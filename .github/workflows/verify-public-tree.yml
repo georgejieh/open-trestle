@@ -1,4 +1,4 @@
-name: Verify public tree
+name: Verify repository
 
 on:
   pull_request:
@@ -15,5 +15,18 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Run tests
+        run: go test ./...
+      - name: Run race tests
+        run: go test -race ./...
+      - name: Run vet
+        run: go vet ./...
+      - name: Build CLI
+        run: go build -o /tmp/trestle ./cmd/trestle
       - name: Validate public repository boundary
         run: python3 tools/verify_public_tree.py
