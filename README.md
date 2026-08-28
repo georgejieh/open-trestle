@@ -40,6 +40,8 @@ go run ./cmd/trestle ci --format=json cmd/trestle/testdata/local-review/fixture.
 
 These commands are local-only. They do not call a model, execute repository content, mutate source, or publish results.
 
+Local fixtures use schema version 1 and exact lowercase JSON field names. The current static adapter accepts one source range. `snapshot.revision` must be the lowercase SHA-256 digest of the declared source file.
+
 ## Product boundary
 
 Open Trestle is not a model prompt attached to a pull request. A canonical review request flows through immutable snapshot capture, deterministic repository evidence, policy-approved analyzers, bounded candidate generation, independent verification, and an idempotent publication gate.
