@@ -40,7 +40,7 @@ go run ./cmd/trestle ci --format=json cmd/trestle/testdata/local-review/fixture.
 
 These commands are local-only. They do not call a model, execute repository content, mutate source, or publish results.
 
-Local fixtures use schema version 1 and exact lowercase JSON field names. The current static adapter accepts one source range. `snapshot.revision` must be the lowercase SHA-256 digest of the declared source file.
+Local fixtures use schema version 1 and exact lowercase JSON field names. The current static adapter accepts one source range. `snapshot.revision` must be the lowercase SHA-256 digest of the declared source file. CI JSON receipts use schema version 2 and return verified results in a `findings` array.
 
 ## Product boundary
 
