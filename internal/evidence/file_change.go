@@ -83,7 +83,7 @@ func validateFileChangeDigest(name, digest string) error {
 
 func canonicalFileChangeRanges(path string, ranges []SourceRange) ([]SourceRange, error) {
 	if len(ranges) == 0 {
-		return nil, fmt.Errorf("at least one changed range is required")
+		return []SourceRange{}, nil
 	}
 	canonical := make([]SourceRange, 0, len(ranges))
 	previousStart := 0

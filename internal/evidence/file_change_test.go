@@ -107,7 +107,6 @@ func TestNewFileChangeValidatesPathAndRanges(t *testing.T) {
 		name   string
 		ranges []SourceRange
 	}{
-		{name: "empty"},
 		{name: "zero value", ranges: []SourceRange{{}}},
 		{name: "path mismatch", ranges: []SourceRange{mustSourceRange(t, "other.go", 1, 1)}},
 		{name: "unsorted", ranges: []SourceRange{mustSourceRange(t, "main.go", 5, 5), mustSourceRange(t, "main.go", 2, 2)}},
@@ -120,6 +119,28 @@ func TestNewFileChangeValidatesPathAndRanges(t *testing.T) {
 				t.Fatal("NewFileChange() error = nil, want range validation error")
 			}
 		})
+	}
+}
+
+func TestNewFileChangeAcceptsDeletionOnlyChange(t *testing.T) {
+	withNil, err := NewFileChange("main.go", testBaseDigest, testHeadDigest, nil)
+	if err != nil {
+		t.Fatalf("NewFileChange(nil ranges) error = %v", err)
+	}
+	withEmpty, err := NewFileChange("main.go", testBaseDigest, testHeadDigest, []SourceRange{})
+	if err != nil {
+		t.Fatalf("NewFileChange(empty ranges) error = %v", err)
+	}
+	if withNil.Identity() != withEmpty.Identity() {
+		t.Fatalf("deletion-only identities = %q and %q, want equality", withNil.Identity(), withEmpty.Identity())
+	}
+	if len(withNil.ChangedRanges()) != 0 || len(withEmpty.ChangedRanges()) != 0 {
+		t.Fatalf("deletion-only ranges = %#v and %#v, want empty", withNil.ChangedRanges(), withEmpty.ChangedRanges())
+	}
+	returned := withNil.ChangedRanges()
+	returned = append(returned, mustSourceRange(t, "main.go", 1, 1))
+	if len(withNil.ChangedRanges()) != 0 {
+		t.Fatal("mutating returned ranges changed deletion-only FileChange")
 	}
 }
 
