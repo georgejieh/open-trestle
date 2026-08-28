@@ -105,19 +105,3 @@ func (r LocalResult) Findings() []Finding {
 func (r LocalResult) EvidenceItems() []evidence.EvidenceItem {
 	return append([]evidence.EvidenceItem(nil), r.evidenceItems...)
 }
-
-// Finding returns the first verified finding.
-func (r LocalResult) Finding() Finding {
-	if len(r.findings) == 0 {
-		return Finding{}
-	}
-	return r.findings[0]
-}
-
-// Evidence returns the first finding's immutable evidence.
-func (r LocalResult) Evidence() evidence.EvidenceItem {
-	if len(r.evidenceItems) == 0 {
-		return evidence.EvidenceItem{}
-	}
-	return r.evidenceItems[0]
-}
