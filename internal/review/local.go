@@ -52,7 +52,7 @@ func ReviewLocalFixture(fixturePath string, configuration config.LocalConfig) (L
 	if err != nil {
 		return LocalResult{}, newOutcomeError(OutcomeFailed, err)
 	}
-	finding, item, matched, err := reviewDebugOutput(selected, sourceRange)
+	finding, item, matched, err := reviewDebugOutput(source, selected, sourceRange)
 	if err != nil {
 		return LocalResult{}, newOutcomeError(OutcomeFailed, err)
 	}

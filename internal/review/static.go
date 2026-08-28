@@ -5,18 +5,22 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"strings"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"path"
+	"strconv"
 
 	"github.com/georgejieh/open-trestle/internal/evidence"
 )
 
 const staticDebugRuleID = "static-debug-output"
 
-func reviewDebugOutput(content []byte, sourceRange evidence.SourceRange) (Finding, evidence.EvidenceItem, bool, error) {
-	if !containsDebugOutput(content) {
+func reviewDebugOutput(source, selected []byte, sourceRange evidence.SourceRange) (Finding, evidence.EvidenceItem, bool, error) {
+	if !containsDebugOutput(source, sourceRange) {
 		return Finding{}, evidence.EvidenceItem{}, false, nil
 	}
-	evidenceDigest := digestHex(content)
+	evidenceDigest := digestHex(selected)
 	evidenceID, err := canonicalIdentity("evidence-", struct {
 		Rule      string `json:"rule"`
 		Path      string `json:"path"`
@@ -51,13 +55,47 @@ func reviewDebugOutput(content []byte, sourceRange evidence.SourceRange) (Findin
 	return finding, item, true, nil
 }
 
-func containsDebugOutput(content []byte) bool {
-	for _, line := range strings.Split(string(content), "\n") {
-		if strings.TrimSpace(line) == `fmt.Println("debug")` {
+func containsDebugOutput(source []byte, sourceRange evidence.SourceRange) bool {
+	if path.Ext(sourceRange.Path()) != ".go" {
+		return false
+	}
+	fileSet := token.NewFileSet()
+	file, err := parser.ParseFile(fileSet, sourceRange.Path(), source, parser.SkipObjectResolution)
+	if err != nil {
+		return false
+	}
+	matched := false
+	ast.Inspect(file, func(node ast.Node) bool {
+		call, isCall := node.(*ast.CallExpr)
+		if !isCall {
 			return true
 		}
+		startLine := fileSet.Position(call.Pos()).Line
+		endLine := fileSet.Position(call.End()).Line
+		if startLine < sourceRange.StartLine() || endLine > sourceRange.EndLine() {
+			return true
+		}
+		matched = isDebugPrintlnCall(call)
+		return !matched
+	})
+	return matched
+}
+
+func isDebugPrintlnCall(call *ast.CallExpr) bool {
+	selector, isSelector := call.Fun.(*ast.SelectorExpr)
+	if !isSelector || selector.Sel.Name != "Println" || len(call.Args) != 1 {
+		return false
 	}
-	return false
+	packageName, isIdentifier := selector.X.(*ast.Ident)
+	if !isIdentifier || packageName.Name != "fmt" {
+		return false
+	}
+	argument, isLiteral := call.Args[0].(*ast.BasicLit)
+	if !isLiteral || argument.Kind != token.STRING {
+		return false
+	}
+	value, err := strconv.Unquote(argument.Value)
+	return err == nil && value == "debug"
 }
 
 func canonicalIdentity(prefix string, value any) (string, error) {

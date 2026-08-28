@@ -77,6 +77,27 @@ func TestRunCIRendersNonVerifiedOutcomes(t *testing.T) {
 	})
 }
 
+func TestRunCIReturnsInconclusiveForInertDebugText(t *testing.T) {
+	testCases := []struct {
+		name       string
+		sourcePath string
+		content    string
+		line       int
+	}{
+		{name: "block comment", sourcePath: "main.go", content: "package sample\n\n/*\nfmt.Println(\"debug\")\n*/\n", line: 4},
+		{name: "raw string", sourcePath: "main.go", content: "package sample\n\nvar message = `\nfmt.Println(\"debug\")\n`\n", line: 4},
+		{name: "interpreted string", sourcePath: "main.go", content: "package sample\n\nvar message = \"fmt.Println(\\\"debug\\\")\"\n", line: 3},
+		{name: "non-Go source", sourcePath: "README.md", content: "fmt.Println(\"debug\")\n", line: 1},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			fixturePath := writeReviewFixture(t, testCase.sourcePath, testCase.content, testCase.line, testCase.line, nil)
+			assertCIOutcome(t, fixturePath, 3, "inconclusive")
+		})
+	}
+}
+
 func TestRunCIRejectsUnsupportedArguments(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
