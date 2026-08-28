@@ -42,7 +42,10 @@ func runValidateFixture(fixturePath string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "validate fixture: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "valid fixture %s\n", fixture.Identity())
+	if _, err := fmt.Fprintf(stdout, "valid fixture %s\n", fixture.Identity()); err != nil {
+		fmt.Fprintf(stderr, "write result: %v\n", err)
+		return 1
+	}
 	return 0
 }
 
@@ -57,18 +60,34 @@ func runReview(fixturePath string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	fmt.Fprintf(stdout, "status: %s\nfixture: %s\n", result.Outcome(), result.FixtureIdentity())
+	var output string
+	exitCode := 0
 	if result.Outcome() == review.OutcomeInconclusive {
-		fmt.Fprintf(stdout, "reason: %s\n", result.Reason())
-		return 3
+		output = fmt.Sprintf("status: %s\nfixture: %s\nreason: %s\n", result.Outcome(), result.FixtureIdentity(), result.Reason())
+		exitCode = 3
+	} else {
+		finding := result.Finding()
+		sourceRange := finding.SourceRange()
+		item := result.Evidence()
+		output = fmt.Sprintf(
+			"status: %s\nfixture: %s\nfinding: %s %s %s\nsource: %s:%d-%d\nevidence: %s %s\n",
+			result.Outcome(),
+			result.FixtureIdentity(),
+			finding.ID(),
+			finding.Severity(),
+			finding.Title(),
+			sourceRange.Path(),
+			sourceRange.StartLine(),
+			sourceRange.EndLine(),
+			item.ID(),
+			item.Digest(),
+		)
 	}
-	finding := result.Finding()
-	sourceRange := finding.SourceRange()
-	item := result.Evidence()
-	fmt.Fprintf(stdout, "finding: %s %s %s\n", finding.ID(), finding.Severity(), finding.Title())
-	fmt.Fprintf(stdout, "source: %s:%d-%d\n", sourceRange.Path(), sourceRange.StartLine(), sourceRange.EndLine())
-	fmt.Fprintf(stdout, "evidence: %s %s\n", item.ID(), item.Digest())
-	return 0
+	if _, err := io.WriteString(stdout, output); err != nil {
+		fmt.Fprintf(stderr, "write result: %v\n", err)
+		return 1
+	}
+	return exitCode
 }
 
 func writeUsage(stderr io.Writer) {

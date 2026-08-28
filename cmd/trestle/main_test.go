@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,6 +113,26 @@ func TestRunFailsClosedForBlockedAndInvalidReview(t *testing.T) {
 		}
 		assertNoCompletionClaim(t, stdout.String()+stderr.String())
 	})
+}
+
+func TestRunFailsWhenSuccessfulOutputCannotBeWritten(t *testing.T) {
+	fixturePath := filepath.Join("testdata", "local-review", "fixture.json")
+
+	for _, args := range [][]string{
+		{"validate-fixture", fixturePath},
+		{"review", fixturePath},
+	} {
+		var stderr bytes.Buffer
+
+		exitCode := run(args, errorWriter{}, &stderr)
+
+		if exitCode == 0 {
+			t.Fatalf("run(%q) exit code = 0, want write failure", args)
+		}
+		if !strings.Contains(stderr.String(), "write result") {
+			t.Fatalf("run(%q) stderr = %q, want write failure", args, stderr.String())
+		}
+	}
 }
 
 func TestRunReportsInconclusiveWithoutCompletionClaim(t *testing.T) {
@@ -234,6 +255,12 @@ func assertNoCompletionClaim(t *testing.T, output string) {
 	if strings.Contains(strings.ToLower(output), "complete") {
 		t.Fatalf("output = %q, must not claim completion", output)
 	}
+}
+
+type errorWriter struct{}
+
+func (errorWriter) Write([]byte) (int, error) {
+	return 0, errors.New("write failed")
 }
 
 type reviewFixtureWire struct {
