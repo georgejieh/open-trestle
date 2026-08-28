@@ -32,7 +32,7 @@ The interface names are design targets, not released commands.
 
 Open Trestle is not a model prompt attached to a pull request. A canonical review request flows through immutable snapshot capture, deterministic repository evidence, policy-approved analyzers, bounded candidate generation, independent verification, and an idempotent publication gate.
 
-See [the public architecture](docs/architecture.md), [the delivery roadmap](docs/roadmap.md), and [the public/private boundary](docs/public-boundary.md).
+See [the public architecture](docs/architecture.md) and [the delivery roadmap](docs/roadmap.md).
 
 ## Current scope
 
