@@ -26,6 +26,8 @@ Add typed candidate findings, independent verification, confidence and duplicate
 
 Add the standalone daemon, CLI, terminal interface, API, headless CI transport, web console, IDE bridges, MCP, ACP, and LSP transport layers.
 
+The web console will include a first-class guided setup wizard for non-technical operators. It will use secure defaults and progressive disclosure to select a local, controlled-hybrid, Kubernetes/HA, or air-gapped profile; configure storage, recovery, identity, inference privacy, and least-privilege integrations; validate a dry-run before publication is possible; and explain blocked or unsafe choices plainly. Equivalent resumable setup is planned for the CLI and terminal interface.
+
 ### Governed execution
 
 Add sandboxed, policy-approved verification runners. Dynamic validation remains separately authorized and disabled by default.
