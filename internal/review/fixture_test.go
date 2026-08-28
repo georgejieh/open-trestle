@@ -71,6 +71,44 @@ func TestLoadFixtureRejectsInvalidOrEffectfulInput(t *testing.T) {
 	}
 }
 
+func TestLoadFixtureRejectsDuplicateKeys(t *testing.T) {
+	rangeJSON := `{"path":"main.go","start_line":1,"end_line":1}`
+	snapshotJSON := fmt.Sprintf(`{"workspace":"workspace","revision":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","ranges":[%s]}`, rangeJSON)
+	requestJSON := fmt.Sprintf(`{"id":"review-1","snapshot":%s}`, snapshotJSON)
+	fixtureJSON := fmt.Sprintf(`{"schema_version":1,"provider_route":"local","requested_capabilities":[],"request":%s}`, requestJSON)
+
+	testCases := []struct {
+		name        string
+		target      string
+		replacement string
+	}{
+		{name: "schema version", target: `"schema_version":1`, replacement: `"schema_version":1,"schema_version":1`},
+		{name: "provider route", target: `"provider_route":"local"`, replacement: `"provider_route":"remote","provider_route":"local"`},
+		{name: "requested capabilities", target: `"requested_capabilities":[]`, replacement: `"requested_capabilities":["publication"],"requested_capabilities":[]`},
+		{name: "request", target: `"request":` + requestJSON, replacement: `"request":` + requestJSON + `,"request":` + requestJSON},
+		{name: "request identity", target: `"id":"review-1"`, replacement: `"id":"review-1","id":"review-1"`},
+		{name: "snapshot", target: `"snapshot":` + snapshotJSON, replacement: `"snapshot":` + snapshotJSON + `,"snapshot":` + snapshotJSON},
+		{name: "workspace", target: `"workspace":"workspace"`, replacement: `"workspace":"workspace","workspace":"workspace"`},
+		{name: "revision", target: `"revision":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`, replacement: `"revision":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","revision":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`},
+		{name: "ranges", target: `"ranges":[` + rangeJSON + `]`, replacement: `"ranges":[` + rangeJSON + `],"ranges":[` + rangeJSON + `]`},
+		{name: "path", target: `"path":"main.go"`, replacement: `"path":"other.go","path":"main.go"`},
+		{name: "start line", target: `"start_line":1`, replacement: `"start_line":2,"start_line":1`},
+		{name: "end line", target: `"end_line":1`, replacement: `"end_line":2,"end_line":1`},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := strings.Replace(fixtureJSON, testCase.target, testCase.replacement, 1)
+			if fixture == fixtureJSON {
+				t.Fatalf("test target %q not found", testCase.target)
+			}
+			if _, err := LoadFixture(strings.NewReader(fixture), config.DefaultLocal()); err == nil {
+				t.Fatal("LoadFixture() error = nil, want duplicate key error")
+			}
+		})
+	}
+}
+
 func TestLoadFixtureRejectsOversizedInput(t *testing.T) {
 	fixture := fmt.Sprintf(`{"schema_version":1,"provider_route":"local","requested_capabilities":[],"request":{"id":"%s","snapshot":{"workspace":"workspace","revision":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","ranges":[{"path":"main.go","start_line":1,"end_line":1}]}}}`, strings.Repeat("a", 1<<20))
 

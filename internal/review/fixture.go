@@ -38,6 +38,9 @@ func LoadFixture(reader io.Reader, configuration config.LocalConfig) (Fixture, e
 	if len(content) > maxFixtureBytes {
 		return Fixture{}, fmt.Errorf("fixture exceeds %d bytes", maxFixtureBytes)
 	}
+	if err := rejectDuplicateJSONKeys(content); err != nil {
+		return Fixture{}, fmt.Errorf("validate fixture keys: %w", err)
+	}
 	decoder := json.NewDecoder(bytes.NewReader(content))
 	decoder.DisallowUnknownFields()
 	var wire fixtureWire
@@ -97,6 +100,65 @@ func LoadFixture(reader io.Reader, configuration config.LocalConfig) (Fixture, e
 		providerRoute:         configuration.ProviderRoute(),
 		requestedCapabilities: append([]policy.Capability(nil), wire.RequestedCapabilities...),
 	}, nil
+}
+
+func rejectDuplicateJSONKeys(content []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(content))
+	return scanJSONValue(decoder)
+}
+
+func scanJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, isDelimiter := token.(json.Delim)
+	if !isDelimiter {
+		return nil
+	}
+
+	switch delimiter {
+	case '{':
+		keys := make(map[string]struct{})
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, isString := keyToken.(string)
+			if !isString {
+				return fmt.Errorf("object key must be a string")
+			}
+			if _, exists := keys[key]; exists {
+				return fmt.Errorf("duplicate JSON key: %q", key)
+			}
+			keys[key] = struct{}{}
+			if err := scanJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		return consumeJSONDelimiter(decoder, '}')
+	case '[':
+		for decoder.More() {
+			if err := scanJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		return consumeJSONDelimiter(decoder, ']')
+	default:
+		return fmt.Errorf("unexpected JSON delimiter: %q", delimiter)
+	}
+}
+
+func consumeJSONDelimiter(decoder *json.Decoder, expected json.Delim) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	if token != expected {
+		return fmt.Errorf("unexpected JSON delimiter: %q", token)
+	}
+	return nil
 }
 
 // Identity returns the canonical SHA-256 fixture identity.
