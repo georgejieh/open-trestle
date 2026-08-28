@@ -203,6 +203,7 @@ func TestParseUnifiedFileDiffRejectsMalformedOrMismatchedPatch(t *testing.T) {
 		{name: "leading zero count", hunk: "@@ -2,01 +2 @@\n-b\n+B\n"},
 		{name: "raw zero positive count", hunk: "@@ -0 +2 @@\n-b\n+B\n"},
 		{name: "both zero", hunk: "@@ -1,0 +1,0 @@\n"},
+		{name: "context-only hunk", hunk: "@@ -1 +1 @@\n a\n@@ -2 +2 @@\n-b\n+B\n"},
 		{name: "base count short", hunk: "@@ -2,2 +2 @@\n-b\n+B\n"},
 		{name: "head count short", hunk: "@@ -2 +2,2 @@\n-b\n+B\n"},
 		{name: "base count long", hunk: "@@ -2 +2 @@\n-b\n-c\n+B\n"},

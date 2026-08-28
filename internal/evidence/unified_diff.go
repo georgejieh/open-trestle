@@ -302,6 +302,7 @@ func (p *unifiedFileDiffParser) parseHunk(header unifiedHunkHeader) error {
 	baseConsumed := 0
 	headConsumed := 0
 	bodyLines := 0
+	editLines := 0
 	var active *unifiedEdit
 	additionSeen := false
 	for p.patchIndex < len(p.patchLines) && !bytes.HasPrefix(p.patchLines[p.patchIndex], []byte("@@")) {
@@ -342,6 +343,7 @@ func (p *unifiedFileDiffParser) parseHunk(header unifiedHunkHeader) error {
 			}
 			active.baseCount++
 			baseConsumed++
+			editLines++
 		case '+':
 			if headConsumed == header.headCount {
 				return p.lineError("addition exceeds head hunk count")
@@ -355,6 +357,7 @@ func (p *unifiedFileDiffParser) parseHunk(header unifiedHunkHeader) error {
 			}
 			active.headCount++
 			headConsumed++
+			editLines++
 		case '\\':
 			return p.lineError("unexpected no-newline marker")
 		default:
@@ -368,6 +371,9 @@ func (p *unifiedFileDiffParser) parseHunk(header unifiedHunkHeader) error {
 	}
 	if bodyLines == 0 {
 		return p.lineError("hunk body is required")
+	}
+	if editLines == 0 {
+		return p.lineError("hunk must contain an addition or deletion")
 	}
 	if baseConsumed != header.baseCount || headConsumed != header.headCount {
 		return p.lineError("hunk body counts do not match header")
