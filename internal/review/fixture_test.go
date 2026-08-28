@@ -144,12 +144,27 @@ func TestLoadFixtureRejectsNonCanonicalKeySpelling(t *testing.T) {
 	}
 }
 
-func TestLoadFixtureRejectsOversizedInput(t *testing.T) {
-	fixture := fmt.Sprintf(`{"schema_version":1,"provider_route":"local","requested_capabilities":[],"request":{"id":"%s","snapshot":{"workspace":"workspace","revision":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","ranges":[{"path":"main.go","start_line":1,"end_line":1}]}}}`, strings.Repeat("a", 1<<20))
-
-	if _, err := LoadFixture(strings.NewReader(fixture), config.DefaultLocal()); err == nil {
-		t.Fatal("LoadFixture() error = nil, want oversized fixture error")
+func TestLoadFixtureEnforcesInputSizeBoundary(t *testing.T) {
+	exactLimit := fixtureWithSize(t, maxFixtureBytes)
+	if _, err := LoadFixture(strings.NewReader(exactLimit), config.DefaultLocal()); err != nil {
+		t.Fatalf("LoadFixture(exact limit) error = %v", err)
 	}
+
+	overLimit := fixtureWithSize(t, maxFixtureBytes+1)
+	if _, err := LoadFixture(strings.NewReader(overLimit), config.DefaultLocal()); err == nil {
+		t.Fatal("LoadFixture(over limit) error = nil, want oversized fixture error")
+	}
+}
+
+func fixtureWithSize(t *testing.T, size int) string {
+	t.Helper()
+	prefix := `{"schema_version":1,"provider_route":"local","requested_capabilities":[],"request":{"id":"`
+	suffix := `","snapshot":{"workspace":"workspace","revision":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","ranges":[{"path":"main.go","start_line":1,"end_line":1}]}}}`
+	identityLength := size - len(prefix) - len(suffix)
+	if identityLength < 1 {
+		t.Fatalf("fixture size %d is too small", size)
+	}
+	return prefix + strings.Repeat("a", identityLength) + suffix
 }
 
 func TestLoadFixtureRejectsInvalidConfiguration(t *testing.T) {
