@@ -28,7 +28,15 @@ func ReviewLocalFixture(fixturePath string, configuration config.LocalConfig) (L
 	if err != nil {
 		return LocalResult{}, err
 	}
-	ranges := fixture.Request().Snapshot().Ranges()
+	request := fixture.Request()
+	snapshot := request.Snapshot()
+	result := LocalResult{
+		fixtureIdentity:  fixture.Identity(),
+		requestID:        request.ID(),
+		snapshotIdentity: snapshot.Identity(),
+		revision:         snapshot.Revision(),
+	}
+	ranges := snapshot.Ranges()
 	if len(ranges) != 1 {
 		return LocalResult{}, failedOutcomeMessage("static adapter requires exactly one source range")
 	}
@@ -37,7 +45,7 @@ func ReviewLocalFixture(fixturePath string, configuration config.LocalConfig) (L
 	if err != nil {
 		return LocalResult{}, newOutcomeError(OutcomeFailed, err)
 	}
-	if digestHex(source) != fixture.Request().Snapshot().Revision() {
+	if digestHex(source) != snapshot.Revision() {
 		return LocalResult{}, failedOutcomeMessage("source content does not match declared revision")
 	}
 	selected, err := selectSourceRange(source, sourceRange)
@@ -49,18 +57,14 @@ func ReviewLocalFixture(fixturePath string, configuration config.LocalConfig) (L
 		return LocalResult{}, newOutcomeError(OutcomeFailed, err)
 	}
 	if !matched {
-		return LocalResult{
-			fixtureIdentity: fixture.Identity(),
-			outcome:         OutcomeInconclusive,
-			reason:          "static debug-output rule did not match the declared range",
-		}, nil
+		result.outcome = OutcomeInconclusive
+		result.reason = "static debug-output rule did not match the declared range"
+		return result, nil
 	}
-	return LocalResult{
-		fixtureIdentity: fixture.Identity(),
-		outcome:         OutcomeVerified,
-		finding:         finding,
-		evidence:        item,
-	}, nil
+	result.outcome = OutcomeVerified
+	result.finding = finding
+	result.evidence = item
+	return result, nil
 }
 
 func loadConfinedFixture(root *os.Root, fixtureName string, configuration config.LocalConfig) (Fixture, error) {

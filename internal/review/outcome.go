@@ -56,16 +56,34 @@ func ErrorOutcome(err error) Outcome {
 
 // LocalResult is the immutable output of a local review.
 type LocalResult struct {
-	fixtureIdentity string
-	outcome         Outcome
-	reason          string
-	finding         Finding
-	evidence        evidence.EvidenceItem
+	fixtureIdentity  string
+	requestID        string
+	snapshotIdentity string
+	revision         string
+	outcome          Outcome
+	reason           string
+	finding          Finding
+	evidence         evidence.EvidenceItem
 }
 
 // FixtureIdentity returns the reviewed fixture identity.
 func (r LocalResult) FixtureIdentity() string {
 	return r.fixtureIdentity
+}
+
+// RequestID returns the reviewed request identity.
+func (r LocalResult) RequestID() string {
+	return r.requestID
+}
+
+// SnapshotIdentity returns the reviewed snapshot identity.
+func (r LocalResult) SnapshotIdentity() string {
+	return r.snapshotIdentity
+}
+
+// Revision returns the reviewed source revision.
+func (r LocalResult) Revision() string {
+	return r.revision
 }
 
 // Outcome returns the review truth state.
