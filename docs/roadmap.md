@@ -49,4 +49,4 @@ A release candidate must demonstrate:
 
 ## How work becomes public
 
-Public source contains original implementation, public contracts, tests, user documentation, and release evidence. Local research archives, orchestration records, upstream inspection copies, prompt material, and agent fingerprints remain excluded from the public repository.
+Public source contains original implementation, public contracts, tests, user documentation, and release evidence. Local research archives, development records, upstream inspection copies, and confidential configuration remain excluded from the public repository.
