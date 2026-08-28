@@ -13,7 +13,7 @@ import (
 
 func TestRunValidatesLocalFixture(t *testing.T) {
 	fixturePath := filepath.Join(t.TempDir(), "fixture.json")
-	fixture := `{"schema_version":1,"provider_route":"local","requested_capabilities":[],"request":{"id":"review-1","snapshot":{"workspace":"workspace","revision":"revision","ranges":[{"path":"main.go","start_line":1,"end_line":1}]}}}`
+	fixture := `{"schema_version":1,"provider_route":"local","requested_capabilities":[],"request":{"id":"review-1","snapshot":{"workspace":"workspace","revision":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","ranges":[{"path":"main.go","start_line":1,"end_line":1}]}}}`
 	if err := os.WriteFile(fixturePath, []byte(fixture), 0o600); err != nil {
 		t.Fatalf("os.WriteFile() error = %v", err)
 	}

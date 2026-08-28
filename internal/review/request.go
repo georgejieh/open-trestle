@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/georgejieh/open-trestle/internal/evidence"
 )
@@ -22,8 +23,11 @@ func NewReviewSnapshot(workspace, revision string, ranges []evidence.SourceRange
 	if workspace == "" {
 		return ReviewSnapshot{}, fmt.Errorf("workspace identity is required")
 	}
-	if revision == "" {
-		return ReviewSnapshot{}, fmt.Errorf("revision identity is required")
+	if len(revision) != sha256.Size*2 || revision != strings.ToLower(revision) {
+		return ReviewSnapshot{}, fmt.Errorf("revision must be a lowercase SHA-256 digest")
+	}
+	if _, err := hex.DecodeString(revision); err != nil {
+		return ReviewSnapshot{}, fmt.Errorf("invalid revision digest: %w", err)
 	}
 	if len(ranges) == 0 {
 		return ReviewSnapshot{}, fmt.Errorf("at least one source range is required")

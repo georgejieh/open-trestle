@@ -11,7 +11,7 @@ func TestNewReviewRequestAcceptsValidLocalSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("evidence.NewSourceRange() error = %v", err)
 	}
-	snapshot, err := NewReviewSnapshot("workspace", "0123456789abcdef", []evidence.SourceRange{sourceRange})
+	snapshot, err := NewReviewSnapshot("workspace", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", []evidence.SourceRange{sourceRange})
 	if err != nil {
 		t.Fatalf("NewReviewSnapshot() error = %v", err)
 	}
@@ -27,14 +27,31 @@ func TestNewReviewRequestAcceptsValidLocalSnapshot(t *testing.T) {
 	if request.Snapshot().Workspace() != "workspace" {
 		t.Fatalf("Snapshot().Workspace() = %q, want %q", request.Snapshot().Workspace(), "workspace")
 	}
-	if request.Snapshot().Revision() != "0123456789abcdef" {
-		t.Fatalf("Snapshot().Revision() = %q, want %q", request.Snapshot().Revision(), "0123456789abcdef")
+	if request.Snapshot().Revision() != "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" {
+		t.Fatalf("Snapshot().Revision() = %q, want %q", request.Snapshot().Revision(), "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	}
 	if request.Snapshot().Identity() == "" {
 		t.Fatal("Snapshot().Identity() is empty")
 	}
 	if got := request.Snapshot().Ranges(); len(got) != 1 || got[0] != sourceRange {
 		t.Fatalf("Snapshot().Ranges() = %#v, want %#v", got, []evidence.SourceRange{sourceRange})
+	}
+}
+
+func TestNewReviewSnapshotRejectsInvalidRevision(t *testing.T) {
+	sourceRange, err := evidence.NewSourceRange("main.go", 1, 1)
+	if err != nil {
+		t.Fatalf("evidence.NewSourceRange() error = %v", err)
+	}
+
+	for _, revision := range []string{
+		"revision",
+		"ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789",
+		"zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+	} {
+		if _, err := NewReviewSnapshot("workspace", revision, []evidence.SourceRange{sourceRange}); err == nil {
+			t.Errorf("NewReviewSnapshot() error = nil for revision %q, want validation error", revision)
+		}
 	}
 }
 
@@ -50,10 +67,10 @@ func TestReviewContractsRejectMissingIdentityAndSnapshotData(t *testing.T) {
 		revision  string
 		ranges    []evidence.SourceRange
 	}{
-		{name: "missing workspace", revision: "revision", ranges: []evidence.SourceRange{sourceRange}},
+		{name: "missing workspace", revision: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", ranges: []evidence.SourceRange{sourceRange}},
 		{name: "missing revision", workspace: "workspace", ranges: []evidence.SourceRange{sourceRange}},
-		{name: "missing ranges", workspace: "workspace", revision: "revision"},
-		{name: "invalid range", workspace: "workspace", revision: "revision", ranges: []evidence.SourceRange{{}}},
+		{name: "missing ranges", workspace: "workspace", revision: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+		{name: "invalid range", workspace: "workspace", revision: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", ranges: []evidence.SourceRange{{}}},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -63,7 +80,7 @@ func TestReviewContractsRejectMissingIdentityAndSnapshotData(t *testing.T) {
 		})
 	}
 
-	snapshot, err := NewReviewSnapshot("workspace", "revision", []evidence.SourceRange{sourceRange})
+	snapshot, err := NewReviewSnapshot("workspace", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", []evidence.SourceRange{sourceRange})
 	if err != nil {
 		t.Fatalf("NewReviewSnapshot() error = %v", err)
 	}

@@ -8,12 +8,12 @@ import (
 )
 
 func TestLoadFixtureProducesStableIdentityForEquivalentJSON(t *testing.T) {
-	compact := `{"schema_version":1,"provider_route":"local","requested_capabilities":[],"request":{"id":"review-1","snapshot":{"workspace":"workspace","revision":"0123456789abcdef","ranges":[{"path":"main.go","start_line":1,"end_line":3}]}}}`
+	compact := `{"schema_version":1,"provider_route":"local","requested_capabilities":[],"request":{"id":"review-1","snapshot":{"workspace":"workspace","revision":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","ranges":[{"path":"main.go","start_line":1,"end_line":3}]}}}`
 	reordered := `{
 		"request": {
 			"snapshot": {
 				"ranges": [{"end_line": 3, "start_line": 1, "path": "main.go"}],
-				"revision": "0123456789abcdef",
+				"revision": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 				"workspace": "workspace"
 			},
 			"id": "review-1"
@@ -22,7 +22,7 @@ func TestLoadFixtureProducesStableIdentityForEquivalentJSON(t *testing.T) {
 		"provider_route": "local",
 		"schema_version": 1
 	}`
-	omittedCapabilities := `{"schema_version":1,"provider_route":"local","request":{"id":"review-1","snapshot":{"workspace":"workspace","revision":"0123456789abcdef","ranges":[{"path":"main.go","start_line":1,"end_line":3}]}}}`
+	omittedCapabilities := `{"schema_version":1,"provider_route":"local","request":{"id":"review-1","snapshot":{"workspace":"workspace","revision":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","ranges":[{"path":"main.go","start_line":1,"end_line":3}]}}}`
 
 	first, err := LoadFixture(strings.NewReader(compact), config.DefaultLocal())
 	if err != nil {
@@ -53,12 +53,12 @@ func TestLoadFixtureRejectsInvalidOrEffectfulInput(t *testing.T) {
 		name    string
 		fixture string
 	}{
-		{name: "unsupported schema", fixture: `{"schema_version":2,"provider_route":"local","requested_capabilities":[],"request":{"id":"review-1","snapshot":{"workspace":"workspace","revision":"revision","ranges":[{"path":"main.go","start_line":1,"end_line":1}]}}}`},
-		{name: "remote route", fixture: `{"schema_version":1,"provider_route":"remote","requested_capabilities":[],"request":{"id":"review-1","snapshot":{"workspace":"workspace","revision":"revision","ranges":[{"path":"main.go","start_line":1,"end_line":1}]}}}`},
-		{name: "publication capability", fixture: `{"schema_version":1,"provider_route":"local","requested_capabilities":["publication"],"request":{"id":"review-1","snapshot":{"workspace":"workspace","revision":"revision","ranges":[{"path":"main.go","start_line":1,"end_line":1}]}}}`},
-		{name: "invalid source path", fixture: `{"schema_version":1,"provider_route":"local","requested_capabilities":[],"request":{"id":"review-1","snapshot":{"workspace":"workspace","revision":"revision","ranges":[{"path":"../main.go","start_line":1,"end_line":1}]}}}`},
-		{name: "unknown field", fixture: `{"schema_version":1,"provider_route":"local","requested_capabilities":[],"unexpected":true,"request":{"id":"review-1","snapshot":{"workspace":"workspace","revision":"revision","ranges":[{"path":"main.go","start_line":1,"end_line":1}]}}}`},
-		{name: "trailing object", fixture: `{"schema_version":1,"provider_route":"local","requested_capabilities":[],"request":{"id":"review-1","snapshot":{"workspace":"workspace","revision":"revision","ranges":[{"path":"main.go","start_line":1,"end_line":1}]}}} {}`},
+		{name: "unsupported schema", fixture: `{"schema_version":2,"provider_route":"local","requested_capabilities":[],"request":{"id":"review-1","snapshot":{"workspace":"workspace","revision":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","ranges":[{"path":"main.go","start_line":1,"end_line":1}]}}}`},
+		{name: "remote route", fixture: `{"schema_version":1,"provider_route":"remote","requested_capabilities":[],"request":{"id":"review-1","snapshot":{"workspace":"workspace","revision":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","ranges":[{"path":"main.go","start_line":1,"end_line":1}]}}}`},
+		{name: "publication capability", fixture: `{"schema_version":1,"provider_route":"local","requested_capabilities":["publication"],"request":{"id":"review-1","snapshot":{"workspace":"workspace","revision":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","ranges":[{"path":"main.go","start_line":1,"end_line":1}]}}}`},
+		{name: "invalid source path", fixture: `{"schema_version":1,"provider_route":"local","requested_capabilities":[],"request":{"id":"review-1","snapshot":{"workspace":"workspace","revision":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","ranges":[{"path":"../main.go","start_line":1,"end_line":1}]}}}`},
+		{name: "unknown field", fixture: `{"schema_version":1,"provider_route":"local","requested_capabilities":[],"unexpected":true,"request":{"id":"review-1","snapshot":{"workspace":"workspace","revision":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","ranges":[{"path":"main.go","start_line":1,"end_line":1}]}}}`},
+		{name: "trailing object", fixture: `{"schema_version":1,"provider_route":"local","requested_capabilities":[],"request":{"id":"review-1","snapshot":{"workspace":"workspace","revision":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","ranges":[{"path":"main.go","start_line":1,"end_line":1}]}}} {}`},
 	}
 
 	for _, testCase := range testCases {
@@ -71,7 +71,7 @@ func TestLoadFixtureRejectsInvalidOrEffectfulInput(t *testing.T) {
 }
 
 func TestLoadFixtureRejectsInvalidConfiguration(t *testing.T) {
-	fixture := `{"schema_version":1,"provider_route":"","requested_capabilities":[],"request":{"id":"review-1","snapshot":{"workspace":"workspace","revision":"revision","ranges":[{"path":"main.go","start_line":1,"end_line":1}]}}}`
+	fixture := `{"schema_version":1,"provider_route":"","requested_capabilities":[],"request":{"id":"review-1","snapshot":{"workspace":"workspace","revision":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","ranges":[{"path":"main.go","start_line":1,"end_line":1}]}}}`
 
 	if _, err := LoadFixture(strings.NewReader(fixture), config.LocalConfig{}); err == nil {
 		t.Fatal("LoadFixture() error = nil, want invalid configuration error")
