@@ -41,30 +41,54 @@ type ciEvidence struct {
 	Digest string `json:"digest"`
 }
 
-func runCI(fixturePath string, stdout, stderr io.Writer) int {
-	result, err := review.ReviewLocalFixture(fixturePath, config.DefaultLocal())
-	receipt := ciReceipt{SchemaVersion: ciReceiptSchemaVersion, Findings: make([]ciFinding, 0)}
-	if err != nil {
-		receipt.Status = review.ErrorOutcome(err)
-		receipt.Reason = err.Error()
-		if receipt.Status == review.OutcomeBlocked {
-			return writeCIReceipt(receipt, stdout, stderr, 4)
-		}
-		return writeCIReceipt(receipt, stdout, stderr, 1)
-	}
+type ciEvaluation struct {
+	result   review.LocalResult
+	outcome  review.Outcome
+	reason   string
+	exitCode int
+}
 
-	receipt.Status = result.Outcome()
-	receipt.FixtureID = result.FixtureIdentity()
-	receipt.RequestID = result.RequestID()
-	receipt.SnapshotID = result.SnapshotIdentity()
-	receipt.Revision = result.Revision()
+func evaluateLocalCI(fixturePath string) ciEvaluation {
+	result, err := review.ReviewLocalFixture(fixturePath, config.DefaultLocal())
+	if err != nil {
+		outcome := review.ErrorOutcome(err)
+		exitCode := 1
+		if outcome == review.OutcomeBlocked {
+			exitCode = 4
+		}
+		return ciEvaluation{outcome: outcome, reason: err.Error(), exitCode: exitCode}
+	}
 	if result.Outcome() == review.OutcomeInconclusive {
-		receipt.Reason = result.Reason()
-		return writeCIReceipt(receipt, stdout, stderr, 3)
+		return ciEvaluation{result: result, outcome: result.Outcome(), reason: result.Reason(), exitCode: 3}
 	}
 	if result.Outcome() != review.OutcomeVerified {
-		receipt.Reason = fmt.Sprintf("unsupported review outcome: %q", result.Outcome())
-		return writeCIReceipt(receipt, stdout, stderr, 1)
+		return ciEvaluation{
+			result:   result,
+			outcome:  result.Outcome(),
+			reason:   fmt.Sprintf("unsupported review outcome: %q", result.Outcome()),
+			exitCode: 1,
+		}
+	}
+	return ciEvaluation{result: result, outcome: result.Outcome()}
+}
+
+func runCI(fixturePath string, stdout, stderr io.Writer) int {
+	evaluation := evaluateLocalCI(fixturePath)
+	receipt := ciReceipt{
+		SchemaVersion: ciReceiptSchemaVersion,
+		Status:        evaluation.outcome,
+		Reason:        evaluation.reason,
+		Findings:      make([]ciFinding, 0),
+	}
+	result := evaluation.result
+	if result.FixtureIdentity() != "" {
+		receipt.FixtureID = result.FixtureIdentity()
+		receipt.RequestID = result.RequestID()
+		receipt.SnapshotID = result.SnapshotIdentity()
+		receipt.Revision = result.Revision()
+	}
+	if evaluation.outcome != review.OutcomeVerified {
+		return writeCIReceipt(receipt, stdout, stderr, evaluation.exitCode)
 	}
 
 	findings := result.Findings()
@@ -90,7 +114,7 @@ func runCI(fixturePath string, stdout, stderr io.Writer) int {
 			Evidence: ciEvidence{ID: item.ID(), Digest: item.Digest()},
 		}
 	}
-	return writeCIReceipt(receipt, stdout, stderr, 0)
+	return writeCIReceipt(receipt, stdout, stderr, evaluation.exitCode)
 }
 
 func writeCIReceipt(receipt ciReceipt, stdout, stderr io.Writer, exitCode int) int {
