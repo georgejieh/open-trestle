@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"os"
@@ -98,6 +100,26 @@ func TestRunCIEmitsEveryFindingWithTextParity(t *testing.T) {
 	}
 	if repeatedStdout.String() != ciStdout.String() {
 		t.Fatalf("repeated CI output = %q, want %q", repeatedStdout.String(), ciStdout.String())
+	}
+}
+
+func TestRunCIBindsLineDirectiveFindingsToPhysicalSource(t *testing.T) {
+	callLine := `func main() { fmt.Println("debug") }`
+	content := "package sample\nimport \"fmt\"\n//line fake.go:100\n" + callLine + "\n"
+	fixturePath := writeReviewFixture(t, "main.go", content, 1, 4, nil)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	if exitCode := run([]string{"ci", "--format=json", fixturePath}, &stdout, &stderr); exitCode != 0 {
+		t.Fatalf("CI exit code = %d, want 0; stderr = %q", exitCode, stderr.String())
+	}
+	receipt := decodeCIReceipt(t, stdout.String())
+	if len(receipt.Findings) != 1 || receipt.Findings[0].Source.Path != "main.go" || receipt.Findings[0].Source.StartLine != 4 || receipt.Findings[0].Source.EndLine != 4 {
+		t.Fatalf("CI findings = %#v, want physical main.go:4-4", receipt.Findings)
+	}
+	digest := sha256.Sum256([]byte(callLine))
+	if receipt.Findings[0].Evidence.Digest != hex.EncodeToString(digest[:]) {
+		t.Fatalf("evidence digest = %q, want physical call line digest", receipt.Findings[0].Evidence.Digest)
 	}
 }
 

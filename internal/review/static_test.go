@@ -150,3 +150,47 @@ func TestReviewDebugOutputsChangesOnlyEditedSpanIdentity(t *testing.T) {
 		t.Fatal("editing a matched span must change its finding and evidence identities")
 	}
 }
+
+func TestReviewDebugOutputsUsesPhysicalLinesWithDirectives(t *testing.T) {
+	for _, directive := range []string{"//line main.go:1", "//line fake.go:100"} {
+		source := []byte("package sample\nimport \"fmt\"\n" + directive + "\nfunc main() { fmt.Println(\"debug\") }\n")
+		selection, err := evidence.NewSourceRange("main.go", 1, 4)
+		if err != nil {
+			t.Fatalf("evidence.NewSourceRange() error = %v", err)
+		}
+
+		findings, items, err := reviewDebugOutputs(source, selection)
+		if err != nil {
+			t.Fatalf("reviewDebugOutputs() error = %v", err)
+		}
+		if len(findings) != 1 || len(items) != 1 {
+			t.Fatalf("reviewDebugOutputs() returned %d findings and %d evidence items, want 1 each", len(findings), len(items))
+		}
+		sourceRange := findings[0].SourceRange()
+		if sourceRange.StartLine() != 4 || sourceRange.EndLine() != 4 {
+			t.Fatalf("finding range = %d-%d, want physical line 4", sourceRange.StartLine(), sourceRange.EndLine())
+		}
+		if items[0].Digest() != digestHex([]byte(`func main() { fmt.Println("debug") }`)) {
+			t.Fatalf("evidence digest = %q, want physical call line digest", items[0].Digest())
+		}
+	}
+}
+
+func TestReviewDebugOutputsDoesNotMergeDirectiveAdjustedLines(t *testing.T) {
+	source := []byte("package sample\nimport \"fmt\"\nfunc main() {\n\tfmt.Println(\"debug\")\n//line main.go:4\n\tfmt.Println(\"debug\")\n}\n")
+	selection, err := evidence.NewSourceRange("main.go", 1, 7)
+	if err != nil {
+		t.Fatalf("evidence.NewSourceRange() error = %v", err)
+	}
+
+	findings, _, err := reviewDebugOutputs(source, selection)
+	if err != nil {
+		t.Fatalf("reviewDebugOutputs() error = %v", err)
+	}
+	if len(findings) != 2 {
+		t.Fatalf("reviewDebugOutputs() returned %d findings, want 2", len(findings))
+	}
+	if findings[0].SourceRange().StartLine() != 4 || findings[1].SourceRange().StartLine() != 6 {
+		t.Fatalf("finding lines = %d and %d, want physical lines 4 and 6", findings[0].SourceRange().StartLine(), findings[1].SourceRange().StartLine())
+	}
+}

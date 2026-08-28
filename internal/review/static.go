@@ -106,8 +106,8 @@ func debugOutputRanges(source []byte, selection evidence.SourceRange) ([]evidenc
 		if !isCall || !isDebugPrintlnCall(call, typeInfo) {
 			return true
 		}
-		startLine := fileSet.Position(call.Pos()).Line
-		endLine := fileSet.Position(call.End()).Line
+		startLine := fileSet.PositionFor(call.Pos(), false).Line
+		endLine := fileSet.PositionFor(call.End(), false).Line
 		if startLine < selection.StartLine() || endLine > selection.EndLine() {
 			return true
 		}
