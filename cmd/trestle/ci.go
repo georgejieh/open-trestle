@@ -118,7 +118,11 @@ func runCI(fixturePath string, stdout, stderr io.Writer) int {
 }
 
 func writeCIReceipt(receipt ciReceipt, stdout, stderr io.Writer, exitCode int) int {
-	encoded, err := json.Marshal(receipt)
+	return writeJSONResult(receipt, stdout, stderr, exitCode)
+}
+
+func writeJSONResult(value any, stdout, stderr io.Writer, exitCode int) int {
+	encoded, err := json.Marshal(value)
 	if err != nil {
 		fmt.Fprintf(stderr, "encode result: %v\n", err)
 		return 1
