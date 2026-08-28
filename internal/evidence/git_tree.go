@@ -57,65 +57,9 @@ func ParseVerifiedGitTree(revision RevisionIdentity, commitVerification GitCommi
 	if err != nil || treeVerification != canonicalVerification {
 		return GitTree{}, fmt.Errorf("git tree object verification does not match content")
 	}
-	objectIDBytes := sha1HexLength / 2
-	if canonicalVerification.TreeAlgorithm() == RevisionAlgorithmSHA256 {
-		objectIDBytes = sha256.Size
-	}
-	entries := make([]GitTreeEntry, 0)
-	seenNames := make(map[string]struct{})
-	totalNameBytes := 0
-	cursor := 0
-	for cursor < len(treeContent) {
-		if len(entries) >= maxGitTreeEntries {
-			return GitTree{}, fmt.Errorf("git tree has more than %d entries", maxGitTreeEntries)
-		}
-		modeEnd := bytes.IndexByte(treeContent[cursor:], ' ')
-		if modeEnd < 0 {
-			return GitTree{}, fmt.Errorf("git tree entry is missing mode delimiter")
-		}
-		modeBytes := treeContent[cursor : cursor+modeEnd]
-		mode, kind, err := parseGitTreeMode(modeBytes)
-		if err != nil {
-			return GitTree{}, err
-		}
-		cursor += modeEnd + 1
-		nameEnd := bytes.IndexByte(treeContent[cursor:], 0)
-		if nameEnd < 0 {
-			return GitTree{}, fmt.Errorf("git tree entry is missing name terminator")
-		}
-		name := treeContent[cursor : cursor+nameEnd]
-		if err := validateGitTreeName(name); err != nil {
-			return GitTree{}, err
-		}
-		if totalNameBytes > maxGitTreeTotalNameBytes-len(name) {
-			return GitTree{}, fmt.Errorf("git tree names exceed %d bytes", maxGitTreeTotalNameBytes)
-		}
-		totalNameBytes += len(name)
-		nameKey := string(name)
-		if _, exists := seenNames[nameKey]; exists {
-			return GitTree{}, fmt.Errorf("git tree contains duplicate name %x", name)
-		}
-		cursor += nameEnd + 1
-		if len(treeContent)-cursor < objectIDBytes {
-			return GitTree{}, fmt.Errorf("git tree entry object ID is truncated")
-		}
-		objectID := treeContent[cursor : cursor+objectIDBytes]
-		cursor += objectIDBytes
-		entry := GitTreeEntry{
-			mode:            mode,
-			kind:            kind,
-			name:            append([]byte{}, name...),
-			objectAlgorithm: canonicalVerification.TreeAlgorithm(),
-			objectDigest:    hex.EncodeToString(objectID),
-		}
-		if len(entries) > 0 {
-			previous := entries[len(entries)-1]
-			if compareGitTreeNames(previous.name, previous.mode == GitTreeModeDirectory, entry.name, entry.mode == GitTreeModeDirectory) >= 0 {
-				return GitTree{}, fmt.Errorf("git tree entries are not in canonical order")
-			}
-		}
-		seenNames[nameKey] = struct{}{}
-		entries = append(entries, entry)
+	entries, err := parseGitTreeEntries(treeContent, canonicalVerification.TreeAlgorithm())
+	if err != nil {
+		return GitTree{}, err
 	}
 	preimage := struct {
 		Contract                 string            `json:"contract"`
@@ -147,6 +91,71 @@ func ParseVerifiedGitTree(revision RevisionIdentity, commitVerification GitCommi
 		treeDigest:               canonicalVerification.ComputedTreeDigest(),
 		entries:                  cloneGitTreeEntries(entries),
 	}, nil
+}
+
+func parseGitTreeEntries(treeContent []byte, algorithm RevisionAlgorithm) ([]GitTreeEntry, error) {
+	objectIDBytes := sha1HexLength / 2
+	if algorithm == RevisionAlgorithmSHA256 {
+		objectIDBytes = sha256.Size
+	} else if algorithm != RevisionAlgorithmSHA1 {
+		return nil, fmt.Errorf("unsupported git tree algorithm %q", algorithm)
+	}
+	entries := make([]GitTreeEntry, 0)
+	seenNames := make(map[string]struct{})
+	totalNameBytes := 0
+	cursor := 0
+	for cursor < len(treeContent) {
+		if len(entries) >= maxGitTreeEntries {
+			return nil, fmt.Errorf("git tree has more than %d entries", maxGitTreeEntries)
+		}
+		modeEnd := bytes.IndexByte(treeContent[cursor:], ' ')
+		if modeEnd < 0 {
+			return nil, fmt.Errorf("git tree entry is missing mode delimiter")
+		}
+		mode, kind, err := parseGitTreeMode(treeContent[cursor : cursor+modeEnd])
+		if err != nil {
+			return nil, err
+		}
+		cursor += modeEnd + 1
+		nameEnd := bytes.IndexByte(treeContent[cursor:], 0)
+		if nameEnd < 0 {
+			return nil, fmt.Errorf("git tree entry is missing name terminator")
+		}
+		name := treeContent[cursor : cursor+nameEnd]
+		if err := validateGitTreeName(name); err != nil {
+			return nil, err
+		}
+		if totalNameBytes > maxGitTreeTotalNameBytes-len(name) {
+			return nil, fmt.Errorf("git tree names exceed %d bytes", maxGitTreeTotalNameBytes)
+		}
+		totalNameBytes += len(name)
+		nameKey := string(name)
+		if _, exists := seenNames[nameKey]; exists {
+			return nil, fmt.Errorf("git tree contains duplicate name %x", name)
+		}
+		cursor += nameEnd + 1
+		if len(treeContent)-cursor < objectIDBytes {
+			return nil, fmt.Errorf("git tree entry object ID is truncated")
+		}
+		objectID := treeContent[cursor : cursor+objectIDBytes]
+		cursor += objectIDBytes
+		entry := GitTreeEntry{
+			mode:            mode,
+			kind:            kind,
+			name:            append([]byte{}, name...),
+			objectAlgorithm: algorithm,
+			objectDigest:    hex.EncodeToString(objectID),
+		}
+		if len(entries) > 0 {
+			previous := entries[len(entries)-1]
+			if compareGitTreeNames(previous.name, previous.mode == GitTreeModeDirectory, entry.name, entry.mode == GitTreeModeDirectory) >= 0 {
+				return nil, fmt.Errorf("git tree entries are not in canonical order")
+			}
+		}
+		seenNames[nameKey] = struct{}{}
+		entries = append(entries, entry)
+	}
+	return entries, nil
 }
 
 func parseGitTreeMode(mode []byte) (GitTreeMode, GitTreeEntryKind, error) {
