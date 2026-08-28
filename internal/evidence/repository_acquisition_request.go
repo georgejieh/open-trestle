@@ -29,6 +29,9 @@ type RepositoryAcquisitionRequest struct {
 	artifact              RepositoryAcquisitionArtifact
 	effect                RepositoryAcquisitionEffect
 	requiredCapabilities  []SourceAdapterCapability
+	repository            RepositoryIdentity
+	revision              RevisionIdentity
+	adapter               SourceAdapterIdentity
 }
 
 // NewRepositoryAcquisitionRequest validates canonical read-only acquisition intent.
@@ -89,7 +92,33 @@ func NewRepositoryAcquisitionRequest(repository RepositoryIdentity, revision Rev
 		artifact:              artifact,
 		effect:                effect,
 		requiredCapabilities:  append([]SourceAdapterCapability{}, requiredCapabilities...),
+		repository:            canonicalRepository,
+		revision:              canonicalRevision,
+		adapter:               canonicalAdapter,
 	}, nil
+}
+
+func canonicalRepositoryAcquisitionRequest(request RepositoryAcquisitionRequest) (RepositoryAcquisitionRequest, error) {
+	canonical, err := NewRepositoryAcquisitionRequest(request.repository, request.revision, request.adapter, request.artifact, request.effect)
+	if err != nil || !repositoryAcquisitionRequestValuesEqual(request, canonical) {
+		return RepositoryAcquisitionRequest{}, fmt.Errorf("repository acquisition request is not canonical")
+	}
+	return canonical, nil
+}
+
+func repositoryAcquisitionRequestValuesEqual(first, second RepositoryAcquisitionRequest) bool {
+	if (first.requiredCapabilities == nil) != (second.requiredCapabilities == nil) || first.identity != second.identity || first.repositoryIdentity != second.repositoryIdentity || first.revisionIdentity != second.revisionIdentity || first.sourceAdapterIdentity != second.sourceAdapterIdentity || first.artifact != second.artifact || first.effect != second.effect || len(first.requiredCapabilities) != len(second.requiredCapabilities) {
+		return false
+	}
+	if !repositoryIdentityValuesEqual(first.repository, second.repository) || first.revision != second.revision || !sourceAdapterIdentityValuesEqual(first.adapter, second.adapter) {
+		return false
+	}
+	for i := range first.requiredCapabilities {
+		if first.requiredCapabilities[i] != second.requiredCapabilities[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func acquisitionCapabilities(artifact RepositoryAcquisitionArtifact) ([]SourceAdapterCapability, error) {
