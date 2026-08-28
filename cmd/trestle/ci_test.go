@@ -82,10 +82,22 @@ func TestRunCIEmitsEveryFindingWithTextParity(t *testing.T) {
 	}
 	findingIDs := textOutputIdentities(reviewStdout.String(), "finding: ")
 	evidenceIDs := textOutputIdentities(reviewStdout.String(), "evidence: ")
+	if len(findingIDs) != len(receipt.Findings) || len(evidenceIDs) != len(receipt.Findings) {
+		t.Fatalf("text result counts = %d and %d, want %d", len(findingIDs), len(evidenceIDs), len(receipt.Findings))
+	}
 	for i, finding := range receipt.Findings {
 		if finding.ID != findingIDs[i] || finding.Evidence.ID != evidenceIDs[i] {
 			t.Fatalf("CI result %d lacks text parity", i)
 		}
+	}
+
+	var repeatedStdout bytes.Buffer
+	var repeatedStderr bytes.Buffer
+	if exitCode := run([]string{"ci", "--format=json", fixturePath}, &repeatedStdout, &repeatedStderr); exitCode != 0 {
+		t.Fatalf("repeated CI exit code = %d, want 0; stderr = %q", exitCode, repeatedStderr.String())
+	}
+	if repeatedStdout.String() != ciStdout.String() {
+		t.Fatalf("repeated CI output = %q, want %q", repeatedStdout.String(), ciStdout.String())
 	}
 }
 

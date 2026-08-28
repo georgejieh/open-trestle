@@ -123,3 +123,30 @@ func TestReviewDebugOutputsHonorsSelectionAndDeduplicatesLines(t *testing.T) {
 		})
 	}
 }
+
+func TestReviewDebugOutputsChangesOnlyEditedSpanIdentity(t *testing.T) {
+	original := []byte("package sample\nimport \"fmt\"\nfunc main() {\n\tfmt.Println(\"debug\")\n\tfmt.Println(\"debug\")\n}\n")
+	changed := []byte("package sample\nimport \"fmt\"\nfunc main() {\n\tfmt.Println(\"debug\")\n\tfmt.Println( \"debug\")\n}\n")
+	selection, err := evidence.NewSourceRange("main.go", 1, 6)
+	if err != nil {
+		t.Fatalf("evidence.NewSourceRange() error = %v", err)
+	}
+
+	originalFindings, originalItems, err := reviewDebugOutputs(original, selection)
+	if err != nil {
+		t.Fatalf("reviewDebugOutputs(original) error = %v", err)
+	}
+	changedFindings, changedItems, err := reviewDebugOutputs(changed, selection)
+	if err != nil {
+		t.Fatalf("reviewDebugOutputs(changed) error = %v", err)
+	}
+	if len(originalFindings) != 2 || len(changedFindings) != 2 {
+		t.Fatalf("finding counts = %d and %d, want 2", len(originalFindings), len(changedFindings))
+	}
+	if originalFindings[0].ID() != changedFindings[0].ID() || originalItems[0].ID() != changedItems[0].ID() {
+		t.Fatal("editing the second span must not change the first pair")
+	}
+	if originalFindings[1].ID() == changedFindings[1].ID() || originalItems[1].ID() == changedItems[1].ID() {
+		t.Fatal("editing a matched span must change its finding and evidence identities")
+	}
+}
