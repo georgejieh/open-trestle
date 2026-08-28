@@ -25,26 +25,27 @@ func TestRunCIEmitsDeterministicVerifiedReceipt(t *testing.T) {
 	}
 
 	receipt := decodeCIReceipt(t, firstStdout.String())
-	if receipt.SchemaVersion != 1 || receipt.Status != "verified" {
-		t.Fatalf("receipt schema and status = (%d, %q), want (1, verified)", receipt.SchemaVersion, receipt.Status)
+	if receipt.SchemaVersion != 2 || receipt.Status != "verified" {
+		t.Fatalf("receipt schema and status = (%d, %q), want (2, verified)", receipt.SchemaVersion, receipt.Status)
 	}
 	if receipt.FixtureID == "" || receipt.RequestID != "local-review-1" || receipt.SnapshotID == "" || receipt.Revision == "" {
 		t.Fatalf("receipt binding is incomplete: %#v", receipt)
 	}
-	if receipt.Finding == nil || receipt.Finding.ID == "" || receipt.Finding.Source.Path != "main.go" || receipt.Finding.Evidence.ID == "" {
-		t.Fatalf("receipt finding is incomplete: %#v", receipt.Finding)
+	if len(receipt.Findings) != 1 || receipt.Findings[0].ID == "" || receipt.Findings[0].Source.Path != "main.go" || receipt.Findings[0].Evidence.ID == "" {
+		t.Fatalf("receipt findings are incomplete: %#v", receipt.Findings)
 	}
+	finding := receipt.Findings[0]
 
 	var reviewStdout bytes.Buffer
 	var reviewStderr bytes.Buffer
 	if exitCode := run([]string{"review", fixturePath}, &reviewStdout, &reviewStderr); exitCode != 0 {
 		t.Fatalf("review exit code = %d, want 0; stderr = %q", exitCode, reviewStderr.String())
 	}
-	if receipt.Finding.ID != outputIdentity(t, reviewStdout.String(), "finding: ") {
-		t.Fatalf("CI finding ID = %q, want review parity", receipt.Finding.ID)
+	if finding.ID != outputIdentity(t, reviewStdout.String(), "finding: ") {
+		t.Fatalf("CI finding ID = %q, want review parity", finding.ID)
 	}
-	if receipt.Finding.Evidence.ID != outputIdentity(t, reviewStdout.String(), "evidence: ") {
-		t.Fatalf("CI evidence ID = %q, want review parity", receipt.Finding.Evidence.ID)
+	if finding.Evidence.ID != outputIdentity(t, reviewStdout.String(), "evidence: ") {
+		t.Fatalf("CI evidence ID = %q, want review parity", finding.Evidence.ID)
 	}
 
 	var secondStdout bytes.Buffer
@@ -54,6 +55,37 @@ func TestRunCIEmitsDeterministicVerifiedReceipt(t *testing.T) {
 	}
 	if secondStdout.String() != firstStdout.String() {
 		t.Fatalf("second output = %q, want deterministic output %q", secondStdout.String(), firstStdout.String())
+	}
+}
+
+func TestRunCIEmitsEveryFindingWithTextParity(t *testing.T) {
+	content := "package sample\nimport \"fmt\"\nfunc main() {\n\tfmt.Println(\"debug\")\n\tfmt.Println(\n\t\t\"debug\",\n\t)\n}\n"
+	fixturePath := writeReviewFixture(t, "main.go", content, 1, 8, nil)
+	var ciStdout bytes.Buffer
+	var ciStderr bytes.Buffer
+
+	if exitCode := run([]string{"ci", "--format=json", fixturePath}, &ciStdout, &ciStderr); exitCode != 0 {
+		t.Fatalf("CI exit code = %d, want 0; stderr = %q", exitCode, ciStderr.String())
+	}
+	receipt := decodeCIReceipt(t, ciStdout.String())
+	if len(receipt.Findings) != 2 {
+		t.Fatalf("CI findings = %#v, want two", receipt.Findings)
+	}
+	if receipt.Findings[0].Source.StartLine != 4 || receipt.Findings[0].Source.EndLine != 4 || receipt.Findings[1].Source.StartLine != 5 || receipt.Findings[1].Source.EndLine != 7 {
+		t.Fatalf("CI source ranges = %#v, want exact ordered spans", receipt.Findings)
+	}
+
+	var reviewStdout bytes.Buffer
+	var reviewStderr bytes.Buffer
+	if exitCode := run([]string{"review", fixturePath}, &reviewStdout, &reviewStderr); exitCode != 0 {
+		t.Fatalf("review exit code = %d, want 0; stderr = %q", exitCode, reviewStderr.String())
+	}
+	findingIDs := textOutputIdentities(reviewStdout.String(), "finding: ")
+	evidenceIDs := textOutputIdentities(reviewStdout.String(), "evidence: ")
+	for i, finding := range receipt.Findings {
+		if finding.ID != findingIDs[i] || finding.Evidence.ID != evidenceIDs[i] {
+			t.Fatalf("CI result %d lacks text parity", i)
+		}
 	}
 }
 
@@ -112,12 +144,18 @@ func TestRunCIFailsForMalformedGoSource(t *testing.T) {
 	if stderr.Len() != 0 {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
+	if !strings.Contains(stdout.String(), `"findings":[]`) {
+		t.Fatalf("stdout = %q, want empty findings array", stdout.String())
+	}
 	receipt := decodeCIReceipt(t, stdout.String())
+	if receipt.SchemaVersion != 2 {
+		t.Fatalf("receipt schema version = %d, want 2", receipt.SchemaVersion)
+	}
 	if receipt.Status != "failed" || !strings.Contains(receipt.Reason, "parse Go source") {
 		t.Fatalf("receipt = %#v, want failed parse outcome", receipt)
 	}
-	if receipt.Finding != nil {
-		t.Fatalf("receipt finding = %#v, want omitted", receipt.Finding)
+	if len(receipt.Findings) != 0 {
+		t.Fatalf("receipt findings = %#v, want empty", receipt.Findings)
 	}
 }
 
@@ -145,13 +183,29 @@ func assertCIOutcome(t *testing.T, fixturePath string, wantExitCode int, wantSta
 	if stderr.Len() != 0 {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
+	if !strings.Contains(stdout.String(), `"findings":[]`) {
+		t.Fatalf("stdout = %q, want empty findings array", stdout.String())
+	}
 	receipt := decodeCIReceipt(t, stdout.String())
+	if receipt.SchemaVersion != 2 {
+		t.Fatalf("receipt schema version = %d, want 2", receipt.SchemaVersion)
+	}
 	if receipt.Status != wantStatus || receipt.Reason == "" {
 		t.Fatalf("receipt = %#v, want status %q with reason", receipt, wantStatus)
 	}
-	if receipt.Finding != nil {
-		t.Fatalf("receipt finding = %#v, want omitted", receipt.Finding)
+	if len(receipt.Findings) != 0 {
+		t.Fatalf("receipt findings = %#v, want empty", receipt.Findings)
 	}
+}
+
+func textOutputIdentities(output, prefix string) []string {
+	var identities []string
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			identities = append(identities, strings.Fields(strings.TrimPrefix(line, prefix))[0])
+		}
+	}
+	return identities
 }
 
 func decodeCIReceipt(t *testing.T, output string) ciReceiptWire {
@@ -169,14 +223,14 @@ func decodeCIReceipt(t *testing.T, output string) ciReceiptWire {
 }
 
 type ciReceiptWire struct {
-	SchemaVersion int            `json:"schema_version"`
-	Status        string         `json:"status"`
-	FixtureID     string         `json:"fixture_id"`
-	RequestID     string         `json:"request_id"`
-	SnapshotID    string         `json:"snapshot_id"`
-	Revision      string         `json:"revision"`
-	Reason        string         `json:"reason"`
-	Finding       *ciFindingWire `json:"finding"`
+	SchemaVersion int             `json:"schema_version"`
+	Status        string          `json:"status"`
+	FixtureID     string          `json:"fixture_id"`
+	RequestID     string          `json:"request_id"`
+	SnapshotID    string          `json:"snapshot_id"`
+	Revision      string          `json:"revision"`
+	Reason        string          `json:"reason"`
+	Findings      []ciFindingWire `json:"findings"`
 }
 
 type ciFindingWire struct {

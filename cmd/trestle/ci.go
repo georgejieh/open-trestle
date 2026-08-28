@@ -9,7 +9,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/review"
 )
 
-const ciReceiptSchemaVersion = 1
+const ciReceiptSchemaVersion = 2
 
 type ciReceipt struct {
 	SchemaVersion int            `json:"schema_version"`
@@ -19,7 +19,7 @@ type ciReceipt struct {
 	SnapshotID    string         `json:"snapshot_id,omitempty"`
 	Revision      string         `json:"revision,omitempty"`
 	Reason        string         `json:"reason,omitempty"`
-	Finding       *ciFinding     `json:"finding,omitempty"`
+	Findings      []ciFinding    `json:"findings"`
 }
 
 type ciFinding struct {
@@ -43,7 +43,7 @@ type ciEvidence struct {
 
 func runCI(fixturePath string, stdout, stderr io.Writer) int {
 	result, err := review.ReviewLocalFixture(fixturePath, config.DefaultLocal())
-	receipt := ciReceipt{SchemaVersion: ciReceiptSchemaVersion}
+	receipt := ciReceipt{SchemaVersion: ciReceiptSchemaVersion, Findings: make([]ciFinding, 0)}
 	if err != nil {
 		receipt.Status = review.ErrorOutcome(err)
 		receipt.Reason = err.Error()
@@ -67,19 +67,28 @@ func runCI(fixturePath string, stdout, stderr io.Writer) int {
 		return writeCIReceipt(receipt, stdout, stderr, 1)
 	}
 
-	finding := result.Finding()
-	sourceRange := finding.SourceRange()
-	item := result.Evidence()
-	receipt.Finding = &ciFinding{
-		ID:       finding.ID(),
-		Title:    finding.Title(),
-		Severity: finding.Severity(),
-		Source: ciSource{
-			Path:      sourceRange.Path(),
-			StartLine: sourceRange.StartLine(),
-			EndLine:   sourceRange.EndLine(),
-		},
-		Evidence: ciEvidence{ID: item.ID(), Digest: item.Digest()},
+	findings := result.Findings()
+	items := result.EvidenceItems()
+	if len(findings) != len(items) {
+		receipt.Status = review.OutcomeFailed
+		receipt.Reason = "finding and evidence counts differ"
+		return writeCIReceipt(receipt, stdout, stderr, 1)
+	}
+	receipt.Findings = make([]ciFinding, len(findings))
+	for i, finding := range findings {
+		sourceRange := finding.SourceRange()
+		item := items[i]
+		receipt.Findings[i] = ciFinding{
+			ID:       finding.ID(),
+			Title:    finding.Title(),
+			Severity: finding.Severity(),
+			Source: ciSource{
+				Path:      sourceRange.Path(),
+				StartLine: sourceRange.StartLine(),
+				EndLine:   sourceRange.EndLine(),
+			},
+			Evidence: ciEvidence{ID: item.ID(), Digest: item.Digest()},
+		}
 	}
 	return writeCIReceipt(receipt, stdout, stderr, 0)
 }
