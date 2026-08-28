@@ -18,12 +18,12 @@ AI review is useful only when its conclusions can be inspected and controlled. O
 
 | Interface | Purpose |
 |---|---|
-| `orsd` | Local or server review daemon |
-| `ors` | CLI and terminal user interface |
-| `ors ci` | Headless review for CI pipelines |
-| `ors lsp` | Editor diagnostics and code actions |
-| `ors mcp` | Scoped Model Context Protocol server |
-| `ors acp` | Agent Client Protocol endpoint |
+| `trestled` | Local or server review daemon |
+| `trestle` | CLI and terminal user interface |
+| `trestle ci` | Headless review for CI pipelines |
+| `trestle lsp` | Editor diagnostics and code actions |
+| `trestle mcp` | Scoped Model Context Protocol server |
+| `trestle acp` | Agent Client Protocol endpoint |
 | Forge adapters | GitHub, GitLab, Bitbucket, and Azure DevOps integration |
 
 The interface names are design targets, not released commands.
