@@ -15,6 +15,13 @@ func TestContainsDebugOutputRequiresGoCallExpression(t *testing.T) {
 		want       bool
 	}{
 		{name: "call", sourcePath: "main.go", content: "package sample\nimport \"fmt\"\nfunc main() {\n\tfmt.Println(\"debug\")\n}\n", line: 4, want: true},
+		{name: "aliased import", sourcePath: "main.go", content: "package sample\nimport f \"fmt\"\nfunc main() {\n\tf.Println(\"debug\")\n}\n", line: 4, want: true},
+		{name: "shadowed import", sourcePath: "main.go", content: "package sample\nimport \"fmt\"\ntype noop struct{}\nfunc (noop) Println(string) {}\nfunc demo() {\n\tvar fmt noop\n\tfmt.Println(\"debug\")\n}\n", line: 7},
+		{name: "unrelated aliased import", sourcePath: "main.go", content: "package sample\nimport fmt \"strings\"\nfunc demo() {\n\tfmt.Println(\"debug\")\n}\n", line: 4},
+		{name: "shadowed package name", sourcePath: "main.go", content: "package sample\n\ntype noop struct{}\nfunc (noop) Println(string) {}\nfunc demo() {\n\tvar fmt noop\n\tfmt.Println(\"debug\")\n}\n", line: 7},
+		{name: "wrong function", sourcePath: "main.go", content: "package sample\nimport \"fmt\"\nfunc main() {\n\tfmt.Printf(\"debug\")\n}\n", line: 4},
+		{name: "wrong arity", sourcePath: "main.go", content: "package sample\nimport \"fmt\"\nfunc main() {\n\tfmt.Println(\"debug\", \"extra\")\n}\n", line: 4},
+		{name: "non-literal argument", sourcePath: "main.go", content: "package sample\nimport \"fmt\"\nfunc main() {\n\tmessage := \"debug\"\n\tfmt.Println(message)\n}\n", line: 5},
 		{name: "block comment", sourcePath: "main.go", content: "package sample\n/*\nfmt.Println(\"debug\")\n*/\n", line: 3},
 		{name: "raw string", sourcePath: "main.go", content: "package sample\nvar message = `\nfmt.Println(\"debug\")\n`\n", line: 3},
 		{name: "interpreted string", sourcePath: "main.go", content: "package sample\nvar message = \"fmt.Println(\\\"debug\\\")\"\n", line: 2},
@@ -27,9 +34,24 @@ func TestContainsDebugOutputRequiresGoCallExpression(t *testing.T) {
 			if err != nil {
 				t.Fatalf("evidence.NewSourceRange() error = %v", err)
 			}
-			if got := containsDebugOutput([]byte(testCase.content), sourceRange); got != testCase.want {
+			got, err := containsDebugOutput([]byte(testCase.content), sourceRange)
+			if err != nil {
+				t.Fatalf("containsDebugOutput() error = %v", err)
+			}
+			if got != testCase.want {
 				t.Fatalf("containsDebugOutput() = %t, want %t", got, testCase.want)
 			}
 		})
+	}
+}
+
+func TestContainsDebugOutputReportsParseError(t *testing.T) {
+	sourceRange, err := evidence.NewSourceRange("main.go", 1, 1)
+	if err != nil {
+		t.Fatalf("evidence.NewSourceRange() error = %v", err)
+	}
+
+	if _, err := containsDebugOutput([]byte("package sample\nfunc {\n"), sourceRange); err == nil {
+		t.Fatal("containsDebugOutput() error = nil, want parse error")
 	}
 }

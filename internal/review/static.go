@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"go/ast"
+	"go/importer"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"path"
 	"strconv"
 
@@ -17,7 +19,11 @@ import (
 const staticDebugRuleID = "static-debug-output"
 
 func reviewDebugOutput(source, selected []byte, sourceRange evidence.SourceRange) (Finding, evidence.EvidenceItem, bool, error) {
-	if !containsDebugOutput(source, sourceRange) {
+	matched, err := containsDebugOutput(source, sourceRange)
+	if err != nil {
+		return Finding{}, evidence.EvidenceItem{}, false, fmt.Errorf("analyze debug output: %w", err)
+	}
+	if !matched {
 		return Finding{}, evidence.EvidenceItem{}, false, nil
 	}
 	evidenceDigest := digestHex(selected)
@@ -55,15 +61,22 @@ func reviewDebugOutput(source, selected []byte, sourceRange evidence.SourceRange
 	return finding, item, true, nil
 }
 
-func containsDebugOutput(source []byte, sourceRange evidence.SourceRange) bool {
+func containsDebugOutput(source []byte, sourceRange evidence.SourceRange) (bool, error) {
 	if path.Ext(sourceRange.Path()) != ".go" {
-		return false
+		return false, nil
 	}
 	fileSet := token.NewFileSet()
 	file, err := parser.ParseFile(fileSet, sourceRange.Path(), source, parser.SkipObjectResolution)
 	if err != nil {
-		return false
+		return false, fmt.Errorf("parse Go source: %w", err)
 	}
+	typeInfo := &types.Info{Uses: make(map[*ast.Ident]types.Object)}
+	configuration := types.Config{
+		Importer: importer.Default(),
+		Error:    func(error) {},
+	}
+	_, _ = configuration.Check("fixture", fileSet, []*ast.File{file}, typeInfo)
+
 	matched := false
 	ast.Inspect(file, func(node ast.Node) bool {
 		call, isCall := node.(*ast.CallExpr)
@@ -75,19 +88,27 @@ func containsDebugOutput(source []byte, sourceRange evidence.SourceRange) bool {
 		if startLine < sourceRange.StartLine() || endLine > sourceRange.EndLine() {
 			return true
 		}
-		matched = isDebugPrintlnCall(call)
+		matched = isDebugPrintlnCall(call, typeInfo)
 		return !matched
 	})
-	return matched
+	return matched, nil
 }
 
-func isDebugPrintlnCall(call *ast.CallExpr) bool {
+func isDebugPrintlnCall(call *ast.CallExpr, typeInfo *types.Info) bool {
 	selector, isSelector := call.Fun.(*ast.SelectorExpr)
-	if !isSelector || selector.Sel.Name != "Println" || len(call.Args) != 1 {
+	if !isSelector || len(call.Args) != 1 {
 		return false
 	}
-	packageName, isIdentifier := selector.X.(*ast.Ident)
-	if !isIdentifier || packageName.Name != "fmt" {
+	packageIdentifier, isIdentifier := selector.X.(*ast.Ident)
+	if !isIdentifier {
+		return false
+	}
+	packageName, isPackageName := typeInfo.Uses[packageIdentifier].(*types.PkgName)
+	if !isPackageName || packageName.Imported() == nil || packageName.Imported().Path() != "fmt" {
+		return false
+	}
+	function, isFunction := typeInfo.Uses[selector.Sel].(*types.Func)
+	if !isFunction || function.Pkg() == nil || function.Pkg().Path() != "fmt" || function.Name() != "Println" {
 		return false
 	}
 	argument, isLiteral := call.Args[0].(*ast.BasicLit)

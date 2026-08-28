@@ -139,7 +139,7 @@ func TestRunFailsWhenSuccessfulOutputCannotBeWritten(t *testing.T) {
 }
 
 func TestRunReportsInconclusiveWithoutCompletionClaim(t *testing.T) {
-	fixturePath := writeReviewFixture(t, "main.go", "return nil\n", 1, 1, nil)
+	fixturePath := writeReviewFixture(t, "main.go", "package sample\nfunc noop() {}\n", 1, 1, nil)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 

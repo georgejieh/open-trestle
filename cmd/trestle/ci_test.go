@@ -59,7 +59,7 @@ func TestRunCIEmitsDeterministicVerifiedReceipt(t *testing.T) {
 
 func TestRunCIRendersNonVerifiedOutcomes(t *testing.T) {
 	t.Run("inconclusive", func(t *testing.T) {
-		fixturePath := writeReviewFixture(t, "main.go", "return nil\n", 1, 1, nil)
+		fixturePath := writeReviewFixture(t, "main.go", "package sample\nfunc noop() {}\n", 1, 1, nil)
 		assertCIOutcome(t, fixturePath, 3, "inconclusive")
 	})
 
@@ -85,6 +85,7 @@ func TestRunCIReturnsInconclusiveForInertDebugText(t *testing.T) {
 		line       int
 	}{
 		{name: "block comment", sourcePath: "main.go", content: "package sample\n\n/*\nfmt.Println(\"debug\")\n*/\n", line: 4},
+		{name: "shadowed package name", sourcePath: "main.go", content: "package sample\n\ntype noop struct{}\nfunc (noop) Println(string) {}\nfunc demo() {\n\tvar fmt noop\n\tfmt.Println(\"debug\")\n}\n", line: 7},
 		{name: "raw string", sourcePath: "main.go", content: "package sample\n\nvar message = `\nfmt.Println(\"debug\")\n`\n", line: 4},
 		{name: "interpreted string", sourcePath: "main.go", content: "package sample\n\nvar message = \"fmt.Println(\\\"debug\\\")\"\n", line: 3},
 		{name: "non-Go source", sourcePath: "README.md", content: "fmt.Println(\"debug\")\n", line: 1},
@@ -95,6 +96,28 @@ func TestRunCIReturnsInconclusiveForInertDebugText(t *testing.T) {
 			fixturePath := writeReviewFixture(t, testCase.sourcePath, testCase.content, testCase.line, testCase.line, nil)
 			assertCIOutcome(t, fixturePath, 3, "inconclusive")
 		})
+	}
+}
+
+func TestRunCIFailsForMalformedGoSource(t *testing.T) {
+	fixturePath := writeReviewFixture(t, "main.go", "package sample\nfunc {\n", 1, 1, nil)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := run([]string{"ci", "--format=json", fixturePath}, &stdout, &stderr)
+
+	if exitCode != 1 {
+		t.Fatalf("run() exit code = %d, want 1; stderr = %q", exitCode, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	receipt := decodeCIReceipt(t, stdout.String())
+	if receipt.Status != "failed" || !strings.Contains(receipt.Reason, "parse Go source") {
+		t.Fatalf("receipt = %#v, want failed parse outcome", receipt)
+	}
+	if receipt.Finding != nil {
+		t.Fatalf("receipt finding = %#v, want omitted", receipt.Finding)
 	}
 }
 
