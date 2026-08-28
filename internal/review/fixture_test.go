@@ -109,6 +109,41 @@ func TestLoadFixtureRejectsDuplicateKeys(t *testing.T) {
 	}
 }
 
+func TestLoadFixtureRejectsNonCanonicalKeySpelling(t *testing.T) {
+	rangeJSON := `{"path":"main.go","start_line":1,"end_line":1}`
+	snapshotJSON := fmt.Sprintf(`{"workspace":"workspace","revision":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","ranges":[%s]}`, rangeJSON)
+	requestJSON := fmt.Sprintf(`{"id":"review-1","snapshot":%s}`, snapshotJSON)
+	fixtureJSON := fmt.Sprintf(`{"schema_version":1,"provider_route":"local","requested_capabilities":[],"request":%s}`, requestJSON)
+
+	testCases := []struct {
+		name        string
+		target      string
+		replacement string
+	}{
+		{name: "schema version", target: `"schema_version"`, replacement: `"Schema_Version"`},
+		{name: "provider route", target: `"provider_route"`, replacement: `"Provider_Route"`},
+		{name: "requested capabilities", target: `"requested_capabilities"`, replacement: `"Requested_Capabilities"`},
+		{name: "request", target: `"request"`, replacement: `"Request"`},
+		{name: "request identity", target: `"id"`, replacement: `"ID"`},
+		{name: "snapshot", target: `"snapshot"`, replacement: `"Snapshot"`},
+		{name: "workspace", target: `"workspace"`, replacement: `"Workspace"`},
+		{name: "revision", target: `"revision"`, replacement: `"Revision"`},
+		{name: "ranges", target: `"ranges"`, replacement: `"Ranges"`},
+		{name: "path", target: `"path"`, replacement: `"Path"`},
+		{name: "start line", target: `"start_line"`, replacement: `"Start_Line"`},
+		{name: "end line", target: `"end_line"`, replacement: `"End_Line"`},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := strings.Replace(fixtureJSON, testCase.target, testCase.replacement, 1)
+			if _, err := LoadFixture(strings.NewReader(fixture), config.DefaultLocal()); err == nil {
+				t.Fatal("LoadFixture() error = nil, want non-canonical key error")
+			}
+		})
+	}
+}
+
 func TestLoadFixtureRejectsOversizedInput(t *testing.T) {
 	fixture := fmt.Sprintf(`{"schema_version":1,"provider_route":"local","requested_capabilities":[],"request":{"id":"%s","snapshot":{"workspace":"workspace","revision":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","ranges":[{"path":"main.go","start_line":1,"end_line":1}]}}}`, strings.Repeat("a", 1<<20))
 

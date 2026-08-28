@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/georgejieh/open-trestle/internal/config"
 	"github.com/georgejieh/open-trestle/internal/evidence"
@@ -128,6 +129,9 @@ func scanJSONValue(decoder *json.Decoder) error {
 			key, isString := keyToken.(string)
 			if !isString {
 				return fmt.Errorf("object key must be a string")
+			}
+			if key != strings.ToLower(key) {
+				return fmt.Errorf("JSON key must use lowercase spelling: %q", key)
 			}
 			if _, exists := keys[key]; exists {
 				return fmt.Errorf("duplicate JSON key: %q", key)
