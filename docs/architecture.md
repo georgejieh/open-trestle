@@ -38,6 +38,10 @@ Repository files, issue text, CI definitions, logs, analyzer output, and model o
 
 A source-control comment or check is a rendering of the canonical result, not the system of record. The publisher validates the current head revision, evidence links, finding fingerprint, policy outcome, and duplicate state before an external write.
 
+### Guided setup
+
+A planned setup wizard will turn deployment, identity, storage, inference, integration, and initial policy choices into a versioned, resumable configuration flow. It will use secure defaults, show the consequence of less-safe choices, retain redacted audit receipts, and validate a non-publishing dry run before the installation is ready. CLI and terminal setup will use the same contract for SSH and air-gapped environments.
+
 ## Integration model
 
 Open Trestle supports three integration paths:
