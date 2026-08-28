@@ -61,8 +61,8 @@ func ReviewLocalFixture(fixturePath string, configuration config.LocalConfig) (L
 		return result, nil
 	}
 	result.outcome = OutcomeVerified
-	result.finding = findings[0]
-	result.evidence = items[0]
+	result.findings = append([]Finding(nil), findings...)
+	result.evidenceItems = append([]evidence.EvidenceItem(nil), items...)
 	return result, nil
 }
 

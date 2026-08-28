@@ -62,8 +62,8 @@ type LocalResult struct {
 	revision         string
 	outcome          Outcome
 	reason           string
-	finding          Finding
-	evidence         evidence.EvidenceItem
+	findings         []Finding
+	evidenceItems    []evidence.EvidenceItem
 }
 
 // FixtureIdentity returns the reviewed fixture identity.
@@ -96,12 +96,28 @@ func (r LocalResult) Reason() string {
 	return r.reason
 }
 
-// Finding returns the verified finding.
-func (r LocalResult) Finding() Finding {
-	return r.finding
+// Findings returns a copy of the verified findings.
+func (r LocalResult) Findings() []Finding {
+	return append([]Finding(nil), r.findings...)
 }
 
-// Evidence returns the finding's immutable evidence.
+// EvidenceItems returns a copy of the immutable evidence collection.
+func (r LocalResult) EvidenceItems() []evidence.EvidenceItem {
+	return append([]evidence.EvidenceItem(nil), r.evidenceItems...)
+}
+
+// Finding returns the first verified finding.
+func (r LocalResult) Finding() Finding {
+	if len(r.findings) == 0 {
+		return Finding{}
+	}
+	return r.findings[0]
+}
+
+// Evidence returns the first finding's immutable evidence.
 func (r LocalResult) Evidence() evidence.EvidenceItem {
-	return r.evidence
+	if len(r.evidenceItems) == 0 {
+		return evidence.EvidenceItem{}
+	}
+	return r.evidenceItems[0]
 }

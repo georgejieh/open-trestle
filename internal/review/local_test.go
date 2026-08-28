@@ -1,8 +1,13 @@
 package review
 
 import (
+	"crypto/sha256"
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/georgejieh/open-trestle/internal/config"
 	"github.com/georgejieh/open-trestle/internal/evidence"
 )
 
@@ -45,4 +50,50 @@ func TestSelectSourceRangeUsesPhysicalLines(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestReviewLocalFixtureReturnsImmutableFindingCollection(t *testing.T) {
+	content := "package sample\nimport \"fmt\"\nfunc main() {\n\tfmt.Println(\"debug\")\n\tfmt.Println(\"debug\")\n}\n"
+	fixturePath := writeLocalFixture(t, content, 1, 6)
+
+	result, err := ReviewLocalFixture(fixturePath, config.DefaultLocal())
+	if err != nil {
+		t.Fatalf("ReviewLocalFixture() error = %v", err)
+	}
+	findings := result.Findings()
+	items := result.EvidenceItems()
+	if len(findings) != 2 || len(items) != 2 {
+		t.Fatalf("ReviewLocalFixture() returned %d findings and %d evidence items, want 2 each", len(findings), len(items))
+	}
+	for i, wantLine := range []int{4, 5} {
+		if findings[i].SourceRange().StartLine() != wantLine || items[i].SourceRange() != findings[i].SourceRange() {
+			t.Fatalf("result %d ranges are not paired at line %d", i, wantLine)
+		}
+		if ids := findings[i].EvidenceIDs(); len(ids) != 1 || ids[0] != items[i].ID() {
+			t.Fatalf("result %d evidence IDs = %#v, want %q", i, ids, items[i].ID())
+		}
+	}
+
+	firstFindingID := findings[0].ID()
+	firstEvidenceID := items[0].ID()
+	findings[0] = Finding{}
+	items[0] = evidence.EvidenceItem{}
+	if result.Findings()[0].ID() != firstFindingID || result.EvidenceItems()[0].ID() != firstEvidenceID {
+		t.Fatal("returned slices must not mutate the local result")
+	}
+}
+
+func writeLocalFixture(t *testing.T, content string, startLine, endLine int) string {
+	t.Helper()
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "main.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("os.WriteFile(source) error = %v", err)
+	}
+	revision := sha256.Sum256([]byte(content))
+	fixture := fmt.Sprintf(`{"schema_version":1,"provider_route":"local","requested_capabilities":[],"request":{"id":"local-test","snapshot":{"workspace":"local-test","revision":"%x","ranges":[{"path":"main.go","start_line":%d,"end_line":%d}]}}}`, revision, startLine, endLine)
+	fixturePath := filepath.Join(directory, "fixture.json")
+	if err := os.WriteFile(fixturePath, []byte(fixture), 0o600); err != nil {
+		t.Fatalf("os.WriteFile(fixture) error = %v", err)
+	}
+	return fixturePath
 }
