@@ -35,10 +35,14 @@ func validateSourcePath(sourcePath string) error {
 	if path.IsAbs(sourcePath) || path.Clean(sourcePath) != sourcePath || sourcePath == "." || sourcePath == ".." || strings.HasPrefix(sourcePath, "../") {
 		return fmt.Errorf("source path must be clean and workspace-relative: %q", sourcePath)
 	}
-	if strings.ContainsRune(sourcePath, '\\') || strings.IndexFunc(sourcePath, unicode.IsControl) >= 0 {
+	if strings.ContainsRune(sourcePath, '\\') || strings.IndexFunc(sourcePath, isNonPrinting) >= 0 {
 		return fmt.Errorf("source path contains an invalid character: %q", sourcePath)
 	}
 	return nil
+}
+
+func isNonPrinting(value rune) bool {
+	return !unicode.IsPrint(value)
 }
 
 // Path returns the workspace-relative source path.

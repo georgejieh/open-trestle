@@ -3,19 +3,21 @@ package evidence
 import "testing"
 
 func TestNewSourceRangeAcceptsWorkspaceRelativePath(t *testing.T) {
-	sourceRange, err := NewSourceRange("internal/review/review.go", 4, 9)
-	if err != nil {
-		t.Fatalf("NewSourceRange() error = %v", err)
-	}
+	for _, sourcePath := range []string{"internal/review/review.go", "docs/naïve file.go"} {
+		sourceRange, err := NewSourceRange(sourcePath, 4, 9)
+		if err != nil {
+			t.Fatalf("NewSourceRange() error = %v", err)
+		}
 
-	if sourceRange.Path() != "internal/review/review.go" {
-		t.Fatalf("Path() = %q, want %q", sourceRange.Path(), "internal/review/review.go")
-	}
-	if sourceRange.StartLine() != 4 {
-		t.Fatalf("StartLine() = %d, want 4", sourceRange.StartLine())
-	}
-	if sourceRange.EndLine() != 9 {
-		t.Fatalf("EndLine() = %d, want 9", sourceRange.EndLine())
+		if sourceRange.Path() != sourcePath {
+			t.Fatalf("Path() = %q, want %q", sourceRange.Path(), sourcePath)
+		}
+		if sourceRange.StartLine() != 4 {
+			t.Fatalf("StartLine() = %d, want 4", sourceRange.StartLine())
+		}
+		if sourceRange.EndLine() != 9 {
+			t.Fatalf("EndLine() = %d, want 9", sourceRange.EndLine())
+		}
 	}
 }
 
@@ -39,6 +41,10 @@ func TestNewSourceRangeRejectsInvalidPathAndLines(t *testing.T) {
 		{name: "escape", path: "internal/forged\x1bstatus.go", startLine: 1, endLine: 1},
 		{name: "delete", path: "internal/forged\x7fstatus.go", startLine: 1, endLine: 1},
 		{name: "c1 control", path: "internal/forged\u0085status.go", startLine: 1, endLine: 1},
+		{name: "line separator", path: "internal/forged\u2028status.go", startLine: 1, endLine: 1},
+		{name: "paragraph separator", path: "internal/forged\u2029status.go", startLine: 1, endLine: 1},
+		{name: "bidi override", path: "internal/safe\u202etxt.go", startLine: 1, endLine: 1},
+		{name: "bidi isolate", path: "internal/safe\u2066txt.go", startLine: 1, endLine: 1},
 		{name: "unclean path", path: "internal//main.go", startLine: 1, endLine: 1},
 		{name: "zero start", path: "main.go", startLine: 0, endLine: 1},
 		{name: "reversed range", path: "main.go", startLine: 3, endLine: 2},
