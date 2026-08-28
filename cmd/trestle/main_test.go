@@ -123,6 +123,7 @@ func TestRunFailsWhenSuccessfulOutputCannotBeWritten(t *testing.T) {
 	for _, args := range [][]string{
 		{"validate-fixture", fixturePath},
 		{"review", fixturePath},
+		{"ci", "--format=json", fixturePath},
 	} {
 		var stderr bytes.Buffer
 
