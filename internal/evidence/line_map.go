@@ -40,7 +40,7 @@ func NewLineMap(change FileChange, baseLineCount, headLineCount int, hunks []Hun
 	baseChanged := int64(0)
 	headChanged := int64(0)
 	for i, hunk := range canonicalHunks {
-		canonical, err := NewHunk(change, hunk.BaseStartLine(), hunk.BaseLineCount(), hunk.HeadStartLine(), hunk.HeadLineCount())
+		canonical, err := newHunkWithoutRangeCheck(change, hunk.BaseStartLine(), hunk.BaseLineCount(), hunk.HeadStartLine(), hunk.HeadLineCount())
 		if err != nil || canonical != hunk {
 			return LineMap{}, fmt.Errorf("hunk %d is not canonical for the file change", i)
 		}

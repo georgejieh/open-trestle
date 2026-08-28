@@ -313,6 +313,18 @@ func TestNewLineMapRequiresExactChangedRangeCoverage(t *testing.T) {
 
 	deletionChange := mustFileChange(t, "main.go", testBaseDigest, testHeadDigest, nil)
 	mustLineMap(t, deletionChange, 3, 2, []Hunk{mustHunk(t, deletionChange, 2, 1, 2, 0)})
+
+	crossRangeChange := mustFileChange(t, "main.go", testBaseDigest, testHeadDigest, []SourceRange{
+		mustSourceRange(t, "main.go", 2, 2),
+		mustSourceRange(t, "main.go", 5, 5),
+	})
+	crossRangeHunk, err := newHunkWithoutRangeCheck(crossRangeChange, 2, 1, 2, 4)
+	if err != nil {
+		t.Fatalf("newHunkWithoutRangeCheck() error = %v", err)
+	}
+	if _, err := NewLineMap(crossRangeChange, 6, 9, []Hunk{crossRangeHunk}); err == nil {
+		t.Fatal("NewLineMap(cross-range hunk) error = nil")
+	}
 }
 
 func TestLineMapIdentityUsesVersionedCanonicalPreimage(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 )
 
 // HunkKind identifies the shape of one normalized edit block.
@@ -33,6 +34,21 @@ type Hunk struct {
 
 // NewHunk creates a normalized edit block owned by a FileChange.
 func NewHunk(change FileChange, baseStartLine, baseLineCount, headStartLine, headLineCount int) (Hunk, error) {
+	hunk, err := newHunkWithoutRangeCheck(change, baseStartLine, baseLineCount, headStartLine, headLineCount)
+	if err != nil {
+		return Hunk{}, err
+	}
+	if headLineCount > 0 {
+		headEndLine, _ := hunkInclusiveEnd(headStartLine, headLineCount)
+		if !fileChangeContainsHeadSpan(change, headStartLine, headEndLine) {
+			return Hunk{}, fmt.Errorf("head span %d-%d is not contained in one changed range", headStartLine, headEndLine)
+		}
+	}
+	return hunk, nil
+}
+
+// Collection constructors use this after proving exact range coverage.
+func newHunkWithoutRangeCheck(change FileChange, baseStartLine, baseLineCount, headStartLine, headLineCount int) (Hunk, error) {
 	if change.Identity() == "" || change.Path() == "" {
 		return Hunk{}, fmt.Errorf("file change is required")
 	}
@@ -54,12 +70,8 @@ func NewHunk(change FileChange, baseStartLine, baseLineCount, headStartLine, hea
 	if _, err := hunkInclusiveEnd(baseStartLine, baseLineCount); err != nil {
 		return Hunk{}, fmt.Errorf("base coordinates: %w", err)
 	}
-	headEndLine, err := hunkInclusiveEnd(headStartLine, headLineCount)
-	if err != nil {
+	if _, err := hunkInclusiveEnd(headStartLine, headLineCount); err != nil {
 		return Hunk{}, fmt.Errorf("head coordinates: %w", err)
-	}
-	if headLineCount > 0 && !fileChangeContainsHeadSpan(change, headStartLine, headEndLine) {
-		return Hunk{}, fmt.Errorf("head span %d-%d is not contained in one changed range", headStartLine, headEndLine)
 	}
 	kind := deriveHunkKind(baseLineCount, headLineCount)
 	canonical := struct {
@@ -112,12 +124,10 @@ func hunkInclusiveEnd(startLine, lineCount int) (int, error) {
 }
 
 func fileChangeContainsHeadSpan(change FileChange, startLine, endLine int) bool {
-	for _, sourceRange := range change.ChangedRanges() {
-		if startLine >= sourceRange.StartLine() && endLine <= sourceRange.EndLine() {
-			return true
-		}
-	}
-	return false
+	index := sort.Search(len(change.ranges), func(i int) bool {
+		return change.ranges[i].EndLine() >= startLine
+	})
+	return index < len(change.ranges) && startLine >= change.ranges[index].StartLine() && endLine <= change.ranges[index].EndLine()
 }
 
 func deriveHunkKind(baseLineCount, headLineCount int) HunkKind {

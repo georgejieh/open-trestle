@@ -370,6 +370,20 @@ func manyUnifiedHunks(count int) ([]byte, []byte, []byte) {
 	return []byte(base.String()), []byte(head.String()), unifiedPatch("main.go", hunks.String())
 }
 
+func BenchmarkParseUnifiedFileDiffManyHunks(b *testing.B) {
+	for _, count := range []int{128, 256, 512, 1024} {
+		base, head, patch := manyUnifiedHunks(count)
+		b.Run(strconv.Itoa(count), func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				if _, _, err := ParseUnifiedFileDiff("main.go", base, head, patch); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 func FuzzParseUnifiedFileDiff(f *testing.F) {
 	f.Add("main.go", []byte("a\n"), []byte("b\n"), unifiedPatch("main.go", "@@ -1 +1 @@\n-a\n+b\n"))
 	f.Add("main.go", []byte("a"), []byte("b"), unifiedPatch("main.go", "@@ -1 +1 @@\n-a\n\\ No newline at end of file\n+b\n\\ No newline at end of file\n"))

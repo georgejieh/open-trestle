@@ -496,7 +496,7 @@ func buildUnifiedDiffEvidence(path string, baseBytes, headBytes []byte, base, he
 	}
 	hunks := make([]Hunk, len(edits))
 	for i, edit := range edits {
-		hunk, err := NewHunk(change, edit.baseStart, edit.baseCount, edit.headStart, edit.headCount)
+		hunk, err := newHunkWithoutRangeCheck(change, edit.baseStart, edit.baseCount, edit.headStart, edit.headCount)
 		if err != nil {
 			return FileChange{}, LineMap{}, fmt.Errorf("create hunk %d: %w", i, err)
 		}
