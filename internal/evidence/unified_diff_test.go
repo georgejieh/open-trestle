@@ -265,13 +265,13 @@ func TestParseUnifiedFileDiffRejectsBinaryAndOversizedPaths(t *testing.T) {
 }
 
 func TestParseUnifiedFileDiffErrorsDoNotEchoBodyContent(t *testing.T) {
-	secret := "PRIVATE_BODY_VALUE"
-	patch := unifiedPatch("main.go", "@@ -1 +1 @@\n-"+secret+"\n+b\n")
+	sentinel := "UNIQUE_BODY_SENTINEL_7f3a"
+	patch := unifiedPatch("main.go", "@@ -1 +1 @@\n-"+sentinel+"\n+b\n")
 	_, _, err := ParseUnifiedFileDiff("main.go", []byte("a\n"), []byte("b\n"), patch)
 	if err == nil {
 		t.Fatal("ParseUnifiedFileDiff() error = nil")
 	}
-	if strings.Contains(err.Error(), secret) {
+	if strings.Contains(err.Error(), sentinel) {
 		t.Fatalf("error exposed body content: %v", err)
 	}
 }
