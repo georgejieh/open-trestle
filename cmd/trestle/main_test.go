@@ -151,6 +151,7 @@ func TestRunFailsWhenSuccessfulOutputCannotBeWritten(t *testing.T) {
 		{"validate-fixture", fixturePath},
 		{"review", fixturePath},
 		{"ci", "--format=json", fixturePath},
+		{"ci", "--format=sarif", fixturePath},
 	} {
 		var stderr bytes.Buffer
 

@@ -15,8 +15,13 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 3 && args[0] == "ci" && args[1] == "--format=json" {
-		return runCI(args[2], stdout, stderr)
+	if len(args) == 3 && args[0] == "ci" {
+		switch args[1] {
+		case "--format=json":
+			return runCI(args[2], stdout, stderr)
+		case "--format=sarif":
+			return runSARIF(args[2], stdout, stderr)
+		}
 	}
 	if len(args) != 2 {
 		writeUsage(stderr)
@@ -107,4 +112,5 @@ func writeUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "usage: trestle validate-fixture <path>")
 	fmt.Fprintln(stderr, "       trestle review <path>")
 	fmt.Fprintln(stderr, "       trestle ci --format=json <path>")
+	fmt.Fprintln(stderr, "       trestle ci --format=sarif <path>")
 }
