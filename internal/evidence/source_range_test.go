@@ -46,6 +46,8 @@ func TestNewSourceRangeRejectsInvalidPathAndLines(t *testing.T) {
 		{name: "bidi override", path: "internal/safe\u202etxt.go", startLine: 1, endLine: 1},
 		{name: "bidi isolate", path: "internal/safe\u2066txt.go", startLine: 1, endLine: 1},
 		{name: "unclean path", path: "internal//main.go", startLine: 1, endLine: 1},
+		{name: "invalid UTF-8 byte", path: string([]byte{'b', 'a', 'd', 0xff, '.', 'g', 'o'}), startLine: 1, endLine: 1},
+		{name: "truncated UTF-8", path: string([]byte{'b', 'a', 'd', 0xe2, 0x82}), startLine: 1, endLine: 1},
 		{name: "zero start", path: "main.go", startLine: 0, endLine: 1},
 		{name: "reversed range", path: "main.go", startLine: 3, endLine: 2},
 	}

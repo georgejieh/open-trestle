@@ -5,6 +5,7 @@ import (
 	"path"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // SourceRange identifies an inclusive range in a workspace-relative source file.
@@ -31,6 +32,9 @@ func NewSourceRange(sourcePath string, startLine, endLine int) (SourceRange, err
 func validateSourcePath(sourcePath string) error {
 	if sourcePath == "" {
 		return fmt.Errorf("source path is required")
+	}
+	if !utf8.ValidString(sourcePath) {
+		return fmt.Errorf("source path must be valid UTF-8")
 	}
 	if path.IsAbs(sourcePath) || path.Clean(sourcePath) != sourcePath || sourcePath == "." || sourcePath == ".." || strings.HasPrefix(sourcePath, "../") {
 		return fmt.Errorf("source path must be clean and workspace-relative: %q", sourcePath)
