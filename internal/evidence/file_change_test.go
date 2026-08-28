@@ -1,6 +1,8 @@
 package evidence
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"testing"
 )
@@ -33,6 +35,19 @@ func TestNewFileChangeCreatesStableModifiedFileDescriptor(t *testing.T) {
 	}
 	if got := first.ChangedRanges(); len(got) != 2 || got[0] != ranges[0] || got[1] != ranges[1] {
 		t.Fatalf("ChangedRanges() = %#v, want %#v", got, ranges)
+	}
+}
+
+func TestFileChangeIdentityUsesVersionedCanonicalPreimage(t *testing.T) {
+	change := mustFileChange(t, "main.go", testBaseDigest, testHeadDigest, []SourceRange{
+		mustSourceRange(t, "main.go", 2, 3),
+		mustSourceRange(t, "main.go", 7, 9),
+	})
+	preimage := `{"contract":"open-trestle/file-change","schema_version":1,"path":"main.go","base_digest":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","head_digest":"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789","ranges":[{"start_line":2,"end_line":3},{"start_line":7,"end_line":9}]}`
+	digest := sha256.Sum256([]byte(preimage))
+	want := hex.EncodeToString(digest[:])
+	if change.Identity() != want {
+		t.Fatalf("Identity() = %q, want SHA-256 of %s", change.Identity(), preimage)
 	}
 }
 

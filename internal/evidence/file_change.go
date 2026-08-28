@@ -36,15 +36,19 @@ func NewFileChange(path, baseDigest, headDigest string, ranges []SourceRange) (F
 		return FileChange{}, err
 	}
 	canonical := struct {
-		Path       string                `json:"path"`
-		BaseDigest string                `json:"base_digest"`
-		HeadDigest string                `json:"head_digest"`
-		Ranges     []fileChangeRangeWire `json:"ranges"`
+		Contract      string                `json:"contract"`
+		SchemaVersion int                   `json:"schema_version"`
+		Path          string                `json:"path"`
+		BaseDigest    string                `json:"base_digest"`
+		HeadDigest    string                `json:"head_digest"`
+		Ranges        []fileChangeRangeWire `json:"ranges"`
 	}{
-		Path:       path,
-		BaseDigest: baseDigest,
-		HeadDigest: headDigest,
-		Ranges:     make([]fileChangeRangeWire, len(canonicalRanges)),
+		Contract:      "open-trestle/file-change",
+		SchemaVersion: 1,
+		Path:          path,
+		BaseDigest:    baseDigest,
+		HeadDigest:    headDigest,
+		Ranges:        make([]fileChangeRangeWire, len(canonicalRanges)),
 	}
 	for i, sourceRange := range canonicalRanges {
 		canonical.Ranges[i] = fileChangeRangeWire{
