@@ -2,7 +2,7 @@
 
 Open Trestle is an open-source, self-hostable code-review runtime for teams that want ownership of review data, policies, evidence, and model routing.
 
-> **Project status: pre-implementation architecture.** This repository does not yet ship a runnable review service. It publishes the product boundary, public architecture, contribution rules, and release requirements that implementation must satisfy.
+> **Project status: experimental local review foundation.** This repository ships a narrow local fixture-review path for development and conformance testing. It does not yet ship the planned daemon, hosted integrations, or a production-ready review service.
 
 ## Why Open Trestle
 
@@ -26,7 +26,19 @@ AI review is useful only when its conclusions can be inspected and controlled. O
 | `trestle acp` | Agent Client Protocol endpoint |
 | Forge adapters | GitHub, GitLab, Bitbucket, and Azure DevOps integration |
 
-The interface names are design targets, not released commands.
+The daemon, TUI, protocol, and forge interfaces remain design targets. The current `trestle` command validates and reviews local versioned fixtures. It also emits deterministic JSON receipts for headless CI dry runs.
+
+## Available local commands
+
+From the repository root:
+
+```sh
+go run ./cmd/trestle validate-fixture cmd/trestle/testdata/local-review/fixture.json
+go run ./cmd/trestle review cmd/trestle/testdata/local-review/fixture.json
+go run ./cmd/trestle ci --format=json cmd/trestle/testdata/local-review/fixture.json
+```
+
+These commands are local-only. They do not call a model, execute repository content, mutate source, or publish results.
 
 ## Product boundary
 
