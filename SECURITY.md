@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Open Trestle is pre-implementation. No release is currently supported for production use.
+Open Trestle is experimental. No release is currently supported for production use.
 
 ## Reporting a vulnerability
 
