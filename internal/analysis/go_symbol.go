@@ -132,24 +132,67 @@ func goReceiverBaseName(declaration *ast.FuncDecl) (string, bool) {
 	if declaration.Recv == nil || len(declaration.Recv.List) != 1 {
 		return "", false
 	}
-	return goReceiverTypeName(declaration.Recv.List[0].Type)
+	receiver := declaration.Recv.List[0]
+	if len(receiver.Names) > 1 {
+		return "", false
+	}
+	return goReceiverTypeName(receiver.Type)
 }
 
 func goReceiverTypeName(expression ast.Expr) (string, bool) {
+	expression = unwrapReceiverParens(expression)
+	if pointer, ok := expression.(*ast.StarExpr); ok {
+		expression = unwrapReceiverParens(pointer.X)
+	}
+	return goReceiverIndexedBase(expression)
+}
+
+func goReceiverIndexedBase(expression ast.Expr) (string, bool) {
+	expression = unwrapReceiverParens(expression)
 	switch value := expression.(type) {
 	case *ast.Ident:
 		return value.Name, value.Name != ""
-	case *ast.StarExpr:
-		return goReceiverTypeName(value.X)
 	case *ast.IndexExpr:
-		return goReceiverTypeName(value.X)
+		if !isReceiverTypeParameter(value.Index) {
+			return "", false
+		}
+		return receiverIdentifierName(unwrapReceiverParens(value.X))
 	case *ast.IndexListExpr:
-		return goReceiverTypeName(value.X)
-	case *ast.ParenExpr:
-		return goReceiverTypeName(value.X)
+		if len(value.Indices) == 0 {
+			return "", false
+		}
+		for _, parameter := range value.Indices {
+			if !isReceiverTypeParameter(parameter) {
+				return "", false
+			}
+		}
+		return receiverIdentifierName(unwrapReceiverParens(value.X))
 	default:
 		return "", false
 	}
+}
+
+func unwrapReceiverParens(expression ast.Expr) ast.Expr {
+	for {
+		parenthesized, ok := expression.(*ast.ParenExpr)
+		if !ok {
+			return expression
+		}
+		expression = parenthesized.X
+	}
+}
+
+func isReceiverTypeParameter(expression ast.Expr) bool {
+	identifier, ok := expression.(*ast.Ident)
+	return ok && identifier.Name != ""
+}
+
+func receiverIdentifierName(expression ast.Expr) (string, bool) {
+	identifier, ok := expression.(*ast.Ident)
+	if !ok || identifier.Name == "" {
+		return "", false
+	}
+	return identifier.Name, true
 }
 
 func goContentDigest(content []byte) string {

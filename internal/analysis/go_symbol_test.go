@@ -40,6 +40,8 @@ func TestResolveGoEnclosingSymbolNormalizesMethodReceivers(t *testing.T) {
 		{name: "pointer", source: "package worker\n\ntype Runner struct{}\nfunc (*Runner) Run() { println(1) }\n", wantName: "worker.Runner.Run"},
 		{name: "generic value", source: "package worker\n\ntype Box[T any] struct{}\nfunc (Box[T]) Get() { println(1) }\n", wantName: "worker.Box.Get"},
 		{name: "generic pointer", source: "package worker\n\ntype Box[T any] struct{}\nfunc (*Box[T]) Get() { println(1) }\n", wantName: "worker.Box.Get"},
+		{name: "parenthesized value", source: "package worker\n\ntype Runner struct{}\nfunc ((Runner)) Run() { println(1) }\n", wantName: "worker.Runner.Run"},
+		{name: "parenthesized pointer", source: "package worker\n\ntype Runner struct{}\nfunc (((*Runner))) Run() { println(1) }\n", wantName: "worker.Runner.Run"},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -226,20 +228,23 @@ func TestResolveGoEnclosingSymbolRejectsInvalidContent(t *testing.T) {
 }
 
 func TestResolveGoEnclosingSymbolRejectsMalformedGo(t *testing.T) {
-	testCases := []string{
-		"pack worker\n",
-		"package worker\nfunc Process( {\n",
-		"package worker\nfunc Process() {\n",
-		"package worker\nfunc (x interface{}) Method() {}\n",
+	testCases := []struct {
+		source        string
+		selectionLine int
+	}{
+		{source: "pack worker\n", selectionLine: 1},
+		{source: "package worker\nfunc Process( {\n", selectionLine: 2},
+		{source: "package worker\nfunc Process() {\n", selectionLine: 2},
+		{source: "package worker\nfunc (x interface{}) Method() {}\n", selectionLine: 2},
+		{source: "package worker\ntype T struct{}\nfunc (**T) Method() {}\n", selectionLine: 3},
+		{source: "package worker\ntype T struct{}\nfunc (a, b T) Method() {}\n", selectionLine: 3},
+		{source: "package worker\ntype T[P any] struct{}\nfunc (T[*int]) Method() {}\n", selectionLine: 3},
+		{source: "package worker\ntype T[P any] struct{}\nfunc (T[p.X]) Method() {}\n", selectionLine: 3},
 	}
-	for i, sourceText := range testCases {
-		path := "bad.go"
-		source := []byte(sourceText)
-		selection := mustAnalysisRange(t, path, 1, 1)
-		if i > 0 {
-			selection = mustAnalysisRange(t, path, 2, 2)
-		}
-		change := mustResolverChange(t, path, source, selection, physicalGoLineCount(source))
+	for _, testCase := range testCases {
+		source := []byte(testCase.source)
+		selection := mustAnalysisRange(t, "bad.go", testCase.selectionLine, testCase.selectionLine)
+		change := mustResolverChange(t, "bad.go", source, selection, physicalGoLineCount(source))
 		assertGoResolverError(t, change, source, selection)
 	}
 }
