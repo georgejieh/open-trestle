@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/georgejieh/open-trestle/internal/config"
 	"github.com/georgejieh/open-trestle/internal/evidence"
@@ -94,7 +93,7 @@ func loadConfinedFixture(root *os.Root, fixtureName string, configuration config
 }
 
 func openConfinedRegularFile(root *os.Root, filePath string) (*os.File, error) {
-	file, err := root.OpenFile(filePath, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	file, err := root.OpenFile(filePath, regularFileOpenFlags(), 0)
 	if err != nil {
 		return nil, err
 	}
