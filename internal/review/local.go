@@ -97,7 +97,13 @@ func readConfinedSource(root *os.Root, sourcePath string) ([]byte, error) {
 }
 
 func selectSourceRange(content []byte, sourceRange evidence.SourceRange) ([]byte, error) {
-	lines := strings.Split(string(content), "\n")
+	var lines []string
+	if len(content) > 0 {
+		lines = strings.Split(string(content), "\n")
+		if content[len(content)-1] == '\n' {
+			lines = lines[:len(lines)-1]
+		}
+	}
 	if sourceRange.EndLine() > len(lines) {
 		return nil, fmt.Errorf("declared range %s:%d-%d exceeds source length", sourceRange.Path(), sourceRange.StartLine(), sourceRange.EndLine())
 	}
