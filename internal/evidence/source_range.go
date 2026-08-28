@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"unicode"
 )
 
 // SourceRange identifies an inclusive range in a workspace-relative source file.
@@ -34,7 +35,7 @@ func validateSourcePath(sourcePath string) error {
 	if path.IsAbs(sourcePath) || path.Clean(sourcePath) != sourcePath || sourcePath == "." || sourcePath == ".." || strings.HasPrefix(sourcePath, "../") {
 		return fmt.Errorf("source path must be clean and workspace-relative: %q", sourcePath)
 	}
-	if strings.ContainsAny(sourcePath, "\\\x00") {
+	if strings.ContainsRune(sourcePath, '\\') || strings.IndexFunc(sourcePath, unicode.IsControl) >= 0 {
 		return fmt.Errorf("source path contains an invalid character: %q", sourcePath)
 	}
 	return nil
