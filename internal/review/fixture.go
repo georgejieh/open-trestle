@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/georgejieh/open-trestle/internal/config"
 	"github.com/georgejieh/open-trestle/internal/evidence"
@@ -130,8 +129,8 @@ func scanJSONValue(decoder *json.Decoder) error {
 			if !isString {
 				return fmt.Errorf("object key must be a string")
 			}
-			if key != strings.ToLower(key) {
-				return fmt.Errorf("JSON key must use lowercase spelling: %q", key)
+			if !isCanonicalJSONKey(key) {
+				return fmt.Errorf("JSON key must use lowercase ASCII spelling: %q", key)
 			}
 			if _, exists := keys[key]; exists {
 				return fmt.Errorf("duplicate JSON key: %q", key)
@@ -152,6 +151,18 @@ func scanJSONValue(decoder *json.Decoder) error {
 	default:
 		return fmt.Errorf("unexpected JSON delimiter: %q", delimiter)
 	}
+}
+
+func isCanonicalJSONKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	for _, value := range key {
+		if value != '_' && (value < 'a' || value > 'z') {
+			return false
+		}
+	}
+	return true
 }
 
 func consumeJSONDelimiter(decoder *json.Decoder, expected json.Delim) error {

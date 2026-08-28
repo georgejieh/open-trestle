@@ -144,6 +144,35 @@ func TestLoadFixtureRejectsNonCanonicalKeySpelling(t *testing.T) {
 	}
 }
 
+func TestRejectDuplicateJSONKeysRejectsUnicodeCaseAliases(t *testing.T) {
+	testCases := []struct {
+		key   string
+		alias string
+	}{
+		{key: "schema_version", alias: "ſchema_version"},
+		{key: "requested_capabilities", alias: "requeſted_capabilities"},
+		{key: "request", alias: "requeſt"},
+		{key: "snapshot", alias: "ſnapshot"},
+		{key: "workspace", alias: "workſpace"},
+		{key: "revision", alias: "reviſion"},
+		{key: "ranges", alias: "rangeſ"},
+		{key: "start_line", alias: "ſtart_line"},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.key, func(t *testing.T) {
+			singleAlias := fmt.Sprintf(`{%q:1}`, testCase.alias)
+			if err := rejectDuplicateJSONKeys([]byte(singleAlias)); err == nil {
+				t.Fatalf("rejectDuplicateJSONKeys(%q) error = nil, want non-canonical key error", singleAlias)
+			}
+			conflictingPair := fmt.Sprintf(`{%q:1,%q:2}`, testCase.key, testCase.alias)
+			if err := rejectDuplicateJSONKeys([]byte(conflictingPair)); err == nil {
+				t.Fatalf("rejectDuplicateJSONKeys(%q) error = nil, want alias conflict error", conflictingPair)
+			}
+		})
+	}
+}
+
 func TestLoadFixtureEnforcesInputSizeBoundary(t *testing.T) {
 	exactLimit := fixtureWithSize(t, maxFixtureBytes)
 	if _, err := LoadFixture(strings.NewReader(exactLimit), config.DefaultLocal()); err != nil {
