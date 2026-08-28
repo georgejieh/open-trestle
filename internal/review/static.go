@@ -108,7 +108,7 @@ func debugOutputRanges(source []byte, selection evidence.SourceRange) ([]evidenc
 		}
 		startLine := fileSet.PositionFor(call.Pos(), false).Line
 		endLine := fileSet.PositionFor(call.End(), false).Line
-		if startLine < selection.StartLine() || endLine > selection.EndLine() {
+		if endLine < selection.StartLine() || startLine > selection.EndLine() {
 			return true
 		}
 		key := [2]int{startLine, endLine}

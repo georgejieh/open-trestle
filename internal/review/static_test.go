@@ -1,6 +1,7 @@
 package review
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/georgejieh/open-trestle/internal/evidence"
@@ -105,7 +106,7 @@ func TestReviewDebugOutputsHonorsSelectionAndDeduplicatesLines(t *testing.T) {
 	}{
 		{name: "same line deduplicates", startLine: 4, endLine: 4, want: 1},
 		{name: "outside selection", startLine: 3, endLine: 3},
-		{name: "crosses selection", startLine: 5, endLine: 6},
+		{name: "intersects selection", startLine: 5, endLine: 6, want: 1},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -192,5 +193,40 @@ func TestReviewDebugOutputsDoesNotMergeDirectiveAdjustedLines(t *testing.T) {
 	}
 	if findings[0].SourceRange().StartLine() != 4 || findings[1].SourceRange().StartLine() != 6 {
 		t.Fatalf("finding lines = %d and %d, want physical lines 4 and 6", findings[0].SourceRange().StartLine(), findings[1].SourceRange().StartLine())
+	}
+}
+
+func TestReviewDebugOutputsExpandsIntersectingSelection(t *testing.T) {
+	source := []byte("package sample\nimport \"fmt\"\nfunc main() {\n\tfmt.Println(\n\t\t\"debug\",\n\t)\n}\n")
+	for _, selectedLine := range []int{4, 5, 6} {
+		t.Run(fmt.Sprintf("line %d", selectedLine), func(t *testing.T) {
+			selection, err := evidence.NewSourceRange("main.go", selectedLine, selectedLine)
+			if err != nil {
+				t.Fatalf("evidence.NewSourceRange() error = %v", err)
+			}
+			findings, items, err := reviewDebugOutputs(source, selection)
+			if err != nil {
+				t.Fatalf("reviewDebugOutputs() error = %v", err)
+			}
+			if len(findings) != 1 || len(items) != 1 {
+				t.Fatalf("reviewDebugOutputs() returned %d findings and %d evidence items, want 1 each", len(findings), len(items))
+			}
+			sourceRange := findings[0].SourceRange()
+			if sourceRange.StartLine() != 4 || sourceRange.EndLine() != 6 || items[0].SourceRange() != sourceRange {
+				t.Fatalf("expanded ranges = %#v and %#v, want main.go:4-6", sourceRange, items[0].SourceRange())
+			}
+		})
+	}
+
+	selection, err := evidence.NewSourceRange("main.go", 3, 3)
+	if err != nil {
+		t.Fatalf("evidence.NewSourceRange() error = %v", err)
+	}
+	findings, _, err := reviewDebugOutputs(source, selection)
+	if err != nil {
+		t.Fatalf("reviewDebugOutputs() error = %v", err)
+	}
+	if len(findings) != 0 {
+		t.Fatalf("disjoint selection returned %d findings, want none", len(findings))
 	}
 }

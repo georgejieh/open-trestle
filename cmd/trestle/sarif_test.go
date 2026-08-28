@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"os"
@@ -72,6 +74,47 @@ func TestRunSARIFEmitsDeterministicVerifiedResult(t *testing.T) {
 	}
 	if secondStdout.String() != firstStdout.String() {
 		t.Fatalf("second output = %q, want deterministic output %q", secondStdout.String(), firstStdout.String())
+	}
+}
+
+func TestRunFormatsExpandIntersectingSelectionToExactCall(t *testing.T) {
+	span := "\tfmt.Println(\n\t\t\"debug\",\n\t)"
+	content := "package sample\nimport \"fmt\"\nfunc main() {\n" + span + "\n}\n"
+	fixturePath := writeReviewFixture(t, "main.go", content, 5, 5, nil)
+
+	var reviewStdout bytes.Buffer
+	var reviewStderr bytes.Buffer
+	if exitCode := run([]string{"review", fixturePath}, &reviewStdout, &reviewStderr); exitCode != 0 {
+		t.Fatalf("review exit code = %d, want 0; stderr = %q", exitCode, reviewStderr.String())
+	}
+	if !strings.Contains(reviewStdout.String(), "source: main.go:4-6\n") {
+		t.Fatalf("review output = %q, want expanded main.go:4-6", reviewStdout.String())
+	}
+
+	var jsonStdout bytes.Buffer
+	var jsonStderr bytes.Buffer
+	if exitCode := run([]string{"ci", "--format=json", fixturePath}, &jsonStdout, &jsonStderr); exitCode != 0 {
+		t.Fatalf("JSON exit code = %d, want 0; stderr = %q", exitCode, jsonStderr.String())
+	}
+	receipt := decodeCIReceipt(t, jsonStdout.String())
+	if len(receipt.Findings) != 1 || receipt.Findings[0].Source.StartLine != 4 || receipt.Findings[0].Source.EndLine != 6 {
+		t.Fatalf("JSON findings = %#v, want expanded main.go:4-6", receipt.Findings)
+	}
+	digest := sha256.Sum256([]byte(span))
+	if receipt.Findings[0].Evidence.Digest != hex.EncodeToString(digest[:]) {
+		t.Fatalf("JSON evidence digest = %q, want full call span digest", receipt.Findings[0].Evidence.Digest)
+	}
+
+	var sarifStdout bytes.Buffer
+	var sarifStderr bytes.Buffer
+	if exitCode := run([]string{"ci", "--format=sarif", fixturePath}, &sarifStdout, &sarifStderr); exitCode != 0 {
+		t.Fatalf("SARIF exit code = %d, want 0; stderr = %q", exitCode, sarifStderr.String())
+	}
+	log := decodeSARIFLog(t, sarifStdout.String())
+	result := log.Runs[0].Results[0]
+	location := result.Locations[0].PhysicalLocation
+	if location.Region.StartLine != 4 || location.Region.EndLine != 6 || result.Fingerprints["openTrestleFindingId/v1"] != receipt.Findings[0].ID || result.Properties.EvidenceID != receipt.Findings[0].Evidence.ID {
+		t.Fatalf("SARIF result = %#v, want JSON parity at main.go:4-6", result)
 	}
 }
 
