@@ -1,0 +1,39 @@
+# Private reference materials and agent work products
+references/
+.hermes/
+.hermes.md
+.agents/
+AGENTS.md
+agents.md
+agents.MD
+CLAUDE.md
+.claude/
+.codex/
+.aider*
+.cursor/
+.continue/
+
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Editor, operating-system, and language caches
+.DS_Store
+.idea/
+.vscode/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+node_modules/
+dist/
+build/
+.tmp/
