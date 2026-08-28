@@ -66,6 +66,28 @@ func TestRunReviewsLocalFixture(t *testing.T) {
 	}
 }
 
+func TestRunReviewsEveryLocalFindingInOrder(t *testing.T) {
+	content := "package sample\nimport \"fmt\"\nfunc main() {\n\tfmt.Println(\"debug\")\n\tfmt.Println(\n\t\t\"debug\",\n\t)\n}\n"
+	fixturePath := writeReviewFixture(t, "main.go", content, 1, 8, nil)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := run([]string{"review", fixturePath}, &stdout, &stderr)
+
+	if exitCode != 0 {
+		t.Fatalf("run() exit code = %d, want 0; stderr = %q", exitCode, stderr.String())
+	}
+	output := stdout.String()
+	if strings.Count(output, "finding: ") != 2 || strings.Count(output, "evidence: ") != 2 {
+		t.Fatalf("stdout = %q, want two finding/evidence records", output)
+	}
+	firstSource := strings.Index(output, "source: main.go:4-4\n")
+	secondSource := strings.Index(output, "source: main.go:5-7\n")
+	if firstSource < 0 || secondSource <= firstSource {
+		t.Fatalf("stdout = %q, want exact ordered source ranges", output)
+	}
+}
+
 func TestRunBindsEvidenceIdentityToExactCallSpan(t *testing.T) {
 	baseSource := "package main; import \"fmt\"; func main() { fmt.Println(\"debug\") }\n// next\n"
 	changedSource := "package main; import \"fmt\"; func main() {  fmt.Println(\"debug\") }\n// next\n"

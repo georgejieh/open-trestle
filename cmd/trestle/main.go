@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/georgejieh/open-trestle/internal/config"
 	"github.com/georgejieh/open-trestle/internal/review"
@@ -69,22 +70,31 @@ func runReview(fixturePath string, stdout, stderr io.Writer) int {
 		output = fmt.Sprintf("status: %s\nfixture: %s\nreason: %s\n", result.Outcome(), result.FixtureIdentity(), result.Reason())
 		exitCode = 3
 	} else {
-		finding := result.Finding()
-		sourceRange := finding.SourceRange()
-		item := result.Evidence()
-		output = fmt.Sprintf(
-			"status: %s\nfixture: %s\nfinding: %s %s %s\nsource: %s:%d-%d\nevidence: %s %s\n",
-			result.Outcome(),
-			result.FixtureIdentity(),
-			finding.ID(),
-			finding.Severity(),
-			finding.Title(),
-			sourceRange.Path(),
-			sourceRange.StartLine(),
-			sourceRange.EndLine(),
-			item.ID(),
-			item.Digest(),
-		)
+		findings := result.Findings()
+		items := result.EvidenceItems()
+		if len(findings) != len(items) {
+			fmt.Fprintln(stderr, "render result: finding and evidence counts differ")
+			return 1
+		}
+		var builder strings.Builder
+		fmt.Fprintf(&builder, "status: %s\nfixture: %s\n", result.Outcome(), result.FixtureIdentity())
+		for i, finding := range findings {
+			sourceRange := finding.SourceRange()
+			item := items[i]
+			fmt.Fprintf(
+				&builder,
+				"finding: %s %s %s\nsource: %s:%d-%d\nevidence: %s %s\n",
+				finding.ID(),
+				finding.Severity(),
+				finding.Title(),
+				sourceRange.Path(),
+				sourceRange.StartLine(),
+				sourceRange.EndLine(),
+				item.ID(),
+				item.Digest(),
+			)
+		}
+		output = builder.String()
 	}
 	if _, err := io.WriteString(stdout, output); err != nil {
 		fmt.Fprintf(stderr, "write result: %v\n", err)
