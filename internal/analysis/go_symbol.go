@@ -9,6 +9,7 @@ import (
 	"go/parser"
 	"go/token"
 	"path"
+	"sort"
 	"unicode/utf8"
 
 	"github.com/georgejieh/open-trestle/internal/evidence"
@@ -23,63 +24,165 @@ func ResolveGoEnclosingSymbol(change evidence.Change, headContent []byte, select
 	if err != nil {
 		return Symbol{}, false, fmt.Errorf("validate Go selection: %w", err)
 	}
-	if path.Ext(validatedSelection.Path()) != ".go" {
-		return Symbol{}, false, fmt.Errorf("Go resolver requires a .go path")
-	}
-	fileChange, ok := change.FileChangeForPath(validatedSelection.Path())
-	if !ok {
-		return Symbol{}, false, fmt.Errorf("change does not contain selected path")
-	}
-	lineMap, ok := change.LineMapForPath(validatedSelection.Path())
-	if !ok || lineMap.FileChangeIdentity() != fileChange.Identity() {
-		return Symbol{}, false, fmt.Errorf("change does not contain matching line evidence")
-	}
-	if len(headContent) > maxGoSourceBytes {
-		return Symbol{}, false, fmt.Errorf("Go source exceeds %d bytes", maxGoSourceBytes)
-	}
-	if bytes.IndexByte(headContent, 0) >= 0 {
-		return Symbol{}, false, fmt.Errorf("Go source contains NUL")
-	}
-	if !utf8.Valid(headContent) {
-		return Symbol{}, false, fmt.Errorf("Go source must be valid UTF-8")
-	}
-	if goContentDigest(headContent) != fileChange.HeadDigest() {
-		return Symbol{}, false, fmt.Errorf("Go source does not match head content identity")
-	}
-	lineCount := goPhysicalLineCount(headContent)
-	if lineCount != lineMap.HeadLineCount() {
-		return Symbol{}, false, fmt.Errorf("Go source line count does not match line map")
-	}
-	if validatedSelection.EndLine() > lineCount {
-		return Symbol{}, false, fmt.Errorf("Go selection exceeds head content")
-	}
-	if !fileChangeContainsRange(fileChange, validatedSelection) {
-		return Symbol{}, false, fmt.Errorf("Go selection is not contained in one changed range")
-	}
-
-	fileSet := token.NewFileSet()
-	file, err := parser.ParseFile(fileSet, validatedSelection.Path(), headContent, parser.ParseComments|parser.SkipObjectResolution|parser.AllErrors)
-	if err != nil {
-		return Symbol{}, false, fmt.Errorf("parse Go source %q: %w", validatedSelection.Path(), err)
-	}
-	declaration, declarationRange, found, err := enclosingGoDeclaration(fileSet, file, validatedSelection)
+	validated, err := validateGoSource(change, validatedSelection.Path(), headContent)
 	if err != nil {
 		return Symbol{}, false, err
 	}
-	if !found {
+	if validatedSelection.EndLine() > validated.lineMap.HeadLineCount() {
+		return Symbol{}, false, fmt.Errorf("Go selection exceeds head content")
+	}
+	if !fileChangeContainsRange(validated.fileChange, validatedSelection) {
+		return Symbol{}, false, fmt.Errorf("Go selection is not contained in one changed range")
+	}
+	parsed, err := parseGoSource(validated, headContent)
+	if err != nil {
+		return Symbol{}, false, err
+	}
+	return parsed.resolve(validatedSelection)
+}
+
+// ResolveGoChangedSymbols resolves positive head Hunks to named Go declarations.
+func ResolveGoChangedSymbols(change evidence.Change, sourcePath string, headContent []byte) ([]Symbol, error) {
+	validated, err := validateGoSource(change, sourcePath, headContent)
+	if err != nil {
+		return nil, err
+	}
+	hunks := validated.lineMap.Hunks()
+	selections := make([]evidence.SourceRange, 0, len(hunks))
+	for _, hunk := range hunks {
+		if hunk.HeadLineCount() == 0 {
+			continue
+		}
+		selection, err := evidence.NewSourceRange(sourcePath, hunk.HeadStartLine(), hunk.HeadStartLine()+hunk.HeadLineCount()-1)
+		if err != nil {
+			return nil, fmt.Errorf("create Go Hunk range: %w", err)
+		}
+		selections = append(selections, selection)
+	}
+	if len(selections) == 0 {
+		return []Symbol{}, nil
+	}
+	parsed, err := parseGoSource(validated, headContent)
+	if err != nil {
+		return nil, err
+	}
+	byIdentity := make(map[string]Symbol, len(selections))
+	for _, selection := range selections {
+		symbol, found, err := parsed.resolve(selection)
+		if err != nil {
+			return nil, err
+		}
+		if found {
+			byIdentity[symbol.Identity()] = symbol
+		}
+	}
+	symbols := make([]Symbol, 0, len(byIdentity))
+	for _, symbol := range byIdentity {
+		symbols = append(symbols, symbol)
+	}
+	sort.Slice(symbols, func(i, j int) bool {
+		left := symbols[i]
+		right := symbols[j]
+		if left.SourceRange().StartLine() != right.SourceRange().StartLine() {
+			return left.SourceRange().StartLine() < right.SourceRange().StartLine()
+		}
+		if left.SourceRange().EndLine() != right.SourceRange().EndLine() {
+			return left.SourceRange().EndLine() < right.SourceRange().EndLine()
+		}
+		if left.Kind() != right.Kind() {
+			return left.Kind() < right.Kind()
+		}
+		if left.QualifiedName() != right.QualifiedName() {
+			return left.QualifiedName() < right.QualifiedName()
+		}
+		return left.Identity() < right.Identity()
+	})
+	return symbols, nil
+}
+
+type validatedGoSource struct {
+	fileChange evidence.FileChange
+	lineMap    evidence.LineMap
+	path       string
+}
+
+type parsedGoSource struct {
+	validated    validatedGoSource
+	file         *ast.File
+	declarations []goDeclaration
+}
+
+type goDeclaration struct {
+	function    *ast.FuncDecl
+	sourceRange evidence.SourceRange
+}
+
+func validateGoSource(change evidence.Change, sourcePath string, headContent []byte) (validatedGoSource, error) {
+	if path.Ext(sourcePath) != ".go" {
+		return validatedGoSource{}, fmt.Errorf("Go resolver requires a .go path")
+	}
+	fileChange, ok := change.FileChangeForPath(sourcePath)
+	if !ok {
+		return validatedGoSource{}, fmt.Errorf("change does not contain selected path")
+	}
+	lineMap, ok := change.LineMapForPath(sourcePath)
+	if !ok || lineMap.FileChangeIdentity() != fileChange.Identity() {
+		return validatedGoSource{}, fmt.Errorf("change does not contain matching line evidence")
+	}
+	if len(headContent) > maxGoSourceBytes {
+		return validatedGoSource{}, fmt.Errorf("Go source exceeds %d bytes", maxGoSourceBytes)
+	}
+	if bytes.IndexByte(headContent, 0) >= 0 {
+		return validatedGoSource{}, fmt.Errorf("Go source contains NUL")
+	}
+	if !utf8.Valid(headContent) {
+		return validatedGoSource{}, fmt.Errorf("Go source must be valid UTF-8")
+	}
+	if goContentDigest(headContent) != fileChange.HeadDigest() {
+		return validatedGoSource{}, fmt.Errorf("Go source does not match head content identity")
+	}
+	if goPhysicalLineCount(headContent) != lineMap.HeadLineCount() {
+		return validatedGoSource{}, fmt.Errorf("Go source line count does not match line map")
+	}
+	return validatedGoSource{fileChange: fileChange, lineMap: lineMap, path: sourcePath}, nil
+}
+
+func parseGoSource(validated validatedGoSource, headContent []byte) (parsedGoSource, error) {
+	fileSet := token.NewFileSet()
+	file, err := parser.ParseFile(fileSet, validated.path, headContent, parser.ParseComments|parser.SkipObjectResolution|parser.AllErrors)
+	if err != nil {
+		return parsedGoSource{}, fmt.Errorf("parse Go source %q: %w", validated.path, err)
+	}
+	declarations, err := collectGoDeclarations(fileSet, file, validated.path)
+	if err != nil {
+		return parsedGoSource{}, err
+	}
+	return parsedGoSource{validated: validated, file: file, declarations: declarations}, nil
+}
+
+func (parsed parsedGoSource) resolve(selection evidence.SourceRange) (Symbol, bool, error) {
+	index := sort.Search(len(parsed.declarations), func(i int) bool {
+		return parsed.declarations[i].sourceRange.EndLine() >= selection.StartLine()
+	})
+	if index == len(parsed.declarations) {
 		return Symbol{}, false, nil
 	}
+	selected := parsed.declarations[index]
+	if selected.sourceRange.StartLine() > selection.StartLine() || selected.sourceRange.EndLine() < selection.EndLine() {
+		return Symbol{}, false, nil
+	}
+	declaration := selected.function
 	kind := SymbolKindFunction
-	qualifiedName := file.Name.Name + "." + declaration.Name.Name
+	qualifiedName := parsed.file.Name.Name + "." + declaration.Name.Name
 	if declaration.Recv != nil {
 		receiver, ok := goReceiverBaseName(declaration)
 		if !ok {
 			return Symbol{}, false, fmt.Errorf("unsupported Go method receiver")
 		}
 		kind = SymbolKindMethod
-		qualifiedName = file.Name.Name + "." + receiver + "." + declaration.Name.Name
+		qualifiedName = parsed.file.Name.Name + "." + receiver + "." + declaration.Name.Name
 	}
-	resolved, err := NewSymbol(lineMap, LanguageGo, kind, qualifiedName, declarationRange)
+	resolved, err := NewSymbol(parsed.validated.lineMap, LanguageGo, kind, qualifiedName, selected.sourceRange)
 	if err != nil {
 		return Symbol{}, false, fmt.Errorf("create Go symbol: %w", err)
 	}
@@ -95,9 +198,8 @@ func fileChangeContainsRange(fileChange evidence.FileChange, selection evidence.
 	return false
 }
 
-func enclosingGoDeclaration(fileSet *token.FileSet, file *ast.File, selection evidence.SourceRange) (*ast.FuncDecl, evidence.SourceRange, bool, error) {
-	var selected *ast.FuncDecl
-	var selectedRange evidence.SourceRange
+func collectGoDeclarations(fileSet *token.FileSet, file *ast.File, sourcePath string) ([]goDeclaration, error) {
+	declarations := make([]goDeclaration, 0, len(file.Decls))
 	for _, declaration := range file.Decls {
 		function, ok := declaration.(*ast.FuncDecl)
 		if !ok {
@@ -113,19 +215,13 @@ func enclosingGoDeclaration(fileSet *token.FileSet, file *ast.File, selection ev
 		}
 		start := fileSet.PositionFor(startPosition, false).Line
 		end := fileSet.PositionFor(endPosition, false).Line
-		if start > selection.StartLine() || end < selection.EndLine() {
-			continue
-		}
-		physicalRange, err := evidence.NewSourceRange(selection.Path(), start, end)
+		physicalRange, err := evidence.NewSourceRange(sourcePath, start, end)
 		if err != nil {
-			return nil, evidence.SourceRange{}, false, fmt.Errorf("create Go declaration range: %w", err)
+			return nil, fmt.Errorf("create Go declaration range: %w", err)
 		}
-		if selected == nil || physicalRange.EndLine()-physicalRange.StartLine() < selectedRange.EndLine()-selectedRange.StartLine() {
-			selected = function
-			selectedRange = physicalRange
-		}
+		declarations = append(declarations, goDeclaration{function: function, sourceRange: physicalRange})
 	}
-	return selected, selectedRange, selected != nil, nil
+	return declarations, nil
 }
 
 func goReceiverBaseName(declaration *ast.FuncDecl) (string, bool) {

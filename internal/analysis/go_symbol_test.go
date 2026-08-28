@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"strconv"
 	"testing"
 
@@ -274,6 +275,367 @@ func TestResolveGoEnclosingSymbolIsDeterministicAndDoesNotRetainContent(t *testi
 	if first.Identity() != identity || first.QualifiedName() != "worker.Process" {
 		t.Fatal("mutating source changed returned Symbol")
 	}
+}
+
+func TestResolveGoChangedSymbolsReturnsOrderedDeclarations(t *testing.T) {
+	source := []byte("package worker\n\nfunc First() {\n\tprintln(1)\n}\n\nfunc Second() {\n\tprintln(2)\n}\n")
+	ranges := []evidence.SourceRange{
+		mustAnalysisRange(t, "main.go", 4, 4),
+		mustAnalysisRange(t, "main.go", 8, 8),
+	}
+	change := mustChangedSymbolChange(t, "main.go", source, ranges)
+
+	symbols, err := ResolveGoChangedSymbols(change, "main.go", source)
+	if err != nil {
+		t.Fatalf("ResolveGoChangedSymbols() error = %v", err)
+	}
+	if len(symbols) != 2 || symbols[0].QualifiedName() != "worker.First" || symbols[1].QualifiedName() != "worker.Second" {
+		t.Fatalf("symbols = %#v", symbols)
+	}
+	for i, changedRange := range ranges {
+		want, found, err := ResolveGoEnclosingSymbol(change, source, changedRange)
+		if err != nil || !found || symbols[i] != want {
+			t.Fatalf("symbols[%d] = %#v, single = (%#v, %t, %v)", i, symbols[i], want, found, err)
+		}
+	}
+}
+
+func TestResolveGoChangedSymbolsDeduplicatesDeclarations(t *testing.T) {
+	source := []byte("package worker\n\nfunc Process() {\n\tfirst := 1\n\tprintln(first)\n}\n")
+	ranges := []evidence.SourceRange{
+		mustAnalysisRange(t, "main.go", 4, 4),
+		mustAnalysisRange(t, "main.go", 6, 6),
+	}
+	change := mustChangedSymbolChange(t, "main.go", source, ranges)
+
+	symbols, err := ResolveGoChangedSymbols(change, "main.go", source)
+	if err != nil || len(symbols) != 1 || symbols[0].QualifiedName() != "worker.Process" {
+		t.Fatalf("ResolveGoChangedSymbols() = (%#v, %v)", symbols, err)
+	}
+	want, found, err := ResolveGoEnclosingSymbol(change, source, ranges[0])
+	if err != nil || !found || symbols[0] != want {
+		t.Fatalf("aggregate Symbol = %#v, single = (%#v, %t, %v)", symbols[0], want, found, err)
+	}
+}
+
+func TestResolveGoChangedSymbolsSkipsDeletionOnlyHunks(t *testing.T) {
+	change := mustDeletionChange(t, "empty.go")
+	symbols, err := ResolveGoChangedSymbols(change, "empty.go", nil)
+	if err != nil || symbols == nil || len(symbols) != 0 {
+		t.Fatalf("ResolveGoChangedSymbols() = (%#v, %v), want non-nil empty", symbols, err)
+	}
+	symbols, err = ResolveGoChangedSymbols(change, "empty.go", []byte("wrong"))
+	if err == nil || symbols != nil {
+		t.Fatalf("mismatched deletion-only result = (%#v, %v), want nil error result", symbols, err)
+	}
+}
+
+func TestResolveGoChangedSymbolsDoesNotGuessDeclarations(t *testing.T) {
+	testCases := []struct {
+		name   string
+		source string
+		range_ evidence.SourceRange
+	}{
+		{
+			name:   "top level",
+			source: "package worker\n\nvar Value = 1\n",
+			range_: mustAnalysisRange(t, "main.go", 3, 3),
+		},
+		{
+			name:   "cross declarations",
+			source: "package worker\n\nfunc First() {}\nfunc Second() {}\n",
+			range_: mustAnalysisRange(t, "main.go", 3, 4),
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			source := []byte(testCase.source)
+			change := mustChangedSymbolChange(t, "main.go", source, []evidence.SourceRange{testCase.range_})
+			symbols, err := ResolveGoChangedSymbols(change, "main.go", source)
+			if err != nil || symbols == nil || len(symbols) != 0 {
+				t.Fatalf("ResolveGoChangedSymbols() = (%#v, %v), want non-nil empty", symbols, err)
+			}
+		})
+	}
+}
+
+func TestResolveGoChangedSymbolsFailsAtomically(t *testing.T) {
+	source := []byte("package worker\n\nfunc First() {}\ntype T struct{}\nfunc (**T) Bad() {}\n")
+	ranges := []evidence.SourceRange{
+		mustAnalysisRange(t, "bad.go", 3, 3),
+		mustAnalysisRange(t, "bad.go", 5, 5),
+	}
+	change := mustChangedSymbolChange(t, "bad.go", source, ranges)
+	symbols, err := ResolveGoChangedSymbols(change, "bad.go", source)
+	if err == nil || symbols != nil {
+		t.Fatalf("ResolveGoChangedSymbols() = (%#v, %v), want nil error result", symbols, err)
+	}
+
+	malformed := []byte("package worker\n\nfunc First() {}\nfunc Broken( {\n")
+	malformedRange := mustAnalysisRange(t, "bad.go", 3, 3)
+	malformedChange := mustChangedSymbolChange(t, "bad.go", malformed, []evidence.SourceRange{malformedRange})
+	symbols, err = ResolveGoChangedSymbols(malformedChange, "bad.go", malformed)
+	if err == nil || symbols != nil {
+		t.Fatalf("malformed result = (%#v, %v), want nil error result", symbols, err)
+	}
+}
+
+func TestResolveGoChangedSymbolsUsesPhysicalPositions(t *testing.T) {
+	source := []byte("package worker\n//line z.go:900\nfunc First() {\n\tprintln(1)\n}\n//line a.go:1\nfunc Second() {\n\tprintln(2)\n}\n")
+	ranges := []evidence.SourceRange{
+		mustAnalysisRange(t, "main.go", 4, 4),
+		mustAnalysisRange(t, "main.go", 8, 8),
+	}
+	change := mustChangedSymbolChange(t, "main.go", source, ranges)
+	symbols, err := ResolveGoChangedSymbols(change, "main.go", source)
+	if err != nil || len(symbols) != 2 {
+		t.Fatalf("ResolveGoChangedSymbols() = (%#v, %v)", symbols, err)
+	}
+	if symbols[0].SourceRange() != mustAnalysisRange(t, "main.go", 3, 5) || symbols[1].SourceRange() != mustAnalysisRange(t, "main.go", 7, 9) {
+		t.Fatalf("physical ranges = (%#v, %#v)", symbols[0].SourceRange(), symbols[1].SourceRange())
+	}
+}
+
+func TestResolveGoChangedSymbolsRejectsInvalidInput(t *testing.T) {
+	source := []byte("package worker\n\nfunc Process() {}\n")
+	changedRange := mustAnalysisRange(t, "main.go", 3, 3)
+	change := mustChangedSymbolChange(t, "main.go", source, []evidence.SourceRange{changedRange})
+	testCases := []struct {
+		name    string
+		change  evidence.Change
+		path    string
+		content []byte
+	}{
+		{name: "zero change", path: "main.go", content: source},
+		{name: "empty path", change: change, content: source},
+		{name: "missing path", change: change, path: "other.go", content: source},
+		{name: "non Go path", change: mustChangedSymbolChange(t, "main.txt", source, []evidence.SourceRange{mustAnalysisRange(t, "main.txt", 3, 3)}), path: "main.txt", content: source},
+		{name: "wrong content", change: change, path: "main.go", content: []byte("package worker\n")},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			symbols, err := ResolveGoChangedSymbols(testCase.change, testCase.path, testCase.content)
+			if err == nil || symbols != nil {
+				t.Fatalf("ResolveGoChangedSymbols() = (%#v, %v), want nil error result", symbols, err)
+			}
+		})
+	}
+}
+
+func TestResolveGoChangedSymbolsSkipsDeletionInMixedHunks(t *testing.T) {
+	source := []byte("package worker\n\nfunc Process() {\n\tprintln(1)\n}\n")
+	change := mustMixedChangedSymbolChange(t, "main.go", source, mustAnalysisRange(t, "main.go", 4, 4))
+	symbols, err := ResolveGoChangedSymbols(change, "main.go", source)
+	if err != nil || len(symbols) != 1 || symbols[0].QualifiedName() != "worker.Process" {
+		t.Fatalf("ResolveGoChangedSymbols() = (%#v, %v)", symbols, err)
+	}
+}
+
+func TestResolveGoChangedSymbolsSkipsParsingDeletionOnlySource(t *testing.T) {
+	source := []byte("not valid Go\n")
+	change := mustDeletionOnlySourceChange(t, "main.go", source)
+	symbols, err := ResolveGoChangedSymbols(change, "main.go", source)
+	if err != nil || symbols == nil || len(symbols) != 0 {
+		t.Fatalf("ResolveGoChangedSymbols() = (%#v, %v), want non-nil empty", symbols, err)
+	}
+}
+
+func TestResolveGoChangedSymbolsNormalizesMethodReceivers(t *testing.T) {
+	testCases := []struct {
+		name     string
+		source   string
+		wantName string
+	}{
+		{name: "value", source: "package worker\n\ntype Runner struct{}\nfunc (Runner) Run() { println(1) }\n", wantName: "worker.Runner.Run"},
+		{name: "pointer", source: "package worker\n\ntype Runner struct{}\nfunc (*Runner) Run() { println(1) }\n", wantName: "worker.Runner.Run"},
+		{name: "generic", source: "package worker\n\ntype Box[T any] struct{}\nfunc (*Box[T]) Get() { println(1) }\n", wantName: "worker.Box.Get"},
+		{name: "parenthesized", source: "package worker\n\ntype Runner struct{}\nfunc (((*Runner))) Run() { println(1) }\n", wantName: "worker.Runner.Run"},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			source := []byte(testCase.source)
+			changedRange := mustAnalysisRange(t, "method.go", 4, 4)
+			change := mustChangedSymbolChange(t, "method.go", source, []evidence.SourceRange{changedRange})
+			symbols, err := ResolveGoChangedSymbols(change, "method.go", source)
+			if err != nil || len(symbols) != 1 || symbols[0].Kind() != SymbolKindMethod || symbols[0].QualifiedName() != testCase.wantName {
+				t.Fatalf("ResolveGoChangedSymbols() = (%#v, %v)", symbols, err)
+			}
+		})
+	}
+}
+
+func TestResolveGoChangedSymbolsRejectsInvalidContent(t *testing.T) {
+	valid := []byte("package worker\n\nfunc Process() {}\n")
+	changedRange := mustAnalysisRange(t, "main.go", 3, 3)
+
+	oversized := append([]byte("package worker\n"), bytes.Repeat([]byte{' '}, maxGoSourceBytes)...)
+	oversizedRange := mustAnalysisRange(t, "large.go", 1, 1)
+	nulContent := []byte("package worker\x00\n")
+	nulRange := mustAnalysisRange(t, "nul.go", 1, 1)
+	invalidUTF8 := []byte{'p', 'a', 'c', 'k', 'a', 'g', 'e', ' ', 'x', 0xff, '\n'}
+	utfRange := mustAnalysisRange(t, "utf.go", 1, 1)
+
+	testCases := []struct {
+		name    string
+		change  evidence.Change
+		path    string
+		content []byte
+	}{
+		{
+			name:    "line count",
+			change:  mustResolverChange(t, "main.go", valid, changedRange, physicalGoLineCount(valid)+1),
+			path:    "main.go",
+			content: valid,
+		},
+		{
+			name:    "oversized",
+			change:  mustChangedSymbolChange(t, "large.go", oversized, []evidence.SourceRange{oversizedRange}),
+			path:    "large.go",
+			content: oversized,
+		},
+		{
+			name:    "NUL",
+			change:  mustChangedSymbolChange(t, "nul.go", nulContent, []evidence.SourceRange{nulRange}),
+			path:    "nul.go",
+			content: nulContent,
+		},
+		{
+			name:    "invalid UTF-8",
+			change:  mustChangedSymbolChange(t, "utf.go", invalidUTF8, []evidence.SourceRange{utfRange}),
+			path:    "utf.go",
+			content: invalidUTF8,
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			symbols, err := ResolveGoChangedSymbols(testCase.change, testCase.path, testCase.content)
+			if err == nil || symbols != nil {
+				t.Fatalf("ResolveGoChangedSymbols() = (%#v, %v), want nil error result", symbols, err)
+			}
+		})
+	}
+}
+
+func TestResolveGoChangedSymbolsHandlesMaximumHunkCount(t *testing.T) {
+	const hunkCount = 1024
+	var source bytes.Buffer
+	source.WriteString("package worker\n\n")
+	ranges := make([]evidence.SourceRange, hunkCount)
+	for i := range ranges {
+		line := 3 + i*2
+		fmt.Fprintf(&source, "func F%04d() {}\n\n", i)
+		ranges[i] = mustAnalysisRange(t, "many.go", line, line)
+	}
+	content := source.Bytes()
+	change := mustChangedSymbolChange(t, "many.go", content, ranges)
+	symbols, err := ResolveGoChangedSymbols(change, "many.go", content)
+	if err != nil || len(symbols) != hunkCount {
+		t.Fatalf("ResolveGoChangedSymbols() returned %d Symbols, error = %v", len(symbols), err)
+	}
+	if symbols[0].QualifiedName() != "worker.F0000" || symbols[hunkCount-1].QualifiedName() != "worker.F1023" {
+		t.Fatalf("boundary Symbols = (%q, %q)", symbols[0].QualifiedName(), symbols[hunkCount-1].QualifiedName())
+	}
+}
+
+func TestResolveGoChangedSymbolsIsDeterministic(t *testing.T) {
+	source := []byte("package worker\n\nfunc Process() {\n\tprintln(1)\n}\n")
+	changedRange := mustAnalysisRange(t, "main.go", 4, 4)
+	change := mustChangedSymbolChange(t, "main.go", source, []evidence.SourceRange{changedRange})
+	first, err := ResolveGoChangedSymbols(change, "main.go", source)
+	if err != nil || len(first) != 1 {
+		t.Fatalf("first = (%#v, %v)", first, err)
+	}
+	repeated, err := ResolveGoChangedSymbols(change, "main.go", source)
+	if err != nil || len(repeated) != 1 || repeated[0] != first[0] {
+		t.Fatalf("repeated = (%#v, %v), want %#v", repeated, err, first)
+	}
+	firstIdentity := first[0].Identity()
+	first[0] = Symbol{}
+	again, err := ResolveGoChangedSymbols(change, "main.go", source)
+	if err != nil || len(again) != 1 || again[0].Identity() != firstIdentity {
+		t.Fatalf("after caller mutation = (%#v, %v)", again, err)
+	}
+
+	changedSource := []byte("package worker\n\nfunc Process() {\n\tprintln(2)\n}\n")
+	changed := mustChangedSymbolChange(t, "main.go", changedSource, []evidence.SourceRange{changedRange})
+	changedSymbols, err := ResolveGoChangedSymbols(changed, "main.go", changedSource)
+	if err != nil || len(changedSymbols) != 1 || changedSymbols[0].Identity() == firstIdentity {
+		t.Fatalf("changed content = (%#v, %v)", changedSymbols, err)
+	}
+}
+
+func mustMixedChangedSymbolChange(t *testing.T, path string, headContent []byte, changedRange evidence.SourceRange) evidence.Change {
+	t.Helper()
+	fileChange, err := evidence.NewFileChange(path, testBaseDigest, resolverContentDigest(headContent), []evidence.SourceRange{changedRange})
+	if err != nil {
+		t.Fatalf("NewFileChange() error = %v", err)
+	}
+	modified, err := evidence.NewHunk(fileChange, changedRange.StartLine(), 1, changedRange.StartLine(), 1)
+	if err != nil {
+		t.Fatalf("NewHunk(modification) error = %v", err)
+	}
+	headLineCount := physicalGoLineCount(headContent)
+	deleted, err := evidence.NewHunk(fileChange, headLineCount+1, 1, headLineCount+1, 0)
+	if err != nil {
+		t.Fatalf("NewHunk(deletion) error = %v", err)
+	}
+	lineMap, err := evidence.NewLineMap(fileChange, headLineCount+1, headLineCount, []evidence.Hunk{modified, deleted})
+	if err != nil {
+		t.Fatalf("NewLineMap() error = %v", err)
+	}
+	change, err := evidence.NewChange([]evidence.FileChange{fileChange}, []evidence.LineMap{lineMap})
+	if err != nil {
+		t.Fatalf("NewChange() error = %v", err)
+	}
+	return change
+}
+
+func mustDeletionOnlySourceChange(t *testing.T, path string, headContent []byte) evidence.Change {
+	t.Helper()
+	fileChange, err := evidence.NewFileChange(path, testBaseDigest, resolverContentDigest(headContent), nil)
+	if err != nil {
+		t.Fatalf("NewFileChange() error = %v", err)
+	}
+	hunk, err := evidence.NewHunk(fileChange, 1, 1, 1, 0)
+	if err != nil {
+		t.Fatalf("NewHunk() error = %v", err)
+	}
+	headLineCount := physicalGoLineCount(headContent)
+	lineMap, err := evidence.NewLineMap(fileChange, headLineCount+1, headLineCount, []evidence.Hunk{hunk})
+	if err != nil {
+		t.Fatalf("NewLineMap() error = %v", err)
+	}
+	change, err := evidence.NewChange([]evidence.FileChange{fileChange}, []evidence.LineMap{lineMap})
+	if err != nil {
+		t.Fatalf("NewChange() error = %v", err)
+	}
+	return change
+}
+
+func mustChangedSymbolChange(t *testing.T, path string, headContent []byte, changedRanges []evidence.SourceRange) evidence.Change {
+	t.Helper()
+	fileChange, err := evidence.NewFileChange(path, testBaseDigest, resolverContentDigest(headContent), changedRanges)
+	if err != nil {
+		t.Fatalf("NewFileChange() error = %v", err)
+	}
+	hunks := make([]evidence.Hunk, len(changedRanges))
+	for i, changedRange := range changedRanges {
+		count := changedRange.EndLine() - changedRange.StartLine() + 1
+		hunks[i], err = evidence.NewHunk(fileChange, changedRange.StartLine(), count, changedRange.StartLine(), count)
+		if err != nil {
+			t.Fatalf("NewHunk() error = %v", err)
+		}
+	}
+	lineCount := physicalGoLineCount(headContent)
+	lineMap, err := evidence.NewLineMap(fileChange, lineCount, lineCount, hunks)
+	if err != nil {
+		t.Fatalf("NewLineMap() error = %v", err)
+	}
+	change, err := evidence.NewChange([]evidence.FileChange{fileChange}, []evidence.LineMap{lineMap})
+	if err != nil {
+		t.Fatalf("NewChange() error = %v", err)
+	}
+	return change
 }
 
 func mustResolverChange(t *testing.T, path string, headContent []byte, changedRange evidence.SourceRange, headLineCount int) evidence.Change {
