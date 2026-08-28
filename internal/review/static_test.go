@@ -55,3 +55,71 @@ func TestContainsDebugOutputReportsParseError(t *testing.T) {
 		t.Fatal("containsDebugOutput() error = nil, want parse error")
 	}
 }
+
+func TestReviewDebugOutputsReturnsExactOrderedFindings(t *testing.T) {
+	source := []byte("package sample\nimport \"fmt\"\nfunc main() {\n\tfmt.Println(\"debug\")\n\tfmt.Println(\n\t\t\"debug\",\n\t)\n}\n")
+	selection, err := evidence.NewSourceRange("main.go", 1, 8)
+	if err != nil {
+		t.Fatalf("evidence.NewSourceRange() error = %v", err)
+	}
+
+	findings, items, err := reviewDebugOutputs(source, selection)
+	if err != nil {
+		t.Fatalf("reviewDebugOutputs() error = %v", err)
+	}
+	if len(findings) != 2 || len(items) != 2 {
+		t.Fatalf("reviewDebugOutputs() returned %d findings and %d evidence items, want 2 each", len(findings), len(items))
+	}
+
+	wantRanges := [][2]int{{4, 4}, {5, 7}}
+	wantContent := []string{"\tfmt.Println(\"debug\")", "\tfmt.Println(\n\t\t\"debug\",\n\t)"}
+	for i, finding := range findings {
+		sourceRange := finding.SourceRange()
+		if got := [2]int{sourceRange.StartLine(), sourceRange.EndLine()}; got != wantRanges[i] {
+			t.Fatalf("finding %d range = %v, want %v", i, got, wantRanges[i])
+		}
+		item := items[i]
+		if item.SourceRange() != sourceRange {
+			t.Fatalf("evidence %d range = %#v, want %#v", i, item.SourceRange(), sourceRange)
+		}
+		if item.Digest() != digestHex([]byte(wantContent[i])) {
+			t.Fatalf("evidence %d digest = %q, want exact span digest", i, item.Digest())
+		}
+		if ids := finding.EvidenceIDs(); len(ids) != 1 || ids[0] != item.ID() {
+			t.Fatalf("finding %d evidence IDs = %#v, want %q", i, ids, item.ID())
+		}
+	}
+	if findings[0].ID() == findings[1].ID() || items[0].ID() == items[1].ID() {
+		t.Fatal("distinct call spans must have distinct identities")
+	}
+}
+
+func TestReviewDebugOutputsHonorsSelectionAndDeduplicatesLines(t *testing.T) {
+	source := []byte("package sample\nimport \"fmt\"\nfunc main() {\n\tfmt.Println(\"debug\"); fmt.Println(\"debug\")\n\tfmt.Println(\n\t\t\"debug\",\n\t)\n}\n")
+
+	testCases := []struct {
+		name      string
+		startLine int
+		endLine   int
+		want      int
+	}{
+		{name: "same line deduplicates", startLine: 4, endLine: 4, want: 1},
+		{name: "outside selection", startLine: 3, endLine: 3},
+		{name: "crosses selection", startLine: 5, endLine: 6},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			selection, err := evidence.NewSourceRange("main.go", testCase.startLine, testCase.endLine)
+			if err != nil {
+				t.Fatalf("evidence.NewSourceRange() error = %v", err)
+			}
+			findings, items, err := reviewDebugOutputs(source, selection)
+			if err != nil {
+				t.Fatalf("reviewDebugOutputs() error = %v", err)
+			}
+			if len(findings) != testCase.want || len(items) != testCase.want {
+				t.Fatalf("reviewDebugOutputs() returned %d findings and %d evidence items, want %d", len(findings), len(items), testCase.want)
+			}
+		})
+	}
+}

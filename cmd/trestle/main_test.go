@@ -66,23 +66,28 @@ func TestRunReviewsLocalFixture(t *testing.T) {
 	}
 }
 
-func TestRunChangesEvidenceIdentityWithContentPathOrRange(t *testing.T) {
+func TestRunBindsEvidenceIdentityToExactCallSpan(t *testing.T) {
 	baseSource := "package main; import \"fmt\"; func main() { fmt.Println(\"debug\") }\n// next\n"
 	changedSource := "package main; import \"fmt\"; func main() {  fmt.Println(\"debug\") }\n// next\n"
 	baseOutput := runSuccessfulReview(t, writeReviewFixture(t, "main.go", baseSource, 1, 1, nil))
 	contentOutput := runSuccessfulReview(t, writeReviewFixture(t, "main.go", changedSource, 1, 1, nil))
 	pathOutput := runSuccessfulReview(t, writeReviewFixture(t, "nested/main.go", baseSource, 1, 1, nil))
-	rangeOutput := runSuccessfulReview(t, writeReviewFixture(t, "main.go", baseSource, 1, 2, nil))
+	widerSelectionOutput := runSuccessfulReview(t, writeReviewFixture(t, "main.go", baseSource, 1, 2, nil))
 
 	baseEvidenceID := outputIdentity(t, baseOutput, "evidence: ")
 	for name, output := range map[string]string{
 		"content": contentOutput,
 		"path":    pathOutput,
-		"range":   rangeOutput,
 	} {
 		if evidenceID := outputIdentity(t, output, "evidence: "); evidenceID == baseEvidenceID {
 			t.Fatalf("%s evidence identity = %q, want change from %q", name, evidenceID, baseEvidenceID)
 		}
+	}
+	if evidenceID := outputIdentity(t, widerSelectionOutput, "evidence: "); evidenceID != baseEvidenceID {
+		t.Fatalf("wider selection evidence identity = %q, want exact-span identity %q", evidenceID, baseEvidenceID)
+	}
+	if fixtureID := outputIdentity(t, widerSelectionOutput, "fixture: "); fixtureID == outputIdentity(t, baseOutput, "fixture: ") {
+		t.Fatal("wider selection must change fixture identity")
 	}
 }
 

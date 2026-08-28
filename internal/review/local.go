@@ -48,22 +48,21 @@ func ReviewLocalFixture(fixturePath string, configuration config.LocalConfig) (L
 	if digestHex(source) != snapshot.Revision() {
 		return LocalResult{}, failedOutcomeMessage("source content does not match declared revision")
 	}
-	selected, err := selectSourceRange(source, sourceRange)
+	if _, err := selectSourceRange(source, sourceRange); err != nil {
+		return LocalResult{}, newOutcomeError(OutcomeFailed, err)
+	}
+	findings, items, err := reviewDebugOutputs(source, sourceRange)
 	if err != nil {
 		return LocalResult{}, newOutcomeError(OutcomeFailed, err)
 	}
-	finding, item, matched, err := reviewDebugOutput(source, selected, sourceRange)
-	if err != nil {
-		return LocalResult{}, newOutcomeError(OutcomeFailed, err)
-	}
-	if !matched {
+	if len(findings) == 0 {
 		result.outcome = OutcomeInconclusive
 		result.reason = "static debug-output rule did not match the declared range"
 		return result, nil
 	}
 	result.outcome = OutcomeVerified
-	result.finding = finding
-	result.evidence = item
+	result.finding = findings[0]
+	result.evidence = items[0]
 	return result, nil
 }
 

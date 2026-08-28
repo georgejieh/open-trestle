@@ -11,6 +11,7 @@ import (
 	"go/token"
 	"go/types"
 	"path"
+	"sort"
 	"strconv"
 
 	"github.com/georgejieh/open-trestle/internal/evidence"
@@ -18,13 +19,28 @@ import (
 
 const staticDebugRuleID = "static-debug-output"
 
-func reviewDebugOutput(source, selected []byte, sourceRange evidence.SourceRange) (Finding, evidence.EvidenceItem, bool, error) {
-	matched, err := containsDebugOutput(source, sourceRange)
+func reviewDebugOutputs(source []byte, selection evidence.SourceRange) ([]Finding, []evidence.EvidenceItem, error) {
+	ranges, err := debugOutputRanges(source, selection)
 	if err != nil {
-		return Finding{}, evidence.EvidenceItem{}, false, fmt.Errorf("analyze debug output: %w", err)
+		return nil, nil, fmt.Errorf("analyze debug output: %w", err)
 	}
-	if !matched {
-		return Finding{}, evidence.EvidenceItem{}, false, nil
+	findings := make([]Finding, 0, len(ranges))
+	items := make([]evidence.EvidenceItem, 0, len(ranges))
+	for _, sourceRange := range ranges {
+		finding, item, err := newDebugOutputFinding(source, sourceRange)
+		if err != nil {
+			return nil, nil, err
+		}
+		findings = append(findings, finding)
+		items = append(items, item)
+	}
+	return findings, items, nil
+}
+
+func newDebugOutputFinding(source []byte, sourceRange evidence.SourceRange) (Finding, evidence.EvidenceItem, error) {
+	selected, err := selectSourceRange(source, sourceRange)
+	if err != nil {
+		return Finding{}, evidence.EvidenceItem{}, fmt.Errorf("select debug output: %w", err)
 	}
 	evidenceDigest := digestHex(selected)
 	evidenceID, err := canonicalIdentity("evidence-", struct {
@@ -41,34 +57,39 @@ func reviewDebugOutput(source, selected []byte, sourceRange evidence.SourceRange
 		Digest:    evidenceDigest,
 	})
 	if err != nil {
-		return Finding{}, evidence.EvidenceItem{}, false, fmt.Errorf("identify evidence: %w", err)
+		return Finding{}, evidence.EvidenceItem{}, fmt.Errorf("identify evidence: %w", err)
 	}
 	item, err := evidence.NewEvidenceItem(evidenceID, evidence.EvidenceKindSource, evidenceDigest, sourceRange)
 	if err != nil {
-		return Finding{}, evidence.EvidenceItem{}, false, fmt.Errorf("create evidence: %w", err)
+		return Finding{}, evidence.EvidenceItem{}, fmt.Errorf("create evidence: %w", err)
 	}
 	findingID, err := canonicalIdentity("finding-", struct {
 		Rule       string `json:"rule"`
 		EvidenceID string `json:"evidence_id"`
 	}{Rule: staticDebugRuleID, EvidenceID: evidenceID})
 	if err != nil {
-		return Finding{}, evidence.EvidenceItem{}, false, fmt.Errorf("identify finding: %w", err)
+		return Finding{}, evidence.EvidenceItem{}, fmt.Errorf("identify finding: %w", err)
 	}
 	finding, err := NewFinding(findingID, "Debug output left in source", SeverityMedium, sourceRange, []string{evidenceID})
 	if err != nil {
-		return Finding{}, evidence.EvidenceItem{}, false, fmt.Errorf("create finding: %w", err)
+		return Finding{}, evidence.EvidenceItem{}, fmt.Errorf("create finding: %w", err)
 	}
-	return finding, item, true, nil
+	return finding, item, nil
 }
 
 func containsDebugOutput(source []byte, sourceRange evidence.SourceRange) (bool, error) {
-	if path.Ext(sourceRange.Path()) != ".go" {
-		return false, nil
+	ranges, err := debugOutputRanges(source, sourceRange)
+	return len(ranges) > 0, err
+}
+
+func debugOutputRanges(source []byte, selection evidence.SourceRange) ([]evidence.SourceRange, error) {
+	if path.Ext(selection.Path()) != ".go" {
+		return nil, nil
 	}
 	fileSet := token.NewFileSet()
-	file, err := parser.ParseFile(fileSet, sourceRange.Path(), source, parser.SkipObjectResolution)
+	file, err := parser.ParseFile(fileSet, selection.Path(), source, parser.SkipObjectResolution)
 	if err != nil {
-		return false, fmt.Errorf("parse Go source: %w", err)
+		return nil, fmt.Errorf("parse Go source: %w", err)
 	}
 	typeInfo := &types.Info{Uses: make(map[*ast.Ident]types.Object)}
 	configuration := types.Config{
@@ -77,21 +98,42 @@ func containsDebugOutput(source []byte, sourceRange evidence.SourceRange) (bool,
 	}
 	_, _ = configuration.Check("fixture", fileSet, []*ast.File{file}, typeInfo)
 
-	matched := false
+	seen := make(map[[2]int]struct{})
+	ranges := make([]evidence.SourceRange, 0)
+	var rangeErr error
 	ast.Inspect(file, func(node ast.Node) bool {
 		call, isCall := node.(*ast.CallExpr)
-		if !isCall {
+		if !isCall || !isDebugPrintlnCall(call, typeInfo) {
 			return true
 		}
 		startLine := fileSet.Position(call.Pos()).Line
 		endLine := fileSet.Position(call.End()).Line
-		if startLine < sourceRange.StartLine() || endLine > sourceRange.EndLine() {
+		if startLine < selection.StartLine() || endLine > selection.EndLine() {
 			return true
 		}
-		matched = isDebugPrintlnCall(call, typeInfo)
-		return !matched
+		key := [2]int{startLine, endLine}
+		if _, exists := seen[key]; exists {
+			return true
+		}
+		seen[key] = struct{}{}
+		sourceRange, err := evidence.NewSourceRange(selection.Path(), startLine, endLine)
+		if err != nil {
+			rangeErr = err
+			return false
+		}
+		ranges = append(ranges, sourceRange)
+		return true
 	})
-	return matched, nil
+	if rangeErr != nil {
+		return nil, rangeErr
+	}
+	sort.Slice(ranges, func(i, j int) bool {
+		if ranges[i].StartLine() != ranges[j].StartLine() {
+			return ranges[i].StartLine() < ranges[j].StartLine()
+		}
+		return ranges[i].EndLine() < ranges[j].EndLine()
+	})
+	return ranges, nil
 }
 
 func isDebugPrintlnCall(call *ast.CallExpr, typeInfo *types.Info) bool {
