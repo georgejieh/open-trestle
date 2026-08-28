@@ -42,25 +42,48 @@ type FileClassificationReceipt struct {
 
 // ClassifyRepositoryFile derives exact path and NUL signals for one manifest file.
 func ClassifyRepositoryFile(manifest evidence.RepositoryManifest, filePath string, content []byte) (FileClassificationReceipt, error) {
-	canonicalManifest, err := evidence.NewRepositoryManifest(manifest.Files())
-	if err != nil || canonicalManifest.Identity() != manifest.Identity() {
-		return FileClassificationReceipt{}, fmt.Errorf("repository manifest is not canonical")
+	validatedManifest, err := validateClassificationManifest(manifest)
+	if err != nil {
+		return FileClassificationReceipt{}, err
 	}
-	manifestFile, ok := canonicalManifest.File(filePath)
+	file, ok := validatedManifest.File(filePath)
 	if !ok {
 		return FileClassificationReceipt{}, fmt.Errorf("repository manifest does not contain path %q", filePath)
 	}
-	exactFile, err := evidence.NewRepositoryFile(filePath, content)
+	return classifyValidatedRepositoryFile(validatedManifest.Identity(), file, content)
+}
+
+func validateClassificationManifest(manifest evidence.RepositoryManifest) (evidence.RepositoryManifest, error) {
+	canonicalManifest, err := evidence.NewRepositoryManifest(manifest.Files())
+	if err != nil || canonicalManifest.Identity() != manifest.Identity() {
+		return evidence.RepositoryManifest{}, fmt.Errorf("repository manifest is not canonical")
+	}
+	return canonicalManifest, nil
+}
+
+func classifyValidatedRepositoryFile(manifestIdentity string, file evidence.RepositoryFile, content []byte) (FileClassificationReceipt, error) {
+	exactFile, err := evidence.NewRepositoryFile(file.Path(), content)
 	if err != nil {
 		return FileClassificationReceipt{}, fmt.Errorf("validate repository file: %w", err)
 	}
-	if exactFile.Identity() != manifestFile.Identity() || exactFile.Digest() != manifestFile.Digest() || exactFile.SizeBytes() != manifestFile.SizeBytes() {
-		return FileClassificationReceipt{}, fmt.Errorf("content does not match repository file %q", filePath)
+	if exactFile != file {
+		return FileClassificationReceipt{}, fmt.Errorf("content does not match repository file %q", file.Path())
 	}
 	contentSignal := FileContentNULFree
 	if bytes.IndexByte(content, 0) >= 0 {
 		contentSignal = FileContentContainsNUL
 	}
+	return newFileClassificationReceipt(manifestIdentity, file, contentSignal)
+}
+
+func newFileClassificationReceipt(manifestIdentity string, file evidence.RepositoryFile, contentSignal FileContentSignal) (FileClassificationReceipt, error) {
+	if !isSHA256Identity(manifestIdentity) {
+		return FileClassificationReceipt{}, fmt.Errorf("manifest identity is not a canonical SHA-256 digest")
+	}
+	if contentSignal != FileContentNULFree && contentSignal != FileContentContainsNUL {
+		return FileClassificationReceipt{}, fmt.Errorf("unsupported file content signal %q", contentSignal)
+	}
+	filePath := file.Path()
 	extension := path.Ext(filePath)
 	vendorPath := hasExactPathSegment(filePath, "vendor")
 	goTestPath := strings.HasSuffix(path.Base(filePath), "_test.go")
@@ -81,8 +104,8 @@ func ClassifyRepositoryFile(manifest evidence.RepositoryManifest, filePath strin
 		SchemaVersion:          1,
 		Classifier:             fileClassificationName,
 		ClassifierVersion:      fileClassificationVersion,
-		ManifestIdentity:       canonicalManifest.Identity(),
-		RepositoryFileIdentity: manifestFile.Identity(),
+		ManifestIdentity:       manifestIdentity,
+		RepositoryFileIdentity: file.Identity(),
 		Path:                   filePath,
 		Extension:              extension,
 		ContentSignal:          contentSignal,
@@ -96,8 +119,8 @@ func ClassifyRepositoryFile(manifest evidence.RepositoryManifest, filePath strin
 	digest := sha256.Sum256(encoded)
 	return FileClassificationReceipt{
 		identity:               hex.EncodeToString(digest[:]),
-		manifestIdentity:       canonicalManifest.Identity(),
-		repositoryFileIdentity: manifestFile.Identity(),
+		manifestIdentity:       manifestIdentity,
+		repositoryFileIdentity: file.Identity(),
 		path:                   filePath,
 		extension:              extension,
 		contentSignal:          contentSignal,
@@ -105,6 +128,25 @@ func ClassifyRepositoryFile(manifest evidence.RepositoryManifest, filePath strin
 		goTestPath:             goTestPath,
 		classifierVersion:      fileClassificationVersion,
 	}, nil
+}
+
+func validateFileClassificationReceipt(manifestIdentity string, file evidence.RepositoryFile, content []byte, receipt FileClassificationReceipt) error {
+	exactFile, err := evidence.NewRepositoryFile(file.Path(), content)
+	if err != nil || exactFile != file {
+		return fmt.Errorf("content does not match repository file %q", file.Path())
+	}
+	contentSignal := FileContentNULFree
+	if bytes.IndexByte(content, 0) >= 0 {
+		contentSignal = FileContentContainsNUL
+	}
+	expected, err := newFileClassificationReceipt(manifestIdentity, file, contentSignal)
+	if err != nil {
+		return err
+	}
+	if receipt != expected {
+		return fmt.Errorf("file classification receipt for %q is not canonical", file.Path())
+	}
+	return nil
 }
 
 func hasExactPathSegment(filePath, segment string) bool {
