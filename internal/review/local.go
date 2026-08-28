@@ -9,12 +9,23 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/georgejieh/open-trestle/internal/config"
 	"github.com/georgejieh/open-trestle/internal/evidence"
 )
 
 const maxSourceBytes = 1 << 20
+
+// LoadLocalFixture loads one manifest from a confined directory.
+func LoadLocalFixture(fixturePath string, configuration config.LocalConfig) (Fixture, error) {
+	root, err := os.OpenRoot(filepath.Dir(fixturePath))
+	if err != nil {
+		return Fixture{}, failedOutcome("open fixture directory", err)
+	}
+	defer root.Close()
+	return loadConfinedFixture(root, filepath.Base(fixturePath), configuration)
+}
 
 // ReviewLocalFixture reviews one manifest and its declared source within a confined directory.
 func ReviewLocalFixture(fixturePath string, configuration config.LocalConfig) (LocalResult, error) {
@@ -67,7 +78,7 @@ func ReviewLocalFixture(fixturePath string, configuration config.LocalConfig) (L
 }
 
 func loadConfinedFixture(root *os.Root, fixtureName string, configuration config.LocalConfig) (Fixture, error) {
-	fixtureFile, err := root.Open(fixtureName)
+	fixtureFile, err := openConfinedRegularFile(root, fixtureName)
 	if err != nil {
 		return Fixture{}, failedOutcome("open fixture", err)
 	}
@@ -82,8 +93,25 @@ func loadConfinedFixture(root *os.Root, fixtureName string, configuration config
 	return fixture, nil
 }
 
+func openConfinedRegularFile(root *os.Root, filePath string) (*os.File, error) {
+	file, err := root.OpenFile(filePath, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		file.Close()
+		return nil, fmt.Errorf("%q is not a regular file", filePath)
+	}
+	return file, nil
+}
+
 func readConfinedSource(root *os.Root, sourcePath string) ([]byte, error) {
-	file, err := root.Open(sourcePath)
+	file, err := openConfinedRegularFile(root, sourcePath)
 	if err != nil {
 		return nil, fmt.Errorf("open declared source %q: %w", sourcePath, err)
 	}

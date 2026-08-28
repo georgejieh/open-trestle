@@ -39,14 +39,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 }
 
 func runValidateFixture(fixturePath string, stdout, stderr io.Writer) int {
-	fixtureFile, err := os.Open(fixturePath)
-	if err != nil {
-		fmt.Fprintf(stderr, "open fixture: %v\n", err)
-		return 1
-	}
-	defer fixtureFile.Close()
-
-	fixture, err := review.LoadFixture(fixtureFile, config.DefaultLocal())
+	fixture, err := review.LoadLocalFixture(fixturePath, config.DefaultLocal())
 	if err != nil {
 		fmt.Fprintf(stderr, "validate fixture: %v\n", err)
 		return 1

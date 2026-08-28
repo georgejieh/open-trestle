@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/georgejieh/open-trestle/internal/config"
@@ -96,4 +97,20 @@ func writeLocalFixture(t *testing.T, content string, startLine, endLine int) str
 		t.Fatalf("os.WriteFile(fixture) error = %v", err)
 	}
 	return fixturePath
+}
+
+func TestOpenConfinedRegularFileRejectsDirectory(t *testing.T) {
+	directory := t.TempDir()
+	if err := os.Mkdir(filepath.Join(directory, "nested"), 0o700); err != nil {
+		t.Fatalf("os.Mkdir() error = %v", err)
+	}
+	root, err := os.OpenRoot(directory)
+	if err != nil {
+		t.Fatalf("os.OpenRoot() error = %v", err)
+	}
+	defer root.Close()
+
+	if _, err := openConfinedRegularFile(root, "nested"); err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("openConfinedRegularFile() error = %v, want regular-file error", err)
+	}
 }

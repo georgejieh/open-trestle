@@ -2,15 +2,83 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestRunRejectsFIFOInputsWithoutBlocking(t *testing.T) {
+	mkfifo, err := exec.LookPath("mkfifo")
+	if err != nil {
+		t.Skip("mkfifo is unavailable")
+	}
+
+	t.Run("source", func(t *testing.T) {
+		directory := t.TempDir()
+		sourcePath := filepath.Join(directory, "main.go")
+		if output, err := exec.Command(mkfifo, sourcePath).CombinedOutput(); err != nil {
+			t.Fatalf("mkfifo error = %v; output = %q", err, output)
+		}
+		fixture := `{"schema_version":1,"provider_route":"local","requested_capabilities":[],"request":{"id":"fifo-source","snapshot":{"workspace":"fifo-source","revision":"0000000000000000000000000000000000000000000000000000000000000000","ranges":[{"path":"main.go","start_line":1,"end_line":1}]}}}`
+		fixturePath := filepath.Join(directory, "fixture.json")
+		if err := os.WriteFile(fixturePath, []byte(fixture), 0o600); err != nil {
+			t.Fatalf("os.WriteFile() error = %v", err)
+		}
+		assertCLIRejectsWithoutBlocking(t, "review", fixturePath)
+	})
+
+	t.Run("fixture", func(t *testing.T) {
+		fixturePath := filepath.Join(t.TempDir(), "fixture.json")
+		if output, err := exec.Command(mkfifo, fixturePath).CombinedOutput(); err != nil {
+			t.Fatalf("mkfifo error = %v; output = %q", err, output)
+		}
+		assertCLIRejectsWithoutBlocking(t, "validate-fixture", fixturePath)
+	})
+}
+
+func TestCLIHelperProcess(t *testing.T) {
+	if os.Getenv("OPEN_TRESTLE_TEST_HELPER") != "1" {
+		return
+	}
+	separator := 0
+	for i, arg := range os.Args {
+		if arg == "--" {
+			separator = i + 1
+			break
+		}
+	}
+	if separator == 0 || separator == len(os.Args) {
+		os.Exit(2)
+	}
+	os.Exit(run(os.Args[separator:], os.Stdout, os.Stderr))
+}
+
+func assertCLIRejectsWithoutBlocking(t *testing.T, args ...string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	commandArgs := append([]string{"-test.run=^TestCLIHelperProcess$", "--"}, args...)
+	command := exec.CommandContext(ctx, os.Args[0], commandArgs...)
+	command.Env = append(os.Environ(), "OPEN_TRESTLE_TEST_HELPER=1")
+	output, err := command.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		t.Fatalf("command blocked on non-regular input; output = %q", output)
+	}
+	if err == nil {
+		t.Fatalf("command exit error = nil, want nonzero; output = %q", output)
+	}
+	if !strings.Contains(string(output), "regular file") {
+		t.Fatalf("command output = %q, want regular-file error", output)
+	}
+}
 
 func TestRunValidatesLocalFixture(t *testing.T) {
 	fixturePath := filepath.Join(t.TempDir(), "fixture.json")
