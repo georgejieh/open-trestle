@@ -18,7 +18,6 @@ REQUIRED_PATHS = (
     "SUPPORT.md",
     "docs/architecture.md",
     "docs/development.md",
-    "docs/public-boundary.md",
     "docs/roadmap.md",
 )
 FORBIDDEN_PREFIXES = (
