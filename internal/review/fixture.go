@@ -1,6 +1,7 @@
 package review
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -12,7 +13,10 @@ import (
 	"github.com/georgejieh/open-trestle/internal/policy"
 )
 
-const fixtureSchemaVersion = 1
+const (
+	fixtureSchemaVersion = 1
+	maxFixtureBytes      = 1 << 20
+)
 
 // Fixture is a validated, content-addressed local review input.
 type Fixture struct {
@@ -27,7 +31,14 @@ func LoadFixture(reader io.Reader, configuration config.LocalConfig) (Fixture, e
 	if configuration.ProviderRoute() != config.ProviderRouteLocal {
 		return Fixture{}, fmt.Errorf("local fixture configuration is invalid")
 	}
-	decoder := json.NewDecoder(reader)
+	content, err := io.ReadAll(io.LimitReader(reader, maxFixtureBytes+1))
+	if err != nil {
+		return Fixture{}, fmt.Errorf("read fixture: %w", err)
+	}
+	if len(content) > maxFixtureBytes {
+		return Fixture{}, fmt.Errorf("fixture exceeds %d bytes", maxFixtureBytes)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(content))
 	decoder.DisallowUnknownFields()
 	var wire fixtureWire
 	if err := decoder.Decode(&wire); err != nil {

@@ -1,6 +1,7 @@
 package review
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -67,6 +68,14 @@ func TestLoadFixtureRejectsInvalidOrEffectfulInput(t *testing.T) {
 				t.Fatal("LoadFixture() error = nil, want validation error")
 			}
 		})
+	}
+}
+
+func TestLoadFixtureRejectsOversizedInput(t *testing.T) {
+	fixture := fmt.Sprintf(`{"schema_version":1,"provider_route":"local","requested_capabilities":[],"request":{"id":"%s","snapshot":{"workspace":"workspace","revision":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","ranges":[{"path":"main.go","start_line":1,"end_line":1}]}}}`, strings.Repeat("a", 1<<20))
+
+	if _, err := LoadFixture(strings.NewReader(fixture), config.DefaultLocal()); err == nil {
+		t.Fatal("LoadFixture() error = nil, want oversized fixture error")
 	}
 }
 
