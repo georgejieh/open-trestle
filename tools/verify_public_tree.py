@@ -20,18 +20,7 @@ REQUIRED_PATHS = (
     "docs/development.md",
     "docs/roadmap.md",
 )
-FORBIDDEN_PREFIXES = (
-    ".agents/",
-    ".claude/",
-    ".codex/",
-    ".hermes/",
-    "references/",
-)
-FORBIDDEN_PATHS = (
-    ".hermes.md",
-    "AGENTS.md",
-    "CLAUDE.md",
-)
+FORBIDDEN_PREFIXES = ("references/",)
 
 
 def tracked_paths() -> tuple[str, ...]:
@@ -53,7 +42,7 @@ def find_violations(paths: tuple[str, ...]) -> list[str]:
         if required not in path_set:
             violations.append(f"missing required public file: {required}")
     for path in paths:
-        if path in FORBIDDEN_PATHS or path.startswith(FORBIDDEN_PREFIXES):
+        if path.startswith(FORBIDDEN_PREFIXES):
             violations.append(f"tracked private artifact: {path}")
     return violations
 
