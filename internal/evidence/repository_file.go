@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // Aligns repository facts with the accepted bounded source-path intake.
@@ -28,6 +29,37 @@ func NewRepositoryFile(path string, content []byte) (RepositoryFile, error) {
 	}
 	contentDigest := sha256.Sum256(content)
 	digest := hex.EncodeToString(contentDigest[:])
+	identity, err := repositoryFileIdentity(path, digest, len(content))
+	if err != nil {
+		return RepositoryFile{}, err
+	}
+	return RepositoryFile{identity: identity, path: path, digest: digest, sizeBytes: len(content)}, nil
+}
+
+func canonicalRepositoryFile(file RepositoryFile) (RepositoryFile, error) {
+	if len(file.path) > maxRepositoryFilePathBytes {
+		return RepositoryFile{}, fmt.Errorf("source path exceeds %d bytes", maxRepositoryFilePathBytes)
+	}
+	if err := validateSourcePath(file.path); err != nil {
+		return RepositoryFile{}, err
+	}
+	if len(file.digest) != sha256HexLength || file.digest != strings.ToLower(file.digest) {
+		return RepositoryFile{}, fmt.Errorf("repository file digest must be a lowercase SHA-256 digest")
+	}
+	if _, err := hex.DecodeString(file.digest); err != nil {
+		return RepositoryFile{}, fmt.Errorf("invalid repository file digest: %w", err)
+	}
+	if file.sizeBytes < 0 {
+		return RepositoryFile{}, fmt.Errorf("repository file size must be non-negative")
+	}
+	identity, err := repositoryFileIdentity(file.path, file.digest, file.sizeBytes)
+	if err != nil || identity != file.identity {
+		return RepositoryFile{}, fmt.Errorf("repository file is not canonical")
+	}
+	return RepositoryFile{identity: identity, path: file.path, digest: file.digest, sizeBytes: file.sizeBytes}, nil
+}
+
+func repositoryFileIdentity(path, digest string, sizeBytes int) (string, error) {
 	preimage := struct {
 		Contract      string `json:"contract"`
 		SchemaVersion int    `json:"schema_version"`
@@ -39,19 +71,14 @@ func NewRepositoryFile(path string, content []byte) (RepositoryFile, error) {
 		SchemaVersion: 1,
 		Path:          path,
 		Digest:        digest,
-		SizeBytes:     len(content),
+		SizeBytes:     sizeBytes,
 	}
 	encoded, err := json.Marshal(preimage)
 	if err != nil {
-		return RepositoryFile{}, fmt.Errorf("encode repository file identity: %w", err)
+		return "", fmt.Errorf("encode repository file identity: %w", err)
 	}
 	identityDigest := sha256.Sum256(encoded)
-	return RepositoryFile{
-		identity:  hex.EncodeToString(identityDigest[:]),
-		path:      path,
-		digest:    digest,
-		sizeBytes: len(content),
-	}, nil
+	return hex.EncodeToString(identityDigest[:]), nil
 }
 
 // Identity returns the versioned canonical SHA-256 identity.
