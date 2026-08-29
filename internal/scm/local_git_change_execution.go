@@ -40,6 +40,14 @@ type localGitChangeEndpoint func(context.Context, evidence.RepositoryAcquisition
 
 type localGitFileDeltaExecutor func(evidence.RepositoryFileDelta, evidence.RepositoryFileDeltaContent, evidence.RepositoryFileDeltaContent) (evidence.RepositoryFileDeltaExecution, error)
 
+type localGitHeadRetention uint8
+
+const (
+	localGitHeadRetentionNone localGitHeadRetention = iota
+	localGitHeadRetentionGo
+	localGitHeadRetentionAll
+)
+
 // ExecuteLocalGitChange builds compact accounted change evidence from two acquisitions.
 func ExecuteLocalGitChange(ctx context.Context, baseRequest, headRequest evidence.RepositoryAcquisitionRequest, adapter *LocalGitSourceAdapter) (LocalGitChangeExecution, error) {
 	return executeLocalGitChange(ctx, baseRequest, headRequest, adapter, executeLocalGitAcquisitionEnvelopeWithOwnedContent, evidence.ExecuteRepositoryFileDelta)
@@ -50,12 +58,12 @@ func executeLocalGitChangeWithEndpoint(ctx context.Context, baseRequest, headReq
 }
 
 func executeLocalGitChange(ctx context.Context, baseRequest, headRequest evidence.RepositoryAcquisitionRequest, adapter *LocalGitSourceAdapter, endpoint localGitChangeEndpoint, fileExecutor localGitFileDeltaExecutor) (LocalGitChangeExecution, error) {
-	execution, goHeadContents, err := executeLocalGitChangeRetainingGo(ctx, baseRequest, headRequest, adapter, endpoint, fileExecutor, false)
-	clearLocalGitGoHeadContents(goHeadContents)
+	execution, retainedHeadContents, err := executeLocalGitChangeRetainingHead(ctx, baseRequest, headRequest, adapter, endpoint, fileExecutor, localGitHeadRetentionNone)
+	clearLocalGitRetainedHeadContents(retainedHeadContents)
 	return execution, err
 }
 
-func executeLocalGitChangeRetainingGo(ctx context.Context, baseRequest, headRequest evidence.RepositoryAcquisitionRequest, adapter *LocalGitSourceAdapter, endpoint localGitChangeEndpoint, fileExecutor localGitFileDeltaExecutor, retainGoHead bool) (LocalGitChangeExecution, map[string][]byte, error) {
+func executeLocalGitChangeRetainingHead(ctx context.Context, baseRequest, headRequest evidence.RepositoryAcquisitionRequest, adapter *LocalGitSourceAdapter, endpoint localGitChangeEndpoint, fileExecutor localGitFileDeltaExecutor, retention localGitHeadRetention) (LocalGitChangeExecution, map[string][]byte, error) {
 	if err := validateLocalGitAcquisitionPairInputs(ctx, baseRequest, headRequest, adapter); err != nil {
 		return LocalGitChangeExecution{}, nil, err
 	}
@@ -96,15 +104,15 @@ func executeLocalGitChangeRetainingGo(ctx context.Context, baseRequest, headRequ
 	if delta.ChangedFileCount() > maxLocalGitChangeEntries {
 		return LocalGitChangeExecution{}, nil, LocalGitChangeExecutionResourceLimit
 	}
-	execution, goHeadContents, err := buildLocalGitChangeExecutionRetainingGo(ctx, pair, baseContents, headContents, fileExecutor, retainGoHead)
+	execution, retainedHeadContents, err := buildLocalGitChangeExecutionRetainingHead(ctx, pair, baseContents, headContents, fileExecutor, retention)
 	if err != nil {
 		return LocalGitChangeExecution{}, nil, err
 	}
 	if err := ctx.Err(); err != nil {
-		clearLocalGitGoHeadContents(goHeadContents)
+		clearLocalGitRetainedHeadContents(retainedHeadContents)
 		return LocalGitChangeExecution{}, nil, err
 	}
-	return execution, goHeadContents, nil
+	return execution, retainedHeadContents, nil
 }
 
 func executeLocalGitAcquisitionEnvelopeWithOwnedContent(ctx context.Context, request evidence.RepositoryAcquisitionRequest, adapter *LocalGitSourceAdapter) (LocalGitAcquisitionEnvelope, evidence.RepositoryManifest, map[string][]byte, error) {
@@ -126,17 +134,17 @@ func executeLocalGitAcquisitionEnvelopeWithOwnedContent(ctx context.Context, req
 	return envelope, manifest, contents, nil
 }
 
-func buildLocalGitChangeExecutionRetainingGo(ctx context.Context, pair LocalGitAcquisitionPair, baseContents, headContents map[string][]byte, fileExecutor localGitFileDeltaExecutor, retainGoHead bool) (LocalGitChangeExecution, map[string][]byte, error) {
+func buildLocalGitChangeExecutionRetainingHead(ctx context.Context, pair LocalGitAcquisitionPair, baseContents, headContents map[string][]byte, fileExecutor localGitFileDeltaExecutor, retention localGitHeadRetention) (LocalGitChangeExecution, map[string][]byte, error) {
 	entries := pair.ManifestDelta().Entries()
 	pruneLocalGitChangeContents(entries, baseContents, headContents)
 	entryExecutions := make([]evidence.RepositoryFileDeltaExecution, 0, len(entries))
 	fileChanges := make([]evidence.FileChange, 0, len(entries))
 	lineMaps := make([]evidence.LineMap, 0, len(entries))
-	var goHeadContents map[string][]byte
+	var retainedHeadContents map[string][]byte
 	completed := false
 	defer func() {
 		if !completed {
-			clearLocalGitGoHeadContents(goHeadContents)
+			clearLocalGitRetainedHeadContents(retainedHeadContents)
 		}
 	}()
 	for _, entry := range entries {
@@ -159,11 +167,11 @@ func buildLocalGitChangeExecutionRetainingGo(ctx context.Context, pair LocalGitA
 		if entryExecution.Status() == evidence.RepositoryFileDeltaExecutionStatusSupported {
 			fileChanges = append(fileChanges, entryExecution.FileChange())
 			lineMaps = append(lineMaps, entryExecution.LineMap())
-			if retainGoHead && path.Ext(entry.Path()) == ".go" {
-				if goHeadContents == nil {
-					goHeadContents = make(map[string][]byte)
+			if retention == localGitHeadRetentionAll || retention == localGitHeadRetentionGo && path.Ext(entry.Path()) == ".go" {
+				if retainedHeadContents == nil {
+					retainedHeadContents = make(map[string][]byte)
 				}
-				goHeadContents[entry.Path()] = headContent
+				retainedHeadContents[entry.Path()] = headContent
 				headContent = nil
 			}
 		}
@@ -189,7 +197,7 @@ func buildLocalGitChangeExecutionRetainingGo(ctx context.Context, pair LocalGitA
 		return LocalGitChangeExecution{}, nil, err
 	}
 	completed = true
-	return execution, goHeadContents, nil
+	return execution, retainedHeadContents, nil
 }
 
 func pruneLocalGitChangeContents(entries []evidence.RepositoryFileDelta, baseContents, headContents map[string][]byte) {
@@ -241,7 +249,7 @@ func zeroLocalGitChangeContent(content []byte) {
 	}
 }
 
-func clearLocalGitGoHeadContents(contents map[string][]byte) {
+func clearLocalGitRetainedHeadContents(contents map[string][]byte) {
 	for path, content := range contents {
 		for index := range content {
 			content[index] = 0

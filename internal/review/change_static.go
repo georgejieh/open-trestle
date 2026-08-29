@@ -85,7 +85,7 @@ func ReviewDebugOutputChange(change evidence.Change, headContents map[string][]b
 	if err != nil || canonicalChange.Identity() != change.Identity() {
 		return DebugOutputChangeResult{}, fmt.Errorf("change is not canonical")
 	}
-	if err := validateDebugOutputChangeLimits(limits); err != nil {
+	if err := ValidateDebugOutputChangeLimits(limits); err != nil {
 		return DebugOutputChangeResult{}, err
 	}
 	fileChanges := canonicalChange.FileChanges()
@@ -175,6 +175,11 @@ func debugOutputPhysicalLineCount(content []byte) int {
 		count++
 	}
 	return count
+}
+
+// ValidateDebugOutputChangeLimits validates explicit limits without reviewing content.
+func ValidateDebugOutputChangeLimits(limits DebugOutputChangeLimits) error {
+	return validateDebugOutputChangeLimits(limits)
 }
 
 func validateDebugOutputChangeLimits(limits DebugOutputChangeLimits) error {

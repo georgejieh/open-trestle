@@ -31,17 +31,17 @@ func executeLocalGitChangeWithGoImpact(ctx context.Context, baseRequest, headReq
 	if builder == nil {
 		return LocalGitGoImpactExecution{}, fmt.Errorf("Go impact builder is nil")
 	}
-	changeExecution, goHeadContents, err := executeLocalGitChangeRetainingGo(ctx, baseRequest, headRequest, adapter, endpoint, fileExecutor, true)
+	changeExecution, retainedHeadContents, err := executeLocalGitChangeRetainingHead(ctx, baseRequest, headRequest, adapter, endpoint, fileExecutor, localGitHeadRetentionGo)
 	if err != nil {
 		return LocalGitGoImpactExecution{}, err
 	}
-	defer clearLocalGitGoHeadContents(goHeadContents)
+	defer clearLocalGitRetainedHeadContents(retainedHeadContents)
 	if !changeExecution.HasChange() {
 		return newLocalGitGoImpactExecution(changeExecution, analysis.ChangeImpactProfile{}, analysis.GoChangeImpactReceipt{}, false)
 	}
-	profile, receipt, err := builder(changeExecution.Change(), goHeadContents)
-	clearLocalGitGoHeadContents(goHeadContents)
-	goHeadContents = nil
+	profile, receipt, err := builder(changeExecution.Change(), retainedHeadContents)
+	clearLocalGitRetainedHeadContents(retainedHeadContents)
+	retainedHeadContents = nil
 	if err != nil {
 		return LocalGitGoImpactExecution{}, err
 	}
