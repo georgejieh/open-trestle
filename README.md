@@ -26,7 +26,7 @@ AI review is useful only when its conclusions can be inspected and controlled. O
 | `trestle acp` | Agent Client Protocol endpoint |
 | Forge adapters | GitHub, GitLab, Bitbucket, and Azure DevOps integration |
 
-The daemon, TUI, protocol, and forge interfaces remain design targets. The current `trestle` command validates and reviews local versioned fixtures, emits deterministic JSON receipts for headless CI dry runs, and can inspect one exact loose Git revision.
+The daemon, TUI, protocol, and forge interfaces remain design targets. The current `trestle` command validates and reviews local versioned fixtures, emits deterministic JSON receipts for headless CI dry runs, inspects exact loose Git revisions, and builds compact evidence for an exact base/head pair.
 
 ## Available local commands
 
@@ -44,9 +44,17 @@ go run ./cmd/trestle local-git inspect \
   --repository-name NAME \
   --revision-algorithm sha1 \
   --revision-digest FULL_LOWERCASE_SHA1
+go run ./cmd/trestle local-git change \
+  --objects-root PATH \
+  --repository-authority AUTHORITY \
+  --repository-namespace NAMESPACE \
+  --repository-name NAME \
+  --revision-algorithm sha1 \
+  --base-revision-digest FULL_LOWERCASE_BASE_SHA1 \
+  --head-revision-digest FULL_LOWERCASE_HEAD_SHA1
 ```
 
-The local Git command supports verified loose objects only. Repository fields are caller-supplied scope labels, not proof that the object directory belongs to that repository. See [Local Git inspection](docs/local-git-inspect.md).
+The local Git commands support verified loose objects only. Repository fields are caller-supplied scope labels, not proof that the object directory belongs to that repository. See [Local Git inspection](docs/local-git-inspect.md) and [Local Git change evidence](docs/local-git-change.md).
 
 These commands are local-only. They do not call a model, execute repository content, mutate source, or publish results.
 
