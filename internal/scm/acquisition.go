@@ -414,6 +414,15 @@ func newRepositoryAcquisitionExecution(request evidence.RepositoryAcquisitionReq
 		execution.gitTreeGraphIdentity = local.gitTreeGraphIdentity
 		execution.correspondenceIdentity = local.correspondenceIdentity
 	}
+	identity, err := canonicalRepositoryAcquisitionExecutionIdentity(execution)
+	if err != nil {
+		return RepositoryAcquisitionExecution{}, err
+	}
+	execution.identity = identity
+	return execution, nil
+}
+
+func canonicalRepositoryAcquisitionExecutionIdentity(execution RepositoryAcquisitionExecution) (string, error) {
 	preimage := struct {
 		Contract                string                                `json:"contract"`
 		SchemaVersion           int                                   `json:"schema_version"`
@@ -431,7 +440,7 @@ func newRepositoryAcquisitionExecution(request evidence.RepositoryAcquisitionReq
 		Contract:                "open-trestle/repository-acquisition-execution",
 		SchemaVersion:           1,
 		RequestIdentity:         execution.requestIdentity,
-		ReceiptIdentity:         receipt.Identity(),
+		ReceiptIdentity:         execution.receipt.Identity(),
 		SourceAdapterIdentity:   execution.sourceAdapterIdentity,
 		Outcome:                 execution.outcome,
 		LocalGitEvidencePresent: execution.hasLocalGitEvidence,
@@ -443,11 +452,10 @@ func newRepositoryAcquisitionExecution(request evidence.RepositoryAcquisitionReq
 	}
 	encoded, err := json.Marshal(preimage)
 	if err != nil {
-		return RepositoryAcquisitionExecution{}, fmt.Errorf("encode repository acquisition execution identity: %w", err)
+		return "", fmt.Errorf("encode repository acquisition execution identity: %w", err)
 	}
 	digest := sha256.Sum256(encoded)
-	execution.identity = hex.EncodeToString(digest[:])
-	return execution, nil
+	return hex.EncodeToString(digest[:]), nil
 }
 
 func isCanonicalLocalGitSourceAdapterIdentity(identity evidence.SourceAdapterIdentity) bool {
