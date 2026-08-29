@@ -2,6 +2,7 @@ package provider
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 )
 
@@ -72,8 +73,14 @@ func TestCheckModelRequirementsRejectsInsufficientCapacity(t *testing.T) {
 
 func TestCheckModelRequirementsValidatesOperandsInOrder(t *testing.T) {
 	invalidRequirements := ModelRequirements{requiredFeatures: 1 << 7}
+	invalidRequirementsWithMismatch := ModelRequirements{
+		requiredFeatures: (1 << 7) | (1 << (ModelFeatureStructuredOutput - 1)),
+		minContextTokens: 2,
+		minOutputTokens:  2,
+	}
 	invalidCapabilities := ModelCapabilities{supportedFeatures: 1 << 7}
 	validRequirements := ModelRequirements{}
+	positiveRequirements := mustModelRequirements(t, 1, 1, ModelFeatureStructuredOutput)
 	validCapabilities := mustModelCapabilities(t, 1, 1)
 	for _, test := range []struct {
 		name         string
@@ -84,7 +91,9 @@ func TestCheckModelRequirementsValidatesOperandsInOrder(t *testing.T) {
 		{name: "requirements", capabilities: validCapabilities, requirements: invalidRequirements, want: ErrInvalidModelRequirements},
 		{name: "capabilities", capabilities: invalidCapabilities, requirements: validRequirements, want: ErrInvalidModelCapabilities},
 		{name: "requirements first", capabilities: invalidCapabilities, requirements: invalidRequirements, want: ErrInvalidModelRequirements},
+		{name: "invalid requirements before mismatch", capabilities: validCapabilities, requirements: invalidRequirementsWithMismatch, want: ErrInvalidModelRequirements},
 		{name: "zero capabilities", requirements: validRequirements, want: ErrInvalidModelCapabilities},
+		{name: "invalid capabilities before mismatch", capabilities: invalidCapabilities, requirements: positiveRequirements, want: ErrInvalidModelCapabilities},
 	} {
 		if err := CheckModelRequirements(test.capabilities, test.requirements); err != test.want {
 			t.Fatalf("%s = %v, want %v", test.name, err, test.want)
@@ -95,11 +104,14 @@ func TestCheckModelRequirementsValidatesOperandsInOrder(t *testing.T) {
 func TestCheckModelRequirementsDoesNotMutateInputs(t *testing.T) {
 	requirements := mustModelRequirements(t, 100, 20, ModelFeatureStructuredOutput)
 	capabilities := mustModelCapabilities(t, 200, 40, ModelFeatureStructuredOutput, ModelFeatureVision)
-	originalRequirements := requirements
-	originalCapabilities := capabilities
+	originalRequirementFeatures := requirements.RequiredFeatures()
+	originalCapabilityFeatures := capabilities.SupportedFeatures()
 	_ = CheckModelRequirements(capabilities, requirements)
-	if requirements != originalRequirements || capabilities != originalCapabilities {
-		t.Fatal("CheckModelRequirements changed an input")
+	if requirements.MinContextTokens() != 100 || requirements.MinOutputTokens() != 20 || !reflect.DeepEqual(requirements.RequiredFeatures(), originalRequirementFeatures) {
+		t.Fatal("CheckModelRequirements changed requirements")
+	}
+	if capabilities.MaxContextTokens() != 200 || capabilities.MaxOutputTokens() != 40 || !reflect.DeepEqual(capabilities.SupportedFeatures(), originalCapabilityFeatures) {
+		t.Fatal("CheckModelRequirements changed capabilities")
 	}
 }
 
