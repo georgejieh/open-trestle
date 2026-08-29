@@ -83,13 +83,29 @@ func containsDebugOutput(source []byte, sourceRange evidence.SourceRange) (bool,
 }
 
 func debugOutputRanges(source []byte, selection evidence.SourceRange) ([]evidence.SourceRange, error) {
-	if path.Ext(selection.Path()) != ".go" {
+	return debugOutputRangesForSelections(source, selection.Path(), []evidence.SourceRange{selection})
+}
+
+func debugOutputRangesForSelections(source []byte, sourcePath string, selections []evidence.SourceRange) ([]evidence.SourceRange, error) {
+	if path.Ext(sourcePath) != ".go" {
 		return nil, nil
 	}
+	if len(selections) == 0 {
+		return []evidence.SourceRange{}, nil
+	}
+	for index, selection := range selections {
+		canonical, err := evidence.NewSourceRange(selection.Path(), selection.StartLine(), selection.EndLine())
+		if err != nil || canonical != selection || selection.Path() != sourcePath {
+			return nil, fmt.Errorf("debug-output selection %d is invalid", index)
+		}
+		if index > 0 && selection.StartLine() <= selections[index-1].EndLine() {
+			return nil, fmt.Errorf("debug-output selections overlap or are unordered")
+		}
+	}
 	fileSet := token.NewFileSet()
-	file, err := parser.ParseFile(fileSet, selection.Path(), source, parser.SkipObjectResolution)
+	file, err := parser.ParseFile(fileSet, sourcePath, source, parser.SkipObjectResolution)
 	if err != nil {
-		return nil, fmt.Errorf("parse Go source: %w", err)
+		return nil, fmt.Errorf("parse Go source")
 	}
 	typeInfo := &types.Info{Uses: make(map[*ast.Ident]types.Object)}
 	configuration := types.Config{
@@ -108,7 +124,7 @@ func debugOutputRanges(source []byte, selection evidence.SourceRange) ([]evidenc
 		}
 		startLine := fileSet.PositionFor(call.Pos(), false).Line
 		endLine := fileSet.PositionFor(call.End(), false).Line
-		if endLine < selection.StartLine() || startLine > selection.EndLine() {
+		if !overlapsDebugOutputSelection(startLine, endLine, selections) {
 			return true
 		}
 		key := [2]int{startLine, endLine}
@@ -116,7 +132,7 @@ func debugOutputRanges(source []byte, selection evidence.SourceRange) ([]evidenc
 			return true
 		}
 		seen[key] = struct{}{}
-		sourceRange, err := evidence.NewSourceRange(selection.Path(), startLine, endLine)
+		sourceRange, err := evidence.NewSourceRange(sourcePath, startLine, endLine)
 		if err != nil {
 			rangeErr = err
 			return false
@@ -134,6 +150,13 @@ func debugOutputRanges(source []byte, selection evidence.SourceRange) ([]evidenc
 		return ranges[i].EndLine() < ranges[j].EndLine()
 	})
 	return ranges, nil
+}
+
+func overlapsDebugOutputSelection(startLine, endLine int, selections []evidence.SourceRange) bool {
+	index := sort.Search(len(selections), func(index int) bool {
+		return selections[index].EndLine() >= startLine
+	})
+	return index < len(selections) && selections[index].StartLine() <= endLine
 }
 
 func isDebugPrintlnCall(call *ast.CallExpr, typeInfo *types.Info) bool {
