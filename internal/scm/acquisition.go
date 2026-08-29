@@ -43,6 +43,13 @@ type localGitExecutionEvidence struct {
 	binding                string
 }
 
+type repositoryAcquisitionRuntimeResult struct {
+	execution        RepositoryAcquisitionExecution
+	result           SourceAdapterResult
+	bindingInputs    localGitEvidenceInputs
+	hasBindingInputs bool
+}
+
 // Identity returns the versioned canonical SHA-256 identity.
 func (e RepositoryAcquisitionExecution) Identity() string { return e.identity }
 
@@ -98,66 +105,159 @@ func ExecuteRepositoryAcquisition(ctx context.Context, request evidence.Reposito
 
 // ExecuteRepositoryAcquisitionWithEvidence invokes one adapter and preserves validated reported evidence.
 func ExecuteRepositoryAcquisitionWithEvidence(ctx context.Context, request evidence.RepositoryAcquisitionRequest, adapter SourceAdapter) (RepositoryAcquisitionExecution, error) {
-	if isNilInterface(ctx) {
-		return RepositoryAcquisitionExecution{}, fmt.Errorf("repository acquisition context is nil")
+	runtime, err := executeRepositoryAcquisition(ctx, request, adapter, false)
+	if err != nil {
+		return RepositoryAcquisitionExecution{}, err
 	}
-	if isNilInterface(adapter) {
-		return RepositoryAcquisitionExecution{}, fmt.Errorf("source adapter is nil")
+	return runtime.execution, nil
+}
+
+// ExecuteLocalGitAcquisitionWithBinding structurally binds one exact local Git execution.
+// Binding synchronously revalidates combined-bounded inputs without rereading the store.
+func ExecuteLocalGitAcquisitionWithBinding(ctx context.Context, request evidence.RepositoryAcquisitionRequest, adapter *LocalGitSourceAdapter) (RepositoryAcquisitionExecution, evidence.RepositoryAcquisitionEvidenceBinding, error) {
+	if isNilInterface(ctx) {
+		return RepositoryAcquisitionExecution{}, evidence.RepositoryAcquisitionEvidenceBinding{}, fmt.Errorf("repository acquisition context is nil")
+	}
+	if adapter == nil {
+		return RepositoryAcquisitionExecution{}, evidence.RepositoryAcquisitionEvidenceBinding{}, fmt.Errorf("source adapter is nil")
 	}
 	if err := evidence.ValidateRepositoryAcquisitionRequest(request); err != nil {
-		return RepositoryAcquisitionExecution{}, err
+		return RepositoryAcquisitionExecution{}, evidence.RepositoryAcquisitionEvidenceBinding{}, err
 	}
 	if err := ctx.Err(); err != nil {
-		return RepositoryAcquisitionExecution{}, err
+		return RepositoryAcquisitionExecution{}, evidence.RepositoryAcquisitionEvidenceBinding{}, err
+	}
+	if request.Artifact() != evidence.AcquisitionArtifactManifestAndContent {
+		return RepositoryAcquisitionExecution{}, evidence.RepositoryAcquisitionEvidenceBinding{}, fmt.Errorf("local Git evidence binding requires manifest and content acquisition")
+	}
+	runtime, err := executeRepositoryAcquisition(ctx, request, adapter, true)
+	if err != nil {
+		return RepositoryAcquisitionExecution{}, evidence.RepositoryAcquisitionEvidenceBinding{}, err
+	}
+	binding, err := bindLocalGitAcquisitionExecution(ctx, request, runtime)
+	if err != nil {
+		return RepositoryAcquisitionExecution{}, evidence.RepositoryAcquisitionEvidenceBinding{}, err
+	}
+	return runtime.execution, binding, nil
+}
+
+func executeRepositoryAcquisition(ctx context.Context, request evidence.RepositoryAcquisitionRequest, adapter SourceAdapter, retainBindingInputs bool) (repositoryAcquisitionRuntimeResult, error) {
+	if isNilInterface(ctx) {
+		return repositoryAcquisitionRuntimeResult{}, fmt.Errorf("repository acquisition context is nil")
+	}
+	if isNilInterface(adapter) {
+		return repositoryAcquisitionRuntimeResult{}, fmt.Errorf("source adapter is nil")
+	}
+	if err := evidence.ValidateRepositoryAcquisitionRequest(request); err != nil {
+		return repositoryAcquisitionRuntimeResult{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return repositoryAcquisitionRuntimeResult{}, err
 	}
 	reportedIdentity := adapter.Identity()
 	canonicalIdentity, err := evidence.NewSourceAdapterIdentity(reportedIdentity.Kind(), reportedIdentity.Name(), reportedIdentity.Version(), reportedIdentity.Capabilities())
 	if err != nil || !sourceAdapterIdentityValuesEqual(reportedIdentity, canonicalIdentity) || canonicalIdentity.Identity() != request.SourceAdapterIdentity() {
-		return RepositoryAcquisitionExecution{}, fmt.Errorf("source adapter identity does not match repository acquisition request")
+		return repositoryAcquisitionRuntimeResult{}, fmt.Errorf("source adapter identity does not match repository acquisition request")
 	}
 	if err := ctx.Err(); err != nil {
-		return RepositoryAcquisitionExecution{}, err
+		return repositoryAcquisitionRuntimeResult{}, err
 	}
 	var result SourceAdapterResult
 	var localGitEvidence localGitExecutionEvidence
+	var bindingInputs localGitEvidenceInputs
 	var hasLocalGitEvidence bool
+	var hasBindingInputs bool
 	if localAdapter, ok := adapter.(*LocalGitSourceAdapter); ok {
-		result, localGitEvidence, hasLocalGitEvidence = localAdapter.acquireWithLocalGitEvidence(ctx, request)
+		if retainBindingInputs {
+			result, localGitEvidence, bindingInputs, hasLocalGitEvidence = localAdapter.acquireWithLocalGitBindingInputs(ctx, request)
+			hasBindingInputs = hasLocalGitEvidence
+		} else {
+			result, localGitEvidence, hasLocalGitEvidence = localAdapter.acquireWithLocalGitEvidence(ctx, request)
+		}
 	} else {
 		result = adapter.Acquire(ctx, request)
 	}
 	if err := ctx.Err(); err != nil {
-		return RepositoryAcquisitionExecution{}, err
+		return repositoryAcquisitionRuntimeResult{}, err
 	}
-	result, err = snapshotSourceAdapterResult(ctx, request, result)
+	if retainBindingInputs && hasBindingInputs {
+		result, err = validateOwnedSourceAdapterResult(ctx, request, result)
+	} else {
+		result, err = snapshotSourceAdapterResult(ctx, request, result)
+	}
 	if err != nil {
-		return RepositoryAcquisitionExecution{}, err
+		return repositoryAcquisitionRuntimeResult{}, err
 	}
 	if err := ctx.Err(); err != nil {
-		return RepositoryAcquisitionExecution{}, err
+		return repositoryAcquisitionRuntimeResult{}, err
 	}
 	receipt, err := evidence.NewRepositoryAcquisitionReceipt(request, result.Outcome, result.Reason, result.Manifest, result.Contents)
 	if err != nil {
-		return RepositoryAcquisitionExecution{}, err
+		return repositoryAcquisitionRuntimeResult{}, err
 	}
 	if err := ctx.Err(); err != nil {
-		return RepositoryAcquisitionExecution{}, err
+		return repositoryAcquisitionRuntimeResult{}, err
 	}
 	localGitEvidence, hasLocalGitEvidence, err = snapshotLocalGitExecutionEvidence(ctx, request, adapter, result, receipt, localGitEvidence, hasLocalGitEvidence)
 	if err != nil {
-		return RepositoryAcquisitionExecution{}, err
+		return repositoryAcquisitionRuntimeResult{}, err
 	}
 	if err := ctx.Err(); err != nil {
-		return RepositoryAcquisitionExecution{}, err
+		return repositoryAcquisitionRuntimeResult{}, err
 	}
 	execution, err := newRepositoryAcquisitionExecution(request, receipt, localGitEvidence, hasLocalGitEvidence)
 	if err != nil {
-		return RepositoryAcquisitionExecution{}, err
+		return repositoryAcquisitionRuntimeResult{}, err
 	}
 	if err := ctx.Err(); err != nil {
-		return RepositoryAcquisitionExecution{}, err
+		return repositoryAcquisitionRuntimeResult{}, err
 	}
-	return execution, nil
+	runtime := repositoryAcquisitionRuntimeResult{execution: execution}
+	if retainBindingInputs {
+		runtime.result = result
+		runtime.bindingInputs = bindingInputs
+		runtime.hasBindingInputs = hasBindingInputs
+	}
+	return runtime, nil
+}
+
+func bindLocalGitAcquisitionExecution(ctx context.Context, request evidence.RepositoryAcquisitionRequest, runtime repositoryAcquisitionRuntimeResult) (evidence.RepositoryAcquisitionEvidenceBinding, error) {
+	if err := ctx.Err(); err != nil {
+		return evidence.RepositoryAcquisitionEvidenceBinding{}, err
+	}
+	execution := runtime.execution
+	inputs := runtime.bindingInputs
+	if !runtime.hasBindingInputs || execution.Outcome() != evidence.AcquisitionOutcomeAcquired || !execution.HasLocalGitEvidence() || runtime.result.Outcome != evidence.AcquisitionOutcomeAcquired || runtime.result.Reason != evidence.AcquisitionReasonNone || execution.Receipt().ContentCoverage() != evidence.ContentCoverageComplete {
+		return evidence.RepositoryAcquisitionEvidenceBinding{}, fmt.Errorf("local Git acquisition execution is not eligible for evidence binding")
+	}
+	if inputs.revision.Identity() != execution.RevisionIdentity() || inputs.commit.Identity() != execution.GitCommitIdentity() || inputs.graph.Identity() != execution.GitTreeGraphIdentity() || inputs.correspondence.Identity() != execution.CorrespondenceIdentity() || runtime.result.Manifest.Identity() != execution.ManifestIdentity() {
+		return evidence.RepositoryAcquisitionEvidenceBinding{}, fmt.Errorf("local Git binding inputs do not match acquisition execution")
+	}
+	validatedResult, err := validateOwnedSourceAdapterResult(ctx, request, runtime.result)
+	if err != nil {
+		return evidence.RepositoryAcquisitionEvidenceBinding{}, err
+	}
+	runtime.result = validatedResult
+	if err := validateLocalGitBindingRetainedContent(ctx, inputs, runtime.result.Manifest.TotalSizeBytes()); err != nil {
+		return evidence.RepositoryAcquisitionEvidenceBinding{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return evidence.RepositoryAcquisitionEvidenceBinding{}, err
+	}
+	binding, err := evidence.BindRepositoryAcquisitionEvidence(request, execution.Receipt(), runtime.result.Contents, inputs.revision, inputs.commitVerification, inputs.commitContent, inputs.commit, inputs.rootTreeVerification, inputs.rootTreeContent, inputs.rootTree, inputs.childTreeContents, inputs.blobContents, inputs.graph, runtime.result.Manifest, inputs.correspondence)
+	if err != nil {
+		return evidence.RepositoryAcquisitionEvidenceBinding{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return evidence.RepositoryAcquisitionEvidenceBinding{}, err
+	}
+	if binding.BindingStatus() != evidence.RepositoryAcquisitionEvidenceStatusSupplied || binding.RequestIdentity() != execution.RequestIdentity() || binding.ReceiptIdentity() != execution.ReceiptIdentity() || binding.RepositoryIdentity() != request.RepositoryIdentity() || binding.RevisionIdentity() != execution.RevisionIdentity() || binding.SourceAdapterIdentity() != execution.SourceAdapterIdentity() || binding.ManifestIdentity() != execution.ManifestIdentity() || binding.GitCommitIdentity() != execution.GitCommitIdentity() || binding.GitTreeGraphIdentity() != execution.GitTreeGraphIdentity() || binding.CorrespondenceIdentity() != execution.CorrespondenceIdentity() {
+		return evidence.RepositoryAcquisitionEvidenceBinding{}, fmt.Errorf("repository acquisition evidence binding does not match execution")
+	}
+	if err := ctx.Err(); err != nil {
+		return evidence.RepositoryAcquisitionEvidenceBinding{}, err
+	}
+	return binding, nil
 }
 
 func newLocalGitExecutionEvidence(local LocalGitRevisionResult) (localGitExecutionEvidence, error) {
@@ -351,6 +451,40 @@ func validExecutionIdentity(identity string) bool {
 
 func repositoryAcquisitionManifestsEqual(first, second evidence.RepositoryManifest) bool {
 	return first.Identity() == second.Identity() && first.TotalSizeBytes() == second.TotalSizeBytes() && slices.Equal(first.Files(), second.Files())
+}
+
+func validateOwnedSourceAdapterResult(ctx context.Context, request evidence.RepositoryAcquisitionRequest, result SourceAdapterResult) (SourceAdapterResult, error) {
+	if err := ctx.Err(); err != nil {
+		return SourceAdapterResult{}, err
+	}
+	if result.Outcome != evidence.AcquisitionOutcomeAcquired || result.Reason != evidence.AcquisitionReasonNone || request.Artifact() != evidence.AcquisitionArtifactManifestAndContent || result.Contents == nil {
+		return SourceAdapterResult{}, fmt.Errorf("owned source adapter result is not a complete acquisition")
+	}
+	if len(result.Contents) != result.Manifest.FileCount() {
+		return SourceAdapterResult{}, fmt.Errorf("source adapter result has %d content entries, want %d", len(result.Contents), result.Manifest.FileCount())
+	}
+	var totalSizeBytes int64
+	for _, file := range result.Manifest.Files() {
+		if err := ctx.Err(); err != nil {
+			return SourceAdapterResult{}, err
+		}
+		content, exists := result.Contents[file.Path()]
+		if !exists || len(content) != file.SizeBytes() {
+			return SourceAdapterResult{}, fmt.Errorf("source adapter result content size does not match path %q", file.Path())
+		}
+		var err error
+		totalSizeBytes, err = checkedSourceAdapterResultContentAdd(totalSizeBytes, len(content))
+		if err != nil {
+			return SourceAdapterResult{}, err
+		}
+	}
+	if totalSizeBytes != result.Manifest.TotalSizeBytes() {
+		return SourceAdapterResult{}, fmt.Errorf("source adapter result content total does not match manifest")
+	}
+	if err := ctx.Err(); err != nil {
+		return SourceAdapterResult{}, err
+	}
+	return result, nil
 }
 
 func snapshotSourceAdapterResult(ctx context.Context, request evidence.RepositoryAcquisitionRequest, result SourceAdapterResult) (SourceAdapterResult, error) {

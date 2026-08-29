@@ -273,6 +273,64 @@ func TestRepositoryAcquisitionExecutionRejectsMismatchedLocalGitEvidence(t *test
 	}
 }
 
+func TestLocalGitSourceAdapterRetainsBindingInputsOnlyWhenRequested(t *testing.T) {
+	directory, store := newLocalGitObjectStoreFixture(t)
+	content := []byte("content")
+	blobDigest := writeLooseObject(t, directory, evidence.RevisionAlgorithmSHA1, "blob", content)
+	tree := localTreeEntry(t, evidence.RevisionAlgorithmSHA1, evidence.GitTreeModeRegular, []byte("file"), blobDigest)
+	revision := writeLocalRevision(t, directory, evidence.RevisionAlgorithmSHA1, tree)
+	adapter := mustLocalGitSourceAdapter(t, store)
+	request := mustLocalGitAdapterRequest(t, adapter, mustRepositoryIdentity(t), revision, evidence.AcquisitionArtifactManifestAndContent)
+
+	result, executionEvidence, inputs, present := adapter.acquireWithLocalGitBindingInputs(context.Background(), request)
+	if !present || executionEvidence.binding == "" || isZeroLocalGitEvidenceInputs(inputs) || result.Outcome != evidence.AcquisitionOutcomeAcquired {
+		t.Fatalf("acquireWithLocalGitBindingInputs() = (%#v, %#v, %#v, %t)", result, executionEvidence, inputs, present)
+	}
+	result.Contents["file"][0] = 'X'
+	if !bytes.Equal(inputs.blobContents[blobDigest], content) {
+		t.Fatal("public result mutation changed retained object input")
+	}
+	compactResult, compactEvidence, compactPresent := adapter.acquireWithLocalGitEvidence(context.Background(), request)
+	if !compactPresent || compactEvidence.binding == "" || !bytes.Equal(compactResult.Contents["file"], content) {
+		t.Fatalf("acquireWithLocalGitEvidence() = (%#v, %#v, %t)", compactResult, compactEvidence, compactPresent)
+	}
+}
+
+func TestValidateLocalGitBindingRetainedContent(t *testing.T) {
+	directory, store := newLocalGitObjectStoreFixture(t)
+	blob := writeLooseObject(t, directory, evidence.RevisionAlgorithmSHA1, "blob", []byte("content"))
+	tree := localTreeEntry(t, evidence.RevisionAlgorithmSHA1, evidence.GitTreeModeRegular, []byte("file"), blob)
+	revision := writeLocalRevision(t, directory, evidence.RevisionAlgorithmSHA1, tree)
+	_, inputs, err := readLocalGitRevisionWithInputs(context.Background(), store, revision, standardLocalGitRevisionLimits())
+	if err != nil {
+		t.Fatalf("readLocalGitRevisionWithInputs() error = %v", err)
+	}
+	retained := int64(len(inputs.commitContent)) + inputs.graph.TotalObjectBytes()
+	remaining := int64(maxLocalGitBindingRetainedContentBytes) - retained
+	if remaining < 0 {
+		t.Fatalf("retained bytes = %d", retained)
+	}
+	if err := validateLocalGitBindingRetainedContent(context.Background(), inputs, remaining); err != nil {
+		t.Fatalf("exact bound error = %v", err)
+	}
+	for _, resultBytes := range []int64{remaining + 1, -1} {
+		if err := validateLocalGitBindingRetainedContent(context.Background(), inputs, resultBytes); !errors.Is(err, LocalGitRevisionResourceLimit) {
+			t.Fatalf("result bytes %d error = %v", resultBytes, err)
+		}
+	}
+	mutated := inputs
+	mutated.blobContents = cloneContents(inputs.blobContents)
+	mutated.blobContents["extra"] = []byte("extra")
+	if err := validateLocalGitBindingRetainedContent(context.Background(), mutated, 0); !errors.Is(err, LocalGitRevisionInvalidGraph) {
+		t.Fatalf("mutated object total error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := validateLocalGitBindingRetainedContent(ctx, inputs, 0); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled validation error = %v", err)
+	}
+}
+
 func TestLocalGitSourceAdapterFailureMapping(t *testing.T) {
 	testCases := []struct {
 		err     error

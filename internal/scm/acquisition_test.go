@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/georgejieh/open-trestle/internal/evidence"
@@ -275,6 +276,182 @@ func expectedRepositoryAcquisitionExecutionIdentity(execution RepositoryAcquisit
 	}
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
+}
+
+func TestExecuteLocalGitAcquisitionWithBinding(t *testing.T) {
+	for _, algorithm := range []evidence.RevisionAlgorithm{evidence.RevisionAlgorithmSHA1, evidence.RevisionAlgorithmSHA256} {
+		t.Run(string(algorithm), func(t *testing.T) {
+			directory, store := newLocalGitObjectStoreFixture(t)
+			blob := writeLooseObject(t, directory, algorithm, "blob", []byte("content"))
+			tree := localTreeEntry(t, algorithm, evidence.GitTreeModeRegular, []byte("file"), blob)
+			revision := writeLocalRevision(t, directory, algorithm, tree)
+			adapter := mustLocalGitSourceAdapter(t, store)
+			request := mustLocalGitAdapterRequest(t, adapter, mustRepositoryIdentity(t), revision, evidence.AcquisitionArtifactManifestAndContent)
+
+			execution, binding, err := ExecuteLocalGitAcquisitionWithBinding(context.Background(), request, adapter)
+			if err != nil {
+				t.Fatalf("ExecuteLocalGitAcquisitionWithBinding() error = %v", err)
+			}
+			if !execution.HasLocalGitEvidence() || binding.Identity() == "" || binding.BindingStatus() != evidence.RepositoryAcquisitionEvidenceStatusSupplied {
+				t.Fatalf("bound execution = %#v, binding = %#v", execution, binding)
+			}
+			if binding.RequestIdentity() != execution.RequestIdentity() || binding.ReceiptIdentity() != execution.ReceiptIdentity() || binding.RepositoryIdentity() != request.RepositoryIdentity() || binding.RevisionIdentity() != execution.RevisionIdentity() || binding.SourceAdapterIdentity() != execution.SourceAdapterIdentity() || binding.ManifestIdentity() != execution.ManifestIdentity() || binding.GitCommitIdentity() != execution.GitCommitIdentity() || binding.GitTreeGraphIdentity() != execution.GitTreeGraphIdentity() || binding.CorrespondenceIdentity() != execution.CorrespondenceIdentity() {
+				t.Fatalf("binding does not match execution: %#v %#v", binding, execution)
+			}
+			ordinary, err := ExecuteRepositoryAcquisitionWithEvidence(context.Background(), request, adapter)
+			if err != nil || ordinary != execution {
+				t.Fatalf("ordinary execution = (%#v, %v), want %#v", ordinary, err, execution)
+			}
+			repeatedExecution, repeatedBinding, err := ExecuteLocalGitAcquisitionWithBinding(context.Background(), request, adapter)
+			if err != nil || repeatedExecution != execution || repeatedBinding != binding {
+				t.Fatalf("repeated binding = (%#v, %#v, %v)", repeatedExecution, repeatedBinding, err)
+			}
+		})
+	}
+}
+
+func TestExecuteLocalGitAcquisitionWithBindingAcceptsEmptyRevision(t *testing.T) {
+	directory, store := newLocalGitObjectStoreFixture(t)
+	revision := writeLocalRevision(t, directory, evidence.RevisionAlgorithmSHA1, nil)
+	adapter := mustLocalGitSourceAdapter(t, store)
+	request := mustLocalGitAdapterRequest(t, adapter, mustRepositoryIdentity(t), revision, evidence.AcquisitionArtifactManifestAndContent)
+	execution, binding, err := ExecuteLocalGitAcquisitionWithBinding(context.Background(), request, adapter)
+	if err != nil || !execution.HasLocalGitEvidence() || binding.Identity() == "" || execution.Receipt().ContentCoverage() != evidence.ContentCoverageComplete {
+		t.Fatalf("ExecuteLocalGitAcquisitionWithBinding() = (%#v, %#v, %v)", execution, binding, err)
+	}
+}
+
+func TestExecuteLocalGitAcquisitionWithBindingRejectsIneligibleExecutions(t *testing.T) {
+	directory, store := newLocalGitObjectStoreFixture(t)
+	blob := writeLooseObject(t, directory, evidence.RevisionAlgorithmSHA1, "blob", []byte("content"))
+	tree := localTreeEntry(t, evidence.RevisionAlgorithmSHA1, evidence.GitTreeModeRegular, []byte("file"), blob)
+	revision := writeLocalRevision(t, directory, evidence.RevisionAlgorithmSHA1, tree)
+	adapter := mustLocalGitSourceAdapter(t, store)
+	repository := mustRepositoryIdentity(t)
+
+	t.Run("manifest only", func(t *testing.T) {
+		request := mustLocalGitAdapterRequest(t, adapter, repository, revision, evidence.AcquisitionArtifactManifest)
+		execution, binding, err := ExecuteLocalGitAcquisitionWithBinding(context.Background(), request, adapter)
+		if err == nil || execution.Identity() != "" || binding.Identity() != "" {
+			t.Fatalf("ExecuteLocalGitAcquisitionWithBinding() = (%#v, %#v, %v)", execution, binding, err)
+		}
+	})
+	t.Run("missing object", func(t *testing.T) {
+		missingDirectory, missingStore := newLocalGitObjectStoreFixture(t)
+		missingTree := localTreeEntry(t, evidence.RevisionAlgorithmSHA1, evidence.GitTreeModeRegular, []byte("file"), fmt.Sprintf("%040d", 8))
+		missingRevision := writeLocalRevision(t, missingDirectory, evidence.RevisionAlgorithmSHA1, missingTree)
+		missingAdapter := mustLocalGitSourceAdapter(t, missingStore)
+		request := mustLocalGitAdapterRequest(t, missingAdapter, repository, missingRevision, evidence.AcquisitionArtifactManifestAndContent)
+		execution, binding, err := ExecuteLocalGitAcquisitionWithBinding(context.Background(), request, missingAdapter)
+		if err == nil || execution.Identity() != "" || binding.Identity() != "" {
+			t.Fatalf("ExecuteLocalGitAcquisitionWithBinding() = (%#v, %#v, %v)", execution, binding, err)
+		}
+	})
+	t.Run("canceled", func(t *testing.T) {
+		request := mustLocalGitAdapterRequest(t, adapter, repository, revision, evidence.AcquisitionArtifactManifestAndContent)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		execution, binding, err := ExecuteLocalGitAcquisitionWithBinding(ctx, request, adapter)
+		if !errors.Is(err, context.Canceled) || execution.Identity() != "" || binding.Identity() != "" {
+			t.Fatalf("ExecuteLocalGitAcquisitionWithBinding() = (%#v, %#v, %v)", execution, binding, err)
+		}
+	})
+	t.Run("nil adapter", func(t *testing.T) {
+		request := mustLocalGitAdapterRequest(t, adapter, repository, revision, evidence.AcquisitionArtifactManifestAndContent)
+		execution, binding, err := ExecuteLocalGitAcquisitionWithBinding(context.Background(), request, nil)
+		if err == nil || execution.Identity() != "" || binding.Identity() != "" {
+			t.Fatalf("ExecuteLocalGitAcquisitionWithBinding() = (%#v, %#v, %v)", execution, binding, err)
+		}
+	})
+}
+
+func TestBindLocalGitAcquisitionExecutionRejectsMutatedInputs(t *testing.T) {
+	directory, store := newLocalGitObjectStoreFixture(t)
+	content := []byte("content")
+	blobDigest := writeLooseObject(t, directory, evidence.RevisionAlgorithmSHA1, "blob", content)
+	childContent := localTreeEntry(t, evidence.RevisionAlgorithmSHA1, evidence.GitTreeModeRegular, []byte("file"), blobDigest)
+	childDigest := writeLooseObject(t, directory, evidence.RevisionAlgorithmSHA1, "tree", childContent)
+	rootContent := localTreeEntry(t, evidence.RevisionAlgorithmSHA1, evidence.GitTreeModeDirectory, []byte("dir"), childDigest)
+	revision := writeLocalRevision(t, directory, evidence.RevisionAlgorithmSHA1, rootContent)
+	adapter := mustLocalGitSourceAdapter(t, store)
+	request := mustLocalGitAdapterRequest(t, adapter, mustRepositoryIdentity(t), revision, evidence.AcquisitionArtifactManifestAndContent)
+	runtime, err := executeRepositoryAcquisition(context.Background(), request, adapter, true)
+	if err != nil {
+		t.Fatalf("executeRepositoryAcquisition() error = %v", err)
+	}
+	if binding, err := bindLocalGitAcquisitionExecution(context.Background(), request, runtime); err != nil || binding.Identity() == "" {
+		t.Fatalf("bindLocalGitAcquisitionExecution() = (%#v, %v)", binding, err)
+	}
+	testCases := []struct {
+		name   string
+		mutate func(*repositoryAcquisitionRuntimeResult)
+	}{
+		{name: "revision", mutate: func(runtime *repositoryAcquisitionRuntimeResult) {
+			runtime.bindingInputs.revision = evidence.RevisionIdentity{}
+		}},
+		{name: "commit verification", mutate: func(runtime *repositoryAcquisitionRuntimeResult) {
+			runtime.bindingInputs.commitVerification = evidence.GitCommitObjectVerification{}
+		}},
+		{name: "commit content", mutate: func(runtime *repositoryAcquisitionRuntimeResult) { runtime.bindingInputs.commitContent[0] ^= 1 }},
+		{name: "commit", mutate: func(runtime *repositoryAcquisitionRuntimeResult) { runtime.bindingInputs.commit = evidence.GitCommit{} }},
+		{name: "root verification", mutate: func(runtime *repositoryAcquisitionRuntimeResult) {
+			runtime.bindingInputs.rootTreeVerification = evidence.GitTreeObjectVerification{}
+		}},
+		{name: "root content", mutate: func(runtime *repositoryAcquisitionRuntimeResult) { runtime.bindingInputs.rootTreeContent[0] ^= 1 }},
+		{name: "root tree", mutate: func(runtime *repositoryAcquisitionRuntimeResult) { runtime.bindingInputs.rootTree = evidence.GitTree{} }},
+		{name: "child tree", mutate: func(runtime *repositoryAcquisitionRuntimeResult) {
+			runtime.bindingInputs.childTreeContents[childDigest][0] ^= 1
+		}},
+		{name: "blob", mutate: func(runtime *repositoryAcquisitionRuntimeResult) {
+			runtime.bindingInputs.blobContents[blobDigest][0] ^= 1
+		}},
+		{name: "graph", mutate: func(runtime *repositoryAcquisitionRuntimeResult) {
+			runtime.bindingInputs.graph = evidence.GitTreeGraph{}
+		}},
+		{name: "correspondence", mutate: func(runtime *repositoryAcquisitionRuntimeResult) {
+			runtime.bindingInputs.correspondence = evidence.GitManifestCorrespondence{}
+		}},
+		{name: "receipt content", mutate: func(runtime *repositoryAcquisitionRuntimeResult) { runtime.result.Contents["dir/file"][0] ^= 1 }},
+		{name: "extra receipt content", mutate: func(runtime *repositoryAcquisitionRuntimeResult) { runtime.result.Contents["extra"] = nil }},
+		{name: "manifest", mutate: func(runtime *repositoryAcquisitionRuntimeResult) {
+			runtime.result.Manifest = evidence.RepositoryManifest{}
+		}},
+		{name: "execution commit", mutate: func(runtime *repositoryAcquisitionRuntimeResult) {
+			runtime.execution.gitCommitIdentity = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		}},
+		{name: "receipt", mutate: func(runtime *repositoryAcquisitionRuntimeResult) {
+			runtime.execution.receipt = evidence.RepositoryAcquisitionReceipt{}
+		}},
+		{name: "missing inputs", mutate: func(runtime *repositoryAcquisitionRuntimeResult) { runtime.hasBindingInputs = false }},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			mutated := cloneRepositoryAcquisitionRuntimeResult(runtime)
+			testCase.mutate(&mutated)
+			if binding, err := bindLocalGitAcquisitionExecution(context.Background(), request, mutated); err == nil || binding.Identity() != "" {
+				t.Fatalf("bindLocalGitAcquisitionExecution() = (%#v, %v)", binding, err)
+			}
+		})
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if binding, err := bindLocalGitAcquisitionExecution(ctx, request, runtime); !errors.Is(err, context.Canceled) || binding.Identity() != "" {
+		t.Fatalf("canceled binding = (%#v, %v)", binding, err)
+	}
+	postBindingCancellation := &stagedCancellationContext{Context: context.Background(), remaining: 8}
+	if binding, err := bindLocalGitAcquisitionExecution(postBindingCancellation, request, runtime); !errors.Is(err, context.Canceled) || binding.Identity() != "" {
+		t.Fatalf("post-binding cancellation = (%#v, %v)", binding, err)
+	}
+}
+
+func cloneRepositoryAcquisitionRuntimeResult(runtime repositoryAcquisitionRuntimeResult) repositoryAcquisitionRuntimeResult {
+	cloned := runtime
+	cloned.result.Contents = cloneContents(runtime.result.Contents)
+	cloned.bindingInputs.commitContent = append([]byte{}, runtime.bindingInputs.commitContent...)
+	cloned.bindingInputs.rootTreeContent = append([]byte{}, runtime.bindingInputs.rootTreeContent...)
+	cloned.bindingInputs.childTreeContents = cloneContents(runtime.bindingInputs.childTreeContents)
+	cloned.bindingInputs.blobContents = cloneContents(runtime.bindingInputs.blobContents)
+	return cloned
 }
 
 func TestCloneSourceAdapterResultContentHonorsCancellation(t *testing.T) {

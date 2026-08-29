@@ -171,6 +171,110 @@ func TestReadLocalGitRevisionRejectsForgedRevision(t *testing.T) {
 	}
 }
 
+func TestReadLocalGitRevisionRetainsPrivateBindingInputs(t *testing.T) {
+	directory, store := newLocalGitObjectStoreFixture(t)
+	algorithm := evidence.RevisionAlgorithmSHA1
+	content := []byte("content")
+	blobDigest := writeLooseObject(t, directory, algorithm, "blob", content)
+	childContent := localTreeEntry(t, algorithm, evidence.GitTreeModeRegular, []byte("file"), blobDigest)
+	childDigest := writeLooseObject(t, directory, algorithm, "tree", childContent)
+	rootContent := localTreeEntry(t, algorithm, evidence.GitTreeModeDirectory, []byte("dir"), childDigest)
+	rootDigest := writeLooseObject(t, directory, algorithm, "tree", rootContent)
+	commitContent := []byte("tree " + rootDigest + "\nauthor A <a@example.com> 0 +0000\ncommitter A <a@example.com> 0 +0000\n\nmessage\n")
+	commitDigest := writeLooseObject(t, directory, algorithm, "commit", commitContent)
+	revision := mustRevisionIdentity(t, algorithm, commitDigest)
+	reader := &countingLocalGitRevisionReader{reader: store}
+
+	result, inputs, err := readLocalGitRevisionWithInputs(context.Background(), reader, revision, standardLocalGitRevisionLimits())
+	if err != nil {
+		t.Fatalf("readLocalGitRevisionWithInputs() error = %v", err)
+	}
+	if reader.commitReads != 1 || reader.treeReads != 2 || reader.blobReads != 1 {
+		t.Fatalf("object reads = commit %d, tree %d, blob %d", reader.commitReads, reader.treeReads, reader.blobReads)
+	}
+	if inputs.revision != revision || !bytes.Equal(inputs.commitContent, commitContent) || !bytes.Equal(inputs.rootTreeContent, rootContent) {
+		t.Fatalf("binding inputs = %#v", inputs)
+	}
+	if !bytes.Equal(inputs.childTreeContents[childDigest], childContent) || !bytes.Equal(inputs.blobContents[blobDigest], content) || len(inputs.childTreeContents) != 1 || len(inputs.blobContents) != 1 {
+		t.Fatalf("object inputs = trees %#v, blobs %#v", inputs.childTreeContents, inputs.blobContents)
+	}
+	if inputs.commitVerification.Identity() == "" || inputs.commit.Identity() != result.GitCommitIdentity() || inputs.rootTreeVerification.Identity() == "" || inputs.rootTree.Identity() == "" || inputs.graph.Identity() != result.GitTreeGraphIdentity() || inputs.correspondence.Identity() != result.CorrespondenceIdentity() {
+		t.Fatalf("verified inputs = %#v", inputs)
+	}
+	resultContents := result.Contents()
+	resultContents["dir/file"][0] = 'X'
+	if !bytes.Equal(inputs.blobContents[blobDigest], content) {
+		t.Fatal("result content mutation changed private object input")
+	}
+	retainedBytes := int64(len(commitContent) + len(rootContent) + len(childContent) + len(content) + len(content))
+	exactLimits := standardLocalGitRevisionLimits()
+	exactLimits.maxRetainedBytes = retainedBytes
+	if exact, _, err := readLocalGitRevisionWithInputs(context.Background(), store, revision, exactLimits); err != nil || exact.Manifest().Identity() != result.Manifest().Identity() || exact.CorrespondenceIdentity() != result.CorrespondenceIdentity() {
+		t.Fatalf("exact retained bound = (%#v, %v)", exact, err)
+	}
+	limited := standardLocalGitRevisionLimits()
+	limited.maxRetainedBytes = retainedBytes - 1
+	if limitedResult, limitedInputs, err := readLocalGitRevisionWithInputs(context.Background(), store, revision, limited); !errors.Is(err, LocalGitRevisionResourceLimit) || limitedResult.RevisionIdentity() != "" || !isZeroLocalGitEvidenceInputs(limitedInputs) {
+		t.Fatalf("limited retained bound = (%#v, %#v, %v)", limitedResult, limitedInputs, err)
+	}
+}
+
+func TestReadLocalGitRevisionWithInputsReturnsAtomicErrors(t *testing.T) {
+	directory, store := newLocalGitObjectStoreFixture(t)
+	algorithm := evidence.RevisionAlgorithmSHA1
+	missing := fmt.Sprintf("%040d", 9)
+	rootContent := localTreeEntry(t, algorithm, evidence.GitTreeModeRegular, []byte("file"), missing)
+	revision := writeLocalRevision(t, directory, algorithm, rootContent)
+	result, inputs, err := readLocalGitRevisionWithInputs(context.Background(), store, revision, standardLocalGitRevisionLimits())
+	if !errors.Is(err, LocalGitRevisionObjectUnavailable) || result.RevisionIdentity() != "" || !isZeroLocalGitEvidenceInputs(inputs) {
+		t.Fatalf("readLocalGitRevisionWithInputs() = (%#v, %#v, %v)", result, inputs, err)
+	}
+	stale := localGitEvidenceInputs{commitContent: []byte("stale")}
+	if result, err := readLocalGitRevisionCapturing(context.Background(), store, revision, standardLocalGitRevisionLimits(), &stale); !errors.Is(err, LocalGitRevisionObjectUnavailable) || result.RevisionIdentity() != "" || !isZeroLocalGitEvidenceInputs(stale) {
+		t.Fatalf("readLocalGitRevisionCapturing() = (%#v, %#v, %v)", result, stale, err)
+	}
+}
+
+type countingLocalGitRevisionReader struct {
+	reader      localGitObjectReader
+	commitReads int
+	treeReads   int
+	blobReads   int
+}
+
+func (r *countingLocalGitRevisionReader) RepositoryIdentity() string {
+	return r.reader.RepositoryIdentity()
+}
+
+func (r *countingLocalGitRevisionReader) ReadCommit(ctx context.Context, revision evidence.RevisionIdentity) ([]byte, error) {
+	r.commitReads++
+	return r.reader.ReadCommit(ctx, revision)
+}
+
+func (r *countingLocalGitRevisionReader) ReadTree(ctx context.Context, algorithm evidence.RevisionAlgorithm, digest string) ([]byte, error) {
+	r.treeReads++
+	return r.reader.ReadTree(ctx, algorithm, digest)
+}
+
+func (r *countingLocalGitRevisionReader) ReadBlob(ctx context.Context, algorithm evidence.RevisionAlgorithm, digest string) ([]byte, error) {
+	r.blobReads++
+	return r.reader.ReadBlob(ctx, algorithm, digest)
+}
+
+func isZeroLocalGitEvidenceInputs(inputs localGitEvidenceInputs) bool {
+	return inputs.revision.Identity() == "" &&
+		inputs.commitVerification.Identity() == "" &&
+		inputs.commitContent == nil &&
+		inputs.commit.Identity() == "" &&
+		inputs.rootTreeVerification.Identity() == "" &&
+		inputs.rootTreeContent == nil &&
+		inputs.rootTree.Identity() == "" &&
+		inputs.childTreeContents == nil &&
+		inputs.blobContents == nil &&
+		inputs.graph.Identity() == "" &&
+		inputs.correspondence.Identity() == ""
+}
+
 func writeLocalRevision(t *testing.T, directory string, algorithm evidence.RevisionAlgorithm, rootTreeContent []byte) evidence.RevisionIdentity {
 	t.Helper()
 	rootDigest := writeLooseObject(t, directory, algorithm, "tree", rootTreeContent)
