@@ -32,25 +32,46 @@ func (e LocalGitAcquisitionEnvelope) EvidenceBinding() evidence.RepositoryAcquis
 
 // ExecuteLocalGitAcquisitionWithBindingAndProfile derives both results from one acquisition.
 func ExecuteLocalGitAcquisitionWithBindingAndProfile(ctx context.Context, request evidence.RepositoryAcquisitionRequest, adapter *LocalGitSourceAdapter) (LocalGitAcquisitionEnvelope, error) {
+	envelope, _, err := executeLocalGitAcquisitionEnvelopeWithManifest(ctx, request, adapter)
+	return envelope, err
+}
+
+func executeLocalGitAcquisitionEnvelopeWithManifest(ctx context.Context, request evidence.RepositoryAcquisitionRequest, adapter *LocalGitSourceAdapter) (LocalGitAcquisitionEnvelope, evidence.RepositoryManifest, error) {
 	if isNilInterface(ctx) {
-		return LocalGitAcquisitionEnvelope{}, fmt.Errorf("repository acquisition context is nil")
+		return LocalGitAcquisitionEnvelope{}, evidence.RepositoryManifest{}, fmt.Errorf("repository acquisition context is nil")
 	}
 	if adapter == nil {
-		return LocalGitAcquisitionEnvelope{}, fmt.Errorf("source adapter is nil")
+		return LocalGitAcquisitionEnvelope{}, evidence.RepositoryManifest{}, fmt.Errorf("source adapter is nil")
 	}
 	if err := evidence.ValidateRepositoryAcquisitionRequest(request); err != nil {
-		return LocalGitAcquisitionEnvelope{}, err
+		return LocalGitAcquisitionEnvelope{}, evidence.RepositoryManifest{}, err
 	}
 	if err := ctx.Err(); err != nil {
-		return LocalGitAcquisitionEnvelope{}, err
+		return LocalGitAcquisitionEnvelope{}, evidence.RepositoryManifest{}, err
 	}
 	if request.Artifact() != evidence.AcquisitionArtifactManifestAndContent {
-		return LocalGitAcquisitionEnvelope{}, fmt.Errorf("local Git acquisition envelope requires manifest and content acquisition")
+		return LocalGitAcquisitionEnvelope{}, evidence.RepositoryManifest{}, fmt.Errorf("local Git acquisition envelope requires manifest and content acquisition")
 	}
 	runtime, err := executeRepositoryAcquisitionWithRetention(ctx, request, adapter, repositoryAcquisitionRetainBindingInputs)
 	if err != nil {
-		return LocalGitAcquisitionEnvelope{}, err
+		return LocalGitAcquisitionEnvelope{}, evidence.RepositoryManifest{}, err
 	}
+	defer clearRepositoryAcquisitionRuntimeResult(&runtime)
+	envelope, err := buildLocalGitAcquisitionEnvelope(ctx, request, runtime)
+	if err != nil {
+		return LocalGitAcquisitionEnvelope{}, evidence.RepositoryManifest{}, err
+	}
+	manifest, err := evidence.NewRepositoryManifest(runtime.result.Manifest.Files())
+	if err != nil || manifest.Identity() != envelope.EvidenceBinding().ManifestIdentity() {
+		return LocalGitAcquisitionEnvelope{}, evidence.RepositoryManifest{}, fmt.Errorf("local Git acquisition manifest does not match envelope")
+	}
+	if err := ctx.Err(); err != nil {
+		return LocalGitAcquisitionEnvelope{}, evidence.RepositoryManifest{}, err
+	}
+	return envelope, manifest, nil
+}
+
+func buildLocalGitAcquisitionEnvelope(ctx context.Context, request evidence.RepositoryAcquisitionRequest, runtime repositoryAcquisitionRuntimeResult) (LocalGitAcquisitionEnvelope, error) {
 	binding, err := bindLocalGitAcquisitionExecution(ctx, request, runtime)
 	if err != nil {
 		return LocalGitAcquisitionEnvelope{}, err
@@ -71,6 +92,18 @@ func ExecuteLocalGitAcquisitionWithBindingAndProfile(ctx context.Context, reques
 		return LocalGitAcquisitionEnvelope{}, err
 	}
 	return envelope, nil
+}
+
+func clearRepositoryAcquisitionRuntimeResult(runtime *repositoryAcquisitionRuntimeResult) {
+	if runtime == nil {
+		return
+	}
+	runtime.result.Contents = nil
+	runtime.bindingInputs.commitContent = nil
+	runtime.bindingInputs.rootTreeContent = nil
+	runtime.bindingInputs.childTreeContents = nil
+	runtime.bindingInputs.blobContents = nil
+	*runtime = repositoryAcquisitionRuntimeResult{}
 }
 
 func newLocalGitAcquisitionEnvelope(profiled RepositoryAcquisitionProfileExecution, binding evidence.RepositoryAcquisitionEvidenceBinding) (LocalGitAcquisitionEnvelope, error) {
