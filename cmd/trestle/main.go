@@ -15,6 +15,9 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	if len(args) >= 2 && args[0] == "local-git" && args[1] == "inspect" {
+		return runLocalGitInspect(args[2:], stdout, stderr)
+	}
 	if len(args) == 3 && args[0] == "ci" {
 		switch args[1] {
 		case "--format=json":
@@ -106,4 +109,5 @@ func writeUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "       trestle review <path>")
 	fmt.Fprintln(stderr, "       trestle ci --format=json <path>")
 	fmt.Fprintln(stderr, "       trestle ci --format=sarif <path>")
+	writeLocalGitInspectUsage(stderr)
 }

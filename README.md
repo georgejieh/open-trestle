@@ -26,7 +26,7 @@ AI review is useful only when its conclusions can be inspected and controlled. O
 | `trestle acp` | Agent Client Protocol endpoint |
 | Forge adapters | GitHub, GitLab, Bitbucket, and Azure DevOps integration |
 
-The daemon, TUI, protocol, and forge interfaces remain design targets. The current `trestle` command validates and reviews local versioned fixtures. It also emits deterministic JSON receipts for headless CI dry runs.
+The daemon, TUI, protocol, and forge interfaces remain design targets. The current `trestle` command validates and reviews local versioned fixtures, emits deterministic JSON receipts for headless CI dry runs, and can inspect one exact loose Git revision.
 
 ## Available local commands
 
@@ -37,7 +37,16 @@ go run ./cmd/trestle validate-fixture cmd/trestle/testdata/local-review/fixture.
 go run ./cmd/trestle review cmd/trestle/testdata/local-review/fixture.json
 go run ./cmd/trestle ci --format=json cmd/trestle/testdata/local-review/fixture.json
 go run ./cmd/trestle ci --format=sarif cmd/trestle/testdata/local-review/fixture.json
+go run ./cmd/trestle local-git inspect \
+  --objects-root PATH \
+  --repository-authority AUTHORITY \
+  --repository-namespace NAMESPACE \
+  --repository-name NAME \
+  --revision-algorithm sha1 \
+  --revision-digest FULL_LOWERCASE_SHA1
 ```
+
+The local Git command supports verified loose objects only. Repository fields are caller-supplied scope labels, not proof that the object directory belongs to that repository. See [Local Git inspection](docs/local-git-inspect.md).
 
 These commands are local-only. They do not call a model, execute repository content, mutate source, or publish results.
 
