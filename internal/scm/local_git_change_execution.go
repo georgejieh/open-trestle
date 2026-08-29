@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"path"
 
 	"github.com/georgejieh/open-trestle/internal/evidence"
 )
@@ -49,54 +50,61 @@ func executeLocalGitChangeWithEndpoint(ctx context.Context, baseRequest, headReq
 }
 
 func executeLocalGitChange(ctx context.Context, baseRequest, headRequest evidence.RepositoryAcquisitionRequest, adapter *LocalGitSourceAdapter, endpoint localGitChangeEndpoint, fileExecutor localGitFileDeltaExecutor) (LocalGitChangeExecution, error) {
+	execution, goHeadContents, err := executeLocalGitChangeRetainingGo(ctx, baseRequest, headRequest, adapter, endpoint, fileExecutor, false)
+	clearLocalGitGoHeadContents(goHeadContents)
+	return execution, err
+}
+
+func executeLocalGitChangeRetainingGo(ctx context.Context, baseRequest, headRequest evidence.RepositoryAcquisitionRequest, adapter *LocalGitSourceAdapter, endpoint localGitChangeEndpoint, fileExecutor localGitFileDeltaExecutor, retainGoHead bool) (LocalGitChangeExecution, map[string][]byte, error) {
 	if err := validateLocalGitAcquisitionPairInputs(ctx, baseRequest, headRequest, adapter); err != nil {
-		return LocalGitChangeExecution{}, err
+		return LocalGitChangeExecution{}, nil, err
 	}
 	if endpoint == nil || fileExecutor == nil {
-		return LocalGitChangeExecution{}, fmt.Errorf("local Git change executor is nil")
+		return LocalGitChangeExecution{}, nil, fmt.Errorf("local Git change executor is nil")
 	}
 	baseEnvelope, baseManifest, baseContents, err := endpoint(ctx, baseRequest, adapter)
 	if err != nil {
-		return LocalGitChangeExecution{}, err
+		return LocalGitChangeExecution{}, nil, err
 	}
 	defer clearLocalGitChangeContents(baseContents)
 	if err := ctx.Err(); err != nil {
-		return LocalGitChangeExecution{}, err
+		return LocalGitChangeExecution{}, nil, err
 	}
 	headEnvelope, headManifest := baseEnvelope, baseManifest
 	var headContents map[string][]byte
 	if baseRequest.Identity() != headRequest.Identity() {
 		headEnvelope, headManifest, headContents, err = endpoint(ctx, headRequest, adapter)
 		if err != nil {
-			return LocalGitChangeExecution{}, err
+			return LocalGitChangeExecution{}, nil, err
 		}
 		defer clearLocalGitChangeContents(headContents)
 	}
 	if err := ctx.Err(); err != nil {
-		return LocalGitChangeExecution{}, err
+		return LocalGitChangeExecution{}, nil, err
 	}
 	if baseManifest.TotalSizeBytes() > maxLocalGitChangeRetainedBytes-headManifest.TotalSizeBytes() {
-		return LocalGitChangeExecution{}, LocalGitChangeExecutionResourceLimit
+		return LocalGitChangeExecution{}, nil, LocalGitChangeExecutionResourceLimit
 	}
 	delta, err := evidence.NewRepositoryManifestDelta(baseManifest, headManifest)
 	if err != nil {
-		return LocalGitChangeExecution{}, err
+		return LocalGitChangeExecution{}, nil, err
 	}
 	pair, err := newLocalGitAcquisitionPair(baseEnvelope, headEnvelope, delta)
 	if err != nil {
-		return LocalGitChangeExecution{}, err
+		return LocalGitChangeExecution{}, nil, err
 	}
 	if delta.ChangedFileCount() > maxLocalGitChangeEntries {
-		return LocalGitChangeExecution{}, LocalGitChangeExecutionResourceLimit
+		return LocalGitChangeExecution{}, nil, LocalGitChangeExecutionResourceLimit
 	}
-	execution, err := buildLocalGitChangeExecution(ctx, pair, baseContents, headContents, fileExecutor)
+	execution, goHeadContents, err := buildLocalGitChangeExecutionRetainingGo(ctx, pair, baseContents, headContents, fileExecutor, retainGoHead)
 	if err != nil {
-		return LocalGitChangeExecution{}, err
+		return LocalGitChangeExecution{}, nil, err
 	}
 	if err := ctx.Err(); err != nil {
-		return LocalGitChangeExecution{}, err
+		clearLocalGitGoHeadContents(goHeadContents)
+		return LocalGitChangeExecution{}, nil, err
 	}
-	return execution, nil
+	return execution, goHeadContents, nil
 }
 
 func executeLocalGitAcquisitionEnvelopeWithOwnedContent(ctx context.Context, request evidence.RepositoryAcquisitionRequest, adapter *LocalGitSourceAdapter) (LocalGitAcquisitionEnvelope, evidence.RepositoryManifest, map[string][]byte, error) {
@@ -118,15 +126,22 @@ func executeLocalGitAcquisitionEnvelopeWithOwnedContent(ctx context.Context, req
 	return envelope, manifest, contents, nil
 }
 
-func buildLocalGitChangeExecution(ctx context.Context, pair LocalGitAcquisitionPair, baseContents, headContents map[string][]byte, fileExecutor localGitFileDeltaExecutor) (LocalGitChangeExecution, error) {
+func buildLocalGitChangeExecutionRetainingGo(ctx context.Context, pair LocalGitAcquisitionPair, baseContents, headContents map[string][]byte, fileExecutor localGitFileDeltaExecutor, retainGoHead bool) (LocalGitChangeExecution, map[string][]byte, error) {
 	entries := pair.ManifestDelta().Entries()
 	pruneLocalGitChangeContents(entries, baseContents, headContents)
 	entryExecutions := make([]evidence.RepositoryFileDeltaExecution, 0, len(entries))
 	fileChanges := make([]evidence.FileChange, 0, len(entries))
 	lineMaps := make([]evidence.LineMap, 0, len(entries))
+	var goHeadContents map[string][]byte
+	completed := false
+	defer func() {
+		if !completed {
+			clearLocalGitGoHeadContents(goHeadContents)
+		}
+	}()
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
-			return LocalGitChangeExecution{}, err
+			return LocalGitChangeExecution{}, nil, err
 		}
 		baseContent, hasBaseContent := takeLocalGitChangeContent(baseContents, entry.Path())
 		headContent, hasHeadContent := takeLocalGitChangeContent(headContents, entry.Path())
@@ -135,19 +150,30 @@ func buildLocalGitChangeExecution(ctx context.Context, pair LocalGitAcquisitionP
 			evidence.RepositoryFileDeltaContent{Present: hasBaseContent, Content: baseContent},
 			evidence.RepositoryFileDeltaContent{Present: hasHeadContent, Content: headContent},
 		)
-		baseContent = nil
-		headContent = nil
 		if err != nil {
-			return LocalGitChangeExecution{}, err
+			zeroLocalGitChangeContent(baseContent)
+			zeroLocalGitChangeContent(headContent)
+			return LocalGitChangeExecution{}, nil, err
 		}
 		entryExecutions = append(entryExecutions, entryExecution)
 		if entryExecution.Status() == evidence.RepositoryFileDeltaExecutionStatusSupported {
 			fileChanges = append(fileChanges, entryExecution.FileChange())
 			lineMaps = append(lineMaps, entryExecution.LineMap())
+			if retainGoHead && path.Ext(entry.Path()) == ".go" {
+				if goHeadContents == nil {
+					goHeadContents = make(map[string][]byte)
+				}
+				goHeadContents[entry.Path()] = headContent
+				headContent = nil
+			}
 		}
+		zeroLocalGitChangeContent(baseContent)
+		zeroLocalGitChangeContent(headContent)
+		baseContent = nil
+		headContent = nil
 	}
 	if len(baseContents) != 0 || len(headContents) != 0 {
-		return LocalGitChangeExecution{}, fmt.Errorf("local Git change content was not completely consumed")
+		return LocalGitChangeExecution{}, nil, fmt.Errorf("local Git change content was not completely consumed")
 	}
 	var change evidence.Change
 	hasChange := len(fileChanges) > 0
@@ -155,10 +181,15 @@ func buildLocalGitChangeExecution(ctx context.Context, pair LocalGitAcquisitionP
 		var err error
 		change, err = evidence.NewChange(fileChanges, lineMaps)
 		if err != nil {
-			return LocalGitChangeExecution{}, err
+			return LocalGitChangeExecution{}, nil, err
 		}
 	}
-	return newLocalGitChangeExecution(pair, change, hasChange, entryExecutions)
+	execution, err := newLocalGitChangeExecution(pair, change, hasChange, entryExecutions)
+	if err != nil {
+		return LocalGitChangeExecution{}, nil, err
+	}
+	completed = true
+	return execution, goHeadContents, nil
 }
 
 func pruneLocalGitChangeContents(entries []evidence.RepositoryFileDelta, baseContents, headContents map[string][]byte) {
@@ -174,12 +205,14 @@ func pruneLocalGitChangeContents(entries []evidence.RepositoryFileDelta, baseCon
 	}
 	for path := range baseContents {
 		if _, keep := basePaths[path]; !keep {
+			zeroLocalGitChangeContent(baseContents[path])
 			baseContents[path] = nil
 			delete(baseContents, path)
 		}
 	}
 	for path := range headContents {
 		if _, keep := headPaths[path]; !keep {
+			zeroLocalGitChangeContent(headContents[path])
 			headContents[path] = nil
 			delete(headContents, path)
 		}
@@ -195,7 +228,24 @@ func takeLocalGitChangeContent(contents map[string][]byte, path string) ([]byte,
 }
 
 func clearLocalGitChangeContents(contents map[string][]byte) {
-	for path := range contents {
+	for path, content := range contents {
+		zeroLocalGitChangeContent(content)
+		contents[path] = nil
+		delete(contents, path)
+	}
+}
+
+func zeroLocalGitChangeContent(content []byte) {
+	for index := range content {
+		content[index] = 0
+	}
+}
+
+func clearLocalGitGoHeadContents(contents map[string][]byte) {
+	for path, content := range contents {
+		for index := range content {
+			content[index] = 0
+		}
 		contents[path] = nil
 		delete(contents, path)
 	}
