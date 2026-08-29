@@ -140,6 +140,71 @@ func TestValidateLocalGitReviewEvidenceRejectsAmbiguousBindings(t *testing.T) {
 	}
 }
 
+func TestRunLocalGitReviewSARIFMatchesJSONFindings(t *testing.T) {
+	path := "space name.go"
+	base := map[string][]byte{path: []byte("package sample\nfunc target() {}\n")}
+	head := map[string][]byte{path: []byte("package sample\nimport \"fmt\"\nfunc target() { fmt.Println(\"debug\") }\n")}
+	objects, baseDigest, headDigest := writeLocalGitChangeFixture(t, evidence.RevisionAlgorithmSHA1, base, head)
+	args := localGitChangeArgs(objects, evidence.RevisionAlgorithmSHA1, baseDigest, headDigest)
+	var jsonOutput, sarifOutput, stderr bytes.Buffer
+	if code := run(append([]string{"local-git", "review"}, args...), &jsonOutput, &stderr); code != 0 || stderr.Len() != 0 {
+		t.Fatalf("JSON run = %d, stderr = %q", code, stderr.String())
+	}
+	explicitJSONArgs := append(append([]string{}, args...), "--format", "json")
+	var explicitJSON bytes.Buffer
+	if code := run(append([]string{"local-git", "review"}, explicitJSONArgs...), &explicitJSON, &stderr); code != 0 || explicitJSON.String() != jsonOutput.String() {
+		t.Fatalf("explicit JSON = %d, output = %q", code, explicitJSON.String())
+	}
+	sarifArgs := append(append([]string{}, args...), "--format", "sarif")
+	if code := run(append([]string{"local-git", "review"}, sarifArgs...), &sarifOutput, &stderr); code != 0 || stderr.Len() != 0 {
+		t.Fatalf("SARIF run = %d, stderr = %q", code, stderr.String())
+	}
+	var jsonResult localGitReviewResult
+	if err := json.Unmarshal(jsonOutput.Bytes(), &jsonResult); err != nil {
+		t.Fatal(err)
+	}
+	var sarif sarifLog
+	if err := json.Unmarshal(sarifOutput.Bytes(), &sarif); err != nil {
+		t.Fatal(err)
+	}
+	if sarif.Schema != sarifSchemaURI || sarif.Version != "2.1.0" || len(sarif.Runs) != 1 || len(sarif.Runs[0].Results) != len(jsonResult.Findings) || len(sarif.Runs[0].Results) != 1 {
+		t.Fatalf("SARIF = %#v", sarif)
+	}
+	result := sarif.Runs[0].Results[0]
+	finding := jsonResult.Findings[0]
+	evidenceItem := jsonResult.Evidence[0]
+	if result.RuleID != "static-debug-output" || result.Level != "warning" || result.Message.Text != finding.Title || result.Locations[0].PhysicalLocation.ArtifactLocation.URI != "space%20name.go" || result.Locations[0].PhysicalLocation.Region.StartLine != finding.StartLine || result.Locations[0].PhysicalLocation.Region.EndLine != finding.EndLine || result.Properties.EvidenceID != evidenceItem.ID || result.Properties.EvidenceDigest != evidenceItem.Digest || result.Fingerprints["openTrestleFindingId/v1"] != finding.ID {
+		t.Fatalf("SARIF result = %#v, JSON finding = %#v, evidence = %#v", result, finding, evidenceItem)
+	}
+}
+
+func TestRunLocalGitReviewSARIFEmitsEmptyResultsForNoFindings(t *testing.T) {
+	objects, baseDigest, headDigest := writeLocalGitChangeFixture(t, evidence.RevisionAlgorithmSHA1, map[string][]byte{"file.go": []byte("package p\nfunc f() {}\n")}, map[string][]byte{"file.go": []byte("package p\nfunc f() { println(1) }\n")})
+	args := append(localGitChangeArgs(objects, evidence.RevisionAlgorithmSHA1, baseDigest, headDigest), "--format", "sarif")
+	var stdout, stderr bytes.Buffer
+	code := run(append([]string{"local-git", "review"}, args...), &stdout, &stderr)
+	var sarif sarifLog
+	if err := json.Unmarshal(stdout.Bytes(), &sarif); err != nil {
+		t.Fatal(err)
+	}
+	if code != 3 || stderr.Len() != 0 || len(sarif.Runs) != 1 || sarif.Runs[0].Results == nil || len(sarif.Runs[0].Results) != 0 {
+		t.Fatalf("SARIF = %#v, code = %d, stderr = %q", sarif, code, stderr.String())
+	}
+}
+
+func TestRunLocalGitReviewRejectsInvalidFormatBeforeOpen(t *testing.T) {
+	args := append(localGitChangeArgs("objects", evidence.RevisionAlgorithmSHA1, strings.Repeat("1", 40), strings.Repeat("2", 40)), "--format", "xml")
+	opens := 0
+	opener := func(string) (localGitRootHandle, error) {
+		opens++
+		return localGitRootHandle{}, errors.New("unexpected open")
+	}
+	var stdout, stderr bytes.Buffer
+	if code := runLocalGitReviewWithOpener(args, &stdout, &stderr, opener); code != 2 || opens != 0 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "usage: trestle local-git review") {
+		t.Fatalf("result = %d, opens = %d, stdout = %q, stderr = %q", code, opens, stdout.String(), stderr.String())
+	}
+}
+
 func TestRunLocalGitReviewRejectsArgumentsBeforeOpen(t *testing.T) {
 	valid := localGitChangeArgs("objects", evidence.RevisionAlgorithmSHA1, strings.Repeat("1", 40), strings.Repeat("2", 40))
 	for name, args := range map[string][]string{

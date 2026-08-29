@@ -60,6 +60,15 @@ go run ./cmd/trestle local-git review \
   --revision-algorithm sha1 \
   --base-revision-digest FULL_LOWERCASE_BASE_SHA1 \
   --head-revision-digest FULL_LOWERCASE_HEAD_SHA1
+go run ./cmd/trestle local-git review \
+  --objects-root PATH \
+  --repository-authority AUTHORITY \
+  --repository-namespace NAMESPACE \
+  --repository-name NAME \
+  --revision-algorithm sha1 \
+  --base-revision-digest FULL_LOWERCASE_BASE_SHA1 \
+  --head-revision-digest FULL_LOWERCASE_HEAD_SHA1 \
+  --format sarif
 ```
 
 The local Git commands support verified loose objects only. Repository fields are caller-supplied scope labels, not proof that the object directory belongs to that repository. See [Local Git inspection](docs/local-git-inspect.md), [Local Git change evidence](docs/local-git-change.md), and [Local Git debug-output review](docs/local-git-review.md).

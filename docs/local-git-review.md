@@ -10,10 +10,11 @@ trestle local-git review \
   --repository-name NAME \
   --revision-algorithm sha1|sha256 \
   --base-revision-digest FULL_LOWERCASE_HEX \
-  --head-revision-digest FULL_LOWERCASE_HEX
+  --head-revision-digest FULL_LOWERCASE_HEX \
+  [--format json|sarif]
 ```
 
-All seven flags are required exactly once. `PATH` is the exact loose-object directory. Base and head are ordered caller selections. The command does not infer a merge base, resolve refs or `HEAD`, inspect an index or working tree, discover `.git`, run Git, use credentials, or access a network. Packs and alternates are unsupported.
+All seven repository and revision flags are required exactly once. An optional `--format json|sarif` pair can appear in any flag position. The default is `json`; explicit `json` is byte-identical to the default. `PATH` is the exact loose-object directory. Base and head are ordered caller selections. The command does not infer a merge base, resolve refs or `HEAD`, inspect an index or working tree, discover `.git`, run Git, use credentials, or access a network. Packs and alternates are unsupported.
 
 Repository authority, namespace, and name are caller-supplied scope labels. They do not establish repository origin, ownership, or authorization.
 
@@ -47,6 +48,12 @@ Status values are:
 - `partial`: review findings or coverage exist alongside unsupported delta entries;
 - `no_change`: base and head produced the same accepted manifest;
 - `unsupported`: changed entries exist but none produced a supported `Change`.
+
+## SARIF output
+
+`--format sarif` renders the same in-memory review result as one deterministic SARIF 2.1.0 log and run. Format selection does not rerun acquisition or review. Findings map to the existing `static-debug-output` rule, severity levels, repository-relative artifact URIs, line regions, finding fingerprints, and evidence identity/digest properties. A report without findings contains an empty `results` array. The run status is verified only for the `findings` result; partial, inconclusive, no-change, and unsupported reports remain inconclusive with their status as the reason.
+
+SARIF generation proves deterministic transport parity for tested inputs only. It does not prove acceptance by a hosted code-scanning service, baseline/fingerprint stability across future schema versions, upload behavior, or policy enforcement. No upload occurs.
 
 ## Exit codes
 

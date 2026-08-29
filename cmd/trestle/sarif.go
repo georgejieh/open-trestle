@@ -8,7 +8,10 @@ import (
 	"github.com/georgejieh/open-trestle/internal/review"
 )
 
-const sarifSchemaURI = "https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json"
+const (
+	sarifSchemaURI             = "https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json"
+	staticDebugOutputSARIFRule = "static-debug-output"
+)
 
 type sarifLog struct {
 	Schema  string     `json:"$schema"`
@@ -122,7 +125,7 @@ func buildSARIFLog(evaluation ciEvaluation) (sarifLog, error) {
 			sourceRange := finding.SourceRange()
 			item := items[i]
 			results[i] = sarifResult{
-				RuleID:  "static-debug-output",
+				RuleID:  staticDebugOutputSARIFRule,
 				Level:   level,
 				Message: sarifMessage{Text: finding.Title()},
 				Locations: []sarifLocation{{
@@ -149,7 +152,7 @@ func buildSARIFLog(evaluation ciEvaluation) (sarifLog, error) {
 			Tool: sarifTool{Driver: sarifDriver{
 				Name: "Open Trestle",
 				Rules: []sarifRule{{
-					ID:                   "static-debug-output",
+					ID:                   staticDebugOutputSARIFRule,
 					ShortDescription:     sarifMessage{Text: "Debug output left in source"},
 					DefaultConfiguration: sarifConfiguration{Level: "warning"},
 				}},
@@ -158,6 +161,84 @@ func buildSARIFLog(evaluation ciEvaluation) (sarifLog, error) {
 			Properties: properties,
 		}},
 	}, nil
+}
+
+func buildLocalGitReviewSARIF(result localGitReviewResult) (sarifLog, error) {
+	if result.Contract != "open-trestle/local-git-review-result" || result.SchemaVersion != 1 {
+		return sarifLog{}, fmt.Errorf("local Git review result contract is invalid")
+	}
+	if err := validateLocalGitReviewWireEvidence(result.Findings, result.Evidence); err != nil {
+		return sarifLog{}, err
+	}
+	results := make([]sarifResult, len(result.Findings))
+	for index, finding := range result.Findings {
+		item := result.Evidence[index]
+		if len(finding.EvidenceIDs) != 1 || finding.EvidenceIDs[0] != item.ID || finding.Path != item.Path || finding.StartLine != item.StartLine || finding.EndLine != item.EndLine {
+			return sarifLog{}, fmt.Errorf("finding and evidence binding differs")
+		}
+		level, err := sarifLevel(review.Severity(finding.Severity))
+		if err != nil {
+			return sarifLog{}, err
+		}
+		results[index] = sarifResult{
+			RuleID:  staticDebugOutputSARIFRule,
+			Level:   level,
+			Message: sarifMessage{Text: finding.Title},
+			Locations: []sarifLocation{{
+				PhysicalLocation: sarifPhysicalLocation{
+					ArtifactLocation: sarifArtifactLocation{URI: sarifArtifactURI(finding.Path)},
+					Region:           sarifRegion{StartLine: finding.StartLine, EndLine: finding.EndLine},
+				},
+			}},
+			Fingerprints: map[string]string{"openTrestleFindingId/v1": finding.ID},
+			Properties:   sarifResultProperties{EvidenceID: item.ID, EvidenceDigest: item.Digest},
+		}
+	}
+	outcome := review.OutcomeInconclusive
+	reason := string(result.Status)
+	if result.Status == localGitReviewStatusFindings {
+		outcome = review.OutcomeVerified
+		reason = ""
+	}
+	return sarifLog{
+		Schema:  sarifSchemaURI,
+		Version: "2.1.0",
+		Runs: []sarifRun{{
+			Tool: sarifTool{Driver: sarifDriver{
+				Name: "Open Trestle",
+				Rules: []sarifRule{{
+					ID:                   staticDebugOutputSARIFRule,
+					ShortDescription:     sarifMessage{Text: "Debug output left in source"},
+					DefaultConfiguration: sarifConfiguration{Level: "warning"},
+				}},
+			}},
+			Results:    results,
+			Properties: sarifRunProperties{Status: outcome, Reason: reason},
+		}},
+	}, nil
+}
+
+func validateLocalGitReviewWireEvidence(findings []localGitReviewFindingResult, items []localGitReviewEvidenceResult) error {
+	if len(findings) != len(items) {
+		return fmt.Errorf("finding and evidence counts differ")
+	}
+	findingIDs := make(map[string]struct{}, len(findings))
+	evidenceIDs := make(map[string]struct{}, len(items))
+	for index, finding := range findings {
+		item := items[index]
+		if _, exists := findingIDs[finding.ID]; exists {
+			return fmt.Errorf("duplicate finding identity")
+		}
+		if _, exists := evidenceIDs[item.ID]; exists {
+			return fmt.Errorf("duplicate evidence identity")
+		}
+		if len(finding.EvidenceIDs) != 1 || finding.EvidenceIDs[0] != item.ID || finding.Path != item.Path || finding.StartLine != item.StartLine || finding.EndLine != item.EndLine {
+			return fmt.Errorf("finding and evidence binding differs")
+		}
+		findingIDs[finding.ID] = struct{}{}
+		evidenceIDs[item.ID] = struct{}{}
+	}
+	return nil
 }
 
 func sarifLevel(severity review.Severity) (string, error) {

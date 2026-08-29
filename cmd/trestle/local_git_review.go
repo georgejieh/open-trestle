@@ -12,6 +12,13 @@ import (
 	"github.com/georgejieh/open-trestle/internal/scm"
 )
 
+type localGitReviewFormat string
+
+const (
+	localGitReviewFormatJSON  localGitReviewFormat = "json"
+	localGitReviewFormatSARIF localGitReviewFormat = "sarif"
+)
+
 type localGitReviewStatus string
 
 const (
@@ -76,7 +83,7 @@ func runLocalGitReview(args []string, stdout, stderr io.Writer) int {
 }
 
 func runLocalGitReviewWithOpener(args []string, stdout, stderr io.Writer, opener localGitRootOpener) int {
-	options, repository, baseRevision, headRevision, err := parseLocalGitChangeOptions(args)
+	options, repository, baseRevision, headRevision, format, err := parseLocalGitReviewOptions(args)
 	if err != nil {
 		fmt.Fprintf(stderr, "local-git review: %v\n", err)
 		writeLocalGitReviewUsage(stderr)
@@ -103,7 +110,7 @@ func runLocalGitReviewWithOpener(args []string, stdout, stderr io.Writer, opener
 		fmt.Fprintln(stderr)
 		return 1
 	}
-	encoded, resultCode, reviewErr := buildLocalGitReviewResult(handle.root, repository, baseRevision, headRevision)
+	encoded, resultCode, reviewErr := buildLocalGitReviewResult(handle.root, repository, baseRevision, headRevision, format)
 	closeErr := handle.close()
 	if reviewErr != nil {
 		fmt.Fprint(stderr, "review local Git: failed")
@@ -128,7 +135,35 @@ func runLocalGitReviewWithOpener(args []string, stdout, stderr io.Writer, opener
 	return resultCode
 }
 
-func buildLocalGitReviewResult(root *os.Root, repository evidence.RepositoryIdentity, baseRevision, headRevision evidence.RevisionIdentity) ([]byte, int, error) {
+func parseLocalGitReviewOptions(args []string) (localGitChangeOptions, evidence.RepositoryIdentity, evidence.RevisionIdentity, evidence.RevisionIdentity, localGitReviewFormat, error) {
+	format := localGitReviewFormatJSON
+	changeArgs := make([]string, 0, len(args))
+	formatSeen := false
+	if len(args)%2 != 0 {
+		return localGitChangeOptions{}, evidence.RepositoryIdentity{}, evidence.RevisionIdentity{}, evidence.RevisionIdentity{}, "", fmt.Errorf("flag-value pairs are required")
+	}
+	for index := 0; index < len(args); index += 2 {
+		if args[index] != "--format" {
+			changeArgs = append(changeArgs, args[index], args[index+1])
+			continue
+		}
+		if formatSeen {
+			return localGitChangeOptions{}, evidence.RepositoryIdentity{}, evidence.RevisionIdentity{}, evidence.RevisionIdentity{}, "", fmt.Errorf("duplicate flag")
+		}
+		formatSeen = true
+		format = localGitReviewFormat(args[index+1])
+		if format != localGitReviewFormatJSON && format != localGitReviewFormatSARIF {
+			return localGitChangeOptions{}, evidence.RepositoryIdentity{}, evidence.RevisionIdentity{}, evidence.RevisionIdentity{}, "", fmt.Errorf("unsupported review format")
+		}
+	}
+	options, repository, baseRevision, headRevision, err := parseLocalGitChangeOptions(changeArgs)
+	if err != nil {
+		return localGitChangeOptions{}, evidence.RepositoryIdentity{}, evidence.RevisionIdentity{}, evidence.RevisionIdentity{}, "", err
+	}
+	return options, repository, baseRevision, headRevision, format, nil
+}
+
+func buildLocalGitReviewResult(root *os.Root, repository evidence.RepositoryIdentity, baseRevision, headRevision evidence.RevisionIdentity, format localGitReviewFormat) ([]byte, int, error) {
 	store, err := scm.NewLocalGitObjectStore(root, repository)
 	if err != nil {
 		return nil, 0, err
@@ -154,11 +189,29 @@ func buildLocalGitReviewResult(root *os.Root, repository evidence.RepositoryIden
 	if err != nil {
 		return nil, 0, err
 	}
-	encoded, err := json.Marshal(result)
+	encoded, err := encodeLocalGitReviewResult(result, format)
 	if err != nil {
-		return nil, 0, fmt.Errorf("encode local Git review result: %w", err)
+		return nil, 0, err
 	}
 	return append(encoded, '\n'), resultCode, nil
+}
+
+func encodeLocalGitReviewResult(result localGitReviewResult, format localGitReviewFormat) ([]byte, error) {
+	var value any = result
+	if format == localGitReviewFormatSARIF {
+		sarif, err := buildLocalGitReviewSARIF(result)
+		if err != nil {
+			return nil, err
+		}
+		value = sarif
+	} else if format != localGitReviewFormatJSON {
+		return nil, fmt.Errorf("unsupported local Git review format")
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("encode local Git review result: %w", err)
+	}
+	return encoded, nil
 }
 
 func newLocalGitReviewResult(execution scm.LocalGitDebugOutputReviewExecution, limits review.DebugOutputChangeLimits) (localGitReviewResult, int, error) {
@@ -273,5 +326,5 @@ func localGitReviewLimits() review.DebugOutputChangeLimits {
 }
 
 func writeLocalGitReviewUsage(stderr io.Writer) {
-	fmt.Fprintln(stderr, "usage: trestle local-git review --objects-root PATH --repository-authority AUTHORITY --repository-namespace SEGMENT[/SEGMENT...] --repository-name NAME --revision-algorithm sha1|sha256 --base-revision-digest FULL_LOWERCASE_HEX --head-revision-digest FULL_LOWERCASE_HEX")
+	fmt.Fprintln(stderr, "usage: trestle local-git review --objects-root PATH --repository-authority AUTHORITY --repository-namespace SEGMENT[/SEGMENT...] --repository-name NAME --revision-algorithm sha1|sha256 --base-revision-digest FULL_LOWERCASE_HEX --head-revision-digest FULL_LOWERCASE_HEX [--format json|sarif]")
 }

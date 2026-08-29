@@ -168,6 +168,23 @@ func TestRunSARIFRendersNonVerifiedOutcomes(t *testing.T) {
 	})
 }
 
+func TestBuildLocalGitReviewSARIFRejectsAmbiguousEvidence(t *testing.T) {
+	result := localGitReviewResult{
+		Contract: "open-trestle/local-git-review-result", SchemaVersion: 1, Status: localGitReviewStatusFindings,
+		Findings: []localGitReviewFindingResult{
+			{ID: "f1", Path: "file.go", StartLine: 1, EndLine: 1, EvidenceIDs: []string{"e1"}},
+			{ID: "f2", Path: "file.go", StartLine: 2, EndLine: 2, EvidenceIDs: []string{"e1"}},
+		},
+		Evidence: []localGitReviewEvidenceResult{
+			{ID: "e1", Path: "file.go", StartLine: 1, EndLine: 1},
+			{ID: "e1", Path: "file.go", StartLine: 2, EndLine: 2},
+		},
+	}
+	if sarif, err := buildLocalGitReviewSARIF(result); err == nil || sarif.Version != "" {
+		t.Fatalf("buildLocalGitReviewSARIF() = (%#v, %v)", sarif, err)
+	}
+}
+
 func TestSARIFSeverityAndArtifactURI(t *testing.T) {
 	for severity, want := range map[review.Severity]string{
 		review.SeverityLow:      "note",
