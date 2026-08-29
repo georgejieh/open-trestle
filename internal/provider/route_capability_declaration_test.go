@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -111,7 +112,11 @@ func TestRouteCapabilityDeclarationFormattingRedactsLabels(t *testing.T) {
 			}
 		}
 	}
-	if formatted := fmt.Sprintf("%p", &declaration); strings.Contains(formatted, "primary") || strings.Contains(formatted, "Model") {
-		t.Fatalf("pointer address format exposed declaration: %q", formatted)
+	formattedPointer := fmt.Sprintf("%p", &declaration)
+	if !strings.HasPrefix(formattedPointer, "0x") {
+		t.Fatalf("pointer format = %q, want hexadecimal address", formattedPointer)
+	}
+	if _, err := strconv.ParseUint(formattedPointer[2:], 16, 64); err != nil {
+		t.Fatalf("pointer format = %q, want hexadecimal address: %v", formattedPointer, err)
 	}
 }
