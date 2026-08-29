@@ -166,6 +166,18 @@ func (r RepositoryAcquisitionRequest) RepositoryIdentity() string {
 	return r.repositoryIdentity
 }
 
+// Repository returns a defensive copy of the bound repository scope.
+func (r RepositoryAcquisitionRequest) Repository() RepositoryIdentity {
+	repository := r.repository
+	repository.namespace = append([]string(nil), r.repository.namespace...)
+	return repository
+}
+
+// Revision returns the bound immutable revision.
+func (r RepositoryAcquisitionRequest) Revision() RevisionIdentity {
+	return r.revision
+}
+
 // RevisionIdentity returns the exact requested revision identity.
 func (r RepositoryAcquisitionRequest) RevisionIdentity() string {
 	return r.revisionIdentity

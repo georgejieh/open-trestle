@@ -40,6 +40,25 @@ func TestNewRepositoryAcquisitionRequestDerivesContentRequirements(t *testing.T)
 	}
 }
 
+func TestRepositoryAcquisitionRequestReturnsBoundAuthorities(t *testing.T) {
+	repository, revision, adapter := mustAcquisitionAuthorities(t, RevisionAlgorithmSHA256, []SourceAdapterCapability{SourceCapabilityReadManifest})
+	request := mustAcquisitionRequest(t, repository, revision, adapter, AcquisitionArtifactManifest)
+	if got := request.Repository(); !repositoryIdentityValuesEqual(got, repository) {
+		t.Fatalf("Repository() = %#v, want %#v", got, repository)
+	}
+	if got := request.Revision(); got != revision {
+		t.Fatalf("Revision() = %#v, want %#v", got, revision)
+	}
+	returned := request.Repository()
+	returned.namespace[0] = "changed"
+	if got := request.Repository(); !repositoryIdentityValuesEqual(got, repository) {
+		t.Fatalf("Repository() changed after returned value mutation: %#v", got)
+	}
+	if zero := (RepositoryAcquisitionRequest{}); zero.Repository().Identity() != "" || zero.Repository().namespace != nil || zero.Revision().Identity() != "" {
+		t.Fatalf("zero request authorities = (%#v, %#v)", zero.Repository(), zero.Revision())
+	}
+}
+
 func TestRepositoryAcquisitionRequestUsesCanonicalPreimage(t *testing.T) {
 	testCases := []struct {
 		artifact     RepositoryAcquisitionArtifact
