@@ -43,41 +43,57 @@ func (a *LocalGitSourceAdapter) Identity() evidence.SourceAdapterIdentity {
 
 // Acquire reads one exact requested revision and returns typed candidate evidence.
 func (a *LocalGitSourceAdapter) Acquire(ctx context.Context, request evidence.RepositoryAcquisitionRequest) SourceAdapterResult {
+	result, _, _ := a.acquireWithLocalGitEvidence(ctx, request)
+	return result
+}
+
+func (a *LocalGitSourceAdapter) acquireWithLocalGitEvidence(ctx context.Context, request evidence.RepositoryAcquisitionRequest) (SourceAdapterResult, localGitExecutionEvidence, bool) {
 	if a == nil || a.store == nil || isNilInterface(ctx) {
-		return localGitSourceAdapterFailure(LocalGitRevisionInvalidGraph)
+		return localGitSourceAdapterExecutionFailure(LocalGitRevisionInvalidGraph)
 	}
 	if err := evidence.ValidateRepositoryAcquisitionRequest(request); err != nil {
-		return localGitSourceAdapterFailure(LocalGitRevisionInvalidGraph)
+		return localGitSourceAdapterExecutionFailure(LocalGitRevisionInvalidGraph)
 	}
 	if err := ctx.Err(); err != nil {
-		return localGitSourceAdapterFailure(err)
+		return localGitSourceAdapterExecutionFailure(err)
 	}
 	if request.SourceAdapterIdentity() != a.identity.Identity() || request.RepositoryIdentity() != a.store.RepositoryIdentity() {
-		return localGitSourceAdapterFailure(LocalGitRevisionInvalidGraph)
+		return localGitSourceAdapterExecutionFailure(LocalGitRevisionInvalidGraph)
 	}
 	result, err := ReadLocalGitRevision(ctx, a.store, request.Revision())
 	if err != nil {
-		return localGitSourceAdapterFailure(err)
+		return localGitSourceAdapterExecutionFailure(err)
 	}
 	if err := ctx.Err(); err != nil {
-		return localGitSourceAdapterFailure(err)
+		return localGitSourceAdapterExecutionFailure(err)
 	}
 	if result.RevisionIdentity() != request.RevisionIdentity() || result.RepositoryIdentity() != request.RepositoryIdentity() || result.Manifest().Identity() == "" {
-		return localGitSourceAdapterFailure(LocalGitRevisionInvalidGraph)
+		return localGitSourceAdapterExecutionFailure(LocalGitRevisionInvalidGraph)
+	}
+	localGitEvidence, err := newLocalGitExecutionEvidence(result)
+	if err != nil {
+		return localGitSourceAdapterExecutionFailure(err)
+	}
+	if err := ctx.Err(); err != nil {
+		return localGitSourceAdapterExecutionFailure(err)
 	}
 	acquired := SourceAdapterResult{Outcome: evidence.AcquisitionOutcomeAcquired, Reason: evidence.AcquisitionReasonNone, Manifest: result.Manifest()}
 	switch request.Artifact() {
 	case evidence.AcquisitionArtifactManifest:
-		return acquired
+		return acquired, localGitEvidence, true
 	case evidence.AcquisitionArtifactManifestAndContent:
-		acquired.Contents = result.Contents()
+		acquired.Contents = result.contents
 		if err := ctx.Err(); err != nil {
-			return localGitSourceAdapterFailure(err)
+			return localGitSourceAdapterExecutionFailure(err)
 		}
-		return acquired
+		return acquired, localGitEvidence, true
 	default:
-		return localGitSourceAdapterFailure(LocalGitRevisionInvalidGraph)
+		return localGitSourceAdapterExecutionFailure(LocalGitRevisionInvalidGraph)
 	}
+}
+
+func localGitSourceAdapterExecutionFailure(err error) (SourceAdapterResult, localGitExecutionEvidence, bool) {
+	return localGitSourceAdapterFailure(err), localGitExecutionEvidence{}, false
 }
 
 func localGitSourceAdapterFailure(err error) SourceAdapterResult {

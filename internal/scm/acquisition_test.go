@@ -2,6 +2,9 @@ package scm
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -37,9 +40,14 @@ func TestExecuteRepositoryAcquisitionBuildsBlockedAndFailedReceipts(t *testing.T
 	for _, result := range testCases {
 		t.Run(string(result.Outcome), func(t *testing.T) {
 			adapter := &fakeSourceAdapter{identity: fixture.adapter, result: result}
-			receipt, err := ExecuteRepositoryAcquisition(context.Background(), fixture.request, adapter)
-			if err != nil || receipt.Outcome() != result.Outcome || receipt.Reason() != result.Reason || adapter.calls != 1 {
-				t.Fatalf("execution = (%#v, %v), calls = %d", receipt, err, adapter.calls)
+			execution, err := ExecuteRepositoryAcquisitionWithEvidence(context.Background(), fixture.request, adapter)
+			if err != nil || execution.Outcome() != result.Outcome || execution.Receipt().Reason() != result.Reason || execution.HasLocalGitEvidence() || adapter.calls != 1 {
+				t.Fatalf("execution = (%#v, %v), calls = %d", execution, err, adapter.calls)
+			}
+			compatibility := &fakeSourceAdapter{identity: fixture.adapter, result: result}
+			receipt, err := ExecuteRepositoryAcquisition(context.Background(), fixture.request, compatibility)
+			if err != nil || receipt != execution.Receipt() || compatibility.calls != 1 {
+				t.Fatalf("compatibility receipt = (%#v, %v), calls = %d", receipt, err, compatibility.calls)
 			}
 		})
 	}
@@ -167,6 +175,136 @@ func TestExecuteRepositoryAcquisitionPropagatesAdapterPanic(t *testing.T) {
 		}
 	}()
 	_, _ = ExecuteRepositoryAcquisition(context.Background(), fixture.request, adapter)
+}
+
+func TestRepositoryAcquisitionExecutionZeroValue(t *testing.T) {
+	var execution RepositoryAcquisitionExecution
+	if execution.Identity() != "" || execution.Receipt().Identity() != "" || execution.ReceiptIdentity() != "" || execution.RequestIdentity() != "" || execution.SourceAdapterIdentity() != "" || execution.Outcome() != "" || execution.HasLocalGitEvidence() || execution.RevisionIdentity() != "" || execution.ManifestIdentity() != "" || execution.GitCommitIdentity() != "" || execution.GitTreeGraphIdentity() != "" || execution.CorrespondenceIdentity() != "" {
+		t.Fatalf("zero execution = %#v", execution)
+	}
+}
+
+func TestExecuteRepositoryAcquisitionWithEvidenceReturnsGenericExecution(t *testing.T) {
+	fixture := mustExecutionFixture(t, evidence.AcquisitionArtifactManifestAndContent)
+	firstAdapter := &fakeSourceAdapter{identity: fixture.adapter, result: fixture.acquiredResult()}
+	first, err := ExecuteRepositoryAcquisitionWithEvidence(context.Background(), fixture.request, firstAdapter)
+	if err != nil {
+		t.Fatalf("ExecuteRepositoryAcquisitionWithEvidence() error = %v", err)
+	}
+	expectedReceipt, err := evidence.NewRepositoryAcquisitionReceipt(fixture.request, evidence.AcquisitionOutcomeAcquired, evidence.AcquisitionReasonNone, fixture.manifest, fixture.resultContents())
+	if err != nil {
+		t.Fatalf("NewRepositoryAcquisitionReceipt() error = %v", err)
+	}
+	if first.Identity() == "" || first.Receipt() != expectedReceipt || first.ReceiptIdentity() != expectedReceipt.Identity() || first.RequestIdentity() != fixture.request.Identity() || first.SourceAdapterIdentity() != fixture.adapter.Identity() || first.Outcome() != evidence.AcquisitionOutcomeAcquired || firstAdapter.calls != 1 {
+		t.Fatalf("execution = %#v, calls = %d", first, firstAdapter.calls)
+	}
+	if first.HasLocalGitEvidence() || first.RevisionIdentity() != "" || first.ManifestIdentity() != "" || first.GitCommitIdentity() != "" || first.GitTreeGraphIdentity() != "" || first.CorrespondenceIdentity() != "" {
+		t.Fatalf("generic execution reported local Git evidence: %#v", first)
+	}
+	if want := expectedRepositoryAcquisitionExecutionIdentity(first); first.Identity() != want {
+		t.Fatalf("Identity() = %q, want %q", first.Identity(), want)
+	}
+	secondAdapter := &fakeSourceAdapter{identity: fixture.adapter, result: fixture.acquiredResult()}
+	second, err := ExecuteRepositoryAcquisitionWithEvidence(context.Background(), fixture.request, secondAdapter)
+	if err != nil || second != first || secondAdapter.calls != 1 {
+		t.Fatalf("second execution = (%#v, %v), calls = %d", second, err, secondAdapter.calls)
+	}
+	compatibilityAdapter := &fakeSourceAdapter{identity: fixture.adapter, result: fixture.acquiredResult()}
+	receipt, err := ExecuteRepositoryAcquisition(context.Background(), fixture.request, compatibilityAdapter)
+	if err != nil || receipt != first.Receipt() || compatibilityAdapter.calls != 1 {
+		t.Fatalf("compatibility receipt = (%#v, %v), calls = %d", receipt, err, compatibilityAdapter.calls)
+	}
+}
+
+func TestExecuteRepositoryAcquisitionWithEvidenceReturnsZeroOnCancellation(t *testing.T) {
+	fixture := mustExecutionFixture(t, evidence.AcquisitionArtifactManifestAndContent)
+	t.Run("before call", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		adapter := &fakeSourceAdapter{identity: fixture.adapter, result: fixture.acquiredResult()}
+		execution, err := ExecuteRepositoryAcquisitionWithEvidence(ctx, fixture.request, adapter)
+		if !errors.Is(err, context.Canceled) || execution.Identity() != "" || adapter.calls != 0 {
+			t.Fatalf("execution = (%#v, %v), calls = %d", execution, err, adapter.calls)
+		}
+	})
+	t.Run("during call", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		adapter := &fakeSourceAdapter{identity: fixture.adapter}
+		adapter.acquire = func(context.Context, evidence.RepositoryAcquisitionRequest) SourceAdapterResult {
+			cancel()
+			return fixture.acquiredResult()
+		}
+		execution, err := ExecuteRepositoryAcquisitionWithEvidence(ctx, fixture.request, adapter)
+		if !errors.Is(err, context.Canceled) || execution.Identity() != "" || adapter.calls != 1 {
+			t.Fatalf("execution = (%#v, %v), calls = %d", execution, err, adapter.calls)
+		}
+	})
+}
+
+func expectedRepositoryAcquisitionExecutionIdentity(execution RepositoryAcquisitionExecution) string {
+	preimage := struct {
+		Contract                string                                `json:"contract"`
+		SchemaVersion           int                                   `json:"schema_version"`
+		RequestIdentity         string                                `json:"request_identity"`
+		ReceiptIdentity         string                                `json:"receipt_identity"`
+		SourceAdapterIdentity   string                                `json:"source_adapter_identity"`
+		Outcome                 evidence.RepositoryAcquisitionOutcome `json:"outcome"`
+		LocalGitEvidencePresent bool                                  `json:"local_git_evidence_present"`
+		RevisionIdentity        string                                `json:"revision_identity"`
+		ManifestIdentity        string                                `json:"manifest_identity"`
+		GitCommitIdentity       string                                `json:"git_commit_identity"`
+		GitTreeGraphIdentity    string                                `json:"git_tree_graph_identity"`
+		CorrespondenceIdentity  string                                `json:"correspondence_identity"`
+	}{
+		Contract:                "open-trestle/repository-acquisition-execution",
+		SchemaVersion:           1,
+		RequestIdentity:         execution.RequestIdentity(),
+		ReceiptIdentity:         execution.ReceiptIdentity(),
+		SourceAdapterIdentity:   execution.SourceAdapterIdentity(),
+		Outcome:                 execution.Outcome(),
+		LocalGitEvidencePresent: execution.HasLocalGitEvidence(),
+		RevisionIdentity:        execution.RevisionIdentity(),
+		ManifestIdentity:        execution.ManifestIdentity(),
+		GitCommitIdentity:       execution.GitCommitIdentity(),
+		GitTreeGraphIdentity:    execution.GitTreeGraphIdentity(),
+		CorrespondenceIdentity:  execution.CorrespondenceIdentity(),
+	}
+	encoded, err := json.Marshal(preimage)
+	if err != nil {
+		panic(err)
+	}
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:])
+}
+
+func TestCloneSourceAdapterResultContentHonorsCancellation(t *testing.T) {
+	content := make([]byte, 3<<20)
+	ctx := &stagedCancellationContext{Context: context.Background(), remaining: 2}
+	if cloned, err := cloneSourceAdapterResultContent(ctx, content); !errors.Is(err, context.Canceled) || cloned != nil {
+		t.Fatalf("cloneSourceAdapterResultContent() = (%d bytes, %v)", len(cloned), err)
+	}
+	cloned, err := cloneSourceAdapterResultContent(context.Background(), []byte("content"))
+	if err != nil || string(cloned) != "content" {
+		t.Fatalf("cloneSourceAdapterResultContent() = (%q, %v)", cloned, err)
+	}
+}
+
+type stagedCancellationContext struct {
+	context.Context
+	remaining int
+	canceled  bool
+}
+
+func (c *stagedCancellationContext) Err() error {
+	if c.canceled {
+		return context.Canceled
+	}
+	if c.remaining == 0 {
+		c.canceled = true
+		return context.Canceled
+	}
+	c.remaining--
+	return nil
 }
 
 func TestCheckedSourceAdapterResultContentAdd(t *testing.T) {

@@ -32,9 +32,29 @@ func TestLocalGitSourceAdapterAcquiresManifestAndContent(t *testing.T) {
 			} else if got := result.Contents["file"]; !bytes.Equal(got, content) {
 				t.Fatalf("content = %q, want %q", got, content)
 			}
+			_, reported, present := adapter.acquireWithLocalGitEvidence(context.Background(), request)
+			if !present || reported.binding == "" {
+				t.Fatalf("acquireWithLocalGitEvidence() = (%#v, %t)", reported, present)
+			}
+			execution, err := ExecuteRepositoryAcquisitionWithEvidence(context.Background(), request, adapter)
+			if err != nil || execution.Outcome() != evidence.AcquisitionOutcomeAcquired || !execution.HasLocalGitEvidence() || execution.RevisionIdentity() != reported.revisionIdentity || execution.ManifestIdentity() != reported.manifest.Identity() || execution.GitCommitIdentity() != reported.gitCommitIdentity || execution.GitTreeGraphIdentity() != reported.gitTreeGraphIdentity || execution.CorrespondenceIdentity() != reported.correspondenceIdentity {
+				t.Fatalf("ExecuteRepositoryAcquisitionWithEvidence() = (%#v, %v)", execution, err)
+			}
+			if execution.Identity() != expectedRepositoryAcquisitionExecutionIdentity(execution) {
+				t.Fatalf("execution identity = %q", execution.Identity())
+			}
+			genericExecution, err := ExecuteRepositoryAcquisitionWithEvidence(context.Background(), request, &fakeSourceAdapter{identity: adapter.Identity(), result: result})
+			if err != nil || genericExecution.HasLocalGitEvidence() || genericExecution.Receipt() != execution.Receipt() || genericExecution.Identity() == execution.Identity() {
+				t.Fatalf("generic execution = (%#v, %v), local execution = %#v", genericExecution, err, execution)
+			}
+			executionIdentity, commitIdentity := execution.Identity(), execution.GitCommitIdentity()
+			reported.gitCommitIdentity = "changed"
+			if execution.Identity() != executionIdentity || execution.GitCommitIdentity() != commitIdentity {
+				t.Fatal("source evidence mutation changed execution")
+			}
 			receipt, err := ExecuteRepositoryAcquisition(context.Background(), request, adapter)
-			if err != nil || receipt.Outcome() != evidence.AcquisitionOutcomeAcquired || receipt.ManifestIdentity() != result.Manifest.Identity() {
-				t.Fatalf("ExecuteRepositoryAcquisition() = (%#v, %v)", receipt, err)
+			if err != nil || receipt != execution.Receipt() || receipt.ManifestIdentity() != result.Manifest.Identity() {
+				t.Fatalf("ExecuteRepositoryAcquisition() = (%#v, %v), detailed receipt = %#v", receipt, err, execution.Receipt())
 			}
 		})
 	}
@@ -49,8 +69,9 @@ func TestLocalGitSourceAdapterAcquiresEmptyContentSet(t *testing.T) {
 	if result.Outcome != evidence.AcquisitionOutcomeAcquired || result.Manifest.FileCount() != 0 || result.Contents == nil || len(result.Contents) != 0 {
 		t.Fatalf("Acquire() = %#v", result)
 	}
-	if receipt, err := ExecuteRepositoryAcquisition(context.Background(), request, adapter); err != nil || receipt.ContentCoverage() != evidence.ContentCoverageComplete {
-		t.Fatalf("ExecuteRepositoryAcquisition() = (%#v, %v)", receipt, err)
+	execution, err := ExecuteRepositoryAcquisitionWithEvidence(context.Background(), request, adapter)
+	if err != nil || !execution.HasLocalGitEvidence() || execution.Receipt().ContentCoverage() != evidence.ContentCoverageComplete {
+		t.Fatalf("ExecuteRepositoryAcquisitionWithEvidence() = (%#v, %v)", execution, err)
 	}
 }
 
@@ -167,6 +188,91 @@ func TestLocalGitSourceAdapterDoesNotRetainResults(t *testing.T) {
 	}
 }
 
+func TestRepositoryAcquisitionExecutionPreservesForwardingAdapterCompatibility(t *testing.T) {
+	for _, artifact := range []evidence.RepositoryAcquisitionArtifact{evidence.AcquisitionArtifactManifest, evidence.AcquisitionArtifactManifestAndContent} {
+		t.Run(string(artifact), func(t *testing.T) {
+			directory, store := newLocalGitObjectStoreFixture(t)
+			blob := writeLooseObject(t, directory, evidence.RevisionAlgorithmSHA1, "blob", []byte("content"))
+			tree := localTreeEntry(t, evidence.RevisionAlgorithmSHA1, evidence.GitTreeModeRegular, []byte("file"), blob)
+			revision := writeLocalRevision(t, directory, evidence.RevisionAlgorithmSHA1, tree)
+			adapter := mustLocalGitSourceAdapter(t, store)
+			request := mustLocalGitAdapterRequest(t, adapter, mustRepositoryIdentity(t), revision, artifact)
+			concrete, err := ExecuteRepositoryAcquisitionWithEvidence(context.Background(), request, adapter)
+			if err != nil || !concrete.HasLocalGitEvidence() {
+				t.Fatalf("concrete execution = (%#v, %v)", concrete, err)
+			}
+			forwarding := &forwardingSourceAdapter{delegate: adapter}
+			generic, err := ExecuteRepositoryAcquisitionWithEvidence(context.Background(), request, forwarding)
+			if err != nil || generic.HasLocalGitEvidence() || generic.Receipt() != concrete.Receipt() || forwarding.calls != 1 {
+				t.Fatalf("forwarded execution = (%#v, %v), calls = %d", generic, err, forwarding.calls)
+			}
+			compatibility := &forwardingSourceAdapter{delegate: adapter}
+			receipt, err := ExecuteRepositoryAcquisition(context.Background(), request, compatibility)
+			if err != nil || receipt != concrete.Receipt() || compatibility.calls != 1 {
+				t.Fatalf("forwarded receipt = (%#v, %v), calls = %d", receipt, err, compatibility.calls)
+			}
+		})
+	}
+}
+
+func TestRepositoryAcquisitionExecutionRejectsMismatchedLocalGitEvidence(t *testing.T) {
+	directory, store := newLocalGitObjectStoreFixture(t)
+	content := []byte("content")
+	blob := writeLooseObject(t, directory, evidence.RevisionAlgorithmSHA1, "blob", content)
+	tree := localTreeEntry(t, evidence.RevisionAlgorithmSHA1, evidence.GitTreeModeRegular, []byte("file"), blob)
+	revision := writeLocalRevision(t, directory, evidence.RevisionAlgorithmSHA1, tree)
+	adapter := mustLocalGitSourceAdapter(t, store)
+	request := mustLocalGitAdapterRequest(t, adapter, mustRepositoryIdentity(t), revision, evidence.AcquisitionArtifactManifestAndContent)
+	result, local, present := adapter.acquireWithLocalGitEvidence(context.Background(), request)
+	if !present {
+		t.Fatal("acquireWithLocalGitEvidence() did not preserve local Git evidence")
+	}
+	receipt, err := evidence.NewRepositoryAcquisitionReceipt(request, result.Outcome, result.Reason, result.Manifest, result.Contents)
+	if err != nil {
+		t.Fatalf("NewRepositoryAcquisitionReceipt() error = %v", err)
+	}
+	if _, preserved, err := snapshotLocalGitExecutionEvidence(context.Background(), request, adapter, result, receipt, local, present); err != nil || !preserved {
+		t.Fatalf("snapshotLocalGitExecutionEvidence() = (present %t, %v)", preserved, err)
+	}
+	if _, _, err := snapshotLocalGitExecutionEvidence(context.Background(), request, adapter, result, receipt, localGitExecutionEvidence{}, false); err == nil {
+		t.Fatal("acquired local Git result without evidence succeeded")
+	}
+	testCases := []struct {
+		name   string
+		mutate func(*SourceAdapterResult, *localGitExecutionEvidence)
+	}{
+		{name: "repository", mutate: func(_ *SourceAdapterResult, local *localGitExecutionEvidence) { local.repositoryIdentity = "wrong" }},
+		{name: "revision", mutate: func(_ *SourceAdapterResult, local *localGitExecutionEvidence) { local.revisionIdentity = "wrong" }},
+		{name: "manifest", mutate: func(_ *SourceAdapterResult, local *localGitExecutionEvidence) {
+			local.manifest = evidence.RepositoryManifest{}
+		}},
+		{name: "file count", mutate: func(_ *SourceAdapterResult, local *localGitExecutionEvidence) { local.fileCount++ }},
+		{name: "content total", mutate: func(_ *SourceAdapterResult, local *localGitExecutionEvidence) { local.totalContentBytes++ }},
+		{name: "commit identity", mutate: func(_ *SourceAdapterResult, local *localGitExecutionEvidence) {
+			local.gitCommitIdentity = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		}},
+		{name: "tree graph identity", mutate: func(_ *SourceAdapterResult, local *localGitExecutionEvidence) { local.gitTreeGraphIdentity = "wrong" }},
+		{name: "correspondence identity", mutate: func(_ *SourceAdapterResult, local *localGitExecutionEvidence) { local.correspondenceIdentity = "wrong" }},
+		{name: "evidence binding", mutate: func(_ *SourceAdapterResult, local *localGitExecutionEvidence) { local.binding = "wrong" }},
+		{name: "public manifest", mutate: func(result *SourceAdapterResult, _ *localGitExecutionEvidence) {
+			result.Manifest = evidence.RepositoryManifest{}
+		}},
+		{name: "failed result", mutate: func(result *SourceAdapterResult, _ *localGitExecutionEvidence) {
+			result.Outcome = evidence.AcquisitionOutcomeFailed
+			result.Reason = evidence.AcquisitionReasonAdapterFailure
+		}},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			mutatedResult, mutatedLocal := result, local
+			testCase.mutate(&mutatedResult, &mutatedLocal)
+			if _, _, err := snapshotLocalGitExecutionEvidence(context.Background(), request, adapter, mutatedResult, receipt, mutatedLocal, true); err == nil {
+				t.Fatal("mismatched local Git evidence succeeded")
+			}
+		})
+	}
+}
+
 func TestLocalGitSourceAdapterFailureMapping(t *testing.T) {
 	testCases := []struct {
 		err     error
@@ -185,6 +291,20 @@ func TestLocalGitSourceAdapterFailureMapping(t *testing.T) {
 			t.Fatalf("localGitSourceAdapterFailure(%v) = %#v", testCase.err, result)
 		}
 	}
+}
+
+type forwardingSourceAdapter struct {
+	delegate SourceAdapter
+	calls    int
+}
+
+func (a *forwardingSourceAdapter) Identity() evidence.SourceAdapterIdentity {
+	return a.delegate.Identity()
+}
+
+func (a *forwardingSourceAdapter) Acquire(ctx context.Context, request evidence.RepositoryAcquisitionRequest) SourceAdapterResult {
+	a.calls++
+	return a.delegate.Acquire(ctx, request)
 }
 
 func mustLocalGitSourceAdapter(t *testing.T, store *LocalGitObjectStore) *LocalGitSourceAdapter {
