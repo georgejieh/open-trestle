@@ -85,6 +85,23 @@ func (r Request) Payload() []byte {
 	return []byte(r.payload)
 }
 
+// String returns a redacted request description.
+func (r Request) String() string { return "provider request" }
+
+// GoString returns a redacted Go-syntax request description.
+func (r Request) GoString() string { return "provider.Request{<redacted>}" }
+
+// Format writes a redacted representation for verbs dispatched through fmt.Formatter.
+func (r Request) Format(state fmt.State, verb rune) {
+	formatted := "provider request"
+	if verb == 'q' {
+		formatted = `"provider request"`
+	} else if verb == 'v' && state.Flag('#') {
+		formatted = "provider.Request{<redacted>}"
+	}
+	_, _ = state.Write([]byte(formatted))
+}
+
 // Validate verifies that the request remains canonical and bounded.
 func (r Request) Validate() error {
 	if r.mediaType != strings.TrimSpace(r.mediaType) {

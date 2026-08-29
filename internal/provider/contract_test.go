@@ -3,7 +3,9 @@ package provider
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -118,5 +120,34 @@ func TestRequestSurfaceContainsNoRoutingOrCredentialState(t *testing.T) {
 	}
 	if typeOfRequest.Field(2).Type.Kind() != reflect.String {
 		t.Fatalf("payload field type = %s, want immutable string", typeOfRequest.Field(2).Type)
+	}
+}
+
+func TestRequestFormattingRedactsPayload(t *testing.T) {
+	request, err := NewRequest(CapabilityReviewV1, "application/sentinel", []byte("SENTINEL_PAYLOAD"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		format string
+		want   string
+	}{
+		{format: "%s", want: "provider request"},
+		{format: "%v", want: "provider request"},
+		{format: "%+v", want: "provider request"},
+		{format: "%q", want: `"provider request"`},
+		{format: "%#v", want: "provider.Request{<redacted>}"},
+		{format: "%d", want: "provider request"},
+		{format: "%x", want: "provider request"},
+	} {
+		for _, value := range []any{request, &request} {
+			formatted := fmt.Sprintf(test.format, value)
+			if formatted != test.want || strings.Contains(formatted, "SENTINEL") {
+				t.Fatalf("format %q = %q, want %q", test.format, formatted, test.want)
+			}
+		}
+	}
+	if formatted := fmt.Sprintf("%p", &request); strings.Contains(formatted, "SENTINEL") {
+		t.Fatalf("pointer address format exposed request fields: %q", formatted)
 	}
 }
