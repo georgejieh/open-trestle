@@ -21,6 +21,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return runLocalGitInspect(args[2:], stdout, stderr)
 		case "change":
 			return runLocalGitChange(args[2:], stdout, stderr)
+		case "review":
+			return runLocalGitReview(args[2:], stdout, stderr)
 		}
 	}
 	if len(args) == 3 && args[0] == "ci" {
@@ -116,4 +118,5 @@ func writeUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "       trestle ci --format=sarif <path>")
 	writeLocalGitInspectUsage(stderr)
 	writeLocalGitChangeUsage(stderr)
+	writeLocalGitReviewUsage(stderr)
 }
