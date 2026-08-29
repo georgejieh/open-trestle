@@ -43,6 +43,14 @@ type localGitExecutionEvidence struct {
 	binding                string
 }
 
+type repositoryAcquisitionRetention uint8
+
+const (
+	repositoryAcquisitionDiscardResult repositoryAcquisitionRetention = iota
+	repositoryAcquisitionRetainResult
+	repositoryAcquisitionRetainBindingInputs
+)
+
 type repositoryAcquisitionRuntimeResult struct {
 	execution        RepositoryAcquisitionExecution
 	result           SourceAdapterResult
@@ -142,6 +150,14 @@ func ExecuteLocalGitAcquisitionWithBinding(ctx context.Context, request evidence
 }
 
 func executeRepositoryAcquisition(ctx context.Context, request evidence.RepositoryAcquisitionRequest, adapter SourceAdapter, retainBindingInputs bool) (repositoryAcquisitionRuntimeResult, error) {
+	retention := repositoryAcquisitionDiscardResult
+	if retainBindingInputs {
+		retention = repositoryAcquisitionRetainBindingInputs
+	}
+	return executeRepositoryAcquisitionWithRetention(ctx, request, adapter, retention)
+}
+
+func executeRepositoryAcquisitionWithRetention(ctx context.Context, request evidence.RepositoryAcquisitionRequest, adapter SourceAdapter, retention repositoryAcquisitionRetention) (repositoryAcquisitionRuntimeResult, error) {
 	if isNilInterface(ctx) {
 		return repositoryAcquisitionRuntimeResult{}, fmt.Errorf("repository acquisition context is nil")
 	}
@@ -168,7 +184,7 @@ func executeRepositoryAcquisition(ctx context.Context, request evidence.Reposito
 	var hasLocalGitEvidence bool
 	var hasBindingInputs bool
 	if localAdapter, ok := adapter.(*LocalGitSourceAdapter); ok {
-		if retainBindingInputs {
+		if retention == repositoryAcquisitionRetainBindingInputs {
 			result, localGitEvidence, bindingInputs, hasLocalGitEvidence = localAdapter.acquireWithLocalGitBindingInputs(ctx, request)
 			hasBindingInputs = hasLocalGitEvidence
 		} else {
@@ -180,7 +196,7 @@ func executeRepositoryAcquisition(ctx context.Context, request evidence.Reposito
 	if err := ctx.Err(); err != nil {
 		return repositoryAcquisitionRuntimeResult{}, err
 	}
-	if retainBindingInputs && hasBindingInputs {
+	if retention == repositoryAcquisitionRetainBindingInputs && hasBindingInputs {
 		result, err = validateOwnedSourceAdapterResult(ctx, request, result)
 	} else {
 		result, err = snapshotSourceAdapterResult(ctx, request, result)
@@ -213,7 +229,7 @@ func executeRepositoryAcquisition(ctx context.Context, request evidence.Reposito
 		return repositoryAcquisitionRuntimeResult{}, err
 	}
 	runtime := repositoryAcquisitionRuntimeResult{execution: execution}
-	if retainBindingInputs {
+	if retention != repositoryAcquisitionDiscardResult {
 		runtime.result = result
 		runtime.bindingInputs = bindingInputs
 		runtime.hasBindingInputs = hasBindingInputs
