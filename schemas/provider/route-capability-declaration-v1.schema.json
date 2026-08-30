@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:provider:route-capability-declaration:v1",
+  "title": "Open Trestle Route Capability Declaration v1",
+  "description": "Canonical interchange shape that binds an unresolved route reference to declared model capabilities. Validation does not prove registry membership, observed support, availability, eligibility, or provider truth.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "route_reference",
+    "model_capabilities"
+  ],
+  "properties": {
+    "route_reference": {
+      "$ref": "urn:open-trestle:schema:provider:route-reference:v1"
+    },
+    "model_capabilities": {
+      "description": "Trusted runtime validation must also enforce every semantic invariant documented by the referenced capability schema.",
+      "$ref": "urn:open-trestle:schema:provider:model-capabilities:v1"
+    }
+  },
+  "$comment": "Resolvers must use a caller-supplied closed local registry. This schema does not authorize remote reference retrieval."
+}
