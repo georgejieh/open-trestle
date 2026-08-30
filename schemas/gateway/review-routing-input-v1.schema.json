@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:gateway:review-routing-input:v1",
+  "title": "Open Trestle Review Routing Input v1",
+  "description": "Canonical interchange shape for provider-neutral inputs used by later route planning. Validation does not establish request provenance, authorization, tenant or repository scope, budget, route eligibility, or dispatch authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "request_identity",
+    "model_requirements",
+    "provider_data_constraints"
+  ],
+  "properties": {
+    "request_identity": {
+      "description": "Canonical content-derived request fingerprint. It is linkable and dictionary-testable, not anonymization, secrecy, or provenance.",
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "not": {
+        "pattern": "[^0-9a-f]"
+      }
+    },
+    "model_requirements": {
+      "$ref": "urn:open-trestle:schema:provider:model-requirements:v1"
+    },
+    "provider_data_constraints": {
+      "$ref": "urn:open-trestle:schema:policy:provider-data-constraints:v1"
+    }
+  },
+  "$comment": "Resolvers must use a caller-supplied closed local registry. This schema does not authorize remote reference retrieval."
+}
