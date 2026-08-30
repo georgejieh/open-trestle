@@ -54,7 +54,7 @@ An integration is supported only after it passes common conformance checks for i
 
 ## Deployment model
 
-The target architecture uses a Go control plane, PostgreSQL ledger, S3-compatible artifact storage, NATS JetStream jobs, OPA policy evaluation, OpenTelemetry observability, and isolated runners. Docker Compose supports a single operator. Helm and Kubernetes support larger installations. These are design decisions, not claims of a released deployment.
+The target architecture uses a trusted control plane, PostgreSQL ledger, S3-compatible artifact storage, NATS JetStream jobs, OPA policy evaluation, OpenTelemetry observability, and isolated runners. The implementation language for the trusted CLI, snapshot, receipt, daemon, and control-plane boundary remains an explicit Go-or-Rust decision; the current Go foundation is not a final language commitment. Docker Compose supports a single operator. Helm and Kubernetes support larger installations. These are design decisions, not claims of a released deployment.
 
 ## Non-goals
 
