@@ -41,7 +41,7 @@
       "$ref": "#/$defs/token_capacity"
     },
     "max_output_tokens": {
-      "description": "Declared maximum output capacity. Trusted runtime validation must reject values above max_context_tokens.",
+      "description": "Declared maximum output capacity. Trusted runtime validation must reject values above max_context_tokens; schema validation does not enforce that relation or prove the declaration.",
       "$ref": "#/$defs/token_capacity"
     }
   }
