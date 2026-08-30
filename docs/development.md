@@ -2,7 +2,18 @@
 
 ## Language and module design
 
-The initial implementation uses Go for control-plane services and TypeScript for the web and editor surfaces. Modules own one coherent responsibility and depend toward stable contracts. Transport adapters, forge adapters, provider adapters, policy evaluation, evidence storage, and publishing remain separate modules.
+Open Trestle chooses languages by component rather than using one language across the product.
+
+| Component | Preferred language | Reason |
+|---|---|---|
+| Model evaluation, retrieval experiments, analyzers, and workflow prototypes | Python | Strong ecosystem support and fast iteration for model-facing work |
+| Trusted local CLI, snapshot acquisition, compact evidence receipts, and daemon core | Go or Rust, pending an explicit decision | Portable distribution, predictable resource handling, and strong boundary enforcement |
+| Web console, IDE extensions, VS Code, and browser views | TypeScript | Native ecosystem fit |
+| CI wrapper and GitHub Action | TypeScript, Go, or a thin shell wrapper | Select according to distribution and integration requirements |
+| Policies, gate plans, and provider-routing rules | Declarative schemas | Versioned, inspectable, language-neutral contracts |
+| Harness integrations | Host-native plugin language | Integrate with the environment users already operate |
+
+The existing Go foundation does not make Go the default for unrelated components. Choose the component language before implementation and keep cross-language boundaries versioned and explicit. Modules own one coherent responsibility and depend toward stable contracts. Transport adapters, forge adapters, provider adapters, policy evaluation, evidence storage, and publishing remain separate modules.
 
 ## Google-style conventions
 
