@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:provider:model-requirements:v1",
+  "title": "Open Trestle Model Requirements v1",
+  "description": "Canonical interchange shape for minimum model requirements. Validation does not prove that a route or model satisfies them.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "required_features",
+    "min_context_tokens",
+    "min_output_tokens"
+  ],
+  "$defs": {
+    "model_feature": {
+      "type": "string",
+      "enum": [
+        "structured_output",
+        "native_tools",
+        "vision"
+      ]
+    },
+    "token_requirement": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1073741824
+    }
+  },
+  "properties": {
+    "required_features": {
+      "description": "Required optional model features. Array order has no meaning.",
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/model_feature"
+      }
+    },
+    "min_context_tokens": {
+      "description": "Minimum total context capacity. Zero imposes no context minimum.",
+      "$ref": "#/$defs/token_requirement"
+    },
+    "min_output_tokens": {
+      "description": "Minimum output capacity. Zero imposes no output minimum.",
+      "$ref": "#/$defs/token_requirement"
+    }
+  }
+}
