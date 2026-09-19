@@ -72,6 +72,14 @@ func ParseProviderZone(value string) (ProviderZone, error) {
 	}
 }
 
+// ValidateAdapterID verifies one stable adapter implementation identifier.
+func ValidateAdapterID(adapterID string) error {
+	if !validRouteRegistryID(adapterID, maxProviderAdapterIDBytes) {
+		return fmt.Errorf("validate adapter ID: %w", ErrInvalidAdapterID)
+	}
+	return nil
+}
+
 // RouteReference binds non-secret labels for an unresolved model selection target.
 type RouteReference struct {
 	zone         ProviderZone

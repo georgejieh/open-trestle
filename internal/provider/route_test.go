@@ -217,3 +217,16 @@ func TestRouteReferenceSurfaceContainsOnlyOpaqueSelectionLabels(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateAdapterIDUsesRouteRegistryGrammar(t *testing.T) {
+	for _, value := range []string{"openai", "openai.compat-v1", "local_adapter"} {
+		if err := ValidateAdapterID(value); err != nil {
+			t.Fatalf("ValidateAdapterID(%q) = %v", value, err)
+		}
+	}
+	for _, value := range []string{"", "Upper", "has/slash", strings.Repeat("a", maxProviderAdapterIDBytes+1)} {
+		if err := ValidateAdapterID(value); !errors.Is(err, ErrInvalidAdapterID) {
+			t.Fatalf("ValidateAdapterID(%q) = %v", value, err)
+		}
+	}
+}
