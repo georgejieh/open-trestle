@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:runtime:github-source-broker:v1",
+  "title": "Open Trestle GitHub source broker configuration v1",
+  "description": "Non-secret protected descriptor shape, not an issuance grant or proof of ownership. Native LoadConfig enforces exact keys, types, byte bounds, canonical endpoints and paths, protected ownership and stable double reads. Operation-specific common authority and effect approvals remain required.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "tenant_id",
+    "repository_id",
+    "repository_full_name",
+    "github_repository_id",
+    "installation_id",
+    "app_id",
+    "repository_authority",
+    "api_endpoint",
+    "api_version",
+    "archive_authorities",
+    "app_key_version",
+    "app_public_key_sha256",
+    "credential_environment",
+    "authorization_generation",
+    "ownership_mode",
+    "attempt_state_directory",
+    "allow_token_creation",
+    "allow_demand_renewal"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/github-source-broker"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.-]+$"
+    },
+    "repository_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.-]+$"
+    },
+    "repository_full_name": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 511,
+      "pattern": "^[a-z0-9._-]{1,255}/[a-z0-9._-]{1,255}$"
+    },
+    "github_repository_id": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "installation_id": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "app_id": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "repository_authority": {
+      "const": "github.com"
+    },
+    "api_endpoint": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "description": "Native parsing requires canonical HTTPS or numeric-loopback HTTP, rejects ambiguous authorities and normalizes an admitted trailing slash."
+    },
+    "api_version": {
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 10,
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "description": "The native descriptor parser validates the exact calendar date. Setup permission inspection additionally requires year 2000 or later."
+    },
+    "archive_authorities": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2040
+      },
+      "description": "Native validation requires sorted, lowercase, canonical authorities and validates each HTTPS endpoint locality."
+    },
+    "app_key_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.-]+$"
+    },
+    "app_public_key_sha256": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    },
+    "credential_environment": {
+      "const": "OPEN_TRESTLE_GITHUB_APP_PRIVATE_KEY"
+    },
+    "authorization_generation": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    },
+    "ownership_mode": {
+      "const": "single_host_exclusive"
+    },
+    "attempt_state_directory": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^[^\u0000\r\n]+$",
+      "description": "Native validation requires an absolute clean path and enforces byte bounds and protected directory authority."
+    },
+    "allow_token_creation": {
+      "type": "boolean",
+      "const": true
+    },
+    "allow_demand_renewal": {
+      "type": "boolean",
+      "const": true
+    }
+  }
+}

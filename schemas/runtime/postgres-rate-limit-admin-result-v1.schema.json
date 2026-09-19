@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:runtime:postgres-rate-limit-admin-result:v1",
+  "title": "Open Trestle PostgreSQL rate-limit administration result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "status",
+    "operation",
+    "shared_rate_limit_authority_identity",
+    "runtime_rate_limit_authority_identity"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/postgres-rate-limit-admin-result"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "status": {
+      "const": "valid"
+    },
+    "operation": {
+      "const": "identity"
+    },
+    "shared_rate_limit_authority_identity": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    },
+    "runtime_rate_limit_authority_identity": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    }
+  }
+}

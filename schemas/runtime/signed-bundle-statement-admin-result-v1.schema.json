@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:runtime:signed-bundle-statement-admin-result:v1",
+  "title": "Open Trestle signed bundle statement administration result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "status",
+    "operation",
+    "statement_base64",
+    "statement_identity"
+  ],
+  "properties": {
+    "contract": { "const": "open-trestle/signed-bundle-statement-admin-result" },
+    "schema_version": { "const": 1 },
+    "status": { "const": "valid" },
+    "operation": { "const": "statement" },
+    "statement_base64": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+    },
+    "statement_identity": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    }
+  }
+}

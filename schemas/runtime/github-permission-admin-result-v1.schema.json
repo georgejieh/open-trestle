@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:runtime:github-permission-admin-result:v1",
+  "title": "Open Trestle GitHub permission administration result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "status",
+    "operation",
+    "permission_authority_identity"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/github-permission-admin-result"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "status": {
+      "const": "valid"
+    },
+    "operation": {
+      "const": "identity"
+    },
+    "permission_authority_identity": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    }
+  }
+}

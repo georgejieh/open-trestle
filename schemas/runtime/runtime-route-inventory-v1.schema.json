@@ -1,0 +1,270 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:runtime:route-inventory:v1",
+  "title": "Open Trestle Runtime Route Inventory",
+  "description": "Bounded operator-owned route registry and point-in-time operational observations.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "routes"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "routes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "zone",
+          "provider_id",
+          "adapter_id",
+          "connection_id",
+          "model_id",
+          "model_version",
+          "max_context_tokens",
+          "max_output_tokens",
+          "features",
+          "content_logging",
+          "pricing_known",
+          "input_micro_usd_per_million_tokens",
+          "output_micro_usd_per_million_tokens",
+          "quality",
+          "registry_revision",
+          "registry_status",
+          "evidence_manifest_base64",
+          "operational_revision",
+          "health",
+          "quota",
+          "performance_revision",
+          "latency_known",
+          "p95_latency_milliseconds",
+          "latency_sample_count"
+        ],
+        "properties": {
+          "zone": {
+            "type": "string",
+            "enum": [
+              "local",
+              "private_remote",
+              "brokered_remote",
+              "subscription_oauth"
+            ]
+          },
+          "provider_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "adapter_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "connection_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "model_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "model_version": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "max_context_tokens": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1073741824
+          },
+          "max_output_tokens": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1073741824
+          },
+          "features": {
+            "type": "array",
+            "maxItems": 3,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "structured_output",
+                "native_tools",
+                "vision"
+              ]
+            }
+          },
+          "content_logging": {
+            "type": "string",
+            "enum": [
+              "disabled",
+              "enabled",
+              "unknown"
+            ]
+          },
+          "pricing_known": {
+            "type": "boolean"
+          },
+          "input_micro_usd_per_million_tokens": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 18446744073709551615
+          },
+          "output_micro_usd_per_million_tokens": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 18446744073709551615
+          },
+          "quality": {
+            "type": "string",
+            "enum": [
+              "tier_1",
+              "tier_2",
+              "tier_3",
+              "tier_4"
+            ]
+          },
+          "registry_revision": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 18446744073709551615
+          },
+          "registry_status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "degraded",
+              "disabled"
+            ]
+          },
+          "evidence_manifest_base64": {
+            "type": "string",
+            "minLength": 4,
+            "maxLength": 1398104,
+            "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+          },
+          "operational_revision": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 18446744073709551615
+          },
+          "health": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "unhealthy",
+              "unknown"
+            ]
+          },
+          "quota": {
+            "type": "string",
+            "enum": [
+              "available",
+              "exhausted",
+              "unknown"
+            ]
+          },
+          "performance_revision": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 18446744073709551615
+          },
+          "latency_known": {
+            "type": "boolean"
+          },
+          "p95_latency_milliseconds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 86400000
+          },
+          "latency_sample_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "pricing_known": {
+                  "const": false
+                }
+              },
+              "required": [
+                "pricing_known"
+              ]
+            },
+            "then": {
+              "properties": {
+                "input_micro_usd_per_million_tokens": {
+                  "const": 0
+                },
+                "output_micro_usd_per_million_tokens": {
+                  "const": 0
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "latency_known": {
+                  "const": false
+                }
+              },
+              "required": [
+                "latency_known"
+              ]
+            },
+            "then": {
+              "properties": {
+                "p95_latency_milliseconds": {
+                  "const": 0
+                },
+                "latency_sample_count": {
+                  "const": 0
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "latency_known": {
+                  "const": true
+                }
+              },
+              "required": [
+                "latency_known"
+              ]
+            },
+            "then": {
+              "properties": {
+                "p95_latency_milliseconds": {
+                  "minimum": 1
+                },
+                "latency_sample_count": {
+                  "minimum": 20
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

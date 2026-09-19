@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:runtime:configuration-validation-result:v1",
+  "title": "Open Trestle runtime configuration validation result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "status",
+    "inventory_identity",
+    "runtime_policy_identity",
+    "review_policy_identity",
+    "route_count",
+    "connection_count"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/runtime-configuration-validation-result"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "status": {
+      "const": "valid"
+    },
+    "inventory_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "runtime_policy_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "review_policy_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "route_count": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 64
+    },
+    "connection_count": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 64
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}

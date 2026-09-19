@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:controlplane:task-completion-request:v1",
+  "title": "Open Trestle task completion request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "lease",
+    "completion"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/task-completion-request"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "lease": {
+      "$ref": "urn:open-trestle:schema:controlplane:review-task-lease:v1"
+    },
+    "completion": {
+      "$ref": "urn:open-trestle:schema:controlplane:review-task-completion:v1"
+    }
+  }
+}

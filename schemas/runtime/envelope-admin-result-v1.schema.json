@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:runtime:envelope-admin-result:v1",
+  "title": "Open Trestle envelope storage administration result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "status",
+    "operation",
+    "envelope_storage_authority_identity",
+    "s3_authority_identity",
+    "kms_authority_identity"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/envelope-admin-result"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "status": {
+      "const": "valid"
+    },
+    "operation": {
+      "const": "identity"
+    },
+    "envelope_storage_authority_identity": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    },
+    "s3_authority_identity": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    },
+    "kms_authority_identity": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    }
+  }
+}

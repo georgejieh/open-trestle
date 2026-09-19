@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:controlplane:runtime-status-response:v1",
+  "title": "Open Trestle runtime status response v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "request_id",
+    "status"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/runtime-status-response"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "status": {
+      "$ref": "urn:open-trestle:schema:runtime:status:v1"
+    }
+  }
+}

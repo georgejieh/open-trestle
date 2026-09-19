@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:controlplane:task-notification-claim-request:v1",
+  "title": "Open Trestle task notification claim request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "wait_milliseconds",
+    "lease_duration_milliseconds"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/task-notification-claim-request"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "wait_milliseconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10000
+    },
+    "lease_duration_milliseconds": {
+      "type": "integer",
+      "minimum": 1000,
+      "maximum": 86400000
+    }
+  }
+}

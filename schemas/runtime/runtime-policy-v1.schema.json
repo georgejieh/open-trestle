@@ -1,0 +1,235 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:runtime:policy:v1",
+  "title": "Open Trestle Runtime Policy",
+  "description": "Exact routing, budget, ranking, verifier independence, and non-secret provider connection authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "inventory_identity",
+    "review_policy_identity",
+    "min_context_tokens",
+    "min_output_tokens",
+    "required_features",
+    "classification",
+    "allowed_zones",
+    "content_logging_allowed",
+    "estimated_input_tokens",
+    "max_output_tokens",
+    "max_cost_micro_usd",
+    "pinned_route_record_identity",
+    "preferred_route_record_identities",
+    "verification_independence",
+    "publication_minimum_severity",
+    "publication_max_inline_findings",
+    "publication_minimum_independence",
+    "publication_block_on_inconclusive",
+    "connections"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "inventory_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "review_policy_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "min_context_tokens": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1073741824
+    },
+    "min_output_tokens": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1073741824
+    },
+    "required_features": {
+      "type": "array",
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "structured_output",
+          "native_tools",
+          "vision"
+        ]
+      }
+    },
+    "classification": {
+      "type": "string",
+      "enum": [
+        "public",
+        "internal",
+        "confidential",
+        "restricted"
+      ]
+    },
+    "allowed_zones": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "local",
+          "private_remote",
+          "brokered_remote",
+          "subscription_oauth"
+        ]
+      }
+    },
+    "content_logging_allowed": {
+      "type": "boolean"
+    },
+    "estimated_input_tokens": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1073741824
+    },
+    "max_output_tokens": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1073741824
+    },
+    "max_cost_micro_usd": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 18446744073709551615
+    },
+    "pinned_route_record_identity": {
+      "description": "Optional generation-only route pin. Independent verification retains ordered preferences but never inherits this pin.",
+      "type": "string",
+      "pattern": "^$|^[0-9a-f]{64}$"
+    },
+    "preferred_route_record_identities": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    },
+    "verification_independence": {
+      "type": "string",
+      "enum": [
+        "distinct_route",
+        "distinct_model",
+        "distinct_provider"
+      ]
+    },
+    "publication_minimum_severity": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ]
+    },
+    "publication_max_inline_findings": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 255
+    },
+    "publication_minimum_independence": {
+      "type": "string",
+      "enum": [
+        "distinct_route",
+        "distinct_model",
+        "distinct_provider"
+      ]
+    },
+    "publication_block_on_inconclusive": {
+      "type": "boolean"
+    },
+    "connections": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "implementation",
+          "adapter_id",
+          "endpoint",
+          "credential_environment"
+        ],
+        "properties": {
+          "implementation": {
+            "const": "openai_responses"
+          },
+          "adapter_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "endpoint": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048,
+            "format": "uri",
+            "anyOf": [
+              {
+                "allOf": [
+                  {
+                    "pattern": "^https://(?=[^/:]{1,253}(?::|/|$))[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*(?::(?:[1-9]|[1-9][0-9]{1,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:/[^?#%\\\\\\s]*)?$"
+                  },
+                  {
+                    "not": {
+                      "pattern": "^https://[0-9.]+(?::|/|$)"
+                    }
+                  }
+                ]
+              },
+              {
+                "pattern": "^https://(?:(?:0|[1-9]\\d?|1\\d{2}|2[0-4]\\d|25[0-5])\\.){3}(?:0|[1-9]\\d?|1\\d{2}|2[0-4]\\d|25[0-5])(?::(?:[1-9]|[1-9][0-9]{1,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:/[^?#%\\\\\\s]*)?$"
+              },
+              {
+                "allOf": [
+                  {
+                    "pattern": "^https://\\[(?:(?!(?:(?:0|[1-9a-f][0-9a-f]{0,3}):)*0:0(?::(?:0|[1-9a-f][0-9a-f]{0,3}))*\\])(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3})|::|::[1-9a-f][0-9a-f]{0,3}|::[1-9a-f][0-9a-f]{0,3}:(?:0|[1-9a-f][0-9a-f]{0,3})|::[1-9a-f][0-9a-f]{0,3}:(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3})|::[1-9a-f][0-9a-f]{0,3}:(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3})|::(?!(?:(?:0|[1-9a-f][0-9a-f]{0,3}):)*0(?::0){3}(?::(?:0|[1-9a-f][0-9a-f]{0,3}))*\\])[1-9a-f][0-9a-f]{0,3}:(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3})|::(?!(?:(?:0|[1-9a-f][0-9a-f]{0,3}):)*0(?::0){2}(?::(?:0|[1-9a-f][0-9a-f]{0,3}))*\\])[1-9a-f][0-9a-f]{0,3}:(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3})|[1-9a-f][0-9a-f]{0,3}::|[1-9a-f][0-9a-f]{0,3}::[1-9a-f][0-9a-f]{0,3}|[1-9a-f][0-9a-f]{0,3}::[1-9a-f][0-9a-f]{0,3}:(?:0|[1-9a-f][0-9a-f]{0,3})|[1-9a-f][0-9a-f]{0,3}::[1-9a-f][0-9a-f]{0,3}:(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3})|[1-9a-f][0-9a-f]{0,3}::(?!(?:(?:0|[1-9a-f][0-9a-f]{0,3}):)*0(?::0){3}(?::(?:0|[1-9a-f][0-9a-f]{0,3}))*\\])[1-9a-f][0-9a-f]{0,3}:(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3})|[1-9a-f][0-9a-f]{0,3}::(?!(?:(?:0|[1-9a-f][0-9a-f]{0,3}):)*0(?::0){2}(?::(?:0|[1-9a-f][0-9a-f]{0,3}))*\\])[1-9a-f][0-9a-f]{0,3}:(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3})|(?:0|[1-9a-f][0-9a-f]{0,3}):[1-9a-f][0-9a-f]{0,3}::|(?:0|[1-9a-f][0-9a-f]{0,3}):[1-9a-f][0-9a-f]{0,3}::[1-9a-f][0-9a-f]{0,3}|(?:0|[1-9a-f][0-9a-f]{0,3}):[1-9a-f][0-9a-f]{0,3}::[1-9a-f][0-9a-f]{0,3}:(?:0|[1-9a-f][0-9a-f]{0,3})|(?:0|[1-9a-f][0-9a-f]{0,3}):[1-9a-f][0-9a-f]{0,3}::[1-9a-f][0-9a-f]{0,3}:(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3})|(?!(?:(?:0|[1-9a-f][0-9a-f]{0,3}):)*0(?::0){1}(?::(?:0|[1-9a-f][0-9a-f]{0,3}))*::)(?:0|[1-9a-f][0-9a-f]{0,3}):[1-9a-f][0-9a-f]{0,3}::(?!(?:(?:0|[1-9a-f][0-9a-f]{0,3}):)*0(?::0){2}(?::(?:0|[1-9a-f][0-9a-f]{0,3}))*\\])[1-9a-f][0-9a-f]{0,3}:(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3})|(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):[1-9a-f][0-9a-f]{0,3}::|(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):[1-9a-f][0-9a-f]{0,3}::[1-9a-f][0-9a-f]{0,3}|(?!(?:(?:0|[1-9a-f][0-9a-f]{0,3}):)*0(?::0){2}(?::(?:0|[1-9a-f][0-9a-f]{0,3}))*::)(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):[1-9a-f][0-9a-f]{0,3}::[1-9a-f][0-9a-f]{0,3}:(?:0|[1-9a-f][0-9a-f]{0,3})|(?!(?:(?:0|[1-9a-f][0-9a-f]{0,3}):)*0(?::0){1}(?::(?:0|[1-9a-f][0-9a-f]{0,3}))*::)(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):[1-9a-f][0-9a-f]{0,3}::(?!(?:(?:0|[1-9a-f][0-9a-f]{0,3}):)*0(?::0){2}(?::(?:0|[1-9a-f][0-9a-f]{0,3}))*\\])[1-9a-f][0-9a-f]{0,3}:(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3})|(?!(?:(?:0|[1-9a-f][0-9a-f]{0,3}):)*0(?::0){3}(?::(?:0|[1-9a-f][0-9a-f]{0,3}))*::)(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):[1-9a-f][0-9a-f]{0,3}::|(?!(?:(?:0|[1-9a-f][0-9a-f]{0,3}):)*0(?::0){2}(?::(?:0|[1-9a-f][0-9a-f]{0,3}))*::)(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):[1-9a-f][0-9a-f]{0,3}::[1-9a-f][0-9a-f]{0,3}|(?!(?:(?:0|[1-9a-f][0-9a-f]{0,3}):)*0(?::0){1}(?::(?:0|[1-9a-f][0-9a-f]{0,3}))*::)(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):[1-9a-f][0-9a-f]{0,3}::[1-9a-f][0-9a-f]{0,3}:(?:0|[1-9a-f][0-9a-f]{0,3})|(?!(?:(?:0|[1-9a-f][0-9a-f]{0,3}):)*0(?::0){2}(?::(?:0|[1-9a-f][0-9a-f]{0,3}))*::)(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):[1-9a-f][0-9a-f]{0,3}::|(?!(?:(?:0|[1-9a-f][0-9a-f]{0,3}):)*0(?::0){1}(?::(?:0|[1-9a-f][0-9a-f]{0,3}))*::)(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):[1-9a-f][0-9a-f]{0,3}::[1-9a-f][0-9a-f]{0,3}|(?!(?:(?:0|[1-9a-f][0-9a-f]{0,3}):)*0(?::0){1}(?::(?:0|[1-9a-f][0-9a-f]{0,3}))*::)(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3}):[1-9a-f][0-9a-f]{0,3}::)\\](?::(?:[1-9]|[1-9][0-9]{1,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:/[^?#%\\\\\\s]*)?$"
+                  },
+                  {
+                    "not": {
+                      "pattern": "^https://\\[::ffff:(?:0|[1-9a-f][0-9a-f]{0,3}):(?:0|[1-9a-f][0-9a-f]{0,3})\\]"
+                    }
+                  }
+                ]
+              },
+              {
+                "pattern": "^http://(?:(?:127\\.(?:0|[1-9]\\d?|1\\d{2}|2[0-4]\\d|25[0-5])\\.(?:0|[1-9]\\d?|1\\d{2}|2[0-4]\\d|25[0-5])\\.(?:0|[1-9]\\d?|1\\d{2}|2[0-4]\\d|25[0-5]))|(?:\\[::1\\]))(?::(?:[1-9]|[1-9][0-9]{1,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:/[^?#%\\\\\\s]*)?$"
+              }
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "pattern": "^https?://[^/]+/[^?#]*//"
+                },
+                {
+                  "pattern": "/(?:\\.{1,2})(?:/|$)"
+                }
+              ]
+            }
+          },
+          "credential_environment": {
+            "type": "string",
+            "minLength": 23,
+            "maxLength": 128,
+            "pattern": "^OPEN_TRESTLE_PROVIDER_[A-Z0-9_]+$"
+          }
+        }
+      }
+    }
+  }
+}

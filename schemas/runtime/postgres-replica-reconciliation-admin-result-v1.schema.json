@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:runtime:postgres-replica-reconciliation-admin-result:v1",
+  "title": "Open Trestle PostgreSQL replica reconciliation administration result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "status",
+    "operation",
+    "replica_reconciliation_authority_identity"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/postgres-replica-reconciliation-admin-result"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "status": {
+      "const": "valid"
+    },
+    "operation": {
+      "const": "identity"
+    },
+    "replica_reconciliation_authority_identity": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    }
+  }
+}
