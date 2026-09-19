@@ -19,13 +19,13 @@ Repository authority, namespace, and name are caller-supplied scope labels. They
 
 ## Output
 
-The command buffers one `open-trestle/local-git-change-result` JSON object and writes it followed by one newline after the object root closes successfully. The object contains only compact identities, counts, documented repository-relative changed paths, change kinds, supported or unsupported states, unsupported reasons, and optional file-change and line-map identities. It does not contain the object-root path, repository label text, raw commit digest, source content, unified patch, timestamps, host data, environment data, credentials, or command output.
+The command buffers one `open-trestle/local-git-change-result` version 2 JSON object with strict public shape `schemas/review/local-git-change-result-v2.schema.json` and writes it followed by one newline after the object root closes successfully. Version 1 remains published for the earlier modified-only supported-entry behavior. The object contains only compact identities, counts, documented repository-relative changed paths, change kinds, supported or unsupported states, unsupported reasons, and optional file-change and line-map identities. It does not contain the object-root path, repository label text, raw commit digest, source content, unified patch, timestamps, host data, environment data, credentials, or command output.
 
-Entry order is the canonical manifest-delta path order. Added and removed paths are explicit unsupported outcomes under the current modified-file `Change` contract. NUL-bearing or diff-over-budget modified files also remain explicit unsupported outcomes. A supported entry carries authenticated `FileChange` and `LineMap` identities. The aggregate `change` identity includes supported entries only; counts and the complete entry array make partial coverage explicit.
+Entry order is the canonical manifest-delta path order. A nonempty, valid, within-budget added text file is supported against a canonical empty base and covers its complete head range. Empty, invalid-UTF-8 or NUL-bearing, diff-over-budget, and removed files remain explicit unsupported outcomes. A supported entry carries authenticated `FileChange` and `LineMap` identities. The aggregate `change` identity includes supported entries only; counts and the complete entry array make partial coverage explicit.
 
 The status is one of:
 
-- `complete`: every changed path produced supported modified-file evidence;
+- `complete`: every changed path produced supported text-file evidence;
 - `no_change`: the two accepted manifests are equal;
 - `partial`: at least one path is supported and at least one is unsupported;
 - `unsupported`: changed paths exist, but none produced supported evidence.

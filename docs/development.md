@@ -30,3 +30,5 @@ Use one coherent change per commit. A commit should normally add or alter one fi
 ## Dependencies
 
 New dependencies require an explicit license, maintenance, security, and supply-chain review. Pin dependencies through the native package manager. Do not add a library only to replace a small standard-library capability.
+
+The web and VS Code package roots disable npm's automatic audit requests, funding notices, and update-notifier checks during install. This keeps locked dependency retrieval separate from advisory network requests. It does not establish vulnerability absence or offline installation. Run vulnerability reporting only through a separately authorized release gate.

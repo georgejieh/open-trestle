@@ -18,7 +18,7 @@ Repository authority, namespace, and name are caller-supplied scope labels. They
 
 ## Output
 
-Success writes one compact JSON object followed by a newline. The contract is `open-trestle/local-git-inspect-result`, schema version 1. It contains only the structural status, content coverage, and identities for the envelope, repository label, revision, adapter, request, receipt, acquisition execution, profiled acquisition execution, evidence binding, manifest, verified commit, verified tree graph, manifest correspondence, and profile bundle.
+Success writes one compact JSON object followed by a newline. The contract is `open-trestle/local-git-inspect-result`, schema version 1, with strict public shape `schemas/review/local-git-inspect-result-v1.schema.json`. It contains only the structural status, content coverage, and identities for the envelope, repository label, revision, adapter, request, receipt, acquisition execution, profiled acquisition execution, evidence binding, manifest, verified commit, verified tree graph, manifest correspondence, and profile bundle.
 
 The command does not print the object-root path, repository labels, raw revision digest, file paths, repository content, profile internals, timestamps, host data, or environment data. The status `supplied_evidence_bound` means structural agreement only.
 

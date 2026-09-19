@@ -27,11 +27,11 @@ The command uses the existing `static-debug-output` rule only. It does not run a
 - at most 64 MiB total authenticated head content;
 - at most 1,024 findings.
 
-Limits are validated before acquisition. Every supported file in the canonical `Change` receives analyzed, unsupported-language, or no-positive-head-range coverage. Added, removed, binary, NUL-bearing, or diff-over-budget entries remain explicit in the nested change execution and are not silently reviewed as modified text.
+Limits are validated before acquisition. Every supported file in the canonical `Change` receives analyzed, unsupported-language, or no-positive-head-range coverage. Nonempty, valid, within-budget added text is supported against an empty base and receives full-file coverage. Empty additions, removed files, invalid-UTF-8 or NUL-bearing content, and diff-over-budget entries remain explicit unsupported outcomes.
 
 ## Output
 
-Success or an inconclusive result writes one `open-trestle/local-git-review-result` JSON object followed by one newline. The object contains:
+Success or an inconclusive result writes one `open-trestle/local-git-review-result` version 2 JSON object with strict public shape `schemas/review/local-git-review-result-v2.schema.json` followed by one newline. Version 1 remains published for the earlier nested modified-only change contract. The object contains:
 
 - the complete nested `open-trestle/local-git-change-result` record;
 - the identity-bound debug-output review execution and result identities;
