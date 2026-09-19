@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:setup:error:v1",
+  "title": "Open Trestle setup error v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "code"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/setup-error"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "code": {
+      "enum": [
+        "invalid_request",
+        "unauthorized",
+        "not_found",
+        "method_not_allowed",
+        "state_unavailable",
+        "state_invalid",
+        "state_conflict",
+        "stale_plan",
+        "check_unavailable",
+        "check_failed",
+        "request_too_large",
+        "unsupported_media_type",
+        "encode_failed"
+      ]
+    }
+  }
+}

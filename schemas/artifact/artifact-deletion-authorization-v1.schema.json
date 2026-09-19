@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:artifact:deletion-authorization:v1",
+  "title": "Open Trestle artifact deletion authorization v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "identity",
+    "tenant_id",
+    "repository_id",
+    "review_run_id",
+    "artifact_identity",
+    "policy_identity",
+    "principal_identity",
+    "hold_clearance_identity",
+    "reason",
+    "issued_at_milliseconds",
+    "expires_at_milliseconds"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/artifact-deletion-authorization"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "repository_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "review_run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "artifact_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "policy_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "principal_identity": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "hold_clearance_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "reason": {
+      "enum": [
+        "expired",
+        "tenant_erasure",
+        "repository_erasure"
+      ]
+    },
+    "issued_at_milliseconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 253402300799999
+    },
+    "expires_at_milliseconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 253402300799999
+    }
+  }
+}

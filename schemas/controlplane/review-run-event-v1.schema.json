@@ -1,0 +1,193 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:controlplane:review-run-event:v1",
+  "title": "Open Trestle review run event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "identity",
+    "plan_identity",
+    "tenant_id",
+    "repository_id",
+    "review_run_id",
+    "sequence",
+    "previous_identity",
+    "kind",
+    "task_key",
+    "task_identity",
+    "attempt",
+    "lease_token_identity",
+    "worker_identity",
+    "lease_expires_at_milliseconds",
+    "output_identity",
+    "failure",
+    "retry_at_milliseconds",
+    "occurred_at_milliseconds"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/review-run-event-record"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "plan_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*[a-z0-9]$|^[a-z0-9]$"
+    },
+    "repository_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*[a-z0-9]$|^[a-z0-9]$"
+    },
+    "review_run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*[a-z0-9]$|^[a-z0-9]$"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "previous_identity": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        {
+          "const": ""
+        }
+      ]
+    },
+    "kind": {
+      "enum": [
+        "run_opened",
+        "task_available",
+        "task_leased",
+        "task_lease_renewed",
+        "task_succeeded",
+        "task_failed",
+        "task_skipped",
+        "run_succeeded",
+        "run_failed",
+        "run_canceled",
+        "artifact_deleted"
+      ]
+    },
+    "task_key": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$"
+        },
+        {
+          "const": ""
+        }
+      ]
+    },
+    "task_identity": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        {
+          "const": ""
+        }
+      ]
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 5
+    },
+    "lease_token_identity": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        {
+          "const": ""
+        }
+      ]
+    },
+    "worker_identity": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "lease_expires_at_milliseconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 253402300799999
+    },
+    "output_identity": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        {
+          "const": ""
+        }
+      ]
+    },
+    "failure": {
+      "enum": [
+        "",
+        "transient",
+        "resource_limit",
+        "policy",
+        "invalid_input",
+        "canceled",
+        "dependency",
+        "internal"
+      ]
+    },
+    "retry_at_milliseconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 253402300799999
+    },
+    "occurred_at_milliseconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 253402300799999
+    }
+  }
+}

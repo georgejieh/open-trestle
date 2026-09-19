@@ -1,0 +1,457 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:review:local-git-change-result:v2",
+  "title": "Open Trestle local Git change result v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "status",
+    "change_execution_identity",
+    "acquisition_pair_identity",
+    "repository_identity",
+    "source_adapter_identity",
+    "base_revision_identity",
+    "head_revision_identity",
+    "base_envelope_identity",
+    "head_envelope_identity",
+    "manifest_delta_identity",
+    "change_present",
+    "change_identity",
+    "changed_file_count",
+    "supported_file_count",
+    "unsupported_file_count",
+    "entries"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/local-git-change-result"
+    },
+    "schema_version": {
+      "const": 2
+    },
+    "status": {
+      "enum": [
+        "complete",
+        "no_change",
+        "partial",
+        "unsupported"
+      ]
+    },
+    "change_execution_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "acquisition_pair_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "repository_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "source_adapter_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "base_revision_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "head_revision_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "base_envelope_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "head_envelope_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "manifest_delta_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "change_present": {
+      "type": "boolean"
+    },
+    "change_identity": {
+      "anyOf": [
+        {
+          "const": ""
+        },
+        {
+          "$ref": "#/$defs/digest"
+        }
+      ]
+    },
+    "changed_file_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 64
+    },
+    "supported_file_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 64
+    },
+    "unsupported_file_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 64
+    },
+    "entries": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/entry"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "no_change"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "change_present": {
+            "const": false
+          },
+          "change_identity": {
+            "const": ""
+          },
+          "changed_file_count": {
+            "const": 0
+          },
+          "supported_file_count": {
+            "const": 0
+          },
+          "unsupported_file_count": {
+            "const": 0
+          },
+          "entries": {
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "complete"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "change_present": {
+            "const": true
+          },
+          "change_identity": {
+            "$ref": "#/$defs/digest"
+          },
+          "changed_file_count": {
+            "minimum": 1
+          },
+          "supported_file_count": {
+            "minimum": 1
+          },
+          "unsupported_file_count": {
+            "const": 0
+          },
+          "entries": {
+            "minItems": 1,
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/entry"
+                },
+                {
+                  "properties": {
+                    "status": {
+                      "const": "supported"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "partial"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "change_present": {
+            "const": true
+          },
+          "change_identity": {
+            "$ref": "#/$defs/digest"
+          },
+          "changed_file_count": {
+            "minimum": 2
+          },
+          "supported_file_count": {
+            "minimum": 1
+          },
+          "unsupported_file_count": {
+            "minimum": 1
+          },
+          "entries": {
+            "minItems": 2,
+            "allOf": [
+              {
+                "contains": {
+                  "properties": {
+                    "status": {
+                      "const": "supported"
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                },
+                "minContains": 1
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "status": {
+                      "const": "unsupported"
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                },
+                "minContains": 1
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "unsupported"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "change_present": {
+            "const": false
+          },
+          "change_identity": {
+            "const": ""
+          },
+          "changed_file_count": {
+            "minimum": 1
+          },
+          "supported_file_count": {
+            "const": 0
+          },
+          "unsupported_file_count": {
+            "minimum": 1
+          },
+          "entries": {
+            "minItems": 1,
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/entry"
+                },
+                {
+                  "properties": {
+                    "status": {
+                      "const": "unsupported"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "kind",
+        "status",
+        "reason",
+        "repository_file_delta_identity",
+        "execution_identity",
+        "file_change_identity",
+        "line_map_identity"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "kind": {
+          "enum": [
+            "added",
+            "modified",
+            "removed"
+          ]
+        },
+        "status": {
+          "enum": [
+            "supported",
+            "unsupported"
+          ]
+        },
+        "reason": {
+          "enum": [
+            "none",
+            "added_file",
+            "removed_file",
+            "unsupported_content",
+            "resource_limit"
+          ]
+        },
+        "repository_file_delta_identity": {
+          "$ref": "#/$defs/digest"
+        },
+        "execution_identity": {
+          "$ref": "#/$defs/digest"
+        },
+        "file_change_identity": {
+          "anyOf": [
+            {
+              "const": ""
+            },
+            {
+              "$ref": "#/$defs/digest"
+            }
+          ]
+        },
+        "line_map_identity": {
+          "anyOf": [
+            {
+              "const": ""
+            },
+            {
+              "$ref": "#/$defs/digest"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "supported"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "added",
+                  "modified"
+                ]
+              },
+              "reason": {
+                "const": "none"
+              },
+              "file_change_identity": {
+                "$ref": "#/$defs/digest"
+              },
+              "line_map_identity": {
+                "$ref": "#/$defs/digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "unsupported"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "file_change_identity": {
+                "const": ""
+              },
+              "line_map_identity": {
+                "const": ""
+              }
+            },
+            "oneOf": [
+              {
+                "properties": {
+                  "kind": {
+                    "const": "added"
+                  },
+                  "reason": {
+                    "enum": [
+                      "added_file",
+                      "unsupported_content",
+                      "resource_limit"
+                    ]
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "removed"
+                  },
+                  "reason": {
+                    "enum": [
+                      "removed_file",
+                      "resource_limit"
+                    ]
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "modified"
+                  },
+                  "reason": {
+                    "enum": [
+                      "unsupported_content",
+                      "resource_limit"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

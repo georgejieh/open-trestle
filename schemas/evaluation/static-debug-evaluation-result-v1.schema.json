@@ -1,0 +1,280 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:evaluation:static-debug-result:v1",
+  "title": "Open Trestle static-debug evaluation result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "identity",
+    "suite_identity",
+    "evaluator_identity",
+    "rule_key",
+    "rule_version",
+    "case_count",
+    "passed_count",
+    "failed_count",
+    "expected_match_count",
+    "observed_match_count",
+    "true_positive_count",
+    "false_positive_count",
+    "false_negative_count",
+    "precision_numerator",
+    "precision_denominator",
+    "recall_numerator",
+    "recall_denominator",
+    "cases"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/static-debug-evaluation-result"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "suite_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "evaluator_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "rule_key": {
+      "const": "static_debug_output"
+    },
+    "rule_version": {
+      "const": 1
+    },
+    "case_count": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 256
+    },
+    "passed_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 256
+    },
+    "failed_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 256
+    },
+    "expected_match_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 262144
+    },
+    "observed_match_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 262144
+    },
+    "true_positive_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 262144
+    },
+    "false_positive_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 262144
+    },
+    "false_negative_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 262144
+    },
+    "precision_numerator": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 262144
+    },
+    "precision_denominator": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 262144
+    },
+    "recall_numerator": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 262144
+    },
+    "recall_denominator": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 262144
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/case"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "passed_count": {
+            "minimum": 1
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "cases": {
+            "contains": {
+              "properties": {
+                "status": {
+                  "const": "passed"
+                }
+              },
+              "required": [
+                "status"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "failed_count": {
+            "minimum": 1
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "cases": {
+            "contains": {
+              "properties": {
+                "status": {
+                  "const": "failed"
+                }
+              },
+              "required": [
+                "status"
+              ]
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status",
+        "expected_count",
+        "observed_count",
+        "true_positive_count",
+        "false_positive_count",
+        "false_negative_count"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._-]{0,63}$"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed"
+          ]
+        },
+        "expected_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1024
+        },
+        "observed_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1024
+        },
+        "true_positive_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1024
+        },
+        "false_positive_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1024
+        },
+        "false_negative_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1024
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "passed"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "false_positive_count": {
+                "const": 0
+              },
+              "false_negative_count": {
+                "const": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "failed"
+              }
+            }
+          },
+          "then": {
+            "anyOf": [
+              {
+                "properties": {
+                  "false_positive_count": {
+                    "minimum": 1
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "false_negative_count": {
+                    "minimum": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

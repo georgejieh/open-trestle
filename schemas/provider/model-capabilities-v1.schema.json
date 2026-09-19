@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:provider:model-capabilities:v1",
+  "title": "Open Trestle Model Capabilities v1",
+  "description": "Canonical interchange shape for declared model capabilities. Runtime validation must also require max_output_tokens to be less than or equal to max_context_tokens. Schema validation does not enforce that cross-field rule or prove provider claims.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "supported_features",
+    "max_context_tokens",
+    "max_output_tokens"
+  ],
+  "$defs": {
+    "model_feature": {
+      "type": "string",
+      "enum": [
+        "structured_output",
+        "native_tools",
+        "vision"
+      ]
+    },
+    "token_capacity": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1073741824
+    }
+  },
+  "properties": {
+    "supported_features": {
+      "description": "Declared optional model features. Array order has no meaning.",
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/model_feature"
+      }
+    },
+    "max_context_tokens": {
+      "description": "Declared maximum total context capacity.",
+      "$ref": "#/$defs/token_capacity"
+    },
+    "max_output_tokens": {
+      "description": "Declared maximum output capacity. Trusted runtime validation must reject values above max_context_tokens; schema validation does not enforce that relation or prove the declaration.",
+      "$ref": "#/$defs/token_capacity"
+    }
+  }
+}

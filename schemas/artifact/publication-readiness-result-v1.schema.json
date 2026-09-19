@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:artifact:publication-readiness-result:v1",
+  "title": "Open Trestle publication readiness result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "identity",
+    "verification_artifact_identity",
+    "verification_result_identity",
+    "publication_policy_identity",
+    "readiness_identity",
+    "status",
+    "verified",
+    "rejected",
+    "inconclusive",
+    "below_threshold",
+    "inline",
+    "summary_only"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/publication-readiness-result"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "verification_artifact_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "verification_result_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "publication_policy_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "status": {
+      "enum": [
+        "advisory_ready",
+        "no_verified_findings",
+        "below_threshold",
+        "blocked_inconclusive",
+        "blocked_independence"
+      ]
+    },
+    "verified": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 50
+    },
+    "rejected": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 50
+    },
+    "inconclusive": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 50
+    },
+    "below_threshold": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 50
+    },
+    "inline": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 50
+    },
+    "summary_only": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 50
+    },
+    "readiness_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    }
+  }
+}

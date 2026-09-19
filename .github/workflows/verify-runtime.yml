@@ -1,0 +1,118 @@
+name: Verify runtime
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            extensions/vscode/package-lock.json
+      - name: Verify npm install request policy
+        run: |
+          test "$(npm config get audit --prefix web)" = "false"
+          test "$(npm config get fund --prefix web)" = "false"
+          test "$(npm config get update-notifier --prefix web)" = "false"
+          test "$(npm config get audit --prefix extensions/vscode)" = "false"
+          test "$(npm config get fund --prefix extensions/vscode)" = "false"
+          test "$(npm config get update-notifier --prefix extensions/vscode)" = "false"
+      - name: Verify web console
+        run: |
+          rm -rf "$RUNNER_TEMP/open-trestle-web-dist"
+          cp -R web/dist "$RUNNER_TEMP/open-trestle-web-dist"
+          npm ci --prefix web
+          npm run format:check --prefix web
+          npm test --prefix web
+          npm run check --prefix web
+          npm run build --prefix web
+          npm run dist:check --prefix web
+          diff -r "$RUNNER_TEMP/open-trestle-web-dist" web/dist
+      - name: Verify VS Code extension
+        run: |
+          rm -rf "$RUNNER_TEMP/open-trestle-vscode-dist"
+          cp -R extensions/vscode/dist "$RUNNER_TEMP/open-trestle-vscode-dist"
+          npm ci --prefix extensions/vscode
+          npm run format:check --prefix extensions/vscode
+          npm test --prefix extensions/vscode
+          npm run check --prefix extensions/vscode
+          TZ=UTC npm run package --prefix extensions/vscode
+          npm run dist:check --prefix extensions/vscode
+          cp extensions/vscode/dist/open-trestle.vsix "$RUNNER_TEMP/open-trestle-first.vsix"
+          TZ=America/Los_Angeles npm run package --prefix extensions/vscode
+          cmp "$RUNNER_TEMP/open-trestle-first.vsix" extensions/vscode/dist/open-trestle.vsix
+          diff -r "$RUNNER_TEMP/open-trestle-vscode-dist" extensions/vscode/dist
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Run tests
+        run: go test ./...
+      - name: Verify static-debug evaluation evidence
+        run: |
+          go run ./cmd/trestle evaluate static-debug > "$RUNNER_TEMP/open-trestle-static-debug-evaluation.json"
+          cmp evaluation/testdata/static-debug-report-v1.json "$RUNNER_TEMP/open-trestle-static-debug-evaluation.json"
+      - name: Run race tests
+        run: go test -race -p=1 -timeout=30m ./...
+      - name: Run vet
+        run: go vet ./...
+      - name: Build static binaries
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p .container/data
+          go build -trimpath -buildvcs=false -ldflags="-s -w" -o .container/trestle ./cmd/trestle
+          go build -trimpath -buildvcs=false -ldflags="-s -w" -o .container/trestled ./cmd/trestled
+          cp /etc/ssl/certs/ca-certificates.crt .container/ca-certificates.crt
+          cp LICENSE .container/LICENSE
+          cp NOTICE .container/NOTICE
+          cp -R THIRD_PARTY_LICENSES .container/licenses
+      - name: Verify deterministic unsigned release evidence
+        env:
+          RELEASE_REVISION: ${{ github.sha }}
+        run: |
+          RELEASE_CREATED="$(date -u -d "$(git show -s --format=%cI "$RELEASE_REVISION")" +%Y-%m-%dT%H:%M:%SZ)"
+          python3 tools/release_evidence.py \
+            --artifact container=.container \
+            --artifact web=web/dist \
+            --artifact vscode=extensions/vscode/dist/open-trestle.vsix \
+            --go-binary .container/trestle \
+            --go-binary .container/trestled \
+            --npm-lock web/package-lock.json \
+            --npm-lock extensions/vscode/package-lock.json \
+            --version 0.1.0-dev \
+            --revision "$RELEASE_REVISION" \
+            --created "$RELEASE_CREATED" \
+            --output "$RUNNER_TEMP/open-trestle-release-evidence-a"
+          python3 tools/release_evidence.py \
+            --artifact container=.container \
+            --artifact web=web/dist \
+            --artifact vscode=extensions/vscode/dist/open-trestle.vsix \
+            --go-binary .container/trestle \
+            --go-binary .container/trestled \
+            --npm-lock web/package-lock.json \
+            --npm-lock extensions/vscode/package-lock.json \
+            --version 0.1.0-dev \
+            --revision "$RELEASE_REVISION" \
+            --created "$RELEASE_CREATED" \
+            --output "$RUNNER_TEMP/open-trestle-release-evidence-b"
+          diff -r "$RUNNER_TEMP/open-trestle-release-evidence-a" "$RUNNER_TEMP/open-trestle-release-evidence-b"
+      - name: Build container image without a registry base
+        run: docker build --network=none --tag open-trestle:verify .

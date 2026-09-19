@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:artifact:source-file:v1",
+  "title": "Open Trestle source file v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "acquisition_execution_identity",
+    "path",
+    "digest",
+    "size_bytes",
+    "content"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/source-file"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "acquisition_execution_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "size_bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10485760
+    },
+    "content": {
+      "type": "string",
+      "contentEncoding": "base64",
+      "maxLength": 13981016
+    }
+  }
+}

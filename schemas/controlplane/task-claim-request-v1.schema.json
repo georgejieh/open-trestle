@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:controlplane:task-claim-request:v1",
+  "title": "Open Trestle task claim request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "handler_identity"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/task-claim-request"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "handler_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}

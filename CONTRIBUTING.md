@@ -4,7 +4,7 @@ Thank you for considering a contribution.
 
 ## Before you begin
 
-Open an issue or discussion before beginning a material design change. Describe the user-visible behavior, the relevant public contract, the expected evidence, and the verification plan. Do not include credentials, proprietary source, private prompts, copied documentation, or third-party data you cannot redistribute.
+Open an issue or discussion before beginning a material design change. Describe the user-visible behavior, the relevant public contract, the expected evidence, and the verification plan. Do not include credentials, proprietary source, confidential configuration, copied documentation, or third-party data you cannot redistribute.
 
 ## Development principles
 
@@ -25,7 +25,9 @@ A pull request should include:
 4. documentation for public API, policy, or operator-visible changes;
 5. license and provenance details for any dependency or imported material.
 
-Do not add internal planning records, agent instructions, private research, local caches, credentials, or generated build output. Those files belong outside the tracked public tree.
+Keep internal planning records, authoring briefs, and private research under the ignored `references/` directory. Do not add local session state or credentials to the public tree. Intentional product skills and agent instructions are product assets, not development records.
+
+Do not add temporary build output. The maintained `web/dist/` and `extensions/vscode/dist/` distributions are intentional exceptions; changes to them must pass the reproducibility and freshness checks in CI.
 
 ## Reporting defects
 

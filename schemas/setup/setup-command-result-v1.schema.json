@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:setup:command-result:v1",
+  "title": "Open Trestle setup command result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "status",
+    "plan_identity",
+    "revision",
+    "ready"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/setup-command-result"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "status": {
+      "enum": [
+        "created",
+        "backup_created",
+        "backup_restored"
+      ]
+    },
+    "plan_identity": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "ready": {
+      "type": "boolean"
+    }
+  }
+}

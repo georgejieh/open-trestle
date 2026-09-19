@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:artifact:model-verification-result:v1",
+  "title": "Open Trestle model verification result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "identity",
+    "generation_artifact_identity",
+    "verification_context_identity",
+    "verification_batch_identity",
+    "route_execution_identity",
+    "independence_level",
+    "route_independence_identity",
+    "independent_receipt_identity",
+    "verified_finding_set_identity",
+    "verification_batch",
+    "route_execution",
+    "verified_finding_set"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/model-verification-result"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "generation_artifact_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "verification_context_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "verification_batch_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "route_execution_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "independence_level": {
+      "enum": [
+        "distinct_route",
+        "distinct_model",
+        "distinct_provider"
+      ]
+    },
+    "route_independence_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "independent_receipt_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "verified_finding_set_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "verification_batch": {
+      "$ref": "urn:open-trestle:schema:artifact:verification-batch:v1"
+    },
+    "route_execution": {
+      "$ref": "urn:open-trestle:schema:artifact:route-execution-record:v1"
+    },
+    "verified_finding_set": {
+      "$ref": "urn:open-trestle:schema:artifact:verified-finding-set:v1"
+    }
+  }
+}

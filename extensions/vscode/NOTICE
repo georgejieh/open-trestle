@@ -1,0 +1,14 @@
+Open Trestle for VS Code
+Copyright 2026 George Jieh
+
+This extension is distributed under the license in LICENSE.
+
+The bundled extension includes:
+
+- vscode-languageclient, vscode-jsonrpc, vscode-languageserver-protocol, vscode-languageserver-textdocument, and vscode-languageserver-types, Copyright Microsoft Corporation, MIT.
+- balanced-match, MIT.
+- brace-expansion, MIT.
+- minimatch, BlueOak-1.0.0.
+- semver, ISC.
+
+Complete license texts are included in THIRD_PARTY_LICENSES.

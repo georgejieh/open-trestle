@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:controlplane:task-notification-lease:v1",
+  "title": "Open Trestle task notification lease v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "identity",
+    "notification",
+    "worker_identity",
+    "token",
+    "token_identity",
+    "delivery",
+    "leased_at_milliseconds",
+    "expires_at_milliseconds"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/task-notification-lease"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "notification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract",
+        "schema_version",
+        "identity",
+        "tenant_id",
+        "repository_id",
+        "review_run_id",
+        "plan_identity",
+        "task_state_revision",
+        "task_state_event_identity",
+        "task_key",
+        "task_identity",
+        "handler_identity",
+        "attempt",
+        "available_at_milliseconds"
+      ],
+      "properties": {
+        "contract": {
+          "const": "open-trestle/task-notification"
+        },
+        "schema_version": {
+          "const": 1
+        },
+        "identity": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        "tenant_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "repository_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "review_run_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "plan_identity": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        "task_state_revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "task_state_event_identity": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        "task_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "task_identity": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        "handler_identity": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 255
+        },
+        "available_at_milliseconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 253402300799999
+        }
+      }
+    },
+    "worker_identity": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "token": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "token_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "delivery": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10
+    },
+    "leased_at_milliseconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 253402300799999
+    },
+    "expires_at_milliseconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 253402300799999
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "provider_route": "local",
+  "requested_capabilities": [],
+  "request": {
+    "id": "local-review-1",
+    "snapshot": {
+      "workspace": "local-review",
+      "revision": "6435f3b2c768f5211821ed77dc32f655cb24c56fb63667eb391138665f242e29",
+      "ranges": [
+        {
+          "path": "main.go",
+          "start_line": 6,
+          "end_line": 6
+        }
+      ]
+    }
+  }
+}

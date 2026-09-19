@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "inventory_identity": "c66ac144e1b2910261d9346d64198a12b83dc4eb22f70efaa8ce8aacbc999fc7",
+  "review_policy_identity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "min_context_tokens": 32000,
+  "min_output_tokens": 4096,
+  "required_features": [
+    "structured_output"
+  ],
+  "classification": "confidential",
+  "allowed_zones": [
+    "local"
+  ],
+  "content_logging_allowed": false,
+  "estimated_input_tokens": 8000,
+  "max_output_tokens": 4096,
+  "max_cost_micro_usd": 0,
+  "pinned_route_record_identity": "",
+  "preferred_route_record_identities": [],
+  "verification_independence": "distinct_route",
+  "publication_minimum_severity": "medium",
+  "publication_max_inline_findings": 20,
+  "publication_minimum_independence": "distinct_route",
+  "publication_block_on_inconclusive": true,
+  "connections": [
+    {
+      "implementation": "openai_responses",
+      "adapter_id": "openai-responses",
+      "endpoint": "http://127.0.0.1:11434/v1",
+      "credential_environment": "OPEN_TRESTLE_PROVIDER_LOCAL_RESPONSES"
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:runtime:github-webhook-admin-result:v1",
+  "title": "Open Trestle GitHub webhook administration result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "status",
+    "operation",
+    "webhook_authority_identity",
+    "verifier_configuration_identity"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/github-webhook-admin-result"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "status": {
+      "const": "valid"
+    },
+    "operation": {
+      "const": "identity"
+    },
+    "webhook_authority_identity": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    },
+    "verifier_configuration_identity": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    }
+  }
+}

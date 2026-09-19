@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:setup:session:v1",
+  "title": "Open Trestle setup session v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "initialized"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/setup-session"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "initialized": {
+      "type": "boolean"
+    },
+    "plan": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1"
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "initialized": {
+          "const": false
+        }
+      },
+      "not": {
+        "required": [
+          "plan"
+        ]
+      }
+    },
+    {
+      "properties": {
+        "initialized": {
+          "const": true
+        }
+      },
+      "required": [
+        "plan"
+      ]
+    }
+  ]
+}

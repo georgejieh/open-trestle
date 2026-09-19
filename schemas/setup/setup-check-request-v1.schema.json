@@ -1,0 +1,2973 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:setup:check-request:v1",
+  "title": "Open Trestle setup check request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "plan_identity",
+    "key",
+    "confirmation"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/setup-check-request"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "plan_identity": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    },
+    "key": {
+      "enum": [
+        "postgres_storage_validated",
+        "envelope_storage_validated",
+        "secret_backend_validated",
+        "local_administrator_validated",
+        "backup_validated",
+        "state_storage_posture_validated",
+        "observer_credential_posture_validated",
+        "policy_validated",
+        "dry_run_validated",
+        "local_inference_validated",
+        "remote_provider_authorized",
+        "integration_permissions_validated",
+        "webhook_validated",
+        "shared_rate_limit_validated",
+        "replica_reconciliation_validated",
+        "signed_bundle_validated"
+      ]
+    },
+    "confirmation": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 96
+    },
+    "storage_root": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^[^\u0000\r\n]+$"
+    },
+    "route_inventory_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^[^\u0000\r\n]+$"
+    },
+    "runtime_policy_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^[^\u0000\r\n]+$"
+    },
+    "approve_inventory_identity": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    },
+    "approve_runtime_policy_identity": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    },
+    "approve_review_policy_identity": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    },
+    "approved_by": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:@-]+$"
+    },
+    "backup_snapshot_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^[^\u0000\r\n]+$"
+    },
+    "approve_postgres_authority_identity": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    },
+    "approve_kms_authority_identity": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    },
+    "kms_region": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^\\u0000-\\u0020\\u007f]+$"
+    },
+    "kms_key_arn": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "pattern": "^[^\\u0000-\\u0020\\u007f]+$"
+    },
+    "kms_endpoint": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "pattern": "^[^\\u0000-\\u0020\\u007f]+$"
+    },
+    "approve_envelope_storage_authority_identity": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    },
+    "s3_endpoint": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "pattern": "^[^\\u0000-\\u0020\\u007f]+$"
+    },
+    "s3_region": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^\\u0000-\\u0020\\u007f]+$"
+    },
+    "s3_bucket": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^\\u0000-\\u0020\\u007f]+$"
+    },
+    "s3_prefix": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^[^\\u0000-\\u0020\\u007f]+$"
+    },
+    "approve_integration_permission_authority_identity": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    },
+    "github_api_endpoint": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "pattern": "^[^\\u0000-\\u0020\\u007f]+$",
+      "format": "uri"
+    },
+    "github_api_version": {
+      "type": "string",
+      "format": "date",
+      "pattern": "^[2-9][0-9]{3}-[0-9]{2}-[0-9]{2}$"
+    },
+    "github_installation_id": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "github_repository_full_name": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 511,
+      "pattern": "^[a-z0-9._-]{1,255}/[a-z0-9._-]{1,255}$"
+    },
+    "approve_webhook_authority_identity": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    },
+    "github_webhook_key_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[!-~]+$"
+    },
+    "approve_shared_rate_limit_authority_identity": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    },
+    "postgres_database_authority_identity": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    },
+    "approve_replica_reconciliation_authority_identity": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    },
+    "approve_signed_bundle_authority_identity": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    },
+    "bundle_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^[^\\u0000\\r\\n]+$",
+      "description": "Canonical absolute path on the setup service host. The runtime also requires filepath.Clean(path) == path.",
+      "anyOf": [
+        {
+          "pattern": "^/"
+        },
+        {
+          "pattern": "^[A-Za-z]:\\\\"
+        },
+        {
+          "pattern": "^\\\\\\\\[^\\\\]+\\\\[^\\\\]+"
+        }
+      ]
+    },
+    "bundle_sha256": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    },
+    "bundle_bytes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1073741824
+    },
+    "public_key": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    },
+    "signature": {
+      "type": "string",
+      "minLength": 128,
+      "maxLength": 128,
+      "pattern": "^[0-9a-f]{128}$",
+      "not": {
+        "const": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "key": {
+          "const": "postgres_storage_validated"
+        },
+        "confirmation": {
+          "const": "run postgres_storage_validated"
+        }
+      },
+      "required": [
+        "key",
+        "confirmation",
+        "approve_postgres_authority_identity",
+        "approved_by"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "storage_root"
+            ]
+          },
+          {
+            "required": [
+              "backup_snapshot_path"
+            ]
+          },
+          {
+            "required": [
+              "route_inventory_path"
+            ]
+          },
+          {
+            "required": [
+              "runtime_policy_path"
+            ]
+          },
+          {
+            "required": [
+              "approve_inventory_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_runtime_policy_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_review_policy_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_kms_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "kms_region"
+            ]
+          },
+          {
+            "required": [
+              "kms_key_arn"
+            ]
+          },
+          {
+            "required": [
+              "kms_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "approve_envelope_storage_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "s3_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "s3_region"
+            ]
+          },
+          {
+            "required": [
+              "s3_bucket"
+            ]
+          },
+          {
+            "required": [
+              "s3_prefix"
+            ]
+          },
+          {
+            "required": [
+              "approve_integration_permission_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "github_api_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "github_api_version"
+            ]
+          },
+          {
+            "required": [
+              "github_installation_id"
+            ]
+          },
+          {
+            "required": [
+              "github_repository_full_name"
+            ]
+          },
+          {
+            "required": [
+              "approve_webhook_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "github_webhook_key_id"
+            ]
+          },
+          {
+            "required": [
+              "approve_shared_rate_limit_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "postgres_database_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_replica_reconciliation_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_signed_bundle_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "bundle_path"
+            ]
+          },
+          {
+            "required": [
+              "bundle_sha256"
+            ]
+          },
+          {
+            "required": [
+              "bundle_bytes"
+            ]
+          },
+          {
+            "required": [
+              "public_key"
+            ]
+          },
+          {
+            "required": [
+              "signature"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "properties": {
+        "key": {
+          "const": "envelope_storage_validated"
+        },
+        "confirmation": {
+          "const": "run envelope_storage_validated"
+        }
+      },
+      "required": [
+        "key",
+        "confirmation",
+        "approve_envelope_storage_authority_identity",
+        "s3_endpoint",
+        "s3_region",
+        "s3_bucket",
+        "s3_prefix",
+        "kms_region",
+        "kms_key_arn",
+        "approved_by"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "storage_root"
+            ]
+          },
+          {
+            "required": [
+              "backup_snapshot_path"
+            ]
+          },
+          {
+            "required": [
+              "route_inventory_path"
+            ]
+          },
+          {
+            "required": [
+              "runtime_policy_path"
+            ]
+          },
+          {
+            "required": [
+              "approve_inventory_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_runtime_policy_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_review_policy_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_postgres_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_kms_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_integration_permission_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "github_api_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "github_api_version"
+            ]
+          },
+          {
+            "required": [
+              "github_installation_id"
+            ]
+          },
+          {
+            "required": [
+              "github_repository_full_name"
+            ]
+          },
+          {
+            "required": [
+              "approve_webhook_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "github_webhook_key_id"
+            ]
+          },
+          {
+            "required": [
+              "approve_shared_rate_limit_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "postgres_database_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_replica_reconciliation_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_signed_bundle_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "bundle_path"
+            ]
+          },
+          {
+            "required": [
+              "bundle_sha256"
+            ]
+          },
+          {
+            "required": [
+              "bundle_bytes"
+            ]
+          },
+          {
+            "required": [
+              "public_key"
+            ]
+          },
+          {
+            "required": [
+              "signature"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "properties": {
+        "key": {
+          "const": "secret_backend_validated"
+        },
+        "confirmation": {
+          "const": "run secret_backend_validated"
+        }
+      },
+      "required": [
+        "key",
+        "confirmation",
+        "approve_kms_authority_identity",
+        "kms_region",
+        "kms_key_arn",
+        "approved_by"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "storage_root"
+            ]
+          },
+          {
+            "required": [
+              "backup_snapshot_path"
+            ]
+          },
+          {
+            "required": [
+              "route_inventory_path"
+            ]
+          },
+          {
+            "required": [
+              "runtime_policy_path"
+            ]
+          },
+          {
+            "required": [
+              "approve_inventory_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_runtime_policy_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_review_policy_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_postgres_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_envelope_storage_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "s3_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "s3_region"
+            ]
+          },
+          {
+            "required": [
+              "s3_bucket"
+            ]
+          },
+          {
+            "required": [
+              "s3_prefix"
+            ]
+          },
+          {
+            "required": [
+              "approve_integration_permission_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "github_api_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "github_api_version"
+            ]
+          },
+          {
+            "required": [
+              "github_installation_id"
+            ]
+          },
+          {
+            "required": [
+              "github_repository_full_name"
+            ]
+          },
+          {
+            "required": [
+              "approve_webhook_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "github_webhook_key_id"
+            ]
+          },
+          {
+            "required": [
+              "approve_shared_rate_limit_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "postgres_database_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_replica_reconciliation_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_signed_bundle_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "bundle_path"
+            ]
+          },
+          {
+            "required": [
+              "bundle_sha256"
+            ]
+          },
+          {
+            "required": [
+              "bundle_bytes"
+            ]
+          },
+          {
+            "required": [
+              "public_key"
+            ]
+          },
+          {
+            "required": [
+              "signature"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "properties": {
+        "key": {
+          "const": "local_administrator_validated"
+        },
+        "confirmation": {
+          "const": "run local_administrator_validated"
+        }
+      },
+      "required": [
+        "key",
+        "confirmation",
+        "approved_by"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "storage_root"
+            ]
+          },
+          {
+            "required": [
+              "backup_snapshot_path"
+            ]
+          },
+          {
+            "required": [
+              "route_inventory_path"
+            ]
+          },
+          {
+            "required": [
+              "runtime_policy_path"
+            ]
+          },
+          {
+            "required": [
+              "approve_inventory_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_runtime_policy_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_review_policy_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_postgres_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_kms_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "kms_region"
+            ]
+          },
+          {
+            "required": [
+              "kms_key_arn"
+            ]
+          },
+          {
+            "required": [
+              "kms_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "approve_envelope_storage_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "s3_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "s3_region"
+            ]
+          },
+          {
+            "required": [
+              "s3_bucket"
+            ]
+          },
+          {
+            "required": [
+              "s3_prefix"
+            ]
+          },
+          {
+            "required": [
+              "approve_integration_permission_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "github_api_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "github_api_version"
+            ]
+          },
+          {
+            "required": [
+              "github_installation_id"
+            ]
+          },
+          {
+            "required": [
+              "github_repository_full_name"
+            ]
+          },
+          {
+            "required": [
+              "approve_webhook_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "github_webhook_key_id"
+            ]
+          },
+          {
+            "required": [
+              "approve_shared_rate_limit_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "postgres_database_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_replica_reconciliation_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_signed_bundle_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "bundle_path"
+            ]
+          },
+          {
+            "required": [
+              "bundle_sha256"
+            ]
+          },
+          {
+            "required": [
+              "bundle_bytes"
+            ]
+          },
+          {
+            "required": [
+              "public_key"
+            ]
+          },
+          {
+            "required": [
+              "signature"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "properties": {
+        "key": {
+          "const": "state_storage_posture_validated"
+        },
+        "confirmation": {
+          "const": "run state_storage_posture_validated"
+        }
+      },
+      "required": [
+        "key",
+        "confirmation",
+        "storage_root"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "backup_snapshot_path"
+            ]
+          },
+          {
+            "required": [
+              "route_inventory_path"
+            ]
+          },
+          {
+            "required": [
+              "runtime_policy_path"
+            ]
+          },
+          {
+            "required": [
+              "approve_inventory_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_runtime_policy_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_review_policy_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_postgres_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approved_by"
+            ]
+          },
+          {
+            "required": [
+              "approve_kms_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "kms_region"
+            ]
+          },
+          {
+            "required": [
+              "kms_key_arn"
+            ]
+          },
+          {
+            "required": [
+              "kms_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "approve_envelope_storage_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "s3_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "s3_region"
+            ]
+          },
+          {
+            "required": [
+              "s3_bucket"
+            ]
+          },
+          {
+            "required": [
+              "s3_prefix"
+            ]
+          },
+          {
+            "required": [
+              "approve_integration_permission_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "github_api_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "github_api_version"
+            ]
+          },
+          {
+            "required": [
+              "github_installation_id"
+            ]
+          },
+          {
+            "required": [
+              "github_repository_full_name"
+            ]
+          },
+          {
+            "required": [
+              "approve_webhook_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "github_webhook_key_id"
+            ]
+          },
+          {
+            "required": [
+              "approve_shared_rate_limit_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "postgres_database_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_replica_reconciliation_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_signed_bundle_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "bundle_path"
+            ]
+          },
+          {
+            "required": [
+              "bundle_sha256"
+            ]
+          },
+          {
+            "required": [
+              "bundle_bytes"
+            ]
+          },
+          {
+            "required": [
+              "public_key"
+            ]
+          },
+          {
+            "required": [
+              "signature"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "properties": {
+        "key": {
+          "const": "backup_validated"
+        },
+        "confirmation": {
+          "const": "run backup_validated"
+        }
+      },
+      "required": [
+        "key",
+        "confirmation",
+        "backup_snapshot_path"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "storage_root"
+            ]
+          },
+          {
+            "required": [
+              "route_inventory_path"
+            ]
+          },
+          {
+            "required": [
+              "runtime_policy_path"
+            ]
+          },
+          {
+            "required": [
+              "approve_inventory_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_runtime_policy_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_review_policy_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_postgres_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approved_by"
+            ]
+          },
+          {
+            "required": [
+              "approve_kms_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "kms_region"
+            ]
+          },
+          {
+            "required": [
+              "kms_key_arn"
+            ]
+          },
+          {
+            "required": [
+              "kms_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "approve_envelope_storage_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "s3_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "s3_region"
+            ]
+          },
+          {
+            "required": [
+              "s3_bucket"
+            ]
+          },
+          {
+            "required": [
+              "s3_prefix"
+            ]
+          },
+          {
+            "required": [
+              "approve_integration_permission_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "github_api_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "github_api_version"
+            ]
+          },
+          {
+            "required": [
+              "github_installation_id"
+            ]
+          },
+          {
+            "required": [
+              "github_repository_full_name"
+            ]
+          },
+          {
+            "required": [
+              "approve_webhook_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "github_webhook_key_id"
+            ]
+          },
+          {
+            "required": [
+              "approve_shared_rate_limit_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "postgres_database_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_replica_reconciliation_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_signed_bundle_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "bundle_path"
+            ]
+          },
+          {
+            "required": [
+              "bundle_sha256"
+            ]
+          },
+          {
+            "required": [
+              "bundle_bytes"
+            ]
+          },
+          {
+            "required": [
+              "public_key"
+            ]
+          },
+          {
+            "required": [
+              "signature"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "properties": {
+        "key": {
+          "const": "observer_credential_posture_validated"
+        },
+        "confirmation": {
+          "const": "run observer_credential_posture_validated"
+        }
+      },
+      "required": [
+        "key",
+        "confirmation"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "storage_root"
+            ]
+          },
+          {
+            "required": [
+              "backup_snapshot_path"
+            ]
+          },
+          {
+            "required": [
+              "route_inventory_path"
+            ]
+          },
+          {
+            "required": [
+              "runtime_policy_path"
+            ]
+          },
+          {
+            "required": [
+              "approve_inventory_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_runtime_policy_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_review_policy_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_postgres_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approved_by"
+            ]
+          },
+          {
+            "required": [
+              "approve_kms_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "kms_region"
+            ]
+          },
+          {
+            "required": [
+              "kms_key_arn"
+            ]
+          },
+          {
+            "required": [
+              "kms_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "approve_envelope_storage_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "s3_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "s3_region"
+            ]
+          },
+          {
+            "required": [
+              "s3_bucket"
+            ]
+          },
+          {
+            "required": [
+              "s3_prefix"
+            ]
+          },
+          {
+            "required": [
+              "approve_integration_permission_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "github_api_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "github_api_version"
+            ]
+          },
+          {
+            "required": [
+              "github_installation_id"
+            ]
+          },
+          {
+            "required": [
+              "github_repository_full_name"
+            ]
+          },
+          {
+            "required": [
+              "approve_webhook_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "github_webhook_key_id"
+            ]
+          },
+          {
+            "required": [
+              "approve_shared_rate_limit_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "postgres_database_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_replica_reconciliation_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_signed_bundle_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "bundle_path"
+            ]
+          },
+          {
+            "required": [
+              "bundle_sha256"
+            ]
+          },
+          {
+            "required": [
+              "bundle_bytes"
+            ]
+          },
+          {
+            "required": [
+              "public_key"
+            ]
+          },
+          {
+            "required": [
+              "signature"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "properties": {
+        "key": {
+          "const": "local_inference_validated"
+        },
+        "confirmation": {
+          "const": "run local_inference_validated"
+        }
+      },
+      "required": [
+        "key",
+        "confirmation",
+        "route_inventory_path",
+        "runtime_policy_path",
+        "approve_inventory_identity",
+        "approve_runtime_policy_identity",
+        "approve_review_policy_identity",
+        "approved_by"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "storage_root"
+            ]
+          },
+          {
+            "required": [
+              "backup_snapshot_path"
+            ]
+          },
+          {
+            "required": [
+              "approve_postgres_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_kms_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "kms_region"
+            ]
+          },
+          {
+            "required": [
+              "kms_key_arn"
+            ]
+          },
+          {
+            "required": [
+              "kms_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "approve_envelope_storage_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "s3_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "s3_region"
+            ]
+          },
+          {
+            "required": [
+              "s3_bucket"
+            ]
+          },
+          {
+            "required": [
+              "s3_prefix"
+            ]
+          },
+          {
+            "required": [
+              "approve_integration_permission_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "github_api_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "github_api_version"
+            ]
+          },
+          {
+            "required": [
+              "github_installation_id"
+            ]
+          },
+          {
+            "required": [
+              "github_repository_full_name"
+            ]
+          },
+          {
+            "required": [
+              "approve_webhook_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "github_webhook_key_id"
+            ]
+          },
+          {
+            "required": [
+              "approve_shared_rate_limit_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "postgres_database_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_replica_reconciliation_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_signed_bundle_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "bundle_path"
+            ]
+          },
+          {
+            "required": [
+              "bundle_sha256"
+            ]
+          },
+          {
+            "required": [
+              "bundle_bytes"
+            ]
+          },
+          {
+            "required": [
+              "public_key"
+            ]
+          },
+          {
+            "required": [
+              "signature"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "properties": {
+        "key": {
+          "const": "policy_validated"
+        },
+        "confirmation": {
+          "const": "run policy_validated"
+        }
+      },
+      "required": [
+        "key",
+        "confirmation",
+        "route_inventory_path",
+        "runtime_policy_path",
+        "approve_inventory_identity",
+        "approve_runtime_policy_identity",
+        "approve_review_policy_identity",
+        "approved_by"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "storage_root"
+            ]
+          },
+          {
+            "required": [
+              "backup_snapshot_path"
+            ]
+          },
+          {
+            "required": [
+              "approve_postgres_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_kms_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "kms_region"
+            ]
+          },
+          {
+            "required": [
+              "kms_key_arn"
+            ]
+          },
+          {
+            "required": [
+              "kms_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "approve_envelope_storage_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "s3_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "s3_region"
+            ]
+          },
+          {
+            "required": [
+              "s3_bucket"
+            ]
+          },
+          {
+            "required": [
+              "s3_prefix"
+            ]
+          },
+          {
+            "required": [
+              "approve_integration_permission_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "github_api_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "github_api_version"
+            ]
+          },
+          {
+            "required": [
+              "github_installation_id"
+            ]
+          },
+          {
+            "required": [
+              "github_repository_full_name"
+            ]
+          },
+          {
+            "required": [
+              "approve_webhook_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "github_webhook_key_id"
+            ]
+          },
+          {
+            "required": [
+              "approve_shared_rate_limit_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "postgres_database_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_replica_reconciliation_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_signed_bundle_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "bundle_path"
+            ]
+          },
+          {
+            "required": [
+              "bundle_sha256"
+            ]
+          },
+          {
+            "required": [
+              "bundle_bytes"
+            ]
+          },
+          {
+            "required": [
+              "public_key"
+            ]
+          },
+          {
+            "required": [
+              "signature"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "properties": {
+        "key": {
+          "const": "dry_run_validated"
+        },
+        "confirmation": {
+          "const": "run dry_run_validated"
+        }
+      },
+      "required": [
+        "key",
+        "confirmation",
+        "route_inventory_path",
+        "runtime_policy_path",
+        "approve_inventory_identity",
+        "approve_runtime_policy_identity",
+        "approve_review_policy_identity",
+        "approved_by"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "storage_root"
+            ]
+          },
+          {
+            "required": [
+              "backup_snapshot_path"
+            ]
+          },
+          {
+            "required": [
+              "approve_postgres_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_kms_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "kms_region"
+            ]
+          },
+          {
+            "required": [
+              "kms_key_arn"
+            ]
+          },
+          {
+            "required": [
+              "kms_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "approve_envelope_storage_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "s3_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "s3_region"
+            ]
+          },
+          {
+            "required": [
+              "s3_bucket"
+            ]
+          },
+          {
+            "required": [
+              "s3_prefix"
+            ]
+          },
+          {
+            "required": [
+              "approve_integration_permission_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "github_api_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "github_api_version"
+            ]
+          },
+          {
+            "required": [
+              "github_installation_id"
+            ]
+          },
+          {
+            "required": [
+              "github_repository_full_name"
+            ]
+          },
+          {
+            "required": [
+              "approve_webhook_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "github_webhook_key_id"
+            ]
+          },
+          {
+            "required": [
+              "approve_shared_rate_limit_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "postgres_database_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_replica_reconciliation_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_signed_bundle_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "bundle_path"
+            ]
+          },
+          {
+            "required": [
+              "bundle_sha256"
+            ]
+          },
+          {
+            "required": [
+              "bundle_bytes"
+            ]
+          },
+          {
+            "required": [
+              "public_key"
+            ]
+          },
+          {
+            "required": [
+              "signature"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "properties": {
+        "key": {
+          "const": "remote_provider_authorized"
+        },
+        "confirmation": {
+          "const": "run remote_provider_authorized"
+        }
+      },
+      "required": [
+        "key",
+        "confirmation",
+        "route_inventory_path",
+        "runtime_policy_path",
+        "approve_inventory_identity",
+        "approve_runtime_policy_identity",
+        "approve_review_policy_identity",
+        "approved_by"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "storage_root"
+            ]
+          },
+          {
+            "required": [
+              "backup_snapshot_path"
+            ]
+          },
+          {
+            "required": [
+              "approve_postgres_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_kms_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "kms_region"
+            ]
+          },
+          {
+            "required": [
+              "kms_key_arn"
+            ]
+          },
+          {
+            "required": [
+              "kms_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "approve_envelope_storage_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "s3_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "s3_region"
+            ]
+          },
+          {
+            "required": [
+              "s3_bucket"
+            ]
+          },
+          {
+            "required": [
+              "s3_prefix"
+            ]
+          },
+          {
+            "required": [
+              "approve_integration_permission_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "github_api_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "github_api_version"
+            ]
+          },
+          {
+            "required": [
+              "github_installation_id"
+            ]
+          },
+          {
+            "required": [
+              "github_repository_full_name"
+            ]
+          },
+          {
+            "required": [
+              "approve_webhook_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "github_webhook_key_id"
+            ]
+          },
+          {
+            "required": [
+              "approve_shared_rate_limit_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "postgres_database_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_replica_reconciliation_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_signed_bundle_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "bundle_path"
+            ]
+          },
+          {
+            "required": [
+              "bundle_sha256"
+            ]
+          },
+          {
+            "required": [
+              "bundle_bytes"
+            ]
+          },
+          {
+            "required": [
+              "public_key"
+            ]
+          },
+          {
+            "required": [
+              "signature"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "properties": {
+        "key": {
+          "const": "integration_permissions_validated"
+        },
+        "confirmation": {
+          "const": "run integration_permissions_validated"
+        }
+      },
+      "required": [
+        "key",
+        "confirmation",
+        "approve_integration_permission_authority_identity",
+        "github_api_endpoint",
+        "github_api_version",
+        "github_installation_id",
+        "github_repository_full_name",
+        "approved_by"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "storage_root"
+            ]
+          },
+          {
+            "required": [
+              "backup_snapshot_path"
+            ]
+          },
+          {
+            "required": [
+              "route_inventory_path"
+            ]
+          },
+          {
+            "required": [
+              "runtime_policy_path"
+            ]
+          },
+          {
+            "required": [
+              "approve_inventory_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_runtime_policy_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_review_policy_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_postgres_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_kms_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_envelope_storage_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "s3_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "s3_region"
+            ]
+          },
+          {
+            "required": [
+              "s3_bucket"
+            ]
+          },
+          {
+            "required": [
+              "s3_prefix"
+            ]
+          },
+          {
+            "required": [
+              "kms_region"
+            ]
+          },
+          {
+            "required": [
+              "kms_key_arn"
+            ]
+          },
+          {
+            "required": [
+              "kms_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "approve_webhook_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "github_webhook_key_id"
+            ]
+          },
+          {
+            "required": [
+              "approve_shared_rate_limit_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "postgres_database_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_replica_reconciliation_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_signed_bundle_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "bundle_path"
+            ]
+          },
+          {
+            "required": [
+              "bundle_sha256"
+            ]
+          },
+          {
+            "required": [
+              "bundle_bytes"
+            ]
+          },
+          {
+            "required": [
+              "public_key"
+            ]
+          },
+          {
+            "required": [
+              "signature"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "properties": {
+        "key": {
+          "const": "webhook_validated"
+        },
+        "confirmation": {
+          "const": "run webhook_validated"
+        }
+      },
+      "required": [
+        "key",
+        "confirmation",
+        "approve_webhook_authority_identity",
+        "github_webhook_key_id",
+        "approved_by"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "storage_root"
+            ]
+          },
+          {
+            "required": [
+              "route_inventory_path"
+            ]
+          },
+          {
+            "required": [
+              "runtime_policy_path"
+            ]
+          },
+          {
+            "required": [
+              "approve_inventory_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_runtime_policy_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_review_policy_identity"
+            ]
+          },
+          {
+            "required": [
+              "backup_snapshot_path"
+            ]
+          },
+          {
+            "required": [
+              "approve_postgres_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_kms_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "kms_region"
+            ]
+          },
+          {
+            "required": [
+              "kms_key_arn"
+            ]
+          },
+          {
+            "required": [
+              "kms_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "approve_envelope_storage_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "s3_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "s3_region"
+            ]
+          },
+          {
+            "required": [
+              "s3_bucket"
+            ]
+          },
+          {
+            "required": [
+              "s3_prefix"
+            ]
+          },
+          {
+            "required": [
+              "approve_integration_permission_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "github_api_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "github_api_version"
+            ]
+          },
+          {
+            "required": [
+              "github_installation_id"
+            ]
+          },
+          {
+            "required": [
+              "github_repository_full_name"
+            ]
+          },
+          {
+            "required": [
+              "approve_shared_rate_limit_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "postgres_database_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_replica_reconciliation_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_signed_bundle_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "bundle_path"
+            ]
+          },
+          {
+            "required": [
+              "bundle_sha256"
+            ]
+          },
+          {
+            "required": [
+              "bundle_bytes"
+            ]
+          },
+          {
+            "required": [
+              "public_key"
+            ]
+          },
+          {
+            "required": [
+              "signature"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "properties": {
+        "key": {
+          "const": "shared_rate_limit_validated"
+        },
+        "confirmation": {
+          "const": "run shared_rate_limit_validated"
+        }
+      },
+      "required": [
+        "key",
+        "confirmation",
+        "approve_shared_rate_limit_authority_identity",
+        "postgres_database_authority_identity",
+        "approved_by"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "storage_root"
+            ]
+          },
+          {
+            "required": [
+              "route_inventory_path"
+            ]
+          },
+          {
+            "required": [
+              "runtime_policy_path"
+            ]
+          },
+          {
+            "required": [
+              "approve_inventory_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_runtime_policy_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_review_policy_identity"
+            ]
+          },
+          {
+            "required": [
+              "backup_snapshot_path"
+            ]
+          },
+          {
+            "required": [
+              "approve_postgres_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_kms_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "kms_region"
+            ]
+          },
+          {
+            "required": [
+              "kms_key_arn"
+            ]
+          },
+          {
+            "required": [
+              "kms_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "approve_envelope_storage_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "s3_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "s3_region"
+            ]
+          },
+          {
+            "required": [
+              "s3_bucket"
+            ]
+          },
+          {
+            "required": [
+              "s3_prefix"
+            ]
+          },
+          {
+            "required": [
+              "approve_integration_permission_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "github_api_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "github_api_version"
+            ]
+          },
+          {
+            "required": [
+              "github_installation_id"
+            ]
+          },
+          {
+            "required": [
+              "github_repository_full_name"
+            ]
+          },
+          {
+            "required": [
+              "approve_webhook_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "github_webhook_key_id"
+            ]
+          },
+          {
+            "required": [
+              "approve_replica_reconciliation_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_signed_bundle_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "bundle_path"
+            ]
+          },
+          {
+            "required": [
+              "bundle_sha256"
+            ]
+          },
+          {
+            "required": [
+              "bundle_bytes"
+            ]
+          },
+          {
+            "required": [
+              "public_key"
+            ]
+          },
+          {
+            "required": [
+              "signature"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "properties": {
+        "key": {
+          "const": "replica_reconciliation_validated"
+        },
+        "confirmation": {
+          "const": "run replica_reconciliation_validated"
+        }
+      },
+      "required": [
+        "key",
+        "confirmation",
+        "approve_replica_reconciliation_authority_identity",
+        "postgres_database_authority_identity",
+        "approved_by"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "storage_root"
+            ]
+          },
+          {
+            "required": [
+              "route_inventory_path"
+            ]
+          },
+          {
+            "required": [
+              "runtime_policy_path"
+            ]
+          },
+          {
+            "required": [
+              "approve_inventory_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_runtime_policy_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_review_policy_identity"
+            ]
+          },
+          {
+            "required": [
+              "backup_snapshot_path"
+            ]
+          },
+          {
+            "required": [
+              "approve_postgres_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_kms_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "kms_region"
+            ]
+          },
+          {
+            "required": [
+              "kms_key_arn"
+            ]
+          },
+          {
+            "required": [
+              "kms_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "approve_envelope_storage_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "s3_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "s3_region"
+            ]
+          },
+          {
+            "required": [
+              "s3_bucket"
+            ]
+          },
+          {
+            "required": [
+              "s3_prefix"
+            ]
+          },
+          {
+            "required": [
+              "approve_integration_permission_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "github_api_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "github_api_version"
+            ]
+          },
+          {
+            "required": [
+              "github_installation_id"
+            ]
+          },
+          {
+            "required": [
+              "github_repository_full_name"
+            ]
+          },
+          {
+            "required": [
+              "approve_webhook_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "github_webhook_key_id"
+            ]
+          },
+          {
+            "required": [
+              "approve_shared_rate_limit_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_signed_bundle_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "bundle_path"
+            ]
+          },
+          {
+            "required": [
+              "bundle_sha256"
+            ]
+          },
+          {
+            "required": [
+              "bundle_bytes"
+            ]
+          },
+          {
+            "required": [
+              "public_key"
+            ]
+          },
+          {
+            "required": [
+              "signature"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "properties": {
+        "key": {
+          "const": "signed_bundle_validated"
+        },
+        "confirmation": {
+          "const": "run signed_bundle_validated"
+        }
+      },
+      "required": [
+        "key",
+        "confirmation",
+        "approve_signed_bundle_authority_identity",
+        "bundle_path",
+        "bundle_sha256",
+        "bundle_bytes",
+        "public_key",
+        "signature",
+        "approved_by"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "storage_root"
+            ]
+          },
+          {
+            "required": [
+              "route_inventory_path"
+            ]
+          },
+          {
+            "required": [
+              "runtime_policy_path"
+            ]
+          },
+          {
+            "required": [
+              "approve_inventory_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_runtime_policy_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_review_policy_identity"
+            ]
+          },
+          {
+            "required": [
+              "backup_snapshot_path"
+            ]
+          },
+          {
+            "required": [
+              "approve_postgres_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_kms_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "kms_region"
+            ]
+          },
+          {
+            "required": [
+              "kms_key_arn"
+            ]
+          },
+          {
+            "required": [
+              "kms_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "approve_envelope_storage_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "s3_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "s3_region"
+            ]
+          },
+          {
+            "required": [
+              "s3_bucket"
+            ]
+          },
+          {
+            "required": [
+              "s3_prefix"
+            ]
+          },
+          {
+            "required": [
+              "approve_integration_permission_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "github_api_endpoint"
+            ]
+          },
+          {
+            "required": [
+              "github_api_version"
+            ]
+          },
+          {
+            "required": [
+              "github_installation_id"
+            ]
+          },
+          {
+            "required": [
+              "github_repository_full_name"
+            ]
+          },
+          {
+            "required": [
+              "approve_webhook_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "github_webhook_key_id"
+            ]
+          },
+          {
+            "required": [
+              "approve_replica_reconciliation_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "approve_shared_rate_limit_authority_identity"
+            ]
+          },
+          {
+            "required": [
+              "postgres_database_authority_identity"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

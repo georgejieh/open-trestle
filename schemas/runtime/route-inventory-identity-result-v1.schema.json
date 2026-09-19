@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:runtime:route-inventory-identity-result:v1",
+  "title": "Open Trestle route inventory identity result v1",
+  "description": "Content-free structural identity report for one decoded runtime route inventory. This schema does not authorize provider execution, prove route reachability, bind a runtime policy, or mint semantic authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "status",
+    "inventory_identity",
+    "route_record_identities",
+    "route_count"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/route-inventory-identity-result"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "status": {
+      "const": "decoded"
+    },
+    "inventory_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "route_record_identities": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/digest"
+      },
+      "description": "Canonical sorted route registry record identities from the decoded inventory. Validation does not prove eligibility, availability, or policy approval."
+    },
+    "route_count": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 64
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "$comment": "Trusted consumers must also check route_count equals the array length and must not treat this JSON as policy binding, reachability, health, quality, execution authorization, or live conformance."
+}

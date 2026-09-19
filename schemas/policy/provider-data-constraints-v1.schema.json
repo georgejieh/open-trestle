@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:policy:provider-data-constraints:v1",
+  "title": "Open Trestle Provider Data Constraints v1",
+  "description": "Canonical interchange shape for provider data constraints. Validation does not prove classification accuracy, policy authority, or provider behavior.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "data_classification",
+    "allowed_provider_zones",
+    "content_logging_allowed"
+  ],
+  "$defs": {
+    "data_classification": {
+      "type": "string",
+      "enum": [
+        "public",
+        "internal",
+        "confidential",
+        "restricted"
+      ]
+    },
+    "provider_zone": {
+      "type": "string",
+      "enum": [
+        "local",
+        "private_remote",
+        "brokered_remote",
+        "subscription_oauth"
+      ]
+    }
+  },
+  "properties": {
+    "data_classification": {
+      "$ref": "#/$defs/data_classification"
+    },
+    "allowed_provider_zones": {
+      "description": "No provider zone is permitted when this array is empty; routing must deny the request. Array order has no meaning.",
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 4,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/provider_zone"
+      }
+    },
+    "content_logging_allowed": {
+      "description": "False requires an effective no-content-logging guarantee. True removes content logging as a disqualifier but does not require or prove logging.",
+      "type": "boolean"
+    }
+  }
+}

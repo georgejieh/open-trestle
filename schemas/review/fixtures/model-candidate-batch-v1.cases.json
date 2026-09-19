@@ -1,0 +1,294 @@
+{
+  "manifest_version": "json-schema-cases-v1",
+  "target_schema": "../model-candidate-batch-v1.schema.json",
+  "cases": [
+    {
+      "name": "valid_minimal",
+      "expected_valid": true,
+      "note": "An empty candidate batch is a valid no-candidate response.",
+      "instance": {
+        "schema_version": 1,
+        "candidates": []
+      }
+    },
+    {
+      "name": "valid_boundary_exact",
+      "expected_valid": true,
+      "note": "One candidate uses every encoded upper boundary.",
+      "instance": {
+        "schema_version": 1,
+        "candidates": [
+          {
+            "title": "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT",
+            "claim": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+            "severity_hint": "critical",
+            "source_range": {
+              "source_id": "s",
+              "start_line": 1000000,
+              "end_line": 1000000
+            },
+            "evidence_ids": [
+              "e1",
+              "e2",
+              "e3",
+              "e4"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "valid_unicode_text",
+      "expected_valid": true,
+      "note": "Free-text fields accept non-English text and an astral character.",
+      "instance": {
+        "schema_version": 1,
+        "candidates": [
+          {
+            "title": "未確認の書き込み結果 😀",
+            "claim": "永続化の失敗が報告されない可能性があります。",
+            "severity_hint": "medium",
+            "source_range": {
+              "source_id": "src.0007",
+              "start_line": 42,
+              "end_line": 42
+            },
+            "evidence_ids": [
+              "ev.0012"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "valid_semantic_representative",
+      "expected_valid": true,
+      "note": "A realistic ordered batch with two distinct candidates.",
+      "instance": {
+        "schema_version": 1,
+        "candidates": [
+          {
+            "title": "Unchecked write result",
+            "claim": "The write result is ignored, so persistence failure may be hidden.",
+            "severity_hint": "medium",
+            "source_range": {
+              "source_id": "src.0007",
+              "start_line": 42,
+              "end_line": 42
+            },
+            "evidence_ids": [
+              "ev.0012"
+            ]
+          },
+          {
+            "title": "Another candidate",
+            "claim": "This claim intentionally spans\nmultiple lines.",
+            "severity_hint": "low",
+            "source_range": {
+              "source_id": "src.0008",
+              "start_line": 5,
+              "end_line": 7
+            },
+            "evidence_ids": [
+              "ev.0013",
+              "ev.0014"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "valid_shape_reversed_range",
+      "expected_valid": true,
+      "note": "Range ordering is a trusted admission rule, not a schema rule.",
+      "instance": {
+        "schema_version": 1,
+        "candidates": [
+          {
+            "title": "Unchecked write result",
+            "claim": "The write result is ignored, so persistence failure may be hidden.",
+            "severity_hint": "medium",
+            "source_range": {
+              "source_id": "src.0007",
+              "start_line": 43,
+              "end_line": 42
+            },
+            "evidence_ids": [
+              "ev.0012"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid_root_type",
+      "expected_valid": false,
+      "note": "The batch root must be an object.",
+      "instance": []
+    },
+    {
+      "name": "invalid_missing_schema_version",
+      "expected_valid": false,
+      "note": "schema_version is required.",
+      "instance": {
+        "candidates": []
+      }
+    },
+    {
+      "name": "invalid_schema_version",
+      "expected_valid": false,
+      "note": "schema_version must be integer 1.",
+      "instance": {
+        "schema_version": "1",
+        "candidates": []
+      }
+    },
+    {
+      "name": "invalid_unknown_batch_member",
+      "expected_valid": false,
+      "note": "The batch object is closed.",
+      "instance": {
+        "schema_version": 1,
+        "candidates": [],
+        "extra": true
+      }
+    },
+    {
+      "name": "invalid_candidate_missing_evidence",
+      "expected_valid": false,
+      "note": "evidence_ids is required.",
+      "instance": {
+        "schema_version": 1,
+        "candidates": [
+          {
+            "title": "Unchecked write result",
+            "claim": "The write result is ignored, so persistence failure may be hidden.",
+            "severity_hint": "medium",
+            "source_range": {
+              "source_id": "src.0007",
+              "start_line": 42,
+              "end_line": 42
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid_candidate_severity",
+      "expected_valid": false,
+      "note": "severity_hint is a closed advisory enum.",
+      "instance": {
+        "schema_version": 1,
+        "candidates": [
+          {
+            "title": "Unchecked write result",
+            "claim": "The write result is ignored, so persistence failure may be hidden.",
+            "severity_hint": "info",
+            "source_range": {
+              "source_id": "src.0007",
+              "start_line": 42,
+              "end_line": 42
+            },
+            "evidence_ids": [
+              "ev.0012"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid_candidate_id",
+      "expected_valid": false,
+      "note": "A model cannot mint a candidate or Finding identity.",
+      "instance": {
+        "schema_version": 1,
+        "candidates": [
+          {
+            "title": "Unchecked write result",
+            "claim": "The write result is ignored, so persistence failure may be hidden.",
+            "severity_hint": "medium",
+            "source_range": {
+              "source_id": "src.0007",
+              "start_line": 42,
+              "end_line": 42
+            },
+            "evidence_ids": [
+              "ev.0012"
+            ],
+            "id": "model-id"
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid_duplicate_evidence",
+      "expected_valid": false,
+      "note": "Evidence references must be unique.",
+      "instance": {
+        "schema_version": 1,
+        "candidates": [
+          {
+            "title": "Unchecked write result",
+            "claim": "The write result is ignored, so persistence failure may be hidden.",
+            "severity_hint": "medium",
+            "source_range": {
+              "source_id": "src.0007",
+              "start_line": 42,
+              "end_line": 42
+            },
+            "evidence_ids": [
+              "e1",
+              "e1"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid_title_line_feed",
+      "expected_valid": false,
+      "note": "Titles cannot contain CR or LF.",
+      "instance": {
+        "schema_version": 1,
+        "candidates": [
+          {
+            "title": "bad title\n",
+            "claim": "The write result is ignored, so persistence failure may be hidden.",
+            "severity_hint": "medium",
+            "source_range": {
+              "source_id": "src.0007",
+              "start_line": 42,
+              "end_line": 42
+            },
+            "evidence_ids": [
+              "ev.0012"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid_reference_line_feed",
+      "expected_valid": false,
+      "note": "Reference IDs use the closed ASCII token alphabet.",
+      "instance": {
+        "schema_version": 1,
+        "candidates": [
+          {
+            "title": "Unchecked write result",
+            "claim": "The write result is ignored, so persistence failure may be hidden.",
+            "severity_hint": "medium",
+            "source_range": {
+              "source_id": "src.0007",
+              "start_line": 42,
+              "end_line": 42
+            },
+            "evidence_ids": [
+              "e1\n"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
