@@ -262,7 +262,7 @@ func newLocalGitChangeResult(execution scm.LocalGitChangeExecution) (localGitCha
 		return localGitChangeResult{}, 0, fmt.Errorf("local Git change aggregate is inconsistent")
 	}
 	return localGitChangeResult{
-		Contract: "open-trestle/local-git-change-result", SchemaVersion: 1, Status: status,
+		Contract: "open-trestle/local-git-change-result", SchemaVersion: 2, Status: status,
 		ChangeExecutionIdentity: execution.Identity(), AcquisitionPairIdentity: pair.Identity(),
 		RepositoryIdentity: baseBinding.RepositoryIdentity(), SourceAdapterIdentity: baseBinding.SourceAdapterIdentity(),
 		BaseRevisionIdentity: baseBinding.RevisionIdentity(), HeadRevisionIdentity: headBinding.RevisionIdentity(),

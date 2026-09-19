@@ -30,7 +30,7 @@ func TestRunLocalGitReviewEmitsExactFindings(t *testing.T) {
 		t.Fatal(err)
 	}
 	want, wantCode := expectedLocalGitReviewResult(t, objects, evidence.RevisionAlgorithmSHA1, baseDigest, headDigest)
-	if !reflect.DeepEqual(got, want) || wantCode != 0 || got.Status != localGitReviewStatusFindings || !got.ReviewPresent || len(got.Findings) != 1 || len(got.Evidence) != 1 || len(got.Files) != 1 || strings.Count(stdout.String(), "\n") != 1 {
+	if !reflect.DeepEqual(got, want) || wantCode != 0 || got.SchemaVersion != 2 || got.Change.SchemaVersion != 2 || got.Status != localGitReviewStatusFindings || !got.ReviewPresent || len(got.Findings) != 1 || len(got.Evidence) != 1 || len(got.Files) != 1 || strings.Count(stdout.String(), "\n") != 1 {
 		t.Fatalf("result = %#v, want %#v, code %d", got, want, wantCode)
 	}
 	for _, forbidden := range []string{objects, "example.test", "private", "sample", baseDigest, headDigest, canary, "fmt.Println"} {
@@ -76,31 +76,44 @@ func TestRunLocalGitReviewReportsInconclusivePartialAndAbsent(t *testing.T) {
 	t.Run("inconclusive", func(t *testing.T) {
 		objects, baseDigest, headDigest := writeLocalGitChangeFixture(t, evidence.RevisionAlgorithmSHA1, map[string][]byte{"file.go": []byte("package p\nfunc f() {}\n")}, map[string][]byte{"file.go": []byte("package p\nfunc f() { println(1) }\n")})
 		result, code := runLocalGitReviewFixture(t, objects, baseDigest, headDigest)
-		if code != 3 || result.Status != localGitReviewStatusInconclusive || !result.ReviewPresent || len(result.Findings) != 0 {
+		if code != 3 || result.SchemaVersion != 2 || result.Change.SchemaVersion != 2 || result.Status != localGitReviewStatusInconclusive || !result.ReviewPresent || len(result.Findings) != 0 {
 			t.Fatalf("result = %#v, code = %d", result, code)
 		}
 	})
 	t.Run("partial", func(t *testing.T) {
-		base := map[string][]byte{"file.go": []byte("package p\nfunc f() {}\n")}
+		base := map[string][]byte{"file.go": []byte("package p\nfunc f() {}\n"), "removed.go": []byte("package p\nfunc removed() {}\n")}
 		head := map[string][]byte{"added.go": []byte("package p\nfunc added() {}\n"), "file.go": []byte("package p\nimport \"fmt\"\nfunc f() { fmt.Println(\"debug\") }\n")}
 		objects, baseDigest, headDigest := writeLocalGitChangeFixture(t, evidence.RevisionAlgorithmSHA1, base, head)
 		result, code := runLocalGitReviewFixture(t, objects, baseDigest, headDigest)
-		if code != 3 || result.Status != localGitReviewStatusPartial || !result.ReviewPresent || len(result.Findings) != 1 || result.Change.UnsupportedFileCount != 1 {
+		if code != 3 || result.SchemaVersion != 2 || result.Change.SchemaVersion != 2 || result.Status != localGitReviewStatusPartial || !result.ReviewPresent || len(result.Findings) != 1 || result.Change.SupportedFileCount != 2 || result.Change.UnsupportedFileCount != 1 {
 			t.Fatalf("result = %#v, code = %d", result, code)
 		}
 	})
 	t.Run("no change", func(t *testing.T) {
 		objects, digest, _ := writeLocalGitChangeFixture(t, evidence.RevisionAlgorithmSHA1, map[string][]byte{"file": []byte("same")}, map[string][]byte{"file": []byte("same")})
 		result, code := runLocalGitReviewFixture(t, objects, digest, digest)
-		if code != 3 || result.Status != localGitReviewStatusNoChange || result.ReviewPresent || result.ReviewResultIdentity != "" {
+		if code != 3 || result.SchemaVersion != 2 || result.Change.SchemaVersion != 2 || result.Status != localGitReviewStatusNoChange || result.ReviewPresent || result.ReviewResultIdentity != "" {
 			t.Fatalf("result = %#v, code = %d", result, code)
 		}
 	})
 	t.Run("unsupported", func(t *testing.T) {
-		objects, baseDigest, headDigest := writeLocalGitChangeFixture(t, evidence.RevisionAlgorithmSHA1, map[string][]byte{}, map[string][]byte{"added.go": []byte("package p\n")})
+		objects, baseDigest, headDigest := writeLocalGitChangeFixture(t, evidence.RevisionAlgorithmSHA1, map[string][]byte{}, map[string][]byte{"added.go": []byte{}})
 		result, code := runLocalGitReviewFixture(t, objects, baseDigest, headDigest)
-		if code != 3 || result.Status != localGitReviewStatusUnsupported || result.ReviewPresent || result.Change.UnsupportedFileCount != 1 {
+		if code != 3 || result.SchemaVersion != 2 || result.Change.SchemaVersion != 2 || result.Status != localGitReviewStatusUnsupported || result.ReviewPresent || result.Change.UnsupportedFileCount != 1 {
 			t.Fatalf("result = %#v, code = %d", result, code)
+		}
+	})
+	t.Run("added finding", func(t *testing.T) {
+		head := map[string][]byte{"added.go": []byte("package p\nimport \"fmt\"\nfunc added() { fmt.Println(\"debug\") }\n")}
+		objects, baseDigest, headDigest := writeLocalGitChangeFixture(t, evidence.RevisionAlgorithmSHA1, map[string][]byte{}, head)
+		result, code := runLocalGitReviewFixture(t, objects, baseDigest, headDigest)
+		if code != 0 || result.SchemaVersion != 2 || result.Change.SchemaVersion != 2 || result.Status != localGitReviewStatusFindings || !result.ReviewPresent || len(result.Files) != 1 || len(result.Findings) != 1 || result.Findings[0].Path != "added.go" || result.Change.SupportedFileCount != 1 || result.Change.UnsupportedFileCount != 0 {
+			t.Fatalf("result = %#v, code = %d", result, code)
+		}
+		args := append(localGitChangeArgs(objects, evidence.RevisionAlgorithmSHA1, baseDigest, headDigest), "--format", "sarif")
+		var stdout, stderr bytes.Buffer
+		if code := run(append([]string{"local-git", "review"}, args...), &stdout, &stderr); code != 0 || stderr.Len() != 0 || !bytes.Contains(stdout.Bytes(), []byte(`"uri":"added.go"`)) || !bytes.Contains(stdout.Bytes(), []byte(`"ruleId":"static-debug-output"`)) {
+			t.Fatalf("SARIF code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 		}
 	})
 }

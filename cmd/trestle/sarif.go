@@ -164,7 +164,7 @@ func buildSARIFLog(evaluation ciEvaluation) (sarifLog, error) {
 }
 
 func buildLocalGitReviewSARIF(result localGitReviewResult) (sarifLog, error) {
-	if result.Contract != "open-trestle/local-git-review-result" || result.SchemaVersion != 1 {
+	if result.Contract != "open-trestle/local-git-review-result" || result.SchemaVersion != 1 && result.SchemaVersion != 2 {
 		return sarifLog{}, fmt.Errorf("local Git review result contract is invalid")
 	}
 	if err := validateLocalGitReviewWireEvidence(result.Findings, result.Evidence); err != nil {

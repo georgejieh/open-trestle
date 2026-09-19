@@ -223,7 +223,7 @@ func newLocalGitReviewResult(execution scm.LocalGitDebugOutputReviewExecution, l
 		return localGitReviewResult{}, 0, err
 	}
 	result := localGitReviewResult{
-		Contract: "open-trestle/local-git-review-result", SchemaVersion: 1,
+		Contract: "open-trestle/local-git-review-result", SchemaVersion: 2,
 		ReviewExecutionIdentity: execution.Identity(), ReviewPresent: execution.HasReview(),
 		Limits: localGitReviewLimitsResult{
 			MaxFiles: limits.MaxFiles, MaxBytesPerFile: limits.MaxBytesPerFile,

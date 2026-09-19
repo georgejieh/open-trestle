@@ -1,22 +1,75 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/georgejieh/open-trestle/internal/config"
 	"github.com/georgejieh/open-trestle/internal/review"
 )
 
 func main() {
+	if len(os.Args) >= 2 && os.Args[1] == "mcp" {
+		os.Exit(runMCP(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "lsp" {
+		os.Exit(runLSP(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "acp" {
+		os.Exit(runACP(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+	}
+	if len(os.Args) >= 3 && os.Args[1] == "setup" && os.Args[2] == "web" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		code := runSetupWeb(ctx, os.Args[3:], os.Getenv, os.Stdout, os.Stderr)
+		stop()
+		os.Exit(code)
+	}
+	if len(os.Args) >= 3 && os.Args[1] == "setup" && os.Args[2] == "tui" {
+		os.Exit(runSetupTUI(os.Args[3:], os.Stdin, os.Stdout, os.Stderr))
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "tui" {
+		os.Exit(runTUI(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+	}
+	if len(os.Args) >= 3 && os.Args[1] == "local-git" && (os.Args[2] == "model-review" || os.Args[2] == "retained-memory-input") {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		code := runWithContext(ctx, os.Args[1:], os.Stdout, os.Stderr)
+		stop()
+		os.Exit(code)
+	}
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	return runWithContext(context.Background(), args, stdout, stderr)
+}
+
+func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) >= 1 && args[0] == "setup" {
+		return runSetup(args[1:], stdout, stderr)
+	}
+	if len(args) >= 1 && args[0] == "config" {
+		return runConfig(args[1:], stdout, stderr)
+	}
+	if len(args) >= 1 && args[0] == "evaluate" {
+		return runEvaluate(args[1:], stdout, stderr)
+	}
+	if len(args) >= 1 && args[0] == "admin" {
+		return runAdmin(args[1:], stdout, stderr)
+	}
+	if len(args) >= 1 && args[0] == "runs" {
+		return runRemote(args[1:], stdout, stderr)
+	}
 	if len(args) >= 2 && args[0] == "local-git" {
 		switch args[1] {
+		case "model-review":
+			return runLocalGitModelReview(ctx, args[2:], stdout, stderr)
+		case "retained-memory-input":
+			return runLocalGitRetainedMemoryInput(ctx, args[2:], stdout, stderr)
 		case "inspect":
 			return runLocalGitInspect(args[2:], stdout, stderr)
 		case "change":
@@ -116,7 +169,18 @@ func writeUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "       trestle review <path>")
 	fmt.Fprintln(stderr, "       trestle ci --format=json <path>")
 	fmt.Fprintln(stderr, "       trestle ci --format=sarif <path>")
+	writeSetupUsage(stderr)
+	writeConfigUsage(stderr)
+	writeEvaluateUsage(stderr)
+	writeAdminUsage(stderr)
+	writeRunsUsage(stderr)
+	writeMCPUsage(stderr)
+	writeLSPUsage(stderr)
+	writeACPUsage(stderr)
+	writeTUIUsage(stderr)
 	writeLocalGitInspectUsage(stderr)
 	writeLocalGitChangeUsage(stderr)
 	writeLocalGitReviewUsage(stderr)
+	writeLocalGitModelReviewUsage(stderr)
+	writeLocalGitRetainedMemoryInputUsage(stderr)
 }

@@ -29,7 +29,7 @@ func TestRunLocalGitChangeEmitsExactSupportedEvidence(t *testing.T) {
 				t.Fatal(err)
 			}
 			want, wantCode := expectedLocalGitChangeResult(t, objects, algorithm, baseDigest, headDigest)
-			if !reflect.DeepEqual(got, want) || wantCode != 0 || got.Status != localGitChangeStatusComplete || !got.ChangePresent || got.SupportedFileCount != 1 || got.UnsupportedFileCount != 0 || len(got.Entries) != 1 || strings.Count(stdout.String(), "\n") != 1 {
+			if !reflect.DeepEqual(got, want) || wantCode != 0 || got.SchemaVersion != 2 || got.Status != localGitChangeStatusComplete || !got.ChangePresent || got.SupportedFileCount != 1 || got.UnsupportedFileCount != 0 || len(got.Entries) != 1 || strings.Count(stdout.String(), "\n") != 1 {
 				t.Fatalf("result = %#v, want %#v, code %d", got, want, wantCode)
 			}
 			first := stdout.String()
@@ -79,7 +79,7 @@ func TestRunLocalGitChangePreservesOrderedUnsupportedEntries(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if code != 3 || stderr.Len() != 0 || result.Status != localGitChangeStatusPartial || result.SupportedFileCount != 1 || result.UnsupportedFileCount != 2 || len(result.Entries) != 3 || result.Entries[0].Path != "added.go" || result.Entries[1].Path != "changed.go" || result.Entries[2].Path != "removed.go" || result.Entries[0].Reason != string(evidence.RepositoryFileDeltaUnsupportedReasonAddedFile) || result.Entries[2].Reason != string(evidence.RepositoryFileDeltaUnsupportedReasonRemovedFile) {
+	if code != 3 || stderr.Len() != 0 || result.SchemaVersion != 2 || result.Status != localGitChangeStatusPartial || result.SupportedFileCount != 2 || result.UnsupportedFileCount != 1 || len(result.Entries) != 3 || result.Entries[0].Path != "added.go" || result.Entries[0].Status != string(evidence.RepositoryFileDeltaExecutionStatusSupported) || result.Entries[0].Reason != string(evidence.RepositoryFileDeltaUnsupportedReasonNone) || result.Entries[0].FileChangeIdentity == "" || result.Entries[0].LineMapIdentity == "" || result.Entries[1].Path != "changed.go" || result.Entries[2].Path != "removed.go" || result.Entries[2].Reason != string(evidence.RepositoryFileDeltaUnsupportedReasonRemovedFile) {
 		t.Fatalf("partial result = %#v, code = %d, stderr = %q", result, code, stderr.String())
 	}
 }
@@ -91,7 +91,7 @@ func TestRunLocalGitChangeReportsNoChangeAndUnsupported(t *testing.T) {
 		code := run(append([]string{"local-git", "change"}, localGitChangeArgs(objects, evidence.RevisionAlgorithmSHA1, digest, digest)...), &stdout, &stderr)
 		var result localGitChangeResult
 		_ = json.Unmarshal(stdout.Bytes(), &result)
-		if code != 0 || result.Status != localGitChangeStatusNoChange || result.ChangePresent || len(result.Entries) != 0 || stderr.Len() != 0 {
+		if code != 0 || result.SchemaVersion != 2 || result.Status != localGitChangeStatusNoChange || result.ChangePresent || len(result.Entries) != 0 || stderr.Len() != 0 {
 			t.Fatalf("no-change result = %#v, code = %d, stderr = %q", result, code, stderr.String())
 		}
 	})
@@ -101,7 +101,7 @@ func TestRunLocalGitChangeReportsNoChangeAndUnsupported(t *testing.T) {
 		code := run(append([]string{"local-git", "change"}, localGitChangeArgs(objects, evidence.RevisionAlgorithmSHA1, baseDigest, headDigest)...), &stdout, &stderr)
 		var result localGitChangeResult
 		_ = json.Unmarshal(stdout.Bytes(), &result)
-		if code != 3 || result.Status != localGitChangeStatusUnsupported || result.ChangePresent || len(result.Entries) != 1 || result.Entries[0].Reason != string(evidence.RepositoryFileDeltaUnsupportedReasonContent) || stderr.Len() != 0 {
+		if code != 3 || result.SchemaVersion != 2 || result.Status != localGitChangeStatusUnsupported || result.ChangePresent || len(result.Entries) != 1 || result.Entries[0].Reason != string(evidence.RepositoryFileDeltaUnsupportedReasonContent) || stderr.Len() != 0 {
 			t.Fatalf("unsupported result = %#v, code = %d, stderr = %q", result, code, stderr.String())
 		}
 	})
