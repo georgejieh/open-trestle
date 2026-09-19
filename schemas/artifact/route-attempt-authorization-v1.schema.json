@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:artifact:route-attempt-authorization:v1",
+  "title": "Open Trestle route attempt authorization v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "identity",
+    "kind",
+    "review_scope_identity",
+    "request_identity",
+    "selection_receipt_identity",
+    "registry_revision",
+    "route_record_identity",
+    "attempt_ordinal",
+    "route_attempt_ordinal",
+    "previous_outcome_identity",
+    "continuation_decision_identity",
+    "zone",
+    "provider_id",
+    "adapter_id",
+    "connection_id",
+    "model_id",
+    "model_version",
+    "content_logging",
+    "input_price_micro_usd_per_million_tokens",
+    "output_price_micro_usd_per_million_tokens",
+    "estimated_input_tokens",
+    "max_output_tokens",
+    "cost_cap_micro_usd",
+    "maximum_cost_micro_usd",
+    "remaining_before_micro_usd",
+    "reserved_micro_usd",
+    "remaining_after_micro_usd"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/route-attempt-authorization"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "kind": {
+      "enum": [
+        "initial",
+        "retry",
+        "fallback"
+      ]
+    },
+    "review_scope_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "request_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "selection_receipt_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "registry_revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "route_record_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "attempt_ordinal": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 25
+    },
+    "route_attempt_ordinal": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5
+    },
+    "previous_outcome_identity": {
+      "type": "string",
+      "pattern": "^(?:|[0-9a-f]{64})$"
+    },
+    "continuation_decision_identity": {
+      "type": "string",
+      "pattern": "^(?:|[0-9a-f]{64})$"
+    },
+    "zone": {
+      "enum": [
+        "local",
+        "private_remote",
+        "brokered_remote",
+        "subscription_oauth"
+      ]
+    },
+    "provider_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "adapter_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "connection_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "model_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255
+    },
+    "model_version": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "content_logging": {
+      "enum": [
+        "disabled",
+        "enabled",
+        "unknown"
+      ]
+    },
+    "input_price_micro_usd_per_million_tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1073741824
+    },
+    "output_price_micro_usd_per_million_tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1073741824
+    },
+    "estimated_input_tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "max_output_tokens": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4294967295
+    },
+    "cost_cap_micro_usd": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "maximum_cost_micro_usd": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "remaining_before_micro_usd": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "reserved_micro_usd": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "remaining_after_micro_usd": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:artifact:verification-batch:v1",
+  "title": "Open Trestle admitted verification batch v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "identity",
+    "response_identity",
+    "candidate_batch_identity",
+    "snapshot_identity",
+    "candidate_identities",
+    "results"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/verification-batch"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "response_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "candidate_batch_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "snapshot_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "candidate_identities": {
+      "type": "array",
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$",
+        "not": {
+          "const": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      }
+    },
+    "results": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "identity",
+          "candidate_identity",
+          "outcome",
+          "final_severity",
+          "rationale",
+          "path",
+          "start_line",
+          "end_line",
+          "evidence"
+        ],
+        "properties": {
+          "identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "candidate_identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "outcome": {
+            "enum": [
+              "verified",
+              "rejected",
+              "inconclusive"
+            ]
+          },
+          "final_severity": {
+            "enum": [
+              "",
+              "critical",
+              "high",
+              "medium",
+              "low"
+            ]
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "start_line": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "end_line": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "evidence": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "identity",
+                "digest",
+                "path",
+                "start_line",
+                "end_line"
+              ],
+              "properties": {
+                "identity": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$",
+                  "not": {
+                    "const": "0000000000000000000000000000000000000000000000000000000000000000"
+                  }
+                },
+                "path": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                },
+                "start_line": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000000
+                },
+                "end_line": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000000
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

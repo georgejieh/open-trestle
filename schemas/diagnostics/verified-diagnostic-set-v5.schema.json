@@ -1,0 +1,349 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:diagnostics:set:v5",
+  "title": "Open Trestle verified diagnostic set v5",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "identity",
+    "tenant_id",
+    "repository_id",
+    "review_run_id",
+    "snapshot_identity",
+    "head_revision",
+    "verified_set_identity",
+    "coverage",
+    "source_coverage",
+    "checks",
+    "findings"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/review-diagnostic-set"
+    },
+    "schema_version": {
+      "const": 5
+    },
+    "identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "repository_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "review_run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "snapshot_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "head_revision": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "verified_set_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidate_count",
+        "verified_count",
+        "rejected_count",
+        "inconclusive_count"
+      ],
+      "properties": {
+        "candidate_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "verified_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "rejected_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "inconclusive_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        }
+      },
+      "description": "Runtime validation requires verified + rejected + inconclusive = candidate and verified = findings length."
+    },
+    "source_coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "verification_context_identity",
+        "analyzed_count",
+        "selected_count",
+        "omitted_count",
+        "omissions"
+      ],
+      "properties": {
+        "verification_context_identity": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        "analyzed_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65664
+        },
+        "selected_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "omitted_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65664
+        },
+        "omissions": {
+          "type": "array",
+          "maxItems": 6,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "reason",
+              "count"
+            ],
+            "properties": {
+              "reason": {
+                "enum": [
+                  "authorization",
+                  "resource_limit",
+                  "unsupported",
+                  "analysis_failure",
+                  "duplicate",
+                  "selection_limit"
+                ]
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65664
+              }
+            }
+          }
+        }
+      },
+      "description": "The verification-context identity binds these counts and summaries to the independently verified request. Runtime validation requires selected + omitted = analyzed, sorted unique reasons, and summary counts totaling omitted. Categories expose no path or source content."
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "identity",
+          "source_check_identity",
+          "analysis_result_identity",
+          "change_identity",
+          "key",
+          "rule_version",
+          "state",
+          "applicable_files",
+          "applicable_ranges",
+          "checked_files",
+          "checked_ranges",
+          "matches"
+        ],
+        "properties": {
+          "identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "source_check_identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "analysis_result_identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "change_identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "key": {
+            "const": "static_debug_output"
+          },
+          "rule_version": {
+            "const": 1
+          },
+          "state": {
+            "enum": [
+              "passed",
+              "failed",
+              "incomplete",
+              "not_applicable"
+            ]
+          },
+          "applicable_files": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4096
+          },
+          "applicable_ranges": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "checked_files": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4096
+          },
+          "checked_ranges": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "matches": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 16777216
+          }
+        },
+        "description": "Runtime validation reconstructs the source check identity, diagnostic check identity, state, completeness, bounds, and exact analysis/change lineage."
+      }
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "identity",
+          "source_identity",
+          "fingerprint",
+          "title",
+          "message",
+          "severity",
+          "path",
+          "start_line",
+          "end_line",
+          "evidence_ids"
+        ],
+        "properties": {
+          "identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "source_identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "fingerprint": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "severity": {
+            "enum": [
+              "error",
+              "warning",
+              "information",
+              "hint"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "start_line": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000000
+          },
+          "end_line": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000000
+          },
+          "evidence_ids": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        }
+      }
+    }
+  }
+}

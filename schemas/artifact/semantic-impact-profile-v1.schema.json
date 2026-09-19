@@ -1,0 +1,271 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:artifact:semantic-impact-profile:v1",
+  "title": "Open Trestle semantic impact profile v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "identity",
+    "adapter_identity",
+    "graph_schema",
+    "input_identity",
+    "base_snapshot_identity",
+    "head_snapshot_identity",
+    "change_model_identity",
+    "declarations",
+    "references",
+    "gaps"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/semantic-impact-profile"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "adapter_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "graph_schema": {
+      "const": "open-trestle/semantic-impact/go-ast-graph/v1"
+    },
+    "input_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "base_snapshot_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "head_snapshot_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "change_model_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "declarations": {
+      "type": "array",
+      "maxItems": 8192,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "identity",
+          "key",
+          "name",
+          "kind",
+          "path",
+          "change",
+          "exported",
+          "start_line",
+          "end_line",
+          "syntax_digest",
+          "api_digest",
+          "public_api_change",
+          "grade"
+        ],
+        "properties": {
+          "identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "kind": {
+            "enum": [
+              "function",
+              "method",
+              "type",
+              "var",
+              "const"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "change": {
+            "enum": [
+              "added",
+              "modified",
+              "removed"
+            ]
+          },
+          "exported": {
+            "type": "boolean"
+          },
+          "start_line": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2097153
+          },
+          "end_line": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2097153
+          },
+          "syntax_digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "api_digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "public_api_change": {
+            "type": "boolean"
+          },
+          "grade": {
+            "const": "structural"
+          }
+        }
+      }
+    },
+    "references": {
+      "type": "array",
+      "maxItems": 32768,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "identity",
+          "declaration_identity",
+          "declaration_key",
+          "path",
+          "line",
+          "column",
+          "affected_test",
+          "grade"
+        ],
+        "properties": {
+          "identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "declaration_identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "declaration_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2097153
+          },
+          "column": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2097153
+          },
+          "affected_test": {
+            "type": "boolean"
+          },
+          "grade": {
+            "const": "syntactic_candidate"
+          }
+        }
+      }
+    },
+    "gaps": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "identity",
+          "path",
+          "reason",
+          "detail"
+        ],
+        "properties": {
+          "identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "reason": {
+            "enum": [
+              "unsupported_language",
+              "parse_failure",
+              "source_unavailable",
+              "limit_exceeded"
+            ]
+          },
+          "detail": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        }
+      }
+    }
+  }
+}

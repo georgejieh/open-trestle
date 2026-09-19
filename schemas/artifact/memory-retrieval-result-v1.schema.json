@@ -1,0 +1,365 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:artifact:memory-retrieval-result:v1",
+  "title": "Open Trestle memory retrieval result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "identity",
+    "change_artifact_identity",
+    "change_identity",
+    "policy_identity",
+    "retriever_identity",
+    "memory_scope_identity",
+    "tenant_id",
+    "repository_id",
+    "actor_id",
+    "visibility",
+    "ref_set_identity",
+    "path_prefixes",
+    "as_of",
+    "queries",
+    "omissions"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/memory-retrieval-result"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "change_artifact_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "change_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "policy_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "memory_scope_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "repository_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "actor_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "visibility": {
+      "const": "exact"
+    },
+    "ref_set_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "path_prefixes": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024
+      }
+    },
+    "as_of": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "queries": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "identity",
+          "retrieval_identity",
+          "index_revision",
+          "limit",
+          "items"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "retrieval_identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "index_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50
+          },
+          "items": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "identity",
+                "query_identity",
+                "record_identity",
+                "rank",
+                "path_score",
+                "symbol_score",
+                "text_score",
+                "kind",
+                "taint",
+                "path",
+                "symbols",
+                "text",
+                "evidence_ids",
+                "derived_from_ids",
+                "counter_evidence_ids",
+                "producer_identity",
+                "observed_at",
+                "valid_from",
+                "valid_until",
+                "stale_after",
+                "freshness_identity",
+                "confidence_basis_points"
+              ],
+              "properties": {
+                "identity": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$",
+                  "not": {
+                    "const": "0000000000000000000000000000000000000000000000000000000000000000"
+                  }
+                },
+                "query_identity": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$",
+                  "not": {
+                    "const": "0000000000000000000000000000000000000000000000000000000000000000"
+                  }
+                },
+                "record_identity": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$",
+                  "not": {
+                    "const": "0000000000000000000000000000000000000000000000000000000000000000"
+                  }
+                },
+                "rank": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 50
+                },
+                "path_score": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 255
+                },
+                "symbol_score": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 255
+                },
+                "text_score": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 255
+                },
+                "kind": {
+                  "enum": [
+                    "canonical_fact",
+                    "review_episode",
+                    "derived_observation",
+                    "human_feedback"
+                  ]
+                },
+                "taint": {
+                  "enum": [
+                    "trusted",
+                    "repository_controlled",
+                    "user_controlled",
+                    "external_unverified"
+                  ]
+                },
+                "path": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024
+                },
+                "symbols": {
+                  "type": "array",
+                  "maxItems": 32,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  }
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                },
+                "evidence_ids": {
+                  "type": "array",
+                  "maxItems": 32,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "derived_from_ids": {
+                  "type": "array",
+                  "maxItems": 32,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "counter_evidence_ids": {
+                  "type": "array",
+                  "maxItems": 32,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "producer_identity": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$",
+                  "not": {
+                    "const": "0000000000000000000000000000000000000000000000000000000000000000"
+                  }
+                },
+                "observed_at": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "valid_from": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "valid_until": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "stale_after": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "freshness_identity": {
+                  "anyOf": [
+                    {
+                      "const": ""
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$",
+                      "not": {
+                        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+                      }
+                    }
+                  ]
+                },
+                "confidence_basis_points": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10000
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "omissions": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "reason"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "reason": {
+            "enum": [
+              "path_not_authorized",
+              "query_limit",
+              "result_limit"
+            ]
+          }
+        }
+      }
+    },
+    "retriever_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    }
+  }
+}

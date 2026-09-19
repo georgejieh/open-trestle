@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:artifact:route-execution-record:v1",
+  "title": "Open Trestle route execution record v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "identity",
+    "authorization",
+    "outcome",
+    "reconciliation",
+    "output"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/route-execution-record"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "authorization": {
+      "$ref": "urn:open-trestle:schema:artifact:route-attempt-authorization:v1"
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identity",
+        "status",
+        "response_identity",
+        "usage_known",
+        "input_tokens",
+        "output_tokens",
+        "cached_input_tokens",
+        "failure",
+        "replay_safety",
+        "retry_after_milliseconds",
+        "duration_milliseconds"
+      ],
+      "properties": {
+        "identity": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        "status": {
+          "const": "succeeded"
+        },
+        "response_identity": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        "usage_known": {
+          "type": "boolean"
+        },
+        "input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "output_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cached_input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failure": {
+          "const": ""
+        },
+        "replay_safety": {
+          "const": ""
+        },
+        "retry_after_milliseconds": {
+          "const": 0
+        },
+        "duration_milliseconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 86400000
+        }
+      }
+    },
+    "reconciliation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identity",
+        "status",
+        "reserved_cost_micro_usd",
+        "actual_known",
+        "actual_input_cost_micro_usd",
+        "actual_output_cost_micro_usd",
+        "actual_total_cost_micro_usd",
+        "remaining_after_reservation_micro_usd",
+        "remaining_cost_micro_usd",
+        "budget_overrun_micro_usd"
+      ],
+      "properties": {
+        "identity": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        "status": {
+          "enum": [
+            "within_reservation",
+            "within_budget",
+            "budget_exceeded",
+            "usage_unknown"
+          ]
+        },
+        "reserved_cost_micro_usd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "actual_known": {
+          "type": "boolean"
+        },
+        "actual_input_cost_micro_usd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "actual_output_cost_micro_usd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "actual_total_cost_micro_usd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "remaining_after_reservation_micro_usd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "remaining_cost_micro_usd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "budget_overrun_micro_usd": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identity",
+        "kind",
+        "context_identity",
+        "artifact_identity"
+      ],
+      "properties": {
+        "identity": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        "kind": {
+          "enum": [
+            "candidate_batch",
+            "verification_batch"
+          ]
+        },
+        "context_identity": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        "artifact_identity": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        }
+      }
+    }
+  }
+}

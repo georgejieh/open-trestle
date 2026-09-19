@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:artifact:publication-input:v1",
+  "title": "Open Trestle publication input v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "identity",
+    "publisher_id",
+    "repository_authority",
+    "repository_namespace",
+    "repository_name",
+    "repository_identity",
+    "change_id",
+    "head_kind",
+    "head_algorithm",
+    "head_digest",
+    "head_identity"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/publication-input"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "publisher_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9](?:[a-z0-9._:-]*[a-z0-9])?$"
+    },
+    "repository_authority": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255
+    },
+    "repository_namespace": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 255
+      }
+    },
+    "repository_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255
+    },
+    "repository_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "change_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "head_kind": {
+      "const": "git_commit"
+    },
+    "head_algorithm": {
+      "enum": [
+        "sha1",
+        "sha256"
+      ]
+    },
+    "head_digest": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "head_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    }
+  }
+}
