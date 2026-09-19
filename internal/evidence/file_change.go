@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// FileChange describes changed head-side ranges in one modified text file.
+// FileChange describes changed head-side ranges in one supported text-file delta.
 type FileChange struct {
 	identity   string
 	path       string
@@ -17,7 +17,7 @@ type FileChange struct {
 	ranges     []SourceRange
 }
 
-// NewFileChange creates a canonical modified-file descriptor.
+// NewFileChange creates a canonical text-file change descriptor.
 func NewFileChange(path, baseDigest, headDigest string, ranges []SourceRange) (FileChange, error) {
 	if err := validateSourcePath(path); err != nil {
 		return FileChange{}, err

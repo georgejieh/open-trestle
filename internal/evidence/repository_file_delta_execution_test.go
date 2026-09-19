@@ -25,7 +25,7 @@ func TestExecuteRepositoryFileDeltaAccountsForEveryKind(t *testing.T) {
 		status RepositoryFileDeltaExecutionStatus
 		reason RepositoryFileDeltaUnsupportedReason
 	}{
-		{path: "added", head: RepositoryFileDeltaContent{Present: true, Content: headContents["added"]}, status: RepositoryFileDeltaExecutionStatusUnsupported, reason: RepositoryFileDeltaUnsupportedReasonAddedFile},
+		{path: "added", head: RepositoryFileDeltaContent{Present: true, Content: headContents["added"]}, status: RepositoryFileDeltaExecutionStatusSupported, reason: RepositoryFileDeltaUnsupportedReasonNone},
 		{path: "modified", base: RepositoryFileDeltaContent{Present: true, Content: baseContents["modified"]}, head: RepositoryFileDeltaContent{Present: true, Content: headContents["modified"]}, status: RepositoryFileDeltaExecutionStatusSupported, reason: RepositoryFileDeltaUnsupportedReasonNone},
 		{path: "removed", base: RepositoryFileDeltaContent{Present: true, Content: baseContents["removed"]}, status: RepositoryFileDeltaExecutionStatusUnsupported, reason: RepositoryFileDeltaUnsupportedReasonRemovedFile},
 	} {
@@ -48,6 +48,29 @@ func TestExecuteRepositoryFileDeltaAccountsForEveryKind(t *testing.T) {
 	}
 }
 
+func TestExecuteRepositoryFileDeltaRecordsAddedRefusals(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		content []byte
+		want    RepositoryFileDeltaUnsupportedReason
+	}{
+		{name: "empty", content: []byte{}, want: RepositoryFileDeltaUnsupportedReasonAddedFile},
+		{name: "NUL", content: []byte{'a', 0}, want: RepositoryFileDeltaUnsupportedReasonContent},
+		{name: "invalid UTF-8", content: []byte{0xff}, want: RepositoryFileDeltaUnsupportedReasonContent},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			base := mustManifestFromContents(t, map[string][]byte{})
+			head := mustManifestFromContents(t, map[string][]byte{"file": test.content})
+			delta, _ := NewRepositoryManifestDelta(base, head)
+			entry, _ := delta.Entry("file")
+			execution, err := ExecuteRepositoryFileDelta(entry, RepositoryFileDeltaContent{}, RepositoryFileDeltaContent{Present: true, Content: test.content})
+			if err != nil || execution.Status() != RepositoryFileDeltaExecutionStatusUnsupported || execution.Reason() != test.want || execution.FileChange().Identity() != "" || execution.LineMap().Identity() != "" {
+				t.Fatalf("execution = (%#v, %v)", execution, err)
+			}
+		})
+	}
+}
+
 func TestExecuteRepositoryFileDeltaRecordsModifiedRefusals(t *testing.T) {
 	for _, test := range []struct {
 		name string
@@ -56,6 +79,7 @@ func TestExecuteRepositoryFileDeltaRecordsModifiedRefusals(t *testing.T) {
 		want RepositoryFileDeltaUnsupportedReason
 	}{
 		{name: "NUL", base: []byte{'a', 0}, head: []byte{'b', 0}, want: RepositoryFileDeltaUnsupportedReasonContent},
+		{name: "invalid UTF-8", base: []byte("a"), head: []byte{0xff}, want: RepositoryFileDeltaUnsupportedReasonContent},
 		{name: "resource", base: bytes.Repeat([]byte("base\n"), 513), head: bytes.Repeat([]byte("head\n"), 513), want: RepositoryFileDeltaUnsupportedReasonResourceLimit},
 	} {
 		t.Run(test.name, func(t *testing.T) {

@@ -11,7 +11,7 @@ import (
 // Bounds one repository change while allowing large reviewed change sets.
 const maxChangeFiles = 1024
 
-// Change is a canonical set of modified-file evidence.
+// Change is a canonical set of text-file change evidence.
 type Change struct {
 	identity    string
 	fileChanges []FileChange

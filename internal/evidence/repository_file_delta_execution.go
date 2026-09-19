@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"unicode/utf8"
 )
 
 // Bounds exact-content digest work to 64 MiB per supplied side.
@@ -33,7 +34,7 @@ type RepositoryFileDeltaUnsupportedReason string
 const (
 	// RepositoryFileDeltaUnsupportedReasonNone identifies a supported result.
 	RepositoryFileDeltaUnsupportedReasonNone RepositoryFileDeltaUnsupportedReason = "none"
-	// RepositoryFileDeltaUnsupportedReasonAddedFile identifies path addition.
+	// RepositoryFileDeltaUnsupportedReasonAddedFile identifies an empty path addition.
 	RepositoryFileDeltaUnsupportedReasonAddedFile RepositoryFileDeltaUnsupportedReason = "added_file"
 	// RepositoryFileDeltaUnsupportedReasonRemovedFile identifies path removal.
 	RepositoryFileDeltaUnsupportedReasonRemovedFile RepositoryFileDeltaUnsupportedReason = "removed_file"
@@ -88,17 +89,23 @@ func ExecuteRepositoryFileDelta(entry RepositoryFileDelta, base, head Repository
 	}
 	switch canonicalEntry.Kind() {
 	case RepositoryFileDeltaAdded:
-		return newRepositoryFileDeltaExecution(canonicalEntry, RepositoryFileDeltaExecutionStatusUnsupported, RepositoryFileDeltaUnsupportedReasonAddedFile, FileChange{}, LineMap{})
+		if len(head.Content) == 0 {
+			return newRepositoryFileDeltaExecution(canonicalEntry, RepositoryFileDeltaExecutionStatusUnsupported, RepositoryFileDeltaUnsupportedReasonAddedFile, FileChange{}, LineMap{})
+		}
+		return executeTextRepositoryFileDelta(canonicalEntry, nil, head.Content)
 	case RepositoryFileDeltaRemoved:
 		return newRepositoryFileDeltaExecution(canonicalEntry, RepositoryFileDeltaExecutionStatusUnsupported, RepositoryFileDeltaUnsupportedReasonRemovedFile, FileChange{}, LineMap{})
 	case RepositoryFileDeltaModified:
-		return executeModifiedRepositoryFileDelta(canonicalEntry, base.Content, head.Content)
+		return executeTextRepositoryFileDelta(canonicalEntry, base.Content, head.Content)
 	default:
 		return RepositoryFileDeltaExecution{}, fmt.Errorf("unsupported repository file delta kind %q", canonicalEntry.Kind())
 	}
 }
 
-func executeModifiedRepositoryFileDelta(entry RepositoryFileDelta, baseContent, headContent []byte) (RepositoryFileDeltaExecution, error) {
+func executeTextRepositoryFileDelta(entry RepositoryFileDelta, baseContent, headContent []byte) (RepositoryFileDeltaExecution, error) {
+	if !utf8.Valid(baseContent) || !utf8.Valid(headContent) {
+		return newRepositoryFileDeltaExecution(entry, RepositoryFileDeltaExecutionStatusUnsupported, RepositoryFileDeltaUnsupportedReasonContent, FileChange{}, LineMap{})
+	}
 	patch, err := GenerateUnifiedFileDiff(entry.Path(), baseContent, headContent)
 	if err != nil {
 		reason := RepositoryFileDeltaUnsupportedReasonNone
@@ -138,7 +145,22 @@ func newRepositoryFileDeltaExecution(entry RepositoryFileDelta, status Repositor
 	if status == RepositoryFileDeltaExecutionStatusSupported {
 		baseFile, hasBase := canonicalEntry.BaseFile()
 		headFile, hasHead := canonicalEntry.HeadFile()
-		if reason != RepositoryFileDeltaUnsupportedReasonNone || canonicalEntry.Kind() != RepositoryFileDeltaModified || !hasBase || !hasHead || fileChange.Identity() == "" || lineMap.Identity() == "" || fileChange.Path() != canonicalEntry.Path() || fileChange.BaseDigest() != baseFile.Digest() || fileChange.HeadDigest() != headFile.Digest() || lineMap.FileChangeIdentity() != fileChange.Identity() || lineMap.Path() != canonicalEntry.Path() {
+		baseDigest := ""
+		validKind := false
+		switch canonicalEntry.Kind() {
+		case RepositoryFileDeltaAdded:
+			emptyBase, emptyErr := NewRepositoryFile(canonicalEntry.Path(), nil)
+			if emptyErr == nil && !hasBase && lineMap.BaseLineCount() == 0 {
+				baseDigest = emptyBase.Digest()
+				validKind = true
+			}
+		case RepositoryFileDeltaModified:
+			if hasBase {
+				baseDigest = baseFile.Digest()
+				validKind = true
+			}
+		}
+		if reason != RepositoryFileDeltaUnsupportedReasonNone || !validKind || !hasHead || fileChange.Identity() == "" || lineMap.Identity() == "" || fileChange.Path() != canonicalEntry.Path() || fileChange.BaseDigest() != baseDigest || fileChange.HeadDigest() != headFile.Digest() || lineMap.FileChangeIdentity() != fileChange.Identity() || lineMap.Path() != canonicalEntry.Path() {
 			return RepositoryFileDeltaExecution{}, fmt.Errorf("supported repository file delta execution is invalid")
 		}
 	} else if status == RepositoryFileDeltaExecutionStatusUnsupported {
@@ -179,7 +201,7 @@ func validRepositoryFileDeltaUnsupportedReason(kind RepositoryFileDeltaKind, rea
 	}
 	switch kind {
 	case RepositoryFileDeltaAdded:
-		return reason == RepositoryFileDeltaUnsupportedReasonAddedFile
+		return reason == RepositoryFileDeltaUnsupportedReasonAddedFile || reason == RepositoryFileDeltaUnsupportedReasonContent
 	case RepositoryFileDeltaRemoved:
 		return reason == RepositoryFileDeltaUnsupportedReasonRemovedFile
 	case RepositoryFileDeltaModified:
@@ -206,7 +228,7 @@ func (e RepositoryFileDeltaExecution) Status() RepositoryFileDeltaExecutionStatu
 // Reason returns the unsupported reason or none for supported evidence.
 func (e RepositoryFileDeltaExecution) Reason() RepositoryFileDeltaUnsupportedReason { return e.reason }
 
-// FileChange returns generated modified-file evidence, if supported.
+// FileChange returns generated text-file evidence, if supported.
 func (e RepositoryFileDeltaExecution) FileChange() FileChange { return cloneFileChange(e.fileChange) }
 
 // LineMap returns generated line evidence, if supported.
