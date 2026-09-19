@@ -1,5 +1,9 @@
 # Local development materials
 references/
+tools/verify_public_tree.py
+tools/test_verify_public_tree.py
+.remember/
+.prime/
 
 # Credentials and local configuration
 .env
@@ -23,5 +27,13 @@ coverage.xml
 htmlcov/
 node_modules/
 dist/
+!web/dist/
+!web/dist/**
+!extensions/vscode/dist/
+extensions/vscode/dist/*
+!extensions/vscode/dist/extension.js
+!extensions/vscode/dist/bundle-meta.json
+!extensions/vscode/dist/open-trestle.vsix
 build/
+.container/
 .tmp/
