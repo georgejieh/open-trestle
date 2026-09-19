@@ -133,10 +133,14 @@ go run ./cmd/trestle local-git review --objects-root PATH \
 go test ./...
 ```
 
+The static `local-git inspect`, `local-git change`, and deterministic `local-git review` commands support verified loose objects only. Nonempty, valid, within-budget added text is reviewed against a canonical empty base; empty, binary, removed, and over-limit entries remain explicit unsupported outcomes. Repository fields are caller-supplied scope labels, not proof that the object directory belongs to that repository. See [Local Git inspection](docs/local-git-inspect.md), [Local Git change evidence](docs/local-git-change.md), and [Local Git debug-output review](docs/local-git-review.md).
+
 The fixture and `local-git` commands are local-only: no model calls, no repository
 content execution, no source mutation, no publication. For model-backed local review
 see [local model review](docs/local-model-review.md) — it requires protected route
-configuration, an explicit egress choice, and a finite timeout.
+configuration, an explicit egress choice, and a finite timeout. It defaults to loose
+Git objects with a separate packed-object opt-in, does not publish results, and its
+results report limits rather than comprehensive clearance.
 
 ## Documentation
 
