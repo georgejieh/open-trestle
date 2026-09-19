@@ -1,0 +1,167 @@
+{
+  "name": "open-trestle",
+  "displayName": "Open Trestle",
+  "description": "Read-only independently verified code-review diagnostics from Open Trestle.",
+  "version": "0.1.0",
+  "private": true,
+  "publisher": "open-trestle",
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.95.0",
+    "node": ">=22"
+  },
+  "categories": [
+    "Linters",
+    "Other"
+  ],
+  "keywords": [
+    "code review",
+    "diagnostics",
+    "lsp",
+    "self-hosted"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:openTrestle.connect",
+    "onCommand:openTrestle.setToken",
+    "onCommand:openTrestle.clearToken",
+    "onCommand:openTrestle.restart"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "openTrestle.connect",
+        "title": "Open Trestle: Connect to Review Run",
+        "category": "Open Trestle"
+      },
+      {
+        "command": "openTrestle.setToken",
+        "title": "Open Trestle: Set API Token",
+        "category": "Open Trestle"
+      },
+      {
+        "command": "openTrestle.clearToken",
+        "title": "Open Trestle: Clear API Token",
+        "category": "Open Trestle"
+      },
+      {
+        "command": "openTrestle.restart",
+        "title": "Open Trestle: Restart Diagnostics",
+        "category": "Open Trestle"
+      }
+    ],
+    "configuration": {
+      "title": "Open Trestle",
+      "properties": {
+        "openTrestle.executable": {
+          "type": "string",
+          "default": "trestle",
+          "description": "Path to the Open Trestle CLI executable.",
+          "scope": "machine"
+        },
+        "openTrestle.server": {
+          "type": "string",
+          "default": "http://127.0.0.1:8741",
+          "description": "HTTPS or loopback HTTP daemon URL.",
+          "scope": "machine"
+        },
+        "openTrestle.tenant": {
+          "type": "string",
+          "default": "",
+          "description": "Exact tenant identifier.",
+          "scope": "machine"
+        },
+        "openTrestle.repository": {
+          "type": "string",
+          "default": "",
+          "description": "Exact repository identifier.",
+          "scope": "machine"
+        },
+        "openTrestle.run": {
+          "type": "string",
+          "default": "",
+          "description": "Exact review run identifier.",
+          "scope": "machine"
+        },
+        "openTrestle.autoStart": {
+          "type": "boolean",
+          "default": false,
+          "description": "Start read-only diagnostics when VS Code starts and configuration is complete.",
+          "scope": "machine"
+        }
+      }
+    },
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "openTrestle.connect",
+          "when": "!openTrestle.connected"
+        },
+        {
+          "command": "openTrestle.restart",
+          "when": "openTrestle.connected"
+        },
+        {
+          "command": "openTrestle.setToken"
+        },
+        {
+          "command": "openTrestle.clearToken"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "npm run check && node esbuild.mjs",
+    "check": "tsc --noEmit --pretty false",
+    "test": "vitest run",
+    "package": "vsce package --no-dependencies --out dist/open-trestle.raw.vsix && node scripts/normalize-vsix.mjs",
+    "format": "prettier --write \"src/**/*.ts\" \"*.{json,js,mjs,md}\" \"scripts/*.mjs\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"*.{json,js,mjs,md}\" \"scripts/*.mjs\"",
+    "vscode:prepublish": "npm run build",
+    "dist:check": "node scripts/check-dist.mjs"
+  },
+  "files": [
+    "dist/extension.js",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "NOTICE",
+    "THIRD_PARTY_LICENSES",
+    "icon.png"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/georgejieh/open-trestle"
+  },
+  "bugs": {
+    "url": "https://github.com/georgejieh/open-trestle/issues"
+  },
+  "homepage": "https://github.com/georgejieh/open-trestle",
+  "dependencies": {
+    "vscode-languageclient": "10.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "26.4.1",
+    "@types/vscode": "1.95.0",
+    "@vscode/vsce": "3.9.2",
+    "esbuild": "0.28.2",
+    "prettier": "3.9.6",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
+  },
+  "icon": "icon.png",
+  "extensionKind": [
+    "workspace"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "The extension starts a local LSP process only in a trusted workspace."
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "Diagnostics bind to an exact local file workspace root."
+    }
+  }
+}
