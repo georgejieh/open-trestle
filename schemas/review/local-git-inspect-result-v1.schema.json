@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:review:local-git-inspect-result:v1",
+  "title": "Open Trestle local Git inspection result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "status",
+    "envelope_identity",
+    "repository_identity",
+    "revision_identity",
+    "source_adapter_identity",
+    "request_identity",
+    "receipt_identity",
+    "acquisition_execution_identity",
+    "profiled_acquisition_execution_identity",
+    "evidence_binding_identity",
+    "manifest_identity",
+    "git_commit_identity",
+    "git_tree_graph_identity",
+    "correspondence_identity",
+    "profile_bundle_identity",
+    "content_coverage"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/local-git-inspect-result"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "status": {
+      "const": "supplied_evidence_bound"
+    },
+    "envelope_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "repository_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "revision_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "source_adapter_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "request_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "receipt_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "acquisition_execution_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "profiled_acquisition_execution_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "evidence_binding_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "manifest_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "git_commit_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "git_tree_graph_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "correspondence_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "profile_bundle_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "content_coverage": {
+      "const": "complete"
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    }
+  }
+}

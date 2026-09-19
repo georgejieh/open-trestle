@@ -1,0 +1,164 @@
+{
+  "manifest_version": "json-schema-cases-v1",
+  "target_schema": "../model-verification-batch-v1.schema.json",
+  "cases": [
+    {
+      "name": "valid_empty",
+      "expected_valid": true,
+      "instance": {
+        "schema_version": 1,
+        "verdicts": []
+      }
+    },
+    {
+      "name": "valid_verified",
+      "expected_valid": true,
+      "instance": {
+        "schema_version": 1,
+        "verdicts": [
+          {
+            "candidate_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "outcome": "verified",
+            "severity": "high",
+            "rationale": "The cited control flow confirms the unchecked error.",
+            "evidence_ids": [
+              "evidence-1"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "valid_rejected",
+      "expected_valid": true,
+      "instance": {
+        "schema_version": 1,
+        "verdicts": [
+          {
+            "candidate_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "outcome": "rejected",
+            "severity": "none",
+            "rationale": "The error is returned on the next line.",
+            "evidence_ids": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid_root_member",
+      "expected_valid": false,
+      "instance": {
+        "schema_version": 1,
+        "verdicts": [],
+        "extra": true
+      }
+    },
+    {
+      "name": "invalid_candidate_id",
+      "expected_valid": false,
+      "instance": {
+        "schema_version": 1,
+        "verdicts": [
+          {
+            "candidate_id": "candidate",
+            "outcome": "verified",
+            "severity": "high",
+            "rationale": "The cited control flow confirms the unchecked error.",
+            "evidence_ids": [
+              "evidence-1"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid_outcome",
+      "expected_valid": false,
+      "instance": {
+        "schema_version": 1,
+        "verdicts": [
+          {
+            "candidate_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "outcome": "maybe",
+            "severity": "high",
+            "rationale": "The cited control flow confirms the unchecked error.",
+            "evidence_ids": [
+              "evidence-1"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid_verified_none",
+      "expected_valid": false,
+      "instance": {
+        "schema_version": 1,
+        "verdicts": [
+          {
+            "candidate_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "outcome": "verified",
+            "severity": "none",
+            "rationale": "The cited control flow confirms the unchecked error.",
+            "evidence_ids": [
+              "evidence-1"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid_verified_no_evidence",
+      "expected_valid": false,
+      "instance": {
+        "schema_version": 1,
+        "verdicts": [
+          {
+            "candidate_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "outcome": "verified",
+            "severity": "high",
+            "rationale": "The cited control flow confirms the unchecked error.",
+            "evidence_ids": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid_rejected_severity",
+      "expected_valid": false,
+      "instance": {
+        "schema_version": 1,
+        "verdicts": [
+          {
+            "candidate_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "outcome": "rejected",
+            "severity": "low",
+            "rationale": "The cited control flow confirms the unchecked error.",
+            "evidence_ids": [
+              "evidence-1"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid_duplicate_evidence",
+      "expected_valid": false,
+      "instance": {
+        "schema_version": 1,
+        "verdicts": [
+          {
+            "candidate_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "outcome": "verified",
+            "severity": "high",
+            "rationale": "The cited control flow confirms the unchecked error.",
+            "evidence_ids": [
+              "evidence-1",
+              "evidence-1"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

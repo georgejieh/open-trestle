@@ -1,0 +1,554 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:review:local-git-review-result:v2",
+  "title": "Open Trestle local Git review result v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "status",
+    "review_execution_identity",
+    "review_present",
+    "review_result_identity",
+    "rule_version",
+    "limits",
+    "change",
+    "files",
+    "findings",
+    "evidence"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/local-git-review-result"
+    },
+    "schema_version": {
+      "const": 2
+    },
+    "status": {
+      "enum": [
+        "findings",
+        "inconclusive",
+        "no_change",
+        "partial",
+        "unsupported"
+      ]
+    },
+    "review_execution_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "review_present": {
+      "type": "boolean"
+    },
+    "review_result_identity": {
+      "anyOf": [
+        {
+          "const": ""
+        },
+        {
+          "$ref": "#/$defs/digest"
+        }
+      ]
+    },
+    "rule_version": {
+      "enum": [
+        "",
+        "1"
+      ]
+    },
+    "limits": {
+      "$ref": "#/$defs/limits"
+    },
+    "change": {
+      "$ref": "urn:open-trestle:schema:review:local-git-change-result:v2"
+    },
+    "files": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/file"
+      }
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 1024,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "maxItems": 1024,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/evidence"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "no_change"
+          }
+        }
+      },
+      "then": {
+        "allOf": [
+          {
+            "properties": {
+              "review_present": {
+                "const": false
+              },
+              "review_result_identity": {
+                "const": ""
+              },
+              "rule_version": {
+                "const": ""
+              },
+              "files": {
+                "maxItems": 0
+              },
+              "findings": {
+                "maxItems": 0
+              },
+              "evidence": {
+                "maxItems": 0
+              }
+            }
+          },
+          {
+            "properties": {
+              "change": {
+                "properties": {
+                  "status": {
+                    "const": "no_change"
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "unsupported"
+          }
+        }
+      },
+      "then": {
+        "allOf": [
+          {
+            "properties": {
+              "review_present": {
+                "const": false
+              },
+              "review_result_identity": {
+                "const": ""
+              },
+              "rule_version": {
+                "const": ""
+              },
+              "files": {
+                "maxItems": 0
+              },
+              "findings": {
+                "maxItems": 0
+              },
+              "evidence": {
+                "maxItems": 0
+              }
+            }
+          },
+          {
+            "properties": {
+              "change": {
+                "properties": {
+                  "status": {
+                    "const": "unsupported"
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "partial"
+          }
+        }
+      },
+      "then": {
+        "allOf": [
+          {
+            "properties": {
+              "review_present": {
+                "const": true
+              },
+              "review_result_identity": {
+                "$ref": "#/$defs/digest"
+              },
+              "rule_version": {
+                "const": "1"
+              },
+              "files": {
+                "minItems": 1
+              }
+            }
+          },
+          {
+            "properties": {
+              "change": {
+                "properties": {
+                  "status": {
+                    "const": "partial"
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "findings"
+          }
+        }
+      },
+      "then": {
+        "allOf": [
+          {
+            "properties": {
+              "review_present": {
+                "const": true
+              },
+              "review_result_identity": {
+                "$ref": "#/$defs/digest"
+              },
+              "rule_version": {
+                "const": "1"
+              },
+              "files": {
+                "minItems": 1
+              }
+            }
+          },
+          {
+            "properties": {
+              "change": {
+                "properties": {
+                  "status": {
+                    "const": "complete"
+                  }
+                }
+              },
+              "findings": {
+                "minItems": 1
+              },
+              "evidence": {
+                "minItems": 1
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "inconclusive"
+          }
+        }
+      },
+      "then": {
+        "allOf": [
+          {
+            "properties": {
+              "review_present": {
+                "const": true
+              },
+              "review_result_identity": {
+                "$ref": "#/$defs/digest"
+              },
+              "rule_version": {
+                "const": "1"
+              },
+              "files": {
+                "minItems": 1
+              }
+            }
+          },
+          {
+            "properties": {
+              "change": {
+                "properties": {
+                  "status": {
+                    "const": "complete"
+                  }
+                }
+              },
+              "findings": {
+                "maxItems": 0
+              },
+              "evidence": {
+                "maxItems": 0
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "findings": {
+            "minItems": 1
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "evidence": {
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "evidence": {
+            "minItems": 1
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "findings": {
+            "minItems": 1
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "finding_id": {
+      "type": "string",
+      "pattern": "^finding-[0-9a-f]{64}$"
+    },
+    "evidence_id": {
+      "type": "string",
+      "pattern": "^evidence-[0-9a-f]{64}$"
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_files",
+        "max_bytes_per_file",
+        "max_total_bytes",
+        "max_findings"
+      ],
+      "properties": {
+        "max_files": {
+          "const": 64
+        },
+        "max_bytes_per_file": {
+          "const": 1048576
+        },
+        "max_total_bytes": {
+          "const": 67108864
+        },
+        "max_findings": {
+          "const": 1024
+        }
+      }
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "outcome",
+        "reason",
+        "head_digest",
+        "match_count"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "outcome": {
+          "enum": [
+            "analyzed",
+            "not_applicable"
+          ]
+        },
+        "reason": {
+          "enum": [
+            "none",
+            "unsupported_language",
+            "no_positive_head_ranges"
+          ]
+        },
+        "head_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "match_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1024
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "analyzed"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "const": "none"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "not_applicable"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "enum": [
+                  "unsupported_language",
+                  "no_positive_head_ranges"
+                ]
+              },
+              "match_count": {
+                "const": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "severity",
+        "path",
+        "start_line",
+        "end_line",
+        "evidence_ids"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/finding_id"
+        },
+        "title": {
+          "const": "Debug output left in source"
+        },
+        "severity": {
+          "const": "medium"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "start_line": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1048576
+        },
+        "end_line": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1048576
+        },
+        "evidence_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/evidence_id"
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "digest",
+        "path",
+        "start_line",
+        "end_line"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/evidence_id"
+        },
+        "kind": {
+          "const": "source"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "start_line": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1048576
+        },
+        "end_line": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1048576
+        }
+      }
+    }
+  }
+}
