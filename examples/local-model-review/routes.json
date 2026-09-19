@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "routes": [
+    {
+      "zone": "local",
+      "provider_id": "local-openai",
+      "adapter_id": "openai-responses",
+      "connection_id": "local/responses",
+      "model_id": "example-local-model",
+      "model_version": "operator-replace",
+      "max_context_tokens": 32768,
+      "max_output_tokens": 4096,
+      "features": [
+        "structured_output"
+      ],
+      "content_logging": "unknown",
+      "pricing_known": false,
+      "input_micro_usd_per_million_tokens": 0,
+      "output_micro_usd_per_million_tokens": 0,
+      "quality": "tier_1",
+      "registry_revision": 1,
+      "registry_status": "pending",
+      "evidence_manifest_base64": "eyJjb250cmFjdCI6Im9wZW4tdHJlc3RsZS9leGFtcGxlLWxvY2FsLW1vZGVsLXJvdXRlLWV2aWRlbmNlIiwic2NoZW1hX3ZlcnNpb24iOjEsImRlY2xhcmF0aW9uIjoiaWxsdXN0cmF0aXZlIG9wZXJhdG9yIGRlY2xhcmF0aW9uIG9ubHk7IG5vdCBlbXBpcmljYWwgY2VydGlmaWNhdGlvbiIsInNlcnZlciI6Im9wZXJhdG9yLXN1cHBsaWVkIGxvY2FsIE9wZW5BSSBSZXNwb25zZXMtY29tcGF0aWJsZSBlbmRwb2ludCIsImVuZHBvaW50IjoiaHR0cDovLzEyNy4wLjAuMToxMTQzNC92MS9yZXNwb25zZXMiLCJjb21wYXRpYmlsaXR5X3N0YXR1cyI6InVua25vd25fdW5tZWFzdXJlZCIsImhlYWx0aF9zdGF0dXMiOiJ1bmtub3duX3VubWVhc3VyZWQiLCJwcmljaW5nX3N0YXR1cyI6InVua25vd25fdW5yYXRlZCIsIm9wZXJhdG9yX211c3RfcmVwbGFjZV9mb3JfcHJvZHVjdGlvbiI6dHJ1ZX0=",
+      "operational_revision": 1,
+      "health": "unknown",
+      "quota": "unknown",
+      "performance_revision": 1,
+      "latency_known": false,
+      "p95_latency_milliseconds": 0,
+      "latency_sample_count": 0
+    }
+  ]
+}
