@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:setup:offline-bundle-signature-statement:v1",
+  "title": "Open Trestle offline bundle signature statement v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "schema_version", "bundle_sha256", "bundle_bytes"],
+  "properties": {
+    "contract": { "const": "open-trestle/offline-bundle-signature-statement" },
+    "schema_version": { "const": 1 },
+    "bundle_sha256": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    },
+    "bundle_bytes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1073741824
+    }
+  }
+}

@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:webhook:verified-delivery:v1",
+  "title": "Open Trestle verified webhook delivery v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "identity",
+    "deduplication_key",
+    "tenant_id",
+    "repository_id",
+    "source",
+    "delivery_id",
+    "event_type",
+    "action",
+    "verifier_identity",
+    "body_digest",
+    "payload",
+    "received_at_milliseconds"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/verified-webhook-delivery"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "deduplication_key": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*[a-z0-9]$|^[a-z0-9]$"
+    },
+    "repository_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*[a-z0-9]$|^[a-z0-9]$"
+    },
+    "source": {
+      "enum": [
+        "github",
+        "gitlab",
+        "bitbucket_cloud",
+        "gitea",
+        "forgejo"
+      ]
+    },
+    "delivery_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "event_type": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "action": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "verifier_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "body_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "payload": {
+      "type": "string",
+      "contentEncoding": "base64",
+      "maxLength": 1398104
+    },
+    "received_at_milliseconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 253402300799999
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:setup:check-result:v1",
+  "title": "Open Trestle setup check result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "plan",
+    "receipt"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/setup-check-result"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "plan": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1"
+    },
+    "receipt": {
+      "$ref": "urn:open-trestle:schema:setup:check-receipt:v1"
+    }
+  }
+}

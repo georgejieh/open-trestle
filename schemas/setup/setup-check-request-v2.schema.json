@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:setup:check-request:v2",
+  "title": "Open Trestle setup integration check request v2",
+  "description": "Explicit request approval for installation-token creation. Authentication, current plan, captured host configuration and native permission checks remain required. Results and receipts retain schema version 1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "plan_identity",
+    "key",
+    "confirmation",
+    "approve_integration_permission_authority_identity",
+    "approve_github_source_broker_authority_identity",
+    "allow_github_installation_token_creation",
+    "approved_by"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/setup-check-request"
+    },
+    "schema_version": {
+      "const": 2
+    },
+    "plan_identity": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    },
+    "key": {
+      "const": "integration_permissions_validated"
+    },
+    "confirmation": {
+      "const": "create GitHub installation token and run integration_permissions_validated"
+    },
+    "approve_integration_permission_authority_identity": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    },
+    "approve_github_source_broker_authority_identity": {
+      "$ref": "urn:open-trestle:schema:setup:plan:v1#/$defs/digest"
+    },
+    "allow_github_installation_token_creation": {
+      "type": "boolean",
+      "const": true
+    },
+    "approved_by": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:@-]+$"
+    }
+  }
+}

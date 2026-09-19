@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:setup:init-request:v1",
+  "title": "Open Trestle setup init request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "profile",
+    "tenant_id",
+    "repository_id",
+    "recovery_owner",
+    "confirmation"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/setup-init-request"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "profile": {
+      "enum": [
+        "local_single_node",
+        "controlled_hybrid",
+        "kubernetes_ha",
+        "air_gapped"
+      ]
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9](?:[a-z0-9._:-]*[a-z0-9])?$"
+    },
+    "repository_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9](?:[a-z0-9._:-]*[a-z0-9])?$"
+    },
+    "recovery_owner": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:@-]+$"
+    },
+    "confirmation": {
+      "const": "create setup plan"
+    }
+  }
+}
