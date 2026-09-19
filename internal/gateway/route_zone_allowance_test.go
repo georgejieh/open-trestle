@@ -20,7 +20,7 @@ func newZoneCheckInput(t *testing.T, zones ...provider.ProviderZone) ReviewRouti
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := NewReviewRoutingInput(request, requirements, constraints)
+	input, err := NewReviewRoutingInput(newRoutingScope(t), request, requirements, constraints)
 	if err != nil {
 		t.Fatal(err)
 	}
