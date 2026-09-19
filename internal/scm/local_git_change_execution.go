@@ -53,10 +53,6 @@ func ExecuteLocalGitChange(ctx context.Context, baseRequest, headRequest evidenc
 	return executeLocalGitChange(ctx, baseRequest, headRequest, adapter, executeLocalGitAcquisitionEnvelopeWithOwnedContent, evidence.ExecuteRepositoryFileDelta)
 }
 
-func executeLocalGitChangeWithEndpoint(ctx context.Context, baseRequest, headRequest evidence.RepositoryAcquisitionRequest, adapter *LocalGitSourceAdapter, endpoint localGitChangeEndpoint) (LocalGitChangeExecution, error) {
-	return executeLocalGitChange(ctx, baseRequest, headRequest, adapter, endpoint, evidence.ExecuteRepositoryFileDelta)
-}
-
 func executeLocalGitChange(ctx context.Context, baseRequest, headRequest evidence.RepositoryAcquisitionRequest, adapter *LocalGitSourceAdapter, endpoint localGitChangeEndpoint, fileExecutor localGitFileDeltaExecutor) (LocalGitChangeExecution, error) {
 	execution, retainedHeadContents, err := executeLocalGitChangeRetainingHead(ctx, baseRequest, headRequest, adapter, endpoint, fileExecutor, localGitHeadRetentionNone)
 	clearLocalGitRetainedHeadContents(retainedHeadContents)
@@ -98,6 +94,10 @@ func executeLocalGitChangeRetainingHead(ctx context.Context, baseRequest, headRe
 		return LocalGitChangeExecution{}, nil, err
 	}
 	pair, err := newLocalGitAcquisitionPair(baseEnvelope, headEnvelope, delta)
+	if err != nil {
+		return LocalGitChangeExecution{}, nil, err
+	}
+	pair, err = attachLocalGitAcquisitionPairManifests(pair, baseManifest, headManifest)
 	if err != nil {
 		return LocalGitChangeExecution{}, nil, err
 	}

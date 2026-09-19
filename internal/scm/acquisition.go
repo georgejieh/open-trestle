@@ -459,7 +459,10 @@ func canonicalRepositoryAcquisitionExecutionIdentity(execution RepositoryAcquisi
 }
 
 func isCanonicalLocalGitSourceAdapterIdentity(identity evidence.SourceAdapterIdentity) bool {
-	if identity.Kind() != evidence.SourceAdapterKindGit || identity.Name() != localGitSourceAdapterName || identity.Version() != localGitSourceAdapterVersion {
+	if identity.Kind() != evidence.SourceAdapterKindGit || identity.Version() != localGitSourceAdapterVersion {
+		return false
+	}
+	if identity.Name() != localGitSourceAdapterName && identity.Name() != localGitPackedSourceAdapterName {
 		return false
 	}
 	return slices.Equal(identity.Capabilities(), []evidence.SourceAdapterCapability{evidence.SourceCapabilityReadContent, evidence.SourceCapabilityReadManifest})

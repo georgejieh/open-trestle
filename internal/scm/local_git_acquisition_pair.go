@@ -16,6 +16,9 @@ type LocalGitAcquisitionPair struct {
 	baseEnvelope  LocalGitAcquisitionEnvelope
 	headEnvelope  LocalGitAcquisitionEnvelope
 	manifestDelta evidence.RepositoryManifestDelta
+	baseManifest  evidence.RepositoryManifest
+	headManifest  evidence.RepositoryManifest
+	hasManifests  bool
 }
 
 type localGitAcquisitionEndpoint func(context.Context, evidence.RepositoryAcquisitionRequest, *LocalGitSourceAdapter) (LocalGitAcquisitionEnvelope, evidence.RepositoryManifest, error)
@@ -54,6 +57,10 @@ func executeLocalGitAcquisitionPairWithEndpoint(ctx context.Context, baseRequest
 		return LocalGitAcquisitionPair{}, err
 	}
 	pair, err := newLocalGitAcquisitionPair(baseEnvelope, headEnvelope, delta)
+	if err != nil {
+		return LocalGitAcquisitionPair{}, err
+	}
+	pair, err = attachLocalGitAcquisitionPairManifests(pair, baseManifest, headManifest)
 	if err != nil {
 		return LocalGitAcquisitionPair{}, err
 	}
@@ -147,4 +154,42 @@ func (p LocalGitAcquisitionPair) HeadEnvelope() LocalGitAcquisitionEnvelope { re
 // ManifestDelta returns the ordered metadata-only manifest comparison.
 func (p LocalGitAcquisitionPair) ManifestDelta() evidence.RepositoryManifestDelta {
 	return p.manifestDelta
+}
+
+// HasManifests reports whether canonical base and head metadata were retained.
+func (p LocalGitAcquisitionPair) HasManifests() bool { return p.hasManifests }
+
+// BaseManifest returns a defensive canonical copy of the base manifest.
+func (p LocalGitAcquisitionPair) BaseManifest() evidence.RepositoryManifest {
+	manifest, _ := evidence.NewRepositoryManifest(p.baseManifest.Files())
+	return manifest
+}
+
+// HeadManifest returns a defensive canonical copy of the head manifest.
+func (p LocalGitAcquisitionPair) HeadManifest() evidence.RepositoryManifest {
+	manifest, _ := evidence.NewRepositoryManifest(p.headManifest.Files())
+	return manifest
+}
+
+func attachLocalGitAcquisitionPairManifests(pair LocalGitAcquisitionPair, base, head evidence.RepositoryManifest) (LocalGitAcquisitionPair, error) {
+	canonicalBase, err := evidence.NewRepositoryManifest(base.Files())
+	if err != nil || canonicalBase.Identity() != base.Identity() {
+		return LocalGitAcquisitionPair{}, fmt.Errorf("base repository manifest is not canonical")
+	}
+	canonicalHead, err := evidence.NewRepositoryManifest(head.Files())
+	if err != nil || canonicalHead.Identity() != head.Identity() {
+		return LocalGitAcquisitionPair{}, fmt.Errorf("head repository manifest is not canonical")
+	}
+	if pair.Identity() == "" || pair.ManifestDelta().BaseManifestIdentity() != base.Identity() || pair.ManifestDelta().HeadManifestIdentity() != head.Identity() {
+		return LocalGitAcquisitionPair{}, fmt.Errorf("repository manifests do not match acquisition pair")
+	}
+	baseBinding := pair.BaseEnvelope().EvidenceBinding()
+	headBinding := pair.HeadEnvelope().EvidenceBinding()
+	if baseBinding.ManifestIdentity() != base.Identity() || headBinding.ManifestIdentity() != head.Identity() {
+		return LocalGitAcquisitionPair{}, fmt.Errorf("repository manifests do not match acquisition bindings")
+	}
+	pair.baseManifest = canonicalBase
+	pair.headManifest = canonicalHead
+	pair.hasManifests = true
+	return pair, nil
 }

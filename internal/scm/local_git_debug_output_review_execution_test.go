@@ -61,16 +61,16 @@ func TestExecuteLocalGitChangeWithDebugOutputReviewAllowsAbsentChange(t *testing
 	}
 }
 
-func TestExecuteLocalGitChangeWithDebugOutputReviewLeavesUnsupportedOnlyReviewAbsent(t *testing.T) {
-	adapter, baseRequest, headRequest := newContentMapLocalGitChangeFixture(t, map[string][]byte{}, map[string][]byte{"added.go": []byte("package sample\nfunc added() {}\n")})
-	builderCalls := 0
-	builder := func(change evidence.Change, contents map[string][]byte, limits review.DebugOutputChangeLimits) (review.DebugOutputChangeResult, error) {
-		builderCalls++
-		return review.DebugOutputChangeResult{}, errors.New("unexpected builder call")
+func TestExecuteLocalGitChangeWithDebugOutputReviewReviewsAllAddedText(t *testing.T) {
+	head := []byte("package sample\nimport \"fmt\"\nfunc added() { fmt.Println(\"debug\") }\n")
+	adapter, baseRequest, headRequest := newContentMapLocalGitChangeFixture(t, map[string][]byte{}, map[string][]byte{"added.go": head})
+	execution, err := ExecuteLocalGitChangeWithDebugOutputReview(context.Background(), baseRequest, headRequest, adapter, testDebugOutputReviewLimits())
+	if err != nil || !execution.HasReview() || !execution.ChangeExecution().HasChange() || len(execution.ChangeExecution().EntryExecutions()) != 1 || len(execution.Result().Findings()) != 1 {
+		t.Fatalf("execution = (%#v, %v)", execution, err)
 	}
-	execution, err := executeLocalGitChangeWithDebugOutputReview(context.Background(), baseRequest, headRequest, adapter, testDebugOutputReviewLimits(), executeLocalGitAcquisitionEnvelopeWithOwnedContent, evidence.ExecuteRepositoryFileDelta, builder)
-	if err != nil || builderCalls != 0 || execution.HasReview() || execution.ChangeExecution().HasChange() || len(execution.ChangeExecution().EntryExecutions()) != 1 {
-		t.Fatalf("execution = (%#v, %v), calls = %d", execution, err, builderCalls)
+	coverage, ok := execution.Result().File("added.go")
+	if !ok || coverage.Outcome() != review.DebugOutputChangeOutcomeAnalyzed || coverage.MatchCount() != 1 {
+		t.Fatalf("coverage = (%#v, %v)", coverage, ok)
 	}
 }
 
@@ -101,17 +101,17 @@ func TestExecuteLocalGitChangeWithDebugOutputReviewTransfersAllSupportedHeads(t 
 	builderCalls := 0
 	builder := func(change evidence.Change, contents map[string][]byte, supplied review.DebugOutputChangeLimits) (review.DebugOutputChangeResult, error) {
 		builderCalls++
-		if supplied != limits || len(contents) != 2 || !bytes.Equal(contents["file.go"], headGo) || !bytes.Equal(contents["file.txt"], head["file.txt"]) {
+		if supplied != limits || len(contents) != 3 || !bytes.Equal(contents["added.go"], head["added.go"]) || !bytes.Equal(contents["file.go"], headGo) || !bytes.Equal(contents["file.txt"], head["file.txt"]) {
 			return review.DebugOutputChangeResult{}, errors.New("unexpected retained head content")
 		}
 		return review.ReviewDebugOutputChange(change, contents, supplied)
 	}
 	execution, err := executeLocalGitChangeWithDebugOutputReview(context.Background(), baseRequest, headRequest, adapter, limits, executeLocalGitAcquisitionEnvelopeWithOwnedContent, evidence.ExecuteRepositoryFileDelta, builder)
-	if err != nil || builderCalls != 1 || !execution.HasReview() || len(execution.Result().Files()) != 2 {
+	if err != nil || builderCalls != 1 || !execution.HasReview() || len(execution.Result().Files()) != 3 {
 		t.Fatalf("execution = (%#v, %v), calls = %d", execution, err, builderCalls)
 	}
-	if _, ok := execution.Result().File("added.go"); ok {
-		t.Fatal("unsupported added file appeared in review result")
+	if _, ok := execution.Result().File("added.go"); !ok {
+		t.Fatal("supported added file missing from review result")
 	}
 	if _, ok := execution.Result().File("removed.go"); ok {
 		t.Fatal("unsupported removed file appeared in review result")

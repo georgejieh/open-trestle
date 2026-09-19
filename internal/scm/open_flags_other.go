@@ -11,6 +11,10 @@ func regularFileOpenFlags() int {
 	return os.O_RDONLY
 }
 
+func nonblockingRegularFileOpenSupported() bool {
+	return false
+}
+
 func confinedRootOpenSupported() bool {
 	return runtime.GOOS == "windows" || runtime.GOOS == "wasip1"
 }

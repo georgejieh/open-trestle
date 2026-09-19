@@ -27,7 +27,7 @@ func TestExecuteLocalGitAcquisitionPairBuildsOrderedDelta(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if pair.Identity() == "" || pair.BaseEnvelope().Identity() == "" || pair.HeadEnvelope().Identity() == "" || pair.ManifestDelta().Identity() != wantDelta.Identity() || pair.ManifestDelta().AddedFileCount() != 1 || pair.ManifestDelta().ModifiedFileCount() != 1 || pair.ManifestDelta().RemovedFileCount() != 1 || pair.ManifestDelta().UnchangedFileCount() != 1 {
+			if pair.Identity() == "" || pair.BaseEnvelope().Identity() == "" || pair.HeadEnvelope().Identity() == "" || !pair.HasManifests() || pair.BaseManifest().Identity() != baseManifest.Identity() || pair.HeadManifest().Identity() != headManifest.Identity() || pair.ManifestDelta().Identity() != wantDelta.Identity() || pair.ManifestDelta().AddedFileCount() != 1 || pair.ManifestDelta().ModifiedFileCount() != 1 || pair.ManifestDelta().RemovedFileCount() != 1 || pair.ManifestDelta().UnchangedFileCount() != 1 {
 				t.Fatalf("pair = %#v, want delta %#v", pair, wantDelta)
 			}
 			if pair.BaseEnvelope().EvidenceBinding().ManifestIdentity() != pair.ManifestDelta().BaseManifestIdentity() || pair.HeadEnvelope().EvidenceBinding().ManifestIdentity() != pair.ManifestDelta().HeadManifestIdentity() || pair.BaseEnvelope().EvidenceBinding().RepositoryIdentity() != pair.HeadEnvelope().EvidenceBinding().RepositoryIdentity() || pair.BaseEnvelope().EvidenceBinding().SourceAdapterIdentity() != pair.HeadEnvelope().EvidenceBinding().SourceAdapterIdentity() || pair.Identity() != expectedLocalGitAcquisitionPairIdentity(pair) {

@@ -8,12 +8,14 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
 	"os"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/georgejieh/open-trestle/internal/evidence"
 )
@@ -26,33 +28,107 @@ const (
 	maxGitBlobPayloadBytes        = 64 << 20
 )
 
-// LocalGitObjectStore reads verified loose objects beneath one supplied object root.
+type LocalGitObjectStoreProfile string
+
+const (
+	LocalGitObjectStoreProfileLooseOnly           LocalGitObjectStoreProfile = "loose-only"
+	LocalGitObjectStoreProfileLooseAndPackIndexV1 LocalGitObjectStoreProfile = "loose-and-pack-index-v1"
+)
+
+const localGitObjectStorePackedProfileIdentity = "de5515d7a1782495bbb622dc483331d6382fc1502fe498cf989e298296eb1697"
+
+type LocalGitObjectStoreOptions struct {
+	ObjectsRoot     *os.Root
+	Repository      evidence.RepositoryIdentity
+	Profile         LocalGitObjectStoreProfile
+	ObjectAlgorithm evidence.RevisionAlgorithm
+}
+
+// LocalGitObjectStoreProfileIdentity returns the reviewed identity for supported store profiles.
+func LocalGitObjectStoreProfileIdentity(profile LocalGitObjectStoreProfile) (string, error) {
+	switch profile {
+	case "", LocalGitObjectStoreProfileLooseOnly:
+		return "", nil
+	case LocalGitObjectStoreProfileLooseAndPackIndexV1:
+		return localGitObjectStorePackedProfileIdentity, nil
+	default:
+		return "", fmt.Errorf("unsupported local Git object store profile %q", profile)
+	}
+}
+
+// LocalGitObjectStore reads verified Git objects beneath one supplied object root.
 type LocalGitObjectStore struct {
 	objectsRoot        *os.Root
 	repositoryIdentity string
+	profile            LocalGitObjectStoreProfile
+	profileIdentity    string
+	objectAlgorithm    evidence.RevisionAlgorithm
+	packLimits         localGitPackLimits
+
+	mu      sync.Mutex
+	closing bool
+	closed  bool
+	active  int
+	idle    chan struct{}
+	gate    chan struct{}
+	catalog *localGitPackIndexCatalog
 }
 
 // NewLocalGitObjectStore uses objectsRoot as the exact authorized Git objects directory.
 // The caller owns its lifetime; repository labels scope without proving origin.
 func NewLocalGitObjectStore(objectsRoot *os.Root, repository evidence.RepositoryIdentity) (*LocalGitObjectStore, error) {
-	if objectsRoot == nil {
+	return NewLocalGitObjectStoreWithOptions(LocalGitObjectStoreOptions{ObjectsRoot: objectsRoot, Repository: repository, Profile: LocalGitObjectStoreProfileLooseOnly})
+}
+
+// NewLocalGitObjectStoreWithOptions constructs a local Git object store without opening pack contents.
+func NewLocalGitObjectStoreWithOptions(options LocalGitObjectStoreOptions) (*LocalGitObjectStore, error) {
+	if options.ObjectsRoot == nil {
 		return nil, fmt.Errorf("Git object root is nil")
 	}
 	if !confinedRootOpenSupported() {
 		return nil, fmt.Errorf("confined Git object reads are unsupported on this platform")
 	}
-	canonicalRepository, err := evidence.NewRepositoryIdentity(repository.Authority(), repository.Namespace(), repository.Name())
-	if err != nil || !repositoryIdentityValuesEqual(repository, canonicalRepository) {
+	canonicalRepository, err := evidence.NewRepositoryIdentity(options.Repository.Authority(), options.Repository.Namespace(), options.Repository.Name())
+	if err != nil || !repositoryIdentityValuesEqual(options.Repository, canonicalRepository) {
 		return nil, fmt.Errorf("repository identity is not canonical")
 	}
-	rootInfo, err := objectsRoot.Stat(".")
+	rootInfo, err := options.ObjectsRoot.Stat(".")
 	if err != nil {
 		return nil, fmt.Errorf("inspect Git object root: %w", err)
 	}
 	if !rootInfo.IsDir() {
 		return nil, fmt.Errorf("Git object root is not a directory")
 	}
-	return &LocalGitObjectStore{objectsRoot: objectsRoot, repositoryIdentity: canonicalRepository.Identity()}, nil
+	profile := options.Profile
+	if profile == "" {
+		profile = LocalGitObjectStoreProfileLooseOnly
+	}
+	profileIdentity, err := LocalGitObjectStoreProfileIdentity(profile)
+	if err != nil {
+		return nil, err
+	}
+	store := &LocalGitObjectStore{
+		objectsRoot:        options.ObjectsRoot,
+		repositoryIdentity: canonicalRepository.Identity(),
+		profile:            profile,
+		profileIdentity:    profileIdentity,
+		objectAlgorithm:    options.ObjectAlgorithm,
+		packLimits:         standardLocalGitPackLimits(),
+		idle:               closedLocalGitIdleChan(),
+	}
+	if profile == LocalGitObjectStoreProfileLooseAndPackIndexV1 {
+		if !nonblockingRegularFileOpenSupported() {
+			return nil, fmt.Errorf("nonblocking regular file opens are unsupported for packed Git object reads")
+		}
+		if options.ObjectAlgorithm != evidence.RevisionAlgorithmSHA1 && options.ObjectAlgorithm != evidence.RevisionAlgorithmSHA256 {
+			return nil, fmt.Errorf("unsupported packed Git object algorithm %q", options.ObjectAlgorithm)
+		}
+		if err := ValidateLocalGitPackedLayout(options.ObjectsRoot); err != nil {
+			return nil, err
+		}
+		store.gate = make(chan struct{}, 1)
+	}
+	return store, nil
 }
 
 // RepositoryIdentity returns the canonical repository scope label.
@@ -63,23 +139,111 @@ func (s *LocalGitObjectStore) RepositoryIdentity() string {
 	return s.repositoryIdentity
 }
 
-// ReadCommit returns an exact verified loose commit payload.
+func (s *LocalGitObjectStore) Profile() LocalGitObjectStoreProfile {
+	if s == nil || s.profile == "" {
+		return LocalGitObjectStoreProfileLooseOnly
+	}
+	return s.profile
+}
+
+func (s *LocalGitObjectStore) ProfileIdentity() string {
+	if s == nil {
+		return ""
+	}
+	return s.profileIdentity
+}
+
+func (s *LocalGitObjectStore) Close(ctx context.Context) error {
+	if s == nil || s.Profile() == LocalGitObjectStoreProfileLooseOnly {
+		return nil
+	}
+	if isNilInterface(ctx) {
+		return fmt.Errorf("Git object store close context is nil")
+	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil
+	}
+	s.closing = true
+	for s.active > 0 {
+		idle := s.idle
+		s.mu.Unlock()
+		select {
+		case <-idle:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		s.mu.Lock()
+	}
+	catalog := s.catalog
+	s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if catalog != nil {
+		if err := catalog.close(); err != nil {
+			return err
+		}
+	}
+	s.mu.Lock()
+	s.catalog = nil
+	s.closed = true
+	s.mu.Unlock()
+	return ctx.Err()
+}
+
+func (s *LocalGitObjectStore) ValidateStable(ctx context.Context) error {
+	if s == nil || s.objectsRoot == nil {
+		return fmt.Errorf("local Git object store is nil")
+	}
+	if isNilInterface(ctx) {
+		return fmt.Errorf("Git object store validation context is nil")
+	}
+	if s.Profile() == LocalGitObjectStoreProfileLooseOnly {
+		return ctx.Err()
+	}
+	return s.withPackScope(ctx, func(scope *localGitPackScope) error {
+		return nil
+	})
+}
+
+// ReadCommit returns an exact verified commit payload.
 func (s *LocalGitObjectStore) ReadCommit(ctx context.Context, revision evidence.RevisionIdentity) ([]byte, error) {
 	canonicalRevision, err := evidence.NewRevisionIdentity(revision.Kind(), revision.Algorithm(), revision.Digest())
 	if err != nil || !revisionIdentityValuesEqual(revision, canonicalRevision) {
 		return nil, fmt.Errorf("revision identity is not canonical")
 	}
-	return s.readLooseObject(ctx, canonicalRevision.Algorithm(), canonicalRevision.Digest(), "commit", maxGitCommitPayloadBytes)
+	return s.readGitObject(ctx, canonicalRevision.Algorithm(), canonicalRevision.Digest(), "commit", maxGitCommitPayloadBytes)
 }
 
-// ReadTree returns an exact verified loose tree payload.
+// ReadTree returns an exact verified tree payload.
 func (s *LocalGitObjectStore) ReadTree(ctx context.Context, algorithm evidence.RevisionAlgorithm, digest string) ([]byte, error) {
-	return s.readLooseObject(ctx, algorithm, digest, "tree", maxGitTreePayloadBytes)
+	return s.readGitObject(ctx, algorithm, digest, "tree", maxGitTreePayloadBytes)
 }
 
-// ReadBlob returns an exact verified loose blob payload.
+// ReadBlob returns an exact verified blob payload.
 func (s *LocalGitObjectStore) ReadBlob(ctx context.Context, algorithm evidence.RevisionAlgorithm, digest string) ([]byte, error) {
-	return s.readLooseObject(ctx, algorithm, digest, "blob", maxGitBlobPayloadBytes)
+	return s.readGitObject(ctx, algorithm, digest, "blob", maxGitBlobPayloadBytes)
+}
+
+func (s *LocalGitObjectStore) readGitObject(ctx context.Context, algorithm evidence.RevisionAlgorithm, digest, expectedType string, maxPayloadBytes int64) ([]byte, error) {
+	if s == nil || s.objectsRoot == nil {
+		return nil, fmt.Errorf("local Git object store is nil")
+	}
+	if s.Profile() == LocalGitObjectStoreProfileLooseOnly {
+		return s.readLooseObject(ctx, algorithm, digest, expectedType, maxPayloadBytes)
+	}
+	var payload []byte
+	err := s.withPackScope(ctx, func(scope *localGitPackScope) error {
+		var readErr error
+		payload, readErr = scope.readGitObject(ctx, algorithm, digest, expectedType, maxPayloadBytes)
+		return readErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	return payload, nil
 }
 
 func (s *LocalGitObjectStore) readLooseObject(ctx context.Context, algorithm evidence.RevisionAlgorithm, digest, expectedType string, maxPayloadBytes int64) ([]byte, error) {
@@ -113,6 +277,17 @@ func (s *LocalGitObjectStore) readLooseObject(ctx context.Context, algorithm evi
 		return nil, err
 	}
 	return payload, nil
+}
+
+func (s *LocalGitObjectStore) readLooseThenPackObject(ctx context.Context, catalog *localGitPackIndexCatalog, scope *localGitPackScope, algorithm evidence.RevisionAlgorithm, digest, expectedType string, maxPayloadBytes int64) ([]byte, error) {
+	payload, err := s.readLooseObject(ctx, algorithm, digest, expectedType, maxPayloadBytes)
+	if err == nil {
+		return payload, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	return catalog.readObjectWithScope(ctx, digest, expectedType, maxPayloadBytes, scope)
 }
 
 func readOpenedLooseObject(ctx context.Context, objectFile *os.File, objectPath, expectedType string, maxPayloadBytes int64, algorithm evidence.RevisionAlgorithm, expectedDigest []byte) ([]byte, error) {
@@ -272,6 +447,36 @@ func verifyLooseObjectDigest(algorithm evidence.RevisionAlgorithm, expected, hea
 	return nil
 }
 
+func verifyGitObjectPayloadDigest(algorithm evidence.RevisionAlgorithm, expected []byte, objectType string, payload []byte) error {
+	var hasher hash.Hash
+	switch algorithm {
+	case evidence.RevisionAlgorithmSHA1:
+		hasher = sha1.New()
+	case evidence.RevisionAlgorithmSHA256:
+		hasher = sha256.New()
+	default:
+		return fmt.Errorf("unsupported Git object algorithm %q", algorithm)
+	}
+	_, _ = hasher.Write([]byte(objectType))
+	_, _ = hasher.Write([]byte{' '})
+	_, _ = hasher.Write([]byte(fmt.Sprintf("%d", len(payload))))
+	_, _ = hasher.Write([]byte{0})
+	_, _ = hasher.Write(payload)
+	if subtle.ConstantTimeCompare(hasher.Sum(nil), expected) != 1 {
+		return fmt.Errorf("Git object identity does not match requested digest")
+	}
+	return nil
+}
+
+func bytesIndexByteOrEnd(buffer []byte, target byte) int {
+	for i, b := range buffer {
+		if b == target {
+			return i
+		}
+	}
+	return len(buffer)
+}
+
 func repositoryIdentityValuesEqual(first, second evidence.RepositoryIdentity) bool {
 	return first.Identity() == second.Identity() && first.Authority() == second.Authority() && slices.Equal(first.Namespace(), second.Namespace()) && first.Name() == second.Name()
 }
@@ -294,4 +499,10 @@ func (r *contextCheckingReader) Read(buffer []byte) (int, error) {
 		return read, contextErr
 	}
 	return read, err
+}
+
+func closedLocalGitIdleChan() chan struct{} {
+	idle := make(chan struct{})
+	close(idle)
+	return idle
 }

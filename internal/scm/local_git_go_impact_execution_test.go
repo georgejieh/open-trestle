@@ -82,7 +82,7 @@ func TestExecuteLocalGitChangeWithGoImpactTransfersOnlySupportedGoHeads(t *testi
 	builderCalls := 0
 	builder := func(change evidence.Change, contents map[string][]byte) (analysis.ChangeImpactProfile, analysis.GoChangeImpactReceipt, error) {
 		builderCalls++
-		if len(contents) != 1 || !bytes.Equal(contents["file.go"], headGo) {
+		if len(contents) != 2 || !bytes.Equal(contents["added.go"], head["added.go"]) || !bytes.Equal(contents["file.go"], headGo) {
 			return analysis.ChangeImpactProfile{}, analysis.GoChangeImpactReceipt{}, errors.New("unexpected Go head content")
 		}
 		return analysis.BuildGoChangeImpactProfile(change, contents)
@@ -94,8 +94,8 @@ func TestExecuteLocalGitChangeWithGoImpactTransfersOnlySupportedGoHeads(t *testi
 	if coverage, ok := execution.Receipt().File("file.txt"); !ok || coverage.Outcome() != analysis.GoImpactOutcomeUnsupported {
 		t.Fatalf("non-Go coverage = (%#v, %v)", coverage, ok)
 	}
-	if _, ok := execution.Receipt().File("added.go"); ok {
-		t.Fatal("unsupported added Go file appeared in Change impact receipt")
+	if _, ok := execution.Receipt().File("added.go"); !ok {
+		t.Fatal("supported added Go file missing from Change impact receipt")
 	}
 	if _, ok := execution.Receipt().File("removed.go"); ok {
 		t.Fatal("unsupported removed Go file appeared in Change impact receipt")

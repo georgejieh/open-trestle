@@ -68,10 +68,13 @@ type localGitEvidenceInputs struct {
 	correspondence       evidence.GitManifestCorrespondence
 }
 
-// ReadLocalGitRevision constructs complete regular-file evidence from loose objects.
+// ReadLocalGitRevision constructs complete regular-file evidence from local Git objects.
 // It does not establish root origin, ref reachability, or snapshot authority.
 func ReadLocalGitRevision(ctx context.Context, store *LocalGitObjectStore, revision evidence.RevisionIdentity) (LocalGitRevisionResult, error) {
-	return readLocalGitRevision(ctx, store, revision, standardLocalGitRevisionLimits())
+	if store == nil {
+		return LocalGitRevisionResult{}, LocalGitRevisionInvalidGraph
+	}
+	return store.readLocalGitRevision(ctx, revision, standardLocalGitRevisionLimits())
 }
 
 // RevisionIdentity returns the canonical requested revision identity.
@@ -136,12 +139,49 @@ func standardLocalGitRevisionLimits() localGitRevisionLimits {
 	}
 }
 
+func (s *LocalGitObjectStore) readLocalGitRevision(ctx context.Context, revision evidence.RevisionIdentity, limits localGitRevisionLimits) (LocalGitRevisionResult, error) {
+	var result LocalGitRevisionResult
+	err := s.withScopedObjectReader(ctx, func(reader localGitObjectReader) error {
+		var readErr error
+		result, readErr = readLocalGitRevisionCapturing(ctx, reader, revision, limits, nil)
+		return readErr
+	})
+	if err != nil {
+		return LocalGitRevisionResult{}, err
+	}
+	return result, nil
+}
+
 func readLocalGitRevision(ctx context.Context, reader localGitObjectReader, revision evidence.RevisionIdentity, limits localGitRevisionLimits) (LocalGitRevisionResult, error) {
+	if store, ok := reader.(*LocalGitObjectStore); ok {
+		return store.readLocalGitRevision(ctx, revision, limits)
+	}
 	return readLocalGitRevisionCapturing(ctx, reader, revision, limits, nil)
 }
 
 // readLocalGitRevisionWithInputs takes ownership of successful reader payloads.
 func readLocalGitRevisionWithInputs(ctx context.Context, reader localGitObjectReader, revision evidence.RevisionIdentity, limits localGitRevisionLimits) (LocalGitRevisionResult, localGitEvidenceInputs, error) {
+	if store, ok := reader.(*LocalGitObjectStore); ok {
+		if store.Profile() == LocalGitObjectStoreProfileLooseOnly {
+			var inputs localGitEvidenceInputs
+			result, err := readLocalGitRevisionCapturing(ctx, store, revision, limits, &inputs)
+			if err != nil {
+				return LocalGitRevisionResult{}, localGitEvidenceInputs{}, err
+			}
+			return result, inputs, nil
+		}
+		var result LocalGitRevisionResult
+		var inputs localGitEvidenceInputs
+		err := store.withScopedObjectReader(ctx, func(scoped localGitObjectReader) error {
+			var readErr error
+			result, inputs, readErr = readLocalGitRevisionWithInputs(ctx, scoped, revision, limits)
+			return readErr
+		})
+		if err != nil {
+			return LocalGitRevisionResult{}, localGitEvidenceInputs{}, err
+		}
+		return result, inputs, nil
+	}
 	var inputs localGitEvidenceInputs
 	result, err := readLocalGitRevisionCapturing(ctx, reader, revision, limits, &inputs)
 	if err != nil {
@@ -576,6 +616,10 @@ func checkedLocalGitRevisionAdd(current, added, limit int64) (int64, error) {
 func classifyLocalGitObjectRead(err error) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
+	}
+	var revErr LocalGitRevisionError
+	if errors.As(err, &revErr) {
+		return revErr
 	}
 	if errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission) {
 		return LocalGitRevisionObjectUnavailable

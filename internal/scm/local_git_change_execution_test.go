@@ -36,23 +36,25 @@ func TestExecuteLocalGitChangeBuildsAccountedChange(t *testing.T) {
 			if err != nil || execution.AcquisitionPair().Identity() != pair.Identity() {
 				t.Fatalf("pair = (%#v, %v), execution %#v", pair, err, execution)
 			}
+			addedPatch, _ := evidence.GenerateUnifiedFileDiff("added.go", nil, headContents["added.go"])
+			addedChange, addedMap, _ := evidence.ParseUnifiedFileDiff("added.go", nil, headContents["added.go"], addedPatch)
 			patch, _ := evidence.GenerateUnifiedFileDiff("changed.go", baseContents["changed.go"], headContents["changed.go"])
 			fileChange, lineMap, _ := evidence.ParseUnifiedFileDiff("changed.go", baseContents["changed.go"], headContents["changed.go"], patch)
-			wantChange, _ := evidence.NewChange([]evidence.FileChange{fileChange}, []evidence.LineMap{lineMap})
+			wantChange, _ := evidence.NewChange([]evidence.FileChange{addedChange, fileChange}, []evidence.LineMap{addedMap, lineMap})
 			entries := execution.EntryExecutions()
 			if execution.Identity() == "" || !execution.HasChange() || execution.Change().Identity() != wantChange.Identity() || len(entries) != 3 || len(entries) != pair.ManifestDelta().ChangedFileCount() || execution.Identity() != expectedLocalGitChangeExecutionIdentity(execution) {
 				t.Fatalf("execution = %#v, entries = %#v", execution, entries)
 			}
 			wantPaths := []string{"added.go", "changed.go", "removed.go"}
-			wantStatuses := []evidence.RepositoryFileDeltaExecutionStatus{evidence.RepositoryFileDeltaExecutionStatusUnsupported, evidence.RepositoryFileDeltaExecutionStatusSupported, evidence.RepositoryFileDeltaExecutionStatusUnsupported}
-			wantReasons := []evidence.RepositoryFileDeltaUnsupportedReason{evidence.RepositoryFileDeltaUnsupportedReasonAddedFile, evidence.RepositoryFileDeltaUnsupportedReasonNone, evidence.RepositoryFileDeltaUnsupportedReasonRemovedFile}
+			wantStatuses := []evidence.RepositoryFileDeltaExecutionStatus{evidence.RepositoryFileDeltaExecutionStatusSupported, evidence.RepositoryFileDeltaExecutionStatusSupported, evidence.RepositoryFileDeltaExecutionStatusUnsupported}
+			wantReasons := []evidence.RepositoryFileDeltaUnsupportedReason{evidence.RepositoryFileDeltaUnsupportedReasonNone, evidence.RepositoryFileDeltaUnsupportedReasonNone, evidence.RepositoryFileDeltaUnsupportedReasonRemovedFile}
 			for i, entryExecution := range entries {
 				deltaEntry, ok := pair.ManifestDelta().Entry(wantPaths[i])
 				if !ok || entryExecution.Identity() == "" || entryExecution.Path() != wantPaths[i] || entryExecution.RepositoryFileDeltaIdentity() != deltaEntry.Identity() || entryExecution.Status() != wantStatuses[i] || entryExecution.Reason() != wantReasons[i] {
 					t.Fatalf("entry execution %d = %#v", i, entryExecution)
 				}
 			}
-			if entries[1].FileChange().Identity() != fileChange.Identity() || entries[1].LineMap().Identity() != lineMap.Identity() || entries[0].FileChange().Identity() != "" || entries[2].LineMap().Identity() != "" {
+			if entries[0].FileChange().Identity() != addedChange.Identity() || entries[0].LineMap().Identity() != addedMap.Identity() || entries[1].FileChange().Identity() != fileChange.Identity() || entries[1].LineMap().Identity() != lineMap.Identity() || entries[2].LineMap().Identity() != "" {
 				t.Fatalf("entry evidence = %#v", entries)
 			}
 		})

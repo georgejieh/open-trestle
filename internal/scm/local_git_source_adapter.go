@@ -9,8 +9,9 @@ import (
 )
 
 const (
-	localGitSourceAdapterName    = "local-git-loose"
-	localGitSourceAdapterVersion = "1.0.0"
+	localGitSourceAdapterName       = "local-git-loose"
+	localGitPackedSourceAdapterName = "local-git-loose-and-pack-index-v1"
+	localGitSourceAdapterVersion    = "1.0.0"
 )
 
 // Bound combined object and path content retained during exact binding.
@@ -32,14 +33,35 @@ type localGitAdapterAcquisition struct {
 	hasBindingInputs  bool
 }
 
-// NewLocalGitSourceAdapter creates a read-only adapter for one supplied object store.
+// NewLocalGitSourceAdapter creates a read-only loose-only adapter for one supplied object store.
 func NewLocalGitSourceAdapter(store *LocalGitObjectStore) (*LocalGitSourceAdapter, error) {
 	if store == nil || store.objectsRoot == nil || store.RepositoryIdentity() == "" {
 		return nil, fmt.Errorf("local Git object store is not initialized")
 	}
+	if store.Profile() != LocalGitObjectStoreProfileLooseOnly {
+		return nil, fmt.Errorf("local Git loose adapter requires the loose-only object store profile")
+	}
 	identity, err := evidence.NewSourceAdapterIdentity(evidence.SourceAdapterKindGit, localGitSourceAdapterName, localGitSourceAdapterVersion, []evidence.SourceAdapterCapability{evidence.SourceCapabilityReadContent, evidence.SourceCapabilityReadManifest})
 	if err != nil {
 		return nil, fmt.Errorf("construct local Git source adapter identity: %w", err)
+	}
+	return &LocalGitSourceAdapter{store: store, identity: identity}, nil
+}
+
+// NewLocalGitPackedSourceAdapter creates the explicit opt-in loose-and-pack-index-v1 adapter.
+func NewLocalGitPackedSourceAdapter(store *LocalGitObjectStore) (*LocalGitSourceAdapter, error) {
+	if store == nil || store.objectsRoot == nil || store.RepositoryIdentity() == "" {
+		return nil, fmt.Errorf("local Git object store is not initialized")
+	}
+	if store.Profile() != LocalGitObjectStoreProfileLooseAndPackIndexV1 || store.ProfileIdentity() != localGitObjectStorePackedProfileIdentity {
+		return nil, fmt.Errorf("local Git packed adapter requires the loose-and-pack-index-v1 object store profile")
+	}
+	identity, err := evidence.NewSourceAdapterIdentity(evidence.SourceAdapterKindGit, localGitPackedSourceAdapterName, localGitSourceAdapterVersion, []evidence.SourceAdapterCapability{evidence.SourceCapabilityReadContent, evidence.SourceCapabilityReadManifest})
+	if err != nil {
+		return nil, fmt.Errorf("construct local Git packed source adapter identity: %w", err)
+	}
+	if identity.Identity() != "aa61d1b44f36ebcf330492606154d877f1f9c6faeb681a07ebb9fd286e6ce286" {
+		return nil, fmt.Errorf("local Git packed source adapter identity preimage mismatch")
 	}
 	return &LocalGitSourceAdapter{store: store, identity: identity}, nil
 }
