@@ -90,4 +90,12 @@ func TestReviewContractsRejectMissingIdentityAndSnapshotData(t *testing.T) {
 	if _, err := NewReviewRequest("review-1", ReviewSnapshot{}); err == nil {
 		t.Fatal("NewReviewRequest() error = nil, want invalid snapshot error")
 	}
+	forged := snapshot
+	forged.identity = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	if forged.Validate() == nil {
+		t.Fatal("forged snapshot identity accepted")
+	}
+	if _, err := NewReviewRequest("review-1", forged); err == nil {
+		t.Fatal("request accepted forged snapshot")
+	}
 }

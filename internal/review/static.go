@@ -86,6 +86,11 @@ func debugOutputRanges(source []byte, selection evidence.SourceRange) ([]evidenc
 	return debugOutputRangesForSelections(source, selection.Path(), []evidence.SourceRange{selection})
 }
 
+// FindStaticDebugOutputRanges returns exact fmt.Println("debug") calls overlapping changed Go ranges.
+func FindStaticDebugOutputRanges(source []byte, sourcePath string, selections []evidence.SourceRange) ([]evidence.SourceRange, error) {
+	return debugOutputRangesForSelections(source, sourcePath, selections)
+}
+
 func debugOutputRangesForSelections(source []byte, sourcePath string, selections []evidence.SourceRange) ([]evidence.SourceRange, error) {
 	if path.Ext(sourcePath) != ".go" {
 		return nil, nil

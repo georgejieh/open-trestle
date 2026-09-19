@@ -1,0 +1,1 @@
+{"contract":"open-trestle/investigation-policy","max_cost_micro_usd":100000,"max_files":16,"max_lines_per_read":20,"max_matches":8,"max_model_turns":5,"max_result_bytes":8192,"max_returned_bytes":32768,"max_scanned_bytes":65536,"max_tool_calls":3,"profile":"snapshot-read-v1","schema_version":1,"timeout_milliseconds":5000}

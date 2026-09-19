@@ -73,6 +73,18 @@ type canonicalRange struct {
 	EndLine   int    `json:"end_line"`
 }
 
+// Validate verifies the snapshot fields and content-derived identity.
+func (s ReviewSnapshot) Validate() error {
+	rebuilt, err := NewReviewSnapshot(s.workspace, s.revision, s.ranges)
+	if err != nil {
+		return err
+	}
+	if rebuilt.identity != s.identity {
+		return fmt.Errorf("review snapshot identity does not match its contents")
+	}
+	return nil
+}
+
 // Workspace returns the local workspace identity.
 func (s ReviewSnapshot) Workspace() string {
 	return s.workspace
@@ -104,8 +116,8 @@ func NewReviewRequest(id string, snapshot ReviewSnapshot) (ReviewRequest, error)
 	if id == "" {
 		return ReviewRequest{}, fmt.Errorf("review request identity is required")
 	}
-	if snapshot.identity == "" {
-		return ReviewRequest{}, fmt.Errorf("review snapshot is invalid")
+	if err := snapshot.Validate(); err != nil {
+		return ReviewRequest{}, fmt.Errorf("review snapshot is invalid: %w", err)
 	}
 	return ReviewRequest{id: id, snapshot: snapshot}, nil
 }
