@@ -1,6 +1,21 @@
 Open Trestle
 Copyright 2026 George Jieh
 
-This repository currently contains original project documentation and release scaffolding.
+Open Trestle is distributed under the license in LICENSE.
 
-No third-party source code or copied upstream documentation is included in the tracked public tree.
+Binary and web-console distributions include third-party components under their own licenses. Complete license texts are provided in THIRD_PARTY_LICENSES.
+
+Runtime components:
+
+- AWS SDK for Go v2, including KMS and internal modules, Apache-2.0.
+- AWS Smithy for Go, Apache-2.0.
+- pgx, pgpassfile, pgservicefile, and puddle, MIT.
+- golang.org/x/crypto, golang.org/x/sync, and golang.org/x/text, BSD-3-Clause.
+- React, React DOM, and Scheduler, Copyright Meta Platforms, Inc. and affiliates, MIT.
+- Lucide React, Copyright Lucide Icons and Contributors, ISC.
+- VS Code language-client protocol packages, Copyright Microsoft Corporation, MIT.
+- balanced-match and brace-expansion, MIT; minimatch, BlueOak-1.0.0; and semver, ISC. These components are bundled only in the VS Code extension.
+
+The extension package includes complete license texts for its bundled runtime components.
+
+Development and test dependencies remain identified by go.mod, go.sum, web/package.json, and web/package-lock.json. Their inclusion in source or build environments does not change the Open Trestle project license.
