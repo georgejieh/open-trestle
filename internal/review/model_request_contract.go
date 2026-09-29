@@ -127,9 +127,13 @@ func ModelRequestReviewScopeIdentity(request provider.Request) (string, error) {
 		return sanitized.ReviewScopeIdentity(), nil
 	}
 	var header struct {
+		Contract            string `json:"contract"`
 		ReviewScopeIdentity string `json:"review_scope_identity"`
 	}
 	if json.Unmarshal(request.Payload(), &header) != nil || !validCandidateDigest(header.ReviewScopeIdentity) {
+		return "", ErrInvalidModelRequestContract
+	}
+	if header.Contract == "open-trestle/local-verification-envelope" && ValidateLocalVerificationRequest(request, header.ReviewScopeIdentity) != nil {
 		return "", ErrInvalidModelRequestContract
 	}
 	return header.ReviewScopeIdentity, nil
@@ -199,6 +203,30 @@ func ValidateCandidateEgressRequest(request provider.Request, reviewScopeIdentit
 	return nil
 }
 
+// SanitizedVerificationPayload returns a defensive copy of the validated verifier payload.
+func SanitizedVerificationPayload(request provider.Request, reviewScopeIdentity string) ([]byte, error) {
+	if ValidateVerificationEgressRequest(request, reviewScopeIdentity) != nil {
+		return nil, ErrInvalidModelRequestContract
+	}
+	sanitized, err := ParseSanitizedModelRequest(request.Payload())
+	if err != nil {
+		return nil, ErrInvalidModelRequestContract
+	}
+	return sanitized.request.Payload(), nil
+}
+
+// ValidateVerificationEgressRequest checks the closed sanitized verifier contract.
+func ValidateVerificationEgressRequest(request provider.Request, reviewScopeIdentity string) error {
+	if request.Validate() != nil || request.MediaType() != "application/json" || !validCandidateDigest(reviewScopeIdentity) {
+		return ErrInvalidModelRequestContract
+	}
+	sanitized, err := ParseSanitizedModelRequest(request.Payload())
+	if err != nil || sanitized.ReviewScopeIdentity() != reviewScopeIdentity || sanitized.SanitizedRequestIdentity() != request.Identity() || ValidateVerificationModelRequest(sanitized.request, reviewScopeIdentity) != nil {
+		return ErrInvalidModelRequestContract
+	}
+	return nil
+}
+
 // ValidateCandidateModelRequest checks the host contract before generation routing.
 // Complete evidence admission additionally requires ValidateContextPacketRequest.
 func ValidateCandidateModelRequest(request provider.Request, reviewScopeIdentity string) error {
@@ -240,7 +268,11 @@ func ModelRequestBudget(request provider.Request, declared provider.ModelCostBud
 	if err := declared.Validate(); err != nil {
 		return provider.ModelCostBudget{}, err
 	}
+	payload := request.Payload()
+	if sanitized, err := ParseSanitizedModelRequest(payload); err == nil && ValidateVerificationModelRequest(sanitized.request, sanitized.ReviewScopeIdentity()) == nil {
+		payload = sanitized.request.Payload()
+	}
 	// Request.Validate bounds payload length to 8 MiB before this addition.
-	estimated := max(uint64(declared.EstimatedInputTokens()), uint64(len(request.Payload()))+modelRequestFramingReserve)
+	estimated := max(uint64(declared.EstimatedInputTokens()), uint64(len(payload))+modelRequestFramingReserve)
 	return provider.NewModelCostBudget(estimated, uint64(declared.MaxOutputTokens()), declared.MaxCostMicroUSD())
 }

@@ -86,8 +86,14 @@ func (m *persistModel) DispatchRoute(ctx context.Context, request gateway.RouteD
 	if !claimed {
 		m.t.Fatal("fake external model preceded actual owner claim")
 	}
+	payload := request.Request().Payload()
+	if sanitized, err := review.SanitizedVerificationPayload(request.Request(), request.Authorization().ReviewScopeIdentity()); err == nil {
+		payload = sanitized
+	} else if local, err := review.LocalVerificationPayload(request.Request(), request.Authorization().ReviewScopeIdentity(), request.Authorization().RouteReference().Zone()); err == nil {
+		payload = local
+	}
 	var packet upperPacket
-	upperCheck(m.t, json.Unmarshal(request.Request().Payload(), &packet))
+	upperCheck(m.t, json.Unmarshal(payload, &packet))
 	m.calls = append(m.calls, request)
 	if len(packet.Sources) == 0 {
 		m.t.Fatal("fixture has no selected source")

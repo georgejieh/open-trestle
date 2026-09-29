@@ -335,8 +335,14 @@ func bridgeFailedDispatch() gateway.RouteDispatchResult {
 }
 func (d *bridgeDispatcher) DispatchRoute(ctx context.Context, request gateway.RouteDispatchRequest) gateway.RouteDispatchResult {
 	m := d.models
+	requestPayload := request.Request().Payload()
+	if sanitized, err := review.SanitizedVerificationPayload(request.Request(), request.Authorization().ReviewScopeIdentity()); err == nil {
+		requestPayload = sanitized
+	} else if local, err := review.LocalVerificationPayload(request.Request(), request.Authorization().ReviewScopeIdentity(), request.Authorization().RouteReference().Zone()); err == nil {
+		requestPayload = local
+	}
 	var packet bridgePacket
-	if request.Validate() != nil || json.Unmarshal(request.Request().Payload(), &packet) != nil || ctx.Value(bridgeRunKey{}) != "foreground" || ctx.Err() != nil {
+	if request.Validate() != nil || json.Unmarshal(requestPayload, &packet) != nil || ctx.Value(bridgeRunKey{}) != "foreground" || ctx.Err() != nil {
 		m.t.Error("provider lost actual request or foreground run context")
 		return bridgeFailedDispatch()
 	}
@@ -477,7 +483,13 @@ func bridgePricedRuntime(t *testing.T) (runtimeconfig.RuntimePolicy, runtimeconf
 	requiredCheck(t, err)
 	definitions := []runtimeconfig.RouteDefinition{}
 	for _, candidate := range original.Candidates() {
-		route := candidate.ResolvedRecord().RouteRegistryRecord().RouteCandidateDeclaration().RouteCapabilityDeclaration().RouteReference()
+		originalRoute := candidate.ResolvedRecord().RouteRegistryRecord().RouteCandidateDeclaration().RouteCapabilityDeclaration().RouteReference()
+		modelVersion := originalRoute.ModelVersion()
+		if modelVersion == "" {
+			modelVersion = "1"
+		}
+		route, err := provider.NewRouteReference(provider.ProviderZoneLocal, originalRoute.ProviderID(), originalRoute.AdapterID(), originalRoute.ConnectionID(), originalRoute.ModelID(), modelVersion)
+		requiredCheck(t, err)
 		definitions = append(definitions, runtimeconfig.RouteDefinition{Route: route, Capabilities: capabilities, ContentLogging: provider.ContentLoggingDisabled, Pricing: price, Quality: provider.RouteQualityTier3, RegistryRevision: 7, RegistryStatus: provider.RouteRegistryApproved, EvidenceManifest: []byte(`{"fixture":"priced investigation contract"}`), OperationalRevision: 9, Health: provider.RouteHealthHealthy, Quota: provider.RouteQuotaAvailable, PerformanceRevision: 11, P95LatencyMilliseconds: 2500, LatencySampleCount: 100})
 	}
 	inventory, err := runtimeconfig.NewRouteInventory(context.Background(), definitions)
@@ -489,10 +501,10 @@ func bridgePricedRuntime(t *testing.T) (runtimeconfig.RuntimePolicy, runtimeconf
 	}
 	payload, err := json.Marshal(map[string]any{
 		"schema_version": 1, "inventory_identity": inventory.Identity(), "review_policy_identity": baseline.ReviewPolicyIdentity(),
-		"min_context_tokens": 32000, "min_output_tokens": 4096, "required_features": []string{"structured_output"}, "classification": "confidential", "allowed_zones": []string{"private_remote"}, "content_logging_allowed": false,
+		"min_context_tokens": 32000, "min_output_tokens": 4096, "required_features": []string{"structured_output"}, "classification": "confidential", "allowed_zones": []string{"local"}, "content_logging_allowed": false,
 		"estimated_input_tokens": 1000, "max_output_tokens": 4096, "max_cost_micro_usd": 1000000, "pinned_route_record_identity": records["adapter-a"], "preferred_route_record_identities": []string{records["adapter-b"]}, "verification_independence": "distinct_provider",
 		"publication_minimum_severity": "medium", "publication_max_inline_findings": 20, "publication_minimum_independence": "distinct_provider", "publication_block_on_inconclusive": true,
-		"connections": []map[string]string{{"implementation": "openai_responses", "adapter_id": "adapter-a", "endpoint": "https://provider-a.invalid", "credential_environment": "OPEN_TRESTLE_PROVIDER_FIXTURE_A"}, {"implementation": "openai_responses", "adapter_id": "adapter-b", "endpoint": "https://provider-b.invalid", "credential_environment": "OPEN_TRESTLE_PROVIDER_FIXTURE_B"}},
+		"connections": []map[string]string{{"implementation": "openai_responses", "adapter_id": "adapter-a", "endpoint": "http://127.0.0.1:11434/v1", "credential_environment": "OPEN_TRESTLE_PROVIDER_FIXTURE_A"}, {"implementation": "openai_responses", "adapter_id": "adapter-b", "endpoint": "http://127.0.0.1:11435/v1", "credential_environment": "OPEN_TRESTLE_PROVIDER_FIXTURE_B"}},
 	})
 	requiredCheck(t, err)
 	configuration, err := runtimeconfig.DecodeRuntimePolicy(context.Background(), bytes.NewReader(payload), inventory)

@@ -696,7 +696,7 @@ func rmOptions(t *testing.T, f *rmModelFixture, c *rmClock) SessionOptions {
 	}
 	return SessionOptions{TenantID: "tenant-local", RepositoryID: "repository-local", Repository: repository,
 		ObjectsRoot: objects, Inventory: inventory, Policy: policy, Egress: EgressLocalOnly, Credentials: credentials,
-		Clock: c, Timeout: 5 * time.Second, ArtifactCapacity: 128, GenerationSanitizer: testsupport.NewCleanGenerationSanitizer()}
+		Clock: c, Timeout: 5 * time.Second, ArtifactCapacity: 128, GenerationSanitizer: testsupport.NewCleanGenerationSanitizer(), VerificationSanitizer: testsupport.NewCleanVerificationSanitizer()}
 }
 func rmRevisions(t *testing.T, f *rmModelFixture) (evidence.RevisionIdentity, evidence.RevisionIdentity) {
 	t.Helper()

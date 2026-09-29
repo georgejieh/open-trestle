@@ -17,6 +17,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/review"
+	"github.com/georgejieh/open-trestle/internal/testsupport"
 )
 
 func TestModelContextV2HistoricalReadbackRejectsNewAuthority(t *testing.T) {
@@ -115,7 +116,7 @@ func TestModelContextV2HistoricalReadbackRejectsNewAuthority(t *testing.T) {
 		t.Fatal("historical generation input reached model dispatch")
 	}
 	authorizer := &fixedVerificationAuthorizer{identity: strings.Repeat("a", 64)}
-	verificationHandler, err := NewVerificationHandler(store, catalog, ledger, authorizer, fixedClock{at: time.UnixMilli(230)})
+	verificationHandler, err := NewVerificationHandler(store, catalog, ledger, authorizer, fixedClock{at: time.UnixMilli(230)}, testsupport.NewCleanVerificationSanitizer())
 	if err != nil {
 		t.Fatal(err)
 	}

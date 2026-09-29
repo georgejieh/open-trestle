@@ -23,6 +23,7 @@ import (
 
 func init() {
 	localReviewGenerationSanitizer = testsupport.NewCleanGenerationSanitizer()
+	localReviewVerificationSanitizer = testsupport.NewCleanVerificationSanitizer()
 }
 
 type localModelSessionClock struct{}
@@ -65,7 +66,7 @@ func localModelSessionOptions(t *testing.T, f *localModelFixture) (localreview.S
 	if err != nil {
 		t.Fatal(err)
 	}
-	return localreview.SessionOptions{TenantID: "tenant-local", RepositoryID: "repository-local", Repository: repository, ObjectsRoot: objects, Inventory: inventory, Policy: policy, Egress: localreview.EgressLocalOnly, Credentials: credentials, Clock: localModelSessionClock{}, Timeout: 5 * time.Second, ArtifactCapacity: 128, GenerationSanitizer: testsupport.NewCleanGenerationSanitizer()}, objects
+	return localreview.SessionOptions{TenantID: "tenant-local", RepositoryID: "repository-local", Repository: repository, ObjectsRoot: objects, Inventory: inventory, Policy: policy, Egress: localreview.EgressLocalOnly, Credentials: credentials, Clock: localModelSessionClock{}, Timeout: 5 * time.Second, ArtifactCapacity: 128, GenerationSanitizer: testsupport.NewCleanGenerationSanitizer(), VerificationSanitizer: testsupport.NewCleanVerificationSanitizer()}, objects
 }
 
 func localModelNewSession(t *testing.T, options localreview.SessionOptions) *localreview.Session {
@@ -369,7 +370,7 @@ func TestLocalModelSessionCapacityAndTimingRemainBounded(t *testing.T) {
 }
 
 func TestLocalModelSessionCannotReceiveForgeOrCustomHandlerCapabilities(t *testing.T) {
-	allowed := map[string]bool{"TenantID": true, "RepositoryID": true, "Repository": true, "ObjectsRoot": true, "ObjectStoreProfile": true, "ObjectAlgorithm": true, "Inventory": true, "Policy": true, "Egress": true, "Credentials": true, "Clock": true, "Timeout": true, "ArtifactCapacity": true, "RenewalInterval": true, "Retention": true, "RetainedMemoryInput": true, "GenerationSanitizer": true}
+	allowed := map[string]bool{"TenantID": true, "RepositoryID": true, "Repository": true, "ObjectsRoot": true, "ObjectStoreProfile": true, "ObjectAlgorithm": true, "Inventory": true, "Policy": true, "Egress": true, "Credentials": true, "Clock": true, "Timeout": true, "ArtifactCapacity": true, "RenewalInterval": true, "Retention": true, "RetainedMemoryInput": true, "GenerationSanitizer": true, "VerificationSanitizer": true}
 	options := reflect.TypeOf(localreview.SessionOptions{})
 	for name, want := range map[string]reflect.Type{
 		"ObjectStoreProfile": reflect.TypeOf(scm.LocalGitObjectStoreProfile("")),

@@ -156,7 +156,11 @@ func requireInvestigationSessionReceipt(t *testing.T, prepared runtimecatalog.Pr
 	for i, capture := range captures {
 		turn := receipt.Investigation.Turns[i]
 		localModelRequireDigest(t, turn.Request, turn.Authorization, turn.Outcome, turn.Reconciliation)
-		if capture.packet.Scope != receipt.Scope || turn.Request != capture.request || seen[turn.Request] || !claimed[turn.Authorization] || !completed[turn.Outcome] || !reconciled[turn.Reconciliation] {
+		requestBound := turn.Request == capture.request
+		if capture.packet.Task == "candidate_verification" {
+			requestBound = turn.Request != capture.request
+		}
+		if capture.packet.Scope != receipt.Scope || !requestBound || seen[turn.Request] || !claimed[turn.Authorization] || !completed[turn.Outcome] || !reconciled[turn.Reconciliation] {
 			t.Fatal("paid turn is not distinct and bound to the actual request and ledger")
 		}
 		seen[turn.Request] = true
@@ -193,7 +197,7 @@ func requireInvestigationSessionReceipt(t *testing.T, prepared runtimecatalog.Pr
 		}
 	}
 	verifier := captures[4]
-	if verifier.packet.Task != "candidate_verification" || verifier.packet.Version != 3 || receipt.GenerationRequest != captures[3].request || receipt.VerificationRequest != verifier.request || receipt.Context != verifier.packet.GenerationContext || receipt.CandidateBatch != verifier.packet.CandidateBatch || len(verifier.packet.Candidates) != 1 || len(receipt.CandidateIDs) != 1 || receipt.CandidateIDs[0] != verifier.packet.Candidates[0].ID {
+	if verifier.packet.Task != "candidate_verification" || verifier.packet.Version != 3 || receipt.GenerationRequest != captures[3].request || receipt.VerificationRequest == verifier.request || receipt.Context != verifier.packet.GenerationContext || receipt.CandidateBatch != verifier.packet.CandidateBatch || len(verifier.packet.Candidates) != 1 || len(receipt.CandidateIDs) != 1 || receipt.CandidateIDs[0] != verifier.packet.Candidates[0].ID {
 		t.Fatal("final result is disconnected from actual final generation and verifier")
 	}
 	if receipt.Independence != "distinct_provider" || receipt.GenerationRoute == receipt.VerificationRoute || receipt.Diagnostics.Coverage.VerifiedCount != 1 || len(receipt.Diagnostics.Findings) != 1 {

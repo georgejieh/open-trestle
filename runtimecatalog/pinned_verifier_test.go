@@ -11,6 +11,7 @@ import (
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/provider"
+	"github.com/georgejieh/open-trestle/internal/testsupport"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 )
 
@@ -71,7 +72,15 @@ func TestRuntimeGenerationPinDoesNotPinIndependentVerifier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request, verificationRequest := readableModelRequests(t, scope)
+	request, rawVerificationRequest := readableModelRequests(t, scope)
+	sanitizedVerification, _, err := testsupport.NewCleanVerificationSanitizer().SanitizeVerification(ctx, rawVerificationRequest, scope.Identity())
+	if err != nil {
+		t.Fatal(err)
+	}
+	verificationRequest, err := sanitizedVerification.ProviderRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
 	authorization, err := generation.Authorize(ctx, scope, request, configuration.ReviewPolicyIdentity(), time.UnixMilli(100))
 	if err != nil || authorization.RouteReference() != routes[0] {
 		t.Fatalf("generation pin failed: %v", err)

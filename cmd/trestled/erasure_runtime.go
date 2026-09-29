@@ -24,9 +24,10 @@ const (
 )
 
 type daemonDependencies struct {
-	openPostgres        func(context.Context, string, postgres.PoolOptions) (*sql.DB, error)
-	clock               interface{ Now() time.Time }
-	generationSanitizer review.GenerationRequestSanitizer
+	openPostgres          func(context.Context, string, postgres.PoolOptions) (*sql.DB, error)
+	clock                 interface{ Now() time.Time }
+	generationSanitizer   review.GenerationRequestSanitizer
+	verificationSanitizer review.VerificationRequestSanitizer
 }
 
 type daemonErasureClock struct {

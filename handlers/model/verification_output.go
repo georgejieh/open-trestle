@@ -2,12 +2,14 @@ package model
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/georgejieh/open-trestle/artifact"
 	"github.com/georgejieh/open-trestle/internal/gateway"
@@ -16,6 +18,45 @@ import (
 )
 
 const maximumVerificationResultBytes = 6 << 20
+
+type VerificationEgressArtifacts struct {
+	SanitizedRequest artifact.Artifact
+	Receipt          artifact.Artifact
+}
+
+type verificationEgressBinding struct {
+	rawRequestIdentity               string
+	sanitizedRequestIdentity         string
+	sanitizedRequestArtifactIdentity string
+	receiptArtifactIdentity          string
+	receiptIdentity                  string
+	sanitizerIdentity                string
+	launcherSHA256                   string
+	workerSHA256                     string
+}
+
+func newVerificationEgressBinding(raw, sanitized provider.Request, requestArtifact, receiptArtifact artifact.Artifact, receipt review.SanitizedEgressReceipt, sanitizerIdentity string, expected review.ScannerBinaryDigests) (verificationEgressBinding, error) {
+	value := verificationEgressBinding{
+		rawRequestIdentity: raw.Identity(), sanitizedRequestIdentity: sanitized.Identity(),
+		sanitizedRequestArtifactIdentity: requestArtifact.Identity(), receiptArtifactIdentity: receiptArtifact.Identity(),
+		receiptIdentity: receipt.Identity(), sanitizerIdentity: sanitizerIdentity,
+		launcherSHA256: expected.LauncherSHA256, workerSHA256: expected.WorkerSHA256,
+	}
+	if !value.valid() || receipt.RawRequestIdentity() != value.rawRequestIdentity || receipt.SanitizedRequestIdentity() != value.sanitizedRequestIdentity || receipt.Scanner().LauncherSHA256 != expected.LauncherSHA256 || receipt.Scanner().WorkerSHA256 != expected.WorkerSHA256 {
+		return verificationEgressBinding{}, ErrInvalidVerificationResult
+	}
+	return value, nil
+}
+
+func (value verificationEgressBinding) empty() bool {
+	return value == (verificationEgressBinding{})
+}
+
+func (value verificationEgressBinding) valid() bool {
+	return validDigest(value.rawRequestIdentity) && validDigest(value.sanitizedRequestIdentity) && value.rawRequestIdentity != value.sanitizedRequestIdentity &&
+		validDigest(value.sanitizedRequestArtifactIdentity) && validDigest(value.receiptArtifactIdentity) && validDigest(value.receiptIdentity) &&
+		validDigest(value.sanitizerIdentity) && validDigest(value.launcherSHA256) && validDigest(value.workerSHA256)
+}
 
 // VerificationResult is one independently checked, promotion-ready review result.
 type VerificationResult struct {
@@ -26,6 +67,7 @@ type VerificationResult struct {
 	routeIndependence                                      gateway.RouteIndependenceReceipt
 	independentReceipt                                     review.IndependentVerificationReceipt
 	verifiedFindings                                       review.VerifiedFindingSet
+	egress                                                 verificationEgressBinding
 }
 
 func (r VerificationResult) Identity() string                   { return r.identity }
@@ -70,6 +112,28 @@ func newVerificationResult(
 	return result, nil
 }
 
+func newSanitizedVerificationResult(
+	generationArtifactIdentity string,
+	context review.VerificationRequestContext,
+	verification review.VerificationBatch,
+	routeExecution gateway.RouteExecutionRecord,
+	independence gateway.RouteIndependenceReceipt,
+	receipt review.IndependentVerificationReceipt,
+	findings review.VerifiedFindingSet,
+	egress verificationEgressBinding,
+) (VerificationResult, error) {
+	result := VerificationResult{
+		generationArtifactIdentity: generationArtifactIdentity, verificationContext: context,
+		verification: verification, routeExecution: routeExecution, routeIndependence: independence,
+		independentReceipt: receipt, verifiedFindings: findings, egress: egress,
+	}
+	result.identity = deriveVerificationResultIdentity(result)
+	if err := result.Validate(); err != nil {
+		return VerificationResult{}, err
+	}
+	return result, nil
+}
+
 // Validate verifies complete generation, route, verdict, independence, and promotion lineage.
 func (r VerificationResult) Validate() error {
 	if !validDigest(r.generationArtifactIdentity) || r.verificationContext.Validate() != nil ||
@@ -77,6 +141,12 @@ func (r VerificationResult) Validate() error {
 		r.routeIndependence.Validate() != nil || r.independentReceipt.Validate() != nil ||
 		r.verifiedFindings.Validate() != nil {
 		return ErrInvalidVerificationResult
+	}
+	if !r.egress.empty() {
+		rawRequest, rawRequestErr := r.verificationContext.ProviderRequest()
+		if rawRequestErr != nil || !r.egress.valid() || r.egress.rawRequestIdentity != rawRequest.Identity() || r.egress.sanitizedRequestIdentity != r.routeExecution.Authorization().RequestIdentity() {
+			return ErrInvalidVerificationResult
+		}
 	}
 	output := r.routeExecution.Output()
 	if output.Kind() != gateway.RouteOutputVerificationBatch ||
@@ -95,20 +165,28 @@ func (r VerificationResult) Validate() error {
 }
 
 type verificationResultWire struct {
-	Contract                    string          `json:"contract"`
-	SchemaVersion               int             `json:"schema_version"`
-	Identity                    string          `json:"identity"`
-	GenerationArtifactIdentity  string          `json:"generation_artifact_identity"`
-	VerificationContextIdentity string          `json:"verification_context_identity"`
-	VerificationBatchIdentity   string          `json:"verification_batch_identity"`
-	RouteExecutionIdentity      string          `json:"route_execution_identity"`
-	IndependenceLevel           string          `json:"independence_level"`
-	RouteIndependenceIdentity   string          `json:"route_independence_identity"`
-	IndependentReceiptIdentity  string          `json:"independent_receipt_identity"`
-	VerifiedFindingSetIdentity  string          `json:"verified_finding_set_identity"`
-	VerificationBatch           json.RawMessage `json:"verification_batch"`
-	RouteExecution              json.RawMessage `json:"route_execution"`
-	VerifiedFindingSet          json.RawMessage `json:"verified_finding_set"`
+	Contract                             string          `json:"contract"`
+	SchemaVersion                        int             `json:"schema_version"`
+	Identity                             string          `json:"identity"`
+	GenerationArtifactIdentity           string          `json:"generation_artifact_identity"`
+	VerificationContextIdentity          string          `json:"verification_context_identity"`
+	VerificationBatchIdentity            string          `json:"verification_batch_identity"`
+	RouteExecutionIdentity               string          `json:"route_execution_identity"`
+	IndependenceLevel                    string          `json:"independence_level"`
+	RouteIndependenceIdentity            string          `json:"route_independence_identity"`
+	IndependentReceiptIdentity           string          `json:"independent_receipt_identity"`
+	VerifiedFindingSetIdentity           string          `json:"verified_finding_set_identity"`
+	RawVerificationRequestIdentity       string          `json:"raw_verification_request_identity,omitempty"`
+	SanitizedVerificationRequestIdentity string          `json:"sanitized_verification_request_identity,omitempty"`
+	SanitizedRequestArtifactIdentity     string          `json:"sanitized_request_artifact_identity,omitempty"`
+	SanitizedReceiptArtifactIdentity     string          `json:"sanitized_receipt_artifact_identity,omitempty"`
+	SanitizedReceiptIdentity             string          `json:"sanitized_receipt_identity,omitempty"`
+	VerificationSanitizerIdentity        string          `json:"verification_sanitizer_identity,omitempty"`
+	ScannerLauncherSHA256                string          `json:"scanner_launcher_sha256,omitempty"`
+	ScannerWorkerSHA256                  string          `json:"scanner_worker_sha256,omitempty"`
+	VerificationBatch                    json.RawMessage `json:"verification_batch"`
+	RouteExecution                       json.RawMessage `json:"route_execution"`
+	VerifiedFindingSet                   json.RawMessage `json:"verified_finding_set"`
 }
 
 func encodeVerificationResult(result VerificationResult) ([]byte, error) {
@@ -127,16 +205,27 @@ func encodeVerificationResult(result VerificationResult) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	version := 1
+	if !result.egress.empty() {
+		version = 2
+	}
 	encoded, err := json.Marshal(verificationResultWire{
-		Contract: "open-trestle/model-verification-result", SchemaVersion: 1,
+		Contract: "open-trestle/model-verification-result", SchemaVersion: version,
 		Identity: result.Identity(), GenerationArtifactIdentity: result.generationArtifactIdentity,
 		VerificationContextIdentity: result.verificationContext.Identity(),
 		VerificationBatchIdentity:   result.verification.Identity(), RouteExecutionIdentity: result.routeExecution.Identity(),
-		IndependenceLevel:          result.routeIndependence.Level().String(),
-		RouteIndependenceIdentity:  result.routeIndependence.Identity(),
-		IndependentReceiptIdentity: result.independentReceipt.Identity(),
-		VerifiedFindingSetIdentity: result.verifiedFindings.Identity(),
-		VerificationBatch:          verification, RouteExecution: routeExecution, VerifiedFindingSet: findings,
+		IndependenceLevel:                    result.routeIndependence.Level().String(),
+		RouteIndependenceIdentity:            result.routeIndependence.Identity(),
+		IndependentReceiptIdentity:           result.independentReceipt.Identity(),
+		VerifiedFindingSetIdentity:           result.verifiedFindings.Identity(),
+		RawVerificationRequestIdentity:       result.egress.rawRequestIdentity,
+		SanitizedVerificationRequestIdentity: result.egress.sanitizedRequestIdentity,
+		SanitizedRequestArtifactIdentity:     result.egress.sanitizedRequestArtifactIdentity,
+		SanitizedReceiptArtifactIdentity:     result.egress.receiptArtifactIdentity,
+		SanitizedReceiptIdentity:             result.egress.receiptIdentity,
+		VerificationSanitizerIdentity:        result.egress.sanitizerIdentity,
+		ScannerLauncherSHA256:                result.egress.launcherSHA256, ScannerWorkerSHA256: result.egress.workerSHA256,
+		VerificationBatch: verification, RouteExecution: routeExecution, VerifiedFindingSet: findings,
 	})
 	if err != nil || len(encoded) == 0 || len(encoded) > maximumVerificationResultBytes {
 		return nil, ErrInvalidVerificationResult
@@ -160,10 +249,61 @@ func VerificationResultReferences(value artifact.Artifact) (string, error) {
 		return "", ErrInvalidVerificationResult
 	}
 	canonical, _ := json.Marshal(wire)
-	if !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/model-verification-result" || wire.SchemaVersion != 1 || !validDigest(wire.GenerationArtifactIdentity) {
+	if !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/model-verification-result" || (wire.SchemaVersion != 1 && wire.SchemaVersion != 2) || !validDigest(wire.GenerationArtifactIdentity) {
 		return "", ErrInvalidVerificationResult
 	}
 	return wire.GenerationArtifactIdentity, nil
+}
+
+// VerificationResultEgressReferences returns the v2 sanitized artifact identities.
+func VerificationResultEgressReferences(value artifact.Artifact) (string, string, bool, error) {
+	if value.Validate() != nil || value.Kind() != artifact.KindVerifiedFindingSet || value.MediaType() != "application/json" || value.Origin() != artifact.OriginIndependentVerifier {
+		return "", "", false, ErrInvalidVerificationResult
+	}
+	payload := value.Payload()
+	if len(payload) == 0 || len(payload) > maximumVerificationResultBytes {
+		return "", "", false, ErrInvalidVerificationResult
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	var wire verificationResultWire
+	if decoder.Decode(&wire) != nil || decoder.Decode(&struct{}{}) != io.EOF {
+		return "", "", false, ErrInvalidVerificationResult
+	}
+	canonical, err := json.Marshal(wire)
+	if err != nil || !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/model-verification-result" || (wire.SchemaVersion != 1 && wire.SchemaVersion != 2) {
+		return "", "", false, ErrInvalidVerificationResult
+	}
+	if wire.SchemaVersion == 1 {
+		return "", "", false, nil
+	}
+	if !validDigest(wire.SanitizedRequestArtifactIdentity) || !validDigest(wire.SanitizedReceiptArtifactIdentity) {
+		return "", "", false, ErrInvalidVerificationResult
+	}
+	return wire.SanitizedRequestArtifactIdentity, wire.SanitizedReceiptArtifactIdentity, true, nil
+}
+
+// ParseStoredVerificationResultArtifact reloads and validates v2 egress authority.
+func ParseStoredVerificationResultArtifact(ctx context.Context, store artifact.Store, at time.Time, value, generationArtifact, generationInputArtifact, generationContextArtifact artifact.Artifact) (VerificationResult, error) {
+	if nilInterface(ctx) || nilInterface(store) || at.UnixMilli() <= 0 {
+		return VerificationResult{}, ErrInvalidVerificationResult
+	}
+	requestIdentity, receiptIdentity, present, err := VerificationResultEgressReferences(value)
+	if err != nil {
+		return VerificationResult{}, ErrInvalidVerificationResult
+	}
+	if !present {
+		return ParseVerificationResultArtifact(value, generationArtifact, generationInputArtifact, generationContextArtifact)
+	}
+	requestArtifact, err := store.Get(ctx, value.Scope(), requestIdentity, at)
+	if err != nil || requestArtifact.Identity() != requestIdentity {
+		return VerificationResult{}, ErrInvalidVerificationResult
+	}
+	receiptArtifact, err := store.Get(ctx, value.Scope(), receiptIdentity, at)
+	if err != nil || receiptArtifact.Identity() != receiptIdentity {
+		return VerificationResult{}, ErrInvalidVerificationResult
+	}
+	return ParseVerificationResultArtifact(value, generationArtifact, generationInputArtifact, generationContextArtifact, VerificationEgressArtifacts{SanitizedRequest: requestArtifact, Receipt: receiptArtifact})
 }
 
 // ParseVerificationResultArtifact reconstructs and verifies complete independent-review lineage.
@@ -172,6 +312,7 @@ func ParseVerificationResultArtifact(
 	generationArtifact artifact.Artifact,
 	generationInputArtifact artifact.Artifact,
 	generationContextArtifact artifact.Artifact,
+	egressArtifacts ...VerificationEgressArtifacts,
 ) (VerificationResult, error) {
 	if value.Validate() != nil || generationArtifact.Validate() != nil ||
 		value.Kind() != artifact.KindVerifiedFindingSet || value.MediaType() != "application/json" ||
@@ -213,7 +354,7 @@ func ParseVerificationResultArtifact(
 		return VerificationResult{}, ErrInvalidVerificationResult
 	}
 	canonical, err := json.Marshal(wire)
-	if err != nil || !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/model-verification-result" || wire.SchemaVersion != 1 ||
+	if err != nil || !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/model-verification-result" || (wire.SchemaVersion != 1 && wire.SchemaVersion != 2) ||
 		wire.GenerationArtifactIdentity != generationArtifact.Identity() || wire.VerificationContextIdentity != verificationContext.Identity() {
 		return VerificationResult{}, ErrInvalidVerificationResult
 	}
@@ -222,7 +363,37 @@ func ParseVerificationResultArtifact(
 		return VerificationResult{}, ErrInvalidVerificationResult
 	}
 	routeExecution, err := gateway.ParseRouteExecutionRecord(wire.RouteExecution)
-	if err != nil || routeExecution.Identity() != wire.RouteExecutionIdentity || routeExecution.Authorization().RequestIdentity() != verificationRequest.Identity() {
+	if err != nil || routeExecution.Identity() != wire.RouteExecutionIdentity {
+		return VerificationResult{}, ErrInvalidVerificationResult
+	}
+	egress := verificationEgressBinding{}
+	if wire.SchemaVersion == 1 {
+		expectedRequestIdentity := verificationRequest.Identity()
+		if routeExecution.Authorization().RequestIdentity() != expectedRequestIdentity {
+			localRequest, requestErr := review.NewLocalVerificationRequest(verificationRequest, value.Scope().Identity())
+			if requestErr != nil || routeExecution.Authorization().RouteReference().Zone() != provider.ProviderZoneLocal || routeExecution.Authorization().RequestIdentity() != localRequest.Identity() {
+				return VerificationResult{}, ErrInvalidVerificationResult
+			}
+		}
+	} else {
+		egress = verificationEgressBinding{wire.RawVerificationRequestIdentity, wire.SanitizedVerificationRequestIdentity, wire.SanitizedRequestArtifactIdentity, wire.SanitizedReceiptArtifactIdentity, wire.SanitizedReceiptIdentity, wire.VerificationSanitizerIdentity, wire.ScannerLauncherSHA256, wire.ScannerWorkerSHA256}
+		if !egress.valid() || egress.rawRequestIdentity != verificationRequest.Identity() || egress.sanitizedRequestIdentity != routeExecution.Authorization().RequestIdentity() || len(egressArtifacts) != 1 {
+			return VerificationResult{}, ErrInvalidVerificationResult
+		}
+		authority := egressArtifacts[0]
+		expected := review.ScannerBinaryDigests{LauncherSHA256: egress.launcherSHA256, WorkerSHA256: egress.workerSHA256}
+		if authority.SanitizedRequest.Identity() != egress.sanitizedRequestArtifactIdentity || authority.Receipt.Identity() != egress.receiptArtifactIdentity ||
+			review.ValidateSanitizedVerificationEgressArtifacts(verificationRequest, generation.ContextIdentity(), generation.Candidates().Identity(), generationArtifact, generationInputArtifact, generationContextArtifact, authority.SanitizedRequest, authority.Receipt, expected) != nil {
+			return VerificationResult{}, ErrInvalidVerificationResult
+		}
+		sanitizedAuthority, requestErr := review.ParseSanitizedModelRequest(authority.SanitizedRequest.Payload())
+		receiptAuthority, receiptErr := review.ParseSanitizedEgressReceipt(authority.Receipt.Payload())
+		providerAuthority, providerErr := sanitizedAuthority.ProviderRequest()
+		if requestErr != nil || receiptErr != nil || providerErr != nil || receiptAuthority.Identity() != egress.receiptIdentity || providerAuthority.Identity() != egress.sanitizedRequestIdentity || receiptAuthority.Scanner().LauncherSHA256 != egress.launcherSHA256 || receiptAuthority.Scanner().WorkerSHA256 != egress.workerSHA256 {
+			return VerificationResult{}, ErrInvalidVerificationResult
+		}
+	}
+	if wire.SchemaVersion == 1 && len(egressArtifacts) != 0 {
 		return VerificationResult{}, ErrInvalidVerificationResult
 	}
 	level, err := gateway.ParseRouteIndependenceLevel(wire.IndependenceLevel)
@@ -240,7 +411,7 @@ func ParseVerificationResultArtifact(
 	independent, err := review.NewIndependentVerificationReceiptFromRecords(review.IndependentVerificationRecords{
 		ReviewScopeIdentity: value.Scope().Identity(), SnapshotIdentity: generation.Candidates().SnapshotIdentity(),
 		GenerationContextIdentity: generation.ContextIdentity(), VerificationContextIdentity: verificationContext.Identity(),
-		GenerationRequestIdentity: generation.RouteExecution().Authorization().RequestIdentity(), VerificationRequestIdentity: verificationRequest.Identity(),
+		GenerationRequestIdentity: generation.RouteExecution().Authorization().RequestIdentity(), VerificationRequestIdentity: routeExecution.Authorization().RequestIdentity(),
 		Candidates: generation.Candidates(), CandidateOutput: generation.RouteExecution().Output(), Verification: verification,
 		VerificationOutput: routeExecution.Output(), RouteIndependence: independence,
 	})
@@ -255,7 +426,12 @@ func ParseVerificationResultArtifact(
 	if err != nil || expectedFindings.Identity() != findings.Identity() {
 		return VerificationResult{}, ErrInvalidVerificationResult
 	}
-	result, err := newVerificationResult(generationArtifact.Identity(), verificationContext, verification, routeExecution, independence, independent, findings)
+	var result VerificationResult
+	if wire.SchemaVersion == 2 {
+		result, err = newSanitizedVerificationResult(generationArtifact.Identity(), verificationContext, verification, routeExecution, independence, independent, findings, egress)
+	} else {
+		result, err = newVerificationResult(generationArtifact.Identity(), verificationContext, verification, routeExecution, independence, independent, findings)
+	}
 	if err != nil || result.Identity() != wire.Identity {
 		return VerificationResult{}, ErrInvalidVerificationResult
 	}
@@ -264,12 +440,16 @@ func ParseVerificationResultArtifact(
 	if err != nil || !bytes.Equal(reencoded, payload) {
 		return VerificationResult{}, ErrInvalidVerificationResult
 	}
-	for _, identity := range []string{
+	provenance := []string{
 		generationInputArtifact.Identity(), generationContextArtifact.Identity(), verification.Identity(),
 		routeExecution.Identity(), routeExecution.Authorization().Identity(), routeExecution.Outcome().Identity(),
 		routeExecution.Reconciliation().Identity(), routeExecution.Output().Identity(), independence.Identity(),
 		independent.Identity(), findings.Identity(),
-	} {
+	}
+	if wire.SchemaVersion == 2 {
+		provenance = append(provenance, routeExecution.Authorization().SelectionReceiptIdentity(), egress.sanitizedRequestArtifactIdentity, egress.receiptArtifactIdentity, egress.receiptIdentity, egress.sanitizedRequestIdentity)
+	}
+	for _, identity := range provenance {
 		if !hasProvenance(value.Provenance(), identity) {
 			return VerificationResult{}, ErrInvalidVerificationResult
 		}
@@ -278,6 +458,10 @@ func ParseVerificationResultArtifact(
 }
 
 func deriveVerificationResultIdentity(result VerificationResult) string {
+	version := 1
+	if !result.egress.empty() {
+		version = 2
+	}
 	encoded, err := json.Marshal(struct {
 		Contract            string `json:"contract"`
 		SchemaVersion       int    `json:"schema_version"`
@@ -288,7 +472,15 @@ func deriveVerificationResultIdentity(result VerificationResult) string {
 		RouteIndependence   string `json:"route_independence"`
 		IndependentReceipt  string `json:"independent_receipt"`
 		VerifiedFindings    string `json:"verified_findings"`
-	}{"open-trestle/model-verification-result", 1, result.generationArtifactIdentity, result.verificationContext.Identity(), result.verification.Identity(), result.routeExecution.Identity(), result.routeIndependence.Identity(), result.independentReceipt.Identity(), result.verifiedFindings.Identity()})
+		RawRequest          string `json:"raw_request,omitempty"`
+		SanitizedRequest    string `json:"sanitized_request,omitempty"`
+		RequestArtifact     string `json:"request_artifact,omitempty"`
+		ReceiptArtifact     string `json:"receipt_artifact,omitempty"`
+		Receipt             string `json:"receipt,omitempty"`
+		Sanitizer           string `json:"sanitizer,omitempty"`
+		Launcher            string `json:"launcher,omitempty"`
+		Worker              string `json:"worker,omitempty"`
+	}{"open-trestle/model-verification-result", version, result.generationArtifactIdentity, result.verificationContext.Identity(), result.verification.Identity(), result.routeExecution.Identity(), result.routeIndependence.Identity(), result.independentReceipt.Identity(), result.verifiedFindings.Identity(), result.egress.rawRequestIdentity, result.egress.sanitizedRequestIdentity, result.egress.sanitizedRequestArtifactIdentity, result.egress.receiptArtifactIdentity, result.egress.receiptIdentity, result.egress.sanitizerIdentity, result.egress.launcherSHA256, result.egress.workerSHA256})
 	if err != nil {
 		return ""
 	}

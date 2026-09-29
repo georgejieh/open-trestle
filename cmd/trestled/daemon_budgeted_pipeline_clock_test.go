@@ -131,7 +131,7 @@ func (h *daemonBudgetedPipelineHarness) args(t *testing.T) []string {
 
 func (h *daemonBudgetedPipelineHarness) build(t *testing.T, ctx context.Context) *daemon {
 	t.Helper()
-	d, err := buildDaemonWithDependencies(ctx, h.args(t), h.env, io.Discard, daemonDependencies{openPostgres: h.sql.OpenPostgres, clock: h.clock, generationSanitizer: daemonTestGenerationSanitizer()})
+	d, err := buildDaemonWithDependencies(ctx, h.args(t), h.env, io.Discard, daemonDependencies{openPostgres: h.sql.OpenPostgres, clock: h.clock, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
 	if err != nil {
 		t.Fatalf("budgeted pipeline daemon build failed: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestDaemonBudgetedLocalSupervisorRunsModelPipelineToReadinessWithUTCMillise
 	if err != nil || generation.ContextIdentity() != input.ContextIdentity() || len(generation.Candidates().Findings()) != 1 || generation.RouteExecution().Outcome().Usage().InputTokens() != 120 || generation.RouteExecution().Outcome().Usage().OutputTokens() != 80 {
 		t.Fatalf("generation result = %#v err=%v", generation, err)
 	}
-	verification, err := modelhandler.ParseVerificationResultArtifact(verificationArtifact, generationArtifact, generationInputArtifact, contextArtifact)
+	verification, err := modelhandler.ParseStoredVerificationResultArtifact(ctx, d.artifactStore, fixture.clock.UTCMS(), verificationArtifact, generationArtifact, generationInputArtifact, contextArtifact)
 	if err != nil || verification.GenerationArtifactIdentity() != generationArtifact.Identity() || verification.Verification().Results()[0].Outcome() != review.VerificationVerified || verification.RouteExecution().Authorization().RouteReference().ModelID() != "model-b" || verification.RouteExecution().Authorization().RouteRecordIdentity() != fixture.model.verificationRoute {
 		t.Fatalf("verification result = %#v err=%v", verification, err)
 	}

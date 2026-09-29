@@ -11,13 +11,26 @@ import (
 )
 
 type CleanGenerationSanitizer struct{}
+type CleanVerificationSanitizer struct{}
 
-func NewCleanGenerationSanitizer() CleanGenerationSanitizer { return CleanGenerationSanitizer{} }
-func (CleanGenerationSanitizer) Identity() string           { return strings.Repeat("8", 64) }
+func NewCleanGenerationSanitizer() CleanGenerationSanitizer     { return CleanGenerationSanitizer{} }
+func NewCleanVerificationSanitizer() CleanVerificationSanitizer { return CleanVerificationSanitizer{} }
+func (CleanVerificationSanitizer) Identity() string             { return strings.Repeat("9", 64) }
+func (CleanVerificationSanitizer) ExpectedBinaryDigests() review.ScannerBinaryDigests {
+	return review.ScannerBinaryDigests{LauncherSHA256: strings.Repeat("b", 64), WorkerSHA256: strings.Repeat("c", 64)}
+}
+func (value CleanVerificationSanitizer) SanitizeVerification(_ context.Context, raw provider.Request, scopeIdentity string) (review.SanitizedModelRequest, review.SanitizedEgressReceipt, error) {
+	return cleanSanitizedRequest(raw, scopeIdentity, value.ExpectedBinaryDigests())
+}
+func (CleanGenerationSanitizer) Identity() string { return strings.Repeat("8", 64) }
 func (CleanGenerationSanitizer) ExpectedBinaryDigests() review.ScannerBinaryDigests {
 	return review.ScannerBinaryDigests{LauncherSHA256: strings.Repeat("b", 64), WorkerSHA256: strings.Repeat("c", 64)}
 }
 func (value CleanGenerationSanitizer) SanitizeGeneration(_ context.Context, raw provider.Request, scopeIdentity string) (review.SanitizedModelRequest, review.SanitizedEgressReceipt, error) {
+	return cleanSanitizedRequest(raw, scopeIdentity, value.ExpectedBinaryDigests())
+}
+
+func cleanSanitizedRequest(raw provider.Request, scopeIdentity string, expected review.ScannerBinaryDigests) (review.SanitizedModelRequest, review.SanitizedEgressReceipt, error) {
 	type item struct {
 		Path    string   `json:"path"`
 		Symbols []string `json:"symbols"`
@@ -36,6 +49,11 @@ func (value CleanGenerationSanitizer) SanitizeGeneration(_ context.Context, raw 
 		} `json:"source_omissions"`
 		Memory           memoryWire   `json:"memory"`
 		AdditionalMemory []memoryWire `json:"additional_memory"`
+		Candidates       []struct {
+			Title string `json:"title"`
+			Claim string `json:"claim"`
+			Path  string `json:"path"`
+		} `json:"candidates"`
 	}
 	if err := json.Unmarshal(raw.Payload(), &wire); err != nil {
 		return review.SanitizedModelRequest{}, review.SanitizedEgressReceipt{}, err
@@ -64,6 +82,11 @@ func (value CleanGenerationSanitizer) SanitizeGeneration(_ context.Context, raw 
 	for _, memoryValue := range wire.AdditionalMemory {
 		appendMemory(memoryValue)
 	}
+	for _, candidate := range wire.Candidates {
+		appendField(review.FieldRoleCandidateTitle, candidate.Title)
+		appendField(review.FieldRoleCandidateClaim, candidate.Claim)
+		appendField(review.FieldRoleCandidatePath, candidate.Path)
+	}
 	inner, err := provider.NewRequest(raw.Capability(), raw.MediaType(), raw.Payload())
 	if err != nil {
 		return review.SanitizedModelRequest{}, review.SanitizedEgressReceipt{}, err
@@ -76,7 +99,6 @@ func (value CleanGenerationSanitizer) SanitizeGeneration(_ context.Context, raw 
 	for _, field := range fields {
 		total += field.ScannedByteCount
 	}
-	expected := value.ExpectedBinaryDigests()
 	receipt, err := review.NewSanitizedEgressReceipt(review.SanitizedEgressReceiptInput{
 		ReviewScopeIdentity: scopeIdentity, RawRequestIdentity: raw.Identity(), SanitizedRequestIdentity: request.SanitizedRequestIdentity(),
 		Scanner: review.ScannerProfile{WorkerProtocol: 1, Scanner: secretscan.ScannerName, ScannerVersion: secretscan.ScannerVersion, ScannerCommit: secretscan.ScannerCommit, RulesetIdentity: secretscan.RulesetIdentity, RulesetRuleCount: secretscan.RulesetRuleCount, BuildProfile: secretscan.BuildProfile, LauncherSHA256: expected.LauncherSHA256, WorkerSHA256: expected.WorkerSHA256},

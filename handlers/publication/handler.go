@@ -255,7 +255,7 @@ func (h *Handler) loadVerification(ctx context.Context, scope audit.ReviewScope,
 	if err != nil {
 		return zero, vr, zero, zero, zero, err
 	}
-	vr, err = modelhandler.ParseVerificationResultArtifact(verificationArtifact, generationArtifact, inputArtifact, contextArtifact)
+	vr, err = modelhandler.ParseStoredVerificationResultArtifact(ctx, h.store, at, verificationArtifact, generationArtifact, inputArtifact, contextArtifact)
 	return verificationArtifact, vr, generationArtifact, inputArtifact, contextArtifact, err
 }
 func (h *Handler) buildSourceBinding(ctx context.Context, scope audit.ReviewScope, target review.PublicationTarget, generationArtifact, inputArtifact, contextArtifact artifact.Artifact, at time.Time) (review.ProtectedSourceBinding, error) {

@@ -510,3 +510,91 @@ func TestModelRequestPayloadBoundsIncludeReadableContract(t *testing.T) {
 		}
 	}
 }
+
+func TestSanitizedVerificationPayloadRequiresTheClosedVerifierContract(t *testing.T) {
+	generation, candidates := verificationContextFixture(t)
+	packet, err := NewVerificationContextPacket(generation, candidates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := packet.ProviderRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sanitized, err := NewSanitizedModelRequest(packet.ReviewScopeIdentity(), raw, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := sanitized.ProviderRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := SanitizedVerificationPayload(request, packet.ReviewScopeIdentity())
+	if err != nil || !bytes.Equal(payload, raw.Payload()) || ValidateVerificationEgressRequest(request, packet.ReviewScopeIdentity()) != nil {
+		t.Fatal("closed verifier payload did not unwrap exactly")
+	}
+	generationRequest, err := generation.ProviderRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	generationSanitized, err := NewSanitizedModelRequest(packet.ReviewScopeIdentity(), generationRequest, generationRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generationEgress, err := generationSanitized.ProviderRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SanitizedVerificationPayload(generationEgress, packet.ReviewScopeIdentity()); err == nil {
+		t.Fatal("generation egress was accepted as verifier egress")
+	}
+}
+
+func TestLocalVerificationEnvelopeIsClosedAndCannotAuthorizeSanitizedEgress(t *testing.T) {
+	generation, candidates := verificationContextFixture(t)
+	packet, err := NewVerificationContextPacket(generation, candidates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := packet.ProviderRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope, err := NewLocalVerificationRequest(raw, packet.ReviewScopeIdentity())
+	if err != nil || ValidateLocalVerificationRequest(envelope, packet.ReviewScopeIdentity()) != nil {
+		t.Fatal("valid local verification envelope was rejected")
+	}
+	payload, err := LocalVerificationPayload(envelope, packet.ReviewScopeIdentity(), provider.ProviderZoneLocal)
+	if err != nil || !bytes.Equal(payload, raw.Payload()) {
+		t.Fatal("local verification envelope did not unwrap exactly")
+	}
+	for _, zone := range []provider.ProviderZone{provider.ProviderZonePrivateRemote, provider.ProviderZoneBrokeredRemote, provider.ProviderZoneSubscriptionOAuth} {
+		if payload, err := LocalVerificationPayload(envelope, packet.ReviewScopeIdentity(), zone); err == nil || payload != nil {
+			t.Fatalf("local verification envelope unwrapped in %s", zone)
+		}
+	}
+	if ValidateVerificationEgressRequest(envelope, packet.ReviewScopeIdentity()) == nil {
+		t.Fatal("local verification envelope gained sanitized egress authority")
+	}
+	if payload, err := SanitizedVerificationPayload(envelope, packet.ReviewScopeIdentity()); err == nil || payload != nil {
+		t.Fatal("local verification envelope passed sanitized verifier admission")
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(envelope.Payload(), &fields) != nil {
+		t.Fatal("decode local verification envelope")
+	}
+	allowed := map[string]bool{"contract": true, "schema_version": true, "review_scope_identity": true, "raw_request_identity": true, "capability": true, "media_type": true, "payload": true}
+	if len(fields) != len(allowed) {
+		t.Fatal("local verification envelope contains an open authority field")
+	}
+	for field := range fields {
+		if !allowed[field] {
+			t.Fatalf("local verification envelope contains forbidden field %s", field)
+		}
+	}
+	for _, forbidden := range []string{"receipt", "scanner", "ruleset", "launcher_sha256", "worker_sha256", "sanitization_policy_identity"} {
+		if bytes.Contains(envelope.Payload(), []byte(`"`+forbidden+`"`)) {
+			t.Fatalf("local verification envelope contains %s authority", forbidden)
+		}
+	}
+}

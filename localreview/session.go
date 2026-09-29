@@ -66,6 +66,7 @@ type SessionOptions struct {
 	ArtifactCapacity                    int
 	RetainedMemoryInput                 *runtimeconfig.RetainedMemoryInput
 	GenerationSanitizer                 review.GenerationRequestSanitizer
+	VerificationSanitizer               review.VerificationRequestSanitizer
 }
 type Session struct {
 	mu                               sync.Mutex
@@ -273,7 +274,11 @@ func newSession(o SessionOptions, investigationPolicy *review.InvestigationPolic
 		if err != nil {
 			return nil, ErrInvalidSession
 		}
-		verification, err := modelhandler.NewVerificationHandler(store, dispatchers, ledger, verificationAuthority, o.Clock)
+		verificationSanitizer := o.VerificationSanitizer
+		if verificationSanitizer == nil {
+			verificationSanitizer = review.NewFixedVerificationRequestSanitizer()
+		}
+		verification, err := modelhandler.NewVerificationHandler(store, dispatchers, ledger, verificationAuthority, o.Clock, verificationSanitizer)
 		if err != nil {
 			return nil, ErrInvalidSession
 		}

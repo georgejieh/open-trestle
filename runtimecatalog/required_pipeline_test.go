@@ -64,7 +64,7 @@ func (f *requiredPipeline) assertLineage(state controlplane.ReviewRunState) {
 	generation, err := modelhandler.ParseGenerationResultArtifact(generationArtifact, inputArtifact, contextArtifact)
 	requiredCheck(t, err)
 	verificationArtifact := f.output(state, "verification")
-	verification, err := modelhandler.ParseVerificationResultArtifact(verificationArtifact, generationArtifact, inputArtifact, contextArtifact)
+	verification, err := modelhandler.ParseStoredVerificationResultArtifact(ctx, f.store, f.clock.Now(), verificationArtifact, generationArtifact, inputArtifact, contextArtifact)
 	requiredCheck(t, err)
 	if generationArtifact.Kind() != artifact.KindCandidateBatch || verificationArtifact.Kind() != artifact.KindVerifiedFindingSet || len(generation.Candidates().Findings()) != 1 || len(verification.VerifiedFindings().Findings()) != 1 || verification.IndependentReceipt().VerifiedCount() != 1 || verification.RouteIndependence().Level() != gateway.RouteIndependenceDistinctProvider {
 		t.Fatal("actual artifacts did not contain one independently verified finding")

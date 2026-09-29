@@ -62,14 +62,14 @@ func (value fixedGenerationProjectionFixture) Residual() secretscan.ScanMetadata
 func (value fixedGenerationProjectionFixture) MaskedByteCount() int { return value.masked }
 
 type fixedGenerationClientFixture struct {
-	projection generationScanProjection
+	projection sanitizedScanProjection
 	launcher   string
 	worker     string
 	calls      int
 	observed   [][]byte
 }
 
-func (value *fixedGenerationClientFixture) Sanitize(_ context.Context, sources [][]byte) generationScanProjection {
+func (value *fixedGenerationClientFixture) Sanitize(_ context.Context, sources [][]byte) sanitizedScanProjection {
 	value.calls++
 	value.observed = make([][]byte, len(sources))
 	for index := range sources {
@@ -715,5 +715,110 @@ func assertSanitizedSchemaShape(t *testing.T, path string, encoded []byte, contr
 	_ = json.Unmarshal(record["contract"], &got)
 	if got != contract {
 		t.Fatalf("contract=%s", got)
+	}
+}
+
+func TestFixedVerificationSanitizerScansEveryTypedUntrustedFieldIndependently(t *testing.T) {
+	generation, candidates := verificationContextFixture(t)
+	packet, err := NewVerificationContextPacket(generation, candidates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := packet.ProviderRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire, err := decodeVerificationContextWire(raw.Payload())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const secret = "sk-proj-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	wire.Sources[0].Path = "src/" + secret + ".go"
+	wire.Sources[0].Content = "clean prefix " + secret
+	wire.SourceOmissions = []contextSourceOmissionWire{{Path: "missing/" + secret, StartLine: 1, EndLine: 1, Reason: "bounded", Count: 1}}
+	wire.Memory.Items = []contextMemoryItemWire{{Path: "memory/" + secret, Symbols: []string{"symbol-" + secret}, Text: "advice " + secret}}
+	wire.AdditionalMemory = []contextMemoryWire{{Items: []contextMemoryItemWire{{Path: "extra/" + secret, Symbols: []string{"extra-" + secret}, Text: "extra advice " + secret}}}}
+	wire.Candidates[0].Title = "title " + secret
+	wire.Candidates[0].Claim = "claim " + secret
+	wire.Candidates[0].Path = "candidate/" + secret
+	encoded, err := json.Marshal(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err = provider.NewRequest(provider.CapabilityReviewV1, "application/json", encoded)
+	if err != nil || ValidateVerificationModelRequest(raw, packet.ReviewScopeIdentity()) != nil {
+		t.Fatal("verification fixture lost its closed contract")
+	}
+	document, err := parseSanitizableRequest(raw, packet.ReviewScopeIdentity())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sanitizedSources := make([][]byte, len(document.fields))
+	matches := make([]secretscan.Match, 0, len(document.fields))
+	roles := make(map[FieldRole]bool)
+	total, masked := 0, 0
+	for index, field := range document.fields {
+		source := []byte(*field.value)
+		sanitizedSources[index] = append([]byte(nil), source...)
+		total += len(source)
+		start := bytes.Index(source, []byte(secret))
+		if start < 0 {
+			continue
+		}
+		roles[field.role] = true
+		match := secretscan.Match{SourceOrdinal: index, RuleID: "generic-api-key", StartByte: start, EndByteExclusive: start + len(secret)}
+		match.OccurrenceID = secretscan.OccurrenceID(match)
+		matches = append(matches, match)
+		copy(sanitizedSources[index][start:start+len(secret)], bytes.Repeat([]byte{'*'}, len(secret)))
+		masked += len(secret)
+	}
+	for _, role := range []FieldRole{FieldRoleSourcePath, FieldRoleSourceContent, FieldRoleSourceOmissionPath, FieldRoleMemoryPath, FieldRoleMemorySymbol, FieldRoleMemoryText, FieldRoleCandidateTitle, FieldRoleCandidateClaim, FieldRoleCandidatePath} {
+		if !roles[role] {
+			t.Fatalf("typed verifier field %s was not scanned", role)
+		}
+	}
+	launcher, worker := strings.Repeat("b", 64), strings.Repeat("c", 64)
+	metadata := secretscan.ScanMetadata{Scanner: secretscan.ScannerName, ScannerVersion: secretscan.ScannerVersion, ScannerCommit: secretscan.ScannerCommit, RulesetIdentity: secretscan.RulesetIdentity, BuildProfile: secretscan.BuildProfile, LauncherSHA256: launcher, WorkerSHA256: worker, SourceCount: len(document.fields), ScannedByteCount: total}
+	initial, residual := metadata, metadata
+	initial.MatchCount = len(matches)
+	client := &fixedGenerationClientFixture{launcher: launcher, worker: worker, projection: fixedGenerationProjectionFixture{complete: true, sources: sanitizedSources, matches: matches, initial: initial, residual: residual, masked: masked}}
+	sanitizer := newFixedVerificationRequestSanitizer(client)
+	request, receipt, err := sanitizer.SanitizeVerification(context.Background(), raw, packet.ReviewScopeIdentity())
+	if err != nil || client.calls != 1 || receipt.Initial().FieldCount != len(document.fields) {
+		t.Fatalf("verification sanitize=(%#v,%#v,%v) calls=%d", request, receipt, err, client.calls)
+	}
+	dispatch, err := request.ProviderRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiptBytes, err := EncodeSanitizedEgressReceipt(receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range [][]byte{[]byte(secret), []byte(base64.StdEncoding.EncodeToString([]byte(secret)))} {
+		if bytes.Contains(dispatch.Payload(), forbidden) || bytes.Contains(receiptBytes, forbidden) {
+			t.Fatal("verification egress contains literal or base64 secret")
+		}
+	}
+	if sanitizer.Identity() == deriveGenerationRequestSanitizerIdentity(sanitizer.ExpectedBinaryDigests()) {
+		t.Fatal("verification reused generation sanitizer identity")
+	}
+	generationRequest, err := generation.ProviderRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request, receipt, err := sanitizer.SanitizeVerification(context.Background(), generationRequest, packet.ReviewScopeIdentity()); err == nil || request.Identity() != "" || receipt.Identity() != "" {
+		t.Fatal("verification sanitizer accepted a generation request")
+	}
+	generationSanitizer := newFixedGenerationRequestSanitizer(client)
+	before := client.calls
+	if request, receipt, err := generationSanitizer.SanitizeGeneration(context.Background(), raw, packet.ReviewScopeIdentity()); err == nil || request.Identity() != "" || receipt.Identity() != "" || client.calls != before {
+		t.Fatal("generation sanitizer accepted or scanned a verification request")
+	}
+}
+
+func TestVerificationSanitizableWireShapeIsFrozen(t *testing.T) {
+	if got := verificationWireShapeIdentity(); got != verificationSanitizableWireShapeIdentity {
+		t.Fatalf("verification wire shape=%s", got)
 	}
 }

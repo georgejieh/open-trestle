@@ -184,8 +184,14 @@ func (m *upperModel) ConfigurationIdentity() string {
 func (m *upperModel) count() int { m.mu.Lock(); defer m.mu.Unlock(); return len(m.calls) }
 func (m *upperModel) DispatchRoute(ctx context.Context, r gateway.RouteDispatchRequest) gateway.RouteDispatchResult {
 	upperCheck(m.t, r.Validate())
+	payload := r.Request().Payload()
+	if sanitized, err := review.SanitizedVerificationPayload(r.Request(), r.Authorization().ReviewScopeIdentity()); err == nil {
+		payload = sanitized
+	} else if local, err := review.LocalVerificationPayload(r.Request(), r.Authorization().ReviewScopeIdentity(), r.Authorization().RouteReference().Zone()); err == nil {
+		payload = local
+	}
 	var p upperPacket
-	upperCheck(m.t, json.Unmarshal(r.Request().Payload(), &p))
+	upperCheck(m.t, json.Unmarshal(payload, &p))
 	m.mu.Lock()
 	m.calls = append(m.calls, r)
 	m.packets = append(m.packets, p)
@@ -409,6 +415,9 @@ func upperFixture(t *testing.T, mode string, generationCapacity ...uint64) (mode
 	if mode == "non-independent" {
 		routes[1]["provider_id"] = "provider-a"
 	}
+	if mode == "remote-verifier" {
+		routes[1]["zone"] = "private_remote"
+	}
 	if len(generationCapacity) == 1 {
 		routes[0]["max_context_tokens"] = generationCapacity[0]
 	}
@@ -624,6 +633,28 @@ func TestInvestigationUpperNonIndependentOnlyRefusesBeforeAnyModel(t *testing.T)
 		if event.Kind() == audit.EventRouteSelected || event.Kind() == audit.EventRouteAttemptClaimed {
 			t.Fatal("independence refusal created route authority")
 		}
+	}
+}
+
+func TestInvestigationUpperRejectsRemoteVerifierCandidateBeforeClaimCostOrDispatch(t *testing.T) {
+	options, _, a, b, _, _ := upperFixture(t, "remote-verifier")
+	controller, err := model.NewInvestigation(context.Background(), options)
+	upperCheck(t, err)
+	_, err = controller.Step(context.Background())
+	upperCheck(t, err)
+	_, err = controller.Step(context.Background())
+	upperCheck(t, err)
+	_, err = controller.Generate(context.Background())
+	upperCheck(t, err)
+	before, err := options.Ledger.Read(context.Background(), options.Scope, 0, 100)
+	upperCheck(t, err)
+	if _, err := controller.Verify(context.Background()); err == nil || a.count() != 3 || b.count() != 0 {
+		t.Fatal("remote verifier candidate reached selection or dispatch")
+	}
+	after, err := options.Ledger.Read(context.Background(), options.Scope, 0, 100)
+	upperCheck(t, err)
+	if len(after) != len(before) {
+		t.Fatal("remote verifier candidate created claim, cost, or dispatch events")
 	}
 }
 

@@ -8,3 +8,7 @@ import (
 func daemonTestGenerationSanitizer() review.GenerationRequestSanitizer {
 	return testsupport.NewCleanGenerationSanitizer()
 }
+
+func daemonTestVerificationSanitizer() review.VerificationRequestSanitizer {
+	return testsupport.NewCleanVerificationSanitizer()
+}

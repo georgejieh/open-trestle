@@ -168,7 +168,7 @@ func TestRunLocalGitModelReviewCompletesIndependentFinding(t *testing.T) {
 	if result.Repository != repository.Identity() || result.Base != base.Identity() || result.Head != head.Identity() || result.Diagnostics.Head != f.head || result.Inventory != f.inventoryID || result.Policy != f.policyID {
 		t.Fatal("receipt does not bind the exact local revisions and protected runtime configuration")
 	}
-	if result.Context != generated[0].ContextID || result.GenerationRequest == generated[0].RequestID || result.VerificationRequest != verified[0].RequestID || result.VerificationContext != verified[0].ContextID || verified[0].Packet.GenerationContext != generated[0].ContextID || result.CandidateBatch != verified[0].Packet.CandidateBatch || result.Diagnostics.SourceCoverage.Context != verified[0].ContextID {
+	if result.Context != generated[0].ContextID || result.GenerationRequest == generated[0].RequestID || result.VerificationRequest == verified[0].RequestID || result.VerificationContext != verified[0].ContextID || verified[0].Packet.GenerationContext != generated[0].ContextID || result.CandidateBatch != verified[0].Packet.CandidateBatch || result.Diagnostics.SourceCoverage.Context != verified[0].ContextID {
 		t.Fatal("terminal/model-visible context, request, or candidate-batch lineage differs")
 	}
 	if result.GenerationRoute != f.generationRoute || result.VerificationRoute != f.verificationRoute || result.Independence != "distinct_provider" || result.GenerationRoute == result.VerificationRoute {

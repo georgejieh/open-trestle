@@ -209,7 +209,7 @@ func TestDaemonBudgetedAsyncWebhookSupervisorOpensPreparedPipelineWithUTCMillise
 	if err != nil || generation.ContextIdentity() != contextInput.ContextIdentity() {
 		t.Fatalf("webhook generation lineage mismatch: %#v err=%v", generation, err)
 	}
-	verification, err := modelhandler.ParseVerificationResultArtifact(verificationArtifact, generationArtifact, generationInputArtifact, contextArtifact)
+	verification, err := modelhandler.ParseStoredVerificationResultArtifact(ctx, d.artifactStore, readAt, verificationArtifact, generationArtifact, generationInputArtifact, contextArtifact)
 	if err != nil || verification.GenerationArtifactIdentity() != generationArtifact.Identity() || verification.Verification().Results()[0].Outcome() != review.VerificationVerified {
 		t.Fatalf("webhook verification lineage mismatch: %#v err=%v", verification, err)
 	}

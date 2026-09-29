@@ -369,6 +369,10 @@ func (c *Investigation) plan(request provider.Request, routes []gateway.Observed
 	}
 	return gateway.NewInitialRouteAttemptAuthorization(request, selection, ranking)
 }
+func localInvestigationVerificationAuthorization(authorization gateway.RouteAttemptAuthorization) bool {
+	return authorization.Validate() == nil && authorization.RouteReference().Zone() == provider.ProviderZoneLocal
+}
+
 func (c *Investigation) live(ctx context.Context) error {
 	if c == nil || nilInterface(ctx) || nilInterface(c.root) || c.cancel == nil || nilInterface(c.options.Clock) || ctx.Err() != nil || c.root.Err() != nil || !time.Now().Before(c.wallDeadline) {
 		return ErrInvestigation
@@ -811,17 +815,22 @@ func (c *Investigation) verify(ctx context.Context) (InvestigationVerification, 
 	if err != nil {
 		return InvestigationVerification{}, err
 	}
-	request, err := verificationContext.ProviderRequest()
+	rawRequest, err := verificationContext.ProviderRequest()
+	if err != nil {
+		return InvestigationVerification{}, err
+	}
+	request, err := review.NewLocalVerificationRequest(rawRequest, c.options.Scope.Identity())
 	if err != nil {
 		return InvestigationVerification{}, err
 	}
 	for _, route := range c.options.Routing.Verification {
-		if gateway.VerifyIndependentRouteCandidate(c.options.Routing.Independence, g.FinalTurn().Authorization(), route) != nil {
+		reference := route.ResolvedRecord().RouteRegistryRecord().RouteCandidateDeclaration().RouteCapabilityDeclaration().RouteReference()
+		if reference.Zone() != provider.ProviderZoneLocal || gateway.VerifyIndependentRouteCandidate(c.options.Routing.Independence, g.FinalTurn().Authorization(), route) != nil {
 			return InvestigationVerification{}, ErrInvestigation
 		}
 	}
 	authorization, err := c.plan(request, c.options.Routing.Verification, c.options.Routing.VerificationRanking, c.owner.State().RemainingCostMicroUSD())
-	if err != nil || gateway.VerifyIndependentRouteAuthorizations(c.options.Routing.Independence, g.FinalTurn().Authorization(), authorization) != nil {
+	if err != nil || !localInvestigationVerificationAuthorization(authorization) || gateway.VerifyIndependentRouteAuthorizations(c.options.Routing.Independence, g.FinalTurn().Authorization(), authorization) != nil {
 		return InvestigationVerification{}, ErrInvestigation
 	}
 	turn, _, err := c.dispatch(ctx, gateway.InvestigationVerificationTurn, request)

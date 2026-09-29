@@ -164,7 +164,7 @@ func (a *PolicyVerificationAuthorizer) Authorize(ctx context.Context, scope audi
 	if a.Validate() != nil || ctx == nil || ctx.Err() != nil || scope.Validate() != nil || request.Validate() != nil || generation.Validate() != nil || generation.Authorization().ReviewScopeIdentity() != scope.Identity() {
 		return VerificationAuthority{}, ErrInvalidVerificationAuthority
 	}
-	if review.ValidateVerificationModelRequest(request, scope.Identity()) != nil {
+	if review.ValidateVerificationEgressRequest(request, scope.Identity()) != nil {
 		return VerificationAuthority{}, ErrInvalidVerificationAuthority
 	}
 	budget, err := review.ModelRequestBudget(request, a.budget)

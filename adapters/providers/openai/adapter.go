@@ -326,7 +326,11 @@ func (a *Adapter) execute(
 	payload := providerRequest.Payload()
 	if sanitized, err := review.SanitizedCandidatePayload(providerRequest, reviewScopeIdentity); err == nil {
 		payload = sanitized
-	} else if review.ValidateCandidateModelRequest(providerRequest, reviewScopeIdentity) == nil {
+	} else if sanitized, err := review.SanitizedVerificationPayload(providerRequest, reviewScopeIdentity); err == nil {
+		payload = sanitized
+	} else if local, err := review.LocalVerificationPayload(providerRequest, reviewScopeIdentity, route.Zone()); err == nil {
+		payload = local
+	} else if review.ValidateCandidateModelRequest(providerRequest, reviewScopeIdentity) == nil || review.ValidateVerificationModelRequest(providerRequest, reviewScopeIdentity) == nil {
 		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
 	}
 	instructions, err := review.TrustedModelRequestInstructions(payload)

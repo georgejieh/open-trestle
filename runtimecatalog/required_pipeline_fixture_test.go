@@ -115,6 +115,8 @@ func (m *requiredModel) DispatchRoute(ctx context.Context, request gateway.Route
 	payload := request.Request().Payload()
 	if sanitized, err := review.SanitizedCandidatePayload(request.Request(), request.Authorization().ReviewScopeIdentity()); err == nil {
 		payload = sanitized
+	} else if sanitized, err := review.SanitizedVerificationPayload(request.Request(), request.Authorization().ReviewScopeIdentity()); err == nil {
+		payload = sanitized
 	}
 	requiredCheck(m.t, json.Unmarshal(payload, &packet))
 	var changed, caller requiredRequestSource
@@ -331,7 +333,7 @@ func newRequiredPipeline(t *testing.T, approvedVerifier, staleHead bool) *requir
 	requiredCheck(t, err)
 	generationHandler, err := modelhandler.NewGenerationHandler(store, dispatchers, ledger, clock, sanitizer.ExpectedBinaryDigests())
 	requiredCheck(t, err)
-	verificationHandler, err := modelhandler.NewVerificationHandler(store, dispatchers, ledger, verificationAuthority, clock)
+	verificationHandler, err := modelhandler.NewVerificationHandler(store, dispatchers, ledger, verificationAuthority, clock, testsupport.NewCleanVerificationSanitizer())
 	requiredCheck(t, err)
 	readiness, err := publicationhandler.NewReadinessHandler(store, diagnostics.NewMemoryStore(), clock, configuration.ReviewPolicyIdentity(), configuration.Publication())
 	requiredCheck(t, err)

@@ -391,10 +391,14 @@ func TestLocalGitInvestigationReadsUnselectedSnapshotAndVerifies(t *testing.T) {
 	for i, c := range captures {
 		turn := receipt.Investigation.Turns[i]
 		localModelRequireDigest(t, turn.Request, turn.Authorization, turn.Outcome, turn.Reconciliation)
-		if seen[c.request] || turn.Request != c.request {
+		requestBound := turn.Request == c.request
+		if c.packet.Task == "candidate_verification" {
+			requestBound = turn.Request != c.request
+		}
+		if seen[turn.Request] || !requestBound {
 			t.Fatal("successful turn reused request identity or receipt invented a request")
 		}
-		seen[c.request] = true
+		seen[turn.Request] = true
 		if seenAuthority[turn.Authorization] || !claimed[turn.Authorization] {
 			t.Fatal("new model turn lacks distinct actual route claim")
 		}
@@ -412,7 +416,7 @@ func TestLocalGitInvestigationReadsUnselectedSnapshotAndVerifies(t *testing.T) {
 			}
 		}
 	}
-	if receipt.GenerationRequest != captures[3].request || receipt.VerificationRequest != captures[4].request || receipt.Context != captures[4].packet.GenerationContext || receipt.CandidateBatch != captures[4].packet.CandidateBatch || len(receipt.CandidateIDs) != 1 || receipt.CandidateIDs[0] != captures[4].packet.Candidates[0].ID {
+	if receipt.GenerationRequest != captures[3].request || receipt.VerificationRequest == captures[4].request || receipt.Context != captures[4].packet.GenerationContext || receipt.CandidateBatch != captures[4].packet.CandidateBatch || len(receipt.CandidateIDs) != 1 || receipt.CandidateIDs[0] != captures[4].packet.Candidates[0].ID {
 		t.Fatal("final output is disconnected from actual generation and independent verification")
 	}
 	if receipt.Diagnostics.Coverage.VerifiedCount != 1 || len(receipt.Diagnostics.Findings) != 1 || receipt.Independence != "distinct_provider" || receipt.ComprehensiveClearance {

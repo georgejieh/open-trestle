@@ -121,7 +121,7 @@ type daemonCloserFunc func() error
 func (f daemonCloserFunc) Close() error { return f() }
 
 func buildDaemon(ctx context.Context, args []string, getenv func(string) string, stderr io.Writer) (*daemon, error) {
-	return buildDaemonWithDependencies(ctx, args, getenv, stderr, daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: reviewcore.NewFixedGenerationRequestSanitizer()})
+	return buildDaemonWithDependencies(ctx, args, getenv, stderr, daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: reviewcore.NewFixedGenerationRequestSanitizer(), verificationSanitizer: reviewcore.NewFixedVerificationRequestSanitizer()})
 }
 func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func(string) string, stderr io.Writer, deps daemonDependencies) (*daemon, error) {
 	if daemonNilDependency(ctx) || getenv == nil || daemonNilDependency(stderr) || deps.openPostgres == nil || daemonNilDependency(deps.clock) {
@@ -132,6 +132,9 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	}
 	if daemonNilDependency(deps.generationSanitizer) {
 		deps.generationSanitizer = reviewcore.NewFixedGenerationRequestSanitizer()
+	}
+	if daemonNilDependency(deps.verificationSanitizer) {
+		deps.verificationSanitizer = reviewcore.NewFixedVerificationRequestSanitizer()
 	}
 	flags := flag.NewFlagSet("trestled", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -611,7 +614,7 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 					sanitizer := deps.generationSanitizer
 					contextTask, contextErr := contexthandler.NewHandler(artifactStore, daemonArtifactClock, generationAuthorizer, sanitizer)
 					generationTask, generationErr := modelhandler.NewGenerationHandler(artifactStore, dispatchers, auditLedger, daemonArtifactClock, sanitizer.ExpectedBinaryDigests())
-					verificationTask, verificationErr := modelhandler.NewVerificationHandler(artifactStore, dispatchers, auditLedger, verificationAuthorizer, daemonArtifactClock)
+					verificationTask, verificationErr := modelhandler.NewVerificationHandler(artifactStore, dispatchers, auditLedger, verificationAuthorizer, daemonArtifactClock, deps.verificationSanitizer)
 					readinessTask, readinessErr := publicationhandler.NewReadinessHandler(artifactStore, diagnosticStore, daemonArtifactClock, configuration.ReviewPolicyIdentity(), configuration.Publication())
 					if verificationAuthErr != nil || contextErr != nil || generationErr != nil || verificationErr != nil || readinessErr != nil {
 						return nil, ErrInvalidDaemonConfiguration

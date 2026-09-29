@@ -188,6 +188,26 @@ func TestExecuteSendsReadableSanitizedInnerPayloadWithoutSecretCanaries(t *testi
 	}
 }
 
+func TestExecuteDeniesRawVerificationContextBeforeCredentialsAndNetwork(t *testing.T) {
+	const canary = "sk-proj-raw-verifier-canary-aaaaaaaaaaaa"
+	raw := testRawVerificationRequest(t, canary)
+	encodedCanary := base64.StdEncoding.EncodeToString([]byte(canary))
+	if !bytes.Contains(raw.Payload(), []byte(canary)) || !bytes.Contains(raw.Payload(), []byte(encodedCanary)) {
+		t.Fatal("raw verifier regression fixture omitted literal or base64 canary")
+	}
+	var httpCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		httpCalls.Add(1)
+	}))
+	defer server.Close()
+	credentials := &credentialProvider{err: errors.New("credentials must not be read")}
+	adapter := newTestAdapter(t, server.URL, credentials)
+	result := adapter.execute(context.Background(), testRoute(t, "gpt-safe", ""), 100, raw)
+	if result.Failure() != gateway.RouteFailurePolicyDenied || result.ReplaySafety() != gateway.RouteReplayNotDispatched || credentials.calls.Load() != 0 || httpCalls.Load() != 0 {
+		t.Fatalf("raw verifier reached credentials or network: result=%#v credentials=%d http=%d", result, credentials.calls.Load(), httpCalls.Load())
+	}
+}
+
 func TestExecuteNormalizesIncompleteAndRefusalResponses(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		_, _ = writer.Write([]byte(`{

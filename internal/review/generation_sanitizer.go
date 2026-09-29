@@ -42,7 +42,7 @@ type GenerationRequestSanitizer interface {
 	SanitizeGeneration(context.Context, provider.Request, string) (SanitizedModelRequest, SanitizedEgressReceipt, error)
 }
 
-type generationScanProjection interface {
+type sanitizedScanProjection interface {
 	Complete() bool
 	Failure() secretscan.FailureClass
 	Sources() [][]byte
@@ -52,14 +52,14 @@ type generationScanProjection interface {
 	MaskedByteCount() int
 }
 
-type generationScanClient interface {
-	Sanitize(context.Context, [][]byte) generationScanProjection
+type sanitizedScanClient interface {
+	Sanitize(context.Context, [][]byte) sanitizedScanProjection
 	BinaryDigests() (string, string)
 }
 
 type fixedSecretScanClient struct{ client *secretscan.Client }
 
-func (value fixedSecretScanClient) Sanitize(ctx context.Context, sources [][]byte) generationScanProjection {
+func (value fixedSecretScanClient) Sanitize(ctx context.Context, sources [][]byte) sanitizedScanProjection {
 	return value.client.Sanitize(ctx, sources)
 }
 func (value fixedSecretScanClient) BinaryDigests() (string, string) {
@@ -67,7 +67,7 @@ func (value fixedSecretScanClient) BinaryDigests() (string, string) {
 }
 
 type FixedGenerationRequestSanitizer struct {
-	client   generationScanClient
+	client   sanitizedScanClient
 	identity string
 }
 
@@ -75,7 +75,7 @@ func NewFixedGenerationRequestSanitizer() *FixedGenerationRequestSanitizer {
 	return newFixedGenerationRequestSanitizer(fixedSecretScanClient{client: secretscan.NewClient()})
 }
 
-func newFixedGenerationRequestSanitizer(client generationScanClient) *FixedGenerationRequestSanitizer {
+func newFixedGenerationRequestSanitizer(client sanitizedScanClient) *FixedGenerationRequestSanitizer {
 	value := &FixedGenerationRequestSanitizer{client: client}
 	value.identity = deriveGenerationRequestSanitizerIdentity(value.ExpectedBinaryDigests())
 	return value
@@ -116,7 +116,7 @@ func (value *FixedGenerationRequestSanitizer) SanitizeGeneration(ctx context.Con
 	if !projection.Complete() {
 		return SanitizedModelRequest{}, SanitizedEgressReceipt{}, sanitizationError(projection.Failure())
 	}
-	return closeGenerationProjection(raw, reviewScopeIdentity, document, projection, value.ExpectedBinaryDigests())
+	return closeSanitizedProjection(raw, reviewScopeIdentity, document, projection, value.ExpectedBinaryDigests())
 }
 
 func sanitizableFieldBounds(document sanitizedRequestDocument) bool {
@@ -133,7 +133,7 @@ func sanitizableFieldBounds(document sanitizedRequestDocument) bool {
 	return true
 }
 
-func closeGenerationProjection(raw provider.Request, reviewScopeIdentity string, document sanitizedRequestDocument, projection generationScanProjection, expected ScannerBinaryDigests) (SanitizedModelRequest, SanitizedEgressReceipt, error) {
+func closeSanitizedProjection(raw provider.Request, reviewScopeIdentity string, document sanitizedRequestDocument, projection sanitizedScanProjection, expected ScannerBinaryDigests) (SanitizedModelRequest, SanitizedEgressReceipt, error) {
 	initial, residual := projection.Initial(), projection.Residual()
 	if !expected.validate() || !validProjectionMetadata(initial, expected, len(document.fields)) || !validProjectionMetadata(residual, expected, len(document.fields)) || initial.ScannedByteCount != residual.ScannedByteCount || residual.MatchCount != 0 {
 		return SanitizedModelRequest{}, SanitizedEgressReceipt{}, ErrSanitizedEgressUnavailable

@@ -13,9 +13,12 @@ import (
 	"github.com/georgejieh/open-trestle/internal/secretscan"
 )
 
-const generationSanitizableWireShapeIdentity = "57998c55909fd92c92c3a16d9502ea026efa7c450e48aff4011d0983470ee020"
+const (
+	generationSanitizableWireShapeIdentity   = "57998c55909fd92c92c3a16d9502ea026efa7c450e48aff4011d0983470ee020"
+	verificationSanitizableWireShapeIdentity = "ddc04c990a827b5ce84e30743d0a8ad0956e9686f5e53ed1ff4a2c18e486795b"
+)
 
-func sanitizedWireShapeIdentity() string {
+func wireShapeIdentity(root reflect.Type) string {
 	var describe func(reflect.Type) string
 	describe = func(value reflect.Type) string {
 		switch value.Kind() {
@@ -32,8 +35,15 @@ func sanitizedWireShapeIdentity() string {
 			return value.Kind().String()
 		}
 	}
-	digest := sha256.Sum256([]byte(describe(reflect.TypeOf(contextPacketWire{}))))
+	digest := sha256.Sum256([]byte(describe(root)))
 	return hex.EncodeToString(digest[:])
+}
+
+func sanitizedWireShapeIdentity() string {
+	return wireShapeIdentity(reflect.TypeOf(contextPacketWire{}))
+}
+func verificationWireShapeIdentity() string {
+	return wireShapeIdentity(reflect.TypeOf(verificationContextWire{}))
 }
 
 type sanitizedFieldReference struct {
@@ -71,7 +81,7 @@ func parseSanitizableRequest(request provider.Request, reviewScopeIdentity strin
 		document.fields = appendContextFieldReferences(document.fields, &wire.Sources, &wire.SourceOmissions, &wire.Memory, wire.AdditionalMemory)
 		return document, nil
 	case "open-trestle/verification-context-packet":
-		if ValidateVerificationModelRequest(request, reviewScopeIdentity) != nil {
+		if verificationWireShapeIdentity() != verificationSanitizableWireShapeIdentity || ValidateVerificationModelRequest(request, reviewScopeIdentity) != nil {
 			return sanitizedRequestDocument{}, ErrInvalidSanitizedModelRequest
 		}
 		wire, err := decodeVerificationContextWire(request.Payload())

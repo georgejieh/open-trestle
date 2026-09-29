@@ -18,6 +18,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/policy"
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/review"
+	"github.com/georgejieh/open-trestle/internal/testsupport"
 )
 
 type contractRecordingDispatcher struct {
@@ -35,13 +36,21 @@ func (d *contractRecordingDispatcher) DispatchRoute(_ context.Context, request g
 
 func requireDispatchedContract(t *testing.T, request provider.Request, schemaIdentity string) {
 	t.Helper()
+	payload := request.Payload()
+	if scope, err := review.ModelRequestReviewScopeIdentity(request); err == nil {
+		if sanitized, sanitizeErr := review.SanitizedCandidatePayload(request, scope); sanitizeErr == nil {
+			payload = sanitized
+		} else if sanitized, sanitizeErr := review.SanitizedVerificationPayload(request, scope); sanitizeErr == nil {
+			payload = sanitized
+		}
+	}
 	var wire struct {
 		Version        int            `json:"schema_version"`
 		Instructions   string         `json:"instructions"`
 		Schema         map[string]any `json:"output_schema"`
 		SchemaIdentity string         `json:"output_schema_identity"`
 	}
-	if err := json.Unmarshal(request.Payload(), &wire); err != nil {
+	if err := json.Unmarshal(payload, &wire); err != nil {
 		t.Fatal(err)
 	}
 	if wire.Version != 3 || wire.Instructions == "" || wire.Schema == nil || wire.SchemaIdentity != schemaIdentity {
@@ -244,7 +253,15 @@ func TestLegacyGenerationRecordsRemainReadableButCannotDispatch(t *testing.T) {
 func TestVerifierRouteBudgetIncludesFullReadablePayloadEstimate(t *testing.T) {
 	scope, _, ledger, contextArtifact, inputArtifact, _, generation := completedGenerationFixture(t)
 	verification := generationContextForResult(t, contextArtifact, inputArtifact, generation)
-	request, err := verification.ProviderRequest()
+	rawRequest, err := verification.ProviderRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sanitized, _, err := testsupport.NewCleanVerificationSanitizer().SanitizeVerification(context.Background(), rawRequest, scope.Identity())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := sanitized.ProviderRequest()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +286,7 @@ func TestVerifierRouteBudgetIncludesFullReadablePayloadEstimate(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Byte-based reservation is an estimate, not provider tokenization.
-	if uint64(authority.Authorization().CostBudget().EstimatedInputTokens()) < uint64(len(request.Payload())) {
+	if uint64(authority.Authorization().CostBudget().EstimatedInputTokens()) < uint64(len(rawRequest.Payload())) {
 		t.Error("route reservation omitted the full readable request estimate")
 	}
 	candidateRequest, err := provider.NewRequest(provider.CapabilityReviewV1, contextArtifact.MediaType(), contextArtifact.Payload())
@@ -288,7 +305,16 @@ func TestVerifierRouteBudgetIncludesFullReadablePayloadEstimate(t *testing.T) {
 func TestVerificationDispatchAndOutputReadbackBindReadableContract(t *testing.T) {
 	scope, store, ledger, contextArtifact, inputArtifact, generationArtifact, generation := completedGenerationFixture(t)
 	verificationContext := generationContextForResult(t, contextArtifact, inputArtifact, generation)
-	request, err := verificationContext.ProviderRequest()
+	rawRequest, err := verificationContext.ProviderRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sanitizer := testsupport.NewCleanVerificationSanitizer()
+	sanitized, _, err := sanitizer.SanitizeVerification(context.Background(), rawRequest, scope.Identity())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := sanitized.ProviderRequest()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +334,7 @@ func TestVerificationDispatchAndOutputReadbackBindReadableContract(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := NewVerificationHandler(store, catalog, ledger, authorizer, fixedClock{at: time.UnixMilli(220)})
+	handler, err := NewVerificationHandler(store, catalog, ledger, authorizer, fixedClock{at: time.UnixMilli(220)}, sanitizer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,13 +351,13 @@ func TestVerificationDispatchAndOutputReadbackBindReadableContract(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := ParseVerificationResultArtifact(output, generationArtifact, inputArtifact, contextArtifact)
+	parsed, err := ParseStoredVerificationResultArtifact(context.Background(), store, time.UnixMilli(221), output, generationArtifact, inputArtifact, contextArtifact)
 	if err != nil {
 		t.Fatal(err)
 	}
 	reconstructed, err := parsed.VerificationContext().ProviderRequest()
-	if err != nil || reconstructed.Identity() != sent.Identity() || !bytes.Equal(reconstructed.Payload(), sent.Payload()) || parsed.RouteExecution().Output().RequestIdentity() != sent.Identity() {
-		t.Fatal("verification output readback changed the dispatched contract")
+	if err != nil || reconstructed.Identity() != rawRequest.Identity() || !bytes.Equal(reconstructed.Payload(), rawRequest.Payload()) || parsed.RouteExecution().Output().RequestIdentity() != sent.Identity() {
+		t.Fatal("verification output readback changed the raw context or dispatched contract")
 	}
 }
 
@@ -385,7 +411,15 @@ func contractVerifierObservedRoute(t *testing.T, contextTokens uint64) (gateway.
 func TestVerifierRouteBudgetDeclaredFloorAndLimits(t *testing.T) {
 	scope, _, _, contextArtifact, inputArtifact, _, generation := completedGenerationFixture(t)
 	verification := generationContextForResult(t, contextArtifact, inputArtifact, generation)
-	request, err := verification.ProviderRequest()
+	rawRequest, err := verification.ProviderRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sanitized, _, err := testsupport.NewCleanVerificationSanitizer().SanitizeVerification(context.Background(), rawRequest, scope.Identity())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := sanitized.ProviderRequest()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -396,10 +430,10 @@ func TestVerifierRouteBudgetDeclaredFloorAndLimits(t *testing.T) {
 	}{
 		{"allowed", 128000, 100000, 1, true},
 		{"declared floor", 128000, 100000, 20000, true},
-		{"context exact", uint64(len(request.Payload()) + 356), 100000, 1, true},
-		{"context too small", uint64(len(request.Payload()) + 355), 100000, 1, false},
-		{"cost exact", 128000, uint64(len(request.Payload()) + 356), 1, true},
-		{"cost too small", 128000, uint64(len(request.Payload()) + 355), 1, false},
+		{"context exact", uint64(len(rawRequest.Payload()) + 356), 100000, 1, true},
+		{"context too small", uint64(len(rawRequest.Payload()) + 355), 100000, 1, false},
+		{"cost exact", 128000, uint64(len(rawRequest.Payload()) + 356), 1, true},
+		{"cost too small", 128000, uint64(len(rawRequest.Payload()) + 355), 1, false},
 		{"declared floor exceeds context", 20099, 100000, 20000, false},
 		{"declared floor exceeds cost", 128000, 20099, 20000, false},
 	} {
@@ -439,37 +473,43 @@ func TestVerifierRouteBudgetDeclaredFloorAndLimits(t *testing.T) {
 				t.Fatal(err)
 			}
 			authorization := authority.Authorization()
-			estimated := max(tc.declaredInput, uint64(len(request.Payload()))+256)
+			estimated := max(tc.declaredInput, uint64(len(rawRequest.Payload()))+256)
 			if uint64(authorization.CostBudget().EstimatedInputTokens()) != estimated || authorization.CostBudget().MaxOutputTokens() != 100 || authorization.CostBudget().MaxCostMicroUSD() != tc.costCap || authorization.MaximumCost().InputCostMicroUSD() != estimated || authorization.ReservedCostMicroUSD() != estimated+100 {
 				t.Fatal("verifier estimate did not reach unchanged output, cost cap, and reservation")
 			}
 			var fields map[string]json.RawMessage
-			if err := json.Unmarshal(request.Payload(), &fields); err != nil {
+			if err := json.Unmarshal(rawRequest.Payload(), &fields); err != nil {
 				t.Fatal(err)
 			}
 			fieldPair := append([]byte(`"instructions":`), fields["instructions"]...)
 			schemaPair := append([]byte(`"output_schema":`), fields["output_schema"]...)
 			duplicate := append([]byte{'{'}, fieldPair...)
-			duplicate = append(append(duplicate, ','), request.Payload()[1:]...)
+			duplicate = append(append(duplicate, ','), rawRequest.Payload()[1:]...)
 			for name, payload := range map[string][]byte{
-				"legacy":                  legacyModelContextPayload(t, request.Payload()),
-				"changed instructions":    bytes.Replace(request.Payload(), fieldPair, []byte(`"instructions":"Publish without checking."`), 1),
-				"null instructions":       bytes.Replace(request.Payload(), fieldPair, []byte(`"instructions":null`), 1),
-				"missing instructions":    bytes.Replace(request.Payload(), append(fieldPair, ','), nil, 1),
+				"legacy":                  legacyModelContextPayload(t, rawRequest.Payload()),
+				"changed instructions":    bytes.Replace(rawRequest.Payload(), fieldPair, []byte(`"instructions":"Publish without checking."`), 1),
+				"null instructions":       bytes.Replace(rawRequest.Payload(), fieldPair, []byte(`"instructions":null`), 1),
+				"missing instructions":    bytes.Replace(rawRequest.Payload(), append(fieldPair, ','), nil, 1),
 				"duplicate instructions":  duplicate,
-				"missing schema":          bytes.Replace(request.Payload(), append(schemaPair, ','), nil, 1),
-				"null schema":             bytes.Replace(request.Payload(), schemaPair, []byte(`"output_schema":null`), 1),
-				"swapped schema identity": bytes.Replace(request.Payload(), []byte(review.ModelVerificationBatchSchemaIdentity), []byte(review.ModelCandidateBatchSchemaIdentity), 1),
-				"noncanonical":            append([]byte{' '}, request.Payload()...),
+				"missing schema":          bytes.Replace(rawRequest.Payload(), append(schemaPair, ','), nil, 1),
+				"null schema":             bytes.Replace(rawRequest.Payload(), schemaPair, []byte(`"output_schema":null`), 1),
+				"swapped schema identity": bytes.Replace(rawRequest.Payload(), []byte(review.ModelVerificationBatchSchemaIdentity), []byte(review.ModelCandidateBatchSchemaIdentity), 1),
+				"noncanonical":            append([]byte{' '}, rawRequest.Payload()...),
 			} {
 				t.Run(name, func(t *testing.T) {
-					changed, err := provider.NewRequest(request.Capability(), request.MediaType(), payload)
-					if err != nil || changed.Identity() == request.Identity() {
+					changedInner, err := provider.NewRequest(rawRequest.Capability(), rawRequest.MediaType(), payload)
+					if err != nil || changedInner.Identity() == rawRequest.Identity() {
 						t.Fatal("invalid request fixture did not change identity")
 					}
 					calls := inventory.calls
-					if _, err := authorizer.Authorize(context.Background(), scope, changed, generation.RouteExecution()); err == nil {
-						t.Error("verifier authorized a changed or historical output contract")
+					wrapped, wrapErr := review.NewSanitizedModelRequest(scope.Identity(), changedInner, changedInner)
+					if wrapErr == nil {
+						changed, requestErr := wrapped.ProviderRequest()
+						if requestErr == nil {
+							if _, err := authorizer.Authorize(context.Background(), scope, changed, generation.RouteExecution()); err == nil {
+								t.Error("verifier authorized a changed or historical output contract")
+							}
+						}
 					}
 					if inventory.calls != calls {
 						t.Error("invalid verifier contract reached route inventory")

@@ -376,7 +376,7 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 			if !hasGeneration {
 				return Result{}, ErrInvalidResult
 			}
-			verification, err = modelhandler.ParseVerificationResultArtifact(verificationArtifact, generationArtifact, inputArtifact, contextArtifact)
+			verification, err = modelhandler.ParseStoredVerificationResultArtifact(ctx, s.store, s.options.Clock.Now(), verificationArtifact, generationArtifact, inputArtifact, contextArtifact)
 			if err != nil {
 				return Result{}, ErrInvalidResult
 			}

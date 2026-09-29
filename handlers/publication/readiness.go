@@ -302,7 +302,7 @@ func (h *ReadinessHandler) Execute(ctx context.Context, request controlplane.Tas
 		if err != nil {
 			return failure(readFailure(ctx, err))
 		}
-		verification, err = modelhandler.ParseVerificationResultArtifact(verificationArtifact, generationArtifact, inputArtifact, contextArtifact)
+		verification, err = modelhandler.ParseStoredVerificationResultArtifact(ctx, h.store, at, verificationArtifact, generationArtifact, inputArtifact, contextArtifact)
 		if err != nil || !contains(contextArtifact.Provenance(), analysisArtifact.Identity()) || !contains(contextArtifact.Provenance(), changeArtifact.Identity()) || !contains(contextArtifact.Provenance(), headSnapshotArtifact.Identity()) {
 			return failure(controlplane.RunFailureInvalidInput)
 		}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"io"
@@ -85,6 +86,87 @@ func testModelRequest(t *testing.T) provider.Request {
 		t.Fatal(err)
 	}
 	request, err := sanitized.ProviderRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return request
+}
+
+func testRawVerificationRequest(t *testing.T, literal string) provider.Request {
+	t.Helper()
+	scope, err := audit.NewReviewScope("tenant", "repository", "verification-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	memoryScope, err := memory.NewScope("tenant", "repository", "actor", memory.RefVisibilityExact, strings.Repeat("a", 64), []string{"src"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encodedCanary := base64.StdEncoding.EncodeToString([]byte(literal))
+	content := []byte("literal=" + literal + "\nbase64=" + encodedCanary + "\n")
+	sourceRange, err := evidence.NewSourceRange("src/main.go", 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := review.NewReviewSnapshot("workspace", strings.Repeat("b", 64), []evidence.SourceRange{sourceRange})
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(content)
+	item, err := evidence.NewEvidenceItem("source-1", evidence.EvidenceKindSource, hex.EncodeToString(digest[:]), sourceRange)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := review.NewContextSource(review.ContextStageChangedHunk, memory.TaintRepositoryControlled, item, content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	index := memory.NewLexicalIndex()
+	query, err := memory.NewLexicalQuery(memoryScope, "src/main.go", nil, nil, time.UnixMilli(100), 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retrieval, err := index.Search(context.Background(), memoryScope, query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limits, err := review.NewContextLimits(1<<20, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generation, err := review.NewContextPacket(scope, memoryScope, snapshot, review.ContextTaskCandidateGeneration, []review.ContextSource{source}, retrieval, limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generationRequest, err := generation.ProviderRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := map[string]any{"schema_version": 1, "candidates": []any{map[string]any{
+		"title": "Candidate " + literal, "claim": "Claim " + encodedCanary, "severity_hint": "medium",
+		"source_range": map[string]any{"source_id": "source-1", "start_line": 1, "end_line": 2}, "evidence_ids": []string{"source-1"},
+	}}}
+	candidatePayload, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	part, err := provider.NewResponsePart(provider.ResponsePartStructuredData, "application/json", candidatePayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := provider.NewResponse(provider.CapabilityReviewV1, provider.ResponseFinishStop, []provider.ResponsePart{part}, provider.NewUnknownRouteTokenUsage())
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidates, err := review.ParseCandidateBatch(response, snapshot, generation.EvidenceItems())
+	if err != nil {
+		t.Fatal(err)
+	}
+	verification, err := review.NewVerificationRequestContext(generationRequest.Payload(), generation.Identity(), scope.Identity(), generation.MemoryScopeIdentity(), generation.MemoryIdentity(), snapshot, generation.EvidenceItems(), candidates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := verification.ProviderRequest()
 	if err != nil {
 		t.Fatal(err)
 	}
