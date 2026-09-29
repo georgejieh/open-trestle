@@ -176,6 +176,13 @@ func TestParseCandidateBatchEnforcesSemanticBounds(t *testing.T) {
 		want             error
 	}{
 		{`"title":"Unchecked write error"`, `"title":""`, ErrInvalidCandidateText},
+		{`"title":"Unchecked write error"`, `"title":"Unchecked \u202eerror"`, ErrInvalidCandidateText},
+		{`"claim":"The write error is discarded."`, `"claim":"hidden \u0000 value"`, ErrInvalidCandidateText},
+		{`"claim":"The write error is discarded."`, `"claim":"hidden \u0085 value"`, ErrInvalidCandidateText},
+		{`"claim":"The write error is discarded."`, `"claim":"hidden \u200d value"`, ErrInvalidCandidateText},
+		{`"claim":"The write error is discarded."`, `"claim":"hidden \u2028 value"`, ErrInvalidCandidateText},
+		{`"claim":"The write error is discarded."`, `"claim":"hidden \u2029 value"`, ErrInvalidCandidateText},
+		{`"claim":"The write error is discarded."`, `"claim":"invalid \ud800 value"`, ErrInvalidCandidateText},
 		{`"severity_hint":"high"`, `"severity_hint":"unknown"`, ErrInvalidCandidateSeverity},
 		{`"evidence_ids":["evidence-1"]`, `"evidence_ids":["evidence-1","evidence-1"]`, ErrDuplicateCandidateEvidence},
 		{`"source_id":"evidence-1"`, `"source_id":"bad/id"`, ErrInvalidCandidateReference},
@@ -184,6 +191,16 @@ func TestParseCandidateBatchEnforcesSemanticBounds(t *testing.T) {
 		if batch, err := ParseCandidateBatch(response, snapshot, items); !errors.Is(err, test.want) || batch.Identity() != "" {
 			t.Fatalf("invalid field = (%#v, %v), want %v", batch, err, test.want)
 		}
+	}
+}
+
+func TestParseCandidateBatchAllowsVisibleUnicodeAndClaimLayout(t *testing.T) {
+	document := strings.Replace(validCandidateDocument(), `"title":"Unchecked write error"`, `"title":"Échec de l’écriture"`, 1)
+	document = strings.Replace(document, `"claim":"The write error is discarded."`, `"claim":"The write error is discarded.\n\tReview the caller."`, 1)
+	response, snapshot, items := candidateFixture(t, document)
+	batch, err := ParseCandidateBatch(response, snapshot, items)
+	if err != nil || batch.Identity() == "" {
+		t.Fatalf("visible Unicode or claim layout was rejected: %#v, %v", batch, err)
 	}
 }
 

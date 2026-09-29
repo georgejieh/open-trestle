@@ -10,6 +10,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/georgejieh/open-trestle/internal/evidence"
@@ -416,14 +417,24 @@ func validCandidateFreeText(value string, maxRunes int) bool {
 	if !utf8.ValidString(value) || utf8.RuneCountInString(value) > maxRunes {
 		return false
 	}
+	hasVisibleText := false
 	for _, character := range value {
-		switch character {
-		case ' ', '\t', '\n', '\v', '\f', '\r':
-		default:
-			return true
+		if unicode.In(character, unicode.Cf, unicode.Zl, unicode.Zp) || character == unicode.ReplacementChar {
+			return false
+		}
+		if unicode.IsControl(character) {
+			switch character {
+			case '\t', '\n', '\r':
+				continue
+			default:
+				return false
+			}
+		}
+		if !unicode.IsSpace(character) {
+			hasVisibleText = true
 		}
 	}
-	return false
+	return hasVisibleText
 }
 
 func validCandidateReference(value string) bool {
