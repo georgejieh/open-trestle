@@ -65,6 +65,8 @@ def _reject_sensitive_path(
     if scoped_parts is None:
         scoped_parts = PurePosixPath(name).parts
     lower_parts = {part.lower() for part in scoped_parts}
+    hidden_parts = tuple(part for part in scoped_parts if part.startswith("."))
+    allowed_container_root = name == "container" and scoped_parts == (".container",)
     if (
         basename == ".env"
         or basename.startswith(".env.")
@@ -79,8 +81,8 @@ def _reject_sensitive_path(
             "id_rsa",
         }
         or path.suffix.lower() in {".key", ".p12", ".pfx", ".pem"}
-        or lower_parts
-        & {".aws", ".git", ".prime", ".remember", ".ssh", "references"}
+        or hidden_parts and not allowed_container_root
+        or "references" in lower_parts
     ):
         raise ValueError(f"sensitive artifact path is forbidden: {name}")
 

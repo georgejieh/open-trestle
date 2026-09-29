@@ -1,9 +1,5 @@
-# Local development materials
+# Private local material
 references/
-tools/verify_public_tree.py
-tools/test_verify_public_tree.py
-.remember/
-.prime/
 
 # Credentials and local configuration
 .env

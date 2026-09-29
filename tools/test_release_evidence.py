@@ -125,6 +125,7 @@ class ArtifactCollectionTest(unittest.TestCase):
             "id_rsa",
             ".aws/credentials",
             ".ssh/id_ed25519",
+            ".tool-state/output",
             "References/plan.md",
         ):
             with (
@@ -140,6 +141,17 @@ class ArtifactCollectionTest(unittest.TestCase):
                     ValueError, "sensitive artifact path is forbidden"
                 ):
                     release_evidence.collect_artifacts(("web=dist",), root)
+
+    def test_container_staging_root_remains_allowed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            staging = root / ".container"
+            staging.mkdir()
+            (staging / "trestle").write_bytes(b"runtime")
+
+            artifacts = release_evidence.collect_artifacts(("container=.container",), root)
+
+            self.assertEqual([artifact.name for artifact in artifacts], ["container/trestle"])
 
     def test_repository_parent_named_references_is_not_treated_as_an_artifact(self):
         with tempfile.TemporaryDirectory() as directory:
