@@ -15,10 +15,12 @@ const (
 	RequestContract  = "open-trestle/secret-scan-request"
 	ResponseContract = "open-trestle/secret-scan-response"
 
-	ScannerName    = "titus"
-	ScannerVersion = "v1.2.10"
-	ScannerCommit  = "f2c9e1f5c090c27f43bdeb7b49546b59c86aa508"
-	BuildProfile   = "pure_go_linux_amd64_v1"
+	ScannerName      = "betterleaks"
+	ScannerVersion   = "v1.8.1"
+	ScannerCommit    = "5eab48332cc48565864514e3bc6de89df091a7c4"
+	RulesetIdentity  = "27ded783c81940d13c22cc46556a3f8184baf397bff08a69fcfae87991925f42"
+	RulesetRuleCount = 417
+	BuildProfile     = "public_detect_run_re2_purego_go1.25.12_linux_amd64_v1"
 
 	StatusComplete          = "complete"
 	StatusInputRejected     = "input_rejected"
@@ -188,7 +190,7 @@ func validateRequest(request Request) error {
 	}
 	total := 0
 	for index, source := range request.Sources {
-		if source.Ordinal != index || source.Content == nil || len(source.Content) > maxSourceBytes {
+		if source.Ordinal != index || source.Content == nil || len(source.Content) > maxSourceBytes || !utf8.Valid(source.Content) {
 			return ErrInvalidProtocol
 		}
 		total += len(source.Content)
@@ -200,7 +202,7 @@ func validateRequest(request Request) error {
 }
 
 func validateResponse(response Response, expectation ResponseExpectation) error {
-	if validateRequest(expectation.Request) != nil || !validLowerHex(expectation.RulesetIdentity, sha256.Size*2) {
+	if validateRequest(expectation.Request) != nil || expectation.RulesetIdentity != RulesetIdentity {
 		return ErrInvalidProtocol
 	}
 	if response.SchemaVersion != 1 || response.RequestID != expectation.Request.RequestID || response.Status != StatusComplete && response.Status != StatusInputRejected && response.Status != StatusScanFailed && response.Status != StatusResourceExhausted ||
