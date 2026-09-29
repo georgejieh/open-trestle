@@ -1,0 +1,275 @@
+{
+  "contract": "open-trestle/betterleaks-expected-spans",
+  "schema_version": 1,
+  "scanner_identity": {
+    "scanner": "betterleaks",
+    "scanner_version": "v1.8.1",
+    "scanner_commit": "5eab48332cc48565864514e3bc6de89df091a7c4",
+    "ruleset_identity": "27ded783c81940d13c22cc46556a3f8184baf397bff08a69fcfae87991925f42",
+    "ruleset_rule_count": 417,
+    "build_profile": "public_detect_run_re2_purego_go1.25.12_linux_amd64_v1"
+  },
+  "coverage_manifest_sha256": "9c383a87d055c786055072fc523079aed0d720551717130dd470b1ba4653ae19",
+  "fixtures": [
+    {
+      "id": "github-pat",
+      "fixture_sha256": "9e9cfc13b3ca75187e1e975f17dc644551f8c26648833a0566ae2a4b50af6149"
+    },
+    {
+      "id": "openai-api",
+      "fixture_sha256": "7d1d1602b66ef10c18e77e58e5e0558e58224e3d8b6788d7ef1aaf2f3d056ec0"
+    },
+    {
+      "id": "github-oauth",
+      "fixture_sha256": "573aa59fc52b1c82374b8d3c10809d56bf238c9aff8c8839b8b916c90875d8d5"
+    },
+    {
+      "id": "bearer",
+      "fixture_sha256": "f45a00b253866afc7a5dd275cf142dcbe8d235c7cce70af9eb5fd8cc5680d613"
+    },
+    {
+      "id": "private-key",
+      "fixture_sha256": "12f1f5665a8777af0b9e4c5a4bb62fbad8a410763c7203b3fc721ff8318aa513"
+    },
+    {
+      "id": "postgresql-uri",
+      "fixture_sha256": "3fe5b5b802b065a5e18a30250461d184240139a4289529ca18f53bbc5167d007"
+    },
+    {
+      "id": "mongodb-uri",
+      "fixture_sha256": "9a7dec5f8ba95dab3ec80ff5072522f830734d027444afa7bce3d324cba016ee"
+    },
+    {
+      "id": "aws-triplet",
+      "fixture_sha256": "e8f84a14a50b8a4ccc0ff9f5ae003a9a919764f10c3fe21348647bd2c12bacb8"
+    },
+    {
+      "id": "jwt",
+      "fixture_sha256": "ae31b9fe2456637095a6bdf944cad89119247a9c6e72367fb45087bfd1c27bb3"
+    },
+    {
+      "id": "slack-webhook",
+      "fixture_sha256": "fe087269511bc2e8a27d13a4a5c9a242e012e96bea47ca6bd56a8628e99aa836"
+    },
+    {
+      "id": "oauth-repeat-unicode-crlf",
+      "fixture_sha256": "d0357bd6656c05c2ec1272a41e96977f37d8264dc2e898de13fe667cddaf0ea9"
+    },
+    {
+      "id": "generic-api-key-near-miss",
+      "fixture_sha256": "157a0a6c722b1c3d72bbf06bd497a5fb54f3f7d88963a541e22f1d8dd1018175"
+    }
+  ],
+  "spans": [
+    {
+      "id": "github-pat-1",
+      "fixture_id": "github-pat",
+      "occurrence": "github_pat",
+      "classification": "accepted_detection",
+      "rule_id": "github-pat",
+      "source_ordinal": 0,
+      "start_line": 1,
+      "end_line": 1,
+      "start_column": 14,
+      "end_column": 53,
+      "start_byte": 13,
+      "end_byte_exclusive": 53,
+      "conditions": [
+        "end_of_file"
+      ]
+    },
+    {
+      "id": "openai-api-1",
+      "fixture_id": "openai-api",
+      "occurrence": "openai_api",
+      "classification": "accepted_detection",
+      "rule_id": "openai-api-key",
+      "source_ordinal": 0,
+      "start_line": 1,
+      "end_line": 1,
+      "start_column": 14,
+      "end_column": 64,
+      "start_byte": 13,
+      "end_byte_exclusive": 64,
+      "conditions": [
+        "trailing_lf"
+      ]
+    },
+    {
+      "id": "github-oauth-1",
+      "fixture_id": "github-oauth",
+      "occurrence": "github_oauth",
+      "classification": "accepted_detection",
+      "rule_id": "github-oauth",
+      "source_ordinal": 0,
+      "start_line": 1,
+      "end_line": 1,
+      "start_column": 9,
+      "end_column": 48,
+      "start_byte": 8,
+      "end_byte_exclusive": 48,
+      "conditions": [
+        "end_of_file"
+      ]
+    },
+    {
+      "id": "private-key-1",
+      "fixture_id": "private-key",
+      "occurrence": "pem_private_key",
+      "classification": "accepted_detection",
+      "rule_id": "private-key",
+      "source_ordinal": 0,
+      "start_line": 1,
+      "end_line": 4,
+      "start_column": 1,
+      "end_column": 25,
+      "start_byte": 0,
+      "end_byte_exclusive": 161,
+      "conditions": [
+        "multiline",
+        "end_of_file"
+      ]
+    },
+    {
+      "id": "postgresql-uri-1",
+      "fixture_id": "postgresql-uri",
+      "occurrence": "postgresql_uri",
+      "classification": "accepted_detection",
+      "rule_id": "generic-credential-uri",
+      "source_ordinal": 0,
+      "start_line": 1,
+      "end_line": 1,
+      "start_column": 12,
+      "end_column": 86,
+      "start_byte": 11,
+      "end_byte_exclusive": 86,
+      "conditions": [
+        "trailing_lf"
+      ]
+    },
+    {
+      "id": "mongodb-uri-1",
+      "fixture_id": "mongodb-uri",
+      "occurrence": "mongodb_uri",
+      "classification": "accepted_detection",
+      "rule_id": "mongodb-connection-string",
+      "source_ordinal": 0,
+      "start_line": 1,
+      "end_line": 1,
+      "start_column": 11,
+      "end_column": 83,
+      "start_byte": 10,
+      "end_byte_exclusive": 83,
+      "conditions": [
+        "trailing_lf"
+      ]
+    },
+    {
+      "id": "aws-access-key-1",
+      "fixture_id": "aws-triplet",
+      "occurrence": "aws_access_key",
+      "classification": "accepted_detection",
+      "rule_id": "aws-access-token",
+      "source_ordinal": 0,
+      "start_line": 1,
+      "end_line": 1,
+      "start_column": 19,
+      "end_column": 38,
+      "start_byte": 18,
+      "end_byte_exclusive": 38,
+      "conditions": [
+        "trailing_lf"
+      ]
+    },
+    {
+      "id": "jwt-1",
+      "fixture_id": "jwt",
+      "occurrence": "jwt",
+      "classification": "accepted_detection",
+      "rule_id": "jwt",
+      "source_ordinal": 0,
+      "start_line": 1,
+      "end_line": 1,
+      "start_column": 15,
+      "end_column": 122,
+      "start_byte": 14,
+      "end_byte_exclusive": 122,
+      "conditions": [
+        "end_of_file"
+      ]
+    },
+    {
+      "id": "slack-webhook-1",
+      "fixture_id": "slack-webhook",
+      "occurrence": "slack_webhook",
+      "classification": "accepted_detection",
+      "rule_id": "slack-webhook-url",
+      "source_ordinal": 0,
+      "start_line": 1,
+      "end_line": 1,
+      "start_column": 11,
+      "end_column": 86,
+      "start_byte": 10,
+      "end_byte_exclusive": 86,
+      "conditions": [
+        "trailing_lf"
+      ]
+    },
+    {
+      "id": "oauth-repeat-1",
+      "fixture_id": "oauth-repeat-unicode-crlf",
+      "occurrence": "github_oauth_first",
+      "classification": "accepted_detection",
+      "rule_id": "github-oauth",
+      "source_ordinal": 0,
+      "start_line": 1,
+      "end_line": 1,
+      "start_column": 11,
+      "end_column": 50,
+      "start_byte": 10,
+      "end_byte_exclusive": 50,
+      "conditions": [
+        "unicode_prefix",
+        "crlf",
+        "repeated",
+        "trailing_lf"
+      ]
+    },
+    {
+      "id": "oauth-repeat-2",
+      "fixture_id": "oauth-repeat-unicode-crlf",
+      "occurrence": "github_oauth_second",
+      "classification": "accepted_detection",
+      "rule_id": "github-oauth",
+      "source_ordinal": 0,
+      "start_line": 2,
+      "end_line": 2,
+      "start_column": 9,
+      "end_column": 48,
+      "start_byte": 60,
+      "end_byte_exclusive": 100,
+      "conditions": [
+        "crlf",
+        "repeated",
+        "trailing_lf"
+      ]
+    },
+    {
+      "id": "generic-api-key-near-miss-1",
+      "fixture_id": "generic-api-key-near-miss",
+      "occurrence": "generic_api_key_near_miss",
+      "classification": "accepted_near_miss",
+      "rule_id": "generic-api-key",
+      "source_ordinal": 0,
+      "start_line": 2,
+      "end_line": 2,
+      "start_column": 1,
+      "end_column": 44,
+      "start_byte": 7,
+      "end_byte_exclusive": 51,
+      "conditions": [
+        "trailing_lf"
+      ]
+    }
+  ]
+}
