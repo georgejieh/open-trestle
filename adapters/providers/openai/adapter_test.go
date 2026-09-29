@@ -217,17 +217,26 @@ func TestExecuteFailsClosedBeforeCredentialOrNetwork(t *testing.T) {
 	if result.Failure() != gateway.RouteFailureInvalidResponse || result.ReplaySafety() != gateway.RouteReplayNotDispatched || credentials.calls.Load() != 0 {
 		t.Fatalf("cross-wired result = %#v, calls = %d", result, credentials.calls.Load())
 	}
-	missingInstructions, err := provider.NewRequest(provider.CapabilityReviewV1, "application/json", []byte(`{"contract":"review.v1","diff":"untrusted"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
 	remoteRoute, err := provider.NewRouteReference(provider.ProviderZonePrivateRemote, "openai", "openai-responses", "primary/openai", "gpt-safe", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	result = adapter.execute(context.Background(), remoteRoute, 100, missingInstructions)
-	if result.Failure() != gateway.RouteFailureInvalidResponse || result.ReplaySafety() != gateway.RouteReplayNotDispatched || credentials.calls.Load() != 0 {
-		t.Fatalf("missing-instructions result = %#v, calls = %d", result, credentials.calls.Load())
+	remoteCredentials := &credentialProvider{err: errors.New("credentials must not be read")}
+	remoteAdapter := newTestAdapter(t, "https://api.openai.com/v1", remoteCredentials)
+	result = remoteAdapter.execute(context.Background(), remoteRoute, 100, testRequest(t))
+	if result.Failure() != gateway.RouteFailurePolicyDenied || result.ReplaySafety() != gateway.RouteReplayNotDispatched || remoteCredentials.calls.Load() != 0 {
+		t.Fatalf("remote repository review result = %#v, calls = %d", result, remoteCredentials.calls.Load())
+	}
+	missingInstructions, err := provider.NewRequest(provider.CapabilityReviewV1, "application/json", []byte(`{"contract":"review.v1","diff":"untrusted"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	localCredentials := &credentialProvider{err: errors.New("credentials must not be read")}
+	localAdapter := newTestAdapter(t, "http://127.0.0.1:1/v1", localCredentials)
+	localRoute := testRoute(t, "gpt-safe", "")
+	result = localAdapter.execute(context.Background(), localRoute, 100, missingInstructions)
+	if result.Failure() != gateway.RouteFailureInvalidResponse || result.ReplaySafety() != gateway.RouteReplayNotDispatched || localCredentials.calls.Load() != 0 {
+		t.Fatalf("missing-instructions result = %#v, calls = %d", result, localCredentials.calls.Load())
 	}
 	validRequest := testRequest(t)
 	var contract map[string]json.RawMessage
@@ -250,9 +259,9 @@ func TestExecuteFailsClosedBeforeCredentialOrNetwork(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		result = adapter.execute(context.Background(), remoteRoute, 100, ambiguous)
-		if result.Failure() != gateway.RouteFailureInvalidResponse || result.ReplaySafety() != gateway.RouteReplayNotDispatched || credentials.calls.Load() != 0 {
-			t.Fatalf("ambiguous-instructions result = %#v, calls = %d", result, credentials.calls.Load())
+		result = localAdapter.execute(context.Background(), localRoute, 100, ambiguous)
+		if result.Failure() != gateway.RouteFailureInvalidResponse || result.ReplaySafety() != gateway.RouteReplayNotDispatched || localCredentials.calls.Load() != 0 {
+			t.Fatalf("ambiguous-instructions result = %#v, calls = %d", result, localCredentials.calls.Load())
 		}
 	}
 }

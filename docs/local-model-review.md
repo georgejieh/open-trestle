@@ -70,11 +70,13 @@ ownership platforms fail closed. There is no environment-based policy fallback.
 
 `local-only` requires local routes and canonical numeric loopback endpoints. The
 existing local transport disables proxies and confines dialing. `policy-approved`
-allows the existing general transport only under the protected inventory/policy.
-It is not an unrestricted egress bypass. Route approval, data classification,
-logging restrictions, provider independence, capacity, and per-request cost
-budgets remain in force. Provider credentials use only explicit protected-policy
-environment references, through the existing credential resolver.
+still applies the protected inventory and policy, but the current OpenAI adapter
+refuses non-local repository-context requests before credential retrieval. Remote
+dispatch remains unavailable until the request carries a verified sanitized egress
+projection and redaction receipt. Route approval, data classification, logging
+restrictions, provider independence, capacity, and per-request cost budgets remain
+in force. Provider credentials use only explicit protected-policy environment
+references, through the existing credential resolver.
 
 Repository and audit labels are host-supplied scope labels, not proof of Git
 origin, forge authentication, or permission to publish. The opened source root is

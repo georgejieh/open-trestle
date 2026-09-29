@@ -310,6 +310,9 @@ func (a *Adapter) execute(
 		maxOutputTokens == 0 || !a.routeMatches(route) || !utf8.Valid(providerRequest.Payload()) {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
 	}
+	if route.Zone() != provider.ProviderZoneLocal {
+		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
+	}
 	instructions, err := review.TrustedModelRequestInstructions(providerRequest.Payload())
 	if err != nil {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
