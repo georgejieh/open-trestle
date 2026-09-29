@@ -19,6 +19,12 @@ The secret scanner is an isolated Go module. It builds with Go 1.25.12 and does 
 
 The adapter selects Betterleaks RE2 before parsing the embedded default config. It uses only `detect.Run` with a private in-memory source. Validation, decoding, filesystem sources, archives, remote sources, baselines, ignore files, reporting, diagnostics, and Betterleaks logging are disabled or unused.
 
+## Launcher toolchain and static runtime
+
+The production launcher uses only the official Zig 0.14.1 x86_64 Linux archive pinned in `launcher/toolchain-v1.json`. The verified archive and extracted-tree digests bind the compiler, bundled LLD linker, headers, x86_64 musl sysroot, and generated static libraries. The fixed target is `x86_64-linux-musl`; host GCC, host libc, `PATH`, and a mutable sysroot are not build inputs.
+
+The linked launcher contains musl 1.2.5 and Zig compiler-rt 0.14.1. Both are MIT licensed. Their complete legal texts and reviewed component inventory are in `THIRD_PARTY_LICENSES/secret-scanner-launcher/`. Linux UAPI headers from the same pinned archive are compile-time inputs under `GPL-2.0 WITH Linux-syscall-note`; no Linux kernel code is linked into the launcher.
+
 ## Module inventory input
 
 The following versions are the unique module inputs reported by:
@@ -80,4 +86,4 @@ GOWORK=off GOTOOLCHAIN=go1.25.12 go list -deps -f '{{with .Module}}{{if .Version
 - `golang.org/x/text v0.39.0`
 - `go.yaml.in/yaml/v3 v3.0.4`
 
-`go.mod` and `go.sum` are authoritative for module resolution and checksums. The final binary license inventory must be generated from the exact release binary and compared with this input before packaging.
+`go.mod` and `go.sum` are authoritative for module resolution and checksums. `THIRD_PARTY_LICENSES/secret-scanner/MODULES.json` binds the reviewed license and notice files to every module in the linked production binary. `tools/package_secret_scanner.py` derives the final inventory with `go version -m` and fails on any missing, unknown, replaced, or changed module or legal file.

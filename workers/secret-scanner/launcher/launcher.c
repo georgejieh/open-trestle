@@ -3,7 +3,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/landlock.h>
-#include <linux/prctl.h>
 #include <stdint.h>
 #include <sys/prctl.h>
 #include <sys/resource.h>
