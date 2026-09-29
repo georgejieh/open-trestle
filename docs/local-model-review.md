@@ -70,12 +70,15 @@ ownership platforms fail closed. There is no environment-based policy fallback.
 
 `local-only` requires local routes and canonical numeric loopback endpoints. The
 existing local transport disables proxies and confines dialing. `policy-approved`
-still applies the protected inventory and policy, but the current OpenAI adapter
-refuses non-local repository-context requests before credential retrieval. Remote
-dispatch remains unavailable until the request carries a verified sanitized egress
-projection and redaction receipt. Route approval, data classification, logging
-restrictions, provider independence, capacity, and per-request cost budgets remain
-in force. Provider credentials use only explicit protected-policy environment
+still applies the protected inventory and policy. This command's direct review path
+does not construct the sanitized-request and receipt artifacts required for a
+private-remote call, so its non-local requests remain denied before credential
+retrieval. The standard runtime generation and independent-verification handlers are
+different: they can admit a private-remote request after separate Betterleaks scans,
+a fresh zero-finding residual scan, artifact reload, and a handler-sealed dispatch
+proof. Investigation requests remain local-only. Route approval, data classification,
+logging restrictions, provider independence, capacity, and per-request cost budgets
+remain in force. Provider credentials use only explicit protected-policy environment
 references, through the existing credential resolver.
 
 Repository and audit labels are host-supplied scope labels, not proof of Git

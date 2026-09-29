@@ -142,13 +142,26 @@ configuration, an explicit egress choice, and a finite timeout. It defaults to l
 Git objects with a separate packed-object opt-in, does not publish results, and its
 results report limits rather than comprehensive clearance.
 
+The unreleased runtime candidate also admits standard generation and independent-
+verification requests to an approved private-remote OpenAI route after two fail-closed
+scans. Betterleaks v1.8.1 scans up to 256 typed fields and 2 MiB of decoded text in a
+fresh fixed sandbox process, the host redacts its content-free byte spans, and a second
+fresh process must complete with zero residual findings. Only a generation or
+verification handler can seal the receipt-bound proof accepted by the adapter.
+Investigation remains local-only. The reviewed corpus found 11 of 14 expected
+occurrences, missing bearer credentials, AWS secret keys, and AWS session tokens; one
+`generic-api-key` near miss at `[7,51)` is redacted. This is not comprehensive secret
+detection, and none of it is released or supported for production. See the
+[OpenAI provider boundary](docs/openai-provider.md) and
+[operations guide](docs/operations.md).
+
 ## Documentation
 
 | Area | Reference |
 |---|---|
 | Architecture and roadmap | [architecture](docs/architecture.md) · [roadmap](docs/roadmap.md) |
 | Runtime | [review-run runtime](docs/review-run-runtime.md) · [daemon API](docs/daemon-api.md) · [remote workers](docs/remote-workers.md) · [task notifications](docs/task-notifications.md) |
-| Review pipeline | [source acquisition](docs/source-acquisition-handler.md) · [change model](docs/change-model-handler.md) · [evidence](docs/deterministic-evidence-handler.md) · [context assembly](docs/context-assembly-handler.md) · [candidate generation](docs/model-generation-handler.md) · [verification](docs/model-verification-handler.md) · [publication](docs/publication-handler.md) |
+| Review pipeline | [source acquisition](docs/source-acquisition-handler.md) · [change model](docs/change-model-handler.md) · [evidence](docs/deterministic-evidence-handler.md) · [context assembly](docs/context-assembly-handler.md) · [candidate generation](docs/model-generation-handler.md) · [verification](docs/model-verification-handler.md) · [OpenAI provider](docs/openai-provider.md) · [publication](docs/publication-handler.md) |
 | Local Git | [inspect](docs/local-git-inspect.md) · [change evidence](docs/local-git-change.md) · [review](docs/local-git-review.md) · [model review](docs/local-model-review.md) |
 | Storage | [PostgreSQL ledgers](docs/postgresql-storage.md) · [encrypted object storage](docs/remote-artifact-storage.md) · [runtime artifacts](docs/runtime-artifacts.md) |
 | Transports | [MCP](docs/mcp.md) · [ACP](docs/acp.md) · [LSP](docs/lsp.md) · [TUI](docs/tui.md) · [web console](docs/web-console.md) · [VS Code](docs/vscode.md) · [protocol contracts](docs/protocol-contracts.md) |

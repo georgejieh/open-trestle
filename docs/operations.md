@@ -2,32 +2,61 @@
 
 ## Build
 
-Open Trestle requires Go 1.24 or newer.
+The root module is fixed to Go 1.24.0. The isolated secret-scanner module declares Go 1.25.0 and is built with Go 1.25.12. Keep the toolchains separate and disable workspace discovery for both:
 
 ```sh
-go test ./...
-go build -trimpath -o bin/trestle ./cmd/trestle
-go build -trimpath -o bin/trestled ./cmd/trestled
+GOWORK=off GOTOOLCHAIN=go1.24.0 go test ./...
+(
+  cd workers/secret-scanner
+  GOWORK=off GOTOOLCHAIN=go1.25.12 go mod verify
+  GOWORK=off GOTOOLCHAIN=go1.25.12 go test ./...
+)
 ```
 
-The included `Dockerfile` packages prebuilt static binaries into a scratch image and has no registry base. Prepare its deliberately narrow build context first:
+A normal root `go build` is useful for development, but it does not inject the trusted scanner binary digests. Such a `trestled` build fails closed when sanitized egress is requested. Build the release staging tree with the reviewed packaging tool instead:
 
 ```sh
-mkdir -p .container/data
-CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w" -o .container/trestle ./cmd/trestle
-CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w" -o .container/trestled ./cmd/trestled
-cp /etc/ssl/certs/ca-certificates.crt .container/ca-certificates.crt
-cp LICENSE .container/LICENSE
-cp NOTICE .container/NOTICE
-cp -R THIRD_PARTY_LICENSES .container/licenses
+python3 tools/package_secret_scanner.py --output .container
+python3 tools/package_secret_scanner.py --verify .container
 docker build --network=none -t open-trestle:local .
 ```
 
-The image runs `trestled` as UID and GID 65532. Supply runtime authority files through read-only mounts and credentials through the documented environment variables. Do not bake route inventories, policies, tokens, database URLs, or key material into an image. Record the binary and CA-bundle digests as release inputs. The image includes the project license, NOTICE, and runtime third-party license texts.
+The tool verifies the root and worker Go pins, Betterleaks module and ruleset identities, linked license inventory, launcher source and build contract, and the complete pinned Zig 0.14.1 x86_64-linux-musl toolchain archive and extracted tree. It builds the static launcher twice with separate Zig caches, builds the Go worker twice, and requires byte-identical outputs for both binaries. It then records both SHA-256 values, emits scanner release evidence and SPDX, injects both digests into the Go 1.24.0 `trestled` binary, and admits only the fixed staging inventory. The launcher uses empty-environment static-PIE flags. The worker uses `GOWORK=off`, Go 1.25.12, `GOOS=linux`, `GOARCH=amd64`, `CGO_ENABLED=0`, `-trimpath`, `-buildvcs=false`, and an empty build ID.
+
+The included `Dockerfile` copies that staging tree into a scratch image with no registry base. The image runs `trestled` as UID and GID 65532. Supply runtime authority files through read-only mounts and credentials through the documented environment variables. Do not bake route inventories, policies, tokens, database URLs, or key material into an image. The image includes the project license, NOTICE, exact runtime third-party license texts, and scanner release evidence.
+
+### Secret-scanner runtime boundary
+
+The root client invokes only `/usr/local/libexec/open-trestle/open-trestle-secret-scanner --stdio-v1`. That static, single-threaded launcher applies `NO_NEW_PRIVS`, core, CPU, and file-descriptor limits plus a Landlock domain, then executes only `/usr/local/libexec/open-trestle/open-trestle-secret-scanner-worker --sandboxed-stdio-v1`. The Go worker installs a process-wide TSYNC seccomp filter before Betterleaks initialization. The pair receives anonymous pipes, cwd `/`, and an empty environment. The worker cannot open network sockets, mutate the filesystem, create namespaces, mount filesystems, trace another process, or execute another program. A sandbox or identity failure occurs before source input is accepted.
+
+Both files must be root-owned, group `root`, mode `0555`, beneath root-owned non-writable directories, and must match the digests compiled into `trestled`. This trust check protects against replacement by the unprivileged service account. It does not protect a host after root or kernel compromise. Host-root control can replace code, inspect process memory, or change enforcement and is outside this boundary's threat model. Keep host administration, image admission, kernel patching, and runtime isolation as separate controls.
+
+The cost model is one child process per scan. That process starts as the launcher and replaces itself with the worker through the fixed exec boundary; there is no process pool or sidecar. A successful sanitization normally pays for two child processes: one initial scan and one fresh residual scan. Generation and independent verification sanitize their requests separately. Capacity planning must include that cold-start cost rather than assuming one long-lived scanner per review.
+
+The framed request accepts 1 to 256 valid-UTF-8 fields, at most 256 KiB each and 2 MiB decoded in aggregate. Request and response frames are capped at 3 MiB and 4 MiB, respectively, and a complete response is capped at 8,192 findings. The worker deadline is five seconds after the frame is decoded; the parent hard watchdog is six seconds from process start or an earlier caller deadline. A limit, timeout, cancellation, nonzero exit, stderr byte, malformed or extra output, incomplete scan, or residual finding discards all matches and blocks dispatch. No partial scan result is accepted.
+
+### Scanner observability and privacy
+
+Operational records are limited to closed failure classes, scanner and build-profile identities, launcher and worker digests, duration, field and byte counts, match counts, receipt identities, rule IDs, and zero-based half-open byte spans. The child writes protocol data only to stdout and must keep stderr empty. The parent does not log request or response frames, source bytes, matched values, upstream errors, or process error text. Initial and residual receipts contain no field content, paths, snippets, matches, source digests, or Betterleaks fingerprints.
+
+Content-free does not mean sensitivity-free. A span reveals the field ordinal, location, and length of a suspected secret. Restrict receipt, audit, and metric access to the review scope, and do not attach high-cardinality span or rule data to general metrics. Remote-provider telemetry is a separate boundary: the provider receives sanitized request text, and operators must keep provider content logging disabled under the approved route.
+
+### Scanner upgrade and requalification
+
+Treat any Betterleaks version, commit, embedded config, rule inventory, regexp engine, adapter behavior, launcher or Go toolchain, target, CGO setting, sandbox, timeout, or build-flag change as a new reviewed build profile. Before adopting it:
+
+1. Diff the upstream public API and detection behavior, review the embedded config and sorted rule IDs, and review every linked module and license.
+2. Regenerate the ruleset identity, allowlist, deterministic launcher and worker, binary digests, release evidence, SPDX, and root digest injection.
+3. Run all public protocol, exact-span, repeat, cancellation, resource, sandbox, leakage, and residual-scan tests.
+4. Run three canonical passes of the unchanged private corpus. The current gate is exactly 11/14 expected occurrences, 10/11 positive files, 2/2 repeated locations, 11/11 exact spans, the named bearer, AWS secret key, and AWS session token misses, and one `generic-api-key` near miss at `[7,51)`. A loss, changed span, or additional or changed near miss blocks adoption until reviewed.
+5. Run five warm-cache 16 MiB direct-adapter passes and five maximum-legal 2 MiB end-to-end child-process passes. Each gate requires median wall time at most two seconds and maximum RSS at most 256 MiB.
+6. Rerun root and worker tests, race tests, vet, deterministic packaging, staging inventory, release evidence, container sandbox, and the frozen-diff security review.
+
+The private corpus and raw scanner output stay outside tracked release material. The baseline measures one fixed corpus and does not establish comprehensive secret detection.
 
 ## Generate unsigned local release evidence
 
-Generate a deterministic checksum list and SPDX 2.3 inventory only from a clean checkout and the exact artifacts built from its declared revision. The tool reads the runtime Go module graph embedded in both binaries and the non-development dependency entries in the npm lockfiles.
+Generate a deterministic checksum list and SPDX 2.3 inventory only from a clean checkout and the exact artifacts built from its declared revision. The tool reads the runtime Go module graph embedded in the two root binaries and the scanner worker, plus the non-development dependency entries in the npm lockfiles. The scanner-specific staging evidence separately binds the static launcher because it is not a Go binary.
 
 ```sh
 test -z "$(git status --porcelain)"
@@ -37,6 +66,7 @@ python3 tools/release_evidence.py \
   --artifact vscode=extensions/vscode/dist/open-trestle.vsix \
   --go-binary .container/trestle \
   --go-binary .container/trestled \
+  --go-binary .container/libexec/open-trestle/open-trestle-secret-scanner-worker \
   --npm-lock web/package-lock.json \
   --npm-lock extensions/vscode/package-lock.json \
   --version 0.1.0-dev \
