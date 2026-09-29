@@ -574,7 +574,7 @@ func TestSetupBrokerBoundaryFrozenProbePreimageArithmetic(t *testing.T) {
 	}
 	sum := sha256.Sum256(append([]byte("open-trestle/setup-github-permission/v2\x00"), data...))
 	if hex.EncodeToString(sum[:]) != "6c1b6bbd3874e1f42587370b40f1fc72cb617d1d8a876067d3d25c202592eb8b" {
-		t.Fatal("root-approved 15-element preimage arithmetic drift")
+		t.Fatal("frozen 15-element preimage arithmetic drift")
 	}
 }
 
