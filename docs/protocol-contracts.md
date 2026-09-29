@@ -18,6 +18,8 @@ Routing, policy, provider, and review schemas:
 - `schemas/review/local-git-change-result-v2.schema.json`
 - `schemas/review/local-git-review-result-v1.schema.json`
 - `schemas/review/local-git-review-result-v2.schema.json`
+- `schemas/secret-scanner/secret-scan-request-v1.schema.json`
+- `schemas/secret-scanner/secret-scan-response-v1.schema.json`
 
 The investigation output schema uses a closed `oneOf`: a candidate batch or one host-defined snapshot tool call. A valid proposal is not permission to execute a tool. Runtime parsing, the retained model response, source bindings, and policy limits still govern admission.
 
