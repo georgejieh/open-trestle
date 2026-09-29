@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -54,15 +55,7 @@ func testRoute(t *testing.T, model, version string) provider.RouteReference {
 
 func testRequest(t *testing.T) provider.Request {
 	t.Helper()
-	request, err := provider.NewRequest(
-		provider.CapabilityReviewV1,
-		"application/json",
-		[]byte(`{"contract":"review.v1","diff":"safe input"}`),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return request
+	return testModelRequest(t)
 }
 
 func newTestAdapter(t *testing.T, endpoint string, credentials APIKeyProvider) *Adapter {
@@ -223,6 +216,44 @@ func TestExecuteFailsClosedBeforeCredentialOrNetwork(t *testing.T) {
 	result = otherAdapter.execute(context.Background(), badRoute, 100, testRequest(t))
 	if result.Failure() != gateway.RouteFailureInvalidResponse || result.ReplaySafety() != gateway.RouteReplayNotDispatched || credentials.calls.Load() != 0 {
 		t.Fatalf("cross-wired result = %#v, calls = %d", result, credentials.calls.Load())
+	}
+	missingInstructions, err := provider.NewRequest(provider.CapabilityReviewV1, "application/json", []byte(`{"contract":"review.v1","diff":"untrusted"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	remoteRoute, err := provider.NewRouteReference(provider.ProviderZonePrivateRemote, "openai", "openai-responses", "primary/openai", "gpt-safe", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result = adapter.execute(context.Background(), remoteRoute, 100, missingInstructions)
+	if result.Failure() != gateway.RouteFailureInvalidResponse || result.ReplaySafety() != gateway.RouteReplayNotDispatched || credentials.calls.Load() != 0 {
+		t.Fatalf("missing-instructions result = %#v, calls = %d", result, credentials.calls.Load())
+	}
+	validRequest := testRequest(t)
+	var contract map[string]json.RawMessage
+	if err := json.Unmarshal(validRequest.Payload(), &contract); err != nil {
+		t.Fatal(err)
+	}
+	for _, firstKey := range []string{"inſtructions", "instructions"} {
+		secondKey := "instructions"
+		if firstKey == secondKey {
+			secondKey = "inſtructions"
+		}
+		replacement := append([]byte(`"`+firstKey+`":`), contract["instructions"]...)
+		replacement = append(replacement, []byte(`,"`+secondKey+`":`)...)
+		replacement = append(replacement, contract["instructions"]...)
+		ambiguousPayload := bytes.Replace(validRequest.Payload(), append([]byte(`"instructions":`), contract["instructions"]...), replacement, 1)
+		if !json.Valid(ambiguousPayload) {
+			t.Fatal("ambiguous instructions fixture is not valid JSON")
+		}
+		ambiguous, err := provider.NewRequest(provider.CapabilityReviewV1, "application/json", ambiguousPayload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result = adapter.execute(context.Background(), remoteRoute, 100, ambiguous)
+		if result.Failure() != gateway.RouteFailureInvalidResponse || result.ReplaySafety() != gateway.RouteReplayNotDispatched || credentials.calls.Load() != 0 {
+			t.Fatalf("ambiguous-instructions result = %#v, calls = %d", result, credentials.calls.Load())
+		}
 	}
 }
 

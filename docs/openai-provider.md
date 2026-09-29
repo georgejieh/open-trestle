@@ -21,7 +21,7 @@ If the route declares a model version, that exact version is sent as the API `mo
 
 ## Request and response contract
 
-The adapter sends the provider-neutral request payload as one user `input_text` item. New candidate-generation and verifier context packets use input schema version 3. Each contains fixed host instructions, the complete canonical `output_schema`, and its `output_schema_identity`. The existing provider request identity binds the full payload, including those contract bytes. Source, memory, and candidate text cannot select or replace the host contract. The adapter does not add hidden instructions, enable tools, or execute model-proposed actions.
+The adapter sends the provider-neutral request payload as one user `input_text` item. It also copies the exact identity-bound host instructions into the Responses API `instructions` field, which gives them system or developer-message priority over repository-controlled input. A missing instruction contract fails before credential retrieval. New candidate-generation and verifier context packets use input schema version 3. Each contains fixed host instructions, the complete canonical `output_schema`, and its `output_schema_identity`. The existing provider request identity binds the full payload, including those contract bytes. Source, memory, and candidate text cannot select or replace the host contract. The adapter does not enable provider tools or execute model-proposed actions.
 
 The schemas are readable output guidance, not provider-enforced constrained decoding. This adapter does not request strict JSON schema mode. The canonical schemas use JSON Schema features that some provider subsets do not support. Output still requires host parsing, evidence admission, independent verification, and publication authorization. Readable guidance does not guarantee model correctness.
 
@@ -32,6 +32,7 @@ Review route selection reserves an input estimate of `max(declared_estimated_inp
 Every request includes:
 
 - the exact authorized model version, or model ID when unpinned
+- the identity-bound host instructions at instruction priority
 - the authorized maximum output-token count
 - `store: false`
 - no tool declarations

@@ -21,6 +21,7 @@ import (
 
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/provider"
+	"github.com/georgejieh/open-trestle/internal/review"
 )
 
 const (
@@ -309,6 +310,10 @@ func (a *Adapter) execute(
 		maxOutputTokens == 0 || !a.routeMatches(route) || !utf8.Valid(providerRequest.Payload()) {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
 	}
+	instructions, err := review.TrustedModelRequestInstructions(providerRequest.Payload())
+	if err != nil {
+		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
+	}
 	credentials, err := a.credentials.Retrieve(ctx)
 	if ctx.Err() != nil {
 		return failed(gateway.RouteFailureCancelled, gateway.RouteReplayNotDispatched, 0)
@@ -316,7 +321,7 @@ func (a *Adapter) execute(
 	if err != nil || credentials.Validate() != nil {
 		return failed(gateway.RouteFailureAuthentication, gateway.RouteReplayNotDispatched, 0)
 	}
-	request, err := a.newRequest(ctx, credentials, modelSelector(route), maxOutputTokens, providerRequest.Payload())
+	request, err := a.newRequest(ctx, credentials, modelSelector(route), maxOutputTokens, instructions, providerRequest.Payload())
 	if err != nil {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
 	}
@@ -358,6 +363,7 @@ func (a *Adapter) routeMatches(route provider.RouteReference) bool {
 
 type requestWire struct {
 	Model           string         `json:"model"`
+	Instructions    string         `json:"instructions"`
 	Input           []requestInput `json:"input"`
 	MaxOutputTokens uint32         `json:"max_output_tokens"`
 	Store           bool           `json:"store"`
@@ -376,10 +382,15 @@ func (a *Adapter) newRequest(
 	credentials APIKey,
 	model string,
 	maxOutputTokens uint32,
+	instructions string,
 	payload []byte,
 ) (*http.Request, error) {
+	if strings.TrimSpace(instructions) == "" {
+		return nil, errors.New("invalid model request instructions")
+	}
 	wire := requestWire{
-		Model: model,
+		Model:        model,
+		Instructions: instructions,
 		Input: []requestInput{{
 			Role:    "user",
 			Content: []requestInputContent{{Type: "input_text", Text: string(payload)}},

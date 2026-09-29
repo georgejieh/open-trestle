@@ -188,6 +188,11 @@ func TestInvestigationContextV3ControlAndCanonicalV4Contract(t *testing.T) {
 	v4 := v4Initial(t, f)
 	request, err := v4.ProviderRequest()
 	v4Check(t, err)
+	trusted, err := TrustedModelRequestInstructions(request.Payload())
+	v4Check(t, err)
+	if trusted != InvestigationInstructions() {
+		t.Fatal("investigation request lost its pinned host instructions")
+	}
 	if v4.Validate() != nil || v4.Identity() != v4Hash(request.Payload()) || request.Identity() == before.Identity() {
 		t.Fatal("v4 identity/request did not bind exact new bytes")
 	}

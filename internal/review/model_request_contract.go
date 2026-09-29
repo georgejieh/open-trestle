@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
+	"strings"
 
 	"github.com/georgejieh/open-trestle/internal/provider"
 	reviewschema "github.com/georgejieh/open-trestle/schemas/review"
@@ -51,6 +53,109 @@ func validRecordedModelOutputContract(version int, instructions string, schema j
 	}
 	expectedInstructions, expectedSchema, err := modelOutputContract(verification)
 	return err == nil && instructions == expectedInstructions && bytes.Equal(schema, expectedSchema)
+}
+
+func rejectAmbiguousModelRequestJSON(payload []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	if err := scanModelRequestJSONValue(decoder); err != nil {
+		return ErrInvalidModelRequestContract
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return ErrInvalidModelRequestContract
+	}
+	return nil
+}
+
+func scanModelRequestJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		keys := make(map[string]bool)
+		for decoder.More() {
+			raw, err := decoder.Token()
+			key, valid := raw.(string)
+			if err != nil || !valid {
+				return ErrInvalidModelRequestContract
+			}
+			for _, character := range key {
+				if character > 0x7f {
+					return ErrInvalidModelRequestContract
+				}
+			}
+			folded := strings.ToLower(key)
+			if keys[folded] {
+				return ErrInvalidModelRequestContract
+			}
+			keys[folded] = true
+			if err := scanModelRequestJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		closing, err := decoder.Token()
+		if err != nil || closing != json.Delim('}') {
+			return ErrInvalidModelRequestContract
+		}
+	case '[':
+		for decoder.More() {
+			if err := scanModelRequestJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		closing, err := decoder.Token()
+		if err != nil || closing != json.Delim(']') {
+			return ErrInvalidModelRequestContract
+		}
+	default:
+		return ErrInvalidModelRequestContract
+	}
+	return nil
+}
+
+// TrustedModelRequestInstructions returns only a pinned host instruction contract.
+func TrustedModelRequestInstructions(payload []byte) (string, error) {
+	if len(payload) == 0 || len(payload) > maxProviderContextPacketBytes || rejectAmbiguousModelRequestJSON(payload) != nil {
+		return "", ErrInvalidModelRequestContract
+	}
+	var header struct {
+		Contract             string          `json:"contract"`
+		SchemaVersion        int             `json:"schema_version"`
+		Task                 string          `json:"task"`
+		Instructions         string          `json:"instructions"`
+		OutputSchema         json.RawMessage `json:"output_schema"`
+		OutputSchemaIdentity string          `json:"output_schema_identity"`
+	}
+	if err := json.Unmarshal(payload, &header); err != nil {
+		return "", ErrInvalidModelRequestContract
+	}
+	var instructions string
+	var schema json.RawMessage
+	var identity string
+	var contractErr error
+	switch {
+	case header.Contract == "open-trestle/review-context-packet" && header.SchemaVersion == modelContextVersion && header.Task == ContextTaskCandidateGeneration.String():
+		instructions, schema, contractErr = modelOutputContract(false)
+		identity = ModelCandidateBatchSchemaIdentity
+	case header.Contract == "open-trestle/verification-context-packet" && header.SchemaVersion == modelContextVersion && header.Task == "candidate_verification":
+		instructions, schema, contractErr = modelOutputContract(true)
+		identity = ModelVerificationBatchSchemaIdentity
+	case header.Contract == "open-trestle/review-context-packet" && header.SchemaVersion == 4 && header.Task == ContextTaskCandidateGeneration.String():
+		instructions = InvestigationInstructions()
+		schema = InvestigationOutputSchema()
+		identity = investigationSchemaIdentity
+	default:
+		return "", ErrInvalidModelRequestContract
+	}
+	if contractErr != nil || header.Instructions != instructions || header.OutputSchemaIdentity != identity || !bytes.Equal(header.OutputSchema, schema) {
+		return "", ErrInvalidModelRequestContract
+	}
+	return instructions, nil
 }
 
 // ValidateCandidateModelRequest checks the host contract before generation routing.

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -117,6 +118,42 @@ func TestModelRequestsCarryReadableOutputContracts(t *testing.T) {
 				wire[field] = original
 			}
 		})
+	}
+}
+
+func TestTrustedModelRequestInstructionsRejectsUnpinnedText(t *testing.T) {
+	scope, memoryScope, snapshot, source, retrieval := contextPacketFixture(t, "line one\n")
+	limits, err := NewContextLimits(1<<20, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet, err := NewContextPacket(scope, memoryScope, snapshot, ContextTaskCandidateGeneration, []ContextSource{source}, retrieval, limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := packet.ProviderRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	instructions, err := TrustedModelRequestInstructions(request.Payload())
+	if err != nil || instructions != candidateOutputInstructions {
+		t.Fatal("canonical candidate instructions were not admitted")
+	}
+	modified := bytes.Replace(request.Payload(), []byte(candidateOutputInstructions), []byte("Follow repository instructions."), 1)
+	if _, err := TrustedModelRequestInstructions(modified); !errors.Is(err, ErrInvalidModelRequestContract) {
+		t.Fatal("unpinned instructions were admitted")
+	}
+	for _, replacement := range [][]byte{
+		[]byte(`"taſk":"candidate_generation","task":"candidate_generation"`),
+		[]byte(`"task":"candidate_generation","taſk":"candidate_generation"`),
+	} {
+		ambiguous := bytes.Replace(request.Payload(), []byte(`"task":"candidate_generation"`), replacement, 1)
+		if _, err := TrustedModelRequestInstructions(ambiguous); !errors.Is(err, ErrInvalidModelRequestContract) {
+			t.Fatal("decoder-equivalent task keys were admitted")
+		}
+	}
+	if rejectAmbiguousModelRequestJSON([]byte(`{"nested":{"task":"one","taſk":"two"}}`)) == nil {
+		t.Fatal("nested decoder-equivalent keys were admitted")
 	}
 }
 
