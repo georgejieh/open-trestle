@@ -22,6 +22,28 @@ func TestHandlerServesConsoleWithBrowserSecurityBoundary(t *testing.T) {
 		t.Fatalf("response=(%d,%q,%q)", result.StatusCode, result.Header, string(body))
 	}
 }
+func TestHandlerServesRecoverableConsoleNotFoundPage(t *testing.T) {
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		response := httptest.NewRecorder()
+		NewHandler().ServeHTTP(response, httptest.NewRequest(method, "https://trestle.test/console/missing", nil))
+		body := response.Body.String()
+		if response.Code != http.StatusNotFound || !strings.Contains(response.Header().Get("Content-Type"), "text/html") || response.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("%s response=(%d,%q,%q)", method, response.Code, response.Header(), body)
+		}
+		if method == http.MethodGet && (!strings.Contains(body, `id="not-found-title">Page not found</h1>`) || !strings.Contains(body, `href="/console/"`) || !strings.Contains(body, `href="/console/not-found.css"`)) {
+			t.Fatalf("GET body=%q", body)
+		}
+		if method == http.MethodHead && response.Body.Len() != 0 {
+			t.Fatal("HEAD returned a body")
+		}
+	}
+	stylesheet := httptest.NewRecorder()
+	NewHandler().ServeHTTP(stylesheet, httptest.NewRequest(http.MethodGet, "https://trestle.test/console/not-found.css", nil))
+	if stylesheet.Code != http.StatusOK || !strings.Contains(stylesheet.Header().Get("Content-Type"), "text/css") || !strings.Contains(stylesheet.Body.String(), ".not-found") {
+		t.Fatalf("stylesheet=(%d,%q,%q)", stylesheet.Code, stylesheet.Header(), stylesheet.Body.String())
+	}
+}
+
 func TestHandlerRestrictsMethodsQueriesAndUnknownAssets(t *testing.T) {
 	handler := NewHandler()
 	for _, tc := range []struct {

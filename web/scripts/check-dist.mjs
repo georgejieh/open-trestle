@@ -31,10 +31,14 @@ export async function checkDistribution(
 ) {
   requireEntries(await directoryEntries(publicDirectory), {
     "favicon.svg": "file",
+    "not-found.css": "file",
+    "not-found.html": "file",
   });
   requireEntries(await directoryEntries(dist), {
     "index.html": "file",
     "favicon.svg": "file",
+    "not-found.css": "file",
+    "not-found.html": "file",
     assets: "directory",
   });
   const assets = join(dist, "assets");

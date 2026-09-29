@@ -19,7 +19,14 @@ async function fixture(t) {
   await mkdir(publicDirectory);
   await writeFile(join(dist, "index.html"), '<div id="root"></div>');
   await writeFile(join(dist, "favicon.svg"), "<svg></svg>");
+  await writeFile(join(dist, "not-found.css"), ".not-found {}");
+  await writeFile(join(dist, "not-found.html"), "<h1>Page not found</h1>");
   await writeFile(join(publicDirectory, "favicon.svg"), "<svg></svg>");
+  await writeFile(join(publicDirectory, "not-found.css"), ".not-found {}");
+  await writeFile(
+    join(publicDirectory, "not-found.html"),
+    "<h1>Page not found</h1>",
+  );
   for (const name of expectedAssets)
     await writeFile(join(dist, "assets", name), "");
   return { root, dist, publicDirectory };
@@ -71,6 +78,8 @@ for (const location of ["dist", "public"]) {
 for (const name of [
   "index.html",
   "favicon.svg",
+  "not-found.css",
+  "not-found.html",
   "assets",
   "assets/index-Abc_123-.js",
   "assets/SetupApp-Xyz_987-.js",

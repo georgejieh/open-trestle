@@ -39,6 +39,10 @@ test("visual fixture admits only known assets and read methods", () => {
       visualAssetPath("/console/favicon.svg", method, assets),
       "favicon.svg",
     );
+    assert.equal(
+      visualAssetPath("/console/not-found.css", method, assets),
+      "not-found.css",
+    );
     for (const name of assets)
       assert.equal(
         visualAssetPath(`/console/assets/${name}`, method, assets),

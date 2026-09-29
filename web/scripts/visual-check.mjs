@@ -640,8 +640,9 @@ const server = createServer(async (request, response) => {
   const relative = visualAssetPath(request.url, request.method, visualAssets);
   if (relative === null) {
     response.statusCode = 404;
-    response.setHeader("content-type", "text/plain; charset=utf-8");
-    response.end("Not found");
+    response.setHeader("content-type", "text/html; charset=utf-8");
+    const body = await readFile(new URL("not-found.html", root));
+    response.end(request.method === "HEAD" ? undefined : body);
     return;
   }
   try {
@@ -721,7 +722,8 @@ try {
   const missingResponse = await proof.goto(base + "unknown-visual-route");
   if (missingResponse?.status() !== 404)
     throw new Error("unknown fixture route did not return 404");
-  await proof.getByText("Not found", { exact: true }).waitFor();
+  await proof.getByRole("heading", { name: "Page not found" }).waitFor();
+  await proof.getByRole("link", { name: "Return to review console" }).waitFor();
   await proof.screenshot({ path: join(output, "proof-404.png") });
   await proof.close();
 
