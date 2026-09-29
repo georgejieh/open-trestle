@@ -35,14 +35,22 @@ type recordingDispatcher struct {
 	calls           int
 	requestIdentity string
 	requestPayload  []byte
+	receiptIdentity string
 }
 
 func (d *recordingDispatcher) AdapterID() string             { return d.adapterID }
 func (d *recordingDispatcher) ConfigurationIdentity() string { return strings.Repeat("a", 64) }
 func (d *recordingDispatcher) DispatchRoute(_ context.Context, request gateway.RouteDispatchRequest) gateway.RouteDispatchResult {
+	return d.record(request, "")
+}
+func (d *recordingDispatcher) DispatchSanitizedRoute(_ context.Context, request gateway.RouteDispatchRequest, proof SanitizedDispatchProof) gateway.RouteDispatchResult {
+	return d.record(request, proof.ReceiptIdentity())
+}
+func (d *recordingDispatcher) record(request gateway.RouteDispatchRequest, receiptIdentity string) gateway.RouteDispatchResult {
 	d.calls++
 	d.requestIdentity = request.Request().Identity()
 	d.requestPayload = request.Request().Payload()
+	d.receiptIdentity = receiptIdentity
 	return d.result
 }
 
@@ -422,7 +430,7 @@ func TestGenerationHandlerDispatchesAuditsAndPersistsAdmittedCandidates(t *testi
 	if completion.Status() != controlplane.TaskCompletionSucceeded || completion.Validate() != nil || dispatcher.calls != 1 {
 		t.Fatalf("completion=%#v calls=%d", completion, dispatcher.calls)
 	}
-	if dispatcher.requestIdentity != authorization.RequestIdentity() || !bytes.Equal(dispatcher.requestPayload, dispatchRequest.Payload()) || bytes.Contains(dispatcher.requestPayload, []byte(secret)) || bytes.Contains(dispatcher.requestPayload, []byte(base64.StdEncoding.EncodeToString([]byte(secret)))) || receipt.SanitizedRequestIdentity() != dispatcher.requestIdentity {
+	if dispatcher.requestIdentity != authorization.RequestIdentity() || !bytes.Equal(dispatcher.requestPayload, dispatchRequest.Payload()) || bytes.Contains(dispatcher.requestPayload, []byte(secret)) || bytes.Contains(dispatcher.requestPayload, []byte(base64.StdEncoding.EncodeToString([]byte(secret)))) || receipt.SanitizedRequestIdentity() != dispatcher.requestIdentity || dispatcher.receiptIdentity != receipt.Identity() {
 		t.Fatal("dispatcher received bytes outside sanitized authority")
 	}
 	output, err := store.Get(context.Background(), scope, completion.OutputIdentity(), time.UnixMilli(201))

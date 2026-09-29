@@ -192,10 +192,18 @@ func (h *VerificationHandler) Execute(ctx context.Context, task controlplane.Tas
 	if !authority.MatchesGeneration(dispatchRequest, generation.RouteExecution()) {
 		return generationFailure(controlplane.RunFailurePolicy)
 	}
+	dispatchProof, err := newVerificationDispatchProof(
+		verificationRequest, generation.ContextIdentity(), generation.Candidates().Identity(),
+		generationArtifact, generationInputArtifact, generationContextArtifact,
+		reloadedRequest, reloadedReceipt, h.expected,
+	)
+	if err != nil {
+		return generationFailure(controlplane.RunFailureInvalidInput)
+	}
 	if _, acquired, err := gateway.ClaimRouteAttempt(ctx, h.ledger, task.Plan().Scope(), authority.Authorization(), started); err != nil || !acquired {
 		return generationFailure(controlplane.RunFailureInternal)
 	}
-	dispatch, err := gateway.DispatchAuthorizedRouteFromCatalog(ctx, h.catalog, authority.Authorization(), dispatchRequest)
+	dispatch, err := dispatchAuthorizedSanitizedRouteFromCatalog(ctx, h.catalog, authority.Authorization(), dispatchRequest, dispatchProof)
 	if err != nil {
 		return generationFailure(controlplane.RunFailurePolicy)
 	}

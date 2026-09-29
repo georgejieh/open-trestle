@@ -25,12 +25,20 @@ type contractRecordingDispatcher struct {
 	adapterID string
 	result    gateway.RouteDispatchResult
 	requests  []provider.Request
+	receipts  []string
 }
 
 func (d *contractRecordingDispatcher) AdapterID() string             { return d.adapterID }
 func (d *contractRecordingDispatcher) ConfigurationIdentity() string { return strings.Repeat("a", 64) }
 func (d *contractRecordingDispatcher) DispatchRoute(_ context.Context, request gateway.RouteDispatchRequest) gateway.RouteDispatchResult {
+	return d.record(request, "")
+}
+func (d *contractRecordingDispatcher) DispatchSanitizedRoute(_ context.Context, request gateway.RouteDispatchRequest, proof SanitizedDispatchProof) gateway.RouteDispatchResult {
+	return d.record(request, proof.ReceiptIdentity())
+}
+func (d *contractRecordingDispatcher) record(request gateway.RouteDispatchRequest, receiptIdentity string) gateway.RouteDispatchResult {
 	d.requests = append(d.requests, request.Request())
+	d.receipts = append(d.receipts, receiptIdentity)
 	return d.result
 }
 
@@ -310,7 +318,7 @@ func TestVerificationDispatchAndOutputReadbackBindReadableContract(t *testing.T)
 		t.Fatal(err)
 	}
 	sanitizer := testsupport.NewCleanVerificationSanitizer()
-	sanitized, _, err := sanitizer.SanitizeVerification(context.Background(), rawRequest, scope.Identity())
+	sanitized, egressReceipt, err := sanitizer.SanitizeVerification(context.Background(), rawRequest, scope.Identity())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,8 +352,8 @@ func TestVerificationDispatchAndOutputReadbackBindReadableContract(t *testing.T)
 	}
 	sent := dispatcher.requests[0]
 	requireDispatchedContract(t, sent, review.ModelVerificationBatchSchemaIdentity)
-	if sent.Identity() != authorization.RequestIdentity() || !bytes.Equal(sent.Payload(), request.Payload()) {
-		t.Fatal("verifier dispatch differs from the authorized contract")
+	if sent.Identity() != authorization.RequestIdentity() || !bytes.Equal(sent.Payload(), request.Payload()) || dispatcher.receipts[0] != egressReceipt.Identity() {
+		t.Fatal("verifier dispatch differs from the authorized contract or receipt lineage")
 	}
 	output, err := store.Get(context.Background(), scope, completion.OutputIdentity(), time.UnixMilli(221))
 	if err != nil {

@@ -166,6 +166,13 @@ func (m *requiredModel) DispatchRoute(ctx context.Context, request gateway.Route
 	return result
 }
 
+func (m *requiredModel) DispatchSanitizedRoute(ctx context.Context, request gateway.RouteDispatchRequest, proof modelhandler.SanitizedDispatchProof) gateway.RouteDispatchResult {
+	if proof.ValidateRequest(request.Authorization().ReviewScopeIdentity(), request.Request().Identity()) != nil {
+		m.t.Fatal("model received an invalid sanitized dispatch proof")
+	}
+	return m.DispatchRoute(ctx, request)
+}
+
 type requiredPublisher struct {
 	t           *testing.T
 	clock       *requiredClock

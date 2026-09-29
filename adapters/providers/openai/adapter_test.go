@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -517,5 +519,237 @@ func TestExecuteUsesModelIDWhenVersionIsUnpinned(t *testing.T) {
 	result := adapter.execute(context.Background(), testRoute(t, "gpt-current", ""), 4096, testRequest(t))
 	if result.Status() != gateway.RouteDispatchSucceeded || result.Validate() != nil {
 		t.Fatalf("unpinned dispatch=%#v", result)
+	}
+}
+
+func remoteTestRoute(t *testing.T, adapterID, providerID, connectionID, model string) provider.RouteReference {
+	t.Helper()
+	route, err := provider.NewRouteReference(provider.ProviderZonePrivateRemote, providerID, adapterID, connectionID, model, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return route
+}
+
+func newRemoteTLSTestAdapter(t *testing.T, handler http.Handler, credentials APIKeyProvider) (*Adapter, *httptest.Server) {
+	t.Helper()
+	server := httptest.NewTLSServer(handler)
+	t.Cleanup(server.Close)
+	serverURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := server.Client().Transport.(*http.Transport).Clone()
+	transport.TLSClientConfig = transport.TLSClientConfig.Clone()
+	transport.TLSClientConfig.ServerName = serverURL.Hostname()
+	transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, serverURL.Host)
+	}
+	adapter, err := New(Config{
+		AdapterID: "openai-responses", ProviderID: "openai", ConnectionID: "primary/openai",
+		Zone: provider.ProviderZonePrivateRemote, ContentLoggingMode: provider.ContentLoggingDisabled,
+		Endpoint: "https://api.example.test/v1", Credentials: credentials,
+		CredentialIdentity: strings.Repeat("a", 64), HTTPClientIdentity: strings.Repeat("b", 64),
+		HTTPClient: &http.Client{Transport: transport, Timeout: time.Second},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return adapter, server
+}
+
+func sanitizedRequestWithCanary(t *testing.T, verification bool, canary string) (provider.Request, []byte) {
+	t.Helper()
+	var raw provider.Request
+	if verification {
+		raw = testRawVerificationRequest(t, canary)
+	} else {
+		raw = testRawModelRequest(t)
+		payload := bytes.Replace(raw.Payload(), []byte("safe input"), []byte(canary), 1)
+		var err error
+		raw, err = provider.NewRequest(provider.CapabilityReviewV1, "application/json", payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	innerPayload := bytes.ReplaceAll(raw.Payload(), []byte(canary), bytes.Repeat([]byte{'*'}, len(canary)))
+	encoded := base64.StdEncoding.EncodeToString([]byte(canary))
+	innerPayload = bytes.ReplaceAll(innerPayload, []byte(encoded), bytes.Repeat([]byte{'*'}, len(encoded)))
+	inner, err := provider.NewRequest(provider.CapabilityReviewV1, "application/json", innerPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var header struct {
+		ReviewScopeIdentity string `json:"review_scope_identity"`
+	}
+	if json.Unmarshal(raw.Payload(), &header) != nil {
+		t.Fatal("raw request omitted scope")
+	}
+	sanitized, err := review.NewSanitizedModelRequest(header.ReviewScopeIdentity, raw, inner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := sanitized.ProviderRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return request, innerPayload
+}
+
+func TestRemoteExecuteAdmitsOnlyExactSanitizedGenerationAndVerification(t *testing.T) {
+	for _, verification := range []bool{false, true} {
+		name := "generation"
+		if verification {
+			name = "verification"
+		}
+		t.Run(name, func(t *testing.T) {
+			canary := "sk-proj-remote-" + name + "-canary-aaaaaaaa"
+			request, innerPayload := sanitizedRequestWithCanary(t, verification, canary)
+			var received []byte
+			credentials := &credentialProvider{key: testKey(t)}
+			adapter, _ := newRemoteTLSTestAdapter(t, http.HandlerFunc(func(writer http.ResponseWriter, httpRequest *http.Request) {
+				if httpRequest.TLS == nil || httpRequest.URL.Path != "/v1/responses" || httpRequest.Host != "api.example.test" || httpRequest.Header.Get("Authorization") != "Bearer test-secret" {
+					t.Errorf("remote request was not pinned to the fake HTTPS authority: %#v", httpRequest)
+				}
+				received, _ = io.ReadAll(httpRequest.Body)
+				_, _ = writer.Write([]byte(successfulResponse("gpt-safe")))
+			}), credentials)
+			result := adapter.executeWithSanitizedReceipt(context.Background(), remoteTestRoute(t, "openai-responses", "openai", "primary/openai", "gpt-safe"), 100, request, strings.Repeat("c", 64))
+			if result.Status() != gateway.RouteDispatchSucceeded || credentials.calls.Load() != 1 {
+				t.Fatalf("remote result = %#v", result)
+			}
+			var wire requestWire
+			if json.Unmarshal(received, &wire) != nil || len(wire.Input) != 1 || len(wire.Input[0].Content) != 1 {
+				t.Fatalf("remote wire = %s", received)
+			}
+			if !bytes.Equal([]byte(wire.Input[0].Content[0].Text), innerPayload) {
+				t.Fatal("remote provider did not receive the exact validated inner bytes")
+			}
+			instructions, err := review.TrustedModelRequestInstructions(innerPayload)
+			if err != nil || wire.Instructions != instructions {
+				t.Fatal("remote provider instructions were not the pinned host instructions")
+			}
+			if bytes.Contains(received, []byte(canary)) || bytes.Contains(received, []byte(base64.StdEncoding.EncodeToString([]byte(canary)))) {
+				t.Fatal("remote provider received a literal or base64 canary")
+			}
+		})
+	}
+}
+
+func TestRemoteExecuteRejectsUntrustedContractsBeforeInstructionsCredentialsAndNetwork(t *testing.T) {
+	canary := "sk-proj-remote-deny-canary-bbbbbbbbbbbb"
+	generation, _ := sanitizedRequestWithCanary(t, false, canary)
+	verification, _ := sanitizedRequestWithCanary(t, true, canary)
+	rawGeneration := testRawModelRequest(t)
+	rawVerification := testRawVerificationRequest(t, canary)
+	var scope struct {
+		ReviewScopeIdentity string `json:"review_scope_identity"`
+	}
+	if json.Unmarshal(rawVerification.Payload(), &scope) != nil {
+		t.Fatal("verification scope unavailable")
+	}
+	localEnvelope, err := review.NewLocalVerificationRequest(rawVerification, scope.ReviewScopeIdentity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unknownInner, _ := provider.NewRequest(provider.CapabilityReviewV1, "application/json", []byte(`{"contract":"unknown","schema_version":1}`))
+	unknownEnvelope, err := review.NewSanitizedModelRequest(scope.ReviewScopeIdentity, rawVerification, unknownInner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unknown, _ := unknownEnvelope.ProviderRequest()
+	investigationPayload, err := json.Marshal(struct {
+		Contract             string          `json:"contract"`
+		SchemaVersion        int             `json:"schema_version"`
+		ReviewScopeIdentity  string          `json:"review_scope_identity"`
+		Task                 string          `json:"task"`
+		Instructions         string          `json:"instructions"`
+		OutputSchema         json.RawMessage `json:"output_schema"`
+		OutputSchemaIdentity string          `json:"output_schema_identity"`
+	}{"open-trestle/review-context-packet", 4, scope.ReviewScopeIdentity, review.ContextTaskCandidateGeneration.String(), review.InvestigationInstructions(), review.InvestigationOutputSchema(), "77367fd94611f87d36e4490729096db927b8d27b9d687a4b6ab515db70e2bbc4"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	investigation, _ := provider.NewRequest(provider.CapabilityReviewV1, "application/json", investigationPayload)
+	validPayload := generation.Payload()
+	malformedIdentity := bytes.Replace(validPayload, []byte(`"identity":"`), []byte(`"identity":"f`), 1)
+	malformed, _ := provider.NewRequest(provider.CapabilityReviewV1, "application/json", malformedIdentity)
+	duplicate := append([]byte(`{"contract":"open-trestle/sanitized-model-request",`), validPayload[1:]...)
+	duplicateRequest, _ := provider.NewRequest(provider.CapabilityReviewV1, "application/json", duplicate)
+	confusable := append([]byte(`{"identitſ":"`+strings.Repeat("d", 64)+`",`), validPayload[1:]...)
+	confusableRequest, _ := provider.NewRequest(provider.CapabilityReviewV1, "application/json", confusable)
+
+	tests := []struct {
+		name, receipt string
+		request       provider.Request
+	}{
+		{"receiptless generation", "", generation}, {"receiptless verification", "", verification},
+		{"raw generation", strings.Repeat("c", 64), rawGeneration}, {"raw verification", strings.Repeat("c", 64), rawVerification},
+		{"local envelope", strings.Repeat("c", 64), localEnvelope}, {"investigation", strings.Repeat("c", 64), investigation},
+		{"unknown inner", strings.Repeat("c", 64), unknown}, {"malformed identity", strings.Repeat("c", 64), malformed},
+		{"duplicate key", strings.Repeat("c", 64), duplicateRequest}, {"confusable key", strings.Repeat("c", 64), confusableRequest},
+		{"short receipt", strings.Repeat("c", 63), generation}, {"zero receipt", strings.Repeat("0", 64), generation},
+		{"uppercase receipt", strings.Repeat("C", 64), generation}, {"nonhex receipt", strings.Repeat("g", 64), generation},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var httpCalls atomic.Int32
+			credentials := &credentialProvider{err: errors.New("must not be read")}
+			adapter, _ := newRemoteTLSTestAdapter(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { httpCalls.Add(1) }), credentials)
+			result := adapter.executeWithSanitizedReceipt(context.Background(), remoteTestRoute(t, "openai-responses", "openai", "primary/openai", "gpt-safe"), 100, test.request, test.receipt)
+			if result.Failure() != gateway.RouteFailurePolicyDenied || result.ReplaySafety() != gateway.RouteReplayNotDispatched || credentials.calls.Load() != 0 || httpCalls.Load() != 0 {
+				t.Fatalf("denied request escaped gate: result=%#v credentials=%d network=%d", result, credentials.calls.Load(), httpCalls.Load())
+			}
+		})
+	}
+}
+
+func TestRemoteExecuteRejectsRouteMismatchBeforeCredentialsAndNetwork(t *testing.T) {
+	request, _ := sanitizedRequestWithCanary(t, false, "sk-proj-route-canary-cccccccccccccccc")
+	for _, route := range []provider.RouteReference{
+		testRoute(t, "gpt-safe", ""),
+		remoteTestRoute(t, "wrong-adapter", "openai", "primary/openai", "gpt-safe"),
+		remoteTestRoute(t, "openai-responses", "wrong-provider", "primary/openai", "gpt-safe"),
+		remoteTestRoute(t, "openai-responses", "openai", "wrong-connection", "gpt-safe"),
+	} {
+		credentials := &credentialProvider{err: errors.New("must not be read")}
+		var httpCalls atomic.Int32
+		adapter, _ := newRemoteTLSTestAdapter(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { httpCalls.Add(1) }), credentials)
+		result := adapter.executeWithSanitizedReceipt(context.Background(), route, 100, request, strings.Repeat("c", 64))
+		if result.Failure() != gateway.RouteFailureInvalidResponse || credentials.calls.Load() != 0 || httpCalls.Load() != 0 {
+			t.Fatalf("route mismatch escaped gate: %#v", result)
+		}
+	}
+}
+
+func TestRemoteExecuteRedirectErrorAndInvalidResponseStayBounded(t *testing.T) {
+	canary := "sk-proj-remote-response-canary-eeeeeeee"
+	request, _ := sanitizedRequestWithCanary(t, false, canary)
+	route := remoteTestRoute(t, "openai-responses", "openai", "primary/openai", "gpt-safe")
+	for _, test := range []struct {
+		name    string
+		handler http.Handler
+		failure gateway.RouteFailureClass
+		safety  gateway.RouteReplaySafety
+	}{
+		{"redirect", http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			http.Redirect(writer, request, "https://redirect.example.test/escape", http.StatusTemporaryRedirect)
+		}), gateway.RouteFailureTransport, gateway.RouteReplayOutcomeUnknown},
+		{"provider error", http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			writer.WriteHeader(http.StatusTooManyRequests)
+			_, _ = writer.Write([]byte(`{"error":"` + canary + `"}`))
+		}), gateway.RouteFailureRateLimited, gateway.RouteReplayNoSideEffect},
+		{"invalid response", http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			_, _ = writer.Write([]byte(strings.Replace(successfulResponse("gpt-safe"), `"model":"gpt-safe"`, `"model":"wrong"`, 1)))
+		}), gateway.RouteFailureInvalidResponse, gateway.RouteReplayOutcomeUnknown},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			credentials := &credentialProvider{key: testKey(t)}
+			adapter, _ := newRemoteTLSTestAdapter(t, test.handler, credentials)
+			result := adapter.executeWithSanitizedReceipt(context.Background(), route, 100, request, strings.Repeat("c", 64))
+			if result.Failure() != test.failure || result.ReplaySafety() != test.safety || credentials.calls.Load() != 1 {
+				t.Fatalf("remote response failure = %#v", result)
+			}
+		})
 	}
 }

@@ -158,6 +158,7 @@ func (h *GenerationHandler) Execute(ctx context.Context, task controlplane.TaskE
 		return generationFailure(controlplane.RunFailureInvalidInput)
 	}
 	var providerRequest provider.Request
+	var dispatchProof SanitizedDispatchProof
 	if input.IsSanitized() {
 		requestArtifact, err := h.store.Get(ctx, task.Plan().Scope(), input.SanitizedRequestArtifactIdentity(), started)
 		if err != nil {
@@ -177,6 +178,10 @@ func (h *GenerationHandler) Execute(ctx context.Context, task controlplane.TaskE
 		if err != nil || receiptErr != nil || requestErr != nil || receipt.Identity() != input.SanitizedEgressReceiptIdentity() || providerRequest.Identity() != receipt.SanitizedRequestIdentity() || providerRequest.Identity() != input.Authorization().RequestIdentity() {
 			return generationFailure(controlplane.RunFailureInvalidInput)
 		}
+		dispatchProof, err = newGenerationDispatchProof(contextArtifact, requestArtifact, receiptArtifact, h.expected)
+		if err != nil {
+			return generationFailure(controlplane.RunFailureInvalidInput)
+		}
 	} else {
 		providerRequest, err = provider.NewRequest(provider.CapabilityReviewV1, contextArtifact.MediaType(), contextArtifact.Payload())
 		if err != nil || providerRequest.Identity() != input.Authorization().RequestIdentity() || input.Authorization().RouteReference().Zone() != provider.ProviderZoneLocal {
@@ -186,9 +191,16 @@ func (h *GenerationHandler) Execute(ctx context.Context, task controlplane.TaskE
 	if _, acquired, err := gateway.ClaimRouteAttempt(ctx, h.ledger, task.Plan().Scope(), input.Authorization(), started); err != nil || !acquired {
 		return generationFailure(controlplane.RunFailureInternal)
 	}
-	dispatchResult, err := gateway.DispatchAuthorizedRouteFromCatalog(
-		ctx, h.catalog, input.Authorization(), providerRequest,
-	)
+	var dispatchResult gateway.RouteDispatchResult
+	if input.IsSanitized() {
+		dispatchResult, err = dispatchAuthorizedSanitizedRouteFromCatalog(
+			ctx, h.catalog, input.Authorization(), providerRequest, dispatchProof,
+		)
+	} else {
+		dispatchResult, err = gateway.DispatchAuthorizedRouteFromCatalog(
+			ctx, h.catalog, input.Authorization(), providerRequest,
+		)
+	}
 	if err != nil {
 		return generationFailure(controlplane.RunFailurePolicy)
 	}

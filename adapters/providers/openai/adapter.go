@@ -19,6 +19,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	modelhandler "github.com/georgejieh/open-trestle/handlers/model"
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/review"
@@ -246,6 +247,11 @@ func defaultHTTPClientIdentity() string {
 	return hex.EncodeToString(digest[:])
 }
 
+// validSanitizedReceiptReference checks only the closed identity format. Trusted handlers own receipt lineage validation.
+func validSanitizedReceiptReference(identity string) bool {
+	return validConfigurationIdentity(identity)
+}
+
 func validConfigurationIdentity(identity string) bool {
 	if len(identity) != sha256.Size*2 || identity != strings.ToLower(identity) {
 		return false
@@ -276,8 +282,20 @@ func (a *Adapter) Validate() error {
 	return nil
 }
 
-// DispatchRoute sends content only after the gateway has constructed an exact authorization.
+// DispatchRoute sends only local content through the generic gateway boundary.
 func (a *Adapter) DispatchRoute(ctx context.Context, request gateway.RouteDispatchRequest) gateway.RouteDispatchResult {
+	return a.dispatchRoute(ctx, request, "")
+}
+
+// DispatchSanitizedRoute sends remote content only with a jointly validated egress proof.
+func (a *Adapter) DispatchSanitizedRoute(ctx context.Context, request gateway.RouteDispatchRequest, proof modelhandler.SanitizedDispatchProof) gateway.RouteDispatchResult {
+	if proof.ValidateRequest(request.Authorization().ReviewScopeIdentity(), request.Request().Identity()) != nil {
+		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
+	}
+	return a.dispatchRoute(ctx, request, proof.ReceiptIdentity())
+}
+
+func (a *Adapter) dispatchRoute(ctx context.Context, request gateway.RouteDispatchRequest, receiptIdentity string) gateway.RouteDispatchResult {
 	if nilInterface(ctx) {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
 	}
@@ -291,13 +309,11 @@ func (a *Adapter) DispatchRoute(ctx context.Context, request gateway.RouteDispat
 	if authorization.ContentLoggingMode() != a.contentLoggingMode {
 		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
 	}
-	if authorization.RouteReference().Zone() == provider.ProviderZoneLocal {
-		scopeIdentity, err := review.ModelRequestReviewScopeIdentity(request.Request())
-		if err != nil || scopeIdentity != authorization.ReviewScopeIdentity() {
-			return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
-		}
+	scopeIdentity, err := review.ModelRequestReviewScopeIdentity(request.Request())
+	if err != nil || scopeIdentity != authorization.ReviewScopeIdentity() {
+		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
 	}
-	return a.execute(ctx, authorization.RouteReference(), authorization.MaxOutputTokens(), request.Request())
+	return a.executeWithSanitizedReceipt(ctx, authorization.RouteReference(), authorization.MaxOutputTokens(), request.Request(), receiptIdentity)
 }
 
 func (a *Adapter) execute(
@@ -305,6 +321,16 @@ func (a *Adapter) execute(
 	route provider.RouteReference,
 	maxOutputTokens uint32,
 	providerRequest provider.Request,
+) gateway.RouteDispatchResult {
+	return a.executeWithSanitizedReceipt(ctx, route, maxOutputTokens, providerRequest, "")
+}
+
+func (a *Adapter) executeWithSanitizedReceipt(
+	ctx context.Context,
+	route provider.RouteReference,
+	maxOutputTokens uint32,
+	providerRequest provider.Request,
+	receiptIdentity string,
 ) gateway.RouteDispatchResult {
 	if nilInterface(ctx) {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
@@ -316,22 +342,39 @@ func (a *Adapter) execute(
 		maxOutputTokens == 0 || !a.routeMatches(route) || !utf8.Valid(providerRequest.Payload()) {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
 	}
-	if route.Zone() != provider.ProviderZoneLocal {
-		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
-	}
 	reviewScopeIdentity, scopeErr := review.ModelRequestReviewScopeIdentity(providerRequest)
 	if scopeErr != nil {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
 	}
 	payload := providerRequest.Payload()
-	if sanitized, err := review.SanitizedCandidatePayload(providerRequest, reviewScopeIdentity); err == nil {
-		payload = sanitized
-	} else if sanitized, err := review.SanitizedVerificationPayload(providerRequest, reviewScopeIdentity); err == nil {
-		payload = sanitized
-	} else if local, err := review.LocalVerificationPayload(providerRequest, reviewScopeIdentity, route.Zone()); err == nil {
-		payload = local
-	} else if review.ValidateCandidateModelRequest(providerRequest, reviewScopeIdentity) == nil || review.ValidateVerificationModelRequest(providerRequest, reviewScopeIdentity) == nil {
-		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
+	candidatePayload, candidateErr := review.SanitizedCandidatePayload(providerRequest, reviewScopeIdentity)
+	verificationPayload, verificationErr := review.SanitizedVerificationPayload(providerRequest, reviewScopeIdentity)
+	if route.Zone() == provider.ProviderZoneLocal {
+		switch {
+		case candidateErr == nil:
+			payload = candidatePayload
+		case verificationErr == nil:
+			payload = verificationPayload
+		default:
+			local, localErr := review.LocalVerificationPayload(providerRequest, reviewScopeIdentity, route.Zone())
+			if localErr == nil {
+				payload = local
+			} else if review.ValidateCandidateModelRequest(providerRequest, reviewScopeIdentity) == nil || review.ValidateVerificationModelRequest(providerRequest, reviewScopeIdentity) == nil {
+				return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
+			}
+		}
+	} else {
+		if !validSanitizedReceiptReference(receiptIdentity) {
+			return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
+		}
+		switch {
+		case candidateErr == nil:
+			payload = candidatePayload
+		case verificationErr == nil:
+			payload = verificationPayload
+		default:
+			return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
+		}
 	}
 	instructions, err := review.TrustedModelRequestInstructions(payload)
 	if err != nil {
@@ -816,3 +859,4 @@ func (a *Adapter) Format(state fmt.State, verb rune) {
 }
 
 var _ gateway.RouteDispatcher = (*Adapter)(nil)
+var _ modelhandler.SanitizedRouteDispatcher = (*Adapter)(nil)
