@@ -419,7 +419,9 @@ button:disabled {
 }
 .rail-foot button,
 .section-head button {
-  padding: 0;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 10px 0;
   border: 0;
   background: none;
   text-decoration: underline;
@@ -632,8 +634,8 @@ button:disabled {
   position: relative;
   display: grid;
   flex: 0 0 auto;
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   place-items: center;
   border: 0;
   border-radius: 8px;
@@ -650,7 +652,7 @@ button:disabled {
 }
 .copy-note {
   position: absolute;
-  right: 40px;
+  right: 48px;
   white-space: nowrap;
   padding: 5px 7px;
   border-radius: 6px;
@@ -1156,6 +1158,9 @@ button:disabled {
     color: #fff;
   }
   .mobile-head button {
+    min-width: 44px;
+    min-height: 44px;
+    padding: 8px 0;
     border: 0;
     background: none;
     color: #d4dddd;

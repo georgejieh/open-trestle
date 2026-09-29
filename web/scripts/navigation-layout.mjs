@@ -71,6 +71,27 @@ export async function checkMobileSetupNavigation(page) {
   );
 }
 
+export async function checkReviewActionTargets(page, expectedSelectors) {
+  for (const selector of expectedSelectors) {
+    const controls = page.locator(selector);
+    let checked = 0;
+    for (let index = 0; index < (await controls.count()); index += 1) {
+      const control = controls.nth(index);
+      if (!(await control.isVisible())) continue;
+      const bounds = await control.evaluate((element) => {
+        const box = element.getBoundingClientRect();
+        return { width: box.width, height: box.height };
+      });
+      assert.ok(
+        bounds.width >= 44 && bounds.height >= 44,
+        `${selector} action ${index} has a 44px touch target`,
+      );
+      checked += 1;
+    }
+    assert.ok(checked > 0, `${selector} exercised a visible control`);
+  }
+}
+
 export async function checkMobileBrandContrast(page) {
   assert.ok(page.viewportSize().width <= 680, "brand check uses mobile layout");
   const colors = await page.locator(".mobile-head").evaluate((header) => ({

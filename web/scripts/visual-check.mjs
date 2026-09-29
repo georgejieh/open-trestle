@@ -6,6 +6,7 @@ import {
   checkTabletNavigation,
   checkMobileSetupNavigation,
   checkMobileBrandContrast,
+  checkReviewActionTargets,
 } from "./navigation-layout.mjs";
 import { chromium } from "playwright-core";
 const root = new URL("../dist/", import.meta.url);
@@ -961,6 +962,11 @@ try {
     if (message.type() === "error") errors.push(message.text());
   });
   await populate(desktop);
+  await checkReviewActionTargets(desktop, [
+    ".icon-button",
+    ".rail-foot button",
+    ".section-head button",
+  ]);
   await desktop.screenshot({
     path: join(output, "open-trestle-console-desktop.png"),
     fullPage: true,
@@ -968,6 +974,10 @@ try {
   await desktop.getByRole("button", { name: /Findings 2/i }).click();
   await desktop.getByRole("heading", { name: "Review coverage" }).waitFor();
   await expandFirstFinding(desktop);
+  await checkReviewActionTargets(desktop, [
+    ".icon-button",
+    ".rail-foot button",
+  ]);
   await desktop.screenshot({
     path: join(output, "open-trestle-console-findings-desktop.png"),
     fullPage: true,
@@ -1013,6 +1023,10 @@ try {
   await checkMobileBrandContrast(mobile);
   await mobile.getByRole("button", { name: "findings" }).click();
   await expandFirstFinding(mobile);
+  await checkReviewActionTargets(mobile, [
+    ".icon-button",
+    ".mobile-head button",
+  ]);
   await mobile.screenshot({
     path: join(output, "open-trestle-console-mobile.png"),
     fullPage: true,
