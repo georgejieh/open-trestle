@@ -1719,6 +1719,10 @@ export default function SetupConsole() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const operationRef = useRef(0);
+  const errorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (error) errorRef.current?.focus();
+  }, [error]);
   async function connect(value: string) {
     const operation = ++operationRef.current;
     setBusy(true);
@@ -1809,6 +1813,26 @@ export default function SetupConsole() {
         <a href="/console/">Review console</a>
       </header>
       <main id="main">
+        {notice && (
+          <div className="success-banner" role="status">
+            <ShieldCheck aria-hidden="true" />
+            <p>{notice}</p>
+          </div>
+        )}
+        {error && (
+          <div
+            className="error-banner"
+            role="alert"
+            ref={errorRef}
+            tabIndex={-1}
+          >
+            <ShieldCheck aria-hidden="true" />
+            <div>
+              <strong>Setup request failed</strong>
+              <p>{error}</p>
+            </div>
+          </div>
+        )}
         {!session ? (
           <SetupToken busy={busy} onConnect={connect} />
         ) : !session.initialized ? (
@@ -1821,21 +1845,6 @@ export default function SetupConsole() {
             onRefresh={() => connect(token)}
             onDisconnect={disconnect}
           />
-        )}{" "}
-        {notice && (
-          <div className="success-banner" role="status">
-            <ShieldCheck aria-hidden="true" />
-            <p>{notice}</p>
-          </div>
-        )}
-        {error && (
-          <div className="error-banner" role="alert">
-            <ShieldCheck aria-hidden="true" />
-            <div>
-              <strong>Setup request failed</strong>
-              <p>{error}</p>
-            </div>
-          </div>
         )}
       </main>
     </div>

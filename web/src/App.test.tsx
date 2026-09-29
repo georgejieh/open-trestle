@@ -1406,6 +1406,15 @@ describe("console", () => {
       }),
     );
     await screen.findByText(/The setup plan changed. Inspect it again/i);
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveFocus();
+    const workspaceHeading = screen.getByRole("heading", {
+      name: /controlled hybrid/i,
+    });
+    expect(
+      alert.compareDocumentPosition(workspaceHeading) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(runSetupCheck).toHaveBeenCalledExactlyOnceWith(
       {
         plan_identity: plan.identity,
