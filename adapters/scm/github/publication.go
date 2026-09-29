@@ -433,25 +433,21 @@ func publicationPayload(request review.PublicationDispatchRequest) (reviewPayloa
 	target := plan.Target()
 	var summary strings.Builder
 	summary.WriteString("## Open Trestle verified review\n\n")
-	inline := plan.InlineFindings()
-	summaryOnly := plan.SummaryOnlyFindings()
+	inline := plan.InlinePublishableFindings()
+	summaryOnly := plan.SummaryOnlyPublishableFindings()
 	comments := make([]reviewCommentWire, 0, len(inline))
 	if len(inline) > 0 {
 		summary.WriteString("### Inline findings\n\n")
 	}
 	for _, finding := range inline {
-		if finding.Validate() != nil {
-			return reviewPayloadWire{}, ErrInvalidPublicationConfig
-		}
-		source := finding.SourceRange()
-		fmt.Fprintf(&summary, "- **%s: %s** (`%s:%d-%d`)\n", strings.ToUpper(string(finding.Severity())), escapeMarkdown(finding.Title()), escapeMarkdown(source.Path()), source.StartLine(), source.EndLine())
+		fmt.Fprintf(&summary, "- **%s: %s** (`%s:%d-%d`)\n", strings.ToUpper(string(finding.Severity())), escapeMarkdown(finding.Title()), escapeMarkdown(finding.Path()), finding.StartLine(), finding.EndLine())
 		body := renderFinding(finding)
 		if len(body) > maximumPublicationBodyBytes {
 			return reviewPayloadWire{}, ErrInvalidPublicationConfig
 		}
-		comment := reviewCommentWire{Path: source.Path(), Line: source.EndLine(), Side: "RIGHT", Body: body}
-		if source.StartLine() != source.EndLine() {
-			comment.StartLine = source.StartLine()
+		comment := reviewCommentWire{Path: finding.Path(), Line: finding.EndLine(), Side: "RIGHT", Body: body}
+		if finding.StartLine() != finding.EndLine() {
+			comment.StartLine = finding.StartLine()
 			comment.StartSide = "RIGHT"
 		}
 		comments = append(comments, comment)
@@ -460,11 +456,7 @@ func publicationPayload(request review.PublicationDispatchRequest) (reviewPayloa
 		summary.WriteString("\n### Summary findings\n")
 	}
 	for _, finding := range summaryOnly {
-		if finding.Validate() != nil {
-			return reviewPayloadWire{}, ErrInvalidPublicationConfig
-		}
-		source := finding.SourceRange()
-		fmt.Fprintf(&summary, "\n#### %s: %s\n\nPath: `%s:%d-%d`\n\n%s\n", strings.ToUpper(string(finding.Severity())), escapeMarkdown(finding.Title()), escapeMarkdown(source.Path()), source.StartLine(), source.EndLine(), escapeMarkdown(finding.Claim()))
+		fmt.Fprintf(&summary, "\n#### %s: %s\n\nPath: `%s:%d-%d`\n\n%s\n", strings.ToUpper(string(finding.Severity())), escapeMarkdown(finding.Title()), escapeMarkdown(finding.Path()), finding.StartLine(), finding.EndLine(), escapeMarkdown(finding.Claim()))
 	}
 	fmt.Fprintf(&summary, "\n<!-- open-trestle-operation:%s -->", request.IdempotencyKey())
 	if summary.Len() > maximumPublicationBodyBytes {
@@ -472,9 +464,8 @@ func publicationPayload(request review.PublicationDispatchRequest) (reviewPayloa
 	}
 	return reviewPayloadWire{CommitID: target.HeadRevision().Digest(), Body: summary.String(), Event: "COMMENT", Comments: comments}, nil
 }
-func renderFinding(finding review.VerifiedFinding) string {
-	source := finding.SourceRange()
-	return fmt.Sprintf("**%s: %s**\n\n%s\n\nLocation: `%s:%d-%d`", strings.ToUpper(string(finding.Severity())), escapeMarkdown(finding.Title()), escapeMarkdown(finding.Claim()), escapeMarkdown(source.Path()), source.StartLine(), source.EndLine())
+func renderFinding(finding review.PublishableFinding) string {
+	return fmt.Sprintf("**%s: %s**\n\n%s\n\nLocation: `%s:%d-%d`", strings.ToUpper(string(finding.Severity())), escapeMarkdown(finding.Title()), escapeMarkdown(finding.Claim()), escapeMarkdown(finding.Path()), finding.StartLine(), finding.EndLine())
 }
 func escapeMarkdown(value string) string {
 	replacer := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "@", "@\u200b", "\\", "\\\\", "*", "\\*", "_", "\\_", "[", "\\[", "]", "\\]", "(", "\\(", ")", "\\)", "#", "\\#", "!", "\\!", "|", "\\|", "`", "\\`", "~", "\\~")

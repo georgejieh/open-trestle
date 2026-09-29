@@ -20,6 +20,8 @@ var (
 	ErrInvalidPublicationLimit = errors.New("invalid publication limit")
 	// ErrInvalidPublicationPolicyIdentity identifies policy content inconsistent with its identity.
 	ErrInvalidPublicationPolicyIdentity = errors.New("invalid publication policy identity")
+	// ErrInvalidPublicationSelection identifies malformed or cross-wired selected findings.
+	ErrInvalidPublicationSelection = errors.New("invalid publication selection")
 	// ErrInvalidPublicationReadinessStatus identifies an unknown readiness outcome.
 	ErrInvalidPublicationReadinessStatus = errors.New("invalid publication readiness status")
 	// ErrPublicationReadinessBindingMismatch identifies an unrelated finding set and verification receipt.
@@ -94,6 +96,8 @@ const (
 	PublicationBelowThreshold
 	PublicationBlockedInconclusive
 	PublicationBlockedIndependence
+	PublicationBlockedSensitiveContent
+	PublicationBlockedInstructionRisk
 )
 
 func (s PublicationReadinessStatus) String() string {
@@ -108,12 +112,16 @@ func (s PublicationReadinessStatus) String() string {
 		return "blocked_inconclusive"
 	case PublicationBlockedIndependence:
 		return "blocked_independence"
+	case PublicationBlockedSensitiveContent:
+		return "blocked_sensitive_content"
+	case PublicationBlockedInstructionRisk:
+		return "blocked_instruction_risk"
 	default:
 		return ""
 	}
 }
 func ParsePublicationReadinessStatus(value string) (PublicationReadinessStatus, error) {
-	for status := PublicationAdvisoryReady; status <= PublicationBlockedIndependence; status++ {
+	for status := PublicationAdvisoryReady; status <= PublicationBlockedInstructionRisk; status++ {
 		if status.String() == value {
 			return status, nil
 		}
@@ -127,6 +135,214 @@ func (s PublicationReadinessStatus) Validate() error {
 	return nil
 }
 
+// PublicationSelection is the frozen policy-selected projection scanned and rendered for publication.
+type PublicationSelection struct {
+	identity                    string
+	status                      PublicationReadinessStatus
+	policy                      PublicationPolicy
+	verificationReceiptIdentity string
+	verifiedFindingSetIdentity  string
+	reviewScopeIdentity         string
+	snapshotIdentity            string
+	independenceLevel           gateway.RouteIndependenceLevel
+	verifiedCount               uint8
+	rejectedCount               uint8
+	inconclusiveCount           uint8
+	belowThresholdCount         uint8
+	inlineFindings              []VerifiedFinding
+	summaryOnlyFindings         []VerifiedFinding
+	inlineProjection            []PublishableFinding
+	summaryOnlyProjection       []PublishableFinding
+}
+
+func SelectPublicationFindings(policy PublicationPolicy, receipt IndependentVerificationReceipt, set VerifiedFindingSet) (PublicationSelection, error) {
+	if policy.Validate() != nil || receipt.Validate() != nil || set.Validate() != nil {
+		return PublicationSelection{}, ErrInvalidPublicationSelection
+	}
+	matchingIdentity := set.IndependentReceiptIdentity() == receipt.Identity() && set.SnapshotIdentity() == receipt.SnapshotIdentity()
+	matchingCounts := set.CandidateCount() == uint8(len(receipt.candidateIdentities)) && set.VerifiedCount() == receipt.VerifiedCount() && set.RejectedCount() == receipt.RejectedCount() && set.InconclusiveCount() == receipt.InconclusiveCount()
+	if !matchingIdentity || !matchingCounts {
+		return PublicationSelection{}, ErrPublicationReadinessBindingMismatch
+	}
+	selection := PublicationSelection{
+		policy: policy, verificationReceiptIdentity: receipt.Identity(), verifiedFindingSetIdentity: set.Identity(),
+		reviewScopeIdentity: receipt.ReviewScopeIdentity(), snapshotIdentity: set.SnapshotIdentity(),
+		independenceLevel: receipt.IndependenceLevel(), verifiedCount: set.VerifiedCount(), rejectedCount: set.RejectedCount(), inconclusiveCount: set.InconclusiveCount(),
+	}
+	eligible := make([]VerifiedFinding, 0, len(set.findings))
+	for _, finding := range set.findings {
+		if severityRank(finding.Severity()) < severityRank(policy.MinimumSeverity()) {
+			selection.belowThresholdCount++
+			continue
+		}
+		eligible = append(eligible, finding)
+	}
+	sort.Slice(eligible, func(i, j int) bool { return publicationFindingLess(eligible[i], eligible[j]) })
+	count := min(len(eligible), int(policy.MaxInlineFindings()))
+	selection.inlineFindings = append([]VerifiedFinding(nil), eligible[:count]...)
+	selection.summaryOnlyFindings = append([]VerifiedFinding(nil), eligible[count:]...)
+	if len(selection.inlineFindings) == 0 {
+		selection.inlineFindings = nil
+	}
+	if len(selection.summaryOnlyFindings) == 0 {
+		selection.summaryOnlyFindings = nil
+	}
+	selection.inlineProjection, _ = publishableFindings(selection.inlineFindings)
+	selection.summaryOnlyProjection, _ = publishableFindings(selection.summaryOnlyFindings)
+	if len(selection.inlineProjection) == 0 {
+		selection.inlineProjection = nil
+	}
+	if len(selection.summaryOnlyProjection) == 0 {
+		selection.summaryOnlyProjection = nil
+	}
+	switch {
+	case receipt.IndependenceLevel() < policy.MinimumIndependence():
+		selection.status = PublicationBlockedIndependence
+	case policy.BlocksOnInconclusive() && set.InconclusiveCount() != 0:
+		selection.status = PublicationBlockedInconclusive
+	case set.VerifiedCount() == 0:
+		selection.status = PublicationNoVerifiedFindings
+	case len(eligible) == 0:
+		selection.status = PublicationBelowThreshold
+	default:
+		selection.status = PublicationAdvisoryReady
+	}
+	selection.identity = derivePublicationSelectionIdentity(selection)
+	if selection.Validate() != nil {
+		return PublicationSelection{}, ErrInvalidPublicationSelection
+	}
+	return selection, nil
+}
+
+func (s PublicationSelection) Identity() string                   { return s.identity }
+func (s PublicationSelection) Status() PublicationReadinessStatus { return s.status }
+func (s PublicationSelection) Policy() PublicationPolicy          { return s.policy }
+func (s PublicationSelection) PolicyIdentity() string             { return s.policy.Identity() }
+func (s PublicationSelection) VerificationReceiptIdentity() string {
+	return s.verificationReceiptIdentity
+}
+func (s PublicationSelection) VerifiedFindingSetIdentity() string {
+	return s.verifiedFindingSetIdentity
+}
+func (s PublicationSelection) ReviewScopeIdentity() string { return s.reviewScopeIdentity }
+func (s PublicationSelection) SnapshotIdentity() string    { return s.snapshotIdentity }
+func (s PublicationSelection) BelowThresholdCount() uint8  { return s.belowThresholdCount }
+func (s PublicationSelection) InlineFindings() []VerifiedFinding {
+	return append([]VerifiedFinding(nil), s.inlineFindings...)
+}
+func (s PublicationSelection) SummaryOnlyFindings() []VerifiedFinding {
+	return append([]VerifiedFinding(nil), s.summaryOnlyFindings...)
+}
+func (s PublicationSelection) InlinePublishableFindings() []PublishableFinding {
+	return append([]PublishableFinding(nil), s.inlineProjection...)
+}
+func (s PublicationSelection) SummaryOnlyPublishableFindings() []PublishableFinding {
+	return append([]PublishableFinding(nil), s.summaryOnlyProjection...)
+}
+func (s PublicationSelection) PublishableCount() int {
+	return len(s.inlineFindings) + len(s.summaryOnlyFindings)
+}
+func (s PublicationSelection) Validate() error {
+	if s.status.Validate() != nil || s.status == PublicationBlockedSensitiveContent || s.status == PublicationBlockedInstructionRisk || s.policy.Validate() != nil || s.independenceLevel.Validate() != nil {
+		return ErrInvalidPublicationSelection
+	}
+	for _, identity := range []string{s.identity, s.verificationReceiptIdentity, s.verifiedFindingSetIdentity, s.reviewScopeIdentity, s.snapshotIdentity} {
+		if !validCandidateDigest(identity) {
+			return ErrInvalidPublicationSelection
+		}
+	}
+	total := int(s.verifiedCount) + int(s.rejectedCount) + int(s.inconclusiveCount)
+	accounted := len(s.inlineFindings) + len(s.summaryOnlyFindings) + int(s.belowThresholdCount)
+	if total > maxCandidateFindings || accounted != int(s.verifiedCount) || len(s.inlineFindings) > int(s.policy.MaxInlineFindings()) {
+		return ErrInvalidPublicationSelection
+	}
+	hasSelected := s.PublishableCount() != 0
+	switch s.status {
+	case PublicationBlockedIndependence:
+		if s.independenceLevel >= s.policy.MinimumIndependence() {
+			return ErrInvalidPublicationSelection
+		}
+	case PublicationBlockedInconclusive:
+		if !s.policy.BlocksOnInconclusive() || s.inconclusiveCount == 0 || s.independenceLevel < s.policy.MinimumIndependence() {
+			return ErrInvalidPublicationSelection
+		}
+	case PublicationNoVerifiedFindings:
+		if s.verifiedCount != 0 || hasSelected || s.belowThresholdCount != 0 {
+			return ErrInvalidPublicationSelection
+		}
+	case PublicationBelowThreshold:
+		if s.verifiedCount == 0 || hasSelected || s.belowThresholdCount != s.verifiedCount {
+			return ErrInvalidPublicationSelection
+		}
+	case PublicationAdvisoryReady:
+		if !hasSelected || s.independenceLevel < s.policy.MinimumIndependence() || s.policy.BlocksOnInconclusive() && s.inconclusiveCount != 0 {
+			return ErrInvalidPublicationSelection
+		}
+	}
+	previous := VerifiedFinding{}
+	seen := map[string]struct{}{}
+	for _, group := range [][]VerifiedFinding{s.inlineFindings, s.summaryOnlyFindings} {
+		for _, finding := range group {
+			if finding.Validate() != nil || finding.snapshotIdentity != s.snapshotIdentity || severityRank(finding.Severity()) < severityRank(s.policy.MinimumSeverity()) || previous.Identity() != "" && publicationFindingLess(finding, previous) {
+				return ErrInvalidPublicationSelection
+			}
+			if _, exists := seen[finding.Identity()]; exists {
+				return ErrInvalidPublicationSelection
+			}
+			seen[finding.Identity()] = struct{}{}
+			previous = finding
+		}
+	}
+	expectedInline, err := publishableFindings(s.inlineFindings)
+	if err != nil || !equalPublishableFindings(expectedInline, s.inlineProjection) {
+		return ErrInvalidPublicationSelection
+	}
+	expectedSummary, err := publishableFindings(s.summaryOnlyFindings)
+	if err != nil || !equalPublishableFindings(expectedSummary, s.summaryOnlyProjection) {
+		return ErrInvalidPublicationSelection
+	}
+	if s.identity != derivePublicationSelectionIdentity(s) {
+		return ErrInvalidPublicationSelection
+	}
+	return nil
+}
+
+func equalPublishableFindings(left, right []PublishableFinding) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func derivePublicationSelectionIdentity(selection PublicationSelection) string {
+	inline := verifiedFindingIdentities(selection.inlineFindings)
+	summary := verifiedFindingIdentities(selection.summaryOnlyFindings)
+	encoded, _ := json.Marshal(struct {
+		Contract     string   `json:"contract"`
+		Version      int      `json:"version"`
+		Status       string   `json:"status"`
+		Policy       string   `json:"policy"`
+		Receipt      string   `json:"receipt"`
+		Set          string   `json:"set"`
+		Scope        string   `json:"scope"`
+		Snapshot     string   `json:"snapshot"`
+		Independence string   `json:"independence"`
+		Verified     uint8    `json:"verified"`
+		Rejected     uint8    `json:"rejected"`
+		Inconclusive uint8    `json:"inconclusive"`
+		Below        uint8    `json:"below"`
+		Inline       []string `json:"inline"`
+		Summary      []string `json:"summary"`
+	}{"open-trestle/publication-selection", 1, selection.status.String(), selection.policy.Identity(), selection.verificationReceiptIdentity, selection.verifiedFindingSetIdentity, selection.reviewScopeIdentity, selection.snapshotIdentity, selection.independenceLevel.String(), selection.verifiedCount, selection.rejectedCount, selection.inconclusiveCount, selection.belowThresholdCount, inline, summary})
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:])
+}
+
 // PublicationReadiness selects advisory output but never grants an external effect.
 type PublicationReadiness struct {
 	identity                    string
@@ -134,6 +350,10 @@ type PublicationReadiness struct {
 	policy                      PublicationPolicy
 	verificationReceiptIdentity string
 	verifiedFindingSetIdentity  string
+	selectionIdentity           string
+	selection                   PublicationSelection
+	contentScanReceiptIdentity  string
+	contentScanReceipt          PublicationContentScanReceipt
 	reviewScopeIdentity         string
 	snapshotIdentity            string
 	generationContextIdentity   string
@@ -146,63 +366,38 @@ type PublicationReadiness struct {
 	summaryOnlyFindings         []VerifiedFinding
 }
 
-func EvaluatePublicationReadiness(policy PublicationPolicy, receipt IndependentVerificationReceipt, set VerifiedFindingSet) (PublicationReadiness, error) {
-	if err := policy.Validate(); err != nil {
-		return PublicationReadiness{}, err
+func EvaluatePublicationReadiness(policy PublicationPolicy, receipt IndependentVerificationReceipt, set VerifiedFindingSet, verificationContext PublicationVerificationContext, selection PublicationSelection, contentScan PublicationContentScanReceipt) (PublicationReadiness, error) {
+	expected, err := SelectPublicationFindings(policy, receipt, set)
+	if err != nil || selection.Validate() != nil || selection.Identity() != expected.Identity() {
+		return PublicationReadiness{}, ErrInvalidPublicationSelection
 	}
-	if err := receipt.Validate(); err != nil {
-		return PublicationReadiness{}, err
-	}
-	if err := set.Validate(); err != nil {
-		return PublicationReadiness{}, err
-	}
-	matchingIdentity := set.IndependentReceiptIdentity() == receipt.Identity() && set.SnapshotIdentity() == receipt.snapshotIdentity
-	matchingCandidateCount := set.CandidateCount() == uint8(len(receipt.candidateIdentities))
-	matchingVerdictCounts := set.VerifiedCount() == receipt.VerifiedCount() && set.RejectedCount() == receipt.RejectedCount() && set.InconclusiveCount() == receipt.InconclusiveCount()
-	matchingCounts := matchingCandidateCount && matchingVerdictCounts
-	if !matchingIdentity || !matchingCounts {
-		return PublicationReadiness{}, ErrPublicationReadinessBindingMismatch
+	if selection.Status() == PublicationAdvisoryReady {
+		if err := contentScan.validateFor(receipt, set, verificationContext, selection); err != nil {
+			return PublicationReadiness{}, err
+		}
+	} else if contentScan.Identity() != "" {
+		return PublicationReadiness{}, ErrPublicationContentScanMismatch
 	}
 	r := PublicationReadiness{
-		policy: policy, verificationReceiptIdentity: receipt.Identity(),
-		verifiedFindingSetIdentity: set.Identity(), reviewScopeIdentity: receipt.ReviewScopeIdentity(),
-		snapshotIdentity: set.SnapshotIdentity(), generationContextIdentity: receipt.GenerationContextIdentity(),
-		independenceLevel: receipt.IndependenceLevel(), verifiedCount: set.VerifiedCount(),
-		rejectedCount: set.RejectedCount(), inconclusiveCount: set.InconclusiveCount(),
+		status: selection.Status(), policy: policy, verificationReceiptIdentity: receipt.Identity(),
+		verifiedFindingSetIdentity: set.Identity(), selectionIdentity: selection.Identity(), selection: selection,
+		contentScanReceiptIdentity: contentScan.Identity(), contentScanReceipt: contentScan,
+		reviewScopeIdentity: receipt.ReviewScopeIdentity(), snapshotIdentity: set.SnapshotIdentity(), generationContextIdentity: receipt.GenerationContextIdentity(),
+		independenceLevel: receipt.IndependenceLevel(), verifiedCount: set.VerifiedCount(), rejectedCount: set.RejectedCount(), inconclusiveCount: set.InconclusiveCount(),
+		belowThresholdCount: selection.BelowThresholdCount(), inlineFindings: selection.InlineFindings(), summaryOnlyFindings: selection.SummaryOnlyFindings(),
 	}
-	switch {
-	case receipt.IndependenceLevel() < policy.MinimumIndependence():
-		r.status = PublicationBlockedIndependence
-	case policy.BlocksOnInconclusive() && set.InconclusiveCount() != 0:
-		r.status = PublicationBlockedInconclusive
-	case set.VerifiedCount() == 0:
-		r.status = PublicationNoVerifiedFindings
-	default:
-		eligible := make([]VerifiedFinding, 0, len(set.findings))
-		for _, finding := range set.findings {
-			if severityRank(finding.Severity()) < severityRank(policy.MinimumSeverity()) {
-				r.belowThresholdCount++
-				continue
-			}
-			eligible = append(eligible, finding)
+	if selection.Status() != PublicationAdvisoryReady {
+		r.inlineFindings, r.summaryOnlyFindings = nil, nil
+	}
+	if selection.Status() == PublicationAdvisoryReady {
+		switch {
+		case contentScan.Initial().MatchCount != 0:
+			r.status = PublicationBlockedSensitiveContent
+			r.inlineFindings, r.summaryOnlyFindings = nil, nil
+		case contentScan.HasInstructionRisk():
+			r.status = PublicationBlockedInstructionRisk
+			r.inlineFindings, r.summaryOnlyFindings = nil, nil
 		}
-		if len(eligible) == 0 {
-			r.status = PublicationBelowThreshold
-			break
-		}
-		sort.Slice(eligible, func(i, j int) bool { return publicationFindingLess(eligible[i], eligible[j]) })
-		count := min(len(eligible), int(policy.MaxInlineFindings()))
-		r.inlineFindings = append([]VerifiedFinding(nil), eligible[:count]...)
-		for _, finding := range eligible[count:] {
-			r.summaryOnlyFindings = append(r.summaryOnlyFindings, finding)
-		}
-		if len(r.inlineFindings) == 0 {
-			r.inlineFindings = nil
-		}
-		if len(r.summaryOnlyFindings) == 0 {
-			r.summaryOnlyFindings = nil
-		}
-		r.status = PublicationAdvisoryReady
 	}
 	r.identity = derivePublicationReadinessIdentity(r)
 	if err := r.Validate(); err != nil {
@@ -220,6 +415,14 @@ func (r PublicationReadiness) VerificationReceiptIdentity() string {
 }
 func (r PublicationReadiness) VerifiedFindingSetIdentity() string {
 	return r.verifiedFindingSetIdentity
+}
+func (r PublicationReadiness) SelectionIdentity() string       { return r.selectionIdentity }
+func (r PublicationReadiness) Selection() PublicationSelection { return r.selection }
+func (r PublicationReadiness) ContentScanReceiptIdentity() string {
+	return r.contentScanReceiptIdentity
+}
+func (r PublicationReadiness) ContentScanReceipt() PublicationContentScanReceipt {
+	return r.contentScanReceipt
 }
 func (r PublicationReadiness) ReviewScopeIdentity() string       { return r.reviewScopeIdentity }
 func (r PublicationReadiness) GenerationContextIdentity() string { return r.generationContextIdentity }
@@ -248,10 +451,21 @@ func (r PublicationReadiness) Validate() error {
 	if err := r.policy.Validate(); err != nil {
 		return err
 	}
-	for _, id := range []string{r.verificationReceiptIdentity, r.verifiedFindingSetIdentity, r.reviewScopeIdentity, r.snapshotIdentity, r.generationContextIdentity} {
+	for _, id := range []string{r.verificationReceiptIdentity, r.verifiedFindingSetIdentity, r.selectionIdentity, r.reviewScopeIdentity, r.snapshotIdentity, r.generationContextIdentity} {
 		if !validCandidateDigest(id) {
 			return ErrInvalidPublicationReadiness
 		}
+	}
+	if r.selection.Validate() != nil || r.selection.Identity() != r.selectionIdentity || r.selection.PolicyIdentity() != r.policy.Identity() || r.selection.VerificationReceiptIdentity() != r.verificationReceiptIdentity || r.selection.VerifiedFindingSetIdentity() != r.verifiedFindingSetIdentity || r.selection.ReviewScopeIdentity() != r.reviewScopeIdentity || r.selection.SnapshotIdentity() != r.snapshotIdentity || r.selection.verifiedCount != r.verifiedCount || r.selection.rejectedCount != r.rejectedCount || r.selection.inconclusiveCount != r.inconclusiveCount || r.selection.belowThresholdCount != r.belowThresholdCount {
+		return ErrInvalidPublicationReadiness
+	}
+	requiresScan := r.selection.Status() == PublicationAdvisoryReady
+	if !requiresScan {
+		if r.contentScanReceiptIdentity != "" || r.contentScanReceipt.Identity() != "" || r.status != r.selection.Status() {
+			return ErrInvalidPublicationReadiness
+		}
+	} else if !validCandidateDigest(r.contentScanReceiptIdentity) || r.contentScanReceipt.Validate() != nil || r.contentScanReceipt.Identity() != r.contentScanReceiptIdentity || r.contentScanReceipt.VerifiedFindingSetIdentity() != r.verifiedFindingSetIdentity || r.contentScanReceipt.SelectionIdentity() != r.selectionIdentity || r.contentScanReceipt.PolicyIdentity() != r.policy.Identity() || r.contentScanReceipt.ReviewScopeIdentity() != r.reviewScopeIdentity {
+		return ErrInvalidPublicationReadiness
 	}
 	if err := r.independenceLevel.Validate(); err != nil {
 		return err
@@ -270,26 +484,34 @@ func (r PublicationReadiness) Validate() error {
 	return nil
 }
 func (r PublicationReadiness) validateSelections() error {
-	has := len(r.inlineFindings) != 0 || len(r.summaryOnlyFindings) != 0 || r.belowThresholdCount != 0
+	has := len(r.inlineFindings) != 0 || len(r.summaryOnlyFindings) != 0
 	switch r.status {
 	case PublicationBlockedIndependence:
-		if r.independenceLevel >= r.policy.MinimumIndependence() || has {
+		if r.selection.Status() != PublicationBlockedIndependence || has {
+			return ErrInvalidPublicationReadiness
+		}
+	case PublicationBlockedSensitiveContent:
+		if r.selection.Status() != PublicationAdvisoryReady || has || r.contentScanReceipt.Initial().MatchCount == 0 {
+			return ErrInvalidPublicationReadiness
+		}
+	case PublicationBlockedInstructionRisk:
+		if r.selection.Status() != PublicationAdvisoryReady || has || r.contentScanReceipt.Initial().MatchCount != 0 || !r.contentScanReceipt.HasInstructionRisk() {
 			return ErrInvalidPublicationReadiness
 		}
 	case PublicationBlockedInconclusive:
-		if !r.policy.BlocksOnInconclusive() || r.inconclusiveCount == 0 || r.independenceLevel < r.policy.MinimumIndependence() || has {
+		if r.selection.Status() != PublicationBlockedInconclusive || has {
 			return ErrInvalidPublicationReadiness
 		}
 	case PublicationNoVerifiedFindings:
-		if r.verifiedCount != 0 || has {
+		if r.selection.Status() != PublicationNoVerifiedFindings || has {
 			return ErrInvalidPublicationReadiness
 		}
 	case PublicationBelowThreshold:
-		if r.verifiedCount == 0 || r.belowThresholdCount != r.verifiedCount || len(r.inlineFindings) != 0 || len(r.summaryOnlyFindings) != 0 {
+		if r.selection.Status() != PublicationBelowThreshold || r.verifiedCount == 0 || r.belowThresholdCount != r.verifiedCount || has {
 			return ErrInvalidPublicationReadiness
 		}
 	case PublicationAdvisoryReady:
-		if len(r.inlineFindings)+len(r.summaryOnlyFindings) == 0 || len(r.inlineFindings)+len(r.summaryOnlyFindings)+int(r.belowThresholdCount) != int(r.verifiedCount) {
+		if r.selection.Status() != PublicationAdvisoryReady || r.contentScanReceipt.Initial().MatchCount != 0 || r.contentScanReceipt.HasInstructionRisk() || len(r.inlineFindings)+len(r.summaryOnlyFindings) == 0 || !equalFindingIdentities(r.inlineFindings, r.selection.inlineFindings) || !equalFindingIdentities(r.summaryOnlyFindings, r.selection.summaryOnlyFindings) {
 			return ErrInvalidPublicationReadiness
 		}
 	}
@@ -325,6 +547,17 @@ func (r PublicationReadiness) validateSelections() error {
 		seen[finding.Identity()] = struct{}{}
 	}
 	return nil
+}
+func equalFindingIdentities(left, right []VerifiedFinding) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index].Identity() != right[index].Identity() {
+			return false
+		}
+	}
+	return true
 }
 func severityRank(s Severity) uint8 {
 	switch s {
@@ -387,6 +620,8 @@ func derivePublicationReadinessIdentity(r PublicationReadiness) string {
 		Policy            string   `json:"policy"`
 		Receipt           string   `json:"receipt"`
 		Set               string   `json:"set"`
+		Selection         string   `json:"selection"`
+		ContentScan       string   `json:"content_scan"`
 		Scope             string   `json:"scope"`
 		Snapshot          string   `json:"snapshot"`
 		GenerationContext string   `json:"generation_context"`
@@ -400,7 +635,7 @@ func derivePublicationReadinessIdentity(r PublicationReadiness) string {
 	}{
 		Contract: "open-trestle/publication-readiness", Version: 1,
 		Status: r.status.String(), Policy: r.policy.Identity(), Receipt: r.verificationReceiptIdentity,
-		Set: r.verifiedFindingSetIdentity, Scope: r.reviewScopeIdentity, Snapshot: r.snapshotIdentity, GenerationContext: r.generationContextIdentity,
+		Set: r.verifiedFindingSetIdentity, Selection: r.selectionIdentity, ContentScan: r.contentScanReceiptIdentity, Scope: r.reviewScopeIdentity, Snapshot: r.snapshotIdentity, GenerationContext: r.generationContextIdentity,
 		Independence: r.independenceLevel.String(), Verified: r.verifiedCount,
 		Rejected: r.rejectedCount, Inconclusive: r.inconclusiveCount, Below: r.belowThresholdCount,
 		Inline: inline, Summary: summary,

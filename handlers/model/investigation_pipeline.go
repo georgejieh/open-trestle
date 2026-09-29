@@ -141,7 +141,7 @@ func (p InvestigationPipelineProfile) DispatcherCatalogIdentity() string {
 	return p.options.DispatcherCatalogIdentity
 }
 
-type InvestigationSupportBindings struct{ Change, Analysis, Memory string }
+type InvestigationSupportBindings struct{ Change, Analysis, Memory, PublicationScanner string }
 type InvestigationPipelineOptions struct {
 	Profile InvestigationPipelineProfile
 	Store   artifact.Store
@@ -202,7 +202,7 @@ func NewInvestigationPipeline(o InvestigationPipelineOptions) (*InvestigationPip
 	if o.Profile.Validate() != nil || nilInterface(o.Store) || nilInterface(o.Ledger) || nilInterface(o.Journal) || nilInterface(o.Clock) || nilInterface(o.Source) || o.Catalog.Validate() != nil || o.Catalog.Identity() != o.Profile.DispatcherCatalogIdentity() {
 		return nil, ErrInvestigationPipeline
 	}
-	for _, id := range []string{o.Support.Change, o.Support.Analysis, o.Support.Memory} {
+	for _, id := range []string{o.Support.Change, o.Support.Analysis, o.Support.Memory, o.Support.PublicationScanner} {
 		if !validDigest(id) {
 			return nil, ErrInvestigationPipeline
 		}
@@ -211,7 +211,7 @@ func NewInvestigationPipeline(o InvestigationPipelineOptions) (*InvestigationPip
 	if err != nil {
 		return nil, ErrInvestigationPipeline
 	}
-	p := &InvestigationPipeline{options: o, coordinator: co, identity: toolRecordIdentity([]any{"open-trestle/investigation-pipeline", 1, o.Profile.Identity()}), captures: map[string]*pipelineCaptureEntry{}}
+	p := &InvestigationPipeline{options: o, coordinator: co, identity: toolRecordIdentity([]any{"open-trestle/investigation-pipeline", 2, o.Profile.Identity(), o.Support.PublicationScanner}), captures: map[string]*pipelineCaptureEntry{}}
 	p.capture = &pipelineCaptureStore{p}
 	p.acquisition, err = NewInvestigationAcquisitionHandler(p.capture, o.Source, o.Clock)
 	if err != nil {
@@ -231,8 +231,14 @@ func (p *InvestigationPipeline) Profile() InvestigationPipelineProfile {
 	}
 	return p.options.Profile
 }
+func (p *InvestigationPipeline) PublicationScannerIdentity() string {
+	if p == nil {
+		return ""
+	}
+	return p.options.Support.PublicationScanner
+}
 func (p *InvestigationPipeline) Validate() error {
-	if p == nil || p.options.Profile.Validate() != nil || p.acquisition == nil || p.acquisition.Validate() != nil || p.capture == nil || p.capture.owner != p || p.identity != toolRecordIdentity([]any{"open-trestle/investigation-pipeline", 1, p.options.Profile.Identity()}) || nilInterface(p.options.Store) || nilInterface(p.options.Ledger) || nilInterface(p.options.Journal) || nilInterface(p.options.Clock) || p.options.Catalog.Validate() != nil {
+	if p == nil || p.options.Profile.Validate() != nil || p.acquisition == nil || p.acquisition.Validate() != nil || p.capture == nil || p.capture.owner != p || p.identity != toolRecordIdentity([]any{"open-trestle/investigation-pipeline", 2, p.options.Profile.Identity(), p.options.Support.PublicationScanner}) || nilInterface(p.options.Store) || nilInterface(p.options.Ledger) || nilInterface(p.options.Journal) || nilInterface(p.options.Clock) || p.options.Catalog.Validate() != nil {
 		return ErrInvestigationPipeline
 	}
 	return nil
@@ -258,7 +264,7 @@ func (p *InvestigationPipeline) HandlerIdentity(kind controlplane.TaskKind) (str
 	case controlplane.TaskVerifyCandidates:
 		return toolRecordIdentity([]any{"open-trestle/investigation-verification-task-handler", 1, profile.Identity()}), nil
 	case controlplane.TaskEvaluatePublication:
-		return toolRecordIdentity([]any{"open-trestle/investigation-readiness-task-handler", 1, profile.Identity(), profile.ReviewPolicyIdentity(), profile.PublicationPolicyIdentity()}), nil
+		return toolRecordIdentity([]any{"open-trestle/investigation-readiness-task-handler", 2, p.Identity(), p.options.Support.PublicationScanner}), nil
 	}
 	return "", ErrInvestigationPipeline
 }

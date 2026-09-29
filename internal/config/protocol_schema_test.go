@@ -38,8 +38,8 @@ func TestPublishedProtocolSchemasHaveUniqueBoundedObjectContracts(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count != 87 {
-		t.Fatalf("published schema count=%d, want 87", count)
+	if count != 89 {
+		t.Fatalf("published schema count=%d, want 89", count)
 	}
 }
 

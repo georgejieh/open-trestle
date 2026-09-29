@@ -22,6 +22,9 @@ func (CleanVerificationSanitizer) ExpectedBinaryDigests() review.ScannerBinaryDi
 func (value CleanVerificationSanitizer) SanitizeVerification(_ context.Context, raw provider.Request, scopeIdentity string) (review.SanitizedModelRequest, review.SanitizedEgressReceipt, error) {
 	return cleanSanitizedRequest(raw, scopeIdentity, value.ExpectedBinaryDigests())
 }
+func (CleanGenerationSanitizer) PublicationContentScanner() review.PublicationContentScanner {
+	return NewCleanPublicationScanner()
+}
 func (CleanGenerationSanitizer) Identity() string { return strings.Repeat("8", 64) }
 func (CleanGenerationSanitizer) ExpectedBinaryDigests() review.ScannerBinaryDigests {
 	return review.ScannerBinaryDigests{LauncherSHA256: strings.Repeat("b", 64), WorkerSHA256: strings.Repeat("c", 64)}

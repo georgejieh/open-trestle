@@ -55,6 +55,8 @@ Artifact schemas:
 - `schemas/artifact/semantic-impact-profile-v1.schema.json`
 - `schemas/artifact/memory-retrieval-result-v1.schema.json`
 - `schemas/artifact/publication-readiness-result-v1.schema.json`
+- `schemas/artifact/publication-readiness-result-v2.schema.json`
+- `schemas/artifact/publication-content-scan-receipt-v1.schema.json`
 - `schemas/artifact/publication-input-v1.schema.json`
 - `schemas/artifact/publication-receipt-v1.schema.json`
 - `schemas/artifact/route-attempt-authorization-v1.schema.json`

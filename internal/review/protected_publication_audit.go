@@ -30,7 +30,7 @@ func RecordProtectedPublicationPrerequisites(ctx context.Context, ledger audit.L
 	if err != nil {
 		return ProtectedPublicationAuditReceipt{}, err
 	}
-	readinessParents := []string{readiness.VerificationReceiptIdentity(), readiness.VerifiedFindingSetIdentity(), readiness.PolicyIdentity()}
+	readinessParents := []string{readiness.VerificationReceiptIdentity(), readiness.VerifiedFindingSetIdentity(), readiness.SelectionIdentity(), readiness.ContentScanReceiptIdentity(), readiness.ContentScanReceipt().ScannerAuthorityIdentity(), readiness.PolicyIdentity()}
 	readinessEvent, err := appendUniqueModelAuditEvent(ctx, ledger, scope, modelAuditEventSpecification{kind: audit.EventPublicationReadinessEvaluated, subject: readiness.Identity(), parents: readinessParents}, at)
 	if err != nil {
 		return ProtectedPublicationAuditReceipt{}, err

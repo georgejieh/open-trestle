@@ -1,0 +1,287 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:artifact:publication-content-scan-receipt:v1",
+  "title": "Open Trestle publication content scan receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "identity",
+    "review_scope_identity",
+    "verified_finding_set_identity",
+    "selection_identity",
+    "publication_policy_identity",
+    "verification_context_identity",
+    "scanner_authority_identity",
+    "scanner",
+    "initial",
+    "residual",
+    "fields",
+    "instruction_risk_evidence",
+    "instruction_risk_fields"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/publication-content-scan-receipt"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "review_scope_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "verified_finding_set_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "selection_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "publication_policy_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "verification_context_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "scanner_authority_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "scanner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "worker_protocol",
+        "scanner",
+        "scanner_version",
+        "scanner_commit",
+        "ruleset_identity",
+        "ruleset_rule_count",
+        "build_profile",
+        "launcher_sha256",
+        "worker_sha256"
+      ],
+      "properties": {
+        "worker_protocol": {
+          "const": 1
+        },
+        "scanner": {
+          "const": "betterleaks"
+        },
+        "scanner_version": {
+          "const": "v1.8.1"
+        },
+        "scanner_commit": {
+          "const": "5eab48332cc48565864514e3bc6de89df091a7c4"
+        },
+        "ruleset_identity": {
+          "const": "27ded783c81940d13c22cc46556a3f8184baf397bff08a69fcfae87991925f42"
+        },
+        "ruleset_rule_count": {
+          "const": 417
+        },
+        "build_profile": {
+          "const": "public_detect_run_re2_purego_go1.25.12_linux_amd64_v1"
+        },
+        "launcher_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        "worker_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        }
+      }
+    },
+    "initial": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "complete",
+        "field_count",
+        "scanned_byte_count",
+        "match_count"
+      ],
+      "properties": {
+        "complete": {
+          "const": true
+        },
+        "field_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 150
+        },
+        "scanned_byte_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2097152
+        },
+        "match_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8192
+        }
+      }
+    },
+    "residual": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "complete",
+        "field_count",
+        "scanned_byte_count",
+        "match_count"
+      ],
+      "properties": {
+        "complete": {
+          "const": true
+        },
+        "field_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 150
+        },
+        "scanned_byte_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2097152
+        },
+        "match_count": {
+          "const": 0
+        }
+      }
+    },
+    "fields": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 150,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "ordinal",
+          "finding_identity",
+          "scanned_byte_count"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "title",
+              "claim",
+              "path"
+            ]
+          },
+          "ordinal": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 149
+          },
+          "finding_identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "scanned_byte_count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 262144
+          }
+        }
+      }
+    },
+    "instruction_risk_evidence": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 150,
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$",
+        "not": {
+          "const": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "instruction_risk_fields": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 150,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "ordinal",
+          "finding_identity"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "title",
+              "claim",
+              "path"
+            ]
+          },
+          "ordinal": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 149
+          },
+          "finding_identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          }
+        }
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    }
+  }
+}

@@ -224,6 +224,12 @@ func newSession(o SessionOptions, investigationPolicy *review.InvestigationPolic
 	}
 	ledger := audit.NewMemoryLedger()
 	diagnosticStore := diagnostics.NewMemoryStore()
+	publicationScanner := review.PublicationContentScanner(review.NewFixedPublicationContentScanner())
+	if provider, ok := o.GenerationSanitizer.(interface {
+		PublicationContentScanner() review.PublicationContentScanner
+	}); ok {
+		publicationScanner = provider.PublicationContentScanner()
+	}
 	var catalog runtimecatalog.PipelineCatalog
 	if investigationPolicy == nil {
 		generationAuthority, err := runtimecatalog.NewGenerationPolicyAuthorizerFromRuntimePolicy(o.Policy, o.Inventory, ledger)
@@ -282,7 +288,7 @@ func newSession(o SessionOptions, investigationPolicy *review.InvestigationPolic
 		if err != nil {
 			return nil, ErrInvalidSession
 		}
-		readiness, err := publicationhandler.NewReadinessHandler(store, diagnosticStore, o.Clock, o.Policy.ReviewPolicyIdentity(), o.Policy.Publication())
+		readiness, err := publicationhandler.NewReadinessHandler(store, diagnosticStore, o.Clock, o.Policy.ReviewPolicyIdentity(), o.Policy.Publication(), publicationScanner)
 		if err != nil {
 			return nil, ErrInvalidSession
 		}
@@ -312,7 +318,7 @@ func newSession(o SessionOptions, investigationPolicy *review.InvestigationPolic
 		if err != nil {
 			return nil, ErrInvalidSession
 		}
-		configuration := runtimecatalog.InvestigationCatalogOptions{Store: store, Diagnostics: diagnosticStore, Ledger: ledger, Journal: journal, Clock: o.Clock, Dispatchers: dispatchers, Source: source}
+		configuration := runtimecatalog.InvestigationCatalogOptions{Store: store, Diagnostics: diagnosticStore, Ledger: ledger, Journal: journal, Clock: o.Clock, Dispatchers: dispatchers, Source: source, PublicationScanner: publicationScanner}
 		catalog, prototype, err := runtimecatalog.NewInvestigationPipelineCatalog(profile, configuration)
 		if err != nil {
 			return nil, ErrInvalidSession

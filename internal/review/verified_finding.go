@@ -351,6 +351,9 @@ func (f VerifiedFinding) Format(state fmt.State, verb rune) {
 
 // Validate verifies independent lineage, exact evidence, severity, fingerprint, and identity.
 func (f VerifiedFinding) Validate() error {
+	if err := validateVerifiedFindingStringFieldFreeze(); err != nil {
+		return err
+	}
 	for _, identity := range []string{f.independentReceiptIdentity, f.snapshotIdentity, f.candidateIdentity, f.verificationIdentity, f.fingerprint} {
 		if !validCandidateDigest(identity) {
 			return ErrVerifiedFindingBindingMismatch

@@ -24,7 +24,7 @@ func TestNewReadinessHandlerBindsBothPolicies(t *testing.T) {
 	policy, _ := review.NewPublicationPolicy(review.SeverityMedium, 10, gateway.RouteIndependenceDistinctProvider, true)
 	diagnosticStore := diagnostics.NewMemoryStore()
 	handler, err := NewReadinessHandler(store, diagnosticStore, fixedClock{time.UnixMilli(100)}, strings.Repeat("a", 64), policy)
-	if err != nil || handler.Validate() != nil || handler.Kind() != controlplane.TaskEvaluatePublication || handler.HandlerIdentity() != "031872918541d21a5869460d6288f88b17fdb8d999b4dd8f44f2eabc4169030e" {
+	if err != nil || handler.Validate() != nil || handler.Kind() != controlplane.TaskEvaluatePublication || handler.HandlerIdentity() != "a8227171a24937cd4acba39e12b5583e79ba15e34a70f3750dd9eb373b578d1f" {
 		t.Fatalf("handler=(%#v,%v)", handler, err)
 	}
 	other, _ := review.NewPublicationPolicy(review.SeverityHigh, 10, gateway.RouteIndependenceDistinctProvider, true)

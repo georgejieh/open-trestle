@@ -98,3 +98,16 @@ func TestContextSourceOmissionCategoriesCoverCanonicalReasons(t *testing.T) {
 		t.Fatal("unknown omission reason accepted")
 	}
 }
+
+func TestPublicationInstructionRiskReadsDurableVerificationContext(t *testing.T) {
+	scope, memoryScope, snapshot, source, retrieval := contextPacketFixture(t, "line 10\n")
+	limits, _ := NewContextLimits(1<<20, 5)
+	generation, _ := NewContextPacket(scope, memoryScope, snapshot, ContextTaskCandidateGeneration, []ContextSource{source}, retrieval, limits)
+	generationRequest, _ := generation.ProviderRequest()
+	candidateResponse, _, _ := candidateFixture(t, `{"schema_version":1,"candidates":[{"title":"Issue","claim":"The value is unchecked.","severity_hint":"high","source_range":{"source_id":"source-1","start_line":10,"end_line":10},"evidence_ids":["source-1"]}]}`)
+	candidates, _ := ParseCandidateBatch(candidateResponse, snapshot, generation.EvidenceItems())
+	verification, _ := NewVerificationRequestContext(generationRequest.Payload(), generation.Identity(), scope.Identity(), generation.MemoryScopeIdentity(), generation.MemoryIdentity(), snapshot, generation.EvidenceItems(), candidates)
+	if risks := publicationInstructionRiskEvidence(verification); risks != nil {
+		t.Fatalf("clean durable verification context risks=%v", risks)
+	}
+}

@@ -44,6 +44,7 @@ type ModelPipelineArtifacts struct {
 	RouteIndependence       gateway.RouteIndependenceReceipt
 	IndependentVerification IndependentVerificationReceipt
 	VerifiedFindings        VerifiedFindingSet
+	PublicationContentScan  PublicationContentScanReceipt
 	PublicationReadiness    PublicationReadiness
 }
 
@@ -67,6 +68,10 @@ func RecordModelPipelineAudit(ctx context.Context, ledger audit.Ledger, scope au
 	}
 	generation := artifacts.GenerationContext
 	selection := generation.SourceSelection()
+	readinessParents := []string{artifacts.IndependentVerification.Identity(), artifacts.VerifiedFindings.Identity(), artifacts.PublicationReadiness.SelectionIdentity(), artifacts.PublicationReadiness.PolicyIdentity()}
+	if artifacts.PublicationContentScan.Identity() != "" {
+		readinessParents = append(readinessParents, artifacts.PublicationContentScan.Identity(), artifacts.PublicationContentScan.ScannerAuthorityIdentity())
+	}
 	specifications := []modelAuditEventSpecification{
 		{audit.EventContextSourcesSelected, selection.Identity(), []string{generation.Retrieval().Identity(), generation.SnapshotIdentity()}},
 		{audit.EventContextPacketAssembled, generation.Identity(), []string{selection.Identity(), generation.Retrieval().Identity(), generation.SnapshotIdentity()}},
@@ -81,7 +86,7 @@ func RecordModelPipelineAudit(ctx context.Context, ledger audit.Ledger, scope au
 				artifacts.RouteIndependence.Identity(), artifacts.Verification.Identity(),
 			},
 		},
-		{audit.EventPublicationReadinessEvaluated, artifacts.PublicationReadiness.Identity(), []string{artifacts.IndependentVerification.Identity(), artifacts.VerifiedFindings.Identity(), artifacts.PublicationReadiness.PolicyIdentity()}},
+		{audit.EventPublicationReadinessEvaluated, artifacts.PublicationReadiness.Identity(), readinessParents},
 	}
 	events := make([]audit.Event, len(specifications))
 	for index, specification := range specifications {
@@ -119,7 +124,11 @@ func validateModelPipelineArtifacts(scope audit.ReviewScope, artifacts ModelPipe
 	if err != nil || expectedFindings.Identity() != artifacts.VerifiedFindings.Identity() {
 		return ErrModelPipelineAuditArtifactMismatch
 	}
-	expectedReadiness, err := EvaluatePublicationReadiness(artifacts.PublicationReadiness.Policy(), expectedIndependent, expectedFindings)
+	expectedSelection, err := SelectPublicationFindings(artifacts.PublicationReadiness.Policy(), expectedIndependent, expectedFindings)
+	if err != nil || expectedSelection.Identity() != artifacts.PublicationReadiness.SelectionIdentity() {
+		return ErrModelPipelineAuditArtifactMismatch
+	}
+	expectedReadiness, err := EvaluatePublicationReadiness(artifacts.PublicationReadiness.Policy(), expectedIndependent, expectedFindings, artifacts.VerificationContext, expectedSelection, artifacts.PublicationContentScan)
 	if err != nil || expectedReadiness.Identity() != artifacts.PublicationReadiness.Identity() {
 		return ErrModelPipelineAuditArtifactMismatch
 	}

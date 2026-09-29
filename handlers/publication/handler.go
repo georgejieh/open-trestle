@@ -133,14 +133,18 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 	if err != nil {
 		return failure(controlplane.RunFailureInvalidInput)
 	}
-	readiness, err := review.EvaluatePublicationReadiness(h.policy, verification.IndependentReceipt(), verification.VerifiedFindings())
+	selection, err := review.SelectPublicationFindings(h.policy, verification.IndependentReceipt(), verification.VerifiedFindings())
+	if err != nil {
+		return failure(controlplane.RunFailureInvalidInput)
+	}
+	readiness, err := review.EvaluatePublicationReadiness(h.policy, verification.IndependentReceipt(), verification.VerifiedFindings(), verification.VerificationContext(), selection, readinessResult.contentScan)
 	if err != nil || readiness.Identity() != readinessResult.ReadinessIdentity() {
 		return failure(controlplane.RunFailureInvalidInput)
 	}
 	switch readiness.Status() {
 	case review.PublicationNoVerifiedFindings, review.PublicationBelowThreshold:
 		return h.persistReceipt(ctx, request, readinessArtifact, publicationInputArtifact, receiptWire{Contract: "open-trestle/publication-receipt", SchemaVersion: 1, Status: "not_required", ReadinessIdentity: readiness.Identity()}, at)
-	case review.PublicationBlockedInconclusive, review.PublicationBlockedIndependence:
+	case review.PublicationBlockedInconclusive, review.PublicationBlockedIndependence, review.PublicationBlockedSensitiveContent, review.PublicationBlockedInstructionRisk:
 		return failure(controlplane.RunFailurePolicy)
 	case review.PublicationAdvisoryReady:
 	default:

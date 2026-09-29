@@ -138,7 +138,20 @@ func (f *requiredPipeline) assertLineage(state controlplane.ReviewRunState) {
 	}
 	protected, err := review.NewProtectedSourceBinding(f.plan.Scope(), change.Repository(), change.HeadRevision(), headArtifact.Identity(), head.Identity(), head.ManifestIdentity(), changeArtifact.Identity(), change.Identity(), analysisArtifact.Identity(), contextArtifact.Identity(), input.ContextIdentity(), input.Snapshot().Identity(), bindings)
 	requiredCheck(t, err)
-	readiness, err := review.EvaluatePublicationReadiness(f.configuration.Publication(), verification.IndependentReceipt(), verification.VerifiedFindings())
+	readinessArtifact := f.output(state, "readiness")
+	var contentScanWire struct {
+		ContentScan json.RawMessage `json:"content_scan"`
+	}
+	requiredCheck(t, json.Unmarshal(readinessArtifact.Payload(), &contentScanWire))
+	contentScan, err := review.ParsePublicationContentScanReceipt(contentScanWire.ContentScan)
+	requiredCheck(t, err)
+	provenance := readinessArtifact.Provenance()
+	if !slices.Contains(provenance, contentScan.Identity()) || !slices.Contains(provenance, contentScan.ScannerAuthorityIdentity()) {
+		t.Fatal("readiness artifact lost content-scan receipt or scanner provenance")
+	}
+	selection, err := review.SelectPublicationFindings(f.configuration.Publication(), verification.IndependentReceipt(), verification.VerifiedFindings())
+	requiredCheck(t, err)
+	readiness, err := review.EvaluatePublicationReadiness(f.configuration.Publication(), verification.IndependentReceipt(), verification.VerifiedFindings(), verification.VerificationContext(), selection, contentScan)
 	requiredCheck(t, err)
 	if readiness.Status() != review.PublicationAdvisoryReady || len(readiness.InlineFindings()) != 1 {
 		t.Fatal("actual verified findings were not publication-ready")
@@ -151,7 +164,6 @@ func (f *requiredPipeline) assertLineage(state controlplane.ReviewRunState) {
 	if effect.Reason() != policy.AuthorizationRepositoryPolicy || effect.PolicyIdentity() != f.configuration.ReviewPolicyIdentity() || effect.PrincipalIdentity() != requiredDigest("repository-publication-operator") || !effect.Allows(policy.CapabilityPublication, f.plan.Scope().Identity(), f.clock.Now()) {
 		t.Fatal("publication bypassed the legitimate repository policy authority")
 	}
-	readinessArtifact := f.output(state, "readiness")
 	var readinessWire struct {
 		Readiness    string `json:"readiness_identity"`
 		Verification string `json:"verification_artifact_identity"`

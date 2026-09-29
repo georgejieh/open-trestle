@@ -21,6 +21,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/internal/scm"
+	"github.com/georgejieh/open-trestle/internal/testsupport"
 	"github.com/georgejieh/open-trestle/runtimecatalog"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 	"github.com/georgejieh/open-trestle/worker"
@@ -536,6 +537,9 @@ type bridgeFixture struct {
 }
 
 func newBridgeFixture(t *testing.T, mode string) *bridgeFixture {
+	return newBridgeFixtureWithScanner(t, mode, testsupport.NewCleanPublicationScanner())
+}
+func newBridgeFixtureWithScanner(t *testing.T, mode string, scanner review.PublicationContentScanner) *bridgeFixture {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.WithValue(context.Background(), bridgeRunKey{}, "foreground"), 30*time.Second)
 	f := &bridgeFixture{t: t, ctx: ctx, cancel: cancel, trace: newBridgeTrace(), gate: newBridgeGate(), clock: bridgeClock{}}
@@ -594,7 +598,7 @@ func newBridgeFixture(t *testing.T, mode string) *bridgeFixture {
 	requiredCheck(t, err)
 	profile, err := runtimecatalog.NewInvestigationProfileFromRuntimePolicy(configuration, inventory, policy, dispatchers.Identity())
 	requiredCheck(t, err)
-	f.catalog, f.bridge, err = runtimecatalog.NewInvestigationPipelineCatalog(profile, runtimecatalog.InvestigationCatalogOptions{Store: f.store, Diagnostics: f.diagnostics, Ledger: f.ledger, Journal: f.journal, Clock: f.clock, Dispatchers: dispatchers, Source: source})
+	f.catalog, f.bridge, err = runtimecatalog.NewInvestigationPipelineCatalog(profile, runtimecatalog.InvestigationCatalogOptions{Store: f.store, Diagnostics: f.diagnostics, Ledger: f.ledger, Journal: f.journal, Clock: f.clock, Dispatchers: dispatchers, Source: source, PublicationScanner: scanner})
 	requiredCheck(t, err)
 	scope, err := audit.NewReviewScope("tenant-a", "repo-a", "bridge-run")
 	requiredCheck(t, err)

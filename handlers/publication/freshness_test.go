@@ -19,6 +19,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/policy"
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/review"
+	"github.com/georgejieh/open-trestle/internal/secretscan"
 )
 
 type freshnessClock struct{ at time.Time }
@@ -286,7 +287,19 @@ func freshnessPublicationFixture(t *testing.T, at time.Time, lifetime time.Durat
 	check(err)
 	publicationPolicy, err := review.NewPublicationPolicy(review.SeverityMedium, 10, gateway.RouteIndependenceDistinctProvider, true)
 	check(err)
-	readiness, err := review.EvaluatePublicationReadiness(publicationPolicy, receipt, findings)
+	selection, err := review.SelectPublicationFindings(publicationPolicy, receipt, findings)
+	check(err)
+	fieldBytes := 0
+	for _, finding := range append(selection.InlineFindings(), selection.SummaryOnlyFindings()...) {
+		fieldBytes += len(finding.Title()) + len(finding.Claim()) + len(finding.SourceRange().Path())
+	}
+	fieldCount := int(findings.VerifiedCount()) * 3
+	scan, err := review.NewPublicationContentScanReceipt(receipt, findings, verificationContext, selection,
+		review.ScannerProfile{WorkerProtocol: 1, Scanner: secretscan.ScannerName, ScannerVersion: secretscan.ScannerVersion, ScannerCommit: secretscan.ScannerCommit, RulesetIdentity: secretscan.RulesetIdentity, RulesetRuleCount: secretscan.RulesetRuleCount, BuildProfile: secretscan.BuildProfile, LauncherSHA256: strings.Repeat("c", 64), WorkerSHA256: strings.Repeat("d", 64)},
+		review.ScanCompletion{Complete: true, FieldCount: fieldCount, ScannedByteCount: fieldBytes},
+		review.ScanCompletion{Complete: true, FieldCount: fieldCount, ScannedByteCount: fieldBytes})
+	check(err)
+	readiness, err := review.EvaluatePublicationReadiness(publicationPolicy, receipt, findings, verificationContext, selection, scan)
 	check(err)
 	handler := &Handler{store: f.store}
 	binding, err := handler.buildSourceBinding(context.Background(), f.scope, f.target, artifact.Artifact{}, f.inputArtifact, f.contextArtifact, at)

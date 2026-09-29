@@ -342,7 +342,7 @@ func newRequiredPipeline(t *testing.T, approvedVerifier, staleHead bool) *requir
 	requiredCheck(t, err)
 	verificationHandler, err := modelhandler.NewVerificationHandler(store, dispatchers, ledger, verificationAuthority, clock, testsupport.NewCleanVerificationSanitizer())
 	requiredCheck(t, err)
-	readiness, err := publicationhandler.NewReadinessHandler(store, diagnostics.NewMemoryStore(), clock, configuration.ReviewPolicyIdentity(), configuration.Publication())
+	readiness, err := publicationhandler.NewReadinessHandler(store, diagnostics.NewMemoryStore(), clock, configuration.ReviewPolicyIdentity(), configuration.Publication(), testsupport.NewCleanPublicationScanner())
 	requiredCheck(t, err)
 	publication, err := publicationhandler.NewHandler(store, clock, ledger, configuration.ReviewPolicyIdentity(), configuration.Publication(), effectAuthority, publishers, resolvers)
 	requiredCheck(t, err)

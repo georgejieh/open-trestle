@@ -64,13 +64,14 @@ func NewInvestigationProfileFromRuntimePolicy(configuration runtimeconfig.Runtim
 }
 
 type InvestigationCatalogOptions struct {
-	Store       artifact.Store
-	Diagnostics diagnostics.Store
-	Ledger      audit.Ledger
-	Journal     controlplane.RunJournal
-	Clock       artifact.Clock
-	Dispatchers gateway.RouteDispatcherCatalog
-	Source      scm.SourceAdapter
+	Store              artifact.Store
+	Diagnostics        diagnostics.Store
+	Ledger             audit.Ledger
+	Journal            controlplane.RunJournal
+	Clock              artifact.Clock
+	Dispatchers        gateway.RouteDispatcherCatalog
+	Source             scm.SourceAdapter
+	PublicationScanner review.PublicationContentScanner
 }
 
 // NewInvestigationPipelineCatalog creates actual inert handlers, not a parallel engine.
@@ -92,7 +93,11 @@ func NewInvestigationPipelineCatalog(profile model.InvestigationPipelineProfile,
 	if err != nil {
 		return PipelineCatalog{}, nil, err
 	}
-	bridge, err := model.NewInvestigationPipeline(model.InvestigationPipelineOptions{Profile: profile, Store: o.Store, Ledger: o.Ledger, Journal: o.Journal, Clock: o.Clock, Catalog: o.Dispatchers, Source: o.Source, Support: model.InvestigationSupportBindings{Change: changes.HandlerIdentity(), Analysis: analyses.HandlerIdentity(), Memory: memories.HandlerIdentity()}})
+	publicationScanner := o.PublicationScanner
+	if publicationScanner == nil {
+		publicationScanner = review.NewFixedPublicationContentScanner()
+	}
+	bridge, err := model.NewInvestigationPipeline(model.InvestigationPipelineOptions{Profile: profile, Store: o.Store, Ledger: o.Ledger, Journal: o.Journal, Clock: o.Clock, Catalog: o.Dispatchers, Source: o.Source, Support: model.InvestigationSupportBindings{Change: changes.HandlerIdentity(), Analysis: analyses.HandlerIdentity(), Memory: memories.HandlerIdentity(), PublicationScanner: publicationScanner.Identity()}})
 	if err != nil {
 		return PipelineCatalog{}, nil, err
 	}
@@ -112,7 +117,7 @@ func NewInvestigationPipelineCatalog(profile model.InvestigationPipelineProfile,
 	if err != nil {
 		return PipelineCatalog{}, nil, err
 	}
-	readiness, err := publication.NewInvestigationReadinessHandler(o.Store, o.Diagnostics, o.Clock, profile.ReviewPolicyIdentity(), profile.PublicationPolicy(), bridge)
+	readiness, err := publication.NewInvestigationReadinessHandler(o.Store, o.Diagnostics, o.Clock, profile.ReviewPolicyIdentity(), profile.PublicationPolicy(), bridge, publicationScanner)
 	if err != nil {
 		return PipelineCatalog{}, nil, err
 	}

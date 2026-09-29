@@ -408,22 +408,36 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 		if !hasVerification || readinessArtifact.Kind() != artifact.KindPublicationPlan || readinessArtifact.Origin() != artifact.OriginPolicy || readinessArtifact.Identity() != w.Output {
 			return Result{}, ErrInvalidResult
 		}
-		readiness, err := review.EvaluatePublicationReadiness(s.options.Policy.Publication(), verification.IndependentReceipt(), verification.VerifiedFindings())
-		if err != nil {
-			return Result{}, ErrInvalidResult
-		}
 		// Read only the actual readiness artifact and check against the same core
 		// contract. This does not create a second review or publication algorithm.
 		var recorded struct {
-			Contract             string `json:"contract"`
-			Version              int    `json:"schema_version"`
-			Readiness            string `json:"readiness_identity"`
-			VerificationArtifact string `json:"verification_artifact_identity"`
-			VerificationResult   string `json:"verification_result_identity"`
-			Policy               string `json:"publication_policy_identity"`
-			Status               string `json:"status"`
+			Contract             string          `json:"contract"`
+			Version              int             `json:"schema_version"`
+			Readiness            string          `json:"readiness_identity"`
+			VerificationArtifact string          `json:"verification_artifact_identity"`
+			VerificationResult   string          `json:"verification_result_identity"`
+			Policy               string          `json:"publication_policy_identity"`
+			Status               string          `json:"status"`
+			ContentScan          json.RawMessage `json:"content_scan"`
 		}
-		if json.Unmarshal(readinessArtifact.Payload(), &recorded) != nil || recorded.Contract != "open-trestle/publication-readiness-result" || recorded.Version != 1 || recorded.Readiness != readiness.Identity() || recorded.VerificationArtifact != verificationArtifact.Identity() || recorded.VerificationResult != verification.Identity() || recorded.Policy != s.options.Policy.Publication().Identity() || recorded.Status != readiness.Status().String() {
+		if json.Unmarshal(readinessArtifact.Payload(), &recorded) != nil || recorded.Contract != "open-trestle/publication-readiness-result" || recorded.Version != 2 {
+			return Result{}, ErrInvalidResult
+		}
+		selection, err := review.SelectPublicationFindings(s.options.Policy.Publication(), verification.IndependentReceipt(), verification.VerifiedFindings())
+		if err != nil {
+			return Result{}, ErrInvalidResult
+		}
+		var contentScan review.PublicationContentScanReceipt
+		if selection.Status() == review.PublicationAdvisoryReady {
+			contentScan, err = review.ParsePublicationContentScanReceipt(recorded.ContentScan)
+			if err != nil {
+				return Result{}, ErrInvalidResult
+			}
+		} else if !bytes.Equal(recorded.ContentScan, []byte("null")) {
+			return Result{}, ErrInvalidResult
+		}
+		readiness, err := review.EvaluatePublicationReadiness(s.options.Policy.Publication(), verification.IndependentReceipt(), verification.VerifiedFindings(), verification.VerificationContext(), selection, contentScan)
+		if err != nil || recorded.Readiness != readiness.Identity() || recorded.VerificationArtifact != verificationArtifact.Identity() || recorded.VerificationResult != verification.Identity() || recorded.Policy != s.options.Policy.Publication().Identity() || recorded.Status != readiness.Status().String() {
 			return Result{}, ErrInvalidResult
 		}
 		set, err := s.diagnostics.GetDiagnosticSet(ctx, p.Plan().Scope())
@@ -444,17 +458,7 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 		if state.Status() != controlplane.ReviewRunSucceeded {
 			return Result{}, ErrInvalidResult
 		}
-		switch {
-		case len(readiness.InlineFindings())+readiness.SummaryOnlyCount() > 0:
-			w.Status = "findings"
-			w.CI = "blocked"
-		case set.SourceOmittedCount() > 0 || set.InconclusiveCount() > 0:
-			w.Status = "incomplete"
-		case set.CandidateCount() == 0:
-			w.Status = "no_candidates"
-		default:
-			w.Status = "incomplete"
-		}
+		w.Status, w.CI = localReadinessDisposition(uint32(set.VerifiedCount()), set.SourceOmittedCount(), uint32(set.InconclusiveCount()), uint32(set.CandidateCount()))
 	}
 	if state.Status() == controlplane.ReviewRunSucceeded && !hasReadiness {
 		return Result{}, ErrInvalidResult
@@ -493,6 +497,19 @@ func (s *Session) FailureResult() Result {
 	result.wire.Limitations = append(result.wire.Limitations, "execution_state_unavailable", "unknown_final_usage")
 	return result
 }
+func localReadinessDisposition(verified, omitted, inconclusive, candidates uint32) (string, string) {
+	if verified > 0 {
+		return "findings", "blocked"
+	}
+	if omitted > 0 || inconclusive > 0 {
+		return "incomplete", "inconclusive"
+	}
+	if candidates == 0 {
+		return "no_candidates", "inconclusive"
+	}
+	return "incomplete", "inconclusive"
+}
+
 func (r Result) CIDisposition() string {
 	if !r.valid {
 		return "error"

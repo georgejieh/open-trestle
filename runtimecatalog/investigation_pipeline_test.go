@@ -14,10 +14,47 @@ import (
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
 	modelhandler "github.com/georgejieh/open-trestle/handlers/model"
+	publicationhandler "github.com/georgejieh/open-trestle/handlers/publication"
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/review"
+	"github.com/georgejieh/open-trestle/runtimecatalog"
 	"github.com/georgejieh/open-trestle/worker"
 )
+
+type swappedPublicationScanner struct{ identity string }
+
+func (scanner swappedPublicationScanner) Identity() string { return scanner.identity }
+func (scanner swappedPublicationScanner) Scan(context.Context, review.IndependentVerificationReceipt, review.VerifiedFindingSet, review.PublicationVerificationContext, review.PublicationSelection) (review.PublicationContentScanReceipt, error) {
+	return review.PublicationContentScanReceipt{}, review.ErrPublicationContentScanUnavailable
+}
+
+func readinessBindingIdentity(t *testing.T, catalog runtimecatalog.PipelineCatalog) string {
+	t.Helper()
+	for _, binding := range catalog.Bindings() {
+		if binding.Kind == controlplane.TaskEvaluatePublication {
+			return binding.HandlerIdentity
+		}
+	}
+	t.Fatal("readiness binding missing")
+	return ""
+}
+
+func TestInvestigationReadinessIdentityRejectsScannerSwapOnRestart(t *testing.T) {
+	first := newBridgeFixture(t, "")
+	second := newBridgeFixtureWithScanner(t, "", swappedPublicationScanner{identity: strings.Repeat("f", 64)})
+	firstIdentity, secondIdentity := readinessBindingIdentity(t, first.catalog), readinessBindingIdentity(t, second.catalog)
+	firstTask, firstOK := first.prepared.Plan().Task("readiness")
+	secondTask, secondOK := second.prepared.Plan().Task("readiness")
+	if !firstOK || !secondOK || firstIdentity == secondIdentity || first.bridge.Identity() == second.bridge.Identity() || firstTask.HandlerIdentity() != firstIdentity || secondTask.HandlerIdentity() != secondIdentity || firstTask.Identity() == secondTask.Identity() {
+		t.Fatal("scanner swap retained investigation pipeline, catalog, or task identity")
+	}
+	if _, err := publicationhandler.NewInvestigationReadinessHandler(first.store, first.diagnostics, first.clock, first.configuration.ReviewPolicyIdentity(), first.configuration.Publication(), first.bridge, swappedPublicationScanner{identity: strings.Repeat("f", 64)}); err == nil {
+		t.Fatal("alternate readiness handler admitted scanner outside pipeline identity")
+	}
+	if err := second.bridge.StartRun(second.ctx, first.prepared.Plan()); err == nil {
+		t.Fatal("scanner-swapped restart admitted prior plan")
+	}
+}
 
 func TestInvestigationPipelineRunnerCompletesLiveNineTaskReview(t *testing.T) {
 	f := newBridgeFixture(t, "")
@@ -136,14 +173,19 @@ func TestInvestigationPipelineRunnerCompletesLiveNineTaskReview(t *testing.T) {
 		t.Fatal("independent verifier lost final context/candidates")
 	}
 	requiredCheck(t, gateway.VerifyIndependentRouteAuthorizations(f.configuration.Independence(), generation.RouteExecution().Authorization(), verification.RouteExecution().Authorization()))
-	readiness, err := review.EvaluatePublicationReadiness(f.configuration.Publication(), verification.IndependentReceipt(), verification.VerifiedFindings())
-	requiredCheck(t, err)
 	var recorded struct {
-		Readiness    string `json:"readiness_identity"`
-		Verification string `json:"verification_artifact_identity"`
-		Result       string `json:"verification_result_identity"`
+		Readiness    string          `json:"readiness_identity"`
+		Verification string          `json:"verification_artifact_identity"`
+		Result       string          `json:"verification_result_identity"`
+		ContentScan  json.RawMessage `json:"content_scan"`
 	}
 	requiredCheck(t, json.Unmarshal(f.output(state, "readiness").Payload(), &recorded))
+	contentScan, err := review.ParsePublicationContentScanReceipt(recorded.ContentScan)
+	requiredCheck(t, err)
+	selection, err := review.SelectPublicationFindings(f.configuration.Publication(), verification.IndependentReceipt(), verification.VerifiedFindings())
+	requiredCheck(t, err)
+	readiness, err := review.EvaluatePublicationReadiness(f.configuration.Publication(), verification.IndependentReceipt(), verification.VerifiedFindings(), verification.VerificationContext(), selection, contentScan)
+	requiredCheck(t, err)
 	if recorded.Readiness != readiness.Identity() || recorded.Verification != view.VerificationArtifact().Identity() || recorded.Result != verification.Identity() || len(readiness.InlineFindings()) != 1 {
 		t.Fatal("existing readiness did not consume the held final verifier")
 	}
