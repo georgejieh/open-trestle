@@ -118,6 +118,10 @@ func pinnedRuleIDSet() map[string]struct{} {
 	return ids
 }
 
+func PinnedRuleIDs() map[string]struct{} {
+	return pinnedRuleIDSet()
+}
+
 func (a *Adapter) Scan(ctx context.Context, request protocol.Request) protocol.Response {
 	response := emptyResponse(request.RequestID, protocol.StatusScanFailed)
 	if !validRequest(request) {

@@ -7,6 +7,7 @@ toolchain go1.25.12
 require (
 	github.com/betterleaks/betterleaks v1.8.1
 	github.com/rs/zerolog v1.33.0
+	golang.org/x/sys v0.46.0
 )
 
 require (
@@ -58,6 +59,5 @@ require (
 	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/exp v0.0.0-20250218142911-aa4b98e5adaa // indirect
 	golang.org/x/sync v0.21.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.39.0 // indirect
 )
