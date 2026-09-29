@@ -81,7 +81,7 @@ func TestGenerationDispatchAndOutputReadbackBindReadableContract(t *testing.T) {
 	if _, err := store.Put(context.Background(), inputArtifact, time.UnixMilli(70)); err != nil {
 		t.Fatal(err)
 	}
-	handler, err := NewGenerationHandler(store, catalog, ledger, fixedClock{at: time.UnixMilli(200)})
+	handler, err := newLegacyGenerationHandler(store, catalog, ledger, fixedClock{at: time.UnixMilli(200)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +227,7 @@ func TestLegacyGenerationRecordsRemainReadableButCannotDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := NewGenerationHandler(store, catalog, ledger, fixedClock{at: time.UnixMilli(220)})
+	handler, err := newLegacyGenerationHandler(store, catalog, ledger, fixedClock{at: time.UnixMilli(220)})
 	if err != nil {
 		t.Fatal(err)
 	}

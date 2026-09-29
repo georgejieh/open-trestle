@@ -18,7 +18,9 @@ import (
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	memorycore "github.com/georgejieh/open-trestle/internal/memory"
 	"github.com/georgejieh/open-trestle/internal/provider"
+	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/internal/scm"
+	"github.com/georgejieh/open-trestle/internal/testsupport"
 	"strings"
 	"testing"
 	"time"
@@ -136,10 +138,28 @@ func routeAuthorization(
 	return gateway.ParseRouteAttemptAuthorization(encoded)
 }
 
-type contextTestAuthorizer struct{ identity string }
+type contextTestSanitizer = testsupport.CleanGenerationSanitizer
+
+type failingContextTestSanitizer struct{ contextTestSanitizer }
+
+func (failingContextTestSanitizer) SanitizeGeneration(context.Context, provider.Request, string) (review.SanitizedModelRequest, review.SanitizedEgressReceipt, error) {
+	return review.SanitizedModelRequest{}, review.SanitizedEgressReceipt{}, review.ErrSanitizedEgressUnavailable
+}
+
+type contextTestAuthorizer struct {
+	identity        string
+	calls           *int
+	requestIdentity *string
+}
 
 func (a contextTestAuthorizer) Identity() string { return a.identity }
 func (a contextTestAuthorizer) Authorize(_ context.Context, scope audit.ReviewScope, request provider.Request, policy string, _ time.Time) (gateway.RouteAttemptAuthorization, error) {
+	if a.calls != nil {
+		*a.calls++
+	}
+	if a.requestIdentity != nil {
+		*a.requestIdentity = request.Identity()
+	}
 	if policy != strings.Repeat("f", 64) {
 		return gateway.RouteAttemptAuthorization{}, errors.New("wrong policy")
 	}
@@ -177,8 +197,11 @@ func TestHandlerBuildsBoundGenerationAuthority(t *testing.T) {
 	}
 	policyIdentity := strings.Repeat("f", 64)
 	memoryTaskHandler, _ := memoryhandler.NewHandler(store, contextTestClock{time.UnixMilli(220)}, index, strings.Repeat("6", 64), policyIdentity, "reviewer", []string{"."}, 10, 20)
-	authorizer := contextTestAuthorizer{identity: strings.Repeat("5", 64)}
-	contextTaskHandler, _ := NewHandler(store, contextTestClock{time.UnixMilli(230)}, authorizer)
+	authorizationCalls := 0
+	authorizedRequestIdentity := ""
+	authorizer := contextTestAuthorizer{identity: strings.Repeat("5", 64), calls: &authorizationCalls, requestIdentity: &authorizedRequestIdentity}
+	sanitizer := contextTestSanitizer{}
+	contextTaskHandler, _ := NewHandler(store, contextTestClock{time.UnixMilli(230)}, authorizer, sanitizer)
 	baseTask, _ := controlplane.NewTaskDefinition("source-base", controlplane.TaskAcquireSource, baseArtifact.Identity(), sourceTaskHandler.HandlerIdentity(), nil, 1, 1000, 30000, true)
 	headTask, _ := controlplane.NewTaskDefinition("source-head", controlplane.TaskAcquireSource, headArtifact.Identity(), sourceTaskHandler.HandlerIdentity(), nil, 1, 1000, 30000, true)
 	changeTask, _ := controlplane.NewTaskDefinition("change", controlplane.TaskBuildChange, strings.Repeat("c", 64), changeTaskHandler.HandlerIdentity(), []string{"source-base", "source-head"}, 1, 1000, 30000, true)
@@ -192,6 +215,7 @@ func TestHandlerBuildsBoundGenerationAuthority(t *testing.T) {
 	journal := controlplane.NewMemoryRunJournal()
 	coordinator, _ := controlplane.NewCoordinator(journal)
 	_, _ = coordinator.Open(context.Background(), plan, time.UnixMilli(100))
+	var contextRequest controlplane.TaskExecutionRequest
 	execute := func(task controlplane.TaskDefinition, handler controlplane.TaskHandler, at time.Time) {
 		state, err := coordinator.Advance(context.Background(), plan, at)
 		if err != nil {
@@ -209,9 +233,12 @@ func TestHandlerBuildsBoundGenerationAuthority(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if task.Key() == "context" {
+			contextRequest = request
+		}
 		completion := handler.Execute(context.Background(), request)
 		if completion.Status() != controlplane.TaskCompletionSucceeded {
-			t.Fatalf("%s completion=%#v", task.Key(), completion)
+			t.Fatalf("%s completion=%#v failure=%s", task.Key(), completion, completion.Failure())
 		}
 		if _, err := coordinator.CompleteTask(context.Background(), plan, lease, completion, at.Add(time.Millisecond)); err != nil {
 			t.Fatal(err)
@@ -223,6 +250,14 @@ func TestHandlerBuildsBoundGenerationAuthority(t *testing.T) {
 	execute(analysisTask, analysisTaskHandler, time.UnixMilli(107))
 	execute(memoryTask, memoryTaskHandler, time.UnixMilli(109))
 	execute(contextTask, contextTaskHandler, time.UnixMilli(111))
+	failingHandler, err := NewHandler(store, contextTestClock{time.UnixMilli(230)}, authorizer, failingContextTestSanitizer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed := failingHandler.Execute(context.Background(), contextRequest)
+	if failed.Status() != controlplane.TaskCompletionFailed || failed.Failure() != controlplane.RunFailurePolicy || authorizationCalls != 1 {
+		t.Fatalf("scanner failure reached authorization: completion=%#v calls=%d", failed, authorizationCalls)
+	}
 	state, err := coordinator.Advance(context.Background(), plan, time.UnixMilli(113))
 	if err != nil {
 		t.Fatal(err)
@@ -233,8 +268,20 @@ func TestHandlerBuildsBoundGenerationAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	input, err := modelhandler.ParseGenerationInput(output.Payload())
-	if err != nil || input.ReviewScopeIdentity() != scope.Identity() || input.Authorization().RequestIdentity() == "" {
+	if err != nil || !input.IsSanitized() || input.ReviewScopeIdentity() != scope.Identity() || input.Authorization().RequestIdentity() == "" {
 		t.Fatalf("input=(%#v,%v)", input, err)
+	}
+	sanitizedRequestArtifact, err := store.Get(context.Background(), scope, input.SanitizedRequestArtifactIdentity(), time.UnixMilli(231))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sanitizedRequest, err := review.ParseSanitizedModelRequest(sanitizedRequestArtifact.Payload())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatchRequest, err := sanitizedRequest.ProviderRequest()
+	if err != nil || authorizedRequestIdentity != dispatchRequest.Identity() || input.Authorization().RequestIdentity() != dispatchRequest.Identity() {
+		t.Fatal("authorizer did not receive the exact sanitized request")
 	}
 	contextArtifact, err := store.Get(context.Background(), scope, input.ContextArtifactIdentity(), time.UnixMilli(231))
 	if err != nil {

@@ -230,7 +230,7 @@ func deriveConfigurationIdentity(a *Adapter) string {
 		Credential          string `json:"credential"`
 		HTTPClient          string `json:"http_client"`
 		TimeoutMilliseconds int64  `json:"timeout_milliseconds"`
-	}{"open-trestle/openai-responses-adapter", 3, a.adapterID, a.providerID, a.connectionID, a.zone.String(), a.contentLoggingMode.String(), a.endpoint.String(), a.credentialIdentity, a.httpClientIdentity, a.httpClient.Timeout.Milliseconds()})
+	}{"open-trestle/openai-responses-adapter", 4, a.adapterID, a.providerID, a.connectionID, a.zone.String(), a.contentLoggingMode.String(), a.endpoint.String(), a.credentialIdentity, a.httpClientIdentity, a.httpClient.Timeout.Milliseconds()})
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }
@@ -291,6 +291,12 @@ func (a *Adapter) DispatchRoute(ctx context.Context, request gateway.RouteDispat
 	if authorization.ContentLoggingMode() != a.contentLoggingMode {
 		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
 	}
+	if authorization.RouteReference().Zone() == provider.ProviderZoneLocal {
+		scopeIdentity, err := review.ModelRequestReviewScopeIdentity(request.Request())
+		if err != nil || scopeIdentity != authorization.ReviewScopeIdentity() {
+			return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
+		}
+	}
 	return a.execute(ctx, authorization.RouteReference(), authorization.MaxOutputTokens(), request.Request())
 }
 
@@ -313,7 +319,17 @@ func (a *Adapter) execute(
 	if route.Zone() != provider.ProviderZoneLocal {
 		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
 	}
-	instructions, err := review.TrustedModelRequestInstructions(providerRequest.Payload())
+	reviewScopeIdentity, scopeErr := review.ModelRequestReviewScopeIdentity(providerRequest)
+	if scopeErr != nil {
+		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
+	}
+	payload := providerRequest.Payload()
+	if sanitized, err := review.SanitizedCandidatePayload(providerRequest, reviewScopeIdentity); err == nil {
+		payload = sanitized
+	} else if review.ValidateCandidateModelRequest(providerRequest, reviewScopeIdentity) == nil {
+		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
+	}
+	instructions, err := review.TrustedModelRequestInstructions(payload)
 	if err != nil {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
 	}
@@ -324,7 +340,7 @@ func (a *Adapter) execute(
 	if err != nil || credentials.Validate() != nil {
 		return failed(gateway.RouteFailureAuthentication, gateway.RouteReplayNotDispatched, 0)
 	}
-	request, err := a.newRequest(ctx, credentials, modelSelector(route), maxOutputTokens, instructions, providerRequest.Payload())
+	request, err := a.newRequest(ctx, credentials, modelSelector(route), maxOutputTokens, instructions, payload)
 	if err != nil {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
 	}

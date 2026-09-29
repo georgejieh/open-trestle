@@ -223,7 +223,7 @@ func daemonBudgetedBuildForCaller(t *testing.T, h *daemonBudgetedHarness, args [
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	d, err := buildDaemonWithDependencies(ctx, args, env, io.Discard, daemonDependencies{openPostgres: h.sql.OpenPostgres, clock: h.clock})
+	d, err := buildDaemonWithDependencies(ctx, args, env, io.Discard, daemonDependencies{openPostgres: h.sql.OpenPostgres, clock: h.clock, generationSanitizer: daemonTestGenerationSanitizer()})
 	if err != nil {
 		t.Fatalf("budgeted build failed: %v", err)
 	}

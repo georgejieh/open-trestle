@@ -15,10 +15,15 @@ import (
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/internal/scm"
+	"github.com/georgejieh/open-trestle/internal/testsupport"
 	"github.com/georgejieh/open-trestle/localreview"
 	"github.com/georgejieh/open-trestle/runtimecatalog"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 )
+
+func init() {
+	localReviewGenerationSanitizer = testsupport.NewCleanGenerationSanitizer()
+}
 
 type localModelSessionClock struct{}
 
@@ -60,7 +65,7 @@ func localModelSessionOptions(t *testing.T, f *localModelFixture) (localreview.S
 	if err != nil {
 		t.Fatal(err)
 	}
-	return localreview.SessionOptions{TenantID: "tenant-local", RepositoryID: "repository-local", Repository: repository, ObjectsRoot: objects, Inventory: inventory, Policy: policy, Egress: localreview.EgressLocalOnly, Credentials: credentials, Clock: localModelSessionClock{}, Timeout: 5 * time.Second, ArtifactCapacity: 128}, objects
+	return localreview.SessionOptions{TenantID: "tenant-local", RepositoryID: "repository-local", Repository: repository, ObjectsRoot: objects, Inventory: inventory, Policy: policy, Egress: localreview.EgressLocalOnly, Credentials: credentials, Clock: localModelSessionClock{}, Timeout: 5 * time.Second, ArtifactCapacity: 128, GenerationSanitizer: testsupport.NewCleanGenerationSanitizer()}, objects
 }
 
 func localModelNewSession(t *testing.T, options localreview.SessionOptions) *localreview.Session {
@@ -364,7 +369,7 @@ func TestLocalModelSessionCapacityAndTimingRemainBounded(t *testing.T) {
 }
 
 func TestLocalModelSessionCannotReceiveForgeOrCustomHandlerCapabilities(t *testing.T) {
-	allowed := map[string]bool{"TenantID": true, "RepositoryID": true, "Repository": true, "ObjectsRoot": true, "ObjectStoreProfile": true, "ObjectAlgorithm": true, "Inventory": true, "Policy": true, "Egress": true, "Credentials": true, "Clock": true, "Timeout": true, "ArtifactCapacity": true, "RenewalInterval": true, "Retention": true, "RetainedMemoryInput": true}
+	allowed := map[string]bool{"TenantID": true, "RepositoryID": true, "Repository": true, "ObjectsRoot": true, "ObjectStoreProfile": true, "ObjectAlgorithm": true, "Inventory": true, "Policy": true, "Egress": true, "Credentials": true, "Clock": true, "Timeout": true, "ArtifactCapacity": true, "RenewalInterval": true, "Retention": true, "RetainedMemoryInput": true, "GenerationSanitizer": true}
 	options := reflect.TypeOf(localreview.SessionOptions{})
 	for name, want := range map[string]reflect.Type{
 		"ObjectStoreProfile": reflect.TypeOf(scm.LocalGitObjectStoreProfile("")),

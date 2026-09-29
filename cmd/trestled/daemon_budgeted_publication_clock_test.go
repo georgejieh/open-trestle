@@ -113,7 +113,7 @@ func (h *daemonBudgetedPublicationHarness) args(t *testing.T) []string {
 
 func (h *daemonBudgetedPublicationHarness) build(t *testing.T, ctx context.Context) *daemon {
 	t.Helper()
-	d, err := buildDaemonWithDependencies(ctx, h.args(t), h.env, io.Discard, daemonDependencies{openPostgres: h.openPostgres, clock: h.clock})
+	d, err := buildDaemonWithDependencies(ctx, h.args(t), h.env, io.Discard, daemonDependencies{openPostgres: h.openPostgres, clock: h.clock, generationSanitizer: daemonTestGenerationSanitizer()})
 	if err != nil {
 		t.Fatalf("budgeted required publication daemon build failed: %v", err)
 	}

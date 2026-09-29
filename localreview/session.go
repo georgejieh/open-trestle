@@ -65,6 +65,7 @@ type SessionOptions struct {
 	Timeout, RenewalInterval, Retention time.Duration
 	ArtifactCapacity                    int
 	RetainedMemoryInput                 *runtimeconfig.RetainedMemoryInput
+	GenerationSanitizer                 review.GenerationRequestSanitizer
 }
 type Session struct {
 	mu                               sync.Mutex
@@ -260,11 +261,15 @@ func newSession(o SessionOptions, investigationPolicy *review.InvestigationPolic
 		if err != nil {
 			return nil, ErrInvalidSession
 		}
-		assembly, err := contexthandler.NewHandler(store, o.Clock, generationAuthority)
+		sanitizer := o.GenerationSanitizer
+		if sanitizer == nil {
+			sanitizer = review.NewFixedGenerationRequestSanitizer()
+		}
+		assembly, err := contexthandler.NewHandler(store, o.Clock, generationAuthority, sanitizer)
 		if err != nil {
 			return nil, ErrInvalidSession
 		}
-		generation, err := modelhandler.NewGenerationHandler(store, dispatchers, ledger, o.Clock)
+		generation, err := modelhandler.NewGenerationHandler(store, dispatchers, ledger, o.Clock, sanitizer.ExpectedBinaryDigests())
 		if err != nil {
 			return nil, ErrInvalidSession
 		}

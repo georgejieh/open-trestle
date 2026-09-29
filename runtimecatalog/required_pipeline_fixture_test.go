@@ -28,6 +28,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/internal/scm"
+	"github.com/georgejieh/open-trestle/internal/testsupport"
 	"github.com/georgejieh/open-trestle/runtimecatalog"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 	"github.com/georgejieh/open-trestle/webhook"
@@ -111,7 +112,11 @@ func (m *requiredModel) DispatchRoute(ctx context.Context, request gateway.Route
 			Evidence []string `json:"evidence_ids"`
 		} `json:"candidates"`
 	}
-	requiredCheck(m.t, json.Unmarshal(request.Request().Payload(), &packet))
+	payload := request.Request().Payload()
+	if sanitized, err := review.SanitizedCandidatePayload(request.Request(), request.Authorization().ReviewScopeIdentity()); err == nil {
+		payload = sanitized
+	}
+	requiredCheck(m.t, json.Unmarshal(payload, &packet))
 	var changed, caller requiredRequestSource
 	for _, source := range packet.Sources {
 		switch source.Path {
@@ -321,9 +326,10 @@ func newRequiredPipeline(t *testing.T, approvedVerifier, staleHead bool) *requir
 	requiredCheck(t, err)
 	memory, err := memoryhandler.NewHandler(store, clock, memorycore.NewLexicalIndex(), requiredDigest("memory-policy"), configuration.ReviewPolicyIdentity(), "reviewer", []string{"."}, 10, 20)
 	requiredCheck(t, err)
-	assembly, err := contexthandler.NewHandler(store, clock, generationAuthority)
+	sanitizer := testsupport.NewCleanGenerationSanitizer()
+	assembly, err := contexthandler.NewHandler(store, clock, generationAuthority, sanitizer)
 	requiredCheck(t, err)
-	generationHandler, err := modelhandler.NewGenerationHandler(store, dispatchers, ledger, clock)
+	generationHandler, err := modelhandler.NewGenerationHandler(store, dispatchers, ledger, clock, sanitizer.ExpectedBinaryDigests())
 	requiredCheck(t, err)
 	verificationHandler, err := modelhandler.NewVerificationHandler(store, dispatchers, ledger, verificationAuthority, clock)
 	requiredCheck(t, err)

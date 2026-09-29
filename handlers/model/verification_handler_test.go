@@ -62,7 +62,7 @@ func completedGenerationFixture(t *testing.T) (audit.ReviewScope, *artifact.Memo
 	seedRouteSelection(t, ledger, scope, authorization)
 	store, _ := artifact.NewMemoryStore(artifact.ProtectionProcessPrivate, 30)
 	_, _ = store.Put(context.Background(), contextArtifact, time.UnixMilli(60))
-	handler, _ := NewGenerationHandler(store, catalog, ledger, fixedClock{at: time.UnixMilli(200)})
+	handler, _ := newLegacyGenerationHandler(store, catalog, ledger, fixedClock{at: time.UnixMilli(200)})
 	input, _ := NewGenerationInput(contextArtifact, packet, snapshot, authorization)
 	inputArtifact, _ := NewGenerationInputArtifact(input, contextArtifact, []string{strings.Repeat("4", 64)}, time.UnixMilli(70))
 	_, _ = store.Put(context.Background(), inputArtifact, time.UnixMilli(70))

@@ -2,12 +2,39 @@ package review
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"reflect"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/secretscan"
 )
+
+const generationSanitizableWireShapeIdentity = "57998c55909fd92c92c3a16d9502ea026efa7c450e48aff4011d0983470ee020"
+
+func sanitizedWireShapeIdentity() string {
+	var describe func(reflect.Type) string
+	describe = func(value reflect.Type) string {
+		switch value.Kind() {
+		case reflect.Pointer, reflect.Slice, reflect.Array:
+			return value.Kind().String() + "(" + describe(value.Elem()) + ")"
+		case reflect.Struct:
+			parts := make([]string, value.NumField())
+			for index := 0; index < value.NumField(); index++ {
+				field := value.Field(index)
+				parts[index] = field.Name + ":" + field.Tag.Get("json") + ":" + describe(field.Type)
+			}
+			return value.Name() + "{" + strings.Join(parts, ",") + "}"
+		default:
+			return value.Kind().String()
+		}
+	}
+	digest := sha256.Sum256([]byte(describe(reflect.TypeOf(contextPacketWire{}))))
+	return hex.EncodeToString(digest[:])
+}
 
 type sanitizedFieldReference struct {
 	role  FieldRole
@@ -33,7 +60,7 @@ func parseSanitizableRequest(request provider.Request, reviewScopeIdentity strin
 	}
 	switch header.Contract {
 	case "open-trestle/review-context-packet":
-		if ValidateCandidateModelRequest(request, reviewScopeIdentity) != nil {
+		if sanitizedWireShapeIdentity() != generationSanitizableWireShapeIdentity || ValidateCandidateModelRequest(request, reviewScopeIdentity) != nil {
 			return sanitizedRequestDocument{}, ErrInvalidSanitizedModelRequest
 		}
 		wire, err := decodeGenerationContextWire(request.Payload())

@@ -1,11 +1,15 @@
 package model
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +22,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/memory"
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/review"
+	"github.com/georgejieh/open-trestle/internal/secretscan"
 )
 
 type fixedClock struct{ at time.Time }
@@ -25,23 +30,30 @@ type fixedClock struct{ at time.Time }
 func (c fixedClock) Now() time.Time { return c.at }
 
 type recordingDispatcher struct {
-	adapterID string
-	result    gateway.RouteDispatchResult
-	calls     int
+	adapterID       string
+	result          gateway.RouteDispatchResult
+	calls           int
+	requestIdentity string
+	requestPayload  []byte
 }
 
 func (d *recordingDispatcher) AdapterID() string             { return d.adapterID }
 func (d *recordingDispatcher) ConfigurationIdentity() string { return strings.Repeat("a", 64) }
-func (d *recordingDispatcher) DispatchRoute(_ context.Context, _ gateway.RouteDispatchRequest) gateway.RouteDispatchResult {
+func (d *recordingDispatcher) DispatchRoute(_ context.Context, request gateway.RouteDispatchRequest) gateway.RouteDispatchResult {
 	d.calls++
+	d.requestIdentity = request.Request().Identity()
+	d.requestPayload = request.Request().Payload()
 	return d.result
 }
 
 func generationContextFixture(t *testing.T) (audit.ReviewScope, review.ReviewSnapshot, review.ContextPacket, artifact.Artifact, provider.Request) {
+	return generationContextFixtureWithContent(t, []byte("line one\nline two\n"))
+}
+
+func generationContextFixtureWithContent(t *testing.T, content []byte) (audit.ReviewScope, review.ReviewSnapshot, review.ContextPacket, artifact.Artifact, provider.Request) {
 	t.Helper()
 	scope, _ := audit.NewReviewScope("tenant-a", "repo-a", "run-a")
 	memoryScope, _ := memory.NewScope("tenant-a", "repo-a", "actor-a", memory.RefVisibilityExact, strings.Repeat("a", 64), []string{"src"})
-	content := []byte("line one\nline two\n")
 	sourceRange, _ := evidence.NewSourceRange("src/main.go", 1, 2)
 	snapshot, _ := review.NewReviewSnapshot("workspace", strings.Repeat("b", 64), []evidence.SourceRange{sourceRange})
 	digest := sha256.Sum256(content)
@@ -116,7 +128,7 @@ func routeAuthorization(
 		Contract: "open-trestle/route-attempt-authorization", SchemaVersion: 1,
 		Kind: "initial", ReviewScopeIdentity: scope.Identity(), RequestIdentity: request.Identity(),
 		SelectionReceiptIdentity: selectionIdentity, RegistryRevision: 1, RouteRecordIdentity: recordIdentity,
-		AttemptOrdinal: 1, RouteAttemptOrdinal: 1, Zone: "private_remote", ProviderID: providerID,
+		AttemptOrdinal: 1, RouteAttemptOrdinal: 1, Zone: "local", ProviderID: providerID,
 		AdapterID: adapterID, ConnectionID: connectionID, ModelID: modelID, ModelVersion: modelVersion,
 		ContentLogging: "disabled", EstimatedInputTokens: 1, MaxOutputTokens: 100,
 	}
@@ -166,6 +178,100 @@ func generationAuthorization(t *testing.T, scope audit.ReviewScope, request prov
 		t, scope, request, "test-provider", "test-model", "primary/test", "test-model", "1",
 		strings.Repeat("c", 64), strings.Repeat("d", 64),
 	)
+}
+
+func sanitizedGenerationFixture(t *testing.T, scope audit.ReviewScope, rawArtifact artifact.Artifact, raw provider.Request, secret string) (review.SanitizedModelRequest, review.SanitizedEgressReceipt, artifact.Artifact, artifact.Artifact, review.ScannerBinaryDigests) {
+	t.Helper()
+	type item struct {
+		Path    string   `json:"path"`
+		Symbols []string `json:"symbols"`
+		Text    string   `json:"text"`
+	}
+	type memoryWire struct {
+		Items []item `json:"items"`
+	}
+	var wire struct {
+		Sources []struct {
+			Path    string `json:"path"`
+			Content string `json:"content"`
+		} `json:"sources"`
+		SourceOmissions []struct {
+			Path string `json:"path"`
+		} `json:"source_omissions"`
+		Memory           memoryWire   `json:"memory"`
+		AdditionalMemory []memoryWire `json:"additional_memory"`
+	}
+	if err := json.Unmarshal(raw.Payload(), &wire); err != nil {
+		t.Fatal(err)
+	}
+	fields := make([]review.SanitizedField, 0)
+	appendField := func(role review.FieldRole, text string) {
+		ordinal := len(fields)
+		matches := []secretscan.Match{}
+		redacted := 0
+		if secret != "" {
+			start := strings.Index(text, secret)
+			if start >= 0 {
+				match := secretscan.Match{SourceOrdinal: ordinal, RuleID: "generic-api-key", StartByte: start, EndByteExclusive: start + len(secret)}
+				match.OccurrenceID = secretscan.OccurrenceID(match)
+				matches = append(matches, match)
+				redacted = len(secret)
+			}
+		}
+		fields = append(fields, review.SanitizedField{Role: role, Ordinal: ordinal, ScannedByteCount: len(text), RedactedByteCount: redacted, Matches: matches})
+	}
+	appendMemory := func(value memoryWire) {
+		for _, item := range value.Items {
+			appendField(review.FieldRoleMemoryPath, item.Path)
+			for _, symbol := range item.Symbols {
+				appendField(review.FieldRoleMemorySymbol, symbol)
+			}
+			appendField(review.FieldRoleMemoryText, item.Text)
+		}
+	}
+	for _, source := range wire.Sources {
+		appendField(review.FieldRoleSourcePath, source.Path)
+		appendField(review.FieldRoleSourceContent, source.Content)
+	}
+	for _, omission := range wire.SourceOmissions {
+		appendField(review.FieldRoleSourceOmissionPath, omission.Path)
+	}
+	appendMemory(wire.Memory)
+	for _, value := range wire.AdditionalMemory {
+		appendMemory(value)
+	}
+	sanitizedPayload := raw.Payload()
+	if secret != "" {
+		sanitizedPayload = bytes.ReplaceAll(sanitizedPayload, []byte(secret), bytes.Repeat([]byte{'*'}, len(secret)))
+	}
+	inner, err := provider.NewRequest(raw.Capability(), raw.MediaType(), sanitizedPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := review.NewSanitizedModelRequest(scope.Identity(), raw, inner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	total, redacted, matches := 0, 0, 0
+	for _, field := range fields {
+		total += field.ScannedByteCount
+		redacted += field.RedactedByteCount
+		matches += len(field.Matches)
+	}
+	expected := review.ScannerBinaryDigests{LauncherSHA256: strings.Repeat("b", 64), WorkerSHA256: strings.Repeat("c", 64)}
+	receipt, err := review.NewSanitizedEgressReceipt(review.SanitizedEgressReceiptInput{
+		ReviewScopeIdentity: scope.Identity(), RawRequestIdentity: raw.Identity(), SanitizedRequestIdentity: request.SanitizedRequestIdentity(),
+		Scanner: review.ScannerProfile{WorkerProtocol: 1, Scanner: secretscan.ScannerName, ScannerVersion: secretscan.ScannerVersion, ScannerCommit: secretscan.ScannerCommit, RulesetIdentity: secretscan.RulesetIdentity, RulesetRuleCount: secretscan.RulesetRuleCount, BuildProfile: secretscan.BuildProfile, LauncherSHA256: expected.LauncherSHA256, WorkerSHA256: expected.WorkerSHA256},
+		Initial: review.ScanCompletion{Complete: true, FieldCount: len(fields), ScannedByteCount: total, MatchCount: matches}, Residual: review.ScanCompletion{Complete: true, FieldCount: len(fields), ScannedByteCount: total}, RedactedByteCount: redacted, Fields: fields,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestArtifact, receiptArtifact, err := review.NewSanitizedEgressArtifacts(rawArtifact, request, receipt, expected, time.UnixMilli(60))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return request, receipt, requestArtifact, receiptArtifact, expected
 }
 
 func successfulProviderResult(t *testing.T) gateway.RouteDispatchResult {
@@ -266,25 +372,42 @@ func seedRouteSelection(t *testing.T, ledger audit.Ledger, scope audit.ReviewSco
 }
 
 func TestGenerationHandlerDispatchesAuditsAndPersistsAdmittedCandidates(t *testing.T) {
-	scope, snapshot, packet, contextArtifact, providerRequest := generationContextFixture(t)
-	authorization := generationAuthorization(t, scope, providerRequest)
+	secret := "sk-proj-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	scope, snapshot, packet, contextArtifact, providerRequest := generationContextFixtureWithContent(t, []byte(secret+"\nline two\n"))
+	sanitized, receipt, requestArtifact, receiptArtifact, expected := sanitizedGenerationFixture(t, scope, contextArtifact, providerRequest, secret)
+	dispatchRequest, err := sanitized.ProviderRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorization := generationAuthorization(t, scope, dispatchRequest)
 	dispatcher := &recordingDispatcher{adapterID: "test-model", result: successfulProviderResult(t)}
 	catalog, _ := gateway.NewRouteDispatcherCatalog([]gateway.RouteDispatcher{dispatcher})
 	ledger := audit.NewMemoryLedger()
 	seedRouteSelection(t, ledger, scope, authorization)
 	store, _ := artifact.NewMemoryStore(artifact.ProtectionProcessPrivate, 20)
 	_, _ = store.Put(context.Background(), contextArtifact, time.UnixMilli(60))
-	handler, err := NewGenerationHandler(store, catalog, ledger, fixedClock{at: time.UnixMilli(200)})
+	_, _ = store.Put(context.Background(), requestArtifact, time.UnixMilli(60))
+	_, _ = store.Put(context.Background(), receiptArtifact, time.UnixMilli(60))
+	handler, err := NewGenerationHandler(store, catalog, ledger, fixedClock{at: time.UnixMilli(200)}, expected)
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := NewGenerationInput(contextArtifact, packet, snapshot, authorization)
+	input, err := NewSanitizedGenerationInput(contextArtifact, packet, snapshot, requestArtifact, receiptArtifact, expected, authorization)
 	if err != nil {
 		t.Fatal(err)
 	}
 	inputArtifact, err := NewGenerationInputArtifact(input, contextArtifact, []string{strings.Repeat("4", 64)}, time.UnixMilli(70))
 	if err != nil {
 		t.Fatal(err)
+	}
+	var inputHeader struct {
+		SchemaVersion                          int    `json:"schema_version"`
+		SanitizedRequestArtifactIdentity       string `json:"sanitized_request_artifact_identity"`
+		SanitizedEgressReceiptArtifactIdentity string `json:"sanitized_egress_receipt_artifact_identity"`
+		SanitizedEgressReceiptIdentity         string `json:"sanitized_egress_receipt_identity"`
+	}
+	if json.Unmarshal(inputArtifact.Payload(), &inputHeader) != nil || inputHeader.SchemaVersion != 3 || inputHeader.SanitizedRequestArtifactIdentity != requestArtifact.Identity() || inputHeader.SanitizedEgressReceiptArtifactIdentity != receiptArtifact.Identity() || inputHeader.SanitizedEgressReceiptIdentity != receipt.Identity() {
+		t.Fatal("generation input omitted sanitized authority identities")
 	}
 	_, _ = store.Put(context.Background(), inputArtifact, time.UnixMilli(70))
 	request := generationTaskRequest(t, scope, inputArtifact.Identity(), handler.HandlerIdentity(), 1)
@@ -299,9 +422,22 @@ func TestGenerationHandlerDispatchesAuditsAndPersistsAdmittedCandidates(t *testi
 	if completion.Status() != controlplane.TaskCompletionSucceeded || completion.Validate() != nil || dispatcher.calls != 1 {
 		t.Fatalf("completion=%#v calls=%d", completion, dispatcher.calls)
 	}
+	if dispatcher.requestIdentity != authorization.RequestIdentity() || !bytes.Equal(dispatcher.requestPayload, dispatchRequest.Payload()) || bytes.Contains(dispatcher.requestPayload, []byte(secret)) || bytes.Contains(dispatcher.requestPayload, []byte(base64.StdEncoding.EncodeToString([]byte(secret)))) || receipt.SanitizedRequestIdentity() != dispatcher.requestIdentity {
+		t.Fatal("dispatcher received bytes outside sanitized authority")
+	}
 	output, err := store.Get(context.Background(), scope, completion.OutputIdentity(), time.UnixMilli(201))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !bytes.Contains(contextArtifact.Payload(), []byte(secret)) {
+		t.Fatal("authorized raw context lost secret canary")
+	}
+	for name, payload := range map[string][]byte{
+		"sanitized request": requestArtifact.Payload(), "receipt": receiptArtifact.Payload(), "generation input": inputArtifact.Payload(), "generation output": output.Payload(),
+	} {
+		if bytes.Contains(payload, []byte(secret)) || bytes.Contains(payload, []byte(base64.StdEncoding.EncodeToString([]byte(secret)))) {
+			t.Fatalf("%s leaked secret canary", name)
+		}
 	}
 	result, err := ParseGenerationResultArtifact(output, inputArtifact, contextArtifact)
 	if err != nil {
@@ -326,6 +462,75 @@ func TestGenerationHandlerDispatchesAuditsAndPersistsAdmittedCandidates(t *testi
 	}
 }
 
+func TestGenerationInputSchemaDeclaresSanitizedAuthorityVersion(t *testing.T) {
+	encoded, err := os.ReadFile(filepath.Join("..", "..", "schemas", "artifact", "model-generation-input-v1.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{`"schema_version": {
+      "enum": [
+        1,
+        3`, `"sanitized_request_artifact_identity"`, `"sanitized_egress_receipt_artifact_identity"`, `"sanitized_egress_receipt_identity"`} {
+		if !bytes.Contains(encoded, []byte(required)) {
+			t.Fatalf("generation input schema missing %s", required)
+		}
+	}
+}
+
+func TestGenerationHandlerRejectsIncompleteOrCrossWiredSanitizedAuthorityBeforeClaim(t *testing.T) {
+	secret := "sk-proj-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	scope, snapshot, packet, contextArtifact, raw := generationContextFixtureWithContent(t, []byte(secret+"\nline two\n"))
+	sanitized, _, requestArtifact, receiptArtifact, expected := sanitizedGenerationFixture(t, scope, contextArtifact, raw, secret)
+	dispatchRequest, err := sanitized.ProviderRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorization := generationAuthorization(t, scope, dispatchRequest)
+	input, err := NewSanitizedGenerationInput(contextArtifact, packet, snapshot, requestArtifact, receiptArtifact, expected, authorization)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputArtifact, err := NewGenerationInputArtifact(input, contextArtifact, []string{strings.Repeat("4", 64)}, time.UnixMilli(70))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name       string
+		putReceipt bool
+		expected   review.ScannerBinaryDigests
+	}{
+		{"missing receipt", false, expected},
+		{"wrong trusted launcher", true, review.ScannerBinaryDigests{LauncherSHA256: strings.Repeat("d", 64), WorkerSHA256: expected.WorkerSHA256}},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			dispatcher := &recordingDispatcher{adapterID: "test-model", result: successfulProviderResult(t)}
+			catalog, _ := gateway.NewRouteDispatcherCatalog([]gateway.RouteDispatcher{dispatcher})
+			ledger := audit.NewMemoryLedger()
+			seedRouteSelection(t, ledger, scope, authorization)
+			store, _ := artifact.NewMemoryStore(artifact.ProtectionProcessPrivate, 20)
+			for _, value := range []artifact.Artifact{contextArtifact, requestArtifact, inputArtifact} {
+				_, _ = store.Put(context.Background(), value, time.UnixMilli(80))
+			}
+			if test.putReceipt {
+				_, _ = store.Put(context.Background(), receiptArtifact, time.UnixMilli(80))
+			}
+			handler, err := NewGenerationHandler(store, catalog, ledger, fixedClock{at: time.UnixMilli(200)}, test.expected)
+			if err != nil {
+				t.Fatal(err)
+			}
+			completion := handler.Execute(context.Background(), generationTaskRequest(t, scope, inputArtifact.Identity(), handler.HandlerIdentity(), 1))
+			if completion.Status() != controlplane.TaskCompletionFailed || dispatcher.calls != 0 {
+				t.Fatalf("completion=%#v calls=%d", completion, dispatcher.calls)
+			}
+			events, err := ledger.Read(context.Background(), scope, 0, 10)
+			if err != nil || len(events) != 1 || events[0].Kind() != audit.EventRouteSelected {
+				t.Fatalf("route claim occurred: events=%#v err=%v", events, err)
+			}
+		})
+	}
+}
+
 func TestGenerationHandlerRejectsControlPlaneRetryAuthority(t *testing.T) {
 	scope, snapshot, packet, contextArtifact, providerRequest := generationContextFixture(t)
 	authorization := generationAuthorization(t, scope, providerRequest)
@@ -335,7 +540,7 @@ func TestGenerationHandlerRejectsControlPlaneRetryAuthority(t *testing.T) {
 	seedRouteSelection(t, ledger, scope, authorization)
 	store, _ := artifact.NewMemoryStore(artifact.ProtectionProcessPrivate, 20)
 	_, _ = store.Put(context.Background(), contextArtifact, time.UnixMilli(60))
-	handler, _ := NewGenerationHandler(store, catalog, ledger, fixedClock{at: time.UnixMilli(200)})
+	handler, _ := newLegacyGenerationHandler(store, catalog, ledger, fixedClock{at: time.UnixMilli(200)})
 	input, _ := NewGenerationInput(contextArtifact, packet, snapshot, authorization)
 	inputArtifact, _ := NewGenerationInputArtifact(input, contextArtifact, []string{strings.Repeat("4", 64)}, time.UnixMilli(70))
 	_, _ = store.Put(context.Background(), inputArtifact, time.UnixMilli(70))
@@ -358,7 +563,7 @@ func TestGenerationHandlerAuditsTypedProviderFailureWithoutOutput(t *testing.T) 
 	seedRouteSelection(t, ledger, scope, authorization)
 	store, _ := artifact.NewMemoryStore(artifact.ProtectionProcessPrivate, 20)
 	_, _ = store.Put(context.Background(), contextArtifact, time.UnixMilli(60))
-	handler, _ := NewGenerationHandler(store, catalog, ledger, fixedClock{at: time.UnixMilli(200)})
+	handler, _ := newLegacyGenerationHandler(store, catalog, ledger, fixedClock{at: time.UnixMilli(200)})
 	input, _ := NewGenerationInput(contextArtifact, packet, snapshot, authorization)
 	inputArtifact, _ := NewGenerationInputArtifact(input, contextArtifact, []string{strings.Repeat("4", 64)}, time.UnixMilli(70))
 	_, _ = store.Put(context.Background(), inputArtifact, time.UnixMilli(70))
@@ -411,7 +616,7 @@ func TestGenerationHandlerRequiresAuditedSelectionBeforeDispatch(t *testing.T) {
 	catalog, _ := gateway.NewRouteDispatcherCatalog([]gateway.RouteDispatcher{dispatcher})
 	store, _ := artifact.NewMemoryStore(artifact.ProtectionProcessPrivate, 20)
 	_, _ = store.Put(context.Background(), contextArtifact, time.UnixMilli(60))
-	handler, _ := NewGenerationHandler(store, catalog, audit.NewMemoryLedger(), fixedClock{at: time.UnixMilli(200)})
+	handler, _ := newLegacyGenerationHandler(store, catalog, audit.NewMemoryLedger(), fixedClock{at: time.UnixMilli(200)})
 	input, _ := NewGenerationInput(contextArtifact, packet, snapshot, authorization)
 	inputArtifact, _ := NewGenerationInputArtifact(input, contextArtifact, []string{strings.Repeat("4", 64)}, time.UnixMilli(70))
 	_, _ = store.Put(context.Background(), inputArtifact, time.UnixMilli(70))

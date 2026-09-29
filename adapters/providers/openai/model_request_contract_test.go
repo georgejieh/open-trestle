@@ -19,7 +19,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/review"
 )
 
-func testModelRequest(t *testing.T) provider.Request {
+func testRawModelRequest(t *testing.T) provider.Request {
 	t.Helper()
 	scope, err := audit.NewReviewScope("tenant", "repository", "run")
 	if err != nil {
@@ -65,6 +65,26 @@ func testModelRequest(t *testing.T) provider.Request {
 		t.Fatal(err)
 	}
 	request, err := packet.ProviderRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return request
+}
+
+func testModelRequest(t *testing.T) provider.Request {
+	t.Helper()
+	raw := testRawModelRequest(t)
+	var header struct {
+		ReviewScopeIdentity string `json:"review_scope_identity"`
+	}
+	if err := json.Unmarshal(raw.Payload(), &header); err != nil {
+		t.Fatal(err)
+	}
+	sanitized, err := review.NewSanitizedModelRequest(header.ReviewScopeIdentity, raw, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := sanitized.ProviderRequest()
 	if err != nil {
 		t.Fatal(err)
 	}

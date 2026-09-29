@@ -26,6 +26,9 @@ type localModelReviewOptions struct {
 	objectStoreProfile                                     scm.LocalGitObjectStoreProfile
 	timeout                                                time.Duration
 }
+
+var localReviewGenerationSanitizer review.GenerationRequestSanitizer
+
 type localReviewClock struct{}
 
 func (localReviewClock) Now() time.Time { return time.Now().UTC() }
@@ -162,7 +165,7 @@ func runLocalGitModelReview(ctx context.Context, args []string, stdout, stderr i
 		_ = objects.Close()
 		return unstarted("failed")
 	}
-	sessionOptions := localreview.SessionOptions{TenantID: options.tenant, RepositoryID: options.repository, Repository: repository, ObjectsRoot: objects, ObjectStoreProfile: options.objectStoreProfile, Inventory: inventory, Policy: policy, Egress: options.egress, Credentials: credentials, Clock: localReviewClock{}, Timeout: options.timeout, RetainedMemoryInput: retainedInput}
+	sessionOptions := localreview.SessionOptions{TenantID: options.tenant, RepositoryID: options.repository, Repository: repository, ObjectsRoot: objects, ObjectStoreProfile: options.objectStoreProfile, Inventory: inventory, Policy: policy, Egress: options.egress, Credentials: credentials, Clock: localReviewClock{}, Timeout: options.timeout, RetainedMemoryInput: retainedInput, GenerationSanitizer: localReviewGenerationSanitizer}
 	if options.objectStoreProfile == scm.LocalGitObjectStoreProfileLooseAndPackIndexV1 {
 		sessionOptions.ObjectAlgorithm = base.Algorithm()
 	}

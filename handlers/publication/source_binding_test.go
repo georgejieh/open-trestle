@@ -27,6 +27,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/internal/scm"
+	"github.com/georgejieh/open-trestle/internal/testsupport"
 )
 
 type bindingSourceAdapter struct {
@@ -172,7 +173,8 @@ func newSourceBindingFixture(t *testing.T, withReference bool) sourceBindingFixt
 	memory, err := memoryhandler.NewHandler(store, fixedClock{time.UnixMilli(220)}, memorycore.NewLexicalIndex(), strings.Repeat("6", 64), strings.Repeat("f", 64), "reviewer", []string{"."}, 10, 20)
 	check(err)
 	authorizer := bindingPolicyAuthorizer(t)
-	assembly, err := contexthandler.NewHandler(store, fixedClock{time.UnixMilli(230)}, authorizer)
+	sanitizer := testsupport.NewCleanGenerationSanitizer()
+	assembly, err := contexthandler.NewHandler(store, fixedClock{time.UnixMilli(230)}, authorizer, sanitizer)
 	check(err)
 	definition := func(key string, handler controlplane.TaskHandler, input string, dependencies []string) controlplane.TaskDefinition {
 		task, err := controlplane.NewTaskDefinition(key, handler.Kind(), input, handler.HandlerIdentity(), dependencies, 1, 1000, 30000, true)
@@ -423,16 +425,23 @@ func sourceBindingContextVariant(t *testing.T, f sourceBindingFixture, mutation 
 	check(err)
 	contextArtifact, err := artifact.New(f.scope, artifact.KindContextPacket, "application/json", f.contextArtifact.Classification(), artifact.OriginHost, f.contextArtifact.Protection(), f.contextArtifact.Provenance(), request.Payload(), time.UnixMilli(240), f.contextArtifact.ExpiresAt())
 	check(err)
-	authorization, err := f.authorizer.Authorize(context.Background(), f.scope, request, strings.Repeat("f", 64), time.UnixMilli(240))
+	sanitizer := testsupport.NewCleanGenerationSanitizer()
+	sanitized, receipt, err := sanitizer.SanitizeGeneration(context.Background(), request, f.scope.Identity())
 	check(err)
-	input, err := modelhandler.NewGenerationInput(contextArtifact, packet, snapshot, authorization)
+	requestArtifact, receiptArtifact, err := review.NewSanitizedEgressArtifacts(contextArtifact, sanitized, receipt, sanitizer.ExpectedBinaryDigests(), time.UnixMilli(240))
+	check(err)
+	dispatchRequest, err := sanitized.ProviderRequest()
+	check(err)
+	authorization, err := f.authorizer.Authorize(context.Background(), f.scope, dispatchRequest, strings.Repeat("f", 64), time.UnixMilli(240))
+	check(err)
+	input, err := modelhandler.NewSanitizedGenerationInput(contextArtifact, packet, snapshot, requestArtifact, receiptArtifact, sanitizer.ExpectedBinaryDigests(), authorization)
 	check(err)
 	inputArtifact, err := modelhandler.NewGenerationInputArtifact(input, contextArtifact, []string{f.analysisArtifact.Identity()}, time.UnixMilli(240))
 	check(err)
 	parsed, err := modelhandler.ParseGenerationInput(inputArtifact.Payload())
 	check(err)
 	check(review.ValidateContextPacketRequest(contextArtifact.Payload(), parsed.ContextIdentity(), f.scope.Identity(), parsed.MemoryScopeIdentity(), parsed.MemoryIdentity(), parsed.Snapshot(), parsed.EvidenceItems()))
-	for _, value := range []artifact.Artifact{contextArtifact, inputArtifact} {
+	for _, value := range []artifact.Artifact{contextArtifact, requestArtifact, receiptArtifact, inputArtifact} {
 		_, err = f.store.Put(context.Background(), value, time.UnixMilli(240))
 		check(err)
 	}

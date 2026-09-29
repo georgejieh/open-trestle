@@ -17,15 +17,18 @@ import (
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/review"
+	"github.com/georgejieh/open-trestle/internal/secretscan"
 )
 
 // GenerationHandler dispatches one authorized model attempt and admits candidate output.
 type GenerationHandler struct {
-	identity string
-	store    artifact.Store
-	catalog  gateway.RouteDispatcherCatalog
-	ledger   audit.Ledger
-	clock    artifact.Clock
+	identity          string
+	store             artifact.Store
+	catalog           gateway.RouteDispatcherCatalog
+	ledger            audit.Ledger
+	clock             artifact.Clock
+	expected          review.ScannerBinaryDigests
+	requiresSanitized bool
 }
 
 // NewGenerationHandler binds exact dispatchers, audit ledger, and protected storage.
@@ -34,12 +37,21 @@ func NewGenerationHandler(
 	catalog gateway.RouteDispatcherCatalog,
 	ledger audit.Ledger,
 	clock artifact.Clock,
+	expected review.ScannerBinaryDigests,
 ) (*GenerationHandler, error) {
+	return newGenerationHandler(store, catalog, ledger, clock, expected, true)
+}
+
+func newLegacyGenerationHandler(store artifact.Store, catalog gateway.RouteDispatcherCatalog, ledger audit.Ledger, clock artifact.Clock) (*GenerationHandler, error) {
+	return newGenerationHandler(store, catalog, ledger, clock, review.ScannerBinaryDigests{}, false)
+}
+
+func newGenerationHandler(store artifact.Store, catalog gateway.RouteDispatcherCatalog, ledger audit.Ledger, clock artifact.Clock, digests review.ScannerBinaryDigests, requiresSanitized bool) (*GenerationHandler, error) {
 	if nilInterface(store) || catalog.Validate() != nil || nilInterface(ledger) || nilInterface(clock) {
 		return nil, ErrInvalidGenerationHandler
 	}
-	handler := &GenerationHandler{store: store, catalog: catalog, ledger: ledger, clock: clock}
-	handler.identity = deriveGenerationHandlerIdentity(catalog.Identity())
+	handler := &GenerationHandler{store: store, catalog: catalog, ledger: ledger, clock: clock, expected: digests, requiresSanitized: requiresSanitized}
+	handler.identity = deriveGenerationHandlerIdentity(catalog.Identity(), digests, handler.requiresSanitized)
 	if err := handler.Validate(); err != nil {
 		return nil, err
 	}
@@ -63,21 +75,27 @@ func (h *GenerationHandler) Kind() controlplane.TaskKind {
 func (h *GenerationHandler) Validate() error {
 	if h == nil || nilInterface(h.store) || h.catalog.Validate() != nil ||
 		nilInterface(h.ledger) || nilInterface(h.clock) ||
-		h.identity != deriveGenerationHandlerIdentity(h.catalog.Identity()) {
+		h.identity != deriveGenerationHandlerIdentity(h.catalog.Identity(), h.expected, h.requiresSanitized) {
 		return ErrInvalidGenerationHandler
 	}
 	return nil
 }
 
-func deriveGenerationHandlerIdentity(catalogIdentity string) string {
+func deriveGenerationHandlerIdentity(catalogIdentity string, expected review.ScannerBinaryDigests, requiresSanitized bool) string {
 	if !validDigest(catalogIdentity) {
 		return ""
 	}
 	encoded, err := json.Marshal(struct {
-		Contract          string `json:"contract"`
-		SchemaVersion     int    `json:"schema_version"`
-		DispatcherCatalog string `json:"dispatcher_catalog"`
-	}{"open-trestle/model-generation-handler", 2, catalogIdentity})
+		Contract           string `json:"contract"`
+		SchemaVersion      int    `json:"schema_version"`
+		DispatcherCatalog  string `json:"dispatcher_catalog"`
+		LauncherSHA256     string `json:"launcher_sha256,omitempty"`
+		WorkerSHA256       string `json:"worker_sha256,omitempty"`
+		RequiresSanitized  bool   `json:"requires_sanitized"`
+		SanitizationPolicy string `json:"sanitization_policy"`
+		Scanner            string `json:"scanner"`
+		BuildProfile       string `json:"build_profile"`
+	}{"open-trestle/model-generation-handler", 3, catalogIdentity, expected.LauncherSHA256, expected.WorkerSHA256, requiresSanitized, review.SanitizationPolicyIdentity, secretscan.ScannerName, secretscan.BuildProfile})
 	if err != nil {
 		return ""
 	}
@@ -115,9 +133,12 @@ func (h *GenerationHandler) Execute(ctx context.Context, task controlplane.TaskE
 		return generationFailure(controlplane.RunFailureInvalidInput)
 	}
 	input, err := ParseGenerationInput(inputArtifact.Payload())
-	if err != nil || input.ReviewScopeIdentity() != task.Plan().Scope().Identity() ||
+	if err != nil || input.IsSanitized() != h.requiresSanitized || input.ReviewScopeIdentity() != task.Plan().Scope().Identity() ||
 		!hasProvenance(inputArtifact.Provenance(), input.ContextArtifactIdentity()) ||
 		!hasProvenance(inputArtifact.Provenance(), input.Authorization().Identity()) {
+		return generationFailure(controlplane.RunFailureInvalidInput)
+	}
+	if input.IsSanitized() && (!hasProvenance(inputArtifact.Provenance(), input.SanitizedRequestArtifactIdentity()) || !hasProvenance(inputArtifact.Provenance(), input.SanitizedEgressReceiptArtifactIdentity())) {
 		return generationFailure(controlplane.RunFailureInvalidInput)
 	}
 	contextArtifact, err := h.store.Get(ctx, task.Plan().Scope(), input.ContextArtifactIdentity(), started)
@@ -136,11 +157,31 @@ func (h *GenerationHandler) Execute(ctx context.Context, task controlplane.TaskE
 	); err != nil {
 		return generationFailure(controlplane.RunFailureInvalidInput)
 	}
-	providerRequest, err := provider.NewRequest(
-		provider.CapabilityReviewV1, contextArtifact.MediaType(), contextArtifact.Payload(),
-	)
-	if err != nil || providerRequest.Identity() != input.Authorization().RequestIdentity() {
-		return generationFailure(controlplane.RunFailureInvalidInput)
+	var providerRequest provider.Request
+	if input.IsSanitized() {
+		requestArtifact, err := h.store.Get(ctx, task.Plan().Scope(), input.SanitizedRequestArtifactIdentity(), started)
+		if err != nil {
+			return generationFailure(generationStoreReadFailure(ctx, err))
+		}
+		receiptArtifact, err := h.store.Get(ctx, task.Plan().Scope(), input.SanitizedEgressReceiptArtifactIdentity(), started)
+		if err != nil {
+			return generationFailure(generationStoreReadFailure(ctx, err))
+		}
+		if review.ValidateSanitizedEgressArtifacts(contextArtifact, requestArtifact, receiptArtifact, h.expected) != nil {
+			return generationFailure(controlplane.RunFailureInvalidInput)
+		}
+		sanitized, err := review.ParseSanitizedModelRequest(requestArtifact.Payload())
+		receipt, receiptErr := review.ParseSanitizedEgressReceipt(receiptArtifact.Payload())
+		sanitizedProviderRequest, requestErr := sanitized.ProviderRequest()
+		providerRequest = sanitizedProviderRequest
+		if err != nil || receiptErr != nil || requestErr != nil || receipt.Identity() != input.SanitizedEgressReceiptIdentity() || providerRequest.Identity() != receipt.SanitizedRequestIdentity() || providerRequest.Identity() != input.Authorization().RequestIdentity() {
+			return generationFailure(controlplane.RunFailureInvalidInput)
+		}
+	} else {
+		providerRequest, err = provider.NewRequest(provider.CapabilityReviewV1, contextArtifact.MediaType(), contextArtifact.Payload())
+		if err != nil || providerRequest.Identity() != input.Authorization().RequestIdentity() || input.Authorization().RouteReference().Zone() != provider.ProviderZoneLocal {
+			return generationFailure(controlplane.RunFailureInvalidInput)
+		}
 	}
 	if _, acquired, err := gateway.ClaimRouteAttempt(ctx, h.ledger, task.Plan().Scope(), input.Authorization(), started); err != nil || !acquired {
 		return generationFailure(controlplane.RunFailureInternal)
@@ -213,6 +254,9 @@ func (h *GenerationHandler) Execute(ctx context.Context, task controlplane.TaskE
 		inputArtifact.Identity(), contextArtifact.Identity(), candidates.Identity(),
 		input.Authorization().Identity(), outcome.Identity(), reconciliation.Identity(),
 		outputReceipt.Identity(), routeExecution.Identity(),
+	}
+	if input.IsSanitized() {
+		provenance = append(provenance, input.SanitizedRequestArtifactIdentity(), input.SanitizedEgressReceiptArtifactIdentity())
 	}
 	sort.Strings(provenance)
 	outputArtifact, err := artifact.New(

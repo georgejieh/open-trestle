@@ -79,7 +79,7 @@ func (a *PolicyAuthorizer) Authorize(ctx context.Context, scope audit.ReviewScop
 	if ctx == nil || ctx.Err() != nil || a.Validate() != nil || scope.Validate() != nil || request.Validate() != nil || policyIdentity != a.policyIdentity {
 		return gateway.RouteAttemptAuthorization{}, ErrInvalidPolicyAuthorizer
 	}
-	if review.ValidateCandidateModelRequest(request, scope.Identity()) != nil {
+	if review.ValidateCandidateEgressRequest(request, scope.Identity()) != nil {
 		return gateway.RouteAttemptAuthorization{}, ErrInvalidPolicyAuthorizer
 	}
 	budget, err := review.ModelRequestBudget(request, a.budget)
@@ -172,7 +172,7 @@ func derivePolicyAuthorizerIdentity(a *PolicyAuthorizer) string {
 		Ranking              string            `json:"ranking_policy"`
 		Routes               []routeWire       `json:"routes"`
 		Observations         []observationWire `json:"observations"`
-	}{Contract: "open-trestle/context-policy-authorizer", Version: 3, InputEstimateVersion: review.ModelRequestBudgetVersion, Policy: a.policyIdentity, MinContext: a.requirements.MinContextTokens(), MinOutput: a.requirements.MinOutputTokens(), Features: featureTokens, Classification: string(a.constraints.Classification()), Zones: zones, Logging: a.constraints.ContentLoggingAllowed(), InputTokens: a.budget.EstimatedInputTokens(), MaxOutput: a.budget.MaxOutputTokens(), Cost: a.budget.MaxCostMicroUSD(), Registry: a.registryRevision, Performance: a.performanceRevision, Ranking: a.rankingPolicy.Identity(), Routes: routes, Observations: observations})
+	}{Contract: "open-trestle/context-policy-authorizer", Version: 4, InputEstimateVersion: review.ModelRequestBudgetVersion, Policy: a.policyIdentity, MinContext: a.requirements.MinContextTokens(), MinOutput: a.requirements.MinOutputTokens(), Features: featureTokens, Classification: string(a.constraints.Classification()), Zones: zones, Logging: a.constraints.ContentLoggingAllowed(), InputTokens: a.budget.EstimatedInputTokens(), MaxOutput: a.budget.MaxOutputTokens(), Cost: a.budget.MaxCostMicroUSD(), Registry: a.registryRevision, Performance: a.performanceRevision, Ranking: a.rankingPolicy.Identity(), Routes: routes, Observations: observations})
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }

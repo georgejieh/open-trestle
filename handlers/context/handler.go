@@ -24,6 +24,7 @@ import (
 	memorycore "github.com/georgejieh/open-trestle/internal/memory"
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/review"
+	"github.com/georgejieh/open-trestle/internal/secretscan"
 )
 
 const (
@@ -45,15 +46,17 @@ type Handler struct {
 	store      artifact.Store
 	clock      artifact.Clock
 	authorizer GenerationAuthorizer
+	sanitizer  review.GenerationRequestSanitizer
 	pipeline   *modelhandler.InvestigationPipeline
 }
 
-func NewHandler(store artifact.Store, clock artifact.Clock, authorizer GenerationAuthorizer) (*Handler, error) {
-	if nilInterface(store) || nilInterface(clock) || nilInterface(authorizer) || !validDigest(authorizer.Identity()) {
+func NewHandler(store artifact.Store, clock artifact.Clock, authorizer GenerationAuthorizer, sanitizer review.GenerationRequestSanitizer) (*Handler, error) {
+	if nilInterface(store) || nilInterface(clock) || nilInterface(authorizer) || !validDigest(authorizer.Identity()) || nilInterface(sanitizer) || !validDigest(sanitizer.Identity()) {
 		return nil, ErrInvalidHandler
 	}
-	h := &Handler{store: store, clock: clock, authorizer: authorizer}
-	h.identity = deriveHandlerIdentity(authorizer.Identity())
+	h := &Handler{store: store, clock: clock, authorizer: authorizer, sanitizer: sanitizer}
+	sanitizerIdentity := sanitizer.Identity()
+	h.identity = deriveHandlerIdentity(authorizer.Identity(), sanitizerIdentity)
 	return h, nil
 }
 func NewInvestigationHandler(store artifact.Store, clock artifact.Clock, pipeline *modelhandler.InvestigationPipeline) (*Handler, error) {
@@ -91,22 +94,26 @@ func (h *Handler) Validate() error {
 	}
 	if h.pipeline != nil {
 		identity, err := h.pipeline.HandlerIdentity(controlplane.TaskAssembleContext)
-		if h.pipeline.Validate() != nil || err != nil || !validDigest(identity) || h.identity != identity || !nilInterface(h.authorizer) {
+		if h.pipeline.Validate() != nil || err != nil || !validDigest(identity) || h.identity != identity || !nilInterface(h.authorizer) || !nilInterface(h.sanitizer) {
 			return ErrInvalidHandler
 		}
 		return nil
 	}
-	if nilInterface(h.authorizer) || !validDigest(h.authorizer.Identity()) || h.identity != deriveHandlerIdentity(h.authorizer.Identity()) {
+	if nilInterface(h.authorizer) || !validDigest(h.authorizer.Identity()) {
+		return ErrInvalidHandler
+	}
+	if nilInterface(h.sanitizer) || !validDigest(h.sanitizer.Identity()) || h.identity != deriveHandlerIdentity(h.authorizer.Identity(), h.sanitizer.Identity()) {
 		return ErrInvalidHandler
 	}
 	return nil
 }
-func deriveHandlerIdentity(authorizer string) string {
+func deriveHandlerIdentity(authorizer, sanitizer string) string {
 	encoded, _ := json.Marshal(struct {
 		Contract   string `json:"contract"`
 		Version    int    `json:"version"`
 		Authorizer string `json:"authorizer"`
-	}{"open-trestle/context-assembly-handler", 4, authorizer})
+		Sanitizer  string `json:"sanitizer,omitempty"`
+	}{"open-trestle/context-assembly-handler", 5, authorizer, sanitizer})
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }
@@ -140,17 +147,44 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 	packet, snapshot := assembly.Packet, assembly.Snapshot
 	contextArtifact := assembly.InitialContextArtifact
 	analysisArtifact, memoryArtifact := assembly.AnalysisArtifact, assembly.MemoryArtifact
-	authorization, err := h.authorizer.Authorize(ctx, request.Plan().Scope(), providerRequest, request.Plan().PolicyIdentity(), at)
+	dispatchRequest := providerRequest
+	var err error
+	var sanitizedRequestArtifact, receiptArtifact artifact.Artifact
+	sanitized, receipt, sanitizeErr := h.sanitizer.SanitizeGeneration(ctx, providerRequest, request.Plan().Scope().Identity())
+	if sanitizeErr != nil {
+		if ctx.Err() != nil {
+			return failure(controlplane.RunFailureCanceled)
+		}
+		switch review.SanitizedEgressFailure(sanitizeErr) {
+		case secretscan.FailureResourceLimit:
+			return failure(controlplane.RunFailureResourceLimit)
+		case secretscan.FailureCanceled:
+			return failure(controlplane.RunFailureCanceled)
+		case secretscan.FailureInvalidInput:
+			return failure(controlplane.RunFailureInvalidInput)
+		default:
+			return failure(controlplane.RunFailurePolicy)
+		}
+	}
+	dispatchRequest, err = sanitized.ProviderRequest()
+	if err != nil {
+		return failure(controlplane.RunFailurePolicy)
+	}
+	sanitizedRequestArtifact, receiptArtifact, err = review.NewSanitizedEgressArtifacts(contextArtifact, sanitized, receipt, h.sanitizer.ExpectedBinaryDigests(), at)
+	if err != nil {
+		return failure(controlplane.RunFailureInvalidInput)
+	}
+	authorization, err := h.authorizer.Authorize(ctx, request.Plan().Scope(), dispatchRequest, request.Plan().PolicyIdentity(), at)
 	if err != nil {
 		if ctx.Err() != nil {
 			return failure(controlplane.RunFailureCanceled)
 		}
 		return failure(controlplane.RunFailurePolicy)
 	}
-	if authorization.Validate() != nil || authorization.RequestIdentity() != providerRequest.Identity() || authorization.ReviewScopeIdentity() != request.Plan().Scope().Identity() {
+	if authorization.Validate() != nil || authorization.RequestIdentity() != dispatchRequest.Identity() || authorization.ReviewScopeIdentity() != request.Plan().Scope().Identity() {
 		return failure(controlplane.RunFailurePolicy)
 	}
-	input, err := modelhandler.NewGenerationInput(contextArtifact, packet, snapshot, authorization)
+	input, err := modelhandler.NewSanitizedGenerationInput(contextArtifact, packet, snapshot, sanitizedRequestArtifact, receiptArtifact, h.sanitizer.ExpectedBinaryDigests(), authorization)
 	if err != nil {
 		return failure(controlplane.RunFailureInternal)
 	}
@@ -159,6 +193,12 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 		return failure(controlplane.RunFailureResourceLimit)
 	}
 	if _, err := h.store.Put(ctx, contextArtifact, at); err != nil {
+		return failure(writeFailure(ctx, err))
+	}
+	if _, err := h.store.Put(ctx, sanitizedRequestArtifact, at); err != nil {
+		return failure(writeFailure(ctx, err))
+	}
+	if _, err := h.store.Put(ctx, receiptArtifact, at); err != nil {
 		return failure(writeFailure(ctx, err))
 	}
 	if _, err := h.store.Put(ctx, inputArtifact, at); err != nil {

@@ -3,9 +3,11 @@ package openai
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/provider"
+	"github.com/georgejieh/open-trestle/internal/review"
 )
 
 type credentialProvider struct {
@@ -144,6 +147,47 @@ func TestExecuteSendsBoundedResponsesRequestAndNormalizesOutput(t *testing.T) {
 	}
 }
 
+func TestExecuteSendsReadableSanitizedInnerPayloadWithoutSecretCanaries(t *testing.T) {
+	secret := "sk-proj-cccccccccccccccccccccccccccccccc"
+	raw := testRawModelRequest(t)
+	rawPayload := bytes.Replace(raw.Payload(), []byte("safe input"), []byte(secret), 1)
+	raw, err := provider.NewRequest(provider.CapabilityReviewV1, "application/json", rawPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sanitizedPayload := bytes.Replace(rawPayload, []byte(secret), bytes.Repeat([]byte{'*'}, len(secret)), 1)
+	inner, err := provider.NewRequest(provider.CapabilityReviewV1, "application/json", sanitizedPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var header struct {
+		ReviewScopeIdentity string `json:"review_scope_identity"`
+	}
+	if err := json.Unmarshal(rawPayload, &header); err != nil {
+		t.Fatal(err)
+	}
+	sanitized, err := review.NewSanitizedModelRequest(header.ReviewScopeIdentity, raw, inner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := sanitized.ProviderRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var received []byte
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		received, _ = io.ReadAll(request.Body)
+		_, _ = writer.Write([]byte(successfulResponse("gpt-safe")))
+	}))
+	defer server.Close()
+	credentials := &credentialProvider{key: testKey(t)}
+	adapter := newTestAdapter(t, server.URL, credentials)
+	result := adapter.execute(context.Background(), testRoute(t, "gpt-safe", ""), 100, request)
+	if result.Status() != gateway.RouteDispatchSucceeded || credentials.calls.Load() != 1 || !bytes.Contains(received, bytes.Repeat([]byte{'*'}, len(secret))) || bytes.Contains(received, []byte(secret)) || bytes.Contains(received, []byte(base64.StdEncoding.EncodeToString([]byte(secret)))) {
+		t.Fatalf("sanitized local request escaped authority: result=%#v calls=%d", result, credentials.calls.Load())
+	}
+}
+
 func TestExecuteNormalizesIncompleteAndRefusalResponses(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		_, _ = writer.Write([]byte(`{
@@ -238,7 +282,7 @@ func TestExecuteFailsClosedBeforeCredentialOrNetwork(t *testing.T) {
 	if result.Failure() != gateway.RouteFailureInvalidResponse || result.ReplaySafety() != gateway.RouteReplayNotDispatched || localCredentials.calls.Load() != 0 {
 		t.Fatalf("missing-instructions result = %#v, calls = %d", result, localCredentials.calls.Load())
 	}
-	validRequest := testRequest(t)
+	validRequest := testRawModelRequest(t)
 	var contract map[string]json.RawMessage
 	if err := json.Unmarshal(validRequest.Payload(), &contract); err != nil {
 		t.Fatal(err)

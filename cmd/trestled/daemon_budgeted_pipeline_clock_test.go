@@ -131,7 +131,7 @@ func (h *daemonBudgetedPipelineHarness) args(t *testing.T) []string {
 
 func (h *daemonBudgetedPipelineHarness) build(t *testing.T, ctx context.Context) *daemon {
 	t.Helper()
-	d, err := buildDaemonWithDependencies(ctx, h.args(t), h.env, io.Discard, daemonDependencies{openPostgres: h.sql.OpenPostgres, clock: h.clock})
+	d, err := buildDaemonWithDependencies(ctx, h.args(t), h.env, io.Discard, daemonDependencies{openPostgres: h.sql.OpenPostgres, clock: h.clock, generationSanitizer: daemonTestGenerationSanitizer()})
 	if err != nil {
 		t.Fatalf("budgeted pipeline daemon build failed: %v", err)
 	}
@@ -291,7 +291,7 @@ func TestDaemonBudgetedLocalSupervisorRunsModelPipelineToReadinessWithUTCMillise
 	if generationCalls != 1 || verificationCalls != 1 || len(generationCaptures) != 1 || len(verificationCaptures) != 1 || len(generationFailures)+len(verificationFailures) != 0 {
 		t.Fatalf("model fixture traffic = gen(%d,%d,%d,%v) verify(%d,%d,%d,%v)", generationCalls, generationBytes, len(generationCaptures), generationFailures, verificationCalls, verificationBytes, len(verificationCaptures), verificationFailures)
 	}
-	if generationCaptures[0].Packet.Task != "candidate_generation" || verificationCaptures[0].Packet.Task != "candidate_verification" || verificationCaptures[0].Packet.GenerationContext != generation.ContextIdentity() || generationCaptures[0].RequestID != input.Authorization().RequestIdentity() {
+	if generationCaptures[0].Packet.Task != "candidate_generation" || verificationCaptures[0].Packet.Task != "candidate_verification" || verificationCaptures[0].Packet.GenerationContext != generation.ContextIdentity() || generationCaptures[0].RequestID == input.Authorization().RequestIdentity() {
 		t.Fatalf("model capture lost request identities: gen=%#v verify=%#v", generationCaptures[0], verificationCaptures[0])
 	}
 	if fixture.readCount(daemonBudgetedModelGenerationKeyEnv) != 1 || fixture.readCount(daemonBudgetedModelVerificationKeyEnv) != 1 || fixture.readCount("OPEN_TRESTLE_GITHUB_PUBLICATION_TOKEN") != 0 {

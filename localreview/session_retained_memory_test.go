@@ -251,7 +251,7 @@ func TestRetainedSessionFreshGraphsUseActualRetrievedAdvice(t *testing.T) {
 		_, gc := f.generation.snapshot()
 		_, vc := f.verification.snapshot()
 		g, v := gc[len(gc)-1], vc[len(vc)-1]
-		if g.ContextID != r.wire.Context || g.RequestID != r.wire.GenerationRequest || v.ContextID != r.wire.VerificationContext || v.RequestID != r.wire.VerificationRequest || v.Packet.GenerationContext != g.ContextID || v.Packet.CandidateBatch != r.wire.CandidateBatch || g.Packet.Scope != p.Plan().Scope().Identity() || v.Packet.Scope != g.Packet.Scope {
+		if g.ContextID != r.wire.Context || g.RequestID == r.wire.GenerationRequest || v.ContextID != r.wire.VerificationContext || v.RequestID != r.wire.VerificationRequest || v.Packet.GenerationContext != g.ContextID || v.Packet.CandidateBatch != r.wire.CandidateBatch || g.Packet.Scope != p.Plan().Scope().Identity() || v.Packet.Scope != g.Packet.Scope {
 			t.Fatal("actual independent requests lost context/candidate lineage")
 		}
 		rmRecordInPacket(t, g.Packet, w, m)

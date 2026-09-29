@@ -2,6 +2,7 @@ package review
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -30,6 +31,54 @@ type sanitizedEgressFixture struct {
 	requestArtifact  artifact.Artifact
 	receiptArtifact  artifact.Artifact
 	expected         ScannerBinaryDigests
+}
+
+type fixedGenerationProjectionFixture struct {
+	complete bool
+	failure  secretscan.FailureClass
+	sources  [][]byte
+	matches  []secretscan.Match
+	initial  secretscan.ScanMetadata
+	residual secretscan.ScanMetadata
+	masked   int
+}
+
+func (value fixedGenerationProjectionFixture) Complete() bool                   { return value.complete }
+func (value fixedGenerationProjectionFixture) Failure() secretscan.FailureClass { return value.failure }
+func (value fixedGenerationProjectionFixture) Sources() [][]byte {
+	copied := make([][]byte, len(value.sources))
+	for index := range value.sources {
+		copied[index] = append([]byte(nil), value.sources[index]...)
+	}
+	return copied
+}
+func (value fixedGenerationProjectionFixture) Matches() []secretscan.Match {
+	return append([]secretscan.Match(nil), value.matches...)
+}
+func (value fixedGenerationProjectionFixture) Initial() secretscan.ScanMetadata { return value.initial }
+func (value fixedGenerationProjectionFixture) Residual() secretscan.ScanMetadata {
+	return value.residual
+}
+func (value fixedGenerationProjectionFixture) MaskedByteCount() int { return value.masked }
+
+type fixedGenerationClientFixture struct {
+	projection generationScanProjection
+	launcher   string
+	worker     string
+	calls      int
+	observed   [][]byte
+}
+
+func (value *fixedGenerationClientFixture) Sanitize(_ context.Context, sources [][]byte) generationScanProjection {
+	value.calls++
+	value.observed = make([][]byte, len(sources))
+	for index := range sources {
+		value.observed[index] = append([]byte(nil), sources[index]...)
+	}
+	return value.projection
+}
+func (value *fixedGenerationClientFixture) BinaryDigests() (string, string) {
+	return value.launcher, value.worker
 }
 
 func sanitizedFixture(t *testing.T) sanitizedEgressFixture {
@@ -464,6 +513,101 @@ func TestSanitizedEgressReceiptSchemaPinsRuleInventoryAndUniqueCollections(t *te
 	}
 	if json.Unmarshal(encoded, &schema) != nil || !schema.Properties.Fields.Unique || !schema.Properties.Fields.Items.Properties.Matches.Unique || !reflect.DeepEqual(schema.Properties.Fields.Items.Properties.Matches.Items.Properties.RuleID.Enum, secretscan.PinnedRuleIDs()) {
 		t.Fatal("receipt schema does not pin the exact rule inventory and unique collections")
+	}
+}
+
+func TestGenerationSanitizerPreflightsEveryFieldBoundAsResourceLimit(t *testing.T) {
+	value := ""
+	fields := make([]sanitizedFieldReference, maximumSanitizedFields+1)
+	for index := range fields {
+		fields[index] = sanitizedFieldReference{role: FieldRoleSourcePath, value: &value}
+	}
+	if sanitizableFieldBounds(sanitizedRequestDocument{fields: fields}) {
+		t.Fatal("257 typed fields reached the scanner")
+	}
+	oversized := strings.Repeat("x", maximumSanitizedFieldBytes+1)
+	if sanitizableFieldBounds(sanitizedRequestDocument{fields: []sanitizedFieldReference{{role: FieldRoleSourceContent, value: &oversized}}}) {
+		t.Fatal("oversized typed field reached the scanner")
+	}
+	chunk := strings.Repeat("x", maximumSanitizedFieldBytes)
+	aggregate := make([]sanitizedFieldReference, maximumSanitizedAggregateBytes/maximumSanitizedFieldBytes+1)
+	for index := range aggregate {
+		aggregate[index] = sanitizedFieldReference{role: FieldRoleSourceContent, value: &chunk}
+	}
+	if sanitizableFieldBounds(sanitizedRequestDocument{fields: aggregate}) {
+		t.Fatal("oversized aggregate reached the scanner")
+	}
+}
+
+func TestFixedGenerationSanitizerClosesMixedCleanAndDetectedFields(t *testing.T) {
+	f := sanitizedFixture(t)
+	document, err := parseSanitizableRequest(f.rawRequest, f.scope.Identity())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const secret = "literal-that-must-not-enter-receipt"
+	sources := make([][]byte, len(document.fields))
+	sanitizedSources := make([][]byte, len(document.fields))
+	matches := []secretscan.Match{}
+	total, masked := 0, 0
+	for index, field := range document.fields {
+		sources[index] = []byte(*field.value)
+		sanitizedSources[index] = append([]byte(nil), sources[index]...)
+		total += len(sources[index])
+		if start := bytes.Index(sources[index], []byte(secret)); start >= 0 {
+			match := secretscan.Match{SourceOrdinal: index, RuleID: "generic-api-key", StartByte: start, EndByteExclusive: start + len(secret)}
+			match.OccurrenceID = secretscan.OccurrenceID(match)
+			matches = append(matches, match)
+			copy(sanitizedSources[index][start:start+len(secret)], bytes.Repeat([]byte{'*'}, len(secret)))
+			masked += len(secret)
+		}
+	}
+	launcher, worker := strings.Repeat("b", 64), strings.Repeat("c", 64)
+	metadata := secretscan.ScanMetadata{Scanner: secretscan.ScannerName, ScannerVersion: secretscan.ScannerVersion, ScannerCommit: secretscan.ScannerCommit, RulesetIdentity: secretscan.RulesetIdentity, BuildProfile: secretscan.BuildProfile, LauncherSHA256: launcher, WorkerSHA256: worker, SourceCount: len(sources), ScannedByteCount: total}
+	initial, residual := metadata, metadata
+	initial.MatchCount = len(matches)
+	client := &fixedGenerationClientFixture{launcher: launcher, worker: worker, projection: fixedGenerationProjectionFixture{complete: true, sources: sanitizedSources, matches: matches, initial: initial, residual: residual, masked: masked}}
+	sanitizer := newFixedGenerationRequestSanitizer(client)
+	request, receipt, err := sanitizer.SanitizeGeneration(context.Background(), f.rawRequest, f.scope.Identity())
+	if err != nil || client.calls != 1 || len(client.observed) != len(sources) {
+		t.Fatalf("sanitize=(%#v,%#v,%v) calls=%d", request, receipt, err, client.calls)
+	}
+	clean := 0
+	for _, field := range receipt.Fields() {
+		if field.Matches == nil {
+			t.Fatal("clean field retained nil matches")
+		}
+		if len(field.Matches) == 0 {
+			clean++
+		}
+	}
+	encoded, err := EncodeSanitizedEgressReceipt(receipt)
+	if err != nil || clean == 0 || bytes.Count(encoded, []byte(`"matches":[]`)) != clean {
+		t.Fatalf("receipt clean fields=%d payload=%s err=%v", clean, encoded, err)
+	}
+	expected := sanitizer.ExpectedBinaryDigests()
+	requestArtifact, receiptArtifact, err := NewSanitizedEgressArtifacts(f.rawArtifact, request, receipt, expected, time.UnixMilli(200))
+	if err != nil || ValidateSanitizedEgressArtifacts(f.rawArtifact, requestArtifact, receiptArtifact, expected) != nil {
+		t.Fatal("mixed projection did not close joint artifacts")
+	}
+	providerRequest, err := request.ProviderRequest()
+	if err != nil || providerRequest.Identity() != receipt.SanitizedRequestIdentity() || bytes.Contains(providerRequest.Payload(), []byte(secret)) || bytes.Contains(providerRequest.Payload(), []byte(base64.StdEncoding.EncodeToString([]byte(secret)))) {
+		t.Fatal("sanitized provider request identity or canary mismatch")
+	}
+}
+
+func TestFixedGenerationSanitizerFailsClosedWithoutPackagedWorkerIdentity(t *testing.T) {
+	f := sanitizedFixture(t)
+	sanitizer := NewFixedGenerationRequestSanitizer()
+	request, receipt, err := sanitizer.SanitizeGeneration(context.Background(), f.rawRequest, f.scope.Identity())
+	if err == nil || request.Identity() != "" || receipt.Identity() != "" {
+		t.Fatal("unpackaged fixed scanner produced generation authority")
+	}
+}
+
+func TestGenerationSanitizableWireShapeIsFrozen(t *testing.T) {
+	if got := sanitizedWireShapeIdentity(); got != generationSanitizableWireShapeIdentity {
+		t.Fatalf("generation wire shape=%s", got)
 	}
 }
 

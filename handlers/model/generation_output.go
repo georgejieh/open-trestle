@@ -172,11 +172,17 @@ func ParseGenerationResultArtifact(
 		) != nil {
 		return GenerationResult{}, ErrInvalidGenerationResult
 	}
-	providerRequest, err := provider.NewRequest(
-		provider.CapabilityReviewV1, contextArtifact.MediaType(), contextArtifact.Payload(),
-	)
-	if err != nil || providerRequest.Identity() != input.Authorization().RequestIdentity() {
-		return GenerationResult{}, ErrInvalidGenerationResult
+	if input.IsSanitized() {
+		if !hasProvenance(inputArtifact.Provenance(), input.SanitizedRequestArtifactIdentity()) || !hasProvenance(inputArtifact.Provenance(), input.SanitizedEgressReceiptArtifactIdentity()) || !hasProvenance(value.Provenance(), input.SanitizedRequestArtifactIdentity()) || !hasProvenance(value.Provenance(), input.SanitizedEgressReceiptArtifactIdentity()) {
+			return GenerationResult{}, ErrInvalidGenerationResult
+		}
+	} else {
+		providerRequest, err := provider.NewRequest(
+			provider.CapabilityReviewV1, contextArtifact.MediaType(), contextArtifact.Payload(),
+		)
+		if err != nil || providerRequest.Identity() != input.Authorization().RequestIdentity() {
+			return GenerationResult{}, ErrInvalidGenerationResult
+		}
 	}
 	payload := value.Payload()
 	if len(payload) == 0 || len(payload) > maximumGenerationResultBytes {

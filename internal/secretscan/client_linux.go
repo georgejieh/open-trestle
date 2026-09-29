@@ -71,6 +71,14 @@ func NewClient() *Client {
 	})
 }
 
+// BinaryDigests returns the compiled scanner executable identities.
+func (client *Client) BinaryDigests() (string, string) {
+	if client == nil {
+		return "", ""
+	}
+	return client.config.expectedLauncherSHA256, client.config.expectedWorkerSHA256
+}
+
 func newClient(config clientConfig) *Client {
 	if config.random == nil {
 		config.random = rand.Reader

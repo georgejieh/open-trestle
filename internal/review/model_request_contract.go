@@ -118,6 +118,23 @@ func scanModelRequestJSONValue(decoder *json.Decoder) error {
 	return nil
 }
 
+// ModelRequestReviewScopeIdentity returns the closed request scope binding.
+func ModelRequestReviewScopeIdentity(request provider.Request) (string, error) {
+	if request.Validate() != nil || request.MediaType() != "application/json" {
+		return "", ErrInvalidModelRequestContract
+	}
+	if sanitized, err := ParseSanitizedModelRequest(request.Payload()); err == nil {
+		return sanitized.ReviewScopeIdentity(), nil
+	}
+	var header struct {
+		ReviewScopeIdentity string `json:"review_scope_identity"`
+	}
+	if json.Unmarshal(request.Payload(), &header) != nil || !validCandidateDigest(header.ReviewScopeIdentity) {
+		return "", ErrInvalidModelRequestContract
+	}
+	return header.ReviewScopeIdentity, nil
+}
+
 // TrustedModelRequestInstructions returns only a pinned host instruction contract.
 func TrustedModelRequestInstructions(payload []byte) (string, error) {
 	if len(payload) == 0 || len(payload) > maxProviderContextPacketBytes || rejectAmbiguousModelRequestJSON(payload) != nil {
@@ -156,6 +173,30 @@ func TrustedModelRequestInstructions(payload []byte) (string, error) {
 		return "", ErrInvalidModelRequestContract
 	}
 	return instructions, nil
+}
+
+// SanitizedCandidatePayload returns a defensive copy of the validated inner provider payload.
+func SanitizedCandidatePayload(request provider.Request, reviewScopeIdentity string) ([]byte, error) {
+	if ValidateCandidateEgressRequest(request, reviewScopeIdentity) != nil {
+		return nil, ErrInvalidModelRequestContract
+	}
+	sanitized, err := ParseSanitizedModelRequest(request.Payload())
+	if err != nil {
+		return nil, ErrInvalidModelRequestContract
+	}
+	return sanitized.request.Payload(), nil
+}
+
+// ValidateCandidateEgressRequest checks the closed sanitized generation contract.
+func ValidateCandidateEgressRequest(request provider.Request, reviewScopeIdentity string) error {
+	if request.Validate() != nil || request.MediaType() != "application/json" || !validCandidateDigest(reviewScopeIdentity) {
+		return ErrInvalidModelRequestContract
+	}
+	sanitized, err := ParseSanitizedModelRequest(request.Payload())
+	if err != nil || sanitized.ReviewScopeIdentity() != reviewScopeIdentity || sanitized.SanitizedRequestIdentity() != request.Identity() || ValidateCandidateModelRequest(sanitized.request, reviewScopeIdentity) != nil {
+		return ErrInvalidModelRequestContract
+	}
+	return nil
 }
 
 // ValidateCandidateModelRequest checks the host contract before generation routing.

@@ -106,7 +106,7 @@ func TestModelContextV2HistoricalReadbackRejectsNewAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	generationHandler, err := NewGenerationHandler(store, catalog, ledger, fixedClock{at: time.UnixMilli(230)})
+	generationHandler, err := newLegacyGenerationHandler(store, catalog, ledger, fixedClock{at: time.UnixMilli(230)})
 	if err != nil {
 		t.Fatal(err)
 	}
