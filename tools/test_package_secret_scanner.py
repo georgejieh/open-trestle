@@ -305,6 +305,17 @@ class LauncherToolchainTest(unittest.TestCase):
 
 
 class ReleaseEvidenceTest(unittest.TestCase):
+    @patch.object(Path, "read_bytes", side_effect=AssertionError("whole-file read"))
+    def test_file_checksums_stream_sha1_and_sha256(self, _read):
+        with tempfile.TemporaryDirectory() as directory:
+            artifact = Path(directory) / "artifact"
+            artifact.write_bytes(b"scanner")
+
+            sha1, sha256 = package_secret_scanner._file_checksums(artifact)
+
+            self.assertEqual(sha1, hashlib.sha1(b"scanner").hexdigest())
+            self.assertEqual(sha256, hashlib.sha256(b"scanner").hexdigest())
+
     def test_release_evidence_binds_both_binaries_and_profile(self):
         launcher = hashlib.sha256(b"launcher").hexdigest()
         worker = hashlib.sha256(b"worker").hexdigest()
@@ -324,7 +335,9 @@ class ReleaseEvidenceTest(unittest.TestCase):
             repository, toolchain
         )
         evidence, spdx = package_secret_scanner.encode_release_evidence(
+            launcher_sha1=hashlib.sha1(b"launcher").hexdigest(),
             launcher_sha256=launcher,
+            worker_sha1=hashlib.sha1(b"worker").hexdigest(),
             worker_sha256=worker,
             launcher_source_sha256="c" * 64,
             launcher_build_contract_sha256="e" * 64,
@@ -389,6 +402,39 @@ class ReleaseEvidenceTest(unittest.TestCase):
         )
         self.assertEqual(worker_file["licenseConcluded"], "NOASSERTION")
         self.assertEqual(worker_file["licenseInfoInFiles"], ["NOASSERTION"])
+        self.assertEqual(
+            launcher_file["checksums"],
+            [
+                {
+                    "algorithm": "SHA1",
+                    "checksumValue": hashlib.sha1(b"launcher").hexdigest(),
+                },
+                {"algorithm": "SHA256", "checksumValue": launcher},
+            ],
+        )
+        self.assertEqual(
+            worker_file["checksums"],
+            [
+                {
+                    "algorithm": "SHA1",
+                    "checksumValue": hashlib.sha1(b"worker").hexdigest(),
+                },
+                {"algorithm": "SHA256", "checksumValue": worker},
+            ],
+        )
+        root_artifacts = [
+            item for item in sbom["relationships"]
+            if item["spdxElementId"] == "SPDXRef-Package-Secret-Scanner"
+            and item["relationshipType"] == "DISTRIBUTION_ARTIFACT"
+        ]
+        self.assertEqual(len(root_artifacts), 2)
+        self.assertFalse(
+            any(
+                item["spdxElementId"] == "SPDXRef-Package-Secret-Scanner"
+                and item["relationshipType"] == "CONTAINS"
+                for item in sbom["relationships"]
+            )
+        )
         static_links = [
             item for item in sbom["relationships"]
             if item["spdxElementId"] == "SPDXRef-File-Launcher"

@@ -29,6 +29,9 @@ class ArtifactCollectionTest(unittest.TestCase):
                 ["trestle", "web/assets/app.js", "web/index.html"],
             )
             self.assertEqual(
+                artifacts[0].sha1, hashlib.sha1(b"binary").hexdigest()
+            )
+            self.assertEqual(
                 artifacts[0].sha256, hashlib.sha256(b"binary").hexdigest()
             )
             self.assertEqual(artifacts[0].size, 6)
@@ -240,8 +243,8 @@ class ArtifactCollectionTest(unittest.TestCase):
 
     def test_checksum_output_is_stable_and_sha256sum_compatible(self):
         artifacts = (
-            release_evidence.Artifact("b/file", "b" * 64, 2),
-            release_evidence.Artifact("a", "a" * 64, 1),
+            release_evidence.Artifact("b/file", "2" * 40, "b" * 64, 2),
+            release_evidence.Artifact("a", "1" * 40, "a" * 64, 1),
         )
 
         encoded = release_evidence.encode_checksums(artifacts)
@@ -253,8 +256,8 @@ class ArtifactCollectionTest(unittest.TestCase):
 
     def test_spdx_inventory_is_deterministic_and_exact(self):
         artifacts = (
-            release_evidence.Artifact("trestle", "a" * 64, 100),
-            release_evidence.Artifact("web/index.html", "b" * 64, 25),
+            release_evidence.Artifact("trestle", "1" * 40, "a" * 64, 100),
+            release_evidence.Artifact("web/index.html", "2" * 40, "b" * 64, 25),
         )
 
         components = (
@@ -296,7 +299,10 @@ class ArtifactCollectionTest(unittest.TestCase):
         )
         self.assertEqual(
             document["files"][0]["checksums"],
-            [{"algorithm": "SHA256", "checksumValue": "a" * 64}],
+            [
+                {"algorithm": "SHA1", "checksumValue": "1" * 40},
+                {"algorithm": "SHA256", "checksumValue": "a" * 64},
+            ],
         )
         self.assertEqual(
             document["documentDescribes"], ["SPDXRef-Package-Open-Trestle"]
@@ -324,25 +330,32 @@ class ArtifactCollectionTest(unittest.TestCase):
         relationship_types = [
             item["relationshipType"] for item in document["relationships"]
         ]
-        self.assertEqual(relationship_types.count("CONTAINS"), 2)
+        self.assertEqual(relationship_types.count("DISTRIBUTION_ARTIFACT"), 2)
+        self.assertEqual(relationship_types.count("CONTAINS"), 0)
         self.assertEqual(relationship_types.count("DEPENDS_ON"), 2)
         self.assertIn("unsigned local inventory", document["comment"].lower())
 
     def test_spdx_inventory_rejects_invalid_metadata_and_artifacts(self):
-        valid = release_evidence.Artifact("trestle", "a" * 64, 1)
+        valid = release_evidence.Artifact("trestle", "1" * 40, "a" * 64, 1)
         cases = (
             ((), "0.1.0", "1" * 40, "2026-09-15T00:00:00Z"),
             ((valid,), "latest", "1" * 40, "2026-09-15T00:00:00Z"),
             ((valid,), "0.1.0", "ABC", "2026-09-15T00:00:00Z"),
             ((valid,), "0.1.0", "1" * 40, "2026-09-15 00:00:00"),
             (
-                (release_evidence.Artifact("trestle", "A" * 64, 1),),
+                (release_evidence.Artifact("trestle", "Z" * 40, "a" * 64, 1),),
                 "0.1.0",
                 "1" * 40,
                 "2026-09-15T00:00:00Z",
             ),
             (
-                (release_evidence.Artifact("trestle", "a" * 64, 0),),
+                (release_evidence.Artifact("trestle", "1" * 40, "A" * 64, 1),),
+                "0.1.0",
+                "1" * 40,
+                "2026-09-15T00:00:00Z",
+            ),
+            (
+                (release_evidence.Artifact("trestle", "1" * 40, "a" * 64, 0),),
                 "0.1.0",
                 "1" * 40,
                 "2026-09-15T00:00:00Z",
@@ -359,7 +372,7 @@ class ArtifactCollectionTest(unittest.TestCase):
                     )
 
     def test_spdx_inventory_rejects_duplicate_or_unsafe_components(self):
-        artifact = (release_evidence.Artifact("trestle", "a" * 64, 1),)
+        artifact = (release_evidence.Artifact("trestle", "1" * 40, "a" * 64, 1),)
         valid = release_evidence.Component("npm", "react", "19.2.8", "MIT")
         cases = (
             (valid, valid),
@@ -381,7 +394,7 @@ class ArtifactCollectionTest(unittest.TestCase):
     def test_release_evidence_directory_is_complete_and_not_overwritten(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "evidence"
-            artifacts = (release_evidence.Artifact("trestle", "a" * 64, 1),)
+            artifacts = (release_evidence.Artifact("trestle", "1" * 40, "a" * 64, 1),)
 
             release_evidence.write_release_evidence(
                 output,
@@ -417,7 +430,7 @@ class ArtifactCollectionTest(unittest.TestCase):
             target = root / "target"
             target.mkdir()
             (root / "linked").symlink_to(target, target_is_directory=True)
-            artifact = (release_evidence.Artifact("trestle", "a" * 64, 1),)
+            artifact = (release_evidence.Artifact("trestle", "1" * 40, "a" * 64, 1),)
 
             with self.assertRaisesRegex(
                 ValueError, "output path must not be symlinked"
@@ -437,7 +450,7 @@ class ArtifactCollectionTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             output = root / "evidence"
-            artifact = (release_evidence.Artifact("trestle", "a" * 64, 1),)
+            artifact = (release_evidence.Artifact("trestle", "1" * 40, "a" * 64, 1),)
 
             with self.assertRaises(OSError):
                 release_evidence.write_release_evidence(
@@ -659,6 +672,12 @@ class ReleaseWorkflowTest(unittest.TestCase):
         ).read_text()
 
         self.assertEqual(workflow.count("python3 tools/release_evidence.py"), 2)
+        validator_lock = (
+            repository_root / "tools/spdx-validator-requirements.txt"
+        ).read_text()
+        self.assertIn("spdx-tools==0.8.5", validator_lock)
+        self.assertEqual(workflow.count("--version SPDX-2.3"), 2)
+
         for required in (
             "--artifact container=.container",
             "--artifact web=web/dist",
@@ -668,6 +687,11 @@ class ReleaseWorkflowTest(unittest.TestCase):
             "--npm-lock web/package-lock.json",
             "--npm-lock extensions/vscode/package-lock.json",
             "diff -r",
+            "--no-cache-dir --require-hashes",
+            "tools/spdx-validator-requirements.txt",
+            "spdx_tools.spdx.clitools.pyspdxtools",
+            ".container/release/secret-scanner.spdx.json",
+            "open-trestle-release-evidence-a/sbom.spdx.json",
         ):
             self.assertIn(required, workflow)
 

@@ -24,6 +24,7 @@ class Artifact:
     """A content-addressed release artifact."""
 
     name: str
+    sha1: str
     sha256: str
     size: int
 
@@ -89,7 +90,8 @@ def _reject_sensitive_path(
 
 def _artifact(name: str, path: Path) -> Artifact:
     _reject_sensitive_path(path, name)
-    digest = hashlib.sha256()
+    sha1 = hashlib.sha1()
+    sha256 = hashlib.sha256()
     size = 0
     try:
         with path.open("rb") as source:
@@ -97,7 +99,8 @@ def _artifact(name: str, path: Path) -> Artifact:
             if not stat.S_ISREG(before.st_mode):
                 raise ValueError(f"artifact is not a regular file: {name}")
             while chunk := source.read(1 << 20):
-                digest.update(chunk)
+                sha1.update(chunk)
+                sha256.update(chunk)
                 size += len(chunk)
             after = os.fstat(source.fileno())
     except OSError as error:
@@ -109,7 +112,12 @@ def _artifact(name: str, path: Path) -> Artifact:
         raise ValueError(f"artifact changed while read: {name}")
     if size == 0:
         raise ValueError(f"artifact must not be empty: {name}")
-    return Artifact(name=name, sha256=digest.hexdigest(), size=size)
+    return Artifact(
+        name=name,
+        sha1=sha1.hexdigest(),
+        sha256=sha256.hexdigest(),
+        size=size,
+    )
 
 
 def _input_path(root: Path, source: str, label: str) -> tuple[Path, tuple[str, ...]]:
@@ -255,6 +263,8 @@ def _validate_artifacts(artifacts: tuple[Artifact, ...]) -> None:
         _validate_name(artifact.name)
         if artifact.name in names:
             raise ValueError(f"duplicate artifact name: {artifact.name}")
+        if not re.fullmatch(r"[0-9a-f]{40}", artifact.sha1):
+            raise ValueError(f"invalid artifact digest: {artifact.name}")
         if not re.fullmatch(r"[0-9a-f]{64}", artifact.sha256):
             raise ValueError(f"invalid artifact digest: {artifact.name}")
         if artifact.size <= 0:
@@ -333,7 +343,8 @@ def encode_spdx(
             {
                 "SPDXID": spdx_id,
                 "checksums": [
-                    {"algorithm": "SHA256", "checksumValue": artifact.sha256}
+                    {"algorithm": "SHA1", "checksumValue": artifact.sha1},
+                    {"algorithm": "SHA256", "checksumValue": artifact.sha256},
                 ],
                 "fileName": "./" + artifact.name,
             }
@@ -399,7 +410,7 @@ def encode_spdx(
     relationships = [
         {
             "relatedSpdxElement": file_id,
-            "relationshipType": "CONTAINS",
+            "relationshipType": "DISTRIBUTION_ARTIFACT",
             "spdxElementId": root_package_id,
         }
         for file_id in file_ids

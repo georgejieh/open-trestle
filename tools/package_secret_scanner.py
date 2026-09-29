@@ -58,6 +58,16 @@ EXECUTABLE_PATHS = frozenset({
 })
 
 
+def _file_checksums(path: Path) -> tuple[str, str]:
+    sha1 = hashlib.sha1()
+    sha256 = hashlib.sha256()
+    with path.open("rb") as source:
+        while chunk := source.read(1 << 20):
+            sha1.update(chunk)
+            sha256.update(chunk)
+    return sha1.hexdigest(), sha256.hexdigest()
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -387,7 +397,9 @@ def _canonical_json(document: object) -> bytes:
 
 def encode_release_evidence(
     *,
+    launcher_sha1: str,
     launcher_sha256: str,
+    worker_sha1: str,
     worker_sha256: str,
     launcher_source_sha256: str,
     launcher_build_contract_sha256: str,
@@ -397,6 +409,9 @@ def encode_release_evidence(
     modules: list[dict[str, str]],
 ) -> tuple[bytes, bytes]:
     """Encode deterministic scanner build evidence and SPDX 2.3 JSON."""
+    for digest in (launcher_sha1, worker_sha1):
+        if not re.fullmatch(r"[0-9a-f]{40}", digest):
+            raise ValueError("release digest is invalid")
     for digest in (
         launcher_sha256,
         worker_sha256,
@@ -479,8 +494,8 @@ def encode_release_evidence(
         "primaryPackagePurpose": "APPLICATION",
     }]
     relationships = [
-        {"spdxElementId": root_id, "relationshipType": "CONTAINS", "relatedSpdxElement": launcher_file_id},
-        {"spdxElementId": root_id, "relationshipType": "CONTAINS", "relatedSpdxElement": worker_file_id},
+        {"spdxElementId": root_id, "relationshipType": "DISTRIBUTION_ARTIFACT", "relatedSpdxElement": launcher_file_id},
+        {"spdxElementId": root_id, "relationshipType": "DISTRIBUTION_ARTIFACT", "relatedSpdxElement": worker_file_id},
     ]
     builder_package_id = "SPDXRef-Package-Launcher-Builder-Zig"
     packages.append({
@@ -576,7 +591,10 @@ def encode_release_evidence(
             {
                 "SPDXID": launcher_file_id,
                 "fileName": "./libexec/open-trestle/open-trestle-secret-scanner",
-                "checksums": [{"algorithm": "SHA256", "checksumValue": launcher_sha256}],
+                "checksums": [
+                    {"algorithm": "SHA1", "checksumValue": launcher_sha1},
+                    {"algorithm": "SHA256", "checksumValue": launcher_sha256},
+                ],
                 "licenseConcluded": "Apache-2.0 AND MIT",
                 "licenseInfoInFiles": ["NOASSERTION"],
                 "copyrightText": "NOASSERTION",
@@ -584,7 +602,10 @@ def encode_release_evidence(
             {
                 "SPDXID": worker_file_id,
                 "fileName": "./libexec/open-trestle/open-trestle-secret-scanner-worker",
-                "checksums": [{"algorithm": "SHA256", "checksumValue": worker_sha256}],
+                "checksums": [
+                    {"algorithm": "SHA1", "checksumValue": worker_sha1},
+                    {"algorithm": "SHA256", "checksumValue": worker_sha256},
+                ],
                 "licenseConcluded": "NOASSERTION",
                 "licenseInfoInFiles": ["NOASSERTION"],
                 "copyrightText": "NOASSERTION",
@@ -811,8 +832,8 @@ def package(repository: Path, output: Path) -> None:
         verify_static_pie_launcher(launcher_b)
         if worker_a.read_bytes() != worker_b.read_bytes():
             raise ValueError("worker builds are not deterministic")
-        launcher_digest = _sha256(launcher_a)
-        worker_digest = _sha256(worker_a)
+        launcher_sha1, launcher_digest = _file_checksums(launcher_a)
+        worker_sha1, worker_digest = _file_checksums(worker_a)
         build_info = _run(["go", "version", "-m", str(worker_a)], cwd=repository)
         verify_worker_build_info(build_info)
         license_root = repository / "THIRD_PARTY_LICENSES/secret-scanner"
@@ -820,7 +841,9 @@ def package(repository: Path, output: Path) -> None:
         modules = verify_linked_licenses(build_info, manifest, license_root)
         modules = add_go_mod_sums(modules, repository / "workers/secret-scanner/go.sum")
         evidence, spdx = encode_release_evidence(
+            launcher_sha1=launcher_sha1,
             launcher_sha256=launcher_digest,
+            worker_sha1=worker_sha1,
             worker_sha256=worker_digest,
             launcher_source_sha256=_sha256(repository / "workers/secret-scanner/launcher/launcher.c"),
             launcher_build_contract_sha256=_sha256(repository / "workers/secret-scanner/launcher/build.mk"),
