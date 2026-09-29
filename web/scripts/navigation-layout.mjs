@@ -57,6 +57,18 @@ export async function checkMobileSetupNavigation(page) {
   const link = page.getByRole("link", { name: "Review console", exact: true });
   assert.equal(await link.getAttribute("href"), "/console/");
   await checkVisibleControl(link, "Review console");
+  const layout = await page.locator(".setup-layout").evaluate((container) => {
+    const progress = container.querySelector(".setup-progress");
+    const detail = container.querySelector(".setup-detail");
+    return {
+      progressTop: progress.getBoundingClientRect().top,
+      detailTop: detail.getBoundingClientRect().top,
+    };
+  });
+  assert.ok(
+    layout.progressTop < layout.detailTop,
+    "mobile readiness navigation precedes the detail it controls",
+  );
 }
 
 export async function checkMobileBrandContrast(page) {

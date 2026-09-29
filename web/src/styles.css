@@ -1871,12 +1871,6 @@ button:disabled {
     margin-top: 18px;
     gap: 18px;
   }
-  .setup-detail {
-    order: 1;
-  }
-  .setup-progress {
-    order: 2;
-  }
   .setup-requirements {
     grid-template-columns: 1fr;
   }
