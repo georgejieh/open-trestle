@@ -41,6 +41,8 @@ Control-plane schemas:
 Artifact schemas:
 
 - `schemas/artifact/runtime-artifact-v1.schema.json`
+- `schemas/artifact/sanitized-model-request-v1.schema.json`
+- `schemas/artifact/sanitized-egress-receipt-v1.schema.json`
 - `schemas/artifact/artifact-deletion-authorization-v1.schema.json`
 - `schemas/artifact/artifact-deletion-receipt-v1.schema.json`
 - `schemas/artifact/source-acquisition-input-v1.schema.json`

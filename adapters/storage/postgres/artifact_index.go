@@ -424,7 +424,7 @@ func validateArtifactIndex(ctx context.Context, index *ArtifactIndex) error {
 	return nil
 }
 func parseArtifactKind(value string) artifact.Kind {
-	for candidate := artifact.KindSourceSnapshot; candidate <= artifact.KindInvestigationToolResult; candidate++ {
+	for candidate := artifact.KindSourceSnapshot; candidate <= artifact.KindSanitizedEgressReceipt; candidate++ {
 		if candidate.String() == value {
 			return candidate
 		}

@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:artifact:sanitized-model-request:v1",
+  "title": "Open Trestle sanitized model request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "identity",
+    "review_scope_identity",
+    "raw_request_identity",
+    "sanitization_policy_identity",
+    "capability",
+    "media_type",
+    "payload"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/sanitized-model-request"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "review_scope_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "raw_request_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "sanitization_policy_identity": {
+      "const": "4397ca6dd6c89759aa20fd780d587df19dd415f18a36c2e084e072ed2f78e696"
+    },
+    "capability": {
+      "const": "review.v1"
+    },
+    "media_type": {
+      "const": "application/json"
+    },
+    "payload": {
+      "type": "string",
+      "contentEncoding": "base64",
+      "minLength": 4,
+      "maxLength": 11184812
+    }
+  }
+}

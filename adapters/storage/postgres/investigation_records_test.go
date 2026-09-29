@@ -95,7 +95,7 @@ func TestInvestigationArtifactMetadataRegistersAndReadsExactKinds(t *testing.T) 
 }
 
 func TestInvestigationArtifactMetadataKindsPreserveOldValuesAndRefuseAliases(t *testing.T) {
-	tokens := []string{"source_snapshot", "change_model", "deterministic_evidence", "retrieval_result", "context_packet", "candidate_batch", "verification_batch", "verified_finding_set", "publication_plan", "run_export", "task_input", "webhook_delivery", "source_file", "publication_receipt", "investigation_turn", "investigation_tool_result"}
+	tokens := []string{"source_snapshot", "change_model", "deterministic_evidence", "retrieval_result", "context_packet", "candidate_batch", "verification_batch", "verified_finding_set", "publication_plan", "run_export", "task_input", "webhook_delivery", "source_file", "publication_receipt", "investigation_turn", "investigation_tool_result", "sanitized_model_request", "sanitized_egress_receipt"}
 	for i, token := range tokens {
 		if kind := parseArtifactKind(token); kind != artifact.Kind(i+1) || kind.String() != token {
 			t.Fatal("metadata decoder changed an enum value or omitted appended kind")

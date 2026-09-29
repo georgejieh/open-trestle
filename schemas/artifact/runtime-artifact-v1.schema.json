@@ -68,7 +68,9 @@
         "source_file",
         "publication_receipt",
         "investigation_turn",
-        "investigation_tool_result"
+        "investigation_tool_result",
+        "sanitized_model_request",
+        "sanitized_egress_receipt"
       ]
     },
     "media_type": {

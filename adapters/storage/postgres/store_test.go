@@ -291,6 +291,14 @@ func TestMigrationDefinesForcedTenantIsolationAndChecksums(t *testing.T) {
 	mock.ExpectQuery("SELECT checksum FROM open_trestle_schema_migrations").WithArgs(13).WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec(regexp.QuoteMeta(string(thirteenth))).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("INSERT INTO open_trestle_schema_migrations").WithArgs(13, hex.EncodeToString(thirteenthDigest[:])).WillReturnResult(sqlmock.NewResult(1, 1))
+	fourteenth, err := migrationFiles.ReadFile("migrations/0014_sanitized_egress_artifact_kinds.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fourteenthDigest := sha256.Sum256(fourteenth)
+	mock.ExpectQuery("SELECT checksum FROM open_trestle_schema_migrations").WithArgs(14).WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec(regexp.QuoteMeta(string(fourteenth))).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("INSERT INTO open_trestle_schema_migrations").WithArgs(14, hex.EncodeToString(fourteenthDigest[:])).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 	if err := ApplyMigrations(context.Background(), database); err != nil {
 		t.Fatal(err)

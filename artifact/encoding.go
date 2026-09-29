@@ -98,7 +98,7 @@ func toRecord(value Artifact) record {
 }
 func parseEnums(kindValue, classificationValue, originValue, protectionValue string) (Kind, Classification, Origin, Protection, error) {
 	var kind Kind
-	for candidate := KindSourceSnapshot; candidate <= KindInvestigationToolResult; candidate++ {
+	for candidate := KindSourceSnapshot; candidate <= KindSanitizedEgressReceipt; candidate++ {
 		if candidate.String() == kindValue {
 			kind = candidate
 		}

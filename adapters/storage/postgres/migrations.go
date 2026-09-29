@@ -40,6 +40,7 @@ var orderedMigrations = []string{
 	"migrations/0011_investigation_artifact_kinds.sql",
 	"migrations/0012_artifact_erasure.sql",
 	"migrations/0013_artifact_erasure_resume.sql",
+	"migrations/0014_sanitized_egress_artifact_kinds.sql",
 }
 
 // VerifyMigrations confirms that every embedded migration was applied unchanged.
