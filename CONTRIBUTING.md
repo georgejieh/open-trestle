@@ -25,7 +25,7 @@ A pull request should include:
 4. documentation for public API, policy, or operator-visible changes;
 5. license and provenance details for any dependency or imported material.
 
-Keep internal planning records, authoring briefs, and private research under the ignored `references/` directory. Do not add local session state or credentials to the public tree. Intentional product skills and agent instructions are product assets, not development records.
+Keep internal planning records, authoring briefs, private research, local session state, and credentials out of the public tree.
 
 Do not add temporary build output. The maintained `web/dist/` and `extensions/vscode/dist/` distributions are intentional exceptions; changes to them must pass the reproducibility and freshness checks in CI.
 
