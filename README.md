@@ -3,7 +3,7 @@
 <p align="center">
   <strong>An evidence-first code-review runtime you can host yourself.</strong><br>
   Every finding traceable to immutable source. Every model choice governed by policy.<br>
-  Every claim backed by receipts — or not made at all.
+  Every claim backed by receipts, or not made at all.
 </p>
 
 <p align="center">
@@ -30,7 +30,7 @@
 **What is real today:** 55 Go packages with a full test suite, deterministic JSON and
 SARIF review output, loose and packed Git inspection, a protected setup planner, a
 durable run journal, an embedded read-only web console, and read-only MCP, ACP, and LSP
-surfaces — all covered by `go test ./...` and a reproducible-release CI gate.
+surfaces. All are covered by `go test ./...` and a reproducible-release CI gate.
 
 **What is not:** a one-command install, stable APIs, or any public claim about review
 quality. Those require evaluation evidence that has not been published yet.
@@ -73,7 +73,7 @@ publication gate.
                     └────────────────────┬────────────────────┘
                                          │
                     ┌────────────────────▼────────────────────┐
-                    │        trestled — review daemon         │
+                    │        trestled: review daemon          │
                     │   durable runs · task journal · auth    │
                     └────────────────────┬────────────────────┘
              ┌───────────────┬───────────┼────────────┬──────────────┐
@@ -137,7 +137,7 @@ The static `local-git inspect`, `local-git change`, and deterministic `local-git
 
 The fixture and `local-git` commands are local-only: no model calls, no repository
 content execution, no source mutation, no publication. For model-backed local review
-see [local model review](docs/local-model-review.md) — it requires protected route
+see [local model review](docs/local-model-review.md). It requires protected route
 configuration, an explicit egress choice, and a finite timeout. It defaults to loose
 Git objects with a separate packed-object opt-in, does not publish results, and its
 results report limits rather than comprehensive clearance.
@@ -167,7 +167,7 @@ The implementation order is deliberately conservative:
 
 Signing, SBOM, provenance, vulnerability reporting, and published evaluation
 evidence are still ahead of the tree. The [roadmap](docs/roadmap.md) separates
-planned work from shipped capability — nothing counts as released until its release
+planned work from shipped capability. Nothing counts as released until its release
 evidence exists.
 
 ## Contributing
