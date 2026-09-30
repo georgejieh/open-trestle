@@ -1,0 +1,599 @@
+"""Tests for the deterministic Linux amd64 distribution."""
+
+import hashlib
+import json
+import os
+import stat
+import struct
+import subprocess
+import sys
+import tempfile
+import unittest
+import warnings
+import zipfile
+from pathlib import Path
+from unittest.mock import patch
+
+import linux_distribution
+import linux_distribution_runtime
+
+
+REVISION = "1" * 40
+CREATED = "2026-09-30T00:00:00Z"
+
+
+def _elf(payload: bytes = b"runtime", elf_type: int = 2) -> bytes:
+    header = bytearray(64)
+    header[:16] = b"\x7fELF\x02\x01\x01\x00" + (b"\x00" * 8)
+    struct.pack_into("<HHI", header, 16, elf_type, 62, 1)
+    return bytes(header) + payload
+
+
+def _write(path: Path, body: bytes, mode: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(body)
+    path.chmod(mode)
+
+
+def _staging(root: Path, marker: bytes = b"one") -> Path:
+    staging = root / "staging"
+    _write(staging / "trestle", _elf(b"trestle-" + marker), 0o555)
+    _write(staging / "trestled", _elf(b"trestled-" + marker), 0o555)
+    _write(
+        staging / "libexec/open-trestle/open-trestle-secret-scanner",
+        _elf(b"launcher-" + marker, 3),
+        0o555,
+    )
+    _write(
+        staging / "libexec/open-trestle/open-trestle-secret-scanner-worker",
+        _elf(b"worker-" + marker),
+        0o555,
+    )
+    _write(staging / "LICENSE", b"project license\n", 0o444)
+    _write(staging / "NOTICE", b"project notice\n", 0o444)
+    _write(staging / "licenses/dependency/LICENSE", b"dependency license\n", 0o444)
+    _write(staging / "release/secret-scanner-release.json", b"{}\n", 0o444)
+    _write(staging / "release/secret-scanner.spdx.json", b"{}\n", 0o444)
+    _write(staging / "release/vulnerability-scan.json", b"{}\n", 0o444)
+    _write(staging / "ca-certificates.crt", b"excluded\n", 0o444)
+    (staging / "data").mkdir()
+    return staging
+
+
+def _build(root: Path, marker: bytes = b"one") -> tuple[Path, Path]:
+    staging = _staging(root, marker)
+    output = root / "open-trestle-linux-amd64.pyz"
+    linux_distribution.build_distribution(
+        staging=staging,
+        runtime=Path(linux_distribution_runtime.__file__),
+        output=output,
+        version="0.1.0-dev",
+        revision=REVISION,
+        created=CREATED,
+    )
+    return output, Path(str(output) + ".sha256")
+
+
+def _run(archive: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(archive), *arguments],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+class BuilderTest(unittest.TestCase):
+    def test_build_is_byte_deterministic_stored_and_exact(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first, first_sidecar = _build(root / "first")
+            second, second_sidecar = _build(root / "second")
+
+            self.assertEqual(first.read_bytes(), second.read_bytes())
+            self.assertEqual(first_sidecar.read_bytes(), second_sidecar.read_bytes())
+            self.assertTrue(first.read_bytes().startswith(b"#!/usr/bin/env python3\n"))
+            with zipfile.ZipFile(first) as archive:
+                names = archive.namelist()
+                self.assertEqual(names, sorted(names))
+                self.assertEqual(names[0], "__main__.py")
+                self.assertIn("manifest.json", names)
+                self.assertNotIn("payload/etc/ssl/certs/ca-certificates.crt", names)
+                self.assertFalse(any("data" in name for name in names))
+                self.assertTrue(all(item.compress_type == zipfile.ZIP_STORED for item in archive.infolist()))
+                self.assertTrue(all(item.date_time == (1980, 1, 1, 0, 0, 0) for item in archive.infolist()))
+                self.assertEqual(archive.comment, b"")
+                manifest = json.loads(archive.read("manifest.json"))
+                self.assertEqual(manifest["target"], "linux-amd64")
+                self.assertEqual([item["path"] for item in manifest["files"]], sorted(item["path"] for item in manifest["files"]))
+                self.assertEqual(len(manifest["files"]), len(names) - 2)
+            expected = hashlib.sha256(first.read_bytes()).hexdigest()
+            self.assertEqual(first_sidecar.read_text(), f"{expected}  {first.name}\n")
+
+    def test_build_refuses_existing_output_or_sidecar_without_changing_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            staging = _staging(root)
+            output = root / "candidate.pyz"
+            output.write_bytes(b"owned")
+            with self.assertRaisesRegex(ValueError, "already exists"):
+                linux_distribution.build_distribution(staging, Path(linux_distribution_runtime.__file__), output, "0.1.0-dev", REVISION, CREATED)
+            self.assertEqual(output.read_bytes(), b"owned")
+
+            output.unlink()
+            sidecar = Path(str(output) + ".sha256")
+            sidecar.write_bytes(b"owned-sidecar")
+            with self.assertRaisesRegex(ValueError, "already exists"):
+                linux_distribution.build_distribution(staging, Path(linux_distribution_runtime.__file__), output, "0.1.0-dev", REVISION, CREATED)
+            self.assertFalse(output.exists())
+            self.assertEqual(sidecar.read_bytes(), b"owned-sidecar")
+
+
+    def test_build_publish_failure_removes_both_output_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            staging = _staging(root)
+            output = root / "candidate.pyz"
+            real_link = os.link
+            calls = 0
+
+            def fail_second(source, destination, **kwargs):
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    raise OSError(5, "injected link failure")
+                return real_link(source, destination, **kwargs)
+
+            with patch("linux_distribution.os.link", side_effect=fail_second):
+                with self.assertRaises(OSError):
+                    linux_distribution.build_distribution(staging, Path(linux_distribution_runtime.__file__), output, "0.1.0-dev", REVISION, CREATED)
+            self.assertFalse(output.exists())
+            self.assertFalse(Path(str(output) + ".sha256").exists())
+
+    def test_build_rejects_wrong_modes_symlinks_elf_target_and_unexpected_inventory(self):
+        cases = ("mode", "symlink", "elf", "unexpected", "release")
+        for case in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                staging = _staging(root)
+                if case == "mode":
+                    (staging / "trestle").chmod(0o755)
+                elif case == "symlink":
+                    (staging / "licenses/dependency/LICENSE").unlink()
+                    (staging / "licenses/dependency/LICENSE").symlink_to(staging / "NOTICE")
+                elif case == "elf":
+                    path = staging / "trestle"
+                    body = bytearray(path.read_bytes())
+                    struct.pack_into("<H", body, 18, 183)
+                    path.chmod(0o644)
+                    _write(path, bytes(body), 0o555)
+                elif case == "unexpected":
+                    _write(staging / "source.go", b"private source\n", 0o444)
+                else:
+                    (staging / "release/vulnerability-scan.json").unlink()
+                with self.assertRaises(ValueError):
+                    linux_distribution.build_distribution(staging, Path(linux_distribution_runtime.__file__), root / "out.pyz", "0.1.0-dev", REVISION, CREATED)
+                self.assertFalse((root / "out.pyz").exists())
+
+    def test_build_rejects_bad_metadata_and_non_linux_host(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            staging = _staging(root)
+            for version, revision, created in (("latest", REVISION, CREATED), ("0.1.0", "HEAD", CREATED), ("0.1.0", REVISION, "today")):
+                with self.subTest(version=version, revision=revision, created=created):
+                    with self.assertRaises(ValueError):
+                        linux_distribution.build_distribution(staging, Path(linux_distribution_runtime.__file__), root / f"{version}.pyz", version, revision, created)
+            with patch("linux_distribution.sys.platform", "darwin"):
+                with self.assertRaisesRegex(ValueError, "Linux"):
+                    linux_distribution.build_distribution(staging, Path(linux_distribution_runtime.__file__), root / "darwin.pyz", "0.1.0", REVISION, CREATED)
+
+
+class ArchiveVerificationTest(unittest.TestCase):
+    def test_verify_accepts_archive_and_rejects_sidecar_tamper(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive, sidecar = _build(Path(directory))
+            valid = _run(archive, "verify")
+            self.assertEqual(valid.returncode, 0, valid.stderr)
+            self.assertIn("verified", valid.stdout)
+            sidecar.chmod(0o644)
+            sidecar.write_text(("0" * 64) + f"  {archive.name}\n")
+            invalid = _run(archive, "verify")
+            self.assertNotEqual(invalid.returncode, 0)
+            self.assertIn("checksum", invalid.stderr.lower())
+
+    def test_verify_rejects_archive_tampering_duplicate_extra_compressed_and_unsafe_names(self):
+        mutations = ("body", "duplicate", "extra", "compressed", "unsafe")
+        for mutation in mutations:
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                archive, sidecar = _build(root)
+                archive.chmod(0o755)
+                if mutation == "body":
+                    body = bytearray(archive.read_bytes())
+                    body[-30] ^= 1
+                    archive.write_bytes(body)
+                else:
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", UserWarning)
+                        with zipfile.ZipFile(archive, "a", compression=zipfile.ZIP_STORED) as target:
+                            if mutation == "duplicate":
+                                target.writestr("manifest.json", b"{}")
+                            elif mutation == "extra":
+                                target.writestr("extra", b"x")
+                            elif mutation == "compressed":
+                                info = zipfile.ZipInfo("extra-compressed")
+                                info.compress_type = zipfile.ZIP_DEFLATED
+                                target.writestr(info, b"x")
+                            else:
+                                target.writestr("../escape", b"x")
+                    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+                    sidecar.chmod(0o644)
+                    sidecar.write_text(f"{digest}  {archive.name}\n")
+                result = _run(archive, "verify")
+                self.assertNotEqual(result.returncode, 0)
+
+    def test_verify_rejects_bytes_between_shebang_and_first_local_header(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive, sidecar = _build(Path(directory))
+            body = archive.read_bytes()
+            archive.chmod(0o755)
+            archive.write_bytes(linux_distribution.SHEBANG + b"JUNK" + body[len(linux_distribution.SHEBANG):])
+            archive.chmod(0o555)
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            sidecar.chmod(0o644)
+            sidecar.write_text(f"{digest}  {archive.name}\n")
+            sidecar.chmod(0o444)
+
+            self.assertNotEqual(_run(archive, "verify-archive").returncode, 0)
+
+    def test_verify_rejects_noncanonical_external_attributes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive, sidecar = _build(Path(directory))
+            body = bytearray(archive.read_bytes())
+            with zipfile.ZipFile(archive) as source:
+                central_offset = source.start_dir
+            external_offset = central_offset + 38
+            current = struct.unpack_from("<I", body, external_offset)[0]
+            struct.pack_into("<I", body, external_offset, current | 1)
+            archive.chmod(0o755)
+            archive.write_bytes(body)
+            archive.chmod(0o555)
+            digest = hashlib.sha256(body).hexdigest()
+            sidecar.chmod(0o644)
+            sidecar.write_text(f"{digest}  {archive.name}\n")
+            sidecar.chmod(0o444)
+
+            self.assertNotEqual(_run(archive, "verify-archive").returncode, 0)
+
+    def test_verify_rejects_manifest_target_outside_fixed_inventory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive, sidecar = _build(Path(directory))
+            with zipfile.ZipFile(archive) as source:
+                members = {item.filename: source.read(item) for item in source.infolist()}
+            manifest = json.loads(members["manifest.json"])
+            body = b"x"
+            manifest["files"].append({
+                "elf": False,
+                "mode": 0o444,
+                "path": "payload/etc/cron.d/open-trestle",
+                "sha256": hashlib.sha256(body).hexdigest(),
+                "size": len(body),
+                "source": "licenses/dependency/LICENSE",
+            })
+            manifest["files"].sort(key=lambda item: item["path"])
+            members["manifest.json"] = (json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n").encode()
+            members["payload/etc/cron.d/open-trestle"] = body
+            archive.chmod(0o755)
+            with archive.open("wb") as destination:
+                destination.write(linux_distribution.SHEBANG)
+                with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_STORED) as target:
+                    for name in sorted(members):
+                        mode = 0o555 if name == "__main__.py" or name.startswith("payload/usr/local/bin/") or name.startswith("payload/usr/local/libexec/") and not name.endswith(".sha256") else 0o444
+                        target.writestr(linux_distribution._zip_info(name, mode), members[name])
+            archive.chmod(0o555)
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            sidecar.chmod(0o644)
+            sidecar.write_text(f"{digest}  {archive.name}\n")
+            sidecar.chmod(0o444)
+
+            result = _run(archive, "verify-archive")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse((Path(directory) / "root/etc/cron.d/open-trestle").exists())
+
+    def test_verify_rejects_missing_sidecar_and_noncanonical_sidecar(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive, sidecar = _build(Path(directory))
+            sidecar.unlink()
+            self.assertNotEqual(_run(archive, "verify").returncode, 0)
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            for body in (f"{digest} *{archive.name}\n", f"{digest}  wrong.pyz\n", f"{digest.upper()}  {archive.name}\n"):
+                sidecar.write_text(body)
+                self.assertNotEqual(_run(archive, "verify").returncode, 0)
+
+
+class LifecycleTest(unittest.TestCase):
+    def test_empty_destdir_install_uninstall_removes_every_package_created_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive, _ = _build(root / "build")
+            destdir = root / "root"
+            destdir.mkdir()
+
+            linux_distribution_runtime.install(Path(archive), destdir)
+            linux_distribution_runtime.uninstall(Path(archive), destdir)
+
+            self.assertEqual(list(destdir.iterdir()), [])
+
+    def test_interrupted_install_rollback_removes_created_paths_and_preserves_sentinels(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive, _ = _build(root / "build")
+            destdir = root / "root"
+            sentinels = {
+                "etc/open-trestle/config.json": "operator config\n",
+                "var/lib/open-trestle/state": "operator state\n",
+                "usr/local/share/open-trestle/operator-note": "operator note\n",
+            }
+            for relative, body in sentinels.items():
+                path = destdir / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(body)
+            expected_directories = {
+                str(path.relative_to(destdir))
+                for path in destdir.rglob("*")
+                if path.is_dir()
+            }
+            original_publish = linux_distribution_runtime._publish_staged
+
+            def interrupt_before_journal(parent, temporary, final_name):
+                if final_name == "journal.json":
+                    raise KeyboardInterrupt("injected interruption")
+                return original_publish(parent, temporary, final_name)
+
+            with patch.object(
+                linux_distribution_runtime,
+                "_publish_staged",
+                side_effect=interrupt_before_journal,
+            ):
+                with self.assertRaisesRegex(KeyboardInterrupt, "injected interruption"):
+                    linux_distribution_runtime.install(Path(archive), destdir)
+
+            self.assertEqual(
+                {
+                    str(path.relative_to(destdir)): path.read_text()
+                    for path in destdir.rglob("*")
+                    if path.is_file()
+                },
+                sentinels,
+            )
+            self.assertEqual(
+                {
+                    str(path.relative_to(destdir))
+                    for path in destdir.rglob("*")
+                    if path.is_dir()
+                },
+                expected_directories,
+            )
+
+    def test_install_verify_rollback_and_uninstall_preserve_unowned_config_and_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive, _ = _build(root / "build")
+            destdir = root / "root"
+            (destdir / "etc/open-trestle").mkdir(parents=True)
+            (destdir / "var/lib/open-trestle").mkdir(parents=True)
+            (destdir / "etc/open-trestle/config.json").write_text("operator config\n")
+            (destdir / "var/lib/open-trestle/state").write_text("operator state\n")
+
+            installed = _run(archive, "install", "--destdir", str(destdir))
+            self.assertEqual(installed.returncode, 0, installed.stderr)
+            self.assertTrue((destdir / "usr/local/bin/trestle").exists())
+            self.assertTrue((destdir / "usr/local/libexec/open-trestle/open-trestle-distribution.pyz").exists())
+            self.assertTrue((destdir / "usr/local/share/open-trestle/distribution/receipt.json").exists())
+            self.assertTrue((destdir / "usr/local/share/open-trestle/distribution/journal.json").exists())
+            verified = _run(archive, "verify-installed", "--destdir", str(destdir))
+            self.assertEqual(verified.returncode, 0, verified.stderr)
+
+            rolled_back = _run(archive, "rollback", "--destdir", str(destdir))
+            self.assertEqual(rolled_back.returncode, 0, rolled_back.stderr)
+            self.assertFalse((destdir / "usr/local/bin/trestle").exists())
+            self.assertEqual((destdir / "etc/open-trestle/config.json").read_text(), "operator config\n")
+            self.assertEqual((destdir / "var/lib/open-trestle/state").read_text(), "operator state\n")
+
+            self.assertEqual(_run(archive, "install", "--destdir", str(destdir)).returncode, 0)
+            unowned = destdir / "usr/local/share/open-trestle/operator-note"
+            unowned.write_text("keep\n")
+            removed = _run(archive, "uninstall", "--destdir", str(destdir))
+            self.assertEqual(removed.returncode, 0, removed.stderr)
+            self.assertTrue(unowned.exists())
+            self.assertTrue((destdir / "etc/open-trestle/config.json").exists())
+            self.assertTrue((destdir / "var/lib/open-trestle/state").exists())
+
+    def test_install_refuses_relative_destdir_existing_unowned_file_and_symlink_parent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive, _ = _build(root / "build")
+            self.assertNotEqual(_run(archive, "install", "--destdir", "relative").returncode, 0)
+
+            destdir = root / "collision"
+            target = destdir / "usr/local/bin/trestle"
+            _write(target, b"operator owned\n", 0o555)
+            result = _run(archive, "install", "--destdir", str(destdir))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(target.read_bytes(), b"operator owned\n")
+            self.assertFalse((destdir / "usr/local/bin/trestled").exists())
+
+            destdir = root / "symlink"
+            outside = root / "outside"
+            outside.mkdir()
+            (destdir / "usr/local").mkdir(parents=True)
+            (destdir / "usr/local/bin").symlink_to(outside)
+            result = _run(archive, "install", "--destdir", str(destdir))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(list(outside.iterdir()), [])
+
+    def test_verify_uninstall_and_rollback_refuse_tampered_or_replaced_owned_file(self):
+        for command in ("verify-installed", "rollback", "uninstall"):
+            with self.subTest(command=command), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                archive, _ = _build(root / "build")
+                destdir = root / "root"
+                destdir.mkdir()
+                result = _run(archive, "install", "--destdir", str(destdir))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                installed = destdir / "usr/local/bin/trestle"
+                installed.chmod(0o755)
+                installed.write_bytes(installed.read_bytes() + b"tamper")
+                result = _run(archive, command, "--destdir", str(destdir))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertTrue(installed.exists())
+
+    def test_second_install_is_refused_without_force_and_preserves_first(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive, _ = _build(root / "first", b"first")
+            second, _ = _build(root / "second", b"second")
+            destdir = root / "root"
+            destdir.mkdir()
+            self.assertEqual(_run(archive, "install", "--destdir", str(destdir)).returncode, 0)
+            before = (destdir / "usr/local/bin/trestle").read_bytes()
+            result = _run(second, "install", "--destdir", str(destdir))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual((destdir / "usr/local/bin/trestle").read_bytes(), before)
+
+    def test_failed_receipt_publish_leaves_no_transaction_temporary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive, _ = _build(root / "build")
+            destdir = root / "root"
+            destdir.mkdir()
+            original = linux_distribution_runtime._publish_staged
+
+            def fail_receipt(parent, temporary, final_name):
+                if final_name == "receipt.json":
+                    raise OSError("injected receipt failure")
+                return original(parent, temporary, final_name)
+
+            with patch.object(linux_distribution_runtime, "_publish_staged", side_effect=fail_receipt):
+                with self.assertRaises(OSError):
+                    linux_distribution_runtime.install(Path(archive), destdir)
+            leftovers = [path for path in destdir.rglob("*") if ".open-trestle-" in path.name]
+            self.assertEqual(leftovers, [])
+            self.assertFalse((destdir / "usr/local/bin/trestle").exists())
+
+    def test_install_copies_lifecycle_from_verified_open_archive(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive, _ = _build(root / "build")
+            original_body = archive.read_bytes()
+            secret = root / "secret"
+            secret.write_bytes(b"root-only secret\n")
+            secret.chmod(0o600)
+            destdir = root / "root"
+            destdir.mkdir()
+            original_stage = linux_distribution_runtime._stage_file
+            swapped = False
+            staged_body = None
+
+            def swap_before_lifecycle(parent, final_name, mode, writer, transaction, production=False):
+                nonlocal swapped, staged_body
+                if final_name == "open-trestle-distribution.pyz" and not swapped:
+                    swapped = True
+                    archive.unlink()
+                    archive.symlink_to(secret)
+                temporary = original_stage(parent, final_name, mode, writer, transaction, production)
+                if final_name == "open-trestle-distribution.pyz":
+                    staged_body = (parent / temporary).read_bytes()
+                return temporary
+
+            with patch.object(linux_distribution_runtime, "_stage_file", side_effect=swap_before_lifecycle):
+                with self.assertRaisesRegex(ValueError, "archive changed"):
+                    linux_distribution_runtime.install(Path(archive), destdir)
+            self.assertTrue(swapped)
+            self.assertEqual(staged_body, original_body)
+            self.assertNotEqual(staged_body, secret.read_bytes())
+            self.assertFalse((destdir / "usr/local/libexec/open-trestle/open-trestle-distribution.pyz").exists())
+
+    def test_install_failure_preserves_replacement_of_published_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive, _ = _build(root / "build")
+            destdir = root / "root"
+            destdir.mkdir()
+            replacement = b"operator replacement\n"
+            calls = 0
+            original_fsync = linux_distribution_runtime._fsync_directory
+
+            def replace_after_first_publish(parent):
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    target = destdir / "usr/local/bin/trestle"
+                    target.unlink()
+                    _write(target, replacement, 0o555)
+                    raise OSError("injected fsync failure")
+                return original_fsync(parent)
+
+            with patch.object(linux_distribution_runtime, "_fsync_directory", side_effect=replace_after_first_publish):
+                with self.assertRaises(OSError):
+                    linux_distribution_runtime.install(Path(archive), destdir)
+            self.assertEqual((destdir / "usr/local/bin/trestle").read_bytes(), replacement)
+
+    def test_uninstall_preserves_replacement_before_first_delete(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive, _ = _build(root / "build")
+            destdir = root / "root"
+            destdir.mkdir()
+            linux_distribution_runtime.install(Path(archive), destdir)
+            replacement = b"operator replacement\n"
+            original_unlink = linux_distribution_runtime._unlink_owned_file
+            replaced_path = None
+
+            def replace_first(path, item, identity):
+                nonlocal replaced_path
+                if replaced_path is None:
+                    replaced_path = path
+                    path.unlink()
+                    _write(path, replacement, item.mode)
+                return original_unlink(path, item, identity)
+
+            with patch.object(linux_distribution_runtime, "_unlink_owned_file", side_effect=replace_first):
+                with self.assertRaisesRegex(ValueError, "changed during uninstall"):
+                    linux_distribution_runtime.uninstall(Path(archive), destdir)
+            self.assertIsNotNone(replaced_path)
+            self.assertEqual(replaced_path.read_bytes(), replacement)
+
+    def test_failed_publish_rolls_back_created_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive, _ = _build(root / "build")
+            destdir = root / "root"
+            destdir.mkdir()
+            original = linux_distribution_runtime._publish_staged
+            calls = 0
+
+            def fail_second(*args, **kwargs):
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    raise OSError("injected failure")
+                return original(*args, **kwargs)
+
+            with patch.object(linux_distribution_runtime, "_publish_staged", side_effect=fail_second):
+                with self.assertRaises(OSError):
+                    linux_distribution_runtime.install(Path(archive), destdir)
+            self.assertFalse((destdir / "usr/local/bin/trestle").exists())
+            self.assertFalse((destdir / "usr/local/bin/trestled").exists())
+
+    def test_destdir_root_and_production_privilege_boundaries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive, _ = _build(Path(directory) / "build")
+            self.assertNotEqual(_run(archive, "install", "--destdir", "/").returncode, 0)
+            with patch("linux_distribution_runtime.os.geteuid", return_value=1000):
+                with self.assertRaisesRegex(PermissionError, "root"):
+                    linux_distribution_runtime._installation_root(None)
+
+
+if __name__ == "__main__":
+    unittest.main()

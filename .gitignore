@@ -33,3 +33,8 @@ extensions/vscode/dist/*
 build/
 .container/
 .tmp/
+/open-trestle-linux-a/
+/open-trestle-linux-b/
+/open-trestle-linux-amd64.pyz
+/open-trestle-linux-amd64.pyz.sha256
+/open-trestle-linux-smoke.json

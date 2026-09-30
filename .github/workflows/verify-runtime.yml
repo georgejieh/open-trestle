@@ -107,6 +107,50 @@ jobs:
         run: |
           (cd tools/govulncheck && GOWORK=off GOTOOLCHAIN=go1.26.8 go mod verify)
           python3 tools/vulnerability_gate.py --staging .container
+      - name: Verify deterministic Linux amd64 candidate lifecycle
+        env:
+          RELEASE_REVISION: ${{ github.sha }}
+        run: |
+          RELEASE_CREATED="$(date -u -d "$(git show -s --format=%cI "$RELEASE_REVISION")" +%Y-%m-%dT%H:%M:%SZ)"
+          mkdir -p open-trestle-linux-a open-trestle-linux-b
+          python3 tools/linux_distribution.py \
+            --staging .container \
+            --version 0.1.0-dev \
+            --revision "$RELEASE_REVISION" \
+            --created "$RELEASE_CREATED" \
+            --output "$GITHUB_WORKSPACE/open-trestle-linux-a/open-trestle-linux-amd64.pyz"
+          python3 tools/linux_distribution.py \
+            --staging .container \
+            --version 0.1.0-dev \
+            --revision "$RELEASE_REVISION" \
+            --created "$RELEASE_CREATED" \
+            --output "$GITHUB_WORKSPACE/open-trestle-linux-b/open-trestle-linux-amd64.pyz"
+          cmp "$GITHUB_WORKSPACE/open-trestle-linux-a/open-trestle-linux-amd64.pyz" "$GITHUB_WORKSPACE/open-trestle-linux-b/open-trestle-linux-amd64.pyz"
+          cmp "$GITHUB_WORKSPACE/open-trestle-linux-a/open-trestle-linux-amd64.pyz.sha256" "$GITHUB_WORKSPACE/open-trestle-linux-b/open-trestle-linux-amd64.pyz.sha256"
+          (cd open-trestle-linux-a && sha256sum -c open-trestle-linux-amd64.pyz.sha256)
+          "$GITHUB_WORKSPACE/open-trestle-linux-a/open-trestle-linux-amd64.pyz" verify-archive
+          mkdir -p \
+            "$RUNNER_TEMP/open-trestle-linux-root/etc/open-trestle" \
+            "$RUNNER_TEMP/open-trestle-linux-root/var/lib/open-trestle" \
+            "$RUNNER_TEMP/open-trestle-linux-root/usr/local/share/open-trestle"
+          printf 'operator-config\n' > "$RUNNER_TEMP/open-trestle-linux-root/etc/open-trestle/sentinel"
+          printf 'operator-state\n' > "$RUNNER_TEMP/open-trestle-linux-root/var/lib/open-trestle/sentinel"
+          printf 'operator-owned\n' > "$RUNNER_TEMP/open-trestle-linux-root/usr/local/share/open-trestle/sentinel"
+          "$GITHUB_WORKSPACE/open-trestle-linux-a/open-trestle-linux-amd64.pyz" install --destdir "$RUNNER_TEMP/open-trestle-linux-root"
+          "$RUNNER_TEMP/open-trestle-linux-root/usr/local/libexec/open-trestle/open-trestle-distribution.pyz" verify-installed --destdir "$RUNNER_TEMP/open-trestle-linux-root"
+          "$RUNNER_TEMP/open-trestle-linux-root/usr/local/libexec/open-trestle/open-trestle-distribution.pyz" smoke \
+            --destdir "$RUNNER_TEMP/open-trestle-linux-root" \
+            --output "$GITHUB_WORKSPACE/open-trestle-linux-smoke.json"
+          "$RUNNER_TEMP/open-trestle-linux-root/usr/local/libexec/open-trestle/open-trestle-distribution.pyz" uninstall --destdir "$RUNNER_TEMP/open-trestle-linux-root"
+          test "$(cat "$RUNNER_TEMP/open-trestle-linux-root/etc/open-trestle/sentinel")" = operator-config
+          test "$(cat "$RUNNER_TEMP/open-trestle-linux-root/var/lib/open-trestle/sentinel")" = operator-state
+          test "$(cat "$RUNNER_TEMP/open-trestle-linux-root/usr/local/share/open-trestle/sentinel")" = operator-owned
+          test ! -e "$RUNNER_TEMP/open-trestle-linux-root/usr/local/bin/trestle"
+          test ! -e "$RUNNER_TEMP/open-trestle-linux-root/usr/local/bin/trestled"
+          test ! -e "$RUNNER_TEMP/open-trestle-linux-root/usr/local/libexec/open-trestle/open-trestle-secret-scanner"
+          test ! -e "$RUNNER_TEMP/open-trestle-linux-root/usr/local/libexec/open-trestle/open-trestle-secret-scanner-worker"
+          test ! -e "$RUNNER_TEMP/open-trestle-linux-root/usr/local/share/open-trestle/distribution/receipt.json"
+          test ! -e "$RUNNER_TEMP/open-trestle-linux-root/usr/local/share/open-trestle/distribution/journal.json"
       - name: Verify deterministic unsigned release evidence
         env:
           RELEASE_REVISION: ${{ github.sha }}
@@ -116,6 +160,9 @@ jobs:
             --artifact container=.container \
             --artifact web=web/dist \
             --artifact vscode=extensions/vscode/dist/open-trestle.vsix \
+            --artifact linux-amd64="$GITHUB_WORKSPACE/open-trestle-linux-a/open-trestle-linux-amd64.pyz" \
+            --artifact linux-amd64-sha256="$GITHUB_WORKSPACE/open-trestle-linux-a/open-trestle-linux-amd64.pyz.sha256" \
+            --artifact linux-amd64-smoke="$GITHUB_WORKSPACE/open-trestle-linux-smoke.json" \
             --go-binary .container/trestle \
             --go-binary .container/trestled \
             --go-binary .container/libexec/open-trestle/open-trestle-secret-scanner-worker \
@@ -130,6 +177,9 @@ jobs:
             --artifact container=.container \
             --artifact web=web/dist \
             --artifact vscode=extensions/vscode/dist/open-trestle.vsix \
+            --artifact linux-amd64="$GITHUB_WORKSPACE/open-trestle-linux-a/open-trestle-linux-amd64.pyz" \
+            --artifact linux-amd64-sha256="$GITHUB_WORKSPACE/open-trestle-linux-a/open-trestle-linux-amd64.pyz.sha256" \
+            --artifact linux-amd64-smoke="$GITHUB_WORKSPACE/open-trestle-linux-smoke.json" \
             --go-binary .container/trestle \
             --go-binary .container/trestled \
             --go-binary .container/libexec/open-trestle/open-trestle-secret-scanner-worker \

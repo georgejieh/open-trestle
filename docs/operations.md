@@ -26,6 +26,94 @@ The tool verifies the root and worker Go pins, Betterleaks module and ruleset id
 
 The included `Dockerfile` copies that staging tree into a scratch image with no registry base. The image runs `trestled` as UID and GID 65532. Supply runtime authority files through read-only mounts and credentials through the documented environment variables. Do not bake route inventories, policies, tokens, database URLs, or key material into an image. The image includes the project license, NOTICE, exact runtime third-party license texts, and scanner release evidence.
 
+## Build and inspect the unsigned Linux amd64 candidate
+
+Run the Linux candidate builder only after `package_secret_scanner.py --verify` and the
+passive vulnerability gate have produced the fixed `.container` inventory:
+
+```sh
+REVISION="$(git rev-parse HEAD)"
+CREATED="$(date -u -d "$(git show -s --format=%cI "$REVISION")" +%Y-%m-%dT%H:%M:%SZ)"
+python3 tools/linux_distribution.py \
+  --staging .container \
+  --version 0.1.0-dev \
+  --revision "$REVISION" \
+  --created "$CREATED" \
+  --output open-trestle-linux-amd64.pyz
+sha256sum -c open-trestle-linux-amd64.pyz.sha256
+./open-trestle-linux-amd64.pyz verify-archive
+```
+
+The stdlib-only builder emits an executable Python zip application plus a detached
+SHA-256 file. Every member uses `ZIP_STORED`, fixed Unix metadata and a fixed timestamp.
+The canonical manifest binds each install path, source identity, mode, size, digest and
+ELF role. The input inventory is exact: `trestle`, `trestled`, the scanner launcher and
+worker, project LICENSE and NOTICE, all reviewed runtime license files, and the three
+scanner release-evidence files. The CA bundle, empty data directory, source, tests,
+private references and build tools are not included. Unexpected, missing, symlinked,
+wrong-mode, changing, non-amd64 or dynamically linked inputs stop the build. Existing
+output or sidecar paths are never replaced. Build into a directory under the exclusive
+control of the invoking account; concurrent mutation by another process with the same
+account authority is outside this local build boundary. CI builds the pair twice in
+separate locations and compares both byte for byte.
+
+The sidecar provides integrity, not authenticity. Obtain the expected digest through a
+separate trusted channel and run `sha256sum -c` before the pyz. Invoking
+`verify-archive` already runs its embedded lifecycle code. The candidate has no
+signature, signer identity, published provenance, SLSA claim or production support.
+
+### Candidate lifecycle
+
+Production-mode commands omit `--destdir`, require effective UID 0, install below
+`/usr/local`, require root-owned non-group/world-writable ancestors and preserve
+root:root ownership. CI may prefix the fixed logical paths with an absolute, existing,
+non-symlink `--destdir` other than `/`. Destdir mode is not a production installation
+or a security boundary against a concurrent process running as the same account.
+Lifecycle transactions require exclusive control of their managed paths. Production
+mode enforces that boundary against non-root writers through root ownership and
+non-writable ancestors; a concurrent root process is outside the host trust model.
+
+```sh
+# production mode, after external checksum verification
+sudo ./open-trestle-linux-amd64.pyz install
+sudo ./open-trestle-linux-amd64.pyz verify-installed
+sudo ./open-trestle-linux-amd64.pyz smoke --output "$(pwd)/open-trestle-linux-smoke.json"
+
+# choose one removal action
+sudo ./open-trestle-linux-amd64.pyz rollback
+# or, for a normal removal
+sudo ./open-trestle-linux-amd64.pyz uninstall
+```
+
+`install` validates the sidecar, complete archive grammar, canonical manifest, payload
+modes, sizes, SHA-256 values, ELF headers and closed inventory before it publishes a
+file. It streams members individually and does not call ZIP extraction APIs. Each file
+is written through `O_EXCL` and `O_NOFOLLOW`, fsynced, and committed with Linux
+`renameat2(RENAME_NOREPLACE)`. A receipt and transaction journal bind the installed
+archive and every owned file. Existing targets stop the operation; there is no force,
+replace or upgrade option.
+
+`verify-installed` checks the receipt and journal, trusted ancestors, exact ownership in
+production, modes, sizes, hashes and ELF identities. `smoke` first performs that check,
+then runs a bounded, non-mutating CLI command-boundary probe with a fixed minimal
+environment. In destdir mode it does not claim to exercise the scanner launcher,
+because that launcher intentionally opens its worker at the fixed production path.
+The container sandbox test remains the scanner execution gate. Smoke output is
+canonical, content-free JSON and does not claim daemon, provider, database or network
+readiness.
+
+`rollback` reverses the receipt-bound install transaction. `uninstall` performs the
+same full ownership preflight before deleting anything. Both quarantine and remove
+only files that still match the receipt and remove only package-created directories
+that are empty. A missing, changed, replaced, symlinked or
+wrong-owner file observed during the complete preflight stops removal before any owned
+file is deleted. Each later removal uses a same-directory atomic quarantine and
+identity check. The exclusive-control boundary above excludes concurrent same-authority
+mutation during that transaction. Application configuration under `/etc/open-trestle`, application state under
+`/var/lib/open-trestle`, pre-existing directories and unowned files are preserved.
+There is no purge mode. The lifecycle does not configure, enable or start a service and
+does not create application configuration or state.
+
 ### Secret-scanner runtime boundary
 
 The root client invokes only `/usr/local/libexec/open-trestle/open-trestle-secret-scanner --stdio-v1`. That static, single-threaded launcher applies `NO_NEW_PRIVS`, core, CPU, and file-descriptor limits plus a Landlock domain, then executes only `/usr/local/libexec/open-trestle/open-trestle-secret-scanner-worker --sandboxed-stdio-v1`. The Go worker installs a process-wide TSYNC seccomp filter before Betterleaks initialization. The pair receives anonymous pipes, cwd `/`, and an empty environment. The worker cannot open network sockets, mutate the filesystem, create namespaces, mount filesystems, trace another process, or execute another program. A sandbox or identity failure occurs before source input is accepted.
@@ -65,6 +153,9 @@ python3 tools/release_evidence.py \
   --artifact container=.container \
   --artifact web=web/dist \
   --artifact vscode=extensions/vscode/dist/open-trestle.vsix \
+  --artifact linux-amd64=open-trestle-linux-amd64.pyz \
+  --artifact linux-amd64-sha256=open-trestle-linux-amd64.pyz.sha256 \
+  --artifact linux-amd64-smoke=open-trestle-linux-smoke.json \
   --go-binary .container/trestle \
   --go-binary .container/trestled \
   --go-binary .container/libexec/open-trestle/open-trestle-secret-scanner-worker \

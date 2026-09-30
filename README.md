@@ -32,8 +32,11 @@ SARIF review output, loose and packed Git inspection, a protected setup planner,
 durable run journal, an embedded read-only web console, and read-only MCP, ACP, and LSP
 surfaces. All are covered by `go test ./...` and a reproducible-release CI gate.
 
-**What is not:** a one-command install, stable APIs, or any public claim about review
-quality. Those require evaluation evidence that has not been published yet.
+**What is not:** a supported production install, stable APIs, or any public claim about
+review quality. CI builds and exercises an unsigned Linux amd64 candidate package, but
+that package has no signer identity or published provenance and is only for explicit
+local evaluation. Production support requires release and deployment evidence that has
+not been published yet.
 
 ## Why Open Trestle
 
@@ -100,8 +103,9 @@ publication gate.
 
 ## Quick start
 
-The runtime is not packaged yet, so "quick start" currently means building from
-source and driving the pieces that exist. From the repository root:
+There is no supported runtime package yet, so the primary quick start builds from
+source and drives the pieces that exist. CI also produces the unsigned Linux amd64
+evaluation candidate described below. From the repository root:
 
 ```sh
 # create and inspect a protected setup plan
@@ -132,6 +136,33 @@ go run ./cmd/trestle local-git review --objects-root PATH \
 # run the test suite
 go test ./...
 ```
+
+### Unsigned Linux amd64 candidate
+
+After the scanner staging and passive vulnerability gates have completed, a Linux amd64
+candidate can be built without compression or external packaging dependencies:
+
+```sh
+REVISION="$(git rev-parse HEAD)"
+CREATED="$(date -u -d "$(git show -s --format=%cI "$REVISION")" +%Y-%m-%dT%H:%M:%SZ)"
+python3 tools/linux_distribution.py \
+  --staging .container \
+  --version 0.1.0-dev \
+  --revision "$REVISION" \
+  --created "$CREATED" \
+  --output open-trestle-linux-amd64.pyz
+sha256sum -c open-trestle-linux-amd64.pyz.sha256
+./open-trestle-linux-amd64.pyz verify-archive
+```
+
+The pyz is unsigned. Its detached SHA-256 file detects accidental or untrusted byte
+changes only when the expected digest is obtained through a separate trusted channel.
+Running `verify-archive` already executes the embedded Python lifecycle code, so use
+external `sha256sum -c` before execution. Neither check authenticates a publisher.
+Production install requires root and targets `/usr/local`. `--destdir` is an explicit
+non-production CI mode. The lifecycle never configures or starts a service and never
+creates application configuration or state. See [operations](docs/operations.md) for
+the exact inventory, lifecycle commands, and removal guarantees.
 
 The static `local-git inspect`, `local-git change`, and deterministic `local-git review` commands support verified loose objects only. Nonempty, valid, within-budget added text is reviewed against a canonical empty base; empty, binary, removed, and over-limit entries remain explicit unsupported outcomes. Repository fields are caller-supplied scope labels, not proof that the object directory belongs to that repository. See [Local Git inspection](docs/local-git-inspect.md), [Local Git change evidence](docs/local-git-change.md), and [Local Git debug-output review](docs/local-git-review.md).
 
