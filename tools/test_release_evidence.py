@@ -262,7 +262,9 @@ class ArtifactCollectionTest(unittest.TestCase):
 
         components = (
             release_evidence.Component("npm", "react", "19.2.8", "MIT"),
-            release_evidence.Component("gomod", "example.org/module", "v1.0.0"),
+            release_evidence.Component("gomod", "github.com/jackc/pgx/v5", "v5.9.2"),
+            release_evidence.Component("gomod", "golang.org/x/sync", "v0.21.0"),
+            release_evidence.Component("gomod", "golang.org/x/text", "v0.39.0"),
         )
         first = release_evidence.encode_spdx(
             artifacts,
@@ -311,7 +313,9 @@ class ArtifactCollectionTest(unittest.TestCase):
             [(item["name"], item["versionInfo"]) for item in document["packages"]],
             [
                 ("Open Trestle", "0.1.0"),
-                ("example.org/module", "v1.0.0"),
+                ("github.com/jackc/pgx/v5", "v5.9.2"),
+                ("golang.org/x/sync", "v0.21.0"),
+                ("golang.org/x/text", "v0.39.0"),
                 ("react", "19.2.8"),
             ],
         )
@@ -321,10 +325,10 @@ class ArtifactCollectionTest(unittest.TestCase):
         )
         self.assertEqual(
             document["packages"][1]["externalRefs"][0]["referenceLocator"],
-            "pkg:golang/example.org/module@v1.0.0",
+            "pkg:golang/github.com/jackc/pgx/v5@v5.9.2",
         )
         self.assertEqual(
-            document["packages"][2]["externalRefs"][0]["referenceLocator"],
+            document["packages"][4]["externalRefs"][0]["referenceLocator"],
             "pkg:npm/react@19.2.8",
         )
         relationship_types = [
@@ -332,7 +336,7 @@ class ArtifactCollectionTest(unittest.TestCase):
         ]
         self.assertEqual(relationship_types.count("DISTRIBUTION_ARTIFACT"), 2)
         self.assertEqual(relationship_types.count("CONTAINS"), 0)
-        self.assertEqual(relationship_types.count("DEPENDS_ON"), 2)
+        self.assertEqual(relationship_types.count("DEPENDS_ON"), 4)
         self.assertIn("unsigned local inventory", document["comment"].lower())
 
     def test_spdx_inventory_rejects_invalid_metadata_and_artifacts(self):
@@ -584,11 +588,12 @@ class ComponentInventoryTest(unittest.TestCase):
 
     def test_go_build_info_inventory_uses_embedded_runtime_dependencies(self):
         components = release_evidence.parse_go_components(
-            """binary: go1.24.0
+            """binary: go1.26.8
 	path	github.com/example/tool
 	mod	github.com/example/project	(devel)	
-	dep	github.com/example/runtime	v1.2.3	h1:sum
-	dep	golang.org/x/text	v0.24.0	h1:sum
+	dep	github.com/jackc/pgx/v5	v5.9.2	h1:sum
+	dep	golang.org/x/sync	v0.21.0	h1:sum
+	dep	golang.org/x/text	v0.39.0	h1:sum
 	build	CGO_ENABLED=0
 """
         )
@@ -596,8 +601,9 @@ class ComponentInventoryTest(unittest.TestCase):
         self.assertEqual(
             [(item.ecosystem, item.name, item.version) for item in components],
             [
-                ("gomod", "github.com/example/runtime", "v1.2.3"),
-                ("gomod", "golang.org/x/text", "v0.24.0"),
+                ("gomod", "github.com/jackc/pgx/v5", "v5.9.2"),
+                ("gomod", "golang.org/x/sync", "v0.21.0"),
+                ("gomod", "golang.org/x/text", "v0.39.0"),
             ],
         )
 
@@ -621,7 +627,7 @@ class ComponentInventoryTest(unittest.TestCase):
             binary = Path(directory) / "trestle"
             binary.write_bytes(b"binary")
             run.return_value.stdout = (
-                "trestle: go1.24.0\n"
+                "trestle: go1.26.8\n"
                 "\tdep\texample.org/runtime\tv1.2.3\th1:sum\n"
             )
 
@@ -653,7 +659,7 @@ class ComponentInventoryTest(unittest.TestCase):
 
     def test_go_build_info_replacements_fail_closed(self):
         build_info = (
-            "trestle: go1.24.0\n"
+            "trestle: go1.26.8\n"
             "\tdep\texample.org/runtime\tv1.2.3\th1:sum\n"
             "\t=>\t../local-runtime\t(devel)\t\n"
         )

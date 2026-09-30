@@ -25,7 +25,7 @@ SCANNER_COMMIT = "5eab48332cc48565864514e3bc6de89df091a7c4"
 RULESET_IDENTITY = "27ded783c81940d13c22cc46556a3f8184baf397bff08a69fcfae87991925f42"
 RULESET_RULE_COUNT = 417
 BUILD_PROFILE = "public_detect_run_re2_purego_go1.25.12_linux_amd64_v1"
-ROOT_GO = "go1.24.0"
+ROOT_GO = "go1.26.8"
 WORKER_GO = "go1.25.12"
 LAUNCHER_TOOLCHAIN_MANIFEST = "workers/secret-scanner/launcher/toolchain-v1.json"
 LAUNCHER_TOOLCHAIN_CACHE = ".tmp/toolchains/zig-x86_64-linux-0.14.1.tar.xz"
@@ -257,6 +257,12 @@ def _parse_build_modules(build_info: str) -> dict[tuple[str, str], str]:
         raise ValueError("linked module inventory is empty")
     return modules
 
+
+def verify_root_build_info(build_info: str) -> None:
+    """Require the pinned root Go toolchain in package metadata."""
+    lines = build_info.splitlines()
+    if not lines or not lines[0].endswith(f": {ROOT_GO}"):
+        raise ValueError("root Go toolchain metadata mismatch")
 
 
 def verify_worker_build_info(build_info: str) -> None:
@@ -803,8 +809,9 @@ def package(repository: Path, output: Path) -> None:
     output = output.resolve()
     if output == repository or repository not in output.parents:
         raise ValueError("staging output must be a repository subdirectory")
-    if (repository / "go.mod").read_text(encoding="utf-8").splitlines()[2] != "go 1.24.0":
-        raise ValueError("root Go directive changed")
+    root_mod = (repository / "go.mod").read_text(encoding="utf-8")
+    if "\ngo 1.25.0\n" not in root_mod or "\ntoolchain go1.26.8\n" not in root_mod:
+        raise ValueError("root toolchain pin changed")
     worker_mod = (repository / "workers/secret-scanner/go.mod").read_text(encoding="utf-8")
     if "\ngo 1.25.0\n" not in worker_mod or "\ntoolchain go1.25.12\n" not in worker_mod:
         raise ValueError("worker toolchain pin changed")
@@ -900,8 +907,7 @@ def package(repository: Path, output: Path) -> None:
             )
             (output / name).chmod(0o555)
         root_build_info = _run(["go", "version", "-m", str(output / "trestled")], cwd=repository)
-        if not root_build_info.splitlines() or not root_build_info.splitlines()[0].endswith(": go1.24.0"):
-            raise ValueError("trestled Go toolchain metadata mismatch")
+        verify_root_build_info(root_build_info)
         trestled = (output / "trestled").read_bytes()
         if launcher_digest.encode("ascii") not in trestled or worker_digest.encode("ascii") not in trestled:
             raise ValueError("trestled does not contain both scanner digests")

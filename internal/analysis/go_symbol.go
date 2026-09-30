@@ -10,6 +10,8 @@ import (
 	"go/token"
 	"path"
 	"sort"
+	"strconv"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/georgejieh/open-trestle/internal/evidence"
@@ -205,9 +207,14 @@ func collectGoDeclarations(fileSet *token.FileSet, file *ast.File, sourcePath st
 		if !ok {
 			continue
 		}
-		startPosition := function.Pos()
+		startPosition := function.Type.Func
 		if function.Doc != nil {
-			startPosition = function.Doc.Pos()
+			for _, comment := range function.Doc.List {
+				if !isGoLineDirective(fileSet, comment) {
+					startPosition = comment.Pos()
+					break
+				}
+			}
 		}
 		endPosition := function.End()
 		if endPosition > function.Pos() {
@@ -222,6 +229,45 @@ func collectGoDeclarations(fileSet *token.FileSet, file *ast.File, sourcePath st
 		declarations = append(declarations, goDeclaration{function: function, sourceRange: physicalRange})
 	}
 	return declarations, nil
+}
+
+func isGoLineDirective(fileSet *token.FileSet, comment *ast.Comment) bool {
+	text := comment.Text
+	var payload string
+	switch {
+	case strings.HasPrefix(text, "//line "):
+		if fileSet.PositionFor(comment.Slash, false).Column != 1 {
+			return false
+		}
+		payload = text[len("//line "):]
+	case strings.HasPrefix(text, "/*line ") && strings.HasSuffix(text, "*/"):
+		payload = text[len("/*line ") : len(text)-len("*/")]
+	default:
+		return false
+	}
+
+	lineSeparator, lastNumber, ok := trailingGoLineDirectiveNumber(payload)
+	if !ok {
+		return false
+	}
+	line := lastNumber
+	_, precedingNumber, hasColumn := trailingGoLineDirectiveNumber(payload[:lineSeparator])
+	if hasColumn {
+		line = precedingNumber
+		if lastNumber == 0 || lastNumber > 1<<30 {
+			return false
+		}
+	}
+	return line > 0 && line <= 1<<30
+}
+
+func trailingGoLineDirectiveNumber(text string) (int, uint64, bool) {
+	separator := strings.LastIndexByte(text, ':')
+	if separator < 0 {
+		return 0, 0, false
+	}
+	number, err := strconv.ParseUint(text[separator+1:], 10, 64)
+	return separator, number, err == nil
 }
 
 func goReceiverBaseName(declaration *ast.FuncDecl) (string, bool) {

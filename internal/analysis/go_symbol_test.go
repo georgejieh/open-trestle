@@ -156,6 +156,21 @@ func TestResolveGoEnclosingSymbolUsesPhysicalPositions(t *testing.T) {
 	}
 }
 
+func TestResolveGoEnclosingSymbolIncludesLineLikeDocumentation(t *testing.T) {
+	for _, comment := range []string{"  //line handling belongs here", "//line handling belongs here"} {
+		source := []byte("package worker\n" + comment + "\nfunc Process() {\n\tprintln(1)\n}\n")
+		selection := mustAnalysisRange(t, "main.go", 4, 4)
+		change := mustResolverChange(t, "main.go", source, selection, physicalGoLineCount(source))
+		symbol, found, err := ResolveGoEnclosingSymbol(change, source, selection)
+		if err != nil || !found {
+			t.Fatalf("comment=%q result = (%#v, %t, %v)", comment, symbol, found, err)
+		}
+		if symbol.SourceRange() != mustAnalysisRange(t, "main.go", 2, 5) {
+			t.Fatalf("comment=%q physical range = %#v", comment, symbol.SourceRange())
+		}
+	}
+}
+
 func TestResolveGoEnclosingSymbolRejectsInvalidEvidenceBinding(t *testing.T) {
 	source := []byte("package worker\n\nfunc Process() {\n\tprintln(1)\n}\n")
 	changed := mustAnalysisRange(t, "main.go", 4, 4)

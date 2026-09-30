@@ -62,14 +62,15 @@ A deployment should obtain the data source from its secret provider. Never place
 
 ## Verification
 
-Unit tests exercise canonical persistence, tenant transaction setup, advisory locking, migration checksums, forced row-level-security declarations, corruption detection, and error mapping through a strict SQL mock. A live test is available when an operator supplies an isolated PostgreSQL database:
+Unit tests exercise canonical persistence, tenant transaction setup, advisory locking, migration checksums, forced row-level-security declarations, corruption detection, and error mapping through a strict SQL mock. Live integration and pgx simple-protocol injection canary tests are available when an operator supplies an isolated PostgreSQL database:
 
 ```sh
 OPEN_TRESTLE_TEST_POSTGRES_URL='postgres://...?...' \
-  go test ./adapters/storage/postgres -run TestPostgresIntegration -count=1
+  GOWORK=off GOTOOLCHAIN=go1.26.8 go test ./adapters/storage/postgres \
+  -run 'Test(PostgresIntegration|PgxSimpleProtocolKeepsPlaceholdersInsideDollarQuotesLiteral)$' -count=1
 ```
 
-The live database role must be non-superuser and suitable for destructive test data. The test uses unique run identities but does not remove immutable ledger rows.
+The live database role must be non-superuser and suitable for destructive test data. The integration test uses unique run identities but does not remove immutable ledger rows. The pgx canary uses a temporary table and rolls back its transaction.
 
 ## Publication fence authority
 

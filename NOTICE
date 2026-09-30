@@ -10,7 +10,7 @@ Runtime components:
 - AWS SDK for Go v2, including KMS and internal modules, Apache-2.0.
 - AWS Smithy for Go, Apache-2.0.
 - pgx, pgpassfile, pgservicefile, and puddle, MIT.
-- golang.org/x/crypto, golang.org/x/sync, and golang.org/x/text, BSD-3-Clause.
+- golang.org/x/sync and golang.org/x/text, BSD-3-Clause.
 - Betterleaks, Copyright 2026 Zachary Rice, MIT. The isolated secret-scanner worker includes additional linked components under MIT, BSD, ISC, Apache-2.0, and MPL-2.0 terms. Their exact versioned license and notice texts are in THIRD_PARTY_LICENSES/secret-scanner.
 - The secret-scanner launcher statically links Zig compiler-rt 0.14.1, Copyright Zig contributors, and musl 1.2.5, Copyright 2005-2020 Rich Felker, et al. Both are MIT licensed. Complete attribution is in THIRD_PARTY_LICENSES/secret-scanner-launcher.
 - React, React DOM, and Scheduler, Copyright Meta Platforms, Inc. and affiliates, MIT.
