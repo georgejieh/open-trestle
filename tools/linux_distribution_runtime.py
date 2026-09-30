@@ -21,6 +21,7 @@ from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Callable
 
 SCHEMA_VERSION = 1
+CONTROL_SCHEMA_VERSION = 2
 TARGET = "linux-amd64"
 SHEBANG = b"#!/usr/bin/env python3\n"
 MAX_ARCHIVE_SIZE = 256 * 1024 * 1024
@@ -30,6 +31,10 @@ LIFECYCLE_PATH = "usr/local/libexec/open-trestle/open-trestle-distribution.pyz"
 SIDECAR_PATH = LIFECYCLE_PATH + ".sha256"
 RECEIPT_PATH = "usr/local/share/open-trestle/distribution/receipt.json"
 JOURNAL_PATH = "usr/local/share/open-trestle/distribution/journal.json"
+PREVIOUS_ARCHIVE_PATH = "usr/local/share/open-trestle/distribution/previous.pyz"
+PREVIOUS_SIDECAR_PATH = PREVIOUS_ARCHIVE_PATH + ".sha256"
+PREVIOUS_RECEIPT_PATH = "usr/local/share/open-trestle/distribution/previous-receipt.json"
+PREVIOUS_JOURNAL_PATH = "usr/local/share/open-trestle/distribution/previous-journal.json"
 EXECUTABLE_PATHS = frozenset(
     {
         "usr/local/bin/trestle",
@@ -90,6 +95,31 @@ def _json_loads(raw: bytes, label: str) -> object:
 
 def _canonical_json(value: object) -> bytes:
     return (json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n").encode("ascii")
+
+
+def _version_precedence(version: str) -> tuple[int, int, int, tuple[tuple[int, object], ...]]:
+    if not isinstance(version, str) or len(version) > 255:
+        raise ValueError("version is not valid SemVer")
+    match = re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?", version)
+    if match is None:
+        raise ValueError("version is not valid SemVer")
+    prerelease = match.group(4)
+    build = match.group(5)
+    for identifiers, numeric_restriction in ((prerelease, True), (build, False)):
+        if identifiers is None:
+            continue
+        for identifier in identifiers.split("."):
+            if not identifier or not re.fullmatch(r"[0-9A-Za-z-]+", identifier):
+                raise ValueError("version is not valid SemVer")
+            if numeric_restriction and identifier.isdigit() and len(identifier) > 1 and identifier.startswith("0"):
+                raise ValueError("version is not valid SemVer")
+    major, minor, patch = (int(match.group(index)) for index in (1, 2, 3))
+    if prerelease is None:
+        return major, minor, patch, ((2, 0),)
+    precedence: list[tuple[int, object]] = []
+    for identifier in prerelease.split("."):
+        precedence.append((0, int(identifier)) if identifier.isdigit() else (1, identifier))
+    return major, minor, patch, tuple(precedence)
 
 
 def _sha256_stream(source: BinaryIO) -> tuple[str, int]:
@@ -188,8 +218,10 @@ def _manifest_files(document: object) -> tuple[InstalledFile, ...]:
         raise ValueError("manifest identity is invalid")
     if document["target"] != TARGET:
         raise ValueError("manifest target is invalid")
-    if not isinstance(document["version"], str) or not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", document["version"]):
-        raise ValueError("manifest version is invalid")
+    try:
+        _version_precedence(document["version"])
+    except ValueError as error:
+        raise ValueError("manifest version is invalid") from error
     if not isinstance(document["revision"], str) or not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", document["revision"]):
         raise ValueError("manifest revision is invalid")
     if not isinstance(document["created"], str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", document["created"]):
@@ -639,22 +671,37 @@ def install(archive_path: Path, destdir: Path | None = None) -> None:
             set(created), key=lambda value: (value.count("/"), value)
         )
         manifest_digest = hashlib.sha256(_canonical_json(validated.manifest)).hexdigest()
+        version = validated.manifest["version"]
         receipt = {
+            "action": "install",
             "archive_sha256": validated.sha256,
             "created_directories": created_directories,
             "files": [_receipt_file(item) for item in sorted(managed, key=lambda value: value.path)],
             "manifest_sha256": manifest_digest,
-            "schema_version": SCHEMA_VERSION,
+            "new_archive_sha256": validated.sha256,
+            "new_manifest_sha256": manifest_digest,
+            "new_version": version,
+            "old_archive_sha256": None,
+            "old_manifest_sha256": None,
+            "old_version": None,
+            "previous": None,
+            "schema_version": CONTROL_SCHEMA_VERSION,
             "target": TARGET,
             "transaction": transaction,
-            "version": validated.manifest["version"],
+            "version": version,
         }
         receipt_body = _canonical_json(receipt)
         journal = {
             "action": "install",
-            "archive_sha256": validated.sha256,
+            "new_archive_sha256": validated.sha256,
+            "new_manifest_sha256": manifest_digest,
+            "new_version": version,
+            "old_archive_sha256": None,
+            "old_manifest_sha256": None,
+            "old_version": None,
             "receipt_sha256": hashlib.sha256(receipt_body).hexdigest(),
-            "schema_version": SCHEMA_VERSION,
+            "schema_version": CONTROL_SCHEMA_VERSION,
+            "target": TARGET,
             "transaction": transaction,
         }
         if created_directories != sorted(
@@ -712,27 +759,7 @@ def _read_control_file(root: Path, relative: str) -> bytes:
     return body
 
 
-def _load_control(root: Path) -> tuple[dict[str, object], dict[str, object], tuple[InstalledFile, ...]]:
-    receipt_raw = _read_control_file(root, RECEIPT_PATH)
-    journal_raw = _read_control_file(root, JOURNAL_PATH)
-    receipt = _json_loads(receipt_raw, "receipt")
-    journal = _json_loads(journal_raw, "journal")
-    if not isinstance(receipt, dict) or set(receipt) != {"archive_sha256", "created_directories", "files", "manifest_sha256", "schema_version", "target", "transaction", "version"}:
-        raise ValueError("installation receipt fields are invalid")
-    if not isinstance(journal, dict) or set(journal) != {"action", "archive_sha256", "receipt_sha256", "schema_version", "transaction"}:
-        raise ValueError("installation journal fields are invalid")
-    if receipt["schema_version"] != SCHEMA_VERSION or receipt["target"] != TARGET or journal["schema_version"] != SCHEMA_VERSION or journal["action"] != "install":
-        raise ValueError("installation control identity is invalid")
-    digest_fields = (receipt["archive_sha256"], receipt["manifest_sha256"], journal["archive_sha256"], journal["receipt_sha256"])
-    if any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in digest_fields):
-        raise ValueError("installation control digest is invalid")
-    if not isinstance(receipt["transaction"], str) or not re.fullmatch(r"[0-9a-f]{32}", receipt["transaction"]):
-        raise ValueError("installation transaction is invalid")
-    if not isinstance(receipt["version"], str) or not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", receipt["version"]):
-        raise ValueError("installation version is invalid")
-    if journal["transaction"] != receipt["transaction"] or journal["archive_sha256"] != receipt["archive_sha256"] or journal["receipt_sha256"] != hashlib.sha256(receipt_raw).hexdigest():
-        raise ValueError("installation journal does not bind the receipt")
-    raw_files = receipt["files"]
+def _parse_receipt_files(raw_files: object) -> tuple[InstalledFile, ...]:
     if not isinstance(raw_files, list) or not raw_files:
         raise ValueError("installation receipt inventory is invalid")
     files: list[InstalledFile] = []
@@ -740,27 +767,148 @@ def _load_control(root: Path) -> tuple[dict[str, object], dict[str, object], tup
         if not isinstance(raw, dict) or set(raw) != {"elf", "mode", "path", "sha256", "size"}:
             raise ValueError("installation receipt file is invalid")
         path = _safe_relative_path(raw["path"])
-        if raw["mode"] not in {0o444, 0o555} or not isinstance(raw["size"], int) or raw["size"] <= 0 or not isinstance(raw["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", raw["sha256"]) or not isinstance(raw["elf"], bool):
+        if raw["mode"] not in {0o444, 0o555} or not isinstance(raw["size"], int) or isinstance(raw["size"], bool) or raw["size"] <= 0 or not isinstance(raw["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", raw["sha256"]) or not isinstance(raw["elf"], bool):
             raise ValueError("installation receipt file metadata is invalid")
         files.append(InstalledFile(path, raw["mode"], raw["size"], raw["sha256"], raw["elf"]))
     if [item.path for item in files] != sorted(item.path for item in files) or len({item.path for item in files}) != len(files):
         raise ValueError("installation receipt inventory is invalid")
     if {item.path for item in files if item.elf} != EXECUTABLE_PATHS or LIFECYCLE_PATH not in {item.path for item in files} or SIDECAR_PATH not in {item.path for item in files}:
         raise ValueError("installation receipt inventory is incomplete")
-    created = receipt["created_directories"]
-    if not isinstance(created, list) or len(set(created)) != len(created) or any(not isinstance(value, str) or value == "." or _safe_relative_path(value) != value for value in created):
+    return tuple(files)
+
+
+def _validate_created_directories(raw: object, files: tuple[InstalledFile, ...]) -> list[str]:
+    if not isinstance(raw, list) or len(set(raw)) != len(raw) or any(not isinstance(value, str) or value == "." or _safe_relative_path(value) != value for value in raw):
         raise ValueError("installation directory inventory is invalid")
     allowed_directories: set[str] = set()
-    for owned_path in [item.path for item in files] + [RECEIPT_PATH, JOURNAL_PATH]:
+    for owned_path in [item.path for item in files] + [
+        RECEIPT_PATH, JOURNAL_PATH, PREVIOUS_ARCHIVE_PATH, PREVIOUS_SIDECAR_PATH,
+        PREVIOUS_RECEIPT_PATH, PREVIOUS_JOURNAL_PATH,
+    ]:
         parent = PurePosixPath(owned_path).parent
         while str(parent) != ".":
             allowed_directories.add(str(parent))
             parent = parent.parent
-    if not set(created) <= allowed_directories:
+    if not set(raw) <= allowed_directories:
         raise ValueError("installation directory inventory is out of scope")
-    return receipt, journal, tuple(files)
+    return raw
 
 
+def _load_control(root: Path) -> tuple[dict[str, object], dict[str, object], tuple[InstalledFile, ...]]:
+    receipt_raw = _read_control_file(root, RECEIPT_PATH)
+    journal_raw = _read_control_file(root, JOURNAL_PATH)
+    receipt = _json_loads(receipt_raw, "receipt")
+    journal = _json_loads(journal_raw, "journal")
+    if _canonical_json(receipt) != receipt_raw or _canonical_json(journal) != journal_raw:
+        raise ValueError("installation receipt or journal is not canonical")
+    legacy_receipt_fields = {
+        "archive_sha256", "created_directories", "files", "manifest_sha256",
+        "schema_version", "target", "transaction", "version",
+    }
+    legacy_journal_fields = {
+        "action", "archive_sha256", "receipt_sha256", "schema_version", "transaction",
+    }
+    if isinstance(receipt, dict) and isinstance(journal, dict) and set(receipt) == legacy_receipt_fields and set(journal) == legacy_journal_fields:
+        if receipt["schema_version"] != SCHEMA_VERSION or receipt["target"] != TARGET or journal["schema_version"] != SCHEMA_VERSION or journal["action"] != "install":
+            raise ValueError("legacy installation control identity is invalid")
+        digest_values = (
+            receipt["archive_sha256"], receipt["manifest_sha256"],
+            journal["archive_sha256"], journal["receipt_sha256"],
+        )
+        if any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in digest_values):
+            raise ValueError("legacy installation control digest is invalid")
+        try:
+            _version_precedence(receipt["version"])
+        except ValueError as error:
+            raise ValueError("legacy installation version is invalid") from error
+        if not isinstance(receipt["transaction"], str) or not re.fullmatch(r"[0-9a-f]{32}", receipt["transaction"]):
+            raise ValueError("legacy installation transaction is invalid")
+        if journal["transaction"] != receipt["transaction"] or journal["archive_sha256"] != receipt["archive_sha256"] or journal["receipt_sha256"] != hashlib.sha256(receipt_raw).hexdigest():
+            raise ValueError("legacy installation journal does not bind the receipt")
+        files = _parse_receipt_files(receipt["files"])
+        _validate_created_directories(receipt["created_directories"], files)
+        normalized = dict(receipt)
+        normalized.update({
+            "action": "install",
+            "new_archive_sha256": receipt["archive_sha256"],
+            "new_manifest_sha256": receipt["manifest_sha256"],
+            "new_version": receipt["version"],
+            "old_archive_sha256": None,
+            "old_manifest_sha256": None,
+            "old_version": None,
+            "previous": None,
+        })
+        return normalized, journal, files
+    receipt_fields = {
+        "action", "archive_sha256", "created_directories", "files", "manifest_sha256",
+        "new_archive_sha256", "new_manifest_sha256", "new_version",
+        "old_archive_sha256", "old_manifest_sha256", "old_version", "previous",
+        "schema_version", "target", "transaction", "version",
+    }
+    journal_fields = {
+        "action", "new_archive_sha256", "new_manifest_sha256", "new_version",
+        "old_archive_sha256", "old_manifest_sha256", "old_version", "receipt_sha256",
+        "schema_version", "target", "transaction",
+    }
+    if not isinstance(receipt, dict) or set(receipt) != receipt_fields:
+        raise ValueError("installation receipt fields are invalid")
+    if not isinstance(journal, dict) or set(journal) != journal_fields:
+        raise ValueError("installation journal fields are invalid")
+    action = receipt["action"]
+    if action not in {"install", "upgrade", "rollback-version"} or journal["action"] != action:
+        raise ValueError("installation control action is invalid")
+    if receipt["schema_version"] != CONTROL_SCHEMA_VERSION or receipt["target"] != TARGET or journal["schema_version"] != CONTROL_SCHEMA_VERSION or journal["target"] != TARGET:
+        raise ValueError("installation control identity is invalid")
+    digests = (receipt["archive_sha256"], receipt["manifest_sha256"], receipt["new_archive_sha256"], receipt["new_manifest_sha256"], journal["new_archive_sha256"], journal["new_manifest_sha256"], journal["receipt_sha256"])
+    if any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in digests):
+        raise ValueError("installation control digest is invalid")
+    old_values = (receipt["old_archive_sha256"], receipt["old_manifest_sha256"], journal["old_archive_sha256"], journal["old_manifest_sha256"])
+    if action == "install":
+        if any(value is not None for value in (*old_values, receipt["old_version"], journal["old_version"])) or receipt["previous"] is not None:
+            raise ValueError("installation control predecessor is invalid")
+    else:
+        if any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in old_values):
+            raise ValueError("installation control predecessor digest is invalid")
+        if any(not isinstance(value, str) for value in (receipt["old_version"], journal["old_version"])):
+            raise ValueError("installation control predecessor version is invalid")
+    versions = [receipt["version"], receipt["new_version"], journal["new_version"]]
+    if action != "install":
+        versions.extend((receipt["old_version"], journal["old_version"]))
+    try:
+        for value in versions:
+            _version_precedence(value)
+    except ValueError as error:
+        raise ValueError("installation version is invalid") from error
+    if action == "upgrade" and _version_precedence(receipt["new_version"]) <= _version_precedence(receipt["old_version"]):
+        raise ValueError("installation upgrade version transition is invalid")
+    if action == "rollback-version" and _version_precedence(receipt["new_version"]) >= _version_precedence(receipt["old_version"]):
+        raise ValueError("installation rollback version transition is invalid")
+    if not isinstance(receipt["transaction"], str) or not re.fullmatch(r"[0-9a-f]{32}", receipt["transaction"]):
+        raise ValueError("installation transaction is invalid")
+    bound = ("action", "new_archive_sha256", "new_manifest_sha256", "new_version", "old_archive_sha256", "old_manifest_sha256", "old_version", "schema_version", "target", "transaction")
+    if any(journal[key] != receipt[key] for key in bound) or journal["receipt_sha256"] != hashlib.sha256(receipt_raw).hexdigest():
+        raise ValueError("installation journal does not bind the receipt")
+    if receipt["archive_sha256"] != receipt["new_archive_sha256"] or receipt["manifest_sha256"] != receipt["new_manifest_sha256"] or receipt["version"] != receipt["new_version"]:
+        raise ValueError("installation current generation binding is invalid")
+    files = _parse_receipt_files(receipt["files"])
+    _validate_created_directories(receipt["created_directories"], files)
+    previous = receipt["previous"]
+    if action == "upgrade":
+        previous_fields = {
+            "archive_sha256", "created_directories", "files", "journal_sha256",
+            "manifest_sha256", "receipt_sha256", "version",
+        }
+        if not isinstance(previous, dict) or set(previous) != previous_fields:
+            raise ValueError("installation predecessor receipt is invalid")
+        previous_files = _parse_receipt_files(previous["files"])
+        _validate_created_directories(previous["created_directories"], previous_files)
+        if previous["archive_sha256"] != receipt["old_archive_sha256"] or previous["manifest_sha256"] != receipt["old_manifest_sha256"] or previous["version"] != receipt["old_version"]:
+            raise ValueError("installation predecessor binding is invalid")
+        if any(not isinstance(previous[key], str) or not re.fullmatch(r"[0-9a-f]{64}", previous[key]) for key in ("receipt_sha256", "journal_sha256")):
+            raise ValueError("installation predecessor control digest is invalid")
+    elif previous is not None:
+        raise ValueError("installation predecessor receipt is invalid")
+    return receipt, journal, files
 
 
 def _validate_directory_chain(root: Path, relative: str) -> None:
@@ -817,7 +965,448 @@ def verify_installed(archive_path: Path, destdir: Path | None = None) -> dict[st
         raise ValueError("installed receipt inventory does not match the archive")
     for item in files:
         _validate_installed_file(root, item)
+    if receipt["action"] == "upgrade":
+        _validate_previous_generation(root, receipt)
     return receipt
+
+
+def _managed_generation(validated: ValidatedArchive) -> tuple[InstalledFile, ...]:
+    sidecar_body = f"{validated.sha256}  {PurePosixPath(LIFECYCLE_PATH).name}\n".encode("ascii")
+    return tuple(sorted(
+        (*validated.files,
+         InstalledFile(LIFECYCLE_PATH, 0o555, validated.size, validated.sha256, False),
+         InstalledFile(SIDECAR_PATH, 0o444, len(sidecar_body), hashlib.sha256(sidecar_body).hexdigest(), False)),
+        key=lambda item: item.path,
+    ))
+
+
+def _verified_installed_generation(root: Path) -> tuple[ValidatedArchive, dict[str, object], tuple[InstalledFile, ...]]:
+    archive = validate_archive(root / LIFECYCLE_PATH, root / SIDECAR_PATH)
+    receipt = verify_installed(archive.path, root)
+    _, _, files = _load_control(root)
+    return archive, receipt, files
+
+
+def _planned_directories(root: Path, paths: set[str]) -> list[str]:
+    planned: set[str] = set()
+    for relative in sorted(paths):
+        current = root
+        for part in PurePosixPath(relative).parent.parts:
+            current = current / part
+            if str(current.relative_to(root)) in planned:
+                continue
+            try:
+                status = os.lstat(current)
+            except FileNotFoundError:
+                planned.add(str(current.relative_to(root)))
+                continue
+            if not stat.S_ISDIR(status.st_mode) or stat.S_ISLNK(status.st_mode) or status.st_mode & 0o022:
+                raise ValueError("destination path contains an untrusted directory")
+            if _is_production(root) and (status.st_uid != 0 or status.st_gid != 0):
+                raise ValueError("production destination directory is not root-owned")
+    return sorted(planned, key=lambda value: (value.count("/"), value))
+
+
+def _stage_generation(
+    root: Path,
+    validated: ValidatedArchive,
+    transaction: str,
+    created: list[str],
+    staged: list[tuple[Path, str, str, InstalledFile, tuple[int, int]]] | None = None,
+) -> list[tuple[Path, str, str, InstalledFile, tuple[int, int]]]:
+    if staged is None:
+        staged = []
+    archive_descriptor = os.open(validated.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(archive_descriptor, "rb") as archive_source:
+        before = os.fstat(archive_source.fileno())
+        digest, size = _sha256_stream(archive_source)
+        if digest != validated.sha256 or size != validated.size:
+            raise ValueError("distribution archive changed before transition")
+        archive_source.seek(0)
+        with zipfile.ZipFile(archive_source) as archive:
+            for item in validated.files:
+                parent = _ensure_directory(root, str(PurePosixPath(item.path).parent), created)
+                name = PurePosixPath(item.path).name
+
+                def archive_writer(destination: BinaryIO, archive_name: str = "payload/" + item.path) -> None:
+                    with archive.open(archive_name) as source:
+                        while chunk := source.read(1 << 20):
+                            destination.write(chunk)
+
+                temporary = _stage_file(parent, name, item.mode, archive_writer, transaction, _is_production(root))
+                staged.append((parent, temporary, name, item, _file_identity(parent / temporary)))
+        lifecycle = InstalledFile(LIFECYCLE_PATH, 0o555, validated.size, validated.sha256, False)
+        parent = _ensure_directory(root, str(PurePosixPath(LIFECYCLE_PATH).parent), created)
+        archive_source.seek(0)
+
+        def lifecycle_writer(destination: BinaryIO) -> None:
+            while chunk := archive_source.read(1 << 20):
+                destination.write(chunk)
+
+        temporary = _stage_file(parent, PurePosixPath(LIFECYCLE_PATH).name, 0o555, lifecycle_writer, transaction, _is_production(root))
+        staged.append((parent, temporary, PurePosixPath(LIFECYCLE_PATH).name, lifecycle, _file_identity(parent / temporary)))
+        after = os.fstat(archive_source.fileno())
+        stable = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+        if any(getattr(before, key) != getattr(after, key) for key in stable):
+            raise ValueError("distribution archive changed during transition")
+    sidecar_body = f"{validated.sha256}  {PurePosixPath(LIFECYCLE_PATH).name}\n".encode("ascii")
+    sidecar = InstalledFile(SIDECAR_PATH, 0o444, len(sidecar_body), hashlib.sha256(sidecar_body).hexdigest(), False)
+    parent = _ensure_directory(root, str(PurePosixPath(SIDECAR_PATH).parent), created)
+    temporary = _stage_file(parent, PurePosixPath(SIDECAR_PATH).name, 0o444, _write_bytes(sidecar_body), transaction, _is_production(root))
+    staged.append((parent, temporary, PurePosixPath(SIDECAR_PATH).name, sidecar, _file_identity(parent / temporary)))
+    for parent, temporary, _, item, _ in staged:
+        _validate_staged_file(parent, temporary, item)
+    return staged
+
+
+def _control_item(path: str, body: bytes) -> InstalledFile:
+    return InstalledFile(path, 0o444, len(body), hashlib.sha256(body).hexdigest(), False)
+
+
+def _previous_slot_items(
+    validated: ValidatedArchive,
+    receipt_body: bytes,
+    journal_body: bytes,
+) -> tuple[InstalledFile, ...]:
+    sidecar_body = f"{validated.sha256}  {PurePosixPath(PREVIOUS_ARCHIVE_PATH).name}\n".encode("ascii")
+    return (
+        InstalledFile(PREVIOUS_ARCHIVE_PATH, 0o555, validated.size, validated.sha256, False),
+        InstalledFile(PREVIOUS_SIDECAR_PATH, 0o444, len(sidecar_body), hashlib.sha256(sidecar_body).hexdigest(), False),
+        _control_item(PREVIOUS_RECEIPT_PATH, receipt_body),
+        _control_item(PREVIOUS_JOURNAL_PATH, journal_body),
+    )
+
+
+def _stage_previous_slot(
+    root: Path,
+    validated: ValidatedArchive,
+    receipt_body: bytes,
+    journal_body: bytes,
+    transaction: str,
+    created: list[str],
+    staged: list[tuple[Path, str, str, InstalledFile, tuple[int, int]]] | None = None,
+) -> list[tuple[Path, str, str, InstalledFile, tuple[int, int]]]:
+    if staged is None:
+        staged = []
+    archive_item, sidecar_item, receipt_item, journal_item = _previous_slot_items(
+        validated, receipt_body, journal_body
+    )
+    parent = _ensure_directory(root, str(PurePosixPath(PREVIOUS_ARCHIVE_PATH).parent), created)
+    descriptor = os.open(validated.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(descriptor, "rb") as source:
+        before = os.fstat(source.fileno())
+
+        def writer(destination: BinaryIO) -> None:
+            while chunk := source.read(1 << 20):
+                destination.write(chunk)
+
+        temporary = _stage_file(parent, PurePosixPath(PREVIOUS_ARCHIVE_PATH).name, 0o555, writer, transaction, _is_production(root))
+        staged.append((parent, temporary, PurePosixPath(PREVIOUS_ARCHIVE_PATH).name, archive_item, _file_identity(parent / temporary)))
+        after = os.fstat(source.fileno())
+    stable = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+    if any(getattr(before, key) != getattr(after, key) for key in stable):
+        raise ValueError("installed archive changed while staged as predecessor")
+    bodies = (
+        (PREVIOUS_SIDECAR_PATH, f"{validated.sha256}  {PurePosixPath(PREVIOUS_ARCHIVE_PATH).name}\n".encode("ascii"), sidecar_item),
+        (PREVIOUS_RECEIPT_PATH, receipt_body, receipt_item),
+        (PREVIOUS_JOURNAL_PATH, journal_body, journal_item),
+    )
+    for relative, body, item in bodies:
+        name = PurePosixPath(relative).name
+        temporary = _stage_file(parent, name, item.mode, _write_bytes(body), transaction, _is_production(root))
+        staged.append((parent, temporary, name, item, _file_identity(parent / temporary)))
+    for staged_parent, staged_name, _, item, _ in staged:
+        _validate_staged_file(staged_parent, staged_name, item)
+    return staged
+
+
+def _validate_previous_generation(
+    root: Path,
+    receipt: dict[str, object],
+) -> tuple[ValidatedArchive, tuple[InstalledFile, ...], bytes, bytes, tuple[InstalledFile, ...]]:
+    if receipt["action"] != "upgrade" or not isinstance(receipt["previous"], dict):
+        raise ValueError("no exact immediate predecessor is available")
+    previous = receipt["previous"]
+    validated = validate_archive(root / PREVIOUS_ARCHIVE_PATH, root / PREVIOUS_SIDECAR_PATH)
+    manifest_digest = hashlib.sha256(_canonical_json(validated.manifest)).hexdigest()
+    if validated.sha256 != previous["archive_sha256"] or manifest_digest != previous["manifest_sha256"] or validated.manifest["version"] != previous["version"]:
+        raise ValueError("immediate predecessor archive does not match the receipt")
+    files = _parse_receipt_files(previous["files"])
+    if files != _managed_generation(validated):
+        raise ValueError("immediate predecessor inventory does not match its archive")
+    receipt_body = _read_control_file(root, PREVIOUS_RECEIPT_PATH)
+    journal_body = _read_control_file(root, PREVIOUS_JOURNAL_PATH)
+    if hashlib.sha256(receipt_body).hexdigest() != previous["receipt_sha256"] or hashlib.sha256(journal_body).hexdigest() != previous["journal_sha256"]:
+        raise ValueError("immediate predecessor controls do not match the receipt")
+    slot_items = _previous_slot_items(validated, receipt_body, journal_body)
+    for item in slot_items:
+        _validate_installed_file(root, item)
+    return validated, files, receipt_body, journal_body, slot_items
+
+
+def _transition_documents(
+    *,
+    action: str,
+    old_receipt: dict[str, object],
+    new_archive: ValidatedArchive,
+    new_files: tuple[InstalledFile, ...],
+    created_directories: list[str],
+    transaction: str,
+    previous: dict[str, object] | None,
+) -> tuple[bytes, bytes]:
+    old_archive_sha256 = old_receipt["archive_sha256"]
+    old_manifest_sha256 = old_receipt["manifest_sha256"]
+    old_version = old_receipt["version"]
+    new_manifest_sha256 = hashlib.sha256(_canonical_json(new_archive.manifest)).hexdigest()
+    new_version = new_archive.manifest["version"]
+    receipt = {
+        "action": action,
+        "archive_sha256": new_archive.sha256,
+        "created_directories": created_directories,
+        "files": [_receipt_file(item) for item in new_files],
+        "manifest_sha256": new_manifest_sha256,
+        "new_archive_sha256": new_archive.sha256,
+        "new_manifest_sha256": new_manifest_sha256,
+        "new_version": new_version,
+        "old_archive_sha256": old_archive_sha256,
+        "old_manifest_sha256": old_manifest_sha256,
+        "old_version": old_version,
+        "previous": previous,
+        "schema_version": CONTROL_SCHEMA_VERSION,
+        "target": TARGET,
+        "transaction": transaction,
+        "version": new_version,
+    }
+    receipt_body = _canonical_json(receipt)
+    journal = {
+        "action": action,
+        "new_archive_sha256": new_archive.sha256,
+        "new_manifest_sha256": new_manifest_sha256,
+        "new_version": new_version,
+        "old_archive_sha256": old_archive_sha256,
+        "old_manifest_sha256": old_manifest_sha256,
+        "old_version": old_version,
+        "receipt_sha256": hashlib.sha256(receipt_body).hexdigest(),
+        "schema_version": CONTROL_SCHEMA_VERSION,
+        "target": TARGET,
+        "transaction": transaction,
+    }
+    return receipt_body, _canonical_json(journal)
+
+
+def _apply_transition(
+    root: Path,
+    staged: list[tuple[Path, str, str, InstalledFile, tuple[int, int]]],
+    old_items: dict[str, tuple[InstalledFile, tuple[int, int]]],
+    created: list[str],
+    obsolete_directories: list[str],
+    transaction: str,
+) -> None:
+    staged_by_path = {item.path: entry for entry in staged for item in (entry[3],)}
+    if len(staged_by_path) != len(staged):
+        raise ValueError("transition staged duplicate destinations")
+    old_paths = set(old_items)
+    new_paths = set(staged_by_path)
+    for relative in sorted(new_paths - old_paths):
+        try:
+            os.lstat(root / relative)
+        except FileNotFoundError:
+            continue
+        raise FileExistsError(f"destination already exists: {relative}")
+    for relative, (item, identity) in old_items.items():
+        if not _matches_owned_file(root / relative, item, identity):
+            raise ValueError(f"owned file changed before transition: {relative}")
+    quarantined: list[tuple[Path, str, InstalledFile, tuple[int, int]]] = []
+    published: list[tuple[Path, InstalledFile, tuple[int, int]]] = []
+    def publish(relative: str) -> None:
+        parent, temporary, name, item, staged_identity = staged_by_path[relative]
+        if not _matches_owned_file(parent / temporary, item, staged_identity):
+            raise ValueError(f"staged file changed before transition: {relative}")
+        if relative in old_items:
+            old_item, old_identity = old_items[relative]
+            quarantine = f".{name}.open-trestle-old-{transaction}"
+            captured = _rename_noreplace(parent, name, quarantine)
+            if captured != old_identity or not _matches_owned_file(parent / quarantine, old_item, old_identity):
+                restored = _rename_noreplace(parent, quarantine, name)
+                _fsync_directory(parent)
+                if restored != captured:
+                    raise ValueError(f"could not restore changed transition file: {relative}")
+                raise ValueError(f"owned file changed during transition: {relative}")
+            quarantined.append((parent, quarantine, old_item, old_identity))
+        identity = _publish_staged(parent, temporary, name)
+        published.append((parent / name, item, identity))
+        if identity != staged_identity or not _matches_owned_file(parent / name, item, staged_identity):
+            raise ValueError(f"staged file changed during transition: {relative}")
+        _fsync_directory(parent)
+
+    try:
+        controls = {RECEIPT_PATH, JOURNAL_PATH}
+        for relative in sorted(new_paths - controls):
+            publish(relative)
+        for relative in sorted(old_paths - new_paths):
+            item, identity = old_items[relative]
+            path = root / relative
+            quarantine = f".{path.name}.open-trestle-old-{transaction}"
+            captured = _rename_noreplace(path.parent, path.name, quarantine)
+            if captured != identity or not _matches_owned_file(path.parent / quarantine, item, identity):
+                restored = _rename_noreplace(path.parent, quarantine, path.name)
+                _fsync_directory(path.parent)
+                if restored != captured:
+                    raise ValueError(f"could not restore changed transition file: {relative}")
+                raise ValueError(f"owned file changed during transition: {relative}")
+            quarantined.append((path.parent, quarantine, item, identity))
+            _fsync_directory(path.parent)
+        publish(RECEIPT_PATH)
+        publish(JOURNAL_PATH)
+    except BaseException:
+        for path, item, identity in reversed(published):
+            if not _unlink_owned_file(path, item, identity):
+                raise ValueError(f"could not remove failed transition file: {item.path}")
+        for parent, quarantine, item, identity in reversed(quarantined):
+            restored = _rename_noreplace(parent, quarantine, PurePosixPath(item.path).name)
+            if restored != identity:
+                raise ValueError(f"could not restore failed transition file: {item.path}")
+            _fsync_directory(parent)
+        for parent, temporary, _, item, identity in staged:
+            _unlink_owned_file(parent / temporary, item, identity)
+        _remove_created_directories(root, created)
+        raise
+    cleanup_failures: list[str] = []
+    for parent, quarantine, item, identity in quarantined:
+        try:
+            if not _unlink_owned_file(parent / quarantine, item, identity):
+                cleanup_failures.append(item.path)
+        except (OSError, ValueError):
+            cleanup_failures.append(item.path)
+    _remove_created_directories(root, obsolete_directories)
+    if cleanup_failures:
+        raise ValueError(
+            "transition committed but cleanup is incomplete: " + ", ".join(sorted(cleanup_failures))
+        )
+
+
+def _transition(archive_path: Path, destdir: Path | None, *, rollback_to_previous: bool) -> None:
+    root = _installation_root(destdir)
+    current_archive, current_receipt, current_files = _verified_installed_generation(root)
+    old_items: dict[str, tuple[InstalledFile, tuple[int, int]]] = {}
+    for item in current_files:
+        status = _validate_installed_file(root, item)
+        old_items[item.path] = (item, (status.st_dev, status.st_ino))
+    control_bodies: dict[str, bytes] = {}
+    for relative in (RECEIPT_PATH, JOURNAL_PATH):
+        body = _read_control_file(root, relative)
+        control_bodies[relative] = body
+        item = _control_item(relative, body)
+        old_items[relative] = (item, _file_identity(root / relative))
+    previous_receipt_body: bytes | None = None
+    previous_journal_body: bytes | None = None
+    if current_receipt["action"] == "upgrade":
+        verified_previous = _validate_previous_generation(root, current_receipt)
+        _, _, previous_receipt_body, previous_journal_body, old_previous_items = verified_previous
+        for item in old_previous_items:
+            status = _validate_installed_file(root, item)
+            old_items[item.path] = (item, (status.st_dev, status.st_ino))
+    if rollback_to_previous:
+        candidate, candidate_files, previous_receipt_body, previous_journal_body, _ = _validate_previous_generation(root, current_receipt)
+        previous_receipt = current_receipt["previous"]
+        assert isinstance(previous_receipt, dict)
+        created_directories = list(previous_receipt["created_directories"])
+        obsolete_directories = [value for value in current_receipt["created_directories"] if value not in created_directories]
+    else:
+        if current_receipt["action"] == "upgrade":
+            raise ValueError("upgrade rollback slot must be consumed before another upgrade")
+        candidate = validate_archive(archive_path)
+        if _version_precedence(candidate.manifest["version"]) <= _version_precedence(current_archive.manifest["version"]):
+            raise ValueError("upgrade candidate must be strictly newer than the installed version")
+        candidate_files = _managed_generation(candidate)
+        action = "upgrade"
+        previous = {
+            "archive_sha256": current_receipt["archive_sha256"],
+            "created_directories": current_receipt["created_directories"],
+            "files": current_receipt["files"],
+            "journal_sha256": hashlib.sha256(control_bodies[JOURNAL_PATH]).hexdigest(),
+            "manifest_sha256": current_receipt["manifest_sha256"],
+            "receipt_sha256": hashlib.sha256(control_bodies[RECEIPT_PATH]).hexdigest(),
+            "version": current_receipt["version"],
+        }
+        planned = _planned_directories(root, {item.path for item in candidate_files} | {
+            PREVIOUS_ARCHIVE_PATH, PREVIOUS_SIDECAR_PATH,
+            PREVIOUS_RECEIPT_PATH, PREVIOUS_JOURNAL_PATH,
+        })
+        created_directories = sorted(set(current_receipt["created_directories"]) | set(planned), key=lambda value: (value.count("/"), value))
+        obsolete_directories = []
+    transaction = uuid.uuid4().hex
+    destination_paths = {item.path for item in candidate_files}
+    if not rollback_to_previous:
+        destination_paths |= {
+            PREVIOUS_ARCHIVE_PATH, PREVIOUS_SIDECAR_PATH,
+            PREVIOUS_RECEIPT_PATH, PREVIOUS_JOURNAL_PATH,
+        }
+    destination_paths |= {RECEIPT_PATH, JOURNAL_PATH}
+    _planned_directories(root, destination_paths)
+    for relative in destination_paths - set(old_items):
+        try:
+            os.lstat(root / relative)
+        except FileNotFoundError:
+            continue
+        raise FileExistsError(f"destination already exists: {relative}")
+    generated_paths = {
+        str(PurePosixPath(relative).parent / f".{PurePosixPath(relative).name}.open-trestle-{transaction}")
+        for relative in destination_paths
+    }
+    generated_paths |= {
+        str(PurePosixPath(relative).parent / f".{PurePosixPath(relative).name}.open-trestle-old-{transaction}")
+        for relative in set(old_items)
+    }
+    _preflight_absent(root, tuple(sorted(generated_paths)))
+    created: list[str] = []
+    staged: list[tuple[Path, str, str, InstalledFile, tuple[int, int]]] = []
+    try:
+        _stage_generation(root, candidate, transaction, created, staged)
+        if not rollback_to_previous:
+            _stage_previous_slot(
+                root, current_archive, control_bodies[RECEIPT_PATH],
+                control_bodies[JOURNAL_PATH], transaction, created, staged,
+            )
+            receipt_body, journal_body = _transition_documents(
+                action=action,
+                old_receipt=current_receipt,
+                new_archive=candidate,
+                new_files=candidate_files,
+                created_directories=created_directories,
+                transaction=transaction,
+                previous=previous,
+            )
+        else:
+            assert previous_receipt_body is not None and previous_journal_body is not None
+            receipt_body, journal_body = previous_receipt_body, previous_journal_body
+        control_parent = _ensure_directory(root, str(PurePosixPath(RECEIPT_PATH).parent), created)
+        for relative, body in ((RECEIPT_PATH, receipt_body), (JOURNAL_PATH, journal_body)):
+            item = _control_item(relative, body)
+            name = PurePosixPath(relative).name
+            temporary = _stage_file(control_parent, name, 0o444, _write_bytes(body), transaction, _is_production(root))
+            staged.append((control_parent, temporary, name, item, _file_identity(control_parent / temporary)))
+        if sorted(set(created), key=lambda value: (value.count("/"), value)) != sorted(set(created) & set(created_directories), key=lambda value: (value.count("/"), value)):
+            raise ValueError("transition directory inventory changed after preflight")
+        _apply_transition(root, staged, old_items, created, obsolete_directories, transaction)
+    except BaseException:
+        for parent, temporary, _, item, identity in staged:
+            _unlink_owned_file(parent / temporary, item, identity)
+        _remove_created_directories(root, created)
+        raise
+
+
+def upgrade(archive_path: Path, destdir: Path | None = None) -> None:
+    _transition(archive_path, destdir, rollback_to_previous=False)
+
+
+def rollback_version(archive_path: Path, destdir: Path | None = None) -> None:
+    root = _installation_root(destdir)
+    executing = validate_archive(archive_path)
+    current, _, _ = _verified_installed_generation(root)
+    if executing.sha256 != current.sha256:
+        raise ValueError("rollback-version must run from the exact installed generation archive")
+    _transition(archive_path, destdir, rollback_to_previous=True)
 
 
 def _remove_created_directories(root: Path, directories: list[str] | tuple[str, ...]) -> None:
@@ -838,6 +1427,11 @@ def _remove_installation(archive_path: Path, destdir: Path | None, action: str) 
     for item in files:
         status = _validate_installed_file(root, item)
         owned.append((root / item.path, item, (status.st_dev, status.st_ino)))
+    if receipt["action"] == "upgrade":
+        _, _, _, _, previous_items = _validate_previous_generation(root, receipt)
+        for item in previous_items:
+            status = _validate_installed_file(root, item)
+            owned.append((root / item.path, item, (status.st_dev, status.st_ino)))
     controls: list[tuple[Path, InstalledFile, tuple[int, int]]] = []
     for relative in (JOURNAL_PATH, RECEIPT_PATH):
         body = _read_control_file(root, relative)
@@ -921,7 +1515,7 @@ def _parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     verify_parser = subparsers.add_parser("verify-archive", aliases=["verify"])
     verify_parser.add_argument("--checksum", type=Path)
-    for command in ("install", "verify-installed", "rollback", "uninstall"):
+    for command in ("install", "upgrade", "verify-installed", "rollback", "rollback-version", "uninstall"):
         child = subparsers.add_parser(command)
         child.add_argument("--destdir", type=Path)
     smoke_parser = subparsers.add_parser("smoke")
@@ -941,6 +1535,9 @@ def main(arguments: list[str] | None = None) -> int:
         elif options.command == "install":
             install(archive_path, options.destdir)
             print("Open Trestle candidate installed.")
+        elif options.command == "upgrade":
+            upgrade(archive_path, options.destdir)
+            print("Open Trestle candidate upgraded.")
         elif options.command == "verify-installed":
             verify_installed(archive_path, options.destdir)
             print("Open Trestle candidate installation verified.")
@@ -949,6 +1546,9 @@ def main(arguments: list[str] | None = None) -> int:
         elif options.command == "rollback":
             rollback(archive_path, options.destdir)
             print("Open Trestle candidate installation rolled back.")
+        elif options.command == "rollback-version":
+            rollback_version(archive_path, options.destdir)
+            print("Open Trestle candidate version rolled back.")
         elif options.command == "uninstall":
             uninstall(archive_path, options.destdir)
             print("Open Trestle candidate uninstalled.")

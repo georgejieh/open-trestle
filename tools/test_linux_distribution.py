@@ -60,19 +60,60 @@ def _staging(root: Path, marker: bytes = b"one") -> Path:
     return staging
 
 
-def _build(root: Path, marker: bytes = b"one") -> tuple[Path, Path]:
+def _build(
+    root: Path,
+    marker: bytes = b"one",
+    version: str = "0.1.0-dev",
+) -> tuple[Path, Path]:
     staging = _staging(root, marker)
     output = root / "open-trestle-linux-amd64.pyz"
     linux_distribution.build_distribution(
         staging=staging,
         runtime=Path(linux_distribution_runtime.__file__),
         output=output,
-        version="0.1.0-dev",
+        version=version,
         revision=REVISION,
         created=CREATED,
     )
     return output, Path(str(output) + ".sha256")
 
+
+
+
+def _rewrite_controls_as_legacy(destdir: Path) -> tuple[bytes, bytes]:
+    receipt_path = destdir / linux_distribution_runtime.RECEIPT_PATH
+    journal_path = destdir / linux_distribution_runtime.JOURNAL_PATH
+    current = json.loads(receipt_path.read_bytes())
+    receipt = {
+        key: current[key]
+        for key in (
+            "archive_sha256",
+            "created_directories",
+            "files",
+            "manifest_sha256",
+            "schema_version",
+            "target",
+            "transaction",
+            "version",
+        )
+    }
+    receipt["schema_version"] = linux_distribution_runtime.SCHEMA_VERSION
+    receipt_body = linux_distribution_runtime._canonical_json(receipt)
+    journal = {
+        "action": "install",
+        "archive_sha256": receipt["archive_sha256"],
+        "receipt_sha256": hashlib.sha256(receipt_body).hexdigest(),
+        "schema_version": linux_distribution_runtime.SCHEMA_VERSION,
+        "transaction": receipt["transaction"],
+    }
+    journal_body = linux_distribution_runtime._canonical_json(journal)
+    receipt_path.chmod(0o644)
+    journal_path.chmod(0o644)
+    receipt_path.write_bytes(receipt_body)
+    journal_path.write_bytes(journal_body)
+    receipt_path.chmod(0o444)
+    journal_path.chmod(0o444)
+    return receipt_body, journal_body
 
 def _run(archive: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -179,7 +220,14 @@ class BuilderTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             staging = _staging(root)
-            for version, revision, created in (("latest", REVISION, CREATED), ("0.1.0", "HEAD", CREATED), ("0.1.0", REVISION, "today")):
+            for version, revision, created in (
+                ("latest", REVISION, CREATED),
+                ("1.0.0-01", REVISION, CREATED),
+                ("1.0.0-a..b", REVISION, CREATED),
+                (("1" * 256) + ".0.0", REVISION, CREATED),
+                ("0.1.0", "HEAD", CREATED),
+                ("0.1.0", REVISION, "today"),
+            ):
                 with self.subTest(version=version, revision=revision, created=created):
                     with self.assertRaises(ValueError):
                         linux_distribution.build_distribution(staging, Path(linux_distribution_runtime.__file__), root / f"{version}.pyz", version, revision, created)
@@ -585,6 +633,322 @@ class LifecycleTest(unittest.TestCase):
                     linux_distribution_runtime.install(Path(archive), destdir)
             self.assertFalse((destdir / "usr/local/bin/trestle").exists())
             self.assertFalse((destdir / "usr/local/bin/trestled").exists())
+
+
+    def test_semver_precedence_is_strict_for_upgrade_admission(self):
+        precedence = linux_distribution_runtime._version_precedence
+        self.assertLess(precedence("1.0.0-rc.2"), precedence("1.0.0-rc.10"))
+        self.assertLess(precedence("1.0.0-rc.10"), precedence("1.0.0"))
+        self.assertEqual(precedence("1.0.0+one"), precedence("1.0.0+two"))
+        for version in ("1.0.0-01", "1.0.0-a..b", "01.0.0", ("1" * 256) + ".0.0"):
+            with self.subTest(version=version), self.assertRaises(ValueError):
+                precedence(version)
+
+    def test_embedded_upgrade_rollback_version_and_upgraded_uninstall_commands(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first, _ = _build(root / "first", b"first", "1.0.0")
+            second, _ = _build(root / "second", b"second", "1.1.0")
+            destdir = root / "root"
+            destdir.mkdir()
+
+            for archive, arguments in (
+                (first, ("install", "--destdir", str(destdir))),
+                (second, ("upgrade", "--destdir", str(destdir))),
+                (destdir / linux_distribution_runtime.LIFECYCLE_PATH, ("verify-installed", "--destdir", str(destdir))),
+                (destdir / linux_distribution_runtime.LIFECYCLE_PATH, ("rollback-version", "--destdir", str(destdir))),
+                (destdir / linux_distribution_runtime.LIFECYCLE_PATH, ("verify-installed", "--destdir", str(destdir))),
+                (second, ("upgrade", "--destdir", str(destdir))),
+                (destdir / linux_distribution_runtime.LIFECYCLE_PATH, ("uninstall", "--destdir", str(destdir))),
+            ):
+                result = _run(archive, *arguments)
+                self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(list(destdir.iterdir()), [])
+
+    def test_upgrade_accepts_legacy_controls_and_rollback_restores_them_byte_for_byte(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first, _ = _build(root / "first", b"first", "1.0.0")
+            second, _ = _build(root / "second", b"second", "1.1.0")
+            destdir = root / "root"
+            destdir.mkdir()
+            linux_distribution_runtime.install(first, destdir)
+            legacy_receipt, legacy_journal = _rewrite_controls_as_legacy(destdir)
+            linux_distribution_runtime.verify_installed(first, destdir)
+
+            linux_distribution_runtime.upgrade(second, destdir)
+            with self.assertRaisesRegex(ValueError, "rollback slot"):
+                linux_distribution_runtime.upgrade(
+                    _build(root / "third", b"third", "1.2.0")[0], destdir
+                )
+            linux_distribution_runtime.rollback_version(second, destdir)
+
+            self.assertEqual(
+                (destdir / linux_distribution_runtime.RECEIPT_PATH).read_bytes(),
+                legacy_receipt,
+            )
+            self.assertEqual(
+                (destdir / linux_distribution_runtime.JOURNAL_PATH).read_bytes(),
+                legacy_journal,
+            )
+            linux_distribution_runtime.verify_installed(first, destdir)
+            self.assertFalse(
+                (destdir / linux_distribution_runtime.PREVIOUS_ARCHIVE_PATH).exists()
+            )
+            self.assertFalse(
+                (destdir / linux_distribution_runtime.PREVIOUS_RECEIPT_PATH).exists()
+            )
+
+    def test_upgrade_and_immediate_version_rollback_are_exact_and_one_use(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first, _ = _build(root / "first", b"first", "1.0.0")
+            second, _ = _build(root / "second", b"second", "1.1.0")
+            destdir = root / "root"
+            (destdir / "etc/open-trestle").mkdir(parents=True)
+            (destdir / "var/lib/open-trestle").mkdir(parents=True)
+            config = destdir / "etc/open-trestle/config.json"
+            state = destdir / "var/lib/open-trestle/state"
+            config.write_text("operator config\n")
+            state.write_text("operator state\n")
+            linux_distribution_runtime.install(first, destdir)
+            unowned = destdir / "usr/local/share/open-trestle/operator-note"
+            unowned.write_text("operator owned\n")
+            first_body = (destdir / "usr/local/bin/trestle").read_bytes()
+
+            linux_distribution_runtime.upgrade(second, destdir)
+            self.assertEqual(linux_distribution_runtime.verify_installed(second, destdir)["version"], "1.1.0")
+            self.assertNotEqual((destdir / "usr/local/bin/trestle").read_bytes(), first_body)
+            receipt = json.loads((destdir / linux_distribution_runtime.RECEIPT_PATH).read_bytes())
+            journal = json.loads((destdir / linux_distribution_runtime.JOURNAL_PATH).read_bytes())
+            for document in (receipt, journal):
+                self.assertEqual(document["action"], "upgrade")
+                self.assertEqual(document["old_version"], "1.0.0")
+                self.assertEqual(document["new_version"], "1.1.0")
+                self.assertRegex(document["old_archive_sha256"], r"^[0-9a-f]{64}$")
+                self.assertRegex(document["new_archive_sha256"], r"^[0-9a-f]{64}$")
+                self.assertRegex(document["old_manifest_sha256"], r"^[0-9a-f]{64}$")
+                self.assertRegex(document["new_manifest_sha256"], r"^[0-9a-f]{64}$")
+                self.assertRegex(document["transaction"], r"^[0-9a-f]{32}$")
+
+            linux_distribution_runtime.rollback_version(second, destdir)
+            self.assertEqual(linux_distribution_runtime.verify_installed(first, destdir)["version"], "1.0.0")
+            self.assertEqual((destdir / "usr/local/bin/trestle").read_bytes(), first_body)
+            self.assertEqual(config.read_text(), "operator config\n")
+            self.assertEqual(state.read_text(), "operator state\n")
+            self.assertEqual(unowned.read_text(), "operator owned\n")
+            with self.assertRaisesRegex(ValueError, "immediate predecessor"):
+                linux_distribution_runtime.rollback_version(first, destdir)
+
+    def test_upgrade_preflight_refuses_non_newer_collision_and_untrusted_control_without_mutation(self):
+        cases = ("1.0.0", "0.9.0")
+        for candidate_version in cases:
+            with self.subTest(candidate_version=candidate_version), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                first, _ = _build(root / "first", b"first", "1.0.0")
+                candidate, _ = _build(root / "candidate", b"candidate", candidate_version)
+                destdir = root / "root"
+                destdir.mkdir()
+                linux_distribution_runtime.install(first, destdir)
+                before = {str(path.relative_to(destdir)): path.read_bytes() for path in destdir.rglob("*") if path.is_file()}
+                with self.assertRaisesRegex(ValueError, "strictly newer"):
+                    linux_distribution_runtime.upgrade(candidate, destdir)
+                after = {str(path.relative_to(destdir)): path.read_bytes() for path in destdir.rglob("*") if path.is_file()}
+                self.assertEqual(after, before)
+
+        for fault in ("collision", "symlink", "mode"):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                first, _ = _build(root / "first", b"first", "1.0.0")
+                second, _ = _build(root / "second", b"second", "1.1.0")
+                destdir = root / "root"
+                destdir.mkdir()
+                linux_distribution_runtime.install(first, destdir)
+                if fault == "mode":
+                    (destdir / linux_distribution_runtime.JOURNAL_PATH).chmod(0o644)
+                else:
+                    collision = destdir / linux_distribution_runtime.PREVIOUS_ARCHIVE_PATH
+                    collision.parent.mkdir(parents=True, exist_ok=True)
+                    if fault == "collision":
+                        collision.write_bytes(b"unowned")
+                    else:
+                        collision.symlink_to(root / "outside")
+                before = {str(path.relative_to(destdir)): (path.read_bytes() if not path.is_symlink() else os.readlink(path)) for path in destdir.rglob("*") if path.is_file() or path.is_symlink()}
+                with self.assertRaises((ValueError, FileExistsError)):
+                    linux_distribution_runtime.upgrade(second, destdir)
+                after = {str(path.relative_to(destdir)): (path.read_bytes() if not path.is_symlink() else os.readlink(path)) for path in destdir.rglob("*") if path.is_file() or path.is_symlink()}
+                self.assertEqual(after, before)
+
+    def test_rollback_version_refuses_missing_or_tampered_predecessor_without_mutation(self):
+        for fault in ("missing", "tamper", "sidecar"):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                first, _ = _build(root / "first", b"first", "1.0.0")
+                second, _ = _build(root / "second", b"second", "1.1.0")
+                destdir = root / "root"
+                destdir.mkdir()
+                linux_distribution_runtime.install(first, destdir)
+                linux_distribution_runtime.upgrade(second, destdir)
+                path = destdir / (linux_distribution_runtime.PREVIOUS_SIDECAR_PATH if fault == "sidecar" else linux_distribution_runtime.PREVIOUS_ARCHIVE_PATH)
+                path.chmod(0o644 if fault == "tamper" else stat.S_IMODE(path.stat().st_mode))
+                if fault == "missing":
+                    path.unlink()
+                elif fault == "tamper":
+                    path.write_bytes(path.read_bytes() + b"tamper")
+                else:
+                    path.chmod(0o644)
+                before = {str(item.relative_to(destdir)): item.read_bytes() for item in destdir.rglob("*") if item.is_file()}
+                with self.assertRaises(ValueError):
+                    linux_distribution_runtime.rollback_version(second, destdir)
+                after = {str(item.relative_to(destdir)): item.read_bytes() for item in destdir.rglob("*") if item.is_file()}
+                self.assertEqual(after, before)
+
+    def test_upgrade_faults_restore_old_generation_without_transaction_debris(self):
+        for fault in ("staging", "replacement", "receipt", "journal", "fsync"):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                first, _ = _build(root / "first", b"first", "1.0.0")
+                second, _ = _build(root / "second", b"second", "1.1.0")
+                destdir = root / "root"
+                destdir.mkdir()
+                linux_distribution_runtime.install(first, destdir)
+                before = {str(path.relative_to(destdir)): path.read_bytes() for path in destdir.rglob("*") if path.is_file()}
+                original_stage = linux_distribution_runtime._stage_file
+                original_publish = linux_distribution_runtime._publish_staged
+                original_fsync = linux_distribution_runtime._fsync_directory
+                calls = 0
+
+                def fail_stage(parent, final_name, mode, writer, transaction, production=False):
+                    if final_name == "trestled":
+                        raise OSError("injected staging failure")
+                    return original_stage(parent, final_name, mode, writer, transaction, production)
+
+                def fail_publish(parent, temporary, final_name):
+                    target = {"replacement": "trestled", "receipt": "receipt.json", "journal": "journal.json"}.get(fault)
+                    if final_name == target:
+                        raise OSError(f"injected {fault} failure")
+                    return original_publish(parent, temporary, final_name)
+
+                def fail_fsync(parent):
+                    nonlocal calls
+                    calls += 1
+                    if calls == 1:
+                        raise OSError("injected fsync failure")
+                    return original_fsync(parent)
+
+                stage_effect = fail_stage if fault == "staging" else original_stage
+                fsync_effect = fail_fsync if fault == "fsync" else original_fsync
+                with patch.object(linux_distribution_runtime, "_stage_file", side_effect=stage_effect), patch.object(linux_distribution_runtime, "_publish_staged", side_effect=fail_publish), patch.object(linux_distribution_runtime, "_fsync_directory", side_effect=fsync_effect):
+                    with self.assertRaises(OSError):
+                        linux_distribution_runtime.upgrade(second, destdir)
+                after = {str(path.relative_to(destdir)): path.read_bytes() for path in destdir.rglob("*") if path.is_file()}
+                self.assertEqual(after, before)
+                self.assertEqual([path for path in destdir.rglob("*") if ".open-trestle-" in path.name], [])
+                linux_distribution_runtime.verify_installed(first, destdir)
+
+    def test_upgrade_race_preserves_replacement_and_leaves_no_transaction_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first, _ = _build(root / "first", b"first", "1.0.0")
+            second, _ = _build(root / "second", b"second", "1.1.0")
+            destdir = root / "root"
+            destdir.mkdir()
+            linux_distribution_runtime.install(first, destdir)
+            target = destdir / "usr/local/bin/trestle"
+            replacement = b"operator replacement\n"
+            original_rename = linux_distribution_runtime._rename_noreplace
+            replaced = False
+
+            def replace_before_quarantine(parent, source_name, destination_name):
+                nonlocal replaced
+                if source_name == "trestle" and ".open-trestle-old-" in destination_name and not replaced:
+                    replaced = True
+                    target.unlink()
+                    _write(target, replacement, 0o555)
+                return original_rename(parent, source_name, destination_name)
+
+            with patch.object(
+                linux_distribution_runtime,
+                "_rename_noreplace",
+                side_effect=replace_before_quarantine,
+            ):
+                with self.assertRaisesRegex(ValueError, "changed during transition"):
+                    linux_distribution_runtime.upgrade(second, destdir)
+            self.assertTrue(replaced)
+            self.assertEqual(target.read_bytes(), replacement)
+            self.assertEqual(
+                [path for path in destdir.rglob("*") if ".open-trestle-" in path.name],
+                [],
+            )
+
+    def test_rollback_version_faults_restore_new_generation_and_rollback_slot(self):
+        for fault in ("staging", "replacement", "receipt", "journal", "fsync"):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                first, _ = _build(root / "first", b"first", "1.0.0")
+                second, _ = _build(root / "second", b"second", "1.1.0")
+                destdir = root / "root"
+                destdir.mkdir()
+                linux_distribution_runtime.install(first, destdir)
+                linux_distribution_runtime.upgrade(second, destdir)
+                before = {
+                    str(path.relative_to(destdir)): path.read_bytes()
+                    for path in destdir.rglob("*")
+                    if path.is_file()
+                }
+                original_stage = linux_distribution_runtime._stage_file
+                original_publish = linux_distribution_runtime._publish_staged
+                original_fsync = linux_distribution_runtime._fsync_directory
+                calls = 0
+
+                def fail_stage(parent, final_name, mode, writer, transaction, production=False):
+                    if final_name == "trestled":
+                        raise OSError("injected staging failure")
+                    return original_stage(parent, final_name, mode, writer, transaction, production)
+
+                def fail_publish(parent, temporary, final_name):
+                    target = {
+                        "replacement": "trestled",
+                        "receipt": "receipt.json",
+                        "journal": "journal.json",
+                    }.get(fault)
+                    if final_name == target:
+                        raise OSError(f"injected {fault} failure")
+                    return original_publish(parent, temporary, final_name)
+
+                def fail_fsync(parent):
+                    nonlocal calls
+                    calls += 1
+                    if calls == 1:
+                        raise OSError("injected fsync failure")
+                    return original_fsync(parent)
+
+                with patch.object(
+                    linux_distribution_runtime,
+                    "_stage_file",
+                    side_effect=fail_stage if fault == "staging" else original_stage,
+                ), patch.object(
+                    linux_distribution_runtime,
+                    "_publish_staged",
+                    side_effect=fail_publish,
+                ), patch.object(
+                    linux_distribution_runtime,
+                    "_fsync_directory",
+                    side_effect=fail_fsync if fault == "fsync" else original_fsync,
+                ):
+                    with self.assertRaises(OSError):
+                        linux_distribution_runtime.rollback_version(second, destdir)
+                after = {
+                    str(path.relative_to(destdir)): path.read_bytes()
+                    for path in destdir.rglob("*")
+                    if path.is_file()
+                }
+                self.assertEqual(after, before)
+                self.assertEqual(
+                    [path for path in destdir.rglob("*") if ".open-trestle-" in path.name],
+                    [],
+                )
+                linux_distribution_runtime.verify_installed(second, destdir)
 
     def test_destdir_root_and_production_privilege_boundaries(self):
         with tempfile.TemporaryDirectory() as directory:

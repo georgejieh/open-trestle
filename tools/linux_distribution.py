@@ -73,8 +73,22 @@ def _canonical_json(value: object) -> bytes:
 
 
 def _validate_metadata(version: str, revision: str, created: str) -> None:
-    if not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", version):
+    if len(version) > 255:
         raise ValueError("version must be semantic version text")
+    match = re.fullmatch(
+        r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?",
+        version,
+    )
+    if match is None:
+        raise ValueError("version must be semantic version text")
+    for identifiers, numeric_restriction in ((match.group(4), True), (match.group(5), False)):
+        if identifiers is None:
+            continue
+        for identifier in identifiers.split("."):
+            if not identifier or not re.fullmatch(r"[0-9A-Za-z-]+", identifier):
+                raise ValueError("version must be semantic version text")
+            if numeric_restriction and identifier.isdigit() and len(identifier) > 1 and identifier.startswith("0"):
+                raise ValueError("version must be semantic version text")
     if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", revision):
         raise ValueError("revision must be a lowercase Git object ID")
     if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", created):

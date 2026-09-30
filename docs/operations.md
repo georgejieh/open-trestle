@@ -79,10 +79,16 @@ sudo ./open-trestle-linux-amd64.pyz install
 sudo ./open-trestle-linux-amd64.pyz verify-installed
 sudo ./open-trestle-linux-amd64.pyz smoke --output "$(pwd)/open-trestle-linux-smoke.json"
 
-# choose one removal action
-sudo ./open-trestle-linux-amd64.pyz rollback
+# a separately verified, strictly newer same-target candidate
+sudo ./open-trestle-linux-amd64-new.pyz upgrade
+sudo /usr/local/libexec/open-trestle/open-trestle-distribution.pyz verify-installed
+# consume the one immediate-predecessor rollback slot, if needed
+sudo /usr/local/libexec/open-trestle/open-trestle-distribution.pyz rollback-version
+
+# choose one complete removal action for whichever generation is installed
+sudo /usr/local/libexec/open-trestle/open-trestle-distribution.pyz rollback
 # or, for a normal removal
-sudo ./open-trestle-linux-amd64.pyz uninstall
+sudo /usr/local/libexec/open-trestle/open-trestle-distribution.pyz uninstall
 ```
 
 `install` validates the sidecar, complete archive grammar, canonical manifest, payload
@@ -90,8 +96,28 @@ modes, sizes, SHA-256 values, ELF headers and closed inventory before it publish
 file. It streams members individually and does not call ZIP extraction APIs. Each file
 is written through `O_EXCL` and `O_NOFOLLOW`, fsynced, and committed with Linux
 `renameat2(RENAME_NOREPLACE)`. A receipt and transaction journal bind the installed
-archive and every owned file. Existing targets stop the operation; there is no force,
-replace or upgrade option.
+archive and every owned file. Existing targets stop the operation; there is no force or
+unbounded replacement option.
+
+`upgrade` first verifies the exact installed generation and the complete candidate. It
+accepts only a strictly newer SemVer generation for the same fixed target. It stages and
+validates the full replacement before changing live files, retains exactly the immediate
+predecessor archive and sidecar, and binds the old and new versions, archives, manifests,
+transaction and action in protected canonical receipt and journal files. New-only path
+collisions, same or lower versions, tampered controls or owned files, unsafe ancestors,
+wrong modes or ownership, and rollback-slot inconsistencies fail before mutation.
+`rollback-version` runs only from the exact installed generation, restores only that
+bound predecessor and its exact protected receipt and journal bytes, and consumes the slot. It cannot select an arbitrary older archive or
+run twice. A second upgrade is refused while the rollback slot is pending. Upgrade and
+version rollback preserve operator configuration, state and all unowned files.
+
+Caught staging, replacement, receipt, journal and fsync failures reverse the in-process
+transaction, restore the prior verified generation, and remove transaction temporary and
+quarantine files. This is not a claim of recovery after process termination, kernel
+failure or power loss. Crash and power-loss recovery has not been proven for this
+candidate. The new journal directory fsync is the commit point. A later quarantine
+cleanup error is reported explicitly as a committed transition with incomplete cleanup;
+it is not misreported as restoration of the prior generation.
 
 `verify-installed` checks the receipt and journal, trusted ancestors, exact ownership in
 production, modes, sizes, hashes and ELF identities. `smoke` first performs that check,
@@ -156,6 +182,7 @@ python3 tools/release_evidence.py \
   --artifact linux-amd64=open-trestle-linux-amd64.pyz \
   --artifact linux-amd64-sha256=open-trestle-linux-amd64.pyz.sha256 \
   --artifact linux-amd64-smoke=open-trestle-linux-smoke.json \
+  --artifact linux-amd64-lifecycle=open-trestle-linux-lifecycle.json \
   --go-binary .container/trestle \
   --go-binary .container/trestled \
   --go-binary .container/libexec/open-trestle/open-trestle-secret-scanner-worker \
@@ -167,6 +194,12 @@ python3 tools/release_evidence.py \
   --created 2026-08-30T22:46:23Z \
   --output release-evidence
 ```
+
+The `linux-amd64-lifecycle` artifact is canonical content-free JSON emitted only after
+CI completes v1 install, v2 upgrade and verification, v1 `rollback-version` and
+verification, a second v2 upgrade, smoke, and uninstall. It records only the ordered
+action names, target, versions, archive digests and pass status. The release evidence
+binds its exact bytes like every other artifact.
 
 Use the commit timestamp normalized to UTC for `--created`. Artifact, Go binary, npm lockfile, and changelog inputs must remain below the working directory. The required changelog must be a regular, non-symlinked UTF-8 file of at most 1 MiB. It must contain exactly one nonempty `## Unreleased` section made from unique `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, or `Security` categories and nonempty `- ` bullets. The tool preserves those authored categories, bullets, and indented continuation lines in `release-notes.md`, alongside the bound version, revision, creation time, and a fixed candidate-status and non-support warning.
 

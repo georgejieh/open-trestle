@@ -18,6 +18,7 @@ All notable changes to released versions of Open Trestle will be documented in t
 - Added a versioned static-debug quality evaluation over eight built-in cases, a canonical public report, and exact CLI reproduction in CI.
 - Added deterministic unsigned local release evidence with exact artifact checksums, embedded Go runtime modules, non-development npm lockfile components in SPDX 2.3-formatted JSON, and candidate release notes preserved from a validated changelog section.
 - Added a deterministic unsigned Linux amd64 candidate pyz with strict archive verification, no-overwrite staged installation, receipt-bound verification, bounded smoke evidence, rollback, and ownership-preserving uninstall for explicit local evaluation.
+- Added bounded same-target candidate upgrades and one-use immediate version rollback with protected old/new generation bindings, caught pre-commit failure restoration, and canonical content-free lifecycle evidence. Crash and power-loss recovery remains unproven.
 
 ### Changed
 
