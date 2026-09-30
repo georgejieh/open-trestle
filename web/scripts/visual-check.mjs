@@ -933,6 +933,7 @@ try {
       }
       await fillWebhook(page, "pf1-owner");
       await expectNoReview(page);
+      await checkSetupTypography(page);
       if (
         await page
           .getByRole("button", { name: "Run webhook validated", exact: true })
@@ -956,6 +957,191 @@ try {
       });
     }
   }
+  const exercisedSetupCompactSelectors = new Set();
+  async function checkSetupTypography(page) {
+    const result = await page.evaluate(() => {
+      const labelFloor = 13;
+      const bodyFloor = 15;
+      const compactSelectors = [
+        ".scope-line",
+        ".data-input",
+        ".identity-row dd",
+        ".setup-guidance code",
+        ".setup-requirements .depth-index",
+      ];
+      const bodySelectors = [
+        ".setup-guidance",
+        ".confirmation-panel p",
+        ".setup-unavailable p",
+        ".success-banner p",
+        ".setup-shell .note",
+        ".setup-shell .section-head p",
+        ".profile-option small",
+        ".setup-header p",
+      ];
+      const compact = compactSelectors.map((selector) => {
+        const element = document.querySelector(selector);
+        if (!(element instanceof HTMLElement))
+          return { selector, missing: true };
+        const style = getComputedStyle(element);
+        return {
+          selector,
+          missing: false,
+          monospace: /mono/i.test(style.fontFamily),
+          size: Number.parseFloat(style.fontSize),
+        };
+      });
+      const undersized = [];
+      let checkedText = 0;
+      for (const element of document.querySelectorAll(".setup-shell *")) {
+        if (!(element instanceof HTMLElement)) continue;
+        if (
+          element.closest(".sr-only") ||
+          element.matches("[aria-hidden=true]") ||
+          !Array.from(element.childNodes).some(
+            (node) =>
+              node.nodeType === Node.TEXT_NODE && node.textContent?.trim(),
+          )
+        )
+          continue;
+        const style = getComputedStyle(element);
+        if (style.display === "none" || style.visibility === "hidden") continue;
+        checkedText++;
+        const size = Number.parseFloat(style.fontSize);
+        if (size >= labelFloor) continue;
+        const compactSelector = compactSelectors.find((selector) =>
+          element.closest(selector),
+        );
+        if (compactSelector && /mono/i.test(style.fontFamily)) continue;
+        undersized.push({
+          element: element.tagName.toLowerCase(),
+          className: element.className,
+          size,
+          text: element.textContent?.trim().slice(0, 80),
+        });
+      }
+      const undersizedBody = [];
+      for (const selector of bodySelectors) {
+        for (const element of document.querySelectorAll(selector)) {
+          if (!(element instanceof HTMLElement)) continue;
+          const style = getComputedStyle(element);
+          if (
+            style.display !== "none" &&
+            style.visibility !== "hidden" &&
+            Number.parseFloat(style.fontSize) < bodyFloor
+          )
+            undersizedBody.push({
+              selector,
+              size: Number.parseFloat(style.fontSize),
+            });
+        }
+      }
+      return { checkedText, compact, undersized, undersizedBody };
+    });
+    if (
+      result.checkedText === 0 ||
+      result.undersized.length ||
+      result.undersizedBody.length
+    )
+      throw new Error(
+        `setup typography floor failed: ${JSON.stringify(result)}`,
+      );
+    for (const entry of result.compact) {
+      if (entry.missing) continue;
+      if (!entry.monospace)
+        throw new Error(
+          `compact setup data selector is not monospace: ${JSON.stringify(entry)}`,
+        );
+      exercisedSetupCompactSelectors.add(entry.selector);
+    }
+  }
+
+  async function checkStatusMarks(page) {
+    const marks = await page.locator(".state").evaluateAll((elements) =>
+      elements.map((element) => ({
+        label: element
+          .querySelector(":scope > span:last-child")
+          ?.textContent?.trim()
+          .toLowerCase(),
+        glyph: element.querySelector(".status-icon")?.textContent,
+        mark: element
+          .querySelector(".status-icon")
+          ?.getAttribute("data-status-icon"),
+      })),
+    );
+    for (const [label, mark] of [
+      ["active", "active"],
+      ["succeeded", "passed"],
+      ["leased", "leased"],
+      ["pending", "pending"],
+    ]) {
+      const entry = marks.find((value) => value.label === label);
+      if (!entry || entry.mark !== mark || !entry.glyph)
+        throw new Error(
+          `status mark mismatch: ${label} ${JSON.stringify(entry)}`,
+        );
+    }
+    const transientGlyphs = marks
+      .filter(({ label }) => ["active", "leased", "pending"].includes(label))
+      .map(({ glyph }) => glyph);
+    if (new Set(transientGlyphs).size !== transientGlyphs.length)
+      throw new Error("transient browser status marks are not distinct");
+  }
+
+  async function checkReducedMotion(page) {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const reducedMotionPreference = await page.evaluate(
+      () => matchMedia("(prefers-reduced-motion: reduce)").matches,
+    );
+    if (!reducedMotionPreference)
+      throw new Error("reduced-motion browser preference was not applied");
+    const motionStyles = await page.evaluate(() => {
+      const primaryButton = document.querySelector(".secondary-button");
+      const depthMarker = document.querySelector(".task-spine .depth-index");
+      if (
+        !(primaryButton instanceof HTMLElement) ||
+        !(depthMarker instanceof HTMLElement)
+      )
+        throw new Error("reduced-motion state fixtures are missing");
+      const buttonStyle = getComputedStyle(primaryButton);
+      const markerStyle = getComputedStyle(depthMarker);
+      return {
+        buttonTransition: buttonStyle.transitionDuration,
+        buttonAnimation: buttonStyle.animationName,
+        markerTransition: markerStyle.transitionDuration,
+        markerAnimation: markerStyle.animationName,
+        markerDisplay: markerStyle.display,
+        markerVisibility: markerStyle.visibility,
+        markerOpacity: markerStyle.opacity,
+      };
+    });
+    if (
+      motionStyles.buttonTransition !== "0s" ||
+      motionStyles.buttonAnimation !== "none" ||
+      motionStyles.markerTransition !== "0s" ||
+      motionStyles.markerAnimation !== "none"
+    )
+      throw new Error(
+        `reduced motion retained travel: ${JSON.stringify(motionStyles)}`,
+      );
+    if (
+      motionStyles.markerDisplay === "none" ||
+      motionStyles.markerVisibility === "hidden" ||
+      Number(motionStyles.markerOpacity) === 0
+    )
+      throw new Error("reduced motion hid the selected depth state");
+    await page.getByRole("button", { name: /Tasks 9/i }).click();
+    await page.getByRole("button", { name: /verification/i }).click();
+    const selectedState = await page
+      .getByRole("button", { name: /verification/i })
+      .getAttribute("aria-current");
+    if (selectedState !== "step")
+      throw new Error("reduced motion hid the updated selected task state");
+    await page.getByText("leased", { exact: true }).waitFor();
+    await page.getByRole("button", { name: /^Overview/ }).click();
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+  }
+
   const desktop = await newLocalPage({
     viewport: { width: 1440, height: 1000 },
     deviceScaleFactor: 1,
@@ -964,6 +1150,8 @@ try {
     if (message.type() === "error") errors.push(message.text());
   });
   await populate(desktop);
+  await checkStatusMarks(desktop);
+  await checkReducedMotion(desktop);
   await checkReviewActionTargets(desktop, [
     ".icon-button",
     ".rail-foot button",
@@ -1049,6 +1237,7 @@ try {
   await populateSetup(setupDesktop, "controlled hybrid", "n".repeat(32));
   await prepareCurrentIntegration(setupDesktop);
   await expectCopyFailure(setupDesktop, /Copy Plan identity:/);
+  await checkSetupTypography(setupDesktop);
   await setupDesktop.screenshot({
     path: join(output, "open-trestle-setup-desktop.png"),
     fullPage: true,
@@ -1076,6 +1265,7 @@ try {
     .getByRole("textbox", { name: /Route inventory path/i })
     .waitFor();
   await expectCopyFailure(setupMobile, /Copy Plan identity:/);
+  await checkSetupTypography(setupMobile);
   await setupMobile.screenshot({
     path: join(output, "open-trestle-setup-mobile.png"),
     fullPage: true,
@@ -1107,6 +1297,7 @@ try {
     "n".repeat(32),
   );
   await prepareCurrentIntegration(setupIntegrationMobile);
+  await checkSetupTypography(setupIntegrationMobile);
   await setupIntegrationMobile.screenshot({
     path: join(output, "open-trestle-setup-integration-mobile.png"),
     fullPage: true,
@@ -1283,6 +1474,17 @@ try {
       document.documentElement.clientWidth,
   );
   await setupRateLimitMobile.close();
+  for (const selector of [
+    ".scope-line",
+    ".data-input",
+    ".identity-row dd",
+    ".setup-guidance code",
+    ".setup-requirements .depth-index",
+  ])
+    if (!exercisedSetupCompactSelectors.has(selector))
+      throw new Error(
+        `compact setup data selector was not exercised: ${selector}`,
+      );
 } finally {
   try {
     if (browser !== undefined) await browser.close();
@@ -1386,5 +1588,8 @@ console.log(
     unexpectedEgress: 0,
     consoleErrors: 0,
     horizontalOverflow: false,
+    reducedMotion: true,
+    setupTypography: true,
+    statusIcons: true,
   }),
 );

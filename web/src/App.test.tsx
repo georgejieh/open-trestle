@@ -1837,4 +1837,116 @@ describe("console", () => {
       screen.getByText(/run the five-request local conformance cycle/i),
     ).toBeInTheDocument();
   });
+  it("explains locator validation and links errors without exposing tokens", () => {
+    render(<App />);
+    expect(
+      screen.getAllByText(
+        /1-128 lowercase letters or numbers; \. _ : - are allowed/i,
+      ),
+    ).toHaveLength(3);
+    expect(
+      screen.getByText(/32-512 non-space characters.*hidden and never saved/i),
+    ).toBeInTheDocument();
+    const tenant = screen.getByLabelText("Tenant");
+    fireEvent.change(tenant, { target: { value: "Tenant A" } });
+    fireEvent.blur(tenant);
+    expect(tenant).toHaveAttribute("aria-invalid", "true");
+    expect(tenant).toHaveAccessibleDescription(
+      expect.stringMatching(/start and end with a lowercase letter or number/i),
+    );
+    const token = screen.getByLabelText("Access token");
+    fireEvent.change(token, { target: { value: "short secret" } });
+    fireEvent.blur(token);
+    expect(token).toHaveAttribute("aria-invalid", "true");
+    expect(token).toHaveAccessibleDescription(
+      expect.stringMatching(/32-512 non-space characters/i),
+    );
+    expect(screen.queryByText("short secret")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Connect to run" }),
+    ).toHaveAccessibleDescription(/correct fields to connect/i);
+  });
+
+  it("explains protected setup and plan field validation on blur", async () => {
+    window.history.replaceState({}, "", "/console/setup");
+    vi.mocked(fetchSetupSession).mockResolvedValue({
+      contract: "open-trestle/setup-session",
+      schema_version: 1,
+      initialized: false,
+    });
+    render(<App />);
+    const token = await screen.findByLabelText("Setup token");
+    expect(token).toHaveAccessibleDescription(
+      /32-512 characters without spaces.*value stays hidden and is never saved/i,
+    );
+    fireEvent.change(token, { target: { value: "short setup secret" } });
+    fireEvent.blur(token);
+    expect(token).toHaveAttribute("aria-invalid", "true");
+    expect(screen.queryByText("short setup secret")).not.toBeInTheDocument();
+    fireEvent.change(token, { target: { value: "s".repeat(32) } });
+    fireEvent.click(screen.getByRole("button", { name: "Inspect setup" }));
+    await screen.findByRole("heading", { name: "Choose a safe baseline" });
+    const tenant = screen.getByLabelText("Tenant");
+    fireEvent.change(tenant, { target: { value: "Tenant A" } });
+    fireEvent.blur(tenant);
+    expect(tenant).toHaveAttribute("aria-invalid", "true");
+    expect(tenant).toHaveAccessibleDescription(
+      expect.stringMatching(/start and end with a lowercase letter or number/i),
+    );
+    expect(screen.getByLabelText(/Recovery owner/)).toHaveAccessibleDescription(
+      expect.stringMatching(/1-128 letters, numbers/i),
+    );
+    expect(
+      screen.getByRole("button", { name: "Review plan creation" }),
+    ).toHaveAccessibleDescription(
+      /enter valid tenant, repository, and recovery owner values/i,
+    );
+  });
+
+  it("uses distinct semantic icons for setup states", async () => {
+    window.history.replaceState({}, "", "/console/setup");
+    const plan = setupTestPlan();
+    plan.requirements = plan.requirements.map((requirement, index) =>
+      index === 0
+        ? { ...requirement, state: "passed" }
+        : index === 1
+          ? { ...requirement, state: "blocked" }
+          : index === 2
+            ? { ...requirement, state: "unavailable" }
+            : requirement,
+    );
+    vi.mocked(fetchSetupSession).mockResolvedValue({
+      contract: "open-trestle/setup-session",
+      schema_version: 1,
+      initialized: true,
+      plan,
+    });
+    const { container } = render(<App />);
+    fireEvent.change(await screen.findByLabelText("Setup token"), {
+      target: { value: "s".repeat(32) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Inspect setup" }));
+    await screen.findByRole("heading", { name: "local single node" });
+    expect(
+      container.querySelector('.state-passed [data-status-icon="passed"]'),
+    ).toBeInTheDocument();
+    expect(
+      container.querySelector('.state-pending [data-status-icon="pending"]'),
+    ).toBeInTheDocument();
+    expect(
+      container.querySelector(
+        '.state-incomplete [data-status-icon="incomplete"]',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      container.querySelector('.state-blocked [data-status-icon="failed"]'),
+    ).toBeInTheDocument();
+    expect(
+      container.querySelector(
+        '.state-unavailable [data-status-icon="unavailable"]',
+      ),
+    ).toBeInTheDocument();
+    expect(container.querySelectorAll(".brand-mark svg")).toHaveLength(1);
+    expect(container.querySelectorAll(".state .brand-shield")).toHaveLength(0);
+  });
 });

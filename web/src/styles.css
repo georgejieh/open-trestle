@@ -118,8 +118,38 @@ input {
   border-radius: 12px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
 }
-.brand-mark svg {
+.brand-mark :is(svg, .status-icon, .instrument-icon) {
   width: 22px;
+}
+.status-icon,
+.instrument-icon {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  font-family: ui-sans-serif, sans-serif;
+  font-weight: 800;
+  line-height: 1;
+}
+.instrument-icon {
+  position: relative;
+  width: 1em;
+  height: 1em;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+}
+.instrument-icon:before,
+.instrument-icon:after {
+  content: "";
+  position: absolute;
+  background: currentColor;
+}
+.instrument-icon:before {
+  width: calc(100% + 8px);
+  height: 2px;
+}
+.instrument-icon:after {
+  width: 2px;
+  height: calc(100% + 8px);
 }
 .brand > span:last-child {
   display: flex;
@@ -174,7 +204,7 @@ input {
   border-right: 1px solid var(--rule);
   background: #e8e5dc;
 }
-.locator-copy > svg {
+.locator-copy > :is(svg, .status-icon, .instrument-icon) {
   width: 32px;
   height: 32px;
   color: var(--cobalt);
@@ -202,7 +232,7 @@ input {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  font-size: 0.8rem;
+  font-size: 0.8125rem;
   font-weight: 650;
   color: #34474e;
 }
@@ -231,14 +261,43 @@ input {
   outline-offset: 0;
   box-shadow: 0 0 0 4px var(--cobalt);
 }
+.locator input[aria-invalid="true"],
+.setup-fields input[aria-invalid="true"] {
+  border-color: var(--oxide);
+  background: #fff9f7;
+}
+.field-hint,
+.field-error {
+  font-size: 0.8125rem;
+  font-weight: 430;
+  line-height: 1.45;
+}
+.field-hint {
+  color: var(--muted);
+}
+.field-error {
+  color: #812d23;
+  font-weight: 650;
+}
+.form-readiness {
+  align-self: center;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+.locator .form-readiness {
+  grid-column: 1;
+}
 .input-with-icon {
   position: relative;
 }
-.input-with-icon svg {
+.input-with-icon :is(svg, .status-icon, .instrument-icon) {
   position: absolute;
   left: 13px;
   top: 13px;
   width: 19px;
+  height: 19px;
   color: #6d7b80;
 }
 .input-with-icon input {
@@ -284,7 +343,7 @@ button:disabled {
 .secondary-button:hover:not(:disabled) {
   background: #ecefe9;
 }
-.secondary-button svg {
+.secondary-button :is(svg, .status-icon, .instrument-icon) {
   width: 17px;
 }
 .error-banner {
@@ -297,7 +356,7 @@ button:disabled {
   background: var(--oxide-soft);
   color: #6f291f;
 }
-.error-banner svg {
+.error-banner :is(svg, .status-icon, .instrument-icon) {
   flex: 0 0 auto;
   width: 21px;
 }
@@ -321,7 +380,7 @@ button:disabled {
   padding-left: 30px;
   border-left: 1px solid #c9cec8;
 }
-.trust-notes svg {
+.trust-notes :is(svg, .status-icon, .instrument-icon) {
   width: 20px;
   color: var(--cobalt);
 }
@@ -386,7 +445,7 @@ button:disabled {
   cursor: pointer;
   text-align: left;
 }
-.rail nav button svg {
+.rail nav button :is(svg, .status-icon, .instrument-icon) {
   width: 18px;
 }
 .rail nav button span {
@@ -486,7 +545,7 @@ button:disabled {
   line-height: 1;
   text-transform: capitalize;
 }
-.state svg {
+.state :is(svg, .status-icon, .instrument-icon) {
   width: 14px;
   height: 14px;
 }
@@ -647,7 +706,7 @@ button:disabled {
 .icon-button:hover {
   background: #e8ece8;
 }
-.icon-button svg {
+.icon-button :is(svg, .status-icon, .instrument-icon) {
   width: 16px;
 }
 .copy-note {
@@ -858,7 +917,7 @@ button:disabled {
   padding-bottom: 21px;
   border-bottom: 1px solid var(--rule-dark);
 }
-.inspector-heading svg {
+.inspector-heading :is(svg, .status-icon, .instrument-icon) {
   width: 20px;
   color: #8fbce6;
 }
@@ -980,7 +1039,7 @@ button:disabled {
   font-weight: 750;
   text-transform: capitalize;
 }
-.severity svg {
+.severity :is(svg, .status-icon, .instrument-icon) {
   width: 16px;
 }
 .severity-error {
@@ -1049,12 +1108,12 @@ button:disabled {
   text-align: center;
   border-top: 1px solid var(--rule);
 }
-.empty-state > svg {
+.empty-state > :is(svg, .status-icon, .instrument-icon) {
   width: 34px;
   height: 34px;
   color: var(--amber);
 }
-.empty-state.verified > svg {
+.empty-state.verified > :is(svg, .status-icon, .instrument-icon) {
   color: var(--lichen);
 }
 .empty-state h2 {
@@ -1077,7 +1136,7 @@ button:disabled {
   font-size: 0.76rem;
   line-height: 1.45;
 }
-.note svg {
+.note :is(svg, .status-icon, .instrument-icon) {
   flex: 0 0 auto;
   width: 16px;
 }
@@ -1109,7 +1168,7 @@ button:disabled {
   .rail nav button span {
     display: none;
   }
-  .rail nav button svg {
+  .rail nav button :is(svg, .status-icon, .instrument-icon) {
     width: 20px;
   }
   .rail .brand {
@@ -1137,7 +1196,7 @@ button:disabled {
     border-right: 0;
     border-bottom: 1px solid var(--rule);
   }
-  .locator-copy > svg {
+  .locator-copy > :is(svg, .status-icon, .instrument-icon) {
     margin-bottom: 22px;
   }
 }
@@ -1272,6 +1331,7 @@ button:disabled {
   .locator label,
   .locator label:nth-child(3),
   .locator .token-field,
+  .locator .form-readiness,
   .primary-button {
     grid-column: 1;
   }
@@ -1297,9 +1357,11 @@ button:disabled {
   *:before,
   *:after {
     scroll-behavior: auto !important;
-    transition-duration: 0.01ms !important;
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
+    transition: none !important;
+    animation: none !important;
+  }
+  .primary-button:hover:not(:disabled) {
+    transform: none;
   }
 }
 
@@ -1346,6 +1408,23 @@ button:disabled {
   min-height: 100vh;
   background: var(--paper);
 }
+.setup-shell .brand small,
+.setup-shell .state,
+.setup-shell .icon-button,
+.setup-shell .copy-note,
+.setup-shell .set-count,
+.setup-requirements small,
+.setup-check-meta dt,
+.setup-check-meta dd,
+.receipt-ledger li {
+  font-size: 0.8125rem;
+}
+.setup-shell .section-head p,
+.setup-shell .note,
+.success-banner p {
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
 .setup-top {
   display: flex;
   align-items: center;
@@ -1364,7 +1443,7 @@ button:disabled {
   font-weight: 700;
   text-underline-offset: 4px;
 }
-.setup-top > a svg {
+.setup-top > a :is(svg, .status-icon, .instrument-icon) {
   width: 17px;
 }
 .setup-shell > main {
@@ -1400,6 +1479,9 @@ button:disabled {
   display: grid;
   gap: 28px;
 }
+.setup-create .form-readiness {
+  grid-column: 1;
+}
 .profile-fieldset {
   min-width: 0;
   margin: 0;
@@ -1409,7 +1491,7 @@ button:disabled {
 .profile-fieldset legend {
   margin-bottom: 12px;
   color: var(--muted);
-  font-size: 0.78rem;
+  font-size: 0.8125rem;
   font-weight: 700;
 }
 .profile-options {
@@ -1457,7 +1539,7 @@ button:disabled {
 .profile-option small {
   max-width: 38ch;
   color: #4c5d64;
-  font-size: 0.78rem;
+  font-size: 0.9375rem;
   line-height: 1.5;
 }
 .setup-fields,
@@ -1473,7 +1555,7 @@ button:disabled {
   flex-direction: column;
   gap: 7px;
   color: #34474e;
-  font-size: 0.78rem;
+  font-size: 0.8125rem;
   font-weight: 700;
 }
 .setup-fields label:last-child {
@@ -1494,9 +1576,13 @@ button:disabled {
 .policy-fields small,
 .setup-check-panel label small {
   color: var(--muted);
-  font-size: 0.7rem;
+  font-size: 0.8125rem;
   font-weight: 430;
   line-height: 1.45;
+}
+.setup-fields .field-error {
+  color: #812d23;
+  font-weight: 650;
 }
 .data-input {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -1509,7 +1595,7 @@ button:disabled {
   border: 1px solid #c9a96d;
   background: var(--amber-soft);
 }
-.confirmation-panel > svg {
+.confirmation-panel > :is(svg, .status-icon, .instrument-icon) {
   flex: 0 0 auto;
   width: 22px;
   color: var(--amber);
@@ -1522,7 +1608,7 @@ button:disabled {
 .confirmation-panel p {
   margin: 0;
   color: #69491b;
-  font-size: 0.78rem;
+  font-size: 0.9375rem;
   line-height: 1.5;
 }
 .confirmation-actions {
@@ -1555,12 +1641,12 @@ button:disabled {
   background: var(--lichen-soft);
   color: #1f5b43;
 }
-.success-banner svg {
+.success-banner :is(svg, .status-icon, .instrument-icon) {
   width: 19px;
 }
 .success-banner p {
   margin: 0;
-  font-size: 0.82rem;
+  font-size: 0.9375rem;
   font-weight: 650;
 }
 .setup-workspace {
@@ -1581,7 +1667,7 @@ button:disabled {
 .setup-header p {
   margin: 7px 0 0;
   color: var(--muted);
-  font-size: 0.82rem;
+  font-size: 0.9375rem;
 }
 .setup-layout {
   display: grid;
@@ -1667,7 +1753,7 @@ button:disabled {
 }
 .setup-requirements strong {
   display: block;
-  font-size: 0.76rem;
+  font-size: 0.8125rem;
   line-height: 1.35;
   text-transform: capitalize;
   overflow-wrap: anywhere;
@@ -1676,7 +1762,7 @@ button:disabled {
   display: block;
   margin-top: 3px;
   color: #aebec1;
-  font-size: 0.65rem;
+  font-size: 0.8125rem;
   text-transform: capitalize;
 }
 .setup-detail {
@@ -1702,7 +1788,7 @@ button:disabled {
   align-items: center;
   gap: 12px;
 }
-.setup-boundary > div:first-child svg {
+.setup-boundary > div:first-child :is(svg, .status-icon, .instrument-icon) {
   width: 22px;
   color: var(--lichen);
 }
@@ -1713,7 +1799,7 @@ button:disabled {
 }
 .setup-boundary small {
   color: var(--muted);
-  font-size: 0.72rem;
+  font-size: 0.8125rem;
   line-height: 1.4;
 }
 .setup-boundary .identity-row {
@@ -1739,18 +1825,18 @@ button:disabled {
 }
 .setup-check-meta dt {
   color: var(--muted);
-  font-size: 0.71rem;
+  font-size: 0.8125rem;
   font-weight: 650;
 }
 .setup-check-meta dd {
   margin: 5px 0 0;
-  font-size: 0.8rem;
+  font-size: 0.8125rem;
 }
 .setup-guidance {
   max-width: 72ch;
   margin: 0 0 22px;
   color: #465960;
-  font-size: 0.82rem;
+  font-size: 0.9375rem;
   line-height: 1.55;
 }
 .setup-guidance code {
@@ -1765,7 +1851,7 @@ button:disabled {
   gap: 9px;
   color: var(--lichen);
 }
-.setup-guidance.verified svg {
+.setup-guidance.verified :is(svg, .status-icon, .instrument-icon) {
   width: 18px;
 }
 .policy-fields {
@@ -1784,13 +1870,13 @@ button:disabled {
   border-bottom: 1px solid var(--rule);
   color: #5e6363;
 }
-.setup-unavailable svg {
+.setup-unavailable :is(svg, .status-icon, .instrument-icon) {
   flex: 0 0 auto;
   width: 18px;
 }
 .setup-unavailable p {
   margin: 0;
-  font-size: 0.79rem;
+  font-size: 0.9375rem;
   line-height: 1.5;
 }
 .confirmation-panel.compact {
@@ -1814,7 +1900,7 @@ button:disabled {
   gap: 16px;
   padding: 11px 0;
   border-top: 1px solid var(--rule);
-  font-size: 0.78rem;
+  font-size: 0.8125rem;
   text-transform: capitalize;
 }
 .receipt-ledger li > .identity-row {

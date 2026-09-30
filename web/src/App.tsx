@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { ShieldCheck } from "./ShieldCheck";
+import { InstrumentIcon, StatusIcon, type StatusValue } from "./Icons";
 import { Identity } from "./Identity";
 import {
   ApiError,
@@ -43,13 +44,10 @@ function rememberedScope(): Scope {
   } catch {}
   return emptyScope;
 }
-function statusIcon() {
-  return <ShieldCheck aria-hidden="true" />;
-}
-function Status({ value }: { value: string }) {
+function Status({ value }: { value: StatusValue }) {
   return (
     <span className={`state state-${value}`}>
-      {statusIcon()}
+      <StatusIcon value={value} />
       <span>{value.replaceAll("_", " ")}</span>
     </span>
   );
@@ -65,15 +63,66 @@ function Locator({
 }) {
   const [scope, setScope] = useState(initial);
   const [token, setToken] = useState("");
-  const ready = validScope(scope) && validAccessToken(token);
+  const [touched, setTouched] = useState({
+    tenant: false,
+    repository: false,
+    run: false,
+    token: false,
+  });
+  const identifierHint =
+    "Use 1-128 lowercase letters or numbers; . _ : - are allowed. Start and end with a lowercase letter or number.";
+  const tokenHint = "Use 32-512 non-space characters. Hidden and never saved.";
+  const identifierValid = (value: string) =>
+    validScope({ tenant: value, repository: value, run: value });
+  const validity = {
+    tenant: identifierValid(scope.tenant),
+    repository: identifierValid(scope.repository),
+    run: identifierValid(scope.run),
+    token: validAccessToken(token),
+  };
+  const ready = Object.values(validity).every(Boolean);
   function submit(event: FormEvent) {
     event.preventDefault();
     if (ready) onConnect(scope, token);
   }
+  function identifierField(key: keyof Scope, label: string, value: string) {
+    const hintID = `locator-${key}-hint`;
+    const errorID = `locator-${key}-error`;
+    const hasError = touched[key] && !validity[key];
+    return (
+      <label>
+        {label}
+        <input
+          value={value}
+          aria-label={label}
+          required
+          maxLength={128}
+          pattern="[a-z0-9](?:[a-z0-9._:\-]*[a-z0-9])?"
+          aria-describedby={`${hintID}${hasError ? ` ${errorID}` : ""}`}
+          aria-invalid={hasError || undefined}
+          onChange={(event) =>
+            setScope({ ...scope, [key]: event.target.value })
+          }
+          onBlur={() => setTouched((current) => ({ ...current, [key]: true }))}
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <small className="field-hint" id={hintID}>
+          {identifierHint}
+        </small>
+        {hasError && (
+          <small className="field-error" id={errorID}>
+            Use the listed identifier format.
+          </small>
+        )}
+      </label>
+    );
+  }
+  const tokenError = touched.token && !validity.token;
   return (
     <section className="locator" aria-labelledby="locator-title">
       <div className="locator-copy">
-        <ShieldCheck aria-hidden="true" />
+        <InstrumentIcon />
         <div>
           <h1 id="locator-title">Locate a review run</h1>
           <p>
@@ -83,69 +132,48 @@ function Locator({
         </div>
       </div>
       <form onSubmit={submit}>
-        <label>
-          Tenant
-          <input
-            value={scope.tenant}
-            required
-            maxLength={128}
-            pattern="[a-z0-9](?:[a-z0-9._:\-]*[a-z0-9])?"
-            onChange={(event) =>
-              setScope({ ...scope, tenant: event.target.value })
-            }
-            autoComplete="off"
-            spellCheck={false}
-          />
-        </label>
-        <label>
-          Repository
-          <input
-            value={scope.repository}
-            required
-            maxLength={128}
-            pattern="[a-z0-9](?:[a-z0-9._:\-]*[a-z0-9])?"
-            onChange={(event) =>
-              setScope({ ...scope, repository: event.target.value })
-            }
-            autoComplete="off"
-            spellCheck={false}
-          />
-        </label>
-        <label>
-          Run
-          <input
-            value={scope.run}
-            required
-            maxLength={128}
-            pattern="[a-z0-9](?:[a-z0-9._:\-]*[a-z0-9])?"
-            onChange={(event) =>
-              setScope({ ...scope, run: event.target.value })
-            }
-            autoComplete="off"
-            spellCheck={false}
-          />
-        </label>
+        {identifierField("tenant", "Tenant", scope.tenant)}
+        {identifierField("repository", "Repository", scope.repository)}
+        {identifierField("run", "Run", scope.run)}
         <label className="token-field">
           Access token
           <span className="input-with-icon">
-            <ShieldCheck aria-hidden="true" />
+            <InstrumentIcon />
             <input
               type="password"
               name="open-trestle-access-token"
               value={token}
+              aria-label="Access token"
               required
               minLength={32}
               maxLength={512}
+              aria-describedby={`locator-token-hint${tokenError ? " locator-token-error" : ""}`}
+              aria-invalid={tokenError || undefined}
               onChange={(event) => setToken(event.target.value)}
+              onBlur={() =>
+                setTouched((current) => ({ ...current, token: true }))
+              }
               autoComplete="off"
               spellCheck={false}
             />
           </span>
+          <small className="field-hint" id="locator-token-hint">
+            {tokenHint}
+          </small>
+          {tokenError && (
+            <small className="field-error" id="locator-token-error">
+              Use 32-512 non-space characters.
+            </small>
+          )}
         </label>
+        <p className="form-readiness" id="locator-readiness">
+          {ready ? "Valid." : "Correct fields to connect."}
+        </p>
         <button
           type="submit"
           className="primary-button"
           disabled={!ready || busy}
+          aria-describedby="locator-readiness"
         >
           {busy ? <>Connecting</> : <>Connect to run</>}
         </button>
@@ -193,7 +221,7 @@ function TaskInspector({ task }: { task: RunTask | undefined }) {
   return (
     <div className="inspector-content">
       <div className="inspector-heading">
-        <ShieldCheck aria-hidden="true" />
+        <InstrumentIcon />
         <div>
           <h2>{task.key}</h2>
           <p>{task.kind.replaceAll("_", " ")}</p>
@@ -324,7 +352,7 @@ function Findings({ set }: { set: DiagnosticSet | null }) {
   if (!set)
     return (
       <section className="empty-state">
-        <ShieldCheck aria-hidden="true" />
+        <StatusIcon value="unavailable" />
         <h2>No verified finding set is available</h2>
         <p>
           The run may still be active, or it may have finished without a
@@ -351,7 +379,11 @@ function Findings({ set }: { set: DiagnosticSet | null }) {
       <section
         className={`empty-state${hasCandidateCoverage || incomplete || gateNotCleared ? "" : " verified"}`}
       >
-        <ShieldCheck aria-hidden="true" />
+        {incomplete || gateNotCleared ? (
+          <StatusIcon value="incomplete" />
+        ) : (
+          <StatusIcon value="passed" />
+        )}
         <h2>No verified findings</h2>
         <p>
           {incomplete
@@ -379,7 +411,11 @@ function Finding({ finding }: { finding: Diagnostic }) {
   return (
     <li>
       <div className={`severity severity-${finding.severity}`}>
-        <ShieldCheck aria-hidden="true" />
+        {finding.severity === "error" ? (
+          <StatusIcon value="failed" />
+        ) : (
+          <StatusIcon value="incomplete" />
+        )}
         <span>{finding.severity}</span>
       </div>
       <div className="finding-body">
@@ -426,7 +462,7 @@ function RuntimeView({
   if (!status)
     return (
       <section className="empty-state">
-        <ShieldCheck aria-hidden="true" />
+        <StatusIcon value="unavailable" />
         <h2>Runtime status is not available</h2>
         <p>{note || "This token may not have runtime inspection authority."}</p>
       </section>
@@ -705,7 +741,7 @@ function ReviewConsole() {
           <Locator initial={scope} onConnect={connect} busy={busy} />
           {error && (
             <div className="error-banner" role="alert">
-              <ShieldCheck aria-hidden="true" />
+              <StatusIcon value="failed" />
               <div>
                 <strong>Connection failed</strong>
                 <p>{error}</p>
@@ -732,7 +768,6 @@ function ReviewConsole() {
             onClick={() => setView("overview")}
             aria-pressed={view === "overview"}
           >
-            <ShieldCheck aria-hidden="true" />
             Overview
           </button>
           <button
@@ -740,7 +775,6 @@ function ReviewConsole() {
             onClick={() => setView("tasks")}
             aria-pressed={view === "tasks"}
           >
-            <ShieldCheck aria-hidden="true" />
             Tasks <span>{receipt.tasks.length}</span>
           </button>
           <button
@@ -748,7 +782,6 @@ function ReviewConsole() {
             onClick={() => setView("findings")}
             aria-pressed={view === "findings"}
           >
-            <ShieldCheck aria-hidden="true" />
             Findings{" "}
             <span>{diagnostics ? diagnostics.findings.length : "n/a"}</span>
           </button>
@@ -757,7 +790,6 @@ function ReviewConsole() {
             onClick={() => setView("runtime")}
             aria-pressed={view === "runtime"}
           >
-            <ShieldCheck aria-hidden="true" />
             Runtime <span>{runtimeStatus?.ready ? "ready" : "n/a"}</span>
           </button>
         </nav>
@@ -846,7 +878,7 @@ function ReviewConsole() {
               </dl>
               {diagnosticNote && (
                 <p className="note">
-                  <ShieldCheck aria-hidden="true" />
+                  <StatusIcon value="unavailable" />
                   {diagnosticNote}
                 </p>
               )}
@@ -921,7 +953,7 @@ function ReviewConsole() {
             <Findings set={diagnostics} />
             {diagnosticNote && (
               <p className="note">
-                <ShieldCheck aria-hidden="true" />
+                <StatusIcon value="unavailable" />
                 {diagnosticNote}
               </p>
             )}
@@ -938,7 +970,7 @@ function Brand({ subtitle = "Evidence console" }: { subtitle?: string }) {
   return (
     <div className="brand">
       <span className="brand-mark">
-        <ShieldCheck aria-hidden="true" />
+        <ShieldCheck className="brand-shield" aria-hidden="true" />
       </span>
       <span>
         <strong>Open Trestle</strong>
@@ -951,7 +983,7 @@ function TrustNotes() {
   return (
     <section className="trust-notes" aria-label="Console safety">
       <div>
-        <ShieldCheck aria-hidden="true" />
+        <InstrumentIcon />
         <h2>Read-only by design</h2>
         <p>
           This console inspects durable state. It cannot approve, publish, run
@@ -959,7 +991,7 @@ function TrustNotes() {
         </p>
       </div>
       <div>
-        <ShieldCheck aria-hidden="true" />
+        <InstrumentIcon />
         <h2>Exact scope</h2>
         <p>
           Review requests name one tenant, repository, and run. Runtime requests
@@ -967,7 +999,7 @@ function TrustNotes() {
         </p>
       </div>
       <div>
-        <ShieldCheck aria-hidden="true" />
+        <StatusIcon value="passed" />
         <h2>Verified means verified</h2>
         <p>
           Candidate output is never presented as a finding. Inconclusive work
