@@ -103,6 +103,10 @@ jobs:
         run: |
           python3 tools/package_secret_scanner.py
           python3 tools/package_secret_scanner.py --verify .container
+      - name: Run passive dependency vulnerability gate
+        run: |
+          (cd tools/govulncheck && GOWORK=off GOTOOLCHAIN=go1.26.8 go mod verify)
+          python3 tools/vulnerability_gate.py --staging .container
       - name: Verify deterministic unsigned release evidence
         env:
           RELEASE_REVISION: ${{ github.sha }}

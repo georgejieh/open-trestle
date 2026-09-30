@@ -178,10 +178,11 @@ The implementation order is deliberately conservative:
 4. CLI, TUI, API, CI, IDE, and agent-harness transports;
 5. separately governed sandbox and dynamic-validation capabilities.
 
-Signing, SBOM, provenance, vulnerability reporting, and published evaluation
-evidence are still ahead of the tree. The [roadmap](docs/roadmap.md) separates
-planned work from shipped capability. Nothing counts as released until its release
-evidence exists.
+The tree includes deterministic SBOM generation and a bounded passive dependency
+vulnerability gate. Signing, provenance, comprehensive vulnerability reporting, and
+broader published evaluation evidence remain planned. The [roadmap](docs/roadmap.md)
+separates planned work from shipped capability. Nothing counts as released until its
+release evidence exists.
 
 ## Contributing
 

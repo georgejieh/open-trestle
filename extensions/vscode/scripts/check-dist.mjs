@@ -68,7 +68,7 @@ const expected = [
   "extension/NOTICE",
   "extension/readme.md",
   "extension/THIRD_PARTY_LICENSES/balanced-match-4.0.4-MIT.txt",
-  "extension/THIRD_PARTY_LICENSES/brace-expansion-5.0.9-MIT.txt",
+  "extension/THIRD_PARTY_LICENSES/brace-expansion-5.0.12-MIT.txt",
   "extension/THIRD_PARTY_LICENSES/minimatch-10.2.6-BlueOak-1.0.0.txt",
   "extension/THIRD_PARTY_LICENSES/semver-7.8.5-ISC.txt",
   "extension/THIRD_PARTY_LICENSES/vscode-languageclient-family-MIT.txt",
