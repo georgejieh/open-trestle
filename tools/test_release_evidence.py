@@ -400,10 +400,12 @@ class ArtifactCollectionTest(unittest.TestCase):
             output = Path(directory) / "evidence"
             artifacts = (release_evidence.Artifact("trestle", "1" * 40, "a" * 64, 1),)
 
+            release_notes = b"candidate notes\n"
             release_evidence.write_release_evidence(
                 output,
                 artifacts,
                 (),
+                release_notes=release_notes,
                 version="0.1.0",
                 revision="1" * 40,
                 created="2026-09-15T00:00:00Z",
@@ -411,8 +413,9 @@ class ArtifactCollectionTest(unittest.TestCase):
 
             self.assertEqual(
                 sorted(path.name for path in output.iterdir()),
-                ["SHA256SUMS", "sbom.spdx.json"],
+                ["SHA256SUMS", "release-notes.md", "sbom.spdx.json"],
             )
+            self.assertEqual((output / "release-notes.md").read_bytes(), release_notes)
             self.assertEqual(
                 (output / "SHA256SUMS").read_text(), ("a" * 64) + "  trestle\n"
             )
@@ -422,6 +425,7 @@ class ArtifactCollectionTest(unittest.TestCase):
                     output,
                     artifacts,
                     (),
+                    release_notes=release_notes,
                     version="0.1.0",
                     revision="1" * 40,
                     created="2026-09-15T00:00:00Z",
@@ -443,6 +447,7 @@ class ArtifactCollectionTest(unittest.TestCase):
                     root / "linked" / "evidence",
                     artifact,
                     (),
+                    release_notes=b"candidate notes\n",
                     version="0.1.0",
                     revision="1" * 40,
                     created="2026-09-15T00:00:00Z",
@@ -461,6 +466,7 @@ class ArtifactCollectionTest(unittest.TestCase):
                     output,
                     artifact,
                     (),
+                    release_notes=b"candidate notes\n",
                     version="0.1.0",
                     revision="1" * 40,
                     created="2026-09-15T00:00:00Z",
@@ -474,6 +480,10 @@ class ArtifactCollectionTest(unittest.TestCase):
             root = parent / "project"
             root.mkdir()
             (root / "trestle").write_bytes(b"binary")
+            (root / "CHANGELOG.md").write_text(
+                "## Unreleased\n\n### Added\n\n- Candidate.\n",
+                encoding="utf-8",
+            )
             (parent / "outside-lock.json").write_text(
                 json.dumps({"lockfileVersion": 3, "packages": {}})
             )
@@ -486,6 +496,8 @@ class ArtifactCollectionTest(unittest.TestCase):
                         "trestle=trestle",
                         "--npm-lock",
                         "../outside-lock.json",
+                        "--changelog",
+                        "CHANGELOG.md",
                         "--version",
                         "0.1.0",
                         "--revision",
@@ -508,6 +520,10 @@ class ArtifactCollectionTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "trestle").write_bytes(b"binary")
+            (root / "CHANGELOG.md").write_text(
+                "## Unreleased\n\n### Added\n\n- Candidate evidence notes.\n",
+                encoding="utf-8",
+            )
             (root / "package-lock.json").write_text(
                 json.dumps(
                     {
@@ -529,6 +545,8 @@ class ArtifactCollectionTest(unittest.TestCase):
                     "trestle=trestle",
                     "--npm-lock",
                     "package-lock.json",
+                    "--changelog",
+                    "CHANGELOG.md",
                     "--version",
                     "0.1.0",
                     "--revision",
@@ -547,6 +565,174 @@ class ArtifactCollectionTest(unittest.TestCase):
                 [(item["name"], item["versionInfo"]) for item in document["packages"]],
                 [("Open Trestle", "0.1.0"), ("runtime", "1.0.0")],
             )
+            self.assertIn(
+                "- Candidate evidence notes.\n",
+                (root / "evidence" / "release-notes.md").read_text(encoding="utf-8"),
+            )
+
+
+class ReleaseNotesTest(unittest.TestCase):
+    def test_unreleased_changelog_bullets_are_preserved_in_candidate_notes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            changelog = Path(directory) / "CHANGELOG.md"
+            changelog.write_text(
+                "# Changelog\n\n"
+                "## Unreleased\n\n"
+                "### Added\n\n"
+                "- Added `literal` wording.\n"
+                "  Kept this authored continuation.\n\n"
+                "### Security\n\n"
+                "- Closed a boundary.\n\n"
+                "## 0.0.1\n\n"
+                "- Old release.\n",
+                encoding="utf-8",
+            )
+
+            unreleased = release_evidence.read_unreleased_changelog(changelog)
+            notes = release_evidence.encode_release_notes(
+                unreleased,
+                version="0.1.0-dev",
+                revision="1" * 40,
+                created="2026-09-15T00:00:00Z",
+            )
+
+            self.assertEqual(
+                notes.decode("utf-8"),
+                "# Open Trestle 0.1.0-dev release candidate\n\n"
+                "Revision: `" + ("1" * 40) + "`\n\n"
+                "Created: `2026-09-15T00:00:00Z`\n\n"
+                "> This is an unsigned candidate, not a supported release. "
+                "It is not suitable for production use.\n\n"
+                "## Changes\n\n"
+                "### Added\n\n"
+                "- Added `literal` wording.\n"
+                "  Kept this authored continuation.\n\n"
+                "### Security\n\n"
+                "- Closed a boundary.\n",
+            )
+
+    def test_unreleased_changelog_rejects_invalid_structure(self):
+        cases = {
+            "missing": "# Changelog\n\n## 0.0.1\n\n### Added\n\n- Old.\n",
+            "duplicate section": (
+                "## Unreleased\n\n### Added\n\n- One.\n\n"
+                "## Unreleased\n\n### Fixed\n\n- Two.\n"
+            ),
+            "malformed duplicate section": (
+                "## Unreleased\n\n### Added\n\n- One.\n\n"
+                "## Unreleased \n"
+            ),
+            "empty": "## Unreleased\n\n## 0.0.1\n",
+            "unknown category": "## Unreleased\n\n### Notes\n\n- One.\n",
+            "duplicate category": (
+                "## Unreleased\n\n### Added\n\n- One.\n\n"
+                "### Added\n\n- Two.\n"
+            ),
+            "category without bullet": (
+                "## Unreleased\n\n### Added\n\n### Fixed\n\n- Two.\n"
+            ),
+            "free prose": (
+                "## Unreleased\n\n### Added\n\nRelease prose.\n\n- One.\n"
+            ),
+            "nested heading": (
+                "## Unreleased\n\n### Added\n\n- One.\n\n#### Detail\n"
+            ),
+            "asterisk bullet": "## Unreleased\n\n### Added\n\n* One.\n",
+            "empty bullet": "## Unreleased\n\n### Added\n\n- \n",
+            "bullet before category": "## Unreleased\n\n- One.\n",
+            "nested bullet": (
+                "## Unreleased\n\n### Added\n\n- One.\n  - Nested.\n"
+            ),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            changelog = Path(directory) / "CHANGELOG.md"
+            for name, content in cases.items():
+                with self.subTest(name=name):
+                    changelog.write_text(content, encoding="utf-8")
+                    with self.assertRaises(ValueError):
+                        release_evidence.read_unreleased_changelog(changelog)
+
+    def test_changelog_must_be_bounded_regular_utf8_and_not_symlinked(self):
+        valid = b"## Unreleased\n\n### Added\n\n- Candidate.\n"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            missing = root / "missing.md"
+            invalid_utf8 = root / "invalid.md"
+            invalid_utf8.write_bytes(valid + b"\xff")
+            oversized = root / "oversized.md"
+            oversized.write_bytes(valid + b"x" * release_evidence.MAX_CHANGELOG_BYTES)
+            target = root / "target.md"
+            target.write_bytes(valid)
+            linked = root / "linked.md"
+            linked.symlink_to(target)
+            nested = root / "nested"
+            nested.mkdir()
+
+            cases = (missing, invalid_utf8, oversized, linked, nested)
+            for path in cases:
+                with self.subTest(path=path.name):
+                    with self.assertRaises(ValueError):
+                        release_evidence.read_unreleased_changelog(path)
+
+    def test_cli_requires_changelog(self):
+        errors = io.StringIO()
+        with tempfile.TemporaryDirectory() as directory, redirect_stderr(errors):
+            root = Path(directory)
+            with self.assertRaisesRegex(SystemExit, "2"):
+                release_evidence.main(
+                    [
+                        "--artifact",
+                        "trestle=trestle",
+                        "--version",
+                        "0.1.0",
+                        "--revision",
+                        "1" * 40,
+                        "--created",
+                        "2026-09-15T00:00:00Z",
+                        "--output",
+                        "evidence",
+                    ],
+                    root=root,
+                )
+            self.assertFalse((root / "evidence").exists())
+        self.assertIn(
+            "the following arguments are required: --changelog", errors.getvalue()
+        )
+
+    def test_cli_rejects_changelog_outside_root_without_partial_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            root = parent / "project"
+            root.mkdir()
+            (root / "trestle").write_bytes(b"binary")
+            (parent / "CHANGELOG.md").write_text(
+                "## Unreleased\n\n### Added\n\n- Candidate.\n",
+                encoding="utf-8",
+            )
+            errors = io.StringIO()
+            with redirect_stderr(errors):
+                code = release_evidence.main(
+                    [
+                        "--artifact",
+                        "trestle=trestle",
+                        "--changelog",
+                        "../CHANGELOG.md",
+                        "--version",
+                        "0.1.0",
+                        "--revision",
+                        "1" * 40,
+                        "--created",
+                        "2026-09-15T00:00:00Z",
+                        "--output",
+                        "evidence",
+                    ],
+                    root=root,
+                )
+
+            self.assertEqual(code, 1)
+            self.assertEqual(errors.getvalue(), "error: changelog path escapes root\n")
+            self.assertFalse((root / "evidence").exists())
+
 
 class ComponentInventoryTest(unittest.TestCase):
     def test_npm_lock_inventory_includes_only_production_packages(self):
@@ -678,6 +864,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
         ).read_text()
 
         self.assertEqual(workflow.count("python3 tools/release_evidence.py"), 2)
+        self.assertEqual(workflow.count("--changelog CHANGELOG.md"), 2)
         validator_lock = (
             repository_root / "tools/spdx-validator-requirements.txt"
         ).read_text()

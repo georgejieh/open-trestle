@@ -70,13 +70,16 @@ python3 tools/release_evidence.py \
   --go-binary .container/libexec/open-trestle/open-trestle-secret-scanner-worker \
   --npm-lock web/package-lock.json \
   --npm-lock extensions/vscode/package-lock.json \
+  --changelog CHANGELOG.md \
   --version 0.1.0-dev \
   --revision "$(git rev-parse HEAD)" \
   --created 2026-08-30T22:46:23Z \
   --output release-evidence
 ```
 
-Use the commit timestamp normalized to UTC for `--created`. Artifact, Go binary, and npm lockfile inputs must remain below the working directory. The output directory contains `SHA256SUMS` and `sbom.spdx.json`. Existing output is never replaced. Artifact hashing streams SHA-1 and SHA-256 in one pass and rejects files that change during the read. `SHA256SUMS` remains SHA-256-only. Missing, empty, duplicate, sensitive, escaping, or symlinked inputs fail without creating a partial evidence directory.
+Use the commit timestamp normalized to UTC for `--created`. Artifact, Go binary, npm lockfile, and changelog inputs must remain below the working directory. The required changelog must be a regular, non-symlinked UTF-8 file of at most 1 MiB. It must contain exactly one nonempty `## Unreleased` section made from unique `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, or `Security` categories and nonempty `- ` bullets. The tool preserves those authored categories, bullets, and indented continuation lines in `release-notes.md`, alongside the bound version, revision, creation time, and a fixed candidate-status and non-support warning.
+
+The output directory contains `release-notes.md`, `SHA256SUMS`, and `sbom.spdx.json`. Existing output is never replaced. The complete directory is installed atomically, so validation or write failure does not leave partial evidence at the requested output path. Artifact hashing streams SHA-1 and SHA-256 in one pass and rejects files that change during the read. `SHA256SUMS` remains SHA-256-only. Missing, empty, duplicate, malformed, sensitive, escaping, or symlinked inputs fail without creating a partial evidence directory.
 
 This is an unsigned local inventory. The declared revision and timestamp are caller inputs, not independently verified provenance. The project-owned tests validate the exact SPDX fields emitted by the tool. CI also installs the official SPDX Workgroup `spdx-tools` 0.8.5 semantic validator from a fully pinned, hash-checked test-only lock and validates both generated SBOMs. The release-evidence tool does not identify the built container image, sign artifacts, publish an attestation, consult a vulnerability database, establish a SLSA level, or make the current experimental release suitable for production. CI separately runs the [passive vulnerability gate](vulnerability-gate.md) before generating this inventory. Preserve the distinction between that point-in-time advisory check and the missing signing, provenance, active validation, and deployment evidence.
 

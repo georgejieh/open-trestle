@@ -121,6 +121,7 @@ jobs:
             --go-binary .container/libexec/open-trestle/open-trestle-secret-scanner-worker \
             --npm-lock web/package-lock.json \
             --npm-lock extensions/vscode/package-lock.json \
+            --changelog CHANGELOG.md \
             --version 0.1.0-dev \
             --revision "$RELEASE_REVISION" \
             --created "$RELEASE_CREATED" \
@@ -134,6 +135,7 @@ jobs:
             --go-binary .container/libexec/open-trestle/open-trestle-secret-scanner-worker \
             --npm-lock web/package-lock.json \
             --npm-lock extensions/vscode/package-lock.json \
+            --changelog CHANGELOG.md \
             --version 0.1.0-dev \
             --revision "$RELEASE_REVISION" \
             --created "$RELEASE_CREATED" \
