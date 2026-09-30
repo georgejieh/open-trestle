@@ -163,9 +163,13 @@ Production install requires root and targets `/usr/local`. `--destdir` is an exp
 non-production CI mode. The candidate supports only an exact verified installation to a
 strictly newer same-target archive, plus one immediate-predecessor `rollback-version`.
 Another upgrade is refused until that rollback slot is consumed. It never configures or starts a service and never creates application configuration or
-state. Caught pre-commit transaction failures restore the prior generation; crash and
-power-loss recovery is not proven. See [operations](docs/operations.md) for the exact inventory,
-lifecycle commands, and removal guarantees.
+state. A fixed root transaction record makes `recover` restore the pre-commit generation
+or verify the post-commit generation before bounded cleanup. On Ubuntu 24.04, the opt-in
+non-production destdir matrix sends SIGKILL after every successful fsync and rename
+boundary for install, upgrade, `rollback-version`, and recovery itself. This is not
+power-loss, production-root, or filesystem qualification. See
+[operations](docs/operations.md) for the exact state machine, retained rescue-candidate
+requirement, inventory, lifecycle commands, and removal guarantees.
 
 The static `local-git inspect`, `local-git change`, and deterministic `local-git review` commands support verified loose objects only. Nonempty, valid, within-budget added text is reviewed against a canonical empty base; empty, binary, removed, and over-limit entries remain explicit unsupported outcomes. Repository fields are caller-supplied scope labels, not proof that the object directory belongs to that repository. See [Local Git inspection](docs/local-git-inspect.md), [Local Git change evidence](docs/local-git-change.md), and [Local Git debug-output review](docs/local-git-review.md).
 

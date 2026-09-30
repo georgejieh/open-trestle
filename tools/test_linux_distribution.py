@@ -574,12 +574,13 @@ class LifecycleTest(unittest.TestCase):
 
             def replace_after_first_publish(parent):
                 nonlocal calls
-                calls += 1
-                if calls == 1:
-                    target = destdir / "usr/local/bin/trestle"
-                    target.unlink()
-                    _write(target, replacement, 0o555)
-                    raise OSError("injected fsync failure")
+                target = destdir / "usr/local/bin/trestle"
+                if target.exists():
+                    calls += 1
+                    if calls == 1:
+                        target.unlink()
+                        _write(target, replacement, 0o555)
+                        raise OSError("injected fsync failure")
                 return original_fsync(parent)
 
             with patch.object(linux_distribution_runtime, "_fsync_directory", side_effect=replace_after_first_publish):

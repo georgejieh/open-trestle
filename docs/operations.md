@@ -85,6 +85,9 @@ sudo /usr/local/libexec/open-trestle/open-trestle-distribution.pyz verify-instal
 # consume the one immediate-predecessor rollback slot, if needed
 sudo /usr/local/libexec/open-trestle/open-trestle-distribution.pyz rollback-version
 
+# retain the transaction-starting candidate outside the install root; use it after interruption
+sudo ./open-trestle-linux-amd64-new.pyz recover
+
 # choose one complete removal action for whichever generation is installed
 sudo /usr/local/libexec/open-trestle/open-trestle-distribution.pyz rollback
 # or, for a normal removal
@@ -111,13 +114,45 @@ bound predecessor and its exact protected receipt and journal bytes, and consume
 run twice. A second upgrade is refused while the rollback slot is pending. Upgrade and
 version rollback preserve operator configuration, state and all unowned files.
 
-Caught staging, replacement, receipt, journal and fsync failures reverse the in-process
-transaction, restore the prior verified generation, and remove transaction temporary and
-quarantine files. This is not a claim of recovery after process termination, kernel
-failure or power loss. Crash and power-loss recovery has not been proven for this
-candidate. The new journal directory fsync is the commit point. A later quarantine
-cleanup error is reported explicitly as a committed transition with incomplete cleanup;
-it is not misreported as restoration of the prior generation.
+The candidate reserves three mutually exclusive canonical records at the destination
+root:
+
+- `.open-trestle-linux-amd64.transaction.bootstrap.json`
+- `.open-trestle-linux-amd64.transaction.pending.json`
+- `.open-trestle-linux-amd64.transaction.committed.json`
+
+The bootstrap record contains the exact canonical plan but admits no managed mutation.
+`recover` removes only a valid bootstrap. A pending record always selects rollback to the
+exact prior generation, or clean absence for an interrupted install. A committed record
+requires every new final file to match before it removes only recorded temporary and
+quarantine files. It never reconstructs a missing committed file. The pending-to-committed
+rename followed by destination-root fsync is the sole commit decision. Generation and plan
+identities use separate SHA-256 domains. Plans bind exact old and new descriptors, control
+digests, deterministic staging and quarantine names, and bounded directory inventories.
+Persisted inode or device numbers are not restart authority; those values are used only for
+live race checks. Restart classification uses safe paths, regular-file type, mode, size,
+SHA-256 and the applicable ownership policy.
+
+`recover` first classifies the complete recorded state without mutation. Malformed,
+noncanonical, multiple, tampered, unsafe, unexpected or ambiguous objects stop recovery
+and preserve every object for operator inspection. Cleanup unlinks only a matching
+recorded file and calls `rmdir` only on a recorded empty directory. It never recurses and
+never deletes operator configuration, state, adjacent files or a nonempty directory.
+Running recovery again after success is a no-op. Mutating lifecycle commands run the same
+recovery gate first; `verify-installed` instead reports that explicit recovery is required.
+Retain the transaction-starting candidate or another byte-identical verified rescue pyz
+outside the installation root because the installed lifecycle path can be quarantined by
+an interrupted transition.
+
+On Ubuntu 24.04, a separate opt-in destdir matrix sends SIGKILL immediately after every
+successful file or directory fsync and every successful `renameat2` boundary for install,
+upgrade, `rollback-version`, and recovery itself. Every case converges to the exact
+pre-commit generation or verified post-commit generation, preserves operator sentinels,
+removes recorded debris, and remains idempotent. This evidence is conditional on atomic
+rename plus successful file-fsync and directory-fsync semantics. It does not test loss of
+unflushed writes, torn writes, kernel panic, controller caches, reboot, production `/`,
+root ownership enforcement, any declared filesystem or mount profile, network or overlay
+filesystems, or hostile root. It is not a power-loss or supported deployment claim.
 
 `verify-installed` checks the receipt and journal, trusted ancestors, exact ownership in
 production, modes, sizes, hashes and ELF identities. `smoke` first performs that check,

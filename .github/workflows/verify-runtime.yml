@@ -82,6 +82,8 @@ jobs:
           GOWORK=off GOTOOLCHAIN=go1.26.8 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go test -run='^$' -exec=true ./...
       - name: Run release-tool tests
         run: python3 -m unittest discover -s tools -p "test_*.py"
+      - name: Verify Linux candidate SIGKILL recovery matrix
+        run: timeout 15m env OPEN_TRESTLE_RUN_CRASH_MATRIX=1 python3 -m unittest discover -s tools -p "test_linux_distribution_recovery.py" -v
       - name: Set up secret-scanner Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:

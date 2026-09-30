@@ -21,8 +21,16 @@ from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Callable
 
 SCHEMA_VERSION = 1
-CONTROL_SCHEMA_VERSION = 2
+CONTROL_SCHEMA_VERSION = 3
+TRANSACTION_SCHEMA_VERSION = 1
 TARGET = "linux-amd64"
+BOOTSTRAP_ANCHOR = ".open-trestle-linux-amd64.transaction.bootstrap.json"
+PENDING_ANCHOR = ".open-trestle-linux-amd64.transaction.pending.json"
+COMMITTED_ANCHOR = ".open-trestle-linux-amd64.transaction.committed.json"
+TRANSACTION_ANCHORS = (BOOTSTRAP_ANCHOR, PENDING_ANCHOR, COMMITTED_ANCHOR)
+GENERATION_DOMAIN = b"open-trestle-linux-generation-v1\0"
+TRANSACTION_DOMAIN = b"open-trestle-linux-transaction-plan-v1\0"
+MAX_TRANSACTION_SIZE = 1 << 20
 SHEBANG = b"#!/usr/bin/env python3\n"
 MAX_ARCHIVE_SIZE = 256 * 1024 * 1024
 MAX_MEMBER_SIZE = 128 * 1024 * 1024
@@ -95,6 +103,287 @@ def _json_loads(raw: bytes, label: str) -> object:
 
 def _canonical_json(value: object) -> bytes:
     return (json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n").encode("ascii")
+
+
+def _generation_core(
+    archive_sha256: str,
+    manifest_sha256: str,
+    version: str,
+    files: tuple[InstalledFile, ...] | list[InstalledFile],
+) -> dict[str, object]:
+    ordered = sorted(files, key=lambda item: item.path)
+    if len({item.path for item in ordered}) != len(ordered):
+        raise ValueError("generation inventory is not unique")
+    return {
+        "archive_sha256": archive_sha256,
+        "files": [_receipt_file(item) for item in ordered],
+        "manifest_sha256": manifest_sha256,
+        "schema_version": 1,
+        "target": TARGET,
+        "version": version,
+    }
+
+
+def _validate_generation_core(value: object) -> dict[str, object]:
+    fields = {"archive_sha256", "files", "manifest_sha256", "schema_version", "target", "version"}
+    if not isinstance(value, dict) or set(value) != fields:
+        raise ValueError("transaction generation fields are invalid")
+    if value["schema_version"] != 1 or value["target"] != TARGET:
+        raise ValueError("transaction generation identity is invalid")
+    for key in ("archive_sha256", "manifest_sha256"):
+        if not isinstance(value[key], str) or not re.fullmatch(r"[0-9a-f]{64}", value[key]):
+            raise ValueError("transaction generation digest is invalid")
+    _version_precedence(value["version"])
+    raw_files = value["files"]
+    if not isinstance(raw_files, list) or len(raw_files) > MAX_FILES:
+        raise ValueError("transaction generation inventory is invalid")
+    paths: list[str] = []
+    for raw in raw_files:
+        if not isinstance(raw, dict) or set(raw) != {"elf", "mode", "path", "sha256", "size"}:
+            raise ValueError("transaction generation file is invalid")
+        path = _safe_relative_path(raw["path"])
+        if raw["mode"] not in {0o444, 0o555} or not isinstance(raw["size"], int) or isinstance(raw["size"], bool) or raw["size"] <= 0:
+            raise ValueError("transaction generation file metadata is invalid")
+        if not isinstance(raw["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", raw["sha256"]) or not isinstance(raw["elf"], bool):
+            raise ValueError("transaction generation file metadata is invalid")
+        paths.append(path)
+    if paths != sorted(paths) or len(paths) != len(set(paths)):
+        raise ValueError("transaction generation inventory is not canonical")
+    return value
+
+
+def _generation_identity(core: dict[str, object]) -> str:
+    _validate_generation_core(core)
+    return hashlib.sha256(GENERATION_DOMAIN + _canonical_json(core)).hexdigest()
+
+
+def _owner_matches(status: os.stat_result, uid: int | None, gid: int | None) -> bool:
+    return (uid is None or status.st_uid == uid) and (gid is None or status.st_gid == gid)
+
+
+def _descriptor(item: InstalledFile, root: Path) -> dict[str, object]:
+    owner = 0 if _is_production(root) else None
+    return {
+        "elf": item.elf,
+        "gid": owner,
+        "mode": item.mode,
+        "sha256": item.sha256,
+        "size": item.size,
+        "uid": owner,
+    }
+
+
+def _parse_descriptor(value: object) -> dict[str, object]:
+    fields = {"elf", "gid", "mode", "sha256", "size", "uid"}
+    if not isinstance(value, dict) or set(value) != fields:
+        raise ValueError("transaction file descriptor fields are invalid")
+    if value["mode"] not in {0o444, 0o555}:
+        raise ValueError("transaction file mode is invalid")
+    if not isinstance(value["size"], int) or isinstance(value["size"], bool) or value["size"] <= 0 or value["size"] > MAX_ARCHIVE_SIZE:
+        raise ValueError("transaction file size is invalid")
+    if not isinstance(value["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", value["sha256"]):
+        raise ValueError("transaction file digest is invalid")
+    if not isinstance(value["elf"], bool):
+        raise ValueError("transaction file ELF flag is invalid")
+    for key in ("uid", "gid"):
+        if value[key] is not None and (not isinstance(value[key], int) or isinstance(value[key], bool) or value[key] < 0):
+            raise ValueError("transaction file owner is invalid")
+    if (value["uid"] is None) != (value["gid"] is None):
+        raise ValueError("transaction file owner policy is incomplete")
+    return value
+
+
+def _transaction_names(relative: str, transaction: str) -> tuple[str, str]:
+    path = PurePosixPath(relative)
+    staged = str(path.parent / f".{path.name}.open-trestle-{transaction}")
+    quarantine = str(path.parent / f".{path.name}.open-trestle-old-{transaction}")
+    return staged, quarantine
+
+
+def _transaction_plan(
+    *,
+    action: str,
+    transaction: str,
+    old_generation: dict[str, object] | None,
+    new_generation: dict[str, object],
+    old_receipt_sha256: str | None,
+    old_journal_sha256: str | None,
+    new_receipt_sha256: str,
+    new_journal_sha256: str,
+    created_directories: list[str],
+    obsolete_directories: list[str],
+    paths: list[dict[str, object]],
+) -> dict[str, object]:
+    return {
+        "action": action,
+        "created_directories": sorted(created_directories, key=lambda value: (value.count("/"), value)),
+        "new_generation": new_generation,
+        "new_generation_id": _generation_identity(new_generation),
+        "new_journal_sha256": new_journal_sha256,
+        "new_receipt_sha256": new_receipt_sha256,
+        "obsolete_directories": sorted(obsolete_directories, key=lambda value: (value.count("/"), value), reverse=True),
+        "old_generation": old_generation,
+        "old_generation_id": None if old_generation is None else _generation_identity(old_generation),
+        "old_journal_sha256": old_journal_sha256,
+        "old_receipt_sha256": old_receipt_sha256,
+        "paths": sorted(paths, key=lambda value: value["final"]),
+        "target": TARGET,
+        "transaction": transaction,
+    }
+
+
+def _transaction_envelope(plan: dict[str, object]) -> bytes:
+    _validate_transaction_plan(plan)
+    return _canonical_json({
+        "plan": plan,
+        "plan_sha256": hashlib.sha256(TRANSACTION_DOMAIN + _canonical_json(plan)).hexdigest(),
+        "schema_version": TRANSACTION_SCHEMA_VERSION,
+    })
+
+
+def _validate_transaction_plan(plan: object) -> dict[str, object]:
+    fields = {
+        "action", "created_directories", "new_generation", "new_generation_id", "new_journal_sha256",
+        "new_receipt_sha256", "obsolete_directories", "old_generation", "old_generation_id",
+        "old_journal_sha256", "old_receipt_sha256", "paths", "target", "transaction",
+    }
+    if not isinstance(plan, dict) or set(plan) != fields:
+        raise ValueError("transaction plan fields are invalid")
+    if plan["target"] != TARGET or plan["action"] not in {"install", "upgrade", "rollback-version"}:
+        raise ValueError("transaction plan identity is invalid")
+    transaction = plan["transaction"]
+    if not isinstance(transaction, str) or not re.fullmatch(r"[0-9a-f]{32}", transaction):
+        raise ValueError("transaction identifier is invalid")
+    new_generation = _validate_generation_core(plan["new_generation"])
+    old_generation = plan["old_generation"]
+    if old_generation is not None:
+        _validate_generation_core(old_generation)
+    if plan["new_generation_id"] != _generation_identity(new_generation):
+        raise ValueError("transaction new generation identity does not match")
+    expected_old_generation_id = None if old_generation is None else _generation_identity(old_generation)
+    if plan["old_generation_id"] != expected_old_generation_id:
+        raise ValueError("transaction old generation identity does not match")
+    if plan["action"] == "install" and old_generation is not None:
+        raise ValueError("install transaction has an old generation")
+    if plan["action"] != "install" and old_generation is None:
+        raise ValueError("transition transaction has no old generation")
+    for key in ("new_receipt_sha256", "new_journal_sha256"):
+        if not isinstance(plan[key], str) or not re.fullmatch(r"[0-9a-f]{64}", plan[key]):
+            raise ValueError("transaction control digest is invalid")
+    for key in ("old_receipt_sha256", "old_journal_sha256"):
+        value = plan[key]
+        if plan["action"] == "install":
+            if value is not None:
+                raise ValueError("install transaction has old controls")
+        elif not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+            raise ValueError("transaction old control digest is invalid")
+    for key in ("created_directories", "obsolete_directories"):
+        values = plan[key]
+        if not isinstance(values, list) or len(values) != len(set(values)):
+            raise ValueError("transaction directory inventory is invalid")
+        expected = sorted(values, key=lambda value: (value.count("/"), value), reverse=(key == "obsolete_directories"))
+        if values != expected:
+            raise ValueError("transaction directory inventory is not sorted")
+        for value in values:
+            if not isinstance(value, str) or value == "." or _safe_relative_path(value) != value:
+                raise ValueError("transaction directory path is invalid")
+    entries = plan["paths"]
+    if not isinstance(entries, list) or len(entries) > MAX_FILES * 3:
+        raise ValueError("transaction path inventory is invalid")
+    finals: list[str] = []
+    for entry in entries:
+        entry_fields = {"final", "new", "old", "quarantine", "staged"}
+        if not isinstance(entry, dict) or set(entry) != entry_fields:
+            raise ValueError("transaction path fields are invalid")
+        final = _safe_relative_path(entry["final"])
+        staged, quarantine = _transaction_names(final, transaction)
+        if entry["staged"] != staged or entry["quarantine"] != quarantine:
+            raise ValueError("transaction derived path does not match")
+        if entry["old"] is None and entry["new"] is None:
+            raise ValueError("transaction path has no generation")
+        if entry["old"] is not None:
+            _parse_descriptor(entry["old"])
+        if entry["new"] is not None:
+            _parse_descriptor(entry["new"])
+        finals.append(final)
+    if finals != sorted(finals) or len(finals) != len(set(finals)):
+        raise ValueError("transaction path inventory is not unique and sorted")
+    allowed_directories: set[str] = set()
+    for final in finals:
+        parent = PurePosixPath(final).parent
+        while str(parent) != ".":
+            allowed_directories.add(str(parent))
+            parent = parent.parent
+    if not set(plan["created_directories"]) <= allowed_directories or not set(plan["obsolete_directories"]) <= allowed_directories:
+        raise ValueError("transaction directory inventory is outside lifecycle scope")
+    generation_paths = {item["path"] for item in new_generation["files"]}
+    if isinstance(old_generation, dict):
+        generation_paths |= {item["path"] for item in old_generation["files"]}
+    allowed = generation_paths | {
+        RECEIPT_PATH, JOURNAL_PATH, PREVIOUS_ARCHIVE_PATH, PREVIOUS_SIDECAR_PATH,
+        PREVIOUS_RECEIPT_PATH, PREVIOUS_JOURNAL_PATH,
+    }
+    if not set(finals) <= allowed:
+        raise ValueError("transaction path is outside lifecycle scope")
+    entry_by_final = {entry["final"]: entry for entry in entries}
+    control_paths = {RECEIPT_PATH, JOURNAL_PATH}
+    previous_paths = {
+        PREVIOUS_ARCHIVE_PATH, PREVIOUS_SIDECAR_PATH,
+        PREVIOUS_RECEIPT_PATH, PREVIOUS_JOURNAL_PATH,
+    }
+    new_generation_paths = {item["path"] for item in new_generation["files"]}
+    old_generation_paths = set()
+    if isinstance(old_generation, dict):
+        old_generation_paths = {item["path"] for item in old_generation["files"]}
+    expected_paths = new_generation_paths | old_generation_paths | control_paths
+    if plan["action"] != "install":
+        expected_paths |= previous_paths
+    if set(finals) != expected_paths:
+        raise ValueError("transaction path inventory does not close over its generations")
+    for side, generation in (("new", new_generation), ("old", old_generation)):
+        if not isinstance(generation, dict):
+            continue
+        for item in generation["files"]:
+            descriptor = entry_by_final[item["path"]][side]
+            if descriptor is None or any(descriptor[key] != item[key] for key in ("elf", "mode", "sha256", "size")):
+                raise ValueError("transaction descriptor does not match its generation")
+    for side, receipt_key, journal_key in (
+        ("new", "new_receipt_sha256", "new_journal_sha256"),
+        ("old", "old_receipt_sha256", "old_journal_sha256"),
+    ):
+        expected_receipt = plan[receipt_key]
+        expected_journal = plan[journal_key]
+        receipt_descriptor = entry_by_final[RECEIPT_PATH][side]
+        journal_descriptor = entry_by_final[JOURNAL_PATH][side]
+        if expected_receipt is None:
+            if receipt_descriptor is not None or journal_descriptor is not None:
+                raise ValueError("transaction old controls are inconsistent")
+        elif receipt_descriptor is None or journal_descriptor is None or receipt_descriptor["sha256"] != expected_receipt or journal_descriptor["sha256"] != expected_journal:
+            raise ValueError("transaction control descriptors do not match")
+    if plan["action"] == "upgrade":
+        if any(entry_by_final[path]["old"] is not None or entry_by_final[path]["new"] is None for path in previous_paths):
+            raise ValueError("upgrade predecessor-slot descriptors are invalid")
+    if plan["action"] == "rollback-version":
+        if any(entry_by_final[path]["old"] is None or entry_by_final[path]["new"] is not None for path in previous_paths):
+            raise ValueError("rollback predecessor-slot descriptors are invalid")
+    return plan
+
+
+def _parse_transaction_envelope(raw: bytes) -> dict[str, object]:
+    if len(raw) > MAX_TRANSACTION_SIZE:
+        raise ValueError("transaction record is too large")
+    document = _json_loads(raw, "transaction record")
+    if _canonical_json(document) != raw:
+        raise ValueError("transaction record is not canonical")
+    if not isinstance(document, dict) or set(document) != {"plan", "plan_sha256", "schema_version"}:
+        raise ValueError("transaction record fields are invalid")
+    if document["schema_version"] != TRANSACTION_SCHEMA_VERSION:
+        raise ValueError("transaction record schema is invalid")
+    plan = _validate_transaction_plan(document["plan"])
+    expected = hashlib.sha256(TRANSACTION_DOMAIN + _canonical_json(plan)).hexdigest()
+    if document["plan_sha256"] != expected:
+        raise ValueError("transaction plan digest does not match")
+    return plan
 
 
 def _version_precedence(version: str) -> tuple[int, int, int, tuple[tuple[int, object], ...]]:
@@ -448,9 +737,11 @@ def _ensure_directory(root: Path, relative: str, created: list[str]) -> Path:
         try:
             status = os.lstat(current)
         except FileNotFoundError:
+            parent = current.parent
             os.mkdir(current, 0o755)
             if _is_production(root):
                 os.chown(current, 0, 0)
+            _fsync_directory(parent)
             created.append(str(current.relative_to(root)))
             status = os.lstat(current)
         if not stat.S_ISDIR(status.st_mode) or stat.S_ISLNK(status.st_mode):
@@ -479,19 +770,22 @@ def _stage_file(parent: Path, final_name: str, mode: int, writer: Callable[[Bina
     try:
         writer(handle)
         handle.flush()
+        os.fchmod(handle.fileno(), mode)
+        if production:
+            os.fchown(handle.fileno(), 0, 0)
         os.fsync(handle.fileno())
         if os.fstat(handle.fileno()).st_mode & 0o777 != mode:
             raise ValueError("staged file mode is invalid")
-        if production:
-            os.fchown(handle.fileno(), 0, 0)
     except BaseException:
         handle.close()
         try:
             os.unlink(parent / temporary)
+            _fsync_directory(parent)
         except FileNotFoundError:
             pass
         raise
     handle.close()
+    _fsync_directory(parent)
     return temporary
 
 
@@ -604,134 +898,504 @@ def _unlink_owned_file(path: Path, item: InstalledFile, identity: tuple[int, int
     return True
 
 
+def _anchor_path(root: Path, name: str) -> Path:
+    return root / name
+
+
+def _read_transaction_anchor(root: Path, name: str) -> tuple[bytes, dict[str, object]]:
+    path = _anchor_path(root, name)
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as source:
+            before = os.fstat(source.fileno())
+            if not stat.S_ISREG(before.st_mode) or stat.S_IMODE(before.st_mode) != 0o444:
+                raise ValueError("transaction anchor is not a protected regular file")
+            expected_owner = 0 if _is_production(root) else None
+            if not _owner_matches(before, expected_owner, expected_owner):
+                raise ValueError("transaction anchor owner is invalid")
+            raw = source.read(MAX_TRANSACTION_SIZE + 1)
+            after = os.fstat(source.fileno())
+    except OSError as error:
+        raise ValueError("transaction anchor could not be read") from error
+    stable = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+    if len(raw) != before.st_size or any(getattr(before, key) != getattr(after, key) for key in stable):
+        raise ValueError("transaction anchor changed while read")
+    plan = _parse_transaction_envelope(raw)
+    expected_owner = 0 if _is_production(root) else None
+    for entry in plan["paths"]:
+        for side in ("old", "new"):
+            file_descriptor = entry[side]
+            if file_descriptor is not None and (file_descriptor["uid"] != expected_owner or file_descriptor["gid"] != expected_owner):
+                raise ValueError("transaction descriptor owner policy is invalid")
+    return raw, plan
+
+
+def _active_transaction(root: Path) -> tuple[str, bytes, dict[str, object]] | None:
+    present: list[str] = []
+    for name in TRANSACTION_ANCHORS:
+        try:
+            os.lstat(root / name)
+        except FileNotFoundError:
+            continue
+        present.append(name)
+    if len(present) > 1:
+        raise ValueError("multiple transaction anchors are present")
+    if not present:
+        return None
+    name = present[0]
+    raw, plan = _read_transaction_anchor(root, name)
+    return name, raw, plan
+
+
+def _preflight_no_transaction_debris(root: Path, finals: list[str] | tuple[str, ...] | set[str]) -> None:
+    parents = {"."} | {str(PurePosixPath(relative).parent) for relative in finals}
+    for relative in parents:
+        parent = root / relative
+        try:
+            children = list(os.scandir(parent))
+        except FileNotFoundError:
+            continue
+        for child in children:
+            if ".open-trestle-" in child.name:
+                raise ValueError("unexpected transaction-looking object is present")
+
+
+def _validate_optional_parent_chain(root: Path, relative: str) -> None:
+    current = root
+    for part in PurePosixPath(relative).parent.parts:
+        current = current / part
+        try:
+            status = os.lstat(current)
+        except FileNotFoundError:
+            return
+        if not stat.S_ISDIR(status.st_mode) or stat.S_ISLNK(status.st_mode) or status.st_mode & 0o022:
+            raise ValueError("transaction path ancestor is not trusted")
+        if _is_production(root) and (status.st_uid != 0 or status.st_gid != 0):
+            raise ValueError("transaction path ancestor is not root-owned")
+
+
+def _descriptor_status(path: Path, descriptor: dict[str, object]) -> os.stat_result | None:
+    try:
+        status = os.lstat(path)
+    except FileNotFoundError:
+        return None
+    if (
+        not stat.S_ISREG(status.st_mode)
+        or stat.S_ISLNK(status.st_mode)
+        or stat.S_IMODE(status.st_mode) != descriptor["mode"]
+        or status.st_size != descriptor["size"]
+        or not _owner_matches(status, descriptor["uid"], descriptor["gid"])
+    ):
+        raise ValueError(f"transaction object metadata is invalid: {path}")
+    digest, size = _sha256_path(path)
+    if digest != descriptor["sha256"] or size != descriptor["size"]:
+        raise ValueError(f"transaction object digest is invalid: {path}")
+    return status
+
+
+def _existing_status(path: Path) -> os.stat_result | None:
+    try:
+        return os.lstat(path)
+    except FileNotFoundError:
+        return None
+
+
+def _matches_descriptor(path: Path, descriptor: dict[str, object] | None) -> bool:
+    if descriptor is None:
+        return False
+    try:
+        return _descriptor_status(path, descriptor) is not None
+    except ValueError:
+        return False
+
+
+def _classify_transaction_paths(root: Path, plan: dict[str, object], state: str) -> list[dict[str, object]]:
+    entries = plan["paths"]
+    assert isinstance(entries, list)
+    allowed_by_parent: dict[str, set[str]] = {".": set(TRANSACTION_ANCHORS)}
+    for raw_entry in entries:
+        assert isinstance(raw_entry, dict)
+        for key in ("staged", "quarantine"):
+            path = PurePosixPath(raw_entry[key])
+            allowed_by_parent.setdefault(str(path.parent), set()).add(path.name)
+        for key in ("final", "staged", "quarantine"):
+            _validate_optional_parent_chain(root, raw_entry[key])
+    for relative, allowed_names in allowed_by_parent.items():
+        parent = root / relative
+        try:
+            children = list(os.scandir(parent))
+        except FileNotFoundError:
+            continue
+        for child in children:
+            if ".open-trestle-" in child.name and child.name not in allowed_names:
+                raise ValueError("unexpected transaction-looking object is present")
+    classified: list[dict[str, object]] = []
+    for raw_entry in entries:
+        entry = dict(raw_entry)
+        final = root / entry["final"]
+        staged = root / entry["staged"]
+        quarantine = root / entry["quarantine"]
+        old = entry["old"]
+        new = entry["new"]
+        final_status = _existing_status(final)
+        staged_status = _existing_status(staged)
+        quarantine_status = _existing_status(quarantine)
+        final_old = final_status is not None and _matches_descriptor(final, old)
+        final_new = final_status is not None and _matches_descriptor(final, new)
+        staged_new = staged_status is not None and _matches_descriptor(staged, new)
+        quarantine_old = quarantine_status is not None and _matches_descriptor(quarantine, old)
+        if final_status is not None and not (final_old or final_new):
+            raise ValueError(f"transaction final is ambiguous: {entry['final']}")
+        if staged_status is not None and not staged_new:
+            raise ValueError(f"transaction staged object is ambiguous: {entry['staged']}")
+        if quarantine_status is not None and not quarantine_old:
+            raise ValueError(f"transaction quarantine is ambiguous: {entry['quarantine']}")
+        if state == BOOTSTRAP_ANCHOR:
+            if old is None:
+                valid = final_status is None and staged_status is None and quarantine_status is None
+            else:
+                valid = final_old and staged_status is None and quarantine_status is None
+        elif state == PENDING_ANCHOR:
+            if old is None:
+                valid = quarantine_status is None and not (final_status is not None and staged_status is not None)
+            elif new is None:
+                valid = staged_status is None and ((final_old and quarantine_status is None) or (final_status is None and quarantine_old))
+            else:
+                valid = (
+                    (final_old and quarantine_status is None)
+                    or (final_status is None and quarantine_old)
+                    or (final_new and quarantine_old and staged_status is None)
+                )
+        else:
+            if new is None:
+                valid = final_status is None and staged_status is None and (quarantine_status is None or quarantine_old)
+            else:
+                valid = final_new and (staged_status is None or staged_new) and (quarantine_status is None or quarantine_old)
+        if not valid:
+            raise ValueError(f"transaction path state is impossible: {entry['final']}")
+        entry.update({
+            "final_exists": final_status is not None,
+            "final_old": final_old,
+            "final_new": final_new,
+            "quarantine_exists": quarantine_status is not None,
+            "staged_exists": staged_status is not None,
+        })
+        classified.append(entry)
+    return classified
+
+
+def _unlink_verified(path: Path, descriptor: dict[str, object]) -> None:
+    before = _descriptor_status(path, descriptor)
+    if before is None:
+        return
+    current = os.lstat(path)
+    if (current.st_dev, current.st_ino) != (before.st_dev, before.st_ino):
+        raise ValueError(f"transaction object changed before removal: {path}")
+    os.unlink(path)
+    _fsync_directory(path.parent)
+
+
+def _remove_transaction_directories(root: Path, directories: list[str]) -> None:
+    for relative in sorted(set(directories), key=lambda value: (value.count("/"), value), reverse=True):
+        path = root / relative
+        try:
+            path.rmdir()
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            if error.errno in {errno.ENOTEMPTY, errno.EEXIST}:
+                continue
+            raise
+        _fsync_directory(path.parent)
+
+
+def _unlink_anchor(root: Path, name: str, raw: bytes) -> None:
+    current, _ = _read_transaction_anchor(root, name)
+    if current != raw:
+        raise ValueError("transaction anchor changed before removal")
+    os.unlink(root / name)
+    _fsync_directory(root)
+
+
+def _recover_pending(root: Path, raw: bytes, plan: dict[str, object]) -> None:
+    entries = _classify_transaction_paths(root, plan, PENDING_ANCHOR)
+    controls = {RECEIPT_PATH, JOURNAL_PATH}
+    ordered = sorted(entries, key=lambda entry: (entry["final"] in controls, entry["final"]))
+    for entry in ordered:
+        final = root / entry["final"]
+        staged = root / entry["staged"]
+        quarantine = root / entry["quarantine"]
+        old = entry["old"]
+        new = entry["new"]
+        if old is None:
+            if entry["final_exists"]:
+                _unlink_verified(final, new)
+            if entry["staged_exists"]:
+                _unlink_verified(staged, new)
+            continue
+        if entry["quarantine_exists"]:
+            if entry["final_exists"]:
+                _unlink_verified(final, new)
+            _rename_noreplace(quarantine.parent, quarantine.name, final.name)
+            _fsync_directory(final.parent)
+        if entry["staged_exists"]:
+            _unlink_verified(staged, new)
+    _remove_transaction_directories(root, plan["created_directories"])
+    _unlink_anchor(root, PENDING_ANCHOR, raw)
+
+
+def _recover_committed(root: Path, raw: bytes, plan: dict[str, object]) -> None:
+    entries = _classify_transaction_paths(root, plan, COMMITTED_ANCHOR)
+    for entry in entries:
+        if entry["staged_exists"]:
+            _unlink_verified(root / entry["staged"], entry["new"])
+        if entry["quarantine_exists"]:
+            _unlink_verified(root / entry["quarantine"], entry["old"])
+    _remove_transaction_directories(root, plan["obsolete_directories"])
+    _unlink_anchor(root, COMMITTED_ANCHOR, raw)
+
+
+def recover(destdir: Path | None = None) -> None:
+    root = _installation_root(destdir)
+    active = _active_transaction(root)
+    if active is None:
+        return
+    name, raw, plan = active
+    if name == BOOTSTRAP_ANCHOR:
+        _classify_transaction_paths(root, plan, BOOTSTRAP_ANCHOR)
+        _unlink_anchor(root, name, raw)
+    elif name == PENDING_ANCHOR:
+        _recover_pending(root, raw, plan)
+    else:
+        _recover_committed(root, raw, plan)
+
+
+def _require_no_recovery(root: Path) -> None:
+    if _active_transaction(root) is not None:
+        raise ValueError("lifecycle recovery is required; run recover")
+
+
+def _start_transaction(root: Path, plan: dict[str, object]) -> bytes:
+    if _active_transaction(root) is not None:
+        raise ValueError("lifecycle recovery is required; run recover")
+    body = _transaction_envelope(plan)
+    _preflight_no_transaction_debris(
+        root, {entry["final"] for entry in plan["paths"]}
+    )
+    handle: BinaryIO | None = None
+    owned_anchor: str | None = None
+    owned_identity: tuple[int, int] | None = None
+    try:
+        handle = _open_new_file(root, BOOTSTRAP_ANCHOR, 0o444)
+        owned_anchor = BOOTSTRAP_ANCHOR
+        opened_status = os.fstat(handle.fileno())
+        owned_identity = (opened_status.st_dev, opened_status.st_ino)
+        handle.write(body)
+        handle.flush()
+        os.fchmod(handle.fileno(), 0o444)
+        if _is_production(root):
+            os.fchown(handle.fileno(), 0, 0)
+        os.fsync(handle.fileno())
+        handle.close()
+        handle = None
+        _fsync_directory(root)
+        _rename_noreplace(root, BOOTSTRAP_ANCHOR, PENDING_ANCHOR)
+        owned_anchor = PENDING_ANCHOR
+        _fsync_directory(root)
+    except BaseException:
+        if handle is not None:
+            handle.close()
+        if owned_anchor is not None and owned_identity is not None:
+            try:
+                current_status = os.lstat(root / owned_anchor)
+                if (current_status.st_dev, current_status.st_ino) == owned_identity:
+                    os.unlink(root / owned_anchor)
+            except FileNotFoundError:
+                pass
+            try:
+                _fsync_directory(root)
+            except OSError:
+                pass
+        raise
+    return body
+
+
+def _commit_transaction(root: Path, plan: dict[str, object]) -> None:
+    _classify_transaction_paths(root, plan, COMMITTED_ANCHOR)
+    _rename_noreplace(root, PENDING_ANCHOR, COMMITTED_ANCHOR)
+    _fsync_directory(root)
+
+
+def _abandon_transaction(root: Path, plan: dict[str, object]) -> None:
+    active = _active_transaction(root)
+    if active is None:
+        return
+    name, raw, active_plan = active
+    if active_plan != plan or name not in {BOOTSTRAP_ANCHOR, PENDING_ANCHOR}:
+        raise ValueError("failed transaction anchor is ambiguous")
+    _unlink_anchor(root, name, raw)
+
+
+def _install_documents(
+    validated: ValidatedArchive,
+    managed: tuple[InstalledFile, ...],
+    created_directories: list[str],
+    transaction: str,
+) -> tuple[bytes, bytes, dict[str, object]]:
+    manifest_digest = hashlib.sha256(_canonical_json(validated.manifest)).hexdigest()
+    version = validated.manifest["version"]
+    generation = _generation_core(validated.sha256, manifest_digest, version, managed)
+    generation_id = _generation_identity(generation)
+    receipt = {
+        "action": "install",
+        "archive_sha256": validated.sha256,
+        "created_directories": created_directories,
+        "files": [_receipt_file(item) for item in managed],
+        "generation_id": generation_id,
+        "manifest_sha256": manifest_digest,
+        "new_archive_sha256": validated.sha256,
+        "new_generation_id": generation_id,
+        "new_manifest_sha256": manifest_digest,
+        "new_version": version,
+        "old_archive_sha256": None,
+        "old_generation_id": None,
+        "old_manifest_sha256": None,
+        "old_version": None,
+        "previous": None,
+        "schema_version": CONTROL_SCHEMA_VERSION,
+        "target": TARGET,
+        "transaction": transaction,
+        "version": version,
+    }
+    receipt_body = _canonical_json(receipt)
+    journal = {
+        "action": "install",
+        "new_archive_sha256": validated.sha256,
+        "new_generation_id": generation_id,
+        "new_manifest_sha256": manifest_digest,
+        "new_version": version,
+        "old_archive_sha256": None,
+        "old_generation_id": None,
+        "old_manifest_sha256": None,
+        "old_version": None,
+        "receipt_sha256": hashlib.sha256(receipt_body).hexdigest(),
+        "schema_version": CONTROL_SCHEMA_VERSION,
+        "target": TARGET,
+        "transaction": transaction,
+    }
+    return receipt_body, _canonical_json(journal), generation
+
+
+def _plan_entry(
+    root: Path,
+    transaction: str,
+    relative: str,
+    old: InstalledFile | None,
+    new: InstalledFile | None,
+) -> dict[str, object]:
+    staged, quarantine = _transaction_names(relative, transaction)
+    return {
+        "final": relative,
+        "new": None if new is None else _descriptor(new, root),
+        "old": None if old is None else _descriptor(old, root),
+        "quarantine": quarantine,
+        "staged": staged,
+    }
+
+
+def _unlink_live_owned_file(path: Path, item: InstalledFile, identity: tuple[int, int]) -> bool:
+    if not _matches_owned_file(path, item, identity):
+        return False
+    status = os.lstat(path)
+    if (status.st_dev, status.st_ino) != identity:
+        return False
+    os.unlink(path)
+    _fsync_directory(path.parent)
+    return True
+
+
 def install(archive_path: Path, destdir: Path | None = None) -> None:
     root = _installation_root(destdir)
+    recover(destdir)
     validated = validate_archive(archive_path)
-    installed_sidecar_body = f"{validated.sha256}  {PurePosixPath(LIFECYCLE_PATH).name}\n".encode("ascii")
-    archive_mode = 0o555
-    sidecar_mode = 0o444
-    managed = list(validated.files) + [
-        InstalledFile(LIFECYCLE_PATH, archive_mode, validated.size, validated.sha256, False),
-        InstalledFile(SIDECAR_PATH, sidecar_mode, len(installed_sidecar_body), hashlib.sha256(installed_sidecar_body).hexdigest(), False),
-    ]
-    all_paths = tuple(item.path for item in managed) + (RECEIPT_PATH, JOURNAL_PATH)
-    _preflight_absent(root, all_paths)
-    created: list[str] = []
+    managed = _managed_generation(validated)
+    all_paths = {item.path for item in managed} | {RECEIPT_PATH, JOURNAL_PATH}
+    _preflight_absent(root, tuple(sorted(all_paths)))
     transaction = uuid.uuid4().hex
+    created_directories = _planned_directories(root, all_paths)
+    receipt_body, journal_body, generation = _install_documents(
+        validated, managed, created_directories, transaction
+    )
+    controls = (
+        _control_item(RECEIPT_PATH, receipt_body),
+        _control_item(JOURNAL_PATH, journal_body),
+    )
+    new_items = {item.path: item for item in (*managed, *controls)}
+    paths = [
+        _plan_entry(root, transaction, relative, None, new_items[relative])
+        for relative in sorted(new_items)
+    ]
+    plan = _transaction_plan(
+        action="install",
+        transaction=transaction,
+        old_generation=None,
+        new_generation=generation,
+        old_receipt_sha256=None,
+        old_journal_sha256=None,
+        new_receipt_sha256=controls[0].sha256,
+        new_journal_sha256=controls[1].sha256,
+        created_directories=created_directories,
+        obsolete_directories=[],
+        paths=paths,
+    )
+    generated_paths = tuple(
+        value for entry in paths for value in (entry["staged"], entry["quarantine"])
+    )
+    _preflight_absent(root, generated_paths)
+    _start_transaction(root, plan)
+    created: list[str] = []
     staged: list[tuple[Path, str, str, InstalledFile, tuple[int, int]]] = []
-    published: list[tuple[InstalledFile, tuple[int, int]]] = []
-    control_published: list[tuple[Path, InstalledFile, tuple[int, int]]] = []
+    published: list[tuple[Path, InstalledFile, tuple[int, int]]] = []
     try:
-        archive_descriptor = os.open(validated.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-        with os.fdopen(archive_descriptor, "rb") as archive_source:
-            before = os.fstat(archive_source.fileno())
-            archive_digest, archive_size = _sha256_stream(archive_source)
-            if archive_digest != validated.sha256 or archive_size != before.st_size:
-                raise ValueError("distribution archive changed before installation")
-            archive_source.seek(0)
-            with zipfile.ZipFile(archive_source) as archive:
-                for item in validated.files:
-                    parent = _ensure_directory(root, str(PurePosixPath(item.path).parent), created)
-                    name = PurePosixPath(item.path).name
-                    def archive_writer(destination: BinaryIO, archive_name: str = "payload/" + item.path) -> None:
-                        with archive.open(archive_name) as source:
-                            while chunk := source.read(1 << 20):
-                                destination.write(chunk)
-                    temporary = _stage_file(parent, name, item.mode, archive_writer, transaction, _is_production(root))
-                    staged.append((parent, temporary, name, item, _file_identity(parent / temporary)))
-            lifecycle_item, lifecycle_sidecar_item = managed[-2:]
-            parent = _ensure_directory(root, str(PurePosixPath(lifecycle_item.path).parent), created)
-            name = PurePosixPath(lifecycle_item.path).name
-            archive_source.seek(0)
-            def lifecycle_writer(destination: BinaryIO) -> None:
-                while chunk := archive_source.read(1 << 20):
-                    destination.write(chunk)
-            temporary = _stage_file(parent, name, lifecycle_item.mode, lifecycle_writer, transaction, _is_production(root))
-            staged.append((parent, temporary, name, lifecycle_item, _file_identity(parent / temporary)))
-            after = os.fstat(archive_source.fileno())
-            stable = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
-            if any(getattr(before, key) != getattr(after, key) for key in stable):
-                raise ValueError("distribution archive changed during installation")
-        parent = _ensure_directory(root, str(PurePosixPath(lifecycle_sidecar_item.path).parent), created)
-        name = PurePosixPath(lifecycle_sidecar_item.path).name
-        temporary = _stage_file(parent, name, lifecycle_sidecar_item.mode, _write_bytes(installed_sidecar_body), transaction, _is_production(root))
-        staged.append((parent, temporary, name, lifecycle_sidecar_item, _file_identity(parent / temporary)))
-        for item, (parent, temporary, _, staged_item, _) in zip(managed, staged, strict=True):
-            if item != staged_item:
-                raise ValueError("staged file inventory is inconsistent")
-            _validate_staged_file(parent, temporary, item)
-        for item, (parent, temporary, name, staged_item, _) in zip(managed, staged, strict=True):
-            if item != staged_item:
-                raise ValueError("staged file inventory is inconsistent")
-            identity = _publish_staged(parent, temporary, name)
-            published.append((item, identity))
-            _fsync_directory(parent)
+        _stage_generation(root, validated, transaction, created, staged)
         control_parent = _ensure_directory(root, str(PurePosixPath(RECEIPT_PATH).parent), created)
-        created_directories = sorted(
-            set(created), key=lambda value: (value.count("/"), value)
-        )
-        manifest_digest = hashlib.sha256(_canonical_json(validated.manifest)).hexdigest()
-        version = validated.manifest["version"]
-        receipt = {
-            "action": "install",
-            "archive_sha256": validated.sha256,
-            "created_directories": created_directories,
-            "files": [_receipt_file(item) for item in sorted(managed, key=lambda value: value.path)],
-            "manifest_sha256": manifest_digest,
-            "new_archive_sha256": validated.sha256,
-            "new_manifest_sha256": manifest_digest,
-            "new_version": version,
-            "old_archive_sha256": None,
-            "old_manifest_sha256": None,
-            "old_version": None,
-            "previous": None,
-            "schema_version": CONTROL_SCHEMA_VERSION,
-            "target": TARGET,
-            "transaction": transaction,
-            "version": version,
-        }
-        receipt_body = _canonical_json(receipt)
-        journal = {
-            "action": "install",
-            "new_archive_sha256": validated.sha256,
-            "new_manifest_sha256": manifest_digest,
-            "new_version": version,
-            "old_archive_sha256": None,
-            "old_manifest_sha256": None,
-            "old_version": None,
-            "receipt_sha256": hashlib.sha256(receipt_body).hexdigest(),
-            "schema_version": CONTROL_SCHEMA_VERSION,
-            "target": TARGET,
-            "transaction": transaction,
-        }
-        if created_directories != sorted(
-            set(created), key=lambda value: (value.count("/"), value)
+        for relative, body, item in (
+            (RECEIPT_PATH, receipt_body, controls[0]),
+            (JOURNAL_PATH, journal_body, controls[1]),
         ):
-            raise ValueError("installation directory inventory changed after receipt snapshot")
-        receipt_temp = _stage_file(control_parent, PurePosixPath(RECEIPT_PATH).name, 0o444, _write_bytes(receipt_body), transaction, _is_production(root))
-        receipt_item = InstalledFile(RECEIPT_PATH, 0o444, len(receipt_body), hashlib.sha256(receipt_body).hexdigest(), False)
-        staged.append((control_parent, receipt_temp, PurePosixPath(RECEIPT_PATH).name, receipt_item, _file_identity(control_parent / receipt_temp)))
-        receipt_identity = _publish_staged(control_parent, receipt_temp, PurePosixPath(RECEIPT_PATH).name)
-        receipt_path = root / RECEIPT_PATH
-        control_published.append((receipt_path, receipt_item, receipt_identity))
-        _fsync_directory(control_parent)
-        journal_body = _canonical_json(journal)
-        journal_temp = _stage_file(control_parent, PurePosixPath(JOURNAL_PATH).name, 0o444, _write_bytes(journal_body), transaction, _is_production(root))
-        journal_item = InstalledFile(JOURNAL_PATH, 0o444, len(journal_body), hashlib.sha256(journal_body).hexdigest(), False)
-        staged.append((control_parent, journal_temp, PurePosixPath(JOURNAL_PATH).name, journal_item, _file_identity(control_parent / journal_temp)))
-        journal_identity = _publish_staged(control_parent, journal_temp, PurePosixPath(JOURNAL_PATH).name)
-        journal_path = root / JOURNAL_PATH
-        control_published.append((journal_path, journal_item, journal_identity))
-        _fsync_directory(control_parent)
+            name = PurePosixPath(relative).name
+            temporary = _stage_file(
+                control_parent, name, item.mode, _write_bytes(body), transaction, _is_production(root)
+            )
+            staged.append((control_parent, temporary, name, item, _file_identity(control_parent / temporary)))
+        if sorted(created, key=lambda value: (value.count("/"), value)) != created_directories:
+            raise ValueError("installation directory inventory changed after preflight")
+        staged_by_path = {entry[3].path: entry for entry in staged}
+        if set(staged_by_path) != set(new_items):
+            raise ValueError("installation staged inventory is inconsistent")
+        order = sorted(set(new_items) - {RECEIPT_PATH, JOURNAL_PATH}) + [RECEIPT_PATH, JOURNAL_PATH]
+        for relative in order:
+            parent, temporary, name, item, staged_identity = staged_by_path[relative]
+            if not _matches_owned_file(parent / temporary, item, staged_identity):
+                raise ValueError(f"staged file changed before installation: {relative}")
+            identity = _publish_staged(parent, temporary, name)
+            published.append((parent / name, item, identity))
+            if identity != staged_identity or not _matches_owned_file(parent / name, item, identity):
+                raise ValueError(f"staged file changed during installation: {relative}")
+            _fsync_directory(parent)
+        _commit_transaction(root, plan)
     except BaseException:
-        for parent, temporary, _, item, identity in staged:
-            _unlink_owned_file(parent / temporary, item, identity)
-        for path, item, identity in reversed(control_published):
-            _unlink_owned_file(path, item, identity)
-        for item, identity in reversed(published):
-            _unlink_owned_file(root / item.path, item, identity)
-        _remove_created_directories(root, created)
+        try:
+            recover(destdir)
+        except (OSError, ValueError):
+            for path, item, identity in reversed(published):
+                _unlink_live_owned_file(path, item, identity)
+            for parent, temporary, _, item, identity in staged:
+                _unlink_live_owned_file(parent / temporary, item, identity)
+            _remove_created_directories(root, created)
+            _abandon_transaction(root, plan)
         raise
+    recover(destdir)
 
 
 def _read_control_file(root: Path, relative: str) -> bytes:
@@ -828,8 +1492,13 @@ def _load_control(root: Path) -> tuple[dict[str, object], dict[str, object], tup
         files = _parse_receipt_files(receipt["files"])
         _validate_created_directories(receipt["created_directories"], files)
         normalized = dict(receipt)
+        legacy_generation = _generation_core(receipt["archive_sha256"], receipt["manifest_sha256"], receipt["version"], files)
+        legacy_generation_id = _generation_identity(legacy_generation)
         normalized.update({
             "action": "install",
+            "generation_id": legacy_generation_id,
+            "new_generation_id": legacy_generation_id,
+            "old_generation_id": None,
             "new_archive_sha256": receipt["archive_sha256"],
             "new_manifest_sha256": receipt["manifest_sha256"],
             "new_version": receipt["version"],
@@ -850,14 +1519,20 @@ def _load_control(root: Path) -> tuple[dict[str, object], dict[str, object], tup
         "old_archive_sha256", "old_manifest_sha256", "old_version", "receipt_sha256",
         "schema_version", "target", "transaction",
     }
-    if not isinstance(receipt, dict) or set(receipt) != receipt_fields:
+    receipt_identity_fields = {"generation_id", "new_generation_id", "old_generation_id"}
+    journal_identity_fields = {"new_generation_id", "old_generation_id"}
+    if not isinstance(receipt, dict) or set(receipt) not in {frozenset(receipt_fields), frozenset(receipt_fields | receipt_identity_fields)}:
         raise ValueError("installation receipt fields are invalid")
-    if not isinstance(journal, dict) or set(journal) != journal_fields:
+    if not isinstance(journal, dict) or set(journal) not in {frozenset(journal_fields), frozenset(journal_fields | journal_identity_fields)}:
         raise ValueError("installation journal fields are invalid")
+    has_generation_id = "generation_id" in receipt
+    if has_generation_id != ("new_generation_id" in journal):
+        raise ValueError("installation generation identity fields are inconsistent")
     action = receipt["action"]
     if action not in {"install", "upgrade", "rollback-version"} or journal["action"] != action:
         raise ValueError("installation control action is invalid")
-    if receipt["schema_version"] != CONTROL_SCHEMA_VERSION or receipt["target"] != TARGET or journal["schema_version"] != CONTROL_SCHEMA_VERSION or journal["target"] != TARGET:
+    expected_schema = CONTROL_SCHEMA_VERSION if has_generation_id else 2
+    if receipt["schema_version"] != expected_schema or receipt["target"] != TARGET or journal["schema_version"] != expected_schema or journal["target"] != TARGET:
         raise ValueError("installation control identity is invalid")
     digests = (receipt["archive_sha256"], receipt["manifest_sha256"], receipt["new_archive_sha256"], receipt["new_manifest_sha256"], journal["new_archive_sha256"], journal["new_manifest_sha256"], journal["receipt_sha256"])
     if any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in digests):
@@ -886,22 +1561,44 @@ def _load_control(root: Path) -> tuple[dict[str, object], dict[str, object], tup
     if not isinstance(receipt["transaction"], str) or not re.fullmatch(r"[0-9a-f]{32}", receipt["transaction"]):
         raise ValueError("installation transaction is invalid")
     bound = ("action", "new_archive_sha256", "new_manifest_sha256", "new_version", "old_archive_sha256", "old_manifest_sha256", "old_version", "schema_version", "target", "transaction")
+    if has_generation_id:
+        bound += ("new_generation_id", "old_generation_id")
     if any(journal[key] != receipt[key] for key in bound) or journal["receipt_sha256"] != hashlib.sha256(receipt_raw).hexdigest():
         raise ValueError("installation journal does not bind the receipt")
     if receipt["archive_sha256"] != receipt["new_archive_sha256"] or receipt["manifest_sha256"] != receipt["new_manifest_sha256"] or receipt["version"] != receipt["new_version"]:
         raise ValueError("installation current generation binding is invalid")
     files = _parse_receipt_files(receipt["files"])
     _validate_created_directories(receipt["created_directories"], files)
+    generation = _generation_core(receipt["archive_sha256"], receipt["manifest_sha256"], receipt["version"], files)
+    generation_id = _generation_identity(generation)
+    if has_generation_id:
+        if receipt["generation_id"] != generation_id or receipt["new_generation_id"] != generation_id:
+            raise ValueError("installation generation identity does not match")
+        if action == "install" and receipt["old_generation_id"] is not None:
+            raise ValueError("installation old generation identity is invalid")
+        if action != "install" and (not isinstance(receipt["old_generation_id"], str) or not re.fullmatch(r"[0-9a-f]{64}", receipt["old_generation_id"])):
+            raise ValueError("installation old generation identity is invalid")
+    else:
+        receipt = dict(receipt)
+        receipt.update({"generation_id": generation_id, "new_generation_id": generation_id})
+        receipt["old_generation_id"] = None
     previous = receipt["previous"]
     if action == "upgrade":
         previous_fields = {
             "archive_sha256", "created_directories", "files", "journal_sha256",
             "manifest_sha256", "receipt_sha256", "version",
         }
-        if not isinstance(previous, dict) or set(previous) != previous_fields:
+        allowed_previous_fields = {frozenset(previous_fields), frozenset(previous_fields | {"generation_id"})}
+        if not isinstance(previous, dict) or set(previous) not in allowed_previous_fields:
             raise ValueError("installation predecessor receipt is invalid")
         previous_files = _parse_receipt_files(previous["files"])
         _validate_created_directories(previous["created_directories"], previous_files)
+        previous_generation = _generation_core(previous["archive_sha256"], previous["manifest_sha256"], previous["version"], previous_files)
+        previous_generation_id = _generation_identity(previous_generation)
+        if "generation_id" in previous and previous["generation_id"] != previous_generation_id:
+            raise ValueError("installation predecessor generation identity is invalid")
+        if has_generation_id and receipt["old_generation_id"] != previous_generation_id:
+            raise ValueError("installation predecessor generation identity does not match")
         if previous["archive_sha256"] != receipt["old_archive_sha256"] or previous["manifest_sha256"] != receipt["old_manifest_sha256"] or previous["version"] != receipt["old_version"]:
             raise ValueError("installation predecessor binding is invalid")
         if any(not isinstance(previous[key], str) or not re.fullmatch(r"[0-9a-f]{64}", previous[key]) for key in ("receipt_sha256", "journal_sha256")):
@@ -947,6 +1644,7 @@ def _validate_installed_file(root: Path, item: InstalledFile) -> os.stat_result:
 
 def verify_installed(archive_path: Path, destdir: Path | None = None) -> dict[str, object]:
     root = _installation_root(destdir)
+    _require_no_recovery(root)
     validated = validate_archive(archive_path)
     receipt, _, files = _load_control(root)
     if receipt["archive_sha256"] != validated.sha256:
@@ -1159,16 +1857,22 @@ def _transition_documents(
     old_version = old_receipt["version"]
     new_manifest_sha256 = hashlib.sha256(_canonical_json(new_archive.manifest)).hexdigest()
     new_version = new_archive.manifest["version"]
+    old_generation_id = old_receipt["generation_id"]
+    new_generation = _generation_core(new_archive.sha256, new_manifest_sha256, new_version, new_files)
+    new_generation_id = _generation_identity(new_generation)
     receipt = {
         "action": action,
         "archive_sha256": new_archive.sha256,
         "created_directories": created_directories,
         "files": [_receipt_file(item) for item in new_files],
+        "generation_id": new_generation_id,
         "manifest_sha256": new_manifest_sha256,
         "new_archive_sha256": new_archive.sha256,
+        "new_generation_id": new_generation_id,
         "new_manifest_sha256": new_manifest_sha256,
         "new_version": new_version,
         "old_archive_sha256": old_archive_sha256,
+        "old_generation_id": old_generation_id,
         "old_manifest_sha256": old_manifest_sha256,
         "old_version": old_version,
         "previous": previous,
@@ -1181,9 +1885,11 @@ def _transition_documents(
     journal = {
         "action": action,
         "new_archive_sha256": new_archive.sha256,
+        "new_generation_id": new_generation_id,
         "new_manifest_sha256": new_manifest_sha256,
         "new_version": new_version,
         "old_archive_sha256": old_archive_sha256,
+        "old_generation_id": old_generation_id,
         "old_manifest_sha256": old_manifest_sha256,
         "old_version": old_version,
         "receipt_sha256": hashlib.sha256(receipt_body).hexdigest(),
@@ -1198,11 +1904,9 @@ def _apply_transition(
     root: Path,
     staged: list[tuple[Path, str, str, InstalledFile, tuple[int, int]]],
     old_items: dict[str, tuple[InstalledFile, tuple[int, int]]],
-    created: list[str],
-    obsolete_directories: list[str],
     transaction: str,
 ) -> None:
-    staged_by_path = {item.path: entry for entry in staged for item in (entry[3],)}
+    staged_by_path = {entry[3].path: entry for entry in staged}
     if len(staged_by_path) != len(staged):
         raise ValueError("transition staged duplicate destinations")
     old_paths = set(old_items)
@@ -1216,8 +1920,7 @@ def _apply_transition(
     for relative, (item, identity) in old_items.items():
         if not _matches_owned_file(root / relative, item, identity):
             raise ValueError(f"owned file changed before transition: {relative}")
-    quarantined: list[tuple[Path, str, InstalledFile, tuple[int, int]]] = []
-    published: list[tuple[Path, InstalledFile, tuple[int, int]]] = []
+
     def publish(relative: str) -> None:
         parent, temporary, name, item, staged_identity = staged_by_path[relative]
         if not _matches_owned_file(parent / temporary, item, staged_identity):
@@ -1232,61 +1935,34 @@ def _apply_transition(
                 if restored != captured:
                     raise ValueError(f"could not restore changed transition file: {relative}")
                 raise ValueError(f"owned file changed during transition: {relative}")
-            quarantined.append((parent, quarantine, old_item, old_identity))
+            _fsync_directory(parent)
         identity = _publish_staged(parent, temporary, name)
-        published.append((parent / name, item, identity))
         if identity != staged_identity or not _matches_owned_file(parent / name, item, staged_identity):
             raise ValueError(f"staged file changed during transition: {relative}")
         _fsync_directory(parent)
 
-    try:
-        controls = {RECEIPT_PATH, JOURNAL_PATH}
-        for relative in sorted(new_paths - controls):
-            publish(relative)
-        for relative in sorted(old_paths - new_paths):
-            item, identity = old_items[relative]
-            path = root / relative
-            quarantine = f".{path.name}.open-trestle-old-{transaction}"
-            captured = _rename_noreplace(path.parent, path.name, quarantine)
-            if captured != identity or not _matches_owned_file(path.parent / quarantine, item, identity):
-                restored = _rename_noreplace(path.parent, quarantine, path.name)
-                _fsync_directory(path.parent)
-                if restored != captured:
-                    raise ValueError(f"could not restore changed transition file: {relative}")
-                raise ValueError(f"owned file changed during transition: {relative}")
-            quarantined.append((path.parent, quarantine, item, identity))
+    controls = {RECEIPT_PATH, JOURNAL_PATH}
+    for relative in sorted(new_paths - controls):
+        publish(relative)
+    for relative in sorted(old_paths - new_paths):
+        item, identity = old_items[relative]
+        path = root / relative
+        quarantine = f".{path.name}.open-trestle-old-{transaction}"
+        captured = _rename_noreplace(path.parent, path.name, quarantine)
+        if captured != identity or not _matches_owned_file(path.parent / quarantine, item, identity):
+            restored = _rename_noreplace(path.parent, quarantine, path.name)
             _fsync_directory(path.parent)
-        publish(RECEIPT_PATH)
-        publish(JOURNAL_PATH)
-    except BaseException:
-        for path, item, identity in reversed(published):
-            if not _unlink_owned_file(path, item, identity):
-                raise ValueError(f"could not remove failed transition file: {item.path}")
-        for parent, quarantine, item, identity in reversed(quarantined):
-            restored = _rename_noreplace(parent, quarantine, PurePosixPath(item.path).name)
-            if restored != identity:
-                raise ValueError(f"could not restore failed transition file: {item.path}")
-            _fsync_directory(parent)
-        for parent, temporary, _, item, identity in staged:
-            _unlink_owned_file(parent / temporary, item, identity)
-        _remove_created_directories(root, created)
-        raise
-    cleanup_failures: list[str] = []
-    for parent, quarantine, item, identity in quarantined:
-        try:
-            if not _unlink_owned_file(parent / quarantine, item, identity):
-                cleanup_failures.append(item.path)
-        except (OSError, ValueError):
-            cleanup_failures.append(item.path)
-    _remove_created_directories(root, obsolete_directories)
-    if cleanup_failures:
-        raise ValueError(
-            "transition committed but cleanup is incomplete: " + ", ".join(sorted(cleanup_failures))
-        )
+            if restored != captured:
+                raise ValueError(f"could not restore changed transition file: {relative}")
+            raise ValueError(f"owned file changed during transition: {relative}")
+        _fsync_directory(path.parent)
+    publish(RECEIPT_PATH)
+    publish(JOURNAL_PATH)
 
 
 def _transition(archive_path: Path, destdir: Path | None, *, rollback_to_previous: bool) -> None:
     root = _installation_root(destdir)
+    recover(destdir)
     current_archive, current_receipt, current_files = _verified_installed_generation(root)
     old_items: dict[str, tuple[InstalledFile, tuple[int, int]]] = {}
     for item in current_files:
@@ -1306,59 +1982,111 @@ def _transition(archive_path: Path, destdir: Path | None, *, rollback_to_previou
         for item in old_previous_items:
             status = _validate_installed_file(root, item)
             old_items[item.path] = (item, (status.st_dev, status.st_ino))
+    transaction = uuid.uuid4().hex
     if rollback_to_previous:
+        action = "rollback-version"
         candidate, candidate_files, previous_receipt_body, previous_journal_body, _ = _validate_previous_generation(root, current_receipt)
         previous_receipt = current_receipt["previous"]
         assert isinstance(previous_receipt, dict)
         created_directories = list(previous_receipt["created_directories"])
-        obsolete_directories = [value for value in current_receipt["created_directories"] if value not in created_directories]
+        obsolete_directories = [
+            value for value in current_receipt["created_directories"]
+            if value not in created_directories
+        ]
+        assert previous_receipt_body is not None and previous_journal_body is not None
+        receipt_body, journal_body = previous_receipt_body, previous_journal_body
+        slot_items: tuple[InstalledFile, ...] = ()
     else:
+        action = "upgrade"
         if current_receipt["action"] == "upgrade":
             raise ValueError("upgrade rollback slot must be consumed before another upgrade")
         candidate = validate_archive(archive_path)
         if _version_precedence(candidate.manifest["version"]) <= _version_precedence(current_archive.manifest["version"]):
             raise ValueError("upgrade candidate must be strictly newer than the installed version")
         candidate_files = _managed_generation(candidate)
-        action = "upgrade"
         previous = {
             "archive_sha256": current_receipt["archive_sha256"],
             "created_directories": current_receipt["created_directories"],
             "files": current_receipt["files"],
+            "generation_id": current_receipt["generation_id"],
             "journal_sha256": hashlib.sha256(control_bodies[JOURNAL_PATH]).hexdigest(),
             "manifest_sha256": current_receipt["manifest_sha256"],
             "receipt_sha256": hashlib.sha256(control_bodies[RECEIPT_PATH]).hexdigest(),
             "version": current_receipt["version"],
         }
-        planned = _planned_directories(root, {item.path for item in candidate_files} | {
-            PREVIOUS_ARCHIVE_PATH, PREVIOUS_SIDECAR_PATH,
-            PREVIOUS_RECEIPT_PATH, PREVIOUS_JOURNAL_PATH,
-        })
-        created_directories = sorted(set(current_receipt["created_directories"]) | set(planned), key=lambda value: (value.count("/"), value))
-        obsolete_directories = []
-    transaction = uuid.uuid4().hex
-    destination_paths = {item.path for item in candidate_files}
-    if not rollback_to_previous:
-        destination_paths |= {
+        destination_for_directories = {item.path for item in candidate_files} | {
             PREVIOUS_ARCHIVE_PATH, PREVIOUS_SIDECAR_PATH,
             PREVIOUS_RECEIPT_PATH, PREVIOUS_JOURNAL_PATH,
         }
-    destination_paths |= {RECEIPT_PATH, JOURNAL_PATH}
-    _planned_directories(root, destination_paths)
+        planned = _planned_directories(root, destination_for_directories)
+        created_directories = sorted(
+            set(current_receipt["created_directories"]) | set(planned),
+            key=lambda value: (value.count("/"), value),
+        )
+        obsolete_directories = []
+        receipt_body, journal_body = _transition_documents(
+            action=action,
+            old_receipt=current_receipt,
+            new_archive=candidate,
+            new_files=candidate_files,
+            created_directories=created_directories,
+            transaction=transaction,
+            previous=previous,
+        )
+        slot_items = _previous_slot_items(
+            current_archive, control_bodies[RECEIPT_PATH], control_bodies[JOURNAL_PATH]
+        )
+    controls = (
+        _control_item(RECEIPT_PATH, receipt_body),
+        _control_item(JOURNAL_PATH, journal_body),
+    )
+    new_items = {item.path: item for item in (*candidate_files, *slot_items, *controls)}
+    destination_paths = set(new_items)
+    transaction_created = _planned_directories(root, destination_paths)
     for relative in destination_paths - set(old_items):
         try:
             os.lstat(root / relative)
         except FileNotFoundError:
             continue
         raise FileExistsError(f"destination already exists: {relative}")
-    generated_paths = {
-        str(PurePosixPath(relative).parent / f".{PurePosixPath(relative).name}.open-trestle-{transaction}")
-        for relative in destination_paths
-    }
-    generated_paths |= {
-        str(PurePosixPath(relative).parent / f".{PurePosixPath(relative).name}.open-trestle-old-{transaction}")
-        for relative in set(old_items)
-    }
-    _preflight_absent(root, tuple(sorted(generated_paths)))
+    old_generation = _generation_core(
+        current_archive.sha256,
+        current_receipt["manifest_sha256"],
+        current_receipt["version"],
+        current_files,
+    )
+    new_manifest_sha256 = hashlib.sha256(_canonical_json(candidate.manifest)).hexdigest()
+    new_generation = _generation_core(
+        candidate.sha256, new_manifest_sha256, candidate.manifest["version"], candidate_files
+    )
+    paths = [
+        _plan_entry(
+            root,
+            transaction,
+            relative,
+            old_items.get(relative, (None, (0, 0)))[0],
+            new_items.get(relative),
+        )
+        for relative in sorted(set(old_items) | set(new_items))
+    ]
+    plan = _transaction_plan(
+        action=action,
+        transaction=transaction,
+        old_generation=old_generation,
+        new_generation=new_generation,
+        old_receipt_sha256=hashlib.sha256(control_bodies[RECEIPT_PATH]).hexdigest(),
+        old_journal_sha256=hashlib.sha256(control_bodies[JOURNAL_PATH]).hexdigest(),
+        new_receipt_sha256=controls[0].sha256,
+        new_journal_sha256=controls[1].sha256,
+        created_directories=transaction_created,
+        obsolete_directories=obsolete_directories,
+        paths=paths,
+    )
+    generated_paths = tuple(
+        value for entry in paths for value in (entry["staged"], entry["quarantine"])
+    )
+    _preflight_absent(root, generated_paths)
+    _start_transaction(root, plan)
     created: list[str] = []
     staged: list[tuple[Path, str, str, InstalledFile, tuple[int, int]]] = []
     try:
@@ -1368,32 +2096,30 @@ def _transition(archive_path: Path, destdir: Path | None, *, rollback_to_previou
                 root, current_archive, control_bodies[RECEIPT_PATH],
                 control_bodies[JOURNAL_PATH], transaction, created, staged,
             )
-            receipt_body, journal_body = _transition_documents(
-                action=action,
-                old_receipt=current_receipt,
-                new_archive=candidate,
-                new_files=candidate_files,
-                created_directories=created_directories,
-                transaction=transaction,
-                previous=previous,
-            )
-        else:
-            assert previous_receipt_body is not None and previous_journal_body is not None
-            receipt_body, journal_body = previous_receipt_body, previous_journal_body
         control_parent = _ensure_directory(root, str(PurePosixPath(RECEIPT_PATH).parent), created)
-        for relative, body in ((RECEIPT_PATH, receipt_body), (JOURNAL_PATH, journal_body)):
-            item = _control_item(relative, body)
+        for relative, body, item in (
+            (RECEIPT_PATH, receipt_body, controls[0]),
+            (JOURNAL_PATH, journal_body, controls[1]),
+        ):
             name = PurePosixPath(relative).name
-            temporary = _stage_file(control_parent, name, 0o444, _write_bytes(body), transaction, _is_production(root))
+            temporary = _stage_file(
+                control_parent, name, 0o444, _write_bytes(body), transaction, _is_production(root)
+            )
             staged.append((control_parent, temporary, name, item, _file_identity(control_parent / temporary)))
-        if sorted(set(created), key=lambda value: (value.count("/"), value)) != sorted(set(created) & set(created_directories), key=lambda value: (value.count("/"), value)):
+        if sorted(created, key=lambda value: (value.count("/"), value)) != transaction_created:
             raise ValueError("transition directory inventory changed after preflight")
-        _apply_transition(root, staged, old_items, created, obsolete_directories, transaction)
+        _apply_transition(root, staged, old_items, transaction)
+        _commit_transaction(root, plan)
     except BaseException:
-        for parent, temporary, _, item, identity in staged:
-            _unlink_owned_file(parent / temporary, item, identity)
-        _remove_created_directories(root, created)
+        try:
+            recover(destdir)
+        except (OSError, ValueError):
+            for parent, temporary, _, item, identity in staged:
+                _unlink_live_owned_file(parent / temporary, item, identity)
+            _remove_created_directories(root, created)
+            _abandon_transaction(root, plan)
         raise
+    recover(destdir)
 
 
 def upgrade(archive_path: Path, destdir: Path | None = None) -> None:
@@ -1402,6 +2128,7 @@ def upgrade(archive_path: Path, destdir: Path | None = None) -> None:
 
 def rollback_version(archive_path: Path, destdir: Path | None = None) -> None:
     root = _installation_root(destdir)
+    recover(destdir)
     executing = validate_archive(archive_path)
     current, _, _ = _verified_installed_generation(root)
     if executing.sha256 != current.sha256:
@@ -1413,14 +2140,17 @@ def _remove_created_directories(root: Path, directories: list[str] | tuple[str, 
     for relative in sorted(set(directories), key=lambda value: (value.count("/"), value), reverse=True):
         if relative == ".":
             continue
+        path = root / relative
         try:
-            (root / relative).rmdir()
+            path.rmdir()
         except (FileNotFoundError, OSError):
-            pass
+            continue
+        _fsync_directory(path.parent)
 
 
 def _remove_installation(archive_path: Path, destdir: Path | None, action: str) -> None:
     root = _installation_root(destdir)
+    recover(destdir)
     receipt = verify_installed(archive_path, destdir)
     _, _, files = _load_control(root)
     owned: list[tuple[Path, InstalledFile, tuple[int, int]]] = []
@@ -1439,6 +2169,9 @@ def _remove_installation(archive_path: Path, destdir: Path | None, action: str) 
         status = os.lstat(path)
         item = InstalledFile(relative, 0o444, len(body), hashlib.sha256(body).hexdigest(), False)
         controls.append((path, item, (status.st_dev, status.st_ino)))
+    _preflight_no_transaction_debris(
+        root, {item.path for _, item, _ in [*owned, *controls]}
+    )
     for path, item, identity in [*owned, *controls]:
         if not _matches_owned_file(path, item, identity):
             raise ValueError(f"owned file changed before {action}: {item.path}")
@@ -1515,7 +2248,7 @@ def _parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     verify_parser = subparsers.add_parser("verify-archive", aliases=["verify"])
     verify_parser.add_argument("--checksum", type=Path)
-    for command in ("install", "upgrade", "verify-installed", "rollback", "rollback-version", "uninstall"):
+    for command in ("install", "upgrade", "verify-installed", "rollback", "rollback-version", "uninstall", "recover"):
         child = subparsers.add_parser(command)
         child.add_argument("--destdir", type=Path)
     smoke_parser = subparsers.add_parser("smoke")
@@ -1541,6 +2274,9 @@ def main(arguments: list[str] | None = None) -> int:
         elif options.command == "verify-installed":
             verify_installed(archive_path, options.destdir)
             print("Open Trestle candidate installation verified.")
+        elif options.command == "recover":
+            recover(options.destdir)
+            print("Open Trestle candidate lifecycle recovered.")
         elif options.command == "smoke":
             smoke(archive_path, options.destdir, options.output)
         elif options.command == "rollback":
