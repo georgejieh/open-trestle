@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "case_id": "debug_near_misses",
+  "changes": [
+    {
+      "path": "dot.go",
+      "ranges": [
+        {
+          "start_line": 6,
+          "end_line": 6
+        }
+      ]
+    },
+    {
+      "path": "main.go",
+      "ranges": [
+        {
+          "start_line": 6,
+          "end_line": 12
+        }
+      ]
+    }
+  ],
+  "targets": [
+    {
+      "key": "static_debug_output",
+      "expected": [],
+      "expected_coverage": [
+        {
+          "path": "dot.go",
+          "outcome": "analyzed",
+          "reason": "none"
+        },
+        {
+          "path": "main.go",
+          "outcome": "analyzed",
+          "reason": "none"
+        }
+      ]
+    }
+  ]
+}

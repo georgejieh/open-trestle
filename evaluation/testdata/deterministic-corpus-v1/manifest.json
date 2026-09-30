@@ -1,0 +1,312 @@
+{
+  "contract": "open-trestle/deterministic-corpus-manifest",
+  "schema_version": 1,
+  "corpus_identity": "4babb0e544c70eab43d931709f52651fe27be74efffd7249a0d6025e803e2058",
+  "corpus_version": 1,
+  "license": "Apache-2.0",
+  "review_state": "pending",
+  "bounds": {
+    "maximum_cases": 8,
+    "maximum_files": 128,
+    "maximum_total_bytes": 1048576,
+    "maximum_file_bytes": 131072,
+    "maximum_labels_per_target": 1024
+  },
+  "targets": [
+    {
+      "key": "changed_declaration",
+      "version": 1,
+      "family": "structural_analyzer",
+      "match_unit": "case_id,path,declaration_key,change_kind"
+    },
+    {
+      "key": "contains_nul",
+      "version": 1,
+      "family": "structural_analyzer",
+      "match_unit": "case_id,path,signal"
+    },
+    {
+      "key": "go_changed_symbol",
+      "version": 1,
+      "family": "structural_analyzer",
+      "match_unit": "case_id,path,kind,qualified_name,start_line,end_line"
+    },
+    {
+      "key": "go_test_path",
+      "version": 1,
+      "family": "structural_analyzer",
+      "match_unit": "case_id,path,signal"
+    },
+    {
+      "key": "public_api_change",
+      "version": 1,
+      "family": "structural_analyzer",
+      "match_unit": "case_id,path,declaration_key,change_kind"
+    },
+    {
+      "key": "static_debug_output",
+      "version": 1,
+      "family": "finding_rule",
+      "match_unit": "case_id,path,start_line,end_line"
+    },
+    {
+      "key": "syntactic_reference_candidate",
+      "version": 1,
+      "family": "structural_analyzer",
+      "match_unit": "case_id,declaration_key,path,line,column"
+    },
+    {
+      "key": "vendor_path",
+      "version": 1,
+      "family": "structural_analyzer",
+      "match_unit": "case_id,path,signal"
+    }
+  ],
+  "origin": {
+    "path": "ORIGIN.md",
+    "sha256": "738188b4340a5ee4a8f35aeb7d249fcf264ce00b9ee4b3dbfad4f78afd26e6c4",
+    "bytes": 240
+  },
+  "cases": [
+    {
+      "id": "classification_boundaries",
+      "files": [
+        {
+          "side": "base",
+          "path": "alt/Vendor/pkg/x_Test.go",
+          "sha256": "a7b92614d2024fe2c230fc2384eb004c430483cd4ce7c7c12aeed66e69342a07",
+          "bytes": 12
+        },
+        {
+          "side": "base",
+          "path": "assets/blob.bin",
+          "sha256": "8a32a1ac92eb2a900f3d868d76fbdae60953bcb5218bd274b8acd9e1752eee1c",
+          "bytes": 11
+        },
+        {
+          "side": "base",
+          "path": "notes.txt",
+          "sha256": "dacf36547c7774a0a170806363b5d412991fbc0d6260b2c00b1d3a80a816c23f",
+          "bytes": 6
+        },
+        {
+          "side": "base",
+          "path": "pkg/vendor.go",
+          "sha256": "a7b92614d2024fe2c230fc2384eb004c430483cd4ce7c7c12aeed66e69342a07",
+          "bytes": 12
+        },
+        {
+          "side": "base",
+          "path": "vendor/pkg/x_test.go",
+          "sha256": "a7b92614d2024fe2c230fc2384eb004c430483cd4ce7c7c12aeed66e69342a07",
+          "bytes": 12
+        },
+        {
+          "side": "head",
+          "path": "alt/Vendor/pkg/x_Test.go",
+          "sha256": "a7b92614d2024fe2c230fc2384eb004c430483cd4ce7c7c12aeed66e69342a07",
+          "bytes": 12
+        },
+        {
+          "side": "head",
+          "path": "assets/blob.bin",
+          "sha256": "8a32a1ac92eb2a900f3d868d76fbdae60953bcb5218bd274b8acd9e1752eee1c",
+          "bytes": 11
+        },
+        {
+          "side": "head",
+          "path": "notes.txt",
+          "sha256": "dacf36547c7774a0a170806363b5d412991fbc0d6260b2c00b1d3a80a816c23f",
+          "bytes": 6
+        },
+        {
+          "side": "head",
+          "path": "pkg/vendor.go",
+          "sha256": "a7b92614d2024fe2c230fc2384eb004c430483cd4ce7c7c12aeed66e69342a07",
+          "bytes": 12
+        },
+        {
+          "side": "head",
+          "path": "vendor/pkg/x_test.go",
+          "sha256": "a7b92614d2024fe2c230fc2384eb004c430483cd4ce7c7c12aeed66e69342a07",
+          "bytes": 12
+        }
+      ],
+      "labels_path": "cases/classification_boundaries/labels.json",
+      "labels_sha256": "74940304d29c4771e92304c6cbd35f8ad67270b691fdfd33a8f20cd26c6a57d5",
+      "labels_bytes": 2497
+    },
+    {
+      "id": "coverage_and_removal",
+      "files": [
+        {
+          "side": "base",
+          "path": "broken.go",
+          "sha256": "850c5b7356e349edac3a16eab4d79201aadb2c233607e71ff94e008a20b9f4bd",
+          "bytes": 32
+        },
+        {
+          "side": "base",
+          "path": "notes.py",
+          "sha256": "585c93666fcb046b7b264d3fa73202aa2a38254ae82a4b3ba19e873c2d5a9886",
+          "bytes": 10
+        },
+        {
+          "side": "base",
+          "path": "removed.go",
+          "sha256": "c015da1a45840afd235af673220f6b3bd49667fc8529f078cd4b6a24c0ae64a2",
+          "bytes": 76
+        },
+        {
+          "side": "head",
+          "path": "broken.go",
+          "sha256": "aa189105a7ddbb9652ae15e6e6d68e1366b80ee842a1539ea1e64bca42147aac",
+          "bytes": 31
+        },
+        {
+          "side": "head",
+          "path": "notes.py",
+          "sha256": "69ef4f409b530264b0da21ad4054978ada08895c93631a0da1957e2a10b592b5",
+          "bytes": 10
+        },
+        {
+          "side": "head",
+          "path": "removed.go",
+          "sha256": "68539bd0ecaa791f6859ff1feb1e50c4e726fe486a9efc3cf54f532bc774fbec",
+          "bytes": 31
+        }
+      ],
+      "labels_path": "cases/coverage_and_removal/labels.json",
+      "labels_sha256": "469677c506983e442a9207465b688a2396f834f86d6458c328ff004304579465",
+      "labels_bytes": 1654
+    },
+    {
+      "id": "debug_direct_and_multiline",
+      "files": [
+        {
+          "side": "base",
+          "path": "main.go",
+          "sha256": "0cf431b72ba3f2b086d26ed716fcf5f5ffc6707a11d93e73a497229e27f2adb2",
+          "bytes": 49
+        },
+        {
+          "side": "head",
+          "path": "main.go",
+          "sha256": "376fb81232a5c0ea4af542b37c069293db4b6ecc2b6f35921f1eeb7a42f17477",
+          "bytes": 134
+        }
+      ],
+      "labels_path": "cases/debug_direct_and_multiline/labels.json",
+      "labels_sha256": "5c158b35a17c7e7328319a2ac90ce7f6923f53f5dd4126c872bcefb737fa477a",
+      "labels_bytes": 670
+    },
+    {
+      "id": "debug_near_misses",
+      "files": [
+        {
+          "side": "base",
+          "path": "dot.go",
+          "sha256": "074e179ee9073121afb177ba81d9edf372887f33f72da0f430f6c45e2e9acfbb",
+          "bytes": 85
+        },
+        {
+          "side": "base",
+          "path": "main.go",
+          "sha256": "752e505a745797a6729205b5eaad72c5b699f5cdd2afe7e7beea7c066259eb3e",
+          "bytes": 91
+        },
+        {
+          "side": "head",
+          "path": "dot.go",
+          "sha256": "e85b258428da4f3d8b364b379d8ccef338b55b8761687269356cbfdc77bd7abd",
+          "bytes": 103
+        },
+        {
+          "side": "head",
+          "path": "main.go",
+          "sha256": "a992d74cfd3c93895739c8a892fb786ddce60c4911c35d474426d09ea20bfa0f",
+          "bytes": 230
+        }
+      ],
+      "labels_path": "cases/debug_near_misses/labels.json",
+      "labels_sha256": "4ac6b82da32f17625905eb4f8ba4d1cd3d6d5fa526781a3ab1c349164a998120",
+      "labels_bytes": 694
+    },
+    {
+      "id": "go_symbol_boundaries",
+      "files": [
+        {
+          "side": "base",
+          "path": "readme.md",
+          "sha256": "01d09d19c2139a46aebfb577780d123d7396e97201bc7ead210a2ebff8239dee",
+          "bytes": 4
+        },
+        {
+          "side": "base",
+          "path": "service.go",
+          "sha256": "59df85154be860eadf9a17d308736085aa4c0a26be70299788d13c22da7e332d",
+          "bytes": 159
+        },
+        {
+          "side": "head",
+          "path": "readme.md",
+          "sha256": "7aa7a5359173d05b63cfd682e3c38487f3cb4f7f1d60659fe59fab1505977d4c",
+          "bytes": 4
+        },
+        {
+          "side": "head",
+          "path": "service.go",
+          "sha256": "cd32ef5ae38a97f2c5bac277524a8e8e7863249a901d8c92d063e3312c6ef0d4",
+          "bytes": 162
+        }
+      ],
+      "labels_path": "cases/go_symbol_boundaries/labels.json",
+      "labels_sha256": "bcf40f81211fe181ae601d2a8df64ec82a234490df333e1c44ef431b5b67fe55",
+      "labels_bytes": 1313
+    },
+    {
+      "id": "semantic_api_and_references",
+      "files": [
+        {
+          "side": "base",
+          "path": "other.go",
+          "sha256": "4680ca464bdd4f8ef9aef19ae5affcffbb9f658cf57c08be45df50672bfdaa1e",
+          "bytes": 66
+        },
+        {
+          "side": "base",
+          "path": "service.go",
+          "sha256": "f60bcf27646a6f618d175df7f27f9ae0366166f512543137447a6da315c2784b",
+          "bytes": 108
+        },
+        {
+          "side": "base",
+          "path": "service_test.go",
+          "sha256": "bccd736abd33b1e26c862057a2b54e63f3b15be4039ef655c07f96701ffd7cb0",
+          "bytes": 71
+        },
+        {
+          "side": "head",
+          "path": "other.go",
+          "sha256": "4680ca464bdd4f8ef9aef19ae5affcffbb9f658cf57c08be45df50672bfdaa1e",
+          "bytes": 66
+        },
+        {
+          "side": "head",
+          "path": "service.go",
+          "sha256": "89269fe5ef92ea58b40fd33f697f6cddd39d1a0343db0576509739be9a3fb639",
+          "bytes": 118
+        },
+        {
+          "side": "head",
+          "path": "service_test.go",
+          "sha256": "bccd736abd33b1e26c862057a2b54e63f3b15be4039ef655c07f96701ffd7cb0",
+          "bytes": 71
+        }
+      ],
+      "labels_path": "cases/semantic_api_and_references/labels.json",
+      "labels_sha256": "48ebfd5714d360fa7732dacef6ae231b4a63437b745d80c37d1cdd3b8f8d880c",
+      "labels_bytes": 1860
+    }
+  ]
+}

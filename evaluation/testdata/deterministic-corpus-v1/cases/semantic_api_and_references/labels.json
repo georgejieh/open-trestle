@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "case_id": "semantic_api_and_references",
+  "changes": [
+    {
+      "path": "service.go",
+      "ranges": [
+        {
+          "start_line": 3,
+          "end_line": 4
+        }
+      ]
+    }
+  ],
+  "targets": [
+    {
+      "key": "changed_declaration",
+      "expected": [
+        {
+          "path": "service.go",
+          "declaration_key": "func:BodyOnly",
+          "change_kind": "modified"
+        },
+        {
+          "path": "service.go",
+          "declaration_key": "func:Exported",
+          "change_kind": "modified"
+        }
+      ],
+      "expected_coverage": [
+        {
+          "path": "service.go",
+          "outcome": "analyzed",
+          "reason": "none"
+        }
+      ]
+    },
+    {
+      "key": "public_api_change",
+      "expected": [
+        {
+          "path": "service.go",
+          "declaration_key": "func:Exported",
+          "change_kind": "modified"
+        }
+      ],
+      "expected_coverage": [
+        {
+          "path": "service.go",
+          "outcome": "analyzed",
+          "reason": "none"
+        }
+      ]
+    },
+    {
+      "key": "syntactic_reference_candidate",
+      "expected": [
+        {
+          "declaration_key": "func:BodyOnly",
+          "path": "service_test.go",
+          "line": 5,
+          "column": 6
+        },
+        {
+          "declaration_key": "func:Exported",
+          "path": "service_test.go",
+          "line": 4,
+          "column": 6
+        }
+      ],
+      "expected_coverage": [
+        {
+          "path": "other.go",
+          "outcome": "analyzed",
+          "reason": "none"
+        },
+        {
+          "path": "service.go",
+          "outcome": "analyzed",
+          "reason": "none"
+        },
+        {
+          "path": "service_test.go",
+          "outcome": "analyzed",
+          "reason": "none"
+        }
+      ]
+    }
+  ]
+}

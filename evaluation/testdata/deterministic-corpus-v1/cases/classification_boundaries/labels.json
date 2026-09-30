@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "case_id": "classification_boundaries",
+  "changes": [],
+  "targets": [
+    {
+      "key": "contains_nul",
+      "expected": [
+        {
+          "path": "assets/blob.bin",
+          "signal": "contains_nul"
+        }
+      ],
+      "expected_coverage": [
+        {
+          "path": "alt/Vendor/pkg/x_Test.go",
+          "outcome": "analyzed",
+          "reason": "none"
+        },
+        {
+          "path": "assets/blob.bin",
+          "outcome": "analyzed",
+          "reason": "none"
+        },
+        {
+          "path": "notes.txt",
+          "outcome": "analyzed",
+          "reason": "none"
+        },
+        {
+          "path": "pkg/vendor.go",
+          "outcome": "analyzed",
+          "reason": "none"
+        },
+        {
+          "path": "vendor/pkg/x_test.go",
+          "outcome": "analyzed",
+          "reason": "none"
+        }
+      ]
+    },
+    {
+      "key": "go_test_path",
+      "expected": [
+        {
+          "path": "vendor/pkg/x_test.go",
+          "signal": "go_test_path"
+        }
+      ],
+      "expected_coverage": [
+        {
+          "path": "alt/Vendor/pkg/x_Test.go",
+          "outcome": "analyzed",
+          "reason": "none"
+        },
+        {
+          "path": "assets/blob.bin",
+          "outcome": "analyzed",
+          "reason": "none"
+        },
+        {
+          "path": "notes.txt",
+          "outcome": "analyzed",
+          "reason": "none"
+        },
+        {
+          "path": "pkg/vendor.go",
+          "outcome": "analyzed",
+          "reason": "none"
+        },
+        {
+          "path": "vendor/pkg/x_test.go",
+          "outcome": "analyzed",
+          "reason": "none"
+        }
+      ]
+    },
+    {
+      "key": "vendor_path",
+      "expected": [
+        {
+          "path": "vendor/pkg/x_test.go",
+          "signal": "vendor_path"
+        }
+      ],
+      "expected_coverage": [
+        {
+          "path": "alt/Vendor/pkg/x_Test.go",
+          "outcome": "analyzed",
+          "reason": "none"
+        },
+        {
+          "path": "assets/blob.bin",
+          "outcome": "analyzed",
+          "reason": "none"
+        },
+        {
+          "path": "notes.txt",
+          "outcome": "analyzed",
+          "reason": "none"
+        },
+        {
+          "path": "pkg/vendor.go",
+          "outcome": "analyzed",
+          "reason": "none"
+        },
+        {
+          "path": "vendor/pkg/x_test.go",
+          "outcome": "analyzed",
+          "reason": "none"
+        }
+      ]
+    }
+  ]
+}

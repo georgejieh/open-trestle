@@ -71,6 +71,21 @@ jobs:
         run: |
           GOWORK=off GOTOOLCHAIN=go1.26.8 go run ./cmd/trestle evaluate static-debug > "$RUNNER_TEMP/open-trestle-static-debug-evaluation.json"
           cmp evaluation/testdata/static-debug-report-v1.json "$RUNNER_TEMP/open-trestle-static-debug-evaluation.json"
+      - name: Verify pending deterministic-corpus candidate tooling
+        run: |
+          GOWORK=off GOTOOLCHAIN=go1.26.8 go build -o "$RUNNER_TEMP/trestle" ./cmd/trestle
+          set +e
+          "$RUNNER_TEMP/trestle" evaluate deterministic-corpus-candidate > "$RUNNER_TEMP/corpus-candidate-a.json"
+          FIRST_STATUS=$?
+          "$RUNNER_TEMP/trestle" evaluate deterministic-corpus-candidate > "$RUNNER_TEMP/corpus-candidate-b.json"
+          SECOND_STATUS=$?
+          set -e
+          test "$FIRST_STATUS" -eq 3
+          test "$SECOND_STATUS" -eq 3
+          cmp "$RUNNER_TEMP/corpus-candidate-a.json" "$RUNNER_TEMP/corpus-candidate-b.json"
+          PYTHONPATH=python/open_trestle_eval/src python3 -m open_trestle_eval.performance --warmups 1 --samples 10 --output "$RUNNER_TEMP/corpus-performance-observation.json" -- "$RUNNER_TEMP/trestle" evaluate deterministic-corpus-candidate
+      - name: Run evaluation-helper tests
+        run: PYTHONPATH=python/open_trestle_eval/src python3 -m unittest discover -s python/open_trestle_eval/tests -p "test_*.py"
       - name: Run race tests
         run: GOWORK=off GOTOOLCHAIN=go1.26.8 go test -race -p=1 -timeout=30m ./...
       - name: Run vet

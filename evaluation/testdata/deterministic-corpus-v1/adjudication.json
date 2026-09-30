@@ -1,0 +1,9 @@
+{
+  "contract": "open-trestle/deterministic-corpus-adjudication",
+  "schema_version": 1,
+  "corpus_identity": "4babb0e544c70eab43d931709f52651fe27be74efffd7249a0d6025e803e2058",
+  "review_state": "pending",
+  "method": "independent_human_review",
+  "decision": "pending",
+  "resolved_disagreements": []
+}

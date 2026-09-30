@@ -24,3 +24,26 @@ Exit codes are:
 Precision is `true_positive / (true_positive + false_positive)`. Recall is `true_positive / (true_positive + false_negative)`. A zero denominator is represented as `0/0`, not as success.
 
 This report evaluates one narrow deterministic rule over eight built-in cases. It does not establish repository-wide quality, calibration, model quality, human equivalence, security, latency, cost, or fitness for approval. Broader versioned evaluations remain required before external quality claims.
+
+
+## Pending deterministic corpus candidate
+
+`trestle evaluate deterministic-corpus-candidate` runs a separate embedded six-case synthetic corpus. It exercises the maintained `static_debug_output` finding rule and seven structural analyzer targets through their production Go APIs. The fixture tree, exact base and head bytes, changed ranges, target labels, and pending review record are under `evaluation/testdata/deterministic-corpus-v1/`.
+
+The candidate is not adjudicated. Its `adjudication.json` has `review_state: pending`, no reviewer identifier, and no review date. The CLI report therefore sets `release_evidence_eligible` to false and `golden_status` to `prohibited_pending_human_review`. No deterministic-corpus golden report is committed. Exit code `3` means the complete candidate contains one or more label or coverage mismatches. Exit code `4` means the complete candidate matched the pending labels. Neither exit code means approval or release evidence.
+
+Each evaluation target has its own closed match key and score. Unlike target units are not pooled into one quality number. For each target:
+
+- `TP = |expected intersection observed|`;
+- `FP = |observed - expected|`;
+- `FN = |expected - observed|`;
+- precision is `TP / (TP + FP)`;
+- recall is `TP / (TP + FN)`.
+
+A zero denominator is `0/0`. The report does not derive true negatives, accuracy, specificity, confidence, or calibration. Coverage is `analyzed / (analyzed + abstained)`. Abstention rate is `abstained / (analyzed + abstained)`. Unsupported and not-applicable units remain visible but do not enter those denominators. Expected positives in an abstained applicable unit remain false negatives.
+
+The current pending labels intentionally distinguish two actual test references from same-name identifiers. The syntactic reference analyzer reports the same-name identifiers as additional candidates, so the candidate report preserves those mismatches rather than changing the labels to make the score clean.
+
+The Linux-only Python wrapper `open_trestle_eval.performance` runs a once-built CLI with at least one warm-up and ten measured processes. It uses `time.perf_counter_ns` and `os.wait4` to record wall time, CPU time, and per-process peak RSS. It verifies identical candidate output digests and identities for every run. Its observation is environment-specific, nondeterministic, not a golden, not a threshold, and not release evidence.
+
+A person other than the fixture author must review every base/head diff, changed range, positive label, negative or near-miss label, expected coverage outcome, and recorded mismatch against the exact corpus identity. Only a later, separate reviewed contract may record that decision. The pending candidate does not satisfy the roadmap quality release gate.

@@ -71,6 +71,8 @@ Artifact schemas:
 Evaluation schemas:
 
 - `schemas/evaluation/static-debug-evaluation-result-v1.schema.json`
+- `schemas/evaluation/deterministic-corpus-candidate-result-v1.schema.json`
+- `schemas/evaluation/deterministic-corpus-performance-observation-v1.schema.json`
 
 Runtime authority schemas:
 

@@ -8,8 +8,12 @@ import (
 )
 
 type staticDebugEvaluationRunner func() ([]byte, bool, error)
+type deterministicCorpusCandidateRunner func() ([]byte, string, error)
 
 func runEvaluate(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 1 && args[0] == "deterministic-corpus-candidate" {
+		return runDeterministicCorpusCandidate(stdout, stderr, runDeterministicCorpusCandidateEvaluation)
+	}
 	return runEvaluateWithRunner(args, stdout, stderr, runStaticDebugEvaluation)
 }
 
@@ -34,6 +38,32 @@ func runEvaluateWithRunner(args []string, stdout, stderr io.Writer, runner stati
 	return 0
 }
 
+func runDeterministicCorpusCandidate(stdout, stderr io.Writer, runner deterministicCorpusCandidateRunner) int {
+	if stdout == nil || stderr == nil || runner == nil {
+		writeEvaluateUsage(stderr)
+		return 2
+	}
+	encoded, status, err := runner()
+	if err != nil {
+		fmt.Fprintln(stderr, "deterministic corpus candidate evaluation failed")
+		return 1
+	}
+	written, err := stdout.Write(append(encoded, '\n'))
+	if err != nil || written != len(encoded)+1 {
+		fmt.Fprintln(stderr, "write evaluation result failed")
+		return 1
+	}
+	switch status {
+	case "mismatch":
+		return 3
+	case "matched":
+		return 4
+	default:
+		fmt.Fprintln(stderr, "deterministic corpus candidate evaluation failed")
+		return 1
+	}
+}
+
 func runStaticDebugEvaluation() ([]byte, bool, error) {
 	report, err := evaluation.EvaluateStaticDebug()
 	if err != nil {
@@ -43,6 +73,15 @@ func runStaticDebugEvaluation() ([]byte, bool, error) {
 	return encoded, report.Passed(), err
 }
 
+func runDeterministicCorpusCandidateEvaluation() ([]byte, string, error) {
+	report, err := evaluation.EvaluateDeterministicCorpusCandidate()
+	if err != nil {
+		return nil, "", err
+	}
+	encoded, err := evaluation.EncodeDeterministicCorpusReport(report)
+	return encoded, report.ExecutionStatus(), err
+}
+
 func writeEvaluateUsage(stderr io.Writer) {
-	fmt.Fprintln(stderr, "usage: trestle evaluate static-debug")
+	fmt.Fprintln(stderr, "usage: trestle evaluate static-debug | deterministic-corpus-candidate")
 }

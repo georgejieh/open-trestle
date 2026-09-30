@@ -1,0 +1,187 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:evaluation:deterministic-corpus-performance-observation:v1",
+  "title": "Open Trestle deterministic corpus performance observation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "release_evidence_eligible",
+    "observation_scope",
+    "binary_sha256",
+    "stdout_sha256",
+    "report_identity",
+    "corpus_identity",
+    "environment",
+    "warmup_count",
+    "sample_count",
+    "samples",
+    "elapsed_ns",
+    "max_rss_kib"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/deterministic-corpus-performance-observation"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "release_evidence_eligible": {
+      "const": false
+    },
+    "observation_scope": {
+      "const": "environment_specific_not_a_golden_or_gate"
+    },
+    "binary_sha256": {
+      "$ref": "#/$defs/digest"
+    },
+    "stdout_sha256": {
+      "$ref": "#/$defs/digest"
+    },
+    "report_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "corpus_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "os",
+        "release",
+        "architecture",
+        "python"
+      ],
+      "properties": {
+        "os": {
+          "const": "Linux"
+        },
+        "release": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "architecture": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "python": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      }
+    },
+    "warmup_count": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
+    },
+    "sample_count": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 1000
+    },
+    "samples": {
+      "type": "array",
+      "minItems": 10,
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "elapsed_ns",
+          "user_cpu_ns",
+          "system_cpu_ns",
+          "max_rss_kib"
+        ],
+        "properties": {
+          "elapsed_ns": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9223372036854775807
+          },
+          "user_cpu_ns": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9223372036854775807
+          },
+          "system_cpu_ns": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9223372036854775807
+          },
+          "max_rss_kib": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9223372036854775807
+          }
+        }
+      }
+    },
+    "elapsed_ns": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "p50",
+        "p95",
+        "max"
+      ],
+      "properties": {
+        "p50": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854775807
+        },
+        "p95": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854775807
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854775807
+        }
+      }
+    },
+    "max_rss_kib": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "p50",
+        "p95",
+        "max"
+      ],
+      "properties": {
+        "p50": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854775807
+        },
+        "p95": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854775807
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854775807
+        }
+      }
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    }
+  }
+}

@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "case_id": "go_symbol_boundaries",
+  "changes": [
+    {
+      "path": "readme.md",
+      "ranges": [
+        {
+          "start_line": 1,
+          "end_line": 1
+        }
+      ]
+    },
+    {
+      "path": "service.go",
+      "ranges": [
+        {
+          "start_line": 6,
+          "end_line": 6
+        },
+        {
+          "start_line": 10,
+          "end_line": 10
+        },
+        {
+          "start_line": 14,
+          "end_line": 14
+        },
+        {
+          "start_line": 17,
+          "end_line": 17
+        }
+      ]
+    }
+  ],
+  "targets": [
+    {
+      "key": "go_changed_symbol",
+      "expected": [
+        {
+          "path": "service.go",
+          "kind": "function",
+          "qualified_name": "sample.Work",
+          "start_line": 5,
+          "end_line": 7
+        },
+        {
+          "path": "service.go",
+          "kind": "method",
+          "qualified_name": "sample.Service.Run",
+          "start_line": 9,
+          "end_line": 11
+        }
+      ],
+      "expected_coverage": [
+        {
+          "path": "readme.md",
+          "outcome": "unsupported",
+          "reason": "unsupported_language"
+        },
+        {
+          "path": "service.go",
+          "outcome": "analyzed",
+          "reason": "none"
+        }
+      ]
+    }
+  ]
+}
