@@ -20,7 +20,7 @@ const (
 	ScannerCommit    = "5eab48332cc48565864514e3bc6de89df091a7c4"
 	RulesetIdentity  = "27ded783c81940d13c22cc46556a3f8184baf397bff08a69fcfae87991925f42"
 	RulesetRuleCount = 417
-	BuildProfile     = "public_detect_run_re2_purego_go1.25.12_linux_amd64_v1"
+	BuildProfile     = "public_detect_run_re2_purego_go1.26.8_linux_amd64_v1"
 
 	StatusComplete          = "complete"
 	StatusInputRejected     = "input_rejected"

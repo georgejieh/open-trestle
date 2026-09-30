@@ -89,16 +89,16 @@ jobs:
           cache: false
       - name: Verify secret-scanner module sums
         working-directory: workers/secret-scanner
-        run: GOWORK=off GOTOOLCHAIN=go1.25.12 go mod verify
+        run: GOWORK=off GOTOOLCHAIN=go1.26.8 go mod verify
       - name: Run secret-scanner tests
         working-directory: workers/secret-scanner
-        run: GOWORK=off GOTOOLCHAIN=go1.25.12 go test -timeout=15m ./...
+        run: GOWORK=off GOTOOLCHAIN=go1.26.8 go test -timeout=15m ./...
       - name: Run secret-scanner race tests
         working-directory: workers/secret-scanner
-        run: GOWORK=off GOTOOLCHAIN=go1.25.12 go test -race -p=1 -timeout=30m ./...
+        run: GOWORK=off GOTOOLCHAIN=go1.26.8 go test -race -p=1 -timeout=30m ./...
       - name: Run secret-scanner vet
         working-directory: workers/secret-scanner
-        run: GOWORK=off GOTOOLCHAIN=go1.25.12 go vet ./...
+        run: GOWORK=off GOTOOLCHAIN=go1.26.8 go vet ./...
       - name: Provision pinned Zig musl builder and build deterministic release staging
         run: |
           python3 tools/package_secret_scanner.py
@@ -150,4 +150,4 @@ jobs:
           python3 -c 'import json,struct,sys; body=json.dumps({"schema_version":1,"request_id":"f"*64,"sources":[{"ordinal":0,"content_base64":"eg=="}]},separators=(",",":")).encode(); sys.stdout.buffer.write(struct.pack(">I",len(body))+body)' > "$RUNNER_TEMP/scanner-request"
           docker run --rm --network=none --read-only --cap-drop=ALL --pids-limit=64 --memory=256m --security-opt=no-new-privileges=true -i --entrypoint /usr/local/libexec/open-trestle/open-trestle-secret-scanner open-trestle:verify --stdio-v1 < "$RUNNER_TEMP/scanner-request" > "$RUNNER_TEMP/scanner-response" 2> "$RUNNER_TEMP/scanner-stderr"
           test ! -s "$RUNNER_TEMP/scanner-stderr"
-          python3 -c 'import json,struct,sys; data=open(sys.argv[1],"rb").read(); size=struct.unpack(">I",data[:4])[0]; doc=json.loads(data[4:]); assert size==len(data)-4 and doc["status"]=="complete" and doc["matches"]==[] and doc["scanner"]=="betterleaks" and doc["scanner_version"]=="v1.8.1" and doc["build_profile"]=="public_detect_run_re2_purego_go1.25.12_linux_amd64_v1"' "$RUNNER_TEMP/scanner-response"
+          python3 -c 'import json,struct,sys; data=open(sys.argv[1],"rb").read(); size=struct.unpack(">I",data[:4])[0]; doc=json.loads(data[4:]); assert size==len(data)-4 and doc["status"]=="complete" and doc["matches"]==[] and doc["scanner"]=="betterleaks" and doc["scanner_version"]=="v1.8.1" and doc["build_profile"]=="public_detect_run_re2_purego_go1.26.8_linux_amd64_v1"' "$RUNNER_TEMP/scanner-response"

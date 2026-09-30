@@ -52,7 +52,7 @@ func TestFrozenBetterleaksIdentity(t *testing.T) {
 	if RulesetIdentity != "27ded783c81940d13c22cc46556a3f8184baf397bff08a69fcfae87991925f42" || RulesetRuleCount != 417 {
 		t.Fatal("unexpected ruleset identity")
 	}
-	if BuildProfile != "public_detect_run_re2_purego_go1.25.12_linux_amd64_v1" {
+	if BuildProfile != "public_detect_run_re2_purego_go1.26.8_linux_amd64_v1" {
 		t.Fatal("unexpected build profile")
 	}
 	match := Match{SourceOrdinal: 0, RuleID: "github-pat", StartByte: 7, EndByteExclusive: 12}

@@ -24,9 +24,9 @@ SCANNER_VERSION = "v1.8.1"
 SCANNER_COMMIT = "5eab48332cc48565864514e3bc6de89df091a7c4"
 RULESET_IDENTITY = "27ded783c81940d13c22cc46556a3f8184baf397bff08a69fcfae87991925f42"
 RULESET_RULE_COUNT = 417
-BUILD_PROFILE = "public_detect_run_re2_purego_go1.25.12_linux_amd64_v1"
+BUILD_PROFILE = "public_detect_run_re2_purego_go1.26.8_linux_amd64_v1"
 ROOT_GO = "go1.26.8"
-WORKER_GO = "go1.25.12"
+WORKER_GO = "go1.26.8"
 LAUNCHER_TOOLCHAIN_MANIFEST = "workers/secret-scanner/launcher/toolchain-v1.json"
 LAUNCHER_TOOLCHAIN_CACHE = ".tmp/toolchains/zig-x86_64-linux-0.14.1.tar.xz"
 LAUNCHER_ZIG_VERSION = "0.14.1"
@@ -268,7 +268,7 @@ def verify_root_build_info(build_info: str) -> None:
 def verify_worker_build_info(build_info: str) -> None:
     """Require the frozen Go toolchain and target settings in the linked worker."""
     lines = build_info.splitlines()
-    if not lines or not lines[0].endswith(": go1.25.12"):
+    if not lines or not lines[0].endswith(": go1.26.8"):
         raise ValueError("worker Go toolchain metadata mismatch")
     required = {
         "build\t-trimpath=true",
@@ -813,7 +813,7 @@ def package(repository: Path, output: Path) -> None:
     if "\ngo 1.25.0\n" not in root_mod or "\ntoolchain go1.26.8\n" not in root_mod:
         raise ValueError("root toolchain pin changed")
     worker_mod = (repository / "workers/secret-scanner/go.mod").read_text(encoding="utf-8")
-    if "\ngo 1.25.0\n" not in worker_mod or "\ntoolchain go1.25.12\n" not in worker_mod:
+    if "\ngo 1.25.0\n" not in worker_mod or "\ntoolchain go1.26.8\n" not in worker_mod:
         raise ValueError("worker toolchain pin changed")
     temporary_root = repository / ".tmp"
     temporary_root.mkdir(exist_ok=True)

@@ -79,7 +79,7 @@ class LinkedLicenseTest(unittest.TestCase):
             package_secret_scanner.verify_root_build_info("trestled: go1.26.7\n")
 
     def test_worker_build_metadata_is_closed(self):
-        valid = """worker: go1.25.12
+        valid = """worker: go1.26.8
 \tbuild\t-trimpath=true
 \tbuild\tCGO_ENABLED=0
 \tbuild\tGOARCH=amd64
@@ -87,7 +87,7 @@ class LinkedLicenseTest(unittest.TestCase):
 """
         package_secret_scanner.verify_worker_build_info(valid)
         for changed in (
-            valid.replace("go1.25.12", "go1.25.11"),
+            valid.replace("go1.26.8", "go1.26.7"),
             valid.replace("CGO_ENABLED=0", "CGO_ENABLED=1"),
             valid.replace("GOARCH=amd64", "GOARCH=arm64"),
         ):
@@ -357,11 +357,11 @@ class ReleaseEvidenceTest(unittest.TestCase):
 
         self.assertEqual(document["launcher"]["sha256"], launcher)
         self.assertEqual(document["worker"]["sha256"], worker)
-        self.assertEqual(document["worker"]["go_toolchain"], "go1.25.12")
+        self.assertEqual(document["worker"]["go_toolchain"], "go1.26.8")
         self.assertEqual(document["root_client"]["go_toolchain"], "go1.26.8")
         self.assertEqual(
             document["build_profile"],
-            "public_detect_run_re2_purego_go1.25.12_linux_amd64_v1",
+            "public_detect_run_re2_purego_go1.26.8_linux_amd64_v1",
         )
         self.assertEqual(
             {item["name"] for item in sbom["packages"]},
@@ -535,8 +535,8 @@ class ReleaseContractTest(unittest.TestCase):
             "GOWORK=off GOTOOLCHAIN=go1.26.8 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go test -run='^$' -exec=true ./...",
         ):
             self.assertIn(command, workflow)
-        self.assertIn("GOWORK=off GOTOOLCHAIN=go1.25.12 go test -timeout=15m ./...", workflow)
-        self.assertIn("GOWORK=off GOTOOLCHAIN=go1.25.12 go test -race", workflow)
+        self.assertIn("GOWORK=off GOTOOLCHAIN=go1.26.8 go test -timeout=15m ./...", workflow)
+        self.assertIn("GOWORK=off GOTOOLCHAIN=go1.26.8 go test -race", workflow)
         self.assertIn("python3 tools/package_secret_scanner.py", workflow)
         self.assertIn("python3 tools/package_secret_scanner.py --verify .container", workflow)
         self.assertIn(
