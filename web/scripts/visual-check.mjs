@@ -1162,7 +1162,7 @@ try {
     path: join(output, "open-trestle-console-desktop.png"),
     fullPage: true,
   });
-  await desktop.getByRole("button", { name: /Findings 2/i }).click();
+  await desktop.getByRole("button", { name: /Review 2/i }).click();
   await desktop.getByRole("heading", { name: "Review coverage" }).waitFor();
   await expandFirstFinding(desktop);
   await checkReviewActionTargets(desktop, [
@@ -1212,7 +1212,7 @@ try {
   });
   await populate(mobile);
   await checkMobileBrandContrast(mobile);
-  await mobile.getByRole("button", { name: "findings" }).click();
+  await mobile.getByRole("button", { name: "review" }).click();
   await expandFirstFinding(mobile);
   await checkReviewActionTargets(mobile, [
     ".icon-button",

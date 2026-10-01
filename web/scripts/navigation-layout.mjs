@@ -39,7 +39,7 @@ export async function checkTabletNavigation(page) {
     name: "Console",
     exact: true,
   });
-  for (const destination of ["Overview", "Tasks", "Findings", "Runtime"]) {
+  for (const destination of ["Overview", "Tasks", "Review", "Runtime"]) {
     await checkVisibleControl(
       navigation.getByRole("button", {
         name: new RegExp(`^${destination}(?: |$)`),
