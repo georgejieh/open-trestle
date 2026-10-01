@@ -6,6 +6,7 @@ import (
 	"github.com/georgejieh/open-trestle/artifact"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
+	"github.com/georgejieh/open-trestle/diagnostics"
 	changehandler "github.com/georgejieh/open-trestle/handlers/change"
 	sourcehandler "github.com/georgejieh/open-trestle/handlers/source"
 	"github.com/georgejieh/open-trestle/internal/evidence"
@@ -63,9 +64,10 @@ func TestHandlerBindsExactChangedSourceSlices(t *testing.T) {
 	_, _ = store.Put(context.Background(), headArtifact, time.UnixMilli(50))
 	sourceTaskHandler, _ := sourcehandler.NewHandler(store, adapter, testClock{time.UnixMilli(200)})
 	changeTaskHandler, _ := changehandler.NewHandler(store, testClock{time.UnixMilli(210)})
-	analysisTaskHandler, _ := NewHandler(store, testClock{time.UnixMilli(220)})
-	if analysisTaskHandler.HandlerIdentity() != "7b5bcfe63ff4dc765caa8e676fd7cc987b4d0c367348933a7a52172fd072068b" {
-		t.Fatalf("handler identity=%s", analysisTaskHandler.HandlerIdentity())
+	diagnosticStore := diagnostics.NewMemoryStore()
+	analysisTaskHandler, _ := NewHandlerWithDiagnostics(store, diagnosticStore, testClock{time.UnixMilli(220)})
+	if analysisTaskHandler.HandlerIdentity() == "" {
+		t.Fatal("projecting analysis handler has no identity")
 	}
 	baseTask, _ := controlplane.NewTaskDefinition("source-base", controlplane.TaskAcquireSource, baseArtifact.Identity(), sourceTaskHandler.HandlerIdentity(), nil, 1, 1000, 30000, true)
 	headTask, _ := controlplane.NewTaskDefinition("source-head", controlplane.TaskAcquireSource, headArtifact.Identity(), sourceTaskHandler.HandlerIdentity(), nil, 1, 1000, 30000, true)
@@ -126,16 +128,55 @@ func TestHandlerBindsExactChangedSourceSlices(t *testing.T) {
 	if err != nil || len(result.Items()) < 2 || len(result.Gaps()) != 0 {
 		t.Fatalf("result=(%#v,%v)", result, err)
 	}
-	if result.SchemaVersion() != 3 || result.Identity() != "364026dda63ea5f4911771fd4e61949a1e32e77d5ae9fadf8cb97ff11bb764b7" {
+	if result.SchemaVersion() != 4 || result.Identity() == "" {
 		t.Fatalf("result schema=%d identity=%s", result.SchemaVersion(), result.Identity())
 	}
 	checks := result.Checks()
+	observations := result.Observations()
 	if len(checks) != 1 || checks[0].State() != CheckFailed || checks[0].MatchCount() != 1 || checks[0].ApplicableFiles() != 1 || checks[0].CheckedFiles() != 1 || !checks[0].Complete() {
 		t.Fatalf("checks=%#v", checks)
+	}
+	if len(observations) != 1 || observations[0].Path() != "gate.go" || observations[0].StartLine() != 3 || observations[0].EndLine() != 3 || observations[0].CheckIdentity() != checks[0].Identity() || observations[0].EvidenceID() == "" {
+		t.Fatalf("observations=%#v", observations)
+	}
+	zeroMatch := result
+	zeroMatch.checks = []DeterministicCheck{mustDeterministicCheck(t, result.ChangeIdentity(), CheckPassed, 1, 1, 1, 1, 0)}
+	zeroMatch.observations = nil
+	zeroMatch.identity = deriveIdentity(zeroMatch)
+	zeroPayload, zeroErr := encodeResult(zeroMatch)
+	if zeroErr != nil || !bytes.Contains(zeroPayload, []byte(`"observations":[]`)) {
+		t.Fatalf("zero-match v4 payload=%s err=%v", zeroPayload, zeroErr)
+	}
+	zeroArtifact, _ := artifact.New(scope, artifact.KindDeterministicEvidence, "application/json", output.Classification(), artifact.OriginDeterministicTool, output.Protection(), output.Provenance(), zeroPayload, output.CreatedAt(), output.ExpiresAt())
+	if parsed, parseErr := ParseResultArtifact(zeroArtifact, changeOutput, baseOutput, headOutput); parseErr != nil || parsed.SchemaVersion() != 4 || len(parsed.Observations()) != 0 {
+		t.Fatalf("zero-match v4=(%#v,%v)", parsed, parseErr)
+	}
+	nullPayload := bytes.Replace(zeroPayload, []byte(`"observations":[]`), []byte(`"observations":null`), 1)
+	nullArtifact, _ := artifact.New(scope, artifact.KindDeterministicEvidence, "application/json", output.Classification(), artifact.OriginDeterministicTool, output.Protection(), output.Provenance(), nullPayload, output.CreatedAt(), output.ExpiresAt())
+	if parsed, parseErr := ParseResultArtifact(nullArtifact, changeOutput, baseOutput, headOutput); parseErr == nil || parsed.Identity() != "" {
+		t.Fatalf("schema-invalid null observations accepted: %#v", parsed)
+	}
+	projected, err := diagnosticStore.GetDiagnosticSet(context.Background(), scope)
+	if err != nil || projected.SchemaVersion() != 6 || projected.AnalysisResultIdentity() != result.Identity() || len(projected.Findings()) != 0 || len(projected.DeterministicObservations()) != 1 || projected.DeterministicObservations()[0].SourceIdentity() != observations[0].Identity() {
+		t.Fatalf("projected diagnostics=%#v err=%v", projected, err)
+	}
+	legacyV3 := result
+	legacyV3.schemaVersion = 3
+	legacyV3.observations = nil
+	legacyV3.identity = deriveIdentity(legacyV3)
+	legacyV3Payload, err := encodeResult(legacyV3)
+	if err != nil || bytes.Contains(legacyV3Payload, []byte(`"observations"`)) {
+		t.Fatalf("legacy v3 identity=%s payload=%s err=%v", legacyV3.Identity(), legacyV3Payload, err)
+	}
+	legacyV3Artifact, _ := artifact.New(scope, artifact.KindDeterministicEvidence, "application/json", output.Classification(), artifact.OriginDeterministicTool, output.Protection(), output.Provenance(), legacyV3Payload, output.CreatedAt(), output.ExpiresAt())
+	legacyV3Parsed, err := ParseResultArtifact(legacyV3Artifact, changeOutput, baseOutput, headOutput)
+	if err != nil || legacyV3Parsed.SchemaVersion() != 3 || len(legacyV3Parsed.Observations()) != 0 || legacyV3Parsed.Identity() != legacyV3.Identity() {
+		t.Fatalf("legacy v3=(%#v,%v)", legacyV3Parsed, err)
 	}
 	legacy := result
 	legacy.schemaVersion = 2
 	legacy.checks = nil
+	legacy.observations = nil
 	legacy.identity = deriveIdentity(legacy)
 	legacyPayload, err := encodeResult(legacy)
 	if legacy.Identity() != "9b51d2bfc59feabac5deb4f8b49f40ae89a7cc6b969fe07542b4a8a6b19b88a1" || bytes.Contains(legacyPayload, []byte(`"checks"`)) {
@@ -180,4 +221,13 @@ func TestHandlerBindsExactChangedSourceSlices(t *testing.T) {
 	if item.Path() != "a.txt" || item.StartLine() != 2 || item.EndLine() != 2 || item.SliceBytes() != 4 {
 		t.Fatalf("item=%#v", item)
 	}
+}
+
+func mustDeterministicCheck(t *testing.T, change string, state DeterministicCheckState, applicableFiles, applicableRanges, checkedFiles, checkedRanges, matches uint32) DeterministicCheck {
+	t.Helper()
+	check, err := NewDeterministicCheck(change, state, applicableFiles, applicableRanges, checkedFiles, checkedRanges, matches)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return check
 }

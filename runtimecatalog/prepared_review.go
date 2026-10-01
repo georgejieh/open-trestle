@@ -40,10 +40,19 @@ type PreparedReviewRun struct {
 }
 
 func NewPreparedReviewRequest(o PreparedReviewRequestOptions) (PreparedReviewRequest, error) {
-	if o.Scope.Validate() != nil || o.Catalog.Validate() != nil || o.Catalog.Mode() != controlplane.ReviewRunLocal || len(o.Catalog.Bindings()) != 8 || o.Classification.String() == "" || o.Protection != artifact.ProtectionProcessPrivate || o.CreatedAt.UnixMilli() <= 0 || o.Retention < time.Minute || o.Retention > 24*time.Hour {
+	if o.Scope.Validate() != nil || o.Catalog.Validate() != nil || o.Catalog.Mode() != controlplane.ReviewRunLocal || (len(o.Catalog.Bindings()) != 3 && len(o.Catalog.Bindings()) != 8) || o.Classification.String() == "" || o.Protection != artifact.ProtectionProcessPrivate || o.CreatedAt.UnixMilli() <= 0 || o.Retention < time.Minute || o.Retention > 24*time.Hour {
 		return PreparedReviewRequest{}, ErrInvalidPreparedReview
 	}
-	for _, id := range []string{o.HostRequestIdentity, o.SourceRootIdentity, o.InventoryIdentity, o.RuntimePolicyIdentity, o.ReviewPolicyIdentity} {
+	deterministic := len(o.Catalog.Bindings()) == 3
+	identities := []string{o.HostRequestIdentity, o.SourceRootIdentity, o.ReviewPolicyIdentity}
+	if deterministic {
+		if o.InventoryIdentity != "" || o.RuntimePolicyIdentity != "" {
+			return PreparedReviewRequest{}, ErrInvalidPreparedReview
+		}
+	} else {
+		identities = append(identities, o.InventoryIdentity, o.RuntimePolicyIdentity)
+	}
+	for _, id := range identities {
 		if controlplane.ValidateHandlerIdentity(id) != nil {
 			return PreparedReviewRequest{}, ErrInvalidPreparedReview
 		}
@@ -64,7 +73,11 @@ func NewPreparedReviewRequest(o PreparedReviewRequestOptions) (PreparedReviewReq
 	}
 	o.CreatedAt = time.UnixMilli(o.CreatedAt.UnixMilli()).UTC()
 	o.Retention = o.Retention.Truncate(time.Millisecond)
-	identity := preparedDigest([]any{"open-trestle/prepared-review-request", 1, o.Scope.Identity(), o.HostRequestIdentity, o.Repository.Identity(), o.BaseRevision.Identity(), o.HeadRevision.Identity(), o.SourceAdapter.Identity(), o.SourceRootIdentity, o.InventoryIdentity, o.RuntimePolicyIdentity, o.ReviewPolicyIdentity, o.Classification.String(), o.Protection.String(), o.CreatedAt.UnixMilli(), o.CreatedAt.Add(o.Retention).UnixMilli(), o.Catalog.Identity()})
+	identityFields := []any{"open-trestle/prepared-review-request", 1, o.Scope.Identity(), o.HostRequestIdentity, o.Repository.Identity(), o.BaseRevision.Identity(), o.HeadRevision.Identity(), o.SourceAdapter.Identity(), o.SourceRootIdentity, o.InventoryIdentity, o.RuntimePolicyIdentity, o.ReviewPolicyIdentity, o.Classification.String(), o.Protection.String(), o.CreatedAt.UnixMilli(), o.CreatedAt.Add(o.Retention).UnixMilli(), o.Catalog.Identity()}
+	if deterministic {
+		identityFields = []any{"open-trestle/prepared-deterministic-review-request", 1, o.Scope.Identity(), o.HostRequestIdentity, o.Repository.Identity(), o.BaseRevision.Identity(), o.HeadRevision.Identity(), o.SourceAdapter.Identity(), o.SourceRootIdentity, o.ReviewPolicyIdentity, o.Classification.String(), o.Protection.String(), o.CreatedAt.UnixMilli(), o.CreatedAt.Add(o.Retention).UnixMilli(), o.Catalog.Identity()}
+	}
+	identity := preparedDigest(identityFields)
 	return PreparedReviewRequest{o, identity}, nil
 }
 func PrepareReviewRun(ctx context.Context, request PreparedReviewRequest) (PreparedReviewRun, error) {
@@ -84,7 +97,13 @@ func buildPreparedReview(ctx context.Context, request PreparedReviewRequest) (Pr
 		if ctx.Err() != nil {
 			return PreparedReviewRun{}, ctx.Err()
 		}
-		input, err := sourcehandler.NewInput(o.Repository, revision, o.SourceAdapter)
+		var input sourcehandler.Input
+		var err error
+		if len(o.Catalog.Bindings()) == 3 {
+			input, err = sourcehandler.NewBoundInput(o.Repository, revision, o.SourceAdapter, o.SourceRootIdentity)
+		} else {
+			input, err = sourcehandler.NewInput(o.Repository, revision, o.SourceAdapter)
+		}
 		if err != nil {
 			return PreparedReviewRun{}, ErrInvalidPreparedReview
 		}
@@ -94,19 +113,24 @@ func buildPreparedReview(ctx context.Context, request PreparedReviewRequest) (Pr
 		}
 		inputs = append(inputs, value)
 	}
-	specs := []struct {
+	type taskSpec struct {
 		key          string
 		kind         controlplane.TaskKind
 		dependencies []string
-	}{
+	}
+	specs := []taskSpec{
 		{"source-base", controlplane.TaskAcquireSource, nil}, {"source-head", controlplane.TaskAcquireSource, nil},
 		{"change", controlplane.TaskBuildChange, []string{"source-base", "source-head"}},
 		{"analysis", controlplane.TaskInspectDeterministic, []string{"change"}},
-		{"memory", controlplane.TaskRetrieveContext, []string{"change"}},
-		{"context", controlplane.TaskAssembleContext, []string{"analysis", "memory"}},
-		{"candidates", controlplane.TaskGenerateCandidates, []string{"context"}},
-		{"verification", controlplane.TaskVerifyCandidates, []string{"candidates"}},
-		{"readiness", controlplane.TaskEvaluatePublication, []string{"analysis", "change", "verification"}},
+	}
+	if len(o.Catalog.Bindings()) == 8 {
+		specs = append(specs,
+			taskSpec{"memory", controlplane.TaskRetrieveContext, []string{"change"}},
+			taskSpec{"context", controlplane.TaskAssembleContext, []string{"analysis", "memory"}},
+			taskSpec{"candidates", controlplane.TaskGenerateCandidates, []string{"context"}},
+			taskSpec{"verification", controlplane.TaskVerifyCandidates, []string{"candidates"}},
+			taskSpec{"readiness", controlplane.TaskEvaluatePublication, []string{"analysis", "change", "verification"}},
+		)
 	}
 	bindings := map[controlplane.TaskKind]string{}
 	for _, binding := range o.Catalog.Bindings() {

@@ -30,6 +30,9 @@ const (
 // MaxEncodedSetBytes is the complete canonical diagnostic payload budget.
 const MaxEncodedSetBytes = 1 << 20
 
+// MaxDeterministicObservations is the bounded location count in one deterministic-only set.
+const MaxDeterministicObservations = 8192
+
 var (
 	// ErrInvalidFinding identifies malformed or unbound diagnostic data.
 	ErrInvalidFinding = errors.New("invalid review diagnostic")
@@ -41,6 +44,8 @@ var (
 	ErrInvalidSetIdentity = errors.New("invalid review diagnostic set identity")
 	// ErrInvalidSetEncoding identifies noncanonical, unknown, or excessive JSON.
 	ErrInvalidSetEncoding = errors.New("invalid review diagnostic set encoding")
+	// ErrSetResourceLimit identifies a canonical deterministic set beyond the durable payload budget.
+	ErrSetResourceLimit = errors.New("review diagnostic set resource limit")
 )
 
 // Severity is a closed editor-neutral diagnostic level.
@@ -195,9 +200,11 @@ func (s OmissionSummary) Validate() error {
 type Set struct {
 	identity, snapshotIdentity, headRevision, verifiedSetIdentity, sourceContextIdentity string
 	scope                                                                                audit.ReviewScope
+	analysisResultIdentity                                                               string
 	findings                                                                             []Finding
 	omissionSummaries                                                                    []OmissionSummary
 	deterministicChecks                                                                  []DeterministicCheck
+	deterministicObservations                                                            []DeterministicObservation
 	schemaVersion                                                                        int
 	candidateCount, rejectedCount, inconclusiveCount                                     uint16
 	sourceAnalyzedCount, sourceSelectedCount, sourceOmittedCount                         uint32
@@ -226,6 +233,29 @@ func NewSetWithOmissionReasons(scope audit.ReviewScope, snapshotIdentity, headRe
 // NewSetWithDeterministicChecks constructs version 5 with one exact content-free check.
 func NewSetWithDeterministicChecks(scope audit.ReviewScope, snapshotIdentity, headRevision, verifiedSetIdentity, sourceContextIdentity string, candidateCount, rejectedCount, inconclusiveCount uint16, sourceAnalyzedCount, sourceSelectedCount, sourceOmittedCount uint32, omissionSummaries []OmissionSummary, deterministicChecks []DeterministicCheck, findings []Finding) (Set, error) {
 	return newSet(scope, snapshotIdentity, headRevision, verifiedSetIdentity, 5, candidateCount, rejectedCount, inconclusiveCount, sourceContextIdentity, sourceAnalyzedCount, sourceSelectedCount, sourceOmittedCount, omissionSummaries, deterministicChecks, findings)
+}
+
+// NewSetWithDeterministicObservations constructs version 6 without implying independent verification.
+func NewSetWithDeterministicObservations(scope audit.ReviewScope, snapshotIdentity, headRevision, analysisResultIdentity string, deterministicChecks []DeterministicCheck, observations []DeterministicObservation) (Set, error) {
+	checks := append([]DeterministicCheck(nil), deterministicChecks...)
+	canonical := append([]DeterministicObservation(nil), observations...)
+	sort.Slice(canonical, func(i, j int) bool { return deterministicObservationLess(canonical[i], canonical[j]) })
+	valid := scope.Validate() == nil && validDigest(snapshotIdentity) && validRevision(headRevision) && validDigest(analysisResultIdentity) && len(checks) == 1 && checks[0].Validate() == nil && checks[0].AnalysisResultIdentity() == analysisResultIdentity && len(canonical) <= MaxDeterministicObservations && uint32(len(canonical)) == checks[0].MatchCount()
+	for index, observation := range canonical {
+		if observation.Validate() != nil || observation.AnalysisResultIdentity() != analysisResultIdentity || observation.CheckIdentity() != checks[0].Identity() || index > 0 && canonical[index-1].Identity() == observation.Identity() {
+			valid = false
+		}
+	}
+	if !valid {
+		return Set{}, ErrInvalidSet
+	}
+	set := Set{scope: scope, snapshotIdentity: snapshotIdentity, headRevision: headRevision, analysisResultIdentity: analysisResultIdentity, deterministicChecks: checks, deterministicObservations: canonical, schemaVersion: 6}
+	set.identity = deriveSetIdentity(set)
+	encoded, encodeErr := json.Marshal(setToRecordV6(set))
+	if encodeErr != nil || len(encoded) > MaxEncodedSetBytes {
+		return Set{}, ErrSetResourceLimit
+	}
+	return set, nil
 }
 
 func newSet(scope audit.ReviewScope, snapshotIdentity, headRevision, verifiedSetIdentity string, schemaVersion int, candidateCount, rejectedCount, inconclusiveCount uint16, sourceContextIdentity string, sourceAnalyzedCount, sourceSelectedCount, sourceOmittedCount uint32, omissionSummaries []OmissionSummary, deterministicChecks []DeterministicCheck, findings []Finding) (Set, error) {
@@ -272,6 +302,7 @@ func (s Set) Scope() audit.ReviewScope            { return s.scope }
 func (s Set) SnapshotIdentity() string            { return s.snapshotIdentity }
 func (s Set) HeadRevision() string                { return s.headRevision }
 func (s Set) VerifiedSetIdentity() string         { return s.verifiedSetIdentity }
+func (s Set) AnalysisResultIdentity() string      { return s.analysisResultIdentity }
 func (s Set) SchemaVersion() int                  { return s.schemaVersion }
 func (s Set) CandidateCount() uint16              { return s.candidateCount }
 func (s Set) VerifiedCount() uint16               { return uint16(len(s.findings)) }
@@ -288,6 +319,9 @@ func (s Set) DeterministicChecks() []DeterministicCheck {
 	return append([]DeterministicCheck(nil), s.deterministicChecks...)
 }
 func (s Set) Findings() []Finding { return append([]Finding(nil), s.findings...) }
+func (s Set) DeterministicObservations() []DeterministicObservation {
+	return append([]DeterministicObservation(nil), s.deterministicObservations...)
+}
 func (s Set) Validate() error {
 	var rebuilt Set
 	var err error
@@ -301,13 +335,15 @@ func (s Set) Validate() error {
 		rebuilt, err = NewSetWithOmissionReasons(s.scope, s.snapshotIdentity, s.headRevision, s.verifiedSetIdentity, s.sourceContextIdentity, s.candidateCount, s.rejectedCount, s.inconclusiveCount, s.sourceAnalyzedCount, s.sourceSelectedCount, s.sourceOmittedCount, s.omissionSummaries, s.findings)
 	} else if s.schemaVersion == 5 {
 		rebuilt, err = NewSetWithDeterministicChecks(s.scope, s.snapshotIdentity, s.headRevision, s.verifiedSetIdentity, s.sourceContextIdentity, s.candidateCount, s.rejectedCount, s.inconclusiveCount, s.sourceAnalyzedCount, s.sourceSelectedCount, s.sourceOmittedCount, s.omissionSummaries, s.deterministicChecks, s.findings)
+	} else if s.schemaVersion == 6 {
+		rebuilt, err = NewSetWithDeterministicObservations(s.scope, s.snapshotIdentity, s.headRevision, s.analysisResultIdentity, s.deterministicChecks, s.deterministicObservations)
 	} else {
 		return ErrInvalidSet
 	}
 	if err != nil {
 		return err
 	}
-	if rebuilt.identity != s.identity || rebuilt.candidateCount != s.candidateCount || rebuilt.rejectedCount != s.rejectedCount || rebuilt.inconclusiveCount != s.inconclusiveCount || rebuilt.sourceContextIdentity != s.sourceContextIdentity || rebuilt.sourceAnalyzedCount != s.sourceAnalyzedCount || rebuilt.sourceSelectedCount != s.sourceSelectedCount || rebuilt.sourceOmittedCount != s.sourceOmittedCount {
+	if rebuilt.identity != s.identity || rebuilt.candidateCount != s.candidateCount || rebuilt.rejectedCount != s.rejectedCount || rebuilt.inconclusiveCount != s.inconclusiveCount || rebuilt.analysisResultIdentity != s.analysisResultIdentity || rebuilt.sourceContextIdentity != s.sourceContextIdentity || rebuilt.sourceAnalyzedCount != s.sourceAnalyzedCount || rebuilt.sourceSelectedCount != s.sourceSelectedCount || rebuilt.sourceOmittedCount != s.sourceOmittedCount {
 		return ErrInvalidSetIdentity
 	}
 	if len(rebuilt.omissionSummaries) != len(s.omissionSummaries) {
@@ -323,6 +359,14 @@ func (s Set) Validate() error {
 	}
 	for index := range rebuilt.deterministicChecks {
 		if rebuilt.deterministicChecks[index] != s.deterministicChecks[index] {
+			return ErrInvalidSetIdentity
+		}
+	}
+	if len(rebuilt.deterministicObservations) != len(s.deterministicObservations) {
+		return ErrInvalidSetIdentity
+	}
+	for index := range rebuilt.deterministicObservations {
+		if rebuilt.deterministicObservations[index].Identity() != s.deterministicObservations[index].Identity() {
 			return ErrInvalidSetIdentity
 		}
 	}
@@ -454,6 +498,34 @@ type setRecordV5 struct {
 	Findings            []findingRecord            `json:"findings"`
 }
 
+type deterministicObservationRecord struct {
+	Identity               string   `json:"identity"`
+	SourceIdentity         string   `json:"source_identity"`
+	Fingerprint            string   `json:"fingerprint"`
+	AnalysisResultIdentity string   `json:"analysis_result_identity"`
+	CheckIdentity          string   `json:"check_identity"`
+	Title                  string   `json:"title"`
+	Message                string   `json:"message"`
+	Severity               string   `json:"severity"`
+	Path                   string   `json:"path"`
+	StartLine              uint32   `json:"start_line"`
+	EndLine                uint32   `json:"end_line"`
+	EvidenceIDs            []string `json:"evidence_ids"`
+}
+type setRecordV6 struct {
+	Contract               string                           `json:"contract"`
+	SchemaVersion          int                              `json:"schema_version"`
+	Identity               string                           `json:"identity"`
+	TenantID               string                           `json:"tenant_id"`
+	RepositoryID           string                           `json:"repository_id"`
+	ReviewRunID            string                           `json:"review_run_id"`
+	SnapshotIdentity       string                           `json:"snapshot_identity"`
+	HeadRevision           string                           `json:"head_revision"`
+	AnalysisResultIdentity string                           `json:"analysis_result_identity"`
+	Checks                 []deterministicCheckRecord       `json:"checks"`
+	Observations           []deterministicObservationRecord `json:"observations"`
+}
+
 func EncodeSet(set Set) ([]byte, error) {
 	if err := set.Validate(); err != nil {
 		return nil, err
@@ -471,6 +543,8 @@ func EncodeSet(set Set) ([]byte, error) {
 		encoded, err = json.Marshal(setToRecordV4(set))
 	case 5:
 		encoded, err = json.Marshal(setToRecordV5(set))
+	case 6:
+		encoded, err = json.Marshal(setToRecordV6(set))
 	}
 	if err != nil || len(encoded) > maxEncodedSetBytes {
 		return nil, ErrInvalidSetEncoding
@@ -498,6 +572,8 @@ func ParseSet(encoded []byte) (Set, error) {
 		return parseSetV4(encoded)
 	case 5:
 		return parseSetV5(encoded)
+	case 6:
+		return parseSetV6(encoded)
 	default:
 		return Set{}, ErrInvalidSetEncoding
 	}
@@ -613,6 +689,44 @@ func parseSetV5(encoded []byte) (Set, error) {
 		}
 	}
 	set, err := NewSetWithDeterministicChecks(scope, record.SnapshotIdentity, record.HeadRevision, record.VerifiedSetIdentity, record.SourceCoverage.VerificationContextIdentity, record.Coverage.CandidateCount, record.Coverage.RejectedCount, record.Coverage.InconclusiveCount, record.SourceCoverage.AnalyzedCount, record.SourceCoverage.SelectedCount, record.SourceCoverage.OmittedCount, summaries, checks, findings)
+	if err != nil || set.identity != record.Identity {
+		return Set{}, ErrInvalidSetIdentity
+	}
+	return verifyParsedSetEncoding(set, encoded)
+}
+
+func parseSetV6(encoded []byte) (Set, error) {
+	var record setRecordV6
+	if err := decodeCanonicalSetRecord(encoded, &record); err != nil || record.Contract != "open-trestle/review-diagnostic-set" || record.SchemaVersion != 6 || len(record.Checks) != 1 {
+		return Set{}, ErrInvalidSetEncoding
+	}
+	scope, err := audit.NewReviewScope(record.TenantID, record.RepositoryID, record.ReviewRunID)
+	if err != nil {
+		return Set{}, ErrInvalidSetEncoding
+	}
+	checks := make([]DeterministicCheck, len(record.Checks))
+	for index, value := range record.Checks {
+		state, stateErr := parseDeterministicCheckState(value.State)
+		if stateErr != nil || value.Key != deterministicCheckKey || value.RuleVersion != deterministicCheckRuleVersion {
+			return Set{}, ErrInvalidSet
+		}
+		checks[index], err = NewDeterministicCheck(value.SourceCheckIdentity, value.AnalysisResultIdentity, value.ChangeIdentity, state, value.ApplicableFiles, value.ApplicableRanges, value.CheckedFiles, value.CheckedRanges, value.Matches)
+		if err != nil || checks[index].Identity() != value.Identity {
+			return Set{}, ErrInvalidSetIdentity
+		}
+	}
+	observations := make([]DeterministicObservation, len(record.Observations))
+	for index, value := range record.Observations {
+		severity, severityErr := parseSeverity(value.Severity)
+		if severityErr != nil {
+			return Set{}, severityErr
+		}
+		observations[index], err = NewDeterministicObservation(value.SourceIdentity, value.Fingerprint, value.AnalysisResultIdentity, value.CheckIdentity, value.Title, value.Message, severity, value.Path, value.StartLine, value.EndLine, value.EvidenceIDs)
+		if err != nil || observations[index].Identity() != value.Identity {
+			return Set{}, ErrInvalidSetIdentity
+		}
+	}
+	set, err := NewSetWithDeterministicObservations(scope, record.SnapshotIdentity, record.HeadRevision, record.AnalysisResultIdentity, checks, observations)
 	if err != nil || set.identity != record.Identity {
 		return Set{}, ErrInvalidSetIdentity
 	}
@@ -735,7 +849,39 @@ func setToRecordV5(set Set) setRecordV5 {
 	}
 }
 
+func setToRecordV6(set Set) setRecordV6 {
+	checks := make([]deterministicCheckRecord, len(set.deterministicChecks))
+	for index, check := range set.deterministicChecks {
+		checks[index] = deterministicCheckRecord{Identity: check.Identity(), SourceCheckIdentity: check.SourceCheckIdentity(), AnalysisResultIdentity: check.AnalysisResultIdentity(), ChangeIdentity: check.ChangeIdentity(), Key: check.Key(), RuleVersion: check.RuleVersion(), State: check.State().String(), ApplicableFiles: check.ApplicableFiles(), ApplicableRanges: check.ApplicableRanges(), CheckedFiles: check.CheckedFiles(), CheckedRanges: check.CheckedRanges(), Matches: check.MatchCount()}
+	}
+	observations := make([]deterministicObservationRecord, len(set.deterministicObservations))
+	for index, observation := range set.deterministicObservations {
+		observations[index] = deterministicObservationRecord{Identity: observation.Identity(), SourceIdentity: observation.SourceIdentity(), Fingerprint: observation.Fingerprint(), AnalysisResultIdentity: observation.AnalysisResultIdentity(), CheckIdentity: observation.CheckIdentity(), Title: observation.Title(), Message: observation.Message(), Severity: observation.Severity().String(), Path: observation.Path(), StartLine: observation.StartLine(), EndLine: observation.EndLine(), EvidenceIDs: observation.EvidenceIDs()}
+	}
+	return setRecordV6{Contract: "open-trestle/review-diagnostic-set", SchemaVersion: 6, Identity: set.identity, TenantID: set.scope.TenantID(), RepositoryID: set.scope.RepositoryID(), ReviewRunID: set.scope.ReviewRunID(), SnapshotIdentity: set.snapshotIdentity, HeadRevision: set.headRevision, AnalysisResultIdentity: set.analysisResultIdentity, Checks: checks, Observations: observations}
+}
+func deterministicObservationLess(a, b DeterministicObservation) bool {
+	if a.Path() != b.Path() {
+		return a.Path() < b.Path()
+	}
+	if a.StartLine() != b.StartLine() {
+		return a.StartLine() < b.StartLine()
+	}
+	if a.EndLine() != b.EndLine() {
+		return a.EndLine() < b.EndLine()
+	}
+	if a.Fingerprint() != b.Fingerprint() {
+		return a.Fingerprint() < b.Fingerprint()
+	}
+	return a.Identity() < b.Identity()
+}
+
 func deriveSetIdentity(set Set) string {
+	if set.schemaVersion == 6 {
+		record := setToRecordV6(set)
+		record.Identity = ""
+		return hashValue(record)
+	}
 	if set.schemaVersion == 5 {
 		record := setToRecordV5(set)
 		record.Identity = ""

@@ -100,9 +100,11 @@ type RepositorySupervisorOptions struct {
 	WorkerIdentity                                  string
 	PollInterval, RenewalInterval, ExecutionTimeout time.Duration
 	Clock                                           Clock
+	FinalizeSettled                                 bool
 }
 type RepositorySupervisor struct {
 	journal   controlplane.RunJournal
+	finalizer *controlplane.RunFinalizer
 	catalog   controlplane.TaskHandlerCatalog
 	options   RepositorySupervisorOptions
 	ready     chan struct{}
@@ -124,7 +126,11 @@ func NewRepositorySupervisor(journal controlplane.RunJournal, catalog controlpla
 	if nilWorkerValue(journal) || catalog.Validate() != nil || !validLocalScopeID(options.TenantID) || !validRepos || !validLocalWorkerIdentity(options.WorkerIdentity) || options.PollInterval < minimumPollInterval || options.PollInterval > maximumPollInterval || options.RenewalInterval < minimumRenewalInterval || options.RenewalInterval > maximumRenewalInterval || options.ExecutionTimeout < minimumExecutionTime || options.ExecutionTimeout > maximumExecutionTime || options.RenewalInterval >= options.ExecutionTimeout || nilWorkerValue(options.Clock) {
 		return nil, ErrInvalidRepositorySupervisor
 	}
-	return &RepositorySupervisor{journal: journal, catalog: catalog, options: options, ready: make(chan struct{}), cursors: make(map[string]string)}, nil
+	finalizer, err := controlplane.NewRunFinalizer(journal)
+	if err != nil {
+		return nil, ErrInvalidRepositorySupervisor
+	}
+	return &RepositorySupervisor{journal: journal, finalizer: finalizer, catalog: catalog, options: options, ready: make(chan struct{}), cursors: make(map[string]string)}, nil
 }
 func (s *RepositorySupervisor) Ready() <-chan struct{} {
 	if s == nil {
@@ -181,15 +187,24 @@ func (s *RepositorySupervisor) RunOnce(ctx context.Context) (bool, error) {
 			if err != nil {
 				return workedAny, err
 			}
+			settled := false
 			for {
-				worked, settled, runErr := runner.RunOnce(ctx)
+				worked, runSettled, runErr := runner.RunOnce(ctx)
 				if runErr != nil {
 					return workedAny, fmt.Errorf("execute repository run: %w", runErr)
 				}
 				workedAny = workedAny || worked
+				settled = runSettled
 				if settled || !worked {
 					break
 				}
+			}
+			if settled && s.options.FinalizeSettled {
+				_, finalized, finalizeErr := s.finalizer.ReconcileRun(ctx, plan.Scope(), s.options.Clock.Now().UTC())
+				if finalizeErr != nil {
+					return workedAny, fmt.Errorf("finalize repository run: %w", finalizeErr)
+				}
+				workedAny = workedAny || finalized
 			}
 		}
 		if len(plans) < maximumSupervisorPlansPerPage {

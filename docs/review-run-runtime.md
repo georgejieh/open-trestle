@@ -36,3 +36,12 @@ The package provides the task graph, canonical encodings, memory and durable loc
 ## Transport boundary
 
 The public `controlplane` package owns these runtime contracts. The authenticated HTTP adapter, Go client, CLI, and daemon use the same canonical plan, lease, completion, and receipt encodings. See [Daemon API and client](daemon-api.md).
+
+
+## Provider-free deterministic local runs
+
+A local deterministic catalog is the exact three-handler subset `acquire_source`, `build_change`, and `inspect_deterministic`. Preparation expands it to four tasks because base and head acquisition are separate immutable roots. The two version 2 source inputs bind a daemon-retained source-root identity. Model inventory and runtime-policy identities are prohibited from this request shape.
+
+The analysis handler stores exact match locations in deterministic-evidence result version 4 and projects diagnostic set version 6. Version 6 deliberately has `analysis_result_identity`, `checks`, and `observations`; it has no `verified_set_identity`, model-candidate coverage, verification-context identity, or verified findings. Observation count and canonical payload bytes are bounded before the analysis artifact is committed. Exceeding the durable diagnostic budget is a closed `resource_limit` failure, never silent truncation.
+
+The repository supervisor finalizes settled runs only when its explicit local deterministic option is enabled. Existing GitHub and model pipeline supervisors preserve their separate finalization behavior. A daemon restart reopens the file journal, artifact store, audit ledger, and diagnostic store. Terminal runs are read back without rerunning handlers. An interrupted active deterministic run remains subject to the existing lease, attempt, and source-root identity checks.

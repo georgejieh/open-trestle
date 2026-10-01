@@ -51,6 +51,59 @@ func (i Item) EvidenceItem() (evidence.EvidenceItem, error) {
 	return evidence.NewEvidenceItem(i.evidenceID, evidence.EvidenceKindSource, i.digest, sourceRange)
 }
 
+// Observation is one exact deterministic rule match. It is not an independently verified finding.
+type Observation struct {
+	identity, fingerprint, checkIdentity, evidenceID, path, digest, fileIdentity, fileDigest string
+	startLine, endLine, sliceBytes                                                           int
+}
+
+func newObservation(check DeterministicCheck, item Item) (Observation, error) {
+	if check.Validate() != nil {
+		return Observation{}, ErrInvalidResult
+	}
+	observation := Observation{checkIdentity: check.Identity(), evidenceID: item.evidenceID, path: item.path, startLine: item.startLine, endLine: item.endLine, digest: item.digest, fileIdentity: item.fileIdentity, fileDigest: item.fileDigest, sliceBytes: item.sliceBytes}
+	observation.fingerprint = hashObservationValue(struct {
+		Rule      string `json:"rule"`
+		Path      string `json:"path"`
+		StartLine int    `json:"start_line"`
+		EndLine   int    `json:"end_line"`
+	}{check.Key(), observation.path, observation.startLine, observation.endLine})
+	observation.identity = deriveObservationIdentity(observation)
+	return observation, nil
+}
+func (o Observation) Identity() string      { return o.identity }
+func (o Observation) Fingerprint() string   { return o.fingerprint }
+func (o Observation) CheckIdentity() string { return o.checkIdentity }
+func (o Observation) EvidenceID() string    { return o.evidenceID }
+func (o Observation) Path() string          { return o.path }
+func (o Observation) StartLine() int        { return o.startLine }
+func (o Observation) EndLine() int          { return o.endLine }
+func (o Observation) Digest() string        { return o.digest }
+func (o Observation) FileIdentity() string  { return o.fileIdentity }
+func (o Observation) FileDigest() string    { return o.fileDigest }
+func (o Observation) SliceBytes() int       { return o.sliceBytes }
+func (o Observation) String() string        { return "deterministic review observation" }
+func (o Observation) GoString() string      { return "analysis.Observation{<redacted>}" }
+func deriveObservationIdentity(o Observation) string {
+	return hashObservationValue(struct {
+		Fingerprint  string `json:"fingerprint"`
+		Check        string `json:"check"`
+		Evidence     string `json:"evidence"`
+		Path         string `json:"path"`
+		StartLine    int    `json:"start_line"`
+		EndLine      int    `json:"end_line"`
+		Digest       string `json:"digest"`
+		FileIdentity string `json:"file_identity"`
+		FileDigest   string `json:"file_digest"`
+		SliceBytes   int    `json:"slice_bytes"`
+	}{o.fingerprint, o.checkIdentity, o.evidenceID, o.path, o.startLine, o.endLine, o.digest, o.fileIdentity, o.fileDigest, o.sliceBytes})
+}
+func hashObservationValue(value any) string {
+	encoded, _ := json.Marshal(value)
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:])
+}
+
 type Gap struct {
 	changeEntryIdentity, changeExecutionIdentity, path, reason string
 	startLine, endLine                                         int
@@ -67,6 +120,7 @@ type Result struct {
 	items                                                                                                                                                                                                 []Item
 	gaps                                                                                                                                                                                                  []Gap
 	checks                                                                                                                                                                                                []DeterministicCheck
+	observations                                                                                                                                                                                          []Observation
 	semanticProfile                                                                                                                                                                                       semanticimpact.Profile
 }
 
@@ -82,6 +136,7 @@ func (r Result) SchemaVersion() int                     { return r.schemaVersion
 func (r Result) Items() []Item                          { return append([]Item(nil), r.items...) }
 func (r Result) Gaps() []Gap                            { return append([]Gap(nil), r.gaps...) }
 func (r Result) Checks() []DeterministicCheck           { return append([]DeterministicCheck(nil), r.checks...) }
+func (r Result) Observations() []Observation            { return append([]Observation(nil), r.observations...) }
 func (r Result) SemanticImpact() semanticimpact.Profile { return r.semanticProfile }
 func (r Result) String() string                         { return "deterministic evidence result" }
 func (r Result) GoString() string                       { return "analysis.Result{<redacted>}" }
@@ -122,6 +177,19 @@ type deterministicCheckWire struct {
 	CheckedRanges    uint32 `json:"checked_ranges"`
 	Matches          uint32 `json:"matches"`
 }
+type observationWire struct {
+	Identity      string `json:"identity"`
+	Fingerprint   string `json:"fingerprint"`
+	CheckIdentity string `json:"check_identity"`
+	EvidenceID    string `json:"evidence_id"`
+	Path          string `json:"path"`
+	StartLine     int    `json:"start_line"`
+	EndLine       int    `json:"end_line"`
+	Digest        string `json:"digest"`
+	FileIdentity  string `json:"file_identity"`
+	FileDigest    string `json:"file_digest"`
+	SliceBytes    int    `json:"slice_bytes"`
+}
 type resultWire struct {
 	Contract                     string                   `json:"contract"`
 	SchemaVersion                int                      `json:"schema_version"`
@@ -140,17 +208,52 @@ type resultWire struct {
 	Items                        []itemWire               `json:"items"`
 	Gaps                         []gapWire                `json:"gaps"`
 	Checks                       []deterministicCheckWire `json:"checks,omitempty"`
+	Observations                 []observationWire        `json:"observations"`
 	SemanticImpact               json.RawMessage          `json:"semantic_impact"`
 }
 
-func newResult(changeArtifact artifact.Artifact, change changehandler.Result, headArtifact artifact.Artifact, head source.Snapshot, items []Item, gaps []Gap, checks []DeterministicCheck, semanticProfile semanticimpact.Profile) (Result, error) {
+func (w resultWire) MarshalJSON() ([]byte, error) {
+	type current resultWire
+	if w.SchemaVersion == 4 {
+		if w.Observations == nil {
+			w.Observations = []observationWire{}
+		}
+		return json.Marshal(current(w))
+	}
+	type legacy struct {
+		Contract                     string                   `json:"contract"`
+		SchemaVersion                int                      `json:"schema_version"`
+		Identity                     string                   `json:"identity"`
+		ChangeArtifactIdentity       string                   `json:"change_artifact_identity"`
+		ChangeIdentity               string                   `json:"change_identity"`
+		RepositoryIdentity           string                   `json:"repository_identity"`
+		HeadRevisionIdentity         string                   `json:"head_revision_identity"`
+		HeadSnapshotArtifactIdentity string                   `json:"head_snapshot_artifact_identity"`
+		HeadSnapshotIdentity         string                   `json:"head_snapshot_identity"`
+		HeadManifestIdentity         string                   `json:"head_manifest_identity"`
+		ChangedEntries               int                      `json:"changed_entries"`
+		ChangedRanges                int                      `json:"changed_ranges"`
+		EvidenceItems                int                      `json:"evidence_items"`
+		CoverageGaps                 int                      `json:"coverage_gaps"`
+		Items                        []itemWire               `json:"items"`
+		Gaps                         []gapWire                `json:"gaps"`
+		Checks                       []deterministicCheckWire `json:"checks,omitempty"`
+		SemanticImpact               json.RawMessage          `json:"semantic_impact"`
+	}
+	return json.Marshal(legacy{w.Contract, w.SchemaVersion, w.Identity, w.ChangeArtifactIdentity, w.ChangeIdentity, w.RepositoryIdentity, w.HeadRevisionIdentity, w.HeadSnapshotArtifactIdentity, w.HeadSnapshotIdentity, w.HeadManifestIdentity, w.ChangedEntries, w.ChangedRanges, w.EvidenceItems, w.CoverageGaps, w.Items, w.Gaps, w.Checks, w.SemanticImpact})
+}
+
+func newResult(changeArtifact artifact.Artifact, change changehandler.Result, headArtifact artifact.Artifact, head source.Snapshot, items []Item, gaps []Gap, checks []DeterministicCheck, observations []Observation, semanticProfile semanticimpact.Profile) (Result, error) {
 	changedRanges := 0
 	for _, entry := range change.Entries() {
 		changedRanges += len(entry.Ranges())
 	}
-	result := Result{schemaVersion: 3, changeArtifactIdentity: changeArtifact.Identity(), changeIdentity: change.Identity(), repositoryIdentity: change.Repository().Identity(), headRevisionIdentity: change.HeadRevision().Identity(), headSnapshotArtifactIdentity: headArtifact.Identity(), headSnapshotIdentity: head.Identity(), headManifestIdentity: head.ManifestIdentity(), changedEntries: len(change.Entries()), changedRanges: changedRanges, items: append([]Item(nil), items...), gaps: append([]Gap(nil), gaps...), checks: append([]DeterministicCheck(nil), checks...), semanticProfile: semanticProfile}
+	result := Result{schemaVersion: 4, changeArtifactIdentity: changeArtifact.Identity(), changeIdentity: change.Identity(), repositoryIdentity: change.Repository().Identity(), headRevisionIdentity: change.HeadRevision().Identity(), headSnapshotArtifactIdentity: headArtifact.Identity(), headSnapshotIdentity: head.Identity(), headManifestIdentity: head.ManifestIdentity(), changedEntries: len(change.Entries()), changedRanges: changedRanges, items: append([]Item(nil), items...), gaps: append([]Gap(nil), gaps...), checks: append([]DeterministicCheck(nil), checks...), observations: append([]Observation(nil), observations...), semanticProfile: semanticProfile}
 	sort.Slice(result.items, func(i, j int) bool { return itemKey(result.items[i]) < itemKey(result.items[j]) })
 	sort.Slice(result.gaps, func(i, j int) bool { return gapKey(result.gaps[i]) < gapKey(result.gaps[j]) })
+	sort.Slice(result.observations, func(i, j int) bool {
+		return observationKey(result.observations[i]) < observationKey(result.observations[j])
+	})
 	result.identity = deriveIdentity(result)
 	if result.validate(false, change) != nil {
 		return Result{}, ErrInvalidResult
@@ -158,10 +261,10 @@ func newResult(changeArtifact artifact.Artifact, change changehandler.Result, he
 	return result, nil
 }
 func (r Result) validate(requireArtifact bool, change changehandler.Result) error {
-	if change.Identity() != r.changeIdentity || change.ArtifactIdentity() != r.changeArtifactIdentity || change.Repository().Identity() != r.repositoryIdentity || change.HeadRevision().Identity() != r.headRevisionIdentity || change.HeadSnapshotArtifactIdentity() != r.headSnapshotArtifactIdentity || change.HeadSnapshotIdentity() != r.headSnapshotIdentity || change.HeadManifestIdentity() != r.headManifestIdentity || r.changedEntries != len(change.Entries()) || len(r.items) > maximumEvidenceItems || len(r.gaps) > maximumEvidenceItems || r.semanticProfile.BaseSnapshotIdentity() != change.BaseSnapshotIdentity() || r.semanticProfile.HeadSnapshotIdentity() != change.HeadSnapshotIdentity() || r.semanticProfile.ChangeModelIdentity() != change.Identity() || requireArtifact && (!validDigest(r.artifactIdentity) || !validDigest(r.scopeIdentity)) {
+	if change.Identity() != r.changeIdentity || change.ArtifactIdentity() != r.changeArtifactIdentity || change.Repository().Identity() != r.repositoryIdentity || change.HeadRevision().Identity() != r.headRevisionIdentity || change.HeadSnapshotArtifactIdentity() != r.headSnapshotArtifactIdentity || change.HeadSnapshotIdentity() != r.headSnapshotIdentity || change.HeadManifestIdentity() != r.headManifestIdentity || r.changedEntries != len(change.Entries()) || len(r.items) > maximumEvidenceItems || len(r.gaps) > maximumEvidenceItems || len(r.observations) > maximumEvidenceItems || r.semanticProfile.BaseSnapshotIdentity() != change.BaseSnapshotIdentity() || r.semanticProfile.HeadSnapshotIdentity() != change.HeadSnapshotIdentity() || r.semanticProfile.ChangeModelIdentity() != change.Identity() || requireArtifact && (!validDigest(r.artifactIdentity) || !validDigest(r.scopeIdentity)) {
 		return ErrInvalidResult
 	}
-	validChecks := r.schemaVersion == 2 && len(r.checks) == 0 || r.schemaVersion == 3 && len(r.checks) == 1
+	validChecks := r.schemaVersion == 2 && len(r.checks) == 0 && len(r.observations) == 0 || r.schemaVersion == 3 && len(r.checks) == 1 && len(r.observations) == 0 || r.schemaVersion == 4 && len(r.checks) == 1
 	if !validChecks {
 		return ErrInvalidResult
 	}
@@ -170,11 +273,22 @@ func (r Result) validate(requireArtifact bool, change changehandler.Result) erro
 			return ErrInvalidResult
 		}
 	}
+	if r.schemaVersion == 4 && uint32(len(r.observations)) != r.checks[0].MatchCount() {
+		return ErrInvalidResult
+	}
 	entryByIdentity := make(map[string]changehandler.Entry, r.changedEntries)
 	changedRanges := 0
 	for _, entry := range change.Entries() {
 		entryByIdentity[entry.Identity()] = entry
 		changedRanges += len(entry.Ranges())
+	}
+	previousObservation := ""
+	for _, observation := range r.observations {
+		key := observationKey(observation)
+		if key <= previousObservation || !validObservation(observation, r.checks[0], entryByIdentity) {
+			return ErrInvalidResult
+		}
+		previousObservation = key
 	}
 	if r.changedRanges != changedRanges {
 		return ErrInvalidResult
@@ -270,6 +384,28 @@ func validGap(gap Gap, entries map[string]changehandler.Entry) bool {
 	return err == nil && containsRange(entry.Ranges(), gap.startLine, gap.endLine)
 }
 
+func validObservation(observation Observation, check DeterministicCheck, entries map[string]changehandler.Entry) bool {
+	if observation.identity != deriveObservationIdentity(observation) || observation.checkIdentity != check.Identity() || !validDigest(observation.identity) || !validDigest(observation.fingerprint) || !validDigest(observation.evidenceID) || !validDigest(observation.digest) || !validDigest(observation.fileIdentity) || !validDigest(observation.fileDigest) || observation.sliceBytes <= 0 || observation.sliceBytes > 1<<20 {
+		return false
+	}
+	entryFound := false
+	for _, entry := range entries {
+		if entry.Path() != observation.path || entry.HeadIdentity() != observation.fileIdentity || entry.HeadDigest() != observation.fileDigest {
+			continue
+		}
+		for _, value := range entry.Ranges() {
+			if value.StartLine() <= observation.startLine && observation.endLine <= value.EndLine() {
+				entryFound = true
+			}
+		}
+	}
+	if !entryFound {
+		return false
+	}
+	item := Item{evidenceID: observation.evidenceID, bindingIdentity: observation.evidenceID, path: observation.path, startLine: observation.startLine, endLine: observation.endLine, digest: observation.digest, fileIdentity: observation.fileIdentity, fileDigest: observation.fileDigest, sliceBytes: observation.sliceBytes}
+	return deriveBindingIdentity(item) == observation.evidenceID
+}
+
 func containsRange(ranges []changehandler.Range, start, end int) bool {
 	for _, value := range ranges {
 		if value.StartLine() == start && value.EndLine() == end {
@@ -307,7 +443,7 @@ func ParseResultArtifact(value, changeArtifact, baseArtifact, headArtifact artif
 		return Result{}, ErrInvalidResult
 	}
 	canonical, _ := json.Marshal(wire)
-	validVersion := wire.SchemaVersion == 2 && len(wire.Checks) == 0 || wire.SchemaVersion == 3 && len(wire.Checks) == 1
+	validVersion := wire.SchemaVersion == 2 && len(wire.Checks) == 0 && len(wire.Observations) == 0 || wire.SchemaVersion == 3 && len(wire.Checks) == 1 && len(wire.Observations) == 0 || wire.SchemaVersion == 4 && len(wire.Checks) == 1
 	if !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/deterministic-evidence-result" || !validVersion || wire.EvidenceItems != len(wire.Items) || wire.CoverageGaps != len(wire.Gaps) {
 		return Result{}, ErrInvalidResult
 	}
@@ -326,7 +462,11 @@ func ParseResultArtifact(value, changeArtifact, baseArtifact, headArtifact artif
 			return Result{}, ErrInvalidResult
 		}
 	}
-	result := fromWire(wire, checks, semanticProfile)
+	observations := make([]Observation, len(wire.Observations))
+	for index, value := range wire.Observations {
+		observations[index] = Observation{identity: value.Identity, fingerprint: value.Fingerprint, checkIdentity: value.CheckIdentity, evidenceID: value.EvidenceID, path: value.Path, startLine: value.StartLine, endLine: value.EndLine, digest: value.Digest, fileIdentity: value.FileIdentity, fileDigest: value.FileDigest, sliceBytes: value.SliceBytes}
+	}
+	result := fromWire(wire, checks, observations, semanticProfile)
 	result.artifactIdentity = value.Identity()
 	result.scopeIdentity = value.Scope().Identity()
 	if result.validate(true, change) != nil {
@@ -347,10 +487,14 @@ func toWire(r Result) resultWire {
 	for index, check := range r.checks {
 		checks[index] = deterministicCheckWire{Identity: check.Identity(), Key: check.Key(), RuleVersion: check.RuleVersion(), ChangeIdentity: check.ChangeIdentity(), State: check.State().String(), ApplicableFiles: check.ApplicableFiles(), ApplicableRanges: check.ApplicableRanges(), CheckedFiles: check.CheckedFiles(), CheckedRanges: check.CheckedRanges(), Matches: check.MatchCount()}
 	}
+	observations := make([]observationWire, len(r.observations))
+	for index, observation := range r.observations {
+		observations[index] = observationWire{Identity: observation.identity, Fingerprint: observation.fingerprint, CheckIdentity: observation.checkIdentity, EvidenceID: observation.evidenceID, Path: observation.path, StartLine: observation.startLine, EndLine: observation.endLine, Digest: observation.digest, FileIdentity: observation.fileIdentity, FileDigest: observation.fileDigest, SliceBytes: observation.sliceBytes}
+	}
 	semanticEncoded, _ := semanticimpact.EncodeProfile(r.semanticProfile)
-	return resultWire{Contract: "open-trestle/deterministic-evidence-result", SchemaVersion: r.schemaVersion, Identity: r.identity, ChangeArtifactIdentity: r.changeArtifactIdentity, ChangeIdentity: r.changeIdentity, RepositoryIdentity: r.repositoryIdentity, HeadRevisionIdentity: r.headRevisionIdentity, HeadSnapshotArtifactIdentity: r.headSnapshotArtifactIdentity, HeadSnapshotIdentity: r.headSnapshotIdentity, HeadManifestIdentity: r.headManifestIdentity, ChangedEntries: r.changedEntries, ChangedRanges: r.changedRanges, EvidenceItems: len(r.items), CoverageGaps: len(r.gaps), Items: items, Gaps: gaps, Checks: checks, SemanticImpact: semanticEncoded}
+	return resultWire{Contract: "open-trestle/deterministic-evidence-result", SchemaVersion: r.schemaVersion, Identity: r.identity, ChangeArtifactIdentity: r.changeArtifactIdentity, ChangeIdentity: r.changeIdentity, RepositoryIdentity: r.repositoryIdentity, HeadRevisionIdentity: r.headRevisionIdentity, HeadSnapshotArtifactIdentity: r.headSnapshotArtifactIdentity, HeadSnapshotIdentity: r.headSnapshotIdentity, HeadManifestIdentity: r.headManifestIdentity, ChangedEntries: r.changedEntries, ChangedRanges: r.changedRanges, EvidenceItems: len(r.items), CoverageGaps: len(r.gaps), Items: items, Gaps: gaps, Checks: checks, Observations: observations, SemanticImpact: semanticEncoded}
 }
-func fromWire(w resultWire, checks []DeterministicCheck, semanticProfile semanticimpact.Profile) Result {
+func fromWire(w resultWire, checks []DeterministicCheck, observations []Observation, semanticProfile semanticimpact.Profile) Result {
 	items := make([]Item, len(w.Items))
 	for i, v := range w.Items {
 		items[i] = Item{evidenceID: v.EvidenceID, bindingIdentity: v.BindingIdentity, changeEntryIdentity: v.ChangeEntryIdentity, changeExecutionIdentity: v.ChangeExecutionIdentity, path: v.Path, startLine: v.StartLine, endLine: v.EndLine, digest: v.Digest, fileIdentity: v.FileIdentity, fileDigest: v.FileDigest, sliceBytes: v.SliceBytes}
@@ -359,7 +503,7 @@ func fromWire(w resultWire, checks []DeterministicCheck, semanticProfile semanti
 	for i, v := range w.Gaps {
 		gaps[i] = Gap{changeEntryIdentity: v.ChangeEntryIdentity, changeExecutionIdentity: v.ChangeExecutionIdentity, path: v.Path, startLine: v.StartLine, endLine: v.EndLine, reason: v.Reason}
 	}
-	return Result{identity: w.Identity, schemaVersion: w.SchemaVersion, changeArtifactIdentity: w.ChangeArtifactIdentity, changeIdentity: w.ChangeIdentity, repositoryIdentity: w.RepositoryIdentity, headRevisionIdentity: w.HeadRevisionIdentity, headSnapshotArtifactIdentity: w.HeadSnapshotArtifactIdentity, headSnapshotIdentity: w.HeadSnapshotIdentity, headManifestIdentity: w.HeadManifestIdentity, changedEntries: w.ChangedEntries, changedRanges: w.ChangedRanges, items: items, gaps: gaps, checks: append([]DeterministicCheck(nil), checks...), semanticProfile: semanticProfile}
+	return Result{identity: w.Identity, schemaVersion: w.SchemaVersion, changeArtifactIdentity: w.ChangeArtifactIdentity, changeIdentity: w.ChangeIdentity, repositoryIdentity: w.RepositoryIdentity, headRevisionIdentity: w.HeadRevisionIdentity, headSnapshotArtifactIdentity: w.HeadSnapshotArtifactIdentity, headSnapshotIdentity: w.HeadSnapshotIdentity, headManifestIdentity: w.HeadManifestIdentity, changedEntries: w.ChangedEntries, changedRanges: w.ChangedRanges, items: items, gaps: gaps, checks: append([]DeterministicCheck(nil), checks...), observations: append([]Observation(nil), observations...), semanticProfile: semanticProfile}
 }
 func deriveIdentity(r Result) string {
 	wire := toWire(r)
@@ -387,6 +531,9 @@ func coverageKey(identity string, start, end int) string {
 	return fmt.Sprintf("%s\x00%09d\x00%09d", identity, start, end)
 }
 func itemKey(i Item) string { return fmt.Sprintf("%s\x00%09d\x00%09d", i.path, i.startLine, i.endLine) }
+func observationKey(o Observation) string {
+	return fmt.Sprintf("%s\x00%09d\x00%09d\x00%s", o.path, o.startLine, o.endLine, o.fingerprint)
+}
 func gapKey(g Gap) string {
 	return fmt.Sprintf("%s\x00%09d\x00%09d\x00%s", g.path, g.startLine, g.endLine, g.reason)
 }

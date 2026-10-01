@@ -165,3 +165,18 @@ func TestRequiredPipelineCatalogIncludesPublicationAuthority(t *testing.T) {
 		t.Fatalf("catalog=(%#v,%v)", catalog, err)
 	}
 }
+
+func TestPipelineCatalogAllowsExactDeterministicLocalKinds(t *testing.T) {
+	kinds := []controlplane.TaskKind{controlplane.TaskAcquireSource, controlplane.TaskBuildChange, controlplane.TaskInspectDeterministic}
+	handlers := make([]controlplane.TaskHandler, len(kinds))
+	for i, kind := range kinds {
+		handlers[i] = handler{kind, strings.Repeat(string("123"[i]), 64)}
+	}
+	catalog, err := NewPipelineCatalog(controlplane.ReviewRunLocal, handlers)
+	if err != nil || catalog.Validate() != nil || catalog.Catalog().Len() != 3 || len(catalog.Bindings()) != 3 {
+		t.Fatalf("catalog=(%#v,%v)", catalog, err)
+	}
+	if advisory, err := NewPipelineCatalog(controlplane.ReviewRunAdvisory, handlers); err == nil || advisory.Identity() != "" {
+		t.Fatal("advisory catalog accepted deterministic-only handlers")
+	}
+}

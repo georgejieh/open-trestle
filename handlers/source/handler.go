@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/georgejieh/open-trestle/artifact"
@@ -20,22 +21,33 @@ import (
 
 // Handler acquires one exact repository revision and persists protected source artifacts.
 type Handler struct {
-	identity string
-	store    artifact.Store
-	adapter  scm.SourceAdapter
-	clock    artifact.Clock
+	identity, sourceRootIdentity string
+	store                        artifact.Store
+	adapter                      scm.SourceAdapter
+	clock                        artifact.Clock
 }
 
 // NewHandler binds one exact source adapter to a protected artifact store.
 func NewHandler(store artifact.Store, adapter scm.SourceAdapter, clock artifact.Clock) (*Handler, error) {
+	return newHandler(store, adapter, "", clock)
+}
+
+// NewHandlerWithSourceRoot binds the handler to one retained daemon source-root authority.
+func NewHandlerWithSourceRoot(store artifact.Store, adapter scm.SourceAdapter, sourceRootIdentity string, clock artifact.Clock) (*Handler, error) {
+	if !validSourceDigest(sourceRootIdentity) {
+		return nil, ErrInvalidHandler
+	}
+	return newHandler(store, adapter, sourceRootIdentity, clock)
+}
+func newHandler(store artifact.Store, adapter scm.SourceAdapter, sourceRootIdentity string, clock artifact.Clock) (*Handler, error) {
 	if nilInterface(store) || nilInterface(adapter) || nilInterface(clock) {
 		return nil, ErrInvalidHandler
 	}
 	if !canonicalAdapter(adapter.Identity()) {
 		return nil, ErrInvalidHandler
 	}
-	handler := &Handler{store: store, adapter: adapter, clock: clock}
-	handler.identity = deriveHandlerIdentity(adapter.Identity())
+	handler := &Handler{store: store, adapter: adapter, sourceRootIdentity: sourceRootIdentity, clock: clock}
+	handler.identity = deriveHandlerIdentity(adapter.Identity(), sourceRootIdentity)
 	if err := handler.Validate(); err != nil {
 		return nil, err
 	}
@@ -58,10 +70,18 @@ func (h *Handler) Kind() controlplane.TaskKind {
 // Validate verifies dependencies, adapter identity, and handler identity.
 func (h *Handler) Validate() error {
 	if h == nil || nilInterface(h.store) || nilInterface(h.adapter) || nilInterface(h.clock) ||
-		!canonicalAdapter(h.adapter.Identity()) || h.identity != deriveHandlerIdentity(h.adapter.Identity()) {
+		!canonicalAdapter(h.adapter.Identity()) || h.identity != deriveHandlerIdentity(h.adapter.Identity(), h.sourceRootIdentity) {
 		return ErrInvalidHandler
 	}
 	return nil
+}
+
+func validSourceDigest(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	decoded, err := hex.DecodeString(value)
+	return err == nil && hex.EncodeToString(decoded) == value && strings.Trim(value, "0") != ""
 }
 
 func canonicalAdapter(value evidence.SourceAdapterIdentity) bool {
@@ -71,12 +91,23 @@ func canonicalAdapter(value evidence.SourceAdapterIdentity) bool {
 		canonical.HasCapability(evidence.SourceCapabilityReadContent)
 }
 
-func deriveHandlerIdentity(adapter evidence.SourceAdapterIdentity) string {
-	encoded, err := json.Marshal(struct {
-		Contract              string `json:"contract"`
-		SchemaVersion         int    `json:"schema_version"`
-		SourceAdapterIdentity string `json:"source_adapter_identity"`
-	}{"open-trestle/source-acquisition-handler", 1, adapter.Identity()})
+func deriveHandlerIdentity(adapter evidence.SourceAdapterIdentity, sourceRootIdentity string) string {
+	var encoded []byte
+	var err error
+	if sourceRootIdentity == "" {
+		encoded, err = json.Marshal(struct {
+			Contract              string `json:"contract"`
+			SchemaVersion         int    `json:"schema_version"`
+			SourceAdapterIdentity string `json:"source_adapter_identity"`
+		}{"open-trestle/source-acquisition-handler", 1, adapter.Identity()})
+	} else {
+		encoded, err = json.Marshal(struct {
+			Contract              string `json:"contract"`
+			SchemaVersion         int    `json:"schema_version"`
+			SourceAdapterIdentity string `json:"source_adapter_identity"`
+			SourceRootIdentity    string `json:"source_root_identity"`
+		}{"open-trestle/source-acquisition-handler", 2, adapter.Identity(), sourceRootIdentity})
+	}
 	if err != nil {
 		return ""
 	}
@@ -110,7 +141,7 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 	if err != nil {
 		return taskFailure(controlplane.RunFailureInvalidInput)
 	}
-	if !sameAdapterIdentity(input.Adapter(), h.adapter.Identity()) {
+	if !sameAdapterIdentity(input.Adapter(), h.adapter.Identity()) || input.SourceRootIdentity() != h.sourceRootIdentity {
 		return taskFailure(controlplane.RunFailurePolicy)
 	}
 	acquisitionRequest, err := evidence.NewRepositoryAcquisitionRequest(

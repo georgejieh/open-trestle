@@ -133,7 +133,7 @@ func TestRepositorySupervisorDiscoversAndExecutesLocalRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	supervisor, err := NewRepositorySupervisor(journal, catalog, RepositorySupervisorOptions{TenantID: "tenant-a", RepositoryIDs: []string{"repo-a"}, WorkerIdentity: "local-worker", PollInterval: time.Second, RenewalInterval: 50 * time.Millisecond, ExecutionTimeout: time.Second, Clock: workerSystemClock{}})
+	supervisor, err := NewRepositorySupervisor(journal, catalog, RepositorySupervisorOptions{TenantID: "tenant-a", RepositoryIDs: []string{"repo-a"}, WorkerIdentity: "local-worker", PollInterval: time.Second, RenewalInterval: 50 * time.Millisecond, ExecutionTimeout: time.Second, Clock: workerSystemClock{}, FinalizeSettled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestRepositorySupervisorDiscoversAndExecutesLocalRuns(t *testing.T) {
 	}
 	receipt, err := coordinator.Receipt(context.Background(), scope)
 	task, _ := receipt.Task("source")
-	if err != nil || task.Status() != controlplane.TaskRuntimeSucceeded {
+	if err != nil || receipt.Status() != controlplane.ReviewRunSucceeded || task.Status() != controlplane.TaskRuntimeSucceeded || receipt.OutputIdentity() != task.OutputIdentity() {
 		t.Fatalf("receipt=(%#v,%v)", receipt, err)
 	}
 }

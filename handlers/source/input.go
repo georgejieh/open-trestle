@@ -29,10 +29,11 @@ var (
 
 // Input authorizes one exact read-only complete-content acquisition.
 type Input struct {
-	identity   string
-	repository evidence.RepositoryIdentity
-	revision   evidence.RevisionIdentity
-	adapter    evidence.SourceAdapterIdentity
+	identity, sourceRootIdentity string
+	schemaVersion                int
+	repository                   evidence.RepositoryIdentity
+	revision                     evidence.RevisionIdentity
+	adapter                      evidence.SourceAdapterIdentity
 }
 
 // NewInput creates an immutable acquisition input for an exact repository revision and adapter.
@@ -41,7 +42,17 @@ func NewInput(
 	revision evidence.RevisionIdentity,
 	adapter evidence.SourceAdapterIdentity,
 ) (Input, error) {
-	input := Input{repository: repository, revision: revision, adapter: adapter}
+	input := Input{schemaVersion: 1, repository: repository, revision: revision, adapter: adapter}
+	if err := input.validateFields(); err != nil {
+		return Input{}, err
+	}
+	input.identity = deriveInputIdentity(input)
+	return input, nil
+}
+
+// NewBoundInput binds acquisition to one daemon-retained source-root authority.
+func NewBoundInput(repository evidence.RepositoryIdentity, revision evidence.RevisionIdentity, adapter evidence.SourceAdapterIdentity, sourceRootIdentity string) (Input, error) {
+	input := Input{schemaVersion: 2, repository: repository, revision: revision, adapter: adapter, sourceRootIdentity: sourceRootIdentity}
 	if err := input.validateFields(); err != nil {
 		return Input{}, err
 	}
@@ -50,6 +61,8 @@ func NewInput(
 }
 
 func (i Input) Identity() string                        { return i.identity }
+func (i Input) SchemaVersion() int                      { return i.schemaVersion }
+func (i Input) SourceRootIdentity() string              { return i.sourceRootIdentity }
 func (i Input) Repository() evidence.RepositoryIdentity { return i.repository }
 func (i Input) Revision() evidence.RevisionIdentity     { return i.revision }
 func (i Input) Adapter() evidence.SourceAdapterIdentity { return i.adapter }
@@ -70,6 +83,9 @@ func (i Input) Validate() error {
 }
 
 func (i Input) validateFields() error {
+	if i.schemaVersion != 1 && i.schemaVersion != 2 || i.schemaVersion == 1 && i.sourceRootIdentity != "" || i.schemaVersion == 2 && !validInputDigest(i.sourceRootIdentity) {
+		return ErrInvalidInput
+	}
 	repository, err := evidence.NewRepositoryIdentity(i.repository.Authority(), i.repository.Namespace(), i.repository.Name())
 	if err != nil || repository.Identity() != i.repository.Identity() {
 		return ErrInvalidInput
@@ -96,6 +112,7 @@ func sameAdapterIdentity(first, second evidence.SourceAdapterIdentity) bool {
 type inputWire struct {
 	Contract              string                             `json:"contract"`
 	SchemaVersion         int                                `json:"schema_version"`
+	SourceRootIdentity    string                             `json:"source_root_identity,omitempty"`
 	Identity              string                             `json:"identity"`
 	RepositoryAuthority   string                             `json:"repository_authority"`
 	RepositoryNamespace   []string                           `json:"repository_namespace"`
@@ -140,7 +157,7 @@ func ParseInput(encoded []byte) (Input, error) {
 	}
 	canonical, err := json.Marshal(wire)
 	if err != nil || !bytes.Equal(canonical, encoded) || wire.Contract != "open-trestle/source-acquisition-input" ||
-		wire.SchemaVersion != 1 || wire.Artifact != string(evidence.AcquisitionArtifactManifestAndContent) ||
+		(wire.SchemaVersion != 1 && wire.SchemaVersion != 2) || wire.SchemaVersion == 1 && wire.SourceRootIdentity != "" || wire.SchemaVersion == 2 && !validInputDigest(wire.SourceRootIdentity) || wire.Artifact != string(evidence.AcquisitionArtifactManifestAndContent) ||
 		wire.Effect != string(evidence.AcquisitionEffectReadOnly) {
 		return Input{}, ErrInvalidInput
 	}
@@ -161,7 +178,12 @@ func ParseInput(encoded []byte) (Input, error) {
 	if err != nil || adapter.Identity() != wire.SourceAdapterIdentity {
 		return Input{}, ErrInvalidInput
 	}
-	input, err := NewInput(repository, revision, adapter)
+	var input Input
+	if wire.SchemaVersion == 2 {
+		input, err = NewBoundInput(repository, revision, adapter, wire.SourceRootIdentity)
+	} else {
+		input, err = NewInput(repository, revision, adapter)
+	}
 	if err != nil || input.Identity() != wire.Identity {
 		return Input{}, ErrInvalidInput
 	}
@@ -174,7 +196,7 @@ func ParseInput(encoded []byte) (Input, error) {
 
 func inputWireValue(input Input) inputWire {
 	return inputWire{
-		Contract: "open-trestle/source-acquisition-input", SchemaVersion: 1, Identity: input.Identity(),
+		Contract: "open-trestle/source-acquisition-input", SchemaVersion: input.schemaVersion, SourceRootIdentity: input.sourceRootIdentity, Identity: input.Identity(),
 		RepositoryAuthority: input.repository.Authority(), RepositoryNamespace: input.repository.Namespace(),
 		RepositoryName: input.repository.Name(), RevisionKind: input.revision.Kind(),
 		RevisionAlgorithm: input.revision.Algorithm(), RevisionDigest: input.revision.Digest(),
@@ -194,6 +216,14 @@ func deriveInputIdentity(input Input) string {
 	}
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
+}
+
+func validInputDigest(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	decoded, err := hex.DecodeString(value)
+	return err == nil && hex.EncodeToString(decoded) == value && bytes.Count(decoded, []byte{0}) != len(decoded)
 }
 
 // NewInputArtifact wraps exact source authority for durable scoped task exchange.

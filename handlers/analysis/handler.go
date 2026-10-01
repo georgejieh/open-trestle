@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/georgejieh/open-trestle/artifact"
+	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
+	"github.com/georgejieh/open-trestle/diagnostics"
 	changehandler "github.com/georgejieh/open-trestle/handlers/change"
 	"github.com/georgejieh/open-trestle/handlers/source"
 	"github.com/georgejieh/open-trestle/internal/evidence"
@@ -24,17 +26,29 @@ import (
 const maximumEvidenceSourceBytes = 64 << 20
 
 type Handler struct {
-	identity string
-	store    artifact.Store
-	clock    artifact.Clock
+	identity        string
+	store           artifact.Store
+	diagnosticStore diagnostics.Store
+	clock           artifact.Clock
 }
 
 func NewHandler(store artifact.Store, clock artifact.Clock) (*Handler, error) {
+	return newHandler(store, nil, clock)
+}
+
+// NewHandlerWithDiagnostics adds deterministic-only diagnostic projection for a terminal local run.
+func NewHandlerWithDiagnostics(store artifact.Store, diagnosticStore diagnostics.Store, clock artifact.Clock) (*Handler, error) {
+	if nilInterface(diagnosticStore) {
+		return nil, ErrInvalidHandler
+	}
+	return newHandler(store, diagnosticStore, clock)
+}
+func newHandler(store artifact.Store, diagnosticStore diagnostics.Store, clock artifact.Clock) (*Handler, error) {
 	if nilInterface(store) || nilInterface(clock) {
 		return nil, ErrInvalidHandler
 	}
-	handler := &Handler{store: store, clock: clock}
-	handler.identity = deriveHandlerIdentity()
+	handler := &Handler{store: store, diagnosticStore: diagnosticStore, clock: clock}
+	handler.identity = deriveHandlerIdentity(!nilInterface(diagnosticStore))
 	return handler, nil
 }
 func (h *Handler) HandlerIdentity() string {
@@ -50,16 +64,17 @@ func (h *Handler) Kind() controlplane.TaskKind {
 	return controlplane.TaskInspectDeterministic
 }
 func (h *Handler) Validate() error {
-	if h == nil || nilInterface(h.store) || nilInterface(h.clock) || h.identity != deriveHandlerIdentity() {
+	if h == nil || nilInterface(h.store) || nilInterface(h.clock) || h.identity != deriveHandlerIdentity(!nilInterface(h.diagnosticStore)) {
 		return ErrInvalidHandler
 	}
 	return nil
 }
-func deriveHandlerIdentity() string {
+func deriveHandlerIdentity(projectDiagnostics bool) string {
 	encoded, _ := json.Marshal(struct {
-		Contract      string `json:"contract"`
-		SchemaVersion int    `json:"schema_version"`
-	}{"open-trestle/deterministic-evidence-handler", 3})
+		Contract             string `json:"contract"`
+		SchemaVersion        int    `json:"schema_version"`
+		DiagnosticProjection bool   `json:"diagnostic_projection"`
+	}{"open-trestle/deterministic-evidence-handler", 4, projectDiagnostics})
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }
@@ -111,6 +126,7 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 		references[reference.Path()] = reference
 	}
 	items := make([]Item, 0)
+	matchItems := make([]Item, 0)
 	gaps := make([]Gap, 0)
 	workUnits := 0
 	for _, entry := range change.Entries() {
@@ -188,6 +204,23 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 				checkedFiles++
 				checkedRanges += uint32(len(sourceRanges))
 				matches += uint32(len(matchedRanges))
+				for _, matched := range matchedRanges {
+					if len(matchItems) >= diagnostics.MaxDeterministicObservations {
+						clear(content)
+						return failure(controlplane.RunFailureResourceLimit)
+					}
+					slice, ok := physicalLineSlice(content, matched.StartLine(), matched.EndLine())
+					if !ok {
+						clear(content)
+						return failure(controlplane.RunFailureInvalidInput)
+					}
+					binding, bindErr := evidence.BindSourceSlice(repositoryFile, content, matched, slice)
+					if bindErr != nil {
+						clear(content)
+						return failure(controlplane.RunFailureResourceLimit)
+					}
+					matchItems = append(matchItems, Item{evidenceID: binding.Identity(), bindingIdentity: binding.Identity(), changeEntryIdentity: entry.Identity(), changeExecutionIdentity: entry.ExecutionIdentity(), path: entry.Path(), startLine: matched.StartLine(), endLine: matched.EndLine(), digest: binding.SliceDigest(), fileIdentity: binding.RepositoryFileIdentity(), fileDigest: binding.RepositoryFileDigest(), sliceBytes: binding.SliceBytes()})
+				}
 			}
 		}
 		for index, value := range ranges {
@@ -223,7 +256,14 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 	if err != nil {
 		return failure(controlplane.RunFailureInternal)
 	}
-	result, err := newResult(changeArtifact, change, headArtifact, head, items, gaps, []DeterministicCheck{check}, semanticProfile)
+	observations := make([]Observation, len(matchItems))
+	for index, item := range matchItems {
+		observations[index], err = newObservation(check, item)
+		if err != nil {
+			return failure(controlplane.RunFailureInternal)
+		}
+	}
+	result, err := newResult(changeArtifact, change, headArtifact, head, items, gaps, []DeterministicCheck{check}, observations, semanticProfile)
 	if err != nil {
 		return failure(controlplane.RunFailureInternal)
 	}
@@ -237,8 +277,20 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 	if err != nil {
 		return failure(controlplane.RunFailureResourceLimit)
 	}
+	var projected diagnostics.Set
+	if !nilInterface(h.diagnosticStore) {
+		projected, err = buildDiagnosticSet(request.Plan().Scope(), change, result, check, observations)
+		if err != nil {
+			return failure(diagnosticWriteFailure(ctx, err))
+		}
+	}
 	if _, err := h.store.Put(ctx, output, at); err != nil {
 		return failure(writeFailure(ctx, err))
+	}
+	if !nilInterface(h.diagnosticStore) {
+		if _, err := h.diagnosticStore.PutDiagnosticSet(ctx, projected); err != nil {
+			return failure(diagnosticWriteFailure(ctx, err))
+		}
 	}
 	completion, err := controlplane.NewTaskSuccess(output.Identity())
 	if err != nil {
@@ -246,6 +298,49 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 	}
 	return completion
 }
+func buildDiagnosticSet(scope audit.ReviewScope, change changehandler.Result, result Result, check DeterministicCheck, observations []Observation) (diagnostics.Set, error) {
+	if len(observations) > diagnostics.MaxDeterministicObservations {
+		return diagnostics.Set{}, diagnostics.ErrSetResourceLimit
+	}
+	state := diagnostics.CheckPassed
+	switch check.State() {
+	case CheckFailed:
+		state = diagnostics.CheckFailed
+	case CheckIncomplete:
+		state = diagnostics.CheckIncomplete
+	case CheckNotApplicable:
+		state = diagnostics.CheckNotApplicable
+	}
+	projectedCheck, err := diagnostics.NewDeterministicCheck(check.Identity(), result.Identity(), change.Identity(), state, check.ApplicableFiles(), check.ApplicableRanges(), check.CheckedFiles(), check.CheckedRanges(), check.MatchCount())
+	if err != nil {
+		return diagnostics.Set{}, err
+	}
+	projectedObservations := make([]diagnostics.DeterministicObservation, len(observations))
+	for index, observation := range observations {
+		projectedObservations[index], err = diagnostics.NewDeterministicObservation(observation.Identity(), observation.Fingerprint(), result.Identity(), projectedCheck.Identity(), "Debug output left in source", "The deterministic static rule matched this exact changed range; human review is required.", diagnostics.SeverityWarning, observation.Path(), uint32(observation.StartLine()), uint32(observation.EndLine()), []string{observation.EvidenceID()})
+		if err != nil {
+			return diagnostics.Set{}, err
+		}
+	}
+	set, err := diagnostics.NewSetWithDeterministicObservations(scope, result.HeadSnapshotIdentity(), change.HeadRevision().Digest(), result.Identity(), []diagnostics.DeterministicCheck{projectedCheck}, projectedObservations)
+	if err != nil {
+		return diagnostics.Set{}, err
+	}
+	return set, nil
+}
+func diagnosticWriteFailure(ctx context.Context, err error) controlplane.RunFailure {
+	if ctx.Err() != nil {
+		return controlplane.RunFailureCanceled
+	}
+	if errors.Is(err, diagnostics.ErrSetResourceLimit) || errors.Is(err, artifact.ErrStoreCapacity) {
+		return controlplane.RunFailureResourceLimit
+	}
+	if errors.Is(err, diagnostics.ErrSetConflict) {
+		return controlplane.RunFailureInvalidInput
+	}
+	return controlplane.RunFailureInternal
+}
+
 func newGap(entry changehandler.Entry, start, end int, reason string) Gap {
 	return Gap{changeEntryIdentity: entry.Identity(), changeExecutionIdentity: entry.ExecutionIdentity(), path: entry.Path(), startLine: start, endLine: end, reason: reason}
 }

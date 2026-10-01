@@ -29,6 +29,9 @@ func NewPipelineCatalog(mode controlplane.ReviewRunMode, handlers []controlplane
 		return PipelineCatalog{}, ErrInvalidPipelineCatalog
 	}
 	expected := []controlplane.TaskKind{controlplane.TaskAcquireSource, controlplane.TaskBuildChange, controlplane.TaskInspectDeterministic, controlplane.TaskRetrieveContext, controlplane.TaskAssembleContext, controlplane.TaskGenerateCandidates, controlplane.TaskVerifyCandidates, controlplane.TaskEvaluatePublication}
+	if mode == controlplane.ReviewRunLocal && len(handlers) == 3 {
+		expected = expected[:3]
+	}
 	if mode == controlplane.ReviewRunRequired {
 		expected = append(expected, controlplane.TaskPublishResult)
 	}

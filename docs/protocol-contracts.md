@@ -26,6 +26,7 @@ The investigation output schema uses a closed `oneOf`: a candidate batch or one 
 Control-plane schemas:
 
 - `schemas/controlplane/review-run-plan-v1.schema.json`
+- `schemas/controlplane/local-deterministic-review-intent-v1.schema.json`
 - `schemas/controlplane/review-run-event-v1.schema.json`
 - `schemas/controlplane/review-run-receipt-v1.schema.json`
 - `schemas/controlplane/review-task-lease-v1.schema.json`
@@ -46,12 +47,14 @@ Artifact schemas:
 - `schemas/artifact/artifact-deletion-authorization-v1.schema.json`
 - `schemas/artifact/artifact-deletion-receipt-v1.schema.json`
 - `schemas/artifact/source-acquisition-input-v1.schema.json`
+- `schemas/artifact/source-acquisition-input-v2.schema.json`
 - `schemas/artifact/source-file-v1.schema.json`
 - `schemas/artifact/source-snapshot-v1.schema.json`
 - `schemas/artifact/change-model-result-v1.schema.json`
 - `schemas/artifact/deterministic-evidence-result-v1.schema.json`
 - `schemas/artifact/deterministic-evidence-result-v2.schema.json`
 - `schemas/artifact/deterministic-evidence-result-v3.schema.json`
+- `schemas/artifact/deterministic-evidence-result-v4.schema.json`
 - `schemas/artifact/semantic-impact-profile-v1.schema.json`
 - `schemas/artifact/memory-retrieval-result-v1.schema.json`
 - `schemas/artifact/publication-readiness-result-v1.schema.json`
@@ -119,6 +122,7 @@ Diagnostic schemas:
 - `schemas/diagnostics/verified-diagnostic-set-v3.schema.json`
 - `schemas/diagnostics/verified-diagnostic-set-v4.schema.json`
 - `schemas/diagnostics/verified-diagnostic-set-v5.schema.json`
+- `schemas/diagnostics/deterministic-diagnostic-set-v6.schema.json`
 
 Webhook schemas:
 

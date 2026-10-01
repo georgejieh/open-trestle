@@ -436,7 +436,7 @@ func readFailure(ctx context.Context, err error) controlplane.RunFailure {
 }
 func diagnosticDeterministicChecks(analysis analysishandler.Result, change changehandler.Result) ([]diagnostics.DeterministicCheck, error) {
 	checks := analysis.Checks()
-	if analysis.SchemaVersion() != 3 || len(checks) != 1 || analysis.ChangeIdentity() != change.Identity() {
+	if (analysis.SchemaVersion() != 3 && analysis.SchemaVersion() != 4) || len(checks) != 1 || analysis.ChangeIdentity() != change.Identity() {
 		return nil, ErrInvalidReadinessResult
 	}
 	check, err := diagnosticDeterministicCheck(checks[0], analysis.Identity(), change.Identity())
