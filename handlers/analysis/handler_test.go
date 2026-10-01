@@ -231,3 +231,9 @@ func mustDeterministicCheck(t *testing.T, change string, state DeterministicChec
 	}
 	return check
 }
+
+func TestDiagnosticWriteFailureClassifiesDiagnosticStoreCapacity(t *testing.T) {
+	if got := diagnosticWriteFailure(context.Background(), diagnostics.ErrStoreCapacity); got != controlplane.RunFailureResourceLimit {
+		t.Fatalf("diagnostic store capacity mapped to %s", got)
+	}
+}

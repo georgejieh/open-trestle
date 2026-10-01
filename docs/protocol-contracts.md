@@ -129,7 +129,7 @@ Webhook schemas:
 - `schemas/webhook/verified-delivery-v1.schema.json`
 - `schemas/webhook/response-v1.schema.json`
 
-The daemon API response carries exactly one run receipt, immutable run plan, task lease, task-notification lease, verified diagnostic set, or sanitized error. Nested contracts are referenced by their schema URNs.
+The daemon API response carries exactly one run receipt, immutable run plan, task lease, task-notification lease, diagnostic set, or sanitized error. Diagnostic versions 1 through 5 contain independently verified finding contracts. Version 6 contains deterministic observations and does not represent them as verified findings. Nested contracts are referenced by their schema URNs.
 
 Every schema has a stable versioned `urn:open-trestle:schema:...` identity, rejects unknown object properties, and declares explicit bounds. The plan, receipt, event, lease, and completion encoders have repository tests that compare their canonical top-level record shape and constants with these documents.
 
