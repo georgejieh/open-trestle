@@ -230,3 +230,12 @@ func TestReviewDebugOutputsExpandsIntersectingSelection(t *testing.T) {
 		t.Fatalf("disjoint selection returned %d findings, want none", len(findings))
 	}
 }
+
+func TestFindStaticDebugOutputRangesUsesFixedFmtAuthority(t *testing.T) {
+	source := []byte("package p\nimport (f \"fmt\"; _ \"example.invalid/unavailable\")\nfunc a(){ f.Println(\"debug\") }\nfunc b(){ f := struct{ Println func(string) }{}; f.Println(\"debug\") }\n")
+	selection, _ := evidence.NewSourceRange("file.go", 1, 4)
+	ranges, err := FindStaticDebugOutputRanges(source, "file.go", []evidence.SourceRange{selection})
+	if err != nil || len(ranges) != 1 || ranges[0].StartLine() != 3 {
+		t.Fatalf("ranges=(%#v,%v)", ranges, err)
+	}
+}

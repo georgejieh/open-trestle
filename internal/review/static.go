@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -114,7 +113,7 @@ func debugOutputRangesForSelections(source []byte, sourcePath string, selections
 	}
 	typeInfo := &types.Info{Uses: make(map[*ast.Ident]types.Object)}
 	configuration := types.Config{
-		Importer: importer.Default(),
+		Importer: staticRuleImporter{},
 		Error:    func(error) {},
 	}
 	_, _ = configuration.Check("fixture", fileSet, []*ast.File{file}, typeInfo)
@@ -162,6 +161,24 @@ func overlapsDebugOutputSelection(startLine, endLine int, selections []evidence.
 		return selections[index].EndLine() >= startLine
 	})
 	return index < len(selections) && selections[index].StartLine() <= endLine
+}
+
+type staticRuleImporter struct{}
+
+func (staticRuleImporter) Import(importPath string) (*types.Package, error) {
+	if importPath != "fmt" {
+		return nil, fmt.Errorf("unsupported static-rule import")
+	}
+	pkg := types.NewPackage("fmt", "fmt")
+	anyType := types.NewInterfaceType(nil, nil)
+	anyType.Complete()
+	parameters := types.NewTuple(types.NewVar(token.NoPos, pkg, "a", types.NewSlice(anyType)))
+	println := types.NewFunc(token.NoPos, pkg, "Println", types.NewSignatureType(nil, nil, nil, parameters, nil, true))
+	if pkg.Scope().Insert(println) != nil {
+		return nil, fmt.Errorf("construct static-rule import")
+	}
+	pkg.MarkComplete()
+	return pkg, nil
 }
 
 func isDebugPrintlnCall(call *ast.CallExpr, typeInfo *types.Info) bool {
