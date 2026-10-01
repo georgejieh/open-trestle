@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/url"
 
+	"github.com/georgejieh/open-trestle/diagnostics"
 	"github.com/georgejieh/open-trestle/internal/review"
 )
 
@@ -76,17 +77,26 @@ type sarifRegion struct {
 }
 
 type sarifRunProperties struct {
-	Status     review.Outcome `json:"trestleStatus"`
-	Reason     string         `json:"trestleReason,omitempty"`
-	FixtureID  string         `json:"trestleFixtureId,omitempty"`
-	RequestID  string         `json:"trestleRequestId,omitempty"`
-	SnapshotID string         `json:"trestleSnapshotId,omitempty"`
-	Revision   string         `json:"trestleRevision,omitempty"`
+	Status           review.Outcome `json:"trestleStatus"`
+	Reason           string         `json:"trestleReason,omitempty"`
+	FixtureID        string         `json:"trestleFixtureId,omitempty"`
+	RequestID        string         `json:"trestleRequestId,omitempty"`
+	SnapshotID       string         `json:"trestleSnapshotId,omitempty"`
+	Revision         string         `json:"trestleRevision,omitempty"`
+	DiagnosticSetID  string         `json:"trestleDiagnosticSetId,omitempty"`
+	AnalysisResultID string         `json:"trestleAnalysisResultId,omitempty"`
+	ChangeID         string         `json:"trestleChangeId,omitempty"`
+	CheckID          string         `json:"trestleCheckId,omitempty"`
+	CheckState       string         `json:"trestleCheckState,omitempty"`
 }
 
 type sarifResultProperties struct {
-	EvidenceID     string `json:"trestleEvidenceId"`
-	EvidenceDigest string `json:"trestleEvidenceDigest"`
+	EvidenceID          string   `json:"trestleEvidenceId,omitempty"`
+	EvidenceIDs         []string `json:"trestleEvidenceIds,omitempty"`
+	EvidenceDigest      string   `json:"trestleEvidenceDigest,omitempty"`
+	ObservationIdentity string   `json:"trestleObservationId,omitempty"`
+	AnalysisResultID    string   `json:"trestleAnalysisResultId,omitempty"`
+	CheckID             string   `json:"trestleCheckId,omitempty"`
 }
 
 func runSARIF(fixturePath string, stdout, stderr io.Writer) int {
@@ -161,6 +171,42 @@ func buildSARIFLog(evaluation ciEvaluation) (sarifLog, error) {
 			Properties: properties,
 		}},
 	}, nil
+}
+
+func buildDiagnosticSetSARIF(set diagnostics.Set) (sarifLog, error) {
+	if set.Validate() != nil || set.SchemaVersion() != 6 || len(set.DeterministicChecks()) != 1 {
+		return sarifLog{}, fmt.Errorf("deterministic diagnostic set is invalid")
+	}
+	check := set.DeterministicChecks()[0]
+	observations := set.DeterministicObservations()
+	if uint32(len(observations)) != check.MatchCount() {
+		return sarifLog{}, fmt.Errorf("deterministic observation count differs")
+	}
+	results := make([]sarifResult, len(observations))
+	for index, observation := range observations {
+		level, err := diagnosticSARIFLevel(observation.Severity())
+		if err != nil {
+			return sarifLog{}, err
+		}
+		evidence := observation.EvidenceIDs()
+		if len(evidence) == 0 || len(evidence) > 16 {
+			return sarifLog{}, fmt.Errorf("deterministic observation evidence differs")
+		}
+		results[index] = sarifResult{RuleID: staticDebugOutputSARIFRule, Level: level, Message: sarifMessage{Text: observation.Title() + ": " + observation.Message()}, Locations: []sarifLocation{{PhysicalLocation: sarifPhysicalLocation{ArtifactLocation: sarifArtifactLocation{URI: sarifArtifactURI(observation.Path())}, Region: sarifRegion{StartLine: int(observation.StartLine()), EndLine: int(observation.EndLine())}}}}, Fingerprints: map[string]string{"openTrestleObservationId/v1": observation.Identity()}, Properties: sarifResultProperties{EvidenceIDs: evidence, ObservationIdentity: observation.Identity(), AnalysisResultID: set.AnalysisResultIdentity(), CheckID: check.Identity()}}
+	}
+	return sarifLog{Schema: sarifSchemaURI, Version: "2.1.0", Runs: []sarifRun{{Tool: sarifTool{Driver: sarifDriver{Name: "Open Trestle", Rules: []sarifRule{{ID: staticDebugOutputSARIFRule, ShortDescription: sarifMessage{Text: "Debug output left in source"}, DefaultConfiguration: sarifConfiguration{Level: "warning"}}}}}, Results: results, Properties: sarifRunProperties{Status: review.OutcomeInconclusive, Reason: "deterministic_check_" + check.State().String(), SnapshotID: set.SnapshotIdentity(), Revision: set.HeadRevision(), DiagnosticSetID: set.Identity(), AnalysisResultID: set.AnalysisResultIdentity(), ChangeID: check.ChangeIdentity(), CheckID: check.Identity(), CheckState: check.State().String()}}}}, nil
+}
+func diagnosticSARIFLevel(severity diagnostics.Severity) (string, error) {
+	switch severity {
+	case diagnostics.SeverityError:
+		return "error", nil
+	case diagnostics.SeverityWarning:
+		return "warning", nil
+	case diagnostics.SeverityInformation, diagnostics.SeverityHint:
+		return "note", nil
+	default:
+		return "", fmt.Errorf("unsupported diagnostic severity")
+	}
 }
 
 func buildLocalGitReviewSARIF(result localGitReviewResult) (sarifLog, error) {

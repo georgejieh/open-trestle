@@ -54,7 +54,7 @@ type Options struct {
 	Once            bool
 }
 
-// Interface is a foreground, bounded view over daemon receipts and verified diagnostics.
+// Interface is a foreground, bounded view over daemon receipts and review diagnostics.
 type Interface struct {
 	service Service
 	input   io.Reader

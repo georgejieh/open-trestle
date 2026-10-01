@@ -12,6 +12,7 @@ import (
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/client"
 	"github.com/georgejieh/open-trestle/controlplane"
+	"github.com/georgejieh/open-trestle/diagnostics"
 )
 
 const (
@@ -85,10 +86,11 @@ func runRemoteScopeOperation(operation string, args []string, stdout, stderr io.
 	tenantID := flags.String("tenant", "", "tenant identifier")
 	repositoryID := flags.String("repository", "", "repository identifier")
 	runID := flags.String("run", "", "review-run identifier")
+	format := flags.String("format", "run", "status output: run, json, or sarif")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
-	if flags.NArg() != 0 || *tenantID == "" || *repositoryID == "" || *runID == "" {
+	if flags.NArg() != 0 || *tenantID == "" || *repositoryID == "" || *runID == "" || (*format != "run" && (*format != "json" && *format != "sarif" || operation != "status")) {
 		writeRunsScopeUsage(stderr, operation)
 		return 2
 	}
@@ -118,6 +120,31 @@ func runRemoteScopeOperation(operation string, args []string, stdout, stderr io.
 	if err != nil {
 		fmt.Fprintf(stderr, "runs %s: %v\n", operation, err)
 		return 1
+	}
+	if operation == "status" && *format != "run" {
+		set, diagnosticErr := apiClient.GetDiagnosticSet(ctx, scope)
+		if diagnosticErr != nil {
+			fmt.Fprintln(stderr, "runs status: review result is unavailable")
+			return 1
+		}
+		if *format == "json" {
+			encoded, encodeErr := diagnostics.EncodeSet(set)
+			if encodeErr != nil {
+				fmt.Fprintln(stderr, "runs status: encode result failed")
+				return 1
+			}
+			if _, writeErr := stdout.Write(append(encoded, '\n')); writeErr != nil {
+				fmt.Fprintln(stderr, "runs status: write result failed")
+				return 1
+			}
+			return 0
+		}
+		log, buildErr := buildDiagnosticSetSARIF(set)
+		if buildErr != nil {
+			fmt.Fprintln(stderr, "runs status: build SARIF failed")
+			return 1
+		}
+		return writeJSONResult(log, stdout, stderr, 0)
 	}
 	return writeRemoteReceipt(receipt, stdout, stderr)
 }
@@ -180,5 +207,5 @@ func writeRunsSubmitUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "usage: trestle runs submit --plan PATH [--server URL]")
 }
 func writeRunsScopeUsage(stderr io.Writer, operation string) {
-	fmt.Fprintf(stderr, "usage: trestle runs %s --tenant ID --repository ID --run ID [--server URL]\n", operation)
+	fmt.Fprintf(stderr, "usage: trestle runs %s --tenant ID --repository ID --run ID [--server URL] [--format run|json|sarif]\n", operation)
 }

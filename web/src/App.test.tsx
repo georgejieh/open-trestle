@@ -177,7 +177,7 @@ describe("console", () => {
       screen.getByRole("button", { name: `Copy Run receipt: ${digest}` }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /Findings n\/a/i }),
+      screen.getByRole("button", { name: /Review n\/a/i }),
     ).toBeInTheDocument();
     expect(sessionStorage.getItem("open-trestle-scope")).toContain("tenant-a");
     expect(sessionStorage.getItem("open-trestle-token")).toBeNull();
@@ -224,7 +224,7 @@ describe("console", () => {
       fireEvent.change(screen.getByLabelText(name), { target: { value } });
     fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
     await screen.findByRole("heading", { name: "Run active" });
-    fireEvent.click(screen.getByRole("button", { name: /Findings 1/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Review 1/i }));
     const summary = await screen.findByText("Inspect evidence");
     const details = summary.closest("details");
     expect(details).not.toHaveAttribute("open");
@@ -270,6 +270,28 @@ describe("console", () => {
       configurable: true,
       value: originalClipboard,
     });
+  });
+
+  it("renders deterministic observations without calling them verified", async () => {
+    const analysis = "7".repeat(64), checkIdentity = "5".repeat(64), observationIdentity = "9".repeat(64);
+    vi.mocked(fetchRun).mockResolvedValue(receipt);
+    vi.mocked(fetchDiagnostics).mockResolvedValue({
+      contract: "open-trestle/review-diagnostic-set", schema_version: 6, identity: "f".repeat(64), tenant_id: "tenant-a", repository_id: "repo-a", review_run_id: "run-a", snapshot_identity: "1".repeat(64), head_revision: "2".repeat(40), analysis_result_identity: analysis,
+      checks: [{ identity: checkIdentity, source_check_identity: "6".repeat(64), analysis_result_identity: analysis, change_identity: "8".repeat(64), key: "static_debug_output", rule_version: 1, state: "failed", applicable_files: 1, applicable_ranges: 1, checked_files: 1, checked_ranges: 1, matches: 1 }],
+      observations: [{ identity: observationIdentity, source_identity: "a".repeat(64), fingerprint: "b".repeat(64), analysis_result_identity: analysis, check_identity: checkIdentity, title: "Debug output left in source", message: "The deterministic static rule matched this exact changed range; human review is required.", severity: "warning", path: "main.go", start_line: 3, end_line: 3, evidence_ids: ["c".repeat(64)] }],
+    });
+    render(<App />);
+    for (const [name, value] of [["Tenant", "tenant-a"], ["Repository", "repo-a"], ["Run", "run-a"], ["Access token", "x".repeat(32)]] as const) fireEvent.change(screen.getByLabelText(name), { target: { value } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
+    await screen.findByRole("heading", { name: "Run active" });
+    fireEvent.click(screen.getByRole("button", { name: /Review 1/i }));
+    expect(await screen.findByRole("heading", { name: "Deterministic rule coverage" })).toBeInTheDocument();
+    expect(screen.getByText(/not independently verified findings/i)).toBeInTheDocument();
+    expect(screen.getByText("warning · deterministic")).toBeInTheDocument();
+    expect(screen.getByText("main.go:3-3")).toBeInTheDocument();
+    expect(screen.queryByText(/1 verified/i)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("Inspect evidence"));
+    expect(screen.getByRole("button", { name: `Copy Observation identity: ${observationIdentity}` })).toBeInTheDocument();
   });
 
   it("renders incomplete candidate and source coverage without implying approval", async () => {
@@ -328,7 +350,7 @@ describe("console", () => {
       fireEvent.change(screen.getByLabelText(name), { target: { value } });
     fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
     await screen.findByRole("heading", { name: "Run active" });
-    fireEvent.click(screen.getByRole("button", { name: /Findings 0/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Review 0/i }));
     expect(
       await screen.findByRole("heading", { name: "Human review queue" }),
     ).toBeInTheDocument();
@@ -417,7 +439,7 @@ describe("console", () => {
       fireEvent.change(screen.getByLabelText(name), { target: { value } });
     fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
     await screen.findByRole("heading", { name: "Run active" });
-    fireEvent.click(screen.getByRole("button", { name: /Findings 0/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Review 0/i }));
     expect(
       await screen.findByText(/Failed check: Static debug output failed/i),
     ).toBeInTheDocument();
@@ -535,7 +557,7 @@ describe("console", () => {
         expect(fetchDiagnostics).toHaveBeenCalledTimes(1);
         expect(fetchRuntimeStatus).toHaveBeenCalledTimes(1);
         expect(
-          screen.getByRole("button", { name: /Findings 0/i }),
+          screen.getByRole("button", { name: /Review 0/i }),
         ).toBeInTheDocument();
         expect(screen.queryByRole("alert")).not.toBeInTheDocument();
         expect(write).toHaveBeenCalledExactlyOnceWith(

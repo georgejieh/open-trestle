@@ -36,7 +36,7 @@ func TestRunTUIUsesAuthenticatedDaemonReceipt(t *testing.T) {
 	if exit != 0 || stderr.Len() != 0 {
 		t.Fatalf("exit=%d stderr=%s", exit, stderr.String())
 	}
-	if requests != 2 || !strings.Contains(stdout.String(), "OPEN TRESTLE") || !strings.Contains(stdout.String(), "No verified diagnostic snapshot") {
+	if requests != 2 || !strings.Contains(stdout.String(), "OPEN TRESTLE") || !strings.Contains(stdout.String(), "No diagnostic snapshot") {
 		t.Fatalf("requests=%d output=%s", requests, stdout.String())
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
+	"github.com/georgejieh/open-trestle/diagnostics"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -85,5 +86,46 @@ func TestRunRemoteRejectsMissingCredentialAndUnsafePlanInput(t *testing.T) {
 	stderr.Reset()
 	if exit := run([]string{"runs", "submit", "--plan", link}, &stdout, &stderr); exit != 1 || !strings.Contains(stderr.String(), "regular file") {
 		t.Fatalf("symlink=(%d,%q)", exit, stderr.String())
+	}
+}
+
+func TestRunStatusExportsSameStoredDeterministicSetAsJSONAndSARIF(t *testing.T) {
+	_, receipt := remotePlanAndReceipt(t)
+	analysisIdentity := strings.Repeat("8", 64)
+	changeIdentity := strings.Repeat("7", 64)
+	sourceCheck := diagnostics.DeterministicCheck{}
+	// Use the canonical source-check identity for one failed exact match.
+	check, err := diagnostics.NewDeterministicCheck("24b00a4f30827fb105067c28f424b27c8743be48316d4f88326c0153ec7e8f4b", analysisIdentity, changeIdentity, diagnostics.CheckFailed, 1, 1, 1, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = sourceCheck
+	observation, _ := diagnostics.NewDeterministicObservation(strings.Repeat("6", 64), strings.Repeat("5", 64), analysisIdentity, check.Identity(), "Debug output left in source", "The deterministic static rule matched this exact changed range; human review is required.", diagnostics.SeverityWarning, "main.go", 3, 3, []string{strings.Repeat("4", 64), strings.Repeat("9", 64)})
+	set, err := diagnostics.NewSetWithDeterministicObservations(receipt.Scope(), strings.Repeat("d", 64), strings.Repeat("1", 40), analysisIdentity, []diagnostics.DeterministicCheck{check}, []diagnostics.DeterministicObservation{observation})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encodedReceipt, _ := controlplane.EncodeReviewRunReceipt(receipt)
+	encodedSet, _ := diagnostics.EncodeSet(set)
+	runResponse, _ := json.Marshal(map[string]any{"contract": "open-trestle/api-response", "schema_version": 1, "request_id": "request-run", "run": json.RawMessage(encodedReceipt)})
+	diagnosticResponse, _ := json.Marshal(map[string]any{"contract": "open-trestle/api-response", "schema_version": 1, "request_id": "request-diagnostics", "diagnostics": json.RawMessage(encodedSet)})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(request.URL.Path, "/diagnostics") {
+			_, _ = writer.Write(diagnosticResponse)
+		} else {
+			_, _ = writer.Write(runResponse)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("OPEN_TRESTLE_API_TOKEN", "01234567890123456789012345678901")
+	base := []string{"runs", "status", "--tenant", "tenant-a", "--repository", "repo-a", "--run", "run-a", "--server", server.URL}
+	var jsonOut, jsonErr bytes.Buffer
+	if exit := run(append(base, "--format", "json"), &jsonOut, &jsonErr); exit != 0 || !bytes.Equal(bytes.TrimSpace(jsonOut.Bytes()), encodedSet) {
+		t.Fatalf("json=(%d,%s,%s)", exit, jsonOut.Bytes(), jsonErr.Bytes())
+	}
+	var sarifOut, sarifErr bytes.Buffer
+	if exit := run(append(base, "--format", "sarif"), &sarifOut, &sarifErr); exit != 0 || !bytes.Contains(sarifOut.Bytes(), []byte(`"uri":"main.go"`)) || !bytes.Contains(sarifOut.Bytes(), []byte(observation.Identity())) || !bytes.Contains(sarifOut.Bytes(), []byte(strings.Repeat("4", 64))) || !bytes.Contains(sarifOut.Bytes(), []byte(strings.Repeat("9", 64))) || !bytes.Contains(sarifOut.Bytes(), []byte("human review is required")) || bytes.Contains(sarifOut.Bytes(), []byte(`"trestleStatus":"verified"`)) {
+		t.Fatalf("sarif=(%d,%s,%s)", exit, sarifOut.Bytes(), sarifErr.Bytes())
 	}
 }

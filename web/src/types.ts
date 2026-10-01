@@ -65,6 +65,10 @@ export interface Diagnostic {
   end_line: number;
   evidence_ids: string[];
 }
+export interface DeterministicObservation extends Diagnostic {
+  analysis_result_identity: string;
+  check_identity: string;
+}
 export interface DiagnosticCoverage {
   candidate_count: number;
   verified_count: number;
@@ -107,7 +111,7 @@ export interface DiagnosticDeterministicCheck {
   checked_ranges: number;
   matches: number;
 }
-interface DiagnosticSetBase {
+interface DiagnosticSetCommon {
   contract: "open-trestle/review-diagnostic-set";
   identity: string;
   tenant_id: string;
@@ -115,34 +119,30 @@ interface DiagnosticSetBase {
   review_run_id: string;
   snapshot_identity: string;
   head_revision: string;
+}
+interface VerifiedDiagnosticSetBase extends DiagnosticSetCommon {
   verified_set_identity: string;
   findings: Diagnostic[];
 }
-export type DiagnosticSet = DiagnosticSetBase &
-  (
-    | { schema_version: 1; coverage?: never; source_coverage?: never }
-    | {
-        schema_version: 2;
-        coverage: DiagnosticCoverage;
-        source_coverage?: never;
-      }
-    | {
-        schema_version: 3;
-        coverage: DiagnosticCoverage;
-        source_coverage: DiagnosticSourceCoverage;
-      }
-    | {
-        schema_version: 4;
-        coverage: DiagnosticCoverage;
-        source_coverage: DiagnosticSourceCoverageWithOmissions;
-      }
-    | {
-        schema_version: 5;
-        coverage: DiagnosticCoverage;
-        source_coverage: DiagnosticSourceCoverageWithOmissions;
-        checks: [DiagnosticDeterministicCheck];
-      }
-  );
+export type DiagnosticSet =
+  | (VerifiedDiagnosticSetBase &
+      (
+        | { schema_version: 1; coverage?: never; source_coverage?: never }
+        | { schema_version: 2; coverage: DiagnosticCoverage; source_coverage?: never }
+        | { schema_version: 3; coverage: DiagnosticCoverage; source_coverage: DiagnosticSourceCoverage }
+        | { schema_version: 4; coverage: DiagnosticCoverage; source_coverage: DiagnosticSourceCoverageWithOmissions }
+        | { schema_version: 5; coverage: DiagnosticCoverage; source_coverage: DiagnosticSourceCoverageWithOmissions; checks: [DiagnosticDeterministicCheck] }
+      ))
+  | (DiagnosticSetCommon & {
+      schema_version: 6;
+      analysis_result_identity: string;
+      checks: [DiagnosticDeterministicCheck];
+      observations: DeterministicObservation[];
+      coverage?: never;
+      source_coverage?: never;
+      verified_set_identity?: never;
+      findings?: never;
+    });
 
 export type RuntimeComponentState = "starting" | "ready";
 export interface RuntimeHandler {

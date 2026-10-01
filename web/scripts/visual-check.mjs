@@ -694,6 +694,7 @@ try {
   browser = await chromium.launch({
     headless: true,
     executablePath: "/usr/bin/chromium",
+    env: { ...process.env, TMPDIR: "/tmp" },
     args: ["--no-sandbox"],
   });
   async function newLocalPage(options) {

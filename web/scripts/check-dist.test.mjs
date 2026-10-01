@@ -154,7 +154,7 @@ test("keeps the existing size and inline-runtime checks", async (t) => {
   const { dist, publicDirectory } = await fixture(t);
   await writeFile(
     join(dist, "assets", expectedAssets[0]),
-    "x".repeat(251 * 1024),
+    "x".repeat(257 * 1024),
   );
   await assert.rejects(checkDistribution(dist, publicDirectory), /exceeds/);
   await writeFile(join(dist, "assets", expectedAssets[0]), "");

@@ -580,6 +580,7 @@ button:disabled {
   grid-template-columns: minmax(0, 1fr) minmax(300px, 0.78fr);
   gap: 28px;
   margin-top: 30px;
+  align-items: start;
 }
 .run-summary,
 .authority-ledger,
@@ -982,7 +983,7 @@ button:disabled {
   font-size: 0.78rem;
   line-height: 1.5;
 }
-.coverage-ledger ul {
+.coverage-ledger .coverage-facts {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
@@ -993,9 +994,22 @@ button:disabled {
   font-weight: 650;
   font-variant-numeric: tabular-nums;
 }
-.coverage-ledger li {
-  padding-top: 10px;
-  border-top: 2px solid var(--cobalt);
+.coverage-ledger .coverage-facts li {
+  min-width: 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--rule-strong);
+  overflow-wrap: anywhere;
+}
+.coverage-ledger .coverage-conditions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 5px;
+  margin: 14px 0 0;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 450;
+  line-height: 1.45;
 }
 .coverage-ledger .coverage-warning {
   color: #74470c;
@@ -1025,11 +1039,17 @@ button:disabled {
 }
 .finding-list li {
   display: grid;
-  grid-template-columns: 105px 1fr;
+  grid-template-columns: 132px minmax(0, 1fr);
   gap: 20px;
-  padding: 24px 0;
+  padding: 24px 0 24px 14px;
   border-top: 1px solid var(--rule);
+  border-left: 4px solid var(--rule-strong);
 }
+.finding-list .severity-edge-error { border-left-color: var(--oxide); }
+.finding-list .severity-edge-warning { border-left-color: var(--amber); }
+.finding-list .severity-edge-information { border-left-color: var(--cobalt); }
+.finding-list .severity-edge-hint { border-left-color: var(--lichen); }
+.finding-body { min-width: 0; }
 .severity {
   display: flex;
   align-items: center;
@@ -1233,6 +1253,7 @@ button:disabled {
     border-bottom: 1px solid var(--rule);
   }
   .mobile-tabs button {
+    min-height: 44px;
     padding: 11px 4px;
     border: 0;
     border-bottom: 2px solid transparent;
@@ -1269,8 +1290,8 @@ button:disabled {
   .run-summary dl {
     grid-template-columns: 1fr;
   }
-  .coverage-ledger ul {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .coverage-ledger .coverage-facts {
+    grid-template-columns: 1fr;
   }
   .task-spine {
     display: block;

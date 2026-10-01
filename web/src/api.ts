@@ -1,6 +1,7 @@
 import type {
   Diagnostic,
   DiagnosticSet,
+  DeterministicObservation,
   Failure,
   RunReceipt,
   RunTask,
@@ -324,6 +325,54 @@ function parseDiagnostic(value: unknown): Diagnostic {
     throw new ApiError("invalid_response");
   return value as unknown as Diagnostic;
 }
+function parseDeterministicCheck(value: unknown) {
+  const keys = [
+    "identity", "source_check_identity", "analysis_result_identity",
+    "change_identity", "key", "rule_version", "state", "applicable_files",
+    "applicable_ranges", "checked_files", "checked_ranges", "matches",
+  ] as const;
+  if (!record(value) || !exact(value, keys) ||
+    !validDigest(value.identity) || !validDigest(value.source_check_identity) ||
+    !validDigest(value.analysis_result_identity) || !validDigest(value.change_identity) ||
+    value.key !== "static_debug_output" || value.rule_version !== 1 ||
+    !integer(value.applicable_files, 0, 4096) || !integer(value.applicable_ranges, 0, 1_000_000) ||
+    !integer(value.checked_files, 0, 4096) || !integer(value.checked_ranges, 0, 1_000_000) ||
+    !integer(value.matches, 0, 1 << 24) || value.applicable_files > value.applicable_ranges ||
+    value.checked_files > value.applicable_files || value.checked_files > value.checked_ranges ||
+    value.checked_ranges > value.applicable_ranges ||
+    (value.applicable_files === 0) !== (value.applicable_ranges === 0) ||
+    (value.checked_files === 0) !== (value.checked_ranges === 0)) throw new ApiError("invalid_response");
+  const complete = value.checked_files === value.applicable_files && value.checked_ranges === value.applicable_ranges;
+  const validState =
+    (value.state === "passed" && value.applicable_ranges > 0 && complete && value.matches === 0) ||
+    (value.state === "failed" && value.applicable_ranges > 0 && value.checked_ranges > 0 && value.matches > 0) ||
+    (value.state === "incomplete" && value.applicable_ranges > 0 && !complete && value.matches === 0) ||
+    (value.state === "not_applicable" && value.applicable_ranges === 0 && value.matches === 0);
+  if (!validState) throw new ApiError("invalid_response");
+  return { ...value } as unknown as import("./types").DiagnosticDeterministicCheck;
+}
+function parseDeterministicObservation(value: unknown): DeterministicObservation {
+  const keys = ["identity", "source_identity", "fingerprint", "analysis_result_identity", "check_identity", "title", "message", "severity", "path", "start_line", "end_line", "evidence_ids"] as const;
+  if (!record(value) || !exact(value, keys) || !validDigest(value.identity) ||
+    !validDigest(value.source_identity) || !validDigest(value.fingerprint) ||
+    !validDigest(value.analysis_result_identity) || !validDigest(value.check_identity) ||
+    !string(value.title, 256) || value.title.length === 0 ||
+    !string(value.message, 4096) || value.message.length === 0 ||
+    typeof value.severity !== "string" || !["error", "warning", "information", "hint"].includes(value.severity) ||
+    !string(value.path, 1024) || value.path.length === 0 ||
+    !integer(value.start_line, 1, 10_000_000) || !integer(value.end_line, value.start_line as number, 10_000_000) ||
+    !Array.isArray(value.evidence_ids) || value.evidence_ids.length < 1 || value.evidence_ids.length > 16 ||
+    !value.evidence_ids.every((entry) => string(entry, 128) && entry.length > 0) ||
+    new Set(value.evidence_ids).size !== value.evidence_ids.length) throw new ApiError("invalid_response");
+  return { ...value, evidence_ids: [...value.evidence_ids] } as DeterministicObservation;
+}
+function validDiagnosticSetCommon(value: Record<string, unknown>, scope: Scope): boolean {
+  return value.contract === "open-trestle/review-diagnostic-set" && validDigest(value.identity) &&
+    value.tenant_id === scope.tenant && value.repository_id === scope.repository && value.review_run_id === scope.run &&
+    validDigest(value.snapshot_identity) && typeof value.head_revision === "string" &&
+    /^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(value.head_revision);
+}
+
 export function parseDiagnosticEnvelope(
   value: unknown,
   scope: Scope,
@@ -361,6 +410,14 @@ export function parseDiagnosticEnvelope(
   )
     throw new ApiError("invalid_response");
   const d = value.diagnostics;
+  if (d.schema_version === 6) {
+    const keys = ["contract", "schema_version", "identity", "tenant_id", "repository_id", "review_run_id", "snapshot_identity", "head_revision", "analysis_result_identity", "checks", "observations"] as const;
+    if (!exact(d, keys) || !validDiagnosticSetCommon(d, scope) || !validDigest(d.analysis_result_identity) || !Array.isArray(d.checks) || d.checks.length !== 1 || !Array.isArray(d.observations) || d.observations.length > 8192) throw new ApiError("invalid_response");
+    const check = parseDeterministicCheck(d.checks[0]);
+    const observations = d.observations.map(parseDeterministicObservation);
+    if (check.analysis_result_identity !== d.analysis_result_identity || check.matches !== observations.length || new Set(observations.map((entry) => entry.identity)).size !== observations.length || observations.some((entry) => entry.analysis_result_identity !== d.analysis_result_identity || entry.check_identity !== check.identity)) throw new ApiError("invalid_response");
+    return { ...d, checks: [check], observations } as unknown as DiagnosticSet;
+  }
   const baseKeys = [
     "contract",
     "schema_version",
@@ -510,49 +567,7 @@ export function parseDiagnosticEnvelope(
     } as unknown as DiagnosticSet;
   if (!Array.isArray(d.checks) || d.checks.length !== 1)
     throw new ApiError("invalid_response");
-  const check = d.checks[0];
-  if (!record(check)) throw new ApiError("invalid_response");
-  if (
-    Object.keys(check).length !== 12 ||
-    !validDigest(check.identity) ||
-    !validDigest(check.source_check_identity) ||
-    !validDigest(check.analysis_result_identity) ||
-    !validDigest(check.change_identity) ||
-    check.key !== "static_debug_output" ||
-    check.rule_version !== 1 ||
-    !integer(check.applicable_files, 0, 4096) ||
-    !integer(check.applicable_ranges, 0, 1_000_000) ||
-    !integer(check.checked_files, 0, 4096) ||
-    !integer(check.checked_ranges, 0, 1_000_000) ||
-    !integer(check.matches, 0, 1 << 24) ||
-    check.applicable_files > check.applicable_ranges ||
-    check.checked_files > check.applicable_files ||
-    check.checked_files > check.checked_ranges ||
-    check.checked_ranges > check.applicable_ranges ||
-    (check.applicable_files === 0) !== (check.applicable_ranges === 0) ||
-    (check.checked_files === 0) !== (check.checked_ranges === 0)
-  )
-    throw new ApiError("invalid_response");
-  const complete =
-    check.checked_files === check.applicable_files &&
-    check.checked_ranges === check.applicable_ranges;
-  const validState =
-    (check.state === "passed" &&
-      check.applicable_ranges > 0 &&
-      complete &&
-      check.matches === 0) ||
-    (check.state === "failed" &&
-      check.applicable_ranges > 0 &&
-      check.checked_ranges > 0 &&
-      check.matches > 0) ||
-    (check.state === "incomplete" &&
-      check.applicable_ranges > 0 &&
-      !complete &&
-      check.matches === 0) ||
-    (check.state === "not_applicable" &&
-      check.applicable_ranges === 0 &&
-      check.matches === 0);
-  if (!validState) throw new ApiError("invalid_response");
+  const check = parseDeterministicCheck(d.checks[0]);
   return {
     ...d,
     coverage: { ...d.coverage },

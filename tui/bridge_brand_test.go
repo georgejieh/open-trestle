@@ -54,7 +54,7 @@ func TestRunRendererPreservesHeadingAndBridgeBrandingAcrossWidthsAndModes(t *tes
 					"OPEN TRESTLE\n",
 					"Run         active",
 					"available",
-					"Verified diagnostics (text is untrusted)",
+					"Review diagnostics (text is untrusted)",
 					"Avoid unchecked result",
 					"Commands: r refresh  c cancel  q quit",
 				} {

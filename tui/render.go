@@ -39,12 +39,40 @@ func (i *Interface) render(view interfaceView) error {
 			task.Status().String(), attempts,
 		)
 	}
-	builder.WriteString("\nVerified diagnostics (text is untrusted)\n")
+	builder.WriteString("\nReview diagnostics (text is untrusted)\n")
 	if !view.hasDiagnostics {
-		builder.WriteString("No verified diagnostic snapshot is available.\n")
+		builder.WriteString("No diagnostic snapshot is available.\n")
+	} else if view.diagnostics.SchemaVersion() == 6 {
+		observations := view.diagnostics.DeterministicObservations()
+		check := view.diagnostics.DeterministicChecks()[0]
+		fmt.Fprintf(&builder, "%d deterministic observation(s), source revision %s\n", len(observations), truncateTerminalText(view.diagnostics.HeadRevision(), 16))
+		switch check.State() {
+		case diagnostics.CheckPassed:
+			builder.WriteString("Cleared gate: static debug output passed for this exact rule only.\n")
+		case diagnostics.CheckFailed:
+			builder.WriteString("Failed check: static debug output failed; exact matches require review.\n")
+		case diagnostics.CheckIncomplete:
+			builder.WriteString("Incomplete check: static debug output did not cover every applicable range.\n")
+		case diagnostics.CheckNotApplicable:
+			builder.WriteString("Abstention: no changed Go range was applicable; this rule was not cleared.\n")
+		}
+		fmt.Fprintf(&builder, "%d/%d changed Go range(s), %d exact match(es)\n", check.CheckedRanges(), check.ApplicableRanges(), check.MatchCount())
+		builder.WriteString("Deterministic observations are not independently verified findings and do not approve the change.\n")
+		for _, observation := range observations {
+			location := fmt.Sprintf("%s:%d", safeTerminalText(observation.Path()), observation.StartLine())
+			if observation.EndLine() != observation.StartLine() {
+				location += fmt.Sprintf("-%d", observation.EndLine())
+			}
+			location = truncateTerminalText(location, width/2)
+			available := width - 14 - utf8.RuneCountInString(location)
+			if available < 1 {
+				available = 1
+			}
+			fmt.Fprintf(&builder, "%-11s %s  %s\n", observation.Severity().String(), location, truncateTerminalText(observation.Title(), available))
+		}
 	} else {
 		findings := view.diagnostics.Findings()
-		fmt.Fprintf(&builder, "%d finding(s), source revision %s\n", len(findings), truncateTerminalText(view.diagnostics.HeadRevision(), 16))
+		fmt.Fprintf(&builder, "%d verified finding(s), source revision %s\n", len(findings), truncateTerminalText(view.diagnostics.HeadRevision(), 16))
 		if view.diagnostics.SchemaVersion() >= 2 {
 			fmt.Fprintf(&builder, "%d candidate(s): %d verified\n", view.diagnostics.CandidateCount(), view.diagnostics.VerifiedCount())
 			fmt.Fprintf(&builder, "%d rejected, %d inconclusive\n", view.diagnostics.RejectedCount(), view.diagnostics.InconclusiveCount())
@@ -89,10 +117,7 @@ func (i *Interface) render(view interfaceView) error {
 			if available < 1 {
 				available = 1
 			}
-			fmt.Fprintf(
-				&builder, "%-11s %s  %s\n",
-				finding.Severity().String(), location, truncateTerminalText(finding.Title(), available),
-			)
+			fmt.Fprintf(&builder, "%-11s %s  %s\n", finding.Severity().String(), location, truncateTerminalText(finding.Title(), available))
 		}
 	}
 	if view.notice != "" {
