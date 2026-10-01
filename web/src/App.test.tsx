@@ -804,6 +804,8 @@ describe("console", () => {
     expect(
       await screen.findByText("Check completed: passed."),
     ).toBeInTheDocument();
+
+    expect(screen.getByText("This exact requirement has a passing receipt.")).toHaveTextContent("✓ This exact requirement has a passing receipt.");
     expect(runSetupCheck).toHaveBeenCalledWith(
       {
         plan_identity: initial.identity,
@@ -1008,9 +1010,9 @@ describe("console", () => {
     );
     await screen.findByRole("heading", { name: "local inference validated" });
     expect(screen.getByText(/at most two fixed probes/i)).toBeInTheDocument();
-    expect(
-      screen.getByText(/Pass the exact policy validation check/i),
-    ).toBeInTheDocument();
+    const inferenceGuidance = screen.getByText(/Pass the exact policy validation check/i);
+    expect(inferenceGuidance).toBeInTheDocument();
+    expect(inferenceGuidance).toHaveTextContent("! Pass the exact policy validation check");
     expect(
       screen.getByText(/no retry or remote fallback/i),
     ).toBeInTheDocument();
