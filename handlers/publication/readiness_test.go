@@ -136,3 +136,9 @@ func TestDiagnosticDeterministicCheckPreservesExactAnalysisState(t *testing.T) {
 		t.Fatalf("crossed=(%#v,%v)", crossed, err)
 	}
 }
+
+func TestDiagnosticWriteFailureClassifiesSetEncodingLimit(t *testing.T) {
+	if got := diagnosticWriteFailure(context.Background(), diagnostics.ErrSetResourceLimit); got != controlplane.RunFailureResourceLimit {
+		t.Fatalf("diagnostic set limit mapped to %s", got)
+	}
+}

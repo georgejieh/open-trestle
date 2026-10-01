@@ -546,8 +546,11 @@ func EncodeSet(set Set) ([]byte, error) {
 	case 6:
 		encoded, err = json.Marshal(setToRecordV6(set))
 	}
-	if err != nil || len(encoded) > maxEncodedSetBytes {
+	if err != nil {
 		return nil, ErrInvalidSetEncoding
+	}
+	if len(encoded) > maxEncodedSetBytes {
+		return nil, ErrSetResourceLimit
 	}
 	return encoded, nil
 }

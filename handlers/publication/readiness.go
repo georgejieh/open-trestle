@@ -471,7 +471,7 @@ func diagnosticWriteFailure(ctx context.Context, err error) controlplane.RunFail
 	if ctx.Err() != nil || errors.Is(err, diagnostics.ErrStoreContextDone) {
 		return controlplane.RunFailureCanceled
 	}
-	if errors.Is(err, diagnostics.ErrStoreCapacity) || errors.Is(err, artifact.ErrStoreCapacity) {
+	if errors.Is(err, diagnostics.ErrSetResourceLimit) || errors.Is(err, diagnostics.ErrStoreCapacity) || errors.Is(err, artifact.ErrStoreCapacity) {
 		return controlplane.RunFailureResourceLimit
 	}
 	return controlplane.RunFailureInternal
