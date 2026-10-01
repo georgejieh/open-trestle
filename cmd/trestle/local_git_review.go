@@ -6,10 +6,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
+	"github.com/georgejieh/open-trestle/audit"
+	"github.com/georgejieh/open-trestle/client"
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/internal/scm"
+	"github.com/georgejieh/open-trestle/runtimecatalog"
 )
 
 type localGitReviewFormat string
@@ -79,7 +83,93 @@ type localGitReviewResult struct {
 }
 
 func runLocalGitReview(args []string, stdout, stderr io.Writer) int {
+	if localGitReviewHasFlag(args, "--server") {
+		return runLocalGitReviewDaemon(args, stdout, stderr, openLocalGitRoot)
+	}
 	return runLocalGitReviewWithOpener(args, stdout, stderr, openLocalGitRoot)
+}
+
+func localGitReviewHasFlag(args []string, target string) bool {
+	for index := 0; index < len(args); index += 2 {
+		if args[index] == target {
+			return true
+		}
+	}
+	return false
+}
+
+func runLocalGitReviewDaemon(args []string, stdout, stderr io.Writer, opener localGitRootOpener) int {
+	if len(args)%2 != 0 || localGitReviewHasFlag(args, "--format") {
+		fmt.Fprintln(stderr, "local-git review: daemon mode requires flag-value pairs and emits a run receipt")
+		writeLocalGitReviewUsage(stderr)
+		return 2
+	}
+	extra := map[string]string{}
+	changeArgs := make([]string, 0, len(args))
+	for index := 0; index < len(args); index += 2 {
+		name, value := args[index], args[index+1]
+		switch name {
+		case "--server", "--tenant", "--repository", "--run":
+			if _, exists := extra[name]; exists || value == "" {
+				fmt.Fprintln(stderr, "local-git review: invalid daemon option")
+				return 2
+			}
+			extra[name] = value
+		default:
+			changeArgs = append(changeArgs, name, value)
+		}
+	}
+	for _, name := range []string{"--server", "--tenant", "--repository", "--run"} {
+		if extra[name] == "" {
+			fmt.Fprintf(stderr, "local-git review: missing flag %q\n", name)
+			return 2
+		}
+	}
+	options, repository, baseRevision, headRevision, _, err := parseLocalGitReviewOptions(changeArgs)
+	if err != nil {
+		fmt.Fprintf(stderr, "local-git review: %v\n", err)
+		writeLocalGitReviewUsage(stderr)
+		return 2
+	}
+	handle, err := opener(options.objectsRoot)
+	if err != nil || handle.root == nil || handle.close == nil {
+		if handle.root != nil {
+			_ = handle.root.Close()
+		}
+		fmt.Fprintln(stderr, "local-git review: local source is unavailable")
+		return 1
+	}
+	_, baseErr := buildLocalGitInspectResult(handle.root, repository, baseRevision)
+	_, headErr := buildLocalGitInspectResult(handle.root, repository, headRevision)
+	closeErr := handle.close()
+	if baseErr != nil || headErr != nil || closeErr != nil {
+		fmt.Fprintln(stderr, "local-git review: local source validation failed")
+		return 1
+	}
+	scope, err := audit.NewReviewScope(extra["--tenant"], extra["--repository"], extra["--run"])
+	if err != nil {
+		fmt.Fprintln(stderr, "local-git review: invalid review scope")
+		return 2
+	}
+	intent, err := runtimecatalog.NewLocalDeterministicReviewIntent(scope, repository, baseRevision, headRevision, time.Now().UTC())
+	if err != nil {
+		fmt.Fprintln(stderr, "local-git review: invalid review intent")
+		return 2
+	}
+	credential := os.Getenv("OPEN_TRESTLE_API_TOKEN")
+	apiClient, err := client.NewLocal(extra["--server"], credential, nil)
+	if err != nil {
+		fmt.Fprintln(stderr, "local-git review: invalid local daemon authority")
+		return 2
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), remoteCommandTimeout)
+	defer cancel()
+	receipt, err := apiClient.SubmitLocalDeterministicReview(ctx, intent)
+	if err != nil {
+		fmt.Fprintln(stderr, "local-git review: daemon admission failed")
+		return 1
+	}
+	return writeRemoteReceipt(receipt, stdout, stderr)
 }
 
 func runLocalGitReviewWithOpener(args []string, stdout, stderr io.Writer, opener localGitRootOpener) int {
@@ -327,4 +417,5 @@ func localGitReviewLimits() review.DebugOutputChangeLimits {
 
 func writeLocalGitReviewUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "usage: trestle local-git review --objects-root PATH --repository-authority AUTHORITY --repository-namespace SEGMENT[/SEGMENT...] --repository-name NAME --revision-algorithm sha1|sha256 --base-revision-digest FULL_LOWERCASE_HEX --head-revision-digest FULL_LOWERCASE_HEX [--format json|sarif]")
+	fmt.Fprintln(stderr, "       trestle local-git review --objects-root PATH --repository-authority AUTHORITY --repository-namespace SEGMENT[/SEGMENT...] --repository-name NAME --revision-algorithm sha1|sha256 --base-revision-digest FULL_LOWERCASE_HEX --head-revision-digest FULL_LOWERCASE_HEX --tenant ID --repository ID --run ID --server LOOPBACK_URL")
 }

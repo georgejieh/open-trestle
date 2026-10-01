@@ -14,6 +14,8 @@ import (
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/diagnostics"
+	"github.com/georgejieh/open-trestle/internal/evidence"
+	"github.com/georgejieh/open-trestle/runtimecatalog"
 )
 
 const testAPIToken = "01234567890123456789012345678901"
@@ -398,5 +400,55 @@ func TestServerFailsClosedWhenRateLimiterIsUnavailable(t *testing.T) {
 	server.ServeHTTP(response, authenticatedRequest(http.MethodGet, target, nil))
 	if response.Code != http.StatusServiceUnavailable || decodeAPIError(t, response.Body.Bytes()).Code != "rate_limit_unavailable" {
 		t.Fatalf("principal limiter=%d %s", response.Code, response.Body.String())
+	}
+}
+
+type localReviewAdmitterStub struct {
+	coordinator *controlplane.Coordinator
+	plan        controlplane.ReviewRunPlan
+	calls       int
+}
+
+func (s *localReviewAdmitterStub) Admit(ctx context.Context, intent runtimecatalog.LocalDeterministicReviewIntent, at time.Time) (controlplane.ReviewRunState, error) {
+	s.calls++
+	if intent.Scope().Identity() != s.plan.Scope().Identity() {
+		return controlplane.ReviewRunState{}, runtimecatalog.ErrInvalidLocalDeterministicReview
+	}
+	state, err := s.coordinator.Open(ctx, s.plan, at)
+	if err == nil {
+		state, err = s.coordinator.Advance(ctx, s.plan, at)
+	}
+	return state, err
+}
+
+func TestServerAdmitsLocalDeterministicIntentThroughExistingRunsEndpoint(t *testing.T) {
+	principal, _ := NewPrincipal("operator-1", "tenant-a", []string{"repo-a"}, []Capability{CapabilityRunRead, CapabilityRunWrite})
+	authenticator, _ := NewStaticTokenAuthenticator([]StaticToken{{Token: testAPIToken, Principal: principal}})
+	journal := controlplane.NewMemoryRunJournal()
+	coordinator, _ := controlplane.NewCoordinator(journal)
+	plan := apiPlan(t)
+	admitter := &localReviewAdmitterStub{coordinator: coordinator, plan: plan}
+	server, err := NewServerWithLocalDeterministicReview(coordinator, authenticator, fixedClock{at: time.UnixMilli(1000)}, admitter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, _ := evidence.NewRepositoryIdentity("local.test", []string{"team"}, "repository")
+	base, _ := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithmSHA1, strings.Repeat("1", 40))
+	head, _ := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithmSHA1, strings.Repeat("2", 40))
+	intent, _ := runtimecatalog.NewLocalDeterministicReviewIntent(plan.Scope(), repository, base, head, time.UnixMilli(1000))
+	encoded, _ := runtimecatalog.EncodeLocalDeterministicReviewIntent(intent)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, authenticatedRequest(http.MethodPost, "https://trestle.test/api/v1/runs", encoded))
+	if response.Code != http.StatusAccepted || admitter.calls != 1 || decodeAPIReceipt(t, response.Body.Bytes()).Scope().Identity() != plan.Scope().Identity() {
+		t.Fatalf("response=%d body=%s calls=%d", response.Code, response.Body.String(), admitter.calls)
+	}
+
+	otherScope, _ := audit.NewReviewScope("tenant-b", "repo-a", "run-a")
+	cross, _ := runtimecatalog.NewLocalDeterministicReviewIntent(otherScope, repository, base, head, time.UnixMilli(1000))
+	crossEncoded, _ := runtimecatalog.EncodeLocalDeterministicReviewIntent(cross)
+	denied := httptest.NewRecorder()
+	server.ServeHTTP(denied, authenticatedRequest(http.MethodPost, "https://trestle.test/api/v1/runs", crossEncoded))
+	if denied.Code != http.StatusForbidden || admitter.calls != 1 {
+		t.Fatalf("cross-scope response=%d body=%s calls=%d", denied.Code, denied.Body.String(), admitter.calls)
 	}
 }

@@ -67,3 +67,36 @@ Operational and usage failures emit no success JSON. Output is buffered and writ
 ## Evidence boundary
 
 The command proves only the identities and bounded rule behavior represented by the emitted acquisition, change, opaque entry, coverage, finding, and evidence contracts. It does not prove repository origin, ownership, authorization, ref reachability, ancestry, merge-base correctness, atomic snapshot stability, working-tree state, semantic review completeness, model quality, policy approval, tenant isolation, or publication readiness. It performs no autofix and retains no source bytes after the synchronous review scope.
+
+
+## Durable local daemon mode
+
+The unreleased local evaluation path can submit the same exact loose-object base/head scope to a daemon-bound deterministic pipeline. This extends the existing command and existing `POST /api/v1/runs`; it adds no source-control adapter, provider route, publication effect, or endpoint.
+
+```text
+trestle local-git review \
+  --objects-root PATH \
+  --repository-authority AUTHORITY \
+  --repository-namespace SEGMENT[/SEGMENT...] \
+  --repository-name NAME \
+  --revision-algorithm sha1|sha256 \
+  --base-revision-digest FULL_LOWERCASE_HEX \
+  --head-revision-digest FULL_LOWERCASE_HEX \
+  --tenant TENANT --repository REPOSITORY --run RUN \
+  --server http://127.0.0.1:8741
+```
+
+Daemon mode requires a canonical numeric-loopback HTTP server. The CLI first reads and verifies both requested revisions through the supplied local root. It sends only scope, repository labels, full revisions, and a millisecond request time. It never sends the object-root path, credentials, source content, route authority, or publication authority. The daemon separately reads its startup-bound root. A successful submission prints the canonical run receipt; it does not claim that the rule passed.
+
+The resulting local plan contains exactly two source-acquisition tasks, one change task, and one deterministic-analysis task. A succeeded run means those handlers completed and durable state was written. The diagnostic check state separately reports `passed`, `failed`, `incomplete`, or `not_applicable`. Version 6 diagnostic observations are exact deterministic rule matches. They are not independently verified findings.
+
+Read the same stored result without rerunning source analysis:
+
+```text
+trestle runs status --tenant TENANT --repository REPOSITORY --run RUN --server http://127.0.0.1:8741
+trestle runs status --tenant TENANT --repository REPOSITORY --run RUN --server http://127.0.0.1:8741 --format json
+trestle runs status --tenant TENANT --repository REPOSITORY --run RUN --server http://127.0.0.1:8741 --format sarif
+trestle tui --tenant TENANT --repository REPOSITORY --run RUN --server http://127.0.0.1:8741 --plain --once
+```
+
+The JSON result is the canonical stored diagnostic set. SARIF carries `trestleStatus: inconclusive`, the deterministic check disposition, the human-review qualifier, exact locations, and all evidence references. It does not call an observation verified.

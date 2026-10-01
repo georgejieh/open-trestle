@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,7 +9,9 @@ import (
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/diagnostics"
+	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/runtimeadmin"
+	"github.com/georgejieh/open-trestle/runtimecatalog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -204,5 +207,41 @@ func TestClientRejectsCrossWiredRuntimeStatus(t *testing.T) {
 	apiClient, _ := New(server.URL, clientTestToken, server.Client())
 	if _, err := apiClient.GetRuntimeStatus(context.Background(), "tenant-a", "repo-a"); !errors.Is(err, ErrInvalidResponse) {
 		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestLocalClientSubmitsDeterministicIntentOnlyToNumericLoopback(t *testing.T) {
+	receipt := clientReceipt(t)
+	repository, _ := evidence.NewRepositoryIdentity("local.test", []string{"team"}, "repository")
+	base, _ := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithmSHA1, strings.Repeat("1", 40))
+	head, _ := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithmSHA1, strings.Repeat("2", 40))
+	intent, _ := runtimecatalog.NewLocalDeterministicReviewIntent(receipt.Scope(), repository, base, head, time.UnixMilli(1000))
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/api/v1/runs" {
+			t.Errorf("request=%s %s", request.Method, request.URL.Path)
+		}
+		var encoded bytes.Buffer
+		_, _ = encoded.ReadFrom(request.Body)
+		parsed, err := runtimecatalog.ParseLocalDeterministicReviewIntent(encoded.Bytes())
+		if err != nil || parsed.Identity() != intent.Identity() {
+			t.Errorf("intent=(%#v,%v)", parsed, err)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusAccepted)
+		_, _ = writer.Write(responseBody(t, receipt))
+	}))
+	defer server.Close()
+	local, err := NewLocal(server.URL, clientTestToken, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := local.SubmitLocalDeterministicReview(context.Background(), intent)
+	if err != nil || got.Identity() != receipt.Identity() {
+		t.Fatalf("submit=(%#v,%v)", got, err)
+	}
+	for _, endpoint := range []string{"https://example.com", "http://example.com", "https://127.0.0.1:8741", "http://localhost:8741"} {
+		if candidate, err := NewLocal(endpoint, clientTestToken, nil); !errors.Is(err, ErrInvalidClient) || candidate != nil {
+			t.Fatalf("NewLocal(%q)=(%#v,%v)", endpoint, candidate, err)
+		}
 	}
 }

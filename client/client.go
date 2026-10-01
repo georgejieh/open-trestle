@@ -21,6 +21,7 @@ import (
 	"github.com/georgejieh/open-trestle/diagnostics"
 	"github.com/georgejieh/open-trestle/internal/apilimit"
 	"github.com/georgejieh/open-trestle/runtimeadmin"
+	"github.com/georgejieh/open-trestle/runtimecatalog"
 )
 
 const (
@@ -68,6 +69,28 @@ func New(rawBaseURL, credential string, httpClient *http.Client) (*Client, error
 	baseCopy.RawPath = ""
 	return &Client{baseURL: &baseCopy, credential: strings.Clone(credential), httpClient: &clone}, nil
 }
+
+// NewLocal confines an alpha client to canonical numeric loopback HTTP.
+func NewLocal(rawBaseURL, credential string, httpClient *http.Client) (*Client, error) {
+	baseURL, err := url.Parse(rawBaseURL)
+	if err != nil || baseURL.Scheme != "http" || net.ParseIP(baseURL.Hostname()) == nil || !net.ParseIP(baseURL.Hostname()).IsLoopback() {
+		return nil, ErrInvalidClient
+	}
+	return New(rawBaseURL, credential, httpClient)
+}
+
+// SubmitLocalDeterministicReview admits one exact provider-free intent through the existing runs endpoint.
+func (c *Client) SubmitLocalDeterministicReview(ctx context.Context, intent runtimecatalog.LocalDeterministicReviewIntent) (controlplane.ReviewRunReceipt, error) {
+	if intent.Validate() != nil {
+		return controlplane.ReviewRunReceipt{}, runtimecatalog.ErrInvalidLocalDeterministicReview
+	}
+	encoded, err := runtimecatalog.EncodeLocalDeterministicReviewIntent(intent)
+	if err != nil {
+		return controlplane.ReviewRunReceipt{}, err
+	}
+	return c.doReceipt(ctx, http.MethodPost, "/api/v1/runs", encoded, http.StatusAccepted, intent.Scope())
+}
+
 func (c *Client) SubmitRun(ctx context.Context, plan controlplane.ReviewRunPlan) (controlplane.ReviewRunReceipt, error) {
 	if err := plan.Validate(); err != nil {
 		return controlplane.ReviewRunReceipt{}, err

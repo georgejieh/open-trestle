@@ -43,15 +43,18 @@ import (
 	memoryhandler "github.com/georgejieh/open-trestle/handlers/memory"
 	modelhandler "github.com/georgejieh/open-trestle/handlers/model"
 	publicationhandler "github.com/georgejieh/open-trestle/handlers/publication"
+	sourcehandler "github.com/georgejieh/open-trestle/handlers/source"
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/internal/fileauthority"
 	memorycore "github.com/georgejieh/open-trestle/internal/memory"
 	providerconfig "github.com/georgejieh/open-trestle/internal/provider"
 	reviewcore "github.com/georgejieh/open-trestle/internal/review"
+	"github.com/georgejieh/open-trestle/internal/scm"
 	"github.com/georgejieh/open-trestle/runtimeadmin"
 	"github.com/georgejieh/open-trestle/runtimecatalog"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 	"github.com/georgejieh/open-trestle/runtimehealth"
+	"github.com/georgejieh/open-trestle/setup"
 	webconsole "github.com/georgejieh/open-trestle/web"
 	"github.com/georgejieh/open-trestle/webhook"
 	"github.com/georgejieh/open-trestle/worker"
@@ -149,6 +152,12 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	flags.SetOutput(stderr)
 	listenAddress := flags.String("listen", defaultDaemonListenAddress, "TCP listen address")
 	stateDirectory := flags.String("state-dir", "", "private durable state directory")
+	setupState := flags.String("setup-state", "", "initialized local_single_node scope plan; does not grant setup readiness")
+	expectedSetupRootIdentity := flags.String("expected-setup-root-identity", "", "expected setup root identity for scope and posture binding only")
+	localGitObjectsRoot := flags.String("local-git-objects-root", "", "daemon-owned loose Git objects directory")
+	localGitRepositoryAuthority := flags.String("local-git-repository-authority", "", "local Git repository authority label")
+	localGitRepositoryNamespace := flags.String("local-git-repository-namespace", "", "local Git repository namespace")
+	localGitRepositoryName := flags.String("local-git-repository-name", "", "local Git repository name")
 	metadataStore := flags.String("metadata-store", "local", "metadata store: local or postgres")
 	postgresAuthorityIdentity := flags.String("postgres-authority-identity", "", "non-secret PostgreSQL publication authority identity")
 	postgresDatabaseAuthorityIdentity := flags.String("postgres-database-authority-identity", "", "expected runtime-role PostgreSQL database authority identity")
@@ -245,6 +254,31 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	githubSecretDigest := sha256.Sum256(githubSecret)
 	plannerConfigured := *githubOpenRuns || *githubLocalDeterministicWorkers || *githubFullName != "" || *githubPolicyIdentity != "" || len(githubHandlers) != 0 || *githubReviewMode != "advisory" || *githubPublisherID != githubwebhook.DefaultGitHubPublisherID || *githubEnablePublication || *githubPublicationPolicyIdentity != "" || *githubPublicationPrincipalIdentity != "" || *githubPublicationAuthorizationTTL != 10*time.Minute
 	runtimeConfigured := *runtimeRouteInventory != "" || *runtimePolicy != ""
+	localGitValues := []string{*setupState, *expectedSetupRootIdentity, *localGitObjectsRoot, *localGitRepositoryAuthority, *localGitRepositoryNamespace, *localGitRepositoryName}
+	localGitConfigured := false
+	localGitComplete := true
+	for _, value := range localGitValues {
+		localGitConfigured = localGitConfigured || value != ""
+		localGitComplete = localGitComplete && value != ""
+	}
+	if localGitConfigured && (!localGitComplete || githubConfigured || plannerConfigured || runtimeConfigured || *metadataStore != "local" || *artifactStoreMode != "local" || len(repositories) != 1 || *tlsCertificate != "" || *tlsKey != "" || !daemonLoopbackAddress(*listenAddress)) {
+		return nil, ErrInvalidDaemonConfiguration
+	}
+	var localSetupPlan setup.Plan
+	var localRepository evidence.RepositoryIdentity
+	if localGitConfigured {
+		// Deterministic review performs no setup, model, egress, or publication effect.
+		// The initialized plan binds scope and denied-effect posture only; its pending
+		// readiness gates remain pending and confer no runtime authorization.
+		var setupErr error
+		localSetupPlan, setupErr = setup.InspectStateFile(ctx, *setupState)
+		var repositoryErr error
+		localRepository, repositoryErr = evidence.NewRepositoryIdentity(*localGitRepositoryAuthority, strings.Split(*localGitRepositoryNamespace, "/"), *localGitRepositoryName)
+		posture := localSetupPlan.Posture()
+		if setupErr != nil || repositoryErr != nil || localRepository.Identity() == "" || !daemonNonzeroDigest(*expectedSetupRootIdentity) || localSetupPlan.RootIdentity() != *expectedSetupRootIdentity || localSetupPlan.Profile() != setup.ProfileLocalSingleNode || localSetupPlan.TenantID() != *tenantID || localSetupPlan.RepositoryID() != repositories[0] || posture.MetadataBackend() != setup.MetadataLocal || posture.ArtifactBackend() != setup.ArtifactLocal || posture.Egress() != setup.EgressDenied || posture.PublicationEnabled() || posture.DynamicValidationEnabled() {
+			return nil, ErrInvalidDaemonConfiguration
+		}
+	}
 	if runtimeConfigured && (*runtimeRouteInventory == "" || *runtimePolicy == "" || !*githubLocalDeterministicWorkers) {
 		return nil, ErrInvalidDaemonConfiguration
 	}
@@ -537,6 +571,46 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	var statusHandlers []runtimeadmin.HandlerBinding
 	var statusInventoryIdentity, statusPolicyIdentity string
 	var statusRouteCount uint32
+	var localReviewAdmitter *runtimecatalog.LocalDeterministicReviewAdmitter
+	if localGitConfigured {
+		objectsRoot, rootIdentity, rootErr := openDaemonLocalGitRoot(*localGitObjectsRoot, localRepository)
+		if rootErr != nil {
+			return nil, rootErr
+		}
+		resources.closers = append(resources.closers, objectsRoot)
+		objectStore, storeErr := scm.NewLocalGitObjectStore(objectsRoot, localRepository)
+		sourceAdapter, adapterErr := scm.NewLocalGitSourceAdapter(objectStore)
+		if storeErr != nil || adapterErr != nil {
+			return nil, ErrInvalidDaemonConfiguration
+		}
+		sourceTask, sourceErr := sourcehandler.NewHandlerWithSourceRoot(artifactStore, sourceAdapter, rootIdentity, daemonArtifactClock)
+		changeTask, changeErr := changehandler.NewHandler(artifactStore, daemonArtifactClock)
+		analysisTask, analysisErr := analysishandler.NewHandlerWithDiagnostics(artifactStore, diagnosticStore, daemonArtifactClock)
+		if sourceErr != nil || changeErr != nil || analysisErr != nil {
+			return nil, ErrInvalidDaemonConfiguration
+		}
+		localHandlers := []controlplane.TaskHandler{sourceTask, changeTask, analysisTask}
+		pipeline, pipelineErr := runtimecatalog.NewPipelineCatalog(controlplane.ReviewRunLocal, localHandlers)
+		if pipelineErr != nil {
+			return nil, pipelineErr
+		}
+		localReviewPolicyIdentity := daemonComponentIdentity("local-deterministic-static-debug-review-v1")
+		localReviewAdmitter, err = runtimecatalog.NewLocalDeterministicReviewAdmitter(journal, artifactStore, runtimecatalog.LocalDeterministicReviewAdmissionConfig{Repository: localRepository, SourceAdapter: sourceAdapter.Identity(), SourceRootIdentity: rootIdentity, ReviewPolicyIdentity: localReviewPolicyIdentity, Classification: artifact.ClassificationInternal, Protection: artifactProtection, Retention: 24 * time.Hour, Catalog: pipeline})
+		if err != nil {
+			return nil, err
+		}
+		localSupervisor, supervisorErr := worker.NewRepositorySupervisor(journal, pipeline.Catalog(), worker.RepositorySupervisorOptions{TenantID: *tenantID, RepositoryIDs: []string(repositories), WorkerIdentity: "trestled-local", PollInterval: time.Second, RenewalInterval: 10 * time.Second, ExecutionTimeout: 30 * time.Minute, Clock: httpapi.SystemClock{}, FinalizeSettled: true})
+		if supervisorErr != nil {
+			return nil, supervisorErr
+		}
+		resources.supervisors = append(resources.supervisors, localSupervisor)
+		resources.supervisorNames = append(resources.supervisorNames, "local_workers")
+		bindings := pipeline.Bindings()
+		statusHandlers = make([]runtimeadmin.HandlerBinding, len(bindings))
+		for index, binding := range bindings {
+			statusHandlers[index] = runtimeadmin.HandlerBinding{Kind: binding.Kind.String(), Identity: binding.HandlerIdentity}
+		}
+	}
 	if githubConfigured {
 		scope, scopeErr := webhook.NewRepositoryScope(*tenantID, *githubRepository)
 		if scopeErr != nil {
@@ -717,6 +791,9 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 		componentNames = append(componentNames, "artifact_erasure_budgeted")
 	}
 	statusMode := runtimeadmin.ReviewDisabled
+	if localGitConfigured {
+		statusMode = runtimeadmin.ReviewLocal
+	}
 	if *githubOpenRuns {
 		switch *githubReviewMode {
 		case "local":
@@ -743,7 +820,7 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	statusConfiguration, err := runtimeadmin.NewConfiguration(runtimeadmin.ConfigurationOptions{
 		TenantID: *tenantID, RepositoryIDs: []string(repositories), MetadataBackend: metadataBackend, DatabaseAuthorityIdentity: *postgresDatabaseAuthorityIdentity,
 		ArtifactBackend: artifactBackend, ArtifactProtection: runtimeadmin.Protection(artifactProtection.String()), NotificationBackend: notificationBackend, RateLimitBackend: rateLimitBackend, RateLimitAuthorityIdentity: rateLimitAuthorityIdentity,
-		ReviewMode: statusMode, WebhookIngress: githubConfigured, LocalWorkers: *githubLocalDeterministicWorkers,
+		ReviewMode: statusMode, WebhookIngress: githubConfigured, LocalWorkers: localGitConfigured || *githubLocalDeterministicWorkers,
 		PublicationEnabled: *githubEnablePublication, PublicationFenceVerified: *postgresAuthorityIdentity != "",
 		RouteInventoryIdentity: statusInventoryIdentity, RuntimePolicyIdentity: statusPolicyIdentity, RouteCount: statusRouteCount, Handlers: statusHandlers,
 	})
@@ -770,7 +847,12 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	if err != nil {
 		return nil, err
 	}
-	apiHandler, err := httpapi.NewServerWithRuntimeAdministrationAndRateLimiters(journal, authenticator, httpapi.SystemClock{}, diagnosticStore, taskNotificationQueue, statusService, requestLimiter, principalLimiter)
+	var apiHandler *httpapi.Server
+	if localGitConfigured {
+		apiHandler, err = httpapi.NewServerWithLocalDeterministicRuntimeAdministrationAndRateLimiters(journal, authenticator, httpapi.SystemClock{}, diagnosticStore, taskNotificationQueue, statusService, requestLimiter, principalLimiter, localReviewAdmitter)
+	} else {
+		apiHandler, err = httpapi.NewServerWithRuntimeAdministrationAndRateLimiters(journal, authenticator, httpapi.SystemClock{}, diagnosticStore, taskNotificationQueue, statusService, requestLimiter, principalLimiter)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1137,6 +1219,46 @@ func validSecureServiceEndpoint(raw string) bool {
 	}
 	_, err = providerconfig.ClassifyServiceEndpoint(raw)
 	return err == nil
+}
+
+func daemonLoopbackAddress(address string) bool {
+	host, _, err := net.SplitHostPort(address)
+	parsed := net.ParseIP(host)
+	return err == nil && parsed != nil && parsed.IsLoopback()
+}
+
+func openDaemonLocalGitRoot(path string, repository evidence.RepositoryIdentity) (*os.Root, string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil || filepath.Clean(absolute) != absolute || repository.Identity() == "" {
+		return nil, "", ErrInvalidDaemonConfiguration
+	}
+	before, err := os.Lstat(absolute)
+	if err != nil || !before.IsDir() || before.Mode()&os.ModeSymlink != 0 {
+		return nil, "", ErrInvalidDaemonConfiguration
+	}
+	resolved, err := filepath.EvalSymlinks(absolute)
+	if err != nil || resolved != absolute {
+		return nil, "", ErrInvalidDaemonConfiguration
+	}
+	root, err := os.OpenRoot(absolute)
+	if err != nil {
+		return nil, "", ErrInvalidDaemonConfiguration
+	}
+	opened, err := root.Stat(".")
+	after, afterErr := os.Lstat(absolute)
+	if err != nil || afterErr != nil || !opened.IsDir() || !os.SameFile(before, opened) || !os.SameFile(opened, after) {
+		_ = root.Close()
+		return nil, "", ErrInvalidDaemonConfiguration
+	}
+	encoded, _ := json.Marshal(struct {
+		Contract   string `json:"contract"`
+		Version    int    `json:"version"`
+		Path       string `json:"path"`
+		Repository string `json:"repository"`
+		Profile    string `json:"profile"`
+	}{"open-trestle/local-git-source-root", 1, absolute, repository.Identity(), string(scm.LocalGitObjectStoreProfileLooseOnly)})
+	digest := sha256.Sum256(encoded)
+	return root, hex.EncodeToString(digest[:]), nil
 }
 
 func validListenAddress(address, certificate, key string) bool {
