@@ -20,17 +20,21 @@
 ## Status
 
 > [!WARNING]
-> **Open Trestle is under active construction and is not yet runnable end to end.**
-> This tree is an unreleased development candidate: the review engine, transports, and
-> storage layers are implemented and tested, but the runtime does not yet launch as a
-> finished product. No version is supported for production use, and capability
-> descriptions below describe the candidate, not a release. Anything you read here is
-> contingent on the [release gates](docs/roadmap.md) still being open.
+> **Open Trestle is under active construction. One local evaluation path is now runnable end to end.**
+> This tree is an unreleased development candidate. The demonstrated path is limited to
+> an unsigned Linux amd64 candidate, one loopback `local_single_node` daemon, one exact
+> loose-object Git base/head pair, and the existing deterministic static-debug rule. No
+> version is supported for production use. Capability descriptions below describe the
+> candidate, not a release, and remain contingent on the open [release gates](docs/roadmap.md).
 
-**What is real today:** 55 Go packages with a full test suite, deterministic JSON and
+**What is real today:** The Go packages have a full test suite, deterministic JSON and
 SARIF review output, loose and packed Git inspection, a protected setup planner, a
 durable run journal, an embedded read-only web console, and read-only MCP, ACP, and LSP
-surfaces. All are covered by `go test ./...` and a reproducible-release CI gate.
+surfaces. The unsigned candidate can now execute one provider-free loose-object review
+through durable daemon state and show the same run in the CLI, TUI, and daemon-served
+console before and after restart. This proves that exact local evaluation path only. It
+does not establish review quality, repository-wide coverage, setup readiness, or a
+supported deployment.
 
 **What is not:** a supported production install, stable APIs, or any public claim about
 review quality. CI builds and exercises an unsigned Linux amd64 candidate package, but
@@ -103,9 +107,55 @@ publication gate.
 
 ## Quick start
 
-There is no supported runtime package yet, so the primary quick start builds from
-source and drives the pieces that exist. CI also produces the unsigned Linux amd64
-evaluation candidate described below. From the repository root:
+There is no supported runtime package. The following clean-checkout procedure reproduces
+the bounded local evaluation path and writes its evidence to a caller-selected private
+directory. It does not install on `/`, contact a model or forge, publish a result, or
+qualify a production deployment.
+
+```sh
+# build and check the committed console assets
+(cd web && npm ci && npm test && npm run build && npm run dist:check)
+
+# build the fixed runtime staging tree and passive point-in-time advisory evidence
+python3 tools/package_secret_scanner.py --output .container
+python3 tools/package_secret_scanner.py --verify .container
+python3 tools/vulnerability_gate.py --staging .container
+
+REVISION="$(git rev-parse HEAD)"
+CREATED="$(date -u -d "$(git show -s --format=%cI "$REVISION")" +%Y-%m-%dT%H:%M:%SZ)"
+python3 tools/linux_distribution.py \
+  --staging .container \
+  --version 0.1.0-dev \
+  --revision "$REVISION" \
+  --created "$CREATED" \
+  --output open-trestle-linux-amd64.pyz
+sha256sum -c open-trestle-linux-amd64.pyz.sha256
+./open-trestle-linux-amd64.pyz verify-archive
+
+# OUTPUT must not exist; it receives synthetic source, durable state, exports,
+# lifecycle evidence, and real daemon-backed desktop/tablet/mobile screenshots.
+python3 tools/local_alpha_system.py \
+  --candidate "$(pwd)/open-trestle-linux-amd64.pyz" \
+  --source-root "$(pwd)" \
+  --browser-script "$(pwd)/web/scripts/daemon-visual-check.mjs" \
+  --output "$HOME/open-trestle-local-alpha-evidence"
+```
+
+The system driver requires a clean source tree. It verifies the detached checksum before
+executing the archive, installs only into an isolated destdir, runs candidate smoke,
+creates a real temporary Git repository, initializes the existing `local_single_node`
+plan, starts `trestled` on numeric loopback, executes the four-task deterministic run,
+reads the same run through CLI/TUI/web, restarts the daemon, compares JSON and SARIF byte
+for byte, then uninstalls the candidate and verifies operator sentinels remain. Inspect
+`$HOME/open-trestle-local-alpha-evidence/receipt.json` for exact binary, revision,
+command, identity, artifact, restart, browser, and cleanup bindings.
+
+The initialized setup plan is a scope and denied-effect posture fence for this narrow
+review. It remains `ready:false`; pending policy, inference, dry-run, backup, observer,
+and other setup gates are not bypassed or reported as passed. The deterministic run does
+not perform a setup, provider, egress, publication, or source-mutation effect.
+
+The lower-level source commands remain useful for focused inspection:
 
 ```sh
 # create and inspect a protected setup plan
