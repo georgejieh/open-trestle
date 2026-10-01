@@ -66,11 +66,13 @@ def main()->int:
     parser.add_argument("--candidate",type=Path,required=True)
     parser.add_argument("--output",type=Path,required=True)
     parser.add_argument("--source-root",type=Path,default=Path.cwd())
-    parser.add_argument("--browser-script",type=Path,required=True)
+    parser.add_argument("--browser-script",type=Path)
+    parser.add_argument("--skip-browser",action="store_true")
     args=parser.parse_args()
-    candidate=args.candidate.resolve(); output=args.output.resolve(); source=args.source_root.resolve(); browser_script=args.browser_script.resolve()
+    candidate=args.candidate.resolve(); output=args.output.resolve(); source=args.source_root.resolve(); browser_script=args.browser_script.resolve() if args.browser_script else None
     sidecar=Path(str(candidate)+".sha256")
-    if not candidate.is_file() or not sidecar.is_file() or not browser_script.is_file() or output.exists(): raise SystemExit("candidate, checksum, and browser script must exist and output must not exist")
+    valid_browser = args.skip_browser and browser_script is None or not args.skip_browser and browser_script is not None and browser_script.is_file()
+    if not candidate.is_file() or not sidecar.is_file() or not valid_browser or output.exists(): raise SystemExit("candidate/checksum and exactly one browser mode must be valid; output must not exist")
     sidecar_fields=sidecar.read_text().strip().split()
     if len(sidecar_fields)<1 or sidecar_fields[0]!=sha256(candidate): raise SystemExit("candidate checksum does not match detached sidecar")
     source_revision=subprocess.run(["git","rev-parse","HEAD"],cwd=source,stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=True,text=True).stdout.strip()
@@ -89,11 +91,12 @@ def main()->int:
     for sentinel in (candidate_root/"etc/open-trestle/operator.conf",candidate_root/"var/lib/open-trestle/operator.state"):
         sentinel.parent.mkdir(mode=0o700,parents=True); write(sentinel,b"operator-owned\n")
     verify_archive=execute([str(candidate),"verify-archive"]); write(artifacts/"candidate-verify-archive.txt",verify_archive.stdout)
-    installed=execute([str(candidate),"install","--destdir",str(candidate_root)]); write(artifacts/"candidate-install.txt",installed.stdout)
     lifecycle=candidate_root/"usr/local/libexec/open-trestle/open-trestle-distribution.pyz"
     trestle=candidate_root/"usr/local/bin/trestle"; trestled=candidate_root/"usr/local/bin/trestled"
-    installed=True; daemon_holder=[None]
+    install_attempted=False; daemon_holder=[None]
     try:
+        install_attempted=True
+        install_result=execute([str(candidate),"install","--destdir",str(candidate_root)]); write(artifacts/"candidate-install.txt",install_result.stdout)
         verified=execute([str(lifecycle),"verify-installed","--destdir",str(candidate_root)]); write(artifacts/"candidate-verify-installed.txt",verified.stdout)
         execute([str(lifecycle),"smoke","--destdir",str(candidate_root),"--output",str(artifacts/"candidate-smoke.json")])
         if not trestle.is_file() or not trestled.is_file(): raise RuntimeError("candidate did not install product binaries")
@@ -136,30 +139,39 @@ def main()->int:
             status_after=execute(status_args); diagnostics_after=request(url+f"/api/v1/tenants/tenant-a/repositories/repository-a/runs/{run_id}/diagnostics",token)
             json_after=execute([*status_args,"--format","json"]); sarif_after=execute([*status_args,"--format","sarif"])
             write(artifacts/"status-after-restart.json",status_after.stdout); write(artifacts/"diagnostics-after-restart.json",diagnostics_after); write(artifacts/"tui-after-restart.txt",execute([str(trestle),"tui","--server",url,"--tenant","tenant-a","--repository","repository-a","--run",run_id,"--plain","--once"]).stdout)
-            visual_env={**env,"OPEN_TRESTLE_DAEMON_URL":url,"OPEN_TRESTLE_DAEMON_VISUAL_OUTPUT":str(artifacts/"daemon-console"),"OPEN_TRESTLE_TENANT":"tenant-a","OPEN_TRESTLE_REPOSITORY":"repository-a","OPEN_TRESTLE_RUN":run_id}
-            commands.append(["node",str(browser_script)]); visual=run(["node",str(browser_script)],visual_env,source)
-            if visual.stdout: write(artifacts/"daemon-console-visual.stdout",visual.stdout)
-            if visual.stderr: write(artifacts/"daemon-console-visual.stderr",visual.stderr)
-            visual_receipt_path=artifacts/"daemon-console/receipt.json"; visual_manifest=json.loads(visual_receipt_path.read_text())
-            if visual_manifest["scope"]!={"tenant":"tenant-a","repository":"repository-a","run":run_id}: raise RuntimeError("browser receipt scope mismatch")
-            browser_record={"receipt":"daemon-console/receipt.json","sha256":sha256(visual_receipt_path),"scope":visual_manifest["scope"],"captures":visual_manifest["captures"]}
+            if args.skip_browser:
+                browser_record={"status":"not_run","reason":"explicit_nonvisual_verification"}
+            else:
+                visual_env={**env,"OPEN_TRESTLE_DAEMON_URL":url,"OPEN_TRESTLE_DAEMON_VISUAL_OUTPUT":str(artifacts/"daemon-console"),"OPEN_TRESTLE_TENANT":"tenant-a","OPEN_TRESTLE_REPOSITORY":"repository-a","OPEN_TRESTLE_RUN":run_id}
+                commands.append(["node",str(browser_script)]); visual=run(["node",str(browser_script)],visual_env,source)
+                if visual.stdout: write(artifacts/"daemon-console-visual.stdout",visual.stdout)
+                if visual.stderr: write(artifacts/"daemon-console-visual.stderr",visual.stderr)
+                visual_receipt_path=artifacts/"daemon-console/receipt.json"; visual_manifest=json.loads(visual_receipt_path.read_text())
+                if visual_manifest["scope"]!={"tenant":"tenant-a","repository":"repository-a","run":run_id}: raise RuntimeError("browser receipt scope mismatch")
+                browser_record={"status":"passed","receipt":"daemon-console/receipt.json","sha256":sha256(visual_receipt_path),"scope":visual_manifest["scope"],"captures":visual_manifest["captures"]}
             if json.loads(status_after.stdout)["identity"]!=status_value["identity"] or json.loads(diagnostics_after)["diagnostics"]!=json.loads(diagnostics)["diagnostics"] or json_after.stdout!=json_first.stdout or sarif_after.stdout!=sarif_first.stdout: raise RuntimeError("restart or deterministic readback mismatch")
         finally: stop_daemon(daemon); daemon_holder[0]=None
         binary_records=[{"name":"trestle","path":str(trestle),"sha256":sha256(trestle)},{"name":"trestled","path":str(trestled),"sha256":sha256(trestled)}]
     finally:
         stop_daemon(daemon_holder[0])
-        if installed:
-            uninstalled=execute([str(lifecycle),"uninstall","--destdir",str(candidate_root)])
-            write(artifacts/"candidate-uninstall.txt",uninstalled.stdout)
-            installed=False
+        if install_attempted:
+            recovered=execute([str(candidate),"recover","--destdir",str(candidate_root)])
+            if recovered.stdout: write(artifacts/"candidate-recover.txt",recovered.stdout)
+            if lifecycle.is_file():
+                uninstalled=execute([str(lifecycle),"uninstall","--destdir",str(candidate_root)])
+                write(artifacts/"candidate-uninstall.txt",uninstalled.stdout)
             sentinels=(candidate_root/"etc/open-trestle/operator.conf",candidate_root/"var/lib/open-trestle/operator.state")
-            if trestle.exists() or trestled.exists() or any(path.read_bytes()!=b"operator-owned\n" or stat.S_IMODE(path.stat().st_mode)!=0o600 for path in sentinels):
-                raise RuntimeError("candidate uninstall did not preserve exact operator state or remove binaries")
+            def exact_sentinel(path:Path) -> bool:
+                try: information=path.lstat()
+                except OSError: return False
+                return stat.S_ISREG(information.st_mode) and stat.S_IMODE(information.st_mode)==0o600 and path.read_bytes()==b"operator-owned\n"
+            if trestle.exists() or trestled.exists() or not all(exact_sentinel(path) for path in sentinels):
+                raise RuntimeError("candidate cleanup did not preserve exact operator state or remove binaries")
     revision=source_revision
     artifact_records=[]
     for path in sorted(artifacts.rglob("*")):
         if path.is_file(): artifact_records.append({"name":str(path.relative_to(artifacts)),"sha256":sha256(path),"bytes":path.stat().st_size})
-    receipt={"contract":"open-trestle/local-alpha-system-receipt","schema_version":1,"source_revision":revision,"source_tree_identity":source_tree_identity,"source_tree_clean":True,"candidate":{"path":str(candidate),"sha256":sha256(candidate),"sidecar_sha256":sha256(sidecar),"lifecycle":"verified_install_smoke_uninstall","operator_state_preserved":True},"binaries":binary_records,"repository":{"base_revision":base,"head_revision":head},"review":{"tenant_id":"tenant-a","repository_id":"repository-a","review_run_id":run_id,"run_receipt_identity":status_value["identity"],"diagnostic_set_identity":json.loads(diagnostics)["diagnostics"]["identity"]},"commands":commands,"artifacts":artifact_records,"restart":{"status_identity_stable":True,"diagnostics_set_stable":True,"json_bytes_stable":True,"sarif_bytes_stable":True},"browser":browser_record,"setup":{"profile":"local_single_node","plan_identity":setup_root,"ready":False,"authority":"scope_and_denied_effect_posture_only"},"network":{"daemon":"numeric_loopback_only","http_proxies":"non_loopback_http_proxies_point_to_closed_loopback","browser_request_guard":"abort_non_loopback"},"cleanup":{"daemon_stopped":True,"candidate_uninstalled":True,"operator_state_preserved":True,"host_modified":False}}
+    receipt={"contract":"open-trestle/local-alpha-system-receipt","schema_version":1,"source_revision":revision,"source_tree_identity":source_tree_identity,"source_tree_clean":True,"candidate":{"path":str(candidate),"sha256":sha256(candidate),"sidecar_sha256":sha256(sidecar),"lifecycle":"verified_install_smoke_recover_uninstall","operator_state_preserved":True},"binaries":binary_records,"repository":{"base_revision":base,"head_revision":head},"review":{"tenant_id":"tenant-a","repository_id":"repository-a","review_run_id":run_id,"run_receipt_identity":status_value["identity"],"diagnostic_set_identity":json.loads(diagnostics)["diagnostics"]["identity"]},"commands":commands,"artifacts":artifact_records,"restart":{"status_identity_stable":True,"diagnostics_set_stable":True,"json_bytes_stable":True,"sarif_bytes_stable":True},"browser":browser_record,"setup":{"profile":"local_single_node","plan_identity":setup_root,"ready":False,"authority":"scope_and_denied_effect_posture_only"},"network":{"configured_url":url,"readyz_observed":True,"http_proxies":"non_loopback_http_proxies_point_to_closed_loopback","browser_request_guard":"not_run" if args.skip_browser else "abort_non_loopback"},"cleanup":{"daemon_stopped":True,"candidate_recovered":True,"candidate_uninstalled":True,"operator_state_preserved":True}}
     write(output/"receipt.json",canonical_json(receipt)+b"\n")
     print(output/"receipt.json")
     return 0

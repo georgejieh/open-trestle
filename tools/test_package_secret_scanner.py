@@ -527,7 +527,7 @@ class ReleaseContractTest(unittest.TestCase):
         self.assertIn("go-version-file: workers/secret-scanner/go.mod", workflow)
         for command in (
             "GOWORK=off GOTOOLCHAIN=go1.26.8 go mod verify",
-            "GOWORK=off GOTOOLCHAIN=go1.26.8 go test ./...",
+            "GOWORK=off GOTOOLCHAIN=go1.26.8 go test -p=1 -timeout=30m ./...",
             "GOWORK=off GOTOOLCHAIN=go1.26.8 go test -race -p=1 -timeout=30m ./...",
             "GOWORK=off GOTOOLCHAIN=go1.26.8 go vet ./...",
             "GOWORK=off GOTOOLCHAIN=go1.26.8 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -run='^$' -exec=true ./...",
@@ -539,6 +539,10 @@ class ReleaseContractTest(unittest.TestCase):
         self.assertIn("GOWORK=off GOTOOLCHAIN=go1.26.8 go test -race", workflow)
         self.assertIn("python3 tools/package_secret_scanner.py", workflow)
         self.assertIn("python3 tools/package_secret_scanner.py --verify .container", workflow)
+        self.assertIn("umask 022", workflow)
+        self.assertIn("python3 tools/local_alpha_system.py", workflow)
+        self.assertIn("--skip-browser", workflow)
+        self.assertIn("open-trestle-local-alpha-system/receipt.json", workflow)
         self.assertIn(
             "name: Provision pinned Zig musl builder and build deterministic release staging",
             workflow,

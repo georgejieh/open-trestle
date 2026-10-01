@@ -66,7 +66,9 @@ jobs:
       - name: Verify root module sums
         run: GOWORK=off GOTOOLCHAIN=go1.26.8 go mod verify
       - name: Run tests
-        run: GOWORK=off GOTOOLCHAIN=go1.26.8 go test ./...
+        run: |
+          umask 022
+          GOWORK=off GOTOOLCHAIN=go1.26.8 go test -p=1 -timeout=30m ./...
       - name: Verify static-debug evaluation evidence
         run: |
           GOWORK=off GOTOOLCHAIN=go1.26.8 go run ./cmd/trestle evaluate static-debug > "$RUNNER_TEMP/open-trestle-static-debug-evaluation.json"
@@ -237,6 +239,17 @@ jobs:
           "$RUNNER_TEMP/open-trestle-spdx-validator/bin/python" -m spdx_tools.spdx.clitools.pyspdxtools \
             --infile "$RUNNER_TEMP/open-trestle-release-evidence-a/sbom.spdx.json" \
             --version SPDX-2.3
+      - name: Verify packaged local single-node journey
+        run: |
+          rm -rf "$GITHUB_WORKSPACE/open-trestle-linux-v1"
+          rm -f "$GITHUB_WORKSPACE/open-trestle-linux-lifecycle.json"
+          rm -rf "$RUNNER_TEMP/open-trestle-local-alpha-system"
+          python3 tools/local_alpha_system.py \
+            --candidate "$GITHUB_WORKSPACE/open-trestle-linux-a/open-trestle-linux-amd64.pyz" \
+            --source-root "$GITHUB_WORKSPACE" \
+            --skip-browser \
+            --output "$RUNNER_TEMP/open-trestle-local-alpha-system"
+          python3 -c 'import json,pathlib,sys; receipt=json.loads(pathlib.Path(sys.argv[1]).read_text()); assert receipt["source_revision"]==sys.argv[2] and receipt["source_tree_clean"] is True and receipt["review"]["review_run_id"]=="local-alpha" and receipt["restart"]=={"diagnostics_set_stable":True,"json_bytes_stable":True,"sarif_bytes_stable":True,"status_identity_stable":True} and receipt["browser"]=={"reason":"explicit_nonvisual_verification","status":"not_run"} and receipt["cleanup"]=={"candidate_recovered":True,"candidate_uninstalled":True,"daemon_stopped":True,"operator_state_preserved":True}' "$RUNNER_TEMP/open-trestle-local-alpha-system/receipt.json" "$GITHUB_SHA"
       - name: Build container image without a registry base
         run: docker build --network=none --tag open-trestle:verify .
       - name: Verify packaged scanner sandbox
