@@ -241,7 +241,7 @@ func TestLocalModelSessionRefusesDuplicateConcurrentAndClaimedRuns(t *testing.T)
 					if err != nil {
 						t.Fatal(err)
 					}
-				case <-time.After(3 * time.Second):
+				case <-time.After(10 * time.Second):
 					t.Fatal("first run did not finish")
 				}
 			}

@@ -515,7 +515,7 @@ func (s *Session) Run(ctx context.Context, prepared runtimecatalog.PreparedRevie
 		}
 	}
 	// Detached context is cleanup/readback only. No handler or model receives it.
-	cleanup, stop := context.WithTimeout(context.Background(), 2*time.Second)
+	cleanup, stop := context.WithTimeout(context.Background(), localReadbackTimeout(s.options.Timeout))
 	defer stop()
 	var state controlplane.ReviewRunState
 	var err error
@@ -602,6 +602,15 @@ func (s *Session) Close(ctx context.Context) error {
 	}
 	s.closed = true
 	return s.closeErr
+}
+func localReadbackTimeout(configured time.Duration) time.Duration {
+	if configured < 2*time.Second {
+		return 2 * time.Second
+	}
+	if configured > 30*time.Second {
+		return 30 * time.Second
+	}
+	return configured
 }
 func digest(value string) string {
 	sum := sha256.Sum256([]byte(value))

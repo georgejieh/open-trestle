@@ -708,3 +708,13 @@ func TestRetainedSessionNilIdentityAndResourceControls(t *testing.T) {
 		})
 	}
 }
+
+func TestLocalReadbackTimeoutIsBoundedByReviewTimeout(t *testing.T) {
+	for _, test := range []struct{ configured, want time.Duration }{
+		{time.Second, 2 * time.Second}, {5 * time.Second, 5 * time.Second}, {time.Minute, 30 * time.Second},
+	} {
+		if got := localReadbackTimeout(test.configured); got != test.want {
+			t.Fatalf("localReadbackTimeout(%s)=%s want %s", test.configured, got, test.want)
+		}
+	}
+}

@@ -78,7 +78,7 @@ func TestRunLocalGitModelReviewBoundsMaximumEscapedFindings(t *testing.T) {
 			}
 			var stdout, stderr bytes.Buffer
 			args := replaceLocalGitChangeValue(f.args, "--format", format)
-			args = replaceLocalGitChangeValue(args, "--timeout", "30s")
+			args = replaceLocalGitChangeValue(args, "--timeout", "60s")
 			if code := run(args, &stdout, &stderr); code != 4 || stderr.Len() != 0 {
 				output := stdout.String()
 				if len(output) > 1024 {
