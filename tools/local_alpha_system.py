@@ -92,7 +92,7 @@ def main()->int:
     installed=execute([str(candidate),"install","--destdir",str(candidate_root)]); write(artifacts/"candidate-install.json",installed.stdout)
     lifecycle=candidate_root/"usr/local/libexec/open-trestle/open-trestle-distribution.pyz"
     verified=execute([str(lifecycle),"verify-installed","--destdir",str(candidate_root)]); write(artifacts/"candidate-verify-installed.json",verified.stdout)
-    smoke=execute([str(lifecycle),"smoke","--destdir",str(candidate_root),"--output",str(artifacts/"candidate-smoke.json")]); write(artifacts/"candidate-smoke-command.json",smoke.stdout)
+    execute([str(lifecycle),"smoke","--destdir",str(candidate_root),"--output",str(artifacts/"candidate-smoke.json")])
     trestle=candidate_root/"usr/local/bin/trestle"; trestled=candidate_root/"usr/local/bin/trestled"
     if not trestle.is_file() or not trestled.is_file(): raise RuntimeError("candidate did not install product binaries")
     execute(["git","init","--object-format=sha1",str(repo)])
