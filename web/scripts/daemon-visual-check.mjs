@@ -34,6 +34,16 @@ const browser = await chromium.launch({
 const errors = [];
 const captures = [];
 const sha256 = (buffer) => createHash("sha256").update(buffer).digest("hex");
+const pngDimensions = (buffer) => {
+  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  if (
+    buffer.length < 24 ||
+    !buffer.subarray(0, 8).equals(signature) ||
+    buffer.toString("ascii", 12, 16) !== "IHDR"
+  )
+    throw new Error("screenshot is not a PNG");
+  return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
+};
 const filePrefix = phase.replaceAll("_", "-");
 try {
   const context = await browser.newContext({
@@ -125,11 +135,14 @@ try {
       path: join(output, fileName),
       fullPage: true,
     });
+    const image = pngDimensions(bytes);
     captures.push({
       name: fileName,
       view,
       width: viewport.width,
       height: viewport.height,
+      image_width: image.width,
+      image_height: image.height,
       bytes: bytes.length,
       sha256: sha256(bytes),
     });

@@ -14,11 +14,13 @@ import selectors
 import signal
 import socket
 import stat
+import struct
 import subprocess
 import sys
 import threading
 import time
 import urllib.parse
+import zlib
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +33,7 @@ MAX_FAILURE_LOG_BYTES = 64 << 10
 MAX_SOURCE_ENTRIES = 100_000
 MAX_SOURCE_BYTES = 8 << 30
 MAX_CANDIDATE_BYTES = 256 << 20
+MAX_SCREENSHOT_BYTES = 16 << 20
 PROCESS_TERM_SECONDS = 2.0
 PROCESS_KILL_SECONDS = 2.0
 
@@ -652,6 +655,52 @@ def read_candidate_manifest(candidate: Path, source_revision: str) -> dict[str, 
     return {"revision": revision, "manifest_sha256": hashlib.sha256(manifest).hexdigest(), "archive_sha256": archive_digest}
 
 
+def validate_png(body: bytes) -> tuple[int, int]:
+    if len(body) < 45 or body[:8] != b"\x89PNG\r\n\x1a\n":
+        raise RuntimeError("browser evidence screenshot is not a PNG")
+    offset = 8
+    chunks = 0
+    width = height = 0
+    saw_idat = False
+    saw_iend = False
+    while offset < len(body):
+        if offset + 12 > len(body):
+            raise RuntimeError("browser evidence PNG is truncated")
+        length = struct.unpack(">I", body[offset:offset + 4])[0]
+        kind = body[offset + 4:offset + 8]
+        end = offset + 12 + length
+        if length > MAX_SCREENSHOT_BYTES or end > len(body) or not re.fullmatch(rb"[A-Za-z]{4}", kind):
+            raise RuntimeError("browser evidence PNG chunk is invalid")
+        data = body[offset + 8:offset + 8 + length]
+        recorded_crc = struct.unpack(">I", body[offset + 8 + length:end])[0]
+        if zlib.crc32(kind + data) & 0xFFFFFFFF != recorded_crc:
+            raise RuntimeError("browser evidence PNG checksum is invalid")
+        chunks += 1
+        if chunks > 100_000:
+            raise RuntimeError("browser evidence PNG chunk limit exceeded")
+        if chunks == 1:
+            if kind != b"IHDR" or length != 13:
+                raise RuntimeError("browser evidence PNG header is invalid")
+            width, height, bit_depth, color_type, compression, filter_method, interlace = struct.unpack(">IIBBBBB", data)
+            valid_depths = {0: {1, 2, 4, 8, 16}, 2: {8, 16}, 3: {1, 2, 4, 8}, 4: {8, 16}, 6: {8, 16}}
+            if width < 1 or height < 1 or width > 100_000 or height > 100_000 or color_type not in valid_depths or bit_depth not in valid_depths[color_type] or compression != 0 or filter_method != 0 or interlace not in {0, 1}:
+                raise RuntimeError("browser evidence PNG dimensions or format are invalid")
+        elif kind == b"IHDR":
+            raise RuntimeError("browser evidence PNG has duplicate header")
+        if kind == b"IDAT":
+            saw_idat = True
+        if kind == b"IEND":
+            if length != 0 or end != len(body):
+                raise RuntimeError("browser evidence PNG ending is invalid")
+            saw_iend = True
+        elif saw_iend:
+            raise RuntimeError("browser evidence PNG has trailing chunks")
+        offset = end
+    if not saw_idat or not saw_iend or offset != len(body):
+        raise RuntimeError("browser evidence PNG structure is incomplete")
+    return width, height
+
+
 def validate_browser_script(source: Path, browser_script: Path | None, skip_browser: bool) -> Path | None:
     if skip_browser:
         if browser_script is not None:
@@ -714,14 +763,14 @@ def validate_browser_phase_record(record: dict, expected: dict, artifacts_root: 
         raise RuntimeError("browser evidence captures are invalid")
     observed_names: set[str] = set()
     for capture in captures:
-        if not isinstance(capture, dict) or set(capture) != {"name", "view", "width", "height", "bytes", "sha256"}:
+        if not isinstance(capture, dict) or set(capture) != {"name", "view", "width", "height", "image_width", "image_height", "bytes", "sha256"}:
             raise RuntimeError("browser evidence capture is invalid")
         name = capture.get("name")
         if name not in expected_captures or name in observed_names:
             raise RuntimeError("browser evidence capture name is invalid")
         observed_names.add(name)
         view, width, height = expected_captures[name]
-        if capture.get("view") != view or capture.get("width") != width or capture.get("height") != height or isinstance(capture.get("bytes"), bool) or not isinstance(capture.get("bytes"), int) or capture["bytes"] <= 0 or not isinstance(capture.get("sha256"), str) or not digest.fullmatch(capture["sha256"]) or capture["sha256"] == "0" * 64:
+        if capture.get("view") != view or capture.get("width") != width or capture.get("height") != height or capture.get("image_width") != width or isinstance(capture.get("image_height"), bool) or not isinstance(capture.get("image_height"), int) or capture["image_height"] < height or capture["image_height"] > 100_000 or isinstance(capture.get("bytes"), bool) or not isinstance(capture.get("bytes"), int) or capture["bytes"] <= 0 or capture["bytes"] > MAX_SCREENSHOT_BYTES or not isinstance(capture.get("sha256"), str) or not digest.fullmatch(capture["sha256"]) or capture["sha256"] == "0" * 64:
             raise RuntimeError("browser evidence capture metadata is invalid")
     if observed_names != set(expected_captures):
         raise RuntimeError("browser evidence capture inventory is invalid")
@@ -749,8 +798,14 @@ def validate_browser_phase_record(record: dict, expected: dict, artifacts_root: 
             information = capture_path.lstat()
         except OSError as error:
             raise RuntimeError("browser evidence screenshot is unavailable") from error
-        if not stat.S_ISREG(information.st_mode) or stat.S_ISLNK(information.st_mode) or information.st_size != capture["bytes"] or sha256(capture_path) != capture["sha256"]:
+        if not stat.S_ISREG(information.st_mode) or stat.S_ISLNK(information.st_mode) or information.st_size != capture["bytes"]:
             raise RuntimeError("browser evidence screenshot digest mismatch")
+        body = read_bounded(capture_path, MAX_SCREENSHOT_BYTES)
+        if hashlib.sha256(body).hexdigest() != capture["sha256"]:
+            raise RuntimeError("browser evidence screenshot digest mismatch")
+        image_width, image_height = validate_png(body)
+        if image_width != capture["image_width"] or image_height != capture["image_height"]:
+            raise RuntimeError("browser evidence PNG dimensions mismatch")
 
 
 def validate_browser_phase_evidence(before: dict | None, after: dict | None, expected: dict, artifacts_root: Path | None = None) -> dict:
@@ -894,7 +949,7 @@ def main() -> int:
             root.mkdir(mode=0o700, exist_ok=True)
             phase_output = root / phase.replace("_", "-")
             visual_env = {**env, "OPEN_TRESTLE_DAEMON_URL": url, "OPEN_TRESTLE_DAEMON_VISUAL_OUTPUT": str(phase_output), "OPEN_TRESTLE_TENANT": "tenant-a", "OPEN_TRESTLE_REPOSITORY": "repository-a", "OPEN_TRESTLE_RUN": run_id, "OPEN_TRESTLE_BROWSER_PHASE": phase}
-            commands.append(["node", str(browser_script), phase])
+            commands.append(["node", str(browser_script)])
             visual = run(["node", str(browser_script)], visual_env, sandbox, timeout=120)
             if visual.stdout:
                 write(artifacts / f"daemon-console-{phase}.stdout", visual.stdout)

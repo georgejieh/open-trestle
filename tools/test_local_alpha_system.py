@@ -9,6 +9,7 @@ import os
 import signal
 import socket
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -17,6 +18,7 @@ import time
 import unittest
 from unittest.mock import patch
 import zipfile
+import zlib
 from pathlib import Path
 
 import local_alpha_system
@@ -35,6 +37,18 @@ class LocalAlphaSystemTest(unittest.TestCase):
         archive.chmod(0o700)
         Path(str(archive) + ".sha256").write_text(f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n")
         return archive, manifest
+
+    def png(self, width: int, height: int) -> bytes:
+        def chunk(kind: bytes, data: bytes) -> bytes:
+            return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+        header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+        return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(b"")) + chunk(b"IEND", b"")
+
+    def rewrite_browser_receipt(self, root: Path, record: dict) -> None:
+        receipt = root / record["receipt"]
+        raw = {key: value for key, value in record.items() if key not in {"receipt", "receipt_sha256"}}
+        receipt.write_text(json.dumps(raw) + "\n")
+        record["receipt_sha256"] = hashlib.sha256(receipt.read_bytes()).hexdigest()
 
     def browser_expected(self):
         return {
@@ -61,9 +75,10 @@ class LocalAlphaSystemTest(unittest.TestCase):
         captures = []
         for name, view, width, height in specifications:
             file_name = f"{prefix}-{name}.png"
-            body = file_name.encode()
+            image_height = height + 7
+            body = self.png(width, image_height)
             (phase_root / file_name).write_bytes(body)
-            captures.append({"name": file_name, "view": view, "width": width, "height": height, "bytes": len(body), "sha256": hashlib.sha256(body).hexdigest()})
+            captures.append({"name": file_name, "view": view, "width": width, "height": height, "image_width": width, "image_height": image_height, "bytes": len(body), "sha256": hashlib.sha256(body).hexdigest()})
         raw = {"contract": "open-trestle/daemon-console-visual-receipt", "schema_version": 2, "phase": phase, **expected, "reduced_motion": True, "horizontal_overflow": False, "keyboard_focus_visible": True, "evidence_disclosure_focus_visible": True, "focus_order_steps": 1, "unexpected_egress": 0, "console_errors": 0, "tap_targets_minimum": 44, "captures": captures}
         receipt = phase_root / "receipt.json"
         receipt.write_text(json.dumps(raw) + "\n")
@@ -216,6 +231,37 @@ class LocalAlphaSystemTest(unittest.TestCase):
             record = local_alpha_system.validate_browser_phase_evidence(before, after, expected, root)
             self.assertEqual(record["status"], "passed")
             self.assertEqual([phase["phase"] for phase in record["phases"]], ["before_restart", "after_restart"])
+
+    def test_browser_phase_evidence_rejects_non_png_screenshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            expected = self.browser_expected()
+            before = self.browser_record(root, "before_restart", expected)
+            after = self.browser_record(root, "after_restart", expected)
+            capture_path = (root / before["receipt"]).parent / before["captures"][0]["name"]
+            body = b"not a png"
+            capture_path.write_bytes(body)
+            before["captures"][0]["bytes"] = len(body)
+            before["captures"][0]["sha256"] = hashlib.sha256(body).hexdigest()
+            self.rewrite_browser_receipt(root, before)
+            with self.assertRaisesRegex(RuntimeError, "PNG"):
+                local_alpha_system.validate_browser_phase_evidence(before, after, expected, root)
+
+    def test_browser_phase_evidence_rejects_png_dimension_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            expected = self.browser_expected()
+            before = self.browser_record(root, "before_restart", expected)
+            after = self.browser_record(root, "after_restart", expected)
+            capture = before["captures"][0]
+            capture_path = (root / before["receipt"]).parent / capture["name"]
+            body = self.png(capture["image_width"] + 1, capture["image_height"])
+            capture_path.write_bytes(body)
+            capture["bytes"] = len(body)
+            capture["sha256"] = hashlib.sha256(body).hexdigest()
+            self.rewrite_browser_receipt(root, before)
+            with self.assertRaisesRegex(RuntimeError, "PNG dimensions mismatch"):
+                local_alpha_system.validate_browser_phase_evidence(before, after, expected, root)
 
     def test_browser_phase_evidence_rejects_tampered_screenshot(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -55,6 +55,10 @@ export function buildDaemonVisualReceipt({
         capture.width < 390 ||
         !Number.isSafeInteger(capture.height) ||
         capture.height < 1 ||
+        !Number.isSafeInteger(capture.image_width) ||
+        capture.image_width !== capture.width ||
+        !Number.isSafeInteger(capture.image_height) ||
+        capture.image_height < capture.height ||
         typeof capture.view !== "string",
     )
   )

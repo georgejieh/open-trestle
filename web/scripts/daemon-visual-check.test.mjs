@@ -30,6 +30,8 @@ const input = {
       view,
       width: index === 4 ? 390 : 900,
       height: 844,
+      image_width: index === 4 ? 390 : 900,
+      image_height: 900,
       bytes: 10,
       sha256: digest(String(index + 5)),
     }),
