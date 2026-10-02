@@ -187,6 +187,24 @@ class LocalAlphaSystemTest(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "source worktree byte limit exceeded"):
                     local_alpha_system.capture_worktree(root)
 
+    def test_source_state_rejects_index_flag_mutation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q", root], check=True)
+            subprocess.run(["git", "config", "user.name", "test"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=root, check=True)
+            tracked = root / "tracked.txt"; tracked.write_text("tracked\n")
+            subprocess.run(["git", "add", "tracked.txt"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
+            for enable, disable in (("--assume-unchanged", "--no-assume-unchanged"), ("--skip-worktree", "--no-skip-worktree")):
+                with self.subTest(flag=enable):
+                    before = local_alpha_system.capture_source_state(root)
+                    subprocess.run(["git", "update-index", enable, "tracked.txt"], cwd=root, check=True)
+                    self.assertEqual(subprocess.run(["git", "status", "--porcelain=v2", "--untracked-files=all"], cwd=root, check=True, capture_output=True).stdout, b"")
+                    with self.assertRaisesRegex(RuntimeError, "source state changed during system verification"):
+                        local_alpha_system.verify_source_state(root, before)
+                    subprocess.run(["git", "update-index", disable, "tracked.txt"], cwd=root, check=True)
+
     def test_source_state_rejects_assume_unchanged_tracked_mutation(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -231,6 +249,45 @@ class LocalAlphaSystemTest(unittest.TestCase):
             record = local_alpha_system.validate_browser_phase_evidence(before, after, expected, root)
             self.assertEqual(record["status"], "passed")
             self.assertEqual([phase["phase"] for phase in record["phases"]], ["before_restart", "after_restart"])
+
+    def test_browser_phase_evidence_rejects_boolean_numeric_fields(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            expected = self.browser_expected()
+            cases = (
+                ("observation_count_bool", "observation_count", True),
+                ("observation_count_float", "observation_count", 1.0),
+                ("console_errors_bool", "console_errors", False),
+                ("unexpected_egress_bool", "unexpected_egress", False),
+                ("horizontal_overflow_int", "horizontal_overflow", 0),
+                ("keyboard_focus_int", "keyboard_focus_visible", 1),
+                ("disclosure_focus_int", "evidence_disclosure_focus_visible", 1),
+                ("reduced_motion_int", "reduced_motion", 1),
+                ("tap_targets_float", "tap_targets_minimum", 44.0),
+                ("schema_version_float", "schema_version", 2.0),
+            )
+            for label, field, value in cases:
+                with self.subTest(case=label):
+                    phase_root = root / label
+                    before = self.browser_record(phase_root, "before_restart", expected)
+                    after = self.browser_record(phase_root, "after_restart", expected)
+                    before[field] = value
+                    after[field] = value
+                    self.rewrite_browser_receipt(phase_root, before)
+                    self.rewrite_browser_receipt(phase_root, after)
+                    with self.assertRaisesRegex(RuntimeError, "browser evidence"):
+                        local_alpha_system.validate_browser_phase_evidence(before, after, expected, phase_root)
+
+    def test_browser_phase_evidence_rejects_non_integer_capture_dimensions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            expected = self.browser_expected()
+            before = self.browser_record(root, "before_restart", expected)
+            after = self.browser_record(root, "after_restart", expected)
+            before["captures"][0]["width"] = float(before["captures"][0]["width"])
+            self.rewrite_browser_receipt(root, before)
+            with self.assertRaisesRegex(RuntimeError, "capture metadata"):
+                local_alpha_system.validate_browser_phase_evidence(before, after, expected, root)
 
     def test_browser_phase_evidence_rejects_non_png_screenshot(self):
         with tempfile.TemporaryDirectory() as directory:

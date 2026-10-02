@@ -580,6 +580,7 @@ class SourceState:
     tree_identity: str
     index_tree_identity: str
     tracked_index_sha256: str
+    index_flags_sha256: str
     status_sha256: str
     worktree_sha256: str
     worktree_entries: int
@@ -592,6 +593,7 @@ class SourceState:
             "tree_identity": self.tree_identity,
             "index_tree_identity": self.index_tree_identity,
             "tracked_index_sha256": self.tracked_index_sha256,
+            "index_flags_sha256": self.index_flags_sha256,
             "status_sha256": self.status_sha256,
             "worktree_sha256": self.worktree_sha256,
             "worktree_entries": self.worktree_entries,
@@ -617,9 +619,10 @@ def capture_source_state(source: Path) -> SourceState:
     tree = git_output(source, "rev-parse", "HEAD^{tree}").decode("ascii").strip()
     index_tree = git_output(source, "write-tree").decode("ascii").strip()
     tracked_index = git_output(source, "ls-files", "--stage", "-z")
+    index_flags = b"assume\0" + git_output(source, "ls-files", "-v", "-z") + b"skip\0" + git_output(source, "ls-files", "-t", "-z") + b"fsmonitor\0" + git_output(source, "ls-files", "-f", "-z")
     status = git_output(source, "status", "--porcelain=v2", "-z", "--untracked-files=all")
     worktree_sha256, worktree_entries, worktree_bytes = capture_worktree(source)
-    return SourceState(revision, tree, index_tree, hashlib.sha256(tracked_index).hexdigest(), hashlib.sha256(status).hexdigest(), worktree_sha256, worktree_entries, worktree_bytes, len(status) == 0)
+    return SourceState(revision, tree, index_tree, hashlib.sha256(tracked_index).hexdigest(), hashlib.sha256(index_flags).hexdigest(), hashlib.sha256(status).hexdigest(), worktree_sha256, worktree_entries, worktree_bytes, len(status) == 0)
 
 
 def verify_source_state(source: Path, expected: SourceState) -> SourceState:
@@ -724,8 +727,14 @@ def validate_browser_phase_record(record: dict, expected: dict, artifacts_root: 
     phase = record.get("phase")
     if phase not in {"before_restart", "after_restart"}:
         raise RuntimeError("browser evidence phase is invalid")
-    if record.get("contract") != "open-trestle/daemon-console-visual-receipt" or record.get("schema_version") != 2:
+    if record.get("contract") != "open-trestle/daemon-console-visual-receipt" or type(record.get("schema_version")) is not int or record["schema_version"] != 2:
         raise RuntimeError("browser evidence contract is invalid")
+    scope = record.get("scope")
+    if not isinstance(scope, dict) or set(scope) != {"tenant", "repository", "run"} or any(not isinstance(value, str) for value in scope.values()) or not isinstance(record.get("deterministic_check_state"), str):
+        raise RuntimeError("browser evidence scope or state is invalid")
+    observation_count = record.get("observation_count")
+    if type(observation_count) is not int or observation_count < 0 or observation_count > 8192:
+        raise RuntimeError("browser evidence observation count is invalid")
     for key, value in expected.items():
         if record.get(key) != value:
             raise RuntimeError(f"browser evidence {key} mismatch")
@@ -736,16 +745,13 @@ def validate_browser_phase_record(record: dict, expected: dict, artifacts_root: 
     observations = record.get("observation_identities")
     if not isinstance(observations, list) or len(observations) != record.get("observation_count") or len(set(observations)) != len(observations) or any(not isinstance(value, str) or not digest.fullmatch(value) or value == "0" * 64 for value in observations):
         raise RuntimeError("browser evidence observations are invalid")
-    exact_metrics = {
-        "console_errors": 0,
-        "unexpected_egress": 0,
-        "horizontal_overflow": False,
-        "keyboard_focus_visible": True,
-        "evidence_disclosure_focus_visible": True,
-        "reduced_motion": True,
-        "tap_targets_minimum": 44,
-    }
-    if any(record.get(key) != value for key, value in exact_metrics.items()):
+    for key in ("console_errors", "unexpected_egress"):
+        if type(record.get(key)) is not int or record[key] != 0:
+            raise RuntimeError("browser evidence metrics are invalid")
+    for key, value in (("horizontal_overflow", False), ("keyboard_focus_visible", True), ("evidence_disclosure_focus_visible", True), ("reduced_motion", True)):
+        if type(record.get(key)) is not bool or record[key] is not value:
+            raise RuntimeError("browser evidence metrics are invalid")
+    if type(record.get("tap_targets_minimum")) is not int or record["tap_targets_minimum"] != 44:
         raise RuntimeError("browser evidence metrics are invalid")
     focus_steps = record.get("focus_order_steps")
     if isinstance(focus_steps, bool) or not isinstance(focus_steps, int) or focus_steps < 1 or focus_steps > 32:
@@ -770,7 +776,7 @@ def validate_browser_phase_record(record: dict, expected: dict, artifacts_root: 
             raise RuntimeError("browser evidence capture name is invalid")
         observed_names.add(name)
         view, width, height = expected_captures[name]
-        if capture.get("view") != view or capture.get("width") != width or capture.get("height") != height or capture.get("image_width") != width or isinstance(capture.get("image_height"), bool) or not isinstance(capture.get("image_height"), int) or capture["image_height"] < height or capture["image_height"] > 100_000 or isinstance(capture.get("bytes"), bool) or not isinstance(capture.get("bytes"), int) or capture["bytes"] <= 0 or capture["bytes"] > MAX_SCREENSHOT_BYTES or not isinstance(capture.get("sha256"), str) or not digest.fullmatch(capture["sha256"]) or capture["sha256"] == "0" * 64:
+        if capture.get("view") != view or type(capture.get("width")) is not int or capture["width"] != width or type(capture.get("height")) is not int or capture["height"] != height or type(capture.get("image_width")) is not int or capture["image_width"] != width or type(capture.get("image_height")) is not int or capture["image_height"] < height or capture["image_height"] > 100_000 or type(capture.get("bytes")) is not int or capture["bytes"] <= 0 or capture["bytes"] > MAX_SCREENSHOT_BYTES or not isinstance(capture.get("sha256"), str) or not digest.fullmatch(capture["sha256"]) or capture["sha256"] == "0" * 64:
             raise RuntimeError("browser evidence capture metadata is invalid")
     if observed_names != set(expected_captures):
         raise RuntimeError("browser evidence capture inventory is invalid")
@@ -1107,6 +1113,7 @@ def main() -> int:
         "source_revision": source_after.revision,
         "source_tree_identity": source_after.tree_identity,
         "source_state_identity": source_after.identity(),
+        "source_index_flags_identity": source_after.index_flags_sha256,
         "source_worktree_identity": source_after.worktree_sha256,
         "source_worktree_entries": source_after.worktree_entries,
         "source_worktree_bytes": source_after.worktree_bytes,
