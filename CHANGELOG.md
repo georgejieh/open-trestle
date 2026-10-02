@@ -18,12 +18,14 @@ All notable changes to released versions of Open Trestle will be documented in t
 - Added a versioned static-debug quality evaluation over eight built-in cases, a canonical public report, and exact CLI reproduction in CI.
 - Added deterministic unsigned local release evidence with exact artifact checksums, embedded Go runtime modules, non-development npm lockfile components in SPDX 2.3-formatted JSON, and candidate release notes preserved from a validated changelog section.
 - Added a deterministic unsigned Linux amd64 candidate pyz with strict archive verification, no-overwrite staged installation, receipt-bound verification, bounded smoke evidence, rollback, and ownership-preserving uninstall for explicit local evaluation.
+- Added a packaged local single-node journey over a real temporary Git repository, with candidate-to-source revision binding, durable daemon review state, CLI/TUI/console inspection, deterministic JSON and SARIF, before-and-after restart browser receipts, bounded process and network output, process-group cleanup, port-rebind proof, and source-state preservation.
 - Added bounded same-target candidate upgrades and one-use immediate version rollback with protected old/new generation bindings, caught pre-commit failure restoration, and canonical content-free lifecycle evidence. Crash and power-loss recovery remains unproven.
 
 ### Changed
 
 - Expanded versioned artifact, diagnostic, readiness, local-Git, setup, and transport contracts with strict offline schema reference and documentation-inventory checks.
 - Advanced diagnostic publication to version 5 while preserving earlier versions, binding the exact source check, analysis, change, verification context, coverage, omissions, and review state.
+- Added diagnostic version 6 for deterministic observations, with analysis-result and changed-range lineage, schema-aware ACP/TUI/CLI/web semantics, and no independent-verification claim.
 - Made web and VS Code distributions reproducible and freshness-checked in CI, with package-local npm policy that separates locked dependency retrieval from automatic audit requests and update checks.
 
 ### Security

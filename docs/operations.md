@@ -304,7 +304,7 @@ The authority receipt detects a fresh or independently initialized database. It 
 
 Use `/healthz` for process liveness and `/readyz` for dependency readiness. Both responses are content-free. Send `SIGTERM` for shutdown. The daemon applies a ten-second bound to HTTP listener shutdown, cancels supervisor contexts, then waits for supervisors to return before closing durable stores. The supervisor join is intentionally not a hard timeout because closing storage beneath active work would be unsafe. Handlers are required to honor cancellation, but a defective handler can delay process exit. Configure the service manager with an explicit termination grace period and alert on an overrun.
 
-Do not infer review or publication success from health endpoints. Query the authenticated run receipt and verified diagnostics instead.
+Do not infer review or publication success from health endpoints. Query the authenticated run receipt and canonical review diagnostics instead. Versions 1 through 5 contain independently verified finding state; version 6 contains deterministic observations that remain unverified and require their own review disposition.
 
 Use repository-scoped runtime inspection to confirm the daemon loaded the expected non-secret database, rate-limit, route, policy, and handler authorities and completed supervisor reconciliation:
 

@@ -31,8 +31,10 @@
 SARIF review output, loose and packed Git inspection, a protected setup planner, a
 durable run journal, an embedded read-only web console, and read-only MCP, ACP, and LSP
 surfaces. The unsigned candidate can now execute one provider-free loose-object review
-through durable daemon state and show the same run in the CLI, TUI, and daemon-served
-console before and after restart. This proves that exact local evaluation path only. It
+through durable daemon state and show the same run in the CLI and TUI plus two
+phase-tagged daemon-served browser passes before and after restart. Both browser passes
+bind the exact run, diagnostic set, deterministic check state, and observation identities.
+This proves that exact local evaluation path only. It
 does not establish review quality, repository-wide coverage, setup readiness, or a
 supported deployment.
 
@@ -101,7 +103,7 @@ publication gate.
 | `trestle lsp` | Read-only editor diagnostics |
 | `trestle mcp` | Scoped Model Context Protocol server |
 | `trestle acp` | Agent Client Protocol endpoint |
-| VS Code extension | Packaged read-only verified diagnostics over the LSP boundary |
+| VS Code extension | Packaged read-only verified findings over the LSP boundary; deterministic observations remain outside LSP findings |
 | Web console | Read-only run, diagnostic, and runtime inspection |
 | Forge adapters | Verified webhook intake; governed publication behind an explicit effect gate |
 
@@ -141,14 +143,22 @@ python3 tools/local_alpha_system.py \
   --output "$HOME/open-trestle-local-alpha-evidence"
 ```
 
-The system driver requires a clean source tree. It verifies the detached checksum before
-executing the archive, installs only into an isolated destdir, runs candidate smoke,
-creates a real temporary Git repository, initializes the existing `local_single_node`
-plan, starts `trestled` on numeric loopback, executes the four-task deterministic run,
-reads the same run through CLI/TUI/web, restarts the daemon, compares JSON and SARIF byte
-for byte, then uninstalls the candidate and verifies operator sentinels remain. Inspect
-`$HOME/open-trestle-local-alpha-evidence/receipt.json` for exact binary, revision,
-command, identity, artifact, restart, browser, and cleanup bindings.
+The system driver requires a clean source tree. It verifies the detached checksum and
+archive, then requires the candidate manifest revision to equal the clean source `HEAD`
+before installation. Candidate and browser commands run from an output-owned sandbox
+with bounded output, HTTP, log, and total-time budgets. The driver installs only into an
+isolated destdir, runs candidate smoke, creates a real temporary Git repository,
+initializes the existing `local_single_node` plan, starts `trestled` on numeric loopback,
+and executes the four-task deterministic run. It captures the exact run in CLI, TUI, and
+the real daemon-served console before restart, proves the daemon process group stopped and
+the port can be rebound, restarts the daemon, and repeats the same identity-bound browser
+matrix. JSON and SARIF bytes must remain identical. Final cleanup recovers and uninstalls
+the candidate, preserves operator sentinels, proves process-group quiescence and port
+reuse, removes the private temporary alias, and verifies the source `HEAD`, tree, index
+inventory, tracked worktree, and non-ignored untracked status are unchanged. Inspect
+`$HOME/open-trestle-local-alpha-evidence/receipt.json` for the
+candidate manifest/archive, source revision/tree, commands, identities, phase-tagged
+screenshots, restart checks, and cleanup bindings.
 
 The initialized setup plan is a scope and denied-effect posture fence for this narrow
 review. It remains `ready:false`; pending policy, inference, dry-run, backup, observer,
@@ -263,7 +273,7 @@ The implementation order is deliberately conservative:
 1. local and GitHub review intake with immutable evidence;
 2. deterministic repository profiling and policy-approved static adapters;
 3. provider gateway and independent finding verification;
-4. CLI, TUI, API, CI, IDE, and agent-harness transports;
+4. CLI, TUI, API, CI, IDE, and agent-protocol transports;
 5. separately governed sandbox and dynamic-validation capabilities.
 
 The tree includes deterministic SBOM generation and a bounded passive dependency

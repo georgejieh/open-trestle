@@ -1,6 +1,6 @@
 # Foreground terminal interface
 
-`trestle tui` observes one exact review run through the authenticated daemon API. It renders the canonical run receipt, bounded task state, and the independently verified diagnostic snapshot. It does not duplicate scheduling, read repository files, execute commands, claim work leases, change policy, invoke models, or publish results.
+`trestle tui` observes one exact review run through the authenticated daemon API. It renders the canonical run receipt, bounded task state, and canonical review diagnostics. Versions 1 through 5 contain independently verified findings; version 6 contains unverified deterministic observations. It does not duplicate scheduling, read repository files, execute commands, claim work leases, change policy, invoke models, or publish results.
 
 ## Start
 
@@ -28,7 +28,7 @@ Commands are line based and bounded to 256 bytes:
 - `cancel RUN_ID` confirms cancellation only after `c` and only for the displayed run.
 - `q` exits without changing the run.
 
-Cancellation is the interface's only mutating operation. It uses the same scoped daemon endpoint as `trestle runs cancel`. A polling failure keeps the last authenticated snapshot visible and labels it as stale. A missing verified diagnostic set is shown as unavailable rather than inferred from run state. Diagnostic-set version 2 prints exact candidate, verified, rejected, and inconclusive counts. Version 3 also prints bounded analyzed, selected, and omitted source counts. Version 4 prints each content-free aggregate omission reason on one bounded line and suppresses the reason section when no source was omitted. Version 5 prints the static-debug check as a `Cleared gate`, `Failed check`, `Incomplete check`, or `Abstention`, followed by checked/applicable changed-Go-range counts and exact matches. Only `passed` is called cleared, and only for that exact rule. Not-applicable explicitly abstains because no changed Go range was applicable and does not clear the rule. Nonzero inconclusive or omitted counts and incomplete checks remain explicit. Versions 1 through 4 remain readable without inventing newer evidence.
+Cancellation is the interface's only mutating operation. It uses the same scoped daemon endpoint as `trestle runs cancel`. A polling failure keeps the last authenticated snapshot visible and labels it as stale. Missing review diagnostics are shown as unavailable rather than inferred from run state. Diagnostic-set version 2 prints exact candidate, verified, rejected, and inconclusive counts. Version 3 also prints bounded analyzed, selected, and omitted source counts. Version 4 prints each content-free aggregate omission reason on one bounded line and suppresses the reason section when no source was omitted. Version 5 prints the static-debug check as a `Cleared gate`, `Failed check`, `Incomplete check`, or `Abstention`, followed by checked/applicable changed-Go-range counts and exact matches. Version 6 prints the deterministic check and exact observations, explicitly labels them not independently verified, and never counts them as verified findings. Only `passed` is called cleared, and only for that exact rule. Not-applicable explicitly abstains because no changed Go range was applicable and does not clear the rule. Nonzero inconclusive or omitted counts and incomplete checks remain explicit.
 
 ## Trust boundary
 

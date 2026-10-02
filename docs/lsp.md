@@ -1,6 +1,6 @@
 # Read-only LSP diagnostics
 
-`trestle lsp` exposes independently verified findings through the Language Server Protocol 3.17 pull-diagnostic interface. Candidate model output cannot enter this interface directly.
+`trestle lsp` exposes independently verified findings from diagnostic-set versions 1 through 5 through the Language Server Protocol 3.17 pull-diagnostic interface. Version 6 deterministic observations are not verified findings and therefore produce an empty LSP item list with the exact diagnostic-set result identity. Candidate model output cannot enter this interface directly.
 
 For live daemon-backed retrieval:
 
@@ -31,7 +31,7 @@ The `rootUri` must be a file URI. Diagnostic requests outside that root are reje
 
 Clients can send `previousResultId`. An exact set identity returns an unchanged report. A new identity returns a complete report, including an empty list when the verified set has no findings.
 
-The public transport contracts are `schemas/diagnostics/verified-diagnostic-set-v1.schema.json` through `schemas/diagnostics/verified-diagnostic-set-v5.schema.json`. Version 2 adds exact candidate outcomes. Version 3 adds the validated verification-context identity and bounded source counts. Version 4 adds sorted content-free aggregate omission reasons. Version 5 adds one exact deterministic check bound to its source check, analysis result, and change. Versions 1 through 4 remain accepted without inventing newer evidence. The internal review adapter creates diagnostics only when the independent verification receipt, verified finding set, snapshot, and review scope all match.
+The public transport contracts are `schemas/diagnostics/verified-diagnostic-set-v1.schema.json` through `schemas/diagnostics/verified-diagnostic-set-v5.schema.json` plus `schemas/diagnostics/deterministic-diagnostic-set-v6.schema.json`. Version 2 adds exact candidate outcomes. Version 3 adds the validated verification-context identity and bounded source counts. Version 4 adds sorted content-free aggregate omission reasons. Version 5 adds one exact deterministic check bound to its source check, analysis result, and change. Version 6 replaces the verified-finding fields with an analysis-result identity and exact deterministic observations. The internal review adapter creates versions 1 through 5 only when the independent verification receipt, verified finding set, snapshot, and review scope all match. The deterministic analysis path creates version 6 without independent-verification authority.
 
 The daemon keeps one immutable diagnostic set per exact review scope in a private crash-safe store. The authenticated API exposes only retrieval. It has no public diagnostic upload endpoint, so unverified callers cannot place arbitrary findings into editor output. The local export mode remains available for air-gapped use. Push refresh notifications remain separate work; editors obtain updates through standard pull requests and result identities.
 
