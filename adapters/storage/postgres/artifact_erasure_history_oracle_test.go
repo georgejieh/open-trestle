@@ -142,6 +142,58 @@ func resumeAssertVersionListResponseOracle(t *testing.T, g *budgetedResumeGraph,
 	return out
 }
 
+func resumeFailedAttemptOracle(t *testing.T, g *budgetedResumeGraph, op artifact.ErasureOperation, snapshot resumeFixtureSQLSnapshot, event resumeWireEvent, allowance artifact.ResumeAllowance, label string, observedUpper time.Time) (resumeListResponseOracle, bool) {
+	t.Helper()
+	request, attempt := resumeAttemptRequestByID(t, g, snapshot, event.Attempt)
+	if attempt.Identity() != event.Attempt || request.Key() != event.Key || request.AllowanceIdentity() != allowance.Identity() {
+		t.Fatal("wire request is attached to the wrong durable attempt")
+	}
+	var responseRow, unknownRow resumeFixtureRow
+	for _, row := range snapshot.Rows[resumeEvidence] {
+		if row["attempt_identity"] != attempt.Identity() {
+			continue
+		}
+		switch row["kind"] {
+		case "response":
+			responseRow = row
+		case "unknown":
+			unknownRow = row
+		}
+	}
+	if responseRow == nil {
+		t.Fatal("dispatched attempt has no durable response state")
+	}
+	responseEvidence, err := artifact.ParseErasureEvidence(responseRow["canonical_evidence"].([]byte), op.Ref())
+	if err != nil {
+		t.Fatal("attempt response evidence parse", err)
+	}
+	response, err := artifact.ParseAttemptResponseEvidence(responseEvidence, attempt)
+	if err != nil {
+		t.Fatal("attempt response metadata parse", err)
+	}
+	if response.Code != artifact.AttemptResponseUnavailable && response.Code != artifact.AttemptResponseMalformed {
+		return resumeListResponseOracle{}, false
+	}
+	observedMillis, ok := responseRow["observed_at_milliseconds"].(int64)
+	observedAt := time.UnixMilli(observedMillis).UTC()
+	if !ok || !response.ObservedAt.Equal(observedAt) || observedAt.Before(attempt.ReservedAt()) || observedAt.After(observedUpper) {
+		t.Fatal("failed response observation time outside reservation/invocation bounds")
+	}
+	if unknownRow == nil {
+		t.Fatal("failed response has no linked unknown evidence")
+	}
+	unknownMillis, ok := unknownRow["observed_at_milliseconds"].(int64)
+	if !ok || !bytes.Equal(unknownRow["canonical_evidence"].([]byte), resumeExpectedUnknown(t, attempt, time.UnixMilli(unknownMillis).UTC())) {
+		t.Fatal("unknown evidence is not the exact linked canonical record")
+	}
+	responseTx := resumeEvidenceInsertTx(snapshot, responseRow["evidence_identity"], label)
+	unknownTx := resumeEvidenceInsertTx(snapshot, unknownRow["evidence_identity"], label)
+	if responseTx == 0 || responseTx != unknownTx || !resumeCommitted(snapshot.Events, g.name, label, responseTx) {
+		t.Fatal("failed response and unknown were not one known commit")
+	}
+	return resumeListResponseOracle{Event: event, Request: request, Attempt: attempt, Response: response, ResponseRow: responseRow, UnknownRow: unknownRow, ObservedAt: observedAt, ResponseTx: responseTx, UnknownTx: unknownTx}, true
+}
+
 func resumeAssertLostListUncertainty(t *testing.T, g *budgetedResumeGraph, op artifact.ErasureOperation, allowance artifact.ResumeAllowance, snapshot resumeFixtureSQLSnapshot, event resumeWireEvent, label string) resumeListResponseOracle {
 	t.Helper()
 	out := resumeAssertVersionListResponseOracle(t, g, op, snapshot, event, allowance, label, g.clock.Value())
