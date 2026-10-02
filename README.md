@@ -155,11 +155,12 @@ the real daemon-served console before restart, proves the daemon process group s
 the port can be rebound, restarts the daemon, and repeats the same identity-bound browser
 matrix. JSON and SARIF bytes must remain identical. Final cleanup recovers and uninstalls
 the candidate, preserves operator sentinels, proves process-group quiescence and port
-reuse, removes the private temporary alias, and verifies the source `HEAD`, tree, index,
-and status plus every working-tree directory, regular-file byte, mode, and symlink target
-outside `.git` are unchanged, including ignored and assume-unchanged files. Inspect
-`$HOME/open-trestle-local-alpha-evidence/receipt.json` for the candidate source/execution
-paths, manifest/archive digests, source revision/tree/worktree identity and counts,
+reuse, removes the private temporary alias, and verifies the source `HEAD`, tree, staged
+entries, assume-unchanged/skip-worktree/fsmonitor flags, and status plus every working-tree
+directory, regular-file byte, mode, and symlink target outside `.git` are unchanged,
+including ignored files. Inspect `$HOME/open-trestle-local-alpha-evidence/receipt.json`
+for the candidate source/execution paths, manifest/archive digests, source
+revision/tree/index-flag/worktree identities and counts,
 commands, review identities, phase-tagged viewport and independently parsed PNG image
 dimensions and digests, restart checks, and cleanup bindings.
 
