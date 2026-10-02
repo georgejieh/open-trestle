@@ -160,8 +160,8 @@ and status plus every working-tree directory, regular-file byte, mode, and symli
 outside `.git` are unchanged, including ignored and assume-unchanged files. Inspect
 `$HOME/open-trestle-local-alpha-evidence/receipt.json` for the candidate source/execution
 paths, manifest/archive digests, source revision/tree/worktree identity and counts,
-commands, review identities, phase-tagged screenshots, restart checks, and cleanup
-bindings.
+commands, review identities, phase-tagged viewport and independently parsed PNG image
+dimensions and digests, restart checks, and cleanup bindings.
 
 The initialized setup plan is a scope and denied-effect posture fence for this narrow
 review. It remains `ready:false`; pending policy, inference, dry-run, backup, observer,
