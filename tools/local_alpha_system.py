@@ -8,6 +8,7 @@ import hashlib
 import http.client
 import json
 import os
+import re
 import secrets
 import selectors
 import signal
@@ -27,6 +28,9 @@ MAX_HTTP_BODY_BYTES = 1 << 20
 MAX_DAEMON_LOG_BYTES = 1 << 20
 MAX_MANIFEST_BYTES = 1 << 20
 MAX_FAILURE_LOG_BYTES = 64 << 10
+MAX_SOURCE_ENTRIES = 100_000
+MAX_SOURCE_BYTES = 8 << 30
+MAX_CANDIDATE_BYTES = 256 << 20
 PROCESS_TERM_SECONDS = 2.0
 PROCESS_KILL_SECONDS = 2.0
 
@@ -42,6 +46,66 @@ def sha256(path: Path) -> str:
 def write(path: Path, data: bytes) -> None:
     path.write_bytes(data)
     path.chmod(0o600)
+
+
+def assert_candidate_digest(candidate: Path, expected: str) -> None:
+    if sha256(candidate) != expected:
+        raise RuntimeError("candidate archive changed after verification")
+
+
+def copy_candidate_archive(source: Path, sidecar: Path, sandbox: Path, expected: str) -> Path:
+    try:
+        before = source.lstat()
+        sidecar_status = sidecar.lstat()
+    except OSError as error:
+        raise RuntimeError("candidate archive copy source is unavailable") from error
+    if not stat.S_ISREG(before.st_mode) or stat.S_ISLNK(before.st_mode) or before.st_size <= 0 or before.st_size > MAX_CANDIDATE_BYTES or not stat.S_ISREG(sidecar_status.st_mode) or stat.S_ISLNK(sidecar_status.st_mode):
+        raise RuntimeError("candidate archive copy source is invalid")
+    destination = sandbox / "open-trestle-linux-amd64.pyz"
+    destination_sidecar = Path(str(destination) + ".sha256")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    source_descriptor = os.open(source, flags)
+    try:
+        opened = os.fstat(source_descriptor)
+        if (opened.st_dev, opened.st_ino, opened.st_mode, opened.st_size) != (before.st_dev, before.st_ino, before.st_mode, before.st_size):
+            raise RuntimeError("candidate archive changed while copied")
+        destination_descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0), 0o500)
+        digest = hashlib.sha256()
+        copied = 0
+        try:
+            while True:
+                chunk = os.read(source_descriptor, 1 << 20)
+                if not chunk:
+                    break
+                copied += len(chunk)
+                if copied > MAX_CANDIDATE_BYTES:
+                    raise RuntimeError("candidate archive byte limit exceeded")
+                digest.update(chunk)
+                view = memoryview(chunk)
+                while view:
+                    written = os.write(destination_descriptor, view)
+                    view = view[written:]
+            os.fsync(destination_descriptor)
+        finally:
+            os.close(destination_descriptor)
+        after = os.fstat(source_descriptor)
+    finally:
+        os.close(source_descriptor)
+    try:
+        path_after = source.lstat()
+    except OSError as error:
+        raise RuntimeError("candidate archive changed while copied") from error
+    if (after.st_dev, after.st_ino, after.st_mode, after.st_size, after.st_mtime_ns) != (before.st_dev, before.st_ino, before.st_mode, before.st_size, before.st_mtime_ns) or (path_after.st_dev, path_after.st_ino, path_after.st_mode, path_after.st_size, path_after.st_mtime_ns) != (before.st_dev, before.st_ino, before.st_mode, before.st_size, before.st_mtime_ns) or digest.hexdigest() != expected:
+        raise RuntimeError("candidate archive changed while copied")
+    destination.chmod(0o555)
+    sidecar_body = read_bounded(sidecar, 4096)
+    fields = sidecar_body.decode("ascii").strip().split()
+    if not fields or fields[0] != expected:
+        raise RuntimeError("candidate checksum does not match detached sidecar")
+    write(destination_sidecar, sidecar_body)
+    destination_sidecar.chmod(0o444)
+    assert_candidate_digest(destination, expected)
+    return destination
 
 
 def create_private_tmp_alias(target: Path) -> Path:
@@ -114,9 +178,9 @@ def terminate_process_group(process: subprocess.Popen[bytes]) -> None:
         process.poll()
         time.sleep(0.01)
     try:
-        process.wait(timeout=0.1)
-    except subprocess.TimeoutExpired:
-        pass
+        process.wait(timeout=PROCESS_KILL_SECONDS)
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError("direct child did not become quiescent") from error
     if process_group_alive(group):
         raise RuntimeError("process group did not become quiescent")
 
@@ -302,6 +366,8 @@ class DaemonLog:
         self._thread.join(timeout=PROCESS_TERM_SECONDS + PROCESS_KILL_SECONDS)
         if self._thread.is_alive() and self.error is None:
             self.error = "daemon log reader did not stop"
+        if self.process.stdout is not None:
+            self.process.stdout.close()
         self._stream.close()
 
 
@@ -381,6 +447,130 @@ def canonical_json(value: object) -> bytes:
     return json.dumps(value, separators=(",", ":"), sort_keys=True).encode()
 
 
+def capture_worktree(source: Path) -> tuple[str, int, int]:
+    digest = hashlib.sha256()
+    entries = 0
+    total_bytes = 0
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    file_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+
+    def add(value: bytes) -> None:
+        digest.update(len(value).to_bytes(8, "big"))
+        digest.update(value)
+
+    def identity(information: os.stat_result) -> tuple[int, int, int, int, int]:
+        return (information.st_dev, information.st_ino, information.st_mode, information.st_size, information.st_mtime_ns)
+
+    def visit(directory_descriptor: int, relative: bytes) -> None:
+        nonlocal entries, total_bytes
+        directory_before = os.fstat(directory_descriptor)
+        try:
+            with os.scandir(directory_descriptor) as scanned:
+                children = sorted(scanned, key=lambda item: os.fsencode(item.name))
+        except OSError as error:
+            raise RuntimeError("source worktree is unavailable") from error
+        for child in children:
+            name = os.fsencode(child.name)
+            child_relative = name if not relative else relative + b"/" + name
+            if not relative and name == b".git":
+                continue
+            try:
+                before = child.stat(follow_symlinks=False)
+            except OSError as error:
+                raise RuntimeError("source worktree entry is unavailable") from error
+            entries += 1
+            if entries > MAX_SOURCE_ENTRIES:
+                raise RuntimeError("source worktree entry limit exceeded")
+            add(child_relative)
+            add(stat.S_IMODE(before.st_mode).to_bytes(4, "big"))
+            if stat.S_ISDIR(before.st_mode):
+                add(b"directory")
+                try:
+                    child_descriptor = os.open(child.name, directory_flags, dir_fd=directory_descriptor)
+                except OSError as error:
+                    raise RuntimeError("source worktree changed while captured") from error
+                try:
+                    if identity(os.fstat(child_descriptor)) != identity(before):
+                        raise RuntimeError("source worktree changed while captured")
+                    visit(child_descriptor, child_relative)
+                    opened_after = os.fstat(child_descriptor)
+                finally:
+                    os.close(child_descriptor)
+                try:
+                    path_after = os.stat(child.name, dir_fd=directory_descriptor, follow_symlinks=False)
+                except OSError as error:
+                    raise RuntimeError("source worktree changed while captured") from error
+                if identity(opened_after) != identity(before) or identity(path_after) != identity(before):
+                    raise RuntimeError("source worktree changed while captured")
+                continue
+            if stat.S_ISLNK(before.st_mode):
+                add(b"symlink")
+                try:
+                    add(os.fsencode(os.readlink(child.name, dir_fd=directory_descriptor)))
+                    path_after = os.stat(child.name, dir_fd=directory_descriptor, follow_symlinks=False)
+                except OSError as error:
+                    raise RuntimeError("source worktree symlink is unavailable") from error
+                if identity(path_after) != identity(before):
+                    raise RuntimeError("source worktree changed while captured")
+                continue
+            if not stat.S_ISREG(before.st_mode):
+                raise RuntimeError("source worktree contains unsupported entry")
+            add(b"regular")
+            add(before.st_size.to_bytes(8, "big"))
+            try:
+                descriptor = os.open(child.name, file_flags, dir_fd=directory_descriptor)
+            except OSError as error:
+                raise RuntimeError("source worktree file is unavailable") from error
+            read_bytes = 0
+            try:
+                if identity(os.fstat(descriptor)) != identity(before):
+                    raise RuntimeError("source worktree changed while captured")
+                while True:
+                    chunk = os.read(descriptor, 1 << 20)
+                    if not chunk:
+                        break
+                    if total_bytes + len(chunk) > MAX_SOURCE_BYTES:
+                        raise RuntimeError("source worktree byte limit exceeded")
+                    total_bytes += len(chunk)
+                    read_bytes += len(chunk)
+                    digest.update(chunk)
+                opened_after = os.fstat(descriptor)
+            finally:
+                os.close(descriptor)
+            try:
+                path_after = os.stat(child.name, dir_fd=directory_descriptor, follow_symlinks=False)
+            except OSError as error:
+                raise RuntimeError("source worktree changed while captured") from error
+            if read_bytes != before.st_size or identity(opened_after) != identity(before) or identity(path_after) != identity(before):
+                raise RuntimeError("source worktree changed while captured")
+        directory_after = os.fstat(directory_descriptor)
+        if identity(directory_after) != identity(directory_before):
+            raise RuntimeError("source worktree changed while captured")
+
+    try:
+        source_before = source.lstat()
+        root_descriptor = os.open(source, directory_flags)
+    except OSError as error:
+        raise RuntimeError("source worktree root is unavailable") from error
+    try:
+        if not stat.S_ISDIR(source_before.st_mode) or stat.S_ISLNK(source_before.st_mode) or identity(os.fstat(root_descriptor)) != identity(source_before):
+            raise RuntimeError("source worktree root is invalid")
+        add(b".")
+        add(stat.S_IMODE(source_before.st_mode).to_bytes(4, "big"))
+        add(b"directory")
+        visit(root_descriptor, b"")
+        root_after = os.fstat(root_descriptor)
+    finally:
+        os.close(root_descriptor)
+    try:
+        source_after = source.lstat()
+    except OSError as error:
+        raise RuntimeError("source worktree changed while captured") from error
+    if identity(root_after) != identity(source_before) or identity(source_after) != identity(source_before):
+        raise RuntimeError("source worktree changed while captured")
+    return digest.hexdigest(), entries, total_bytes
+
+
 @dataclass(frozen=True)
 class SourceState:
     revision: str
@@ -388,6 +578,9 @@ class SourceState:
     index_tree_identity: str
     tracked_index_sha256: str
     status_sha256: str
+    worktree_sha256: str
+    worktree_entries: int
+    worktree_bytes: int
     clean: bool
 
     def identity(self) -> str:
@@ -397,6 +590,9 @@ class SourceState:
             "index_tree_identity": self.index_tree_identity,
             "tracked_index_sha256": self.tracked_index_sha256,
             "status_sha256": self.status_sha256,
+            "worktree_sha256": self.worktree_sha256,
+            "worktree_entries": self.worktree_entries,
+            "worktree_bytes": self.worktree_bytes,
             "clean": self.clean,
         })).hexdigest()
 
@@ -419,7 +615,8 @@ def capture_source_state(source: Path) -> SourceState:
     index_tree = git_output(source, "write-tree").decode("ascii").strip()
     tracked_index = git_output(source, "ls-files", "--stage", "-z")
     status = git_output(source, "status", "--porcelain=v2", "-z", "--untracked-files=all")
-    return SourceState(revision, tree, index_tree, hashlib.sha256(tracked_index).hexdigest(), hashlib.sha256(status).hexdigest(), len(status) == 0)
+    worktree_sha256, worktree_entries, worktree_bytes = capture_worktree(source)
+    return SourceState(revision, tree, index_tree, hashlib.sha256(tracked_index).hexdigest(), hashlib.sha256(status).hexdigest(), worktree_sha256, worktree_entries, worktree_bytes, len(status) == 0)
 
 
 def verify_source_state(source: Path, expected: SourceState) -> SourceState:
@@ -455,16 +652,112 @@ def read_candidate_manifest(candidate: Path, source_revision: str) -> dict[str, 
     return {"revision": revision, "manifest_sha256": hashlib.sha256(manifest).hexdigest(), "archive_sha256": archive_digest}
 
 
-def validate_browser_phase_evidence(before: dict | None, after: dict | None, expected: dict) -> dict:
+def validate_browser_script(source: Path, browser_script: Path | None, skip_browser: bool) -> Path | None:
+    if skip_browser:
+        if browser_script is not None:
+            raise RuntimeError("browser script must be absent in nonvisual mode")
+        return None
+    canonical = source / "web/scripts/daemon-visual-check.mjs"
+    if browser_script is None:
+        raise RuntimeError("canonical browser script is required")
+    try:
+        canonical_resolved = canonical.resolve(strict=True)
+        supplied_resolved = browser_script.resolve(strict=True)
+        information = canonical.lstat()
+    except OSError as error:
+        raise RuntimeError("canonical browser script is unavailable") from error
+    if supplied_resolved != canonical_resolved or not stat.S_ISREG(information.st_mode) or stat.S_ISLNK(information.st_mode):
+        raise RuntimeError("canonical browser script is required")
+    return canonical_resolved
+
+
+def validate_browser_phase_record(record: dict, expected: dict, artifacts_root: Path | None) -> None:
+    phase = record.get("phase")
+    if phase not in {"before_restart", "after_restart"}:
+        raise RuntimeError("browser evidence phase is invalid")
+    if record.get("contract") != "open-trestle/daemon-console-visual-receipt" or record.get("schema_version") != 2:
+        raise RuntimeError("browser evidence contract is invalid")
+    for key, value in expected.items():
+        if record.get(key) != value:
+            raise RuntimeError(f"browser evidence {key} mismatch")
+    digest = re.compile(r"^[0-9a-f]{64}$")
+    for key in ("run_identity", "diagnostic_set_identity", "deterministic_check_identity"):
+        if not isinstance(record.get(key), str) or not digest.fullmatch(record[key]) or record[key] == "0" * 64:
+            raise RuntimeError("browser evidence identity is invalid")
+    observations = record.get("observation_identities")
+    if not isinstance(observations, list) or len(observations) != record.get("observation_count") or len(set(observations)) != len(observations) or any(not isinstance(value, str) or not digest.fullmatch(value) or value == "0" * 64 for value in observations):
+        raise RuntimeError("browser evidence observations are invalid")
+    exact_metrics = {
+        "console_errors": 0,
+        "unexpected_egress": 0,
+        "horizontal_overflow": False,
+        "keyboard_focus_visible": True,
+        "evidence_disclosure_focus_visible": True,
+        "reduced_motion": True,
+        "tap_targets_minimum": 44,
+    }
+    if any(record.get(key) != value for key, value in exact_metrics.items()):
+        raise RuntimeError("browser evidence metrics are invalid")
+    focus_steps = record.get("focus_order_steps")
+    if isinstance(focus_steps, bool) or not isinstance(focus_steps, int) or focus_steps < 1 or focus_steps > 32:
+        raise RuntimeError("browser evidence focus order is invalid")
+    prefix = phase.replace("_", "-")
+    expected_captures = {
+        f"{prefix}-desktop-overview.png": ("overview", 1440, 1000),
+        f"{prefix}-desktop-findings.png": ("review", 1440, 1000),
+        f"{prefix}-desktop-runtime.png": ("runtime", 1440, 1000),
+        f"{prefix}-tablet-findings.png": ("review", 900, 1000),
+        f"{prefix}-mobile-390-findings.png": ("review", 390, 844),
+    }
+    captures = record.get("captures")
+    if not isinstance(captures, list) or len(captures) != len(expected_captures):
+        raise RuntimeError("browser evidence captures are invalid")
+    observed_names: set[str] = set()
+    for capture in captures:
+        if not isinstance(capture, dict) or set(capture) != {"name", "view", "width", "height", "bytes", "sha256"}:
+            raise RuntimeError("browser evidence capture is invalid")
+        name = capture.get("name")
+        if name not in expected_captures or name in observed_names:
+            raise RuntimeError("browser evidence capture name is invalid")
+        observed_names.add(name)
+        view, width, height = expected_captures[name]
+        if capture.get("view") != view or capture.get("width") != width or capture.get("height") != height or isinstance(capture.get("bytes"), bool) or not isinstance(capture.get("bytes"), int) or capture["bytes"] <= 0 or not isinstance(capture.get("sha256"), str) or not digest.fullmatch(capture["sha256"]) or capture["sha256"] == "0" * 64:
+            raise RuntimeError("browser evidence capture metadata is invalid")
+    if observed_names != set(expected_captures):
+        raise RuntimeError("browser evidence capture inventory is invalid")
+    receipt_name = record.get("receipt")
+    receipt_sha256 = record.get("receipt_sha256")
+    if not isinstance(receipt_name, str) or not isinstance(receipt_sha256, str) or not digest.fullmatch(receipt_sha256):
+        raise RuntimeError("browser evidence receipt binding is invalid")
+    if artifacts_root is None:
+        return
+    receipt_path = artifacts_root / receipt_name
+    try:
+        receipt_relative = receipt_path.resolve().relative_to(artifacts_root.resolve())
+        receipt_status = receipt_path.lstat()
+    except (OSError, ValueError) as error:
+        raise RuntimeError("browser evidence receipt is unavailable") from error
+    if not stat.S_ISREG(receipt_status.st_mode) or stat.S_ISLNK(receipt_status.st_mode) or sha256(receipt_path) != receipt_sha256:
+        raise RuntimeError("browser evidence receipt digest mismatch")
+    raw_record = json.loads(read_bounded(receipt_path, MAX_HTTP_BODY_BYTES))
+    augmented = {key: value for key, value in record.items() if key not in {"receipt", "receipt_sha256"}}
+    if raw_record != augmented or receipt_relative.parent.name != phase.replace("_", "-"):
+        raise RuntimeError("browser evidence receipt content mismatch")
+    for capture in captures:
+        capture_path = receipt_path.parent / capture["name"]
+        try:
+            information = capture_path.lstat()
+        except OSError as error:
+            raise RuntimeError("browser evidence screenshot is unavailable") from error
+        if not stat.S_ISREG(information.st_mode) or stat.S_ISLNK(information.st_mode) or information.st_size != capture["bytes"] or sha256(capture_path) != capture["sha256"]:
+            raise RuntimeError("browser evidence screenshot digest mismatch")
+
+
+def validate_browser_phase_evidence(before: dict | None, after: dict | None, expected: dict, artifacts_root: Path | None = None) -> dict:
     if before is None or after is None or before.get("phase") != "before_restart" or after.get("phase") != "after_restart":
         raise RuntimeError("browser evidence requires before and after restart phases")
-    for record in (before, after):
-        for key, value in expected.items():
-            if record.get(key) != value:
-                raise RuntimeError(f"browser evidence {key} mismatch")
-        captures = record.get("captures")
-        if not isinstance(captures, list) or not captures:
-            raise RuntimeError("browser evidence captures are unavailable")
+    validate_browser_phase_record(before, expected, artifacts_root)
+    validate_browser_phase_record(after, expected, artifacts_root)
     return {"status": "passed", "phases": [before, after]}
 
 
@@ -479,11 +772,14 @@ def main() -> int:
     candidate = args.candidate.resolve()
     output = args.output.resolve()
     source = args.source_root.resolve()
-    browser_script = args.browser_script.resolve() if args.browser_script else None
+    supplied_browser_script = args.browser_script.resolve() if args.browser_script else None
+    try:
+        browser_script = validate_browser_script(source, supplied_browser_script, args.skip_browser)
+    except RuntimeError as error:
+        raise SystemExit(str(error)) from error
     sidecar = Path(str(candidate) + ".sha256")
-    valid_browser = args.skip_browser and browser_script is None or not args.skip_browser and browser_script is not None and browser_script.is_file()
-    if not candidate.is_file() or not sidecar.is_file() or not valid_browser or output.exists():
-        raise SystemExit("candidate/checksum and exactly one browser mode must be valid; output must not exist")
+    if not candidate.is_file() or not sidecar.is_file() or output.exists():
+        raise SystemExit("candidate/checksum must be valid and output must not exist")
     sidecar_fields = read_bounded(sidecar, 4096).decode("ascii").strip().split()
     candidate_digest = sha256(candidate)
     if len(sidecar_fields) < 1 or sidecar_fields[0] != candidate_digest:
@@ -503,6 +799,7 @@ def main() -> int:
     cache = output / "cache"
     for directory in (home, runtime, setup_dir, repository, artifacts, sandbox, private_tmp, cache):
         directory.mkdir(mode=0o700)
+    execution_candidate = copy_candidate_archive(candidate, sidecar, sandbox, candidate_digest)
     private_tmp_alias = create_private_tmp_alias(private_tmp)
     atexit.register(remove_private_tmp_alias, private_tmp_alias, private_tmp)
     private_tmp_alias_removed = False
@@ -527,15 +824,23 @@ def main() -> int:
         commands.append(command)
         return run(command, env, cwd or sandbox, accepted, timeout)
 
+    def execute_candidate(arguments: list[str], timeout: float = 120) -> subprocess.CompletedProcess[bytes]:
+        assert_candidate_digest(execution_candidate, candidate_digest)
+        result = execute([str(execution_candidate), *arguments], timeout=timeout)
+        assert_candidate_digest(execution_candidate, candidate_digest)
+        return result
+
     candidate_root = output / "candidate-root"
     candidate_root.mkdir(mode=0o700)
     for sentinel in (candidate_root / "etc/open-trestle/operator.conf", candidate_root / "var/lib/open-trestle/operator.state"):
         sentinel.parent.mkdir(mode=0o700, parents=True)
         write(sentinel, b"operator-owned\n")
 
-    verify_archive = execute([str(candidate), "verify-archive"])
+    verify_archive = execute_candidate(["verify-archive"])
     write(artifacts / "candidate-verify-archive.txt", verify_archive.stdout)
-    candidate_manifest = read_candidate_manifest(candidate, source_before.revision)
+    candidate_manifest = read_candidate_manifest(execution_candidate, source_before.revision)
+    if candidate_manifest["archive_sha256"] != candidate_digest:
+        raise RuntimeError("candidate archive changed after manifest verification")
     lifecycle = candidate_root / "usr/local/libexec/open-trestle/open-trestle-distribution.pyz"
     trestle = candidate_root / "usr/local/bin/trestle"
     trestled = candidate_root / "usr/local/bin/trestled"
@@ -549,7 +854,7 @@ def main() -> int:
     browser_after: dict | None = None
     try:
         install_attempted = True
-        install_result = execute([str(candidate), "install", "--destdir", str(candidate_root)])
+        install_result = execute_candidate(["install", "--destdir", str(candidate_root)])
         write(artifacts / "candidate-install.txt", install_result.stdout)
         verified = execute([str(lifecycle), "verify-installed", "--destdir", str(candidate_root)])
         write(artifacts / "candidate-verify-installed.txt", verified.stdout)
@@ -643,6 +948,7 @@ def main() -> int:
                 "deterministic_check_identity": diagnostics_value["checks"][0]["identity"],
                 "deterministic_check_state": diagnostics_value["checks"][0]["state"],
                 "observation_count": len(diagnostics_value["observations"]),
+                "observation_identities": [value["identity"] for value in diagnostics_value["observations"]],
             }
             if not args.skip_browser:
                 browser_before = run_browser_phase("before_restart", {**expected_browser, "phase": "before_restart"})
@@ -692,7 +998,7 @@ def main() -> int:
         daemon_holder[0] = None
         if install_attempted:
             try:
-                recovered = execute([str(candidate), "recover", "--destdir", str(candidate_root)])
+                recovered = execute_candidate(["recover", "--destdir", str(candidate_root)])
                 if recovered.stdout:
                     write(artifacts / "candidate-recover.txt", recovered.stdout)
             except Exception as error:
@@ -722,6 +1028,7 @@ def main() -> int:
             cleanup_errors.append(f"temporary alias: {error}")
         if cleanup_errors:
             raise RuntimeError("local alpha cleanup failed: " + "; ".join(cleanup_errors))
+    assert_candidate_digest(execution_candidate, candidate_digest)
     source_after = verify_source_state(source, source_before)
     artifact_records = []
     for path in sorted(artifacts.rglob("*")):
@@ -737,15 +1044,19 @@ def main() -> int:
             "deterministic_check_identity": diagnostics_value["checks"][0]["identity"],
             "deterministic_check_state": diagnostics_value["checks"][0]["state"],
             "observation_count": len(diagnostics_value["observations"]),
-        })
+            "observation_identities": [value["identity"] for value in diagnostics_value["observations"]],
+        }, artifacts)
     receipt = {
         "contract": "open-trestle/local-alpha-system-receipt",
         "schema_version": 2,
         "source_revision": source_after.revision,
         "source_tree_identity": source_after.tree_identity,
         "source_state_identity": source_after.identity(),
+        "source_worktree_identity": source_after.worktree_sha256,
+        "source_worktree_entries": source_after.worktree_entries,
+        "source_worktree_bytes": source_after.worktree_bytes,
         "source_tree_clean": source_after.clean,
-        "candidate": {"path": str(candidate), "sha256": candidate_digest, "sidecar_sha256": sha256(sidecar), "manifest_revision": candidate_manifest["revision"], "manifest_sha256": candidate_manifest["manifest_sha256"], "archive_sha256": candidate_manifest["archive_sha256"], "lifecycle": "verified_install_smoke_recover_uninstall", "operator_state_preserved": True},
+        "candidate": {"path": str(candidate), "execution_path": str(execution_candidate), "sha256": candidate_digest, "sidecar_sha256": sha256(sidecar), "manifest_revision": candidate_manifest["revision"], "manifest_sha256": candidate_manifest["manifest_sha256"], "archive_sha256": candidate_manifest["archive_sha256"], "lifecycle": "verified_install_smoke_recover_uninstall", "operator_state_preserved": True},
         "binaries": binary_records,
         "repository": {"base_revision": base, "head_revision": head},
         "review": {"tenant_id": "tenant-a", "repository_id": "repository-a", "review_run_id": run_id, "run_receipt_identity": status_value["identity"], "diagnostic_set_identity": diagnostics_value["identity"]},

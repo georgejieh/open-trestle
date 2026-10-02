@@ -8,12 +8,14 @@ import json
 import os
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 import zipfile
 from pathlib import Path
 
@@ -34,6 +36,39 @@ class LocalAlphaSystemTest(unittest.TestCase):
         Path(str(archive) + ".sha256").write_text(f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n")
         return archive, manifest
 
+    def browser_expected(self):
+        return {
+            "scope": {"tenant": "tenant-a", "repository": "repository-a", "run": "local-alpha"},
+            "run_identity": "1" * 64,
+            "diagnostic_set_identity": "2" * 64,
+            "deterministic_check_identity": "3" * 64,
+            "deterministic_check_state": "failed",
+            "observation_count": 1,
+            "observation_identities": ["4" * 64],
+        }
+
+    def browser_record(self, root: Path, phase: str, expected: dict):
+        prefix = phase.replace("_", "-")
+        phase_root = root / "daemon-console" / prefix
+        phase_root.mkdir(parents=True)
+        specifications = [
+            ("desktop-overview", "overview", 1440, 1000),
+            ("desktop-findings", "review", 1440, 1000),
+            ("desktop-runtime", "runtime", 1440, 1000),
+            ("tablet-findings", "review", 900, 1000),
+            ("mobile-390-findings", "review", 390, 844),
+        ]
+        captures = []
+        for name, view, width, height in specifications:
+            file_name = f"{prefix}-{name}.png"
+            body = file_name.encode()
+            (phase_root / file_name).write_bytes(body)
+            captures.append({"name": file_name, "view": view, "width": width, "height": height, "bytes": len(body), "sha256": hashlib.sha256(body).hexdigest()})
+        raw = {"contract": "open-trestle/daemon-console-visual-receipt", "schema_version": 2, "phase": phase, **expected, "reduced_motion": True, "horizontal_overflow": False, "keyboard_focus_visible": True, "evidence_disclosure_focus_visible": True, "focus_order_steps": 1, "unexpected_egress": 0, "console_errors": 0, "tap_targets_minimum": 44, "captures": captures}
+        receipt = phase_root / "receipt.json"
+        receipt.write_text(json.dumps(raw) + "\n")
+        return {**raw, "receipt": str(receipt.relative_to(root)), "receipt_sha256": hashlib.sha256(receipt.read_bytes()).hexdigest()}
+
     def test_candidate_manifest_binds_matching_source_revision(self):
         with tempfile.TemporaryDirectory() as directory:
             revision = "1" * 40
@@ -48,6 +83,38 @@ class LocalAlphaSystemTest(unittest.TestCase):
             archive, _ = self.candidate(Path(directory), "1" * 40)
             with self.assertRaisesRegex(RuntimeError, "candidate manifest revision does not match source HEAD"):
                 local_alpha_system.read_candidate_manifest(archive, "2" * 40)
+
+    def test_browser_phase_evidence_rejects_unbound_capture_fields(self):
+        expected = self.browser_expected()
+        before = {**expected, "phase": "before_restart", "captures": [{}]}
+        after = {**expected, "phase": "after_restart", "captures": [{}]}
+        with self.assertRaisesRegex(RuntimeError, "browser evidence"):
+            local_alpha_system.validate_browser_phase_evidence(before, after, expected)
+
+    def test_browser_script_must_be_canonical_tracked_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory); canonical = source / "web/scripts/daemon-visual-check.mjs"
+            canonical.parent.mkdir(parents=True); canonical.write_text("export {}\n")
+            self.assertEqual(local_alpha_system.validate_browser_script(source, canonical, False), canonical.resolve())
+            outside = source / "other.mjs"; outside.write_text("export {}\n")
+            with self.assertRaisesRegex(RuntimeError, "canonical browser script"):
+                local_alpha_system.validate_browser_script(source, outside, False)
+
+    def test_candidate_execution_copy_is_output_owned_and_digest_fenced(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, _ = self.candidate(root, "1" * 40)
+            expected = hashlib.sha256(source.read_bytes()).hexdigest()
+            sandbox = root / "sandbox"; sandbox.mkdir()
+            copied = local_alpha_system.copy_candidate_archive(source, Path(str(source) + ".sha256"), sandbox, expected)
+            self.assertEqual(copied.parent, sandbox)
+            self.assertEqual(hashlib.sha256(copied.read_bytes()).hexdigest(), expected)
+            self.assertEqual(stat.S_IMODE(copied.stat().st_mode), 0o555)
+            self.assertEqual(stat.S_IMODE(Path(str(copied) + ".sha256").stat().st_mode), 0o444)
+            local_alpha_system.assert_candidate_digest(copied, expected)
+            copied.chmod(0o700); copied.write_bytes(copied.read_bytes() + b"mutation")
+            with self.assertRaisesRegex(RuntimeError, "candidate archive changed"):
+                local_alpha_system.assert_candidate_digest(copied, expected)
 
     def test_source_state_rejects_tracked_and_untracked_mutation(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -71,30 +138,98 @@ class LocalAlphaSystemTest(unittest.TestCase):
                     subprocess.run(["git", "reset", "--hard", "-q", "HEAD"], cwd=root, check=True)
                     (root / "untracked.txt").unlink(missing_ok=True)
 
+    def test_worktree_snapshot_never_follows_replaced_directory(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside_directory:
+            root = Path(directory); victim = root / "victim"; victim.mkdir(); (victim / "inside").write_text("inside")
+            outside = Path(outside_directory); (outside / "outside").write_text("outside")
+            moved = root / "moved"
+            original_scandir = os.scandir
+            calls = 0
+            def replacing_scandir(path):
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    victim.rename(moved)
+                    victim.symlink_to(outside, target_is_directory=True)
+                return original_scandir(path)
+            with patch.object(local_alpha_system.os, "scandir", replacing_scandir):
+                with self.assertRaisesRegex(RuntimeError, "source worktree changed while captured"):
+                    local_alpha_system.capture_worktree(root)
+
+    def test_worktree_snapshot_enforces_actual_read_byte_limit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); growing = root / "growing.bin"; growing.write_bytes(b"1234")
+            original_read = os.read
+            grown = False
+            def growing_read(descriptor, size):
+                nonlocal grown
+                if not grown:
+                    grown = True
+                    with growing.open("ab") as stream:
+                        stream.write(b"56789012")
+                return original_read(descriptor, size)
+            with patch.object(local_alpha_system, "MAX_SOURCE_BYTES", 8), patch.object(local_alpha_system.os, "read", growing_read):
+                with self.assertRaisesRegex(RuntimeError, "source worktree byte limit exceeded"):
+                    local_alpha_system.capture_worktree(root)
+
+    def test_source_state_rejects_assume_unchanged_tracked_mutation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q", root], check=True)
+            subprocess.run(["git", "config", "user.name", "test"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=root, check=True)
+            tracked = root / "tracked.txt"; tracked.write_bytes(b"before")
+            subprocess.run(["git", "add", "tracked.txt"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
+            subprocess.run(["git", "update-index", "--assume-unchanged", "tracked.txt"], cwd=root, check=True)
+            before = local_alpha_system.capture_source_state(root)
+            tracked.write_bytes(b"mutate")
+            self.assertEqual(subprocess.run(["git", "status", "--porcelain=v2", "--untracked-files=all"], cwd=root, check=True, capture_output=True).stdout, b"")
+            with self.assertRaisesRegex(RuntimeError, "source state changed during system verification"):
+                local_alpha_system.verify_source_state(root, before)
+
+    def test_source_state_rejects_ignored_same_status_content_mutation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q", root], check=True)
+            subprocess.run(["git", "config", "user.name", "test"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=root, check=True)
+            (root / ".gitignore").write_text("ignored.bin\n")
+            (root / "tracked.txt").write_text("tracked\n")
+            subprocess.run(["git", "add", ".gitignore", "tracked.txt"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
+            ignored = root / "ignored.bin"
+            ignored.write_bytes(b"before")
+            before = local_alpha_system.capture_source_state(root)
+            self.assertTrue(before.clean)
+            ignored.write_bytes(b"mutate")
+            self.assertEqual(subprocess.run(["git", "status", "--porcelain=v2", "--untracked-files=all"], cwd=root, check=True, capture_output=True).stdout, b"")
+            with self.assertRaisesRegex(RuntimeError, "source state changed during system verification"):
+                local_alpha_system.verify_source_state(root, before)
+
     def test_browser_phase_evidence_binds_same_review_before_and_after_restart(self):
-        expected = {
-            "scope": {"tenant": "tenant-a", "repository": "repository-a", "run": "local-alpha"},
-            "run_identity": "1" * 64,
-            "diagnostic_set_identity": "2" * 64,
-            "deterministic_check_identity": "3" * 64,
-            "deterministic_check_state": "failed",
-            "observation_count": 1,
-        }
-        before = {**expected, "phase": "before_restart", "captures": [{"name": "desktop-overview.png", "sha256": "4" * 64, "bytes": 10}]}
-        after = {**expected, "phase": "after_restart", "captures": [{"name": "desktop-overview.png", "sha256": "5" * 64, "bytes": 11}]}
-        record = local_alpha_system.validate_browser_phase_evidence(before, after, expected)
-        self.assertEqual(record["status"], "passed")
-        self.assertEqual([phase["phase"] for phase in record["phases"]], ["before_restart", "after_restart"])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            expected = self.browser_expected()
+            before = self.browser_record(root, "before_restart", expected)
+            after = self.browser_record(root, "after_restart", expected)
+            record = local_alpha_system.validate_browser_phase_evidence(before, after, expected, root)
+            self.assertEqual(record["status"], "passed")
+            self.assertEqual([phase["phase"] for phase in record["phases"]], ["before_restart", "after_restart"])
+
+    def test_browser_phase_evidence_rejects_tampered_screenshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            expected = self.browser_expected()
+            before = self.browser_record(root, "before_restart", expected)
+            after = self.browser_record(root, "after_restart", expected)
+            capture = root / before["receipt"]
+            (capture.parent / before["captures"][0]["name"]).write_bytes(b"tampered")
+            with self.assertRaisesRegex(RuntimeError, "screenshot digest mismatch"):
+                local_alpha_system.validate_browser_phase_evidence(before, after, expected, root)
 
     def test_browser_phase_evidence_rejects_missing_pre_restart_phase(self):
-        expected = {
-            "scope": {"tenant": "tenant-a", "repository": "repository-a", "run": "local-alpha"},
-            "run_identity": "1" * 64,
-            "diagnostic_set_identity": "2" * 64,
-            "deterministic_check_identity": "3" * 64,
-            "deterministic_check_state": "failed",
-            "observation_count": 1,
-        }
+        expected = self.browser_expected()
         after = {**expected, "phase": "after_restart", "captures": []}
         with self.assertRaisesRegex(RuntimeError, "browser evidence requires before and after restart phases"):
             local_alpha_system.validate_browser_phase_evidence(None, after, expected)
@@ -208,7 +343,7 @@ class LocalAlphaSystemTest(unittest.TestCase):
             ready = Path(directory) / "ready"
             child = "import os,pathlib,socket,sys,time; s=socket.socket(); s.bind(('127.0.0.1',0)); s.listen(); pathlib.Path(sys.argv[1]).write_text(str(s.getsockname()[1])+' '+str(os.getpid())); time.sleep(30)"
             parent = subprocess.Popen(
-                [sys.executable, "-c", "import subprocess,sys; subprocess.Popen([sys.executable,'-c',sys.argv[1],sys.argv[2]],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)", child, str(ready)],
+                [sys.executable, "-c", "import os,subprocess,sys; child_process=subprocess.Popen([sys.executable,'-c',sys.argv[1],sys.argv[2]],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); os._exit(0)", child, str(ready)],
                 start_new_session=True,
             )
             parent.wait(timeout=2)
