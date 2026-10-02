@@ -143,10 +143,11 @@ python3 tools/local_alpha_system.py \
   --output "$HOME/open-trestle-local-alpha-evidence"
 ```
 
-The system driver requires a clean source tree. It verifies the detached checksum and
-archive, then requires the candidate manifest revision to equal the clean source `HEAD`
-before installation. Candidate and browser commands run from an output-owned sandbox
-with bounded output, HTTP, log, and total-time budgets. The driver installs only into an
+The system driver requires a clean source tree. It verifies the detached checksum, makes
+a stable byte-identical candidate copy inside the output-owned sandbox, and executes only
+that copy with digest fences around every archive command. The verified manifest revision
+must equal the clean source `HEAD` before installation. Candidate and browser commands run
+from the sandbox with bounded output, HTTP, log, and total-time budgets. The driver installs only into an
 isolated destdir, runs candidate smoke, creates a real temporary Git repository,
 initializes the existing `local_single_node` plan, starts `trestled` on numeric loopback,
 and executes the four-task deterministic run. It captures the exact run in CLI, TUI, and
@@ -154,11 +155,13 @@ the real daemon-served console before restart, proves the daemon process group s
 the port can be rebound, restarts the daemon, and repeats the same identity-bound browser
 matrix. JSON and SARIF bytes must remain identical. Final cleanup recovers and uninstalls
 the candidate, preserves operator sentinels, proves process-group quiescence and port
-reuse, removes the private temporary alias, and verifies the source `HEAD`, tree, index
-inventory, tracked worktree, and non-ignored untracked status are unchanged. Inspect
-`$HOME/open-trestle-local-alpha-evidence/receipt.json` for the
-candidate manifest/archive, source revision/tree, commands, identities, phase-tagged
-screenshots, restart checks, and cleanup bindings.
+reuse, removes the private temporary alias, and verifies the source `HEAD`, tree, index,
+and status plus every working-tree directory, regular-file byte, mode, and symlink target
+outside `.git` are unchanged, including ignored and assume-unchanged files. Inspect
+`$HOME/open-trestle-local-alpha-evidence/receipt.json` for the candidate source/execution
+paths, manifest/archive digests, source revision/tree/worktree identity and counts,
+commands, review identities, phase-tagged screenshots, restart checks, and cleanup
+bindings.
 
 The initialized setup plan is a scope and denied-effect posture fence for this narrow
 review. It remains `ready:false`; pending policy, inference, dry-run, backup, observer,

@@ -27,6 +27,7 @@ All notable changes to released versions of Open Trestle will be documented in t
 - Advanced diagnostic publication to version 5 while preserving earlier versions, binding the exact source check, analysis, change, verification context, coverage, omissions, and review state.
 - Added diagnostic version 6 for deterministic observations, with analysis-result and changed-range lineage, schema-aware ACP/TUI/CLI/web semantics, and no independent-verification claim.
 - Made web and VS Code distributions reproducible and freshness-checked in CI, with package-local npm policy that separates locked dependency retrieval from automatic audit requests and update checks.
+- Sealed packaged alpha verification to a stable output-owned candidate copy and a no-follow working-tree snapshot bounded by entry count and regular-file bytes, including ignored and assume-unchanged files and recorded symlink targets outside `.git`.
 
 ### Security
 
