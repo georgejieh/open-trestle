@@ -201,6 +201,9 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 		if applicable {
 			matchedRanges, checkErr := review.FindStaticDebugOutputRanges(content, entry.Path(), sourceRanges)
 			if checkErr == nil {
+				matchedRanges, checkErr = bindStaticMatchesToChanges(matchedRanges, sourceRanges)
+			}
+			if checkErr == nil {
 				checkedFiles++
 				checkedRanges += uint32(len(sourceRanges))
 				matches += uint32(len(matchedRanges))
@@ -344,6 +347,45 @@ func diagnosticWriteFailure(ctx context.Context, err error) controlplane.RunFail
 func newGap(entry changehandler.Entry, start, end int, reason string) Gap {
 	return Gap{changeEntryIdentity: entry.Identity(), changeExecutionIdentity: entry.ExecutionIdentity(), path: entry.Path(), startLine: start, endLine: end, reason: reason}
 }
+func bindStaticMatchesToChanges(matches, changes []evidence.SourceRange) ([]evidence.SourceRange, error) {
+	bound := make([]evidence.SourceRange, 0, len(matches))
+	seen := make(map[[2]int]struct{}, len(matches))
+	appendRange := func(value evidence.SourceRange) {
+		key := [2]int{value.StartLine(), value.EndLine()}
+		if _, exists := seen[key]; exists {
+			return
+		}
+		seen[key] = struct{}{}
+		bound = append(bound, value)
+	}
+	for _, matched := range matches {
+		contained := false
+		for _, changed := range changes {
+			if changed.Path() == matched.Path() && changed.StartLine() <= matched.StartLine() && matched.EndLine() <= changed.EndLine() {
+				appendRange(matched)
+				contained = true
+				break
+			}
+		}
+		if contained {
+			continue
+		}
+		for _, changed := range changes {
+			if changed.Path() != matched.Path() || changed.EndLine() < matched.StartLine() || matched.EndLine() < changed.StartLine() {
+				continue
+			}
+			start := max(matched.StartLine(), changed.StartLine())
+			end := min(matched.EndLine(), changed.EndLine())
+			projected, err := evidence.NewSourceRange(matched.Path(), start, end)
+			if err != nil {
+				return nil, err
+			}
+			appendRange(projected)
+		}
+	}
+	return bound, nil
+}
+
 func physicalLineSlice(content []byte, startLine, endLine int) ([]byte, bool) {
 	if len(content) == 0 || startLine < 1 || endLine < startLine {
 		return nil, false
