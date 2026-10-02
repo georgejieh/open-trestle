@@ -1612,23 +1612,83 @@ describe("API client", () => {
   it("parses deterministic diagnostics without promoting observations to verified findings", () => {
     const digest = (value: string) => value.repeat(64);
     const check = {
-      identity: digest("a"), source_check_identity: digest("b"), analysis_result_identity: digest("c"), change_identity: digest("d"),
-      key: "static_debug_output", rule_version: 1, state: "failed", applicable_files: 1, applicable_ranges: 1, checked_files: 1, checked_ranges: 1, matches: 1,
+      identity: digest("a"),
+      source_check_identity: digest("b"),
+      analysis_result_identity: digest("c"),
+      change_identity: digest("d"),
+      key: "static_debug_output",
+      rule_version: 1,
+      state: "failed",
+      applicable_files: 1,
+      applicable_ranges: 1,
+      checked_files: 1,
+      checked_ranges: 1,
+      matches: 1,
     };
     const observation = {
-      identity: digest("e"), source_identity: digest("f"), fingerprint: digest("1"), analysis_result_identity: digest("c"), check_identity: digest("a"),
-      title: "Debug output left in source", message: "Deterministic observation; human review required.", severity: "warning", path: "main.go", start_line: 3, end_line: 3, evidence_ids: [digest("2")],
+      identity: digest("e"),
+      source_identity: digest("f"),
+      fingerprint: digest("1"),
+      analysis_result_identity: digest("c"),
+      check_identity: digest("a"),
+      title: "Debug output left in source",
+      message: "Deterministic observation; human review required.",
+      severity: "warning",
+      path: "main.go",
+      start_line: 3,
+      end_line: 3,
+      evidence_ids: [digest("2")],
     };
-    const envelope = { contract: "open-trestle/api-response", schema_version: 1, request_id: "request-v6", diagnostics: {
-      contract: "open-trestle/review-diagnostic-set", schema_version: 6, identity: digest("3"), tenant_id: "tenant-a", repository_id: "repo-a", review_run_id: "run-a", snapshot_identity: digest("4"), head_revision: "5".repeat(40), analysis_result_identity: digest("c"), checks: [check], observations: [observation],
-    }};
-    const parsed = parseDiagnosticEnvelope(envelope, { tenant: "tenant-a", repository: "repo-a", run: "run-a" });
+    const envelope = {
+      contract: "open-trestle/api-response",
+      schema_version: 1,
+      request_id: "request-v6",
+      diagnostics: {
+        contract: "open-trestle/review-diagnostic-set",
+        schema_version: 6,
+        identity: digest("3"),
+        tenant_id: "tenant-a",
+        repository_id: "repo-a",
+        review_run_id: "run-a",
+        snapshot_identity: digest("4"),
+        head_revision: "5".repeat(40),
+        analysis_result_identity: digest("c"),
+        checks: [check],
+        observations: [observation],
+      },
+    };
+    const parsed = parseDiagnosticEnvelope(envelope, {
+      tenant: "tenant-a",
+      repository: "repo-a",
+      run: "run-a",
+    });
     expect(parsed.schema_version).toBe(6);
     if (parsed.schema_version !== 6) throw new Error("unexpected schema");
     expect(parsed.observations).toEqual([observation]);
     expect("findings" in parsed).toBe(false);
-    expect(() => parseDiagnosticEnvelope({ ...envelope, diagnostics: { ...envelope.diagnostics, verified_set_identity: digest("6") } }, { tenant: "tenant-a", repository: "repo-a", run: "run-a" })).toThrow();
-    expect(() => parseDiagnosticEnvelope({ ...envelope, diagnostics: { ...envelope.diagnostics, observations: [{ ...observation, check_identity: digest("9") }] } }, { tenant: "tenant-a", repository: "repo-a", run: "run-a" })).toThrow();
+    expect(() =>
+      parseDiagnosticEnvelope(
+        {
+          ...envelope,
+          diagnostics: {
+            ...envelope.diagnostics,
+            verified_set_identity: digest("6"),
+          },
+        },
+        { tenant: "tenant-a", repository: "repo-a", run: "run-a" },
+      ),
+    ).toThrow();
+    expect(() =>
+      parseDiagnosticEnvelope(
+        {
+          ...envelope,
+          diagnostics: {
+            ...envelope.diagnostics,
+            observations: [{ ...observation, check_identity: digest("9") }],
+          },
+        },
+        { tenant: "tenant-a", repository: "repo-a", run: "run-a" },
+      ),
+    ).toThrow();
   });
-
 });

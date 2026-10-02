@@ -128,10 +128,27 @@ export type DiagnosticSet =
   | (VerifiedDiagnosticSetBase &
       (
         | { schema_version: 1; coverage?: never; source_coverage?: never }
-        | { schema_version: 2; coverage: DiagnosticCoverage; source_coverage?: never }
-        | { schema_version: 3; coverage: DiagnosticCoverage; source_coverage: DiagnosticSourceCoverage }
-        | { schema_version: 4; coverage: DiagnosticCoverage; source_coverage: DiagnosticSourceCoverageWithOmissions }
-        | { schema_version: 5; coverage: DiagnosticCoverage; source_coverage: DiagnosticSourceCoverageWithOmissions; checks: [DiagnosticDeterministicCheck] }
+        | {
+            schema_version: 2;
+            coverage: DiagnosticCoverage;
+            source_coverage?: never;
+          }
+        | {
+            schema_version: 3;
+            coverage: DiagnosticCoverage;
+            source_coverage: DiagnosticSourceCoverage;
+          }
+        | {
+            schema_version: 4;
+            coverage: DiagnosticCoverage;
+            source_coverage: DiagnosticSourceCoverageWithOmissions;
+          }
+        | {
+            schema_version: 5;
+            coverage: DiagnosticCoverage;
+            source_coverage: DiagnosticSourceCoverageWithOmissions;
+            checks: [DiagnosticDeterministicCheck];
+          }
       ))
   | (DiagnosticSetCommon & {
       schema_version: 6;

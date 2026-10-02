@@ -239,7 +239,7 @@ jobs:
           "$RUNNER_TEMP/open-trestle-spdx-validator/bin/python" -m spdx_tools.spdx.clitools.pyspdxtools \
             --infile "$RUNNER_TEMP/open-trestle-release-evidence-a/sbom.spdx.json" \
             --version SPDX-2.3
-      - name: Verify packaged local single-node journey
+      - name: Verify packaged local single-node journey without a browser
         run: |
           rm -rf "$GITHUB_WORKSPACE/open-trestle-linux-v1"
           rm -f "$GITHUB_WORKSPACE/open-trestle-linux-lifecycle.json"
@@ -249,7 +249,18 @@ jobs:
             --source-root "$GITHUB_WORKSPACE" \
             --skip-browser \
             --output "$RUNNER_TEMP/open-trestle-local-alpha-system"
-          python3 -c 'import json,pathlib,sys; receipt=json.loads(pathlib.Path(sys.argv[1]).read_text()); assert receipt["source_revision"]==sys.argv[2] and receipt["source_tree_clean"] is True and receipt["review"]["review_run_id"]=="local-alpha" and receipt["restart"]=={"diagnostics_set_stable":True,"json_bytes_stable":True,"sarif_bytes_stable":True,"status_identity_stable":True} and receipt["browser"]=={"reason":"explicit_nonvisual_verification","status":"not_run"} and receipt["cleanup"]=={"candidate_recovered":True,"candidate_uninstalled":True,"daemon_stopped":True,"operator_state_preserved":True}' "$RUNNER_TEMP/open-trestle-local-alpha-system/receipt.json" "$GITHUB_SHA"
+          python3 -c 'import json,pathlib,sys; receipt=json.loads(pathlib.Path(sys.argv[1]).read_text()); assert receipt["schema_version"]==2 and receipt["source_revision"]==sys.argv[2] and receipt["source_tree_clean"] is True and receipt["candidate"]["manifest_revision"]==sys.argv[2] and receipt["candidate"]["archive_sha256"]==receipt["candidate"]["sha256"] and receipt["review"]["review_run_id"]=="local-alpha" and receipt["restart"]=={"diagnostics_set_stable":True,"json_bytes_stable":True,"sarif_bytes_stable":True,"status_identity_stable":True} and receipt["browser"]=={"reason":"explicit_nonvisual_verification","status":"not_run"} and all(receipt["cleanup"][key] is True for key in ("candidate_recovered","candidate_uninstalled","daemon_stopped","operator_state_preserved","process_group_quiescent","port_rebind_before_restart","port_rebind_after_cleanup"))' "$RUNNER_TEMP/open-trestle-local-alpha-system/receipt.json" "$GITHUB_SHA"
+      - name: Verify packaged console before and after daemon restart
+        run: |
+          BROWSER_PATH="$(command -v chromium || command -v google-chrome || command -v google-chrome-stable)"
+          test -n "$BROWSER_PATH"
+          rm -rf "$RUNNER_TEMP/open-trestle-local-alpha-system-visual"
+          OPEN_TRESTLE_CHROMIUM_PATH="$BROWSER_PATH" python3 tools/local_alpha_system.py \
+            --candidate "$GITHUB_WORKSPACE/open-trestle-linux-a/open-trestle-linux-amd64.pyz" \
+            --source-root "$GITHUB_WORKSPACE" \
+            --browser-script web/scripts/daemon-visual-check.mjs \
+            --output "$RUNNER_TEMP/open-trestle-local-alpha-system-visual"
+          python3 -c 'import json,pathlib; receipt=json.loads(pathlib.Path("${{ runner.temp }}/open-trestle-local-alpha-system-visual/receipt.json").read_text()); assert receipt["browser"]["status"]=="passed" and [phase["phase"] for phase in receipt["browser"]["phases"]]==["before_restart","after_restart"] and len(receipt["browser"]["phases"])==2 and all(len(phase["captures"])==5 and phase["run_identity"]==receipt["review"]["run_receipt_identity"] and phase["diagnostic_set_identity"]==receipt["review"]["diagnostic_set_identity"] and phase["deterministic_check_state"]=="failed" and phase["observation_count"]==1 for phase in receipt["browser"]["phases"])'
       - name: Build container image without a registry base
         run: docker build --network=none --tag open-trestle:verify .
       - name: Verify packaged scanner sandbox

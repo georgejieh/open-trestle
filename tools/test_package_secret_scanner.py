@@ -542,7 +542,10 @@ class ReleaseContractTest(unittest.TestCase):
         self.assertIn("umask 022", workflow)
         self.assertIn("python3 tools/local_alpha_system.py", workflow)
         self.assertIn("--skip-browser", workflow)
+        self.assertIn("--browser-script web/scripts/daemon-visual-check.mjs", workflow)
         self.assertIn("open-trestle-local-alpha-system/receipt.json", workflow)
+        self.assertIn("open-trestle-local-alpha-system-visual/receipt.json", workflow)
+        self.assertIn('receipt["browser"]["status"]=="passed"', workflow)
         self.assertIn(
             "name: Provision pinned Zig musl builder and build deterministic release staging",
             workflow,

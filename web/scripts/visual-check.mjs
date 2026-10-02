@@ -735,7 +735,9 @@ try {
     await page.getByLabel("Run", { exact: true }).fill("pr-184");
     await page.getByLabel("Access token").fill("x".repeat(32));
     await page.getByRole("button", { name: "Connect to run" }).click();
-    await page.getByRole("heading", { name: "Run active" }).waitFor();
+    await page
+      .getByRole("heading", { name: "Execution in progress" })
+      .waitFor();
   }
   async function expectCopyFailure(page, name) {
     await page.evaluate(() => {
@@ -1188,7 +1190,9 @@ try {
   await checkTabletNavigation(desktop);
   await desktop.getByRole("button", { name: /^Overview/ }).focus();
   await desktop.keyboard.press("Enter");
-  await desktop.getByRole("heading", { name: "Run active" }).waitFor();
+  await desktop
+    .getByRole("heading", { name: "Execution in progress" })
+    .waitFor();
   await desktop.screenshot({
     path: join(output, "open-trestle-console-tablet.png"),
     fullPage: true,

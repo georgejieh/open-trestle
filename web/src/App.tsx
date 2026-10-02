@@ -287,7 +287,43 @@ function CheckOutcome({ check }: { check: DiagnosticDeterministicCheck }) {
 }
 
 function diagnosticItemCount(set: DiagnosticSet): number {
-  return set.schema_version === 6 ? set.observations.length : set.findings.length;
+  return set.schema_version === 6
+    ? set.observations.length
+    : set.findings.length;
+}
+
+function diagnosticsRequireReview(set: DiagnosticSet): boolean {
+  if (set.schema_version === 6)
+    return set.observations.length > 0 || set.checks[0].state !== "passed";
+  if (set.findings.length > 0) return true;
+  if (set.schema_version === 1) return false;
+  if (set.coverage.rejected_count > 0 || set.coverage.inconclusive_count > 0)
+    return true;
+  if (
+    (set.schema_version === 3 ||
+      set.schema_version === 4 ||
+      set.schema_version === 5) &&
+    set.source_coverage.omitted_count > 0
+  )
+    return true;
+  return set.schema_version === 5 && set.checks[0].state !== "passed";
+}
+
+function primaryRunHeading(
+  receipt: RunReceipt,
+  diagnostics: DiagnosticSet | null,
+  diagnosticNote: string,
+  busy: boolean,
+): string {
+  if (receipt.status === "active") return "Execution in progress";
+  if (receipt.status === "failed") return "Execution failed";
+  if (receipt.status === "canceled") return "Execution canceled";
+  if (busy && !diagnostics) return "Execution complete, loading review state";
+  if (!diagnostics && diagnosticNote)
+    return "Execution complete, review state unavailable";
+  if (diagnostics && diagnosticsRequireReview(diagnostics))
+    return "Execution complete, review required";
+  return "Execution complete";
 }
 
 function CoverageLedger({ set }: { set: DiagnosticSet | null }) {
@@ -295,7 +331,10 @@ function CoverageLedger({ set }: { set: DiagnosticSet | null }) {
   if (set.schema_version === 6) {
     const check = set.checks[0];
     return (
-      <section className="coverage-ledger" aria-labelledby="review-coverage-title">
+      <section
+        className="coverage-ledger"
+        aria-labelledby="review-coverage-title"
+      >
         <div>
           <h3 id="review-coverage-title">Deterministic rule coverage</h3>
           <p>Exact changed-range accounting for one local static rule.</p>
@@ -308,9 +347,15 @@ function CoverageLedger({ set }: { set: DiagnosticSet | null }) {
         </ul>
         <CheckOutcome check={check} />
         <ul className="coverage-conditions" aria-label="Coverage limits">
-          <li>Observations are deterministic, not independently verified findings.</li>
-          <li>Only changed Go ranges applicable to this exact rule were checked.</li>
-          <li>A cleared rule does not approve the change or prove correctness.</li>
+          <li>
+            Observations are deterministic, not independently verified findings.
+          </li>
+          <li>
+            Only changed Go ranges applicable to this exact rule were checked.
+          </li>
+          <li>
+            A cleared rule does not approve the change or prove correctness.
+          </li>
         </ul>
       </section>
     );
@@ -318,31 +363,65 @@ function CoverageLedger({ set }: { set: DiagnosticSet | null }) {
   if (set.schema_version === 1) return null;
   const coverage = set.coverage;
   const sourceCoverage =
-    set.schema_version === 3 || set.schema_version === 4 || set.schema_version === 5
+    set.schema_version === 3 ||
+    set.schema_version === 4 ||
+    set.schema_version === 5
       ? set.source_coverage
       : null;
   const omissionText =
     set.schema_version === 4 || set.schema_version === 5
-      ? set.source_coverage.omissions.map(({ reason, count }) => `${count} ${reason.replaceAll("_", " ")}`).join(", ")
+      ? set.source_coverage.omissions
+          .map(({ reason, count }) => `${count} ${reason.replaceAll("_", " ")}`)
+          .join(", ")
       : "";
   const check = set.schema_version === 5 ? set.checks[0] : null;
-  const incomplete = coverage.inconclusive_count > 0 || (sourceCoverage?.omitted_count ?? 0) > 0;
+  const incomplete =
+    coverage.inconclusive_count > 0 || (sourceCoverage?.omitted_count ?? 0) > 0;
   return (
-    <section className="coverage-ledger" aria-labelledby="review-coverage-title">
+    <section
+      className="coverage-ledger"
+      aria-labelledby="review-coverage-title"
+    >
       <div>
         <h3 id="review-coverage-title">Review coverage</h3>
         <p>Exact candidate outcomes and bounded source selection.</p>
       </div>
-      <ul className="coverage-facts" aria-label={sourceCoverage ? "Candidate and source coverage" : "Candidate verification coverage"}>
+      <ul
+        className="coverage-facts"
+        aria-label={
+          sourceCoverage
+            ? "Candidate and source coverage"
+            : "Candidate verification coverage"
+        }
+      >
         <li>{coverage.candidate_count} candidates</li>
         <li>{coverage.verified_count} verified</li>
         <li>{coverage.rejected_count} rejected</li>
         <li>{coverage.inconclusive_count} inconclusive</li>
-        {sourceCoverage && <><li>{sourceCoverage.analyzed_count} sources analyzed</li><li>{sourceCoverage.selected_count} selected for model review</li><li>{sourceCoverage.omitted_count} omitted from model context</li></>}
+        {sourceCoverage && (
+          <>
+            <li>{sourceCoverage.analyzed_count} sources analyzed</li>
+            <li>{sourceCoverage.selected_count} selected for model review</li>
+            <li>{sourceCoverage.omitted_count} omitted from model context</li>
+          </>
+        )}
       </ul>
-      <ul className={`coverage-conditions${incomplete ? " coverage-warning" : ""}`} aria-label="Coverage conditions">
-        <li>{coverage.inconclusive_count > 0 ? "Candidate coverage is incomplete: at least one verdict is inconclusive." : "Every admitted candidate received a terminal verdict."}</li>
-        {sourceCoverage && <li>{sourceCoverage.omitted_count > 0 ? "Source coverage is incomplete: analyzed sources were omitted from model context." : "Every analyzed source was selected for model review."}</li>}
+      <ul
+        className={`coverage-conditions${incomplete ? " coverage-warning" : ""}`}
+        aria-label="Coverage conditions"
+      >
+        <li>
+          {coverage.inconclusive_count > 0
+            ? "Candidate coverage is incomplete: at least one verdict is inconclusive."
+            : "Every admitted candidate received a terminal verdict."}
+        </li>
+        {sourceCoverage && (
+          <li>
+            {sourceCoverage.omitted_count > 0
+              ? "Source coverage is incomplete: analyzed sources were omitted from model context."
+              : "Every analyzed source was selected for model review."}
+          </li>
+        )}
         <li>Rejected candidates are not cleared gates.</li>
         <li>Source counts are not repository-wide.</li>
         <li>This does not approve the change or prove correctness.</li>
@@ -369,12 +448,27 @@ function Findings({ set }: { set: DiagnosticSet | null }) {
     if (set.observations.length === 0)
       return (
         <section className="empty-state">
-          <StatusIcon value={set.checks[0].state === "passed" ? "passed" : "incomplete"} />
+          <StatusIcon
+            value={set.checks[0].state === "passed" ? "passed" : "incomplete"}
+          />
           <h2>No deterministic observations</h2>
-          <p>This exact rule produced no source observation. Its coverage state remains visible above and does not approve the change.</p>
+          <p>
+            This exact rule produced no source observation. Its coverage state
+            remains visible above and does not approve the change.
+          </p>
         </section>
       );
-    return <ol className="finding-list observation-list">{set.observations.map((observation) => <Finding key={observation.identity} finding={observation} deterministic />)}</ol>;
+    return (
+      <ol className="finding-list observation-list">
+        {set.observations.map((observation) => (
+          <Finding
+            key={observation.identity}
+            finding={observation}
+            deterministic
+          />
+        ))}
+      </ol>
+    );
   }
   if (set.findings.length === 0) {
     const hasCandidateCoverage = (set.coverage?.candidate_count ?? 0) > 0;
@@ -423,12 +517,23 @@ function Findings({ set }: { set: DiagnosticSet | null }) {
     </ol>
   );
 }
-function Finding({ finding, deterministic = false }: { finding: Diagnostic | DeterministicObservation; deterministic?: boolean }) {
+function Finding({
+  finding,
+  deterministic = false,
+}: {
+  finding: Diagnostic | DeterministicObservation;
+  deterministic?: boolean;
+}) {
   return (
     <li className={`finding-row severity-edge-${finding.severity}`}>
       <div className={`severity severity-${finding.severity}`}>
-        <StatusIcon value={finding.severity === "error" ? "failed" : "incomplete"} />
-        <span>{finding.severity}{deterministic && " · deterministic"}</span>
+        <StatusIcon
+          value={finding.severity === "error" ? "failed" : "incomplete"}
+        />
+        <span>
+          {finding.severity}
+          {deterministic && " · deterministic"}
+        </span>
       </div>
       <div className="finding-body">
         <h2>{finding.title}</h2>
@@ -445,10 +550,38 @@ function Finding({ finding, deterministic = false }: { finding: Diagnostic | Det
         <details className="finding-evidence">
           <summary>Inspect evidence</summary>
           <dl>
-            <Identity label={deterministic ? "Observation identity" : "Diagnostic identity"} value={finding.identity} />
-            {deterministic && "analysis_result_identity" in finding && <><Identity label="Analysis result identity" value={finding.analysis_result_identity} /><Identity label="Deterministic check identity" value={finding.check_identity} /></>}
-            {!deterministic && <Identity label="Source finding identity" value={finding.source_identity} />}
-            <Identity label={deterministic ? "Observation fingerprint" : "Finding fingerprint"} value={finding.fingerprint} />
+            <Identity
+              label={
+                deterministic ? "Observation identity" : "Diagnostic identity"
+              }
+              value={finding.identity}
+            />
+            {deterministic && "analysis_result_identity" in finding && (
+              <>
+                <Identity
+                  label="Analysis result identity"
+                  value={finding.analysis_result_identity}
+                />
+                <Identity
+                  label="Deterministic check identity"
+                  value={finding.check_identity}
+                />
+              </>
+            )}
+            {!deterministic && (
+              <Identity
+                label="Source finding identity"
+                value={finding.source_identity}
+              />
+            )}
+            <Identity
+              label={
+                deterministic
+                  ? "Observation fingerprint"
+                  : "Finding fingerprint"
+              }
+              value={finding.fingerprint}
+            />
             {finding.evidence_ids.map((identity, index) => (
               <Identity
                 key={identity}
@@ -765,6 +898,12 @@ function ReviewConsole() {
   const completed = receipt.tasks.filter(
     (task) => task.status === "succeeded",
   ).length;
+  const primaryHeading = primaryRunHeading(
+    receipt,
+    diagnostics,
+    diagnosticNote,
+    busy,
+  );
   return (
     <div className="app-shell console">
       <a className="skip-link" href="#main">
@@ -793,7 +932,9 @@ function ReviewConsole() {
             aria-pressed={view === "findings"}
           >
             Review{" "}
-            <span>{diagnostics ? diagnosticItemCount(diagnostics) : "n/a"}</span>
+            <span>
+              {diagnostics ? diagnosticItemCount(diagnostics) : "n/a"}
+            </span>
           </button>
           <button
             className={view === "runtime" ? "active" : ""}
@@ -826,14 +967,20 @@ function ReviewConsole() {
               <span>/</span>
               <strong>{scope.run}</strong>
             </div>
-            <h1>Run {receipt.status}</h1>
+            <h1>{primaryHeading}</h1>
             <p>
               Journal revision {receipt.revision} · Updated{" "}
               {new Date(receipt.last_occurred_at_milliseconds).toLocaleString()}
             </p>
           </div>
           <div className="header-actions">
-            <Status value={receipt.status} />
+            <div
+              className="operational-status"
+              aria-label={`Operational run status ${receipt.status}`}
+            >
+              <span>Operational run status</span>
+              <Status value={receipt.status} />
+            </div>
             <button
               className="secondary-button"
               disabled={busy}
@@ -882,8 +1029,16 @@ function ReviewConsole() {
                   </dd>
                 </div>
                 <div>
-                  <dt>{diagnostics?.schema_version === 6 ? "Deterministic observations" : "Verified findings"}</dt>
-                  <dd>{diagnostics ? diagnosticItemCount(diagnostics) : "Not available"}</dd>
+                  <dt>
+                    {diagnostics?.schema_version === 6
+                      ? "Deterministic observations"
+                      : "Verified findings"}
+                  </dt>
+                  <dd>
+                    {diagnostics
+                      ? diagnosticItemCount(diagnostics)
+                      : "Not available"}
+                  </dd>
                 </div>
               </dl>
               {diagnosticNote && (
@@ -899,6 +1054,10 @@ function ReviewConsole() {
                 <Identity label="Run receipt" value={receipt.identity} />
                 <Identity label="Plan" value={receipt.plan_identity} />
                 <Identity label="Head" value={receipt.head_identity} />
+                <Identity
+                  label="Diagnostic set"
+                  value={diagnostics?.identity ?? ""}
+                />
                 <Identity
                   label="Terminal output"
                   value={receipt.output_identity}
@@ -950,12 +1109,21 @@ function ReviewConsole() {
             <div className="section-head">
               <div>
                 <h2>Human review queue</h2>
-                <p>Verified findings and deterministic observations stay separate.</p>
+                <p>
+                  Verified findings and deterministic observations stay
+                  separate.
+                </p>
               </div>
               {diagnostics && (
                 <span className="set-count">
                   {diagnosticItemCount(diagnostics)}{" "}
-                  {diagnosticItemCount(diagnostics) === 1 ? (diagnostics.schema_version === 6 ? "observation" : "finding") : (diagnostics.schema_version === 6 ? "observations" : "findings")}
+                  {diagnosticItemCount(diagnostics) === 1
+                    ? diagnostics.schema_version === 6
+                      ? "observation"
+                      : "finding"
+                    : diagnostics.schema_version === 6
+                      ? "observations"
+                      : "findings"}
                 </span>
               )}
             </div>

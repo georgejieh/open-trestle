@@ -533,6 +533,16 @@ button:disabled {
   align-items: center;
   gap: 12px;
 }
+.operational-status {
+  display: grid;
+  justify-items: end;
+  gap: 6px;
+}
+.operational-status > span:first-child {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 650;
+}
 .state {
   display: inline-flex;
   align-items: center;
@@ -1045,11 +1055,21 @@ button:disabled {
   border-top: 1px solid var(--rule);
   border-left: 4px solid var(--rule-strong);
 }
-.finding-list .severity-edge-error { border-left-color: var(--oxide); }
-.finding-list .severity-edge-warning { border-left-color: var(--amber); }
-.finding-list .severity-edge-information { border-left-color: var(--cobalt); }
-.finding-list .severity-edge-hint { border-left-color: var(--lichen); }
-.finding-body { min-width: 0; }
+.finding-list .severity-edge-error {
+  border-left-color: var(--oxide);
+}
+.finding-list .severity-edge-warning {
+  border-left-color: var(--amber);
+}
+.finding-list .severity-edge-information {
+  border-left-color: var(--cobalt);
+}
+.finding-list .severity-edge-hint {
+  border-left-color: var(--lichen);
+}
+.finding-body {
+  min-width: 0;
+}
 .severity {
   display: flex;
   align-items: center;
@@ -1274,6 +1294,9 @@ button:disabled {
   .header-actions {
     justify-content: space-between;
     margin-top: 20px;
+  }
+  .operational-status {
+    justify-items: start;
   }
   .overview-grid,
   .runtime-grid {

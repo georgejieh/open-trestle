@@ -1464,9 +1464,8 @@ function SetupCheckPanel({
           </p>
           {inferenceCheck && !policyPassed && (
             <p className="setup-guidance">
-              <StatusIcon value="incomplete" />{" "}
-              Pass the exact policy validation check before running local
-              inference.
+              <StatusIcon value="incomplete" /> Pass the exact policy validation
+              check before running local inference.
             </p>
           )}
           <label>
@@ -1588,8 +1587,8 @@ function SetupCheckPanel({
       )}
       {supported && requirement.state === "passed" && (
         <p className="setup-guidance verified">
-          <StatusIcon value="passed" />{" "}
-          This exact requirement has a passing receipt.
+          <StatusIcon value="passed" /> This exact requirement has a passing
+          receipt.
         </p>
       )}
       {canRun &&
