@@ -22,7 +22,7 @@ const (
 // DiagnosticClock supplies artifact creation and expiry time.
 type DiagnosticClock interface{ Now() time.Time }
 
-// DiagnosticStoreOptions defines protection and retention for verified diagnostic content.
+// DiagnosticStoreOptions defines protection and retention for canonical diagnostic content.
 type DiagnosticStoreOptions struct {
 	Classification artifact.Classification
 	Protection     artifact.Protection
@@ -185,7 +185,11 @@ func (s *DiagnosticStore) newDiagnosticArtifact(set diagnostics.Set, at time.Tim
 	if err != nil {
 		return artifact.Artifact{}, err
 	}
-	provenance := []string{set.Identity(), set.SnapshotIdentity(), set.VerifiedSetIdentity()}
+	kind, origin, authorityIdentity := artifact.KindVerifiedFindingSet, artifact.OriginIndependentVerifier, set.VerifiedSetIdentity()
+	if set.SchemaVersion() == 6 {
+		kind, origin, authorityIdentity = artifact.KindDeterministicEvidence, artifact.OriginDeterministicTool, set.AnalysisResultIdentity()
+	}
+	provenance := []string{set.Identity(), set.SnapshotIdentity(), authorityIdentity}
 	sort.Strings(provenance)
 	canonical := provenance[:0]
 	for _, identity := range provenance {
@@ -194,8 +198,8 @@ func (s *DiagnosticStore) newDiagnosticArtifact(set diagnostics.Set, at time.Tim
 		}
 	}
 	return artifact.New(
-		set.Scope(), artifact.KindVerifiedFindingSet, "application/json", s.options.Classification,
-		artifact.OriginIndependentVerifier, s.options.Protection, canonical, encoded, at, at.Add(s.options.Retention),
+		set.Scope(), kind, "application/json", s.options.Classification,
+		origin, s.options.Protection, canonical, encoded, at, at.Add(s.options.Retention),
 	)
 }
 func (s *DiagnosticStore) loadDiagnosticArtifact(ctx context.Context, scope audit.ReviewScope, mapping diagnosticMapping, at time.Time) (diagnostics.Set, error) {
@@ -203,16 +207,20 @@ func (s *DiagnosticStore) loadDiagnosticArtifact(ctx context.Context, scope audi
 	if err != nil {
 		return diagnostics.Set{}, err
 	}
-	provenance := value.Provenance()
-	validLineage := slices.Contains(provenance, mapping.setIdentity)
-	validType := value.Kind() == artifact.KindVerifiedFindingSet && value.MediaType() == "application/json"
-	validPolicy := value.Classification() == s.options.Classification && value.Protection() == s.options.Protection
-	validArtifact := validType && validPolicy && value.Origin() == artifact.OriginIndependentVerifier && value.ExpiresAt().Equal(mapping.expiresAt) && validLineage
-	if !validArtifact {
-		return diagnostics.Set{}, ErrCorruptRecord
-	}
 	set, err := diagnostics.ParseSet(value.Payload())
 	if err != nil || set.Identity() != mapping.setIdentity || set.Scope().Identity() != scope.Identity() {
+		return diagnostics.Set{}, ErrCorruptRecord
+	}
+	expectedKind, expectedOrigin, authorityIdentity := artifact.KindVerifiedFindingSet, artifact.OriginIndependentVerifier, set.VerifiedSetIdentity()
+	if set.SchemaVersion() == 6 {
+		expectedKind, expectedOrigin, authorityIdentity = artifact.KindDeterministicEvidence, artifact.OriginDeterministicTool, set.AnalysisResultIdentity()
+	}
+	provenance := value.Provenance()
+	validLineage := slices.Contains(provenance, mapping.setIdentity) && slices.Contains(provenance, set.SnapshotIdentity()) && slices.Contains(provenance, authorityIdentity)
+	validType := value.Kind() == expectedKind && value.MediaType() == "application/json"
+	validPolicy := value.Classification() == s.options.Classification && value.Protection() == s.options.Protection
+	validArtifact := validType && validPolicy && value.Origin() == expectedOrigin && value.ExpiresAt().Equal(mapping.expiresAt) && validLineage
+	if !validArtifact {
 		return diagnostics.Set{}, ErrCorruptRecord
 	}
 	return set, nil

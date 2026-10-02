@@ -136,7 +136,7 @@ func TestClientDoesNotForwardCredentialsAcrossRedirects(t *testing.T) {
 	}
 }
 
-func TestClientReadsScopedVerifiedDiagnostics(t *testing.T) {
+func TestClientReadsScopedReviewDiagnostics(t *testing.T) {
 	scope, _ := audit.NewReviewScope("tenant-a", "repo-a", "run-a")
 	omission, _ := diagnostics.NewOmissionSummary(diagnostics.OmissionSelectionLimit, 172)
 	check, _ := diagnostics.NewDeterministicCheck("3f01f93e51003eb3a0deca04719a3957d6e367c97c33bdfea105174d95698092", strings.Repeat("8", 64), strings.Repeat("7", 64), diagnostics.CheckPassed, 1, 2, 1, 2, 0)
@@ -152,6 +152,25 @@ func TestClientReadsScopedVerifiedDiagnostics(t *testing.T) {
 	got, err := client.GetDiagnosticSet(context.Background(), scope)
 	if err != nil || got.Identity() != set.Identity() || got.SchemaVersion() != 5 || len(got.OmissionSummaries()) != 1 || len(got.DeterministicChecks()) != 1 || got.OmissionSummaries()[0].Count() != 172 || got.CandidateCount() != 2 || got.RejectedCount() != 1 || got.InconclusiveCount() != 1 || got.SourceAnalyzedCount() != 173 || got.SourceSelectedCount() != 1 || got.SourceOmittedCount() != 172 {
 		t.Fatalf("set=(%#v,%v)", got, err)
+	}
+}
+
+func TestClientPreservesDeterministicObservationAuthority(t *testing.T) {
+	scope, _ := audit.NewReviewScope("tenant-a", "repo-a", "run-v6")
+	analysisIdentity := strings.Repeat("8", 64)
+	check, _ := diagnostics.NewDeterministicCheck("3f01f93e51003eb3a0deca04719a3957d6e367c97c33bdfea105174d95698092", analysisIdentity, strings.Repeat("7", 64), diagnostics.CheckPassed, 1, 2, 1, 2, 0)
+	set, _ := diagnostics.NewSetWithDeterministicObservations(scope, strings.Repeat("d", 64), strings.Repeat("1", 40), analysisIdentity, []diagnostics.DeterministicCheck{check}, nil)
+	encoded, _ := diagnostics.EncodeSet(set)
+	body, _ := json.Marshal(map[string]any{"contract": "open-trestle/api-response", "schema_version": 1, "request_id": "request-v6", "diagnostics": json.RawMessage(encoded)})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write(body)
+	}))
+	defer server.Close()
+	client, _ := New(server.URL, clientTestToken, server.Client())
+	got, err := client.GetDiagnosticSet(context.Background(), scope)
+	if err != nil || got.Identity() != set.Identity() || got.SchemaVersion() != 6 || got.AnalysisResultIdentity() != analysisIdentity || got.VerifiedSetIdentity() != "" || len(got.Findings()) != 0 || len(got.DeterministicObservations()) != 0 {
+		t.Fatalf("v6 set=(%#v,%v)", got, err)
 	}
 }
 

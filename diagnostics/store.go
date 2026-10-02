@@ -43,7 +43,7 @@ var (
 	ErrStorePersistence = errors.New("diagnostic store persistence failure")
 )
 
-// Store persists one immutable verified diagnostic set per review scope.
+// Store persists one immutable diagnostic set per review scope.
 type Store interface {
 	PutDiagnosticSet(context.Context, Set) (bool, error)
 	GetDiagnosticSet(context.Context, audit.ReviewScope) (Set, error)

@@ -3,8 +3,10 @@ package acpserver
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/diagnostics"
@@ -41,6 +43,80 @@ func acpFixture(t *testing.T) (audit.ReviewScope, controlplane.ReviewRunReceipt,
 	set, _ := diagnostics.NewSetWithDeterministicChecks(scope, strings.Repeat("d", 64), strings.Repeat("1", 40), strings.Repeat("e", 64), strings.Repeat("f", 64), 0, 0, 0, 2, 1, 1, []diagnostics.OmissionSummary{omission}, []diagnostics.DeterministicCheck{check}, nil)
 	return scope, receipt, set
 }
+func sourceCheckIdentity(changeIdentity string, state diagnostics.DeterministicCheckState, applicableFiles, applicableRanges, checkedFiles, checkedRanges, matches uint32) string {
+	encoded, _ := json.Marshal(struct {
+		Contract         string `json:"contract"`
+		Version          int    `json:"version"`
+		Key              string `json:"key"`
+		RuleVersion      uint16 `json:"rule_version"`
+		ChangeIdentity   string `json:"change_identity"`
+		State            string `json:"state"`
+		ApplicableFiles  uint32 `json:"applicable_files"`
+		ApplicableRanges uint32 `json:"applicable_ranges"`
+		CheckedFiles     uint32 `json:"checked_files"`
+		CheckedRanges    uint32 `json:"checked_ranges"`
+		Matches          uint32 `json:"matches"`
+	}{"open-trestle/deterministic-check", 1, "static_debug_output", 1, changeIdentity, state.String(), applicableFiles, applicableRanges, checkedFiles, checkedRanges, matches})
+	return fmt.Sprintf("%x", sha256.Sum256(encoded))
+}
+
+func acpV6Fixture(t *testing.T, count int, messageBytes int) (audit.ReviewScope, controlplane.ReviewRunReceipt, diagnostics.Set) {
+	t.Helper()
+	scope, receipt, _ := acpFixture(t)
+	analysisIdentity := strings.Repeat("6", 64)
+	changeIdentity := strings.Repeat("7", 64)
+	check, err := diagnostics.NewDeterministicCheck(sourceCheckIdentity(changeIdentity, diagnostics.CheckFailed, 1, uint32(count), 1, uint32(count), uint32(count)), analysisIdentity, changeIdentity, diagnostics.CheckFailed, 1, uint32(count), 1, uint32(count), uint32(count))
+	if err != nil {
+		t.Fatal(err)
+	}
+	observations := make([]diagnostics.DeterministicObservation, count)
+	message := strings.Repeat("<", messageBytes)
+	if count == 1 {
+		message = "This deterministic observation is not independently verified."
+	}
+	for index := range observations {
+		observations[index], err = diagnostics.NewDeterministicObservation(fmt.Sprintf("%064x", index+1), fmt.Sprintf("%064x", index+10000), analysisIdentity, check.Identity(), "Debug output left in source", message, diagnostics.SeverityWarning, fmt.Sprintf("path-%04d.go", index), 1, 1, []string{fmt.Sprintf("%064x", index+20000)})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	set, err := diagnostics.NewSetWithDeterministicObservations(scope, strings.Repeat("d", 64), strings.Repeat("1", 40), analysisIdentity, []diagnostics.DeterministicCheck{check}, observations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return scope, receipt, set
+}
+
+func promptMessages(t *testing.T, service *serviceStub, scope audit.ReviewScope) [][]byte {
+	t.Helper()
+	server, err := New(service, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var input bytes.Buffer
+	input.Write(acpLine(1, "initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}}))
+	input.Write(acpLine(2, "session/new", map[string]any{"cwd": "/workspace", "mcpServers": []any{}}))
+	var initial bytes.Buffer
+	if err := server.Serve(context.Background(), &input, &initial); err != nil {
+		t.Fatal(err)
+	}
+	lines := bytes.Split(bytes.TrimSpace(initial.Bytes()), []byte{'\n'})
+	var session struct {
+		Result struct {
+			SessionID string `json:"sessionId"`
+		} `json:"result"`
+	}
+	if len(lines) != 2 || json.Unmarshal(lines[1], &session) != nil || session.Result.SessionID == "" {
+		t.Fatalf("initial ACP output=%s", initial.String())
+	}
+	request := acpLine(3, "session/prompt", map[string]any{"sessionId": session.Result.SessionID, "prompt": []map[string]any{{"type": "text", "text": "Show review status"}}})
+	var output bytes.Buffer
+	if err := server.Serve(context.Background(), bytes.NewReader(request), &output); err != nil {
+		t.Fatal(err)
+	}
+	return bytes.Split(bytes.TrimSpace(output.Bytes()), []byte{'\n'})
+}
+
 func acpLine(id int, method string, params any) []byte {
 	encoded, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
 	return append(encoded, '\n')
@@ -80,13 +156,40 @@ func TestServerInitializesCreatesSessionAndReportsVerifiedState(t *testing.T) {
 	if len(messages) != 2 || service.runCalls != 1 || service.diagnosticCalls != 1 {
 		t.Fatalf("messages=%d calls=(%d,%d) output=%s", len(messages), service.runCalls, service.diagnosticCalls, promptOutput.String())
 	}
-	if !bytes.Contains(messages[0], []byte(`"method":"session/update"`)) || !bytes.Contains(messages[0], []byte(receipt.Identity())) || !bytes.Contains(messages[0], []byte(set.Identity())) || !bytes.Contains(messages[0], []byte(`source_coverage`)) || !bytes.Contains(messages[0], []byte(`selection_limit`)) || !bytes.Contains(messages[0], []byte(`static_debug_output`)) || !bytes.Contains(messages[0], []byte("untrusted")) {
+	if !bytes.Contains(messages[0], []byte(`"method":"session/update"`)) || !bytes.Contains(messages[0], []byte(receipt.Identity())) || !bytes.Contains(messages[0], []byte(set.Identity())) || !bytes.Contains(messages[0], []byte(`source_coverage`)) || !bytes.Contains(messages[0], []byte(`selection_limit`)) || !bytes.Contains(messages[0], []byte(`static_debug_output`)) || !bytes.Contains(messages[0], []byte("untrusted")) || !bytes.Contains(messages[0], []byte("Verified diagnostics:")) {
 		t.Fatalf("update=%s", messages[0])
 	}
 	if !bytes.Contains(messages[1], []byte(`"stopReason":"end_turn"`)) {
 		t.Fatalf("response=%s", messages[1])
 	}
 }
+func TestServerLabelsV6AsDeterministicObservations(t *testing.T) {
+	scope, receipt, set := acpV6Fixture(t, 1, 64)
+	messages := promptMessages(t, &serviceStub{receipt: receipt, set: set}, scope)
+	if len(messages) != 2 || !bytes.Contains(messages[0], []byte("Deterministic review observations:")) || !bytes.Contains(messages[0], []byte("not independently verified")) || bytes.Contains(messages[0], []byte("Verified diagnostics:")) || bytes.Contains(messages[0], []byte("verified-state view")) {
+		t.Fatalf("ACP v6 update=%s", messages[0])
+	}
+	for _, message := range messages {
+		if len(message)+1 > maxACPMessageBytes {
+			t.Fatalf("ACP frame bytes=%d, max=%d", len(message)+1, maxACPMessageBytes)
+		}
+	}
+	if !bytes.Contains(messages[1], []byte(`"stopReason":"end_turn"`)) {
+		t.Fatalf("response=%s", messages[1])
+	}
+}
+
+func TestServerLabelsOmittedV6AsDeterministicAndBoundsFrame(t *testing.T) {
+	scope, receipt, set := acpV6Fixture(t, 37, 4096)
+	messages := promptMessages(t, &serviceStub{receipt: receipt, set: set}, scope)
+	if len(messages) != 2 || !bytes.Contains(messages[0], []byte("Deterministic review observations omitted: ACP message size limit.")) || bytes.Contains(messages[0], []byte("Verified diagnostics")) {
+		t.Fatalf("ACP omitted v6 update prefix=%s", messages[0][:min(len(messages[0]), 2048)])
+	}
+	if len(messages[0])+1 > maxACPMessageBytes {
+		t.Fatalf("ACP frame bytes=%d, max=%d", len(messages[0])+1, maxACPMessageBytes)
+	}
+}
+
 func TestServerRejectsFilesystemAndMCPExpansion(t *testing.T) {
 	scope, receipt, set := acpFixture(t)
 	server, _ := New(&serviceStub{receipt: receipt, set: set}, scope)

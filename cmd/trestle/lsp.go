@@ -26,7 +26,7 @@ func runLSP(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	flags := flag.NewFlagSet("trestle lsp", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	diagnosticPath := flags.String("diagnostics", "", "canonical verified diagnostic set file")
+	diagnosticPath := flags.String("diagnostics", "", "canonical review diagnostic set file")
 	serverURL := flags.String("server", apiURLFromEnvironment(), "Open Trestle API URL")
 	if err := flags.Parse(args); err != nil {
 		return 2

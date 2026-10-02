@@ -134,7 +134,7 @@ func (c *Client) GetRunPlan(ctx context.Context, scope audit.ReviewScope) (contr
 	return plan, nil
 }
 
-// GetDiagnosticSet reads independently verified diagnostics for one exact run scope.
+// GetDiagnosticSet reads canonical review diagnostics for one exact run scope.
 func (c *Client) GetDiagnosticSet(ctx context.Context, scope audit.ReviewScope) (diagnostics.Set, error) {
 	if err := scope.Validate(); err != nil {
 		return diagnostics.Set{}, err

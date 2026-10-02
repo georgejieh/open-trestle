@@ -14,6 +14,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/webhook"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -377,6 +378,39 @@ func TestDiagnosticStoreKeepsContentInProtectedArtifactStore(t *testing.T) {
 		t.Fatalf("get=(%#v,%v)", loaded, err)
 	}
 	assertMock(t, mock)
+}
+
+func TestDiagnosticStorePreservesDeterministicObservationAuthority(t *testing.T) {
+	scope, _ := audit.NewReviewScope("tenant-a", "repo-a", "run-deterministic")
+	analysisIdentity := strings.Repeat("8", 64)
+	check, err := diagnostics.NewDeterministicCheck("3f01f93e51003eb3a0deca04719a3957d6e367c97c33bdfea105174d95698092", analysisIdentity, strings.Repeat("7", 64), diagnostics.CheckPassed, 1, 2, 1, 2, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	set, err := diagnostics.NewSetWithDeterministicObservations(scope, strings.Repeat("c", 64), strings.Repeat("d", 40), analysisIdentity, []diagnostics.DeterministicCheck{check}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifacts, _ := artifact.NewMemoryStore(artifact.ProtectionProcessPrivate, 10)
+	database, _ := newMockDatabase(t)
+	store, err := NewDiagnosticStore(database, artifacts, DiagnosticStoreOptions{Classification: artifact.ClassificationRestricted, Protection: artifact.ProtectionProcessPrivate, Retention: time.Hour, Clock: diagnosticFixedClock{at: time.UnixMilli(100)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := store.newDiagnosticArtifact(set, time.UnixMilli(100))
+	if err != nil {
+		t.Fatalf("newDiagnosticArtifact(v6) error=%v", err)
+	}
+	if value.Kind() != artifact.KindDeterministicEvidence || value.Origin() != artifact.OriginDeterministicTool || !slices.Contains(value.Provenance(), analysisIdentity) {
+		t.Fatalf("v6 artifact authority kind=%s origin=%s provenance=%v", value.Kind(), value.Origin(), value.Provenance())
+	}
+	if _, err := artifacts.Put(context.Background(), value, time.UnixMilli(100)); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.loadDiagnosticArtifact(context.Background(), scope, diagnosticMapping{setIdentity: set.Identity(), artifactIdentity: value.Identity(), expiresAt: value.ExpiresAt()}, time.UnixMilli(100))
+	if err != nil || loaded.Identity() != set.Identity() || loaded.SchemaVersion() != 6 {
+		t.Fatalf("loadDiagnosticArtifact(v6)=(%#v,%v)", loaded, err)
+	}
 }
 
 type webhookFixedClock struct{ at time.Time }

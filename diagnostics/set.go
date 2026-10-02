@@ -1,4 +1,4 @@
-// Package diagnostics defines secret-free verified review diagnostics for editor transports.
+// Package diagnostics defines secret-free review diagnostics and their evidence authority.
 package diagnostics
 
 import (

@@ -43,7 +43,7 @@ type SystemClock struct{}
 
 func (SystemClock) Now() time.Time { return time.Now().UTC() }
 
-// DiagnosticReader loads one canonical verified diagnostic set.
+// DiagnosticReader loads one canonical review diagnostic set.
 type DiagnosticReader interface {
 	GetDiagnosticSet(context.Context, audit.ReviewScope) (diagnostics.Set, error)
 }
@@ -154,7 +154,7 @@ func NewServerWithLocalDeterministicRuntimeAdministrationAndRateLimiters(journal
 	return server, nil
 }
 
-// NewServerWithDiagnostics constructs a server with scoped verified diagnostic retrieval.
+// NewServerWithDiagnostics constructs a server with scoped diagnostic retrieval.
 func NewServerWithDiagnostics(coordinator *controlplane.Coordinator, authenticator Authenticator, clock Clock, reader DiagnosticReader) (*Server, error) {
 	if isNilDiagnosticReader(reader) {
 		return nil, ErrInvalidServer
@@ -320,20 +320,20 @@ func (s *Server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			return
 		}
 		if isNilDiagnosticReader(s.diagnosticReader) {
-			writeAPIError(writer, http.StatusNotFound, requestID, "not_found", "Verified diagnostics are not available.")
+			writeAPIError(writer, http.StatusNotFound, requestID, "not_found", "Review diagnostics are not available.")
 			return
 		}
 		set, readErr := s.diagnosticReader.GetDiagnosticSet(ctx, diagnosticScope)
 		if readErr != nil {
 			if errors.Is(readErr, diagnostics.ErrSetNotFound) {
-				writeAPIError(writer, http.StatusNotFound, requestID, "not_found", "Verified diagnostics were not found.")
+				writeAPIError(writer, http.StatusNotFound, requestID, "not_found", "Review diagnostics were not found.")
 			} else {
-				writeAPIError(writer, http.StatusInternalServerError, requestID, "internal_error", "Verified diagnostics could not be read.")
+				writeAPIError(writer, http.StatusInternalServerError, requestID, "internal_error", "Review diagnostics could not be read.")
 			}
 			return
 		}
 		if set.Scope().Identity() != diagnosticScope.Identity() {
-			writeAPIError(writer, http.StatusInternalServerError, requestID, "internal_error", "Verified diagnostics could not be read.")
+			writeAPIError(writer, http.StatusInternalServerError, requestID, "internal_error", "Review diagnostics could not be read.")
 			return
 		}
 		writeAPIDiagnostics(writer, http.StatusOK, requestID, set)

@@ -32,7 +32,7 @@ var (
 	ErrOutput = errors.New("LSP output failure")
 )
 
-// DiagnosticReader loads one canonical verified diagnostic set.
+// DiagnosticReader loads one canonical review diagnostic set.
 type DiagnosticReader interface {
 	GetDiagnosticSet(context.Context, audit.ReviewScope) (diagnostics.Set, error)
 }
@@ -190,7 +190,7 @@ func (s *Server) diagnostic(ctx context.Context, state *session, id json.RawMess
 	}
 	set, err := s.reader.GetDiagnosticSet(ctx, state.scope)
 	if err != nil || set.Validate() != nil || set.Scope().Identity() != state.scope.Identity() {
-		return failure(id, -32603, "Verified diagnostics are unavailable.")
+		return failure(id, -32603, "Review diagnostics are unavailable.")
 	}
 	if params.PreviousResultID == set.Identity() {
 		return success(id, map[string]any{"kind": "unchanged", "resultId": set.Identity()})
