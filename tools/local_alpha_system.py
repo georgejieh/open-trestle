@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import hashlib
 import http.client
 import json
@@ -41,6 +42,37 @@ def sha256(path: Path) -> str:
 def write(path: Path, data: bytes) -> None:
     path.write_bytes(data)
     path.chmod(0o600)
+
+
+def create_private_tmp_alias(target: Path) -> Path:
+    root = Path("/dev/shm")
+    if not root.is_dir() or not os.access(root, os.W_OK | os.X_OK):
+        raise RuntimeError("private short temporary root is unavailable")
+    try:
+        information = target.lstat()
+    except OSError as error:
+        raise RuntimeError("private temporary target is unavailable") from error
+    if not stat.S_ISDIR(information.st_mode) or stat.S_ISLNK(information.st_mode) or stat.S_IMODE(information.st_mode) != 0o700 or information.st_uid != os.geteuid():
+        raise RuntimeError("private temporary target must be an owned mode-0700 directory")
+    target = target.resolve()
+    for _ in range(8):
+        alias = root / ("ot-" + secrets.token_hex(8))
+        try:
+            alias.symlink_to(target, target_is_directory=True)
+            return alias
+        except FileExistsError:
+            continue
+    raise RuntimeError("private short temporary alias is unavailable")
+
+
+def remove_private_tmp_alias(alias: Path, target: Path) -> None:
+    try:
+        information = alias.lstat()
+    except FileNotFoundError:
+        return
+    if not stat.S_ISLNK(information.st_mode) or alias.resolve() != target.resolve():
+        raise RuntimeError("private short temporary alias changed")
+    alias.unlink()
 
 
 def read_bounded(path: Path, maximum: int) -> bytes:
@@ -471,11 +503,14 @@ def main() -> int:
     cache = output / "cache"
     for directory in (home, runtime, setup_dir, repository, artifacts, sandbox, private_tmp, cache):
         directory.mkdir(mode=0o700)
+    private_tmp_alias = create_private_tmp_alias(private_tmp)
+    atexit.register(remove_private_tmp_alias, private_tmp_alias, private_tmp)
+    private_tmp_alias_removed = False
     token = secrets.token_hex(32)
     env = {
         "HOME": str(home),
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-        "TMPDIR": str(private_tmp),
+        "TMPDIR": str(private_tmp_alias),
         "XDG_CACHE_HOME": str(cache),
         "OPEN_TRESTLE_API_TOKEN": token,
         "HTTP_PROXY": "http://127.0.0.1:9",
@@ -679,6 +714,12 @@ def main() -> int:
 
             if trestle.exists() or trestled.exists() or not all(exact_sentinel(path) for path in sentinels):
                 cleanup_errors.append("candidate cleanup did not preserve exact operator state or remove binaries")
+        try:
+            remove_private_tmp_alias(private_tmp_alias, private_tmp)
+            atexit.unregister(remove_private_tmp_alias)
+            private_tmp_alias_removed = True
+        except Exception as error:
+            cleanup_errors.append(f"temporary alias: {error}")
         if cleanup_errors:
             raise RuntimeError("local alpha cleanup failed: " + "; ".join(cleanup_errors))
     source_after = verify_source_state(source, source_before)
@@ -714,9 +755,9 @@ def main() -> int:
         "browser": browser_record,
         "setup": {"profile": "local_single_node", "plan_identity": setup_root, "ready": False, "authority": "scope_and_denied_effect_posture_only"},
         "network": {"configured_url": url, "readyz_observed": True, "http_proxies": "non_loopback_http_proxies_point_to_closed_loopback", "browser_request_guard": "not_run" if args.skip_browser else "abort_non_loopback"},
-        "cleanup": {"daemon_stopped": True, "process_group_quiescent": process_groups_quiescent, "port_rebind_before_restart": port_before_restart, "port_rebind_after_cleanup": port_after_cleanup, "candidate_recovered": True, "candidate_uninstalled": True, "operator_state_preserved": True},
+        "cleanup": {"daemon_stopped": True, "process_group_quiescent": process_groups_quiescent, "port_rebind_before_restart": port_before_restart, "port_rebind_after_cleanup": port_after_cleanup, "private_temporary_alias_removed": private_tmp_alias_removed, "candidate_recovered": True, "candidate_uninstalled": True, "operator_state_preserved": True},
     }
-    if not all((process_groups_quiescent, port_before_restart, port_after_cleanup)):
+    if not all((process_groups_quiescent, port_before_restart, port_after_cleanup, private_tmp_alias_removed)):
         raise RuntimeError("daemon cleanup evidence is incomplete")
     write(output / "receipt.json", canonical_json(receipt) + b"\n")
     print(output / "receipt.json")

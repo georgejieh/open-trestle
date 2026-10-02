@@ -99,6 +99,24 @@ class LocalAlphaSystemTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "browser evidence requires before and after restart phases"):
             local_alpha_system.validate_browser_phase_evidence(None, after, expected)
 
+    def test_private_tmp_alias_is_short_and_output_owned(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "owned-tmp"; target.mkdir(mode=0o700)
+            alias = local_alpha_system.create_private_tmp_alias(target)
+            try:
+                self.assertLess(len(str(alias)), 48)
+                self.assertTrue(alias.is_symlink())
+                self.assertEqual(alias.resolve(), target.resolve())
+            finally:
+                local_alpha_system.remove_private_tmp_alias(alias, target)
+            self.assertFalse(alias.exists())
+
+    def test_private_tmp_alias_rejects_nonprivate_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "shared-tmp"; target.mkdir(mode=0o755)
+            with self.assertRaisesRegex(RuntimeError, "private temporary target"):
+                local_alpha_system.create_private_tmp_alias(target)
+
     def test_command_runs_from_output_sandbox_with_private_tmp(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
