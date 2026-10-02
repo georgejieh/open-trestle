@@ -1,7 +1,7 @@
 {
   "name": "open-trestle",
   "displayName": "Open Trestle",
-  "description": "Read-only independently verified code-review diagnostics from Open Trestle.",
+  "description": "Read-only independently verified findings from Open Trestle diagnostic versions 1 through 5.",
   "version": "0.1.0",
   "private": true,
   "publisher": "open-trestle",

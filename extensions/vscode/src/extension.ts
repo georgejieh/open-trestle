@@ -44,8 +44,9 @@ function setStatus(
 ) {
   switch (kind) {
     case "connected":
-      status.text = "$(verified) Trestle: connected";
-      status.tooltip = "Read-only verified diagnostics are active";
+      status.text = "$(shield) Trestle: connected";
+      status.tooltip =
+        "Read-only verified findings are active; deterministic observations remain outside LSP findings";
       status.command = "openTrestle.restart";
       break;
     case "connecting":

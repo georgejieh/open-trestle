@@ -1,10 +1,10 @@
 # Open Trestle for VS Code
 
-Open Trestle for VS Code displays independently verified review findings through the read-only Open Trestle LSP server. It does not edit files, execute repository commands, offer code actions, change policy, call a model directly, or publish review results.
+Open Trestle for VS Code displays independently verified review findings from diagnostic versions 1 through 5 through the read-only Open Trestle LSP server. Version 6 deterministic observations remain outside LSP findings and are available through the CLI, TUI, and web console. The extension does not edit files, execute repository commands, offer code actions, change policy, call a model directly, or publish review results.
 
 ## Requirements
 
-Install the `trestle` CLI on the extension host. Configure an HTTPS daemon URL or a canonical loopback IP HTTP URL. The daemon must already contain the exact review run and verified diagnostic set.
+Install the `trestle` CLI on the extension host. Configure an HTTPS daemon URL or a canonical loopback IP HTTP URL. The daemon must already contain the exact review run and canonical diagnostic set. A version 6 set is a valid empty LSP result because its deterministic observations are not independently verified findings.
 
 ## Connect
 
