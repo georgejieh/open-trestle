@@ -610,6 +610,30 @@ describe("API client", () => {
       ),
     ).toThrow(ApiError);
   });
+  it("normalizes Go runtime status null handlers after strict validation", () => {
+    const status = {
+      ...runtimeStatus,
+      ready: true,
+      configuration: {
+        ...runtimeStatus.configuration,
+        review_mode: "disabled",
+        local_workers: false,
+        handlers: null,
+      },
+      components: [],
+    };
+    const parsed = parseRuntimeStatusEnvelope(
+      {
+        contract: "open-trestle/runtime-status-response",
+        schema_version: 1,
+        request_id: "request-disabled",
+        status,
+      },
+      { tenant: "tenant-a", repository: "repo-a" },
+    );
+    expect(parsed.configuration.handlers).toEqual([]);
+  });
+
   it("rejects impossible runtime state and normalized calendar dates", () => {
     const envelope = (status: unknown) => ({
       contract: "open-trestle/runtime-status-response",

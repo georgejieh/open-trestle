@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import atexit
 import dataclasses
+import datetime
 import hashlib
 import http.client
 import json
@@ -1139,14 +1140,97 @@ def seal_browser_modules(source: Path, state: SourceState, destination: Path) ->
     return script, record
 
 
-def validate_browser_phase_record(record: dict, expected: dict, artifacts_root: Path | None) -> None:
+def _runtime_digest(value: object, prefix: bytes) -> str:
+    encoded = json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode()
+    return hashlib.sha256(prefix + encoded).hexdigest()
+
+
+def _runtime_observed_milliseconds(value: object) -> int:
+    if not isinstance(value, str): raise RuntimeError("browser runtime observed_at is invalid")
+    match = re.fullmatch(r"(\d{4})-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.(\d{1,3}))?Z", value)
+    if not match or int(match.group(1)) < 1970: raise RuntimeError("browser runtime observed_at is invalid")
+    base = value[:-1].split(".", 1)[0]
+    normalized = base + "." + (match.group(2) or "").ljust(3, "0") + "+00:00"
+    try: parsed = datetime.datetime.fromisoformat(normalized)
+    except ValueError as error: raise RuntimeError("browser runtime observed_at is invalid") from error
+    milliseconds = int(parsed.timestamp() * 1000)
+    if datetime.datetime.fromtimestamp(milliseconds / 1000, datetime.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z") != normalized.replace("+00:00", "Z"):
+        raise RuntimeError("browser runtime observed_at is invalid")
+    return milliseconds
+
+
+def _runtime_configuration(value: object, scope: dict) -> dict:
+    if not isinstance(value, dict): raise RuntimeError("browser runtime configuration is invalid")
+    has_database = "database_authority_identity" in value; has_rate = "rate_limit_authority_identity" in value
+    has_routes = "route_inventory_identity" in value or "runtime_policy_identity" in value
+    keys = ["tenant_id", "repository_ids", "metadata_backend"] + (["database_authority_identity"] if has_database else []) + ["artifact_backend", "artifact_protection", "notification_backend", "rate_limit_backend"] + (["rate_limit_authority_identity"] if has_rate else []) + ["review_mode", "webhook_ingress", "local_workers", "publication_enabled", "publication_fence_verified"] + (["route_inventory_identity", "runtime_policy_identity"] if has_routes else []) + ["route_count", "handlers"]
+    digest = re.compile(r"^[0-9a-f]{64}$")
+    valid_digest = lambda item: isinstance(item, str) and digest.fullmatch(item) is not None and item != "0" * 64
+    raw_handlers = value.get("handlers")
+    handlers = [] if raw_handlers is None else raw_handlers
+    if set(value) != set(keys) or value.get("tenant_id") != scope["tenant"] or value.get("repository_ids") != [scope["repository"]] or value.get("metadata_backend") not in {"local", "postgres"} or value.get("artifact_backend") not in {"local", "s3"} or value.get("artifact_protection") not in {"process_private", "envelope_encrypted"} or value.get("notification_backend") not in {"process_local", "postgres"} or value.get("rate_limit_backend") not in {"process_local", "postgres"} or value.get("review_mode") not in {"disabled", "local", "advisory", "required"} or any(type(value.get(key)) is not bool for key in ("webhook_ingress", "local_workers", "publication_enabled", "publication_fence_verified")) or type(value.get("route_count")) is not int or not 0 <= value["route_count"] <= 64 or (not isinstance(raw_handlers, list) and raw_handlers is not None) or len(handlers) > 64:
+        raise RuntimeError("browser runtime configuration is invalid")
+    if has_database != (value["metadata_backend"] == "postgres") or has_rate != (value["rate_limit_backend"] == "postgres") or has_routes != (value["route_count"] > 0) or has_database and not valid_digest(value["database_authority_identity"]) or has_rate and not valid_digest(value["rate_limit_authority_identity"]) or has_routes and (not valid_digest(value["route_inventory_identity"]) or not valid_digest(value["runtime_policy_identity"])) or value["route_count"] > 0 and value["local_workers"] is not True or value["review_mode"] == "disabled" and (value["local_workers"] or value["route_count"] or handlers) or value["local_workers"] and not handlers or value["publication_enabled"] != (value["review_mode"] == "required") or value["publication_enabled"] and not value["publication_fence_verified"] or value["publication_fence_verified"] and value["metadata_backend"] != "postgres" or value["metadata_backend"] == "local" and (value["artifact_backend"] != "local" or value["artifact_protection"] != "process_private" or value["notification_backend"] != "process_local" or value["rate_limit_backend"] != "process_local") or value["artifact_backend"] == "local" and value["artifact_protection"] != "process_private" or value["artifact_backend"] == "s3" and (value["metadata_backend"] != "postgres" or value["artifact_protection"] != "envelope_encrypted") or value["notification_backend"] == "postgres" and value["metadata_backend"] != "postgres" or value["rate_limit_backend"] == "postgres" and value["metadata_backend"] != "postgres" or value["metadata_backend"] == "postgres" and value["rate_limit_backend"] != "postgres":
+        raise RuntimeError("browser runtime configuration is invalid")
+    task_kinds = {"acquire_source", "build_change", "inspect_deterministic", "retrieve_context", "assemble_context", "generate_candidates", "verify_candidates", "evaluate_publication", "publish_result"}
+    previous = ""
+    for handler in handlers:
+        if not isinstance(handler, dict) or set(handler) != {"kind", "identity"} or handler.get("kind") not in task_kinds or handler["kind"] <= previous or not valid_digest(handler.get("identity")): raise RuntimeError("browser runtime handler is invalid")
+        previous = handler["kind"]
+    canonical = {"tenant_id": value["tenant_id"], "repository_ids": list(value["repository_ids"]), "metadata_backend": value["metadata_backend"]}
+    if has_database: canonical["database_authority_identity"] = value["database_authority_identity"]
+    canonical.update({"artifact_backend": value["artifact_backend"], "artifact_protection": value["artifact_protection"], "notification_backend": value["notification_backend"], "rate_limit_backend": value["rate_limit_backend"]})
+    if has_rate: canonical["rate_limit_authority_identity"] = value["rate_limit_authority_identity"]
+    canonical.update({"review_mode": value["review_mode"], "webhook_ingress": value["webhook_ingress"], "local_workers": value["local_workers"], "publication_enabled": value["publication_enabled"], "publication_fence_verified": value["publication_fence_verified"]})
+    if has_routes: canonical.update({"route_inventory_identity": value["route_inventory_identity"], "runtime_policy_identity": value["runtime_policy_identity"]})
+    canonical.update({"route_count": value["route_count"], "handlers": None if raw_handlers is None else [dict(handler) for handler in handlers]})
+    return canonical
+
+
+def _runtime_envelope(value: object, scope: dict) -> dict:
+    if not isinstance(value, dict) or set(value) != {"contract", "schema_version", "request_id", "status"} or value.get("contract") != "open-trestle/runtime-status-response" or type(value.get("schema_version")) is not int or value["schema_version"] != 1 or not isinstance(value.get("request_id"), str) or not 1 <= len(value["request_id"]) <= 128 or not isinstance(value.get("status"), dict): raise RuntimeError("browser runtime envelope is invalid")
+    status = value["status"]
+    required = {"contract", "schema_version", "identity", "configuration_identity", "tenant_id", "repository_id", "observed_at", "ready", "configuration", "components"}
+    digest = re.compile(r"^[0-9a-f]{64}$"); valid_digest = lambda item: isinstance(item, str) and digest.fullmatch(item) is not None and item != "0" * 64
+    if set(status) != required or status.get("contract") != "open-trestle/runtime-status" or type(status.get("schema_version")) is not int or status["schema_version"] != 1 or not valid_digest(status.get("identity")) or not valid_digest(status.get("configuration_identity")) or status.get("tenant_id") != scope["tenant"] or status.get("repository_id") != scope["repository"] or type(status.get("ready")) is not bool or not isinstance(status.get("components"), list) or len(status["components"]) > 64: raise RuntimeError("browser runtime status is invalid")
+    _runtime_observed_milliseconds(status.get("observed_at")); configuration = _runtime_configuration(status["configuration"], scope)
+    if status["configuration_identity"] != _runtime_digest(configuration, b"open-trestle/runtime-configuration/v1\0"): raise RuntimeError("browser runtime configuration identity is invalid")
+    components = []; previous = ""; ready = True
+    for component in status["components"]:
+        if not isinstance(component, dict) or set(component) != {"name", "state"} or component.get("name") not in {"local_workers", "task_notifications"} or component["name"] <= previous or component.get("state") not in {"starting", "ready"}: raise RuntimeError("browser runtime component is invalid")
+        previous = component["name"]; ready = ready and component["state"] == "ready"; components.append(dict(component))
+    if status["ready"] is not ready: raise RuntimeError("browser runtime readiness is invalid")
+    unsigned = {"contract": "open-trestle/runtime-status", "schema_version": 1, "identity": "", "configuration_identity": status["configuration_identity"], "tenant_id": status["tenant_id"], "repository_id": status["repository_id"], "observed_at": status["observed_at"], "ready": status["ready"], "configuration": configuration, "components": components}
+    if status["identity"] != _runtime_digest(unsigned, b"open-trestle/runtime-status/v1\0"):
+        raise RuntimeError("browser runtime status identity is invalid")
+    normalized_configuration = {**configuration, "handlers": [] if configuration["handlers"] is None else configuration["handlers"]}
+    return {**unsigned, "identity": status["identity"], "configuration": normalized_configuration}
+
+
+def validate_browser_runtime(runtime: object, phase: str, scope: dict, captures: list[dict]) -> dict:
+    keys = {"phase", "endpoint", "displayed_received_at_milliseconds", "post_capture_received_at_milliseconds", "displayed", "post_capture", "dom", "runtime_screenshot_sha256"}
+    expected_endpoint = f"/api/v1/tenants/{urllib.parse.quote(scope['tenant'], safe='')}/repositories/{urllib.parse.quote(scope['repository'], safe='')}/runtime"
+    digest = re.compile(r"^[0-9a-f]{64}$")
+    if not isinstance(runtime, dict) or set(runtime) != keys or runtime.get("phase") != phase or runtime.get("endpoint") != expected_endpoint or type(runtime.get("displayed_received_at_milliseconds")) is not int or type(runtime.get("post_capture_received_at_milliseconds")) is not int or runtime["displayed_received_at_milliseconds"] < 0 or runtime["post_capture_received_at_milliseconds"] < runtime["displayed_received_at_milliseconds"] or not isinstance(runtime.get("runtime_screenshot_sha256"), str) or not digest.fullmatch(runtime["runtime_screenshot_sha256"]) or runtime["runtime_screenshot_sha256"] == "0" * 64: raise RuntimeError("browser runtime evidence is invalid")
+    displayed = _runtime_envelope(runtime["displayed"], scope); post = _runtime_envelope(runtime["post_capture"], scope)
+    displayed_at = _runtime_observed_milliseconds(displayed["observed_at"]); post_at = _runtime_observed_milliseconds(post["observed_at"])
+    if displayed_at > runtime["displayed_received_at_milliseconds"] + 1000 or runtime["displayed_received_at_milliseconds"] - displayed_at > 30_000 or post_at > runtime["post_capture_received_at_milliseconds"] + 1000 or runtime["post_capture_received_at_milliseconds"] - post_at > 30_000 or post_at < displayed_at or displayed["configuration_identity"] != post["configuration_identity"] or displayed["tenant_id"] != post["tenant_id"] or displayed["repository_id"] != post["repository_id"] or displayed["ready"] is not post["ready"] or displayed["configuration"] != post["configuration"] or displayed["components"] != post["components"]: raise RuntimeError("browser runtime changed during screenshot capture")
+    expected_dom = {"status_identity": displayed["identity"], "configuration_identity": displayed["configuration_identity"], "observed_at": displayed["observed_at"], "ready": displayed["ready"], "configuration": displayed["configuration"], "components": displayed["components"]}
+    if runtime.get("dom") != expected_dom: raise RuntimeError("browser runtime DOM does not match response")
+    runtime_captures = [capture for capture in captures if capture.get("view") == "runtime"]
+    if len(runtime_captures) != 1 or runtime_captures[0].get("sha256") != runtime["runtime_screenshot_sha256"]: raise RuntimeError("browser runtime screenshot is not bound")
+    return {"displayed": displayed, "post_capture": post}
+
+
+def validate_browser_phase_record(record: dict, expected: dict, artifacts_root: Path | None) -> dict:
     phase = record.get("phase")
     if phase not in {"before_restart", "after_restart"}:
         raise RuntimeError("browser evidence phase is invalid")
-    if record.get("contract") != "open-trestle/daemon-console-visual-receipt" or type(record.get("schema_version")) is not int or record["schema_version"] != 2:
+    required_keys = {"contract", "schema_version", "phase", "scope", "run_identity", "diagnostic_set_identity", "deterministic_check_identity", "deterministic_check_state", "observation_count", "observation_identities", "runtime", "console_errors", "unexpected_egress", "horizontal_overflow", "keyboard_focus_visible", "evidence_disclosure_focus_visible", "focus_order_steps", "reduced_motion", "tap_targets_minimum", "captures", "receipt", "receipt_sha256"}
+    if set(record) != required_keys or record.get("contract") != "open-trestle/daemon-console-visual-receipt" or type(record.get("schema_version")) is not int or record["schema_version"] != 3:
         raise RuntimeError("browser evidence contract is invalid")
     scope = record.get("scope")
-    if not isinstance(scope, dict) or set(scope) != {"tenant", "repository", "run"} or any(not isinstance(value, str) for value in scope.values()) or not isinstance(record.get("deterministic_check_state"), str):
+    if not isinstance(scope, dict) or set(scope) != {"tenant", "repository", "run"} or any(not isinstance(value, str) for value in scope.values()) or record.get("deterministic_check_state") not in {"passed", "failed"}:
         raise RuntimeError("browser evidence scope or state is invalid")
     observation_count = record.get("observation_count")
     if type(observation_count) is not int or observation_count < 0 or observation_count > 8192:
@@ -1196,12 +1280,13 @@ def validate_browser_phase_record(record: dict, expected: dict, artifacts_root: 
             raise RuntimeError("browser evidence capture metadata is invalid")
     if observed_names != set(expected_captures):
         raise RuntimeError("browser evidence capture inventory is invalid")
+    runtime = validate_browser_runtime(record.get("runtime"), phase, scope, captures)
     receipt_name = record.get("receipt")
     receipt_sha256 = record.get("receipt_sha256")
     if not isinstance(receipt_name, str) or not isinstance(receipt_sha256, str) or not digest.fullmatch(receipt_sha256):
         raise RuntimeError("browser evidence receipt binding is invalid")
     if artifacts_root is None:
-        return
+        return runtime
     receipt_path = artifacts_root / receipt_name
     try:
         receipt_relative = receipt_path.resolve().relative_to(artifacts_root.resolve())
@@ -1228,14 +1313,18 @@ def validate_browser_phase_record(record: dict, expected: dict, artifacts_root: 
         image_width, image_height = validate_png(body)
         if image_width != capture["image_width"] or image_height != capture["image_height"]:
             raise RuntimeError("browser evidence PNG dimensions mismatch")
+    return runtime
 
 
 def validate_browser_phase_evidence(before: dict | None, after: dict | None, expected: dict, artifacts_root: Path | None = None) -> dict:
     if before is None or after is None or before.get("phase") != "before_restart" or after.get("phase") != "after_restart":
         raise RuntimeError("browser evidence requires before and after restart phases")
-    validate_browser_phase_record(before, expected, artifacts_root)
-    validate_browser_phase_record(after, expected, artifacts_root)
-    return {"status": "passed", "phases": [before, after]}
+    before_runtime = validate_browser_phase_record(before, expected, artifacts_root)
+    after_runtime = validate_browser_phase_record(after, expected, artifacts_root)
+    before_status = before_runtime["displayed"]; after_status = after_runtime["displayed"]
+    if before_status["configuration_identity"] != after_status["configuration_identity"] or before_status["tenant_id"] != after_status["tenant_id"] or before_status["repository_id"] != after_status["repository_id"] or before_status["ready"] is not after_status["ready"] or before_status["configuration"] != after_status["configuration"] or before_status["components"] != after_status["components"] or _runtime_observed_milliseconds(after_status["observed_at"]) < _runtime_observed_milliseconds(before_status["observed_at"]):
+        raise RuntimeError("browser runtime semantics changed across restart")
+    return {"status": "passed", "runtime": {"configuration_identity": before_status["configuration_identity"], "ready": before_status["ready"], "components": before_status["components"], "configuration_stable": True, "components_stable": True, "per_phase": {"before_restart": {"status_identity": before_status["identity"], "observed_at": before_status["observed_at"]}, "after_restart": {"status_identity": after_status["identity"], "observed_at": after_status["observed_at"]}}}, "phases": [before, after]}
 
 
 def main() -> int:
@@ -1532,7 +1621,7 @@ def main() -> int:
         browser_record["provenance"] = browser_provenance
     receipt = {
         "contract": "open-trestle/local-alpha-system-receipt",
-        "schema_version": 2,
+        "schema_version": 3,
         "source_revision": source_after.revision,
         "source_tree_identity": source_after.tree_identity,
         "source_state_identity": source_after.identity(),
@@ -1557,6 +1646,7 @@ def main() -> int:
         "artifacts": artifact_records,
         "restart": {"status_identity_stable": True, "diagnostics_set_stable": True, "json_bytes_stable": True, "sarif_bytes_stable": True},
         "browser": browser_record,
+        "runtime": browser_record.get("runtime", {"status": "not_run", "reason": "explicit_nonvisual_verification"}),
         "setup": {"profile": "local_single_node", "plan_identity": setup_root, "ready": False, "authority": "scope_and_denied_effect_posture_only"},
         "network": {"configured_url": url, "readyz_observed": True, "http_proxies": "non_loopback_http_proxies_point_to_closed_loopback", "browser_request_guard": "not_run" if args.skip_browser else "abort_non_loopback"},
         "cleanup": {"daemon_stopped": True, "process_group_quiescent": process_groups_quiescent, "port_rebind_before_restart": port_before_restart, "port_rebind_after_cleanup": port_after_cleanup, "private_temporary_alias_removed": private_tmp_alias_removed, "candidate_recovered": True, "candidate_uninstalled": True, "operator_state_preserved": True},

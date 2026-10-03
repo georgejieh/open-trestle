@@ -61,6 +61,31 @@ class LocalAlphaSystemTest(unittest.TestCase):
             "observation_identities": ["4" * 64],
         }
 
+    def runtime_status(self, observed_at: str) -> dict:
+        configuration = {
+            "tenant_id": "tenant-a",
+            "repository_ids": ["repository-a"],
+            "metadata_backend": "local",
+            "artifact_backend": "local",
+            "artifact_protection": "process_private",
+            "notification_backend": "process_local",
+            "rate_limit_backend": "process_local",
+            "review_mode": "local",
+            "webhook_ingress": False,
+            "local_workers": True,
+            "publication_enabled": False,
+            "publication_fence_verified": False,
+            "route_count": 0,
+            "handlers": [
+                {"kind": "acquire_source", "identity": "a" * 64},
+                {"kind": "build_change", "identity": "b" * 64},
+                {"kind": "inspect_deterministic", "identity": "c" * 64},
+            ],
+        }
+        configuration_identity = local_alpha_system._runtime_digest(configuration, b"open-trestle/runtime-configuration/v1\0")
+        unsigned = {"contract": "open-trestle/runtime-status", "schema_version": 1, "identity": "", "configuration_identity": configuration_identity, "tenant_id": "tenant-a", "repository_id": "repository-a", "observed_at": observed_at, "ready": True, "configuration": configuration, "components": [{"name": "local_workers", "state": "ready"}, {"name": "task_notifications", "state": "ready"}]}
+        return {**unsigned, "identity": local_alpha_system._runtime_digest(unsigned, b"open-trestle/runtime-status/v1\0")}
+
     def browser_record(self, root: Path, phase: str, expected: dict):
         prefix = phase.replace("_", "-")
         phase_root = root / "daemon-console" / prefix
@@ -79,7 +104,20 @@ class LocalAlphaSystemTest(unittest.TestCase):
             body = self.png(width, image_height)
             (phase_root / file_name).write_bytes(body)
             captures.append({"name": file_name, "view": view, "width": width, "height": height, "image_width": width, "image_height": image_height, "bytes": len(body), "sha256": hashlib.sha256(body).hexdigest()})
-        raw = {"contract": "open-trestle/daemon-console-visual-receipt", "schema_version": 2, "phase": phase, **expected, "reduced_motion": True, "horizontal_overflow": False, "keyboard_focus_visible": True, "evidence_disclosure_focus_visible": True, "focus_order_steps": 1, "unexpected_egress": 0, "console_errors": 0, "tap_targets_minimum": 44, "captures": captures}
+        base_milliseconds = 1791003600000 if phase == "before_restart" else 1791003660000
+        displayed = self.runtime_status("2026-10-03T05:00:00.000Z" if phase == "before_restart" else "2026-10-03T05:01:00.000Z")
+        post = self.runtime_status("2026-10-03T05:00:00.100Z" if phase == "before_restart" else "2026-10-03T05:01:00.100Z")
+        runtime = {
+            "phase": phase,
+            "endpoint": "/api/v1/tenants/tenant-a/repositories/repository-a/runtime",
+            "displayed_received_at_milliseconds": base_milliseconds + 10,
+            "post_capture_received_at_milliseconds": base_milliseconds + 110,
+            "displayed": {"contract": "open-trestle/runtime-status-response", "schema_version": 1, "request_id": f"{phase}-displayed", "status": displayed},
+            "post_capture": {"contract": "open-trestle/runtime-status-response", "schema_version": 1, "request_id": f"{phase}-post", "status": post},
+            "dom": {"status_identity": displayed["identity"], "configuration_identity": displayed["configuration_identity"], "observed_at": displayed["observed_at"], "ready": displayed["ready"], "configuration": displayed["configuration"], "components": displayed["components"]},
+            "runtime_screenshot_sha256": next(capture["sha256"] for capture in captures if capture["view"] == "runtime"),
+        }
+        raw = {"contract": "open-trestle/daemon-console-visual-receipt", "schema_version": 3, "phase": phase, **expected, "runtime": runtime, "reduced_motion": True, "horizontal_overflow": False, "keyboard_focus_visible": True, "evidence_disclosure_focus_visible": True, "focus_order_steps": 1, "unexpected_egress": 0, "console_errors": 0, "tap_targets_minimum": 44, "captures": captures}
         receipt = phase_root / "receipt.json"
         receipt.write_text(json.dumps(raw) + "\n")
         return {**raw, "receipt": str(receipt.relative_to(root)), "receipt_sha256": hashlib.sha256(receipt.read_bytes()).hexdigest()}
@@ -358,7 +396,6 @@ class LocalAlphaSystemTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "source provenance|tracked source"):
                 local_alpha_system.capture_source_state(root)
 
-
     def test_source_provenance_rejects_staged_and_nonignored_untracked_state(self):
         for mode in ("staged", "untracked"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
@@ -454,6 +491,15 @@ class LocalAlphaSystemTest(unittest.TestCase):
             self.assertEqual(before, after)
             self.assertTrue(before.clean)
 
+    def test_browser_phase_evidence_validates_without_artifact_filesystem(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); expected = self.browser_expected()
+            before = self.browser_record(root, "before_restart", expected)
+            after = self.browser_record(root, "after_restart", expected)
+            result = local_alpha_system.validate_browser_phase_evidence(before, after, expected)
+            self.assertEqual(result["status"], "passed")
+            self.assertTrue(result["runtime"]["configuration_stable"])
+
     def test_browser_phase_evidence_binds_same_review_before_and_after_restart(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -463,6 +509,61 @@ class LocalAlphaSystemTest(unittest.TestCase):
             record = local_alpha_system.validate_browser_phase_evidence(before, after, expected, root)
             self.assertEqual(record["status"], "passed")
             self.assertEqual([phase["phase"] for phase in record["phases"]], ["before_restart", "after_restart"])
+
+    def test_runtime_identity_validator_matches_go_golden(self):
+        status = self.runtime_status("2026-10-03T05:00:00Z")
+        self.assertEqual(status["configuration_identity"], "f89cbad323eb45449637dd40eba77f7eb63a987754270b85c2f9ec2db5c9be98")
+        self.assertEqual(status["identity"], "7140112d9eee5bd9287fe98dc1a2985e79ebf4c00baf33975504c8691830c576")
+        envelope = {"contract": "open-trestle/runtime-status-response", "schema_version": 1, "request_id": "go-golden", "status": status}
+        parsed = local_alpha_system._runtime_envelope(envelope, {"tenant": "tenant-a", "repository": "repository-a"})
+        self.assertEqual(parsed["identity"], status["identity"])
+
+
+    def test_runtime_identity_validator_normalizes_go_null_handlers(self):
+        status = json.loads('{"contract":"open-trestle/runtime-status","schema_version":1,"identity":"8e915eaca0878ba00b7acc3c2ed907333b13e1ff1b825f60c43b8ab0832dd931","configuration_identity":"26ab6e2eb1f2b47d3c8e7f6b8eacb65c76d3594a223a7c9c73ac23f8b08b2d5a","tenant_id":"tenant-a","repository_id":"repository-a","observed_at":"2026-10-03T05:00:00Z","ready":true,"configuration":{"tenant_id":"tenant-a","repository_ids":["repository-a"],"metadata_backend":"local","artifact_backend":"local","artifact_protection":"process_private","notification_backend":"process_local","rate_limit_backend":"process_local","review_mode":"disabled","webhook_ingress":false,"local_workers":false,"publication_enabled":false,"publication_fence_verified":false,"route_count":0,"handlers":null},"components":[]}')
+        envelope = {"contract": "open-trestle/runtime-status-response", "schema_version": 1, "request_id": "go-empty-golden", "status": status}
+        parsed = local_alpha_system._runtime_envelope(envelope, {"tenant": "tenant-a", "repository": "repository-a"})
+        self.assertEqual(parsed["configuration"]["handlers"], [])
+        self.assertEqual(parsed["identity"], status["identity"])
+
+    def test_browser_runtime_binding_rejects_hostile_receipts(self):
+        expected = self.browser_expected()
+        mutations = (
+            ("missing_runtime", lambda record: record.pop("runtime")),
+            ("boolean_route_count", lambda record: record["runtime"]["displayed"]["status"]["configuration"].__setitem__("route_count", True)),
+            ("zero_identity", lambda record: record["runtime"]["displayed"]["status"].__setitem__("identity", "0" * 64)),
+            ("unknown_component", lambda record: record["runtime"]["displayed"]["status"]["components"][0].__setitem__("name", "unknown_component")),
+            ("dom_disagreement", lambda record: record["runtime"]["dom"].__setitem__("status_identity", "f" * 64)),
+            ("stale_response", lambda record: record["runtime"]["displayed"].__setitem__("status", self.runtime_status("1970-01-01T00:00:00.000Z"))),
+            ("capture_mutation", lambda record: record["runtime"]["post_capture"]["status"]["components"][0].__setitem__("state", "starting")),
+        )
+        import copy
+        for label, mutate in mutations:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory); record = self.browser_record(root, "before_restart", expected)
+                mutate(record); self.rewrite_browser_receipt(root, record)
+                with self.assertRaisesRegex(RuntimeError, "browser (evidence|runtime)"):
+                    local_alpha_system.validate_browser_phase_record(record, expected, root)
+
+
+    def test_browser_runtime_rejects_cross_phase_receipt_substitution(self):
+        import copy
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); expected = self.browser_expected()
+            before = self.browser_record(root, "before_restart", expected)
+            after = self.browser_record(root, "after_restart", expected)
+            after["runtime"] = copy.deepcopy(before["runtime"])
+            self.rewrite_browser_receipt(root, after)
+            with self.assertRaisesRegex(RuntimeError, "browser runtime"):
+                local_alpha_system.validate_browser_phase_evidence(before, after, expected, root)
+
+
+    def test_browser_phase_evidence_rejects_unknown_deterministic_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); expected = self.browser_expected(); expected["deterministic_check_state"] = "active"
+            record = self.browser_record(root, "before_restart", expected)
+            with self.assertRaisesRegex(RuntimeError, "scope or state"):
+                local_alpha_system.validate_browser_phase_record(record, expected, root)
 
     def test_browser_phase_evidence_rejects_boolean_numeric_fields(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -478,7 +579,7 @@ class LocalAlphaSystemTest(unittest.TestCase):
                 ("disclosure_focus_int", "evidence_disclosure_focus_visible", 1),
                 ("reduced_motion_int", "reduced_motion", 1),
                 ("tap_targets_float", "tap_targets_minimum", 44.0),
-                ("schema_version_float", "schema_version", 2.0),
+                ("schema_version_float", "schema_version", 3.0),
             )
             for label, field, value in cases:
                 with self.subTest(case=label):

@@ -760,6 +760,8 @@ export function parseRuntimeStatusEnvelope(
   )
     throw new ApiError("invalid_response");
   const configuration = status.configuration;
+  const rawHandlers = configuration.handlers;
+  const handlers: unknown[] = Array.isArray(rawHandlers) ? rawHandlers : [];
   const baseKeys = [
     "tenant_id",
     "repository_ids",
@@ -812,8 +814,8 @@ export function parseRuntimeStatusEnvelope(
     typeof configuration.publication_enabled !== "boolean" ||
     typeof configuration.publication_fence_verified !== "boolean" ||
     !integer(configuration.route_count, 0, 64) ||
-    !Array.isArray(configuration.handlers) ||
-    configuration.handlers.length > 64
+    (!Array.isArray(rawHandlers) && rawHandlers !== null) ||
+    handlers.length > 64
   )
     throw new ApiError("invalid_response");
   const routeConfigured = Number(configuration.route_count) > 0;
@@ -833,8 +835,8 @@ export function parseRuntimeStatusEnvelope(
     (configuration.review_mode === "disabled" &&
       (configuration.local_workers ||
         routeConfigured ||
-        configuration.handlers.length > 0)) ||
-    (configuration.local_workers && configuration.handlers.length === 0)
+        handlers.length > 0)) ||
+    (configuration.local_workers && handlers.length === 0)
   )
     throw new ApiError("invalid_response");
   if (
@@ -862,9 +864,9 @@ export function parseRuntimeStatusEnvelope(
         configuration.artifact_protection !== "envelope_encrypted"))
   )
     throw new ApiError("invalid_response");
-  const handlers = configuration.handlers as unknown[];
+  const runtimeHandlers = handlers as unknown[];
   let previousHandlerKind = "";
-  for (const handler of handlers) {
+  for (const handler of runtimeHandlers) {
     if (
       !record(handler) ||
       !exact(handler, ["kind", "identity"]) ||
@@ -892,7 +894,10 @@ export function parseRuntimeStatusEnvelope(
     allReady = allReady && component.state === "ready";
   }
   if (status.ready !== allReady) throw new ApiError("invalid_response");
-  return status as unknown as RuntimeStatus;
+  return {
+    ...status,
+    configuration: { ...configuration, handlers: runtimeHandlers },
+  } as unknown as RuntimeStatus;
 }
 
 const setupProfiles = new Set<SetupProfile>([

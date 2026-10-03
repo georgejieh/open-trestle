@@ -5,6 +5,7 @@ import { chromium } from "playwright-core";
 import {
   buildDaemonVisualReceipt,
   browserPhases,
+  validateRuntimeEnvelope,
 } from "./daemon-visual-contract.mjs";
 
 const url = process.env.OPEN_TRESTLE_DAEMON_URL;
@@ -45,12 +46,167 @@ const pngDimensions = (buffer) => {
   return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
 };
 const filePrefix = phase.replaceAll("_", "-");
+const runtimeEndpoint = `/api/v1/tenants/${encodeURIComponent(tenant)}/repositories/${encodeURIComponent(repository)}/runtime`;
+const equal = (left, right) => JSON.stringify(left) === JSON.stringify(right);
+const expectedRuntimeDOM = (status) => ({
+  status_identity: status.identity,
+  configuration_identity: status.configuration_identity,
+  observed_at: status.observed_at,
+  ready: status.ready,
+  configuration: status.configuration,
+  components: status.components,
+});
+const assertRuntimeDOM = async (page, status) => {
+  const actual = await page.evaluate(() => {
+    const heading = [...document.querySelectorAll("h2")].find(
+      (item) => item.textContent?.trim() === "Runtime state",
+    );
+    const summarySection = heading?.closest("section");
+    const authoritySection = [...document.querySelectorAll("section")].find(
+      (item) =>
+        item.querySelector("h2")?.textContent?.trim() === "Runtime authority",
+    );
+    const readinessSection = [...document.querySelectorAll("section")].find(
+      (item) =>
+        item.querySelector("h2")?.textContent?.trim() === "Service readiness",
+    );
+    const handlerSection = [...document.querySelectorAll("section")].find(
+      (item) =>
+        item.querySelector("h2")?.textContent?.trim() === "Handler authority",
+    );
+    if (
+      !summarySection ||
+      !authoritySection ||
+      !readinessSection ||
+      !handlerSection
+    )
+      throw new Error("runtime DOM sections are missing");
+    const rows = (root) =>
+      Object.fromEntries(
+        [...root.querySelectorAll("dl > div")].map((row) => {
+          const term = row.querySelector("dt")?.textContent?.trim();
+          const value = row.querySelector("dd");
+          if (!term || !value) throw new Error("runtime DOM row is malformed");
+          return [term, value.textContent?.trim()];
+        }),
+      );
+    const identities = (root) =>
+      Object.fromEntries(
+        [...root.querySelectorAll("dl > div")].map((row) => {
+          const term = row.querySelector("dt")?.textContent?.trim();
+          const value = row.querySelector("dd");
+          if (!term || !value)
+            throw new Error("runtime identity row is malformed");
+          return [term, value.getAttribute("title") || null];
+        }),
+      );
+    return {
+      observed: summarySection
+        .querySelector(".section-head p")
+        ?.textContent?.trim(),
+      ready: summarySection.querySelector(".state")?.textContent?.trim(),
+      summary: rows(summarySection),
+      authority: identities(authoritySection),
+      components: [
+        ...readinessSection.querySelectorAll(".runtime-list li"),
+      ].map((item) => ({
+        name: item.querySelector("strong")?.textContent?.trim(),
+        state: item.querySelector(".state")?.textContent?.trim(),
+      })),
+      handler_count: handlerSection
+        .querySelector(".section-head p")
+        ?.textContent?.trim(),
+      handlers: identities(handlerSection),
+    };
+  });
+  const configuration = status.configuration;
+  const observed = await page.evaluate(
+    (value) => `Observed ${new Date(value).toLocaleString()}`,
+    status.observed_at,
+  );
+  const expected = {
+    observed,
+    ready: status.ready ? "ready" : "starting",
+    summary: {
+      Metadata: configuration.metadata_backend,
+      Artifacts: `${configuration.artifact_backend} · ${configuration.artifact_protection.replaceAll("_", " ")}`,
+      Notifications: configuration.notification_backend.replaceAll("_", " "),
+      "Rate limits": configuration.rate_limit_backend.replaceAll("_", " "),
+      "Review mode": configuration.review_mode,
+      "Webhook ingress": configuration.webhook_ingress
+        ? "Configured"
+        : "Disabled",
+      "Local workers": configuration.local_workers ? "Configured" : "Disabled",
+      Publication: configuration.publication_enabled
+        ? configuration.publication_fence_verified
+          ? "Enabled, fence verified"
+          : "Unavailable"
+        : "Disabled",
+      "Approved routes": String(configuration.route_count),
+    },
+    authority: {
+      Status: status.identity,
+      Configuration: status.configuration_identity,
+      "Database authority": configuration.database_authority_identity ?? null,
+      "Rate-limit authority":
+        configuration.rate_limit_authority_identity ?? null,
+      "Route inventory": configuration.route_inventory_identity ?? null,
+      "Runtime policy": configuration.runtime_policy_identity ?? null,
+    },
+    components: status.components.map((component) => ({
+      name: component.name.replaceAll("_", " "),
+      state: component.state,
+    })),
+    handler_count: `${configuration.handlers.length} exact handler bindings`,
+    handlers: Object.fromEntries(
+      configuration.handlers.map((handler) => [
+        handler.kind.replaceAll("_", " "),
+        handler.identity,
+      ]),
+    ),
+  };
+  if (!equal(actual, expected))
+    throw new Error(
+      `runtime DOM does not match authenticated response: ${JSON.stringify({ actual, expected })}`,
+    );
+  return expectedRuntimeDOM(status);
+};
 try {
   const context = await browser.newContext({
     viewport: { width: 1440, height: 1000 },
     reducedMotion: "reduce",
   });
   const page = await context.newPage();
+  let resolveDisplayedRuntime, rejectDisplayedRuntime;
+  const displayedRuntimePromise = new Promise((resolve, reject) => {
+    resolveDisplayedRuntime = resolve;
+    rejectDisplayedRuntime = reject;
+  });
+  let displayedRuntimeSeen = false;
+  page.on("response", async (response) => {
+    try {
+      const target = new URL(response.url());
+      if (
+        displayedRuntimeSeen ||
+        target.origin !== new URL(url).origin ||
+        target.pathname !== runtimeEndpoint ||
+        response.request().method() !== "GET"
+      )
+        return;
+      displayedRuntimeSeen = true;
+      const body = await response.body();
+      if (body.length === 0 || body.length > 1 << 20)
+        throw new Error("runtime response body is outside bounds");
+      const envelope = JSON.parse(body.toString("utf8"));
+      validateRuntimeEnvelope(envelope, { tenant, repository });
+      resolveDisplayedRuntime({
+        envelope,
+        received_at_milliseconds: Date.now(),
+      });
+    } catch (error) {
+      rejectDisplayedRuntime(error);
+    }
+  });
   const blockedRequests = [];
   await page.route("**/*", async (route) => {
     const target = new URL(route.request().url());
@@ -136,7 +292,7 @@ try {
       fullPage: true,
     });
     const image = pngDimensions(bytes);
-    captures.push({
+    const capture = {
       name: fileName,
       view,
       width: viewport.width,
@@ -145,7 +301,9 @@ try {
       image_height: image.height,
       bytes: bytes.length,
       sha256: sha256(bytes),
-    });
+    };
+    captures.push(capture);
+    return capture;
   };
   const assertLayout = async () => {
     const overflow = await page.evaluate(
@@ -168,8 +326,59 @@ try {
   await snap("desktop-findings", "review");
   await page.getByRole("button", { name: /Runtime ready/i }).click();
   await page.getByRole("heading", { name: "Runtime state" }).waitFor();
+  const displayedRuntime = await Promise.race([
+    displayedRuntimePromise,
+    new Promise((_, reject) =>
+      setTimeout(
+        () => reject(new Error("runtime response was not observed")),
+        5000,
+      ),
+    ),
+  ]);
+  const displayedStatus = validateRuntimeEnvelope(displayedRuntime.envelope, {
+    tenant,
+    repository,
+  });
+  const runtimeDOM = await assertRuntimeDOM(page, displayedStatus);
   await assertLayout();
-  await snap("desktop-runtime", "runtime");
+  const runtimeCapture = await snap("desktop-runtime", "runtime");
+  const postCaptureEnvelope = await page.evaluate(
+    async ({ path, credential }) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000);
+      try {
+        const response = await fetch(path, {
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${credential}`,
+          },
+          credentials: "omit",
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("runtime post-capture read failed");
+        const body = await response.arrayBuffer();
+        if (body.byteLength === 0 || body.byteLength > 1 << 20)
+          throw new Error("runtime post-capture body is outside bounds");
+        return JSON.parse(new TextDecoder().decode(body));
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    { path: runtimeEndpoint, credential: token },
+  );
+  const postCaptureReceivedAt = Date.now();
+  validateRuntimeEnvelope(postCaptureEnvelope, { tenant, repository });
+  const runtimeEvidence = {
+    phase,
+    endpoint: runtimeEndpoint,
+    displayed_received_at_milliseconds:
+      displayedRuntime.received_at_milliseconds,
+    post_capture_received_at_milliseconds: postCaptureReceivedAt,
+    displayed: displayedRuntime.envelope,
+    post_capture: postCaptureEnvelope,
+    dom: runtimeDOM,
+    runtime_screenshot_sha256: runtimeCapture.sha256,
+  };
   await page.setViewportSize({ width: 900, height: 1000 });
   await page.getByRole("button", { name: /Review/i }).click();
   await assertLayout();
@@ -228,6 +437,7 @@ try {
     phase,
     scope: { tenant, repository, run },
     observed,
+    runtime: runtimeEvidence,
     metrics: {
       reduced_motion: true,
       horizontal_overflow: false,
