@@ -115,7 +115,9 @@ directory. It does not install on `/`, contact a model or forge, publish a resul
 qualify a production deployment.
 
 ```sh
-# build and check the committed console assets
+# build and check the committed console assets with the pinned Node release
+# node --version must print v26.7.0; do not accept a build from another Node release.
+node --version
 (cd web && npm ci && npm test && npm run build && npm run dist:check)
 
 # build the fixed runtime staging tree and passive point-in-time advisory evidence
@@ -143,26 +145,55 @@ python3 tools/local_alpha_system.py \
   --output "$HOME/open-trestle-local-alpha-evidence"
 ```
 
-The system driver requires a clean source tree. It verifies the detached checksum, makes
-a stable byte-identical candidate copy inside the output-owned sandbox, and executes only
-that copy with digest fences around every archive command. The verified manifest revision
-must equal the clean source `HEAD` before installation. Candidate and browser commands run
-from the sandbox with bounded output, HTTP, log, and total-time budgets. The driver installs only into an
-isolated destdir, runs candidate smoke, creates a real temporary Git repository,
-initializes the existing `local_single_node` plan, starts `trestled` on numeric loopback,
-and executes the four-task deterministic run. It captures the exact run in CLI, TUI, and
-the real daemon-served console before restart, proves the daemon process group stopped and
-the port can be rebound, restarts the daemon, and repeats the same identity-bound browser
-matrix. JSON and SARIF bytes must remain identical. Final cleanup recovers and uninstalls
-the candidate, preserves operator sentinels, proves process-group quiescence and port
-reuse, removes the private temporary alias, and verifies the source `HEAD`, tree, staged
-entries, assume-unchanged/skip-worktree/fsmonitor flags, and status plus every working-tree
-directory, regular-file byte, mode, and symlink target outside `.git` are unchanged,
-including ignored files. Inspect `$HOME/open-trestle-local-alpha-evidence/receipt.json`
-for the candidate source/execution paths, manifest/archive digests, source
-revision/tree/index-flag/worktree identities and counts,
-commands, review identities, phase-tagged viewport and independently parsed PNG image
-dimensions and digests, restart checks, and cleanup bindings.
+The system driver fails before creating its output directory unless the live source is
+proved against the committed `HEAD` tree. It reads Git objects and index metadata without
+refreshing the index or writing Git objects, rejects unresolved or staged entries,
+assume-unchanged, skip-worktree, fsmonitor-valid and sparse or unsupported entries, and
+requires every tracked path to match `HEAD` in object type, Git executable semantics,
+regular-file bytes or symlink target. Nonignored untracked paths are rejected. Ignored
+paths are permitted, but their own byte, type, full mode and symlink-target identity is
+recorded separately and must remain unchanged through the final source fence. The ignored
+identity is not a substitute for, or proof of, tracked-tree provenance.
+
+The canonical browser script and its local contract module execute only from output-owned
+copies reconstructed from their exact `HEAD` blobs and modes. The installed
+`playwright-core` 1.62.1 payload is independently pinned by a bounded path, mode and byte
+identity, rejects symlinks, and is copied and rehashed in the browser sandbox. This payload
+binding is toolchain evidence, not a claim that ignored files belong to the committed tree.
+The verified candidate manifest revision must also equal the independently proved source
+`HEAD`; a matching manifest alone is not source provenance.
+
+The driver verifies the detached checksum, makes a stable byte-identical candidate copy
+inside the output-owned sandbox, and executes only that copy with digest fences around
+every archive command. Candidate and browser commands have bounded output, HTTP, log and
+total-time budgets. The driver installs only into an isolated destdir, runs candidate
+smoke, creates a real temporary Git repository, initializes the existing
+`local_single_node` plan, starts `trestled` on numeric loopback, and executes the four-task
+deterministic run. It captures the exact run in CLI, TUI and the real daemon-served console
+before restart, proves the daemon process group stopped and the port can be rebound,
+restarts the daemon, and repeats the same identity-bound browser matrix. JSON and SARIF
+bytes must remain identical.
+
+Each Runtime screenshot is bound to the exact authenticated runtime-status response shown
+by the UI. The phase receipt records and independently validates its status identity,
+configuration identity, observed time, complete configuration and authority identities,
+handlers, and component names and states. The browser compares those values with the DOM,
+captures the Runtime image, then performs a bounded immediate reread. Status identities
+and observation times may naturally differ across reads and restart; configuration and
+component semantics must remain stable. JavaScript and Python validators recompute the Go
+runtime configuration and status identities, reject stale or malformed responses, and
+bind the Runtime image SHA-256 to the phase receipt.
+
+Final cleanup recovers and uninstalls the candidate, preserves operator sentinels, proves
+process-group quiescence and port reuse, removes the private temporary alias, and repeats
+the complete source proof. Inspect
+`$HOME/open-trestle-local-alpha-evidence/receipt.json` for distinct committed-tree, live
+tracked-tree, ignored-worktree, index, index-flag and status identities; exact browser
+module and dependency bindings; candidate source/execution paths and archive digests;
+phase-tagged Runtime responses and screenshot digests; independently parsed PNG dimensions;
+restart checks; and cleanup bindings. These records prove only this bounded local journey.
+They do not authenticate a publisher, qualify a deployment, or establish production
+readiness.
 
 The initialized setup plan is a scope and denied-effect posture fence for this narrow
 review. It remains `ready:false`; pending policy, inference, dry-run, backup, observer,

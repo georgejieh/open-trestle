@@ -14,6 +14,29 @@ GOWORK=off GOTOOLCHAIN=go1.26.8 go test ./...
 )
 ```
 
+## Local evaluation evidence boundary
+
+`tools/local_alpha_system.py` is a bounded evidence driver, not a deployment profile. It
+must run from a source checkout whose tracked paths exactly match the committed `HEAD`
+tree in object type, Git executable semantics, regular-file bytes and symlink targets.
+The driver reads Git tree and index state without refreshing the index. It rejects staged
+or unresolved entries, hidden index flags, unsupported or sparse entries and nonignored
+untracked paths before it creates the evidence directory or copies a candidate.
+
+Ignored paths have a separate bounded identity and may exist, but they must remain stable
+through the run. That identity does not establish committed provenance. The browser script
+and local contract are sealed from exact `HEAD` blobs. The pinned Playwright payload is
+copied into the output-owned browser sandbox and rehashed before execution. A candidate
+manifest revision must equal the independently proved source revision; the manifest does
+not prove the worktree by itself.
+
+Visual phase receipts bind the authenticated runtime-status response displayed by the
+console, the corresponding DOM values and Runtime screenshot, and an immediate bounded
+post-capture reread. Configuration and component semantics must survive restart. Runtime
+status identities and observation times are observation-specific and need not be equal.
+All evidence remains unsigned local output and does not establish publisher authenticity,
+production readiness or support.
+
 A normal root `go build` is useful for development, but it does not inject the trusted scanner binary digests. Such a `trestled` build fails closed when sanitized egress is requested. Build the release staging tree with the reviewed packaging tool instead:
 
 ```sh
