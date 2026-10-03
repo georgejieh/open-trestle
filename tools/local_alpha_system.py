@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import dataclasses
 import hashlib
 import http.client
 import json
@@ -11,6 +12,7 @@ import os
 import re
 import secrets
 import selectors
+import shutil
 import signal
 import socket
 import stat
@@ -22,6 +24,7 @@ import time
 import urllib.parse
 import zlib
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,8 +35,13 @@ MAX_MANIFEST_BYTES = 1 << 20
 MAX_FAILURE_LOG_BYTES = 64 << 10
 MAX_SOURCE_ENTRIES = 100_000
 MAX_SOURCE_BYTES = 8 << 30
+MAX_SOURCE_GIT_OUTPUT_BYTES = 32 << 20
 MAX_CANDIDATE_BYTES = 256 << 20
 MAX_SCREENSHOT_BYTES = 16 << 20
+MAX_BROWSER_MODULE_BYTES = 1 << 20
+BROWSER_DEPENDENCY_PREFIX = b"web/node_modules/playwright-core/"
+BROWSER_DEPENDENCY_VERSION = "1.62.1"
+BROWSER_DEPENDENCY_SHA256 = "90abfaf282ebeb89837d8c86e74e372f77d2ee0d93a8eba9d183fef237cdee37"
 PROCESS_TERM_SECONDS = 2.0
 PROCESS_KILL_SECONDS = 2.0
 
@@ -574,61 +582,385 @@ def capture_worktree(source: Path) -> tuple[str, int, int]:
     return digest.hexdigest(), entries, total_bytes
 
 
-@dataclass(frozen=True)
-class SourceState:
-    revision: str
-    tree_identity: str
-    index_tree_identity: str
-    tracked_index_sha256: str
-    index_flags_sha256: str
-    status_sha256: str
-    worktree_sha256: str
-    worktree_entries: int
-    worktree_bytes: int
-    clean: bool
+def _source_identity(information: os.stat_result) -> tuple[int, int, int, int, int]:
+    return (information.st_dev, information.st_ino, information.st_mode, information.st_size, information.st_mtime_ns)
 
-    def identity(self) -> str:
-        return hashlib.sha256(canonical_json({
-            "revision": self.revision,
-            "tree_identity": self.tree_identity,
-            "index_tree_identity": self.index_tree_identity,
-            "tracked_index_sha256": self.tracked_index_sha256,
-            "index_flags_sha256": self.index_flags_sha256,
-            "status_sha256": self.status_sha256,
-            "worktree_sha256": self.worktree_sha256,
-            "worktree_entries": self.worktree_entries,
-            "worktree_bytes": self.worktree_bytes,
-            "clean": self.clean,
-        })).hexdigest()
+
+def _valid_git_path(path: bytes) -> bool:
+    return bool(path) and not path.startswith(b"/") and all(part not in (b"", b".", b"..") for part in path.split(b"/"))
+
+
+def _parse_head_entries(raw: bytes) -> list[tuple[bytes, str, str]]:
+    entries: list[tuple[bytes, str, str]] = []
+    seen: set[bytes] = set()
+    for record in raw.split(b"\0"):
+        if not record:
+            continue
+        try:
+            metadata, path = record.split(b"\t", 1)
+            mode_raw, kind_raw, oid_raw = metadata.split(b" ", 2)
+            mode, kind, oid = mode_raw.decode("ascii"), kind_raw.decode("ascii"), oid_raw.decode("ascii")
+        except (ValueError, UnicodeDecodeError) as error:
+            raise RuntimeError("source provenance HEAD tree is malformed") from error
+        if not _valid_git_path(path) or path in seen or kind != "blob" or mode not in {"100644", "100755", "120000"} or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", oid):
+            raise RuntimeError("source provenance HEAD tree contains an unsupported entry")
+        seen.add(path); entries.append((path, mode, oid))
+        if len(entries) > MAX_SOURCE_ENTRIES:
+            raise RuntimeError("source provenance entry limit exceeded")
+    if entries != sorted(entries, key=lambda item: item[0]):
+        raise RuntimeError("source provenance HEAD tree is not canonical")
+    return entries
+
+
+def _parse_index_entries(raw: bytes) -> list[tuple[bytes, str, str]]:
+    entries: list[tuple[bytes, str, str]] = []
+    seen: set[bytes] = set()
+    for record in raw.split(b"\0"):
+        if not record:
+            continue
+        try:
+            metadata, path = record.split(b"\t", 1)
+            mode_raw, oid_raw, stage_raw = metadata.split(b" ", 2)
+            mode, oid, stage = mode_raw.decode("ascii"), oid_raw.decode("ascii"), int(stage_raw)
+        except (ValueError, UnicodeDecodeError) as error:
+            raise RuntimeError("source provenance index is malformed") from error
+        if not _valid_git_path(path) or path in seen or stage != 0 or mode not in {"100644", "100755", "120000"} or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", oid):
+            raise RuntimeError("source provenance index contains unresolved or unsupported entries")
+        seen.add(path); entries.append((path, mode, oid))
+        if len(entries) > MAX_SOURCE_ENTRIES:
+            raise RuntimeError("source provenance entry limit exceeded")
+    return entries
+
+
+def _framed_sha256(records: list[bytes]) -> str:
+    digest = hashlib.sha256()
+    for record in records:
+        digest.update(len(record).to_bytes(8, "big")); digest.update(record)
+    return digest.hexdigest()
+
+
+def _records_sha256(entries: list[tuple[bytes, str, str]]) -> str:
+    return _framed_sha256([path + b"\0" + mode.encode() + b"\0" + oid.encode() for path, mode, oid in entries])
+
+
+def _parse_flag_listing(raw: bytes, label: str, rejected: Callable[[bytes], bool]) -> list[bytes]:
+    records: list[bytes] = []
+    for record in raw.split(b"\0"):
+        if not record:
+            continue
+        if len(record) < 3 or record[1:2] != b" " or not _valid_git_path(record[2:]):
+            raise RuntimeError(f"source provenance {label} flags are malformed")
+        if rejected(record[:1]):
+            raise RuntimeError(f"source provenance rejects {label} index flags")
+        records.append(record)
+    return records
+
+
+def _open_source_parent(root_descriptor: int, path: bytes) -> tuple[list[int], list[tuple[bytes, os.stat_result]]]:
+    descriptors = [os.dup(root_descriptor)]
+    chain: list[tuple[bytes, os.stat_result]] = []
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        for component in path.split(b"/")[:-1]:
+            before = os.stat(component, dir_fd=descriptors[-1], follow_symlinks=False)
+            if not stat.S_ISDIR(before.st_mode) or stat.S_ISLNK(before.st_mode):
+                raise RuntimeError("tracked source does not match HEAD")
+            child = os.open(component, flags, dir_fd=descriptors[-1])
+            if _source_identity(os.fstat(child)) != _source_identity(before):
+                os.close(child); raise RuntimeError("source provenance changed while captured")
+            descriptors.append(child); chain.append((component, before))
+        return descriptors, chain
+    except Exception:
+        for descriptor in reversed(descriptors): os.close(descriptor)
+        raise
+
+
+def _close_source_parent(descriptors: list[int], chain: list[tuple[bytes, os.stat_result]]) -> None:
+    try:
+        for index in range(len(chain) - 1, -1, -1):
+            component, before = chain[index]
+            after = os.stat(component, dir_fd=descriptors[index], follow_symlinks=False)
+            if _source_identity(after) != _source_identity(before) or _source_identity(os.fstat(descriptors[index + 1])) != _source_identity(before):
+                raise RuntimeError("source provenance changed while captured")
+    finally:
+        for descriptor in reversed(descriptors): os.close(descriptor)
+
+
+def _capture_ignored_directory(directory_descriptor: int, budget: dict[str, int]) -> tuple[str, int]:
+    records: list[bytes] = []
+    subtree_bytes = 0
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    file_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+
+    def visit(descriptor: int, relative: bytes) -> None:
+        nonlocal subtree_bytes
+        directory_before = os.fstat(descriptor)
+        with os.scandir(descriptor) as scanned:
+            children = sorted(scanned, key=lambda item: os.fsencode(item.name))
+        for child in children:
+            name = os.fsencode(child.name); path = name if not relative else relative + b"/" + name
+            before = child.stat(follow_symlinks=False); mode = stat.S_IMODE(before.st_mode)
+            budget["entries"] += 1
+            if budget["entries"] > MAX_SOURCE_ENTRIES:
+                raise RuntimeError("source provenance entry limit exceeded")
+            if stat.S_ISDIR(before.st_mode):
+                child_descriptor = os.open(child.name, directory_flags, dir_fd=descriptor)
+                try:
+                    if _source_identity(os.fstat(child_descriptor)) != _source_identity(before):
+                        raise RuntimeError("source provenance changed while captured")
+                    records.append(path + b"\0directory\0" + str(mode).encode())
+                    visit(child_descriptor, path)
+                    opened_after = os.fstat(child_descriptor)
+                finally:
+                    os.close(child_descriptor)
+                path_after = os.stat(child.name, dir_fd=descriptor, follow_symlinks=False)
+                if _source_identity(opened_after) != _source_identity(before) or _source_identity(path_after) != _source_identity(before):
+                    raise RuntimeError("source provenance changed while captured")
+                continue
+            if stat.S_ISLNK(before.st_mode):
+                target = os.fsencode(os.readlink(child.name, dir_fd=descriptor))
+                path_after = os.stat(child.name, dir_fd=descriptor, follow_symlinks=False)
+                if _source_identity(path_after) != _source_identity(before):
+                    raise RuntimeError("source provenance changed while captured")
+                records.append(path + b"\0symlink\0" + str(mode).encode() + b"\0" + hashlib.sha256(target).hexdigest().encode())
+                continue
+            if not stat.S_ISREG(before.st_mode):
+                raise RuntimeError("source provenance ignored directory contains unsupported entry")
+            opened = os.open(child.name, file_flags, dir_fd=descriptor); content = hashlib.sha256(); size = 0
+            try:
+                if _source_identity(os.fstat(opened)) != _source_identity(before):
+                    raise RuntimeError("source provenance changed while captured")
+                while True:
+                    chunk = os.read(opened, 1 << 20)
+                    if not chunk: break
+                    size += len(chunk); subtree_bytes += len(chunk); budget["bytes"] += len(chunk)
+                    if budget["bytes"] > MAX_SOURCE_BYTES:
+                        raise RuntimeError("source provenance byte limit exceeded")
+                    content.update(chunk)
+                opened_after = os.fstat(opened)
+            finally:
+                os.close(opened)
+            path_after = os.stat(child.name, dir_fd=descriptor, follow_symlinks=False)
+            if size != before.st_size or _source_identity(opened_after) != _source_identity(before) or _source_identity(path_after) != _source_identity(before):
+                raise RuntimeError("source provenance changed while captured")
+            records.append(path + b"\0regular\0" + str(mode).encode() + b"\0" + str(size).encode() + b"\0" + content.hexdigest().encode())
+        if _source_identity(os.fstat(descriptor)) != _source_identity(directory_before):
+            raise RuntimeError("source provenance changed while captured")
+
+    visit(directory_descriptor, b"")
+    return _framed_sha256(records), subtree_bytes
+
+
+def _read_source_entry(root_descriptor: int, path: bytes, object_format: str, expected_mode: str | None, expected_oid: str | None, budget: dict[str, int]) -> tuple[str, int, str, int]:
+    descriptors, chain = _open_source_parent(root_descriptor, path)
+    name = path.split(b"/")[-1]
+    try:
+        before = os.stat(name, dir_fd=descriptors[-1], follow_symlinks=False)
+        mode = stat.S_IMODE(before.st_mode)
+        if stat.S_ISDIR(before.st_mode):
+            if expected_mode is not None:
+                raise RuntimeError("tracked source does not match HEAD")
+            kind = "directory"
+            directory_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(name, directory_flags, dir_fd=descriptors[-1])
+            try:
+                if _source_identity(os.fstat(descriptor)) != _source_identity(before):
+                    raise RuntimeError("source provenance changed while captured")
+                content_sha256, size = _capture_ignored_directory(descriptor, budget)
+                opened_after = os.fstat(descriptor)
+            finally:
+                os.close(descriptor)
+            after = os.stat(name, dir_fd=descriptors[-1], follow_symlinks=False)
+            if _source_identity(opened_after) != _source_identity(before) or _source_identity(after) != _source_identity(before):
+                raise RuntimeError("source provenance changed while captured")
+            object_hash = hashlib.new(object_format); object_hash.update(content_sha256.encode())
+        elif stat.S_ISLNK(before.st_mode):
+            kind = "symlink"
+            if expected_mode is not None and expected_mode != "120000": raise RuntimeError("tracked source does not match HEAD")
+            payload = os.fsencode(os.readlink(name, dir_fd=descriptors[-1]))
+            after = os.stat(name, dir_fd=descriptors[-1], follow_symlinks=False)
+            if _source_identity(after) != _source_identity(before): raise RuntimeError("source provenance changed while captured")
+            content_sha256 = hashlib.sha256(payload).hexdigest()
+            object_hash = hashlib.new(object_format); object_hash.update(f"blob {len(payload)}\0".encode()); object_hash.update(payload)
+            size = len(payload)
+        elif stat.S_ISREG(before.st_mode):
+            kind = "regular"
+            if expected_mode is not None:
+                executable = stat.S_IMODE(before.st_mode) & 0o111
+                if executable not in {0, 0o111}:
+                    raise RuntimeError("tracked source executable mode is unsupported")
+                live_mode = "100755" if executable == 0o111 else "100644"
+                if expected_mode != live_mode:
+                    raise RuntimeError("tracked source does not match HEAD")
+            flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(name, flags, dir_fd=descriptors[-1])
+            content = hashlib.sha256(); object_hash = hashlib.new(object_format); object_hash.update(f"blob {before.st_size}\0".encode())
+            size = 0
+            try:
+                if _source_identity(os.fstat(descriptor)) != _source_identity(before): raise RuntimeError("source provenance changed while captured")
+                while True:
+                    chunk = os.read(descriptor, 1 << 20)
+                    if not chunk: break
+                    size += len(chunk); budget["bytes"] += len(chunk)
+                    if budget["bytes"] > MAX_SOURCE_BYTES: raise RuntimeError("source provenance byte limit exceeded")
+                    content.update(chunk); object_hash.update(chunk)
+                opened_after = os.fstat(descriptor)
+            finally: os.close(descriptor)
+            after = os.stat(name, dir_fd=descriptors[-1], follow_symlinks=False)
+            if size != before.st_size or _source_identity(opened_after) != _source_identity(before) or _source_identity(after) != _source_identity(before): raise RuntimeError("source provenance changed while captured")
+            content_sha256 = content.hexdigest()
+        else:
+            raise RuntimeError("tracked source does not match HEAD" if expected_mode is not None else "source provenance ignored entry is unsupported")
+        budget["entries"] += 1
+        if budget["entries"] > MAX_SOURCE_ENTRIES: raise RuntimeError("source provenance entry limit exceeded")
+        oid = object_hash.hexdigest()
+        if expected_oid is not None and oid != expected_oid: raise RuntimeError("tracked source does not match HEAD")
+        return kind, size, content_sha256, mode
+    except FileNotFoundError as error:
+        raise RuntimeError("tracked source does not match HEAD" if expected_mode is not None else "source provenance ignored entry is unavailable") from error
+    finally:
+        _close_source_parent(descriptors, chain)
+
+
+def _metadata_paths(raw: bytes, label: str) -> list[tuple[bytes, bool]]:
+    entries: list[tuple[bytes, bool]] = []
+    seen: set[bytes] = set()
+    for raw_path in raw.split(b"\0"):
+        if not raw_path:
+            continue
+        directory = raw_path.endswith(b"/"); path = raw_path[:-1] if directory else raw_path
+        if not _valid_git_path(path) or path in seen:
+            raise RuntimeError(f"source provenance {label} paths are malformed")
+        seen.add(path); entries.append((path, directory))
+        if len(entries) > MAX_SOURCE_ENTRIES:
+            raise RuntimeError("source provenance entry limit exceeded")
+    return sorted(entries, key=lambda item: item[0])
 
 
 def git_output(source: Path, *arguments: str) -> bytes:
     env = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-        "HOME": os.environ.get("HOME", "/nonexistent"),
+        "HOME": "/nonexistent",
         "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_NOGLOBAL": "1",
+        "GIT_OPTIONAL_LOCKS": "0",
         "GIT_TERMINAL_PROMPT": "0",
         "LC_ALL": "C",
     }
-    result = run(["git", *arguments], env, source, timeout=15)
+    result = run(["git", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", *arguments], env, source, timeout=30, maximum_output_bytes=MAX_SOURCE_GIT_OUTPUT_BYTES)
     return result.stdout
 
 
+def _source_metadata(source: Path) -> tuple[bytes, ...]:
+    return (
+        git_output(source, "rev-parse", "HEAD"),
+        git_output(source, "rev-parse", "HEAD^{tree}"),
+        git_output(source, "rev-parse", "--show-object-format"),
+        git_output(source, "ls-tree", "-rz", "--full-tree", "HEAD", "--"),
+        git_output(source, "ls-files", "--stage", "-z"),
+        git_output(source, "ls-files", "-v", "-z"),
+        git_output(source, "ls-files", "-t", "-z"),
+        git_output(source, "ls-files", "-f", "-z"),
+        git_output(source, "status", "--porcelain=v2", "-z", "--untracked-files=all"),
+        git_output(source, "ls-files", "--others", "--exclude-standard", "-z"),
+        git_output(source, "ls-files", "--others", "--ignored", "--exclude-standard", "-z"),
+    )
+
+
+@dataclass(frozen=True)
+class SourceState:
+    revision: str
+    tree_identity: str
+    committed_tree_sha256: str
+    live_tracked_tree_sha256: str
+    live_tracked_entries: int
+    live_tracked_bytes: int
+    index_sha256: str
+    index_flags_sha256: str
+    status_sha256: str
+    ignored_worktree_sha256: str
+    ignored_worktree_entries: int
+    ignored_worktree_bytes: int
+    browser_dependency_sha256: str
+    browser_dependency_entries: int
+    browser_dependency_bytes: int
+    browser_script_head_blob: str
+    browser_script_head_mode: str
+    browser_contract_head_blob: str
+    browser_contract_head_mode: str
+    object_format: str
+    clean: bool
+
+    @property
+    def index_tree_identity(self) -> str: return self.index_sha256
+    @property
+    def tracked_index_sha256(self) -> str: return self.index_sha256
+    @property
+    def worktree_sha256(self) -> str: return _framed_sha256([self.live_tracked_tree_sha256.encode(), self.ignored_worktree_sha256.encode()])
+    @property
+    def worktree_entries(self) -> int: return self.live_tracked_entries + self.ignored_worktree_entries
+    @property
+    def worktree_bytes(self) -> int: return self.live_tracked_bytes + self.ignored_worktree_bytes
+
+    def identity(self) -> str:
+        return hashlib.sha256(canonical_json(dataclasses.asdict(self))).hexdigest()
+
+
 def capture_source_state(source: Path) -> SourceState:
-    revision = git_output(source, "rev-parse", "HEAD").decode("ascii").strip()
-    tree = git_output(source, "rev-parse", "HEAD^{tree}").decode("ascii").strip()
-    index_tree = git_output(source, "write-tree").decode("ascii").strip()
-    tracked_index = git_output(source, "ls-files", "--stage", "-z")
-    index_flags = b"assume\0" + git_output(source, "ls-files", "-v", "-z") + b"skip\0" + git_output(source, "ls-files", "-t", "-z") + b"fsmonitor\0" + git_output(source, "ls-files", "-f", "-z")
-    status = git_output(source, "status", "--porcelain=v2", "-z", "--untracked-files=all")
-    worktree_sha256, worktree_entries, worktree_bytes = capture_worktree(source)
-    return SourceState(revision, tree, index_tree, hashlib.sha256(tracked_index).hexdigest(), hashlib.sha256(index_flags).hexdigest(), hashlib.sha256(status).hexdigest(), worktree_sha256, worktree_entries, worktree_bytes, len(status) == 0)
+    before = _source_metadata(source)
+    revision = before[0].decode("ascii").strip(); tree = before[1].decode("ascii").strip(); object_format = before[2].decode("ascii").strip()
+    if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", revision) or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", tree) or object_format not in {"sha1", "sha256"}:
+        raise RuntimeError("source provenance Git identity is malformed")
+    committed = _parse_head_entries(before[3]); index = _parse_index_entries(before[4])
+    if index != committed: raise RuntimeError("source provenance index does not match HEAD")
+    assume = _parse_flag_listing(before[5], "assume-unchanged", lambda tag: tag.islower())
+    skip = _parse_flag_listing(before[6], "skip-worktree", lambda tag: tag == b"S")
+    fsmonitor = _parse_flag_listing(before[7], "fsmonitor", lambda tag: tag.islower())
+    committed_paths = [path for path, _, _ in committed]
+    if [record[2:] for record in assume] != committed_paths or [record[2:] for record in skip] != committed_paths or [record[2:] for record in fsmonitor] != committed_paths:
+        raise RuntimeError("source provenance index flag paths do not match HEAD")
+    if before[8]: raise RuntimeError("source provenance status is not clean")
+    untracked = _metadata_paths(before[9], "untracked")
+    if untracked:
+        raise RuntimeError("source provenance contains nonignored untracked paths")
+    ignored = _metadata_paths(before[10], "ignored")
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    source_before = source.lstat(); root_descriptor = os.open(source, directory_flags)
+    budget = {"entries": 0, "bytes": 0}; live_records: list[bytes] = []; ignored_records: list[bytes] = []; browser_dependency_records: list[bytes] = []
+    browser_dependency_bytes = 0
+    try:
+        if not stat.S_ISDIR(source_before.st_mode) or stat.S_ISLNK(source_before.st_mode) or _source_identity(os.fstat(root_descriptor)) != _source_identity(source_before): raise RuntimeError("source provenance root is invalid")
+        for path, mode, oid in committed:
+            kind, size, content, live_mode = _read_source_entry(root_descriptor, path, object_format, mode, oid, budget)
+            live_records.append(path + b"\0" + mode.encode() + b"\0" + oid.encode() + b"\0" + kind.encode() + b"\0" + str(size).encode() + b"\0" + content.encode())
+        tracked_entries, tracked_bytes = budget["entries"], budget["bytes"]
+        for path, directory_hint in ignored:
+            kind, size, content, live_mode = _read_source_entry(root_descriptor, path, object_format, None, None, budget)
+            if directory_hint is not (kind == "directory"):
+                raise RuntimeError("source provenance ignored entry type changed")
+            record = path + b"\0" + kind.encode() + b"\0" + str(live_mode).encode() + b"\0" + str(size).encode() + b"\0" + content.encode()
+            ignored_records.append(record)
+            if path.startswith(BROWSER_DEPENDENCY_PREFIX):
+                if directory_hint or kind != "regular":
+                    raise RuntimeError("browser dependency closure contains unsupported entries")
+                browser_dependency_records.append(record); browser_dependency_bytes += size
+        root_after = os.fstat(root_descriptor)
+    finally: os.close(root_descriptor)
+    source_after = source.lstat()
+    if _source_identity(root_after) != _source_identity(source_before) or _source_identity(source_after) != _source_identity(source_before): raise RuntimeError("source provenance changed while captured")
+    after = _source_metadata(source)
+    if after != before: raise RuntimeError("source provenance changed while captured")
+    head = {path: (mode, oid) for path, mode, oid in committed}
+    browser_path = b"web/scripts/daemon-visual-check.mjs"; contract_path = b"web/scripts/daemon-visual-contract.mjs"
+    browser_mode, browser_blob = head.get(browser_path, ("", "")); contract_mode, contract_blob = head.get(contract_path, ("", ""))
+    flags = b"assume\0" + before[5] + b"skip\0" + before[6] + b"fsmonitor\0" + before[7]
+    return SourceState(revision, tree, _records_sha256(committed), _framed_sha256(live_records), tracked_entries, tracked_bytes, _records_sha256(index), hashlib.sha256(flags).hexdigest(), hashlib.sha256(before[8]).hexdigest(), _framed_sha256(ignored_records), budget["entries"] - tracked_entries, budget["bytes"] - tracked_bytes, _framed_sha256(browser_dependency_records), len(browser_dependency_records), browser_dependency_bytes, browser_blob, browser_mode, contract_blob, contract_mode, object_format, True)
 
 
 def verify_source_state(source: Path, expected: SourceState) -> SourceState:
-    observed = capture_source_state(source)
-    if observed != expected or not observed.clean:
-        raise RuntimeError("source state changed during system verification")
+    try: observed = capture_source_state(source)
+    except RuntimeError as error: raise RuntimeError("source state changed during system verification") from error
+    if observed != expected or not observed.clean: raise RuntimeError("source state changed during system verification")
     return observed
 
 
@@ -704,23 +1036,113 @@ def validate_png(body: bytes) -> tuple[int, int]:
     return width, height
 
 
-def validate_browser_script(source: Path, browser_script: Path | None, skip_browser: bool) -> Path | None:
+def _git_blob_digest(payload: bytes, object_format: str) -> str:
+    digest = hashlib.new(object_format); digest.update(f"blob {len(payload)}\0".encode()); digest.update(payload)
+    return digest.hexdigest()
+
+
+def _read_bound_head_blob(source: Path, state: SourceState, oid: str) -> bytes:
+    if not oid or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", oid): raise RuntimeError("canonical browser module is not bound to HEAD")
+    if git_output(source, "rev-parse", "HEAD").decode("ascii").strip() != state.revision or git_output(source, "rev-parse", "HEAD^{tree}").decode("ascii").strip() != state.tree_identity: raise RuntimeError("source state changed before browser module sealing")
+    payload = git_output(source, "cat-file", "blob", oid)
+    if not payload or len(payload) > MAX_BROWSER_MODULE_BYTES:
+        raise RuntimeError("canonical browser module is outside bounds")
+    if _git_blob_digest(payload, state.object_format) != oid: raise RuntimeError("canonical browser module Git object is invalid")
+    return payload
+
+
+def _browser_dependency_snapshot(source: Path, state: SourceState) -> tuple[list[tuple[bytes, int]], str, int, int]:
+    ignored = _metadata_paths(git_output(source, "ls-files", "--others", "--ignored", "--exclude-standard", "-z"), "ignored")
+    selected = [(path, directory) for path, directory in ignored if path.startswith(BROWSER_DEPENDENCY_PREFIX)]
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    root_descriptor = os.open(source, directory_flags); budget = {"entries": 0, "bytes": 0}; records: list[bytes] = []; details: list[tuple[bytes, int]] = []
+    try:
+        for path, directory_hint in selected:
+            kind, size, content, mode = _read_source_entry(root_descriptor, path, state.object_format, None, None, budget)
+            if directory_hint or kind != "regular":
+                raise RuntimeError("browser dependency closure contains unsupported entries")
+            records.append(path + b"\0" + kind.encode() + b"\0" + str(mode).encode() + b"\0" + str(size).encode() + b"\0" + content.encode())
+            details.append((path, mode))
+    finally:
+        os.close(root_descriptor)
+    return details, _framed_sha256(records), budget["entries"], budget["bytes"]
+
+
+def _validate_browser_dependency_closure(source: Path, state: SourceState) -> list[tuple[bytes, int]]:
+    details, identity, entries, size = _browser_dependency_snapshot(source, state)
+    if identity != state.browser_dependency_sha256 or entries != state.browser_dependency_entries or size != state.browser_dependency_bytes:
+        raise RuntimeError("browser dependency closure changed after source capture")
+    if identity != BROWSER_DEPENDENCY_SHA256 or entries == 0 or size <= 0:
+        raise RuntimeError("browser dependency closure does not match the pinned Playwright payload")
+    return details
+
+
+def _seal_browser_dependency_closure(source: Path, state: SourceState, destination: Path) -> dict[str, object]:
+    details = _validate_browser_dependency_closure(source, state)
+    for path, mode in details:
+        target = destination / os.fsdecode(path); target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        shutil.copyfile(source / os.fsdecode(path), target, follow_symlinks=False); target.chmod(mode)
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    root_descriptor = os.open(destination, directory_flags); budget = {"entries": 0, "bytes": 0}; records: list[bytes] = []
+    try:
+        for path, _ in details:
+            kind, size, content, mode = _read_source_entry(root_descriptor, path, state.object_format, None, None, budget)
+            if kind != "regular":
+                raise RuntimeError("sealed browser dependency closure contains unsupported entries")
+            records.append(path + b"\0" + kind.encode() + b"\0" + str(mode).encode() + b"\0" + str(size).encode() + b"\0" + content.encode())
+    finally:
+        os.close(root_descriptor)
+    identity = _framed_sha256(records)
+    if identity != BROWSER_DEPENDENCY_SHA256 or budget["entries"] != state.browser_dependency_entries or budget["bytes"] != state.browser_dependency_bytes:
+        raise RuntimeError("sealed browser dependency closure does not match the pinned payload")
+    return {"package": "playwright-core", "version": BROWSER_DEPENDENCY_VERSION, "payload_sha256": identity, "entries": budget["entries"], "bytes": budget["bytes"], "authority": "pinned_installed_payload"}
+
+
+def validate_browser_script(source: Path, browser_script: Path | None, skip_browser: bool, state: SourceState | None = None) -> Path | None:
     if skip_browser:
-        if browser_script is not None:
-            raise RuntimeError("browser script must be absent in nonvisual mode")
+        if browser_script is not None: raise RuntimeError("browser script must be absent in nonvisual mode")
         return None
     canonical = source / "web/scripts/daemon-visual-check.mjs"
-    if browser_script is None:
-        raise RuntimeError("canonical browser script is required")
+    if browser_script is None or state is None or not state.browser_script_head_blob or state.browser_script_head_mode not in {"100644", "100755"}: raise RuntimeError("canonical browser script is required and must be bound to HEAD")
     try:
-        canonical_resolved = canonical.resolve(strict=True)
-        supplied_resolved = browser_script.resolve(strict=True)
-        information = canonical.lstat()
-    except OSError as error:
-        raise RuntimeError("canonical browser script is unavailable") from error
-    if supplied_resolved != canonical_resolved or not stat.S_ISREG(information.st_mode) or stat.S_ISLNK(information.st_mode):
-        raise RuntimeError("canonical browser script is required")
+        canonical_information = canonical.lstat(); supplied_information = browser_script.lstat()
+        canonical_resolved = canonical.resolve(strict=True); supplied_resolved = browser_script.resolve(strict=True)
+    except OSError as error: raise RuntimeError("canonical browser script is unavailable") from error
+    if supplied_resolved != canonical_resolved or _source_identity(supplied_information) != _source_identity(canonical_information) or not stat.S_ISREG(canonical_information.st_mode) or stat.S_ISLNK(canonical_information.st_mode): raise RuntimeError("canonical browser script is required")
+    executable = stat.S_IMODE(canonical_information.st_mode) & 0o111
+    if executable not in {0, 0o111}:
+        raise RuntimeError("canonical browser script executable mode is unsupported")
+    live_mode = "100755" if executable == 0o111 else "100644"
+    if live_mode != state.browser_script_head_mode: raise RuntimeError("canonical browser script executable mode does not match HEAD")
+    payload = _read_bound_head_blob(source, state, state.browser_script_head_blob)
+    if hashlib.sha256(payload).hexdigest() != sha256(canonical):
+        raise RuntimeError("canonical browser script bytes do not match HEAD")
+    if not state.browser_contract_head_blob or state.browser_contract_head_mode not in {"100644", "100755"}:
+        raise RuntimeError("canonical browser contract is required and must be bound to HEAD")
+    _read_bound_head_blob(source, state, state.browser_contract_head_blob)
+    _validate_browser_dependency_closure(source, state)
     return canonical_resolved
+
+
+def seal_browser_modules(source: Path, state: SourceState, destination: Path) -> tuple[Path, dict[str, str]]:
+    if destination.exists(): raise RuntimeError("browser execution sandbox already exists")
+    scripts = destination / "web/scripts"; scripts.mkdir(parents=True, mode=0o700)
+    modules = (
+        ("daemon-visual-check.mjs", state.browser_script_head_blob, state.browser_script_head_mode),
+        ("daemon-visual-contract.mjs", state.browser_contract_head_blob, state.browser_contract_head_mode),
+    )
+    record: dict[str, str] = {}
+    for name, oid, mode in modules:
+        if mode not in {"100644", "100755"}: raise RuntimeError("canonical browser module mode is unsupported")
+        payload = _read_bound_head_blob(source, state, oid)
+        target = scripts / name; target.write_bytes(payload); target.chmod(0o555 if mode == "100755" else 0o444)
+        if _git_blob_digest(target.read_bytes(), state.object_format) != oid: raise RuntimeError("sealed browser module does not match HEAD")
+        record[f"{name}_head_blob"] = oid; record[f"{name}_sha256"] = hashlib.sha256(payload).hexdigest(); record[f"{name}_mode"] = mode
+    dependency = _seal_browser_dependency_closure(source, state, destination)
+    script = scripts / "daemon-visual-check.mjs"
+    record["execution_path"] = str(script); record["source_revision"] = state.revision; record["source_tree_identity"] = state.tree_identity
+    record["dependency_package"] = str(dependency["package"]); record["dependency_version"] = str(dependency["version"]); record["dependency_payload_sha256"] = str(dependency["payload_sha256"]); record["dependency_entries"] = str(dependency["entries"]); record["dependency_bytes"] = str(dependency["bytes"]); record["dependency_authority"] = str(dependency["authority"])
+    return script, record
 
 
 def validate_browser_phase_record(record: dict, expected: dict, artifacts_root: Path | None) -> None:
@@ -833,11 +1255,7 @@ def main() -> int:
     candidate = args.candidate.resolve()
     output = args.output.resolve()
     source = args.source_root.resolve()
-    supplied_browser_script = args.browser_script.resolve() if args.browser_script else None
-    try:
-        browser_script = validate_browser_script(source, supplied_browser_script, args.skip_browser)
-    except RuntimeError as error:
-        raise SystemExit(str(error)) from error
+    supplied_browser_script = Path(os.path.abspath(args.browser_script)) if args.browser_script else None
     sidecar = Path(str(candidate) + ".sha256")
     if not candidate.is_file() or not sidecar.is_file() or output.exists():
         raise SystemExit("candidate/checksum must be valid and output must not exist")
@@ -845,7 +1263,11 @@ def main() -> int:
     candidate_digest = sha256(candidate)
     if len(sidecar_fields) < 1 or sidecar_fields[0] != candidate_digest:
         raise SystemExit("candidate checksum does not match detached sidecar")
-    source_before = capture_source_state(source)
+    try:
+        source_before = capture_source_state(source)
+        browser_script = validate_browser_script(source, supplied_browser_script, args.skip_browser, source_before)
+    except RuntimeError as error:
+        raise SystemExit(str(error)) from error
     if not source_before.clean:
         raise SystemExit("source tree must be clean before system verification")
 
@@ -861,6 +1283,11 @@ def main() -> int:
     for directory in (home, runtime, setup_dir, repository, artifacts, sandbox, private_tmp, cache):
         directory.mkdir(mode=0o700)
     execution_candidate = copy_candidate_archive(candidate, sidecar, sandbox, candidate_digest)
+    browser_provenance: dict[str, str] | None = None
+    browser_execution_script: Path | None = None
+    if not args.skip_browser:
+        assert browser_script is not None
+        browser_execution_script, browser_provenance = seal_browser_modules(source, source_before, output / "browser-runtime")
     private_tmp_alias = create_private_tmp_alias(private_tmp)
     atexit.register(remove_private_tmp_alias, private_tmp_alias, private_tmp)
     private_tmp_alias_removed = False
@@ -950,13 +1377,13 @@ def main() -> int:
         daemon: subprocess.Popen[bytes] | None = None
 
         def run_browser_phase(phase: str, expected: dict) -> dict:
-            assert browser_script is not None
+            assert browser_execution_script is not None
             root = artifacts / "daemon-console"
             root.mkdir(mode=0o700, exist_ok=True)
             phase_output = root / phase.replace("_", "-")
             visual_env = {**env, "OPEN_TRESTLE_DAEMON_URL": url, "OPEN_TRESTLE_DAEMON_VISUAL_OUTPUT": str(phase_output), "OPEN_TRESTLE_TENANT": "tenant-a", "OPEN_TRESTLE_REPOSITORY": "repository-a", "OPEN_TRESTLE_RUN": run_id, "OPEN_TRESTLE_BROWSER_PHASE": phase}
-            commands.append(["node", str(browser_script)])
-            visual = run(["node", str(browser_script)], visual_env, sandbox, timeout=120)
+            commands.append(["node", str(browser_execution_script)])
+            visual = run(["node", str(browser_execution_script)], visual_env, sandbox, timeout=120)
             if visual.stdout:
                 write(artifacts / f"daemon-console-{phase}.stdout", visual.stdout)
             if visual.stderr:
@@ -1107,6 +1534,8 @@ def main() -> int:
             "observation_count": len(diagnostics_value["observations"]),
             "observation_identities": [value["identity"] for value in diagnostics_value["observations"]],
         }, artifacts)
+        assert browser_provenance is not None
+        browser_record["provenance"] = browser_provenance
     receipt = {
         "contract": "open-trestle/local-alpha-system-receipt",
         "schema_version": 2,
@@ -1114,10 +1543,18 @@ def main() -> int:
         "source_tree_identity": source_after.tree_identity,
         "source_state_identity": source_after.identity(),
         "source_index_flags_identity": source_after.index_flags_sha256,
-        "source_worktree_identity": source_after.worktree_sha256,
-        "source_worktree_entries": source_after.worktree_entries,
-        "source_worktree_bytes": source_after.worktree_bytes,
         "source_tree_clean": source_after.clean,
+        "source_provenance": {
+            "object_format": source_after.object_format,
+            "committed_tree": {"tree_oid": source_after.tree_identity, "entries_sha256": source_after.committed_tree_sha256, "entry_count": source_after.live_tracked_entries},
+            "live_tracked_tree": {"entries_sha256": source_after.live_tracked_tree_sha256, "entry_count": source_after.live_tracked_entries, "bytes": source_after.live_tracked_bytes, "matches_committed_head": True},
+            "index": {"entries_sha256": source_after.index_sha256, "stage_zero_matches_committed_head": True},
+            "index_flags": {"sha256": source_after.index_flags_sha256, "assume_unchanged": False, "skip_worktree": False, "fsmonitor_valid": False},
+            "status": {"sha256": source_after.status_sha256, "porcelain_empty": True, "nonignored_untracked_count": 0},
+            "ignored_worktree": {"entries_sha256": source_after.ignored_worktree_sha256, "entry_count": source_after.ignored_worktree_entries, "bytes": source_after.ignored_worktree_bytes, "stable_during_run": True},
+            "browser_dependency": {"package": "playwright-core", "version": BROWSER_DEPENDENCY_VERSION, "payload_sha256": source_after.browser_dependency_sha256, "entry_count": source_after.browser_dependency_entries, "bytes": source_after.browser_dependency_bytes, "authority": "pinned_installed_payload"},
+            "browser_modules": {"script_head_blob": source_after.browser_script_head_blob, "script_head_mode": source_after.browser_script_head_mode, "contract_head_blob": source_after.browser_contract_head_blob, "contract_head_mode": source_after.browser_contract_head_mode},
+        },
         "candidate": {"path": str(candidate), "execution_path": str(execution_candidate), "sha256": candidate_digest, "sidecar_sha256": sha256(sidecar), "manifest_revision": candidate_manifest["revision"], "manifest_sha256": candidate_manifest["manifest_sha256"], "archive_sha256": candidate_manifest["archive_sha256"], "lifecycle": "verified_install_smoke_recover_uninstall", "operator_state_preserved": True},
         "binaries": binary_records,
         "repository": {"base_revision": base, "head_revision": head},

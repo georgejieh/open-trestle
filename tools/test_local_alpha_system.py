@@ -108,12 +108,47 @@ class LocalAlphaSystemTest(unittest.TestCase):
 
     def test_browser_script_must_be_canonical_tracked_source(self):
         with tempfile.TemporaryDirectory() as directory:
-            source = Path(directory); canonical = source / "web/scripts/daemon-visual-check.mjs"
-            canonical.parent.mkdir(parents=True); canonical.write_text("export {}\n")
-            self.assertEqual(local_alpha_system.validate_browser_script(source, canonical, False), canonical.resolve())
+            source = Path(directory); self.provenance_repository(source)
+            dependency = source / "web/node_modules/playwright-core/index.js"; dependency.parent.mkdir(parents=True); dependency.write_text("export {}\n")
+            canonical = source / "web/scripts/daemon-visual-check.mjs"
+            state = local_alpha_system.capture_source_state(source)
+            with patch.object(local_alpha_system, "BROWSER_DEPENDENCY_SHA256", state.browser_dependency_sha256):
+                self.assertEqual(local_alpha_system.validate_browser_script(source, canonical, False, state), canonical.resolve())
             outside = source / "other.mjs"; outside.write_text("export {}\n")
             with self.assertRaisesRegex(RuntimeError, "canonical browser script"):
-                local_alpha_system.validate_browser_script(source, outside, False)
+                with patch.object(local_alpha_system, "BROWSER_DEPENDENCY_SHA256", state.browser_dependency_sha256):
+                    local_alpha_system.validate_browser_script(source, outside, False, state)
+            canonical.write_bytes(b"X" * canonical.stat().st_size)
+            with self.assertRaisesRegex(RuntimeError, "bytes do not match HEAD"):
+                with patch.object(local_alpha_system, "BROWSER_DEPENDENCY_SHA256", state.browser_dependency_sha256):
+                    local_alpha_system.validate_browser_script(source, canonical, False, state)
+
+    def test_browser_dependency_symlink_escape_is_rejected_before_output(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside_directory, tempfile.TemporaryDirectory() as candidate_directory, tempfile.TemporaryDirectory() as output_parent:
+            source = Path(directory); self.provenance_repository(source)
+            external = Path(outside_directory); (external / "index.js").write_text("malicious")
+            package = source / "web/node_modules/playwright-core"; package.parent.mkdir(parents=True); package.symlink_to(external, target_is_directory=True)
+            revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=source, check=True, capture_output=True, text=True).stdout.strip()
+            candidate, _ = self.candidate(Path(candidate_directory), revision); output = Path(output_parent) / "must-not-exist"
+            arguments = ["local_alpha_system.py", "--candidate", str(candidate), "--source-root", str(source), "--browser-script", str(source / "web/scripts/daemon-visual-check.mjs"), "--output", str(output)]
+            with patch.object(sys, "argv", arguments), self.assertRaisesRegex(SystemExit, "browser dependency closure"):
+                local_alpha_system.main()
+            self.assertFalse(output.exists())
+
+    def test_browser_modules_are_sealed_from_exact_head_blobs(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as output_directory:
+            source = Path(directory); self.provenance_repository(source)
+            contract = source / "web/scripts/daemon-visual-contract.mjs"
+            dependency = source / "web/node_modules/playwright-core/index.js"; dependency.parent.mkdir(parents=True); dependency.write_text("export {}\n")
+            state = local_alpha_system.capture_source_state(source)
+            with patch.object(local_alpha_system, "BROWSER_DEPENDENCY_SHA256", state.browser_dependency_sha256):
+                script, record = local_alpha_system.seal_browser_modules(source, state, Path(output_directory) / "sealed")
+            self.assertEqual(script.read_bytes(), (source / "web/scripts/daemon-visual-check.mjs").read_bytes())
+            self.assertEqual((script.parent / "daemon-visual-contract.mjs").read_bytes(), contract.read_bytes())
+            self.assertEqual(record["daemon-visual-check.mjs_head_blob"], state.browser_script_head_blob)
+            self.assertEqual(stat.S_IMODE(script.stat().st_mode), 0o444)
+            self.assertFalse((Path(output_directory) / "sealed/web/node_modules").is_symlink())
+            self.assertEqual((Path(output_directory) / "sealed/web/node_modules/playwright-core/index.js").read_text(), "export {}\n")
 
     def test_candidate_execution_copy_is_output_owned_and_digest_fenced(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -215,11 +250,10 @@ class LocalAlphaSystemTest(unittest.TestCase):
             subprocess.run(["git", "add", "tracked.txt"], cwd=root, check=True)
             subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
             subprocess.run(["git", "update-index", "--assume-unchanged", "tracked.txt"], cwd=root, check=True)
-            before = local_alpha_system.capture_source_state(root)
             tracked.write_bytes(b"mutate")
             self.assertEqual(subprocess.run(["git", "status", "--porcelain=v2", "--untracked-files=all"], cwd=root, check=True, capture_output=True).stdout, b"")
-            with self.assertRaisesRegex(RuntimeError, "source state changed during system verification"):
-                local_alpha_system.verify_source_state(root, before)
+            with self.assertRaisesRegex(RuntimeError, "source provenance rejects assume-unchanged index flags"):
+                local_alpha_system.capture_source_state(root)
 
     def test_source_state_rejects_ignored_same_status_content_mutation(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -227,7 +261,7 @@ class LocalAlphaSystemTest(unittest.TestCase):
             subprocess.run(["git", "init", "-q", root], check=True)
             subprocess.run(["git", "config", "user.name", "test"], cwd=root, check=True)
             subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=root, check=True)
-            (root / ".gitignore").write_text("ignored.bin\n")
+            (root / ".gitignore").write_text("ignored.bin\nweb/node_modules/\n")
             (root / "tracked.txt").write_text("tracked\n")
             subprocess.run(["git", "add", ".gitignore", "tracked.txt"], cwd=root, check=True)
             subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
@@ -239,6 +273,172 @@ class LocalAlphaSystemTest(unittest.TestCase):
             self.assertEqual(subprocess.run(["git", "status", "--porcelain=v2", "--untracked-files=all"], cwd=root, check=True, capture_output=True).stdout, b"")
             with self.assertRaisesRegex(RuntimeError, "source state changed during system verification"):
                 local_alpha_system.verify_source_state(root, before)
+
+    def test_source_state_rejects_ignored_type_mode_and_target_mutation(self):
+        for mutation in ("mode", "type", "target"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                subprocess.run(["git", "init", "-q", root], check=True)
+                subprocess.run(["git", "config", "user.name", "test"], cwd=root, check=True)
+                subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=root, check=True)
+                (root / ".gitignore").write_text("ignored.bin\n")
+                (root / "tracked.txt").write_text("tracked")
+                subprocess.run(["git", "add", ".gitignore", "tracked.txt"], cwd=root, check=True)
+                subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
+                ignored = root / "ignored.bin"
+                if mutation == "target": ignored.symlink_to("tracked.txt")
+                else: ignored.write_bytes(b"ignored")
+                before = local_alpha_system.capture_source_state(root)
+                if mutation == "mode": ignored.chmod(0o755)
+                elif mutation == "type": ignored.unlink(); ignored.symlink_to("tracked.txt")
+                else: ignored.unlink(); ignored.symlink_to(".gitignore")
+                with self.assertRaisesRegex(RuntimeError, "source state changed during system verification"):
+                    local_alpha_system.verify_source_state(root, before)
+
+    def provenance_repository(self, root: Path) -> None:
+        subprocess.run(["git", "init", "-q", root], check=True)
+        subprocess.run(["git", "config", "user.name", "test"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=root, check=True)
+        (root / ".gitignore").write_text("ignored.bin\nweb/node_modules/\n")
+        (root / "build.txt").write_bytes(b"build-before")
+        browser = root / "web/scripts/daemon-visual-check.mjs"; browser.parent.mkdir(parents=True); browser.write_bytes(b"browser-before")
+        (root / "web/scripts/daemon-visual-contract.mjs").write_bytes(b"contract-before")
+        subprocess.run(["git", "add", ".gitignore", "build.txt", "web/scripts/daemon-visual-check.mjs", "web/scripts/daemon-visual-contract.mjs"], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
+        (root / "ignored.bin").write_bytes(b"ignored-stable")
+
+    def test_hidden_tracked_mutation_stops_before_output_or_execution(self):
+        for relative, flag, visual in (("build.txt", "--assume-unchanged", False), ("web/scripts/daemon-visual-check.mjs", "--skip-worktree", True)):
+            with self.subTest(path=relative), tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as candidate_directory, tempfile.TemporaryDirectory() as output_parent:
+                root = Path(directory); self.provenance_repository(root)
+                revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+                candidate, _ = self.candidate(Path(candidate_directory), revision)
+                subprocess.run(["git", "update-index", flag, relative], cwd=root, check=True)
+                target = root / relative; target.write_bytes(b"X" * target.stat().st_size)
+                output = Path(output_parent) / "must-not-exist"
+                arguments = ["local_alpha_system.py", "--candidate", str(candidate), "--source-root", str(root), "--output", str(output)]
+                if visual: arguments.extend(["--browser-script", str(root / relative)])
+                else: arguments.append("--skip-browser")
+                with patch.object(sys, "argv", arguments), self.assertRaisesRegex(SystemExit, "source provenance"):
+                    local_alpha_system.main()
+                self.assertFalse(output.exists())
+
+    def test_source_provenance_rejects_hidden_tracked_byte_mutation(self):
+        for relative, flag in (("build.txt", "--assume-unchanged"), ("web/scripts/daemon-visual-check.mjs", "--skip-worktree")):
+            with self.subTest(path=relative, flag=flag), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory); self.provenance_repository(root)
+                subprocess.run(["git", "update-index", flag, relative], cwd=root, check=True)
+                target = root / relative; target.write_bytes(b"X" * target.stat().st_size)
+                self.assertEqual(subprocess.run(["git", "status", "--porcelain=v2", "--untracked-files=all"], cwd=root, check=True, capture_output=True).stdout, b"")
+                with self.assertRaisesRegex(RuntimeError, "source provenance"):
+                    local_alpha_system.capture_source_state(root)
+
+    def test_source_provenance_rejects_hidden_deletion_type_and_mode_drift(self):
+        for mode in ("delete", "symlink", "executable"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory); self.provenance_repository(root)
+                subprocess.run(["git", "update-index", "--assume-unchanged", "build.txt"], cwd=root, check=True)
+                target = root / "build.txt"
+                if mode == "delete": target.unlink()
+                elif mode == "symlink": target.unlink(); target.symlink_to("ignored.bin")
+                else: target.chmod(0o755)
+                with self.assertRaisesRegex(RuntimeError, "source provenance"):
+                    local_alpha_system.capture_source_state(root)
+
+    def test_source_provenance_rejects_staged_and_nonignored_untracked_state(self):
+        for mode in ("staged", "untracked"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory); self.provenance_repository(root)
+                if mode == "staged":
+                    (root / "build.txt").write_text("staged")
+                    subprocess.run(["git", "add", "build.txt"], cwd=root, check=True)
+                else:
+                    (root / "untracked.txt").write_text("untracked")
+                with self.assertRaisesRegex(RuntimeError, "source provenance"):
+                    local_alpha_system.capture_source_state(root)
+
+    def test_source_provenance_rejects_unresolved_index_stage_without_git_writes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); self.provenance_repository(root)
+            blob = subprocess.run(["git", "rev-parse", "HEAD:build.txt"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+            subprocess.run(["git", "update-index", "--force-remove", "build.txt"], cwd=root, check=True)
+            subprocess.run(["git", "update-index", "--index-info"], cwd=root, check=True, input=f"100644 {blob} 2\tbuild.txt\n", text=True)
+            objects_before = sorted(str(path.relative_to(root / ".git/objects")) for path in (root / ".git/objects").rglob("*") if path.is_file())
+            index_before = (root / ".git/index").read_bytes()
+            with self.assertRaisesRegex(RuntimeError, "source provenance"):
+                local_alpha_system.capture_source_state(root)
+            self.assertEqual((root / ".git/index").read_bytes(), index_before)
+            self.assertEqual(sorted(str(path.relative_to(root / ".git/objects")) for path in (root / ".git/objects").rglob("*") if path.is_file()), objects_before)
+            self.assertFalse((root / ".git/index.lock").exists())
+
+    def test_source_provenance_fails_closed_on_tracked_open_race(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); self.provenance_repository(root)
+            target = root / "build.txt"; original_open = os.open; raced = False
+            def racing_open(path, flags, *arguments, **keywords):
+                nonlocal raced
+                descriptor = original_open(path, flags, *arguments, **keywords)
+                if path == b"build.txt" and not raced:
+                    raced = True; target.write_bytes(b"race-mutated")
+                return descriptor
+            with patch.object(local_alpha_system.os, "open", racing_open):
+                with self.assertRaisesRegex(RuntimeError, "source provenance changed while captured"):
+                    local_alpha_system.capture_source_state(root)
+            self.assertTrue(raced)
+
+    def test_source_provenance_does_not_execute_repo_local_fsmonitor(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside_directory:
+            root = Path(directory); self.provenance_repository(root)
+            marker = Path(outside_directory) / "fsmonitor-ran"
+            hook = root / ".git/fsmonitor-hook"
+            hook.write_text(f"#!/bin/sh\nprintf ran > {marker}\n")
+            hook.chmod(0o755)
+            subprocess.run(["git", "config", "core.fsmonitor", str(hook)], cwd=root, check=True)
+            local_alpha_system.capture_source_state(root)
+            self.assertFalse(marker.exists())
+
+    def test_source_provenance_read_is_index_and_object_store_side_effect_free(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); self.provenance_repository(root)
+            index = root / ".git/index"; index_before = index.read_bytes(); stat_before = index.stat()
+            objects_before = sorted(str(path.relative_to(root / ".git/objects")) for path in (root / ".git/objects").rglob("*") if path.is_file())
+            local_alpha_system.capture_source_state(root)
+            stat_after = index.stat()
+            self.assertEqual(index.read_bytes(), index_before)
+            self.assertEqual((stat_after.st_ino, stat_after.st_size, stat_after.st_mtime_ns), (stat_before.st_ino, stat_before.st_size, stat_before.st_mtime_ns))
+            self.assertEqual(sorted(str(path.relative_to(root / ".git/objects")) for path in (root / ".git/objects").rglob("*") if path.is_file()), objects_before)
+            self.assertFalse((root / ".git/index.lock").exists())
+
+    def test_source_provenance_captures_ignored_nested_checkout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q", root], check=True)
+            subprocess.run(["git", "config", "user.name", "test"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=root, check=True)
+            (root / ".gitignore").write_text("refs/\n")
+            (root / "tracked.txt").write_text("tracked")
+            subprocess.run(["git", "add", ".gitignore", "tracked.txt"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
+            nested = root / "refs/nested"; nested.mkdir(parents=True)
+            subprocess.run(["git", "init", "-q", nested], check=True)
+            subprocess.run(["git", "config", "user.name", "nested"], cwd=nested, check=True)
+            subprocess.run(["git", "config", "user.email", "nested@example.invalid"], cwd=nested, check=True)
+            (nested / "inside.txt").write_text("inside")
+            subprocess.run(["git", "add", "inside.txt"], cwd=nested, check=True)
+            subprocess.run(["git", "commit", "-qm", "nested"], cwd=nested, check=True)
+            before = local_alpha_system.capture_source_state(root)
+            self.assertGreater(before.ignored_worktree_entries, 1)
+            (nested / "inside.txt").write_text("mutated")
+            with self.assertRaisesRegex(RuntimeError, "source state changed during system verification"):
+                local_alpha_system.verify_source_state(root, before)
+
+    def test_source_provenance_accepts_canonical_head_with_stable_ignored_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); self.provenance_repository(root)
+            before = local_alpha_system.capture_source_state(root)
+            after = local_alpha_system.verify_source_state(root, before)
+            self.assertEqual(before, after)
+            self.assertTrue(before.clean)
 
     def test_browser_phase_evidence_binds_same_review_before_and_after_restart(self):
         with tempfile.TemporaryDirectory() as directory:
