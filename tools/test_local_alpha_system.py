@@ -345,6 +345,20 @@ class LocalAlphaSystemTest(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "source provenance"):
                     local_alpha_system.capture_source_state(root)
 
+    def test_source_provenance_uses_git_owner_executable_semantics(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); self.provenance_repository(root)
+            executable = root / "executable.sh"; executable.write_text("#!/bin/sh\n"); executable.chmod(0o755)
+            subprocess.run(["git", "add", "executable.sh"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "executable"], cwd=root, check=True)
+            executable.chmod(0o700)
+            state = local_alpha_system.capture_source_state(root)
+            self.assertTrue(state.clean)
+            executable.chmod(0o600)
+            with self.assertRaisesRegex(RuntimeError, "source provenance|tracked source"):
+                local_alpha_system.capture_source_state(root)
+
+
     def test_source_provenance_rejects_staged_and_nonignored_untracked_state(self):
         for mode in ("staged", "untracked"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:

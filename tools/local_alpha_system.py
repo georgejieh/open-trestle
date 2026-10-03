@@ -786,10 +786,7 @@ def _read_source_entry(root_descriptor: int, path: bytes, object_format: str, ex
         elif stat.S_ISREG(before.st_mode):
             kind = "regular"
             if expected_mode is not None:
-                executable = stat.S_IMODE(before.st_mode) & 0o111
-                if executable not in {0, 0o111}:
-                    raise RuntimeError("tracked source executable mode is unsupported")
-                live_mode = "100755" if executable == 0o111 else "100644"
+                live_mode = "100755" if before.st_mode & stat.S_IXUSR else "100644"
                 if expected_mode != live_mode:
                     raise RuntimeError("tracked source does not match HEAD")
             flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
@@ -1109,10 +1106,7 @@ def validate_browser_script(source: Path, browser_script: Path | None, skip_brow
         canonical_resolved = canonical.resolve(strict=True); supplied_resolved = browser_script.resolve(strict=True)
     except OSError as error: raise RuntimeError("canonical browser script is unavailable") from error
     if supplied_resolved != canonical_resolved or _source_identity(supplied_information) != _source_identity(canonical_information) or not stat.S_ISREG(canonical_information.st_mode) or stat.S_ISLNK(canonical_information.st_mode): raise RuntimeError("canonical browser script is required")
-    executable = stat.S_IMODE(canonical_information.st_mode) & 0o111
-    if executable not in {0, 0o111}:
-        raise RuntimeError("canonical browser script executable mode is unsupported")
-    live_mode = "100755" if executable == 0o111 else "100644"
+    live_mode = "100755" if canonical_information.st_mode & stat.S_IXUSR else "100644"
     if live_mode != state.browser_script_head_mode: raise RuntimeError("canonical browser script executable mode does not match HEAD")
     payload = _read_bound_head_blob(source, state, state.browser_script_head_blob)
     if hashlib.sha256(payload).hexdigest() != sha256(canonical):
