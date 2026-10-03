@@ -343,3 +343,13 @@ test("reads semantic Runtime state labels without decorative icon text", async (
   );
   assert.equal(source.match(/lastElementChild\?\.textContent/g)?.length, 2);
 });
+
+test("captures the UI Runtime response before fulfilling the intercepted request", async () => {
+  const source = await readFile(
+    new URL("./daemon-visual-check.mjs", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /const response = await route\.fetch\(\)/);
+  assert.match(source, /await route\.fulfill\(\{ response, body \}\)/);
+  assert.doesNotMatch(source, /page\.on\("response"/);
+});

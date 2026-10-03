@@ -187,43 +187,45 @@ try {
     rejectDisplayedRuntime = reject;
   });
   let displayedRuntimeSeen = false;
-  page.on("response", async (response) => {
-    try {
-      const target = new URL(response.url());
-      if (
-        displayedRuntimeSeen ||
-        target.origin !== new URL(url).origin ||
-        target.pathname !== runtimeEndpoint ||
-        response.request().method() !== "GET"
-      )
-        return;
-      displayedRuntimeSeen = true;
-      const body = await response.body();
-      if (body.length === 0 || body.length > 1 << 20)
-        throw new Error("runtime response body is outside bounds");
-      const envelope = JSON.parse(body.toString("utf8"));
-      validateRuntimeEnvelope(envelope, { tenant, repository });
-      resolveDisplayedRuntime({
-        envelope,
-        received_at_milliseconds: Date.now(),
-      });
-    } catch (error) {
-      rejectDisplayedRuntime(error);
-    }
-  });
   const blockedRequests = [];
+  const daemonOrigin = new URL(url).origin;
   await page.route("**/*", async (route) => {
-    const target = new URL(route.request().url());
-    if (
-      target.origin === new URL(url).origin ||
-      target.protocol === "data:" ||
-      target.protocol === "blob:"
-    )
+    const request = route.request();
+    const target = new URL(request.url());
+    if (target.origin === daemonOrigin) {
+      if (
+        !displayedRuntimeSeen &&
+        target.pathname === runtimeEndpoint &&
+        request.method() === "GET"
+      ) {
+        displayedRuntimeSeen = true;
+        try {
+          const response = await route.fetch();
+          const body = await response.body();
+          if (!response.ok() || body.length === 0 || body.length > 1 << 20)
+            throw new Error("runtime response body is outside bounds");
+          const envelope = JSON.parse(body.toString("utf8"));
+          validateRuntimeEnvelope(envelope, { tenant, repository });
+          resolveDisplayedRuntime({
+            envelope,
+            received_at_milliseconds: Date.now(),
+          });
+          await route.fulfill({ response, body });
+        } catch (error) {
+          rejectDisplayedRuntime(error);
+          await route.abort("failed");
+        }
+        return;
+      }
       await route.continue();
-    else {
-      blockedRequests.push(target.origin);
-      await route.abort("blockedbyclient");
+      return;
     }
+    if (target.protocol === "data:" || target.protocol === "blob:") {
+      await route.continue();
+      return;
+    }
+    blockedRequests.push(target.origin);
+    await route.abort("blockedbyclient");
   });
   page.on("console", (message) => {
     if (message.type() === "error") errors.push(message.text());
