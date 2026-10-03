@@ -200,9 +200,14 @@ try {
       ) {
         displayedRuntimeSeen = true;
         try {
-          const response = await route.fetch();
+          const response = await route.fetch({ maxRedirects: 0 });
           const body = await response.body();
-          if (!response.ok() || body.length === 0 || body.length > 1 << 20)
+          if (
+            new URL(response.url()).origin !== daemonOrigin ||
+            !response.ok() ||
+            body.length === 0 ||
+            body.length > 1 << 20
+          )
             throw new Error("runtime response body is outside bounds");
           const envelope = JSON.parse(body.toString("utf8"));
           validateRuntimeEnvelope(envelope, { tenant, repository });
