@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import {
   buildDaemonVisualReceipt,
   validateRuntimeEnvelope,
@@ -311,4 +312,12 @@ test("normalizes Go runtimeadmin null handlers after identity validation", () =>
   );
   assert.deepEqual(parsed.configuration.handlers, []);
   assert.equal(parsed.identity, status.identity);
+});
+
+test("reads semantic Runtime state labels without decorative icon text", async () => {
+  const source = await readFile(
+    new URL("./daemon-visual-check.mjs", import.meta.url),
+    "utf8",
+  );
+  assert.equal(source.match(/lastElementChild\?\.textContent/g)?.length, 2);
 });

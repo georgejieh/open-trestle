@@ -104,14 +104,18 @@ const assertRuntimeDOM = async (page, status) => {
       observed: summarySection
         .querySelector(".section-head p")
         ?.textContent?.trim(),
-      ready: summarySection.querySelector(".state")?.textContent?.trim(),
+      ready: summarySection
+        .querySelector(".state")
+        ?.lastElementChild?.textContent?.trim(),
       summary: rows(summarySection),
       authority: identities(authoritySection),
       components: [
         ...readinessSection.querySelectorAll(".runtime-list li"),
       ].map((item) => ({
         name: item.querySelector("strong")?.textContent?.trim(),
-        state: item.querySelector(".state")?.textContent?.trim(),
+        state: item
+          .querySelector(".state")
+          ?.lastElementChild?.textContent?.trim(),
       })),
       handler_count: handlerSection
         .querySelector(".section-head p")
