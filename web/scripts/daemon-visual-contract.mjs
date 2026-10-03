@@ -203,7 +203,10 @@ function canonicalConfiguration(configuration, scope) {
     handlers:
       configuration.handlers === null
         ? null
-        : handlers.map((handler) => ({ ...handler })),
+        : handlers.map((handler) => ({
+            kind: handler.kind,
+            identity: handler.identity,
+          })),
   };
   return { wire: canonical, normalized: { ...canonical, handlers } };
 }

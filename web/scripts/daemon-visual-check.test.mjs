@@ -276,6 +276,28 @@ test("matches Go runtimeadmin identity golden", () => {
   assert.equal(parsed.configuration_identity, status.configuration_identity);
 });
 
+test("reconstructs Go handler key order independent of JSON object order", () => {
+  const status = runtimeStatus("2026-10-03T05:00:00.000Z");
+  const reordered = {
+    ...status,
+    configuration: {
+      ...status.configuration,
+      handlers: status.configuration.handlers.map((handler) => ({
+        identity: handler.identity,
+        kind: handler.kind,
+      })),
+    },
+  };
+  const parsed = validateRuntimeEnvelope(
+    runtimeEnvelope(reordered, "reordered"),
+    {
+      tenant: "tenant-a",
+      repository: "repository-a",
+    },
+  );
+  assert.equal(parsed.identity, status.identity);
+});
+
 test("normalizes Go runtimeadmin null handlers after identity validation", () => {
   const status = {
     contract: "open-trestle/runtime-status",

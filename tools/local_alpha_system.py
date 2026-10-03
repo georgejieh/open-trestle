@@ -1183,7 +1183,7 @@ def _runtime_configuration(value: object, scope: dict) -> dict:
     if has_rate: canonical["rate_limit_authority_identity"] = value["rate_limit_authority_identity"]
     canonical.update({"review_mode": value["review_mode"], "webhook_ingress": value["webhook_ingress"], "local_workers": value["local_workers"], "publication_enabled": value["publication_enabled"], "publication_fence_verified": value["publication_fence_verified"]})
     if has_routes: canonical.update({"route_inventory_identity": value["route_inventory_identity"], "runtime_policy_identity": value["runtime_policy_identity"]})
-    canonical.update({"route_count": value["route_count"], "handlers": None if raw_handlers is None else [dict(handler) for handler in handlers]})
+    canonical.update({"route_count": value["route_count"], "handlers": None if raw_handlers is None else [{"kind": handler["kind"], "identity": handler["identity"]} for handler in handlers]})
     return canonical
 
 

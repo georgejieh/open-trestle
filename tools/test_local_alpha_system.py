@@ -519,6 +519,16 @@ class LocalAlphaSystemTest(unittest.TestCase):
         self.assertEqual(parsed["identity"], status["identity"])
 
 
+    def test_runtime_identity_validator_reconstructs_handler_key_order(self):
+        status = self.runtime_status("2026-10-03T05:00:00.000Z")
+        status["configuration"]["handlers"] = [
+            {"identity": handler["identity"], "kind": handler["kind"]}
+            for handler in status["configuration"]["handlers"]
+        ]
+        envelope = {"contract": "open-trestle/runtime-status-response", "schema_version": 1, "request_id": "reordered", "status": status}
+        parsed = local_alpha_system._runtime_envelope(envelope, {"tenant": "tenant-a", "repository": "repository-a"})
+        self.assertEqual(parsed["identity"], status["identity"])
+
     def test_runtime_identity_validator_normalizes_go_null_handlers(self):
         status = json.loads('{"contract":"open-trestle/runtime-status","schema_version":1,"identity":"8e915eaca0878ba00b7acc3c2ed907333b13e1ff1b825f60c43b8ab0832dd931","configuration_identity":"26ab6e2eb1f2b47d3c8e7f6b8eacb65c76d3594a223a7c9c73ac23f8b08b2d5a","tenant_id":"tenant-a","repository_id":"repository-a","observed_at":"2026-10-03T05:00:00Z","ready":true,"configuration":{"tenant_id":"tenant-a","repository_ids":["repository-a"],"metadata_backend":"local","artifact_backend":"local","artifact_protection":"process_private","notification_backend":"process_local","rate_limit_backend":"process_local","review_mode":"disabled","webhook_ingress":false,"local_workers":false,"publication_enabled":false,"publication_fence_verified":false,"route_count":0,"handlers":null},"components":[]}')
         envelope = {"contract": "open-trestle/runtime-status-response", "schema_version": 1, "request_id": "go-empty-golden", "status": status}
