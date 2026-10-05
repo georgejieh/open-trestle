@@ -138,7 +138,8 @@ const runtimeStatus = {
   contract: "open-trestle/runtime-status",
   schema_version: 1,
   identity: "122a127e5ae939fa8d6582c6681945679653f5fc855721248f4a35e8e3353959",
-  configuration_identity: "15e5f36c79b8c9cf9129ec34700067a406bf57f49086f0ffe5b39e4d965572f9",
+  configuration_identity:
+    "15e5f36c79b8c9cf9129ec34700067a406bf57f49086f0ffe5b39e4d965572f9",
   tenant_id: "tenant-a",
   repository_id: "payments-api",
   observed_at: "2026-09-03T19:00:00Z",
