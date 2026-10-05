@@ -357,19 +357,6 @@ func (i *PermissionInspector) findInstallation(ctx context.Context, token Token)
 	}
 	return matches[0], nil
 }
-func (i *PermissionInspector) inspectRepositories(ctx context.Context, token Token) (uint64, error) {
-	path := permissionRuntimePath
-	content, err := i.get(ctx, token, path, url.Values{"per_page": {strconv.Itoa(permissionRepositoryPageSize)}, "page": {"1"}})
-	if err != nil {
-		return 0, err
-	}
-	defer clear(content)
-	total, entries, err := parseRepositoryPage(content)
-	if err != nil || total != 1 || len(entries) != 1 || entries[0].id == 0 || strings.ToLower(entries[0].fullName) != i.repositoryFullName || !validResponseRepositoryFullName(entries[0].fullName) {
-		return 0, ErrPermissionMismatch
-	}
-	return entries[0].id, nil
-}
 func (i *PermissionInspector) get(ctx context.Context, token Token, path string, query url.Values) ([]byte, error) {
 	requestURL := *i.endpoint
 	requestURL.Path = strings.TrimSuffix(requestURL.Path, "/") + path
@@ -434,11 +421,6 @@ func requiredGitHubPermissions() map[string]string {
 	return map[string]string{"contents": "read", "metadata": "read", "pull_requests": "read"}
 }
 
-type repositoryPermissionEntry struct {
-	id       uint64
-	fullName string
-}
-
 func parseInstallationPage(content []byte) (int, []permissionInstallation, error) {
 	object, err := decodeSelectedObject(content, map[string]bool{"total_count": true, "installations": true})
 	if err != nil {
@@ -475,34 +457,6 @@ func parseInstallationPage(content []byte) (int, []permissionInstallation, error
 		sort.Strings(events)
 		suspendedRaw, present := fields["suspended_at"]
 		entries = append(entries, permissionInstallation{id, login, selection, permissions, events, !bytes.Equal(bytes.TrimSpace(suspendedRaw), []byte("null")), present})
-	}
-	return total, entries, nil
-}
-func parseRepositoryPage(content []byte) (int, []repositoryPermissionEntry, error) {
-	object, err := decodeSelectedObject(content, map[string]bool{"total_count": true, "repositories": true})
-	if err != nil {
-		return 0, nil, err
-	}
-	total, ok := decodeInt(object["total_count"])
-	if !ok {
-		return 0, nil, ErrPermissionMismatch
-	}
-	var raw []json.RawMessage
-	if json.Unmarshal(object["repositories"], &raw) != nil || raw == nil {
-		return 0, nil, ErrPermissionMismatch
-	}
-	entries := make([]repositoryPermissionEntry, 0, len(raw))
-	for _, item := range raw {
-		fields, err := decodeSelectedObject(item, map[string]bool{"id": true, "full_name": true})
-		if err != nil {
-			return 0, nil, err
-		}
-		id, ok := decodeUint(fields["id"])
-		var fullName string
-		if !ok || json.Unmarshal(fields["full_name"], &fullName) != nil {
-			return 0, nil, ErrPermissionMismatch
-		}
-		entries = append(entries, repositoryPermissionEntry{id, fullName})
 	}
 	return total, entries, nil
 }
@@ -574,10 +528,6 @@ func validPermissionAPIVersion(value string) bool {
 func validRepositoryFullName(value string) bool {
 	owner, name, found := strings.Cut(value, "/")
 	return found && !strings.Contains(name, "/") && validRepositorySlug(owner) && validRepositorySlug(name)
-}
-func validResponseRepositoryFullName(value string) bool {
-	owner, name, found := strings.Cut(value, "/")
-	return found && !strings.Contains(name, "/") && validResponseRepositorySlug(owner) && validResponseRepositorySlug(name)
 }
 func validResponseRepositorySlug(value string) bool {
 	return validRepositorySlug(strings.ToLower(value))
