@@ -17,11 +17,18 @@ GOWORK=off GOTOOLCHAIN=go1.26.8 go test ./...
 ## Local evaluation evidence boundary
 
 `tools/local_alpha_system.py` is a bounded evidence driver, not a deployment profile. It
-must run from a source checkout whose tracked paths exactly match the committed `HEAD`
-tree in object type, Git executable semantics, regular-file bytes and symlink targets.
-The driver reads Git tree and index state without refreshing the index. It rejects staged
-or unresolved entries, hidden index flags, unsupported or sparse entries and nonignored
-untracked paths before it creates the evidence directory or copies a candidate.
+must run from a non-bare source checkout whose effective absolute Git top level equals the
+resolved source root. The literal unreplaced `HEAD` commit and tree are the authority.
+Replacement refs, common or per-worktree grafts, redirected worktrees, Git authority
+environment overrides, alternate objects and symlinked Git control/object/ref storage are
+rejected. A legitimate linked worktree is accepted only when its effective top level and
+per-worktree/common Git controls validate against that source root.
+
+Tracked paths must exactly match the literal tree in object type, Git executable semantics,
+regular-file bytes and symlink targets. The driver reads Git tree and index state without
+refreshing the index. It rejects staged or unresolved entries, hidden index flags,
+unsupported or sparse entries and nonignored untracked paths before it creates the evidence
+directory or copies a candidate.
 
 Ignored paths have a separate bounded identity and may exist, but they must remain stable
 through the run. That identity does not establish committed provenance. The browser script
@@ -30,10 +37,14 @@ copied into the output-owned browser sandbox and rehashed before execution. A ca
 manifest revision must equal the independently proved source revision; the manifest does
 not prove the worktree by itself.
 
-Visual phase receipts bind the authenticated runtime-status response displayed by the
-console, the corresponding DOM values and Runtime screenshot, and an immediate bounded
-post-capture reread. Configuration and component semantics must survive restart. Runtime
-status identities and observation times are observation-specific and need not be equal.
+The production console recomputes Go-compatible Runtime identities with browser WebCrypto
+before it renders or exposes them. Visual phase receipts bind the authenticated
+runtime-status response displayed by the console, the corresponding DOM values and Runtime
+screenshot, and an immediate bounded post-capture reread. All identity-bearing evidence
+fetches reject redirects, require their exact canonical final endpoint, have total
+deadlines and enforce streaming byte limits. Configuration and component semantics must
+survive restart. Runtime status identities and observation times are observation-specific
+and need not be equal.
 All evidence remains unsigned local output and does not establish publisher authenticity,
 production readiness or support.
 

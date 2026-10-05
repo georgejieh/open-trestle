@@ -146,14 +146,24 @@ python3 tools/local_alpha_system.py \
 ```
 
 The system driver fails before creating its output directory unless the live source is
-proved against the committed `HEAD` tree. It reads Git objects and index metadata without
-refreshing the index or writing Git objects, rejects unresolved or staged entries,
-assume-unchanged, skip-worktree, fsmonitor-valid and sparse or unsupported entries, and
-requires every tracked path to match `HEAD` in object type, Git executable semantics,
-regular-file bytes or symlink target. Nonignored untracked paths are rejected. Ignored
-paths are permitted, but their own byte, type, full mode and symlink-target identity is
-recorded separately and must remain unchanged through the final source fence. The ignored
-identity is not a substitute for, or proof of, tracked-tree provenance.
+proved against the literal, unreplaced committed `HEAD` tree. It requires a non-bare Git
+worktree whose effective absolute top level equals the resolved source root. Every Git read
+uses the fixed trusted `/usr/bin/git`, replacement interpretation disabled, explicit
+per-worktree Git directory and worktree, and the validated default index and common object
+directory. Replacement refs, common or linked-worktree grafts, redirected `core.worktree`,
+ambient Git authority overrides, alternate object stores, and symlinked Git object, ref,
+config, index or linked-worktree control storage are rejected. Legitimate linked worktrees
+are supported only when their effective top level is the supplied source root and their
+per-worktree and common control paths pass the same checks.
+
+The driver reads Git objects and index metadata without refreshing the index or writing Git
+objects. It rejects unresolved or staged entries, assume-unchanged, skip-worktree,
+fsmonitor-valid and sparse or unsupported entries, and requires every tracked path to match
+the literal tree in object type, Git executable semantics, regular-file bytes or symlink
+target. Nonignored untracked paths are rejected. Ignored paths are permitted, but their own
+byte, type, full mode and symlink-target identity is recorded separately and must remain
+unchanged through the final source fence. The ignored identity is not a substitute for, or
+proof of, tracked-tree provenance.
 
 The canonical browser script and its local contract module execute only from output-owned
 copies reconstructed from their exact `HEAD` blobs and modes. The installed
@@ -174,15 +184,23 @@ before restart, proves the daemon process group stopped and the port can be rebo
 restarts the daemon, and repeats the same identity-bound browser matrix. JSON and SARIF
 bytes must remain identical.
 
+Normal console use and screenshot evidence both recompute the Go-compatible Runtime
+configuration and status identities before rendering or exposing them for copy controls.
+The browser-safe production verifier uses WebCrypto over canonical Go field order, preserves
+wire `handlers:null` during hashing, and normalizes it to an empty UI array only after
+identity acceptance.
+
 Each Runtime screenshot is bound to the exact authenticated runtime-status response shown
-by the UI. The phase receipt records and independently validates its status identity,
-configuration identity, observed time, complete configuration and authority identities,
-handlers, and component names and states. The browser compares those values with the DOM,
-captures the Runtime image, then performs a bounded immediate reread. Status identities
-and observation times may naturally differ across reads and restart; configuration and
-component semantics must remain stable. JavaScript and Python validators recompute the Go
-runtime configuration and status identities, reject stale or malformed responses, and
-bind the Runtime image SHA-256 to the phase receipt.
+by the UI. Run, diagnostics, displayed Runtime and post-capture Runtime reads reject
+redirects, require the exact canonical final URL, enforce total deadlines, and stop reading
+when their byte cap is crossed. The phase receipt records and independently validates its
+status identity, configuration identity, observed time, complete configuration and
+authority identities, handlers, and component names and states. The browser compares those
+values with the DOM, captures the Runtime image, then performs a bounded immediate reread.
+Status identities and observation times may naturally differ across reads and restart;
+configuration and component semantics must remain stable. JavaScript and Python validators
+reject stale, malformed, forged, redirected or misattributed responses and bind the Runtime
+image SHA-256 to the phase receipt.
 
 Final cleanup recovers and uninstalls the candidate, preserves operator sentinels, proves
 process-group quiescence and port reuse, removes the private temporary alias, and repeats
