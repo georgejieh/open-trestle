@@ -585,6 +585,17 @@ class LocalAlphaSystemTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "redirected Git control"):
                 local_alpha_system.capture_source_state(linked)
 
+    def test_source_provenance_rejects_linked_worktree_grafts(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as linked_parent:
+            root = Path(directory); self.provenance_repository(root)
+            linked = Path(linked_parent) / "linked"
+            subprocess.run(["git", "worktree", "add", "-q", "--detach", str(linked), "HEAD"], cwd=root, check=True)
+            linked_git = Path(subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=linked, check=True, capture_output=True, text=True).stdout.strip())
+            head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=linked, check=True, capture_output=True, text=True).stdout.strip()
+            grafts = linked_git / "info/grafts"; grafts.parent.mkdir(parents=True, exist_ok=True); grafts.write_text(f"{head}\n")
+            with self.assertRaisesRegex(RuntimeError, "graft"):
+                local_alpha_system.capture_source_state(linked)
+
     def test_source_provenance_rejects_bare_repository(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -967,6 +967,49 @@ def _validate_git_storage_tree(root_path: Path, label: str) -> None:
         os.close(root)
 
 
+def _validate_git_grafts(git_dir: Path, common_dir: Path) -> None:
+    for grafts in {git_dir / "info/grafts", common_dir / "info/grafts"}:
+        if not grafts.exists() and not grafts.is_symlink():
+            continue
+        try:
+            information = grafts.lstat()
+        except OSError as error:
+            raise RuntimeError("source provenance graft file is unavailable") from error
+        if stat.S_ISLNK(information.st_mode) or not stat.S_ISREG(information.st_mode) or information.st_size != 0:
+            raise RuntimeError("source provenance rejects legacy Git graft entries")
+
+
+def _validate_git_control_files(git_dir: Path, common_dir: Path) -> None:
+    for control in (git_dir / "HEAD", git_dir / "index", git_dir / "commondir", git_dir / "gitdir", git_dir / "config.worktree", common_dir / "HEAD", common_dir / "config", common_dir / "packed-refs"):
+        if not control.exists() and not control.is_symlink():
+            continue
+        information = control.lstat()
+        if stat.S_ISLNK(information.st_mode) or not stat.S_ISREG(information.st_mode):
+            raise RuntimeError("source provenance rejects redirected Git control files")
+
+
+def _validate_git_alternates(object_dir: Path) -> None:
+    for name in ("alternates", "http-alternates"):
+        alternate = object_dir / f"info/{name}"
+        if not alternate.exists() and not alternate.is_symlink():
+            continue
+        information = alternate.lstat()
+        if stat.S_ISLNK(information.st_mode) or not stat.S_ISREG(information.st_mode) or information.st_size != 0:
+            raise RuntimeError("source provenance rejects alternate Git object directories")
+
+
+def _validate_git_storage_authority(git_dir: Path, common_dir: Path, object_dir: Path) -> None:
+    _validate_git_storage_tree(object_dir, "Git object storage")
+    refs = common_dir / "refs"
+    if refs.exists() or refs.is_symlink():
+        if refs.is_symlink() or not refs.is_dir():
+            raise RuntimeError("source provenance Git refs storage is unsupported")
+        _validate_git_storage_tree(refs, "Git refs storage")
+    _validate_git_control_files(git_dir, common_dir)
+    _validate_git_grafts(git_dir, common_dir)
+    _validate_git_alternates(object_dir)
+
+
 def validate_git_authority(source: Path) -> GitAuthority:
     _git_environment()
     try:
@@ -1010,32 +1053,8 @@ def validate_git_authority(source: Path) -> GitAuthority:
     replace_refs = _git_run(canonical_source, ["for-each-ref", "--format=%(refname)", "refs/replace"], authority=authority).stdout
     if replace_refs.strip():
         raise RuntimeError("source provenance rejects active Git replacement refs")
-    grafts = common_dir / "info/grafts"
-    if grafts.exists() or grafts.is_symlink():
-        try:
-            information = grafts.lstat()
-        except OSError as error:
-            raise RuntimeError("source provenance graft file is unavailable") from error
-        if stat.S_ISLNK(information.st_mode) or not stat.S_ISREG(information.st_mode) or information.st_size != 0:
-            raise RuntimeError("source provenance rejects legacy Git graft entries")
-    for name in ("alternates", "http-alternates"):
-        alternate = object_dir / f"info/{name}"
-        if alternate.exists() or alternate.is_symlink():
-            information = alternate.lstat()
-            if stat.S_ISLNK(information.st_mode) or not stat.S_ISREG(information.st_mode) or information.st_size != 0:
-                raise RuntimeError("source provenance rejects alternate Git object directories")
-    _validate_git_storage_tree(object_dir, "Git object storage")
-    refs = common_dir / "refs"
-    if refs.exists() or refs.is_symlink():
-        if refs.is_symlink() or not refs.is_dir():
-            raise RuntimeError("source provenance Git refs storage is unsupported")
-        _validate_git_storage_tree(refs, "Git refs storage")
-    for control in (git_dir / "HEAD", git_dir / "index", git_dir / "commondir", git_dir / "gitdir", git_dir / "config.worktree", common_dir / "HEAD", common_dir / "config", common_dir / "packed-refs"):
-        if not control.exists() and not control.is_symlink():
-            continue
-        information = control.lstat()
-        if stat.S_ISLNK(information.st_mode) or not stat.S_ISREG(information.st_mode):
-            raise RuntimeError("source provenance rejects redirected Git control files")
+    _validate_git_grafts(git_dir, common_dir)
+    _validate_git_storage_authority(git_dir, common_dir, object_dir)
     revision = _git_run(canonical_source, ["rev-parse", "--verify", "HEAD"], authority=authority).stdout.decode("ascii").strip()
     if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", revision):
         raise RuntimeError("source provenance HEAD identity is malformed")
@@ -1052,6 +1071,10 @@ def validate_git_authority(source: Path) -> GitAuthority:
     interpreted_tree = _git_run(canonical_source, ["rev-parse", f"{revision}^{{tree}}"], authority=authority).stdout.decode("ascii").strip()
     if interpreted_tree != tree:
         raise RuntimeError("source provenance literal Git commit interpretation changed")
+    _validate_git_storage_authority(git_dir, common_dir, object_dir)
+    replace_refs_after = _git_run(canonical_source, ["for-each-ref", "--format=%(refname)", "refs/replace"], authority=authority).stdout
+    if replace_refs_after.strip():
+        raise RuntimeError("source provenance rejects active Git replacement refs")
     return dataclasses.replace(authority, revision=revision, tree=tree, commit_sha256=hashlib.sha256(commit).hexdigest())
 
 
