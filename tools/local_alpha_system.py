@@ -1053,6 +1053,42 @@ def _validate_git_storage_authority(git_dir: Path, common_dir: Path, object_dir:
     _validate_git_alternates(object_dir)
 
 
+def _validate_literal_commit(commit: bytes, object_format: str) -> str:
+    if not commit or len(commit) > 1 << 20 or b"\0" in commit:
+        raise RuntimeError("source provenance literal HEAD commit is outside bounds")
+    headers, separator, _message = commit.partition(b"\n\n")
+    if not separator:
+        raise RuntimeError("source provenance literal HEAD commit is malformed")
+    lines = headers.split(b"\n")
+    oid_length = 40 if object_format == "sha1" else 64
+    oid = re.compile(rb"[0-9a-f]{" + str(oid_length).encode() + rb"}")
+    if not lines or not lines[0].startswith(b"tree ") or not oid.fullmatch(lines[0][5:]):
+        raise RuntimeError("source provenance literal HEAD tree is malformed")
+    tree = lines[0][5:].decode("ascii")
+    index = 1
+    while index < len(lines) and lines[index].startswith(b"parent "):
+        if not oid.fullmatch(lines[index][7:]):
+            raise RuntimeError("source provenance literal HEAD parent is malformed")
+        index += 1
+    identity = rb"[^\x00-\x1f<>]+ <[^\x00-\x1f<>]+> [0-9]+ [+-][0-9]{4}"
+    if index >= len(lines) or not re.fullmatch(rb"author " + identity, lines[index]):
+        raise RuntimeError("source provenance literal HEAD author is malformed")
+    index += 1
+    if index >= len(lines) or not re.fullmatch(rb"committer " + identity, lines[index]):
+        raise RuntimeError("source provenance literal HEAD committer is malformed")
+    index += 1
+    continuation = False
+    for line in lines[index:]:
+        if line.startswith(b" "):
+            if not continuation:
+                raise RuntimeError("source provenance literal HEAD header continuation is malformed")
+            continue
+        if not re.fullmatch(rb"[A-Za-z0-9-]+ .+", line):
+            raise RuntimeError("source provenance literal HEAD header is malformed")
+        continuation = True
+    return tree
+
+
 def validate_git_authority(source: Path) -> GitAuthority:
     _git_environment()
     try:
@@ -1111,16 +1147,11 @@ def validate_git_authority(source: Path) -> GitAuthority:
     revision = _git_run(canonical_source, ["rev-parse", "--verify", "HEAD"], authority=authority).stdout.decode("ascii").strip()
     if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", revision):
         raise RuntimeError("source provenance HEAD identity is malformed")
+    object_format = _git_run(canonical_source, ["rev-parse", "--show-object-format"], authority=authority).stdout.decode("ascii").strip()
+    if object_format not in {"sha1", "sha256"}:
+        raise RuntimeError("source provenance Git object format is unsupported")
     commit = _git_run(canonical_source, ["cat-file", "commit", revision], authority=authority).stdout
-    first = commit.split(b"\n", 1)[0]
-    if not first.startswith(b"tree "):
-        raise RuntimeError("source provenance HEAD commit is malformed")
-    try:
-        tree = first[5:].decode("ascii")
-    except UnicodeDecodeError as error:
-        raise RuntimeError("source provenance HEAD tree is malformed") from error
-    if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", tree):
-        raise RuntimeError("source provenance HEAD tree is malformed")
+    tree = _validate_literal_commit(commit, object_format)
     interpreted_tree = _git_run(canonical_source, ["rev-parse", f"{revision}^{{tree}}"], authority=authority).stdout.decode("ascii").strip()
     if interpreted_tree != tree:
         raise RuntimeError("source provenance literal Git commit interpretation changed")

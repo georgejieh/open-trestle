@@ -607,6 +607,15 @@ class LocalAlphaSystemTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "symlinked path component"):
                 local_alpha_system.capture_source_state(root)
 
+    def test_source_provenance_rejects_malformed_literal_commit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); self.provenance_repository(root)
+            tree = subprocess.run(["git", "rev-parse", "HEAD^{tree}"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+            malformed = subprocess.run(["git", "hash-object", "--literally", "-t", "commit", "-w", "--stdin"], cwd=root, check=True, input=f"tree {tree}\n\nmalformed\n", capture_output=True, text=True).stdout.strip()
+            subprocess.run(["git", "update-ref", "HEAD", malformed], cwd=root, check=True)
+            with self.assertRaisesRegex(RuntimeError, "literal HEAD (author|commit).+malformed"):
+                local_alpha_system.capture_source_state(root)
+
     def test_source_provenance_rejects_bare_repository(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
