@@ -582,7 +582,7 @@ class LocalAlphaSystemTest(unittest.TestCase):
             subprocess.run(["git", "worktree", "add", "-q", "--detach", str(linked), "HEAD"], cwd=root, check=True)
             linked_git = Path(subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=linked, check=True, capture_output=True, text=True).stdout.strip())
             commondir = linked_git / "commondir"; moved = Path(outside_directory) / "commondir"; commondir.rename(moved); commondir.symlink_to(moved)
-            with self.assertRaisesRegex(RuntimeError, "redirected Git control"):
+            with self.assertRaisesRegex(RuntimeError, "redirected Git control|commondir pointer"):
                 local_alpha_system.capture_source_state(linked)
 
     def test_source_provenance_rejects_linked_worktree_grafts(self):
@@ -595,6 +595,17 @@ class LocalAlphaSystemTest(unittest.TestCase):
             grafts = linked_git / "info/grafts"; grafts.parent.mkdir(parents=True, exist_ok=True); grafts.write_text(f"{head}\n")
             with self.assertRaisesRegex(RuntimeError, "graft"):
                 local_alpha_system.capture_source_state(linked)
+
+    def test_source_provenance_rejects_symlinked_git_directory_ancestor(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as storage_directory:
+            root = Path(directory); self.provenance_repository(root)
+            storage = Path(storage_directory); real = storage / "real"; real.mkdir()
+            moved = real / "repository.git"; (root / ".git").rename(moved)
+            alias = storage / "alias"; alias.symlink_to(real, target_is_directory=True)
+            (root / ".git").write_text(f"gitdir: {alias / 'repository.git'}\n")
+            self.assertEqual(subprocess.run(["git", "status", "--porcelain=v2"], cwd=root, check=True, capture_output=True).stdout, b"")
+            with self.assertRaisesRegex(RuntimeError, "symlinked path component"):
+                local_alpha_system.capture_source_state(root)
 
     def test_source_provenance_rejects_bare_repository(self):
         with tempfile.TemporaryDirectory() as directory:

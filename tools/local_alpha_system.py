@@ -898,11 +898,54 @@ def _git_run(source: Path, arguments: list[str], *, authority: GitAuthority | No
     return run(command, env, source, accepted=accepted, timeout=30, maximum_output_bytes=MAX_SOURCE_GIT_OUTPUT_BYTES)
 
 
+def _reject_symlinked_path_components(path: Path, label: str) -> None:
+    if not path.is_absolute():
+        raise RuntimeError(f"source provenance {label} must be absolute")
+    current = Path(path.anchor)
+    for component in path.parts[1:]:
+        current /= component
+        if current.is_symlink():
+            raise RuntimeError(f"source provenance {label} has a symlinked path component")
+
+
+def _read_git_pointer(path: Path, base: Path, label: str, prefix: str = "") -> Path:
+    information = path.lstat()
+    if stat.S_ISLNK(information.st_mode) or not stat.S_ISREG(information.st_mode) or information.st_size <= 0 or information.st_size > 4096:
+        raise RuntimeError(f"source provenance {label} is invalid")
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        if _source_identity(os.fstat(descriptor)) != _source_identity(information):
+            raise RuntimeError(f"source provenance {label} changed while inspected")
+        body = os.read(descriptor, 4097)
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    if len(body) != information.st_size or len(body) > 4096 or _source_identity(after) != _source_identity(information):
+        raise RuntimeError(f"source provenance {label} changed while inspected")
+    try:
+        value = body.decode("utf-8").strip()
+    except UnicodeDecodeError as error:
+        raise RuntimeError(f"source provenance {label} is malformed") from error
+    if prefix:
+        if not value.startswith(prefix):
+            raise RuntimeError(f"source provenance {label} is malformed")
+        value = value[len(prefix):].strip()
+    target = Path(value)
+    if not target.is_absolute():
+        target = base / target
+    target = Path(os.path.abspath(target))
+    _reject_symlinked_path_components(target, label)
+    try:
+        return target.resolve(strict=True)
+    except OSError as error:
+        raise RuntimeError(f"source provenance {label} target is unavailable") from error
+
+
 def _resolved_git_path(value: bytes, label: str, *, reject_symlink: bool = False) -> Path:
     try:
         raw = Path(value.decode("utf-8").strip())
-        if reject_symlink and raw.is_symlink():
-            raise RuntimeError(f"source provenance {label} must not be a symlink")
+        if reject_symlink:
+            _reject_symlinked_path_components(raw, label)
         path = raw.resolve(strict=True)
     except (OSError, UnicodeDecodeError) as error:
         raise RuntimeError(f"source provenance {label} is unavailable") from error
@@ -1036,6 +1079,16 @@ def validate_git_authority(source: Path) -> GitAuthority:
     common_dir = _resolved_git_path(_git_run(canonical_source, ["rev-parse", "--path-format=absolute", "--git-common-dir"]).stdout, "common Git directory", reject_symlink=True)
     if not git_dir.is_dir() or git_dir.is_symlink() or not common_dir.is_dir() or common_dir.is_symlink():
         raise RuntimeError("source provenance Git directory is unsupported")
+    if stat.S_ISREG(dot_git_information.st_mode):
+        if _read_git_pointer(dot_git, canonical_source, ".git pointer", "gitdir:") != git_dir:
+            raise RuntimeError("source provenance .git pointer does not match Git directory")
+    commondir_pointer = git_dir / "commondir"
+    if commondir_pointer.exists() or commondir_pointer.is_symlink():
+        if _read_git_pointer(commondir_pointer, git_dir, "commondir pointer") != common_dir:
+            raise RuntimeError("source provenance commondir pointer does not match common Git directory")
+    gitdir_pointer = git_dir / "gitdir"
+    if gitdir_pointer.exists() or gitdir_pointer.is_symlink():
+        _read_git_pointer(gitdir_pointer, git_dir, "gitdir pointer")
     configured_scopes = ["--local"]
     worktree_config = _git_run(canonical_source, [f"--git-dir={git_dir}", "config", "--local", "--type=bool", "--get", "extensions.worktreeConfig"], accepted=(0, 1))
     if worktree_config.returncode == 0 and worktree_config.stdout.strip() == b"true":
