@@ -975,6 +975,13 @@ def validate_git_authority(source: Path) -> GitAuthority:
         raise RuntimeError("source provenance source root is unavailable") from error
     if not canonical_source.is_dir() or canonical_source.is_symlink():
         raise RuntimeError("source provenance source root is invalid")
+    dot_git = canonical_source / ".git"
+    try:
+        dot_git_information = dot_git.lstat()
+    except OSError as error:
+        raise RuntimeError("source provenance requires .git control for a non-bare work tree") from error
+    if stat.S_ISLNK(dot_git_information.st_mode) or not (stat.S_ISDIR(dot_git_information.st_mode) or stat.S_ISREG(dot_git_information.st_mode)):
+        raise RuntimeError("source provenance rejects redirected .git control")
     top = _resolved_git_path(_git_run(canonical_source, ["rev-parse", "--show-toplevel"]).stdout, "Git top-level")
     if top != canonical_source:
         raise RuntimeError("source provenance Git top-level does not equal supplied source root")
@@ -1023,7 +1030,7 @@ def validate_git_authority(source: Path) -> GitAuthority:
         if refs.is_symlink() or not refs.is_dir():
             raise RuntimeError("source provenance Git refs storage is unsupported")
         _validate_git_storage_tree(refs, "Git refs storage")
-    for control in (git_dir / "HEAD", git_dir / "index", git_dir / "config.worktree", common_dir / "config", common_dir / "packed-refs"):
+    for control in (git_dir / "HEAD", git_dir / "index", git_dir / "commondir", git_dir / "gitdir", git_dir / "config.worktree", common_dir / "HEAD", common_dir / "config", common_dir / "packed-refs"):
         if not control.exists() and not control.is_symlink():
             continue
         information = control.lstat()

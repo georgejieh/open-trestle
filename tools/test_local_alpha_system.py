@@ -570,6 +570,21 @@ class LocalAlphaSystemTest(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "symlink|redirected Git control"):
                     local_alpha_system.capture_source_state(root)
 
+    def test_source_provenance_rejects_redirected_git_controls(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside_directory:
+            root = Path(directory); self.provenance_repository(root)
+            git_dir = root / ".git"; moved = Path(outside_directory) / "git"; git_dir.rename(moved); git_dir.symlink_to(moved, target_is_directory=True)
+            with self.assertRaisesRegex(RuntimeError, "redirected .git"):
+                local_alpha_system.capture_source_state(root)
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as linked_parent, tempfile.TemporaryDirectory() as outside_directory:
+            root = Path(directory); self.provenance_repository(root)
+            linked = Path(linked_parent) / "linked"
+            subprocess.run(["git", "worktree", "add", "-q", "--detach", str(linked), "HEAD"], cwd=root, check=True)
+            linked_git = Path(subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=linked, check=True, capture_output=True, text=True).stdout.strip())
+            commondir = linked_git / "commondir"; moved = Path(outside_directory) / "commondir"; commondir.rename(moved); commondir.symlink_to(moved)
+            with self.assertRaisesRegex(RuntimeError, "redirected Git control"):
+                local_alpha_system.capture_source_state(linked)
+
     def test_source_provenance_rejects_bare_repository(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
