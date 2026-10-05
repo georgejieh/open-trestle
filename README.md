@@ -152,9 +152,11 @@ uses the fixed trusted `/usr/bin/git`, replacement interpretation disabled, expl
 per-worktree Git directory and worktree, and the validated default index and common object
 directory. Replacement refs, common or linked-worktree grafts, redirected `core.worktree`,
 ambient Git authority overrides, alternate object stores, and symlinked Git object, ref,
-config, index or linked-worktree control storage are rejected. Legitimate linked worktrees
-are supported only when their effective top level is the supplied source root and their
-per-worktree and common control paths pass the same checks.
+config, index or linked-worktree control storage are rejected. The local alpha supports
+only the `files` reference backend and a normal unsplit index; reftable and split-index
+repositories, including redirected or symlinked stores, fail before output or execution.
+Legitimate linked worktrees are supported only when their effective top level is the
+supplied source root and their per-worktree and common control paths pass the same checks.
 
 The driver reads Git objects and index metadata without refreshing the index or writing Git
 objects. It rejects unresolved or staged entries, assume-unchanged, skip-worktree,
@@ -170,12 +172,14 @@ copies reconstructed from their exact `HEAD` blobs and modes. The installed
 `playwright-core` 1.62.1 payload is independently pinned by a bounded path, mode and byte
 identity, rejects symlinks, and is copied and rehashed in the browser sandbox. This payload
 binding is toolchain evidence, not a claim that ignored files belong to the committed tree.
-The verified candidate manifest revision must also equal the independently proved source
-`HEAD`; a matching manifest alone is not source provenance.
+The driver reads and bounds the original candidate manifest without executing archive code.
+Its revision and the safely read archive digest must match the independently proved source
+`HEAD` and detached checksum before the output directory, browser sandbox, or execution
+marker can exist. A matching manifest alone is not source provenance.
 
-The driver verifies the detached checksum, makes a stable byte-identical candidate copy
-inside the output-owned sandbox, and executes only that copy with digest fences around
-every archive command. Candidate and browser commands have bounded output, HTTP, log and
+After that preflight, the driver writes the exact inspected candidate snapshot into the
+output-owned sandbox, revalidates its digest and manifest, and executes only that copy with
+digest fences around every archive command. Candidate and browser commands have bounded output, HTTP, log and
 total-time budgets. The driver installs only into an isolated destdir, runs candidate
 smoke, creates a real temporary Git repository, initializes the existing
 `local_single_node` plan, starts `trestled` on numeric loopback, and executes the four-task

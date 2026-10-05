@@ -21,8 +21,10 @@ must run from a non-bare source checkout whose effective absolute Git top level 
 resolved source root. The literal unreplaced `HEAD` commit and tree are the authority.
 Replacement refs, common or per-worktree grafts, redirected worktrees, Git authority
 environment overrides, alternate objects and symlinked Git control/object/ref storage are
-rejected. A legitimate linked worktree is accepted only when its effective top level and
-per-worktree/common Git controls validate against that source root.
+rejected. Reftable reference storage and split indexes are not supported by the local alpha
+and fail before output or candidate execution. A legitimate linked worktree is accepted
+only when its effective top level and per-worktree/common Git controls validate against
+that source root.
 
 Tracked paths must exactly match the literal tree in object type, Git executable semantics,
 regular-file bytes and symlink targets. The driver reads Git tree and index state without
@@ -33,8 +35,10 @@ directory or copies a candidate.
 Ignored paths have a separate bounded identity and may exist, but they must remain stable
 through the run. That identity does not establish committed provenance. The browser script
 and local contract are sealed from exact `HEAD` blobs. The pinned Playwright payload is
-copied into the output-owned browser sandbox and rehashed before execution. A candidate
-manifest revision must equal the independently proved source revision; the manifest does
+copied into the output-owned browser sandbox and rehashed before execution. The original
+candidate manifest and archive digest are inspected without execution and must match the
+source revision and detached checksum before output is created. The exact inspected bytes
+are then copied into the sandbox and revalidated before `verify-archive`; the manifest does
 not prove the worktree by itself.
 
 The production console recomputes Go-compatible Runtime identities with browser WebCrypto
