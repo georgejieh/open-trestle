@@ -2,10 +2,8 @@ package github
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -128,14 +126,6 @@ func TestPublicationMarkdownEscapesUntrustedEffects(t *testing.T) {
 		}
 	}
 }
-func decodeJSONReader(reader io.Reader, target any) error {
-	content, err := io.ReadAll(reader)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(content, target)
-}
-
 func TestStaticPublicationTokenProviderRequiresExactScopeAndTarget(t *testing.T) {
 	scope, target := githubPublicationTarget(t)
 	token, _ := NewToken([]byte("test-token"))

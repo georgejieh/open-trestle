@@ -113,9 +113,6 @@ func resumeExpectedFence(t *testing.T, op artifact.ErasureOperation) []byte {
 func resumeAttestationKey(g *resumeJournalGraph) string {
 	return resumePrefix + "/deletions/" + g.scope.Identity() + "/" + g.value.Identity() + ".attestation-v2"
 }
-func resumeIntentKey(g *resumeJournalGraph) string {
-	return strings.TrimSuffix(resumeAttestationKey(g), ".attestation-v2") + ".intent-v2"
-}
 func assertResumeCertified(t *testing.T, g *budgetedResumeGraph, op artifact.ErasureOperation, r artifact.ErasureResult, err error, selected ...artifact.ProtectedErasurePolicy) artifact.ErasureAttestationV2 {
 	t.Helper()
 	if err != nil || r.State() != artifact.ErasureState(5) || r.Operation().Identity() != op.Identity() {

@@ -246,11 +246,6 @@ func packedCLIHashBytes(t *testing.T, algorithm evidence.RevisionAlgorithm, valu
 	return h.Sum(nil)
 }
 
-func packedCLISHA256Hex(value []byte) string {
-	sum := sha256.Sum256(value)
-	return hex.EncodeToString(sum[:])
-}
-
 func packedCLIDecodeHex(t *testing.T, value string) []byte {
 	t.Helper()
 	decoded, err := hex.DecodeString(value)

@@ -219,11 +219,6 @@ func packedLRHash(t *testing.T, algorithm evidence.RevisionAlgorithm, value []by
 	return h.Sum(nil)
 }
 
-func packedLRSHA256(value []byte) string {
-	sum := sha256.Sum256(value)
-	return hex.EncodeToString(sum[:])
-}
-
 func packedLRDecode(t *testing.T, value string) []byte {
 	t.Helper()
 	decoded, err := hex.DecodeString(value)
