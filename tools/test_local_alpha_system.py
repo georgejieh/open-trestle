@@ -187,6 +187,44 @@ class LocalAlphaSystemTest(unittest.TestCase):
             self.assertTrue(mutated)
             self.assertFalse(marker_path.exists())
 
+    def test_candidate_sidecar_symlink_and_oversize_fail_before_output(self):
+        for mode in ("sidecar-symlink", "oversize"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as candidate_directory, tempfile.TemporaryDirectory() as output_parent, tempfile.TemporaryDirectory() as outside_directory:
+                root = Path(directory); self.provenance_repository(root)
+                revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+                marker_path = Path(candidate_directory) / "candidate-executed"
+                candidate = self.marker_candidate(Path(candidate_directory), revision, marker_path)
+                sidecar = Path(str(candidate) + ".sha256")
+                if mode == "sidecar-symlink":
+                    moved = Path(outside_directory) / sidecar.name; sidecar.rename(moved); sidecar.symlink_to(moved)
+                else:
+                    with candidate.open("r+b") as stream: stream.truncate(local_alpha_system.MAX_CANDIDATE_BYTES + 1)
+                    sidecar.write_text(f"{'0' * 64}  {candidate.name}\n")
+                output = Path(output_parent) / "must-not-exist"
+                arguments = ["local_alpha_system.py", "--candidate", str(candidate), "--source-root", str(root), "--skip-browser", "--output", str(output)]
+                with patch.object(sys, "argv", arguments), self.assertRaises((RuntimeError, SystemExit)):
+                    local_alpha_system.main()
+                self.assertFalse(output.exists())
+                self.assertFalse(marker_path.exists())
+
+    def test_source_is_reproved_before_candidate_execution(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as candidate_directory, tempfile.TemporaryDirectory() as output_parent:
+            root = Path(directory); self.provenance_repository(root)
+            revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+            marker_path = Path(candidate_directory) / "candidate-executed"
+            candidate = self.marker_candidate(Path(candidate_directory), revision, marker_path)
+            output = Path(output_parent) / "output"
+            original_copy = local_alpha_system.copy_candidate_snapshot
+            def mutating_copy(*arguments, **keywords):
+                copied = original_copy(*arguments, **keywords)
+                (root / "build.txt").write_text("changed after preflight")
+                return copied
+            arguments = ["local_alpha_system.py", "--candidate", str(candidate), "--source-root", str(root), "--skip-browser", "--output", str(output)]
+            with patch.object(sys, "argv", arguments), patch.object(local_alpha_system, "copy_candidate_snapshot", mutating_copy), self.assertRaisesRegex(RuntimeError, "source state changed"):
+                local_alpha_system.main()
+            self.assertTrue(output.exists())
+            self.assertFalse(marker_path.exists())
+
     def test_candidate_manifest_binds_matching_source_revision(self):
         with tempfile.TemporaryDirectory() as directory:
             revision = "1" * 40

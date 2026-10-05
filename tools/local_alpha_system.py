@@ -1320,6 +1320,37 @@ def verify_source_state(source: Path, expected: SourceState) -> SourceState:
     return observed
 
 
+def read_candidate_sidecar(sidecar: Path, candidate_name: str) -> tuple[bytes, str]:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        before = sidecar.lstat()
+        if not stat.S_ISREG(before.st_mode) or stat.S_ISLNK(before.st_mode) or before.st_size <= 0 or before.st_size > 4096:
+            raise RuntimeError("candidate checksum sidecar is invalid")
+        descriptor = os.open(sidecar, flags)
+    except OSError as error:
+        raise RuntimeError("candidate checksum sidecar is unavailable") from error
+    try:
+        if _source_identity(os.fstat(descriptor)) != _source_identity(before):
+            raise RuntimeError("candidate checksum sidecar changed while inspected")
+        body = os.read(descriptor, 4097)
+        opened_after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    try:
+        path_after = sidecar.lstat()
+    except OSError as error:
+        raise RuntimeError("candidate checksum sidecar changed while inspected") from error
+    if len(body) != before.st_size or len(body) > 4096 or _source_identity(opened_after) != _source_identity(before) or _source_identity(path_after) != _source_identity(before):
+        raise RuntimeError("candidate checksum sidecar changed while inspected")
+    try:
+        fields = body.decode("ascii").strip().split()
+    except UnicodeDecodeError as error:
+        raise RuntimeError("candidate checksum sidecar is invalid") from error
+    if len(fields) != 2 or not re.fullmatch(r"[0-9a-f]{64}", fields[0]) or fields[1] != candidate_name:
+        raise RuntimeError("candidate checksum sidecar is invalid")
+    return body, fields[0]
+
+
 def inspect_candidate_manifest(candidate: Path, source_revision: str, expected_digest: str | None = None) -> tuple[dict[str, str], bytes]:
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
@@ -1753,13 +1784,12 @@ def main() -> int:
     source = args.source_root.resolve()
     supplied_browser_script = Path(os.path.abspath(args.browser_script)) if args.browser_script else None
     sidecar = Path(str(candidate) + ".sha256")
-    if not candidate.is_file() or not sidecar.is_file() or output.exists():
+    if output.exists():
         raise SystemExit("candidate/checksum must be valid and output must not exist")
-    sidecar_body = read_bounded(sidecar, 4096)
-    sidecar_fields = sidecar_body.decode("ascii").strip().split()
-    candidate_digest = sha256(candidate)
-    if len(sidecar_fields) < 1 or sidecar_fields[0] != candidate_digest:
-        raise SystemExit("candidate checksum does not match detached sidecar")
+    try:
+        sidecar_body, candidate_digest = read_candidate_sidecar(sidecar, candidate.name)
+    except RuntimeError as error:
+        raise SystemExit(str(error)) from error
     try:
         source_before = capture_source_state(source)
         browser_script = validate_browser_script(source, supplied_browser_script, args.skip_browser, source_before)
@@ -1825,6 +1855,7 @@ def main() -> int:
         assert_candidate_digest(execution_candidate, candidate_digest)
         return result
 
+    verify_source_state(source, source_before)
     candidate_root = output / "candidate-root"
     candidate_root.mkdir(mode=0o700)
     for sentinel in (candidate_root / "etc/open-trestle/operator.conf", candidate_root / "var/lib/open-trestle/operator.state"):
