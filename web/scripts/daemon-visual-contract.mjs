@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { request as httpRequest } from "node:http";
 
 const digest = /^[0-9a-f]{64}$/;
 const zeroDigest = /^0{64}$/;
@@ -209,6 +210,189 @@ function canonicalConfiguration(configuration, scope) {
           })),
   };
   return { wire: canonical, normalized: { ...canonical, handlers } };
+}
+
+export function fetchExactLoopbackJSON({
+  endpoint,
+  credential,
+  timeoutMilliseconds = 5000,
+  maximumBytes = 1 << 20,
+}) {
+  const target = new URL(endpoint);
+  if (
+    target.protocol !== "http:" ||
+    !/^(?:127(?:\.\d{1,3}){3}|\[::1\])$/.test(target.hostname) ||
+    typeof credential !== "string" ||
+    credential.length < 32 ||
+    !Number.isSafeInteger(timeoutMilliseconds) ||
+    timeoutMilliseconds < 1 ||
+    timeoutMilliseconds > 30_000 ||
+    !Number.isSafeInteger(maximumBytes) ||
+    maximumBytes < 1 ||
+    maximumBytes > 2 << 20
+  )
+    return Promise.reject(
+      new Error("invalid exact loopback fetch configuration"),
+    );
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      request.destroy();
+      reject(error instanceof Error ? error : new Error(String(error)));
+    };
+    const request = httpRequest(target, {
+      method: "GET",
+      agent: false,
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${credential}`,
+        Connection: "close",
+      },
+    });
+    const timer = setTimeout(
+      () => fail(new Error("exact loopback fetch deadline exceeded")),
+      timeoutMilliseconds,
+    );
+    request.once("error", fail);
+    request.once("response", (response) => {
+      const declared = Number(response.headers["content-length"] ?? 0);
+      if (
+        response.statusCode !== 200 ||
+        (declared &&
+          (!Number.isSafeInteger(declared) || declared > maximumBytes))
+      ) {
+        response.destroy();
+        fail(new Error("exact loopback response status or size is invalid"));
+        return;
+      }
+      const chunks = [];
+      let total = 0;
+      response.on("data", (chunk) => {
+        total += chunk.length;
+        if (total > maximumBytes) {
+          response.destroy();
+          fail(new Error("exact loopback response body exceeded limit"));
+          return;
+        }
+        chunks.push(chunk);
+      });
+      response.once("error", fail);
+      response.once("end", () => {
+        if (settled) return;
+        const body = Buffer.concat(chunks, total);
+        if (!body.length)
+          return fail(new Error("exact loopback response body is empty"));
+        let envelope;
+        try {
+          envelope = JSON.parse(body.toString("utf8"));
+        } catch (error) {
+          return fail(error);
+        }
+        settled = true;
+        clearTimeout(timer);
+        resolve({
+          envelope,
+          body,
+          contentType: String(
+            response.headers["content-type"] ?? "application/json",
+          ),
+        });
+      });
+    });
+    request.end();
+  });
+}
+
+export async function fetchExactBrowserJSON(
+  page,
+  {
+    base,
+    path,
+    credential,
+    timeoutMilliseconds = 5000,
+    maximumBytes = 1 << 20,
+  },
+) {
+  if (
+    typeof base !== "string" ||
+    typeof path !== "string" ||
+    !path.startsWith("/") ||
+    typeof credential !== "string" ||
+    credential.length < 32 ||
+    !Number.isSafeInteger(timeoutMilliseconds) ||
+    timeoutMilliseconds < 1 ||
+    timeoutMilliseconds > 30_000 ||
+    !Number.isSafeInteger(maximumBytes) ||
+    maximumBytes < 1 ||
+    maximumBytes > 2 << 20
+  )
+    throw new Error("invalid exact browser fetch configuration");
+  const expectedURL = new URL(path, base).href;
+  if (new URL(expectedURL).origin !== new URL(base).origin)
+    throw new Error("exact browser fetch endpoint is outside daemon origin");
+  return page.evaluate(
+    async ({ endpoint, token, timeout, limit }) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeout);
+      try {
+        const response = await fetch(endpoint, {
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          credentials: "omit",
+          cache: "no-store",
+          redirect: "error",
+          referrerPolicy: "no-referrer",
+          signal: controller.signal,
+        });
+        if (!response.ok || response.url !== endpoint)
+          throw new Error(
+            "identity response did not use the exact canonical endpoint",
+          );
+        const declared = Number(response.headers.get("content-length") ?? 0);
+        if (declared && (!Number.isSafeInteger(declared) || declared > limit)) {
+          controller.abort();
+          throw new Error("identity response declared size is outside bounds");
+        }
+        if (!response.body)
+          throw new Error("identity response body is unavailable");
+        const reader = response.body.getReader();
+        const chunks = [];
+        let total = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          total += value.byteLength;
+          if (total > limit) {
+            controller.abort();
+            await reader.cancel();
+            throw new Error("identity response body exceeded limit");
+          }
+          chunks.push(value);
+        }
+        if (!total) throw new Error("identity response body is empty");
+        const body = new Uint8Array(total);
+        let offset = 0;
+        for (const chunk of chunks) {
+          body.set(chunk, offset);
+          offset += chunk.byteLength;
+        }
+        return JSON.parse(new TextDecoder().decode(body));
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    {
+      endpoint: expectedURL,
+      token: credential,
+      timeout: timeoutMilliseconds,
+      limit: maximumBytes,
+    },
+  );
 }
 
 export function validateRuntimeEnvelope(envelope, scope) {

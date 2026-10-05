@@ -349,11 +349,8 @@ test("captures the UI Runtime response before fulfilling the intercepted request
     new URL("./daemon-visual-check.mjs", import.meta.url),
     "utf8",
   );
-  assert.match(
-    source,
-    /const response = await route\.fetch\(\{ maxRedirects: 0 \}\)/,
-  );
-  assert.match(source, /new URL\(response\.url\(\)\)\.origin !== daemonOrigin/);
-  assert.match(source, /await route\.fulfill\(\{ response, body \}\)/);
+  assert.match(source, /fetchExactLoopbackJSON\(\{/);
+  assert.match(source, /endpoint: runtimeURL/);
+  assert.match(source, /"content-length": String\(captured\.body\.length\)/);
   assert.doesNotMatch(source, /page\.on\("response"/);
 });

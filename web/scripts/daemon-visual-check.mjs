@@ -6,6 +6,8 @@ import {
   buildDaemonVisualReceipt,
   browserPhases,
   validateRuntimeEnvelope,
+  fetchExactBrowserJSON,
+  fetchExactLoopbackJSON,
 } from "./daemon-visual-contract.mjs";
 
 const url = process.env.OPEN_TRESTLE_DAEMON_URL;
@@ -47,6 +49,7 @@ const pngDimensions = (buffer) => {
 };
 const filePrefix = phase.replaceAll("_", "-");
 const runtimeEndpoint = `/api/v1/tenants/${encodeURIComponent(tenant)}/repositories/${encodeURIComponent(repository)}/runtime`;
+const runtimeURL = new URL(runtimeEndpoint, url).href;
 const equal = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 const expectedRuntimeDOM = (status) => ({
   status_identity: status.identity,
@@ -195,27 +198,28 @@ try {
     if (target.origin === daemonOrigin) {
       if (
         !displayedRuntimeSeen &&
-        target.pathname === runtimeEndpoint &&
+        target.href === runtimeURL &&
         request.method() === "GET"
       ) {
         displayedRuntimeSeen = true;
         try {
-          const response = await route.fetch({ maxRedirects: 0 });
-          const body = await response.body();
-          if (
-            new URL(response.url()).origin !== daemonOrigin ||
-            !response.ok() ||
-            body.length === 0 ||
-            body.length > 1 << 20
-          )
-            throw new Error("runtime response body is outside bounds");
-          const envelope = JSON.parse(body.toString("utf8"));
-          validateRuntimeEnvelope(envelope, { tenant, repository });
+          const captured = await fetchExactLoopbackJSON({
+            endpoint: runtimeURL,
+            credential: token,
+          });
+          validateRuntimeEnvelope(captured.envelope, { tenant, repository });
           resolveDisplayedRuntime({
-            envelope,
+            envelope: captured.envelope,
             received_at_milliseconds: Date.now(),
           });
-          await route.fulfill({ response, body });
+          await route.fulfill({
+            status: 200,
+            headers: {
+              "content-type": captured.contentType,
+              "content-length": String(captured.body.length),
+            },
+            body: captured.body,
+          });
         } catch (error) {
           rejectDisplayedRuntime(error);
           await route.abort("failed");
@@ -255,45 +259,34 @@ try {
     await page.getByRole("heading", { level: 1, name: "Run succeeded" }).count()
   )
     throw new Error("operational success remains the primary review heading");
-  const observed = await page.evaluate(
-    async ({ base, tenantID, repositoryID, runID, credential }) => {
-      const headers = {
-        Accept: "application/json",
-        Authorization: `Bearer ${credential}`,
-      };
-      const path = `/api/v1/tenants/${encodeURIComponent(tenantID)}/repositories/${encodeURIComponent(repositoryID)}/runs/${encodeURIComponent(runID)}`;
-      const [runResponse, diagnosticResponse] = await Promise.all([
-        fetch(base + path, { headers, credentials: "omit" }),
-        fetch(base + path + "/diagnostics", { headers, credentials: "omit" }),
-      ]);
-      if (!runResponse.ok || !diagnosticResponse.ok)
-        throw new Error("daemon browser identity fetch failed");
-      const runEnvelope = await runResponse.json();
-      const diagnosticEnvelope = await diagnosticResponse.json();
-      const set = diagnosticEnvelope.diagnostics;
-      if (
-        set?.schema_version !== 6 ||
-        set.checks?.length !== 1 ||
-        !Array.isArray(set.observations)
-      )
-        throw new Error("daemon browser diagnostics are not deterministic v6");
-      return {
-        run_identity: runEnvelope.run.identity,
-        diagnostic_set_identity: set.identity,
-        deterministic_check_identity: set.checks[0].identity,
-        deterministic_check_state: set.checks[0].state,
-        observation_count: set.observations.length,
-        observation_identities: set.observations.map((item) => item.identity),
-      };
-    },
-    {
+  const reviewPath = `/api/v1/tenants/${encodeURIComponent(tenant)}/repositories/${encodeURIComponent(repository)}/runs/${encodeURIComponent(run)}`;
+  const [runEnvelope, diagnosticEnvelope] = await Promise.all([
+    fetchExactBrowserJSON(page, {
       base: url,
-      tenantID: tenant,
-      repositoryID: repository,
-      runID: run,
+      path: reviewPath,
       credential: token,
-    },
-  );
+    }),
+    fetchExactBrowserJSON(page, {
+      base: url,
+      path: reviewPath + "/diagnostics",
+      credential: token,
+    }),
+  ]);
+  const set = diagnosticEnvelope.diagnostics;
+  if (
+    set?.schema_version !== 6 ||
+    set.checks?.length !== 1 ||
+    !Array.isArray(set.observations)
+  )
+    throw new Error("daemon browser diagnostics are not deterministic v6");
+  const observed = {
+    run_identity: runEnvelope.run.identity,
+    diagnostic_set_identity: set.identity,
+    deterministic_check_identity: set.checks[0].identity,
+    deterministic_check_state: set.checks[0].state,
+    observation_count: set.observations.length,
+    observation_identities: set.observations.map((item) => item.identity),
+  };
   const snap = async (name, view) => {
     const viewport = page.viewportSize();
     if (!viewport) throw new Error("viewport unavailable");
@@ -353,30 +346,11 @@ try {
   const runtimeDOM = await assertRuntimeDOM(page, displayedStatus);
   await assertLayout();
   const runtimeCapture = await snap("desktop-runtime", "runtime");
-  const postCaptureEnvelope = await page.evaluate(
-    async ({ path, credential }) => {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 5000);
-      try {
-        const response = await fetch(path, {
-          headers: {
-            Accept: "application/json",
-            Authorization: `Bearer ${credential}`,
-          },
-          credentials: "omit",
-          signal: controller.signal,
-        });
-        if (!response.ok) throw new Error("runtime post-capture read failed");
-        const body = await response.arrayBuffer();
-        if (body.byteLength === 0 || body.byteLength > 1 << 20)
-          throw new Error("runtime post-capture body is outside bounds");
-        return JSON.parse(new TextDecoder().decode(body));
-      } finally {
-        clearTimeout(timer);
-      }
-    },
-    { path: runtimeEndpoint, credential: token },
-  );
+  const postCaptureEnvelope = await fetchExactBrowserJSON(page, {
+    base: url,
+    path: runtimeEndpoint,
+    credential: token,
+  });
   const postCaptureReceivedAt = Date.now();
   validateRuntimeEnvelope(postCaptureEnvelope, { tenant, repository });
   const runtimeEvidence = {
