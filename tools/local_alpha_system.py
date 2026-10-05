@@ -40,6 +40,7 @@ MAX_SOURCE_GIT_OUTPUT_BYTES = 32 << 20
 MAX_CANDIDATE_BYTES = 256 << 20
 MAX_SCREENSHOT_BYTES = 16 << 20
 MAX_BROWSER_MODULE_BYTES = 1 << 20
+GIT_EXECUTABLE = "/usr/bin/git"
 BROWSER_DEPENDENCY_PREFIX = b"web/node_modules/playwright-core/"
 BROWSER_DEPENDENCY_VERSION = "1.62.1"
 BROWSER_DEPENDENCY_SHA256 = "90abfaf282ebeb89837d8c86e74e372f77d2ee0d93a8eba9d183fef237cdee37"
@@ -835,33 +836,241 @@ def _metadata_paths(raw: bytes, label: str) -> list[tuple[bytes, bool]]:
     return sorted(entries, key=lambda item: item[0])
 
 
-def git_output(source: Path, *arguments: str) -> bytes:
-    env = {
-        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+_PROHIBITED_GIT_ENV = {
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_DIR",
+    "GIT_INDEX_FILE",
+    "GIT_NAMESPACE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_WORK_TREE",
+}
+
+
+@dataclass(frozen=True)
+class GitAuthority:
+    source: Path
+    git_dir: Path
+    common_dir: Path
+    index_path: Path
+    object_dir: Path
+    revision: str
+    tree: str
+    commit_sha256: str
+
+
+def _git_environment() -> dict[str, str]:
+    attempted = sorted(name for name, value in os.environ.items() if value and (name in _PROHIBITED_GIT_ENV or name.startswith("GIT_CONFIG_")))
+    if attempted:
+        raise RuntimeError(f"source provenance rejects Git environment authority overrides: {', '.join(attempted)}")
+    return {
+        "PATH": "/usr/bin:/bin",
         "HOME": "/nonexistent",
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_CONFIG_NOGLOBAL": "1",
+        "GIT_NO_REPLACE_OBJECTS": "1",
         "GIT_OPTIONAL_LOCKS": "0",
         "GIT_TERMINAL_PROMPT": "0",
         "LC_ALL": "C",
     }
-    result = run(["git", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", *arguments], env, source, timeout=30, maximum_output_bytes=MAX_SOURCE_GIT_OUTPUT_BYTES)
-    return result.stdout
 
 
-def _source_metadata(source: Path) -> tuple[bytes, ...]:
+def _git_run(source: Path, arguments: list[str], *, authority: GitAuthority | None = None, accepted: tuple[int, ...] = (0,)) -> subprocess.CompletedProcess[bytes]:
+    env = _git_environment()
+    try:
+        git_information = Path(GIT_EXECUTABLE).lstat()
+    except OSError as error:
+        raise RuntimeError("source provenance trusted Git executable is unavailable") from error
+    if not stat.S_ISREG(git_information.st_mode) or stat.S_ISLNK(git_information.st_mode) or not git_information.st_mode & stat.S_IXUSR or git_information.st_uid != 0 or stat.S_IMODE(git_information.st_mode) & 0o022:
+        raise RuntimeError("source provenance trusted Git executable is invalid")
+    for ancestor in (Path(GIT_EXECUTABLE).parent, Path(GIT_EXECUTABLE).parent.parent, Path("/")):
+        information = ancestor.lstat()
+        if not stat.S_ISDIR(information.st_mode) or stat.S_ISLNK(information.st_mode) or information.st_uid != 0 or stat.S_IMODE(information.st_mode) & 0o022:
+            raise RuntimeError("source provenance trusted Git executable ancestry is invalid")
+    command = [GIT_EXECUTABLE, "--no-replace-objects"]
+    if authority is None:
+        command.extend(["-C", str(source)])
+    else:
+        command.extend([f"--git-dir={authority.git_dir}", f"--work-tree={authority.source}"])
+    command.extend(["-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", *arguments])
+    return run(command, env, source, accepted=accepted, timeout=30, maximum_output_bytes=MAX_SOURCE_GIT_OUTPUT_BYTES)
+
+
+def _resolved_git_path(value: bytes, label: str, *, reject_symlink: bool = False) -> Path:
+    try:
+        raw = Path(value.decode("utf-8").strip())
+        if reject_symlink and raw.is_symlink():
+            raise RuntimeError(f"source provenance {label} must not be a symlink")
+        path = raw.resolve(strict=True)
+    except (OSError, UnicodeDecodeError) as error:
+        raise RuntimeError(f"source provenance {label} is unavailable") from error
+    return path
+
+
+def _optional_git_config(source: Path, git_dir: Path, scope: str, key: str) -> str:
+    result = _git_run(source, [f"--git-dir={git_dir}", "config", scope, "--get", key], accepted=(0, 1))
+    if result.returncode == 1:
+        return ""
+    try:
+        return result.stdout.decode("utf-8").strip()
+    except UnicodeDecodeError as error:
+        raise RuntimeError("source provenance Git configuration is malformed") from error
+
+
+def _configured_worktree_path(value: str, git_dir: Path) -> Path:
+    configured = Path(value)
+    if not configured.is_absolute():
+        configured = git_dir / configured
+    try:
+        return configured.resolve(strict=True)
+    except OSError as error:
+        raise RuntimeError("source provenance configured worktree is unavailable") from error
+
+
+def _validate_git_storage_tree(root_path: Path, label: str) -> None:
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    entries = 0
+    def visit(descriptor: int) -> None:
+        nonlocal entries
+        before_directory = os.fstat(descriptor)
+        with os.scandir(descriptor) as scanned:
+            children = sorted(scanned, key=lambda child: os.fsencode(child.name))
+        for child in children:
+            before = child.stat(follow_symlinks=False)
+            entries += 1
+            if entries > MAX_SOURCE_ENTRIES:
+                raise RuntimeError(f"source provenance {label} entry limit exceeded")
+            if stat.S_ISLNK(before.st_mode):
+                raise RuntimeError(f"source provenance rejects symlinks in {label}")
+            if stat.S_ISDIR(before.st_mode):
+                opened = os.open(child.name, directory_flags, dir_fd=descriptor)
+                try:
+                    if _source_identity(os.fstat(opened)) != _source_identity(before):
+                        raise RuntimeError(f"source provenance {label} changed while inspected")
+                    visit(opened)
+                    opened_after = os.fstat(opened)
+                finally:
+                    os.close(opened)
+                path_after = os.stat(child.name, dir_fd=descriptor, follow_symlinks=False)
+                if _source_identity(opened_after) != _source_identity(before) or _source_identity(path_after) != _source_identity(before):
+                    raise RuntimeError(f"source provenance {label} changed while inspected")
+            elif not stat.S_ISREG(before.st_mode):
+                raise RuntimeError(f"source provenance {label} contains unsupported entries")
+        if _source_identity(os.fstat(descriptor)) != _source_identity(before_directory):
+            raise RuntimeError(f"source provenance {label} changed while inspected")
+    root = os.open(root_path, directory_flags)
+    try:
+        visit(root)
+    finally:
+        os.close(root)
+
+
+def validate_git_authority(source: Path) -> GitAuthority:
+    _git_environment()
+    try:
+        canonical_source = source.resolve(strict=True)
+    except OSError as error:
+        raise RuntimeError("source provenance source root is unavailable") from error
+    if not canonical_source.is_dir() or canonical_source.is_symlink():
+        raise RuntimeError("source provenance source root is invalid")
+    top = _resolved_git_path(_git_run(canonical_source, ["rev-parse", "--show-toplevel"]).stdout, "Git top-level")
+    if top != canonical_source:
+        raise RuntimeError("source provenance Git top-level does not equal supplied source root")
+    bare = _git_run(canonical_source, ["rev-parse", "--is-bare-repository"]).stdout.strip()
+    inside = _git_run(canonical_source, ["rev-parse", "--is-inside-work-tree"]).stdout.strip()
+    if bare != b"false" or inside != b"true":
+        raise RuntimeError("source provenance requires a non-bare working tree")
+    git_dir = _resolved_git_path(_git_run(canonical_source, ["rev-parse", "--absolute-git-dir"]).stdout, "per-worktree Git directory", reject_symlink=True)
+    common_dir = _resolved_git_path(_git_run(canonical_source, ["rev-parse", "--path-format=absolute", "--git-common-dir"]).stdout, "common Git directory", reject_symlink=True)
+    if not git_dir.is_dir() or git_dir.is_symlink() or not common_dir.is_dir() or common_dir.is_symlink():
+        raise RuntimeError("source provenance Git directory is unsupported")
+    configured_scopes = ["--local"]
+    worktree_config = _git_run(canonical_source, [f"--git-dir={git_dir}", "config", "--local", "--type=bool", "--get", "extensions.worktreeConfig"], accepted=(0, 1))
+    if worktree_config.returncode == 0 and worktree_config.stdout.strip() == b"true":
+        configured_scopes.append("--worktree")
+    for scope in configured_scopes:
+        configured = _optional_git_config(canonical_source, git_dir, scope, "core.worktree")
+        if configured and _configured_worktree_path(configured, git_dir) != canonical_source:
+            raise RuntimeError("source provenance configured worktree does not equal supplied source root")
+    provisional = GitAuthority(canonical_source, git_dir, common_dir, git_dir / "index", common_dir / "objects", "", "", "")
+    index_path = _resolved_git_path(_git_run(canonical_source, ["rev-parse", "--path-format=absolute", "--git-path", "index"], authority=provisional).stdout, "Git index", reject_symlink=True)
+    object_dir = _resolved_git_path(_git_run(canonical_source, ["rev-parse", "--path-format=absolute", "--git-path", "objects"], authority=provisional).stdout, "Git object directory", reject_symlink=True)
+    if index_path != (git_dir / "index").resolve(strict=True) or object_dir != (common_dir / "objects").resolve(strict=True):
+        raise RuntimeError("source provenance Git index or object directory is redirected")
+    authority = GitAuthority(canonical_source, git_dir, common_dir, index_path, object_dir, "", "", "")
+    replace_refs = _git_run(canonical_source, ["for-each-ref", "--format=%(refname)", "refs/replace"], authority=authority).stdout
+    if replace_refs.strip():
+        raise RuntimeError("source provenance rejects active Git replacement refs")
+    grafts = common_dir / "info/grafts"
+    if grafts.exists() or grafts.is_symlink():
+        try:
+            information = grafts.lstat()
+        except OSError as error:
+            raise RuntimeError("source provenance graft file is unavailable") from error
+        if stat.S_ISLNK(information.st_mode) or not stat.S_ISREG(information.st_mode) or information.st_size != 0:
+            raise RuntimeError("source provenance rejects legacy Git graft entries")
+    for name in ("alternates", "http-alternates"):
+        alternate = object_dir / f"info/{name}"
+        if alternate.exists() or alternate.is_symlink():
+            information = alternate.lstat()
+            if stat.S_ISLNK(information.st_mode) or not stat.S_ISREG(information.st_mode) or information.st_size != 0:
+                raise RuntimeError("source provenance rejects alternate Git object directories")
+    _validate_git_storage_tree(object_dir, "Git object storage")
+    refs = common_dir / "refs"
+    if refs.exists() or refs.is_symlink():
+        if refs.is_symlink() or not refs.is_dir():
+            raise RuntimeError("source provenance Git refs storage is unsupported")
+        _validate_git_storage_tree(refs, "Git refs storage")
+    for control in (git_dir / "HEAD", git_dir / "index", git_dir / "config.worktree", common_dir / "config", common_dir / "packed-refs"):
+        if not control.exists() and not control.is_symlink():
+            continue
+        information = control.lstat()
+        if stat.S_ISLNK(information.st_mode) or not stat.S_ISREG(information.st_mode):
+            raise RuntimeError("source provenance rejects redirected Git control files")
+    revision = _git_run(canonical_source, ["rev-parse", "--verify", "HEAD"], authority=authority).stdout.decode("ascii").strip()
+    if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", revision):
+        raise RuntimeError("source provenance HEAD identity is malformed")
+    commit = _git_run(canonical_source, ["cat-file", "commit", revision], authority=authority).stdout
+    first = commit.split(b"\n", 1)[0]
+    if not first.startswith(b"tree "):
+        raise RuntimeError("source provenance HEAD commit is malformed")
+    try:
+        tree = first[5:].decode("ascii")
+    except UnicodeDecodeError as error:
+        raise RuntimeError("source provenance HEAD tree is malformed") from error
+    if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", tree):
+        raise RuntimeError("source provenance HEAD tree is malformed")
+    interpreted_tree = _git_run(canonical_source, ["rev-parse", f"{revision}^{{tree}}"], authority=authority).stdout.decode("ascii").strip()
+    if interpreted_tree != tree:
+        raise RuntimeError("source provenance literal Git commit interpretation changed")
+    return dataclasses.replace(authority, revision=revision, tree=tree, commit_sha256=hashlib.sha256(commit).hexdigest())
+
+
+def git_output(source: Path, *arguments: str, authority: GitAuthority | None = None) -> bytes:
+    bound = authority or validate_git_authority(source)
+    return _git_run(bound.source, list(arguments), authority=bound).stdout
+
+
+def _source_metadata(source: Path, authority: GitAuthority | None = None) -> tuple[bytes, ...]:
+    bound = authority or validate_git_authority(source)
+    revision = git_output(bound.source, "rev-parse", "--verify", "HEAD", authority=bound)
+    commit = git_output(bound.source, "cat-file", "commit", bound.revision, authority=bound)
+    if revision.decode("ascii").strip() != bound.revision or hashlib.sha256(commit).hexdigest() != bound.commit_sha256:
+        raise RuntimeError("source provenance literal HEAD changed while captured")
     return (
-        git_output(source, "rev-parse", "HEAD"),
-        git_output(source, "rev-parse", "HEAD^{tree}"),
-        git_output(source, "rev-parse", "--show-object-format"),
-        git_output(source, "ls-tree", "-rz", "--full-tree", "HEAD", "--"),
-        git_output(source, "ls-files", "--stage", "-z"),
-        git_output(source, "ls-files", "-v", "-z"),
-        git_output(source, "ls-files", "-t", "-z"),
-        git_output(source, "ls-files", "-f", "-z"),
-        git_output(source, "status", "--porcelain=v2", "-z", "--untracked-files=all"),
-        git_output(source, "ls-files", "--others", "--exclude-standard", "-z"),
-        git_output(source, "ls-files", "--others", "--ignored", "--exclude-standard", "-z"),
+        revision,
+        (bound.tree + "\n").encode("ascii"),
+        git_output(bound.source, "rev-parse", "--show-object-format", authority=bound),
+        git_output(bound.source, "ls-tree", "-rz", "--full-tree", bound.tree, "--", authority=bound),
+        git_output(bound.source, "ls-files", "--stage", "-z", authority=bound),
+        git_output(bound.source, "ls-files", "-v", "-z", authority=bound),
+        git_output(bound.source, "ls-files", "-t", "-z", authority=bound),
+        git_output(bound.source, "ls-files", "-f", "-z", authority=bound),
+        git_output(bound.source, "status", "--porcelain=v2", "-z", "--untracked-files=all", authority=bound),
+        git_output(bound.source, "ls-files", "--others", "--exclude-standard", "-z", authority=bound),
+        git_output(bound.source, "ls-files", "--others", "--ignored", "--exclude-standard", "-z", authority=bound),
     )
 
 
@@ -869,6 +1078,7 @@ def _source_metadata(source: Path) -> tuple[bytes, ...]:
 class SourceState:
     revision: str
     tree_identity: str
+    git_authority_sha256: str
     committed_tree_sha256: str
     live_tracked_tree_sha256: str
     live_tracked_entries: int
@@ -904,8 +1114,19 @@ class SourceState:
         return hashlib.sha256(canonical_json(dataclasses.asdict(self))).hexdigest()
 
 
+def git_authority_identity(authority: GitAuthority) -> str:
+    return hashlib.sha256(canonical_json({"source": str(authority.source), "git_dir": str(authority.git_dir), "common_dir": str(authority.common_dir), "index": str(authority.index_path), "objects": str(authority.object_dir), "revision": authority.revision, "tree": authority.tree, "commit_sha256": authority.commit_sha256})).hexdigest()
+
+
+def verify_git_authority(source: Path, expected_sha256: str) -> None:
+    if git_authority_identity(validate_git_authority(source)) != expected_sha256:
+        raise RuntimeError("source provenance Git authority changed before output creation")
+
+
 def capture_source_state(source: Path) -> SourceState:
-    before = _source_metadata(source)
+    authority = validate_git_authority(source)
+    source = authority.source
+    before = _source_metadata(source, authority)
     revision = before[0].decode("ascii").strip(); tree = before[1].decode("ascii").strip(); object_format = before[2].decode("ascii").strip()
     if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", revision) or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", tree) or object_format not in {"sha1", "sha256"}:
         raise RuntimeError("source provenance Git identity is malformed")
@@ -946,13 +1167,18 @@ def capture_source_state(source: Path) -> SourceState:
     finally: os.close(root_descriptor)
     source_after = source.lstat()
     if _source_identity(root_after) != _source_identity(source_before) or _source_identity(source_after) != _source_identity(source_before): raise RuntimeError("source provenance changed while captured")
-    after = _source_metadata(source)
-    if after != before: raise RuntimeError("source provenance changed while captured")
+    authority_after = validate_git_authority(source)
+    if authority_after != authority:
+        raise RuntimeError("source provenance Git authority changed while captured")
+    after = _source_metadata(source, authority_after)
+    if after != before:
+        raise RuntimeError("source provenance changed while captured")
     head = {path: (mode, oid) for path, mode, oid in committed}
     browser_path = b"web/scripts/daemon-visual-check.mjs"; contract_path = b"web/scripts/daemon-visual-contract.mjs"
     browser_mode, browser_blob = head.get(browser_path, ("", "")); contract_mode, contract_blob = head.get(contract_path, ("", ""))
     flags = b"assume\0" + before[5] + b"skip\0" + before[6] + b"fsmonitor\0" + before[7]
-    return SourceState(revision, tree, _records_sha256(committed), _framed_sha256(live_records), tracked_entries, tracked_bytes, _records_sha256(index), hashlib.sha256(flags).hexdigest(), hashlib.sha256(before[8]).hexdigest(), _framed_sha256(ignored_records), budget["entries"] - tracked_entries, budget["bytes"] - tracked_bytes, _framed_sha256(browser_dependency_records), len(browser_dependency_records), browser_dependency_bytes, browser_blob, browser_mode, contract_blob, contract_mode, object_format, True)
+    authority_identity = git_authority_identity(authority)
+    return SourceState(revision, tree, authority_identity, _records_sha256(committed), _framed_sha256(live_records), tracked_entries, tracked_bytes, _records_sha256(index), hashlib.sha256(flags).hexdigest(), hashlib.sha256(before[8]).hexdigest(), _framed_sha256(ignored_records), budget["entries"] - tracked_entries, budget["bytes"] - tracked_bytes, _framed_sha256(browser_dependency_records), len(browser_dependency_records), browser_dependency_bytes, browser_blob, browser_mode, contract_blob, contract_mode, object_format, True)
 
 
 def verify_source_state(source: Path, expected: SourceState) -> SourceState:
@@ -1353,6 +1579,10 @@ def main() -> int:
         raise SystemExit(str(error)) from error
     if not source_before.clean:
         raise SystemExit("source tree must be clean before system verification")
+    try:
+        verify_git_authority(source, source_before.git_authority_sha256)
+    except RuntimeError as error:
+        raise SystemExit(str(error)) from error
 
     output.mkdir(mode=0o700, parents=True)
     home = output / "home"
@@ -1629,6 +1859,7 @@ def main() -> int:
         "source_tree_clean": source_after.clean,
         "source_provenance": {
             "object_format": source_after.object_format,
+            "git_authority": {"sha256": source_after.git_authority_sha256, "literal_unreplaced_head": True, "top_level_matches_source_root": True, "replacement_refs": False, "legacy_grafts": False, "alternate_objects": False},
             "committed_tree": {"tree_oid": source_after.tree_identity, "entries_sha256": source_after.committed_tree_sha256, "entry_count": source_after.live_tracked_entries},
             "live_tracked_tree": {"entries_sha256": source_after.live_tracked_tree_sha256, "entry_count": source_after.live_tracked_entries, "bytes": source_after.live_tracked_bytes, "matches_committed_head": True},
             "index": {"entries_sha256": source_after.index_sha256, "stage_zero_matches_committed_head": True},

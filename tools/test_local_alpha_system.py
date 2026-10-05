@@ -483,6 +483,148 @@ class LocalAlphaSystemTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "source state changed during system verification"):
                 local_alpha_system.verify_source_state(root, before)
 
+    def test_source_provenance_rejects_stable_replace_ref(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); self.provenance_repository(root)
+            original = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+            (root / "build.txt").write_bytes(b"replacement!!")
+            subprocess.run(["git", "add", "build.txt"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "replacement"], cwd=root, check=True)
+            replacement = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+            subprocess.run(["git", "reset", "--hard", "-q", original], cwd=root, check=True, env={**os.environ, "GIT_NO_REPLACE_OBJECTS": "1"})
+            subprocess.run(["git", "update-ref", f"refs/replace/{original}", replacement], cwd=root, check=True)
+            subprocess.run(["git", "reset", "--hard", "-q", "HEAD"], cwd=root, check=True)
+            self.assertEqual(subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip(), original)
+            self.assertEqual((root / "build.txt").read_bytes(), b"replacement!!")
+            self.assertEqual(subprocess.run(["git", "status", "--porcelain=v2", "--untracked-files=all"], cwd=root, check=True, capture_output=True).stdout, b"")
+            with self.assertRaisesRegex(RuntimeError, "replace|literal Git"):
+                local_alpha_system.capture_source_state(root)
+
+    def test_source_provenance_rejects_legacy_graft_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); self.provenance_repository(root)
+            head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+            grafts = root / ".git/info/grafts"; grafts.parent.mkdir(parents=True, exist_ok=True); grafts.write_text(f"{head}\n")
+            with self.assertRaisesRegex(RuntimeError, "graft|literal Git"):
+                local_alpha_system.capture_source_state(root)
+
+    def test_source_provenance_rejects_redirected_core_worktree(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as external_directory:
+            root = Path(directory); self.provenance_repository(root)
+            external = Path(external_directory)
+            for relative in (".gitignore", "build.txt", "web/scripts/daemon-visual-check.mjs", "web/scripts/daemon-visual-contract.mjs"):
+                target = external / relative; target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes((root / relative).read_bytes())
+            (root / "untracked.go").write_text("package hidden\n")
+            subprocess.run(["git", "config", "core.worktree", str(external)], cwd=root, check=True)
+            self.assertEqual(subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=root, check=True, capture_output=True, text=True).stdout.strip(), str(external))
+            with self.assertRaisesRegex(RuntimeError, "top-level|worktree|source root"):
+                local_alpha_system.capture_source_state(root)
+
+    def test_source_provenance_rejects_ambient_git_authority_overrides(self):
+        variables = {
+            "GIT_INDEX_FILE": "/dev/null/index",
+            "GIT_COMMON_DIR": "/dev/null/common",
+            "GIT_NO_REPLACE_OBJECTS": "0",
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_DIR": "/dev/null/git",
+            "GIT_WORK_TREE": "/dev/null/worktree",
+            "GIT_OBJECT_DIRECTORY": "/dev/null/objects",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": "/dev/null/alternate",
+            "GIT_NAMESPACE": "alternate",
+            "GIT_REPLACE_REF_BASE": "refs/other-replacements",
+        }
+        for name, value in variables.items():
+            with self.subTest(variable=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory); self.provenance_repository(root)
+                with patch.dict(os.environ, {name: value}, clear=False):
+                    with self.assertRaisesRegex(RuntimeError, "Git environment|authority override"):
+                        local_alpha_system.capture_source_state(root)
+
+    def test_source_provenance_accepts_valid_linked_worktree(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as linked_parent:
+            root = Path(directory); self.provenance_repository(root)
+            linked = Path(linked_parent) / "linked"
+            subprocess.run(["git", "worktree", "add", "-q", "--detach", str(linked), "HEAD"], cwd=root, check=True)
+            state = local_alpha_system.capture_source_state(linked)
+            self.assertTrue(state.clean)
+            self.assertEqual(state.revision, subprocess.run(["git", "rev-parse", "HEAD"], cwd=linked, check=True, capture_output=True, text=True).stdout.strip())
+            self.assertNotEqual(subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=linked, check=True, capture_output=True, text=True).stdout.strip(), str(linked / ".git"))
+
+    def test_source_provenance_rejects_symlinked_git_object_storage(self):
+        for mode in ("fanout", "pack", "ref", "config"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside_directory:
+                root = Path(directory); self.provenance_repository(root)
+                objects = root / ".git/objects"; outside = Path(outside_directory)
+                if mode == "fanout":
+                    fanout = next(path for path in objects.iterdir() if path.is_dir() and len(path.name) == 2)
+                    moved = outside / fanout.name; fanout.rename(moved); fanout.symlink_to(moved, target_is_directory=True)
+                elif mode == "pack":
+                    pack = objects / "pack"; pack.mkdir(exist_ok=True)
+                    target = outside / "evil.pack"; target.write_bytes(b"outside")
+                    (pack / "evil.pack").symlink_to(target)
+                elif mode == "ref":
+                    reference = next(path for path in (root / ".git/refs/heads").rglob("*") if path.is_file())
+                    target = outside / "ref"; reference.rename(target); reference.symlink_to(target)
+                else:
+                    config = root / ".git/config"; target = outside / "config"; config.rename(target); config.symlink_to(target)
+                with self.assertRaisesRegex(RuntimeError, "symlink|redirected Git control"):
+                    local_alpha_system.capture_source_state(root)
+
+    def test_source_provenance_rejects_bare_repository(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "--bare", "-q", root], check=True)
+            with self.assertRaisesRegex(RuntimeError, "non-bare|work tree|top-level"):
+                local_alpha_system.capture_source_state(root)
+
+    def test_source_provenance_rejects_redirected_linked_worktree(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as linked_parent, tempfile.TemporaryDirectory() as external_directory:
+            root = Path(directory); self.provenance_repository(root)
+            linked = Path(linked_parent) / "linked"
+            subprocess.run(["git", "worktree", "add", "-q", "--detach", str(linked), "HEAD"], cwd=root, check=True)
+            subprocess.run(["git", "config", "extensions.worktreeConfig", "true"], cwd=root, check=True)
+            external = Path(external_directory)
+            for relative in (".gitignore", "build.txt", "web/scripts/daemon-visual-check.mjs", "web/scripts/daemon-visual-contract.mjs"):
+                target = external / relative; target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes((linked / relative).read_bytes())
+            (linked / "hidden.go").write_text("package hidden\n")
+            subprocess.run(["git", "config", "--worktree", "core.worktree", str(external)], cwd=linked, check=True)
+            with self.assertRaisesRegex(RuntimeError, "top-level|worktree|source root"):
+                local_alpha_system.capture_source_state(linked)
+
+    def test_invalid_git_authority_stops_before_output_creation(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as candidate_directory, tempfile.TemporaryDirectory() as output_parent:
+            root = Path(directory); self.provenance_repository(root)
+            raw = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+            (root / "build.txt").write_bytes(b"replacement!!")
+            subprocess.run(["git", "add", "build.txt"], cwd=root, check=True)
+            tree = subprocess.run(["git", "write-tree"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+            replacement = subprocess.run(["git", "commit-tree", tree, "-m", "replacement"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+            subprocess.run(["git", "reset", "--hard", "-q", raw], cwd=root, check=True)
+            subprocess.run(["git", "replace", raw, replacement], cwd=root, check=True)
+            subprocess.run(["git", "checkout", "-q", replacement, "--", "build.txt"], cwd=root, check=True)
+            candidate, _ = self.candidate(Path(candidate_directory), raw)
+            output = Path(output_parent) / "must-not-exist"
+            arguments = ["local_alpha_system.py", "--candidate", str(candidate), "--source-root", str(root), "--skip-browser", "--output", str(output)]
+            with patch.object(sys, "argv", arguments), self.assertRaisesRegex(SystemExit, "replacement"):
+                local_alpha_system.main()
+            self.assertFalse(output.exists())
+
+    def test_git_authority_drift_after_capture_stops_before_output(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as candidate_directory, tempfile.TemporaryDirectory() as output_parent:
+            root = Path(directory); self.provenance_repository(root)
+            revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+            tree = subprocess.run(["git", "rev-parse", "HEAD^{tree}"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+            replacement = subprocess.run(["git", "commit-tree", tree, "-m", "replacement"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+            candidate, _ = self.candidate(Path(candidate_directory), revision)
+            output = Path(output_parent) / "must-not-exist"
+            def mutate_authority(*_arguments):
+                subprocess.run(["git", "replace", revision, replacement], cwd=root, check=True)
+                return None
+            arguments = ["local_alpha_system.py", "--candidate", str(candidate), "--source-root", str(root), "--skip-browser", "--output", str(output)]
+            with patch.object(sys, "argv", arguments), patch.object(local_alpha_system, "validate_browser_script", mutate_authority), self.assertRaisesRegex(SystemExit, "authority changed|replacement"):
+                local_alpha_system.main()
+            self.assertFalse(output.exists())
+
     def test_source_provenance_accepts_canonical_head_with_stable_ignored_state(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); self.provenance_repository(root)
