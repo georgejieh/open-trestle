@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { request as httpRequest } from "node:http";
+import { Agent, request as httpRequest } from "node:http";
 
 const digest = /^[0-9a-f]{64}$/;
 const zeroDigest = /^0{64}$/;
@@ -235,21 +235,22 @@ export function fetchExactLoopbackJSON({
       new Error("invalid exact loopback fetch configuration"),
     );
   return new Promise((resolve, reject) => {
+    const agent = new Agent({ keepAlive: true, maxSockets: 1 });
     let settled = false;
     const fail = (error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       request.destroy();
+      agent.destroy();
       reject(error instanceof Error ? error : new Error(String(error)));
     };
     const request = httpRequest(target, {
       method: "GET",
-      agent: false,
+      agent,
       headers: {
         Accept: "application/json",
         Authorization: `Bearer ${credential}`,
-        Connection: "close",
       },
     });
     const timer = setTimeout(
@@ -293,6 +294,7 @@ export function fetchExactLoopbackJSON({
         }
         settled = true;
         clearTimeout(timer);
+        agent.destroy();
         resolve({
           envelope,
           body,
