@@ -1089,6 +1089,20 @@ def _validate_literal_commit(commit: bytes, object_format: str) -> str:
     return tree
 
 
+def _reject_unsupported_git_authority_stores(authority: GitAuthority) -> None:
+    for directory in {authority.git_dir, authority.common_dir}:
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                if entry.name == "reftable" or entry.name.startswith("sharedindex."):
+                    raise RuntimeError("source provenance rejects reftable or split index authority")
+    reference_format = _git_run(authority.source, ["rev-parse", "--show-ref-format"], authority=authority).stdout.strip()
+    if reference_format != b"files":
+        raise RuntimeError("source provenance rejects non-files Git reference backend")
+    shared_index = _git_run(authority.source, ["rev-parse", "--shared-index-path"], authority=authority).stdout.strip()
+    if shared_index:
+        raise RuntimeError("source provenance rejects active split index authority")
+
+
 def validate_git_authority(source: Path) -> GitAuthority:
     _git_environment()
     try:
@@ -1139,6 +1153,7 @@ def validate_git_authority(source: Path) -> GitAuthority:
     if index_path != (git_dir / "index").resolve(strict=True) or object_dir != (common_dir / "objects").resolve(strict=True):
         raise RuntimeError("source provenance Git index or object directory is redirected")
     authority = GitAuthority(canonical_source, git_dir, common_dir, index_path, object_dir, "", "", "")
+    _reject_unsupported_git_authority_stores(authority)
     replace_refs = _git_run(canonical_source, ["for-each-ref", "--format=%(refname)", "refs/replace"], authority=authority).stdout
     if replace_refs.strip():
         raise RuntimeError("source provenance rejects active Git replacement refs")
@@ -1156,6 +1171,7 @@ def validate_git_authority(source: Path) -> GitAuthority:
     if interpreted_tree != tree:
         raise RuntimeError("source provenance literal Git commit interpretation changed")
     _validate_git_storage_authority(git_dir, common_dir, object_dir)
+    _reject_unsupported_git_authority_stores(authority)
     replace_refs_after = _git_run(canonical_source, ["for-each-ref", "--format=%(refname)", "refs/replace"], authority=authority).stdout
     if replace_refs_after.strip():
         raise RuntimeError("source provenance rejects active Git replacement refs")
@@ -1973,7 +1989,7 @@ def main() -> int:
         "source_tree_clean": source_after.clean,
         "source_provenance": {
             "object_format": source_after.object_format,
-            "git_authority": {"sha256": source_after.git_authority_sha256, "literal_unreplaced_head": True, "top_level_matches_source_root": True, "replacement_refs": False, "legacy_grafts": False, "alternate_objects": False},
+            "git_authority": {"sha256": source_after.git_authority_sha256, "literal_unreplaced_head": True, "top_level_matches_source_root": True, "reference_format": "files", "split_index": False, "replacement_refs": False, "legacy_grafts": False, "alternate_objects": False},
             "committed_tree": {"tree_oid": source_after.tree_identity, "entries_sha256": source_after.committed_tree_sha256, "entry_count": source_after.live_tracked_entries},
             "live_tracked_tree": {"entries_sha256": source_after.live_tracked_tree_sha256, "entry_count": source_after.live_tracked_entries, "bytes": source_after.live_tracked_bytes, "matches_committed_head": True},
             "index": {"entries_sha256": source_after.index_sha256, "stage_zero_matches_committed_head": True},

@@ -38,6 +38,19 @@ class LocalAlphaSystemTest(unittest.TestCase):
         Path(str(archive) + ".sha256").write_text(f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n")
         return archive, manifest
 
+    def marker_candidate(self, root: Path, revision: str, marker: Path, manifest: bytes | None = None) -> Path:
+        archive = root / "marker.pyz"
+        body = manifest if manifest is not None else (json.dumps({"revision": revision}, separators=(",", ":")) + "\n").encode()
+        payload = root / "payload.zip"
+        script = "import pathlib,sys\n" + f"if len(sys.argv) > 1 and sys.argv[1] == 'verify-archive':\n    pathlib.Path({str(marker)!r}).write_text('executed')\n    print('verified')\n    raise SystemExit(0)\nraise SystemExit(17)\n"
+        with zipfile.ZipFile(payload, "w", zipfile.ZIP_STORED) as bundle:
+            bundle.writestr("__main__.py", script)
+            bundle.writestr("manifest.json", body)
+        archive.write_bytes(b"#!/usr/bin/env python3\n" + payload.read_bytes())
+        archive.chmod(0o700)
+        Path(str(archive) + ".sha256").write_text(f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n")
+        return archive
+
     def png(self, width: int, height: int) -> bytes:
         def chunk(kind: bytes, data: bytes) -> bytes:
             return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
@@ -482,6 +495,49 @@ class LocalAlphaSystemTest(unittest.TestCase):
             (nested / "inside.txt").write_text("mutated")
             with self.assertRaisesRegex(RuntimeError, "source state changed during system verification"):
                 local_alpha_system.verify_source_state(root, before)
+
+    def reftable_repository(self, root: Path) -> None:
+        subprocess.run(["git", "init", "--ref-format=reftable", "-q", root], check=True)
+        subprocess.run(["git", "config", "user.name", "test"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=root, check=True)
+        (root / "tracked.txt").write_text("tracked\n")
+        subprocess.run(["git", "add", "tracked.txt"], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
+
+    def test_source_provenance_rejects_symlinked_reftable_storage(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside_directory:
+            root = Path(directory); self.reftable_repository(root)
+            table = root / ".git/reftable"; moved = Path(outside_directory) / "reftable"; table.rename(moved); table.symlink_to(moved, target_is_directory=True)
+            self.assertEqual(subprocess.run(["git", "status", "--porcelain=v2"], cwd=root, check=True, capture_output=True).stdout, b"")
+            with self.assertRaisesRegex(RuntimeError, "reftable|reference backend"):
+                local_alpha_system.capture_source_state(root)
+
+    def test_source_provenance_rejects_symlinked_split_index_storage(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside_directory:
+            root = Path(directory); self.provenance_repository(root)
+            subprocess.run(["git", "update-index", "--split-index"], cwd=root, check=True)
+            shared = next((root / ".git").glob("sharedindex.*")); moved = Path(outside_directory) / shared.name; shared.rename(moved); shared.symlink_to(moved)
+            self.assertEqual(subprocess.run(["git", "status", "--porcelain=v2"], cwd=root, check=True, capture_output=True).stdout, b"")
+            with self.assertRaisesRegex(RuntimeError, "split index|sharedindex"):
+                local_alpha_system.capture_source_state(root)
+
+    def test_redirected_git_authority_stores_stop_before_output_or_execution(self):
+        for mode in ("reftable", "split-index"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside_directory, tempfile.TemporaryDirectory() as candidate_directory, tempfile.TemporaryDirectory() as output_parent:
+                root = Path(directory); outside = Path(outside_directory)
+                if mode == "reftable":
+                    self.reftable_repository(root); store = root / ".git/reftable"; moved = outside / "reftable"; store.rename(moved); store.symlink_to(moved, target_is_directory=True)
+                else:
+                    self.provenance_repository(root); subprocess.run(["git", "update-index", "--split-index"], cwd=root, check=True); store = next((root / ".git").glob("sharedindex.*")); moved = outside / store.name; store.rename(moved); store.symlink_to(moved)
+                revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+                execution_marker = outside / "candidate-executed"
+                candidate = self.marker_candidate(Path(candidate_directory), revision, execution_marker)
+                output = Path(output_parent) / "must-not-exist"
+                arguments = ["local_alpha_system.py", "--candidate", str(candidate), "--source-root", str(root), "--skip-browser", "--output", str(output)]
+                with patch.object(sys, "argv", arguments), self.assertRaises((RuntimeError, SystemExit)):
+                    local_alpha_system.main()
+                self.assertFalse(output.exists())
+                self.assertFalse(execution_marker.exists())
 
     def test_source_provenance_rejects_stable_replace_ref(self):
         with tempfile.TemporaryDirectory() as directory:
