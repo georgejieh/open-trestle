@@ -21,6 +21,13 @@ import type {
   TaskKind,
   TaskStatus,
 } from "./types";
+import {
+  canonicalRuntimeConfiguration,
+  runtimeConfigurationIdentity,
+  runtimeStatusIdentity,
+  type RuntimeComponentWire,
+  type RuntimeHandlerWire,
+} from "./runtimeIdentity";
 // Display/action diagnostic only. Server approval and native grants remain independent.
 export const CURRENT_INTEGRATION_PERMISSION_CHECKER_IDENTITY =
   "8308da20feae56a9f00344d5ac0824bf5133f1eff42d2ab31bce83b172daf3e9";
@@ -701,10 +708,11 @@ function validRuntimeObservedAt(value: unknown): value is string {
   return new Date(milliseconds).toISOString() === normalized;
 }
 
-export function parseRuntimeStatusEnvelope(
+export async function parseRuntimeStatusEnvelope(
   value: unknown,
   scope: Pick<Scope, "tenant" | "repository">,
-): RuntimeStatus {
+): Promise<RuntimeStatus> {
+  if (!validRuntimeScope(scope)) throw new ApiError("invalid_scope");
   if (!record(value)) throw new ApiError("invalid_response");
   if ("error" in value) {
     if (
@@ -762,33 +770,31 @@ export function parseRuntimeStatusEnvelope(
   const configuration = status.configuration;
   const rawHandlers = configuration.handlers;
   const handlers: unknown[] = Array.isArray(rawHandlers) ? rawHandlers : [];
-  const baseKeys = [
-    "tenant_id",
-    "repository_ids",
-    "metadata_backend",
-    "artifact_backend",
-    "artifact_protection",
-    "notification_backend",
-    "rate_limit_backend",
-    "review_mode",
-    "webhook_ingress",
-    "local_workers",
-    "publication_enabled",
-    "publication_fence_verified",
-    "route_count",
-    "handlers",
-  ];
   const hasRoutes =
     "route_inventory_identity" in configuration ||
     "runtime_policy_identity" in configuration;
   const hasDatabaseAuthority = "database_authority_identity" in configuration;
   const hasRateLimitAuthority =
     "rate_limit_authority_identity" in configuration;
-  let expected = [...baseKeys];
+  const expected = ["tenant_id", "repository_ids", "metadata_backend"];
   if (hasDatabaseAuthority) expected.push("database_authority_identity");
+  expected.push(
+    "artifact_backend",
+    "artifact_protection",
+    "notification_backend",
+    "rate_limit_backend",
+  );
   if (hasRateLimitAuthority) expected.push("rate_limit_authority_identity");
+  expected.push(
+    "review_mode",
+    "webhook_ingress",
+    "local_workers",
+    "publication_enabled",
+    "publication_fence_verified",
+  );
   if (hasRoutes)
     expected.push("route_inventory_identity", "runtime_policy_identity");
+  expected.push("route_count", "handlers");
   if (
     !exact(configuration, expected) ||
     configuration.tenant_id !== scope.tenant ||
@@ -865,6 +871,7 @@ export function parseRuntimeStatusEnvelope(
   )
     throw new ApiError("invalid_response");
   const runtimeHandlers = handlers as unknown[];
+  const canonicalHandlers: RuntimeHandlerWire[] = [];
   let previousHandlerKind = "";
   for (const handler of runtimeHandlers) {
     if (
@@ -877,7 +884,12 @@ export function parseRuntimeStatusEnvelope(
     )
       throw new ApiError("invalid_response");
     previousHandlerKind = handler.kind;
+    canonicalHandlers.push({
+      kind: handler.kind,
+      identity: handler.identity as string,
+    });
   }
+  const canonicalComponents: RuntimeComponentWire[] = [];
   let allReady = true,
     previousComponent = "";
   for (const component of status.components) {
@@ -892,8 +904,32 @@ export function parseRuntimeStatusEnvelope(
       throw new ApiError("invalid_response");
     previousComponent = component.name;
     allReady = allReady && component.state === "ready";
+    canonicalComponents.push({
+      name: component.name,
+      state: component.state as "starting" | "ready",
+    });
   }
   if (status.ready !== allReady) throw new ApiError("invalid_response");
+  const wireConfiguration = canonicalRuntimeConfiguration(
+    configuration,
+    rawHandlers === null ? null : canonicalHandlers,
+    expected,
+  );
+  const configurationIdentity =
+    await runtimeConfigurationIdentity(wireConfiguration);
+  if (status.configuration_identity !== configurationIdentity)
+    throw new ApiError("invalid_response");
+  const statusIdentity = await runtimeStatusIdentity({
+    configuration_identity: configurationIdentity,
+    tenant_id: status.tenant_id as string,
+    repository_id: status.repository_id as string,
+    observed_at: status.observed_at as string,
+    ready: status.ready as boolean,
+    configuration: wireConfiguration,
+    components: canonicalComponents,
+  });
+  if (status.identity !== statusIdentity)
+    throw new ApiError("invalid_response");
   return {
     ...status,
     configuration: { ...configuration, handlers: runtimeHandlers },
@@ -1761,7 +1797,7 @@ export async function fetchRuntimeStatus(
   if (!validRuntimeScope(scope)) throw new ApiError("invalid_scope");
   const path = `/api/v1/tenants/${encodeURIComponent(scope.tenant)}/repositories/${encodeURIComponent(scope.repository)}/runtime`;
   const response = await request(path, token, fetcher);
-  const status = parseRuntimeStatusEnvelope(response.body, scope);
+  const status = await parseRuntimeStatusEnvelope(response.body, scope);
   if (response.status !== 200) throw new ApiError("invalid_response");
   return status;
 }

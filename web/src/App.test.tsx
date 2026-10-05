@@ -742,6 +742,41 @@ describe("console", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows bounded Runtime unavailable state without stale identities", async () => {
+    vi.mocked(fetchRun).mockResolvedValue(receipt);
+    vi.mocked(fetchDiagnostics).mockRejectedValue(new Error("not ready"));
+    vi.mocked(fetchRuntimeStatus).mockRejectedValue(
+      new ApiError("invalid_response"),
+    );
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("Tenant"), {
+      target: { value: "tenant-a" },
+    });
+    fireEvent.change(screen.getByLabelText("Repository"), {
+      target: { value: "repo-a" },
+    });
+    fireEvent.change(screen.getByLabelText("Run"), {
+      target: { value: "run-a" },
+    });
+    fireEvent.change(screen.getByLabelText("Access token"), {
+      target: { value: "x".repeat(32) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
+    await screen.findByRole("heading", { name: "Execution in progress" });
+    fireEvent.click(screen.getByRole("button", { name: /Runtime n\/a/i }));
+    expect(
+      await screen.findByRole("heading", {
+        name: "Runtime status is not available",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Runtime status could not be loaded with this token."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Copy Status:/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it("creates a safe setup plan only after explicit confirmation", async () => {
     window.history.replaceState({}, "", "/console/setup");
     vi.mocked(fetchSetupSession).mockResolvedValue({
