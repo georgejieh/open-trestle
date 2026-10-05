@@ -135,6 +135,58 @@ class LocalAlphaSystemTest(unittest.TestCase):
         receipt.write_text(json.dumps(raw) + "\n")
         return {**raw, "receipt": str(receipt.relative_to(root)), "receipt_sha256": hashlib.sha256(receipt.read_bytes()).hexdigest()}
 
+    def test_wrong_revision_candidate_is_rejected_before_output_or_execution(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as candidate_directory, tempfile.TemporaryDirectory() as output_parent:
+            root = Path(directory); self.provenance_repository(root)
+            marker_path = Path(candidate_directory) / "candidate-executed"
+            candidate = self.marker_candidate(Path(candidate_directory), "0" * 40, marker_path)
+            output = Path(output_parent) / "must-not-exist"
+            arguments = ["local_alpha_system.py", "--candidate", str(candidate), "--source-root", str(root), "--skip-browser", "--output", str(output)]
+            with patch.object(sys, "argv", arguments), self.assertRaisesRegex(RuntimeError, "manifest revision does not match"):
+                local_alpha_system.main()
+            self.assertFalse(output.exists())
+            self.assertFalse(marker_path.exists())
+
+    def test_invalid_candidate_manifest_never_creates_output_or_executes(self):
+        for mode in ("malformed", "duplicate", "oversized", "digest"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as candidate_directory, tempfile.TemporaryDirectory() as output_parent:
+                root = Path(directory); self.provenance_repository(root)
+                revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+                marker_path = Path(candidate_directory) / "candidate-executed"
+                manifest = b"{" if mode == "malformed" else (b"x" * (local_alpha_system.MAX_MANIFEST_BYTES + 1) if mode == "oversized" else None)
+                candidate = self.marker_candidate(Path(candidate_directory), revision, marker_path, manifest)
+                if mode == "duplicate":
+                    with zipfile.ZipFile(candidate, "a", zipfile.ZIP_STORED) as bundle:
+                        bundle.writestr("manifest.json", json.dumps({"revision": revision}))
+                    Path(str(candidate) + ".sha256").write_text(f"{hashlib.sha256(candidate.read_bytes()).hexdigest()}  {candidate.name}\n")
+                elif mode == "digest":
+                    Path(str(candidate) + ".sha256").write_text(f"{'0' * 64}  {candidate.name}\n")
+                output = Path(output_parent) / "must-not-exist"
+                arguments = ["local_alpha_system.py", "--candidate", str(candidate), "--source-root", str(root), "--skip-browser", "--output", str(output)]
+                with patch.object(sys, "argv", arguments), self.assertRaises((RuntimeError, SystemExit, json.JSONDecodeError, UnicodeDecodeError)):
+                    local_alpha_system.main()
+                self.assertFalse(output.exists())
+                self.assertFalse(marker_path.exists())
+
+    def test_candidate_archive_race_is_rejected_before_output(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as candidate_directory:
+            root = Path(directory); self.provenance_repository(root)
+            revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+            marker_path = Path(candidate_directory) / "candidate-executed"
+            candidate = self.marker_candidate(Path(candidate_directory), revision, marker_path)
+            original_read = os.read; mutated = False
+            def racing_read(descriptor, size):
+                nonlocal mutated
+                chunk = original_read(descriptor, size)
+                if not mutated and chunk:
+                    mutated = True
+                    with candidate.open("ab") as stream: stream.write(b"race")
+                return chunk
+            with patch.object(local_alpha_system.os, "read", racing_read), self.assertRaisesRegex(RuntimeError, "changed|digest"):
+                local_alpha_system.inspect_candidate_manifest(candidate, revision, hashlib.sha256(candidate.read_bytes()).hexdigest())
+            self.assertTrue(mutated)
+            self.assertFalse(marker_path.exists())
+
     def test_candidate_manifest_binds_matching_source_revision(self):
         with tempfile.TemporaryDirectory() as directory:
             revision = "1" * 40

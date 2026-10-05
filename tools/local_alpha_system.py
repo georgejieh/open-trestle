@@ -8,6 +8,7 @@ import dataclasses
 import datetime
 import hashlib
 import http.client
+import io
 import json
 import os
 import re
@@ -20,6 +21,7 @@ import stat
 import struct
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -1318,10 +1320,40 @@ def verify_source_state(source: Path, expected: SourceState) -> SourceState:
     return observed
 
 
-def read_candidate_manifest(candidate: Path, source_revision: str) -> dict[str, str]:
-    archive_digest = sha256(candidate)
+def inspect_candidate_manifest(candidate: Path, source_revision: str, expected_digest: str | None = None) -> tuple[dict[str, str], bytes]:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
-        with zipfile.ZipFile(candidate) as archive:
+        before = candidate.lstat()
+        if not stat.S_ISREG(before.st_mode) or stat.S_ISLNK(before.st_mode) or before.st_size <= 0 or before.st_size > MAX_CANDIDATE_BYTES:
+            raise RuntimeError("candidate archive is unavailable or outside bounds")
+        descriptor = os.open(candidate, flags)
+    except OSError as error:
+        raise RuntimeError("candidate archive is unavailable") from error
+    body = bytearray()
+    try:
+        if _source_identity(os.fstat(descriptor)) != _source_identity(before):
+            raise RuntimeError("candidate archive changed while inspected")
+        while True:
+            chunk = os.read(descriptor, 1 << 20)
+            if not chunk:
+                break
+            body.extend(chunk)
+            if len(body) > MAX_CANDIDATE_BYTES:
+                raise RuntimeError("candidate archive exceeds byte limit")
+        opened_after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    try:
+        path_after = candidate.lstat()
+    except OSError as error:
+        raise RuntimeError("candidate archive changed while inspected") from error
+    if len(body) != before.st_size or _source_identity(opened_after) != _source_identity(before) or _source_identity(path_after) != _source_identity(before):
+        raise RuntimeError("candidate archive changed while inspected")
+    archive_digest = hashlib.sha256(body).hexdigest()
+    if expected_digest is not None and archive_digest != expected_digest:
+        raise RuntimeError("candidate archive digest does not match detached checksum")
+    try:
+        with zipfile.ZipFile(io.BytesIO(body)) as archive:
             if archive.namelist().count("manifest.json") != 1:
                 raise RuntimeError("candidate manifest is unavailable")
             information = archive.getinfo("manifest.json")
@@ -1341,7 +1373,32 @@ def read_candidate_manifest(candidate: Path, source_revision: str) -> dict[str, 
         raise RuntimeError("candidate manifest revision is invalid")
     if revision != source_revision:
         raise RuntimeError("candidate manifest revision does not match source HEAD")
-    return {"revision": revision, "manifest_sha256": hashlib.sha256(manifest).hexdigest(), "archive_sha256": archive_digest}
+    return {"revision": revision, "manifest_sha256": hashlib.sha256(manifest).hexdigest(), "archive_sha256": archive_digest}, bytes(body)
+
+
+def read_candidate_manifest(candidate: Path, source_revision: str, expected_digest: str | None = None) -> dict[str, str]:
+    record, _body = inspect_candidate_manifest(candidate, source_revision, expected_digest)
+    return record
+
+
+def copy_candidate_snapshot(name: str, body: bytes, sidecar_body: bytes, sandbox: Path, expected: str) -> Path:
+    if not name or name in {".", ".."} or "/" in name or "\\" in name or len(body) == 0 or len(body) > MAX_CANDIDATE_BYTES or hashlib.sha256(body).hexdigest() != expected:
+        raise RuntimeError("candidate snapshot is invalid")
+    target = sandbox / name
+    try:
+        descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0), 0o500)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(body)
+            stream.flush()
+            os.fsync(stream.fileno())
+        target.chmod(0o555)
+        copied_sidecar = Path(str(target) + ".sha256")
+        write(copied_sidecar, sidecar_body)
+        copied_sidecar.chmod(0o444)
+    except OSError as error:
+        raise RuntimeError("candidate snapshot copy failed") from error
+    assert_candidate_digest(target, expected)
+    return target
 
 
 def validate_png(body: bytes) -> tuple[int, int]:
@@ -1698,7 +1755,8 @@ def main() -> int:
     sidecar = Path(str(candidate) + ".sha256")
     if not candidate.is_file() or not sidecar.is_file() or output.exists():
         raise SystemExit("candidate/checksum must be valid and output must not exist")
-    sidecar_fields = read_bounded(sidecar, 4096).decode("ascii").strip().split()
+    sidecar_body = read_bounded(sidecar, 4096)
+    sidecar_fields = sidecar_body.decode("ascii").strip().split()
     candidate_digest = sha256(candidate)
     if len(sidecar_fields) < 1 or sidecar_fields[0] != candidate_digest:
         raise SystemExit("candidate checksum does not match detached sidecar")
@@ -1709,6 +1767,9 @@ def main() -> int:
         raise SystemExit(str(error)) from error
     if not source_before.clean:
         raise SystemExit("source tree must be clean before system verification")
+    candidate_manifest, candidate_snapshot = inspect_candidate_manifest(candidate, source_before.revision, candidate_digest)
+    if candidate_manifest["archive_sha256"] != candidate_digest:
+        raise RuntimeError("candidate archive changed after manifest verification")
     try:
         verify_git_authority(source, source_before.git_authority_sha256)
     except RuntimeError as error:
@@ -1725,7 +1786,10 @@ def main() -> int:
     cache = output / "cache"
     for directory in (home, runtime, setup_dir, repository, artifacts, sandbox, private_tmp, cache):
         directory.mkdir(mode=0o700)
-    execution_candidate = copy_candidate_archive(candidate, sidecar, sandbox, candidate_digest)
+    execution_candidate = copy_candidate_snapshot(candidate.name, candidate_snapshot, sidecar_body, sandbox, candidate_digest)
+    copied_manifest = read_candidate_manifest(execution_candidate, source_before.revision, candidate_digest)
+    if copied_manifest != candidate_manifest:
+        raise RuntimeError("copied candidate manifest binding mismatch")
     browser_provenance: dict[str, str] | None = None
     browser_execution_script: Path | None = None
     if not args.skip_browser:
@@ -1769,9 +1833,9 @@ def main() -> int:
 
     verify_archive = execute_candidate(["verify-archive"])
     write(artifacts / "candidate-verify-archive.txt", verify_archive.stdout)
-    candidate_manifest = read_candidate_manifest(execution_candidate, source_before.revision)
-    if candidate_manifest["archive_sha256"] != candidate_digest:
-        raise RuntimeError("candidate archive changed after manifest verification")
+    verified_manifest = read_candidate_manifest(execution_candidate, source_before.revision, candidate_digest)
+    if verified_manifest != candidate_manifest:
+        raise RuntimeError("verified candidate manifest binding mismatch")
     lifecycle = candidate_root / "usr/local/libexec/open-trestle/open-trestle-distribution.pyz"
     trestle = candidate_root / "usr/local/bin/trestle"
     trestled = candidate_root / "usr/local/bin/trestled"
