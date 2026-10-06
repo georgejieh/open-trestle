@@ -68,61 +68,6 @@ def assert_candidate_digest(candidate: Path, expected: str) -> None:
         raise RuntimeError("candidate archive changed after verification")
 
 
-def copy_candidate_archive(source: Path, sidecar: Path, sandbox: Path, expected: str) -> Path:
-    try:
-        before = source.lstat()
-        sidecar_status = sidecar.lstat()
-    except OSError as error:
-        raise RuntimeError("candidate archive copy source is unavailable") from error
-    if not stat.S_ISREG(before.st_mode) or stat.S_ISLNK(before.st_mode) or before.st_size <= 0 or before.st_size > MAX_CANDIDATE_BYTES or not stat.S_ISREG(sidecar_status.st_mode) or stat.S_ISLNK(sidecar_status.st_mode):
-        raise RuntimeError("candidate archive copy source is invalid")
-    destination = sandbox / "open-trestle-linux-amd64.pyz"
-    destination_sidecar = Path(str(destination) + ".sha256")
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    source_descriptor = os.open(source, flags)
-    try:
-        opened = os.fstat(source_descriptor)
-        if (opened.st_dev, opened.st_ino, opened.st_mode, opened.st_size) != (before.st_dev, before.st_ino, before.st_mode, before.st_size):
-            raise RuntimeError("candidate archive changed while copied")
-        destination_descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0), 0o500)
-        digest = hashlib.sha256()
-        copied = 0
-        try:
-            while True:
-                chunk = os.read(source_descriptor, 1 << 20)
-                if not chunk:
-                    break
-                copied += len(chunk)
-                if copied > MAX_CANDIDATE_BYTES:
-                    raise RuntimeError("candidate archive byte limit exceeded")
-                digest.update(chunk)
-                view = memoryview(chunk)
-                while view:
-                    written = os.write(destination_descriptor, view)
-                    view = view[written:]
-            os.fsync(destination_descriptor)
-        finally:
-            os.close(destination_descriptor)
-        after = os.fstat(source_descriptor)
-    finally:
-        os.close(source_descriptor)
-    try:
-        path_after = source.lstat()
-    except OSError as error:
-        raise RuntimeError("candidate archive changed while copied") from error
-    if (after.st_dev, after.st_ino, after.st_mode, after.st_size, after.st_mtime_ns) != (before.st_dev, before.st_ino, before.st_mode, before.st_size, before.st_mtime_ns) or (path_after.st_dev, path_after.st_ino, path_after.st_mode, path_after.st_size, path_after.st_mtime_ns) != (before.st_dev, before.st_ino, before.st_mode, before.st_size, before.st_mtime_ns) or digest.hexdigest() != expected:
-        raise RuntimeError("candidate archive changed while copied")
-    destination.chmod(0o555)
-    sidecar_body = read_bounded(sidecar, 4096)
-    fields = sidecar_body.decode("ascii").strip().split()
-    if not fields or fields[0] != expected:
-        raise RuntimeError("candidate checksum does not match detached sidecar")
-    write(destination_sidecar, sidecar_body)
-    destination_sidecar.chmod(0o444)
-    assert_candidate_digest(destination, expected)
-    return destination
-
-
 def create_private_tmp_alias(target: Path) -> Path:
     root = Path("/dev/shm")
     if not root.is_dir() or not os.access(root, os.W_OK | os.X_OK):

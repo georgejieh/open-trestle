@@ -19,6 +19,7 @@ import unittest
 from unittest.mock import patch
 import zipfile
 import zlib
+from contextlib import nullcontext
 from pathlib import Path
 
 import local_alpha_system
@@ -340,21 +341,51 @@ class LocalAlphaSystemTest(unittest.TestCase):
             self.assertFalse((Path(output_directory) / "sealed/web/node_modules").is_symlink())
             self.assertEqual((Path(output_directory) / "sealed/web/node_modules/playwright-core/index.js").read_text(), "export {}\n")
 
-    def test_candidate_execution_copy_is_output_owned_and_digest_fenced(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            source, _ = self.candidate(root, "1" * 40)
-            expected = hashlib.sha256(source.read_bytes()).hexdigest()
-            sandbox = root / "sandbox"; sandbox.mkdir()
-            copied = local_alpha_system.copy_candidate_archive(source, Path(str(source) + ".sha256"), sandbox, expected)
+    def test_candidate_snapshot_copy_preserves_exact_bytes_modes_and_digest_fence(self):
+        with tempfile.TemporaryDirectory(dir="/dev/shm") as directory:
+            sandbox = Path(directory)
+            body = b"candidate snapshot bytes"
+            digest = hashlib.sha256(body).hexdigest()
+            sidecar_body = f"{digest}  candidate.pyz\n".encode()
+            copied = local_alpha_system.copy_candidate_snapshot("candidate.pyz", body, sidecar_body, sandbox, digest)
+            copied_sidecar = Path(str(copied) + ".sha256")
             self.assertEqual(copied.parent, sandbox)
-            self.assertEqual(hashlib.sha256(copied.read_bytes()).hexdigest(), expected)
+            self.assertEqual(copied.read_bytes(), body)
+            self.assertEqual(copied_sidecar.read_bytes(), sidecar_body)
             self.assertEqual(stat.S_IMODE(copied.stat().st_mode), 0o555)
-            self.assertEqual(stat.S_IMODE(Path(str(copied) + ".sha256").stat().st_mode), 0o444)
-            local_alpha_system.assert_candidate_digest(copied, expected)
-            copied.chmod(0o700); copied.write_bytes(copied.read_bytes() + b"mutation")
+            self.assertEqual(stat.S_IMODE(copied_sidecar.stat().st_mode), 0o444)
+            local_alpha_system.assert_candidate_digest(copied, digest)
+            copied.chmod(0o700); copied.write_bytes(body + b"mutation")
             with self.assertRaisesRegex(RuntimeError, "candidate archive changed"):
-                local_alpha_system.assert_candidate_digest(copied, expected)
+                local_alpha_system.assert_candidate_digest(copied, digest)
+
+    def test_candidate_snapshot_copy_rejects_existing_or_invalid_targets(self):
+        cases = (
+            ("empty-name", "", b"body", None),
+            ("dot-name", ".", b"body", None),
+            ("parent-name", "..", b"body", None),
+            ("slash-name", "path/candidate.pyz", b"body", None),
+            ("backslash-name", "path\\candidate.pyz", b"body", None),
+            ("empty-body", "candidate.pyz", b"", None),
+            ("oversized-body", "candidate.pyz", b"1234", 3),
+            ("digest-mismatch", "candidate.pyz", b"body", None),
+        )
+        for mode, name, body, byte_limit in cases:
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory(dir="/dev/shm") as directory:
+                sandbox = Path(directory)
+                expected = "0" * 64 if mode == "digest-mismatch" else hashlib.sha256(body).hexdigest()
+                limit = patch.object(local_alpha_system, "MAX_CANDIDATE_BYTES", byte_limit) if byte_limit is not None else nullcontext()
+                with limit, self.assertRaisesRegex(RuntimeError, "candidate snapshot is invalid"):
+                    local_alpha_system.copy_candidate_snapshot(name, body, b"sidecar", sandbox, expected)
+                self.assertEqual(list(sandbox.iterdir()), [])
+        with tempfile.TemporaryDirectory(dir="/dev/shm") as directory:
+            sandbox = Path(directory)
+            target = sandbox / "candidate.pyz"; target.write_bytes(b"existing")
+            body = b"replacement"; digest = hashlib.sha256(body).hexdigest()
+            with self.assertRaisesRegex(RuntimeError, "candidate snapshot copy failed"):
+                local_alpha_system.copy_candidate_snapshot(target.name, body, b"sidecar", sandbox, digest)
+            self.assertEqual(target.read_bytes(), b"existing")
+            self.assertFalse(Path(str(target) + ".sha256").exists())
 
     def test_source_state_rejects_tracked_and_untracked_mutation(self):
         with tempfile.TemporaryDirectory() as directory:
