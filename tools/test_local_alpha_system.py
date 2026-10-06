@@ -215,8 +215,8 @@ class LocalAlphaSystemTest(unittest.TestCase):
             self.assertTrue(mutated)
             self.assertFalse(marker_path.exists())
 
-    def test_candidate_sidecar_symlink_and_oversize_fail_before_output(self):
-        for mode in ("sidecar-symlink", "oversize"):
+    def test_candidate_sidecar_and_archive_bounds_fail_before_output(self):
+        for mode in ("sidecar-symlink", "candidate-oversize", "sidecar-oversize"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as candidate_directory, tempfile.TemporaryDirectory() as output_parent, tempfile.TemporaryDirectory() as outside_directory:
                 root = Path(directory); self.provenance_repository(root)
                 revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
@@ -225,9 +225,11 @@ class LocalAlphaSystemTest(unittest.TestCase):
                 sidecar = Path(str(candidate) + ".sha256")
                 if mode == "sidecar-symlink":
                     moved = Path(outside_directory) / sidecar.name; sidecar.rename(moved); sidecar.symlink_to(moved)
-                else:
+                elif mode == "candidate-oversize":
                     with candidate.open("r+b") as stream: stream.truncate(local_alpha_system.MAX_CANDIDATE_BYTES + 1)
                     sidecar.write_text(f"{'0' * 64}  {candidate.name}\n")
+                else:
+                    sidecar.write_bytes(b"0" * 4097)
                 output = Path(output_parent) / "must-not-exist"
                 arguments = ["local_alpha_system.py", "--candidate", str(candidate), "--source-root", str(root), "--skip-browser", "--output", str(output)]
                 with patch.object(sys, "argv", arguments), self.assertRaises((RuntimeError, SystemExit)):
