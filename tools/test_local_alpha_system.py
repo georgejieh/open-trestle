@@ -148,6 +148,55 @@ class LocalAlphaSystemTest(unittest.TestCase):
             self.assertFalse(output.exists())
             self.assertFalse(marker_path.exists())
 
+    def test_candidate_descendant_audit_rejects_reachable_descendant(self):
+        with subprocess.Popen([sys.executable, "-c", "import os,sys,time;pid=os.fork()\nif pid==0:os.setsid();time.sleep(120);os._exit(0)\ntime.sleep(120)"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True) as host:
+            time.sleep(0.5)
+            self.assertTrue(local_alpha_system._candidate_descendants_alive(host))
+            host.terminate(); host.wait(timeout=5)
+
+
+
+    def test_harness_owned_write_path_and_argument_artifact_reject_symlink_substitution(self):
+        with tempfile.TemporaryDirectory(dir="/dev/shm") as directory, tempfile.TemporaryDirectory(dir="/dev/shm") as candidate_directory, tempfile.TemporaryDirectory(dir="/dev/shm") as output_parent, tempfile.TemporaryDirectory(dir="/dev/shm") as outside_directory:
+            root = Path(directory); self.provenance_repository(root)
+            revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+            marker_path = Path(candidate_directory) / "candidate-executed"
+            candidate = self.marker_candidate(Path(candidate_directory), revision, marker_path)
+            output = Path(output_parent) / "output"
+            sentinel = output / "candidate-root/etc/open-trestle/operator.conf"
+            victim = Path(outside_directory) / "victim.txt"; victim.touch()
+            sentinel.parent.mkdir(parents=True, exist_ok=True)
+            sentinel.symlink_to(victim)
+            arguments = ["local_alpha_system.py", "--candidate", str(candidate), "--source-root", str(root), "--skip-browser", "--output", str(output)]
+            with patch.object(sys, "argv", arguments), self.assertRaisesRegex((RuntimeError, SystemExit), "refusing to (traverse|write|symlink|clobber|overwrite)"):
+                local_alpha_system.main()
+            self.assertFalse(marker_path.exists())
+            self.assertTrue(sentinel.is_symlink())
+            self.assertEqual(victim.read_bytes(), b"")
+
+    def test_receipt_write_uses_captured_sidecar_body_and_rejects_symlink_replacement(self):
+        with tempfile.TemporaryDirectory(dir="/dev/shm") as directory, tempfile.TemporaryDirectory(dir="/dev/shm") as candidate_directory, tempfile.TemporaryDirectory(dir="/dev/shm") as output_parent, tempfile.TemporaryDirectory(dir="/dev/shm") as outside_directory:
+            root = Path(directory); self.provenance_repository(root)
+            revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+            marker_path = Path(candidate_directory) / "candidate-executed"
+            candidate = self.marker_candidate(Path(candidate_directory), revision, marker_path)
+            output = Path(output_parent) / "output"
+            sentinel = output / "candidate-root/etc/open-trestle/operator.conf"
+            sentinel.parent.mkdir(parents=True, exist_ok=True)
+            sentinel.symlink_to(Path(outside_directory) / "victim.txt")
+            arguments = ["local_alpha_system.py", "--candidate", str(candidate), "--source-root", str(root), "--skip-browser", "--output", str(output)]
+            original_read_candidate_sidecar = local_alpha_system.read_candidate_sidecar
+            replacement_sidecar = Path(outside_directory) / "replacement.sidecar"
+            def wrapping(sidecar_path, candidate_name):
+                body, digest = original_read_candidate_sidecar(sidecar_path, candidate_name)
+                sidecar_path.unlink()
+                sidecar_path.symlink_to(replacement_sidecar)
+                replacement_sidecar.write_bytes(b"x" * 4097)
+                return body, digest
+            with patch.object(local_alpha_system, "read_candidate_sidecar", wrapping), patch.object(sys, "argv", arguments), self.assertRaisesRegex((RuntimeError, SystemExit), "refusing to (traverse|write|symlink|clobber|read_candidate_sidecar|overwrite)"):
+                local_alpha_system.main()
+            self.assertFalse(marker_path.exists())
+
     def test_symlinked_candidate_is_rejected_before_source_capture_or_output(self):
         for mode in ("target-sidecar-only", "alias-sidecar"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory(dir="/dev/shm") as directory, tempfile.TemporaryDirectory(dir="/dev/shm") as candidate_directory, tempfile.TemporaryDirectory(dir="/dev/shm") as output_parent:
@@ -174,7 +223,6 @@ class LocalAlphaSystemTest(unittest.TestCase):
                 self.assertFalse((output / "browser-runtime").exists())
                 self.assertFalse((output / "artifacts").exists())
                 self.assertFalse((output / "receipt.json").exists())
-
     def test_invalid_candidate_manifest_never_creates_output_or_executes(self):
         for mode in ("malformed", "duplicate", "oversized", "digest"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as candidate_directory, tempfile.TemporaryDirectory() as output_parent:
@@ -195,7 +243,6 @@ class LocalAlphaSystemTest(unittest.TestCase):
                     local_alpha_system.main()
                 self.assertFalse(output.exists())
                 self.assertFalse(marker_path.exists())
-
     def test_candidate_archive_race_is_rejected_before_output(self):
         with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as candidate_directory:
             root = Path(directory); self.provenance_repository(root)

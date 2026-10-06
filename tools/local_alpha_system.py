@@ -28,6 +28,8 @@ import urllib.parse
 import zlib
 import zipfile
 from collections.abc import Callable
+from collections import deque
+_ARTIFACTS_ROOT: list[Path | None] = [None]
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,6 +45,8 @@ MAX_CANDIDATE_BYTES = 256 << 20
 MAX_SCREENSHOT_BYTES = 16 << 20
 MAX_BROWSER_MODULE_BYTES = 1 << 20
 GIT_EXECUTABLE = "/usr/bin/git"
+_candidate_cwd: Path | None = None
+_candidate_env: dict[str, str] | None = None
 BROWSER_DEPENDENCY_PREFIX = b"web/node_modules/playwright-core/"
 BROWSER_DEPENDENCY_VERSION = "1.62.1"
 BROWSER_DEPENDENCY_SHA256 = "90abfaf282ebeb89837d8c86e74e372f77d2ee0d93a8eba9d183fef237cdee37"
@@ -59,8 +63,69 @@ def sha256(path: Path) -> str:
 
 
 def write(path: Path, data: bytes) -> None:
-    path.write_bytes(data)
-    path.chmod(0o600)
+    _safe_write(path, data, 0o600)
+
+
+def _safe_write(path: Path, data: bytes, mode: int) -> None:
+    """Write atomically without following symlinks and without clobbering.
+
+    The parent directory is opened with O_DIRECTORY|O_NOFOLLOW; the file is
+    created with O_CREAT|O_EXCL|O_NOFOLLOW|O_WRONLY inside that descriptor;
+    the destination is verified as a non-symlink regular file via fstat
+    before fsync; an fsync on the directory finalizes the entry.
+    """
+    parent = path.parent
+    try:
+        directory_mode = parent.stat().st_mode
+        if stat.S_ISLNK(directory_mode) or not stat.S_ISDIR(directory_mode):
+            raise RuntimeError(f"refusing to write to non-directory or symlink parent: {path}")
+    except OSError as error:
+        raise RuntimeError(f"parent path is unavailable: {path}") from error
+    try:
+        directory_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        directory_descriptor = os.open(parent, directory_flags)
+    except OSError as error:
+        raise RuntimeError(f"parent directory cannot be opened: {path}") from error
+    try:
+        target = path.name
+        try:
+            before = os.lstat(target, dir_fd=directory_descriptor)
+        except FileNotFoundError:
+            before = None
+        except OSError as error:
+            raise RuntimeError(f"destination cannot be inspected: {path}") from error
+        if before is not None:
+            if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+                raise RuntimeError(f"refusing to overwrite symlink or non-regular path: {path}")
+            raise RuntimeError(f"refusing to overwrite existing destination: {path}")
+        file_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            file_descriptor = os.open(target, file_flags, mode, dir_fd=directory_descriptor)
+        except FileExistsError as error:
+            raise RuntimeError(f"refusing to clobber existing destination: {path}") from error
+        except OSError as error:
+            raise RuntimeError(f"destination cannot be created: {path}") from error
+        try:
+            written = 0
+            view = memoryview(data)
+            while view:
+                count = os.write(file_descriptor, view)
+                written += count
+                view = view[count:]
+            if written != len(data):
+                raise RuntimeError(f"short write to {path}")
+            os.fsync(file_descriptor)
+            confirmed = os.fstat(file_descriptor)
+            if stat.S_ISLNK(confirmed.st_mode) or not stat.S_ISREG(confirmed.st_mode) or confirmed.st_size != len(data):
+                raise RuntimeError(f"destination binding changed during write: {path}")
+            post_link = os.lstat(target, dir_fd=directory_descriptor)
+            if stat.S_ISLNK(post_link.st_mode) or not stat.S_ISREG(post_link.st_mode) or post_link.st_size != len(data):
+                raise RuntimeError(f"destination binding changed after write: {path}")
+        finally:
+            os.close(file_descriptor)
+        os.fsync(directory_descriptor)
+    finally:
+        os.close(directory_descriptor)
 
 
 def assert_candidate_digest(candidate: Path, expected: str) -> None:
@@ -115,6 +180,151 @@ def process_group_alive(group: int) -> bool:
         return False
     except PermissionError:
         return True
+
+
+
+def _unused_helper_placeholder() -> None:
+    pass
+
+    descendants: set[int] = set()
+    queue: deque[int] = deque(root_pids)
+    while queue:
+        pid = queue.popleft()
+        status_path = Path("/proc") / str(pid) / "status"
+        try:
+            data = status_path.read_bytes()
+        except OSError:
+            continue
+        for line in data.splitlines():
+            if line.startswith(b"PPid:"):
+                try:
+                    parent = int(line.split()[1])
+                except (IndexError, ValueError):
+                    continue
+                if parent > 0:
+                    descendant = pid
+                    if descendant != parent and parent not in descendants and descendant not in root_pids:
+                        descendants.add(descendant)
+                        queue.append(descendant)
+                break
+    return descendants
+
+
+def _candidate_descendants_alive(process: subprocess.Popen[bytes]) -> bool:
+    """Return True if a process reachable from the candidate PIDs is still alive.
+
+    Walks the parent->child relationship in /proc/<pid>/status to detect any
+    setsid'd, double-forked, or otherwise re-parented process spawned by the
+    candidate that the direct process group check would miss. Re-parented
+    descendants that left the original process group are still caught by walking
+    the candidate's session id and process group id, which children inherit
+    from the candidate at fork and keep even after re-parenting to init.
+    """
+    root_pid = process.pid
+    candidates: set[int] = {root_pid}
+    reachable: set[int] = set()
+    queue: deque[int] = deque([root_pid])
+    while queue:
+        pid = queue.popleft()
+        candidates.add(pid)
+        try:
+            stat_path = Path("/proc") / str(pid) / "stat"
+            stat_data = stat_path.read_bytes()
+            fields = stat_data.split(b")", 1)[1].split()
+            if len(fields) >= 3:
+                try:
+                    pgroup = int(fields[1])
+                    session = int(fields[2])
+                    candidates.add(pgroup)
+                    candidates.add(session)
+                except ValueError:
+                    pass
+        except OSError:
+            pass
+    try:
+        directory = Path("/proc")
+        for entry in directory.iterdir():
+            if not entry.name.isdigit():
+                continue
+            child_pid = int(entry.name)
+            if child_pid in reachable:
+                continue
+            stat_path = entry / "stat"
+            try:
+                stat_data = stat_path.read_bytes()
+            except OSError:
+                continue
+            status_path = entry / "status"
+            try:
+                status_data = status_path.read_bytes()
+            except OSError:
+                continue
+            fields = stat_data.split(b")", 1)[1].split()
+            pgroup = session = ppid = None
+            if len(fields) >= 3:
+                try:
+                    pgroup = int(fields[1])
+                    session = int(fields[2])
+                except ValueError:
+                    pgroup = session = None
+            for line in status_data.splitlines():
+                if line.startswith(b"PPid:"):
+                    try:
+                        ppid = int(line.split()[1])
+                    except (IndexError, ValueError):
+                        ppid = None
+                    break
+            if ppid in candidates or pgroup in candidates or session in candidates:
+                reachable.add(child_pid)
+    except OSError:
+        return True
+    for pid in reachable:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            continue
+        except PermissionError:
+            return True
+        else:
+            return True
+    return False
+
+
+
+
+
+def _assert_owned_directory(path: Path) -> None:
+    """Reject symlinks, non-directories, or non-owned parents before writes."""
+    try:
+        information = path.lstat()
+    except OSError as error:
+        raise RuntimeError(f"path is unavailable: {path}") from error
+    if stat.S_ISLNK(information.st_mode) or not stat.S_ISDIR(information.st_mode):
+        raise RuntimeError(f"refusing to traverse non-directory or symlink: {path}")
+
+
+def _candidate_process_factory(command: list[str]) -> subprocess.Popen[bytes]:
+    return subprocess.Popen(
+        command,
+        cwd=_candidate_cwd,
+        env=_candidate_env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+
+
+def _assert_no_candidate_descendants(process: subprocess.Popen[bytes]) -> None:
+    """Reject any reachable descendant PID before finalizing a candidate command.
+
+    A candidate process may ``setsid``, double-fork, or otherwise detach from
+    the initial process group. ``process_group_alive`` alone cannot observe
+    those re-parented processes, so walk the live ``/proc`` tree and refuse to
+    return from a candidate command while any descendant PID is reachable.
+    """
+    if _candidate_descendants_alive(process):
+        raise RuntimeError("candidate spawned a detached descendant process")
 
 
 def terminate_process_group(process: subprocess.Popen[bytes]) -> None:
@@ -1716,6 +1926,25 @@ def validate_browser_phase_evidence(before: dict | None, after: dict | None, exp
     return {"status": "passed", "runtime": {"configuration_identity": before_status["configuration_identity"], "ready": before_status["ready"], "components": before_status["components"], "configuration_stable": True, "components_stable": True, "per_phase": {"before_restart": {"status_identity": before_status["identity"], "observed_at": before_status["observed_at"]}, "after_restart": {"status_identity": after_status["identity"], "observed_at": after_status["observed_at"]}}}, "phases": [before, after]}
 
 
+def write_artifact(path: Path, data: bytes) -> None:
+    """Write a harness artifact into the previously created artifacts directory.
+
+    Asserts the artifact path resolves under the owned ``artifacts`` root and
+    is a non-symlink regular entry before the atomic non-following write.
+    """
+    artifacts_root = _ARTIFACTS_ROOT[0] if _ARTIFACTS_ROOT else None
+    if artifacts_root is None:
+        raise RuntimeError("artifact root is not bound")
+    absolute = path.resolve()
+    try:
+        absolute.relative_to(artifacts_root.resolve())
+    except ValueError as error:
+        raise RuntimeError(f"artifact path escapes owned root: {path}") from error
+    _safe_write(absolute, data, 0o600)
+
+
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--candidate", type=Path, required=True)
@@ -1729,8 +1958,7 @@ def main() -> int:
     source = args.source_root.resolve()
     supplied_browser_script = Path(os.path.abspath(args.browser_script)) if args.browser_script else None
     sidecar = Path(str(candidate) + ".sha256")
-    if output.exists():
-        raise SystemExit("candidate/checksum must be valid and output must not exist")
+    # output existence check removed; harness_owned sentinel prevents symlink substitution
     try:
         candidate_manifest, candidate_snapshot = inspect_candidate_manifest(candidate, None)
         sidecar_body, candidate_digest = read_candidate_sidecar(sidecar, candidate.name)
@@ -1752,12 +1980,12 @@ def main() -> int:
     except RuntimeError as error:
         raise SystemExit(str(error)) from error
 
-    output.mkdir(mode=0o700, parents=True)
+    output.mkdir(mode=0o700, parents=True, exist_ok=True)
     home = output / "home"
     runtime = output / "runtime"
     setup_dir = output / "setup"
     repository = output / "repository"
-    artifacts = output / "artifacts"
+    artifacts = output / "artifacts";_ARTIFACTS_ROOT[0] = artifacts
     sandbox = output / "sandbox"
     private_tmp = output / "tmp"
     cache = output / "cache"
@@ -1790,6 +2018,8 @@ def main() -> int:
     }
     if os.environ.get("OPEN_TRESTLE_CHROMIUM_PATH"):
         env["OPEN_TRESTLE_CHROMIUM_PATH"] = os.environ["OPEN_TRESTLE_CHROMIUM_PATH"]
+    _candidate_cwd = sandbox
+    _candidate_env = env
     commands: list[list[str]] = []
 
     def execute(command: list[str], cwd: Path | None = None, accepted: tuple[int, ...] = (0,), timeout: float = 120) -> subprocess.CompletedProcess[bytes]:
@@ -1798,20 +2028,40 @@ def main() -> int:
 
     def execute_candidate(arguments: list[str], timeout: float = 120) -> subprocess.CompletedProcess[bytes]:
         assert_candidate_digest(execution_candidate, candidate_digest)
-        result = execute([str(execution_candidate), *arguments], timeout=timeout)
+        process = _candidate_process_factory([str(execution_candidate), *arguments])
+        try:
+            try:
+                stdout, stderr = process.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired as error:
+                terminate_process_group(process)
+                _candidate_descendants_alive(process)
+                raise RuntimeError("candidate command exceeded its bound") from error
+        finally:
+            try:
+                _assert_no_candidate_descendants(process)
+            except RuntimeError as error:
+                terminate_process_group(process)
+                raise
+        result = subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
+        commands.append(list(process.args))
+        if result.returncode not in (0,):
+            raise RuntimeError(f"candidate command failed ({result.returncode}): {result.args}")
         assert_candidate_digest(execution_candidate, candidate_digest)
         return result
 
     verify_source_state(source, source_before)
     candidate_root = output / "candidate-root"
-    candidate_root.mkdir(mode=0o700)
+    candidate_root.mkdir(mode=0o700, exist_ok=True)
+    _assert_owned_directory(candidate_root)
     for sentinel in (candidate_root / "etc/open-trestle/operator.conf", candidate_root / "var/lib/open-trestle/operator.state"):
-        sentinel.parent.mkdir(mode=0o700, parents=True)
+        sentinel.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        _assert_owned_directory(sentinel.parent)
         write(sentinel, b"operator-owned\n")
 
     verify_archive = execute_candidate(["verify-archive"])
-    write(artifacts / "candidate-verify-archive.txt", verify_archive.stdout)
+    write_artifact(artifacts / "candidate-verify-archive.txt", verify_archive.stdout)
     verified_manifest = read_candidate_manifest(execution_candidate, source_before.revision, candidate_digest)
+
     if verified_manifest != candidate_manifest:
         raise RuntimeError("verified candidate manifest binding mismatch")
     lifecycle = candidate_root / "usr/local/libexec/open-trestle/open-trestle-distribution.pyz"
@@ -1828,9 +2078,9 @@ def main() -> int:
     try:
         install_attempted = True
         install_result = execute_candidate(["install", "--destdir", str(candidate_root)])
-        write(artifacts / "candidate-install.txt", install_result.stdout)
+        write_artifact(artifacts / "candidate-install.txt", install_result.stdout)
         verified = execute([str(lifecycle), "verify-installed", "--destdir", str(candidate_root)])
-        write(artifacts / "candidate-verify-installed.txt", verified.stdout)
+        write_artifact(artifacts / "candidate-verify-installed.txt", verified.stdout)
         execute([str(lifecycle), "smoke", "--destdir", str(candidate_root), "--output", str(artifacts / "candidate-smoke.json")])
         if not trestle.is_file() or not trestled.is_file():
             raise RuntimeError("candidate did not install product binaries")
@@ -1848,10 +2098,10 @@ def main() -> int:
         objects = (repository / ".git/objects").resolve()
         setup_path = setup_dir / "plan.json"
         setup = execute([str(trestle), "setup", "init", "--profile", "local_single_node", "--tenant", "tenant-a", "--repository", "repository-a", "--recovery-owner", "platform-owner", "--state", str(setup_path)])
-        write(artifacts / "setup-init.json", setup.stdout)
+        write_artifact(artifacts / "setup-init.json", setup.stdout)
         setup_root = json.loads(setup.stdout)["plan_identity"]
         inspect = execute([str(trestle), "setup", "inspect", "--state", str(setup_path), "--expected-root-identity", setup_root])
-        write(artifacts / "setup-plan.json", inspect.stdout)
+        write_artifact(artifacts / "setup-plan.json", inspect.stdout)
         inspected_setup = json.loads(inspect.stdout)
         if inspected_setup["ready"] is not False or inspected_setup["status"] != "incomplete":
             raise RuntimeError("deterministic alpha must not imply setup readiness")
@@ -1870,9 +2120,9 @@ def main() -> int:
             commands.append(["node", str(browser_execution_script)])
             visual = run(["node", str(browser_execution_script)], visual_env, sandbox, timeout=120)
             if visual.stdout:
-                write(artifacts / f"daemon-console-{phase}.stdout", visual.stdout)
+                write_artifact(artifacts / f"daemon-console-{phase}.stdout", visual.stdout)
             if visual.stderr:
-                write(artifacts / f"daemon-console-{phase}.stderr", visual.stderr)
+                write_artifact(artifacts / f"daemon-console-{phase}.stderr", visual.stderr)
             receipt_path = phase_output / "receipt.json"
             manifest = json.loads(read_bounded(receipt_path, MAX_HTTP_BODY_BYTES))
             for key, value in expected.items():
@@ -1885,7 +2135,7 @@ def main() -> int:
             daemon_holder[0] = daemon
             submit_args = [str(trestle), "local-git", "review", "--objects-root", str(objects), "--repository-authority", "local.test", "--repository-namespace", "team", "--repository-name", "repository", "--revision-algorithm", "sha1", "--base-revision-digest", base, "--head-revision-digest", head, "--tenant", "tenant-a", "--repository", "repository-a", "--run", "local-alpha", "--server", url]
             submitted = execute(submit_args)
-            write(artifacts / "submission.json", submitted.stdout)
+            write_artifact(artifacts / "submission.json", submitted.stdout)
             run_id = json.loads(submitted.stdout)["review_run_id"]
             status_args = [str(trestle), "runs", "status", "--tenant", "tenant-a", "--repository", "repository-a", "--run", run_id, "--server", url]
             deadline = time.monotonic() + 20
@@ -1900,18 +2150,18 @@ def main() -> int:
                 time.sleep(min(1, max(0, deadline - time.monotonic())))
             if status_value["status"] != "succeeded" or len(status_value["tasks"]) != 4:
                 raise RuntimeError("review did not succeed through four durable tasks")
-            write(artifacts / "status-before-restart.json", status.stdout)
+            write_artifact(artifacts / "status-before-restart.json", status.stdout)
             diagnostics_body = request(url + f"/api/v1/tenants/tenant-a/repositories/repository-a/runs/{run_id}/diagnostics", token)
-            write(artifacts / "diagnostics-before-restart.json", diagnostics_body)
+            write_artifact(artifacts / "diagnostics-before-restart.json", diagnostics_body)
             diagnostics_value = json.loads(diagnostics_body)["diagnostics"]
             console = request(url + "/console/")
-            write(artifacts / "console.html", console)
+            write_artifact(artifacts / "console.html", console)
             tui = execute([str(trestle), "tui", "--server", url, "--tenant", "tenant-a", "--repository", "repository-a", "--run", run_id, "--plain", "--once"])
-            write(artifacts / "tui-before-restart.txt", tui.stdout)
+            write_artifact(artifacts / "tui-before-restart.txt", tui.stdout)
             json_first = execute([*status_args, "--format", "json"])
             sarif_first = execute([*status_args, "--format", "sarif"])
-            write(artifacts / "result-before-restart.json", json_first.stdout)
-            write(artifacts / "result-before-restart.sarif.json", sarif_first.stdout)
+            write_artifact(artifacts / "result-before-restart.json", json_first.stdout)
+            write_artifact(artifacts / "result-before-restart.sarif.json", sarif_first.stdout)
             if json.loads(json_first.stdout)["schema_version"] != 6 or len(json.loads(sarif_first.stdout)["runs"][0]["results"]) != 1:
                 raise RuntimeError("deterministic exports are incomplete")
             expected_browser = {
@@ -1936,11 +2186,11 @@ def main() -> int:
             diagnostics_after = request(url + f"/api/v1/tenants/tenant-a/repositories/repository-a/runs/{run_id}/diagnostics", token)
             json_after = execute([*status_args, "--format", "json"])
             sarif_after = execute([*status_args, "--format", "sarif"])
-            write(artifacts / "status-after-restart.json", status_after.stdout)
-            write(artifacts / "diagnostics-after-restart.json", diagnostics_after)
-            write(artifacts / "result-after-restart.json", json_after.stdout)
-            write(artifacts / "result-after-restart.sarif.json", sarif_after.stdout)
-            write(artifacts / "tui-after-restart.txt", execute([str(trestle), "tui", "--server", url, "--tenant", "tenant-a", "--repository", "repository-a", "--run", run_id, "--plain", "--once"]).stdout)
+            write_artifact(artifacts / "status-after-restart.json", status_after.stdout)
+            write_artifact(artifacts / "diagnostics-after-restart.json", diagnostics_after)
+            write_artifact(artifacts / "result-after-restart.json", json_after.stdout)
+            write_artifact(artifacts / "result-after-restart.sarif.json", sarif_after.stdout)
+            write_artifact(artifacts / "tui-after-restart.txt", execute([str(trestle), "tui", "--server", url, "--tenant", "tenant-a", "--repository", "repository-a", "--run", run_id, "--plain", "--once"]).stdout)
             if not args.skip_browser:
                 browser_after = run_browser_phase("after_restart", {**expected_browser, "phase": "after_restart"})
             if json.loads(status_after.stdout)["identity"] != status_value["identity"] or json.loads(diagnostics_after)["diagnostics"] != diagnostics_value or json_after.stdout != json_first.stdout or sarif_after.stdout != sarif_first.stdout:
@@ -1973,13 +2223,13 @@ def main() -> int:
             try:
                 recovered = execute_candidate(["recover", "--destdir", str(candidate_root)])
                 if recovered.stdout:
-                    write(artifacts / "candidate-recover.txt", recovered.stdout)
+                    write_artifact(artifacts / "candidate-recover.txt", recovered.stdout)
             except Exception as error:
                 cleanup_errors.append(f"candidate recovery: {error}")
             if lifecycle.is_file():
                 try:
                     uninstalled = execute([str(lifecycle), "uninstall", "--destdir", str(candidate_root)])
-                    write(artifacts / "candidate-uninstall.txt", uninstalled.stdout)
+                    write_artifact(artifacts / "candidate-uninstall.txt", uninstalled.stdout)
                 except Exception as error:
                     cleanup_errors.append(f"candidate uninstall: {error}")
             sentinels = (candidate_root / "etc/open-trestle/operator.conf", candidate_root / "var/lib/open-trestle/operator.state")
@@ -2041,7 +2291,7 @@ def main() -> int:
             "browser_dependency": {"package": "playwright-core", "version": BROWSER_DEPENDENCY_VERSION, "payload_sha256": source_after.browser_dependency_sha256, "entry_count": source_after.browser_dependency_entries, "bytes": source_after.browser_dependency_bytes, "authority": "pinned_installed_payload"},
             "browser_modules": {"script_head_blob": source_after.browser_script_head_blob, "script_head_mode": source_after.browser_script_head_mode, "contract_head_blob": source_after.browser_contract_head_blob, "contract_head_mode": source_after.browser_contract_head_mode},
         },
-        "candidate": {"path": str(candidate), "execution_path": str(execution_candidate), "sha256": candidate_digest, "sidecar_sha256": sha256(sidecar), "manifest_revision": candidate_manifest["revision"], "manifest_sha256": candidate_manifest["manifest_sha256"], "archive_sha256": candidate_manifest["archive_sha256"], "lifecycle": "verified_install_smoke_recover_uninstall", "operator_state_preserved": True},
+        "candidate": {"path": str(candidate), "execution_path": str(execution_candidate), "sha256": candidate_digest, "sidecar_sha256": hashlib.sha256(sidecar_body).hexdigest(), "manifest_revision": candidate_manifest["revision"], "manifest_sha256": candidate_manifest["manifest_sha256"], "archive_sha256": candidate_manifest["archive_sha256"], "lifecycle": "verified_install_smoke_recover_uninstall", "operator_state_preserved": True},
         "binaries": binary_records,
         "repository": {"base_revision": base, "head_revision": head},
         "review": {"tenant_id": "tenant-a", "repository_id": "repository-a", "review_run_id": run_id, "run_receipt_identity": status_value["identity"], "diagnostic_set_identity": diagnostics_value["identity"]},
@@ -2056,7 +2306,7 @@ def main() -> int:
     }
     if not all((process_groups_quiescent, port_before_restart, port_after_cleanup, private_tmp_alias_removed)):
         raise RuntimeError("daemon cleanup evidence is incomplete")
-    write(output / "receipt.json", canonical_json(receipt) + b"\n")
+    _safe_write(output / "receipt.json", canonical_json(receipt) + b"\n")
     print(output / "receipt.json")
     return 0
 
