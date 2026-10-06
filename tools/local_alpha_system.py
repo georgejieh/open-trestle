@@ -2306,7 +2306,7 @@ def main() -> int:
     }
     if not all((process_groups_quiescent, port_before_restart, port_after_cleanup, private_tmp_alias_removed)):
         raise RuntimeError("daemon cleanup evidence is incomplete")
-    _safe_write(output / "receipt.json", canonical_json(receipt) + b"\n")
+    _safe_write(output / "receipt.json", canonical_json(receipt) + b"\n", 0o600)
     print(output / "receipt.json")
     return 0
 
