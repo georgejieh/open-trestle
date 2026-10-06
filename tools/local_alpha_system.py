@@ -1351,7 +1351,7 @@ def read_candidate_sidecar(sidecar: Path, candidate_name: str) -> tuple[bytes, s
     return body, fields[0]
 
 
-def inspect_candidate_manifest(candidate: Path, source_revision: str, expected_digest: str | None = None) -> tuple[dict[str, str], bytes]:
+def inspect_candidate_manifest(candidate: Path, source_revision: str | None, expected_digest: str | None = None) -> tuple[dict[str, str], bytes]:
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
         before = candidate.lstat()
@@ -1402,7 +1402,7 @@ def inspect_candidate_manifest(candidate: Path, source_revision: str, expected_d
     revision = document.get("revision") if isinstance(document, dict) else None
     if not isinstance(revision, str):
         raise RuntimeError("candidate manifest revision is invalid")
-    if revision != source_revision:
+    if source_revision is not None and revision != source_revision:
         raise RuntimeError("candidate manifest revision does not match source HEAD")
     return {"revision": revision, "manifest_sha256": hashlib.sha256(manifest).hexdigest(), "archive_sha256": archive_digest}, bytes(body)
 
@@ -1779,7 +1779,7 @@ def main() -> int:
     parser.add_argument("--browser-script", type=Path)
     parser.add_argument("--skip-browser", action="store_true")
     args = parser.parse_args()
-    candidate = args.candidate.resolve()
+    candidate = args.candidate
     output = args.output.resolve()
     source = args.source_root.resolve()
     supplied_browser_script = Path(os.path.abspath(args.browser_script)) if args.browser_script else None
@@ -1787,7 +1787,10 @@ def main() -> int:
     if output.exists():
         raise SystemExit("candidate/checksum must be valid and output must not exist")
     try:
+        candidate_manifest, candidate_snapshot = inspect_candidate_manifest(candidate, None)
         sidecar_body, candidate_digest = read_candidate_sidecar(sidecar, candidate.name)
+        if candidate_manifest["archive_sha256"] != candidate_digest:
+            raise RuntimeError("candidate archive digest does not match detached checksum")
     except RuntimeError as error:
         raise SystemExit(str(error)) from error
     try:
@@ -1797,9 +1800,8 @@ def main() -> int:
         raise SystemExit(str(error)) from error
     if not source_before.clean:
         raise SystemExit("source tree must be clean before system verification")
-    candidate_manifest, candidate_snapshot = inspect_candidate_manifest(candidate, source_before.revision, candidate_digest)
-    if candidate_manifest["archive_sha256"] != candidate_digest:
-        raise RuntimeError("candidate archive changed after manifest verification")
+    if candidate_manifest["revision"] != source_before.revision:
+        raise RuntimeError("candidate manifest revision does not match source HEAD")
     try:
         verify_git_authority(source, source_before.git_authority_sha256)
     except RuntimeError as error:

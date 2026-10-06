@@ -147,6 +147,33 @@ class LocalAlphaSystemTest(unittest.TestCase):
             self.assertFalse(output.exists())
             self.assertFalse(marker_path.exists())
 
+    def test_symlinked_candidate_is_rejected_before_source_capture_or_output(self):
+        for mode in ("target-sidecar-only", "alias-sidecar"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory(dir="/dev/shm") as directory, tempfile.TemporaryDirectory(dir="/dev/shm") as candidate_directory, tempfile.TemporaryDirectory(dir="/dev/shm") as output_parent:
+                root = Path(directory); self.provenance_repository(root)
+                revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+                marker_path = Path(candidate_directory) / "candidate-executed"
+                original = self.marker_candidate(Path(candidate_directory), revision, marker_path)
+                actual = original.with_name("actual.pyz"); original.rename(actual)
+                original_sidecar = Path(str(original) + ".sha256")
+                actual_sidecar = Path(str(actual) + ".sha256"); original_sidecar.rename(actual_sidecar)
+                digest = hashlib.sha256(actual.read_bytes()).hexdigest()
+                actual_sidecar.write_text(f"{digest}  {actual.name}\n")
+                alias = actual.with_name("alias.pyz"); alias.symlink_to(actual.name)
+                if mode == "alias-sidecar":
+                    Path(str(alias) + ".sha256").write_text(f"{digest}  {alias.name}\n")
+                output = Path(output_parent) / "must-not-exist"
+                arguments = ["local_alpha_system.py", "--candidate", str(alias), "--source-root", str(root), "--skip-browser", "--output", str(output)]
+                with patch.object(sys, "argv", arguments), patch.object(local_alpha_system, "capture_source_state", side_effect=AssertionError("source capture must not run")), self.assertRaisesRegex((RuntimeError, SystemExit), "candidate"):
+                    local_alpha_system.main()
+                self.assertTrue(alias.is_symlink())
+                self.assertFalse(output.exists())
+                self.assertFalse((output / "sandbox" / alias.name).exists())
+                self.assertFalse(marker_path.exists())
+                self.assertFalse((output / "browser-runtime").exists())
+                self.assertFalse((output / "artifacts").exists())
+                self.assertFalse((output / "receipt.json").exists())
+
     def test_invalid_candidate_manifest_never_creates_output_or_executes(self):
         for mode in ("malformed", "duplicate", "oversized", "digest"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as candidate_directory, tempfile.TemporaryDirectory() as output_parent:
@@ -224,6 +251,28 @@ class LocalAlphaSystemTest(unittest.TestCase):
                 local_alpha_system.main()
             self.assertTrue(output.exists())
             self.assertFalse(marker_path.exists())
+
+    def test_copied_candidate_substitution_is_rejected_before_execution(self):
+        with tempfile.TemporaryDirectory(dir="/dev/shm") as directory, tempfile.TemporaryDirectory(dir="/dev/shm") as candidate_directory, tempfile.TemporaryDirectory(dir="/dev/shm") as substitute_directory, tempfile.TemporaryDirectory(dir="/dev/shm") as output_parent:
+            root = Path(directory); self.provenance_repository(root)
+            revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+            marker_path = Path(candidate_directory) / "candidate-executed"
+            substitute_marker = Path(substitute_directory) / "substitute-executed"
+            candidate = self.marker_candidate(Path(candidate_directory), revision, marker_path)
+            substitute = self.marker_candidate(Path(substitute_directory), revision, substitute_marker)
+            output = Path(output_parent) / "output"
+            original_copy = local_alpha_system.copy_candidate_snapshot
+            def substituting_copy(*arguments, **keywords):
+                copied = original_copy(*arguments, **keywords)
+                copied.chmod(0o700); copied.write_bytes(substitute.read_bytes()); copied.chmod(0o555)
+                return copied
+            arguments = ["local_alpha_system.py", "--candidate", str(candidate), "--source-root", str(root), "--skip-browser", "--output", str(output)]
+            with patch.object(sys, "argv", arguments), patch.object(local_alpha_system, "copy_candidate_snapshot", substituting_copy), self.assertRaisesRegex(RuntimeError, "digest"):
+                local_alpha_system.main()
+            self.assertTrue(output.exists())
+            self.assertFalse(marker_path.exists())
+            self.assertFalse(substitute_marker.exists())
+            self.assertFalse((output / "receipt.json").exists())
 
     def test_candidate_manifest_binds_matching_source_revision(self):
         with tempfile.TemporaryDirectory() as directory:
