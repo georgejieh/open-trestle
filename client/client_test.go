@@ -264,3 +264,34 @@ func TestLocalClientSubmitsDeterministicIntentOnlyToNumericLoopback(t *testing.T
 		}
 	}
 }
+
+func TestLocalClientSubmitsFullReviewIntentWithoutAuthorityPaths(t *testing.T) {
+	receipt := clientReceipt(t)
+	repository, _ := evidence.NewRepositoryIdentity("local.test", []string{"team"}, "repository")
+	base, _ := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithmSHA1, strings.Repeat("1", 40))
+	head, _ := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithmSHA1, strings.Repeat("2", 40))
+	intent, _ := runtimecatalog.NewLocalFullReviewIntent(receipt.Scope(), repository, base, head, strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64), time.UnixMilli(1000))
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/api/v1/runs" || request.Header.Get("Authorization") != "Bearer "+clientTestToken {
+			t.Errorf("request=%s %s", request.Method, request.URL.Path)
+		}
+		var encoded bytes.Buffer
+		_, _ = encoded.ReadFrom(request.Body)
+		parsed, err := runtimecatalog.ParseLocalFullReviewIntent(encoded.Bytes())
+		if err != nil || parsed.Identity() != intent.Identity() || bytes.Contains(encoded.Bytes(), []byte("objects_root")) {
+			t.Errorf("intent=(%#v,%v)", parsed, err)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusAccepted)
+		_, _ = writer.Write(responseBody(t, receipt))
+	}))
+	defer server.Close()
+	local, err := NewLocal(server.URL, clientTestToken, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := local.SubmitLocalFullReview(context.Background(), intent)
+	if err != nil || got.Identity() != receipt.Identity() {
+		t.Fatalf("submit=(%#v,%v)", got, err)
+	}
+}

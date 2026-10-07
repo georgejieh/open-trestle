@@ -53,6 +53,11 @@ type LocalDeterministicReviewAdmitter interface {
 	Admit(context.Context, runtimecatalog.LocalDeterministicReviewIntent, time.Time) (controlplane.ReviewRunState, error)
 }
 
+// LocalFullReviewAdmitter opens a daemon-bound nine-task local review.
+type LocalFullReviewAdmitter interface {
+	Admit(context.Context, runtimecatalog.LocalFullReviewIntent, time.Time) (controlplane.ReviewRunState, error)
+}
+
 // Server serves the versioned review-run HTTP API.
 type Server struct {
 	coordinator           *controlplane.Coordinator
@@ -66,6 +71,7 @@ type Server struct {
 	runFinalizer          *controlplane.RunFinalizer
 	runtimeStatus         RuntimeStatusReader
 	localReviewAdmitter   LocalDeterministicReviewAdmitter
+	localFullAdmitter     LocalFullReviewAdmitter
 }
 
 func NewServer(coordinator *controlplane.Coordinator, authenticator Authenticator, clock Clock) (*Server, error) {
@@ -84,6 +90,19 @@ func NewServerWithLocalDeterministicReview(coordinator *controlplane.Coordinator
 		return nil, err
 	}
 	server.localReviewAdmitter = admitter
+	return server, nil
+}
+
+// NewServerWithLocalFullReview admits canonical full local intents on the runs endpoint.
+func NewServerWithLocalFullReview(coordinator *controlplane.Coordinator, authenticator Authenticator, clock Clock, admitter LocalFullReviewAdmitter) (*Server, error) {
+	if isNilLocalFullAdmitter(admitter) {
+		return nil, ErrInvalidServer
+	}
+	server, err := NewServer(coordinator, authenticator, clock)
+	if err != nil {
+		return nil, err
+	}
+	server.localFullAdmitter = admitter
 	return server, nil
 }
 
@@ -151,6 +170,19 @@ func NewServerWithLocalDeterministicRuntimeAdministrationAndRateLimiters(journal
 		return nil, err
 	}
 	server.localReviewAdmitter = admitter
+	return server, nil
+}
+
+// NewServerWithLocalFullRuntimeAdministrationAndRateLimiters adds full local intent admission to runtime services.
+func NewServerWithLocalFullRuntimeAdministrationAndRateLimiters(journal controlplane.RunJournal, authenticator Authenticator, clock Clock, reader DiagnosticReader, queue controlplane.TaskNotificationQueue, status RuntimeStatusReader, requestLimiter, principalLimiter RateLimiter, admitter LocalFullReviewAdmitter) (*Server, error) {
+	if isNilLocalFullAdmitter(admitter) {
+		return nil, ErrInvalidServer
+	}
+	server, err := NewServerWithRuntimeAdministrationAndRateLimiters(journal, authenticator, clock, reader, queue, status, requestLimiter, principalLimiter)
+	if err != nil {
+		return nil, err
+	}
+	server.localFullAdmitter = admitter
 	return server, nil
 }
 
@@ -461,6 +493,29 @@ func (s *Server) submitRun(ctx context.Context, writer http.ResponseWriter, requ
 	}
 	plan, parseErr := controlplane.ParseReviewRunPlan(encoded)
 	if parseErr != nil {
+		fullIntent, fullErr := runtimecatalog.ParseLocalFullReviewIntent(encoded)
+		if fullErr == nil {
+			if isNilLocalFullAdmitter(s.localFullAdmitter) {
+				writeAPIError(writer, http.StatusBadRequest, requestID, "invalid_request", "The review run request is invalid.")
+				return
+			}
+			if !principalAllowsScope(principal, fullIntent.Scope()) {
+				writeForbidden(writer, requestID)
+				return
+			}
+			state, operationErr := s.localFullAdmitter.Admit(ctx, fullIntent, at)
+			if operationErr != nil {
+				s.writeLocalFullReviewAdmissionError(writer, requestID, operationErr)
+				return
+			}
+			receipt, receiptErr := controlplane.NewReviewRunReceipt(state)
+			if receiptErr != nil {
+				s.writeCoordinatorError(writer, requestID, receiptErr)
+				return
+			}
+			writeAPIReceipt(writer, http.StatusAccepted, requestID, receipt)
+			return
+		}
 		intent, intentErr := runtimecatalog.ParseLocalDeterministicReviewIntent(encoded)
 		if intentErr != nil || isNilLocalReviewAdmitter(s.localReviewAdmitter) {
 			writeAPIError(writer, http.StatusBadRequest, requestID, "invalid_request", "The review run request is invalid.")
@@ -481,6 +536,10 @@ func (s *Server) submitRun(ctx context.Context, writer http.ResponseWriter, requ
 			return
 		}
 		writeAPIReceipt(writer, http.StatusAccepted, requestID, receipt)
+		return
+	}
+	if !isNilLocalFullAdmitter(s.localFullAdmitter) {
+		writeAPIError(writer, http.StatusBadRequest, requestID, "invalid_request", "This daemon admits full local review intents, not caller-authored plans.")
 		return
 	}
 	if !principalAllowsScope(principal, plan.Scope()) {
@@ -515,6 +574,25 @@ func (s *Server) writeLocalReviewAdmissionError(writer http.ResponseWriter, requ
 	default:
 		writeAPIError(writer, http.StatusServiceUnavailable, requestID, "unavailable", "The local deterministic review could not be admitted.")
 	}
+}
+func (s *Server) writeLocalFullReviewAdmissionError(writer http.ResponseWriter, requestID string, err error) {
+	switch {
+	case errors.Is(err, runtimecatalog.ErrInvalidLocalFullReview):
+		writeAPIError(writer, http.StatusBadRequest, requestID, "invalid_request", "The local full review request is invalid.")
+	case errors.Is(err, runtimecatalog.ErrLocalFullReviewConflict):
+		writeAPIError(writer, http.StatusConflict, requestID, "conflict", "The review scope is already bound to another request.")
+	case errors.Is(err, runtimecatalog.ErrLocalFullReviewExpired):
+		writeAPIError(writer, http.StatusConflict, requestID, "stale_request", "The local full review request is stale.")
+	default:
+		writeAPIError(writer, http.StatusServiceUnavailable, requestID, "unavailable", "The local full review could not be admitted.")
+	}
+}
+func isNilLocalFullAdmitter(value LocalFullReviewAdmitter) bool {
+	if value == nil {
+		return true
+	}
+	reflected := reflect.ValueOf(value)
+	return reflected.Kind() == reflect.Pointer && reflected.IsNil()
 }
 func isNilLocalReviewAdmitter(value LocalDeterministicReviewAdmitter) bool {
 	if value == nil {

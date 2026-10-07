@@ -68,6 +68,8 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 		switch args[1] {
 		case "model-review":
 			return runLocalGitModelReview(ctx, args[2:], stdout, stderr)
+		case "submit-review":
+			return runLocalGitSubmitReview(args[2:], stdout, stderr)
 		case "retained-memory-input":
 			return runLocalGitRetainedMemoryInput(ctx, args[2:], stdout, stderr)
 		case "inspect":

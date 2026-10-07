@@ -91,6 +91,18 @@ func (c *Client) SubmitLocalDeterministicReview(ctx context.Context, intent runt
 	return c.doReceipt(ctx, http.MethodPost, "/api/v1/runs", encoded, http.StatusAccepted, intent.Scope())
 }
 
+// SubmitLocalFullReview admits a scoped full review; the daemon supplies source and policy authority.
+func (c *Client) SubmitLocalFullReview(ctx context.Context, intent runtimecatalog.LocalFullReviewIntent) (controlplane.ReviewRunReceipt, error) {
+	if intent.Validate() != nil {
+		return controlplane.ReviewRunReceipt{}, runtimecatalog.ErrInvalidLocalFullReview
+	}
+	encoded, err := runtimecatalog.EncodeLocalFullReviewIntent(intent)
+	if err != nil {
+		return controlplane.ReviewRunReceipt{}, err
+	}
+	return c.doReceipt(ctx, http.MethodPost, "/api/v1/runs", encoded, http.StatusAccepted, intent.Scope())
+}
+
 func (c *Client) SubmitRun(ctx context.Context, plan controlplane.ReviewRunPlan) (controlplane.ReviewRunReceipt, error) {
 	if err := plan.Validate(); err != nil {
 		return controlplane.ReviewRunReceipt{}, err
