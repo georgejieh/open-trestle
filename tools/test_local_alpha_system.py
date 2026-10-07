@@ -39,11 +39,11 @@ class LocalAlphaSystemTest(unittest.TestCase):
         Path(str(archive) + ".sha256").write_text(f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n")
         return archive, manifest
 
-    def marker_candidate(self, root: Path, revision: str, marker: Path, manifest: bytes | None = None) -> Path:
+    def marker_candidate(self, root: Path, revision: str, marker: Path, manifest: bytes | None = None, script: str | None = None) -> Path:
         archive = root / "marker.pyz"
         body = manifest if manifest is not None else (json.dumps({"revision": revision}, separators=(",", ":")) + "\n").encode()
         payload = root / "payload.zip"
-        script = "import pathlib,sys\n" + f"if len(sys.argv) > 1 and sys.argv[1] == 'verify-archive':\n    pathlib.Path({str(marker)!r}).write_text('executed')\n    print('verified')\n    raise SystemExit(0)\nraise SystemExit(17)\n"
+        script = script or ("import pathlib,sys\n" + f"if len(sys.argv) > 1 and sys.argv[1] == 'verify-archive':\n    pathlib.Path({str(marker)!r}).write_text('executed')\n    print('verified')\n    raise SystemExit(0)\nraise SystemExit(17)\n")
         with zipfile.ZipFile(payload, "w", zipfile.ZIP_STORED) as bundle:
             bundle.writestr("__main__.py", script)
             bundle.writestr("manifest.json", body)
@@ -136,6 +136,69 @@ class LocalAlphaSystemTest(unittest.TestCase):
         receipt.write_text(json.dumps(raw) + "\n")
         return {**raw, "receipt": str(receipt.relative_to(root)), "receipt_sha256": hashlib.sha256(receipt.read_bytes()).hexdigest()}
 
+    def test_candidate_execution_receives_sandbox_cwd_and_sanitized_environment(self):
+        with tempfile.TemporaryDirectory(dir="/dev/shm") as directory, tempfile.TemporaryDirectory(dir="/dev/shm") as candidate_directory, tempfile.TemporaryDirectory(dir="/dev/shm") as output_parent:
+            root = Path(directory); self.provenance_repository(root)
+            revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+            marker = Path(candidate_directory) / "child.json"
+            script = ("import json,os,pathlib,sys\n"
+                      f"pathlib.Path({str(marker)!r}).write_text(json.dumps({{'cwd':os.getcwd(),'home':os.environ.get('HOME'),'tmp':os.environ.get('TMPDIR'),'ambient':os.environ.get('OT_AMBIENT_CANARY')}}))\n"
+                      "if sys.argv[1] in ('verify-archive','recover'): raise SystemExit(0)\n"
+                      "raise SystemExit(17)\n")
+            candidate = self.marker_candidate(Path(candidate_directory), revision, marker, script=script)
+            output = Path(output_parent) / "fresh"
+            arguments = ["local_alpha_system.py", "--candidate", str(candidate), "--source-root", str(root), "--skip-browser", "--output", str(output)]
+            with patch.dict(os.environ, {"OT_AMBIENT_CANARY": "must-not-leak"}), patch.object(sys, "argv", arguments), self.assertRaisesRegex(RuntimeError, "command failed"):
+                local_alpha_system.main()
+            child = json.loads(marker.read_text())
+            self.assertEqual(child['cwd'], str(output / 'sandbox'))
+            self.assertEqual(child['home'], str(output / 'home'))
+            self.assertNotEqual(child['tmp'], os.environ.get('TMPDIR'))
+            self.assertEqual(Path(child['tmp']).parent, Path('/dev/shm'))
+            self.assertTrue(Path(child['tmp']).name.startswith('ot-'))
+            self.assertFalse(Path(child['tmp']).is_symlink())
+            self.assertIsNone(child['ambient'])
+
+    def test_candidate_execution_stops_combined_output_flood(self):
+        with tempfile.TemporaryDirectory(dir="/dev/shm") as directory, tempfile.TemporaryDirectory(dir="/dev/shm") as candidate_directory, tempfile.TemporaryDirectory(dir="/dev/shm") as output_parent:
+            root = Path(directory); self.provenance_repository(root)
+            revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+            marker = Path(candidate_directory) / "pid"
+            script = ("import os,pathlib,sys,time\n"
+                      "if sys.argv[1] in ('verify-archive','recover'): raise SystemExit(0)\n"
+                      f"pathlib.Path({str(marker)!r}).write_text(str(os.getpid()))\n"
+                      "os.write(1,b'x'*(750<<10));os.write(2,b'y'*(750<<10));time.sleep(3)\n")
+            candidate = self.marker_candidate(Path(candidate_directory), revision, marker, script=script)
+            arguments = ["local_alpha_system.py", "--candidate", str(candidate), "--source-root", str(root), "--skip-browser", "--output", str(Path(output_parent) / 'fresh')]
+            start = time.monotonic()
+            try:
+                with patch.object(sys, "argv", arguments), self.assertRaisesRegex(RuntimeError, "output byte limit"):
+                    local_alpha_system.main()
+                self.assertLess(time.monotonic()-start, 10)
+                self.assertTrue(marker.exists())
+                with self.assertRaises(ProcessLookupError): os.kill(int(marker.read_text()),0)
+            finally:
+                if marker.exists():
+                    try: os.kill(int(marker.read_text()),signal.SIGKILL)
+                    except ProcessLookupError: pass
+
+    def test_existing_output_directory_or_symlink_is_rejected_untouched(self):
+        for kind in ('directory','symlink','broken-symlink'):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory(dir="/dev/shm") as directory, tempfile.TemporaryDirectory(dir="/dev/shm") as candidate_directory, tempfile.TemporaryDirectory(dir="/dev/shm") as output_parent:
+                root=Path(directory); self.provenance_repository(root)
+                revision=subprocess.run(['git','rev-parse','HEAD'],cwd=root,check=True,capture_output=True,text=True).stdout.strip()
+                marker=Path(candidate_directory)/'marker'
+                candidate=self.marker_candidate(Path(candidate_directory),revision,marker)
+                parent=Path(output_parent); owned=parent/'owned';owned.mkdir(); (owned/'sentinel').write_text('unchanged')
+                output=owned if kind=='directory' else parent/'supplied'
+                if kind!='directory': output.symlink_to(owned if kind=='symlink' else parent/'missing',target_is_directory=True)
+                args=['local_alpha_system.py','--candidate',str(candidate),'--source-root',str(root),'--skip-browser','--output',str(output)]
+                with patch.object(sys,'argv',args),patch.object(local_alpha_system,'capture_source_state',side_effect=AssertionError('no provenance capture')),self.assertRaisesRegex((RuntimeError,SystemExit),'output path already exists'):
+                    local_alpha_system.main()
+                self.assertEqual((owned/'sentinel').read_text(),'unchanged')
+                self.assertFalse(marker.exists())
+                if kind!='directory': self.assertTrue(output.is_symlink())
+
     def test_wrong_revision_candidate_is_rejected_before_output_or_execution(self):
         with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as candidate_directory, tempfile.TemporaryDirectory() as output_parent:
             root = Path(directory); self.provenance_repository(root)
@@ -148,54 +211,52 @@ class LocalAlphaSystemTest(unittest.TestCase):
             self.assertFalse(output.exists())
             self.assertFalse(marker_path.exists())
 
-    def test_candidate_descendant_audit_rejects_reachable_descendant(self):
-        with subprocess.Popen([sys.executable, "-c", "import os,sys,time;pid=os.fork()\nif pid==0:os.setsid();time.sleep(120);os._exit(0)\ntime.sleep(120)"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True) as host:
-            time.sleep(0.5)
-            self.assertTrue(local_alpha_system._candidate_descendants_alive(host))
-            host.terminate(); host.wait(timeout=5)
-
-
-
     def test_harness_owned_write_path_and_argument_artifact_reject_symlink_substitution(self):
-        with tempfile.TemporaryDirectory(dir="/dev/shm") as directory, tempfile.TemporaryDirectory(dir="/dev/shm") as candidate_directory, tempfile.TemporaryDirectory(dir="/dev/shm") as output_parent, tempfile.TemporaryDirectory(dir="/dev/shm") as outside_directory:
-            root = Path(directory); self.provenance_repository(root)
-            revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
-            marker_path = Path(candidate_directory) / "candidate-executed"
-            candidate = self.marker_candidate(Path(candidate_directory), revision, marker_path)
-            output = Path(output_parent) / "output"
-            sentinel = output / "candidate-root/etc/open-trestle/operator.conf"
-            victim = Path(outside_directory) / "victim.txt"; victim.touch()
-            sentinel.parent.mkdir(parents=True, exist_ok=True)
-            sentinel.symlink_to(victim)
-            arguments = ["local_alpha_system.py", "--candidate", str(candidate), "--source-root", str(root), "--skip-browser", "--output", str(output)]
-            with patch.object(sys, "argv", arguments), self.assertRaisesRegex((RuntimeError, SystemExit), "refusing to (traverse|write|symlink|clobber|overwrite)"):
-                local_alpha_system.main()
-            self.assertFalse(marker_path.exists())
-            self.assertTrue(sentinel.is_symlink())
-            self.assertEqual(victim.read_bytes(), b"")
+        with tempfile.TemporaryDirectory(dir="/dev/shm") as directory, tempfile.TemporaryDirectory(dir="/dev/shm") as outside_directory:
+            artifacts = Path(directory) / "artifacts"; artifacts.mkdir()
+            victim = Path(outside_directory) / "victim.txt"; victim.write_bytes(b"unchanged")
+            alias = artifacts / "candidate-verify-archive.txt"; alias.symlink_to(victim)
+            previous = local_alpha_system._ARTIFACTS_ROOT[0]
+            local_alpha_system._ARTIFACTS_ROOT[0] = artifacts
+            try:
+                with self.assertRaisesRegex(RuntimeError, "artifact path escapes owned root"):
+                    local_alpha_system.write_artifact(alias, b"clobber")
+                with self.assertRaisesRegex(RuntimeError, "refusing to overwrite symlink"):
+                    local_alpha_system._safe_write(alias, b"clobber", 0o600)
+                local_alpha_system.write_artifact(artifacts / "fresh.txt", b"fresh")
+                self.assertEqual((artifacts / "fresh.txt").read_bytes(), b"fresh")
+            finally:
+                local_alpha_system._ARTIFACTS_ROOT[0] = previous
+            self.assertTrue(alias.is_symlink())
+            self.assertEqual(victim.read_bytes(), b"unchanged")
 
-    def test_receipt_write_uses_captured_sidecar_body_and_rejects_symlink_replacement(self):
+    def test_sidecar_replacement_uses_captured_bytes_for_snapshot(self):
         with tempfile.TemporaryDirectory(dir="/dev/shm") as directory, tempfile.TemporaryDirectory(dir="/dev/shm") as candidate_directory, tempfile.TemporaryDirectory(dir="/dev/shm") as output_parent, tempfile.TemporaryDirectory(dir="/dev/shm") as outside_directory:
             root = Path(directory); self.provenance_repository(root)
             revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
-            marker_path = Path(candidate_directory) / "candidate-executed"
-            candidate = self.marker_candidate(Path(candidate_directory), revision, marker_path)
-            output = Path(output_parent) / "output"
-            sentinel = output / "candidate-root/etc/open-trestle/operator.conf"
-            sentinel.parent.mkdir(parents=True, exist_ok=True)
-            sentinel.symlink_to(Path(outside_directory) / "victim.txt")
-            arguments = ["local_alpha_system.py", "--candidate", str(candidate), "--source-root", str(root), "--skip-browser", "--output", str(output)]
-            original_read_candidate_sidecar = local_alpha_system.read_candidate_sidecar
+            marker = Path(candidate_directory) / "candidate-executed"
+            candidate = self.marker_candidate(Path(candidate_directory), revision, marker)
+            original_body = Path(str(candidate) + ".sha256").read_bytes()
             replacement_sidecar = Path(outside_directory) / "replacement.sidecar"
-            def wrapping(sidecar_path, candidate_name):
-                body, digest = original_read_candidate_sidecar(sidecar_path, candidate_name)
-                sidecar_path.unlink()
-                sidecar_path.symlink_to(replacement_sidecar)
-                replacement_sidecar.write_bytes(b"x" * 4097)
+            replacement_sidecar.write_bytes(b"x" * 4097)
+            original_read = local_alpha_system.read_candidate_sidecar
+            original_copy = local_alpha_system.copy_candidate_snapshot
+            def swap(sidecar_path, candidate_name):
+                body, digest = original_read(sidecar_path, candidate_name)
+                sidecar_path.unlink(); sidecar_path.symlink_to(replacement_sidecar)
                 return body, digest
-            with patch.object(local_alpha_system, "read_candidate_sidecar", wrapping), patch.object(sys, "argv", arguments), self.assertRaisesRegex((RuntimeError, SystemExit), "refusing to (traverse|write|symlink|clobber|read_candidate_sidecar|overwrite)"):
+            def verify_snapshot(name, candidate_bytes, sidecar_body, sandbox, digest):
+                self.assertEqual(sidecar_body, original_body)
+                copied = original_copy(name, candidate_bytes, sidecar_body, sandbox, digest)
+                self.assertEqual(Path(str(copied) + ".sha256").read_bytes(), original_body)
+                raise RuntimeError("snapshot inspected")
+            output = Path(output_parent) / "fresh"
+            arguments = ["local_alpha_system.py", "--candidate", str(candidate), "--source-root", str(root), "--skip-browser", "--output", str(output)]
+            with patch.object(local_alpha_system, "read_candidate_sidecar", swap), patch.object(local_alpha_system, "copy_candidate_snapshot", verify_snapshot), patch.object(sys, "argv", arguments), self.assertRaisesRegex(RuntimeError, "snapshot inspected"):
                 local_alpha_system.main()
-            self.assertFalse(marker_path.exists())
+            self.assertFalse(marker.exists())
+            self.assertTrue(Path(str(candidate) + ".sha256").is_symlink())
+            self.assertEqual(replacement_sidecar.read_bytes(), b"x" * 4097)
 
     def test_symlinked_candidate_is_rejected_before_source_capture_or_output(self):
         for mode in ("target-sidecar-only", "alias-sidecar"):

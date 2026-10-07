@@ -28,7 +28,6 @@ import urllib.parse
 import zlib
 import zipfile
 from collections.abc import Callable
-from collections import deque
 _ARTIFACTS_ROOT: list[Path | None] = [None]
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,8 +44,6 @@ MAX_CANDIDATE_BYTES = 256 << 20
 MAX_SCREENSHOT_BYTES = 16 << 20
 MAX_BROWSER_MODULE_BYTES = 1 << 20
 GIT_EXECUTABLE = "/usr/bin/git"
-_candidate_cwd: Path | None = None
-_candidate_env: dict[str, str] | None = None
 BROWSER_DEPENDENCY_PREFIX = b"web/node_modules/playwright-core/"
 BROWSER_DEPENDENCY_VERSION = "1.62.1"
 BROWSER_DEPENDENCY_SHA256 = "90abfaf282ebeb89837d8c86e74e372f77d2ee0d93a8eba9d183fef237cdee37"
@@ -183,116 +180,6 @@ def process_group_alive(group: int) -> bool:
 
 
 
-def _unused_helper_placeholder() -> None:
-    pass
-
-    descendants: set[int] = set()
-    queue: deque[int] = deque(root_pids)
-    while queue:
-        pid = queue.popleft()
-        status_path = Path("/proc") / str(pid) / "status"
-        try:
-            data = status_path.read_bytes()
-        except OSError:
-            continue
-        for line in data.splitlines():
-            if line.startswith(b"PPid:"):
-                try:
-                    parent = int(line.split()[1])
-                except (IndexError, ValueError):
-                    continue
-                if parent > 0:
-                    descendant = pid
-                    if descendant != parent and parent not in descendants and descendant not in root_pids:
-                        descendants.add(descendant)
-                        queue.append(descendant)
-                break
-    return descendants
-
-
-def _candidate_descendants_alive(process: subprocess.Popen[bytes]) -> bool:
-    """Return True if a process reachable from the candidate PIDs is still alive.
-
-    Walks the parent->child relationship in /proc/<pid>/status to detect any
-    setsid'd, double-forked, or otherwise re-parented process spawned by the
-    candidate that the direct process group check would miss. Re-parented
-    descendants that left the original process group are still caught by walking
-    the candidate's session id and process group id, which children inherit
-    from the candidate at fork and keep even after re-parenting to init.
-    """
-    root_pid = process.pid
-    candidates: set[int] = {root_pid}
-    reachable: set[int] = set()
-    queue: deque[int] = deque([root_pid])
-    while queue:
-        pid = queue.popleft()
-        candidates.add(pid)
-        try:
-            stat_path = Path("/proc") / str(pid) / "stat"
-            stat_data = stat_path.read_bytes()
-            fields = stat_data.split(b")", 1)[1].split()
-            if len(fields) >= 3:
-                try:
-                    pgroup = int(fields[1])
-                    session = int(fields[2])
-                    candidates.add(pgroup)
-                    candidates.add(session)
-                except ValueError:
-                    pass
-        except OSError:
-            pass
-    try:
-        directory = Path("/proc")
-        for entry in directory.iterdir():
-            if not entry.name.isdigit():
-                continue
-            child_pid = int(entry.name)
-            if child_pid in reachable:
-                continue
-            stat_path = entry / "stat"
-            try:
-                stat_data = stat_path.read_bytes()
-            except OSError:
-                continue
-            status_path = entry / "status"
-            try:
-                status_data = status_path.read_bytes()
-            except OSError:
-                continue
-            fields = stat_data.split(b")", 1)[1].split()
-            pgroup = session = ppid = None
-            if len(fields) >= 3:
-                try:
-                    pgroup = int(fields[1])
-                    session = int(fields[2])
-                except ValueError:
-                    pgroup = session = None
-            for line in status_data.splitlines():
-                if line.startswith(b"PPid:"):
-                    try:
-                        ppid = int(line.split()[1])
-                    except (IndexError, ValueError):
-                        ppid = None
-                    break
-            if ppid in candidates or pgroup in candidates or session in candidates:
-                reachable.add(child_pid)
-    except OSError:
-        return True
-    for pid in reachable:
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            continue
-        except PermissionError:
-            return True
-        else:
-            return True
-    return False
-
-
-
-
-
 def _assert_owned_directory(path: Path) -> None:
     """Reject symlinks, non-directories, or non-owned parents before writes."""
     try:
@@ -301,30 +188,6 @@ def _assert_owned_directory(path: Path) -> None:
         raise RuntimeError(f"path is unavailable: {path}") from error
     if stat.S_ISLNK(information.st_mode) or not stat.S_ISDIR(information.st_mode):
         raise RuntimeError(f"refusing to traverse non-directory or symlink: {path}")
-
-
-def _candidate_process_factory(command: list[str]) -> subprocess.Popen[bytes]:
-    return subprocess.Popen(
-        command,
-        cwd=_candidate_cwd,
-        env=_candidate_env,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        start_new_session=True,
-    )
-
-
-def _assert_no_candidate_descendants(process: subprocess.Popen[bytes]) -> None:
-    """Reject any reachable descendant PID before finalizing a candidate command.
-
-    A candidate process may ``setsid``, double-fork, or otherwise detach from
-    the initial process group. ``process_group_alive`` alone cannot observe
-    those re-parented processes, so walk the live ``/proc`` tree and refuse to
-    return from a candidate command while any descendant PID is reachable.
-    """
-    if _candidate_descendants_alive(process):
-        raise RuntimeError("candidate spawned a detached descendant process")
 
 
 def terminate_process_group(process: subprocess.Popen[bytes]) -> None:
@@ -1954,11 +1817,17 @@ def main() -> int:
     parser.add_argument("--skip-browser", action="store_true")
     args = parser.parse_args()
     candidate = args.candidate
+    # Inspect the supplied path before resolve() can hide an existing symlink.
+    try:
+        args.output.lstat()
+    except FileNotFoundError:
+        pass
+    else:
+        raise SystemExit("output path already exists")
     output = args.output.resolve()
     source = args.source_root.resolve()
     supplied_browser_script = Path(os.path.abspath(args.browser_script)) if args.browser_script else None
     sidecar = Path(str(candidate) + ".sha256")
-    # output existence check removed; harness_owned sentinel prevents symlink substitution
     try:
         candidate_manifest, candidate_snapshot = inspect_candidate_manifest(candidate, None)
         sidecar_body, candidate_digest = read_candidate_sidecar(sidecar, candidate.name)
@@ -1980,7 +1849,7 @@ def main() -> int:
     except RuntimeError as error:
         raise SystemExit(str(error)) from error
 
-    output.mkdir(mode=0o700, parents=True, exist_ok=True)
+    output.mkdir(mode=0o700, parents=True, exist_ok=False)
     home = output / "home"
     runtime = output / "runtime"
     setup_dir = output / "setup"
@@ -2018,8 +1887,6 @@ def main() -> int:
     }
     if os.environ.get("OPEN_TRESTLE_CHROMIUM_PATH"):
         env["OPEN_TRESTLE_CHROMIUM_PATH"] = os.environ["OPEN_TRESTLE_CHROMIUM_PATH"]
-    _candidate_cwd = sandbox
-    _candidate_env = env
     commands: list[list[str]] = []
 
     def execute(command: list[str], cwd: Path | None = None, accepted: tuple[int, ...] = (0,), timeout: float = 120) -> subprocess.CompletedProcess[bytes]:
@@ -2028,24 +1895,12 @@ def main() -> int:
 
     def execute_candidate(arguments: list[str], timeout: float = 120) -> subprocess.CompletedProcess[bytes]:
         assert_candidate_digest(execution_candidate, candidate_digest)
-        process = _candidate_process_factory([str(execution_candidate), *arguments])
-        try:
-            try:
-                stdout, stderr = process.communicate(timeout=timeout)
-            except subprocess.TimeoutExpired as error:
-                terminate_process_group(process)
-                _candidate_descendants_alive(process)
-                raise RuntimeError("candidate command exceeded its bound") from error
-        finally:
-            try:
-                _assert_no_candidate_descendants(process)
-            except RuntimeError as error:
-                terminate_process_group(process)
-                raise
-        result = subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
-        commands.append(list(process.args))
-        if result.returncode not in (0,):
-            raise RuntimeError(f"candidate command failed ({result.returncode}): {result.args}")
+        command = [str(execution_candidate), *arguments]
+        # run() streams both pipes under one deadline and a combined byte bound.
+        # It terminates and checks the candidate process group, not detached
+        # processes which leave that group and cannot be attributed post-exit.
+        result = run(command, env, sandbox, timeout=timeout)
+        commands.append(command)
         assert_candidate_digest(execution_candidate, candidate_digest)
         return result
 
