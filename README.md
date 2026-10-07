@@ -208,7 +208,9 @@ image SHA-256 to the phase receipt.
 
 Final cleanup recovers and uninstalls the candidate, preserves operator sentinels, proves
 process-group quiescence and port reuse, removes the private temporary alias, and repeats
-the complete source proof. Inspect
+the complete source proof. Process-group checks cover the candidate and daemon groups;
+they cannot prove that a subprocess which detached into another session and was
+reparented has exited. Inspect
 `$HOME/open-trestle-local-alpha-evidence/receipt.json` for distinct committed-tree, live
 tracked-tree, ignored-worktree, index, index-flag and status identities; exact browser
 module and dependency bindings; candidate source/execution paths and archive digests;
