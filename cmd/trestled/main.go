@@ -158,6 +158,7 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	localGitRepositoryAuthority := flags.String("local-git-repository-authority", "", "local Git repository authority label")
 	localGitRepositoryNamespace := flags.String("local-git-repository-namespace", "", "local Git repository namespace")
 	localGitRepositoryName := flags.String("local-git-repository-name", "", "local Git repository name")
+	localFullReview := flags.Bool("local-full-review", false, "admit policy-bound local reviews without starting model workers")
 	metadataStore := flags.String("metadata-store", "local", "metadata store: local or postgres")
 	postgresAuthorityIdentity := flags.String("postgres-authority-identity", "", "non-secret PostgreSQL publication authority identity")
 	postgresDatabaseAuthorityIdentity := flags.String("postgres-database-authority-identity", "", "expected runtime-role PostgreSQL database authority identity")
@@ -261,7 +262,7 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 		localGitConfigured = localGitConfigured || value != ""
 		localGitComplete = localGitComplete && value != ""
 	}
-	if localGitConfigured && (!localGitComplete || githubConfigured || plannerConfigured || runtimeConfigured || *metadataStore != "local" || *artifactStoreMode != "local" || len(repositories) != 1 || *tlsCertificate != "" || *tlsKey != "" || !daemonLoopbackAddress(*listenAddress)) {
+	if localGitConfigured && (!localGitComplete || githubConfigured || plannerConfigured || runtimeConfigured != *localFullReview || *metadataStore != "local" || *artifactStoreMode != "local" || len(repositories) != 1 || *tlsCertificate != "" || *tlsKey != "" || !daemonLoopbackAddress(*listenAddress)) {
 		return nil, ErrInvalidDaemonConfiguration
 	}
 	var localSetupPlan setup.Plan
@@ -279,7 +280,7 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 			return nil, ErrInvalidDaemonConfiguration
 		}
 	}
-	if runtimeConfigured && (*runtimeRouteInventory == "" || *runtimePolicy == "" || !*githubLocalDeterministicWorkers) {
+	if *localFullReview && !localGitConfigured || runtimeConfigured && (*runtimeRouteInventory == "" || *runtimePolicy == "" || !*githubLocalDeterministicWorkers && !*localFullReview) {
 		return nil, ErrInvalidDaemonConfiguration
 	}
 	publicationConfigured := *githubEnablePublication || *githubPublicationPolicyIdentity != "" || *githubPublicationPrincipalIdentity != "" || *githubPublicationAuthorizationTTL != 10*time.Minute
@@ -301,9 +302,9 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 			return nil, ErrInvalidDaemonConfiguration
 		}
 	}
-	capabilities := []httpapi.Capability{
-		httpapi.CapabilityRunRead, httpapi.CapabilityRunWrite,
-		httpapi.CapabilityTaskClaim, httpapi.CapabilityTaskComplete, httpapi.CapabilityRuntimeRead,
+	capabilities := []httpapi.Capability{httpapi.CapabilityRunRead, httpapi.CapabilityRunWrite, httpapi.CapabilityRuntimeRead}
+	if !*localFullReview {
+		capabilities = append(capabilities, httpapi.CapabilityTaskClaim, httpapi.CapabilityTaskComplete)
 	}
 	principal, err := httpapi.NewPrincipal("daemon-operator", *tenantID, repositories, capabilities)
 	if err != nil {
@@ -572,6 +573,7 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	var statusInventoryIdentity, statusPolicyIdentity string
 	var statusRouteCount uint32
 	var localReviewAdmitter *runtimecatalog.LocalDeterministicReviewAdmitter
+	var localFullAdmitter *runtimecatalog.LocalFullReviewAdmitter
 	if localGitConfigured {
 		objectsRoot, rootIdentity, rootErr := openDaemonLocalGitRoot(*localGitObjectsRoot, localRepository)
 		if rootErr != nil {
@@ -590,21 +592,55 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 			return nil, ErrInvalidDaemonConfiguration
 		}
 		localHandlers := []controlplane.TaskHandler{sourceTask, changeTask, analysisTask}
-		pipeline, pipelineErr := runtimecatalog.NewPipelineCatalog(controlplane.ReviewRunLocal, localHandlers)
-		if pipelineErr != nil {
-			return nil, pipelineErr
+		var pipeline runtimecatalog.PipelineCatalog
+		var pipelineErr error
+		if *localFullReview {
+			inventory, configuration, configErr := loadRuntimeConfiguration(ctx, *runtimeRouteInventory, *runtimePolicy)
+			if configErr != nil {
+				return nil, ErrInvalidDaemonConfiguration
+			}
+			memoryTask, memoryErr := memoryhandler.NewHandler(artifactStore, daemonArtifactClock, memorycore.NewLexicalIndex(), daemonComponentIdentity("empty-memory-index-v1"), configuration.ReviewPolicyIdentity(), "trestled", []string{"."}, 64, 50)
+			dispatchers, dispatcherErr := runtimecatalog.NewLocalOpenAIRouteDispatcherCatalogFromRuntimePolicy(inventory, configuration, environmentOpenAICredentialResolver{getenv: getenv})
+			generationAuthorizer, authErr := runtimecatalog.NewGenerationPolicyAuthorizerFromRuntimePolicy(configuration, inventory, auditLedger)
+			verificationInventory, inventoryErr := runtimecatalog.NewStaticVerificationRouteInventory(inventory)
+			if memoryErr != nil || dispatcherErr != nil || authErr != nil || inventoryErr != nil {
+				return nil, ErrInvalidDaemonConfiguration
+			}
+			verificationAuthorizer, verificationAuthErr := runtimecatalog.NewVerificationPolicyAuthorizerFromRuntimePolicy(configuration, verificationInventory, auditLedger, httpapi.SystemClock{})
+			contextTask, contextErr := contexthandler.NewHandler(artifactStore, daemonArtifactClock, generationAuthorizer, deps.generationSanitizer)
+			generationTask, generationErr := modelhandler.NewGenerationHandler(artifactStore, dispatchers, auditLedger, daemonArtifactClock, deps.generationSanitizer.ExpectedBinaryDigests())
+			verificationTask, verificationErr := modelhandler.NewVerificationHandler(artifactStore, dispatchers, auditLedger, verificationAuthorizer, daemonArtifactClock, deps.verificationSanitizer)
+			readinessTask, readinessErr := publicationhandler.NewReadinessHandler(artifactStore, diagnosticStore, daemonArtifactClock, configuration.ReviewPolicyIdentity(), configuration.Publication(), publicationContentScannerFromGenerationSanitizer(deps.generationSanitizer))
+			if verificationAuthErr != nil || contextErr != nil || generationErr != nil || verificationErr != nil || readinessErr != nil {
+				return nil, ErrInvalidDaemonConfiguration
+			}
+			localHandlers = append(localHandlers, memoryTask, contextTask, generationTask, verificationTask, readinessTask)
+			pipeline, pipelineErr = runtimecatalog.NewPipelineCatalog(controlplane.ReviewRunLocal, localHandlers)
+			if pipelineErr != nil {
+				return nil, ErrInvalidDaemonConfiguration
+			}
+			localFullAdmitter, err = runtimecatalog.NewLocalFullReviewAdmitter(journal, artifactStore, runtimecatalog.LocalFullReviewAdmissionConfig{Source: objectStore, Repository: localRepository, SourceAdapter: sourceAdapter.Identity(), SourceRootIdentity: rootIdentity, Inventory: inventory, Policy: configuration, Classification: artifact.ClassificationInternal, Protection: artifactProtection, Retention: 24 * time.Hour, Catalog: pipeline})
+			if err != nil {
+				return nil, ErrInvalidDaemonConfiguration
+			}
+			statusInventoryIdentity, statusPolicyIdentity, statusRouteCount = inventory.Identity(), configuration.Identity(), uint32(len(inventory.Candidates()))
+		} else {
+			pipeline, pipelineErr = runtimecatalog.NewPipelineCatalog(controlplane.ReviewRunLocal, localHandlers)
+			if pipelineErr != nil {
+				return nil, pipelineErr
+			}
+			localReviewPolicyIdentity := daemonComponentIdentity("local-deterministic-static-debug-review-v1")
+			localReviewAdmitter, err = runtimecatalog.NewLocalDeterministicReviewAdmitter(journal, artifactStore, runtimecatalog.LocalDeterministicReviewAdmissionConfig{Repository: localRepository, SourceAdapter: sourceAdapter.Identity(), SourceRootIdentity: rootIdentity, ReviewPolicyIdentity: localReviewPolicyIdentity, Classification: artifact.ClassificationInternal, Protection: artifactProtection, Retention: 24 * time.Hour, Catalog: pipeline})
+			if err != nil {
+				return nil, err
+			}
+			localSupervisor, supervisorErr := worker.NewRepositorySupervisor(journal, pipeline.Catalog(), worker.RepositorySupervisorOptions{TenantID: *tenantID, RepositoryIDs: []string(repositories), WorkerIdentity: "trestled-local", PollInterval: time.Second, RenewalInterval: 10 * time.Second, ExecutionTimeout: 30 * time.Minute, Clock: httpapi.SystemClock{}, FinalizeSettled: true})
+			if supervisorErr != nil {
+				return nil, supervisorErr
+			}
+			resources.supervisors = append(resources.supervisors, localSupervisor)
+			resources.supervisorNames = append(resources.supervisorNames, "local_workers")
 		}
-		localReviewPolicyIdentity := daemonComponentIdentity("local-deterministic-static-debug-review-v1")
-		localReviewAdmitter, err = runtimecatalog.NewLocalDeterministicReviewAdmitter(journal, artifactStore, runtimecatalog.LocalDeterministicReviewAdmissionConfig{Repository: localRepository, SourceAdapter: sourceAdapter.Identity(), SourceRootIdentity: rootIdentity, ReviewPolicyIdentity: localReviewPolicyIdentity, Classification: artifact.ClassificationInternal, Protection: artifactProtection, Retention: 24 * time.Hour, Catalog: pipeline})
-		if err != nil {
-			return nil, err
-		}
-		localSupervisor, supervisorErr := worker.NewRepositorySupervisor(journal, pipeline.Catalog(), worker.RepositorySupervisorOptions{TenantID: *tenantID, RepositoryIDs: []string(repositories), WorkerIdentity: "trestled-local", PollInterval: time.Second, RenewalInterval: 10 * time.Second, ExecutionTimeout: 30 * time.Minute, Clock: httpapi.SystemClock{}, FinalizeSettled: true})
-		if supervisorErr != nil {
-			return nil, supervisorErr
-		}
-		resources.supervisors = append(resources.supervisors, localSupervisor)
-		resources.supervisorNames = append(resources.supervisorNames, "local_workers")
 		bindings := pipeline.Bindings()
 		statusHandlers = make([]runtimeadmin.HandlerBinding, len(bindings))
 		for index, binding := range bindings {
@@ -820,7 +856,7 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	statusConfiguration, err := runtimeadmin.NewConfiguration(runtimeadmin.ConfigurationOptions{
 		TenantID: *tenantID, RepositoryIDs: []string(repositories), MetadataBackend: metadataBackend, DatabaseAuthorityIdentity: *postgresDatabaseAuthorityIdentity,
 		ArtifactBackend: artifactBackend, ArtifactProtection: runtimeadmin.Protection(artifactProtection.String()), NotificationBackend: notificationBackend, RateLimitBackend: rateLimitBackend, RateLimitAuthorityIdentity: rateLimitAuthorityIdentity,
-		ReviewMode: statusMode, WebhookIngress: githubConfigured, LocalWorkers: localGitConfigured || *githubLocalDeterministicWorkers,
+		ReviewMode: statusMode, WebhookIngress: githubConfigured, LocalWorkers: localGitConfigured && !*localFullReview || *githubLocalDeterministicWorkers,
 		PublicationEnabled: *githubEnablePublication, PublicationFenceVerified: *postgresAuthorityIdentity != "",
 		RouteInventoryIdentity: statusInventoryIdentity, RuntimePolicyIdentity: statusPolicyIdentity, RouteCount: statusRouteCount, Handlers: statusHandlers,
 	})
@@ -848,7 +884,9 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 		return nil, err
 	}
 	var apiHandler *httpapi.Server
-	if localGitConfigured {
+	if localGitConfigured && *localFullReview {
+		apiHandler, err = httpapi.NewServerWithLocalFullRuntimeAdministrationAndRateLimiters(journal, authenticator, httpapi.SystemClock{}, diagnosticStore, taskNotificationQueue, statusService, requestLimiter, principalLimiter, localFullAdmitter)
+	} else if localGitConfigured {
 		apiHandler, err = httpapi.NewServerWithLocalDeterministicRuntimeAdministrationAndRateLimiters(journal, authenticator, httpapi.SystemClock{}, diagnosticStore, taskNotificationQueue, statusService, requestLimiter, principalLimiter, localReviewAdmitter)
 	} else {
 		apiHandler, err = httpapi.NewServerWithRuntimeAdministrationAndRateLimiters(journal, authenticator, httpapi.SystemClock{}, diagnosticStore, taskNotificationQueue, statusService, requestLimiter, principalLimiter)
