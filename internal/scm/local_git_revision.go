@@ -77,6 +77,12 @@ func ReadLocalGitRevision(ctx context.Context, store *LocalGitObjectStore, revis
 	return store.readLocalGitRevision(ctx, revision, standardLocalGitRevisionLimits())
 }
 
+// ValidateLocalRevision verifies a bounded, complete Git revision without retaining its content.
+func (s *LocalGitObjectStore) ValidateLocalRevision(ctx context.Context, revision evidence.RevisionIdentity) error {
+	_, err := ReadLocalGitRevision(ctx, s, revision)
+	return err
+}
+
 // RevisionIdentity returns the canonical requested revision identity.
 func (r LocalGitRevisionResult) RevisionIdentity() string { return r.revisionIdentity }
 

@@ -256,6 +256,25 @@ func TestPreparedReviewCreatesDeterministicFourTaskPlan(t *testing.T) {
 	}
 }
 
+func TestPreparedFullReviewSourceInputsBindDaemonRoot(t *testing.T) {
+	options := preparedReviewOptions(t)
+	options.RequireBoundSource = true
+	request, err := NewPreparedReviewRequest(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := PrepareReviewRun(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, inputArtifact := range prepared.Inputs() {
+		input, parseErr := sourcehandler.ParseInput(inputArtifact.Payload())
+		if parseErr != nil || input.SchemaVersion() != 2 || input.SourceRootIdentity() != options.SourceRootIdentity {
+			t.Fatalf("full-review source input is not bound to daemon root: %#v, %v", input, parseErr)
+		}
+	}
+}
+
 func TestPreparedDeterministicReviewRejectsModelRoutingAuthority(t *testing.T) {
 	options := preparedReviewOptions(t)
 	handlers := []controlplane.TaskHandler{

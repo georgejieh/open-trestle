@@ -27,6 +27,7 @@ Control-plane schemas:
 
 - `schemas/controlplane/review-run-plan-v1.schema.json`
 - `schemas/controlplane/local-deterministic-review-intent-v1.schema.json`
+- `schemas/controlplane/local-full-review-intent-v1.schema.json`
 - `schemas/controlplane/review-run-event-v1.schema.json`
 - `schemas/controlplane/review-run-receipt-v1.schema.json`
 - `schemas/controlplane/review-task-lease-v1.schema.json`

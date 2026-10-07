@@ -23,6 +23,7 @@ type PreparedReviewRequestOptions struct {
 	BaseRevision, HeadRevision                                                         evidence.RevisionIdentity
 	SourceAdapter                                                                      evidence.SourceAdapterIdentity
 	SourceRootIdentity, InventoryIdentity, RuntimePolicyIdentity, ReviewPolicyIdentity string
+	RequireBoundSource                                                                 bool
 	Classification                                                                     artifact.Classification
 	Protection                                                                         artifact.Protection
 	CreatedAt                                                                          time.Time
@@ -76,6 +77,8 @@ func NewPreparedReviewRequest(o PreparedReviewRequestOptions) (PreparedReviewReq
 	identityFields := []any{"open-trestle/prepared-review-request", 1, o.Scope.Identity(), o.HostRequestIdentity, o.Repository.Identity(), o.BaseRevision.Identity(), o.HeadRevision.Identity(), o.SourceAdapter.Identity(), o.SourceRootIdentity, o.InventoryIdentity, o.RuntimePolicyIdentity, o.ReviewPolicyIdentity, o.Classification.String(), o.Protection.String(), o.CreatedAt.UnixMilli(), o.CreatedAt.Add(o.Retention).UnixMilli(), o.Catalog.Identity()}
 	if deterministic {
 		identityFields = []any{"open-trestle/prepared-deterministic-review-request", 1, o.Scope.Identity(), o.HostRequestIdentity, o.Repository.Identity(), o.BaseRevision.Identity(), o.HeadRevision.Identity(), o.SourceAdapter.Identity(), o.SourceRootIdentity, o.ReviewPolicyIdentity, o.Classification.String(), o.Protection.String(), o.CreatedAt.UnixMilli(), o.CreatedAt.Add(o.Retention).UnixMilli(), o.Catalog.Identity()}
+	} else if o.RequireBoundSource {
+		identityFields = append(identityFields, "bound-source-v1")
 	}
 	identity := preparedDigest(identityFields)
 	return PreparedReviewRequest{o, identity}, nil
@@ -99,7 +102,7 @@ func buildPreparedReview(ctx context.Context, request PreparedReviewRequest) (Pr
 		}
 		var input sourcehandler.Input
 		var err error
-		if len(o.Catalog.Bindings()) == 3 {
+		if len(o.Catalog.Bindings()) == 3 || o.RequireBoundSource {
 			input, err = sourcehandler.NewBoundInput(o.Repository, revision, o.SourceAdapter, o.SourceRootIdentity)
 		} else {
 			input, err = sourcehandler.NewInput(o.Repository, revision, o.SourceAdapter)
