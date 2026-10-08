@@ -42,6 +42,7 @@ type runEventRecord struct {
 	OccurredAtMilliseconds     int64                    `json:"occurred_at_milliseconds"`
 	PreparedArtifact           []byte                   `json:"prepared_artifact,omitempty"`
 	PacketDescriptor           *ContextPacketDescriptor `json:"packet_descriptor,omitempty"`
+	InputDescriptor            *ContextInputDescriptor  `json:"input_descriptor,omitempty"`
 }
 
 // EncodeRunEvent emits bounded canonical JSON without lease secrets or raw errors.
@@ -75,7 +76,7 @@ func ParseRunEvent(encoded []byte) (RunEvent, error) {
 	if err != nil || !bytes.Equal(canonical, encoded) {
 		return RunEvent{}, ErrInvalidRunEventEncoding
 	}
-	if record.Contract != "open-trestle/review-run-event-record" || (record.SchemaVersion != 1 && record.SchemaVersion != 2 && record.SchemaVersion != 3 && record.SchemaVersion != 4) || len(encoded) > runEventMaxBytesForVersion(record.SchemaVersion) {
+	if record.Contract != "open-trestle/review-run-event-record" || (record.SchemaVersion != 1 && record.SchemaVersion != 2 && record.SchemaVersion != 3 && record.SchemaVersion != 4 && record.SchemaVersion != 5) || len(encoded) > runEventMaxBytesForVersion(record.SchemaVersion) {
 		return RunEvent{}, ErrInvalidRunEventEncoding
 	}
 	scope, err := audit.NewReviewScope(record.TenantID, record.RepositoryID, record.ReviewRunID)
@@ -105,7 +106,13 @@ func ParseRunEvent(encoded []byte) (RunEvent, error) {
 		}
 		event.packetDescriptor = clonePacketDescriptor(*record.PacketDescriptor)
 	}
-	if err := event.Validate(); err != nil || record.SchemaVersion != runEventVersion(event) || record.OutputKind != contextFailureOutputKind(runEventVersion(event) >= 2 && runEventVersion(event) != 4) {
+	if record.InputDescriptor != nil {
+		if record.SchemaVersion != 5 {
+			return RunEvent{}, ErrInvalidRunEventEncoding
+		}
+		event.inputDescriptor = cloneContextInputDescriptor(*record.InputDescriptor)
+	}
+	if err := event.Validate(); err != nil || record.SchemaVersion != runEventVersion(event) || record.OutputKind != eventContextFailureOutputKind(event) {
 		return RunEvent{}, ErrInvalidRunEventEncoding
 	}
 	return event, nil
@@ -119,9 +126,13 @@ func runEventToRecord(event RunEvent) runEventRecord {
 		PreviousIdentity: event.PreviousIdentity(), Kind: event.Kind().String(),
 		TaskKey: event.TaskKey(), TaskIdentity: event.TaskIdentity(), Attempt: event.Attempt(),
 		LeaseTokenIdentity: event.LeaseTokenIdentity(), WorkerIdentity: event.WorkerIdentity(),
-		LeaseExpiresAtMilliseconds: event.leaseExpiresAtMillis, OutputIdentity: event.OutputIdentity(), OutputKind: contextFailureOutputKind(runEventVersion(event) >= 2 && runEventVersion(event) != 4),
+		LeaseExpiresAtMilliseconds: event.leaseExpiresAtMillis, OutputIdentity: event.OutputIdentity(), OutputKind: eventContextFailureOutputKind(event),
 		Failure: event.Failure().String(), RetryAtMilliseconds: event.retryAtMillis,
 		OccurredAtMilliseconds: event.occurredAtMillis, PreparedArtifact: event.PreparedArtifact(),
+	}
+	if event.kind == RunEventContextInputPrepared {
+		d := event.InputDescriptor()
+		record.InputDescriptor = &d
 	}
 	if event.kind == RunEventContextPacketPrepared {
 		d := event.PacketDescriptor()
@@ -130,7 +141,7 @@ func runEventToRecord(event RunEvent) runEventRecord {
 	return record
 }
 func parseRunEventKind(value string) (RunEventKind, error) {
-	for kind := RunEventOpened; kind <= RunEventContextPacketPrepared; kind++ {
+	for kind := RunEventOpened; kind <= RunEventContextInputPrepared; kind++ {
 		if kind.String() == value {
 			return kind, nil
 		}
@@ -149,7 +160,13 @@ func parseRunFailure(value string) (RunFailure, error) {
 	return 0, ErrInvalidRunEventFailure
 }
 
+func eventContextFailureOutputKind(event RunEvent) string {
+	return contextFailureOutputKind(event.kind == RunEventContextAbstentionPrepared || event.kind == RunEventTaskFailed && event.outputIdentity != "")
+}
 func runEventVersion(event RunEvent) int {
+	if event.kind == RunEventContextInputPrepared {
+		return 5
+	}
 	if event.kind == RunEventContextPacketPrepared {
 		return 4
 	}

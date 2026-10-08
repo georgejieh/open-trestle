@@ -42,8 +42,8 @@ func TestPublishedProtocolSchemasHaveUniqueBoundedObjectContracts(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count != 103 {
-		t.Fatalf("published schema count=%d, want 103", count)
+	if count != 104 {
+		t.Fatalf("published schema count=%d, want 104", count)
 	}
 }
 
@@ -394,5 +394,69 @@ func TestRuntimePolicyV2SchemaExactVerifierGrant(t *testing.T) {
 	sort.Strings(before)
 	if !reflect.DeepEqual(required, before) {
 		t.Fatal("v2 grant not required")
+	}
+}
+
+func TestControlPlaneV5InputPreparedSchema(t *testing.T) {
+	encoded, err := os.ReadFile(filepath.Join("..", "..", "schemas", "controlplane", "review-run-event-v5.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := schemaFixtureObject(t, encoded)
+	if schema["$id"] != "urn:open-trestle:schema:controlplane:review-run-event:v5" || schema["type"] != "object" || schema["additionalProperties"] != false {
+		t.Fatal("v5 root identity or closure")
+	}
+	root := schemaFixtureMap(t, schema["properties"])
+	assertExactSchemaFields(t, schema, root, "contract schema_version identity plan_identity tenant_id repository_id review_run_id sequence previous_identity kind task_key task_identity attempt lease_token_identity worker_identity lease_expires_at_milliseconds output_identity failure retry_at_milliseconds occurred_at_milliseconds input_descriptor")
+	for _, forbidden := range []string{"packet_descriptor", "prepared_artifact", "output_kind", "payload", "raw_request", "authorization"} {
+		if root[forbidden] != nil {
+			t.Fatalf("v5 root admits %s", forbidden)
+		}
+	}
+	for field, value := range map[string]any{"contract": "open-trestle/review-run-event-record", "schema_version": float64(5), "kind": "context_input_prepared", "worker_identity": "", "lease_expires_at_milliseconds": float64(0), "failure": "", "retry_at_milliseconds": float64(0)} {
+		if !reflect.DeepEqual(root[field], map[string]any{"const": value}) {
+			t.Fatalf("v5 %s is not fixed", field)
+		}
+	}
+	input := schemaFixtureMap(t, root["input_descriptor"])
+	fields := schemaFixtureMap(t, input["properties"])
+	assertExactSchemaFields(t, input, fields, "packet_prepared_event_identity packet_artifact_identity lease_identity lease_event_identity request receipt input receipt_identity scanner_launcher_digest scanner_worker_digest generation_input_identity authorization_identity selection_receipt_identity routing_input_identity selected_record_identity policy_identity route_pair_identity authorizer_identity sanitizer_identity registry_revision performance_revision")
+	for _, name := range []string{"request", "receipt", "input"} {
+		object := schemaFixtureMap(t, fields[name])
+		parts := schemaFixtureMap(t, object["properties"])
+		assertExactSchemaFields(t, object, parts, "artifact_identity payload_digest classification protection provenance created_at_milliseconds expires_at_milliseconds")
+		for _, forbidden := range []string{"payload", "bytes", "raw_request", "authorization"} {
+			if parts[forbidden] != nil {
+				t.Fatalf("v5 %s admits %s", name, forbidden)
+			}
+		}
+		provenance := schemaFixtureMap(t, parts["provenance"])
+		if provenance["maxItems"] != float64(32) || provenance["uniqueItems"] != true || provenance["minItems"] != float64(1) {
+			t.Fatalf("v5 %s provenance bound", name)
+		}
+	}
+	for _, name := range []string{"registry_revision", "performance_revision"} {
+		if schemaFixtureMap(t, fields[name])["minimum"] != float64(1) {
+			t.Fatalf("v5 %s permits zero", name)
+		}
+	}
+}
+
+func assertExactSchemaFields(t *testing.T, schema, fields map[string]any, names string) {
+	t.Helper()
+	if schema["type"] != "object" || schema["additionalProperties"] != false {
+		t.Fatal("nested schema is open")
+	}
+	want := strings.Fields(names)
+	sort.Strings(want)
+	required := schemaFixtureStrings(t, schema["required"])
+	sort.Strings(required)
+	actual := make([]string, 0, len(fields))
+	for key := range fields {
+		actual = append(actual, key)
+	}
+	sort.Strings(actual)
+	if !reflect.DeepEqual(required, want) || !reflect.DeepEqual(actual, want) {
+		t.Fatalf("required=%v fields=%v want=%v", required, actual, want)
 	}
 }

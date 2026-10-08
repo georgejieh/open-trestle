@@ -3,6 +3,7 @@ package controlplane
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -50,6 +51,7 @@ const (
 	RunEventCanceled
 	RunEventContextAbstentionPrepared
 	RunEventContextPacketPrepared
+	RunEventContextInputPrepared
 )
 
 func (k RunEventKind) String() string {
@@ -78,6 +80,8 @@ func (k RunEventKind) String() string {
 		return "context_abstention_prepared"
 	case RunEventContextPacketPrepared:
 		return "context_packet_prepared"
+	case RunEventContextInputPrepared:
+		return "context_input_prepared"
 	default:
 		return ""
 	}
@@ -146,6 +150,7 @@ type RunEvent struct {
 	occurredAtMillis     int64
 	preparedArtifact     []byte
 	packetDescriptor     ContextPacketDescriptor
+	inputDescriptor      ContextInputDescriptor
 }
 
 // NewRunEvent creates one structurally closed journal event.
@@ -172,6 +177,9 @@ func NewRunEvent(
 	}
 	if kind == RunEventContextPacketPrepared {
 		return RunEvent{}, ErrPreparedContextPacket
+	}
+	if kind == RunEventContextInputPrepared {
+		return RunEvent{}, ErrPreparedContextInput
 	}
 	if sequence == 0 {
 		return RunEvent{}, ErrInvalidRunEventSequence
@@ -204,6 +212,9 @@ func NewRunEvent(
 	return event, nil
 }
 
+func (e RunEvent) InputDescriptor() ContextInputDescriptor {
+	return cloneContextInputDescriptor(e.inputDescriptor)
+}
 func (e RunEvent) PacketDescriptor() ContextPacketDescriptor {
 	return clonePacketDescriptor(e.packetDescriptor)
 }
@@ -246,6 +257,12 @@ func (e RunEvent) Validate() error {
 		return err
 	}
 	if e.kind != RunEventContextAbstentionPrepared && len(e.preparedArtifact) != 0 {
+		return ErrInvalidRunEventEncoding
+	}
+	if e.kind == RunEventContextInputPrepared && (!e.inputDescriptor.valid(e.scope) || e.inputDescriptor.Input.ArtifactIdentity != e.outputIdentity) {
+		return ErrInvalidRunEventOutput
+	}
+	if e.kind != RunEventContextInputPrepared && !reflect.DeepEqual(e.inputDescriptor, ContextInputDescriptor{}) {
 		return ErrInvalidRunEventEncoding
 	}
 	if e.kind == RunEventContextPacketPrepared && (!e.packetDescriptor.valid(e.scope) || e.packetDescriptor.ArtifactIdentity != e.outputIdentity) {
@@ -305,6 +322,10 @@ func (e RunEvent) validateFields() error {
 		if e.retryAtMillis != 0 && (!e.failure.Retryable() || e.retryAtMillis < e.occurredAtMillis) {
 			return ErrInvalidRunEventTime
 		}
+	case RunEventContextInputPrepared:
+		if !hasTask || e.attempt == 0 || !validControlPlaneDigest(e.leaseTokenIdentity) || e.workerIdentity != "" || e.leaseExpiresAtMillis != 0 || !validControlPlaneDigest(e.outputIdentity) || e.failure != 0 || e.retryAtMillis != 0 {
+			return ErrInvalidRunEventOutput
+		}
 	case RunEventContextPacketPrepared:
 		if !hasTask || e.attempt == 0 || !validControlPlaneDigest(e.leaseTokenIdentity) || e.workerIdentity != "" || e.leaseExpiresAtMillis != 0 || !validControlPlaneDigest(e.outputIdentity) || e.failure != 0 || e.retryAtMillis != 0 {
 			return ErrInvalidRunEventOutput
@@ -361,6 +382,9 @@ func runMillisToTime(value int64) time.Time {
 }
 func deriveRunEventIdentity(event RunEvent) string {
 	version := 1
+	if event.kind == RunEventContextInputPrepared {
+		version = 5
+	}
 	if event.kind == RunEventContextPacketPrepared {
 		version = 4
 	}
@@ -391,6 +415,7 @@ func deriveRunEventIdentity(event RunEvent) string {
 		OccurredAt       int64                    `json:"occurred_at"`
 		PreparedArtifact []byte                   `json:"prepared_artifact,omitempty"`
 		PacketDescriptor *ContextPacketDescriptor `json:"packet_descriptor,omitempty"`
+		InputDescriptor  *ContextInputDescriptor  `json:"input_descriptor,omitempty"`
 	}{
 		Contract: "open-trestle/review-run-event", Version: version,
 		Plan: event.planIdentity, Scope: event.scope.Identity(), Sequence: event.sequence,
@@ -399,6 +424,10 @@ func deriveRunEventIdentity(event RunEvent) string {
 		LeaseToken: event.leaseTokenIdentity, Worker: event.workerIdentity,
 		LeaseExpires: event.leaseExpiresAtMillis, Output: event.outputIdentity, OutputKind: contextFailureOutputKind((event.kind == RunEventTaskFailed && event.outputIdentity != "") || event.kind == RunEventContextAbstentionPrepared),
 		Failure: event.failure.String(), RetryAt: event.retryAtMillis, OccurredAt: event.occurredAtMillis, PreparedArtifact: event.preparedArtifact,
+	}
+	if event.kind == RunEventContextInputPrepared {
+		d := cloneContextInputDescriptor(event.inputDescriptor)
+		preimage.InputDescriptor = &d
 	}
 	if event.kind == RunEventContextPacketPrepared {
 		d := clonePacketDescriptor(event.packetDescriptor)

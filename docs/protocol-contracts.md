@@ -32,6 +32,7 @@ Control-plane schemas:
 - `schemas/controlplane/review-run-event-v2.schema.json`
 - `schemas/controlplane/review-run-event-v3.schema.json`
 - `schemas/controlplane/review-run-event-v4.schema.json`
+- `schemas/controlplane/review-run-event-v5.schema.json`
 - `schemas/controlplane/review-run-receipt-v1.schema.json`
 - `schemas/controlplane/review-run-receipt-v2.schema.json`
 - `schemas/controlplane/review-task-lease-v1.schema.json`
@@ -148,5 +149,7 @@ The daemon API response carries exactly one run receipt, immutable run plan, tas
 Every schema has a stable versioned `urn:open-trestle:schema:...` identity, rejects unknown object properties, and declares explicit bounds. The plan, receipt, event, lease, and completion encoders have repository tests that compare their canonical top-level record shape and constants with these documents.
 
 A `review-task-lease` and a `task-notification-lease` contain bearer secrets. It is suitable only for the authorized worker transport. Do not place it in logs, diagnostics, URLs, model context, audit events, or public state. `review-run-receipt` and `review-run-event` are intentionally secret-free.
+
+The v5 `context_input_prepared` event advances the exact v4 packet checkpoint under the same task, attempt, lease and worker. Its bounded public descriptor is untrusted claims about artifact envelopes and route/scanner identities. It is not proof of an actual scanner run, route selection, audit join, stored sanitized request, receipt, generation input or authorization. It contains no recoverable request, receipt, input, authorization, or repository bytes. Neither this event nor a route-audit subject grants task success or model authority. Ordinary completion, lease renewal and expiry reclaim remain blocked. Trusted recovery can append a no-output policy failure after lease expiry; there is no v5 success settlement API until independent exact-byte and selection proof is specified and verified. Existing v1-v4 encodings and v3 abstention behavior remain unchanged.
 
 Consumers must treat all strings, tool descriptions, repository material, and webhook fields as untrusted data even after structural validation. They must not infer publication authority, provider access, or policy approval from a schema-valid document. Those decisions require the corresponding content-addressed policy and effect receipts.

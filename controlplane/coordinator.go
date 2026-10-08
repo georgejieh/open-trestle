@@ -400,6 +400,9 @@ func (c *Coordinator) RenewTaskLease(ctx context.Context, plan ReviewRunPlan, le
 		reserved := uint64(1)
 		for _, task := range plan.Tasks() {
 			reserved += 3 * uint64(task.MaxAttempts())
+			if task.Kind() == TaskAssembleContext {
+				reserved += 2 * uint64(task.MaxAttempts())
+			}
 		}
 		if state.Revision()+1+reserved > maxRunJournalStreamEvents {
 			return TaskLease{}, state, ErrTaskLeaseRenewalLimit
@@ -452,6 +455,9 @@ func (c *Coordinator) CompleteTask(ctx context.Context, plan ReviewRunPlan, leas
 			return ReviewRunState{}, ErrInvalidTaskCompletion
 		}
 		if runtime.Status() == TaskRuntimeSucceeded || runtime.Status() == TaskRuntimeFailed {
+			if runtime.preparedInputTerminal {
+				return ReviewRunState{}, ErrPreparedContextInput
+			}
 			if completedTaskMatches(runtime, lease, completion) {
 				return state, nil
 			}
@@ -462,6 +468,9 @@ func (c *Coordinator) CompleteTask(ctx context.Context, plan ReviewRunPlan, leas
 		}
 		if runtime.preparedEvent.Kind() == RunEventContextPacketPrepared {
 			return ReviewRunState{}, ErrPreparedContextPacket
+		}
+		if runtime.preparedEvent.Kind() == RunEventContextInputPrepared {
+			return ReviewRunState{}, ErrPreparedContextInput
 		}
 		if runtime.preparedEventIdentity != "" && (completion.Status() != TaskCompletionFailed || completion.OutputIdentity() != runtime.preparedEvent.OutputIdentity() || completion.Failure() != runtime.preparedEvent.Failure()) {
 			return ReviewRunState{}, ErrPreparedContextAbstention
