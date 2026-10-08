@@ -14,6 +14,53 @@ import (
 	"time"
 )
 
+func TestPreparedAbstentionCannotAppendAfterCancel(t *testing.T) {
+	ctx := context.Background()
+	for _, preparedBeforeCancel := range []bool{false, true} {
+		t.Run(map[bool]string{false: "cancel-before-prepare", true: "cancel-before-settle"}[preparedBeforeCancel], func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "journal")
+			journal, err := NewFileRunJournal(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			coordinator, plan, lease := preparedTestLease(t, journal)
+			artifact := preparedTestArtifact(t, plan, []byte(`{}`))
+			before := lease.ExpiresAt().Add(-2 * time.Millisecond)
+			var prepared PreparedContextAbstention
+			if preparedBeforeCancel {
+				prepared, err = coordinator.PrepareContextAbstention(ctx, plan, lease, artifact, RunFailurePolicy, before)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			canceled, err := coordinator.CancelRun(ctx, plan, before.Add(time.Millisecond))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if preparedBeforeCancel {
+				if _, err := coordinator.SettlePreparedContextAbstention(ctx, plan, prepared, lease.ExpiresAt().Add(time.Millisecond)); !errors.Is(err, ErrRunAlreadyTerminal) {
+					t.Fatalf("post-cancel settlement=%v", err)
+				}
+			} else if _, err := coordinator.PrepareContextAbstention(ctx, plan, lease, artifact, RunFailurePolicy, lease.ExpiresAt()); !errors.Is(err, ErrRunAlreadyTerminal) {
+				t.Fatalf("post-cancel prepare=%v", err)
+			}
+			if err := journal.Close(); err != nil {
+				t.Fatal(err)
+			}
+			reopened, err := NewFileRunJournal(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer reopened.Close()
+			restarted, _ := NewCoordinator(reopened)
+			_, state, err := restarted.Resume(ctx, plan.Scope())
+			if err != nil || state.Status() != ReviewRunCanceled || state.HeadIdentity() != canceled.HeadIdentity() {
+				t.Fatalf("post-cancel journal poisoned: %v", err)
+			}
+		})
+	}
+}
+
 func TestPreparedContextAbstentionRequiresDurableIntent(t *testing.T) {
 	plan := runPlanFixture(t)
 	coordinator, _ := NewCoordinator(NewMemoryRunJournal())

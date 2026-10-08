@@ -141,6 +141,9 @@ func (c *Coordinator) PrepareContextAbstention(ctx context.Context, plan ReviewR
 		if err != nil {
 			return PreparedContextAbstention{}, err
 		}
+		if state.Status() != ReviewRunActive {
+			return PreparedContextAbstention{}, ErrRunAlreadyTerminal
+		}
 		runtime, exists := state.Task(lease.TaskKey())
 		if !exists || lease.PlanIdentity() != plan.Identity() || lease.HandlerIdentity() != runtime.Definition().HandlerIdentity() || runtime.Definition().Kind() != TaskAssembleContext || !runtimeMatchesLease(runtime, lease) {
 			return PreparedContextAbstention{}, ErrRunTransitionLeaseMismatch
@@ -181,6 +184,9 @@ func (c *Coordinator) SettlePreparedContextAbstention(ctx context.Context, plan 
 		state, err := c.load(ctx, plan)
 		if err != nil {
 			return ReviewRunState{}, err
+		}
+		if state.Status() != ReviewRunActive {
+			return ReviewRunState{}, ErrRunAlreadyTerminal
 		}
 		runtime, ok := state.Task(prepared.TaskKey())
 		if !ok || runtime.Definition().Identity() != prepared.TaskIdentity() {
