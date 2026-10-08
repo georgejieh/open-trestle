@@ -345,6 +345,15 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 		daemonGitHubSourceClock = budgetedClock
 		daemonWebhookClock = budgetedClock
 	}
+	// The LOCAL Git state and artifact paths are inspected before any store
+	// constructor can chmod, lock, or recover data. This is not an owner gate.
+	if localGitConfigured && *metadataStore == "local" && *artifactStoreMode == "local" {
+		closeRoots, err := localPathPreflight(*stateDirectory)
+		if err != nil {
+			return nil, err
+		}
+		defer closeRoots()
+	}
 	var artifactStore artifact.RetentionStore
 	var artifactKeyProvider artifact.EnvelopeKeyProvider
 	var budgetedPolicy artifact.ProtectedErasurePolicy
