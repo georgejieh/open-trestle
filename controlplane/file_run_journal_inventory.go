@@ -1,0 +1,247 @@
+// Startup inventory is an API-only, fail-closed inspection of journal-root entries.
+// It does not attest the owner, inspect sibling contents, or run before constructors.
+package controlplane
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+)
+
+// Fixed local compatibility policy. Older larger journals require offline review;
+// exceeding a bound is not evidence of corrupt bytes or of v4 absence.
+const (
+	maxStartupInventoryEntries            = 1024 // includes lock and sibling directories
+	maxStartupInventoryPlans              = 500
+	maxStartupInventoryEncodedBytes int64 = 256 << 20 // plans plus streams
+)
+
+var (
+	ErrPreparedContextPacketAtStartup   = errors.New("prepared context packet in historical journal at startup")
+	ErrIncompleteStartupInventoryPrefix = errors.New("incomplete startup inventory plan-only prefix")
+	ErrInvalidStartupInventoryEntry     = errors.New("invalid startup inventory entry")
+	ErrStartupInventoryLimit            = errors.New("startup inventory limit exceeded")
+)
+
+// StartupInventory contains only counts from an exhaustive successful inspection.
+// An error always returns zero counters, including for a valid replayed v4 event.
+type StartupInventory struct{ Plans, Streams, Events int }
+
+// InspectStartupInventory checks every direct journal-root entry and every event
+// in every paired stream. This method is not daemon startup wiring or packet safety.
+func (j *FileRunJournal) InspectStartupInventory(ctx context.Context) (StartupInventory, error) {
+	zero := StartupInventory{}
+	if j == nil {
+		return zero, ErrInvalidRunJournal
+	}
+	if err := validateFileRunContext(ctx); err != nil {
+		return zero, err
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.gateMu.Lock()
+	closing := j.closing
+	j.gateMu.Unlock()
+	if j.closed || closing {
+		return zero, ErrRunJournalClosed
+	}
+	rootInfo, err := os.Lstat(j.root)
+	if err != nil {
+		return zero, fmt.Errorf("%w: %v", ErrRunJournalPersistence, err)
+	}
+	if !rootInfo.IsDir() || rootInfo.Mode().Perm()&0o077 != 0 {
+		return zero, ErrInvalidStartupInventoryEntry
+	}
+	directory, err := os.Open(j.root)
+	if err != nil {
+		return zero, fmt.Errorf("%w: %v", ErrRunJournalPersistence, err)
+	}
+	defer directory.Close()
+	// Positive n reads no more than n entries; never enumerate the unbounded root.
+	entries, err := directory.ReadDir(maxStartupInventoryEntries + 1)
+	if err != nil {
+		return zero, fmt.Errorf("%w: %v", ErrRunJournalPersistence, err)
+	}
+	if len(entries) > maxStartupInventoryEntries {
+		return zero, ErrStartupInventoryLimit
+	}
+	plans := make(map[string]struct{})
+	streams := make(map[string]struct{})
+	var total int64
+	for _, entry := range entries {
+		if err := fileRunContextDone(ctx); err != nil {
+			return zero, err
+		}
+		name := entry.Name()
+		info, err := entry.Info()
+		if err != nil {
+			return zero, fmt.Errorf("%w: %v", ErrRunJournalPersistence, err)
+		}
+		mode := info.Mode()
+		if mode.Perm()&0o077 != 0 || mode&os.ModeSymlink != 0 {
+			return zero, ErrInvalidStartupInventoryEntry
+		}
+		switch name {
+		case runJournalWriterLockName:
+			if !mode.IsRegular() {
+				return zero, ErrInvalidStartupInventoryEntry
+			}
+			continue
+		case "artifacts", "audit", "diagnostics", "webhook-inbox", "setup":
+			if !mode.IsDir() {
+				return zero, ErrInvalidStartupInventoryEntry
+			}
+			continue
+		}
+		var base string
+		var isPlan bool
+		switch {
+		case strings.HasSuffix(name, runJournalPlanSuffix):
+			base = strings.TrimSuffix(name, runJournalPlanSuffix)
+			isPlan = true
+		case strings.HasSuffix(name, runJournalStreamSuffix):
+			base = strings.TrimSuffix(name, runJournalStreamSuffix)
+		default:
+			return zero, ErrInvalidStartupInventoryEntry
+		}
+		if !inventoryDigest(base) || !mode.IsRegular() {
+			return zero, ErrInvalidStartupInventoryEntry
+		}
+		size := info.Size()
+		if size <= 0 {
+			return zero, ErrInvalidStartupInventoryEntry
+		}
+		if isPlan {
+			if size > maxEncodedReviewRunPlanBytes {
+				return zero, ErrStartupInventoryLimit
+			}
+			plans[base] = struct{}{}
+			if len(plans) > maxStartupInventoryPlans {
+				return zero, ErrStartupInventoryLimit
+			}
+		} else {
+			if size > maxRunJournalStreamBytes {
+				return zero, ErrStartupInventoryLimit
+			}
+			streams[base] = struct{}{}
+		}
+		if size > maxStartupInventoryEncodedBytes-total {
+			return zero, ErrStartupInventoryLimit
+		}
+		total += size
+	}
+	for base := range streams {
+		if _, ok := plans[base]; !ok {
+			return zero, ErrInvalidStartupInventoryEntry
+		}
+	}
+	bases := make([]string, 0, len(plans))
+	for base := range plans {
+		bases = append(bases, base)
+	}
+	sort.Strings(bases)
+	incomplete := false
+	for _, base := range bases {
+		if _, ok := streams[base]; ok {
+			continue
+		}
+		if err := fileRunContextDone(ctx); err != nil {
+			return zero, err
+		}
+		if _, err := j.readInventoryPlan(base); err != nil {
+			return zero, err
+		}
+		incomplete = true
+	}
+	if incomplete {
+		return zero, ErrIncompleteStartupInventoryPrefix
+	}
+	result := StartupInventory{}
+	hasPacket := false
+	// Every planned scope is recovered from bounded canonical plan bytes. The digest
+	// cannot be inverted; exact filename identity is checked before loading stream.
+	for _, base := range bases {
+		if err := fileRunContextDone(ctx); err != nil {
+			return zero, err
+		}
+		plan, err := j.readInventoryPlan(base)
+		if err != nil {
+			return zero, err
+		}
+		events, err := j.loadStream(plan.Scope())
+		if err != nil {
+			return zero, err
+		}
+		if len(events) == 0 {
+			return zero, ErrInvalidStartupInventoryEntry
+		}
+		if _, err := ReplayReviewRun(plan, events); err != nil {
+			return zero, fmt.Errorf("%w: %v", ErrInvalidStartupInventoryEntry, err)
+		}
+		for _, event := range events {
+			if event.Kind() == RunEventContextPacketPrepared {
+				hasPacket = true
+			}
+		}
+		result.Plans++
+		result.Streams++
+		result.Events += len(events)
+	}
+	if err := fileRunContextDone(ctx); err != nil {
+		return zero, err
+	}
+	if hasPacket {
+		return zero, ErrPreparedContextPacketAtStartup
+	}
+	return result, nil
+}
+
+func (j *FileRunJournal) readInventoryPlan(base string) (ReviewRunPlan, error) {
+	path := filepath.Join(j.root, base+runJournalPlanSuffix)
+	file, err := os.Open(path)
+	if err != nil {
+		return ReviewRunPlan{}, fmt.Errorf("%w: %v", ErrRunJournalPersistence, err)
+	}
+	info, statErr := file.Stat()
+	if statErr != nil {
+		file.Close()
+		return ReviewRunPlan{}, fmt.Errorf("%w: %v", ErrRunJournalPersistence, statErr)
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 || info.Size() <= 0 || info.Size() > maxEncodedReviewRunPlanBytes {
+		file.Close()
+		return ReviewRunPlan{}, ErrInvalidReviewRunPlanEncoding
+	}
+	// Bound the read even if the file changes after directory classification.
+	content, readErr := io.ReadAll(io.LimitReader(file, maxEncodedReviewRunPlanBytes+1))
+	closeErr := file.Close()
+	if readErr != nil || closeErr != nil {
+		return ReviewRunPlan{}, fmt.Errorf("%w: %v", ErrRunJournalPersistence, errors.Join(readErr, closeErr))
+	}
+	if len(content) == 0 || len(content) > maxEncodedReviewRunPlanBytes || int64(len(content)) != info.Size() {
+		return ReviewRunPlan{}, ErrInvalidReviewRunPlanEncoding
+	}
+	plan, err := ParseReviewRunPlan(content)
+	if err != nil {
+		return ReviewRunPlan{}, err
+	}
+	if plan.Scope().Identity() != base {
+		return ReviewRunPlan{}, ErrInvalidReviewRunPlanEncoding
+	}
+	return plan, nil
+}
+func inventoryDigest(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, ch := range []byte(value) {
+		if ch < '0' || ch > '9' && ch < 'a' || ch > 'f' {
+			return false
+		}
+	}
+	return true
+}
