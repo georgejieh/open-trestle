@@ -161,3 +161,269 @@ func TestRouteAuditRejectsCrossWiredRecords(t *testing.T) {
 		t.Fatalf("nil ledger = (%#v, %v)", event, err)
 	}
 }
+
+// A valid audit.Event only proves the event encoding, not the route-selection parent contract.
+func TestRouteSelectionRejectsExistingWrongParentsBeforeClaim(t *testing.T) {
+	for _, storage := range []string{"memory", "file"} {
+		t.Run(storage, func(t *testing.T) {
+			var ledger audit.Ledger = audit.NewMemoryLedger()
+			if storage == "file" {
+				file, err := audit.NewFileLedger(t.TempDir())
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					if err := file.Close(); err != nil {
+						t.Error(err)
+					}
+				})
+				ledger = file
+			}
+			ctx := context.Background()
+			scope := newRoutingScope(t)
+			request, fixture, _ := newInitialAttemptFixture(t)
+			authorization, err := NewInitialRouteAttemptAuthorization(request, fixture.selection, fixture.ranking)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parents := []string{fixture.selection.RoutingInputIdentity(), fixture.selection.SelectedRecordIdentity(), fixture.selection.RankingPolicyIdentity()}
+			for i, parent := range parents {
+				if parent == fixture.selection.SelectedRecordIdentity() {
+					parents[i] = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+					break
+				}
+			}
+			wrong, err := audit.NewEvent(scope, 1, "", audit.EventRouteSelected, fixture.selection.Identity(), parents, time.UnixMilli(1))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := ledger.Append(ctx, "", wrong); err != nil {
+				t.Fatal(err)
+			}
+			if event, err := RecordRouteSelection(ctx, ledger, scope, fixture.selection, time.UnixMilli(2)); !errors.Is(err, ErrRouteAuditRecordMismatch) || event.Identity() != "" {
+				t.Fatalf("wrong-parent selection = (%#v, %v), want integrity error", event, err)
+			}
+			if event, acquired, err := ClaimRouteAttempt(ctx, ledger, scope, authorization, time.UnixMilli(3)); !errors.Is(err, ErrRouteAuditRecordMismatch) || acquired || event.Identity() != "" {
+				t.Fatalf("wrong-parent claim = (%#v, %t, %v), want denial", event, acquired, err)
+			}
+			events, err := ledger.Read(ctx, scope, 0, 10)
+			if err != nil || len(events) != 1 {
+				t.Fatalf("events = (%d, %v), want only forged selection", len(events), err)
+			}
+		})
+	}
+}
+
+func TestRouteSelectionRejectsConflictingDuplicateAndKeepsExactIdempotence(t *testing.T) {
+	ctx := context.Background()
+	ledger := audit.NewMemoryLedger()
+	scope := newRoutingScope(t)
+	_, fixture, _ := newInitialAttemptFixture(t)
+	first, err := RecordRouteSelection(ctx, ledger, scope, fixture.selection, time.UnixMilli(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	same, err := RecordRouteSelection(ctx, ledger, scope, fixture.selection, time.UnixMilli(2))
+	if err != nil || same.Identity() != first.Identity() {
+		t.Fatalf("exact idempotence = (%#v, %v)", same, err)
+	}
+	parents := []string{fixture.selection.RoutingInputIdentity(), fixture.selection.SelectedRecordIdentity(), "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}
+	wrong, err := audit.NewEvent(scope, 2, first.Identity(), audit.EventRouteSelected, fixture.selection.Identity(), parents, time.UnixMilli(3))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.Append(ctx, first.Identity(), wrong); err != nil {
+		t.Fatal(err)
+	}
+	if event, err := RecordRouteSelection(ctx, ledger, scope, fixture.selection, time.UnixMilli(4)); !errors.Is(err, ErrRouteAuditRecordMismatch) || event.Identity() != "" {
+		t.Fatalf("conflicting duplicate = (%#v, %v), want integrity error", event, err)
+	}
+	otherScope, err := audit.NewReviewScope("other-tenant", "repository", "review-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event, err := RecordRouteSelection(ctx, ledger, otherScope, fixture.selection, time.UnixMilli(5)); !errors.Is(err, ErrRouteAuditScopeMismatch) || event.Identity() != "" {
+		t.Fatalf("wrong scope = (%#v, %v)", event, err)
+	}
+}
+
+// A fallback uses the original selection receipt, but its route is not the first selected record.
+func TestRouteAuditClaimsFallbackAfterFailedInitialAttempt(t *testing.T) {
+	for _, storage := range []string{"memory", "file"} {
+		t.Run(storage, func(t *testing.T) {
+			var ledger audit.Ledger = audit.NewMemoryLedger()
+			if storage == "file" {
+				file, err := audit.NewFileLedger(t.TempDir())
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					if err := file.Close(); err != nil {
+						t.Error(err)
+					}
+				})
+				ledger = file
+			}
+			ctx := context.Background()
+			scope := newRoutingScope(t)
+			free := mustKnownFreePricing(t)
+			primary := newFallbackRoute(t, 141_000, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier4, free)
+			next := newFallbackRoute(t, 141_001, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier3, free)
+			fixture := newFallbackFixture(t, 0, next, primary)
+			request, err := provider.NewRequest(provider.CapabilityReviewV1, "application/json", []byte("fallback payload"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			initial, err := NewInitialRouteAttemptAuthorization(request, fixture.selection, fixture.ranking)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := RecordRouteSelection(ctx, ledger, scope, fixture.selection, time.UnixMilli(1)); err != nil {
+				t.Fatal(err)
+			}
+			if _, acquired, err := ClaimRouteAttempt(ctx, ledger, scope, initial, time.UnixMilli(2)); err != nil || !acquired {
+				t.Fatalf("initial claim = (%t, %v)", acquired, err)
+			}
+			rawFailure, err := NewFailedRouteDispatchResult(RouteFailureConnection, RouteReplayNoSideEffect, provider.NewUnknownRouteTokenUsage(), 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dispatcher := &recordingRouteDispatcher{adapterID: initial.RouteReference().AdapterID(), result: rawFailure}
+			result, err := DispatchAuthorizedRoute(ctx, dispatcher, initial, request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			outcome, err := NewRouteAttemptOutcomeFromDispatch(initial, result, 5)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := RecordRouteDispatchCompleted(ctx, ledger, scope, initial, result, outcome, time.UnixMilli(3)); err != nil {
+				t.Fatal(err)
+			}
+			reconciliation, err := ReconcileAuthorizedRouteAttemptCost(initial, outcome)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := RecordRouteCostReconciliation(ctx, ledger, scope, initial, outcome, reconciliation, time.UnixMilli(4)); err != nil {
+				t.Fatal(err)
+			}
+			policy, err := NewRouteFallbackPolicy(2, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decision, err := PlanRouteAttemptFallback(fixture.selection, fixture.ranking, policy, initial, outcome, reconciliation, []string{initial.RouteRecordIdentity()})
+			if err != nil || !decision.ShouldFallback() {
+				t.Fatalf("fallback decision = (%#v, %v)", decision, err)
+			}
+			fallback, err := NewRouteFallbackAttemptAuthorization(initial, outcome, reconciliation, decision, fixture.selection, fixture.ranking)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fallback.SelectionReceiptIdentity() != initial.SelectionReceiptIdentity() || fallback.RouteRecordIdentity() == initial.RouteRecordIdentity() {
+				t.Fatal("fixture did not change route under the same selection")
+			}
+			claim, acquired, err := ClaimRouteAttempt(ctx, ledger, scope, fallback, time.UnixMilli(5))
+			if err != nil || !acquired || claim.SubjectIdentity() != fallback.Identity() {
+				t.Fatalf("fallback claim = (%#v, %t, %v)", claim, acquired, err)
+			}
+			duplicate, acquired, err := ClaimRouteAttempt(ctx, ledger, scope, fallback, time.UnixMilli(6))
+			if err != nil || acquired || duplicate.Identity() != claim.Identity() {
+				t.Fatalf("fallback duplicate = (%#v, %t, %v)", duplicate, acquired, err)
+			}
+			head, _, err := ledger.Head(ctx, scope)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parents := []string{fixture.selection.RoutingInputIdentity(), fixture.selection.SelectedRecordIdentity(), fixture.selection.RankingPolicyIdentity()}
+			secondSelection, err := audit.NewEvent(scope, head.Sequence()+1, head.Identity(), audit.EventRouteSelected, fixture.selection.Identity(), parents, time.UnixMilli(7))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := ledger.Append(ctx, head.Identity(), secondSelection); err != nil {
+				t.Fatal(err)
+			}
+			if event, acquired, err := ClaimRouteAttempt(ctx, ledger, scope, fallback, time.UnixMilli(8)); !errors.Is(err, ErrRouteAuditRecordMismatch) || acquired || event.Identity() != "" {
+				t.Fatalf("duplicate selection fallback claim = (%#v, %t, %v)", event, acquired, err)
+			}
+		})
+	}
+}
+
+func TestRouteAuditClaimsSameRecordRetry(t *testing.T) {
+	for _, storage := range []string{"memory", "file"} {
+		t.Run(storage, func(t *testing.T) {
+			var ledger audit.Ledger = audit.NewMemoryLedger()
+			if storage == "file" {
+				file, err := audit.NewFileLedger(t.TempDir())
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					if err := file.Close(); err != nil {
+						t.Error(err)
+					}
+				})
+				ledger = file
+			}
+			ctx := context.Background()
+			scope := newRoutingScope(t)
+			request, fixture, _ := newInitialAttemptFixture(t)
+			initial, err := NewInitialRouteAttemptAuthorization(request, fixture.selection, fixture.ranking)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := RecordRouteSelection(ctx, ledger, scope, fixture.selection, time.UnixMilli(1)); err != nil {
+				t.Fatal(err)
+			}
+			if _, acquired, err := ClaimRouteAttempt(ctx, ledger, scope, initial, time.UnixMilli(2)); err != nil || !acquired {
+				t.Fatalf("initial claim = (%t, %v)", acquired, err)
+			}
+			usage, err := provider.NewRouteTokenUsage(0, 0, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rawFailure, err := NewFailedRouteDispatchResult(RouteFailureTimeout, RouteReplayNoSideEffect, usage, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dispatcher := &recordingRouteDispatcher{adapterID: initial.RouteReference().AdapterID(), result: rawFailure}
+			result, err := DispatchAuthorizedRoute(ctx, dispatcher, initial, request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			outcome, err := NewRouteAttemptOutcomeFromDispatch(initial, result, 10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := RecordRouteDispatchCompleted(ctx, ledger, scope, initial, result, outcome, time.UnixMilli(3)); err != nil {
+				t.Fatal(err)
+			}
+			reconciliation, err := ReconcileAuthorizedRouteAttemptCost(initial, outcome)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := RecordRouteCostReconciliation(ctx, ledger, scope, initial, outcome, reconciliation, time.UnixMilli(4)); err != nil {
+				t.Fatal(err)
+			}
+			policy, err := NewRouteRetryPolicy(3, 100, 1_000, 0, 2_000)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decision, err := EvaluateRouteAttemptRetry(policy, initial, outcome)
+			if err != nil || !decision.ShouldRetry() {
+				t.Fatalf("retry decision = (%#v, %v)", decision, err)
+			}
+			retry, err := NewRouteRetryAttemptAuthorization(initial, outcome, reconciliation, decision)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if retry.RouteRecordIdentity() != initial.RouteRecordIdentity() {
+				t.Fatal("retry changed selected record")
+			}
+			claim, acquired, err := ClaimRouteAttempt(ctx, ledger, scope, retry, time.UnixMilli(5))
+			if err != nil || !acquired || claim.SubjectIdentity() != retry.Identity() {
+				t.Fatalf("retry claim = (%#v, %t, %v)", claim, acquired, err)
+			}
+		})
+	}
+}

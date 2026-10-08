@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"time"
 
 	"github.com/georgejieh/open-trestle/audit"
@@ -54,7 +55,7 @@ func ClaimRouteAttempt(ctx context.Context, ledger audit.Ledger, scope audit.Rev
 	if authorization.ReviewScopeIdentity() != scope.Identity() {
 		return audit.Event{}, false, ErrRouteAuditScopeMismatch
 	}
-	if err := requireRouteAuditEvent(ctx, ledger, scope, audit.EventRouteSelected, authorization.SelectionReceiptIdentity()); err != nil {
+	if err := requireRouteSelectionForClaim(ctx, ledger, scope, authorization); err != nil {
 		return audit.Event{}, false, err
 	}
 	parents := []string{authorization.SelectionReceiptIdentity()}
@@ -193,7 +194,7 @@ func appendUniqueRouteAuditEvent(ctx context.Context, ledger audit.Ledger, scope
 		if err != nil {
 			return audit.Event{}, false, err
 		}
-		existing, found, conflict, err := inspectRouteAuditEvents(ctx, ledger, scope, kind, subjectIdentity, uniqueParent)
+		existing, found, conflict, err := inspectRouteAuditEvents(ctx, ledger, scope, kind, subjectIdentity, parents, uniqueParent)
 		if err != nil {
 			return audit.Event{}, false, err
 		}
@@ -229,8 +230,10 @@ func appendUniqueRouteAuditEvent(ctx context.Context, ledger audit.Ledger, scope
 	return audit.Event{}, false, ErrRouteAuditAppendConflict
 }
 
-func inspectRouteAuditEvents(ctx context.Context, ledger audit.Ledger, scope audit.ReviewScope, kind audit.EventKind, subjectIdentity, uniqueParent string) (audit.Event, bool, bool, error) {
+func inspectRouteAuditEvents(ctx context.Context, ledger audit.Ledger, scope audit.ReviewScope, kind audit.EventKind, subjectIdentity string, parents []string, uniqueParent string) (audit.Event, bool, bool, error) {
 	var after uint64
+	var matching audit.Event
+	found := false
 	for {
 		events, err := ledger.Read(ctx, scope, after, 1_000)
 		if err != nil {
@@ -241,14 +244,60 @@ func inspectRouteAuditEvents(ctx context.Context, ledger audit.Ledger, scope aud
 				continue
 			}
 			if event.SubjectIdentity() == subjectIdentity {
-				return event, true, false, nil
+				if kind != audit.EventRouteSelected {
+					return event, true, false, nil
+				}
+				if found || !routeAuditParentsMatch(event, parents) {
+					return audit.Event{}, false, false, ErrRouteAuditRecordMismatch
+				}
+				matching, found = event, true
+				continue
 			}
 			if uniqueParent != "" && auditEventReferences(event, uniqueParent) {
 				return audit.Event{}, false, true, nil
 			}
 		}
 		if len(events) < 1_000 {
-			return audit.Event{}, false, false, nil
+			return matching, found, false, nil
+		}
+		after = events[len(events)-1].Sequence()
+	}
+}
+
+// The receipt supplies all three expected parents for this selection comparison.
+func routeAuditParentsMatch(event audit.Event, parents []string) bool {
+	actual := event.CausalParentIdentities()
+	expected := slices.Clone(parents)
+	slices.Sort(expected)
+	return slices.Equal(actual, expected)
+}
+
+// A claim has no routing-input or ranking-policy witness. Fallback also lacks
+// the original selected record, so this guard is structural rather than exact proof.
+func requireRouteSelectionForClaim(ctx context.Context, ledger audit.Ledger, scope audit.ReviewScope, authorization RouteAttemptAuthorization) error {
+	var after uint64
+	found := false
+	for {
+		events, err := ledger.Read(ctx, scope, after, 1_000)
+		if err != nil {
+			return err
+		}
+		for _, event := range events {
+			if event.Kind() != audit.EventRouteSelected || event.SubjectIdentity() != authorization.SelectionReceiptIdentity() {
+				continue
+			}
+			parents := event.CausalParentIdentities()
+			// Fallback keeps the first selection but authorizes a different route record.
+			if found || len(parents) != 3 || (authorization.Kind() != RouteAttemptFallback && !auditEventReferences(event, authorization.RouteRecordIdentity())) {
+				return ErrRouteAuditRecordMismatch
+			}
+			found = true
+		}
+		if len(events) < 1_000 {
+			if !found {
+				return ErrRouteAuditPrerequisiteMissing
+			}
+			return nil
 		}
 		after = events[len(events)-1].Sequence()
 	}
