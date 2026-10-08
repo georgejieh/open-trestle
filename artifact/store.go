@@ -160,7 +160,20 @@ type FileStore struct {
 	closed   bool
 }
 
-func NewFileStore(root string) (*FileStore, error) {
+// PendingFileStore holds an exclusive writer lock without running deletion recovery.
+// Activation does not validate ownership of historical artifacts.
+type PendingFileStore struct {
+	state *pendingFileStoreState
+}
+
+type pendingFileStoreState struct {
+	mu    sync.Mutex
+	store *FileStore
+}
+
+// OpenPendingFileStore prepares a root and locks it without recovering deletions.
+// Root creation, permissions, lock acquisition, and root sync still take effect.
+func OpenPendingFileStore(root string) (*PendingFileStore, error) {
 	if root == "" {
 		return nil, ErrInvalidStoreRoot
 	}
@@ -192,12 +205,65 @@ func NewFileStore(root string) (*FileStore, error) {
 	}
 	store := &FileStore{root: absolute, rootInfo: information, lock: lock}
 	if err := store.syncRoot(); err != nil {
-		_ = lock.Close()
-		return nil, err
+		return nil, errors.Join(err, store.Close())
+	}
+	return &PendingFileStore{state: &pendingFileStoreState{store: store}}, nil
+}
+
+// Activate recovers deletion receipts once, transferring the lock to the returned store.
+// Recovery may partially change disk before an error; it does not attest ownership.
+func (p *PendingFileStore) Activate() (*FileStore, error) {
+	if p == nil {
+		return nil, ErrInvalidStore
+	}
+	if p.state == nil {
+		return nil, ErrStoreClosed
+	}
+	p.state.mu.Lock()
+	defer p.state.mu.Unlock()
+	if p.state.store == nil {
+		return nil, ErrStoreClosed
+	}
+	store := p.state.store
+	if err := store.ensureOpen(); err != nil {
+		p.state.store = nil
+		return nil, errors.Join(err, store.Close())
 	}
 	if err := store.recoverDeletions(); err != nil {
-		_ = lock.Close()
+		p.state.store = nil
+		return nil, errors.Join(err, store.Close())
+	}
+	p.state.store = nil
+	return store, nil
+}
+
+// Close releases a pending lock, or does nothing after activation.
+func (p *PendingFileStore) Close() error {
+	if p == nil {
+		return ErrInvalidStore
+	}
+	if p.state == nil {
+		return nil
+	}
+	p.state.mu.Lock()
+	defer p.state.mu.Unlock()
+	if p.state.store == nil {
+		return nil
+	}
+	store := p.state.store
+	p.state.store = nil
+	return store.Close()
+}
+
+// NewFileStore retains the immediate-recovery legacy contract.
+func NewFileStore(root string) (*FileStore, error) {
+	pending, err := OpenPendingFileStore(root)
+	if err != nil {
 		return nil, err
+	}
+	store, err := pending.Activate()
+	if err != nil {
+		return nil, errors.Join(err, pending.Close())
 	}
 	return store, nil
 }
