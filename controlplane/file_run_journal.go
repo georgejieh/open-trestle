@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/internal/filelock"
@@ -31,6 +32,8 @@ var (
 	ErrRunJournalLocked = errors.New("run journal locked")
 	// ErrRunJournalClosed identifies use after releasing the writer lease.
 	ErrRunJournalClosed = errors.New("run journal closed")
+	// ErrInvalidRunJournalEffectSection identifies a missing effect callback.
+	ErrInvalidRunJournalEffectSection = errors.New("invalid run journal effect section")
 	// ErrCorruptRunJournalStream identifies a malformed or broken event stream.
 	ErrCorruptRunJournalStream = errors.New("corrupt run journal stream")
 	// ErrRunJournalStreamTooLarge identifies a stream beyond local bounds.
@@ -42,9 +45,17 @@ var (
 // FileRunJournal is a durable local journal with one exclusive writer per root.
 type FileRunJournal struct {
 	mu             sync.Mutex
+	gateMu         sync.Mutex
+	gate           chan struct{}
+	closingSignal  chan struct{}
+	closing        bool
 	root, lockPath string
 	lockFile       *filelock.Lock
-	closed         bool
+	// Optional fault-injection seams; production uses syncRoot and lockFile.Close.
+	syncOnClose         func() error
+	closeLock           func(*filelock.Lock) error
+	onContendedGateWait func() // test observer, set before concurrent use only
+	closed              bool
 }
 
 // NewFileRunJournal creates a private root and acquires its exclusive writer lease.
@@ -74,7 +85,11 @@ func NewFileRunJournal(root string) (*FileRunJournal, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrRunJournalPersistence, err)
 	}
-	journal := &FileRunJournal{root: absolute, lockPath: lockPath, lockFile: lockFile}
+	journal := &FileRunJournal{
+		root: absolute, lockPath: lockPath, lockFile: lockFile,
+		gate: make(chan struct{}, 1), closingSignal: make(chan struct{}),
+	}
+	journal.gate <- struct{}{}
 	if err := journal.syncRoot(); err != nil {
 		_ = lockFile.Close()
 		return nil, err
@@ -82,23 +97,94 @@ func NewFileRunJournal(root string) (*FileRunJournal, error) {
 	return journal, nil
 }
 func (j *FileRunJournal) Close() error {
-	if j == nil {
+	if j == nil || j.gate == nil || j.closingSignal == nil {
 		return ErrInvalidRunJournal
 	}
+	j.gateMu.Lock()
+	if !j.closing {
+		j.closing = true
+		close(j.closingSignal)
+	}
+	j.gateMu.Unlock()
+	<-j.gate
+	defer func() { j.gate <- struct{}{} }()
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if j.closed {
 		return nil
 	}
-	if j.lockFile != nil {
-		if err := j.lockFile.Close(); err != nil {
-			return fmt.Errorf("%w: %v", ErrRunJournalPersistence, err)
-		}
-		j.lockFile = nil
-	}
+	// Retire the old owner before any fallible filesystem operation or lease release.
 	j.closed = true
-	return j.syncRoot()
+	// Sync while the writer lease is still held, even when sync fails.
+	syncRoot := j.syncOnClose
+	if syncRoot == nil {
+		syncRoot = j.syncRoot
+	}
+	syncErr := syncRoot()
+	if j.lockFile == nil {
+		return syncErr
+	}
+	closeLock := j.closeLock
+	if closeLock == nil {
+		closeLock = (*filelock.Lock).Close
+	}
+	closeErr := closeLock(j.lockFile)
+	j.lockFile = nil
+	if closeErr != nil {
+		closeErr = fmt.Errorf("%w: %v", ErrRunJournalPersistence, closeErr)
+	}
+	return errors.Join(syncErr, closeErr)
 }
+
+// WithEffectSection serializes a local synchronous effect with cancellation appends.
+// The section is non-reentrant: the callback must not call Close, append a
+// cancellation, or nest another WithEffectSection on this journal.
+func (j *FileRunJournal) WithEffectSection(ctx context.Context, effect func() error) error {
+	if j == nil || j.gate == nil || j.closingSignal == nil {
+		return ErrInvalidRunJournal
+	}
+	if effect == nil {
+		return ErrInvalidRunJournalEffectSection
+	}
+	if err := validateFileRunContext(ctx); err != nil {
+		return err
+	}
+	return j.withEffectSection(ctx, effect)
+}
+
+func (j *FileRunJournal) withEffectSection(ctx context.Context, effect func() error) error {
+	// An unbounded caller context must not leave a gate waiter stuck forever.
+	waitCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	// A test observer only acknowledges a real contended acquisition. It must
+	// not block or change the gate, and must be installed before concurrent use.
+	select {
+	case <-j.gate:
+	default:
+		if j.onContendedGateWait != nil {
+			j.onContendedGateWait()
+		}
+		select {
+		case <-waitCtx.Done():
+			return ErrRunJournalContextDone
+		case <-j.closingSignal:
+			return ErrRunJournalClosed
+		case <-j.gate:
+		}
+	}
+	defer func() { j.gate <- struct{}{} }()
+	j.gateMu.Lock()
+	closing := j.closing
+	j.gateMu.Unlock()
+	if closing {
+		return ErrRunJournalClosed
+	}
+	if err := fileRunContextDone(waitCtx); err != nil {
+		return err
+	}
+	return effect()
+}
+
 func (j *FileRunJournal) SavePlan(ctx context.Context, plan ReviewRunPlan) error {
 	if j == nil {
 		return ErrInvalidRunJournal
@@ -271,7 +357,7 @@ func (j *FileRunJournal) ListPlans(ctx context.Context, tenantID, repositoryID, 
 }
 
 func (j *FileRunJournal) Append(ctx context.Context, expectedHead string, event RunEvent) error {
-	if j == nil {
+	if j == nil || j.gate == nil || j.closingSignal == nil {
 		return ErrInvalidRunJournal
 	}
 	if err := validateFileRunContext(ctx); err != nil {
@@ -283,6 +369,13 @@ func (j *FileRunJournal) Append(ctx context.Context, expectedHead string, event 
 	if err := event.Validate(); err != nil {
 		return err
 	}
+	if event.Kind() == RunEventCanceled {
+		return j.withEffectSection(ctx, func() error { return j.appendValidated(ctx, expectedHead, event) })
+	}
+	return j.appendValidated(ctx, expectedHead, event)
+}
+
+func (j *FileRunJournal) appendValidated(ctx context.Context, expectedHead string, event RunEvent) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if j.closed {
