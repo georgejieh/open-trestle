@@ -62,7 +62,7 @@ func (a *fixedVerificationAuthorizer) Authorize(_ context.Context, _ audit.Revie
 	return a.authority, nil
 }
 
-func appendSelectionEvent(t *testing.T, ledger audit.Ledger, scope audit.ReviewScope, subject string, at time.Time) {
+func appendSelectionEvent(t *testing.T, ledger audit.Ledger, scope audit.ReviewScope, authorization gateway.RouteAttemptAuthorization, at time.Time) {
 	t.Helper()
 	head, found, err := ledger.Head(context.Background(), scope)
 	if err != nil {
@@ -74,7 +74,9 @@ func appendSelectionEvent(t *testing.T, ledger audit.Ledger, scope audit.ReviewS
 		sequence = head.Sequence() + 1
 		previous = head.Identity()
 	}
-	event, err := audit.NewEvent(scope, sequence, previous, audit.EventRouteSelected, subject, []string{strings.Repeat("1", 64), strings.Repeat("2", 64), strings.Repeat("3", 64)}, at)
+	// This legacy verifier fixture has no typed selection receipt. Bind the
+	// attempted record structurally, without claiming exact routing/ranking proof.
+	event, err := audit.NewEvent(scope, sequence, previous, audit.EventRouteSelected, authorization.SelectionReceiptIdentity(), []string{strings.Repeat("1", 64), authorization.RouteRecordIdentity(), strings.Repeat("3", 64)}, at)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +217,7 @@ func TestVerificationHandlerUsesIndependentRouteAndPersistsPromotedFindings(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	appendSelectionEvent(t, ledger, scope, verificationAuthorization.SelectionReceiptIdentity(), time.UnixMilli(210))
+	appendSelectionEvent(t, ledger, scope, verificationAuthorization, time.UnixMilli(210))
 	authorizer := &fixedVerificationAuthorizer{identity: strings.Repeat("a", 64), authority: authority}
 	dispatcher := &recordingDispatcher{adapterID: "test-verifier", result: verificationProviderResult(t, generation.Candidates())}
 	catalog, _ := gateway.NewRouteDispatcherCatalog([]gateway.RouteDispatcher{dispatcher})

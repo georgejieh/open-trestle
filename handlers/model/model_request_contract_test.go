@@ -335,7 +335,7 @@ func TestVerificationDispatchAndOutputReadbackBindReadableContract(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	appendSelectionEvent(t, ledger, scope, authorization.SelectionReceiptIdentity(), time.UnixMilli(210))
+	appendSelectionEvent(t, ledger, scope, authorization, time.UnixMilli(210))
 	authorizer := &fixedVerificationAuthorizer{identity: strings.Repeat("a", 64), authority: authority}
 	dispatcher := &contractRecordingDispatcher{adapterID: "test-verifier", result: verificationProviderResult(t, generation.Candidates())}
 	catalog, err := gateway.NewRouteDispatcherCatalog([]gateway.RouteDispatcher{dispatcher})

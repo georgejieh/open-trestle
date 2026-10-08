@@ -370,7 +370,9 @@ func generationTaskRequest(t *testing.T, scope audit.ReviewScope, inputIdentity,
 
 func seedRouteSelection(t *testing.T, ledger audit.Ledger, scope audit.ReviewScope, authorization gateway.RouteAttemptAuthorization) {
 	t.Helper()
-	event, err := audit.NewEvent(scope, 1, "", audit.EventRouteSelected, authorization.SelectionReceiptIdentity(), []string{strings.Repeat("1", 64), strings.Repeat("2", 64), strings.Repeat("3", 64)}, time.UnixMilli(90))
+	// This legacy model-handler fixture has no typed selection receipt. Bind the
+	// attempted record structurally, without claiming exact routing/ranking proof.
+	event, err := audit.NewEvent(scope, 1, "", audit.EventRouteSelected, authorization.SelectionReceiptIdentity(), []string{strings.Repeat("1", 64), authorization.RouteRecordIdentity(), strings.Repeat("3", 64)}, time.UnixMilli(90))
 	if err != nil {
 		t.Fatal(err)
 	}
