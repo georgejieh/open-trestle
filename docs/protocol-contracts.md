@@ -89,6 +89,7 @@ Runtime authority schemas:
 
 - `schemas/runtime/runtime-route-inventory-v1.schema.json`
 - `schemas/runtime/runtime-policy-v1.schema.json`
+- `schemas/runtime/runtime-policy-v2.schema.json`
 - `schemas/runtime/configuration-validation-result-v1.schema.json`
 - `schemas/runtime/route-inventory-identity-result-v1.schema.json`
 - `schemas/runtime/runtime-status-v1.schema.json`
@@ -103,6 +104,8 @@ Runtime authority schemas:
 - `schemas/runtime/github-permission-admin-result-v2.schema.json`
 - `schemas/runtime/github-source-broker-v1.schema.json`
 - `schemas/runtime/github-webhook-admin-result-v1.schema.json`
+
+Runtime policy v1 keeps its original wire and identity contract. Its `preferred_route_record_identities` are ordered ranking hints, not a verifier-route grant. Runtime policy v2 requires `verification_route_record_identity`, an exact nonzero record identity in the bound route inventory. It binds that grant and version into a distinct policy identity. The local route-pair resolver accepts only the v2 explicit grant, plus a generation pin, and checks local eligibility and independence before producing a preliminary pair. It never derives verifier authority from the preferred-route list. This startup pair is not authorization for an actual sanitized request, does not permit fallback, and does not enable dispatch by itself. Historical v1 local admission remains unchanged.
 
 The inventory adds exactly three schemas (79 to 82): the source-broker descriptor v1, configuration-only permission-admin result v2, and integration-only check request v2. The descriptor retains its native 20 fields, `single_host_exclusive` ownership, and explicit token-creation and demand-renewal booleans. Its schema date pattern is structural; native source parsing validates dates and normalizes admitted trailing endpoint slashes. Setup/admin separately require API year >=2000. Schema validation never opens an owner or approves effects.
 

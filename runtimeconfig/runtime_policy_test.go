@@ -79,3 +79,63 @@ func TestDecodeRuntimePolicyRejectsAmbiguousAdapterNamespace(t *testing.T) {
 		t.Fatal("ambiguous adapter namespace accepted")
 	}
 }
+
+// The v1 policy remains an independently decodable historical contract.
+func TestRuntimePolicyV2ExplicitVerifierGrantAndV1Identity(t *testing.T) {
+	inventory, err := NewRouteInventory(context.Background(), []RouteDefinition{routeDefinition(t, "model-a")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := runtimePolicyDocument(t, inventory)
+	old, err := DecodeRuntimePolicy(context.Background(), bytes.NewReader(original), inventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const oldIdentity = "6cb218e80d4983aeaed4daa8a1a74e1717b9ff19885c56346af4ab9a3840a3d6"
+	if old.Identity() != oldIdentity {
+		t.Fatalf("v1 identity=%s, expected %s", old.Identity(), oldIdentity)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(original, &document); err != nil {
+		t.Fatal(err)
+	}
+	record := inventory.Candidates()[0].ResolvedRecord().RouteRegistryRecord().Identity()
+	for _, value := range []any{"", nil, record} {
+		document["verification_route_record_identity"] = value
+		encoded, _ := json.Marshal(document)
+		if _, err := DecodeRuntimePolicy(context.Background(), bytes.NewReader(encoded), inventory); err == nil {
+			t.Fatalf("v1 accepted presence: %v", value)
+		}
+	}
+	encoded, _ := json.Marshal(document)
+	wrongCase := bytes.Replace(encoded, []byte(`"verification_route_record_identity"`), []byte(`"Verification_route_record_identity"`), 1)
+	if _, err := DecodeRuntimePolicy(context.Background(), bytes.NewReader(wrongCase), inventory); err == nil {
+		t.Fatal("v1 accepted alternate spelling of new field")
+	}
+	document["schema_version"] = 2
+	for _, value := range []any{"", nil, strings.Repeat("b", 64)} {
+		document["verification_route_record_identity"] = value
+		encoded, _ := json.Marshal(document)
+		if _, err := DecodeRuntimePolicy(context.Background(), bytes.NewReader(encoded), inventory); err == nil {
+			t.Fatalf("v2 accepted invalid record: %v", value)
+		}
+	}
+	delete(document, "verification_route_record_identity")
+	encoded, _ = json.Marshal(document)
+	if _, err := DecodeRuntimePolicy(context.Background(), bytes.NewReader(encoded), inventory); err == nil {
+		t.Fatal("v2 accepted missing grant")
+	}
+	document["pinned_route_record_identity"] = record
+	document["verification_route_record_identity"] = record
+	encoded, _ = json.Marshal(document)
+	if _, err := DecodeRuntimePolicy(context.Background(), bytes.NewReader(encoded), inventory); err == nil {
+		t.Fatal("v2 accepted duplicate generation/verifier record")
+	}
+	document["pinned_route_record_identity"] = ""
+	document["verification_route_record_identity"] = record
+	encoded, _ = json.Marshal(document)
+	current, err := DecodeRuntimePolicy(context.Background(), bytes.NewReader(encoded), inventory)
+	if err != nil || current.VerificationRouteRecordIdentity() != record || current.Identity() == old.Identity() {
+		t.Fatalf("v2 grant and identity: %v", err)
+	}
+}

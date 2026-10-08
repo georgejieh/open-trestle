@@ -29,6 +29,10 @@ JSON is the default; `--format text` selects a short human-readable summary.
 loose-object-only behavior. There are no publish, resume, state, or existing-run
 identity flags.
 
+## Runtime policy route-pair boundary
+
+The existing `local-git model-review` command and historical runtime policy v1 keep their current behavior. A single entry in `preferred_route_record_identities` is a ranking hint, not an exact verifier grant. Runtime policy v2 adds required `verification_route_record_identity`, which must name one record in the bound inventory and differ from the generation pin. The preliminary local generation route-pair resolver uses only that explicit grant, requires local-only zones with logging disabled, and checks both routes against eligibility and configured independence. Preferred-route hints cannot substitute for the grant or redirect the pair. Neither a schema-valid v2 document nor a preflight pair authorizes an actual model request. Generation and verification need separate eligibility checks for their actual sanitized requests, exact record pins, and no fallback before dispatch. This route-pair correction is not wired to this command, the daemon, or model workers.
+
 ## Object store profile
 
 The default profile is `loose-only`. It reads only loose Git commit, tree, and

@@ -42,8 +42,8 @@ func TestPublishedProtocolSchemasHaveUniqueBoundedObjectContracts(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count != 101 {
-		t.Fatalf("published schema count=%d, want 101", count)
+	if count != 102 {
+		t.Fatalf("published schema count=%d, want 102", count)
 	}
 }
 
@@ -334,4 +334,44 @@ func containsSchemaField(fields []string, name string) bool {
 		}
 	}
 	return false
+}
+
+func TestRuntimePolicyV2SchemaExactVerifierGrant(t *testing.T) {
+	oldBytes, err := os.ReadFile(filepath.Join("..", "..", "schemas", "runtime", "runtime-policy-v1.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprintf("%x", sha256.Sum256(oldBytes)); got != "dff07bb537101767273b2d12a8d151681f44cd8a00fd88e7b4855e7006ccb964" {
+		t.Fatalf("v1 schema bytes changed: %s", got)
+	}
+	old := schemaFixtureObject(t, oldBytes)
+	newBytes, err := os.ReadFile(filepath.Join("..", "..", "schemas", "runtime", "runtime-policy-v2.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := schemaFixtureObject(t, newBytes)
+	if current["$id"] != "urn:open-trestle:schema:runtime:policy:v2" || current["$schema"] != old["$schema"] || current["type"] != "object" || current["additionalProperties"] != false {
+		t.Fatal("v2 contract identity/closure")
+	}
+	prior := schemaFixtureMap(t, old["properties"])
+	properties := schemaFixtureMap(t, current["properties"])
+	if len(properties) != len(prior)+1 || !reflect.DeepEqual(properties["schema_version"], map[string]any{"const": float64(2)}) {
+		t.Fatal("v2 field or version mismatch")
+	}
+	for key, value := range prior {
+		if key != "schema_version" && !reflect.DeepEqual(value, properties[key]) {
+			t.Fatalf("v1 property changed: %s", key)
+		}
+	}
+	if !reflect.DeepEqual(properties["verification_route_record_identity"], map[string]any{"description": "Exact inventory record grant for the local-only verification route; ranking preferences do not authorize this route.", "type": "string", "pattern": "^[0-9a-f]{64}$", "not": map[string]any{"const": strings.Repeat("0", 64)}}) {
+		t.Fatal("v2 verifier grant not a nonzero digest")
+	}
+	required := schemaFixtureStrings(t, current["required"])
+	before := schemaFixtureStrings(t, old["required"])
+	sort.Strings(required)
+	before = append(before, "verification_route_record_identity")
+	sort.Strings(before)
+	if !reflect.DeepEqual(required, before) {
+		t.Fatal("v2 grant not required")
+	}
 }
