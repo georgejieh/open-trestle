@@ -101,6 +101,12 @@ type TaskRuntimeState struct {
 	preparedEventIdentity string
 }
 
+func (s TaskRuntimeState) PreparedContextPacket() (PreparedContextPacket, bool) {
+	if s.status != TaskRuntimeLeased || s.preparedEvent.Kind() != RunEventContextPacketPrepared {
+		return PreparedContextPacket{}, false
+	}
+	return PreparedContextPacket{s.preparedEvent}, true
+}
 func (s TaskRuntimeState) PreparedContextAbstention() (PreparedContextAbstention, bool) {
 	if s.status != TaskRuntimeLeased || s.preparedEvent.Kind() != RunEventContextAbstentionPrepared {
 		return PreparedContextAbstention{}, false
@@ -267,6 +273,9 @@ func (s *ReviewRunState) applyTaskEvent(event RunEvent, runtime *TaskRuntimeStat
 		runtime.leaseExpiresAtMillis = event.leaseExpiresAtMillis
 	case RunEventTaskLeaseRenewed:
 		if runtime.preparedEventIdentity != "" {
+			if runtime.preparedEvent.Kind() == RunEventContextPacketPrepared {
+				return ErrPreparedContextPacket
+			}
 			return ErrPreparedContextAbstention
 		}
 		matching := runtime.status == TaskRuntimeLeased && event.Attempt() == runtime.attempts && event.LeaseTokenIdentity() == runtime.leaseTokenIdentity && event.WorkerIdentity() == runtime.workerIdentity
@@ -277,6 +286,9 @@ func (s *ReviewRunState) applyTaskEvent(event RunEvent, runtime *TaskRuntimeStat
 		runtime.leaseExpiresAtMillis = event.leaseExpiresAtMillis
 	case RunEventTaskSucceeded:
 		if runtime.preparedEventIdentity != "" {
+			if runtime.preparedEvent.Kind() == RunEventContextPacketPrepared {
+				return ErrPreparedContextPacket
+			}
 			return ErrPreparedContextAbstention
 		}
 		if !runtime.matchesLeaseResult(event) {
@@ -286,6 +298,19 @@ func (s *ReviewRunState) applyTaskEvent(event RunEvent, runtime *TaskRuntimeStat
 		runtime.outputIdentity = event.OutputIdentity()
 		runtime.workerIdentity = ""
 		runtime.leaseExpiresAtMillis = 0
+	case RunEventContextPacketPrepared:
+		if runtime.definition.Kind() != TaskAssembleContext || runtime.preparedEventIdentity != "" || !runtime.matchesLeaseResult(event) || event.occurredAtMillis > runtime.leaseExpiresAtMillis || !event.packetDescriptor.valid(s.plan.Scope()) || event.packetDescriptor.ArtifactIdentity != event.OutputIdentity() || event.packetDescriptor.CreatedAtMilliseconds > event.occurredAtMillis || event.packetDescriptor.ExpiresAtMilliseconds <= event.occurredAtMillis {
+			return ErrPreparedContextPacket
+		}
+		expectedLease := TaskLease{planIdentity: s.plan.Identity(), taskKey: runtime.Key(), taskIdentity: runtime.definition.Identity(), handlerIdentity: runtime.definition.HandlerIdentity(), workerIdentity: runtime.workerIdentity, tokenIdentity: runtime.leaseTokenIdentity, eventIdentity: runtime.lastEventIdentity, attempt: runtime.attempts, expiresAtMillis: runtime.leaseExpiresAtMillis}
+		if event.packetDescriptor.LeaseEventIdentity != runtime.lastEventIdentity || event.packetDescriptor.LeaseIdentity != deriveTaskLeaseIdentity(expectedLease) {
+			return ErrPreparedContextPacket
+		}
+		if !exactPacketDependencies(*s, *runtime, event.packetDescriptor) {
+			return ErrPreparedContextPacket
+		}
+		runtime.preparedEvent = event
+		runtime.preparedEventIdentity = event.Identity()
 	case RunEventContextAbstentionPrepared:
 		if runtime.definition.Kind() != TaskAssembleContext || runtime.preparedEventIdentity != "" || !runtime.matchesLeaseResult(event) || event.occurredAtMillis > runtime.leaseExpiresAtMillis {
 			return ErrPreparedContextAbstention
@@ -296,7 +321,11 @@ func (s *ReviewRunState) applyTaskEvent(event RunEvent, runtime *TaskRuntimeStat
 		runtime.preparedEvent = event
 		runtime.preparedEventIdentity = event.Identity()
 	case RunEventTaskFailed:
-		if runtime.preparedEventIdentity != "" && (event.OutputIdentity() != runtime.preparedEvent.OutputIdentity() || event.Failure() != runtime.preparedEvent.Failure() || event.Attempt() != runtime.preparedEvent.Attempt() || event.LeaseTokenIdentity() != runtime.preparedEvent.LeaseTokenIdentity()) {
+		packetTermination := runtime.preparedEvent.Kind() == RunEventContextPacketPrepared && event.OutputIdentity() == "" && event.Failure() == RunFailurePolicy && event.retryAtMillis == 0 && event.occurredAtMillis >= runtime.leaseExpiresAtMillis && event.Attempt() == runtime.attempts && event.LeaseTokenIdentity() == runtime.leaseTokenIdentity
+		if runtime.preparedEvent.Kind() == RunEventContextPacketPrepared && !packetTermination {
+			return ErrPreparedContextPacket
+		}
+		if runtime.preparedEventIdentity != "" && !packetTermination && (event.OutputIdentity() != runtime.preparedEvent.OutputIdentity() || event.Failure() != runtime.preparedEvent.Failure() || event.Attempt() != runtime.preparedEvent.Attempt() || event.LeaseTokenIdentity() != runtime.preparedEvent.LeaseTokenIdentity()) {
 			return ErrPreparedContextAbstention
 		}
 		if runtime.preparedEventIdentity == "" && event.OutputIdentity() != "" && event.occurredAtMillis > runtime.leaseExpiresAtMillis {
@@ -305,7 +334,7 @@ func (s *ReviewRunState) applyTaskEvent(event RunEvent, runtime *TaskRuntimeStat
 		// The coordinator can settle an exhausted lease without reviving worker authority.
 		exhaustedExpiry := runtime.status == TaskRuntimeLeased && runtime.attempts == runtime.definition.MaxAttempts() && event.Attempt() == runtime.attempts && event.LeaseTokenIdentity() == runtime.leaseTokenIdentity && event.occurredAtMillis >= runtime.leaseExpiresAtMillis && event.Failure() == RunFailureResourceLimit && event.retryAtMillis == 0
 		preparedSettlement := runtime.preparedEventIdentity != "" && event.OutputIdentity() != "" && event.OutputIdentity() == runtime.preparedEvent.OutputIdentity() && event.Failure() == runtime.preparedEvent.Failure()
-		if !runtime.matchesLeaseResult(event) && !exhaustedExpiry && !preparedSettlement {
+		if !runtime.matchesLeaseResult(event) && !exhaustedExpiry && !preparedSettlement && !packetTermination {
 			return ErrRunTransitionLeaseMismatch
 		}
 		if event.OutputIdentity() != "" && runtime.definition.Kind() != TaskAssembleContext {

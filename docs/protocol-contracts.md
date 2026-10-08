@@ -31,6 +31,7 @@ Control-plane schemas:
 - `schemas/controlplane/review-run-event-v1.schema.json`
 - `schemas/controlplane/review-run-event-v2.schema.json`
 - `schemas/controlplane/review-run-event-v3.schema.json`
+- `schemas/controlplane/review-run-event-v4.schema.json`
 - `schemas/controlplane/review-run-receipt-v1.schema.json`
 - `schemas/controlplane/review-run-receipt-v2.schema.json`
 - `schemas/controlplane/review-task-lease-v1.schema.json`
@@ -45,6 +46,8 @@ Control-plane schemas:
 - `schemas/controlplane/runtime-status-response-v1.schema.json`
 
 The local file-backed full-review context worker emits a v3 `context_abstention_prepared` event before writing any abstention artifact. Its bounded canonical artifact envelope contains omission metadata only, not repository source bytes or a model claim. Recovery must verify the exact scope, plan, task, provenance, failure class, and artifact identity before a v2 failed-task event links the result. Old v1 no-output failures and v2 linked failures remain readable. The PostgreSQL journal's current 1 MiB event limit does not qualify v3; local full review rejects nonlocal stores.
+
+A v4 `context_packet_prepared` event stores only packet artifact metadata, exact identity, creation/expiry, source root/snapshot, upstream dependencies, scope, task, attempt, exact lease identity, original lease event identity, and lease token identity. The file journal fsyncs this checkpoint before a caller may put packet bytes. This first checkpoint cannot settle success, renew or reclaim the lease, or authorize dispatch. Trusted recovery may terminally fail an expired packet-only preparation with a policy-class, no-output task failure. It cannot treat the preparatory packet as output. This does not implement the later sanitized-input checkpoint or verify packet bytes against immutable upstream sources. v1/v2/v3 event bytes remain unchanged.
 
 Artifact schemas:
 

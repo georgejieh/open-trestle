@@ -379,6 +379,9 @@ func (c *Coordinator) RenewTaskLease(ctx context.Context, plan ReviewRunPlan, le
 			return TaskLease{}, ReviewRunState{}, ErrRunTransitionSequenceMismatch
 		}
 		runtime, exists := state.Task(lease.TaskKey())
+		if runtime.preparedEvent.Kind() == RunEventContextPacketPrepared {
+			return TaskLease{}, ReviewRunState{}, ErrPreparedContextPacket
+		}
 		if !exists || lease.PlanIdentity() != plan.Identity() || lease.HandlerIdentity() != runtime.Definition().HandlerIdentity() || !runtimeMatchesLease(runtime, lease) || runtime.preparedEventIdentity != "" || at.UnixMilli() > runtime.leaseExpiresAtMillis {
 			return TaskLease{}, ReviewRunState{}, ErrRunTransitionLeaseMismatch
 		}
@@ -456,6 +459,9 @@ func (c *Coordinator) CompleteTask(ctx context.Context, plan ReviewRunPlan, leas
 		}
 		if !runtimeMatchesLease(runtime, lease) {
 			return ReviewRunState{}, ErrRunTransitionLeaseMismatch
+		}
+		if runtime.preparedEvent.Kind() == RunEventContextPacketPrepared {
+			return ReviewRunState{}, ErrPreparedContextPacket
 		}
 		if runtime.preparedEventIdentity != "" && (completion.Status() != TaskCompletionFailed || completion.OutputIdentity() != runtime.preparedEvent.OutputIdentity() || completion.Failure() != runtime.preparedEvent.Failure()) {
 			return ReviewRunState{}, ErrPreparedContextAbstention

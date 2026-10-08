@@ -42,8 +42,8 @@ func TestPublishedProtocolSchemasHaveUniqueBoundedObjectContracts(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count != 102 {
-		t.Fatalf("published schema count=%d, want 102", count)
+	if count != 103 {
+		t.Fatalf("published schema count=%d, want 103", count)
 	}
 }
 
@@ -327,6 +327,27 @@ func TestControlPlaneV3PreparedEventSchema(t *testing.T) {
 		t.Fatal("v3 fields optional")
 	}
 }
+func TestControlPlaneV4PacketPreparedSchema(t *testing.T) {
+	encoded, err := os.ReadFile(filepath.Join("..", "..", "schemas", "controlplane", "review-run-event-v4.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := schemaFixtureObject(t, encoded)
+	if schema["$id"] != "urn:open-trestle:schema:controlplane:review-run-event:v4" || schema["additionalProperties"] != false {
+		t.Fatal("v4 scope or closure")
+	}
+	fields := schemaFixtureMap(t, schema["properties"])
+	required := schemaFixtureStrings(t, schema["required"])
+	if !containsSchemaField(required, "packet_descriptor") || containsSchemaField(required, "prepared_artifact") || containsSchemaField(required, "output_kind") || fields["kind"] != nil && !reflect.DeepEqual(fields["kind"], map[string]any{"const": "context_packet_prepared"}) || !reflect.DeepEqual(fields["schema_version"], map[string]any{"const": float64(4)}) || !reflect.DeepEqual(fields["failure"], map[string]any{"const": ""}) {
+		t.Fatal("v4 packet structure")
+	}
+	descriptor := schemaFixtureMap(t, fields["packet_descriptor"])
+	properties := schemaFixtureMap(t, descriptor["properties"])
+	if descriptor["additionalProperties"] != false || len(properties) != 12 || len(schemaFixtureStrings(t, descriptor["required"])) != 12 || properties["payload"] != nil {
+		t.Fatal("v4 descriptor not closed and content-free")
+	}
+}
+
 func containsSchemaField(fields []string, name string) bool {
 	for _, field := range fields {
 		if field == name {
