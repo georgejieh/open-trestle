@@ -1,6 +1,7 @@
 package runtimecatalog
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/provider"
+	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 )
 
@@ -22,9 +24,11 @@ type LocalGenerationRoutePair struct {
 	registryRevision, performanceRevision                                                             uint64
 }
 
-func (p LocalGenerationRoutePair) Identity() string          { return p.identity }
-func (p LocalGenerationRoutePair) PolicyIdentity() string    { return p.policyIdentity }
-func (p LocalGenerationRoutePair) InventoryIdentity() string { return p.inventoryIdentity }
+func (p LocalGenerationRoutePair) Identity() string            { return p.identity }
+func (p LocalGenerationRoutePair) RegistryRevision() uint64    { return p.registryRevision }
+func (p LocalGenerationRoutePair) PerformanceRevision() uint64 { return p.performanceRevision }
+func (p LocalGenerationRoutePair) PolicyIdentity() string      { return p.policyIdentity }
+func (p LocalGenerationRoutePair) InventoryIdentity() string   { return p.inventoryIdentity }
 func (p LocalGenerationRoutePair) GenerationRecordIdentity() string {
 	return p.generationRecordIdentity
 }
@@ -165,4 +169,96 @@ func ResolveLocalGenerationRoutePair(configuration runtimeconfig.RuntimePolicy, 
 		return fail()
 	}
 	return value, nil
+}
+
+// LocalGenerationRoutePlan exposes only identities for an unaudited decision.
+// It is not dispatch authority; typed routing and attempt objects remain private
+// until a separate audited grant enforces selection and claim prerequisites.
+type LocalGenerationRoutePlan struct {
+	routingInput                                    gateway.ReviewRoutingInput
+	eligibility                                     gateway.RouteEligibilityResult
+	ranking                                         gateway.RouteRankingResult
+	selection                                       gateway.RouteSelectionReceipt
+	authorization                                   gateway.RouteAttemptAuthorization
+	policyIdentity, inventoryIdentity, pairIdentity string
+	registryRevision, performanceRevision           uint64
+}
+
+func (p LocalGenerationRoutePlan) RequestIdentity() string { return p.routingInput.RequestIdentity() }
+func (p LocalGenerationRoutePlan) RoutingInputIdentity() string {
+	return p.selection.RoutingInputIdentity()
+}
+func (p LocalGenerationRoutePlan) SelectionIdentity() string { return p.selection.Identity() }
+func (p LocalGenerationRoutePlan) RankingPolicyIdentity() string {
+	return p.ranking.RankingPolicyIdentity()
+}
+func (p LocalGenerationRoutePlan) SelectedRecordIdentity() string {
+	return p.selection.SelectedRecordIdentity()
+}
+func (p LocalGenerationRoutePlan) PolicyIdentity() string      { return p.policyIdentity }
+func (p LocalGenerationRoutePlan) InventoryIdentity() string   { return p.inventoryIdentity }
+func (p LocalGenerationRoutePlan) PairIdentity() string        { return p.pairIdentity }
+func (p LocalGenerationRoutePlan) RegistryRevision() uint64    { return p.registryRevision }
+func (p LocalGenerationRoutePlan) PerformanceRevision() uint64 { return p.performanceRevision }
+
+// PlanLocalGenerationRoute checks the actual sanitized request against only the bound generation record.
+// It neither writes a selection event nor grants independently usable dispatch authority.
+func PlanLocalGenerationRoute(ctx context.Context, scope audit.ReviewScope, request provider.Request, configuration runtimeconfig.RuntimePolicy, inventory runtimeconfig.RouteInventory, pair LocalGenerationRoutePair) (LocalGenerationRoutePlan, error) {
+	fail := func() (LocalGenerationRoutePlan, error) {
+		return LocalGenerationRoutePlan{}, ErrInvalidLocalGenerationRoutePair
+	}
+	if ctx == nil || ctx.Err() != nil || scope.Validate() != nil || review.ValidateCandidateEgressRequest(request, scope.Identity()) != nil || configuration.Validate() != nil || inventory.Validate() != nil || configuration.ValidateAgainstInventory(inventory) != nil || pair.Validate() != nil || configuration.Identity() != pair.PolicyIdentity() || inventory.Identity() != pair.InventoryIdentity() || inventory.RegistryRevision() != pair.RegistryRevision() || inventory.PerformanceRevision() != pair.PerformanceRevision() {
+		return fail()
+	}
+	current, err := ResolveLocalGenerationRoutePair(configuration, inventory)
+	if err != nil || current != pair {
+		return fail()
+	}
+	var candidate gateway.ObservedRouteCandidate
+	var observation provider.RoutePerformanceObservation
+	candidateCount, observationCount := 0, 0
+	for _, route := range inventory.Candidates() {
+		record := route.ResolvedRecord().RouteRegistryRecord()
+		if record.Identity() == pair.GenerationRecordIdentity() {
+			candidate = route
+			candidateCount++
+			if record.RouteCandidateDeclaration().RouteCapabilityDeclaration().RouteReference() != pair.GenerationRoute() || record.RouteCandidateDeclaration().ContentLoggingMode() != provider.ContentLoggingDisabled || pair.GenerationRoute().Zone() != provider.ProviderZoneLocal {
+				return fail()
+			}
+		}
+	}
+	for _, value := range inventory.PerformanceObservations() {
+		if value.RecordIdentity() == pair.GenerationRecordIdentity() {
+			observation = value
+			observationCount++
+		}
+	}
+	if candidateCount != 1 || observationCount != 1 || observation.ObservationRevision() != pair.PerformanceRevision() || ctx.Err() != nil {
+		return fail()
+	}
+	budget, err := review.ModelRequestBudget(request, configuration.Budget())
+	if err != nil {
+		return fail()
+	}
+	input, err := gateway.NewReviewRoutingInput(scope, request, configuration.Requirements(), configuration.Constraints())
+	if err != nil {
+		return fail()
+	}
+	eligibility, err := gateway.FilterEligibleRoutes(input, budget, inventory.RegistryRevision(), []gateway.ObservedRouteCandidate{candidate})
+	if err != nil || len(eligibility.EligibleRoutes()) != 1 || len(eligibility.RejectedRoutes()) != 0 {
+		return fail()
+	}
+	ranking, err := gateway.RankEligibleRoutes(eligibility, configuration.Ranking(), inventory.PerformanceRevision(), []provider.RoutePerformanceObservation{observation})
+	if err != nil || len(ranking.RankedRoutes()) != 1 {
+		return fail()
+	}
+	selection, err := gateway.NewRouteSelectionReceipt(eligibility, ranking)
+	if err != nil || selection.SelectedRecordIdentity() != pair.GenerationRecordIdentity() {
+		return fail()
+	}
+	authorization, err := gateway.NewInitialRouteAttemptAuthorization(request, selection, ranking)
+	if err != nil || authorization.RouteRecordIdentity() != pair.GenerationRecordIdentity() || authorization.RouteReference() != pair.GenerationRoute() || authorization.ContentLoggingMode() != provider.ContentLoggingDisabled || authorization.Kind() != gateway.RouteAttemptInitial || authorization.AttemptOrdinal() != 1 || authorization.RouteAttemptOrdinal() != 1 || authorization.ReservedCostMicroUSD() != authorization.MaximumCost().MaximumCostMicroUSD() || ctx.Err() != nil {
+		return fail()
+	}
+	return LocalGenerationRoutePlan{input, eligibility, ranking, selection, authorization, configuration.Identity(), inventory.Identity(), pair.Identity(), inventory.RegistryRevision(), inventory.PerformanceRevision()}, nil
 }
