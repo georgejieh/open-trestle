@@ -48,6 +48,7 @@ const (
 	RunEventSucceeded
 	RunEventFailed
 	RunEventCanceled
+	RunEventContextAbstentionPrepared
 )
 
 func (k RunEventKind) String() string {
@@ -72,6 +73,8 @@ func (k RunEventKind) String() string {
 		return "run_failed"
 	case RunEventCanceled:
 		return "run_canceled"
+	case RunEventContextAbstentionPrepared:
+		return "context_abstention_prepared"
 	default:
 		return ""
 	}
@@ -138,6 +141,7 @@ type RunEvent struct {
 	failure              RunFailure
 	retryAtMillis        int64
 	occurredAtMillis     int64
+	preparedArtifact     []byte
 }
 
 // NewRunEvent creates one structurally closed journal event.
@@ -186,10 +190,14 @@ func NewRunEvent(
 	if err := event.validateFields(); err != nil {
 		return RunEvent{}, err
 	}
+	if (kind == RunEventTaskFailed && outputIdentity != "" || kind == RunEventContextAbstentionPrepared) && task.Kind() != TaskAssembleContext {
+		return RunEvent{}, ErrInvalidRunEventOutput
+	}
 	event.identity = deriveRunEventIdentity(event)
 	return event, nil
 }
 
+func (e RunEvent) PreparedArtifact() []byte   { return append([]byte(nil), e.preparedArtifact...) }
 func (e RunEvent) Identity() string           { return e.identity }
 func (e RunEvent) PlanIdentity() string       { return e.planIdentity }
 func (e RunEvent) Scope() audit.ReviewScope   { return e.scope }
@@ -226,6 +234,15 @@ func (e RunEvent) Validate() error {
 	}
 	if err := e.validateFields(); err != nil {
 		return err
+	}
+	if e.kind != RunEventContextAbstentionPrepared && len(e.preparedArtifact) != 0 {
+		return ErrInvalidRunEventEncoding
+	}
+	if e.kind == RunEventContextAbstentionPrepared {
+		identity, err := preparedArtifactIdentity(e.preparedArtifact, e.scope)
+		if err != nil || identity != e.outputIdentity {
+			return ErrInvalidRunEventOutput
+		}
 	}
 	if e.identity != deriveRunEventIdentity(e) {
 		return ErrInvalidRunEventIdentity
@@ -266,11 +283,15 @@ func (e RunEvent) validateFields() error {
 			return ErrInvalidRunEventOutput
 		}
 	case RunEventTaskFailed:
-		if !hasTask || e.attempt == 0 || !validControlPlaneDigest(e.leaseTokenIdentity) || e.workerIdentity != "" || e.leaseExpiresAtMillis != 0 || e.outputIdentity != "" || e.failure.String() == "" {
+		if !hasTask || e.attempt == 0 || !validControlPlaneDigest(e.leaseTokenIdentity) || e.workerIdentity != "" || e.leaseExpiresAtMillis != 0 || (e.outputIdentity != "" && !validControlPlaneDigest(e.outputIdentity)) || e.failure.String() == "" {
 			return ErrInvalidRunEventFailure
 		}
 		if e.retryAtMillis != 0 && (!e.failure.Retryable() || e.retryAtMillis < e.occurredAtMillis) {
 			return ErrInvalidRunEventTime
+		}
+	case RunEventContextAbstentionPrepared:
+		if !hasTask || e.attempt == 0 || !validControlPlaneDigest(e.leaseTokenIdentity) || e.workerIdentity != "" || e.leaseExpiresAtMillis != 0 || !validControlPlaneDigest(e.outputIdentity) || (e.failure != RunFailurePolicy && e.failure != RunFailureResourceLimit) || e.retryAtMillis != 0 || len(e.preparedArtifact) == 0 || len(e.preparedArtifact) > maxPreparedArtifactBytes {
+			return ErrInvalidRunEventOutput
 		}
 	case RunEventTaskSkipped:
 		if !hasTask || e.hasAttemptFields() || e.outputIdentity != "" || (e.failure != RunFailureDependency && e.failure != RunFailurePolicy) || e.retryAtMillis != 0 {
@@ -319,32 +340,48 @@ func runMillisToTime(value int64) time.Time {
 	return time.UnixMilli(value).UTC()
 }
 func deriveRunEventIdentity(event RunEvent) string {
+	version := 1
+	if event.kind == RunEventContextAbstentionPrepared {
+		version = 3
+	}
+	if event.kind == RunEventTaskFailed && event.outputIdentity != "" {
+		version = 2
+	}
 	preimage := struct {
-		Contract     string `json:"contract"`
-		Version      int    `json:"version"`
-		Plan         string `json:"plan"`
-		Scope        string `json:"scope"`
-		Sequence     uint64 `json:"sequence"`
-		Previous     string `json:"previous"`
-		Kind         string `json:"kind"`
-		TaskKey      string `json:"task_key"`
-		Task         string `json:"task"`
-		Attempt      uint8  `json:"attempt"`
-		LeaseToken   string `json:"lease_token"`
-		Worker       string `json:"worker"`
-		LeaseExpires int64  `json:"lease_expires"`
-		Output       string `json:"output"`
-		Failure      string `json:"failure"`
-		RetryAt      int64  `json:"retry_at"`
-		OccurredAt   int64  `json:"occurred_at"`
+		Contract         string `json:"contract"`
+		Version          int    `json:"version"`
+		Plan             string `json:"plan"`
+		Scope            string `json:"scope"`
+		Sequence         uint64 `json:"sequence"`
+		Previous         string `json:"previous"`
+		Kind             string `json:"kind"`
+		TaskKey          string `json:"task_key"`
+		Task             string `json:"task"`
+		Attempt          uint8  `json:"attempt"`
+		LeaseToken       string `json:"lease_token"`
+		Worker           string `json:"worker"`
+		LeaseExpires     int64  `json:"lease_expires"`
+		Output           string `json:"output"`
+		OutputKind       string `json:"output_kind,omitempty"`
+		Failure          string `json:"failure"`
+		RetryAt          int64  `json:"retry_at"`
+		OccurredAt       int64  `json:"occurred_at"`
+		PreparedArtifact []byte `json:"prepared_artifact,omitempty"`
 	}{
-		Contract: "open-trestle/review-run-event", Version: 1,
+		Contract: "open-trestle/review-run-event", Version: version,
 		Plan: event.planIdentity, Scope: event.scope.Identity(), Sequence: event.sequence,
 		Previous: event.previousIdentity, Kind: event.kind.String(),
 		TaskKey: event.taskKey, Task: event.taskIdentity, Attempt: event.attempt,
 		LeaseToken: event.leaseTokenIdentity, Worker: event.workerIdentity,
-		LeaseExpires: event.leaseExpiresAtMillis, Output: event.outputIdentity,
-		Failure: event.failure.String(), RetryAt: event.retryAtMillis, OccurredAt: event.occurredAtMillis,
+		LeaseExpires: event.leaseExpiresAtMillis, Output: event.outputIdentity, OutputKind: contextFailureOutputKind((event.kind == RunEventTaskFailed && event.outputIdentity != "") || event.kind == RunEventContextAbstentionPrepared),
+		Failure: event.failure.String(), RetryAt: event.retryAtMillis, OccurredAt: event.occurredAtMillis, PreparedArtifact: event.preparedArtifact,
 	}
 	return hashControlPlaneValue(preimage)
+}
+
+func contextFailureOutputKind(present bool) string {
+	if present {
+		return "context_abstention"
+	}
+	return ""
 }

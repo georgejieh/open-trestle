@@ -75,7 +75,7 @@ func (r ReviewTaskReceipt) Validate() error {
 			return ErrInvalidReviewRunReceipt
 		}
 	case TaskRuntimeFailed:
-		if r.attempts == 0 || r.leaseExpiresAtMillis != 0 || r.outputIdentity != "" || r.failure.String() == "" {
+		if r.attempts == 0 || r.leaseExpiresAtMillis != 0 || (r.outputIdentity != "" && (r.kind != TaskAssembleContext || !validControlPlaneDigest(r.outputIdentity))) || r.failure.String() == "" {
 			return ErrInvalidReviewRunReceipt
 		}
 		canRetry := r.failure.Retryable() && r.attempts < r.maxAttempts
@@ -215,6 +215,7 @@ type reviewTaskReceiptRecord struct {
 	MaxAttempts                uint8  `json:"max_attempts"`
 	LeaseExpiresAtMilliseconds int64  `json:"lease_expires_at_milliseconds"`
 	OutputIdentity             string `json:"output_identity"`
+	OutputKind                 string `json:"output_kind,omitempty"`
 	Failure                    string `json:"failure"`
 	RetryAtMilliseconds        int64  `json:"retry_at_milliseconds"`
 }
@@ -259,7 +260,7 @@ func ParseReviewRunReceipt(encoded []byte) (ReviewRunReceipt, error) {
 		return ReviewRunReceipt{}, ErrInvalidReviewRunReceiptEncoding
 	}
 	canonical, err := json.Marshal(record)
-	if err != nil || !bytes.Equal(canonical, encoded) || record.Contract != "open-trestle/review-run-receipt" || record.SchemaVersion != 1 {
+	if err != nil || !bytes.Equal(canonical, encoded) || record.Contract != "open-trestle/review-run-receipt" || (record.SchemaVersion != 1 && record.SchemaVersion != 2) {
 		return ReviewRunReceipt{}, ErrInvalidReviewRunReceiptEncoding
 	}
 	scope, err := audit.NewReviewScope(record.TenantID, record.RepositoryID, record.ReviewRunID)
@@ -304,8 +305,13 @@ func ParseReviewRunReceipt(encoded []byte) (ReviewRunReceipt, error) {
 		lastOccurredAtMillis: record.LastOccurredAtMilliseconds,
 		outputIdentity:       record.OutputIdentity, failure: failure, tasks: tasks,
 	}
-	if err := receipt.Validate(); err != nil {
-		return ReviewRunReceipt{}, err
+	if err := receipt.Validate(); err != nil || record.SchemaVersion != reviewRunReceiptVersion(receipt) {
+		return ReviewRunReceipt{}, ErrInvalidReviewRunReceiptEncoding
+	}
+	for index, task := range receipt.tasks {
+		if record.Tasks[index].OutputKind != contextFailureOutputKind(task.status == TaskRuntimeFailed && task.outputIdentity != "") {
+			return ReviewRunReceipt{}, ErrInvalidReviewRunReceiptEncoding
+		}
 	}
 	reencoded, err := EncodeReviewRunReceipt(receipt)
 	if err != nil || !bytes.Equal(reencoded, encoded) {
@@ -321,12 +327,12 @@ func reviewRunReceiptToRecord(receipt ReviewRunReceipt) reviewRunReceiptRecord {
 			HandlerIdentity: task.handlerIdentity, Kind: task.kind.String(), Required: task.required,
 			Status: task.status.String(), Attempts: task.attempts, MaxAttempts: task.maxAttempts,
 			LeaseExpiresAtMilliseconds: task.leaseExpiresAtMillis,
-			OutputIdentity:             task.outputIdentity, Failure: task.failure.String(),
+			OutputIdentity:             task.outputIdentity, OutputKind: contextFailureOutputKind(task.status == TaskRuntimeFailed && task.outputIdentity != ""), Failure: task.failure.String(),
 			RetryAtMilliseconds: task.retryAtMillis,
 		}
 	}
 	return reviewRunReceiptRecord{
-		Contract: "open-trestle/review-run-receipt", SchemaVersion: 1,
+		Contract: "open-trestle/review-run-receipt", SchemaVersion: reviewRunReceiptVersion(receipt),
 		Identity: receipt.identity, PlanIdentity: receipt.planIdentity,
 		TenantID: receipt.scope.TenantID(), RepositoryID: receipt.scope.RepositoryID(),
 		ReviewRunID: receipt.scope.ReviewRunID(), Status: receipt.status.String(),
@@ -356,4 +362,13 @@ func parseTaskRuntimeStatus(value string) (TaskRuntimeStatus, error) {
 		}
 	}
 	return 0, ErrInvalidReviewRunReceipt
+}
+
+func reviewRunReceiptVersion(receipt ReviewRunReceipt) int {
+	for _, task := range receipt.tasks {
+		if task.status == TaskRuntimeFailed && task.outputIdentity != "" {
+			return 2
+		}
+	}
+	return 1
 }

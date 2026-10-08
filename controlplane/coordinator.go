@@ -130,6 +130,8 @@ func (s TaskCompletionStatus) Validate() error {
 // TaskCompletion is bounded worker output without provider error strings.
 type TaskCompletion struct {
 	identity       string
+	planIdentity   string
+	taskIdentity   string
 	status         TaskCompletionStatus
 	outputIdentity string
 	failure        RunFailure
@@ -151,17 +153,32 @@ func NewTaskFailure(failure RunFailure) (TaskCompletion, error) {
 	completion.identity = deriveTaskCompletionIdentity(completion)
 	return completion, nil
 }
+
+// NewContextTaskFailureWithOutput binds a failed context result to one plan and task.
+// The caller must verify the stored artifact kind, scope, and content before admission.
+func NewContextTaskFailureWithOutput(failure RunFailure, plan ReviewRunPlan, task TaskDefinition, artifactIdentity string) (TaskCompletion, error) {
+	if failure.String() == "" || plan.Validate() != nil || task.Validate() != nil || task.Kind() != TaskAssembleContext || !validControlPlaneDigest(artifactIdentity) {
+		return TaskCompletion{}, ErrInvalidTaskCompletion
+	}
+	canonical, exists := plan.Task(task.Key())
+	if !exists || canonical.Identity() != task.Identity() {
+		return TaskCompletion{}, ErrInvalidTaskCompletion
+	}
+	completion := TaskCompletion{status: TaskCompletionFailed, failure: failure, outputIdentity: artifactIdentity, planIdentity: plan.Identity(), taskIdentity: task.Identity()}
+	completion.identity = deriveTaskCompletionIdentity(completion)
+	return completion, nil
+}
 func (c TaskCompletion) Identity() string             { return c.identity }
 func (c TaskCompletion) Status() TaskCompletionStatus { return c.status }
 func (c TaskCompletion) OutputIdentity() string       { return c.outputIdentity }
 func (c TaskCompletion) Failure() RunFailure          { return c.failure }
 func (c TaskCompletion) Validate() error {
 	if c.status == TaskCompletionSucceeded {
-		if !validControlPlaneDigest(c.outputIdentity) || c.failure != 0 {
+		if !validControlPlaneDigest(c.outputIdentity) || c.failure != 0 || c.planIdentity != "" || c.taskIdentity != "" {
 			return ErrInvalidTaskCompletion
 		}
 	} else if c.status == TaskCompletionFailed {
-		if c.outputIdentity != "" || c.failure.String() == "" {
+		if c.failure.String() == "" || (c.outputIdentity == "" && (c.planIdentity != "" || c.taskIdentity != "")) || (c.outputIdentity != "" && (!validControlPlaneDigest(c.outputIdentity) || !validControlPlaneDigest(c.planIdentity) || !validControlPlaneDigest(c.taskIdentity))) {
 			return ErrInvalidTaskCompletion
 		}
 	} else {
@@ -242,7 +259,7 @@ func (c *Coordinator) Advance(ctx context.Context, plan ReviewRunPlan, at time.T
 		var exhausted TaskRuntimeState
 		for _, definition := range plan.Tasks() {
 			runtime, _ := state.Task(definition.Key())
-			if runtime.status == TaskRuntimeLeased && runtime.attempts == definition.MaxAttempts() && at.UnixMilli() >= runtime.leaseExpiresAtMillis {
+			if runtime.status == TaskRuntimeLeased && runtime.attempts == definition.MaxAttempts() && at.UnixMilli() >= runtime.leaseExpiresAtMillis && runtime.preparedEventIdentity == "" {
 				exhausted = runtime
 				break
 			}
@@ -316,7 +333,7 @@ func (c *Coordinator) ClaimTask(ctx context.Context, plan ReviewRunPlan, taskKey
 		}
 		runtime, _ := state.Task(taskKey)
 		claimable := runtime.Status() == TaskRuntimeAvailable
-		expired := runtime.Status() == TaskRuntimeLeased && at.UnixMilli() >= runtime.leaseExpiresAtMillis
+		expired := runtime.Status() == TaskRuntimeLeased && runtime.preparedEventIdentity == "" && at.UnixMilli() >= runtime.leaseExpiresAtMillis
 		if !claimable && !expired {
 			return TaskLease{}, false, nil
 		}
@@ -362,7 +379,7 @@ func (c *Coordinator) RenewTaskLease(ctx context.Context, plan ReviewRunPlan, le
 			return TaskLease{}, ReviewRunState{}, ErrRunTransitionSequenceMismatch
 		}
 		runtime, exists := state.Task(lease.TaskKey())
-		if !exists || lease.PlanIdentity() != plan.Identity() || lease.HandlerIdentity() != runtime.Definition().HandlerIdentity() || !runtimeMatchesLease(runtime, lease) || at.UnixMilli() > runtime.leaseExpiresAtMillis {
+		if !exists || lease.PlanIdentity() != plan.Identity() || lease.HandlerIdentity() != runtime.Definition().HandlerIdentity() || !runtimeMatchesLease(runtime, lease) || runtime.preparedEventIdentity != "" || at.UnixMilli() > runtime.leaseExpiresAtMillis {
 			return TaskLease{}, ReviewRunState{}, ErrRunTransitionLeaseMismatch
 		}
 		expiresAt := at.Add(time.Duration(runtime.Definition().LeaseDurationMilliseconds()) * time.Millisecond)
@@ -428,6 +445,9 @@ func (c *Coordinator) CompleteTask(ctx context.Context, plan ReviewRunPlan, leas
 		if !exists {
 			return ReviewRunState{}, ErrReviewTaskNotFound
 		}
+		if completion.outputIdentity != "" && completion.Status() == TaskCompletionFailed && (runtime.Definition().Kind() != TaskAssembleContext || completion.planIdentity != plan.Identity() || completion.taskIdentity != runtime.Definition().Identity()) {
+			return ReviewRunState{}, ErrInvalidTaskCompletion
+		}
 		if runtime.Status() == TaskRuntimeSucceeded || runtime.Status() == TaskRuntimeFailed {
 			if completedTaskMatches(runtime, lease, completion) {
 				return state, nil
@@ -436,6 +456,9 @@ func (c *Coordinator) CompleteTask(ctx context.Context, plan ReviewRunPlan, leas
 		}
 		if !runtimeMatchesLease(runtime, lease) {
 			return ReviewRunState{}, ErrRunTransitionLeaseMismatch
+		}
+		if runtime.preparedEventIdentity != "" && (completion.Status() != TaskCompletionFailed || completion.OutputIdentity() != runtime.preparedEvent.OutputIdentity() || completion.Failure() != runtime.preparedEvent.Failure()) {
+			return ReviewRunState{}, ErrPreparedContextAbstention
 		}
 		if !transitionTimeAllowed(state, at) {
 			return ReviewRunState{}, ErrRunTransitionSequenceMismatch
@@ -449,7 +472,6 @@ func (c *Coordinator) CompleteTask(ctx context.Context, plan ReviewRunPlan, leas
 		retryAt := time.Time{}
 		if completion.Status() == TaskCompletionFailed {
 			kind = RunEventTaskFailed
-			output = ""
 			failure = completion.Failure()
 			if failure.Retryable() && runtime.Attempts() < runtime.Definition().MaxAttempts() {
 				retryAt = at.Add(time.Duration(runtime.Definition().RetryDelayMilliseconds()) * time.Millisecond)
@@ -699,7 +721,7 @@ func completedTaskMatches(runtime TaskRuntimeState, lease TaskLease, completion 
 	if runtime.Status() == TaskRuntimeSucceeded {
 		return completion.Status() == TaskCompletionSucceeded && runtime.OutputIdentity() == completion.OutputIdentity()
 	}
-	return completion.Status() == TaskCompletionFailed && runtime.Failure() == completion.Failure()
+	return completion.Status() == TaskCompletionFailed && runtime.Failure() == completion.Failure() && runtime.OutputIdentity() == completion.OutputIdentity()
 }
 func validLeaseToken(token string) bool {
 	if len(token) != 64 || token != strings.ToLower(token) || strings.Trim(token, "0") == "" {
@@ -738,6 +760,17 @@ func deriveTaskCompletionIdentity(completion TaskCompletion) string {
 	status := "failed"
 	if completion.status == TaskCompletionSucceeded {
 		status = "succeeded"
+	}
+	if completion.outputIdentity != "" && completion.status == TaskCompletionFailed {
+		return hashControlPlaneValue(struct {
+			Contract string `json:"contract"`
+			Version  int    `json:"version"`
+			Status   string `json:"status"`
+			Output   string `json:"output"`
+			Failure  string `json:"failure"`
+			Plan     string `json:"plan"`
+			Task     string `json:"task"`
+		}{"open-trestle/task-completion", 2, status, completion.outputIdentity, completion.failure.String(), completion.planIdentity, completion.taskIdentity})
 	}
 	preimage := struct {
 		Contract string `json:"contract"`

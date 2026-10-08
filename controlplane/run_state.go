@@ -85,20 +85,28 @@ func (s TaskRuntimeStatus) String() string {
 
 // TaskRuntimeState is the current reconstructed state for one immutable task.
 type TaskRuntimeState struct {
-	definition           TaskDefinition
-	status               TaskRuntimeStatus
-	attempts             uint8
-	leaseTokenIdentity   string
-	workerIdentity       string
-	leaseExpiresAtMillis int64
-	outputIdentity       string
-	failure              RunFailure
-	retryAtMillis        int64
-	lastEventRevision    uint64
-	lastEventIdentity    string
-	lastEventAtMillis    int64
+	definition            TaskDefinition
+	status                TaskRuntimeStatus
+	attempts              uint8
+	leaseTokenIdentity    string
+	workerIdentity        string
+	leaseExpiresAtMillis  int64
+	outputIdentity        string
+	failure               RunFailure
+	retryAtMillis         int64
+	lastEventRevision     uint64
+	lastEventIdentity     string
+	lastEventAtMillis     int64
+	preparedEvent         RunEvent
+	preparedEventIdentity string
 }
 
+func (s TaskRuntimeState) PreparedContextAbstention() (PreparedContextAbstention, bool) {
+	if s.status != TaskRuntimeLeased || s.preparedEvent.Kind() != RunEventContextAbstentionPrepared {
+		return PreparedContextAbstention{}, false
+	}
+	return PreparedContextAbstention{event: s.preparedEvent}, true
+}
 func (s TaskRuntimeState) Definition() TaskDefinition { return s.definition }
 func (s TaskRuntimeState) Key() string                { return s.definition.Key() }
 func (s TaskRuntimeState) Status() TaskRuntimeStatus  { return s.status }
@@ -240,9 +248,10 @@ func (s *ReviewRunState) applyTaskEvent(event RunEvent, runtime *TaskRuntimeStat
 		runtime.status = TaskRuntimeAvailable
 		runtime.retryAtMillis = 0
 		runtime.failure = 0
+		runtime.outputIdentity = ""
 	case RunEventTaskLeased:
 		available := runtime.status == TaskRuntimeAvailable
-		expired := runtime.status == TaskRuntimeLeased && event.occurredAtMillis >= runtime.leaseExpiresAtMillis
+		expired := runtime.status == TaskRuntimeLeased && runtime.preparedEventIdentity == "" && event.occurredAtMillis >= runtime.leaseExpiresAtMillis
 		if !available && !expired {
 			return ErrRunTransitionInvalid
 		}
@@ -250,11 +259,16 @@ func (s *ReviewRunState) applyTaskEvent(event RunEvent, runtime *TaskRuntimeStat
 			return ErrRunTransitionAttemptLimit
 		}
 		runtime.status = TaskRuntimeLeased
+		runtime.preparedEvent = RunEvent{}
+		runtime.preparedEventIdentity = ""
 		runtime.attempts = event.Attempt()
 		runtime.leaseTokenIdentity = event.LeaseTokenIdentity()
 		runtime.workerIdentity = event.WorkerIdentity()
 		runtime.leaseExpiresAtMillis = event.leaseExpiresAtMillis
 	case RunEventTaskLeaseRenewed:
+		if runtime.preparedEventIdentity != "" {
+			return ErrPreparedContextAbstention
+		}
 		matching := runtime.status == TaskRuntimeLeased && event.Attempt() == runtime.attempts && event.LeaseTokenIdentity() == runtime.leaseTokenIdentity && event.WorkerIdentity() == runtime.workerIdentity
 		timely := event.occurredAtMillis <= runtime.leaseExpiresAtMillis && event.leaseExpiresAtMillis > runtime.leaseExpiresAtMillis
 		if !matching || !timely {
@@ -262,6 +276,9 @@ func (s *ReviewRunState) applyTaskEvent(event RunEvent, runtime *TaskRuntimeStat
 		}
 		runtime.leaseExpiresAtMillis = event.leaseExpiresAtMillis
 	case RunEventTaskSucceeded:
+		if runtime.preparedEventIdentity != "" {
+			return ErrPreparedContextAbstention
+		}
 		if !runtime.matchesLeaseResult(event) {
 			return ErrRunTransitionLeaseMismatch
 		}
@@ -269,18 +286,39 @@ func (s *ReviewRunState) applyTaskEvent(event RunEvent, runtime *TaskRuntimeStat
 		runtime.outputIdentity = event.OutputIdentity()
 		runtime.workerIdentity = ""
 		runtime.leaseExpiresAtMillis = 0
+	case RunEventContextAbstentionPrepared:
+		if runtime.definition.Kind() != TaskAssembleContext || runtime.preparedEventIdentity != "" || !runtime.matchesLeaseResult(event) || event.occurredAtMillis > runtime.leaseExpiresAtMillis {
+			return ErrPreparedContextAbstention
+		}
+		if identity, err := preparedArtifactIdentity(event.preparedArtifact, s.plan.Scope()); err != nil || identity != event.OutputIdentity() {
+			return ErrPreparedContextAbstention
+		}
+		runtime.preparedEvent = event
+		runtime.preparedEventIdentity = event.Identity()
 	case RunEventTaskFailed:
+		if runtime.preparedEventIdentity != "" && (event.OutputIdentity() != runtime.preparedEvent.OutputIdentity() || event.Failure() != runtime.preparedEvent.Failure() || event.Attempt() != runtime.preparedEvent.Attempt() || event.LeaseTokenIdentity() != runtime.preparedEvent.LeaseTokenIdentity()) {
+			return ErrPreparedContextAbstention
+		}
+		if runtime.preparedEventIdentity == "" && event.OutputIdentity() != "" && event.occurredAtMillis > runtime.leaseExpiresAtMillis {
+			return ErrRunTransitionLeaseMismatch
+		}
 		// The coordinator can settle an exhausted lease without reviving worker authority.
 		exhaustedExpiry := runtime.status == TaskRuntimeLeased && runtime.attempts == runtime.definition.MaxAttempts() && event.Attempt() == runtime.attempts && event.LeaseTokenIdentity() == runtime.leaseTokenIdentity && event.occurredAtMillis >= runtime.leaseExpiresAtMillis && event.Failure() == RunFailureResourceLimit && event.retryAtMillis == 0
-		if !runtime.matchesLeaseResult(event) && !exhaustedExpiry {
+		preparedSettlement := runtime.preparedEventIdentity != "" && event.OutputIdentity() != "" && event.OutputIdentity() == runtime.preparedEvent.OutputIdentity() && event.Failure() == runtime.preparedEvent.Failure()
+		if !runtime.matchesLeaseResult(event) && !exhaustedExpiry && !preparedSettlement {
 			return ErrRunTransitionLeaseMismatch
+		}
+		if event.OutputIdentity() != "" && runtime.definition.Kind() != TaskAssembleContext {
+			return ErrInvalidRunEventOutput
 		}
 		canRetry := event.Failure().Retryable() && runtime.attempts < runtime.definition.MaxAttempts()
 		if canRetry != (event.retryAtMillis != 0) {
 			return ErrRunTransitionInvalid
 		}
 		runtime.status = TaskRuntimeFailed
+		runtime.preparedEvent = RunEvent{}
 		runtime.failure = event.Failure()
+		runtime.outputIdentity = event.OutputIdentity()
 		runtime.retryAtMillis = event.retryAtMillis
 		runtime.workerIdentity = ""
 		runtime.leaseExpiresAtMillis = 0

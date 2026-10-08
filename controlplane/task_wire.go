@@ -91,6 +91,9 @@ type taskCompletionRecord struct {
 	Identity       string `json:"identity"`
 	Status         string `json:"status"`
 	OutputIdentity string `json:"output_identity"`
+	PlanIdentity   string `json:"plan_identity,omitempty"`
+	TaskIdentity   string `json:"task_identity,omitempty"`
+	OutputKind     string `json:"output_kind,omitempty"`
 	Failure        string `json:"failure"`
 }
 
@@ -118,7 +121,7 @@ func ParseTaskCompletion(encoded []byte) (TaskCompletion, error) {
 		return TaskCompletion{}, ErrInvalidTaskCompletionEncoding
 	}
 	canonical, err := json.Marshal(record)
-	if err != nil || !bytes.Equal(canonical, encoded) || record.Contract != "open-trestle/review-task-completion" || record.SchemaVersion != 1 {
+	if err != nil || !bytes.Equal(canonical, encoded) || record.Contract != "open-trestle/review-task-completion" || (record.SchemaVersion != 1 && record.SchemaVersion != 2) {
 		return TaskCompletion{}, ErrInvalidTaskCompletionEncoding
 	}
 	status, err := parseTaskCompletionStatus(record.Status)
@@ -129,18 +132,33 @@ func ParseTaskCompletion(encoded []byte) (TaskCompletion, error) {
 	if err != nil {
 		return TaskCompletion{}, err
 	}
-	completion := TaskCompletion{identity: record.Identity, status: status, outputIdentity: record.OutputIdentity, failure: failure}
+	if record.SchemaVersion != taskCompletionVersion(TaskCompletion{status: status, outputIdentity: record.OutputIdentity}) || (record.SchemaVersion == 2 && record.OutputKind != "context_abstention") || (record.SchemaVersion == 1 && (record.PlanIdentity != "" || record.TaskIdentity != "" || record.OutputKind != "")) {
+		return TaskCompletion{}, ErrInvalidTaskCompletionEncoding
+	}
+	completion := TaskCompletion{identity: record.Identity, status: status, outputIdentity: record.OutputIdentity, failure: failure, planIdentity: record.PlanIdentity, taskIdentity: record.TaskIdentity}
 	if err := completion.Validate(); err != nil {
 		return TaskCompletion{}, err
 	}
 	return completion, nil
 }
 func taskCompletionToRecord(completion TaskCompletion) taskCompletionRecord {
-	return taskCompletionRecord{
-		Contract: "open-trestle/review-task-completion", SchemaVersion: 1,
+	record := taskCompletionRecord{
+		Contract: "open-trestle/review-task-completion", SchemaVersion: taskCompletionVersion(completion),
 		Identity: completion.identity, Status: completion.status.String(),
 		OutputIdentity: completion.outputIdentity, Failure: completion.failure.String(),
 	}
+	if record.SchemaVersion == 2 {
+		record.PlanIdentity = completion.planIdentity
+		record.TaskIdentity = completion.taskIdentity
+		record.OutputKind = "context_abstention"
+	}
+	return record
+}
+func taskCompletionVersion(completion TaskCompletion) int {
+	if completion.status == TaskCompletionFailed && completion.outputIdentity != "" {
+		return 2
+	}
+	return 1
 }
 func parseTaskCompletionStatus(value string) (TaskCompletionStatus, error) {
 	for status := TaskCompletionSucceeded; status <= TaskCompletionFailed; status++ {

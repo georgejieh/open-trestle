@@ -420,7 +420,7 @@ func (j *FileRunJournal) loadStream(scope audit.ReviewScope) ([]RunEvent, error)
 		return nil, fmt.Errorf("%w: %v", ErrRunJournalPersistence, err)
 	}
 	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 4<<10), maxEncodedRunEventBytes+1)
+	scanner.Buffer(make([]byte, 4<<10), maxEncodedRunEventV3Bytes+1)
 	events := make([]RunEvent, 0, 64)
 	previous, planIdentity := "", ""
 	var occurredAt int64
