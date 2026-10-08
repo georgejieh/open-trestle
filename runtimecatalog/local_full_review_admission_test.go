@@ -185,3 +185,58 @@ func TestLocalFullAdmissionKeepsSourceResourceFailureSeparate(t *testing.T) {
 		t.Fatalf("resource error opened plan: found=%t err=%v", found, loadErr)
 	}
 }
+
+// racingFullAdmissionJournal opens a different plan after Resume sees no plan.
+type racingFullAdmissionJournal struct {
+	controlplane.RunJournal
+	fault     error
+	competing controlplane.ReviewRunPlan
+}
+
+func (j *racingFullAdmissionJournal) SavePlan(ctx context.Context, plan controlplane.ReviewRunPlan) error {
+	if j.fault != nil {
+		return j.fault
+	}
+	if j.competing.Identity() == "" {
+		var err error
+		j.competing, err = controlplane.NewReviewRunPlan(plan.Scope(), strings.Repeat("a", 64), plan.PolicyIdentity(), plan.Mode(), plan.Tasks())
+		if err != nil {
+			return err
+		}
+		if err := j.RunJournal.SavePlan(ctx, j.competing); err != nil {
+			return err
+		}
+	}
+	return j.RunJournal.SavePlan(ctx, plan)
+}
+
+func TestLocalFullAdmissionConcurrentDifferentPlanReturnsConflict(t *testing.T) {
+	intent, config, underlying, store := fullAdmissionFixture(t, "run-racing")
+	journal := &racingFullAdmissionJournal{RunJournal: underlying}
+	admitter, err := NewLocalFullReviewAdmitter(journal, store, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = admitter.Admit(context.Background(), intent, intent.CreatedAt().Add(time.Second))
+	if !errors.Is(err, ErrLocalFullReviewConflict) {
+		t.Fatalf("interleaved conflict=%v", err)
+	}
+	persisted, found, loadErr := underlying.LoadPlan(context.Background(), intent.Scope())
+	if loadErr != nil || !found || persisted.Identity() != journal.competing.Identity() {
+		t.Fatalf("competing plan changed: found=%t err=%v", found, loadErr)
+	}
+}
+
+func TestLocalFullAdmissionOpenStorageFaultRemainsUnavailable(t *testing.T) {
+	intent, config, underlying, store := fullAdmissionFixture(t, "run-open-fault")
+	fault := errors.New("storage unavailable")
+	journal := &racingFullAdmissionJournal{RunJournal: underlying, fault: fault}
+	admitter, err := NewLocalFullReviewAdmitter(journal, store, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = admitter.Admit(context.Background(), intent, intent.CreatedAt().Add(time.Second))
+	if !errors.Is(err, fault) || errors.Is(err, ErrLocalFullReviewConflict) {
+		t.Fatalf("storage fault reclassified: %v", err)
+	}
+}

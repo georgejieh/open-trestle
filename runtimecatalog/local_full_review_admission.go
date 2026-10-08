@@ -126,6 +126,9 @@ func (a *LocalFullReviewAdmitter) Admit(ctx context.Context, intent LocalFullRev
 		}
 	}
 	state, err := a.coordinator.Open(ctx, plan, at)
+	if errors.Is(err, controlplane.ErrRunPlanConflict) {
+		return controlplane.ReviewRunState{}, ErrLocalFullReviewConflict
+	}
 	if err == nil {
 		state, err = a.coordinator.Advance(ctx, plan, at)
 	}
