@@ -293,6 +293,10 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 }
 
 func (h *Handler) assemble(ctx context.Context, request controlplane.TaskExecutionRequest, at time.Time) (modelhandler.InvestigationAssembly, provider.Request, *artifact.Artifact, controlplane.RunFailure) {
+	return h.assembleAt(ctx, request, at, at)
+}
+
+func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecutionRequest, readAt, createdAt time.Time) (modelhandler.InvestigationAssembly, provider.Request, *artifact.Artifact, controlplane.RunFailure) {
 	analysisDependency, ok := request.DependencyOutput("analysis")
 	if !ok || !analysisDependency.Available() {
 		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
@@ -301,11 +305,11 @@ func (h *Handler) assemble(ctx context.Context, request controlplane.TaskExecuti
 	if !ok || !memoryDependency.Available() {
 		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 	}
-	analysisArtifact, err := h.store.Get(ctx, request.Plan().Scope(), analysisDependency.OutputIdentity(), at)
+	analysisArtifact, err := h.store.Get(ctx, request.Plan().Scope(), analysisDependency.OutputIdentity(), readAt)
 	if err != nil {
 		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, readFailure(ctx, err)
 	}
-	memoryArtifact, err := h.store.Get(ctx, request.Plan().Scope(), memoryDependency.OutputIdentity(), at)
+	memoryArtifact, err := h.store.Get(ctx, request.Plan().Scope(), memoryDependency.OutputIdentity(), readAt)
 	if err != nil {
 		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, readFailure(ctx, err)
 	}
@@ -313,7 +317,7 @@ func (h *Handler) assemble(ctx context.Context, request controlplane.TaskExecuti
 	if err != nil {
 		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 	}
-	changeArtifact, err := h.store.Get(ctx, request.Plan().Scope(), changeID, at)
+	changeArtifact, err := h.store.Get(ctx, request.Plan().Scope(), changeID, readAt)
 	if err != nil {
 		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, readFailure(ctx, err)
 	}
@@ -321,11 +325,11 @@ func (h *Handler) assemble(ctx context.Context, request controlplane.TaskExecuti
 	if err != nil {
 		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 	}
-	baseArtifact, err := h.store.Get(ctx, request.Plan().Scope(), baseID, at)
+	baseArtifact, err := h.store.Get(ctx, request.Plan().Scope(), baseID, readAt)
 	if err != nil {
 		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, readFailure(ctx, err)
 	}
-	headArtifact, err := h.store.Get(ctx, request.Plan().Scope(), headID, at)
+	headArtifact, err := h.store.Get(ctx, request.Plan().Scope(), headID, readAt)
 	if err != nil {
 		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, readFailure(ctx, err)
 	}
@@ -362,7 +366,7 @@ func (h *Handler) assemble(ctx context.Context, request controlplane.TaskExecuti
 		}
 		memoryItems += len(retrievals[index].Items())
 	}
-	contents, manifest, expires, loadFailure := h.loadHead(ctx, request.Plan().Scope(), head, at, minimumTime(analysisArtifact.ExpiresAt(), memoryArtifact.ExpiresAt(), changeArtifact.ExpiresAt(), baseArtifact.ExpiresAt(), headArtifact.ExpiresAt()))
+	contents, manifest, expires, loadFailure := h.loadHead(ctx, request.Plan().Scope(), head, readAt, minimumTime(analysisArtifact.ExpiresAt(), memoryArtifact.ExpiresAt(), changeArtifact.ExpiresAt(), baseArtifact.ExpiresAt(), headArtifact.ExpiresAt()))
 	if loadFailure != 0 {
 		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, loadFailure
 	}
@@ -439,7 +443,7 @@ func (h *Handler) assemble(ctx context.Context, request controlplane.TaskExecuti
 		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, semanticFailure
 	}
 	makeAbstention := func(reason string, failureCode controlplane.RunFailure, sourceOmissions []review.ContextSourceOmission) (*artifact.Artifact, controlplane.RunFailure) {
-		value, err := newContextAbstentionArtifact(request, analysisArtifact, memoryArtifact, changeArtifact, headArtifact, head.Identity(), sourceOmissions, reason, failureCode, at, expires)
+		value, err := newContextAbstentionArtifact(request, analysisArtifact, memoryArtifact, changeArtifact, headArtifact, head.Identity(), sourceOmissions, reason, failureCode, createdAt, expires)
 		if err != nil {
 			return nil, controlplane.RunFailureResourceLimit
 		}
@@ -497,7 +501,7 @@ func (h *Handler) assemble(ctx context.Context, request controlplane.TaskExecuti
 	}
 	contextProvenance := []string{analysisArtifact.Identity(), memoryArtifact.Identity(), changeArtifact.Identity(), headArtifact.Identity(), analysis.Identity(), memoryResult.Identity()}
 	sort.Strings(contextProvenance)
-	contextArtifact, err := artifact.New(request.Plan().Scope(), artifact.KindContextPacket, "application/json", analysisArtifact.Classification(), artifact.OriginHost, analysisArtifact.Protection(), contextProvenance, providerRequest.Payload(), at, expires)
+	contextArtifact, err := artifact.New(request.Plan().Scope(), artifact.KindContextPacket, "application/json", analysisArtifact.Classification(), artifact.OriginHost, analysisArtifact.Protection(), contextProvenance, providerRequest.Payload(), createdAt, expires)
 	if err != nil {
 		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureResourceLimit
 	}
