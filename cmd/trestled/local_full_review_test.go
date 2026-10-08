@@ -93,8 +93,8 @@ func TestDaemonFullLocalAdmissionPersistsPendingPlanWithoutModelDispatch(t *test
 		t.Fatal(err)
 	}
 	defer d.Close()
-	if len(d.supervisors) != 1 {
-		t.Fatalf("full admission dispatched workers: supervisors=%d", len(d.supervisors))
+	if len(d.supervisors) != 2 {
+		t.Fatalf("full admission missing restricted pre-model worker: supervisors=%d", len(d.supervisors))
 	}
 	server := httptest.NewServer(d.server.Handler)
 	defer server.Close()

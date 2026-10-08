@@ -29,9 +29,13 @@ Control-plane schemas:
 - `schemas/controlplane/local-deterministic-review-intent-v1.schema.json`
 - `schemas/controlplane/local-full-review-intent-v1.schema.json`
 - `schemas/controlplane/review-run-event-v1.schema.json`
+- `schemas/controlplane/review-run-event-v2.schema.json`
+- `schemas/controlplane/review-run-event-v3.schema.json`
 - `schemas/controlplane/review-run-receipt-v1.schema.json`
+- `schemas/controlplane/review-run-receipt-v2.schema.json`
 - `schemas/controlplane/review-task-lease-v1.schema.json`
 - `schemas/controlplane/review-task-completion-v1.schema.json`
+- `schemas/controlplane/review-task-completion-v2.schema.json`
 - `schemas/controlplane/task-claim-request-v1.schema.json`
 - `schemas/controlplane/task-completion-request-v1.schema.json`
 - `schemas/controlplane/task-notification-v1.schema.json`
@@ -40,9 +44,12 @@ Control-plane schemas:
 - `schemas/controlplane/api-response-v1.schema.json`
 - `schemas/controlplane/runtime-status-response-v1.schema.json`
 
+The local file-backed full-review context worker emits a v3 `context_abstention_prepared` event before writing any abstention artifact. Its bounded canonical artifact envelope contains omission metadata only, not repository source bytes or a model claim. Recovery must verify the exact scope, plan, task, provenance, failure class, and artifact identity before a v2 failed-task event links the result. Old v1 no-output failures and v2 linked failures remain readable. The PostgreSQL journal's current 1 MiB event limit does not qualify v3; local full review rejects nonlocal stores.
+
 Artifact schemas:
 
 - `schemas/artifact/runtime-artifact-v1.schema.json`
+- `schemas/artifact/context-abstention-v1.schema.json`
 - `schemas/artifact/sanitized-model-request-v1.schema.json`
 - `schemas/artifact/sanitized-egress-receipt-v1.schema.json`
 - `schemas/artifact/artifact-deletion-authorization-v1.schema.json`

@@ -68,6 +68,7 @@ const (
 var (
 	ErrInvalidDaemonConfiguration = errors.New("invalid Open Trestle daemon configuration")
 	ErrDaemonRuntimeUnavailable   = errors.New("Open Trestle daemon runtime unavailable")
+	ErrDaemonPlanIncompatible     = errors.New("active local full review plan has an incompatible context handler")
 )
 
 type repositoryFlags []string
@@ -601,13 +602,16 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 			}
 			memoryTask, memoryErr := memoryhandler.NewHandler(artifactStore, daemonArtifactClock, memorycore.NewLexicalIndex(), daemonComponentIdentity("empty-memory-index-v1"), configuration.ReviewPolicyIdentity(), "trestled", []string{"."}, 64, 50)
 			dispatchers, dispatcherErr := runtimecatalog.NewLocalOpenAIRouteDispatcherCatalogFromRuntimePolicy(inventory, configuration, environmentOpenAICredentialResolver{getenv: getenv})
-			generationAuthorizer, authErr := runtimecatalog.NewGenerationPolicyAuthorizerFromRuntimePolicy(configuration, inventory, auditLedger)
 			verificationInventory, inventoryErr := runtimecatalog.NewStaticVerificationRouteInventory(inventory)
-			if memoryErr != nil || dispatcherErr != nil || authErr != nil || inventoryErr != nil {
+			if memoryErr != nil || dispatcherErr != nil || inventoryErr != nil {
 				return nil, ErrInvalidDaemonConfiguration
 			}
 			verificationAuthorizer, verificationAuthErr := runtimecatalog.NewVerificationPolicyAuthorizerFromRuntimePolicy(configuration, verificationInventory, auditLedger, httpapi.SystemClock{})
-			contextTask, contextErr := contexthandler.NewHandler(artifactStore, daemonArtifactClock, generationAuthorizer, deps.generationSanitizer)
+			contextCoordinator, coordinatorErr := controlplane.NewCoordinator(journal)
+			if coordinatorErr != nil {
+				return nil, coordinatorErr
+			}
+			contextTask, contextErr := contexthandler.NewJournaledPacketOnlyHandler(artifactStore, daemonArtifactClock, contextCoordinator)
 			generationTask, generationErr := modelhandler.NewGenerationHandler(artifactStore, dispatchers, auditLedger, daemonArtifactClock, deps.generationSanitizer.ExpectedBinaryDigests())
 			verificationTask, verificationErr := modelhandler.NewVerificationHandler(artifactStore, dispatchers, auditLedger, verificationAuthorizer, daemonArtifactClock, deps.verificationSanitizer)
 			readinessTask, readinessErr := publicationhandler.NewReadinessHandler(artifactStore, diagnosticStore, daemonArtifactClock, configuration.ReviewPolicyIdentity(), configuration.Publication(), publicationContentScannerFromGenerationSanitizer(deps.generationSanitizer))
@@ -619,10 +623,26 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 			if pipelineErr != nil {
 				return nil, ErrInvalidDaemonConfiguration
 			}
+			if err := checkLocalFullReviewStartupPlans(ctx, journal, *tenantID, repositories, contextTask.HandlerIdentity()); err != nil {
+				return nil, err
+			}
+			if err := recoverLocalFullReviewPrepared(ctx, journal, artifactStore, contextCoordinator, *tenantID, repositories, daemonArtifactClock.Now()); err != nil {
+				return nil, err
+			}
 			localFullAdmitter, err = runtimecatalog.NewLocalFullReviewAdmitter(journal, artifactStore, runtimecatalog.LocalFullReviewAdmissionConfig{Source: objectStore, Repository: localRepository, SourceAdapter: sourceAdapter.Identity(), SourceRootIdentity: rootIdentity, Inventory: inventory, Policy: configuration, Classification: artifact.ClassificationInternal, Protection: artifactProtection, Retention: 24 * time.Hour, Catalog: pipeline})
 			if err != nil {
 				return nil, ErrInvalidDaemonConfiguration
 			}
+			preModelCatalog, catalogErr := controlplane.NewTaskHandlerCatalog([]controlplane.TaskHandler{sourceTask, changeTask, analysisTask, memoryTask, contextTask})
+			if catalogErr != nil {
+				return nil, ErrInvalidDaemonConfiguration
+			}
+			localSupervisor, supervisorErr := worker.NewRepositorySupervisor(journal, preModelCatalog, worker.RepositorySupervisorOptions{TenantID: *tenantID, RepositoryIDs: []string(repositories), WorkerIdentity: "trestled-local-premodel", PollInterval: time.Second, RenewalInterval: 10 * time.Second, ExecutionTimeout: 30 * time.Minute, Clock: httpapi.SystemClock{}, FinalizeSettled: true})
+			if supervisorErr != nil {
+				return nil, ErrInvalidDaemonConfiguration
+			}
+			resources.supervisors = append(resources.supervisors, localSupervisor)
+			resources.supervisorNames = append(resources.supervisorNames, "local_workers")
 			statusInventoryIdentity, statusPolicyIdentity, statusRouteCount = inventory.Identity(), configuration.Identity(), uint32(len(inventory.Candidates()))
 		} else {
 			pipeline, pipelineErr = runtimecatalog.NewPipelineCatalog(controlplane.ReviewRunLocal, localHandlers)
@@ -856,7 +876,7 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	statusConfiguration, err := runtimeadmin.NewConfiguration(runtimeadmin.ConfigurationOptions{
 		TenantID: *tenantID, RepositoryIDs: []string(repositories), MetadataBackend: metadataBackend, DatabaseAuthorityIdentity: *postgresDatabaseAuthorityIdentity,
 		ArtifactBackend: artifactBackend, ArtifactProtection: runtimeadmin.Protection(artifactProtection.String()), NotificationBackend: notificationBackend, RateLimitBackend: rateLimitBackend, RateLimitAuthorityIdentity: rateLimitAuthorityIdentity,
-		ReviewMode: statusMode, WebhookIngress: githubConfigured, LocalWorkers: localGitConfigured && !*localFullReview || *githubLocalDeterministicWorkers,
+		ReviewMode: statusMode, WebhookIngress: githubConfigured, LocalWorkers: localGitConfigured || *githubLocalDeterministicWorkers,
 		PublicationEnabled: *githubEnablePublication, PublicationFenceVerified: *postgresAuthorityIdentity != "",
 		RouteInventoryIdentity: statusInventoryIdentity, RuntimePolicyIdentity: statusPolicyIdentity, RouteCount: statusRouteCount, Handlers: statusHandlers,
 	})
@@ -1341,4 +1361,89 @@ func sameDaemonCredential(left []byte, right string) bool {
 	rightBytes := []byte(right)
 	defer clear(rightBytes)
 	return subtle.ConstantTimeCompare(left, rightBytes) == 1
+}
+
+// checkLocalFullReviewStartupPlans rejects pending work bound to an unavailable context handler.
+func checkLocalFullReviewStartupPlans(ctx context.Context, journal controlplane.RunJournal, tenantID string, repositories []string, contextHandlerIdentity string) error {
+	const pageSize = 100
+	const maximumPlansPerRepository = 10_000
+	coordinator, err := controlplane.NewCoordinator(journal)
+	if err != nil {
+		return err
+	}
+	for _, repositoryID := range repositories {
+		after := ""
+		for examined := 0; ; {
+			plans, err := journal.ListPlans(ctx, tenantID, repositoryID, after, pageSize)
+			if err != nil {
+				return err
+			}
+			if examined+len(plans) > maximumPlansPerRepository {
+				return ErrDaemonRuntimeUnavailable
+			}
+			for _, plan := range plans {
+				if plan.Scope().ReviewRunID() <= after {
+					return ErrDaemonRuntimeUnavailable
+				}
+				_, state, err := coordinator.Resume(ctx, plan.Scope())
+				if err != nil {
+					return err
+				}
+				if state.Status() != controlplane.ReviewRunActive || plan.Mode() != controlplane.ReviewRunLocal {
+					continue
+				}
+				for _, definition := range plan.Tasks() {
+					task, found := state.Task(definition.Key())
+					if !found {
+						return ErrDaemonRuntimeUnavailable
+					}
+					if definition.Kind() == controlplane.TaskAssembleContext && task.Status() != controlplane.TaskRuntimeSucceeded && task.Status() != controlplane.TaskRuntimeSkipped && definition.HandlerIdentity() != contextHandlerIdentity {
+						return fmt.Errorf("%w: tenant %s repository %s run %s", ErrDaemonPlanIncompatible, tenantID, repositoryID, plan.Scope().ReviewRunID())
+					}
+				}
+			}
+			examined += len(plans)
+			if len(plans) < pageSize {
+				break
+			}
+			after = plans[len(plans)-1].Scope().ReviewRunID()
+		}
+	}
+	return nil
+}
+
+// recoverLocalFullReviewPrepared resolves journaled content-free abstentions before
+// any supervisor or listener can settle an expired one-attempt context lease.
+func recoverLocalFullReviewPrepared(ctx context.Context, journal controlplane.RunJournal, store artifact.Store, coordinator *controlplane.Coordinator, tenantID string, repositories []string, at time.Time) error {
+	const pageSize = 100
+	const maximumPlansPerRepository = 10_000
+	for _, repositoryID := range repositories {
+		after := ""
+		for examined := 0; ; {
+			plans, err := journal.ListPlans(ctx, tenantID, repositoryID, after, pageSize)
+			if err != nil {
+				return err
+			}
+			if examined+len(plans) > maximumPlansPerRepository {
+				return ErrDaemonRuntimeUnavailable
+			}
+			for _, plan := range plans {
+				if plan.Scope().ReviewRunID() <= after {
+					return ErrDaemonRuntimeUnavailable
+				}
+				if plan.Mode() != controlplane.ReviewRunLocal {
+					continue
+				}
+				if err := contexthandler.RecoverPreparedContextAbstention(ctx, coordinator, store, plan, at); err != nil {
+					return fmt.Errorf("%w: tenant %s repository %s run %s: %v", ErrDaemonRuntimeUnavailable, tenantID, repositoryID, plan.Scope().ReviewRunID(), err)
+				}
+			}
+			examined += len(plans)
+			if len(plans) < pageSize {
+				break
+			}
+			after = plans[len(plans)-1].Scope().ReviewRunID()
+		}
+	}
+	return nil
 }

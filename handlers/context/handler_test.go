@@ -250,6 +250,15 @@ func TestHandlerBuildsBoundGenerationAuthority(t *testing.T) {
 	execute(analysisTask, analysisTaskHandler, time.UnixMilli(107))
 	execute(memoryTask, memoryTaskHandler, time.UnixMilli(109))
 	execute(contextTask, contextTaskHandler, time.UnixMilli(111))
+	invalidAbstention, err := artifact.New(scope, artifact.KindDeterministicEvidence, "application/json", artifact.ClassificationInternal, artifact.OriginDeterministicTool, artifact.ProtectionProcessPrivate, []string{strings.Repeat("a", 64)}, []byte(`{"contract":"open-trestle/context-abstention","schema_version":1}`), time.UnixMilli(112), time.UnixMilli(1000))
+	if err != nil || validateContextAbstentionArtifact(invalidAbstention, contextRequest) == nil {
+		t.Fatalf("malformed abstention accepted: %v", err)
+	}
+	foreignScope, _ := audit.NewReviewScope(scope.TenantID(), scope.RepositoryID(), "foreign-run")
+	foreignAbstention, err := artifact.New(foreignScope, artifact.KindDeterministicEvidence, "application/json", artifact.ClassificationInternal, artifact.OriginDeterministicTool, artifact.ProtectionProcessPrivate, []string{strings.Repeat("a", 64)}, invalidAbstention.Payload(), time.UnixMilli(112), time.UnixMilli(1000))
+	if err != nil || validateContextAbstentionArtifact(foreignAbstention, contextRequest) == nil {
+		t.Fatalf("cross-scope abstention accepted: %v", err)
+	}
 	failingHandler, err := NewHandler(store, contextTestClock{time.UnixMilli(230)}, authorizer, failingContextTestSanitizer{})
 	if err != nil {
 		t.Fatal(err)
