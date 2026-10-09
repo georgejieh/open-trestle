@@ -109,6 +109,8 @@ func inspectRecordedHistoricalPackets(ctx context.Context, journal *controlplane
 						return errPhysicalPacketObservationUncertain
 					}
 					selected := historicalPacketObserved
+					hasV4Missing := false
+					hasV4Mismatch := false
 					conservative := false
 					linkedInput := false
 					for i, observation := range observations {
@@ -117,13 +119,9 @@ func inspectRecordedHistoricalPackets(ctx context.Context, journal *controlplane
 						}
 						switch observation.kind {
 						case physicalPacketMissing:
-							if selected != historicalPacketMissing && selected != historicalPacketMismatch {
-								selected = historicalPacketMissing
-							}
+							hasV4Missing = true
 						case physicalPacketMismatch:
-							if selected != historicalPacketMissing && selected != historicalPacketMismatch {
-								selected = historicalPacketMismatch
-							}
+							hasV4Mismatch = true
 						case physicalPacketIntact:
 							terminal, hasTerminal := facts[i].TerminalEvent()
 							_, linked := facts[i].LinkedInputEvent()
@@ -136,13 +134,15 @@ func inspectRecordedHistoricalPackets(ctx context.Context, journal *controlplane
 							return errPhysicalPacketObservationUncertain
 						}
 					}
-					if selected == historicalPacketObserved {
-						switch {
-						case linkedInput:
-							selected = historicalPacketInputIntentQuarantined
-						case conservative:
-							selected = historicalPacketConservativeRefusal
-						}
+					switch {
+					case hasV4Missing:
+						selected = historicalPacketMissing
+					case hasV4Mismatch:
+						selected = historicalPacketMismatch
+					case linkedInput:
+						selected = historicalPacketInputIntentQuarantined
+					case conservative:
+						selected = historicalPacketConservativeRefusal
 					}
 					*classification = selected // Provisional until all postchecks and borrowed roots close.
 					if probe != nil && probe.afterClassified != nil {
