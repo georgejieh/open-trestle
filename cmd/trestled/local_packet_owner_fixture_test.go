@@ -51,6 +51,12 @@ type localPacketOwnerFixture struct {
 	request     controlplane.TaskExecutionRequest
 	rootDigest  string
 	statePath   string
+	setupPath   string
+	setupPlan   setup.Plan
+	repository  evidence.RepositoryIdentity
+	gitRoot     *os.Root
+	objectStore *scm.LocalGitObjectStore
+	adapter     *scm.LocalGitSourceAdapter
 	clock       localPacketFixtureClock
 }
 
@@ -290,7 +296,7 @@ func newLocalPacketOwnerFixture(t *testing.T) localPacketOwnerFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return localPacketOwnerFixture{store: store, journal: journal, owner: owner, resources: resources, coordinator: coordinator, request: request, rootDigest: digest, statePath: statePath, clock: clock}
+	return localPacketOwnerFixture{store: store, journal: journal, owner: owner, resources: resources, coordinator: coordinator, request: request, rootDigest: digest, statePath: statePath, setupPath: setupPath, setupPlan: setupPlan, repository: repository, gitRoot: gitRoot, objectStore: objectStore, adapter: adapter, clock: clock}
 }
 
 // assertLocalPacketOracle checks the wire against persisted upstream artifacts, not a
