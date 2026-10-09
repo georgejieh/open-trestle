@@ -443,9 +443,9 @@ func TestPhysicalPacketObservationExactTrustedUIDContinuity(t *testing.T) {
 }
 
 func TestPhysicalPacketObservationDirectEntryBoundary(t *testing.T) {
-	base, err := os.MkdirTemp("/dev/shm", "open-trestle-stage4-packet-cap-")
+	base, err := os.MkdirTemp("", "open-trestle-stage4-packet-cap-")
 	if err != nil {
-		t.Skipf("agent-owned shm scratch unavailable: %v", err)
+		t.Skipf("test scratch unavailable: %v", err)
 	}
 	t.Cleanup(func() {
 		if err := os.RemoveAll(base); err != nil {
