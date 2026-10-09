@@ -79,10 +79,12 @@ func (j *FileRunJournal) inspectStartupInventory(ctx context.Context, historical
 	}
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	j.gateMu.Lock()
-	closing := j.closing
-	j.gateMu.Unlock()
-	if j.closed || closing {
+	select {
+	case <-j.closingSignal:
+		return zero, ErrRunJournalClosed
+	default:
+	}
+	if j.closed {
 		return zero, ErrRunJournalClosed
 	}
 	rootInfo, err := os.Lstat(j.root)
