@@ -136,7 +136,7 @@ func publicationContentScannerFromGenerationSanitizer(sanitizer reviewcore.Gener
 	return reviewcore.NewFixedPublicationContentScanner()
 }
 
-func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func(string) string, stderr io.Writer, deps daemonDependencies) (*daemon, error) {
+func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func(string) string, stderr io.Writer, deps daemonDependencies) (result *daemon, err error) {
 	if daemonNilDependency(ctx) || getenv == nil || daemonNilDependency(stderr) || deps.openPostgres == nil || daemonNilDependency(deps.clock) {
 		return nil, ErrInvalidDaemonConfiguration
 	}
@@ -337,7 +337,7 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	built := false
 	defer func() {
 		if !built {
-			_ = resources.Close()
+			err = errors.Join(err, resources.Close())
 		}
 	}()
 	var daemonArtifactClock artifact.Clock = httpapi.SystemClock{}
@@ -355,28 +355,59 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 		daemonGitHubSourceClock = budgetedClock
 		daemonWebhookClock = budgetedClock
 	}
-	// The LOCAL Git state and artifact paths are inspected before any store
-	// constructor can chmod, lock, or recover data. This is not an owner gate.
-	if localGitConfigured && *metadataStore == "local" && *artifactStoreMode == "local" {
-		closeRoots, err := localPathPreflight(*stateDirectory)
-		if err != nil {
-			return nil, err
+	var localObjectsRoot *os.Root
+	var localObjectStore *scm.LocalGitObjectStore
+	var localSourceAdapter *scm.LocalGitSourceAdapter
+	var localRootDigest string
+	if localGitConfigured {
+		var rootErr error
+		localObjectsRoot, localRootDigest, rootErr = openDaemonLocalGitRoot(*localGitObjectsRoot, localRepository)
+		if rootErr != nil {
+			return nil, rootErr
 		}
-		defer closeRoots()
+		resources.closers = append(resources.closers, localObjectsRoot)
+		gitPath, pathErr := filepath.Abs(*localGitObjectsRoot)
+		if pathErr != nil {
+			return nil, pathErr
+		}
+		if _, rootErr = observeLocalSourceDirectory(gitPath, localObjectsRoot); rootErr != nil {
+			return nil, rootErr
+		}
+		localObjectStore, rootErr = scm.NewLocalGitObjectStore(localObjectsRoot, localRepository)
+		if rootErr != nil {
+			return nil, rootErr
+		}
+		localSourceAdapter, rootErr = scm.NewLocalGitSourceAdapter(localObjectStore)
+		if rootErr != nil {
+			return nil, rootErr
+		}
 	}
+	if *metadataStore == "local" && *artifactStoreMode != "local" {
+		if mixedErr := rejectMixedLocalOwner(*stateDirectory); mixedErr != nil {
+			return nil, mixedErr
+		}
+	}
+	var journal controlplane.RunJournal
 	var artifactStore artifact.RetentionStore
 	var artifactKeyProvider artifact.EnvelopeKeyProvider
 	var budgetedPolicy artifact.ProtectedErasurePolicy
 	var budgetedErasureBackend *s3store.ErasureBackend
 	budgetedErasureConstructed := false
 	artifactProtection := artifact.ProtectionProcessPrivate
-	if *artifactStoreMode == "local" {
-		if err := ctx.Err(); err != nil {
-			return nil, err
+	if *artifactStoreMode == "local" && *metadataStore == "local" {
+		active, fileJournal, gateErr := startLocalSourceOwnerGate(ctx, resources, *stateDirectory, *setupState, &localSetupPlan, *tenantID, repositories[0], localRepository, localObjectsRoot, localObjectStore, localSourceAdapter, localRootDigest)
+		if gateErr != nil {
+			if localGitConfigured && (errors.Is(gateErr, errLocalSourceOwnerSnapshot) || errors.Is(gateErr, errLocalMissingStateBoundary)) {
+				return nil, errors.Join(ErrInvalidDaemonConfiguration, gateErr)
+			}
+			return nil, gateErr
 		}
-		physicalArtifacts, err := artifact.NewFileStore(filepath.Join(*stateDirectory, "artifacts"))
-		if err != nil {
-			return nil, err
+		artifactStore = active
+		journal = fileJournal
+	} else if *artifactStoreMode == "local" {
+		physicalArtifacts, storeErr := artifact.NewFileStore(filepath.Join(*stateDirectory, "artifacts"))
+		if storeErr != nil {
+			return nil, storeErr
 		}
 		resources.closers = append(resources.closers, physicalArtifacts)
 		artifactStore = physicalArtifacts
@@ -453,7 +484,6 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 		}
 		artifactProtection = artifact.ProtectionEnvelopeEncrypted
 	}
-	var journal controlplane.RunJournal
 	var taskNotificationQueue controlplane.TaskNotificationQueue
 	var diagnosticStore diagnostics.Store
 	var auditLedger audit.Ledger
@@ -463,18 +493,29 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		fileJournal, err := controlplane.NewFileRunJournal(*stateDirectory)
-		if err != nil {
-			return nil, err
-		}
-		resources.closers = append(resources.closers, fileJournal)
-		if _, err := fileJournal.InspectStartupInventory(ctx); err != nil {
-			if errors.Is(err, controlplane.ErrInvalidStartupInventoryEntry) {
-				return nil, fmt.Errorf("local metadata startup rejected: --state-dir has an invalid or unknown direct entry; review the documented private root layout offline; no automatic repair: %w", err)
+		if *artifactStoreMode != "local" {
+			fileJournal, journalErr := controlplane.NewFileRunJournal(*stateDirectory)
+			if journalErr != nil {
+				return nil, journalErr
 			}
-			return nil, fmt.Errorf("local metadata startup inventory: %w", err)
+			resources.closers = append(resources.closers, fileJournal)
+			if *artifactStoreMode != "local" {
+				if mixedErr := fileJournal.WithOwnedRoot(ctx, func(root *os.Root) error {
+					if err := noGitOwnerAbsent(root); err != nil {
+						return err
+					}
+					if _, err := fileJournal.InspectStartupInventory(ctx); err != nil {
+						return localStartupInventoryError(err)
+					}
+					return noGitOwnerAbsent(root)
+				}); mixedErr != nil {
+					return nil, mixedErr
+				}
+			} else if _, inventoryErr := fileJournal.InspectStartupInventory(ctx); inventoryErr != nil {
+				return nil, localStartupInventoryError(inventoryErr)
+			}
+			journal = fileJournal
 		}
-		journal = fileJournal
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -601,16 +642,8 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	var localReviewAdmitter *runtimecatalog.LocalDeterministicReviewAdmitter
 	var localFullAdmitter *runtimecatalog.LocalFullReviewAdmitter
 	if localGitConfigured {
-		objectsRoot, rootIdentity, rootErr := openDaemonLocalGitRoot(*localGitObjectsRoot, localRepository)
-		if rootErr != nil {
-			return nil, rootErr
-		}
-		resources.closers = append(resources.closers, objectsRoot)
-		objectStore, storeErr := scm.NewLocalGitObjectStore(objectsRoot, localRepository)
-		sourceAdapter, adapterErr := scm.NewLocalGitSourceAdapter(objectStore)
-		if storeErr != nil || adapterErr != nil {
-			return nil, ErrInvalidDaemonConfiguration
-		}
+		rootIdentity := localRootDigest
+		objectStore, sourceAdapter := localObjectStore, localSourceAdapter
 		sourceTask, sourceErr := sourcehandler.NewHandlerWithSourceRoot(artifactStore, sourceAdapter, rootIdentity, daemonArtifactClock)
 		changeTask, changeErr := changehandler.NewHandler(artifactStore, daemonArtifactClock)
 		analysisTask, analysisErr := analysishandler.NewHandlerWithDiagnostics(artifactStore, diagnosticStore, daemonArtifactClock)
@@ -977,7 +1010,7 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	built = true
 	return resources, nil
 }
-func runDaemon(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) error {
+func runDaemon(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) (runErr error) {
 	if ctx == nil || stdout == nil {
 		return ErrInvalidDaemonConfiguration
 	}
@@ -986,12 +1019,12 @@ func runDaemon(ctx context.Context, args []string, getenv func(string) string, s
 	}
 	daemon, err := buildDaemon(ctx, args, getenv, stderr)
 	if err != nil {
-		if ctx.Err() != nil {
+		if onlyDaemonStartupCancellation(err, ctx.Err()) {
 			return nil
 		}
 		return err
 	}
-	defer daemon.Close()
+	defer func() { runErr = errors.Join(runErr, daemon.Close()) }()
 	if ctx.Err() != nil {
 		return nil
 	}
@@ -1000,8 +1033,7 @@ func runDaemon(ctx context.Context, args []string, getenv func(string) string, s
 		return err
 	}
 	if _, err := fmt.Fprintf(stdout, "trestled listening on %s\n", listener.Addr().String()); err != nil {
-		_ = listener.Close()
-		return err
+		return errors.Join(err, listener.Close())
 	}
 	runtimeContext, stopRuntime := context.WithCancel(ctx)
 	defer stopRuntime()
@@ -1044,14 +1076,53 @@ func runDaemon(ctx context.Context, args []string, getenv func(string) string, s
 	}
 	for range remaining {
 		result := <-results
-		if result.err != nil && !errors.Is(result.err, http.ErrServerClosed) && firstErr == nil {
-			firstErr = result.err
+		if result.err != nil && !errors.Is(result.err, http.ErrServerClosed) {
+			firstErr = errors.Join(firstErr, result.err)
 		}
 	}
-	if shutdownErr != nil && firstErr == nil {
-		firstErr = shutdownErr
-	}
+	firstErr = errors.Join(firstErr, shutdownErr)
 	return firstErr
+}
+
+// Ignore a build interruption only when the entire bounded error tree is
+// exactly the context cancellation. A joined cleanup failure remains visible.
+func onlyDaemonStartupCancellation(err, cancellation error) bool {
+	if err == nil || cancellation == nil {
+		return false
+	}
+	visited := 0
+	var check func(error, int) (bool, bool)
+	check = func(current error, depth int) (bool, bool) {
+		if current == nil || depth >= 64 || visited >= 256 {
+			return false, false
+		}
+		visited++
+		if children, ok := current.(interface{ Unwrap() []error }); ok {
+			values := children.Unwrap()
+			any := false
+			for _, child := range values {
+				if child == nil {
+					continue
+				}
+				matched, valid := check(child, depth+1)
+				if !valid || !matched {
+					return false, false
+				}
+				any = true
+			}
+			return any, any
+		}
+		if wrapper, ok := current.(interface{ Unwrap() error }); ok {
+			child := wrapper.Unwrap()
+			if child == nil {
+				return false, false
+			}
+			return check(child, depth+1)
+		}
+		return current == cancellation, true
+	}
+	matched, valid := check(err, 0)
+	return valid && matched
 }
 
 func (d *daemon) Close() error {
@@ -1063,9 +1134,7 @@ func (d *daemon) Close() error {
 			if d.closers[index] == nil {
 				continue
 			}
-			if err := d.closers[index].Close(); err != nil && d.closeErr == nil {
-				d.closeErr = err
-			}
+			d.closeErr = errors.Join(d.closeErr, d.closers[index].Close())
 		}
 		d.closers = nil
 	})

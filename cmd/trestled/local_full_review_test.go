@@ -24,6 +24,9 @@ import (
 func localFullDaemonFixture(t *testing.T) ([]string, func(string) string, evidence.RepositoryIdentity, evidence.RevisionIdentity, evidence.RevisionIdentity, runtimeconfig.RuntimePolicy, runtimeconfig.RouteInventory) {
 	t.Helper()
 	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	objects := filepath.Join(root, "repository", ".git", "objects")
 	if err := os.MkdirAll(objects, 0700); err != nil {
 		t.Fatal(err)

@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/georgejieh/open-trestle/internal/fileauthority"
 )
 
 // Fixed local compatibility policy. Older larger journals require offline review;
@@ -87,6 +89,11 @@ func (j *FileRunJournal) InspectStartupInventory(ctx context.Context) (StartupIn
 			return zero, ErrInvalidStartupInventoryEntry
 		}
 		switch name {
+		case ".local-source-owner.json":
+			if mode != 0o600 || !mode.IsRegular() || !fileauthority.TrustedOwner(info) || info.Size() <= 0 || info.Size() > 16<<10 {
+				return zero, ErrInvalidStartupInventoryEntry
+			}
+			continue
 		case runJournalWriterLockName:
 			if !mode.IsRegular() {
 				return zero, ErrInvalidStartupInventoryEntry

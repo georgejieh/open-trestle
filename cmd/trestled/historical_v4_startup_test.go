@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -161,11 +162,13 @@ func TestBuildDaemonRejectsHistoricalTerminalPacketFromOtherScope(t *testing.T) 
 		t.Fatalf("journal lease: %v", err)
 	}
 	journal.Close()
-	store, err := artifact.NewFileStore(filepath.Join(root, "artifacts"))
+	pending, err := artifact.OpenPendingFileStore(filepath.Join(root, "artifacts"))
 	if err != nil {
-		t.Fatalf("artifact lease: %v", err)
+		t.Fatalf("pending artifact lease: %v", err)
 	}
-	store.Close()
+	if err := pending.Close(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestBuildDaemonRejectsHistoricalPacketInDeterministicAndFullLocalModes(t *testing.T) {
@@ -180,7 +183,55 @@ func TestBuildDaemonRejectsHistoricalPacketInDeterministicAndFullLocalModes(t *t
 				args = args[:len(args)-5]
 			} // Drop full-review and both runtime configuration flag/value pairs.
 			root := daemonTestFlagValue(t, args, "--state-dir")
+
+			// Bootstrap a real owner against the fixture's Git objects and setup
+			// state. A recordless runtime with a journal must fail before inventory.
+			first, err := buildDaemon(context.Background(), args, getenv, os.Stderr)
+			if err != nil || first == nil {
+				t.Fatalf("valid owner bootstrap: daemon=%v error=%v", first, err)
+			}
+			if err := first.Close(); err != nil {
+				t.Fatal(err)
+			}
 			historicalPacketJournal(t, root, false)
+
+			type entry struct {
+				path string
+				info os.FileInfo
+				data []byte
+			}
+			snapshot := func() ([]entry, error) {
+				var entries []entry
+				for _, name := range []string{localSourceOwnerLeaf, "audit", "diagnostics"} {
+					path := filepath.Join(root, name)
+					err := filepath.WalkDir(path, func(path string, item os.DirEntry, walkErr error) error {
+						if walkErr != nil {
+							return walkErr
+						}
+						info, err := os.Lstat(path)
+						if err != nil {
+							return err
+						}
+						observed := entry{path: path, info: info}
+						if info.Mode().IsRegular() {
+							observed.data, err = os.ReadFile(path)
+							if err != nil {
+								return err
+							}
+						}
+						entries = append(entries, observed)
+						return nil
+					})
+					if err != nil {
+						return nil, err
+					}
+				}
+				return entries, nil
+			}
+			before, err := snapshot()
+			if err != nil {
+				t.Fatalf("pre-restart owner and output snapshot: %v", err)
+			}
 			d, err := buildDaemon(context.Background(), args, getenv, os.Stderr)
 			if d != nil {
 				d.Close()
@@ -188,24 +239,36 @@ func TestBuildDaemonRejectsHistoricalPacketInDeterministicAndFullLocalModes(t *t
 			if d != nil || !errors.Is(err, controlplane.ErrPreparedContextPacketAtStartup) {
 				t.Fatalf("historical packet: daemon=%v error=%v", d, err)
 			}
-			for _, name := range []string{"audit", "diagnostics"} {
-				if _, err := os.Lstat(filepath.Join(root, name)); !errors.Is(err, os.ErrNotExist) {
-					t.Fatalf("%s created: %v", name, err)
+			after, err := snapshot()
+			if err != nil {
+				t.Fatalf("post-refusal owner and output snapshot: %v", err)
+			}
+			if len(before) != len(after) {
+				t.Fatalf("refused restart changed owner/audit/diagnostics entry count: before=%d after=%d", len(before), len(after))
+			}
+			for i := range before {
+				if before[i].path != after[i].path || before[i].info.Mode() != after[i].info.Mode() || !os.SameFile(before[i].info, after[i].info) || !bytes.Equal(before[i].data, after[i].data) {
+					t.Fatalf("refused restart changed owner/audit/diagnostics entry: before=%s after=%s", before[i].path, after[i].path)
 				}
 			}
 			journal, err := controlplane.NewFileRunJournal(root)
 			if err != nil {
 				t.Fatalf("journal lease: %v", err)
 			}
-			journal.Close()
-			store, err := artifact.NewFileStore(filepath.Join(root, "artifacts"))
-			if err != nil {
-				t.Fatalf("artifact lease: %v", err)
+			if err := journal.Close(); err != nil {
+				t.Fatal(err)
 			}
-			store.Close()
+			pending, err := artifact.OpenPendingFileStore(filepath.Join(root, "artifacts"))
+			if err != nil {
+				t.Fatalf("pending artifact lease: %v", err)
+			}
+			if err := pending.Close(); err != nil {
+				t.Fatal(err)
+			}
 		})
 	}
 }
+
 func daemonTestFlagValue(t *testing.T, args []string, flag string) string {
 	t.Helper()
 	for i := 0; i+1 < len(args); i++ {

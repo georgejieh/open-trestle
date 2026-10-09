@@ -159,9 +159,52 @@ func TestLocalGitPathPreflightAcceptsFreshAndPrivateRoots(t *testing.T) {
 				args[3] = filepath.Join(state, "..", "runtime") + string(filepath.Separator) + "."
 			}
 			if kind == "private artifacts" {
-				if err := os.Mkdir(filepath.Join(state, "artifacts"), 0o700); err != nil {
+				artifacts := filepath.Join(state, "artifacts")
+				if err := os.Mkdir(artifacts, 0o700); err != nil {
 					t.Fatal(err)
 				}
+				original := []byte("private artifact unchanged")
+				if err := os.WriteFile(filepath.Join(artifacts, "original"), original, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				closer, err := localPathPreflight(state)
+				if err != nil || closer == nil {
+					t.Fatalf("private child rejected by read-only path preflight: closer=%v err=%v", closer != nil, err)
+				}
+				closer()
+				d, err := buildDaemon(context.Background(), args, getenv, &bytes.Buffer{})
+				if d != nil {
+					d.Close()
+				}
+				if d != nil || !errors.Is(err, ErrInvalidDaemonConfiguration) {
+					t.Fatalf("existing artifacts were enrolled as first use: daemon=%v err=%v", d, err)
+				}
+				stateEntries, err := os.ReadDir(state)
+				if err != nil || len(stateEntries) != 1 || stateEntries[0].Name() != "artifacts" {
+					t.Fatalf("state mutated before owner enrollment: entries=%v err=%v", stateEntries, err)
+				}
+				artifactEntries, err := os.ReadDir(artifacts)
+				if err != nil || len(artifactEntries) != 1 || artifactEntries[0].Name() != "original" {
+					t.Fatalf("artifact child mutated before owner enrollment: entries=%v err=%v", artifactEntries, err)
+				}
+				for _, path := range []string{state, artifacts} {
+					info, err := os.Lstat(path)
+					if err != nil || info.Mode() != os.ModeDir|0o700 {
+						t.Fatalf("private directory changed: path=%q info=%v err=%v", path, info, err)
+					}
+				}
+				info, err := os.Lstat(filepath.Join(artifacts, "original"))
+				if err != nil || info.Mode() != 0o600 {
+					t.Fatalf("original artifact mode changed: info=%v err=%v", info, err)
+				}
+				data, err := os.ReadFile(filepath.Join(artifacts, "original"))
+				if err != nil || !bytes.Equal(data, original) {
+					t.Fatalf("original artifact bytes changed: data=%q err=%v", data, err)
+				}
+				if owner, err := os.Lstat(filepath.Join(state, localSourceOwnerLeaf)); owner != nil || !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("refused first use minted owner: info=%v err=%v", owner, err)
+				}
+				return
 			}
 			d, err := buildDaemon(context.Background(), args, getenv, &bytes.Buffer{})
 			if err != nil {

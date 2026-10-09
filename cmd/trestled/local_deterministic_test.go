@@ -24,6 +24,9 @@ import (
 
 func TestBuildDaemonUsesIncompleteSetupOnlyAsDeterministicScopeFence(t *testing.T) {
 	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	objects := filepath.Join(root, "repository", ".git", "objects")
 	if err := os.MkdirAll(objects, 0o700); err != nil {
 		t.Fatal(err)
