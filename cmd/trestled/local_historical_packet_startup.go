@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sort"
 
@@ -20,6 +21,7 @@ var (
 	errHistoricalPacketMissingAtStartup          = errors.New("historical packet missing at startup")
 	errHistoricalPacketMismatchAtStartup         = errors.New("historical packet mismatch at startup")
 	errHistoricalInputIntentQuarantinedAtStartup = errors.New("historical prepared context input intent quarantined at startup")
+	errHistoricalInputArtifactMissingAtStartup   = errors.New("historical prepared context input artifact missing at startup")
 )
 
 type historicalPacketStartupClass uint8
@@ -31,6 +33,7 @@ const (
 	historicalPacketMismatch
 	historicalPacketConservativeRefusal
 	historicalPacketInputIntentQuarantined
+	historicalPacketInputArtifactMissing
 )
 
 type historicalGateFaultProbe struct {
@@ -93,12 +96,26 @@ func inspectRecordedHistoricalPackets(ctx context.Context, journal *controlplane
 					}
 					return facts[i].PreparedEvent().Sequence() < facts[j].PreparedEvent().Sequence()
 				})
-				expectedPackets := make([]physicalPacketExpectation, 0, len(facts))
+				if len(facts) > physicalPacketExpectationLimit {
+					return errPhysicalPacketObservationUncertain
+				}
+				expectedPackets := make([]physicalPacketExpectation, 0, len(facts)*4)
 				for _, fact := range facts {
 					if err := reconcileRecordedHistoricalFact(fact, tenant, repositoryID, sourceDigest); err != nil {
 						return err
 					}
 					expectedPackets = append(expectedPackets, physicalPacketExpectation{scope: fact.Plan().Scope(), descriptor: fact.PreparedEvent().PacketDescriptor()})
+					if linked, ok := fact.LinkedInputEvent(); ok {
+						if err := validateLinkedHistoricalInput(fact, linked); err != nil {
+							return err
+						}
+						d := linked.InputDescriptor()
+						scope := fact.Plan().Scope()
+						expectedPackets = append(expectedPackets,
+							physicalPacketExpectation{scope: scope, role: physicalRoleRequest, input: d.Request},
+							physicalPacketExpectation{scope: scope, role: physicalRoleReceipt, input: d.Receipt},
+							physicalPacketExpectation{scope: scope, role: physicalRoleInput, input: d.Input})
+					}
 				}
 				if len(expectedPackets) == 0 {
 					*classification = historicalPacketNone
@@ -113,32 +130,60 @@ func inspectRecordedHistoricalPackets(ctx context.Context, journal *controlplane
 					hasV4Mismatch := false
 					conservative := false
 					linkedInput := false
-					for i, observation := range observations {
-						if observation.expectation.scope.Identity() != expectedPackets[i].scope.Identity() || observation.expectation.descriptor.ArtifactIdentity != expectedPackets[i].descriptor.ArtifactIdentity {
+					allMissingLinked := true
+					index := 0
+					for _, fact := range facts {
+						if index >= len(observations) || !reflect.DeepEqual(observations[index].expectation, expectedPackets[index]) {
 							return errPhysicalPacketObservationUncertain
 						}
-						switch observation.kind {
+						switch observations[index].kind {
 						case physicalPacketMissing:
 							hasV4Missing = true
 						case physicalPacketMismatch:
 							hasV4Mismatch = true
 						case physicalPacketIntact:
-							terminal, hasTerminal := facts[i].TerminalEvent()
-							_, linked := facts[i].LinkedInputEvent()
-							if linked {
-								linkedInput = true
-							} else if hasTerminal && terminal.Kind() == controlplane.RunEventCanceled {
+							terminal, hasTerminal := fact.TerminalEvent()
+							_, linked := fact.LinkedInputEvent()
+							if !linked && hasTerminal && terminal.Kind() == controlplane.RunEventCanceled {
 								conservative = true
 							}
 						default:
 							return errPhysicalPacketObservationUncertain
 						}
+						index++
+						if _, linked := fact.LinkedInputEvent(); linked {
+							linkedInput = true
+							if index+3 > len(observations) {
+								return errPhysicalPacketObservationUncertain
+							}
+							tripleMissing := true
+							for offset := 0; offset < 3; offset++ {
+								observed := observations[index+offset]
+								if !reflect.DeepEqual(observed.expectation, expectedPackets[index+offset]) {
+									return errPhysicalPacketObservationUncertain
+								}
+								switch observed.kind {
+								case physicalPacketMissing:
+								case physicalPacketIntact, physicalPacketMismatch:
+									tripleMissing = false
+								default:
+									return errPhysicalPacketObservationUncertain
+								}
+							}
+							allMissingLinked = allMissingLinked && tripleMissing
+							index += 3
+						}
+					}
+					if index != len(observations) {
+						return errPhysicalPacketObservationUncertain
 					}
 					switch {
 					case hasV4Missing:
 						selected = historicalPacketMissing
 					case hasV4Mismatch:
 						selected = historicalPacketMismatch
+					case linkedInput && allMissingLinked:
+						selected = historicalPacketInputArtifactMissing
 					case linkedInput:
 						selected = historicalPacketInputIntentQuarantined
 					case conservative:
@@ -150,10 +195,11 @@ func inspectRecordedHistoricalPackets(ctx context.Context, journal *controlplane
 					}
 					return nil
 				}
+				closeFile := (*os.File).Close
 				if probe != nil && probe.closePhysicalFile != nil {
-					return observeBorrowedHistoricalPacketFilesWithClose(ctx, artifactRoot, expectedPackets, after, probe.closePhysicalFile)
+					closeFile = probe.closePhysicalFile
 				}
-				return observeBorrowedHistoricalPacketFiles(ctx, artifactRoot, expectedPackets, after)
+				return observeBorrowedHistoricalFilesWithClose(ctx, artifactRoot, expectedPackets, after, closeFile)
 			})
 			if err != nil {
 				return err
@@ -161,6 +207,36 @@ func inspectRecordedHistoricalPackets(ctx context.Context, journal *controlplane
 			return recheck()
 		})
 	})
+}
+
+// Replay supplies the link; recheck its identity and descriptor before naming leaves.
+func validateLinkedHistoricalInput(f controlplane.HistoricalContextPacketFact, linked controlplane.RunEvent) error {
+	plan, prepared := f.Plan(), f.PreparedEvent()
+	d, packet := linked.InputDescriptor(), prepared.PacketDescriptor()
+	if linked.Kind() != controlplane.RunEventContextInputPrepared || linked.Validate() != nil ||
+		linked.PlanIdentity() != plan.Identity() || linked.Scope().Identity() != plan.Scope().Identity() ||
+		linked.TaskKey() != prepared.TaskKey() || linked.TaskIdentity() != prepared.TaskIdentity() ||
+		linked.Attempt() != prepared.Attempt() || linked.LeaseTokenIdentity() != prepared.LeaseTokenIdentity() ||
+		linked.Sequence() <= prepared.Sequence() || linked.OutputIdentity() != d.Input.ArtifactIdentity ||
+		d.PacketPreparedEventIdentity != prepared.Identity() || d.PacketArtifactIdentity != packet.ArtifactIdentity ||
+		d.LeaseIdentity != packet.LeaseIdentity || d.LeaseEventIdentity != packet.LeaseEventIdentity ||
+		d.Request.Classification != packet.Classification || d.Request.Protection != packet.Protection ||
+		d.Request.Protection != "process_private" || d.Request.ExpiresAtMilliseconds != packet.ExpiresAtMilliseconds ||
+		d.Request.CreatedAtMilliseconds < packet.CreatedAtMilliseconds ||
+		d.Request.CreatedAtMilliseconds < prepared.OccurredAt().UnixMilli() ||
+		d.Request.CreatedAtMilliseconds > linked.OccurredAt().UnixMilli() ||
+		d.Receipt.CreatedAtMilliseconds > linked.OccurredAt().UnixMilli() ||
+		d.Input.CreatedAtMilliseconds > linked.OccurredAt().UnixMilli() ||
+		d.Input.ExpiresAtMilliseconds <= linked.OccurredAt().UnixMilli() {
+		return errPhysicalPacketObservationUncertain
+	}
+	for role, desc := range []controlplane.ContextInputArtifactDescriptor{d.Request, d.Receipt, d.Input} {
+		e := physicalPacketExpectation{scope: plan.Scope(), role: physicalPacketRole(role + 1), input: desc}
+		if !physicalExpectationValid(e) {
+			return errPhysicalPacketObservationUncertain
+		}
+	}
+	return nil
 }
 
 func reconcileRecordedHistoricalFact(f controlplane.HistoricalContextPacketFact, tenant, repositoryID, sourceDigest string) error {

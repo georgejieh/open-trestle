@@ -217,6 +217,8 @@ func startLocalSourceOwnerGateWithProbe(ctx context.Context, resources *daemon, 
 		return nil, nil, nil, localStartupInventoryError(controlplane.ErrPreparedContextPacketAtStartup)
 	case historicalPacketInputIntentQuarantined:
 		return nil, nil, nil, errHistoricalInputIntentQuarantinedAtStartup
+	case historicalPacketInputArtifactMissing:
+		return nil, nil, nil, errHistoricalInputArtifactMissingAtStartup
 	}
 	active, err := pending.Activate()
 	if err != nil {

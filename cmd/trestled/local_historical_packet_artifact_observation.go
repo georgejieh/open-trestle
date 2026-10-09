@@ -21,18 +21,30 @@ import (
 )
 
 const (
-	physicalPacketEntryLimit       = 20001
-	physicalPacketNameLimit        = 160
-	physicalPacketExpectationLimit = 1024
-	physicalPacketFileLimit        = 22 << 20 // Keep aligned with artifact.maxEncodedArtifactBytes.
-	physicalPacketTotalLimit       = 64 << 20
+	physicalPacketEntryLimit         = 20001
+	physicalPacketNameLimit          = 160
+	physicalPacketExpectationLimit   = 1024
+	physicalCombinedExpectationLimit = 4096
+	physicalPacketFileLimit          = 22 << 20 // Keep aligned with artifact.maxEncodedArtifactBytes.
+	physicalPacketTotalLimit         = 64 << 20
 )
 
 var errPhysicalPacketObservationUncertain = errors.New("historical packet physical observation uncertain")
 
+type physicalPacketRole uint8
+
+const (
+	physicalRolePacket physicalPacketRole = iota
+	physicalRoleRequest
+	physicalRoleReceipt
+	physicalRoleInput
+)
+
 type physicalPacketExpectation struct {
 	scope      audit.ReviewScope
 	descriptor controlplane.ContextPacketDescriptor
+	role       physicalPacketRole
+	input      controlplane.ContextInputArtifactDescriptor
 }
 type physicalPacketObservationKind uint8
 
@@ -147,29 +159,43 @@ func physicalPacketScanEqual(a, b map[string]os.FileInfo) bool {
 // This borrowed root is only a physical witness. Only a caller's live owned-root
 // lease and its postchecks can supply provenance; this function grants none.
 func observeBorrowedHistoricalPacketFiles(ctx context.Context, borrowed *os.Root, expected []physicalPacketExpectation, after func([]physicalPacketObservation) error) error {
-	return observeBorrowedHistoricalPacketFilesWithClose(ctx, borrowed, expected, after, (*os.File).Close)
+	if len(expected) > physicalPacketExpectationLimit {
+		return errPhysicalPacketObservationUncertain
+	}
+	return observeBorrowedHistoricalFilesWithClose(ctx, borrowed, expected, after, (*os.File).Close)
 }
 
 // The per-call closer supports checked-close fault injection without global hooks.
 // A supplied closer must close its file even when returning an injected error.
 func observeBorrowedHistoricalPacketFilesWithClose(ctx context.Context, borrowed *os.Root, expected []physicalPacketExpectation, after func([]physicalPacketObservation) error, closeFile func(*os.File) error) error {
-	if runtime.GOOS != "linux" || ctx == nil || borrowed == nil || after == nil || closeFile == nil || ctx.Err() != nil || len(expected) > physicalPacketExpectationLimit {
+	if len(expected) > physicalPacketExpectationLimit {
+		return errPhysicalPacketObservationUncertain
+	}
+	return observeBorrowedHistoricalFilesWithClose(ctx, borrowed, expected, after, closeFile)
+}
+
+func observeBorrowedHistoricalFilesWithClose(ctx context.Context, borrowed *os.Root, expected []physicalPacketExpectation, after func([]physicalPacketObservation) error, closeFile func(*os.File) error) error {
+	if runtime.GOOS != "linux" || ctx == nil || borrowed == nil || after == nil || closeFile == nil || ctx.Err() != nil || len(expected) > physicalCombinedExpectationLimit {
 		return errPhysicalPacketObservationUncertain
 	}
 	names := make([]string, len(expected))
 	unique := make(map[string]physicalPacketExpectation, len(expected))
 	for i, e := range expected {
-		if e.scope.Validate() != nil || !physicalPacketDescriptorValid(e) {
+		if e.scope.Validate() != nil || !physicalExpectationValid(e) {
 			return errPhysicalPacketObservationUncertain
 		}
-		name := e.scope.Identity() + "-" + e.descriptor.ArtifactIdentity + ".artifact.json"
-		if prior, ok := unique[name]; ok && (prior.scope.Identity() != e.scope.Identity() || !reflect.DeepEqual(prior.descriptor, e.descriptor)) {
+		identity := e.descriptor.ArtifactIdentity
+		if e.role != physicalRolePacket {
+			identity = e.input.ArtifactIdentity
+		}
+		name := e.scope.Identity() + "-" + identity + ".artifact.json"
+		if prior, ok := unique[name]; ok && !reflect.DeepEqual(prior, e) {
 			return errPhysicalPacketObservationUncertain
 		}
 		unique[name] = e
 		names[i] = name
 	}
-	if len(unique) > physicalPacketExpectationLimit {
+	if len(unique) > physicalCombinedExpectationLimit {
 		return errPhysicalPacketObservationUncertain
 	}
 	first, rootInfo, scanErr := physicalPacketScan(ctx, borrowed, closeFile)
@@ -219,7 +245,7 @@ func observeBorrowedHistoricalPacketFilesWithClose(ctx context.Context, borrowed
 			continue
 		}
 		canonical, encodeErr := artifact.Encode(parsed)
-		valid := encodeErr == nil && bytes.Equal(canonical, raw) && physicalPacketMatches(parsed, e)
+		valid := encodeErr == nil && bytes.Equal(canonical, raw) && physicalExpectationMatches(parsed, e)
 		canonical = nil
 		if valid {
 			kinds[name] = physicalPacketIntact
@@ -339,4 +365,71 @@ func physicalPacketDescriptorValid(e physicalPacketExpectation) bool {
 	}
 	digest := sha256.Sum256(encoded)
 	return d.ArtifactIdentity == hex.EncodeToString(digest[:])
+}
+
+func physicalInputKind(role physicalPacketRole) artifact.Kind {
+	switch role {
+	case physicalRoleRequest:
+		return artifact.KindSanitizedModelRequest
+	case physicalRoleReceipt:
+		return artifact.KindSanitizedEgressReceipt
+	case physicalRoleInput:
+		return artifact.KindTaskInput
+	default:
+		return 0
+	}
+}
+
+func physicalExpectationValid(e physicalPacketExpectation) bool {
+	if e.role == physicalRolePacket {
+		return reflect.DeepEqual(e.input, controlplane.ContextInputArtifactDescriptor{}) && physicalPacketDescriptorValid(e)
+	}
+	kind := physicalInputKind(e.role)
+	d := e.input
+	if kind == 0 || !reflect.DeepEqual(e.descriptor, controlplane.ContextPacketDescriptor{}) ||
+		!physicalPacketDigest(e.scope.Identity()) || !physicalPacketDigest(d.ArtifactIdentity) || !physicalPacketDigest(d.PayloadDigest) ||
+		d.Protection != "process_private" || d.CreatedAtMilliseconds <= 0 || d.ExpiresAtMilliseconds <= d.CreatedAtMilliseconds ||
+		d.ExpiresAtMilliseconds > 253402300799999 || d.ExpiresAtMilliseconds-d.CreatedAtMilliseconds > int64(10*365*24*60*60*1000) ||
+		len(d.Provenance) == 0 || len(d.Provenance) > 32 {
+		return false
+	}
+	switch d.Classification {
+	case "public", "internal", "confidential", "restricted":
+	default:
+		return false
+	}
+	for i, parent := range d.Provenance {
+		if !physicalPacketDigest(parent) || i > 0 && d.Provenance[i-1] >= parent {
+			return false
+		}
+	}
+	preimage := struct {
+		ScopeIdentity         string   `json:"scope_identity"`
+		Kind                  string   `json:"kind"`
+		MediaType             string   `json:"media_type"`
+		Classification        string   `json:"classification"`
+		Origin                string   `json:"origin"`
+		Protection            string   `json:"protection"`
+		Provenance            []string `json:"provenance"`
+		PayloadDigest         string   `json:"payload_digest"`
+		CreatedAtMilliseconds int64    `json:"created_at_milliseconds"`
+		ExpiresAtMilliseconds int64    `json:"expires_at_milliseconds"`
+	}{e.scope.Identity(), kind.String(), "application/json", d.Classification, "host", d.Protection, d.Provenance, d.PayloadDigest, d.CreatedAtMilliseconds, d.ExpiresAtMilliseconds}
+	encoded, err := json.Marshal(preimage)
+	if err != nil {
+		return false
+	}
+	digest := sha256.Sum256(encoded)
+	return d.ArtifactIdentity == hex.EncodeToString(digest[:])
+}
+
+func physicalExpectationMatches(a artifact.Artifact, e physicalPacketExpectation) bool {
+	if e.role == physicalRolePacket {
+		return physicalPacketMatches(a, e)
+	}
+	d := e.input
+	return a.Scope().Identity() == e.scope.Identity() && a.Identity() == d.ArtifactIdentity && a.PayloadDigest() == d.PayloadDigest &&
+		a.Kind() == physicalInputKind(e.role) && a.MediaType() == "application/json" && a.Origin() == artifact.OriginHost &&
+		a.Protection() == artifact.ProtectionProcessPrivate && a.Classification().String() == d.Classification &&
+		reflect.DeepEqual(a.Provenance(), d.Provenance) && a.CreatedAt().UnixMilli() == d.CreatedAtMilliseconds && a.ExpiresAt().UnixMilli() == d.ExpiresAtMilliseconds
 }

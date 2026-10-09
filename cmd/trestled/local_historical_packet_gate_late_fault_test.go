@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/georgejieh/open-trestle/artifact"
 	"github.com/georgejieh/open-trestle/controlplane"
@@ -192,6 +193,84 @@ func TestLocalHistoricalPacketGateLateFaultPrecedence(t *testing.T) {
 			}
 			if after := snapshotLocalPacketFiles(t, fixture.statePath); !reflect.DeepEqual(after, baseline) {
 				t.Error("lease reopening changed file bytes")
+			}
+		})
+	}
+}
+
+// A linked v5 all-absent decision is provisional until the gate finishes every
+// physical, journal, owner, and close witness.
+func TestLocalHistoricalInputMissingLateFaultDoesNotReturnTypedMissing(t *testing.T) {
+	for _, name := range []string{"callback error", "cancel after classification"} {
+		t.Run(name, func(t *testing.T) {
+			fixture := newLocalPacketOwnerFixture(t)
+			ctx := context.Background()
+			scope := fixture.request.Plan().Scope()
+			prepared, err := fixture.owner.PreparePacket(ctx, fixture.request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			packet, err := fixture.store.Get(ctx, scope, prepared.Descriptor().ArtifactIdentity, fixture.clock.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := artifact.Encode(packet)
+			if err != nil || packet.Identity() != prepared.Descriptor().ArtifactIdentity || packet.PayloadDigest() != prepared.Descriptor().PayloadDigest {
+				t.Fatalf("real owner Put/readback: %v", err)
+			}
+			descriptor := missingLocalContextInputDescriptor(t, fixture, prepared, packet)
+			checkpoint, err := fixture.coordinator.PrepareContextInput(ctx, fixture.request.Plan(), fixture.request.Lease(), prepared, descriptor, fixture.clock.Now().Add(time.Millisecond))
+			if err != nil {
+				t.Fatal(err)
+			}
+			events := encodedLocalPacketHistory(t, fixture.journal, scope)
+			if err := fixture.resources.Close(); err != nil {
+				t.Fatal(err)
+			}
+			verifyLocalPacketReopen(t, fixture, prepared, encoded, events, checkpoint, descriptor, true)
+			assertMissingLocalInputLeaves(t, fixture.statePath, scope, descriptor)
+			baseline := snapshotLocalPacketFiles(t, fixture.statePath)
+			injected := errors.New("injected after linked v5 missing classification")
+			gateCtx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			called := 0
+			probe := &historicalGateFaultProbe{afterClassified: func(class historicalPacketStartupClass) error {
+				called++
+				if class != historicalPacketInputArtifactMissing {
+					return fmt.Errorf("unexpected linked v5 provisional class %d", class)
+				}
+				if name == "callback error" {
+					return injected
+				}
+				cancel()
+				return nil
+			}}
+			second := &daemon{}
+			t.Cleanup(func() {
+				if err := second.Close(); err != nil {
+					t.Errorf("cleanup refused gate: %v", err)
+				}
+			})
+			active, journal, owner, gateErr := startLocalSourceOwnerGateWithProbe(gateCtx, second, fixture.statePath, fixture.setupPath, &fixture.setupPlan,
+				"tenant-a", "repo-a", fixture.repository, fixture.gitRoot, fixture.objectStore, fixture.adapter, fixture.rootDigest, fixture.clock, probe)
+			marker := injected
+			if name == "cancel after classification" {
+				marker = controlplane.ErrRunJournalContextDone
+			}
+			if called != 1 || active != nil || journal != nil || owner != nil || !errors.Is(gateErr, marker) ||
+				errors.Is(gateErr, errHistoricalInputArtifactMissingAtStartup) || errors.Is(gateErr, errHistoricalInputIntentQuarantinedAtStartup) {
+				t.Errorf("late %s: callback=%d handles=%v/%v/%v err=%v", name, called, active, journal, owner, gateErr)
+			}
+			if err := second.Close(); err != nil {
+				t.Fatal(err)
+			}
+			assertMissingLocalInputLeaves(t, fixture.statePath, scope, descriptor)
+			if after := snapshotLocalPacketFiles(t, fixture.statePath); !reflect.DeepEqual(after, baseline) {
+				t.Fatal("late refusal changed state files")
+			}
+			verifyLocalPacketReopen(t, fixture, prepared, encoded, events, checkpoint, descriptor, true)
+			if after := snapshotLocalPacketFiles(t, fixture.statePath); !reflect.DeepEqual(after, baseline) {
+				t.Fatal("raw replay changed state files")
 			}
 		})
 	}

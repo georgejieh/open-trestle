@@ -360,6 +360,162 @@ func TestPhysicalPacketObservationRejectsUntrustedDirectEntries(t *testing.T) {
 		})
 	}
 }
+func TestPhysicalLinkedRequestStableAbsenceAndLateAppearance(t *testing.T) {
+	f := newPhysicalPacketTestFixture(t)
+	packet := f.expected[0]
+	created := time.UnixMilli(1002)
+	request, err := artifact.New(packet.scope, artifact.KindSanitizedModelRequest, "application/json", artifact.ClassificationConfidential,
+		artifact.OriginHost, artifact.ProtectionProcessPrivate, []string{packet.descriptor.ArtifactIdentity},
+		[]byte(`{"unpersisted":"descriptor fixture only"}`), created, created.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := controlplane.ContextInputArtifactDescriptor{ArtifactIdentity: request.Identity(), PayloadDigest: request.PayloadDigest(),
+		Classification: request.Classification().String(), Protection: request.Protection().String(), Provenance: request.Provenance(),
+		CreatedAtMilliseconds: request.CreatedAt().UnixMilli(), ExpiresAtMilliseconds: request.ExpiresAt().UnixMilli()}
+	linked := physicalPacketExpectation{scope: packet.scope, role: physicalRoleRequest, input: d}
+	name := packet.scope.Identity() + "-" + request.Identity() + ".artifact.json"
+	pending, err := artifact.OpenPendingFileStore(f.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := pending.Close(); err != nil {
+			t.Errorf("close pending: %v", err)
+		}
+	}()
+	observe := func(after func([]physicalPacketObservation) error) error {
+		return pending.WithOwnedRoot(func(borrowed *os.Root) error {
+			return observeBorrowedHistoricalFilesWithClose(context.Background(), borrowed,
+				[]physicalPacketExpectation{packet, linked}, after, (*os.File).Close)
+		})
+	}
+	check := func(got []physicalPacketObservation) {
+		t.Helper()
+		if len(got) != 2 || got[0].kind != physicalPacketIntact || got[1].kind != physicalPacketMissing ||
+			!reflect.DeepEqual(got[1].expectation, linked) {
+			t.Fatalf("linked request not observed at its exact absent name: %+v", got)
+		}
+	}
+	if err := observe(func(got []physicalPacketObservation) error { check(got); return nil }); err != nil {
+		t.Fatalf("stable linked absence: %v", err)
+	}
+	f.unchanged(t)
+	if err := observe(func(got []physicalPacketObservation) error {
+		check(got)
+		return os.WriteFile(filepath.Join(f.root, name), []byte("late"), 0600)
+	}); !errors.Is(err, errPhysicalPacketObservationUncertain) {
+		t.Fatalf("late descriptor-named appearance must defeat provisional absence: %v", err)
+	}
+}
+
+func TestPhysicalCombinedExpectationsBoundAndRolePreimage(t *testing.T) {
+	f := newPhysicalPacketTestFixture(t)
+	pending, err := artifact.OpenPendingFileStore(f.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := pending.Close(); err != nil {
+			t.Errorf("close pending: %v", err)
+		}
+	}()
+	observe := func(expected []physicalPacketExpectation, after func([]physicalPacketObservation) error) error {
+		return pending.WithOwnedRoot(func(root *os.Root) error {
+			return observeBorrowedHistoricalFilesWithClose(context.Background(), root, expected, after, (*os.File).Close)
+		})
+	}
+	large := make([]physicalPacketExpectation, physicalCombinedExpectationLimit)
+	for i := range large {
+		large[i] = f.expected[0]
+	}
+	called := false
+	if err := observe(large, func(got []physicalPacketObservation) error {
+		called = true
+		if len(got) != len(large) || got[len(got)-1].kind != physicalPacketIntact {
+			t.Fatal("combined bound lost expectation")
+		}
+		return nil
+	}); err != nil || !called {
+		t.Fatalf("4096 expectations: callback=%v err=%v", called, err)
+	}
+	called = false
+	large = append(large, f.expected[0])
+	if err := observe(large, func([]physicalPacketObservation) error { called = true; return nil }); !errors.Is(err, errPhysicalPacketObservationUncertain) || called {
+		t.Fatalf("4097 expectations must fail before scan: callback=%v err=%v", called, err)
+	}
+	wrongRole := f.expected[0]
+	wrongRole.role = physicalRoleRequest
+	wrongRole.input = controlplane.ContextInputArtifactDescriptor{ArtifactIdentity: wrongRole.descriptor.ArtifactIdentity,
+		PayloadDigest: wrongRole.descriptor.PayloadDigest, Classification: wrongRole.descriptor.Classification,
+		Protection: wrongRole.descriptor.Protection, Provenance: wrongRole.descriptor.Provenance,
+		CreatedAtMilliseconds: wrongRole.descriptor.CreatedAtMilliseconds, ExpiresAtMilliseconds: wrongRole.descriptor.ExpiresAtMilliseconds}
+	wrongRole.descriptor = controlplane.ContextPacketDescriptor{}
+	if err := observe([]physicalPacketExpectation{wrongRole}, func([]physicalPacketObservation) error { called = true; return nil }); !errors.Is(err, errPhysicalPacketObservationUncertain) || called {
+		t.Fatalf("packet identity cannot serve as request identity: callback=%v err=%v", called, err)
+	}
+	f.unchanged(t)
+}
+
+func TestPhysicalCombinedDistinctMissingRoleExpectationsBound(t *testing.T) {
+	f := newPhysicalPacketTestFixture(t)
+	packet := f.expected[0]
+	created := time.UnixMilli(1002)
+	large := make([]physicalPacketExpectation, 0, physicalCombinedExpectationLimit+1)
+	names := make(map[string]bool, physicalCombinedExpectationLimit+1)
+	for i := 0; i <= physicalCombinedExpectationLimit; i++ {
+		request, err := artifact.New(packet.scope, artifact.KindSanitizedModelRequest, "application/json", artifact.ClassificationConfidential,
+			artifact.OriginHost, artifact.ProtectionProcessPrivate, []string{packet.descriptor.ArtifactIdentity},
+			[]byte(fmt.Sprintf(`{"unpersisted":%d}`, i)), created, created.Add(time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+		name := packet.scope.Identity() + "-" + request.Identity() + ".artifact.json"
+		if names[name] {
+			t.Fatalf("request %d has duplicate expected name", i)
+		}
+		names[name] = true
+		large = append(large, physicalPacketExpectation{scope: packet.scope, role: physicalRoleRequest,
+			input: controlplane.ContextInputArtifactDescriptor{ArtifactIdentity: request.Identity(), PayloadDigest: request.PayloadDigest(),
+				Classification: request.Classification().String(), Protection: request.Protection().String(), Provenance: request.Provenance(),
+				CreatedAtMilliseconds: request.CreatedAt().UnixMilli(), ExpiresAtMilliseconds: request.ExpiresAt().UnixMilli()}})
+	}
+	pending, err := artifact.OpenPendingFileStore(f.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := pending.Close(); err != nil {
+			t.Errorf("close pending lease: %v", err)
+		}
+	}()
+	observe := func(expected []physicalPacketExpectation, after func([]physicalPacketObservation) error) error {
+		return pending.WithOwnedRoot(func(root *os.Root) error {
+			return observeBorrowedHistoricalFilesWithClose(context.Background(), root, expected, after, (*os.File).Close)
+		})
+	}
+	calls := 0
+	if err := observe(large[:physicalCombinedExpectationLimit], func(got []physicalPacketObservation) error {
+		calls++
+		if len(got) != physicalCombinedExpectationLimit {
+			t.Fatalf("distinct role observation count: %d", len(got))
+		}
+		for i, observation := range got {
+			if observation.kind != physicalPacketMissing || !reflect.DeepEqual(observation.expectation, large[i]) {
+				t.Fatalf("distinct request %d is not its exact missing observation: %+v", i, observation)
+			}
+		}
+		return nil
+	}); err != nil || calls != 1 {
+		t.Fatalf("4096 distinct missing role expectations: callbacks=%d err=%v", calls, err)
+	}
+	calls = 0
+	if err := observe(large, func([]physicalPacketObservation) error { calls++; return nil }); !errors.Is(err, errPhysicalPacketObservationUncertain) || calls != 0 {
+		t.Fatalf("4097 distinct role expectations must refuse before callback: callbacks=%d err=%v", calls, err)
+	}
+	f.unchanged(t)
+}
+
 func TestPhysicalPacketObservationExpectationLimitBeforeScan(t *testing.T) {
 	f := newPhysicalPacketTestFixture(t)
 	expected := make([]physicalPacketExpectation, physicalPacketExpectationLimit+1)

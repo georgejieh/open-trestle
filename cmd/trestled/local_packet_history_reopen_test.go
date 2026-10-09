@@ -63,6 +63,9 @@ func TestLocalPacketHistoryForensicReopenAndStartupRefusal(t *testing.T) {
 			// Constructors below only classify durable facts. Close them before
 			// attempting the second Git-qualified start on the same leased roots.
 			verifyLocalPacketReopen(t, fixture, prepared, originalBytes, beforeEvents, inputCheckpoint, inputDescriptor, withMissingInput)
+			if withMissingInput {
+				assertMissingLocalInputLeaves(t, fixture.statePath, scope, inputDescriptor)
+			}
 			beforeFiles := snapshotLocalPacketFiles(t, fixture.statePath)
 			second := &daemon{}
 			active, journal, owner, bootErr := startLocalSourceOwnerGate(ctx, second, fixture.statePath, fixture.setupPath, &fixture.setupPlan,
@@ -74,27 +77,43 @@ func TestLocalPacketHistoryForensicReopenAndStartupRefusal(t *testing.T) {
 				t.Fatalf("close refused boot resources: %v", err)
 			}
 			afterFiles := snapshotLocalPacketFiles(t, fixture.statePath)
+			if withMissingInput {
+				assertMissingLocalInputLeaves(t, fixture.statePath, scope, inputDescriptor)
+			}
 			if !reflect.DeepEqual(beforeFiles, afterFiles) {
 				t.Fatal("refused second boot altered or removed stored files")
 			}
 			verifyLocalPacketReopen(t, fixture, prepared, originalBytes, beforeEvents, inputCheckpoint, inputDescriptor, withMissingInput)
 			if withMissingInput {
-				// Linked v5 intent needs a content-neutral quarantine diagnosis.
-				// Boot has not inspected the three descriptor-referenced objects.
-				const marker = "historical prepared context input intent quarantined at startup"
-				if bootErr == nil || !errors.Is(bootErr, errHistoricalInputIntentQuarantinedAtStartup) ||
+				const marker = "historical prepared context input artifact missing at startup"
+				if bootErr == nil || errors.Is(bootErr, errHistoricalInputIntentQuarantinedAtStartup) ||
 					errors.Is(bootErr, controlplane.ErrPreparedContextPacketAtStartup) ||
 					errors.Is(bootErr, errHistoricalPacketObservedAtStartup) ||
 					errors.Is(bootErr, errHistoricalPacketMissingAtStartup) ||
 					errors.Is(bootErr, errHistoricalPacketMismatchAtStartup) ||
+					!errors.Is(bootErr, errHistoricalInputArtifactMissingAtStartup) ||
 					!strings.Contains(bootErr.Error(), marker) {
-					t.Fatalf("linked v5 intent must remain quarantined without a generic v4 refusal: %v", bootErr)
+					t.Fatalf("three absent descriptor-named v5 leaves require a distinct missing refusal: %v", bootErr)
 				}
 			} else if !errors.Is(bootErr, errHistoricalPacketObservedAtStartup) ||
 				errors.Is(bootErr, controlplane.ErrPreparedContextPacketAtStartup) {
 				t.Fatalf("intact v4 must retain typed observed refusal, not blanket v4 refusal: %v", bootErr)
 			}
 		})
+	}
+}
+
+func assertMissingLocalInputLeaves(t *testing.T, statePath string, scope audit.ReviewScope, descriptor controlplane.ContextInputDescriptor) {
+	t.Helper()
+	for role, identity := range map[string]string{
+		"request": descriptor.Request.ArtifactIdentity,
+		"receipt": descriptor.Receipt.ArtifactIdentity,
+		"input":   descriptor.Input.ArtifactIdentity,
+	} {
+		leaf := filepath.Join(statePath, "artifacts", scope.Identity()+"-"+identity+".artifact.json")
+		if _, err := os.Lstat(leaf); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s descriptor-named artifact leaf %s is not absent: %v", role, leaf, err)
+		}
 	}
 }
 
