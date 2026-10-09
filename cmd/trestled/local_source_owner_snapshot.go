@@ -257,29 +257,160 @@ func recheckOwnerEntries(s *localSourceOwnerSnapshot) error {
 		}{s.ReceiptRoot, "setup/plan.json.receipts/", 257})
 	}
 	for _, dir := range dirs {
-		entries, err := boundedOwnerEntries(dir.root, dir.limit)
-		if err != nil {
+		if err := recheckOwnerSnapshotDirectory(s, dir.root, dir.prefix, dir.limit); err != nil {
 			return err
 		}
-		count := 0
-		for _, entry := range entries {
-			key := dir.prefix + entry.Name()
-			before, ok := s.Entries[key]
-			after, statErr := dir.root.Lstat(entry.Name())
-			if !ok || statErr != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() || before.Size() != after.Size() {
-				return errLocalSourceOwnerSnapshot
-			}
-			count++
-		}
-		expected := 0
-		for key := range s.Entries {
-			if strings.HasPrefix(key, dir.prefix) && key != "." && !strings.Contains(strings.TrimPrefix(key, dir.prefix), "/") {
-				expected++
-			}
-		}
-		if count != expected {
+	}
+	return nil
+}
+
+// Compare one original directory without accepting changes to saved entry inodes.
+func recheckOwnerSnapshotDirectory(s *localSourceOwnerSnapshot, root *os.Root, prefix string, limit int) error {
+	entries, err := boundedOwnerEntries(root, limit)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		key := prefix + entry.Name()
+		before, ok := s.Entries[key]
+		after, statErr := root.Lstat(entry.Name())
+		if !ok || before == nil || statErr != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() || before.Size() != after.Size() || !fileauthority.TrustedOwner(after) {
 			return errLocalSourceOwnerSnapshot
 		}
+	}
+	expected := 0
+	for key := range s.Entries {
+		if strings.HasPrefix(key, prefix) && key != "." && !strings.Contains(strings.TrimPrefix(key, prefix), "/") {
+			expected++
+		}
+	}
+	if len(entries) != expected {
+		return errLocalSourceOwnerSnapshot
+	}
+	return nil
+}
+
+// recheckLocalSourceOwnerPostConstructor is a read-only shape comparison under
+// both constructor-held leases. The caller supplies the scoped borrowed roots;
+// this does not authenticate their origin, missing-root ancestry, setup bytes,
+// or any historical owner, and never grants enrollment or activation.
+func recheckLocalSourceOwnerPostConstructor(s *localSourceOwnerSnapshot, stateRoot, artifactRoot *os.Root) error {
+	if s == nil || stateRoot == nil || artifactRoot == nil ||
+		(s.Kind != localSourceOwnerMissing && s.Entries == nil) ||
+		(s.Kind != localSourceOwnerMissing && s.Kind != localSourceOwnerEmpty && s.Kind != localSourceOwnerSetupOnly) {
+		return errLocalSourceOwnerSnapshot
+	}
+	if s.Kind == localSourceOwnerMissing {
+		if s.StateRoot != nil || s.SetupRoot != nil || s.ReceiptRoot != nil || len(s.Entries) != 0 {
+			return errLocalSourceOwnerSnapshot
+		}
+	} else {
+		if s.StateRoot == nil || (s.Kind == localSourceOwnerSetupOnly && (s.SetupRoot == nil || s.ReceiptRoot == nil)) ||
+			(s.Kind == localSourceOwnerEmpty && (s.SetupRoot != nil || s.ReceiptRoot != nil)) {
+			return errLocalSourceOwnerSnapshot
+		}
+	}
+	stateBefore, err := stateRoot.Stat(".")
+	if err != nil || !ownerDirectoryInfo(stateBefore) {
+		return errLocalSourceOwnerSnapshot
+	}
+	if s.StateRoot != nil {
+		original, originalErr := s.StateRoot.Stat(".")
+		saved, ok := s.Entries["."]
+		if originalErr != nil || !ok || saved == nil || !ownerDirectoryInfo(original) || !os.SameFile(saved, original) ||
+			!os.SameFile(original, stateBefore) || saved.Mode() != original.Mode() {
+			return errLocalSourceOwnerSnapshot
+		}
+	}
+	// The artifact parent observations bracket the child enumeration. No payload
+	// or owner bytes are opened here; constructor capture/whole-chain pinning
+	// remains the responsibility of the two outer callback APIs.
+	childBefore, err := stateRoot.Lstat("artifacts")
+	if err != nil || !ownerDirectoryInfo(childBefore) {
+		return errLocalSourceOwnerSnapshot
+	}
+	artifactBefore, err := artifactRoot.Stat(".")
+	if err != nil || !ownerDirectoryInfo(artifactBefore) || !os.SameFile(childBefore, artifactBefore) {
+		return errLocalSourceOwnerSnapshot
+	}
+	required := map[string]bool{".run-writer.lock": false, "artifacts": false}
+	if s.Kind == localSourceOwnerSetupOnly {
+		required["setup"] = false
+	}
+	entries, err := boundedOwnerEntries(stateRoot, len(required))
+	if err != nil || len(entries) != len(required) {
+		return errLocalSourceOwnerSnapshot
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if _, ok := required[name]; !ok || required[name] {
+			return errLocalSourceOwnerSnapshot
+		}
+		required[name] = true
+		info, statErr := stateRoot.Lstat(name)
+		if statErr != nil {
+			return errLocalSourceOwnerSnapshot
+		}
+		switch name {
+		case ".run-writer.lock":
+			if !ownerConstructorLockInfo(info) {
+				return errLocalSourceOwnerSnapshot
+			}
+		case "artifacts":
+			if !ownerDirectoryInfo(info) || !os.SameFile(info, artifactBefore) {
+				return errLocalSourceOwnerSnapshot
+			}
+		case "setup":
+			saved := s.Entries["setup"]
+			original, originalErr := s.SetupRoot.Stat(".")
+			if originalErr != nil || !ownerDirectoryInfo(info) || !ownerDirectoryInfo(original) ||
+				saved == nil || !os.SameFile(saved, info) || !os.SameFile(info, original) ||
+				saved.Mode() != info.Mode() {
+				return errLocalSourceOwnerSnapshot
+			}
+		}
+	}
+	if s.Kind == localSourceOwnerSetupOnly {
+		receiptBefore, err := s.SetupRoot.Lstat("plan.json.receipts")
+		originalReceipt, originalErr := s.ReceiptRoot.Stat(".")
+		if s.Entries["setup/plan.json.receipts"] == nil || err != nil || originalErr != nil || !ownerDirectoryInfo(receiptBefore) ||
+			!ownerDirectoryInfo(originalReceipt) || !os.SameFile(receiptBefore, originalReceipt) ||
+			!os.SameFile(receiptBefore, s.Entries["setup/plan.json.receipts"]) {
+			return errLocalSourceOwnerSnapshot
+		}
+		if err := recheckOwnerSnapshotDirectory(s, s.SetupRoot, "setup/", 3); err != nil {
+			return err
+		}
+		if err := recheckOwnerSnapshotDirectory(s, s.ReceiptRoot, "setup/plan.json.receipts/", 257); err != nil {
+			return err
+		}
+		setupAfter, err := stateRoot.Lstat("setup")
+		receiptAfter, receiptErr := s.SetupRoot.Lstat("plan.json.receipts")
+		if s.Entries["setup"] == nil || err != nil || receiptErr != nil || !ownerDirectoryInfo(setupAfter) || !ownerDirectoryInfo(receiptAfter) ||
+			!os.SameFile(setupAfter, s.Entries["setup"]) || !os.SameFile(receiptBefore, receiptAfter) {
+			return errLocalSourceOwnerSnapshot
+		}
+	}
+	artifactEntries, err := boundedOwnerEntries(artifactRoot, 1)
+	if err != nil || len(artifactEntries) != 1 || artifactEntries[0].Name() != ".artifact-writer.lock" {
+		return errLocalSourceOwnerSnapshot
+	}
+	artifactLock, err := artifactRoot.Lstat(".artifact-writer.lock")
+	if err != nil || !ownerConstructorLockInfo(artifactLock) {
+		return errLocalSourceOwnerSnapshot
+	}
+	stateLock, err := stateRoot.Lstat(".run-writer.lock")
+	if err != nil || !ownerConstructorLockInfo(stateLock) {
+		return errLocalSourceOwnerSnapshot
+	}
+	childAfter, err := stateRoot.Lstat("artifacts")
+	artifactAfter, artifactErr := artifactRoot.Stat(".")
+	stateAfter, stateErr := stateRoot.Stat(".")
+	if err != nil || artifactErr != nil || stateErr != nil || !ownerDirectoryInfo(childAfter) ||
+		!ownerDirectoryInfo(artifactAfter) || !ownerDirectoryInfo(stateAfter) ||
+		!os.SameFile(childBefore, childAfter) || !os.SameFile(childAfter, artifactAfter) ||
+		!os.SameFile(stateBefore, stateAfter) {
+		return errLocalSourceOwnerSnapshot
 	}
 	return nil
 }
