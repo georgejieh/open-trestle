@@ -16,9 +16,10 @@ import (
 )
 
 var (
-	errHistoricalPacketObservedAtStartup = errors.New("historical packet observed at startup")
-	errHistoricalPacketMissingAtStartup  = errors.New("historical packet missing at startup")
-	errHistoricalPacketMismatchAtStartup = errors.New("historical packet mismatch at startup")
+	errHistoricalPacketObservedAtStartup         = errors.New("historical packet observed at startup")
+	errHistoricalPacketMissingAtStartup          = errors.New("historical packet missing at startup")
+	errHistoricalPacketMismatchAtStartup         = errors.New("historical packet mismatch at startup")
+	errHistoricalInputIntentQuarantinedAtStartup = errors.New("historical prepared context input intent quarantined at startup")
 )
 
 type historicalPacketStartupClass uint8
@@ -29,6 +30,7 @@ const (
 	historicalPacketMissing
 	historicalPacketMismatch
 	historicalPacketConservativeRefusal
+	historicalPacketInputIntentQuarantined
 )
 
 type historicalGateFaultProbe struct {
@@ -108,6 +110,7 @@ func inspectRecordedHistoricalPackets(ctx context.Context, journal *controlplane
 					}
 					selected := historicalPacketObserved
 					conservative := false
+					linkedInput := false
 					for i, observation := range observations {
 						if observation.expectation.scope.Identity() != expectedPackets[i].scope.Identity() || observation.expectation.descriptor.ArtifactIdentity != expectedPackets[i].descriptor.ArtifactIdentity {
 							return errPhysicalPacketObservationUncertain
@@ -124,15 +127,22 @@ func inspectRecordedHistoricalPackets(ctx context.Context, journal *controlplane
 						case physicalPacketIntact:
 							terminal, hasTerminal := facts[i].TerminalEvent()
 							_, linked := facts[i].LinkedInputEvent()
-							if linked || hasTerminal && terminal.Kind() == controlplane.RunEventCanceled {
+							if linked {
+								linkedInput = true
+							} else if hasTerminal && terminal.Kind() == controlplane.RunEventCanceled {
 								conservative = true
 							}
 						default:
 							return errPhysicalPacketObservationUncertain
 						}
 					}
-					if selected == historicalPacketObserved && conservative {
-						selected = historicalPacketConservativeRefusal
+					if selected == historicalPacketObserved {
+						switch {
+						case linkedInput:
+							selected = historicalPacketInputIntentQuarantined
+						case conservative:
+							selected = historicalPacketConservativeRefusal
+						}
 					}
 					*classification = selected // Provisional until all postchecks and borrowed roots close.
 					if probe != nil && probe.afterClassified != nil {

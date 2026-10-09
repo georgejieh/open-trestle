@@ -67,15 +67,8 @@ func TestLocalPacketHistoryForensicReopenAndStartupRefusal(t *testing.T) {
 			second := &daemon{}
 			active, journal, owner, bootErr := startLocalSourceOwnerGate(ctx, second, fixture.statePath, fixture.setupPath, &fixture.setupPlan,
 				"tenant-a", "repo-a", fixture.repository, fixture.gitRoot, fixture.objectStore, fixture.adapter, fixture.rootDigest, fixture.clock)
-			expectedRefusal := errHistoricalPacketObservedAtStartup
-			if withMissingInput {
-				expectedRefusal = controlplane.ErrPreparedContextPacketAtStartup
-			}
-			if active != nil || journal != nil || owner != nil || !errors.Is(bootErr, expectedRefusal) {
-				t.Errorf("second Git-qualified boot must refuse historical packet before activation: store=%v journal=%v owner=%v err=%v", active, journal, owner, bootErr)
-			}
-			if !withMissingInput && errors.Is(bootErr, controlplane.ErrPreparedContextPacketAtStartup) {
-				t.Errorf("intact v4 must not use legacy blanket refusal: %v", bootErr)
+			if active != nil || journal != nil || owner != nil {
+				t.Fatalf("second Git-qualified boot activated historical packet: store=%v journal=%v owner=%v err=%v", active, journal, owner, bootErr)
 			}
 			if err := second.Close(); err != nil {
 				t.Fatalf("close refused boot resources: %v", err)
@@ -85,6 +78,22 @@ func TestLocalPacketHistoryForensicReopenAndStartupRefusal(t *testing.T) {
 				t.Fatal("refused second boot altered or removed stored files")
 			}
 			verifyLocalPacketReopen(t, fixture, prepared, originalBytes, beforeEvents, inputCheckpoint, inputDescriptor, withMissingInput)
+			if withMissingInput {
+				// Linked v5 intent needs a content-neutral quarantine diagnosis.
+				// Boot has not inspected the three descriptor-referenced objects.
+				const marker = "historical prepared context input intent quarantined at startup"
+				if bootErr == nil || !errors.Is(bootErr, errHistoricalInputIntentQuarantinedAtStartup) ||
+					errors.Is(bootErr, controlplane.ErrPreparedContextPacketAtStartup) ||
+					errors.Is(bootErr, errHistoricalPacketObservedAtStartup) ||
+					errors.Is(bootErr, errHistoricalPacketMissingAtStartup) ||
+					errors.Is(bootErr, errHistoricalPacketMismatchAtStartup) ||
+					!strings.Contains(bootErr.Error(), marker) {
+					t.Fatalf("linked v5 intent must remain quarantined without a generic v4 refusal: %v", bootErr)
+				}
+			} else if !errors.Is(bootErr, errHistoricalPacketObservedAtStartup) ||
+				errors.Is(bootErr, controlplane.ErrPreparedContextPacketAtStartup) {
+				t.Fatalf("intact v4 must retain typed observed refusal, not blanket v4 refusal: %v", bootErr)
+			}
 		})
 	}
 }
