@@ -266,6 +266,16 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	if localGitConfigured && (!localGitComplete || githubConfigured || plannerConfigured || runtimeConfigured != *localFullReview || *metadataStore != "local" || *artifactStoreMode != "local" || len(repositories) != 1 || *tlsCertificate != "" || *tlsKey != "" || !daemonLoopbackAddress(*listenAddress)) {
 		return nil, ErrInvalidDaemonConfiguration
 	}
+	if *metadataStore == "local" && *setupState != "" {
+		stateRoot, rootErr := filepath.Abs(*stateDirectory)
+		setupParent, parentErr := filepath.Abs(filepath.Dir(*setupState))
+		if rootErr != nil || parentErr != nil {
+			return nil, ErrInvalidDaemonConfiguration
+		}
+		if filepath.Clean(setupParent) == filepath.Clean(stateRoot) {
+			return nil, fmt.Errorf("local metadata startup rejected: --setup-state directly inside --state-dir is unsupported; stop writers and restore a verified offline setup backup with its receipts under --state-dir/setup/plan.json or outside --state-dir, then update --setup-state and inspect; no automatic move or deletion: %w", ErrInvalidDaemonConfiguration)
+		}
+	}
 	var localSetupPlan setup.Plan
 	var localRepository evidence.RepositoryIdentity
 	if localGitConfigured {
@@ -458,6 +468,12 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 			return nil, err
 		}
 		resources.closers = append(resources.closers, fileJournal)
+		if _, err := fileJournal.InspectStartupInventory(ctx); err != nil {
+			if errors.Is(err, controlplane.ErrInvalidStartupInventoryEntry) {
+				return nil, fmt.Errorf("local metadata startup rejected: --state-dir has an invalid or unknown direct entry; review the documented private root layout offline; no automatic repair: %w", err)
+			}
+			return nil, fmt.Errorf("local metadata startup inventory: %w", err)
+		}
 		journal = fileJournal
 		if err := ctx.Err(); err != nil {
 			return nil, err
