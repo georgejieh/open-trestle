@@ -36,8 +36,41 @@ type StartupInventory struct{ Plans, Streams, Events int }
 
 // InspectStartupInventory checks every direct journal-root entry and every event
 // in every paired stream. This method is not daemon startup wiring or packet safety.
+type startupInventoryWalkResult struct {
+	inventory StartupInventory
+	facts     []HistoricalContextPacketFact
+	hasPacket bool
+	overflow  bool
+}
+
+// InspectStartupInventory preserves its blanket v4 refusal and zero-on-error
+// counts. Both public APIs use the same exhaustive old-error-ordered walk.
 func (j *FileRunJournal) InspectStartupInventory(ctx context.Context) (StartupInventory, error) {
-	zero := StartupInventory{}
+	result, err := j.inspectStartupInventory(ctx, false)
+	if err != nil {
+		return StartupInventory{}, err
+	}
+	if result.hasPacket {
+		return StartupInventory{}, ErrPreparedContextPacketAtStartup
+	}
+	return result.inventory, nil
+}
+
+// InspectHistoricalContextPackets is all-scope diagnostic metadata only. It
+// grants no startup, owner-scoped, artifact, or dispatch authority.
+func (j *FileRunJournal) InspectHistoricalContextPackets(ctx context.Context) ([]HistoricalContextPacketFact, error) {
+	result, err := j.inspectStartupInventory(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	if result.overflow {
+		return nil, ErrStartupInventoryLimit
+	}
+	return append([]HistoricalContextPacketFact{}, result.facts...), nil
+}
+
+func (j *FileRunJournal) inspectStartupInventory(ctx context.Context, historical bool) (startupInventoryWalkResult, error) {
+	zero := startupInventoryWalkResult{}
 	if j == nil {
 		return zero, ErrInvalidRunJournal
 	}
@@ -187,13 +220,22 @@ func (j *FileRunJournal) InspectStartupInventory(ctx context.Context) (StartupIn
 		if len(events) == 0 {
 			return zero, ErrInvalidStartupInventoryEntry
 		}
-		if _, err := ReplayReviewRun(plan, events); err != nil {
+		state, err := ReplayReviewRun(plan, events)
+		if err != nil {
 			return zero, fmt.Errorf("%w: %v", ErrInvalidStartupInventoryEntry, err)
 		}
 		for _, event := range events {
 			if event.Kind() == RunEventContextPacketPrepared {
 				hasPacket = true
 			}
+		}
+		if historical && !zero.overflow {
+			streamFacts, overflow, err := historicalFactsForStream(plan, events, state, maxStartupHistoricalPacketFacts-len(zero.facts))
+			if err != nil {
+				return startupInventoryWalkResult{}, err
+			}
+			zero.facts = append(zero.facts, streamFacts...)
+			zero.overflow = overflow
 		}
 		result.Plans++
 		result.Streams++
@@ -202,10 +244,9 @@ func (j *FileRunJournal) InspectStartupInventory(ctx context.Context) (StartupIn
 	if err := fileRunContextDone(ctx); err != nil {
 		return zero, err
 	}
-	if hasPacket {
-		return zero, ErrPreparedContextPacketAtStartup
-	}
-	return result, nil
+	zero.inventory = result
+	zero.hasPacket = hasPacket
+	return zero, nil
 }
 
 func (j *FileRunJournal) readInventoryPlan(base string) (ReviewRunPlan, error) {
