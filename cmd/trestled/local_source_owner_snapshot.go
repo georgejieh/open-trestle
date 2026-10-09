@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/georgejieh/open-trestle/internal/fileauthority"
@@ -36,6 +38,8 @@ type localSourceOwnerSnapshot struct {
 	ReceiptRoot *os.Root
 	// Entries are read-only, momentary observations for a future under-lock recheck.
 	Entries map[string]os.FileInfo
+	// SetupBytes fingerprints only the original setup leaves, never runtime state.
+	SetupBytes map[string][sha256.Size]byte
 }
 
 func (s *localSourceOwnerSnapshot) Close() error {
@@ -55,7 +59,12 @@ func (s *localSourceOwnerSnapshot) Close() error {
 // inspectLocalSourceOwnerSnapshot only observes pre-constructor first-use shapes.
 // expected must be a separately approved setup plan for the setup-only shape;
 // metadata and local Git source identities are NOT authenticated here.
-func inspectLocalSourceOwnerSnapshot(ctx context.Context, stateDir, configuredSetupPath string, expected *setup.Plan) (result *localSourceOwnerSnapshot, err error) {
+func inspectLocalSourceOwnerSnapshot(ctx context.Context, stateDir, configuredSetupPath string, expected *setup.Plan) (*localSourceOwnerSnapshot, error) {
+	return inspectLocalSourceOwnerSnapshotWithInspector(ctx, stateDir, configuredSetupPath, expected, setup.InspectStateFile)
+}
+
+// The per-call inspector seam keeps the byte bracket test local to this call.
+func inspectLocalSourceOwnerSnapshotWithInspector(ctx context.Context, stateDir, configuredSetupPath string, expected *setup.Plan, inspector func(context.Context, string) (setup.Plan, error)) (result *localSourceOwnerSnapshot, err error) {
 	if ctx == nil || ctx.Err() != nil || stateDir == "" {
 		return nil, errLocalSourceOwnerSnapshot
 	}
@@ -105,15 +114,32 @@ func inspectLocalSourceOwnerSnapshot(ctx context.Context, stateDir, configuredSe
 	if err = scanOwnerSetup(snap); err != nil {
 		return nil, err
 	}
-	plan, err := setup.InspectStateFile(ctx, configuredSetupPath)
+	snap.Kind = localSourceOwnerSetupOnly
+	if err = recheckOwnerEntries(snap); err != nil {
+		return nil, err
+	}
+	if err = recheckOriginalSetupSubtree(snap); err != nil {
+		return nil, err
+	}
+	if snap.SetupBytes, err = hashOriginalSetupEntries(ctx, snap); err != nil {
+		return nil, err
+	}
+	if err = recheckOriginalSetupSubtree(snap); err != nil || recheckOwnerEntries(snap) != nil {
+		return nil, errLocalSourceOwnerSnapshot
+	}
+	plan, err := inspector(ctx, configuredSetupPath)
 	if err != nil {
 		return nil, fmt.Errorf("%w: setup plan or ledger: %v", errLocalSourceOwnerSnapshot, err)
 	}
 	if plan.Validate() != nil || plan.RootIdentity() != expected.RootIdentity() || plan.TenantID() != expected.TenantID() || plan.RepositoryID() != expected.RepositoryID() || plan.Profile() != expected.Profile() || plan.Posture() != expected.Posture() {
 		return nil, errLocalSourceOwnerSnapshot
 	}
-	snap.Kind = localSourceOwnerSetupOnly
-	if ctx.Err() != nil || recheckOwnerEntries(snap) != nil {
+	if ctx.Err() != nil || recheckOriginalSetupSubtree(snap) != nil || recheckOwnerEntries(snap) != nil {
+		return nil, errLocalSourceOwnerSnapshot
+	}
+	observed, err := hashOriginalSetupEntries(ctx, snap)
+	if err != nil || !equalOriginalSetupBytes(snap.SetupBytes, observed) || ctx.Err() != nil ||
+		recheckOriginalSetupSubtree(snap) != nil || recheckOwnerEntries(snap) != nil {
 		return nil, errLocalSourceOwnerSnapshot
 	}
 	return snap, nil
@@ -410,6 +436,199 @@ func recheckLocalSourceOwnerPostConstructor(s *localSourceOwnerSnapshot, stateRo
 		!ownerDirectoryInfo(artifactAfter) || !ownerDirectoryInfo(stateAfter) ||
 		!os.SameFile(childBefore, childAfter) || !os.SameFile(childAfter, artifactAfter) ||
 		!os.SameFile(stateBefore, stateAfter) {
+		return errLocalSourceOwnerSnapshot
+	}
+	return nil
+}
+
+// recheckOriginalSetupSubtree pins each saved parent-child edge and the exact
+// original directory shape. It is not a pathname-based plan validator.
+func recheckOriginalSetupSubtree(s *localSourceOwnerSnapshot) error {
+	if s == nil || s.Kind != localSourceOwnerSetupOnly || s.StateRoot == nil || s.SetupRoot == nil || s.ReceiptRoot == nil || s.Entries == nil {
+		return errLocalSourceOwnerSnapshot
+	}
+	if err := recheckOwnerSnapshotDirectory(s, s.SetupRoot, "setup/", 3); err != nil {
+		return err
+	}
+	if err := recheckOwnerSnapshotDirectory(s, s.ReceiptRoot, "setup/plan.json.receipts/", 257); err != nil {
+		return err
+	}
+	for _, edge := range []struct {
+		parent, child *os.Root
+		name, key     string
+	}{
+		{s.StateRoot, s.SetupRoot, "setup", "setup"},
+		{s.SetupRoot, s.ReceiptRoot, "plan.json.receipts", "setup/plan.json.receipts"},
+	} {
+		saved := s.Entries[edge.key]
+		observed, err := edge.parent.Lstat(edge.name)
+		if err != nil || saved == nil || !ownerDirectoryInfo(observed) || !os.SameFile(saved, observed) || saved.Mode() != observed.Mode() {
+			return errLocalSourceOwnerSnapshot
+		}
+		opened, err := edge.child.Stat(".")
+		if err != nil || !ownerDirectoryInfo(opened) || !os.SameFile(saved, opened) || saved.Mode() != opened.Mode() {
+			return errLocalSourceOwnerSnapshot
+		}
+	}
+	return nil
+}
+
+// hashOriginalSetupEntries never enumerates a new digest target. The snapshot
+// directory check separately rejects additions, removals and changed ancestry.
+func hashOriginalSetupEntries(ctx context.Context, s *localSourceOwnerSnapshot) (map[string][sha256.Size]byte, error) {
+	if ctx == nil || ctx.Err() != nil || s == nil || s.Kind != localSourceOwnerSetupOnly || s.SetupRoot == nil || s.ReceiptRoot == nil || s.Entries == nil {
+		return nil, errLocalSourceOwnerSnapshot
+	}
+	const prefix = "setup/plan.json.receipts/"
+	names := make([]string, 0, 259)
+	for key, info := range s.Entries {
+		if key == "setup/plan.json" || key == "setup/plan.json.lock" || strings.HasPrefix(key, prefix) {
+			if info == nil || info.Mode() != 0600 || info.Size() < 0 || info.Size() > 1<<20 || !fileauthority.TrustedOwner(info) {
+				return nil, errLocalSourceOwnerSnapshot
+			}
+			if strings.HasPrefix(key, prefix) && (!ownerReceiptName.MatchString(strings.TrimPrefix(key, prefix)) || strings.Contains(strings.TrimPrefix(key, prefix), "/")) {
+				return nil, errLocalSourceOwnerSnapshot
+			}
+			names = append(names, key)
+		}
+	}
+	if len(names) < 2 || len(names) > 259 || s.Entries["setup/plan.json"] == nil || s.Entries["setup/plan.json.lock"] == nil {
+		return nil, errLocalSourceOwnerSnapshot
+	}
+	sort.Strings(names)
+	digests := make(map[string][sha256.Size]byte, len(names))
+	var total int64
+	for _, key := range names {
+		saved := s.Entries[key]
+		if total+saved.Size() > 259<<20 {
+			return nil, errLocalSourceOwnerSnapshot
+		}
+		total += saved.Size()
+		root, name := s.SetupRoot, strings.TrimPrefix(key, "setup/")
+		if strings.HasPrefix(key, prefix) {
+			root, name = s.ReceiptRoot, strings.TrimPrefix(key, prefix)
+		}
+		digest, err := hashOriginalSetupLeaf(ctx, root, name, saved)
+		if err != nil {
+			return nil, err
+		}
+		digests[key] = digest
+	}
+	if ctx.Err() != nil {
+		return nil, errLocalSourceOwnerSnapshot
+	}
+	return digests, nil
+}
+
+func hashOriginalSetupLeaf(ctx context.Context, root *os.Root, name string, saved os.FileInfo) (digest [sha256.Size]byte, err error) {
+	return hashOriginalSetupLeafWithReader(ctx, root, name, saved, nil)
+}
+
+// makeReader is a per-call fault seam after descriptor Stat; nil reads the opened file.
+func hashOriginalSetupLeafWithReader(ctx context.Context, root *os.Root, name string, saved os.FileInfo, makeReader func(*os.File) io.ReadCloser) (digest [sha256.Size]byte, err error) {
+	if ctx == nil || ctx.Err() != nil || root == nil || saved == nil || saved.Mode() != 0600 || saved.Size() < 0 || saved.Size() > 1<<20 || !fileauthority.TrustedOwner(saved) {
+		return digest, errLocalSourceOwnerSnapshot
+	}
+	before, statErr := root.Lstat(name)
+	if statErr != nil || !sameOriginalSetupFile(saved, before) {
+		return digest, errLocalSourceOwnerSnapshot
+	}
+	file, openErr := root.Open(name)
+	if openErr != nil {
+		return digest, errLocalSourceOwnerSnapshot
+	}
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("%w: close setup leaf: %v", errLocalSourceOwnerSnapshot, closeErr))
+		}
+	}()
+	opened, statErr := file.Stat()
+	if statErr != nil || !sameOriginalSetupFile(saved, opened) || !os.SameFile(before, opened) {
+		return digest, errLocalSourceOwnerSnapshot
+	}
+	var reader io.Reader = file
+	if makeReader != nil {
+		injected := makeReader(file)
+		if injected == nil {
+			return digest, errLocalSourceOwnerSnapshot
+		}
+		reader = injected
+		defer func() {
+			if closeErr := injected.Close(); closeErr != nil {
+				err = errors.Join(err, fmt.Errorf("%w: close setup reader: %v", errLocalSourceOwnerSnapshot, closeErr))
+			}
+		}()
+	}
+	hash := sha256.New()
+	var buffer [32 * 1024]byte
+	remaining := saved.Size()
+	for remaining > 0 {
+		if ctx.Err() != nil {
+			return digest, errLocalSourceOwnerSnapshot
+		}
+		count := int64(len(buffer))
+		if remaining < count {
+			count = remaining
+		}
+		n, readErr := reader.Read(buffer[:int(count)])
+		if n > 0 {
+			_, _ = hash.Write(buffer[:n])
+			remaining -= int64(n)
+		}
+		if readErr != nil || n == 0 {
+			return digest, errLocalSourceOwnerSnapshot
+		}
+	}
+	if ctx.Err() != nil {
+		return digest, errLocalSourceOwnerSnapshot
+	}
+	var probe [1]byte
+	n, readErr := reader.Read(probe[:])
+	if n != 0 || !errors.Is(readErr, io.EOF) {
+		return digest, errLocalSourceOwnerSnapshot
+	}
+	after, statErr := root.Lstat(name)
+	if statErr != nil || !sameOriginalSetupFile(saved, after) || !os.SameFile(before, after) || ctx.Err() != nil {
+		return digest, errLocalSourceOwnerSnapshot
+	}
+	copy(digest[:], hash.Sum(nil))
+	return digest, nil
+}
+
+func sameOriginalSetupFile(saved, observed os.FileInfo) bool {
+	return saved != nil && observed != nil && observed.Mode() == 0600 && saved.Mode() == observed.Mode() &&
+		observed.Size() >= 0 && observed.Size() <= 1<<20 && saved.Size() == observed.Size() &&
+		fileauthority.TrustedOwner(observed) && os.SameFile(saved, observed)
+}
+
+func equalOriginalSetupBytes(expected, observed map[string][sha256.Size]byte) bool {
+	if expected == nil || len(expected) != len(observed) {
+		return false
+	}
+	for key, digest := range observed {
+		if previous, ok := expected[key]; !ok || previous != digest {
+			return false
+		}
+	}
+	return true
+}
+
+// recheckLocalSourceOwnerSetupBytes is private setup-only continuity evidence.
+// The caller must hold both constructor leases. This does not validate the
+// plan or grant ownership; the atomic caller must invoke this check both before
+// and after its independent setup.InspectStateFile semantic inspection.
+func recheckLocalSourceOwnerSetupBytes(ctx context.Context, s *localSourceOwnerSnapshot, stateRoot, artifactRoot *os.Root) error {
+	if ctx == nil || ctx.Err() != nil || s == nil || s.Kind != localSourceOwnerSetupOnly || s.SetupBytes == nil {
+		return errLocalSourceOwnerSnapshot
+	}
+	if recheckLocalSourceOwnerPostConstructor(s, stateRoot, artifactRoot) != nil || recheckOriginalSetupSubtree(s) != nil {
+		return errLocalSourceOwnerSnapshot
+	}
+	observed, err := hashOriginalSetupEntries(ctx, s)
+	if err != nil || !equalOriginalSetupBytes(s.SetupBytes, observed) || ctx.Err() != nil {
+		return errLocalSourceOwnerSnapshot
+	}
+	if recheckOriginalSetupSubtree(s) != nil || recheckLocalSourceOwnerPostConstructor(s, stateRoot, artifactRoot) != nil || ctx.Err() != nil {
 		return errLocalSourceOwnerSnapshot
 	}
 	return nil
