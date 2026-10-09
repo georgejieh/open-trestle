@@ -177,6 +177,19 @@ func (j *FileRunJournal) inspectStartupInventory(ctx context.Context, historical
 		}
 		total += size
 	}
+	return walkInventoryPlans(ctx, historical, plans, streams, readPlanFromJournal(j), streamFromJournal(j))
+}
+
+func readPlanFromJournal(j *FileRunJournal) func(string) (ReviewRunPlan, error) {
+	return j.readInventoryPlan
+}
+func streamFromJournal(j *FileRunJournal) func(ReviewRunPlan) ([]RunEvent, error) {
+	return func(plan ReviewRunPlan) ([]RunEvent, error) { return j.loadStream(plan.Scope()) }
+}
+
+// walkInventoryPlans preserves the legacy all-scope ordering for both entry sources.
+func walkInventoryPlans(ctx context.Context, historical bool, plans, streams map[string]struct{}, readPlan func(string) (ReviewRunPlan, error), loadStream func(ReviewRunPlan) ([]RunEvent, error)) (startupInventoryWalkResult, error) {
+	zero := startupInventoryWalkResult{}
 	for base := range streams {
 		if _, ok := plans[base]; !ok {
 			return zero, ErrInvalidStartupInventoryEntry
@@ -195,7 +208,7 @@ func (j *FileRunJournal) inspectStartupInventory(ctx context.Context, historical
 		if err := fileRunContextDone(ctx); err != nil {
 			return zero, err
 		}
-		if _, err := j.readInventoryPlan(base); err != nil {
+		if _, err := readPlan(base); err != nil {
 			return zero, err
 		}
 		incomplete = true
@@ -211,11 +224,11 @@ func (j *FileRunJournal) inspectStartupInventory(ctx context.Context, historical
 		if err := fileRunContextDone(ctx); err != nil {
 			return zero, err
 		}
-		plan, err := j.readInventoryPlan(base)
+		plan, err := readPlan(base)
 		if err != nil {
 			return zero, err
 		}
-		events, err := j.loadStream(plan.Scope())
+		events, err := loadStream(plan)
 		if err != nil {
 			return zero, err
 		}
