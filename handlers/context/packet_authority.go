@@ -30,6 +30,13 @@ type packetBuild struct {
 	root, snapshot string
 }
 
+// packetAssembler checks the source-bound packet without owning any effect boundary.
+type packetAssembler struct {
+	store     artifact.Store
+	clock     artifact.Clock
+	ownerRoot string
+}
+
 type PacketAuthority struct {
 	store       artifact.Store
 	coordinator *controlplane.Coordinator
@@ -85,31 +92,12 @@ func (p *PacketAuthority) Prepare(ctx context.Context, request controlplane.Task
 	if prior, ok := runtime.PreparedContextPacket(); ok {
 		createdAt = time.UnixMilli(prior.Descriptor().CreatedAtMilliseconds)
 	}
-	built, err := p.rebuild(ctx, request, state, now, createdAt)
+	candidate, err := BuildPacketCandidate(ctx, p.store, request, state, p.clock, p.ownerRoot, now, createdAt)
 	if err != nil {
 		return controlplane.PreparedContextPacket{}, err
 	}
-	value, root := built.value, built.root
-	if value.Protection() != artifact.ProtectionProcessPrivate || !value.ExpiresAt().After(request.Lease().ExpiresAt()) {
-		return controlplane.PreparedContextPacket{}, ErrPacketAuthority
-	}
-	dependencies := []string{}
-	for _, output := range request.DependencyOutputs() {
-		if !output.Available() {
-			return controlplane.PreparedContextPacket{}, ErrPacketAuthority
-		}
-		dependencies = append(dependencies, output.OutputIdentity())
-	}
-	slices.Sort(dependencies)
-	descriptor := controlplane.ContextPacketDescriptor{
-		ArtifactIdentity: value.Identity(), LeaseIdentity: request.Lease().Identity(), LeaseEventIdentity: request.Lease().EventIdentity(),
-		PayloadDigest: value.PayloadDigest(), Classification: value.Classification().String(), Protection: value.Protection().String(),
-		Provenance: value.Provenance(), SourceRootIdentity: root, SnapshotIdentity: built.snapshot,
-		DependencyIdentities: dependencies, CreatedAtMilliseconds: value.CreatedAt().UnixMilli(), ExpiresAtMilliseconds: value.ExpiresAt().UnixMilli(),
-	}
-	if !validDigest(descriptor.SnapshotIdentity) {
-		return controlplane.PreparedContextPacket{}, ErrPacketAuthority
-	}
+	value, descriptor := candidate.Artifact(), candidate.Descriptor()
+	root := descriptor.SourceRootIdentity
 	now = p.clock.Now().UTC()
 	if ctx.Err() != nil || !now.Before(request.Lease().ExpiresAt()) || !now.Before(value.ExpiresAt()) {
 		return controlplane.PreparedContextPacket{}, ErrPacketAuthority
@@ -154,6 +142,10 @@ func (p *PacketAuthority) current(ctx context.Context, request controlplane.Task
 }
 
 func (p *PacketAuthority) rebuild(ctx context.Context, request controlplane.TaskExecutionRequest, state controlplane.ReviewRunState, at, createdAt time.Time) (packetBuild, error) {
+	return (packetAssembler{store: p.store, clock: p.clock, ownerRoot: p.ownerRoot}).rebuild(ctx, request, state, at, createdAt)
+}
+
+func (p packetAssembler) rebuild(ctx context.Context, request controlplane.TaskExecutionRequest, state controlplane.ReviewRunState, at, createdAt time.Time) (packetBuild, error) {
 	runtime, ok := state.Task(request.Task().Key())
 	if !ok || runtime.Status() != controlplane.TaskRuntimeLeased || runtime.Definition().Identity() != request.Task().Identity() ||
 		runtime.Attempts() != request.Lease().Attempt() || runtime.WorkerIdentity() != request.Lease().WorkerIdentity() || runtime.LeaseExpiresAt() != request.Lease().ExpiresAt() ||
@@ -188,7 +180,7 @@ func (p *PacketAuthority) rebuild(ctx context.Context, request controlplane.Task
 	return packetBuild{value: value, root: root, snapshot: assembly.Snapshot.Identity()}, nil
 }
 
-func (p *PacketAuthority) sourceChain(ctx context.Context, request controlplane.TaskExecutionRequest, state controlplane.ReviewRunState, baseArtifact, headArtifact, changeArtifact artifact.Artifact, packetExpiry time.Time) (string, error) {
+func (p packetAssembler) sourceChain(ctx context.Context, request controlplane.TaskExecutionRequest, state controlplane.ReviewRunState, baseArtifact, headArtifact, changeArtifact artifact.Artifact, packetExpiry time.Time) (string, error) {
 	reader := leaseBoundReads{Store: p.store, clock: p.clock, lease: request.Lease()}
 	base, err := sourcehandler.ParseSnapshotArtifact(baseArtifact)
 	if err != nil {

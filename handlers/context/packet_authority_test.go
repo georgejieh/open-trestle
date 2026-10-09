@@ -58,17 +58,21 @@ func (s blockedPacketStore) Put(ctx context.Context, value artifact.Artifact, at
 
 type failingPacketJournal struct {
 	controlplane.RunJournal
-	fail bool
+	fail           bool
+	onCancelAppend func()
 }
 
 func (j *failingPacketJournal) Append(ctx context.Context, head string, event controlplane.RunEvent) error {
+	if j.onCancelAppend != nil && event.Kind() == controlplane.RunEventCanceled {
+		j.onCancelAppend()
+	}
 	if j.fail && event.Kind() == controlplane.RunEventContextPacketPrepared {
 		return errors.New("injected v4 append failure")
 	}
 	return j.RunJournal.Append(ctx, head, event)
 }
 
-func newPacketWriterFixture(t *testing.T, blockedFile bool, baseFile bool, legacy bool, crossedRoot bool, failAppend bool) (*PacketAuthority, controlplane.TaskExecutionRequest, *controlplane.Coordinator, artifact.Store, string, func()) {
+func newPacketWriterFixture(t *testing.T, blockedFile bool, baseFile bool, legacy bool, crossedRoot bool, failAppend bool) (*PacketAuthority, controlplane.TaskExecutionRequest, *controlplane.Coordinator, artifact.Store, string, func(), *failingPacketJournal) {
 	repository, _ := evidence.NewRepositoryIdentity("github.com", []string{"owner"}, "repo")
 	gitRoot := filepath.Join(t.TempDir(), "repo")
 	if err := os.Mkdir(gitRoot, 0700); err != nil {
@@ -237,12 +241,12 @@ func newPacketWriterFixture(t *testing.T, blockedFile bool, baseFile bool, legac
 		}
 		for _, ref := range snapshot.Files() {
 			if ref.Path() == "z_unselected.txt" {
-				return NewPacketAuthority(blockedPacketStore{Store: store, blocked: ref.ArtifactIdentity()}, coordinator, contextTestClock{time.UnixMilli(230)}, sourceRoot), contextRequest, coordinator, store, root, func() { _ = journal.Close(); _ = store.Close() }
+				return NewPacketAuthority(blockedPacketStore{Store: store, blocked: ref.ArtifactIdentity()}, coordinator, contextTestClock{time.UnixMilli(230)}, sourceRoot), contextRequest, coordinator, store, root, func() { _ = journal.Close(); _ = store.Close() }, wrappedJournal
 			}
 		}
 		t.Fatal("nonselected file absent")
 	}
-	return NewPacketAuthority(store, coordinator, contextTestClock{time.UnixMilli(230)}, sourceRoot), contextRequest, coordinator, store, root, func() { _ = journal.Close(); _ = store.Close() }
+	return NewPacketAuthority(store, coordinator, contextTestClock{time.UnixMilli(230)}, sourceRoot), contextRequest, coordinator, store, root, func() { _ = journal.Close(); _ = store.Close() }, wrappedJournal
 }
 func TestPacketAuthorityFileBackedPreflight(t *testing.T) {
 	for _, tc := range []struct {
@@ -260,7 +264,7 @@ func TestPacketAuthorityFileBackedPreflight(t *testing.T) {
 		{"packet_put_failure", false, false, false, false, false, false, true, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			authority, request, coordinator, store, root, closeFixture := newPacketWriterFixture(t, tc.blocked, tc.baseFile, tc.legacy, tc.crossedRoot, tc.appendFailure)
+			authority, request, coordinator, store, root, closeFixture, _ := newPacketWriterFixture(t, tc.blocked, tc.baseFile, tc.legacy, tc.crossedRoot, tc.appendFailure)
 			defer closeFixture()
 			if tc.name == "retained_owner_root_mismatch" {
 				authority.ownerRoot = strings.Repeat("a", 64)
