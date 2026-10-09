@@ -62,6 +62,10 @@ type failingPacketJournal struct {
 	onCancelAppend func()
 }
 
+func (j *failingPacketJournal) WithEffectSection(ctx context.Context, effect func() error) error {
+	return j.RunJournal.(*controlplane.FileRunJournal).WithEffectSection(ctx, effect)
+}
+
 func (j *failingPacketJournal) Append(ctx context.Context, head string, event controlplane.RunEvent) error {
 	if j.onCancelAppend != nil && event.Kind() == controlplane.RunEventCanceled {
 		j.onCancelAppend()

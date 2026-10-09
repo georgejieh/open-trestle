@@ -10,6 +10,7 @@ import (
 	"io"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/georgejieh/open-trestle/audit"
@@ -203,6 +204,57 @@ type Coordinator struct {
 
 func NewCoordinator(journal RunJournal) (*Coordinator, error) {
 	return newCoordinator(journal, rand.Reader)
+}
+
+// WithPacketEffectSection cooperatively shares this coordinator's journal effect
+// gate with a synchronous packet write. Only journals that explicitly expose the
+// capability can prepare packets. An optional implementation must invoke the
+// callback synchronously exactly once; this checks callback discipline, not
+// owner provenance or that an arbitrary wrapper uses the same live journal.
+func (c *Coordinator) WithPacketEffectSection(ctx context.Context, effect func() error) error {
+	if c == nil || effect == nil {
+		return ErrInvalidCoordinator
+	}
+	gated, ok := c.journal.(interface {
+		WithEffectSection(context.Context, func() error) error
+	})
+	if !ok {
+		return ErrInvalidCoordinatorJournal
+	}
+	// An optional wrapper is not provenance. Require that it synchronously
+	// invokes the callback exactly once before reporting success. Protect this
+	// state because a broken wrapper may call concurrently or after returning.
+	var mu sync.Mutex
+	calls, finished, returned := 0, false, false
+	var callbackErr error
+	invalid := false
+	gateErr := gated.WithEffectSection(ctx, func() error {
+		mu.Lock()
+		if returned || calls != 0 {
+			invalid = true
+			mu.Unlock()
+			return ErrInvalidCoordinatorJournal
+		}
+		calls++
+		mu.Unlock()
+		err := effect()
+		mu.Lock()
+		callbackErr = err
+		finished = true
+		mu.Unlock()
+		return err
+	})
+	mu.Lock()
+	returned = true
+	valid := calls == 1 && finished && !invalid
+	effectErr := callbackErr
+	mu.Unlock()
+	if !valid {
+		return errors.Join(ErrInvalidCoordinatorJournal, gateErr, effectErr)
+	}
+	// An optional implementation may swallow an effect error. Never turn
+	// that into success or claim that its return proves a shared owner gate.
+	return errors.Join(gateErr, effectErr)
 }
 func newCoordinator(journal RunJournal, random io.Reader) (*Coordinator, error) {
 	if isNilRunJournal(journal) {

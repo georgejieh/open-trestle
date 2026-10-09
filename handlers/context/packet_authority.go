@@ -22,8 +22,9 @@ import (
 
 var ErrPacketAuthority = errors.New("packet authority or effect fence unavailable")
 
-// PacketAuthority is an unwired, packet-only preparation boundary. It does not
-// authenticate root ownership or atomically fence cancellation against FileStore.
+// PacketAuthority is an unwired, packet-only preparation boundary. Its optional
+// shared journal gate cooperatively orders cancellation and physical Put, but
+// does not authenticate root ownership or make two stores crash-atomic.
 // Its return value is an intent, never a successful task completion.
 type packetBuild struct {
 	value          artifact.Artifact
@@ -102,33 +103,61 @@ func (p *PacketAuthority) Prepare(ctx context.Context, request controlplane.Task
 	if ctx.Err() != nil || !now.Before(request.Lease().ExpiresAt()) || !now.Before(value.ExpiresAt()) {
 		return controlplane.PreparedContextPacket{}, ErrPacketAuthority
 	}
-	prepared, err := p.coordinator.PrepareContextPacket(ctx, request.Plan(), request.Lease(), descriptor, now)
+	// A fresh state/source/lease check, v4 CAS, physical Put (including an
+	// error-after-rename return), readback, and final fence share the same live
+	// journal gate used by canceled Append. Unsupported journals fail before v4.
+	var prepared controlplane.PreparedContextPacket
+	err = p.coordinator.WithPacketEffectSection(ctx, func() error {
+		freshAt := p.clock.Now().UTC()
+		if ctx.Err() != nil || !freshAt.Before(request.Lease().ExpiresAt()) || !freshAt.Before(value.ExpiresAt()) {
+			return ErrPacketAuthority
+		}
+		freshState, stateErr := p.current(ctx, request)
+		if stateErr != nil {
+			return stateErr
+		}
+		fresh, buildErr := BuildPacketCandidate(ctx, p.store, request, freshState, p.clock, p.ownerRoot, freshAt, createdAt)
+		if buildErr != nil || !reflect.DeepEqual(fresh.Descriptor(), descriptor) || !samePacketArtifact(value, fresh.Artifact()) {
+			return errors.Join(ErrPacketAuthority, buildErr)
+		}
+		freshAt = p.clock.Now().UTC()
+		if ctx.Err() != nil || !freshAt.Before(request.Lease().ExpiresAt()) || !freshAt.Before(value.ExpiresAt()) {
+			return ErrPacketAuthority
+		}
+		prepared, stateErr = p.coordinator.PrepareContextPacket(ctx, request.Plan(), request.Lease(), descriptor, freshAt)
+		if stateErr != nil {
+			return errors.Join(ErrPacketAuthority, stateErr)
+		}
+		for step := 0; step < 4; step++ {
+			if fenceErr := p.fence(ctx, request, prepared, value, root); fenceErr != nil {
+				return fenceErr
+			}
+			switch step {
+			case 0:
+				effectAt := p.clock.Now().UTC()
+				if ctx.Err() != nil || !effectAt.Before(request.Lease().ExpiresAt()) || !effectAt.Before(value.ExpiresAt()) {
+					return ErrPacketAuthority
+				}
+				if _, putErr := p.store.Put(ctx, value, effectAt); putErr != nil {
+					// A failed Put may already have renamed the packet. Its physical
+					// outcome is uncertain; never infer absent bytes from this error.
+					return errors.Join(ErrPacketAuthority, putErr)
+				}
+			case 2:
+				effectAt := p.clock.Now().UTC()
+				if ctx.Err() != nil || !effectAt.Before(request.Lease().ExpiresAt()) || !effectAt.Before(value.ExpiresAt()) {
+					return ErrPacketAuthority
+				}
+				stored, getErr := p.store.Get(ctx, request.Plan().Scope(), value.Identity(), effectAt)
+				if getErr != nil || !samePacketEnvelope(value, stored) {
+					return errors.Join(ErrPacketAuthority, getErr)
+				}
+			}
+		}
+		return nil
+	})
 	if err != nil {
-		return controlplane.PreparedContextPacket{}, errors.Join(ErrPacketAuthority, err)
-	}
-	for step := 0; step < 4; step++ {
-		if err = p.fence(ctx, request, prepared, value, root); err != nil {
-			return prepared, err
-		}
-		switch step {
-		case 0:
-			effectAt := p.clock.Now().UTC()
-			if ctx.Err() != nil || !effectAt.Before(request.Lease().ExpiresAt()) || !effectAt.Before(value.ExpiresAt()) {
-				return prepared, ErrPacketAuthority
-			}
-			if _, err = p.store.Put(ctx, value, effectAt); err != nil {
-				return prepared, errors.Join(ErrPacketAuthority, err)
-			}
-		case 2:
-			effectAt := p.clock.Now().UTC()
-			if ctx.Err() != nil || !effectAt.Before(request.Lease().ExpiresAt()) || !effectAt.Before(value.ExpiresAt()) {
-				return prepared, ErrPacketAuthority
-			}
-			stored, getErr := p.store.Get(ctx, request.Plan().Scope(), value.Identity(), effectAt)
-			if getErr != nil || !samePacketArtifact(value, stored) {
-				return prepared, errors.Join(ErrPacketAuthority, getErr)
-			}
-		}
+		return prepared, errors.Join(ErrPacketAuthority, err)
 	}
 	return prepared, nil
 }
@@ -277,6 +306,15 @@ func (p *PacketAuthority) fence(ctx context.Context, request controlplane.TaskEx
 		return ErrPacketAuthority
 	}
 	return nil
+}
+
+func samePacketEnvelope(first, second artifact.Artifact) bool {
+	if !samePacketArtifact(first, second) {
+		return false
+	}
+	left, leftErr := artifact.Encode(first)
+	right, rightErr := artifact.Encode(second)
+	return leftErr == nil && rightErr == nil && bytes.Equal(left, right)
 }
 
 func samePacketArtifact(first, second artifact.Artifact) bool {
