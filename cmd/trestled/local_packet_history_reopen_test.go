@@ -67,8 +67,15 @@ func TestLocalPacketHistoryForensicReopenAndStartupRefusal(t *testing.T) {
 			second := &daemon{}
 			active, journal, owner, bootErr := startLocalSourceOwnerGate(ctx, second, fixture.statePath, fixture.setupPath, &fixture.setupPlan,
 				"tenant-a", "repo-a", fixture.repository, fixture.gitRoot, fixture.objectStore, fixture.adapter, fixture.rootDigest, fixture.clock)
-			if active != nil || journal != nil || owner != nil || !errors.Is(bootErr, controlplane.ErrPreparedContextPacketAtStartup) {
-				t.Errorf("second Git-qualified boot must refuse historical v4 before activation: store=%v journal=%v owner=%v err=%v", active, journal, owner, bootErr)
+			expectedRefusal := errHistoricalPacketObservedAtStartup
+			if withMissingInput {
+				expectedRefusal = controlplane.ErrPreparedContextPacketAtStartup
+			}
+			if active != nil || journal != nil || owner != nil || !errors.Is(bootErr, expectedRefusal) {
+				t.Errorf("second Git-qualified boot must refuse historical packet before activation: store=%v journal=%v owner=%v err=%v", active, journal, owner, bootErr)
+			}
+			if !withMissingInput && errors.Is(bootErr, controlplane.ErrPreparedContextPacketAtStartup) {
+				t.Errorf("intact v4 must not use legacy blanket refusal: %v", bootErr)
 			}
 			if err := second.Close(); err != nil {
 				t.Fatalf("close refused boot resources: %v", err)

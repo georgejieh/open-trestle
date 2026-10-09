@@ -18,6 +18,10 @@ import (
 
 // The constructors prepare and lock storage; only Activate can recover deletion receipts.
 func startLocalSourceOwnerGate(ctx context.Context, resources *daemon, stateDirectory, setupPath string, expected *setup.Plan, tenant, repositoryID string, repository evidence.RepositoryIdentity, gitRoot *os.Root, objectStore *scm.LocalGitObjectStore, adapter *scm.LocalGitSourceAdapter, sourceDigest string, clock artifact.Clock) (*artifact.FileStore, *controlplane.FileRunJournal, *localPacketOwner, error) {
+	return startLocalSourceOwnerGateWithProbe(ctx, resources, stateDirectory, setupPath, expected, tenant, repositoryID, repository, gitRoot, objectStore, adapter, sourceDigest, clock, nil)
+}
+
+func startLocalSourceOwnerGateWithProbe(ctx context.Context, resources *daemon, stateDirectory, setupPath string, expected *setup.Plan, tenant, repositoryID string, repository evidence.RepositoryIdentity, gitRoot *os.Root, objectStore *scm.LocalGitObjectStore, adapter *scm.LocalGitSourceAdapter, sourceDigest string, clock artifact.Clock, probe *historicalGateFaultProbe) (*artifact.FileStore, *controlplane.FileRunJournal, *localPacketOwner, error) {
 	if clock == nil {
 		return nil, nil, nil, ErrInvalidDaemonConfiguration
 	}
@@ -40,6 +44,7 @@ func startLocalSourceOwnerGate(ctx context.Context, resources *daemon, stateDire
 	}
 	var pending *artifact.PendingFileStore
 	var journal *controlplane.FileRunJournal
+	var classification historicalPacketStartupClass
 	// Saved pre-constructor roots must close, successfully, before deletion recovery.
 	preflight := func() (result error) {
 		var snapshot *localSourceOwnerSnapshot
@@ -97,6 +102,9 @@ func startLocalSourceOwnerGate(ctx context.Context, resources *daemon, stateDire
 			return result
 		}
 		resources.closers = append(resources.closers, journal)
+		if recorded != nil {
+			return inspectRecordedHistoricalPackets(ctx, journal, pending, recorded, statePath, artifactPath, setupPath, expected, tenant, repositoryID, repository, gitRoot, originalGitIdentity, objectStore, adapter, sourceDigest, &classification, probe)
+		}
 		return journal.WithOwnedRoot(ctx, func(stateRoot *os.Root) error {
 			return pending.WithOwnedRoot(func(artifactRoot *os.Root) error {
 				if ctx.Err() != nil {
@@ -127,29 +135,20 @@ func startLocalSourceOwnerGate(ctx context.Context, resources *daemon, stateDire
 					if gitID != originalGitIdentity {
 						return ErrLocalSourceOwnerMismatch
 					}
-					if recorded != nil {
-						if gateErr = recheckLocalSourceOwnerRecordedSnapshot(ctx, recorded, stateRoot, artifactRoot); gateErr != nil {
+					if missing != nil {
+						if gateErr = missing.RecheckConstructed(ctx, stateRoot); gateErr != nil {
 							return gateErr
 						}
-						if gateErr = inspectLockedOwnerSetupSemantics(ctx, setupPath, expected); gateErr != nil {
+					}
+					if gateErr = recheckLocalSourceOwnerPostConstructor(snapshot, stateRoot, artifactRoot); gateErr != nil {
+						return gateErr
+					}
+					if snapshot.Kind == localSourceOwnerSetupOnly {
+						if gateErr = inspectLockedOwnerSetup(ctx, snapshot, stateRoot, artifactRoot, setupPath, expected); gateErr != nil {
 							return gateErr
 						}
-					} else {
-						if missing != nil {
-							if gateErr = missing.RecheckConstructed(ctx, stateRoot); gateErr != nil {
-								return gateErr
-							}
-						}
-						if gateErr = recheckLocalSourceOwnerPostConstructor(snapshot, stateRoot, artifactRoot); gateErr != nil {
-							return gateErr
-						}
-						if snapshot.Kind == localSourceOwnerSetupOnly {
-							if gateErr = inspectLockedOwnerSetup(ctx, snapshot, stateRoot, artifactRoot, setupPath, expected); gateErr != nil {
-								return gateErr
-							}
-						} else if gateErr = inspectLockedOwnerSetupSemantics(ctx, setupPath, expected); gateErr != nil {
-							return gateErr
-						}
+					} else if gateErr = inspectLockedOwnerSetupSemantics(ctx, setupPath, expected); gateErr != nil {
+						return gateErr
 					}
 					observed := localSourceOwnerRecord{StatePath: statePath, ArtifactPath: artifactPath, GitObjectsPath: gitPath, TenantID: tenant, RepositoryID: repositoryID, RepositoryIdentity: repository.Identity(), AdapterIdentity: adapter.Identity().Identity(), Profile: string(objectStore.Profile()), SourcePathDigest: sourceDigest, Git: gitID, State: stateID, Artifact: artifactID}
 					if gateErr = observed.validate(); gateErr != nil {
@@ -157,16 +156,6 @@ func startLocalSourceOwnerGate(ctx context.Context, resources *daemon, stateDire
 					}
 					if _, gateErr = journal.InspectStartupInventory(ctx); gateErr != nil {
 						return localStartupInventoryError(gateErr)
-					}
-					if recorded != nil {
-						owner, readErr := readLocalSourceOwnerRecord(stateRoot, statePath)
-						if readErr != nil {
-							return readErr
-						}
-						if gateErr = matchLocalSourceOwnerRecord(owner, observed); gateErr != nil {
-							return gateErr
-						}
-						return recheckLocalSourceOwnerRecordedSnapshot(ctx, recorded, stateRoot, artifactRoot)
 					}
 					if gateErr = recheckLocalSourceOwnerPostConstructor(snapshot, stateRoot, artifactRoot); gateErr != nil {
 						return gateErr
@@ -213,6 +202,19 @@ func startLocalSourceOwnerGate(ctx context.Context, resources *daemon, stateDire
 	}
 	if err = preflight(); err != nil {
 		return nil, nil, nil, err
+	}
+	if err = ctx.Err(); err != nil {
+		return nil, nil, nil, err
+	}
+	switch classification {
+	case historicalPacketObserved:
+		return nil, nil, nil, errHistoricalPacketObservedAtStartup
+	case historicalPacketMissing:
+		return nil, nil, nil, errHistoricalPacketMissingAtStartup
+	case historicalPacketMismatch:
+		return nil, nil, nil, errHistoricalPacketMismatchAtStartup
+	case historicalPacketConservativeRefusal:
+		return nil, nil, nil, localStartupInventoryError(controlplane.ErrPreparedContextPacketAtStartup)
 	}
 	active, err := pending.Activate()
 	if err != nil {

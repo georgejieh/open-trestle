@@ -236,8 +236,10 @@ func TestBuildDaemonRejectsHistoricalPacketInDeterministicAndFullLocalModes(t *t
 			if d != nil {
 				d.Close()
 			}
-			if d != nil || !errors.Is(err, controlplane.ErrPreparedContextPacketAtStartup) {
-				t.Fatalf("historical packet: daemon=%v error=%v", d, err)
+			// The synthetic journal belongs to a different tenant/repository than
+			// the recorded Git owner. Owner mismatch takes precedence over packet class.
+			if d != nil || !errors.Is(err, ErrLocalSourceOwnerMismatch) || errors.Is(err, controlplane.ErrPreparedContextPacketAtStartup) || errors.Is(err, errHistoricalPacketObservedAtStartup) || errors.Is(err, errHistoricalPacketMissingAtStartup) || errors.Is(err, errHistoricalPacketMismatchAtStartup) {
+				t.Fatalf("foreign-owner historical packet: daemon=%v error=%v", d, err)
 			}
 			after, err := snapshot()
 			if err != nil {
