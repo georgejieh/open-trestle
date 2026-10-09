@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/georgejieh/open-trestle/audit"
+	"github.com/georgejieh/open-trestle/internal/fileauthority"
 	"github.com/georgejieh/open-trestle/internal/filelock"
 )
 
@@ -50,7 +51,9 @@ type FileRunJournal struct {
 	closingSignal  chan struct{}
 	closing        bool
 	root, lockPath string
+	rootInfo       os.FileInfo // constructor-captured inode, never caller-held authority
 	lockFile       *filelock.Lock
+	closeOwnedRoot func(*os.Root) error // test-only close seam; nil uses os.Root.Close
 	// Optional fault-injection seams; production uses syncRoot and lockFile.Close.
 	syncOnClose         func() error
 	closeLock           func(*filelock.Lock) error
@@ -58,8 +61,23 @@ type FileRunJournal struct {
 	closed              bool
 }
 
+// errOwnedJournalRoot marks a failed sampled identity, private mode, or owner check.
+var errOwnedJournalRoot = errors.New("run journal owned root changed or untrusted")
+
+// fileRunJournalConstructorOptions holds per-call test seams. Public construction
+// always supplies zero options; no process-global hook changes constructor behavior.
+type fileRunJournalConstructorOptions struct {
+	afterSync      func() error
+	closeCandidate func(*os.Root) error
+	closeLock      func(*filelock.Lock) error
+}
+
 // NewFileRunJournal creates a private root and acquires its exclusive writer lease.
 func NewFileRunJournal(root string) (*FileRunJournal, error) {
+	return newFileRunJournal(root, fileRunJournalConstructorOptions{})
+}
+
+func newFileRunJournal(root string, options fileRunJournalConstructorOptions) (*FileRunJournal, error) {
 	if root == "" {
 		return nil, ErrInvalidRunJournalRoot
 	}
@@ -90,12 +108,140 @@ func NewFileRunJournal(root string) (*FileRunJournal, error) {
 		gate: make(chan struct{}, 1), closingSignal: make(chan struct{}),
 	}
 	journal.gate <- struct{}{}
-	if err := journal.syncRoot(); err != nil {
-		_ = lockFile.Close()
-		return nil, err
+	closeLock := options.closeLock
+	if closeLock == nil {
+		closeLock = (*filelock.Lock).Close
+	}
+	closeCandidate := options.closeCandidate
+	if closeCandidate == nil {
+		closeCandidate = (*os.Root).Close
+	}
+	journal.mu.Lock()
+	captureErr := journal.syncRoot()
+	if captureErr == nil && options.afterSync != nil {
+		captureErr = options.afterSync()
+	}
+	var candidate *os.Root
+	if captureErr == nil {
+		var before, opened, after os.FileInfo
+		before, captureErr = os.Lstat(absolute)
+		if captureErr == nil {
+			candidate, captureErr = os.OpenRoot(absolute)
+		}
+		if captureErr == nil {
+			opened, captureErr = candidate.Stat(".")
+		}
+		if captureErr == nil {
+			after, captureErr = os.Lstat(absolute)
+		}
+		if captureErr == nil {
+			captureErr = checkOwnedJournalInfo(information, before, opened, after)
+			if captureErr == nil {
+				journal.rootInfo = opened
+			}
+		}
+	}
+	if candidate != nil {
+		captureErr = errors.Join(captureErr, closeCandidate(candidate))
+	}
+	journal.mu.Unlock()
+	if captureErr != nil {
+		return nil, errors.Join(captureErr, closeLock(lockFile))
 	}
 	return journal, nil
 }
+
+func checkOwnedJournalInfo(captured os.FileInfo, observations ...os.FileInfo) error {
+	if captured == nil {
+		return errOwnedJournalRoot
+	}
+	for _, info := range observations {
+		if info == nil || info.Mode() != os.ModeDir|0o700 || !fileauthority.TrustedOwner(info) || !os.SameFile(captured, info) {
+			return errOwnedJournalRoot
+		}
+	}
+	return nil
+}
+
+// WithOwnedRoot lends one rooted handle only for the callback. The callback must
+// not retain it, call Close, or enter another effect section on this journal.
+// Validation samples do not prove uninterrupted pathname ownership.
+func (j *FileRunJournal) WithOwnedRoot(ctx context.Context, use func(*os.Root) error) error {
+	if j == nil || j.gate == nil || j.closingSignal == nil {
+		return ErrInvalidRunJournal
+	}
+	if use == nil {
+		return ErrInvalidRunJournalEffectSection
+	}
+	if err := validateFileRunContext(ctx); err != nil {
+		return err
+	}
+	return j.withEffectSection(ctx, func() error {
+		j.mu.Lock()
+		if j.closed || j.rootInfo == nil {
+			j.mu.Unlock()
+			return ErrRunJournalClosed
+		}
+		root, captured := j.root, j.rootInfo
+		pin, err := fileauthority.PinDirectory(root)
+		var opened *os.Root
+		if err == nil {
+			var before, inRoot, after os.FileInfo
+			before, err = os.Lstat(root)
+			if err == nil {
+				opened, err = os.OpenRoot(root)
+			}
+			if err == nil {
+				inRoot, err = opened.Stat(".")
+			}
+			if err == nil {
+				after, err = os.Lstat(root)
+			}
+			if err == nil {
+				err = checkOwnedJournalInfo(captured, before, inRoot, after)
+			}
+			if err == nil {
+				err = pin.Recheck()
+			}
+		}
+		if err != nil {
+			j.mu.Unlock()
+			if opened != nil {
+				return errors.Join(err, j.closeBorrowedRoot(opened))
+			}
+			return err
+		}
+		j.mu.Unlock() // Inventory may take mu from within use; gate remains held.
+		return func() (result error) {
+			defer func() {
+				// A callback panic still runs the same post-use checks and root close.
+				// Preserve its original value even if a cleanup step panics.
+				if panicValue := recover(); panicValue != nil {
+					defer func() { panic(panicValue) }()
+				}
+				// Close must run even if a postcheck panics, before the gate opens.
+				defer func() { result = errors.Join(result, j.closeBorrowedRoot(opened)) }()
+				chainErr := pin.Recheck() // original component pins, not a new path check
+				inRoot, rootErr := opened.Stat(".")
+				leaf, leafErr := os.Lstat(root)
+				if rootErr == nil && leafErr == nil {
+					rootErr = checkOwnedJournalInfo(captured, inRoot, leaf)
+				}
+				// On normal return, join callback, postcheck, and close errors.
+				result = errors.Join(result, chainErr, rootErr, leafErr)
+			}()
+			return use(opened)
+		}()
+	})
+}
+
+func (j *FileRunJournal) closeBorrowedRoot(root *os.Root) error {
+	if j.closeOwnedRoot != nil {
+		return j.closeOwnedRoot(root)
+	}
+	return root.Close()
+}
+
 func (j *FileRunJournal) Close() error {
 	if j == nil || j.gate == nil || j.closingSignal == nil {
 		return ErrInvalidRunJournal
