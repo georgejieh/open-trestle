@@ -692,17 +692,32 @@ func (j *FileRunJournal) loadStream(scope audit.ReviewScope) ([]RunEvent, error)
 	if information.Size() <= 0 || information.Size() > maxRunJournalStreamBytes {
 		return nil, ErrRunJournalStreamTooLarge
 	}
-	if _, err := file.Seek(-1, io.SeekEnd); err != nil {
-		return nil, ErrCorruptRunJournalStream
+	if err := probeRunJournalStreamNewline(file); err != nil {
+		return nil, err
+	}
+	return parseRunJournalStream(scope, file)
+}
+
+// probeRunJournalStreamNewline checks the final delimiter on an already-open
+// stream, then rewinds it. Parsing can then use the same handle via an io.Reader.
+func probeRunJournalStreamNewline(stream io.ReadSeeker) error {
+	if _, err := stream.Seek(-1, io.SeekEnd); err != nil {
+		return ErrCorruptRunJournalStream
 	}
 	last := []byte{0}
-	if _, err := io.ReadFull(file, last); err != nil || last[0] != '\n' {
-		return nil, ErrCorruptRunJournalStream
+	if _, err := io.ReadFull(stream, last); err != nil || last[0] != '\n' {
+		return ErrCorruptRunJournalStream
 	}
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrRunJournalPersistence, err)
+	if _, err := stream.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("%w: %v", ErrRunJournalPersistence, err)
 	}
-	scanner := bufio.NewScanner(file)
+	return nil
+}
+
+// parseRunJournalStream accepts an already-open stream. A caller can wrap its
+// reader to count and hash the bytes consumed without replacing this parser.
+func parseRunJournalStream(scope audit.ReviewScope, stream io.Reader) ([]RunEvent, error) {
+	scanner := bufio.NewScanner(stream)
 	scanner.Buffer(make([]byte, 4<<10), maxEncodedRunEventV3Bytes+1)
 	events := make([]RunEvent, 0, 64)
 	previous, planIdentity := "", ""

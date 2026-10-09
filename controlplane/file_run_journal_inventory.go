@@ -272,7 +272,16 @@ func (j *FileRunJournal) readInventoryPlan(base string) (ReviewRunPlan, error) {
 	if readErr != nil || closeErr != nil {
 		return ReviewRunPlan{}, fmt.Errorf("%w: %v", ErrRunJournalPersistence, errors.Join(readErr, closeErr))
 	}
-	if len(content) == 0 || len(content) > maxEncodedReviewRunPlanBytes || int64(len(content)) != info.Size() {
+	if int64(len(content)) != info.Size() {
+		return ReviewRunPlan{}, ErrInvalidReviewRunPlanEncoding
+	}
+	return parseInventoryPlanBytes(base, content)
+}
+
+// parseInventoryPlanBytes verifies bounded canonical bytes against their scope
+// digest. The caller owns pathname, handle, and read-size validation.
+func parseInventoryPlanBytes(base string, content []byte) (ReviewRunPlan, error) {
+	if len(content) == 0 || len(content) > maxEncodedReviewRunPlanBytes {
 		return ReviewRunPlan{}, ErrInvalidReviewRunPlanEncoding
 	}
 	plan, err := ParseReviewRunPlan(content)
