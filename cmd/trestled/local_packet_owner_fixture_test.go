@@ -45,6 +45,8 @@ func (r localPacketFixtureReader) Get(ctx context.Context, scope audit.ReviewSco
 type localPacketOwnerFixture struct {
 	store       *artifact.FileStore
 	journal     *controlplane.FileRunJournal
+	owner       *localPacketOwner
+	resources   *daemon
 	coordinator *controlplane.Coordinator
 	request     controlplane.TaskExecutionRequest
 	rootDigest  string
@@ -113,12 +115,16 @@ func newLocalPacketOwnerFixture(t *testing.T) localPacketOwnerFixture {
 			t.Errorf("close owner resources: %v", err)
 		}
 	})
-	store, journal, err := startLocalSourceOwnerGate(ctx, resources, statePath, setupPath, &setupPlan, "tenant-a", "repo-a", repository, gitRoot, objectStore, adapter, digest)
+	clock := localPacketFixtureClock{time.UnixMilli(230)}
+	store, journal, owner, err := startLocalSourceOwnerGate(ctx, resources, statePath, setupPath, &setupPlan, "tenant-a", "repo-a", repository, gitRoot, objectStore, adapter, digest, clock)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if store == nil || journal == nil {
-		t.Fatal("owner gate did not return raw local store and journal")
+	if store == nil || journal == nil || owner == nil {
+		t.Fatal("Git-qualified boot did not return raw local resources and private owner")
+	}
+	if owner.store != store || owner.journal != journal || owner.sourceRootDigest != digest || owner.clock != clock {
+		t.Fatal("boot-returned owner is not bound to enrolled raw resources, source digest, and trusted clock")
 	}
 	if err := journal.WithOwnedRoot(ctx, func(stateRoot *os.Root) error {
 		record, readErr := readLocalSourceOwnerRecord(stateRoot, statePath)
@@ -180,7 +186,6 @@ func newLocalPacketOwnerFixture(t *testing.T) localPacketOwnerFixture {
 			t.Fatal(err)
 		}
 	}
-	clock := localPacketFixtureClock{time.UnixMilli(230)}
 	sourceHandler, err := sourcehandler.NewHandlerWithSourceRoot(store, adapter, digest, clock)
 	if err != nil {
 		t.Fatal(err)
@@ -285,7 +290,7 @@ func newLocalPacketOwnerFixture(t *testing.T) localPacketOwnerFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return localPacketOwnerFixture{store: store, journal: journal, coordinator: coordinator, request: request, rootDigest: digest, statePath: statePath, clock: clock}
+	return localPacketOwnerFixture{store: store, journal: journal, owner: owner, resources: resources, coordinator: coordinator, request: request, rootDigest: digest, statePath: statePath, clock: clock}
 }
 
 // assertLocalPacketOracle checks the wire against persisted upstream artifacts, not a

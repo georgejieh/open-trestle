@@ -395,7 +395,7 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	budgetedErasureConstructed := false
 	artifactProtection := artifact.ProtectionProcessPrivate
 	if *artifactStoreMode == "local" && *metadataStore == "local" {
-		active, fileJournal, gateErr := startLocalSourceOwnerGate(ctx, resources, *stateDirectory, *setupState, &localSetupPlan, *tenantID, repositories[0], localRepository, localObjectsRoot, localObjectStore, localSourceAdapter, localRootDigest)
+		active, fileJournal, _, gateErr := startLocalSourceOwnerGate(ctx, resources, *stateDirectory, *setupState, &localSetupPlan, *tenantID, repositories[0], localRepository, localObjectsRoot, localObjectStore, localSourceAdapter, localRootDigest, daemonArtifactClock)
 		if gateErr != nil {
 			if localGitConfigured && (errors.Is(gateErr, errLocalSourceOwnerSnapshot) || errors.Is(gateErr, errLocalMissingStateBoundary)) {
 				return nil, errors.Join(ErrInvalidDaemonConfiguration, gateErr)

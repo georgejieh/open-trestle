@@ -58,6 +58,7 @@ type FileRunJournal struct {
 	syncOnClose         func() error
 	closeLock           func(*filelock.Lock) error
 	onContendedGateWait func() // test observer, set before concurrent use only
+	contentionWatcher   chan struct{}
 	closed              bool
 }
 
@@ -298,6 +299,41 @@ func (j *FileRunJournal) WithEffectSection(ctx context.Context, effect func() er
 	return j.withEffectSection(ctx, effect)
 }
 
+// WatchEffectGateContention observes actual busy-gate acquisition attempts.
+// It is diagnostic only: a notification does not establish a durable append.
+func (j *FileRunJournal) WatchEffectGateContention() (<-chan struct{}, func(), error) {
+	if j == nil || j.gate == nil || j.closingSignal == nil {
+		return nil, nil, ErrInvalidRunJournal
+	}
+	j.gateMu.Lock()
+	defer j.gateMu.Unlock()
+	if j.closing {
+		return nil, nil, ErrRunJournalClosed
+	}
+	j.mu.Lock()
+	closed := j.closed
+	j.mu.Unlock()
+	if closed {
+		return nil, nil, ErrRunJournalClosed
+	}
+	if j.contentionWatcher != nil {
+		return nil, nil, ErrInvalidRunJournalEffectSection
+	}
+	watcher := make(chan struct{}, 1)
+	j.contentionWatcher = watcher
+	var once sync.Once
+	unsubscribe := func() {
+		once.Do(func() {
+			j.gateMu.Lock()
+			if j.contentionWatcher == watcher {
+				j.contentionWatcher = nil
+			}
+			j.gateMu.Unlock()
+		})
+	}
+	return watcher, unsubscribe, nil
+}
+
 func (j *FileRunJournal) withEffectSection(ctx context.Context, effect func() error) error {
 	// An unbounded caller context must not leave a gate waiter stuck forever.
 	waitCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -307,6 +343,14 @@ func (j *FileRunJournal) withEffectSection(ctx context.Context, effect func() er
 	select {
 	case <-j.gate:
 	default:
+		j.gateMu.Lock()
+		if j.contentionWatcher != nil {
+			select {
+			case j.contentionWatcher <- struct{}{}:
+			default:
+			}
+		}
+		j.gateMu.Unlock()
 		if j.onContendedGateWait != nil {
 			j.onContendedGateWait()
 		}

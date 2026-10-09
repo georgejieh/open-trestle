@@ -17,10 +17,13 @@ import (
 )
 
 // The constructors prepare and lock storage; only Activate can recover deletion receipts.
-func startLocalSourceOwnerGate(ctx context.Context, resources *daemon, stateDirectory, setupPath string, expected *setup.Plan, tenant, repositoryID string, repository evidence.RepositoryIdentity, gitRoot *os.Root, objectStore *scm.LocalGitObjectStore, adapter *scm.LocalGitSourceAdapter, sourceDigest string) (*artifact.FileStore, *controlplane.FileRunJournal, error) {
+func startLocalSourceOwnerGate(ctx context.Context, resources *daemon, stateDirectory, setupPath string, expected *setup.Plan, tenant, repositoryID string, repository evidence.RepositoryIdentity, gitRoot *os.Root, objectStore *scm.LocalGitObjectStore, adapter *scm.LocalGitSourceAdapter, sourceDigest string, clock artifact.Clock) (*artifact.FileStore, *controlplane.FileRunJournal, *localPacketOwner, error) {
+	if clock == nil {
+		return nil, nil, nil, ErrInvalidDaemonConfiguration
+	}
 	statePath, err := filepath.Abs(stateDirectory)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	artifactPath := filepath.Join(statePath, "artifacts")
 	gitEnabled := gitRoot != nil
@@ -28,11 +31,11 @@ func startLocalSourceOwnerGate(ctx context.Context, resources *daemon, stateDire
 	if gitEnabled {
 		gitPath, pathErr := filepath.Abs(gitRoot.Name())
 		if pathErr != nil {
-			return nil, nil, pathErr
+			return nil, nil, nil, pathErr
 		}
 		originalGitIdentity, err = observeLocalSourceDirectory(gitPath, gitRoot)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 	}
 	var pending *artifact.PendingFileStore
@@ -209,15 +212,18 @@ func startLocalSourceOwnerGate(ctx context.Context, resources *daemon, stateDire
 		})
 	}
 	if err = preflight(); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	active, err := pending.Activate()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	// Replace the already registered pending closer. The journal remains last.
 	resources.closers[len(resources.closers)-2] = active
-	return active, journal, nil
+	if gitEnabled {
+		return active, journal, &localPacketOwner{store: active, journal: journal, sourceRootDigest: sourceDigest, clock: clock}, nil
+	}
+	return active, journal, nil, nil
 }
 
 func inspectLockedOwnerSetup(ctx context.Context, s *localSourceOwnerSnapshot, stateRoot, artifactRoot *os.Root, path string, expected *setup.Plan) error {
