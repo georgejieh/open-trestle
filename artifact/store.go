@@ -154,11 +154,12 @@ func (s *MemoryStore) Delete(ctx context.Context, authorization DeletionAuthoriz
 
 // FileStore is a private exclusive-writer local artifact store.
 type FileStore struct {
-	mu       sync.Mutex
-	root     string
-	rootInfo os.FileInfo
-	lock     *filelock.Lock
-	closed   bool
+	mu                 sync.Mutex
+	root               string
+	rootInfo           os.FileInfo
+	lock               *filelock.Lock
+	closed             bool
+	afterPersistRename func() error
 }
 
 // PendingFileStore holds an exclusive writer lock without running deletion recovery.
@@ -689,6 +690,11 @@ func (s *FileStore) persist(destination string, encoded []byte) error {
 		return ErrStorePersistence
 	}
 	renamed = true
+	if s.afterPersistRename != nil {
+		if err := s.afterPersistRename(); err != nil {
+			return errors.Join(ErrStorePersistence, err)
+		}
+	}
 	return s.syncRoot()
 }
 func (s *FileStore) syncRoot() error {
