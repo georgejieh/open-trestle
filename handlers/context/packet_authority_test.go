@@ -3,6 +3,7 @@ package context
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"errors"
 	"os"
 	"os/exec"
@@ -77,6 +78,10 @@ func (j *failingPacketJournal) Append(ctx context.Context, head string, event co
 }
 
 func newPacketWriterFixture(t *testing.T, blockedFile bool, baseFile bool, legacy bool, crossedRoot bool, failAppend bool) (*PacketAuthority, controlplane.TaskExecutionRequest, *controlplane.Coordinator, artifact.Store, string, func(), *failingPacketJournal) {
+	return newPacketWriterFixtureVariant(t, blockedFile, baseFile, legacy, crossedRoot, failAppend, false)
+}
+
+func newPacketWriterFixtureVariant(t *testing.T, blockedFile bool, baseFile bool, legacy bool, crossedRoot bool, failAppend bool, indexedChangedPath bool) (*PacketAuthority, controlplane.TaskExecutionRequest, *controlplane.Coordinator, artifact.Store, string, func(), *failingPacketJournal) {
 	repository, _ := evidence.NewRepositoryIdentity("github.com", []string{"owner"}, "repo")
 	gitRoot := filepath.Join(t.TempDir(), "repo")
 	if err := os.Mkdir(gitRoot, 0700); err != nil {
@@ -84,7 +89,14 @@ func newPacketWriterFixture(t *testing.T, blockedFile bool, baseFile bool, legac
 	}
 	git := func(args ...string) string {
 		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", gitRoot}, args...)...)
+		prefix := []string{"-C", gitRoot}
+		if indexedChangedPath {
+			prefix = append(prefix, "-c", "commit.gpgsign=false")
+		}
+		cmd := exec.Command("git", append(prefix, args...)...)
+		if indexedChangedPath {
+			cmd.Env = append(os.Environ(), "GIT_AUTHOR_DATE=2001-01-01T00:00:00Z", "GIT_COMMITTER_DATE=2001-01-01T00:00:00Z")
+		}
 		data, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("git %v: %v: %s", args, err, data)
@@ -109,6 +121,7 @@ func newPacketWriterFixture(t *testing.T, blockedFile bool, baseFile bool, legac
 	git("add", ".")
 	git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "head")
 	headRevision, _ := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithmSHA1, git("rev-parse", "HEAD"))
+
 	adapterIdentity, _ := evidence.NewSourceAdapterIdentity(evidence.SourceAdapterKindGit, "test-source", "1.0.0", []evidence.SourceAdapterCapability{evidence.SourceCapabilityReadManifest, evidence.SourceCapabilityReadContent})
 	adapter := &contextTestSource{identity: adapterIdentity, results: map[string]scm.SourceAdapterResult{baseRevision.Identity(): makeSourceResult(t, map[string][]byte{"a.go": []byte("package p\nfunc Changed() int{return 1}\n"), "a_test.go": []byte("package p\nfunc TestChanged(){_=Changed()}\n"), "z_unselected.txt": []byte("unchanged\n")}), headRevision.Identity(): makeSourceResult(t, map[string][]byte{"a.go": []byte("package p\nfunc Changed() int{return 2}\n"), "a_test.go": []byte("package p\nfunc TestChanged(){_=Changed()}\n"), "z_unselected.txt": []byte("unchanged\n")})}}
 	root := t.TempDir()
@@ -148,7 +161,11 @@ func newPacketWriterFixture(t *testing.T, blockedFile bool, baseFile bool, legac
 	if scopeErr != nil {
 		t.Fatal(scopeErr)
 	}
-	record, recordErr := memorycore.NewRecord(memoryScope, memorycore.RecordInput{Kind: memorycore.RecordCanonicalFact, Taint: memorycore.TaintTrusted, Path: "a.txt", Text: "this path has a parser invariant", EvidenceIDs: []string{strings.Repeat("9", 64)}, ProducerIdentity: strings.Repeat("7", 64), ObservedAt: time.UnixMilli(10), ValidFrom: time.UnixMilli(10)})
+	recordPath := "a.txt"
+	if indexedChangedPath {
+		recordPath = "a.go"
+	}
+	record, recordErr := memorycore.NewRecord(memoryScope, memorycore.RecordInput{Kind: memorycore.RecordCanonicalFact, Taint: memorycore.TaintTrusted, Path: recordPath, Text: "this path has a parser invariant", EvidenceIDs: []string{strings.Repeat("9", 64)}, ProducerIdentity: strings.Repeat("7", 64), ObservedAt: time.UnixMilli(10), ValidFrom: time.UnixMilli(10)})
 	if recordErr != nil {
 		t.Fatal(recordErr)
 	}
@@ -174,6 +191,19 @@ func newPacketWriterFixture(t *testing.T, blockedFile bool, baseFile bool, legac
 	}
 	wrappedJournal := &failingPacketJournal{RunJournal: journal, fail: failAppend}
 	coordinator, _ := controlplane.NewCoordinator(wrappedJournal)
+	if indexedChangedPath {
+		// The coordinator retains the reader passed at construction; restore the
+		// process-global reader even if construction panics.
+		coordinator, err = func() (*controlplane.Coordinator, error) {
+			originalRandom := rand.Reader
+			defer func() { rand.Reader = originalRandom }()
+			rand.Reader = bytes.NewReader(bytes.Repeat([]byte{0x42}, 1024))
+			return controlplane.NewCoordinator(wrappedJournal)
+		}()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	_, _ = coordinator.Open(context.Background(), plan, time.UnixMilli(100))
 	var contextRequest controlplane.TaskExecutionRequest
 	execute := func(task controlplane.TaskDefinition, handler controlplane.TaskHandler, at time.Time) {
