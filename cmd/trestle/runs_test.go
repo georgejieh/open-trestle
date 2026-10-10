@@ -128,4 +128,25 @@ func TestRunStatusExportsSameStoredDeterministicSetAsJSONAndSARIF(t *testing.T) 
 	if exit := run(append(base, "--format", "sarif"), &sarifOut, &sarifErr); exit != 0 || !bytes.Contains(sarifOut.Bytes(), []byte(`"uri":"main.go"`)) || !bytes.Contains(sarifOut.Bytes(), []byte(observation.Identity())) || !bytes.Contains(sarifOut.Bytes(), []byte(strings.Repeat("4", 64))) || !bytes.Contains(sarifOut.Bytes(), []byte(strings.Repeat("9", 64))) || !bytes.Contains(sarifOut.Bytes(), []byte("human review is required")) || bytes.Contains(sarifOut.Bytes(), []byte(`"trestleStatus":"verified"`)) {
 		t.Fatalf("sarif=(%d,%s,%s)", exit, sarifOut.Bytes(), sarifErr.Bytes())
 	}
+	var sarif struct {
+		Runs []struct {
+			Tool struct {
+				Driver struct {
+					Rules []struct {
+						ID string `json:"id"`
+					} `json:"rules"`
+				} `json:"driver"`
+			} `json:"tool"`
+			Results []struct {
+				RuleID       string            `json:"ruleId"`
+				Fingerprints map[string]string `json:"fingerprints"`
+			} `json:"results"`
+		} `json:"runs"`
+	}
+	if err := json.Unmarshal(sarifOut.Bytes(), &sarif); err != nil {
+		t.Fatalf("decode v6 SARIF: %v", err)
+	}
+	if len(sarif.Runs) != 1 || len(sarif.Runs[0].Tool.Driver.Rules) != 1 || sarif.Runs[0].Tool.Driver.Rules[0].ID != "static-debug-output" || len(sarif.Runs[0].Results) != 1 || sarif.Runs[0].Results[0].RuleID != "static-debug-output" || sarif.Runs[0].Results[0].Fingerprints["openTrestleObservationId/v1"] != observation.Identity() {
+		t.Fatalf("v6 observation rule/fingerprint not preserved: %+v", sarif.Runs)
+	}
 }

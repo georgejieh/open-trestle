@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
@@ -12,6 +13,8 @@ import (
 const (
 	sarifSchemaURI             = "https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json"
 	staticDebugOutputSARIFRule = "static-debug-output"
+	verifiedFindingSARIFRule   = "open-trestle-verified-finding"
+	maxDiagnosticSARIFBytes    = 4 << 20
 )
 
 type sarifLog struct {
@@ -77,17 +80,41 @@ type sarifRegion struct {
 }
 
 type sarifRunProperties struct {
-	Status           review.Outcome `json:"trestleStatus"`
-	Reason           string         `json:"trestleReason,omitempty"`
-	FixtureID        string         `json:"trestleFixtureId,omitempty"`
-	RequestID        string         `json:"trestleRequestId,omitempty"`
-	SnapshotID       string         `json:"trestleSnapshotId,omitempty"`
-	Revision         string         `json:"trestleRevision,omitempty"`
-	DiagnosticSetID  string         `json:"trestleDiagnosticSetId,omitempty"`
-	AnalysisResultID string         `json:"trestleAnalysisResultId,omitempty"`
-	ChangeID         string         `json:"trestleChangeId,omitempty"`
-	CheckID          string         `json:"trestleCheckId,omitempty"`
-	CheckState       string         `json:"trestleCheckState,omitempty"`
+	Status                review.Outcome  `json:"trestleStatus"`
+	Reason                string          `json:"trestleReason,omitempty"`
+	FixtureID             string          `json:"trestleFixtureId,omitempty"`
+	RequestID             string          `json:"trestleRequestId,omitempty"`
+	SnapshotID            string          `json:"trestleSnapshotId,omitempty"`
+	Revision              string          `json:"trestleRevision,omitempty"`
+	DiagnosticSetID       string          `json:"trestleDiagnosticSetId,omitempty"`
+	AnalysisResultID      string          `json:"trestleAnalysisResultId,omitempty"`
+	ChangeID              string          `json:"trestleChangeId,omitempty"`
+	CheckID               string          `json:"trestleCheckId,omitempty"`
+	CheckState            string          `json:"trestleCheckState,omitempty"`
+	VerifiedSetID         string          `json:"trestleVerifiedSetId,omitempty"`
+	VerificationContextID string          `json:"trestleVerificationContextId,omitempty"`
+	SourceCheckID         string          `json:"trestleSourceCheckId,omitempty"`
+	CheckAnalysisResultID string          `json:"trestleCheckAnalysisResultId,omitempty"`
+	CheckKey              string          `json:"trestleCheckKey,omitempty"`
+	CheckRuleVersion      *uint16         `json:"trestleCheckRuleVersion,omitempty"`
+	ApplicableFiles       *uint32         `json:"trestleApplicableFiles,omitempty"`
+	ApplicableRanges      *uint32         `json:"trestleApplicableRanges,omitempty"`
+	CheckedFiles          *uint32         `json:"trestleCheckedFiles,omitempty"`
+	CheckedRanges         *uint32         `json:"trestleCheckedRanges,omitempty"`
+	MatchCount            *uint32         `json:"trestleMatchCount,omitempty"`
+	CandidateCount        *uint16         `json:"trestleCandidateCount,omitempty"`
+	VerifiedCount         *uint16         `json:"trestleVerifiedCount,omitempty"`
+	RejectedCount         *uint16         `json:"trestleRejectedCount,omitempty"`
+	InconclusiveCount     *uint16         `json:"trestleInconclusiveCount,omitempty"`
+	SourceAnalyzedCount   *uint32         `json:"trestleSourceAnalyzedCount,omitempty"`
+	SourceSelectedCount   *uint32         `json:"trestleSourceSelectedCount,omitempty"`
+	SourceOmittedCount    *uint32         `json:"trestleSourceOmittedCount,omitempty"`
+	Omissions             []sarifOmission `json:"trestleOmissions,omitempty"`
+}
+
+type sarifOmission struct {
+	Reason string `json:"reason"`
+	Count  uint32 `json:"count"`
 }
 
 type sarifResultProperties struct {
@@ -174,7 +201,21 @@ func buildSARIFLog(evaluation ciEvaluation) (sarifLog, error) {
 }
 
 func buildDiagnosticSetSARIF(set diagnostics.Set) (sarifLog, error) {
-	if set.Validate() != nil || set.SchemaVersion() != 6 || len(set.DeterministicChecks()) != 1 {
+	version := set.SchemaVersion()
+	if version != 5 && version != 6 {
+		return sarifLog{}, fmt.Errorf("unsupported diagnostic SARIF schema version %d", version)
+	}
+	if err := set.Validate(); err != nil {
+		return sarifLog{}, fmt.Errorf("diagnostic set is invalid: %w", err)
+	}
+	if version == 5 {
+		return buildVerifiedDiagnosticSetSARIF(set)
+	}
+	return buildDeterministicDiagnosticSetSARIF(set)
+}
+
+func buildDeterministicDiagnosticSetSARIF(set diagnostics.Set) (sarifLog, error) {
+	if len(set.DeterministicChecks()) != 1 {
 		return sarifLog{}, fmt.Errorf("deterministic diagnostic set is invalid")
 	}
 	check := set.DeterministicChecks()[0]
@@ -196,6 +237,99 @@ func buildDiagnosticSetSARIF(set diagnostics.Set) (sarifLog, error) {
 	}
 	return sarifLog{Schema: sarifSchemaURI, Version: "2.1.0", Runs: []sarifRun{{Tool: sarifTool{Driver: sarifDriver{Name: "Open Trestle", Rules: []sarifRule{{ID: staticDebugOutputSARIFRule, ShortDescription: sarifMessage{Text: "Debug output left in source"}, DefaultConfiguration: sarifConfiguration{Level: "warning"}}}}}, Results: results, Properties: sarifRunProperties{Status: review.OutcomeInconclusive, Reason: "deterministic_check_" + check.State().String(), SnapshotID: set.SnapshotIdentity(), Revision: set.HeadRevision(), DiagnosticSetID: set.Identity(), AnalysisResultID: set.AnalysisResultIdentity(), ChangeID: check.ChangeIdentity(), CheckID: check.Identity(), CheckState: check.State().String()}}}}, nil
 }
+
+// Version 5 findings are independently verified diagnostics, not deterministic observations.
+// A check match has no location in this schema and must not generate a result.
+func buildVerifiedDiagnosticSetSARIF(set diagnostics.Set) (sarifLog, error) {
+	checks := set.DeterministicChecks()
+	if len(checks) != 1 {
+		return sarifLog{}, fmt.Errorf("version 5 diagnostic check is invalid")
+	}
+	check := checks[0]
+	findings := set.Findings()
+	results := make([]sarifResult, len(findings))
+	for i, finding := range findings {
+		level, err := diagnosticSARIFLevel(finding.Severity())
+		if err != nil {
+			return sarifLog{}, err
+		}
+		results[i] = sarifResult{
+			RuleID: verifiedFindingSARIFRule, Level: level,
+			Message: sarifMessage{Text: finding.Title() + ": " + finding.Message()},
+			Locations: []sarifLocation{{PhysicalLocation: sarifPhysicalLocation{
+				ArtifactLocation: sarifArtifactLocation{URI: sarifArtifactURI(finding.Path())},
+				Region:           sarifRegion{StartLine: int(finding.StartLine()), EndLine: int(finding.EndLine())},
+			}}},
+			Fingerprints: map[string]string{
+				"openTrestleVerifiedFindingId/v1":  finding.Identity(),
+				"openTrestleFindingFingerprint/v1": finding.Fingerprint(),
+			},
+			Properties: sarifResultProperties{EvidenceIDs: finding.EvidenceIDs()},
+		}
+	}
+	omissions := make([]sarifOmission, 0, len(set.OmissionSummaries()))
+	for _, summary := range set.OmissionSummaries() {
+		omissions = append(omissions, sarifOmission{Reason: summary.Reason().String(), Count: summary.Count()})
+	}
+	// Whole-log status does not approve a run, even when all recorded axes are complete.
+	reason := "review status is advisory; no approval asserted"
+	if set.InconclusiveCount() > 0 {
+		reason += "; candidate verification inconclusive"
+	}
+	if set.RejectedCount() > 0 {
+		reason += "; rejected candidates"
+	}
+	if set.SourceOmittedCount() > 0 {
+		reason += "; source omission"
+	}
+	if check.State() != diagnostics.CheckPassed {
+		reason += "; deterministic check " + check.State().String()
+	}
+	if !check.Complete() {
+		reason += "; deterministic scan coverage incomplete"
+	}
+	properties := sarifRunProperties{
+		Status: review.OutcomeInconclusive, Reason: reason,
+		SnapshotID: set.SnapshotIdentity(), Revision: set.HeadRevision(), DiagnosticSetID: set.Identity(),
+		VerifiedSetID: set.VerifiedSetIdentity(), VerificationContextID: set.VerificationContextIdentity(),
+		ChangeID: check.ChangeIdentity(), CheckID: check.Identity(), CheckState: check.State().String(),
+		SourceCheckID: check.SourceCheckIdentity(), CheckAnalysisResultID: check.AnalysisResultIdentity(),
+		CheckKey: check.Key(), CheckRuleVersion: sarifPointer(check.RuleVersion()),
+		ApplicableFiles: sarifPointer(check.ApplicableFiles()), ApplicableRanges: sarifPointer(check.ApplicableRanges()),
+		CheckedFiles: sarifPointer(check.CheckedFiles()), CheckedRanges: sarifPointer(check.CheckedRanges()),
+		MatchCount: sarifPointer(check.MatchCount()), CandidateCount: sarifPointer(set.CandidateCount()),
+		VerifiedCount: sarifPointer(set.VerifiedCount()), RejectedCount: sarifPointer(set.RejectedCount()),
+		InconclusiveCount:   sarifPointer(set.InconclusiveCount()),
+		SourceAnalyzedCount: sarifPointer(set.SourceAnalyzedCount()),
+		SourceSelectedCount: sarifPointer(set.SourceSelectedCount()),
+		SourceOmittedCount:  sarifPointer(set.SourceOmittedCount()), Omissions: omissions,
+	}
+	rules := make([]sarifRule, 0, 1)
+	if len(findings) != 0 {
+		rules = append(rules, sarifRule{
+			ID:                   verifiedFindingSARIFRule,
+			ShortDescription:     sarifMessage{Text: "Independently verified finding"},
+			DefaultConfiguration: sarifConfiguration{Level: "warning"},
+		})
+	}
+	log := sarifLog{Schema: sarifSchemaURI, Version: "2.1.0", Runs: []sarifRun{{
+		Tool:    sarifTool{Driver: sarifDriver{Name: "Open Trestle", Rules: rules}},
+		Results: results, Properties: properties,
+	}}}
+	// writeJSONResult marshals this unchanged log and appends one newline.
+	// Do not truncate results: failure is safer than a partial finding set.
+	encoded, err := json.Marshal(log)
+	if err != nil {
+		return sarifLog{}, fmt.Errorf("encode version 5 SARIF: %w", err)
+	}
+	if len(encoded)+1 > maxDiagnosticSARIFBytes {
+		return sarifLog{}, fmt.Errorf("version 5 SARIF exceeds %d-byte limit", maxDiagnosticSARIFBytes)
+	}
+	return log, nil
+}
+
+func sarifPointer[T any](value T) *T { return &value }
+
 func diagnosticSARIFLevel(severity diagnostics.Severity) (string, error) {
 	switch severity {
 	case diagnostics.SeverityError:
