@@ -16,10 +16,13 @@ import (
 	"github.com/georgejieh/open-trestle/artifact"
 	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/handlers/source"
+	"github.com/georgejieh/open-trestle/internal/changecodec"
 	"github.com/georgejieh/open-trestle/internal/evidence"
 )
 
 const maximumLoadedSourceBytes = 256 << 20
+
+var ErrInvalidHandler = errors.New("invalid change model handler")
 
 type Handler struct {
 	identity string
@@ -101,7 +104,7 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 		return failure(controlplane.RunFailureInternal)
 	}
 	entries := delta.Entries()
-	if len(entries) > maximumChangedEntries {
+	if len(entries) > changecodec.MaxChangedEntries {
 		return failure(controlplane.RunFailureResourceLimit)
 	}
 	executions := make([]evidence.RepositoryFileDeltaExecution, len(entries))
@@ -129,11 +132,11 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 			}
 		}
 	}
-	result, err := newResult(base.artifact, head.artifact, base.snapshot, head.snapshot, base.input.Repository(), base.input.Revision(), head.input.Revision(), delta, executions, extra)
+	result, err := changecodec.NewResult(base.artifact, head.artifact, base.snapshot, head.snapshot, base.input.Repository(), base.input.Revision(), head.input.Revision(), delta, executions, extra)
 	if err != nil {
 		return failure(controlplane.RunFailureInternal)
 	}
-	payload, err := encodeResult(result)
+	payload, err := changecodec.EncodeResult(result)
 	if err != nil {
 		return failure(controlplane.RunFailureResourceLimit)
 	}
@@ -293,3 +296,13 @@ func (h *Handler) Format(state fmt.State, verb rune) {
 }
 
 var _ controlplane.TaskHandler = (*Handler)(nil)
+
+func writeRedacted(state fmt.State, verb rune, plain, detailed string) {
+	value := plain
+	if verb == 'q' {
+		value = fmt.Sprintf("%q", plain)
+	} else if verb == 'v' && state.Flag('#') {
+		value = detailed
+	}
+	_, _ = state.Write([]byte(value))
+}
