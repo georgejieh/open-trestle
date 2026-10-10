@@ -1,39 +1,27 @@
-package artifact
+package artifactvalidation
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"github.com/georgejieh/open-trestle/audit"
+	"github.com/georgejieh/open-trestle/artifact"
 	"github.com/georgejieh/open-trestle/controlplane"
 	"reflect"
 	"sort"
-	"time"
 )
-
-var ErrInvalidTaskHandler = errors.New("invalid artifact-validating task handler")
-
-// Reader retrieves one exact scoped artifact.
-type Reader interface {
-	Get(context.Context, audit.ReviewScope, string, time.Time) (Artifact, error)
-}
-
-// Clock supplies artifact retention evaluation time.
-type Clock interface{ Now() time.Time }
 
 // ValidatedTaskHandler fences an approved handler with durable input and output checks.
 type ValidatedTaskHandler struct {
 	inner                   controlplane.TaskHandler
-	reader                  Reader
-	clock                   Clock
+	reader                  artifact.Reader
+	clock                   artifact.Clock
 	handlerIdentity         string
 	kind                    controlplane.TaskKind
-	inputKinds, outputKinds []Kind
+	inputKinds, outputKinds []artifact.Kind
 }
 
-func NewValidatedTaskHandler(inner controlplane.TaskHandler, reader Reader, clock Clock, inputKinds, outputKinds []Kind) (*ValidatedTaskHandler, error) {
+func NewValidatedTaskHandler(inner controlplane.TaskHandler, reader artifact.Reader, clock artifact.Clock, inputKinds, outputKinds []artifact.Kind) (*ValidatedTaskHandler, error) {
 	if isNilHandler(inner) || isNilReader(reader) || clock == nil || controlplane.ValidateHandlerIdentity(inner.HandlerIdentity()) != nil || inner.Kind().Validate() != nil {
-		return nil, ErrInvalidTaskHandler
+		return nil, artifact.ErrInvalidTaskHandler
 	}
 	inputs, err := canonicalKinds(inputKinds)
 	if err != nil {
@@ -71,7 +59,7 @@ func (h *ValidatedTaskHandler) Execute(ctx context.Context, request controlplane
 			}
 		}
 	}
-	inputs := make([]Artifact, len(inputIdentities))
+	inputs := make([]artifact.Artifact, len(inputIdentities))
 	for index, identity := range inputIdentities {
 		input, err := h.reader.Get(ctx, scope, identity, h.clock.Now())
 		if err != nil {
@@ -114,20 +102,20 @@ func (h *ValidatedTaskHandler) Format(state fmt.State, verb rune) {
 	}
 	_, _ = state.Write([]byte(value))
 }
-func canonicalKinds(values []Kind) ([]Kind, error) {
+func canonicalKinds(values []artifact.Kind) ([]artifact.Kind, error) {
 	if len(values) == 0 || len(values) > 10 {
-		return nil, ErrInvalidTaskHandler
+		return nil, artifact.ErrInvalidTaskHandler
 	}
-	canonical := append([]Kind(nil), values...)
+	canonical := append([]artifact.Kind(nil), values...)
 	sort.Slice(canonical, func(i, j int) bool { return canonical[i] < canonical[j] })
 	for index, value := range canonical {
 		if value.String() == "" || index > 0 && value == canonical[index-1] {
-			return nil, ErrInvalidTaskHandler
+			return nil, artifact.ErrInvalidTaskHandler
 		}
 	}
 	return canonical, nil
 }
-func kindAllowed(values []Kind, value Kind) bool {
+func kindAllowed(values []artifact.Kind, value artifact.Kind) bool {
 	index := sort.Search(len(values), func(index int) bool { return values[index] >= value })
 	return index < len(values) && values[index] == value
 }
@@ -147,7 +135,7 @@ func isNilHandler(handler controlplane.TaskHandler) bool {
 	value := reflect.ValueOf(handler)
 	return value.Kind() == reflect.Ptr && value.IsNil()
 }
-func isNilReader(reader Reader) bool {
+func isNilReader(reader artifact.Reader) bool {
 	if reader == nil {
 		return true
 	}

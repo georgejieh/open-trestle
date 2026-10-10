@@ -44,6 +44,11 @@ that package has no signer identity or published provenance and is only for expl
 local evaluation. Production support requires release and deployment evidence that has
 not been published yet.
 
+Go API upgrade note (pre-v1): `artifact.NewValidatedTaskHandler` and
+`artifact.ValidatedTaskHandler` moved to `artifactvalidation`. Import the new package;
+there is no compatibility shim. `artifact.ErrInvalidTaskHandler`, `artifact.Reader`,
+and `artifact.Clock` remain in `artifact`.
+
 ## Why Open Trestle
 
 AI code review today is mostly a prompt attached to a pull request. The conclusions

@@ -27,6 +27,6 @@ At most 4,096 changed paths enter one result. Unsupported evidence is never sile
 
 The canonical result binds both source artifact and snapshot identities, repository coordinates, full base and head revisions, adapter, reconstructed manifests, manifest delta, per-path file identities and digests, execution status, omission reason, and changed ranges. Its protected artifact uses deterministic-tool origin and cites both dependency outputs, both root inputs, and the delta in provenance.
 
-`ParseResultArtifact` checks canonical encoding and cross-binds the result to both source snapshots. `artifact.ValidatedTaskHandler` can enforce `source_snapshot` dependencies and a `change_model` output.
+`ParseResultArtifact` checks canonical encoding and cross-binds the result to both source snapshots. `artifactvalidation.ValidatedTaskHandler` can enforce `source_snapshot` dependencies and a `change_model` output.
 
 Published schema: `schemas/artifact/change-model-result-v1.schema.json`. The behavior-versioned handler identity is `1a574001085da1114defaf7d093fb91bb05abd684e40d3fc05cd2c20fdd0482d`.

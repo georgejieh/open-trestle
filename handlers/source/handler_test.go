@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/georgejieh/open-trestle/artifact"
+	"github.com/georgejieh/open-trestle/artifactvalidation"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/internal/evidence"
@@ -114,7 +115,7 @@ func TestHandlerAcquiresAndPersistsExactSourceArtifacts(t *testing.T) {
 		t.Fatalf("store input = (%v, %v)", created, err)
 	}
 	request := taskExecutionRequest(t, scope, inputArtifact.Identity(), handler.HandlerIdentity())
-	validated, err := artifact.NewValidatedTaskHandler(
+	validated, err := artifactvalidation.NewValidatedTaskHandler(
 		handler, store, fixedClock{at: time.UnixMilli(201)},
 		[]artifact.Kind{artifact.KindTaskInput}, []artifact.Kind{artifact.KindSourceSnapshot},
 	)

@@ -48,7 +48,7 @@ The `candidate_batch` artifact contains:
 
 Its provenance includes the task input, context, candidates, authorization, outcome, reconciliation, output receipt, and route execution. `ParseGenerationResultArtifact` requires the exact input and context artifacts and revalidates scope, classification, protection, provenance, candidates, route records, and canonical encodings.
 
-The handler can be wrapped in `artifact.ValidatedTaskHandler` with `task_input` and `candidate_batch` kinds.
+The handler can be wrapped in `artifactvalidation.ValidatedTaskHandler` with `task_input` and `candidate_batch` kinds.
 
 ## Published schemas
 

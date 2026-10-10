@@ -44,7 +44,7 @@ A successful `verified_finding_set` artifact contains and binds:
 
 Only independently verified candidates are promoted. Rejected and inconclusive counts remain in the finding set. `ParseVerificationResultArtifact` reconstructs the verification context and all derived receipts, reruns independence and promotion, and compares every identity before returning data.
 
-`artifact.ValidatedTaskHandler` can wrap the handler with `candidate_batch` as input and `verified_finding_set` as output.
+`artifactvalidation.ValidatedTaskHandler` can wrap the handler with `candidate_batch` as input and `verified_finding_set` as output.
 
 ## Published schemas
 

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/georgejieh/open-trestle/artifact"
+	"github.com/georgejieh/open-trestle/artifactvalidation"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/internal/evidence"
@@ -421,7 +422,7 @@ func TestGenerationHandlerDispatchesAuditsAndPersistsAdmittedCandidates(t *testi
 	}
 	_, _ = store.Put(context.Background(), inputArtifact, time.UnixMilli(70))
 	request := generationTaskRequest(t, scope, inputArtifact.Identity(), handler.HandlerIdentity(), 1)
-	validated, err := artifact.NewValidatedTaskHandler(
+	validated, err := artifactvalidation.NewValidatedTaskHandler(
 		handler, store, fixedClock{at: time.UnixMilli(201)},
 		[]artifact.Kind{artifact.KindTaskInput}, []artifact.Kind{artifact.KindCandidateBatch},
 	)

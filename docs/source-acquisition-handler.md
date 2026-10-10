@@ -27,7 +27,7 @@ All output artifacts retain the input's scope, classification, protection mode, 
 
 `ParseSnapshotArtifact` verifies the scoped index. `ParseFileArtifact` then requires that verified snapshot and one exact listed reference. It checks scope, classification, protection, identity, canonical encoding, repository origin, provenance, content digest, byte count, and acquisition lineage before returning a defensive content copy. Downstream change-building handlers should resolve only file identities listed by the verified snapshot index.
 
-The handler can be wrapped in `artifact.ValidatedTaskHandler` with `task_input` as its input kind and `source_snapshot` as its output kind for an additional catalog boundary.
+The handler can be wrapped in `artifactvalidation.ValidatedTaskHandler` with `task_input` as its input kind and `source_snapshot` as its output kind for an additional catalog boundary.
 
 ## Terminal behavior
 

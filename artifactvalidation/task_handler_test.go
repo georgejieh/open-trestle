@@ -1,7 +1,8 @@
-package artifact
+package artifactvalidation
 
 import (
 	"context"
+	"github.com/georgejieh/open-trestle/artifact"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
 	"strings"
@@ -44,14 +45,14 @@ func taskRequestFixture(t *testing.T, inputIdentity string) (controlplane.Review
 }
 func TestTaskHandlerValidatesDurableInputAndOutputArtifacts(t *testing.T) {
 	scope, _ := audit.NewReviewScope("tenant-a", "repo-a", "run-a")
-	store, _ := NewMemoryStore(ProtectionProcessPrivate, 10)
-	input, _ := New(scope, KindTaskInput, "application/json", ClassificationConfidential, OriginHost, ProtectionProcessPrivate, []string{strings.Repeat("a", 64)}, []byte(`{}`), time.UnixMilli(1), time.UnixMilli(1000))
-	output, _ := New(scope, KindChangeModel, "application/json", ClassificationConfidential, OriginDeterministicTool, ProtectionProcessPrivate, []string{input.Identity()}, []byte(`{"ok":true}`), time.UnixMilli(2), time.UnixMilli(1000))
+	store, _ := artifact.NewMemoryStore(artifact.ProtectionProcessPrivate, 10)
+	input, _ := artifact.New(scope, artifact.KindTaskInput, "application/json", artifact.ClassificationConfidential, artifact.OriginHost, artifact.ProtectionProcessPrivate, []string{strings.Repeat("a", 64)}, []byte(`{}`), time.UnixMilli(1), time.UnixMilli(1000))
+	output, _ := artifact.New(scope, artifact.KindChangeModel, "application/json", artifact.ClassificationConfidential, artifact.OriginDeterministicTool, artifact.ProtectionProcessPrivate, []string{input.Identity()}, []byte(`{"ok":true}`), time.UnixMilli(2), time.UnixMilli(1000))
 	_, _ = store.Put(context.Background(), input, time.UnixMilli(10))
 	_, _ = store.Put(context.Background(), output, time.UnixMilli(10))
 	completion, _ := controlplane.NewTaskSuccess(output.Identity())
 	inner := &innerHandler{completion: completion}
-	handler, err := NewValidatedTaskHandler(inner, store, fixedClock{at: time.UnixMilli(200)}, []Kind{KindTaskInput}, []Kind{KindChangeModel})
+	handler, err := NewValidatedTaskHandler(inner, store, fixedClock{at: time.UnixMilli(200)}, []artifact.Kind{artifact.KindTaskInput}, []artifact.Kind{artifact.KindChangeModel})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,10 +67,10 @@ func TestTaskHandlerValidatesDurableInputAndOutputArtifacts(t *testing.T) {
 	}
 }
 func TestTaskHandlerFailsClosedBeforeCallingInnerForMissingInput(t *testing.T) {
-	store, _ := NewMemoryStore(ProtectionProcessPrivate, 10)
+	store, _ := artifact.NewMemoryStore(artifact.ProtectionProcessPrivate, 10)
 	completion, _ := controlplane.NewTaskSuccess(strings.Repeat("e", 64))
 	inner := &innerHandler{completion: completion}
-	handler, _ := NewValidatedTaskHandler(inner, store, fixedClock{at: time.UnixMilli(200)}, []Kind{KindTaskInput}, []Kind{KindChangeModel})
+	handler, _ := NewValidatedTaskHandler(inner, store, fixedClock{at: time.UnixMilli(200)}, []artifact.Kind{artifact.KindTaskInput}, []artifact.Kind{artifact.KindChangeModel})
 	state, lease := taskRequestFixture(t, strings.Repeat("a", 64))
 	catalog, _ := controlplane.NewTaskHandlerCatalog([]controlplane.TaskHandler{handler})
 	result, err := controlplane.DispatchLeasedTask(context.Background(), catalog, state, lease, time.UnixMilli(200))

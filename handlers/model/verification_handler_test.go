@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/georgejieh/open-trestle/artifact"
+	"github.com/georgejieh/open-trestle/artifactvalidation"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/internal/gateway"
@@ -226,7 +227,7 @@ func TestVerificationHandlerUsesIndependentRouteAndPersistsPromotedFindings(t *t
 		t.Fatal(err)
 	}
 	request := verificationTaskRequest(t, scope, generationArtifact.Identity(), handler.HandlerIdentity())
-	validated, err := artifact.NewValidatedTaskHandler(
+	validated, err := artifactvalidation.NewValidatedTaskHandler(
 		handler, store, fixedClock{at: time.UnixMilli(221)},
 		[]artifact.Kind{artifact.KindCandidateBatch}, []artifact.Kind{artifact.KindVerifiedFindingSet},
 	)
