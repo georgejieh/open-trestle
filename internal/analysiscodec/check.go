@@ -1,4 +1,4 @@
-package analysis
+package analysiscodec
 
 import (
 	"crypto/sha256"
@@ -59,7 +59,7 @@ type DeterministicCheck struct {
 	matches                                                        uint32
 }
 
-func newStaticDebugCheck(changeIdentity string, applicableFiles, applicableRanges, checkedFiles, checkedRanges, matches uint32) (DeterministicCheck, error) {
+func NewStaticDebugCheck(changeIdentity string, applicableFiles, applicableRanges, checkedFiles, checkedRanges, matches uint32) (DeterministicCheck, error) {
 	state := CheckPassed
 	switch {
 	case applicableRanges == 0:

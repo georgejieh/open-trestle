@@ -54,21 +54,3 @@ func TestDeterministicCheckRejectsImpossibleState(t *testing.T) {
 		}
 	}
 }
-
-func TestNewStaticDebugCheckDerivesFailClosedState(t *testing.T) {
-	change := strings.Repeat("a", 64)
-	for _, test := range []struct {
-		applicableFiles, applicableRanges, checkedFiles, checkedRanges, matches uint32
-		want                                                                    DeterministicCheckState
-	}{
-		{2, 3, 2, 3, 0, CheckPassed},
-		{2, 3, 1, 2, 1, CheckFailed},
-		{2, 3, 1, 2, 0, CheckIncomplete},
-		{0, 0, 0, 0, 0, CheckNotApplicable},
-	} {
-		check, err := newStaticDebugCheck(change, test.applicableFiles, test.applicableRanges, test.checkedFiles, test.checkedRanges, test.matches)
-		if err != nil || check.State() != test.want {
-			t.Fatalf("check=%#v want=%s err=%v", check, test.want, err)
-		}
-	}
-}

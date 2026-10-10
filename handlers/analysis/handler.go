@@ -18,12 +18,20 @@ import (
 	"github.com/georgejieh/open-trestle/diagnostics"
 	changehandler "github.com/georgejieh/open-trestle/handlers/change"
 	"github.com/georgejieh/open-trestle/handlers/source"
+	"github.com/georgejieh/open-trestle/internal/analysiscodec"
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/semanticimpact"
 )
 
 const maximumEvidenceSourceBytes = 64 << 20
+
+var ErrInvalidHandler = errors.New("invalid deterministic evidence handler")
+
+type boundMatch struct {
+	entry   changehandler.Entry
+	binding evidence.SourceSliceBinding
+}
 
 type Handler struct {
 	identity        string
@@ -126,7 +134,7 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 		references[reference.Path()] = reference
 	}
 	items := make([]Item, 0)
-	matchItems := make([]Item, 0)
+	matchItems := make([]boundMatch, 0)
 	gaps := make([]Gap, 0)
 	workUnits := 0
 	for _, entry := range change.Entries() {
@@ -151,7 +159,7 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 			applicableRanges += uint32(len(ranges))
 		}
 		if evidenceLimit {
-			gaps = append(gaps, newGap(entry, 0, 0, "evidence_limit"))
+			gaps = append(gaps, analysiscodec.NewGap(entry, 0, 0, "evidence_limit"))
 			continue
 		}
 		if len(ranges) == 0 {
@@ -159,7 +167,7 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 			if entry.Kind() == "added" {
 				reason = "empty_added_file"
 			}
-			gaps = append(gaps, newGap(entry, 0, 0, reason))
+			gaps = append(gaps, analysiscodec.NewGap(entry, 0, 0, reason))
 			continue
 		}
 		reference, ok := references[entry.Path()]
@@ -168,7 +176,7 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 		}
 		if loaded+reference.SizeBytes() > maximumEvidenceSourceBytes {
 			for _, value := range ranges {
-				gaps = append(gaps, newGap(entry, value.StartLine(), value.EndLine(), "resource_limit"))
+				gaps = append(gaps, analysiscodec.NewGap(entry, value.StartLine(), value.EndLine(), "resource_limit"))
 			}
 			continue
 		}
@@ -222,7 +230,7 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 						clear(content)
 						return failure(controlplane.RunFailureResourceLimit)
 					}
-					matchItems = append(matchItems, Item{evidenceID: binding.Identity(), bindingIdentity: binding.Identity(), changeEntryIdentity: entry.Identity(), changeExecutionIdentity: entry.ExecutionIdentity(), path: entry.Path(), startLine: matched.StartLine(), endLine: matched.EndLine(), digest: binding.SliceDigest(), fileIdentity: binding.RepositoryFileIdentity(), fileDigest: binding.RepositoryFileDigest(), sliceBytes: binding.SliceBytes()})
+					matchItems = append(matchItems, boundMatch{entry, binding})
 				}
 			}
 		}
@@ -235,10 +243,15 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 			}
 			binding, err := evidence.BindSourceSlice(repositoryFile, content, sourceRange, slice)
 			if err != nil {
-				gaps = append(gaps, newGap(entry, value.StartLine(), value.EndLine(), "slice_resource_limit"))
+				gaps = append(gaps, analysiscodec.NewGap(entry, value.StartLine(), value.EndLine(), "slice_resource_limit"))
 				continue
 			}
-			items = append(items, Item{evidenceID: binding.Identity(), bindingIdentity: binding.Identity(), changeEntryIdentity: entry.Identity(), changeExecutionIdentity: entry.ExecutionIdentity(), path: entry.Path(), startLine: value.StartLine(), endLine: value.EndLine(), digest: binding.SliceDigest(), fileIdentity: binding.RepositoryFileIdentity(), fileDigest: binding.RepositoryFileDigest(), sliceBytes: binding.SliceBytes()})
+			item, itemErr := analysiscodec.NewItem(entry, binding)
+			if itemErr != nil {
+				clear(content)
+				return failure(controlplane.RunFailureInternal)
+			}
+			items = append(items, item)
 		}
 		clear(content)
 	}
@@ -255,22 +268,22 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 	if semanticExpires.Before(expires) {
 		expires = semanticExpires
 	}
-	check, err := newStaticDebugCheck(change.Identity(), applicableFiles, applicableRanges, checkedFiles, checkedRanges, matches)
+	check, err := analysiscodec.NewStaticDebugCheck(change.Identity(), applicableFiles, applicableRanges, checkedFiles, checkedRanges, matches)
 	if err != nil {
 		return failure(controlplane.RunFailureInternal)
 	}
 	observations := make([]Observation, len(matchItems))
 	for index, item := range matchItems {
-		observations[index], err = newObservation(check, item)
+		observations[index], err = analysiscodec.NewObservationFromBinding(check, item.entry, item.binding)
 		if err != nil {
 			return failure(controlplane.RunFailureInternal)
 		}
 	}
-	result, err := newResult(changeArtifact, change, headArtifact, head, items, gaps, []DeterministicCheck{check}, observations, semanticProfile)
+	result, err := analysiscodec.NewResult(changeArtifact, change, headArtifact, head, items, gaps, []DeterministicCheck{check}, observations, semanticProfile)
 	if err != nil {
 		return failure(controlplane.RunFailureInternal)
 	}
-	payload, err := encodeResult(result)
+	payload, err := analysiscodec.EncodeResult(result)
 	if err != nil {
 		return failure(controlplane.RunFailureResourceLimit)
 	}
@@ -344,9 +357,6 @@ func diagnosticWriteFailure(ctx context.Context, err error) controlplane.RunFail
 	return controlplane.RunFailureInternal
 }
 
-func newGap(entry changehandler.Entry, start, end int, reason string) Gap {
-	return Gap{changeEntryIdentity: entry.Identity(), changeExecutionIdentity: entry.ExecutionIdentity(), path: entry.Path(), startLine: start, endLine: end, reason: reason}
-}
 func bindStaticMatchesToChanges(matches, changes []evidence.SourceRange) ([]evidence.SourceRange, error) {
 	bound := make([]evidence.SourceRange, 0, len(matches))
 	seen := make(map[[2]int]struct{}, len(matches))
@@ -475,3 +485,13 @@ func (h *Handler) Format(state fmt.State, verb rune) {
 }
 
 var _ controlplane.TaskHandler = (*Handler)(nil)
+
+func writeRedacted(state fmt.State, verb rune, plain, detailed string) {
+	value := plain
+	if verb == 'q' {
+		value = fmt.Sprintf("%q", plain)
+	} else if verb == 'v' && state.Flag('#') {
+		value = detailed
+	}
+	_, _ = state.Write([]byte(value))
+}

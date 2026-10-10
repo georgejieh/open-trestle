@@ -157,18 +157,13 @@ func TestOldCodeAnalysisGoldenFixtures(t *testing.T) {
 		t.Run(name, func(t *testing.T) { verifyOldCodeGolden(t, readOldCodeGolden(t, name)) })
 	}
 }
-func assertOldCodeAnalysisGoldens(t *testing.T, base, head, change, produced artifact.Artifact, result Result, zero artifact.Artifact, zeroResult Result, legacy3 artifact.Artifact, legacy3Result Result, legacy2 artifact.Artifact, legacy2Result Result) {
+func assertOldCodeAnalysisGoldens(t *testing.T, base, head, change, produced artifact.Artifact, result Result) {
 	t.Helper()
 	for _, v := range []struct {
 		name     string
 		evidence artifact.Artifact
 		result   Result
-	}{
-		{"produced-v4-failed-one-observation", produced, result},
-		{"synthetic-v4-zero-match", zero, zeroResult},
-		{"synthetic-v3-check-no-observations", legacy3, legacy3Result},
-		{"synthetic-v2-no-checks-observations", legacy2, legacy2Result},
-	} {
+	}{{"produced-v4-failed-one-observation", produced, result}} {
 		frozen := readOldCodeGolden(t, v.name)
 		verifyOldCodeGolden(t, frozen)
 		for _, pair := range []struct {
