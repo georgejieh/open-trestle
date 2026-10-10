@@ -98,11 +98,11 @@ func TestOldCodeMemoryProducerGoldens(t *testing.T) {
 				t.Fatalf("queries=%d omissions=%d", len(result.Queries()), len(result.Omissions()))
 			}
 			for _, query := range result.Queries() {
-				if query.identity != want.queryIdentity {
-					t.Fatalf("query identity=%s want=%s", query.identity, want.queryIdentity)
+				if query.Identity() != want.queryIdentity {
+					t.Fatalf("query identity=%s want=%s", query.Identity(), want.queryIdentity)
 				}
 				retrieval, err := query.Retrieval(scope, result.AsOf())
-				if err != nil || retrieval.Identity() != query.retrievalIdentity {
+				if err != nil || retrieval.Identity() != query.RetrievalIdentity() {
 					t.Fatalf("retrieval=%s err=%v", retrieval.Identity(), err)
 				}
 				if retrieval.Identity() != want.retrievalIdentity {

@@ -16,10 +16,10 @@ import (
 	"github.com/georgejieh/open-trestle/controlplane"
 	analysis "github.com/georgejieh/open-trestle/handlers/analysis"
 	change "github.com/georgejieh/open-trestle/handlers/change"
-	memoryhandler "github.com/georgejieh/open-trestle/handlers/memory"
 	source "github.com/georgejieh/open-trestle/handlers/source"
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/memory"
+	memorycodec "github.com/georgejieh/open-trestle/internal/memorycodec"
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/internal/scm"
@@ -796,7 +796,7 @@ func (p *InvestigationPipeline) validateAssembly(ctx context.Context, s controlp
 	if err != nil || analyzed.ChangeIdentity() != changed.Identity() {
 		return nil, ErrInvestigationPipeline
 	}
-	mem, err := memoryhandler.ParseResultArtifact(a.MemoryArtifact, a.ChangeArtifact, a.BaseSnapshotArtifact, a.HeadSnapshotArtifact)
+	mem, err := memorycodec.ParseResultArtifact(a.MemoryArtifact, a.ChangeArtifact, a.BaseSnapshotArtifact, a.HeadSnapshotArtifact)
 	if err != nil || mem.PolicyIdentity() != p.plan.PolicyIdentity() {
 		return nil, ErrInvestigationPipeline
 	}

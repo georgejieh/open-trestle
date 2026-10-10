@@ -11,6 +11,7 @@ import (
 	"github.com/georgejieh/open-trestle/controlplane"
 	changehandler "github.com/georgejieh/open-trestle/handlers/change"
 	memorycore "github.com/georgejieh/open-trestle/internal/memory"
+	"github.com/georgejieh/open-trestle/internal/memorycodec"
 	"reflect"
 	"sort"
 	"strings"
@@ -113,21 +114,34 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 	queries := make([]Query, 0, h.queryLimit)
 	omissions := make([]Omission, 0)
 	records := 0
+	expires := at.Add(time.Hour)
 	for _, entry := range change.Entries() {
 		if ctx.Err() != nil {
 			return failure(controlplane.RunFailureCanceled)
 		}
 		if !scope.AllowsPath(entry.Path()) {
-			omissions = append(omissions, Omission{entry.Path(), "path_not_authorized"})
+			omission, err := memorycodec.NewOmission(entry.Path(), "path_not_authorized")
+			if err != nil {
+				return failure(controlplane.RunFailureInternal)
+			}
+			omissions = append(omissions, omission)
 			continue
 		}
 		if len(queries) >= int(h.queryLimit) {
-			omissions = append(omissions, Omission{entry.Path(), "query_limit"})
+			omission, err := memorycodec.NewOmission(entry.Path(), "query_limit")
+			if err != nil {
+				return failure(controlplane.RunFailureInternal)
+			}
+			omissions = append(omissions, omission)
 			continue
 		}
 		remaining := int(h.totalLimit) - records
 		if remaining <= 0 {
-			omissions = append(omissions, Omission{entry.Path(), "result_limit"})
+			omission, err := memorycodec.NewOmission(entry.Path(), "result_limit")
+			if err != nil {
+				return failure(controlplane.RunFailureInternal)
+			}
+			omissions = append(omissions, omission)
 			continue
 		}
 		query, err := memorycore.NewLexicalQuery(scope, entry.Path(), nil, nil, at, uint8(remaining))
@@ -141,31 +155,28 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 		if retrieval.Validate() != nil || retrieval.Query().Identity() != query.Identity() || retrieval.ScopeIdentity() != scope.Identity() {
 			return failure(controlplane.RunFailureInternal)
 		}
-		items := make([]Item, len(retrieval.Items()))
-		for index, value := range retrieval.Items() {
+		for _, value := range retrieval.Items() {
 			record := value.Record()
-			items[index] = Item{identity: value.Identity(), queryIdentity: value.QueryIdentity(), recordIdentity: record.Identity(), kind: record.Kind().String(), taint: record.Taint().String(), path: record.Path(), text: record.Text(), producerIdentity: record.ProducerIdentity(), freshnessIdentity: record.FreshnessIdentity(), rank: value.Rank(), pathScore: value.PathScore(), symbolScore: value.SymbolScore(), textScore: value.TextScore(), symbols: record.Symbols(), evidenceIDs: record.EvidenceIDs(), derivedFromIDs: record.DerivedFromIDs(), counterEvidenceIDs: record.CounterEvidenceIDs(), observedAt: record.ObservedAtUnixMilliseconds(), validFrom: record.ValidFromUnixMilliseconds(), validUntil: record.ValidUntilUnixMilliseconds(), staleAfter: record.StaleAfterUnixMilliseconds(), confidence: record.ConfidenceBasisPoints()}
-		}
-		queries = append(queries, Query{entry.Path(), query.Identity(), retrieval.Identity(), retrieval.IndexRevision(), query.Limit(), items})
-		records += len(items)
-	}
-	result, err := newResult(changeArtifact, change, h.policyIdentity, h.retrieverIdentity, scope, at, queries, omissions)
-	if err != nil {
-		return failure(controlplane.RunFailureInternal)
-	}
-	payload, err := encodeResult(result)
-	if err != nil {
-		return failure(controlplane.RunFailureResourceLimit)
-	}
-	expires := at.Add(time.Hour)
-	for _, query := range queries {
-		for _, item := range query.items {
-			for _, candidate := range []int64{item.validUntil, item.staleAfter} {
+			for _, candidate := range []int64{record.ValidUntilUnixMilliseconds(), record.StaleAfterUnixMilliseconds()} {
 				if candidate > at.UnixMilli() && time.UnixMilli(candidate).Before(expires) {
 					expires = time.UnixMilli(candidate)
 				}
 			}
 		}
+		wireQuery, err := memorycodec.NewQuery(scope, query, retrieval)
+		if err != nil {
+			return failure(controlplane.RunFailureInternal)
+		}
+		queries = append(queries, wireQuery)
+		records += len(retrieval.Items())
+	}
+	result, err := newResult(changeArtifact, change, h.policyIdentity, h.retrieverIdentity, scope, at, queries, omissions)
+	if err != nil {
+		return failure(controlplane.RunFailureInternal)
+	}
+	payload, err := encodeResult(result, change)
+	if err != nil {
+		return failure(controlplane.RunFailureResourceLimit)
 	}
 	for _, value := range []time.Time{changeArtifact.ExpiresAt(), baseArtifact.ExpiresAt(), headArtifact.ExpiresAt()} {
 		if value.Before(expires) {
