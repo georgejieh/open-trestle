@@ -1,10 +1,10 @@
 package main
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
-	"strings"
+
+	"github.com/georgejieh/open-trestle/internal/localownerroot"
 )
 
 // localPathPreflight is a read-only path snapshot, not an owner or race guard.
@@ -46,61 +46,7 @@ func localPathPreflight(state string) (func(), error) {
 	}, nil
 }
 
-// localExistingRoot checks each component from a rooted parent in order. It
-// neither creates a missing component nor assumes an ENOENT masks other errors.
+// localExistingRoot checks every existing component through an opened root.
 func localExistingRoot(absolute string) (*os.Root, error) {
-	parent, err := os.OpenRoot(string(filepath.Separator))
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if parent != nil {
-			_ = parent.Close()
-		}
-	}()
-	path := string(filepath.Separator)
-	components := strings.Split(strings.TrimPrefix(absolute, path), path)
-	for _, component := range components {
-		if component == "" {
-			continue
-		}
-		path = filepath.Join(path, component)
-		before, err := os.Lstat(path)
-		if errors.Is(err, os.ErrNotExist) {
-			// The rooted lookup distinguishes a missing child from a changed or
-			// inaccessible absolute pathname at this instant.
-			if _, rootedErr := parent.Lstat(component); !errors.Is(rootedErr, os.ErrNotExist) {
-				return nil, ErrInvalidDaemonConfiguration
-			}
-			return nil, nil
-		}
-		if err != nil {
-			return nil, err
-		}
-		rooted, err := parent.Lstat(component)
-		if err != nil || !os.SameFile(before, rooted) || before.Mode() != rooted.Mode() || !before.IsDir() || before.Mode()&os.ModeType != os.ModeDir {
-			return nil, ErrInvalidDaemonConfiguration
-		}
-		child, err := parent.OpenRoot(component)
-		if err != nil {
-			return nil, err
-		}
-		opened, openErr := child.Stat(".")
-		after, afterErr := os.Lstat(path)
-		rootedAfter, rootedErr := parent.Lstat(component)
-		if openErr != nil || afterErr != nil || rootedErr != nil || !os.SameFile(before, opened) || !os.SameFile(before, after) || !os.SameFile(before, rootedAfter) || before.Mode() != opened.Mode() || before.Mode() != after.Mode() || before.Mode() != rootedAfter.Mode() {
-			_ = child.Close()
-			return nil, ErrInvalidDaemonConfiguration
-		}
-		_ = parent.Close()
-		parent = child
-	}
-	info, err := parent.Stat(".")
-	if err != nil || info.Mode() != os.ModeDir|0o700 {
-		return nil, ErrInvalidDaemonConfiguration
-	}
-	// The caller holds the observed leaf through the following constructors.
-	openedLeaf := parent
-	parent = nil
-	return openedLeaf, nil
+	return localownerroot.ExistingRoot(absolute, ErrInvalidDaemonConfiguration)
 }

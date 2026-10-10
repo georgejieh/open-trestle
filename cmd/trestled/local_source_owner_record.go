@@ -8,9 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"strings"
-	"unicode/utf8"
 
+	"github.com/georgejieh/open-trestle/internal/localownerroot"
 	"github.com/georgejieh/open-trestle/internal/scm"
 )
 
@@ -30,10 +29,7 @@ var (
 )
 
 // localSourceDirectoryIdentity is a Linux directory device/inode pair, not a pathname proof.
-type localSourceDirectoryIdentity struct {
-	Device uint64 `json:"device"`
-	Inode  uint64 `json:"inode"`
-}
+type localSourceDirectoryIdentity = localownerroot.DirectoryIdentity
 
 type localSourceOwnerRecord struct {
 	StatePath          string                       `json:"state_path"`
@@ -62,7 +58,7 @@ type localSourceOwnerEnvelope struct {
 }
 
 func validLocalOwnerPath(path string) bool {
-	return path != "" && len(path) <= 4096 && utf8.ValidString(path) && strings.IndexByte(path, 0) == -1 && filepath.IsAbs(path) && filepath.Clean(path) == path && path[0] == '/'
+	return localownerroot.ValidPath(path)
 }
 
 func validLocalOwnerLabel(label string) bool {

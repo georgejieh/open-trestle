@@ -5,105 +5,41 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 
 	"github.com/georgejieh/open-trestle/internal/fileauthority"
+	"github.com/georgejieh/open-trestle/internal/localownerroot"
 )
 
 const localSourceOwnerLeaf = ".local-source-owner.json"
 
 var (
-	errLocalSourceOwnerPersistence = errors.New("local source owner persistence or changed state")
-	errLocalSourceOwnerUnsupported = errors.New("local source owner directory identity unsupported")
+	errLocalSourceOwnerPersistence = localownerroot.ErrPersistence
+	errLocalSourceOwnerUnsupported = localownerroot.ErrUnsupported
 )
 
 func ownerPersistence(stage string, err error) error {
-	if err == nil {
-		return fmt.Errorf("%w: %s", errLocalSourceOwnerPersistence, stage)
-	}
-	return fmt.Errorf("%w: %s: %w", errLocalSourceOwnerPersistence, stage, err)
+	return localownerroot.Persistence(stage, err)
 }
 
 func ownerDirectoryInfo(info os.FileInfo) bool {
-	return info != nil && info.Mode() == os.ModeDir|0700 && fileauthority.TrustedOwner(info)
+	return localownerroot.DirectoryInfo(info)
 }
 
-// The path observations check cooperative consistency with the caller's opened root.
-// Each checked root validates every existing component without following symlinks.
 func observeLocalSourceDirectory(path string, root *os.Root) (localSourceDirectoryIdentity, error) {
-	if root == nil || !validLocalOwnerPath(path) || filepath.Clean(path) != path {
-		return localSourceDirectoryIdentity{}, ownerPersistence("absent or invalid opened root", nil)
-	}
-	before, err := checkedLocalSourceDirectoryInfo(path)
-	if err != nil {
-		return localSourceDirectoryIdentity{}, ownerPersistence("directory chain before", err)
-	}
-	opened, err := root.Stat(".")
-	if err != nil {
-		return localSourceDirectoryIdentity{}, ownerPersistence("opened directory", err)
-	}
-	after, err := checkedLocalSourceDirectoryInfo(path)
-	if err != nil {
-		return localSourceDirectoryIdentity{}, ownerPersistence("directory chain after", err)
-	}
-	if !ownerDirectoryInfo(before) || !ownerDirectoryInfo(opened) || !ownerDirectoryInfo(after) || !os.SameFile(before, opened) || !os.SameFile(opened, after) {
-		return localSourceDirectoryIdentity{}, ownerPersistence("directory identity or private mode changed", nil)
-	}
-	return localSourceDirectoryIdentityFromInfo(opened)
+	return localownerroot.ObserveDirectory(path, root, ErrInvalidDaemonConfiguration)
 }
 
 func checkedLocalSourceDirectoryInfo(path string) (os.FileInfo, error) {
-	checked, err := localExistingRoot(path)
-	if err != nil {
-		return nil, err
-	}
-	if checked == nil {
-		return nil, os.ErrNotExist
-	}
-	info, statErr := checked.Stat(".")
-	closeErr := checked.Close()
-	return info, errors.Join(statErr, closeErr)
+	return localownerroot.CheckedDirectoryInfo(path, ErrInvalidDaemonConfiguration)
 }
 
-// An opened artifact root must also match the exact child of its opened state root.
 func observeLocalSourceArtifactDirectory(stateRoot, artifactRoot *os.Root, statePath string) (localSourceDirectoryIdentity, error) {
-	return observeLocalSourceArtifactDirectoryWithHook(stateRoot, artifactRoot, statePath, nil)
+	return localownerroot.ObserveArtifactDirectory(stateRoot, artifactRoot, statePath, ErrInvalidDaemonConfiguration)
 }
 
-// The per-call hook only arranges changes between child observations.
+// The per-call hook only arranges filesystem changes between child observations.
 func observeLocalSourceArtifactDirectoryWithHook(stateRoot, artifactRoot *os.Root, statePath string, hook func(string)) (localSourceDirectoryIdentity, error) {
-	if stateRoot == nil || artifactRoot == nil {
-		return localSourceDirectoryIdentity{}, ownerPersistence("absent artifact root", nil)
-	}
-	if _, err := observeLocalSourceDirectory(statePath, stateRoot); err != nil {
-		return localSourceDirectoryIdentity{}, err
-	}
-	before, err := stateRoot.Lstat("artifacts")
-	if err != nil {
-		return localSourceDirectoryIdentity{}, ownerPersistence("artifact child before", err)
-	}
-	if hook != nil {
-		hook("after-child-before")
-	}
-	identity, err := observeLocalSourceDirectory(filepath.Join(statePath, "artifacts"), artifactRoot)
-	if err != nil {
-		return localSourceDirectoryIdentity{}, err
-	}
-	opened, err := artifactRoot.Stat(".")
-	if err != nil {
-		return localSourceDirectoryIdentity{}, ownerPersistence("artifact opened", err)
-	}
-	after, err := stateRoot.Lstat("artifacts")
-	if err != nil {
-		return localSourceDirectoryIdentity{}, ownerPersistence("artifact child after", err)
-	}
-	if !ownerDirectoryInfo(before) || !ownerDirectoryInfo(after) || !os.SameFile(before, opened) || !os.SameFile(opened, after) {
-		return localSourceDirectoryIdentity{}, ownerPersistence("artifact child changed", nil)
-	}
-	if _, err := observeLocalSourceDirectory(statePath, stateRoot); err != nil {
-		return localSourceDirectoryIdentity{}, err
-	}
-	return identity, nil
+	return localownerroot.ObserveArtifactDirectoryWithHook(stateRoot, artifactRoot, statePath, hook, ErrInvalidDaemonConfiguration)
 }
 
 func ownerLeafInfo(info os.FileInfo) bool {

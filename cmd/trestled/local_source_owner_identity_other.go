@@ -3,10 +3,11 @@
 package main
 
 import (
-	"fmt"
 	"os"
+
+	"github.com/georgejieh/open-trestle/internal/localownerroot"
 )
 
-func localSourceDirectoryIdentityFromInfo(os.FileInfo) (localSourceDirectoryIdentity, error) {
-	return localSourceDirectoryIdentity{}, fmt.Errorf("%w: directory identity needs Linux", errLocalSourceOwnerUnsupported)
+func localSourceDirectoryIdentityFromInfo(info os.FileInfo) (localSourceDirectoryIdentity, error) {
+	return localownerroot.IdentityFromInfo(info)
 }
