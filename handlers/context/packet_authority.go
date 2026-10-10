@@ -14,10 +14,11 @@ import (
 	"github.com/georgejieh/open-trestle/artifact"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
-	changehandler "github.com/georgejieh/open-trestle/handlers/change"
-	sourcehandler "github.com/georgejieh/open-trestle/handlers/source"
+	"github.com/georgejieh/open-trestle/internal/changecodec"
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/internal/review"
+	"github.com/georgejieh/open-trestle/internal/sourceinput"
+	"github.com/georgejieh/open-trestle/internal/sourceoutput"
 )
 
 var ErrPacketAuthority = errors.New("packet authority or effect fence unavailable")
@@ -211,15 +212,15 @@ func (p packetAssembler) rebuild(ctx context.Context, request controlplane.TaskE
 
 func (p packetAssembler) sourceChain(ctx context.Context, request controlplane.TaskExecutionRequest, state controlplane.ReviewRunState, baseArtifact, headArtifact, changeArtifact artifact.Artifact, packetExpiry time.Time) (string, error) {
 	reader := leaseBoundReads{Store: p.store, clock: p.clock, lease: request.Lease()}
-	base, err := sourcehandler.ParseSnapshotArtifact(baseArtifact)
+	base, err := sourceoutput.ParseSnapshotArtifact(baseArtifact)
 	if err != nil {
 		return "", ErrPacketAuthority
 	}
-	head, err := sourcehandler.ParseSnapshotArtifact(headArtifact)
+	head, err := sourceoutput.ParseSnapshotArtifact(headArtifact)
 	if err != nil {
 		return "", ErrPacketAuthority
 	}
-	change, err := changehandler.ParseResultArtifact(changeArtifact, baseArtifact, headArtifact)
+	change, err := changecodec.ParseResultArtifact(changeArtifact, baseArtifact, headArtifact)
 	if err != nil {
 		return "", ErrPacketAuthority
 	}
@@ -231,7 +232,7 @@ func (p packetAssembler) sourceChain(ctx context.Context, request controlplane.T
 	var root, repository, adapter string
 	for index, entry := range []struct {
 		key      string
-		snapshot sourcehandler.Snapshot
+		snapshot sourceoutput.Snapshot
 		value    artifact.Artifact
 	}{{"source-base", base, baseArtifact}, {"source-head", head, headArtifact}} {
 		task, exists := request.Plan().Task(entry.key)
@@ -246,7 +247,7 @@ func (p packetAssembler) sourceChain(ctx context.Context, request controlplane.T
 			inputArtifact.ExpiresAt().Before(packetExpiry) || inputArtifact.Classification() != entry.value.Classification() || inputArtifact.Protection() != entry.value.Protection() || entry.value.ExpiresAt().Before(packetExpiry) || !slices.Equal(entry.value.Provenance(), sortedPair(inputArtifact.Identity(), entry.snapshot.AcquisitionExecutionIdentity())) {
 			return "", ErrPacketAuthority
 		}
-		input, parseErr := sourcehandler.ParseInput(inputArtifact.Payload())
+		input, parseErr := sourceinput.ParseInput(inputArtifact.Payload())
 		if parseErr != nil || input.SchemaVersion() != 2 || !validDigest(input.SourceRootIdentity()) ||
 			input.Repository().Identity() != entry.snapshot.RepositoryIdentity() || input.Revision().Identity() != entry.snapshot.RevisionIdentity() ||
 			input.SourceAdapterIdentity() != entry.snapshot.SourceAdapterIdentity() ||
@@ -264,7 +265,7 @@ func (p packetAssembler) sourceChain(ctx context.Context, request controlplane.T
 			if fileErr != nil || fileValue.ExpiresAt().Before(packetExpiry) || !slices.Equal(fileValue.Provenance(), sortedPair(inputArtifact.Identity(), entry.snapshot.AcquisitionExecutionIdentity())) {
 				return "", ErrPacketAuthority
 			}
-			if _, fileErr = sourcehandler.ParseFileArtifact(fileValue, entry.snapshot, ref); fileErr != nil {
+			if _, fileErr = sourceoutput.ParseFileArtifact(fileValue, entry.snapshot, ref); fileErr != nil {
 				return "", ErrPacketAuthority
 			}
 		}

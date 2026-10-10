@@ -15,17 +15,17 @@ import (
 	"github.com/georgejieh/open-trestle/artifact"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
-	analysishandler "github.com/georgejieh/open-trestle/handlers/analysis"
-	changehandler "github.com/georgejieh/open-trestle/handlers/change"
-	memoryhandler "github.com/georgejieh/open-trestle/handlers/memory"
 	modelhandler "github.com/georgejieh/open-trestle/handlers/model"
-	sourcehandler "github.com/georgejieh/open-trestle/handlers/source"
+	"github.com/georgejieh/open-trestle/internal/analysiscodec"
+	"github.com/georgejieh/open-trestle/internal/changecodec"
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	memorycore "github.com/georgejieh/open-trestle/internal/memory"
+	"github.com/georgejieh/open-trestle/internal/memorycodec"
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/internal/secretscan"
+	"github.com/georgejieh/open-trestle/internal/sourceoutput"
 )
 
 const (
@@ -321,7 +321,7 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 	if err != nil {
 		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, readFailure(ctx, err)
 	}
-	baseID, headID, err := changehandler.ResultArtifactReferences(changeArtifact)
+	baseID, headID, err := changecodec.ResultArtifactReferences(changeArtifact)
 	if err != nil {
 		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 	}
@@ -333,19 +333,19 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 	if err != nil {
 		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, readFailure(ctx, err)
 	}
-	_, err = changehandler.ParseResultArtifact(changeArtifact, baseArtifact, headArtifact)
+	_, err = changecodec.ParseResultArtifact(changeArtifact, baseArtifact, headArtifact)
 	if err != nil {
 		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 	}
-	analysis, err := analysishandler.ParseResultArtifact(analysisArtifact, changeArtifact, baseArtifact, headArtifact)
+	analysis, err := analysiscodec.ParseResultArtifact(analysisArtifact, changeArtifact, baseArtifact, headArtifact)
 	if err != nil {
 		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 	}
-	memoryResult, err := memoryhandler.ParseResultArtifact(memoryArtifact, changeArtifact, baseArtifact, headArtifact)
+	memoryResult, err := memorycodec.ParseResultArtifact(memoryArtifact, changeArtifact, baseArtifact, headArtifact)
 	if err != nil || memoryResult.ChangeArtifactIdentity() != analysis.ChangeArtifactIdentity() || memoryResult.PolicyIdentity() != request.Plan().PolicyIdentity() {
 		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 	}
-	head, err := sourcehandler.ParseSnapshotArtifact(headArtifact)
+	head, err := sourceoutput.ParseSnapshotArtifact(headArtifact)
 	if err != nil || head.Identity() != analysis.HeadSnapshotIdentity() || head.ManifestIdentity() != analysis.HeadManifestIdentity() {
 		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 	}
@@ -513,7 +513,7 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 	}, providerRequest, nil, 0
 }
 
-func (h *Handler) loadHead(ctx context.Context, scope audit.ReviewScope, head sourcehandler.Snapshot, at, expires time.Time) (map[string][]byte, evidence.RepositoryManifest, time.Time, controlplane.RunFailure) {
+func (h *Handler) loadHead(ctx context.Context, scope audit.ReviewScope, head sourceoutput.Snapshot, at, expires time.Time) (map[string][]byte, evidence.RepositoryManifest, time.Time, controlplane.RunFailure) {
 	contents := make(map[string][]byte, head.FileCount())
 	files := make([]evidence.RepositoryFile, 0, head.FileCount())
 	loaded := 0
@@ -531,7 +531,7 @@ func (h *Handler) loadHead(ctx context.Context, scope audit.ReviewScope, head so
 			clearContents(contents)
 			return nil, evidence.RepositoryManifest{}, time.Time{}, readFailure(ctx, err)
 		}
-		file, err := sourcehandler.ParseFileArtifact(value, head, reference)
+		file, err := sourceoutput.ParseFileArtifact(value, head, reference)
 		if err != nil {
 			clearContents(contents)
 			return nil, evidence.RepositoryManifest{}, time.Time{}, controlplane.RunFailureInvalidInput

@@ -17,8 +17,8 @@ import (
 	analysis "github.com/georgejieh/open-trestle/handlers/analysis"
 	change "github.com/georgejieh/open-trestle/handlers/change"
 	source "github.com/georgejieh/open-trestle/handlers/source"
+	"github.com/georgejieh/open-trestle/internal/contextpacket"
 	"github.com/georgejieh/open-trestle/internal/gateway"
-	"github.com/georgejieh/open-trestle/internal/memory"
 	memorycodec "github.com/georgejieh/open-trestle/internal/memorycodec"
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/review"
@@ -152,14 +152,7 @@ type InvestigationPipelineOptions struct {
 	Source  scm.SourceAdapter
 	Support InvestigationSupportBindings
 }
-type InvestigationAssembly struct {
-	Packet                                           review.ContextPacket
-	Snapshot                                         review.ReviewSnapshot
-	MemoryScope                                      memory.Scope
-	InitialContextArtifact                           artifact.Artifact
-	AnalysisArtifact, MemoryArtifact, ChangeArtifact artifact.Artifact
-	BaseSnapshotArtifact, HeadSnapshotArtifact       artifact.Artifact
-}
+type InvestigationAssembly = contextpacket.Assembly
 type pipelineOperationKey struct{}
 type pipelineOperation struct {
 	owner *InvestigationPipeline
