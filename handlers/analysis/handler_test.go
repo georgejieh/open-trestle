@@ -189,6 +189,7 @@ func TestHandlerBindsExactChangedSourceSlices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertOldCodeAnalysisGoldens(t, baseOutput, headOutput, changeOutput, output, result, zeroArtifact, zeroMatch, legacyV3Artifact, legacyV3, legacyArtifact, legacy)
 	legacyParsed, err := ParseResultArtifact(legacyArtifact, changeOutput, baseOutput, headOutput)
 	if err != nil || legacyParsed.SchemaVersion() != 2 || len(legacyParsed.Checks()) != 0 || legacyParsed.Identity() != legacy.Identity() {
 		t.Fatalf("legacy=(%#v,%v)", legacyParsed, err)
