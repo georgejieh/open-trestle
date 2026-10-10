@@ -131,6 +131,27 @@ func (j *MemoryRunJournal) Head(ctx context.Context, scope audit.ReviewScope) (R
 	}
 	return events[len(events)-1], true, nil
 }
+
+// A public journal writer cannot complete a lease that has recorded a v4
+// packet checkpoint. The history check also precedes the duplicate shortcut:
+// an already-stored success is not a grant to append it through this API.
+func publicSuccessFollowsPreparedPacket(stream []RunEvent, event RunEvent) bool {
+	if event.Kind() != RunEventTaskSucceeded {
+		return false
+	}
+	for _, earlier := range stream {
+		if earlier.Sequence() < event.Sequence() &&
+			earlier.Kind() == RunEventContextPacketPrepared &&
+			earlier.TaskKey() == event.TaskKey() &&
+			earlier.TaskIdentity() == event.TaskIdentity() &&
+			earlier.Attempt() == event.Attempt() &&
+			earlier.LeaseTokenIdentity() == event.LeaseTokenIdentity() {
+			return true
+		}
+	}
+	return false
+}
+
 func (j *MemoryRunJournal) Append(ctx context.Context, expectedHead string, event RunEvent) error {
 	if isNilRunJournalContext(ctx) {
 		return ErrInvalidRunJournalContext
@@ -152,6 +173,9 @@ func (j *MemoryRunJournal) Append(ctx context.Context, expectedHead string, even
 	}
 	if len(events) > 0 && events[0].PlanIdentity() != event.PlanIdentity() {
 		return ErrRunPlanConflict
+	}
+	if publicSuccessFollowsPreparedPacket(events, event) {
+		return ErrPreparedContextPacket
 	}
 	if len(events) > 0 && events[len(events)-1].Identity() == event.Identity() {
 		return nil

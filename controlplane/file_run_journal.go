@@ -589,6 +589,9 @@ func (j *FileRunJournal) appendValidated(ctx context.Context, expectedHead strin
 	if len(stream) > 0 && stream[0].PlanIdentity() != event.PlanIdentity() {
 		return ErrRunPlanConflict
 	}
+	if publicSuccessFollowsPreparedPacket(stream, event) {
+		return ErrPreparedContextPacket
+	}
 	if len(stream) > 0 && stream[len(stream)-1].Identity() == event.Identity() {
 		return nil
 	}
