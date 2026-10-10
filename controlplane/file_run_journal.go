@@ -55,11 +55,12 @@ type FileRunJournal struct {
 	lockFile       *filelock.Lock
 	closeOwnedRoot func(*os.Root) error // test-only close seam; nil uses os.Root.Close
 	// Optional fault-injection seams; production uses syncRoot and lockFile.Close.
-	syncOnClose         func() error
-	closeLock           func(*filelock.Lock) error
-	onContendedGateWait func() // test observer, set before concurrent use only
-	contentionWatcher   chan struct{}
-	closed              bool
+	syncOnClose               func() error
+	closeLock                 func(*filelock.Lock) error
+	onContendedGateWait       func() // test observer, set before concurrent use only
+	contentionWatcher         chan struct{}
+	afterCanceledStreamRename func(audit.ReviewScope) error // test-only instance seam; set before concurrent use
+	closed                    bool
 }
 
 // errOwnedJournalRoot marks a failed sampled identity, private mode, or owner check.
@@ -804,6 +805,11 @@ func (j *FileRunJournal) replaceStream(ctx context.Context, scope audit.ReviewSc
 		return fmt.Errorf("%w: %v", ErrRunJournalPersistence, err)
 	}
 	cleaned = true
+	if len(events) > 0 && events[len(events)-1].Kind() == RunEventCanceled && j.afterCanceledStreamRename != nil {
+		if err := j.afterCanceledStreamRename(scope); err != nil {
+			return errors.Join(ErrRunJournalPersistence, err)
+		}
+	}
 	return j.syncRoot()
 }
 func (j *FileRunJournal) syncRoot() error {
