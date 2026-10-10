@@ -106,19 +106,35 @@ func TestBuildPacketCandidateMatchesUnwiredPrepareWithoutWriting(t *testing.T) {
 	}
 }
 
+// blockedBaseGetReader records that a base snapshot file, not a selected head
+// range, was actually reached by sourceChain after clean assembly.
+type blockedBaseGetReader struct {
+	packetCandidateGetReader
+	blocked string
+	gets    int
+}
+
+func (r *blockedBaseGetReader) Get(ctx context.Context, scope audit.ReviewScope, identity string, at time.Time) (artifact.Artifact, error) {
+	if identity == r.blocked {
+		r.gets++
+	}
+	return r.packetCandidateGetReader.Get(ctx, scope, identity, at)
+}
+
 func TestBuildPacketCandidateRejectsUnselectedFileDamageBeforeAnyEffect(t *testing.T) {
 	for _, test := range []struct {
-		name    string
-		changed bool
-	}{{"missing", false}, {"mismatched", true}} {
+		name              string
+		changed, baseFile bool
+	}{{"missing", false, false}, {"mismatched", true, false}, {"base_missing", false, true}, {"base_mismatched", true, true}} {
 		t.Run(test.name, func(t *testing.T) {
-			authority, request, coordinator, store, _, closeFixture, journal := newPacketWriterFixture(t, true, false, false, false, false)
+			authority, request, coordinator, store, _, closeFixture, journal := newPacketWriterFixture(t, true, test.baseFile, false, false, false)
 			defer closeFixture()
+			damaged := authority.store.(blockedPacketStore)
 			if test.changed {
-				damaged := authority.store.(blockedPacketStore)
 				damaged.changed = true
-				authority.store = damaged
 			}
+			puts := 0
+			damaged.putCount = &puts
 			ctx := context.Background()
 			scope := request.Plan().Scope()
 			at := time.UnixMilli(230)
@@ -127,32 +143,52 @@ func TestBuildPacketCandidateRejectsUnselectedFileDamageBeforeAnyEffect(t *testi
 			if err != nil {
 				t.Fatal(err)
 			}
-			h := &Handler{store: store, packetOnly: true}
-			assembly, _, abstention, failure := h.assemble(ctx, request, at)
+			assembly, _, abstention, failure := (&Handler{store: store, packetOnly: true}).assemble(ctx, request, at)
 			if failure != 0 || abstention != nil {
 				t.Fatal("fixture cannot assemble its undamaged selected packet")
 			}
+			for _, item := range assembly.Packet.EvidenceItems() {
+				if item.SourceRange().Path() == "z_unselected.txt" {
+					t.Fatal("damaged base body selected")
+				}
+			}
 			expectedIdentity := assembly.InitialContextArtifact.Identity()
-			if _, err := BuildPacketCandidate(ctx, packetCandidateGetReader{source: authority.store}, request, state, contextTestClock{at}, authority.ownerRoot, at, at); !errors.Is(err, ErrPacketAuthority) {
-				t.Fatalf("unselected head file %s was accepted: %v", test.name, err)
+			reader := &blockedBaseGetReader{packetCandidateGetReader: packetCandidateGetReader{source: damaged}, blocked: damaged.blocked}
+			candidate, err := BuildPacketCandidate(ctx, reader, request, state, contextTestClock{at}, authority.ownerRoot, at, at)
+			if !errors.Is(err, ErrPacketAuthority) {
+				t.Fatalf("unselected file %s accepted: %v", test.name, err)
+			}
+			if candidate.Artifact().Identity() != "" || candidate.Descriptor().ArtifactIdentity != "" {
+				t.Fatal("rejection returned candidate")
+			}
+			if test.baseFile && reader.gets != 1 {
+				t.Fatalf("STOP: blocked base ID Get count=%d; sourceChain not proven", reader.gets)
 			}
 			afterEvents := packetCandidateEvents(t, journal, scope)
 			if len(afterEvents) != len(beforeEvents) {
-				t.Fatal("rejected candidate appended a journal event")
+				t.Fatal("rejected candidate appended journal event")
+			}
+			for i := range beforeEvents {
+				if beforeEvents[i].Identity() != afterEvents[i].Identity() {
+					t.Fatal("rejected candidate changed ordered journal identities")
+				}
 			}
 			_, afterState, err := coordinator.Resume(ctx, scope)
 			if err != nil || afterState.HeadIdentity() != state.HeadIdentity() {
-				t.Fatalf("rejected candidate changed the current head: %v", err)
+				t.Fatalf("rejected candidate changed journal head: %v", err)
 			}
 			runtime, ok := afterState.Task("context")
 			if !ok {
 				t.Fatal("missing context task")
 			}
 			if _, prepared := runtime.PreparedContextPacket(); prepared {
-				t.Fatal("rejected candidate prepared a durable packet")
+				t.Fatal("rejected candidate prepared durable packet")
+			}
+			if puts != 0 {
+				t.Fatalf("rejected candidate forwarded %d Put calls", puts)
 			}
 			if _, err := store.Get(ctx, scope, expectedIdentity, at); !errors.Is(err, artifact.ErrArtifactNotFound) {
-				t.Fatalf("rejected candidate wrote packet bytes: %v", err)
+				t.Fatalf("rejected candidate persisted packet: %v", err)
 			}
 		})
 	}

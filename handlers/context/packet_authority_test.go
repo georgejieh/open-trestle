@@ -78,10 +78,10 @@ func (j *failingPacketJournal) Append(ctx context.Context, head string, event co
 }
 
 func newPacketWriterFixture(t *testing.T, blockedFile bool, baseFile bool, legacy bool, crossedRoot bool, failAppend bool) (*PacketAuthority, controlplane.TaskExecutionRequest, *controlplane.Coordinator, artifact.Store, string, func(), *failingPacketJournal) {
-	return newPacketWriterFixtureVariant(t, blockedFile, baseFile, legacy, crossedRoot, failAppend, false)
+	return newPacketWriterFixtureVariant(t, blockedFile, baseFile, legacy, crossedRoot, failAppend, false, false)
 }
 
-func newPacketWriterFixtureVariant(t *testing.T, blockedFile bool, baseFile bool, legacy bool, crossedRoot bool, failAppend bool, indexedChangedPath bool) (*PacketAuthority, controlplane.TaskExecutionRequest, *controlplane.Coordinator, artifact.Store, string, func(), *failingPacketJournal) {
+func newPacketWriterFixtureVariant(t *testing.T, blockedFile bool, baseFile bool, legacy bool, crossedRoot bool, failAppend bool, indexedChangedPath bool, emptyIndex bool) (*PacketAuthority, controlplane.TaskExecutionRequest, *controlplane.Coordinator, artifact.Store, string, func(), *failingPacketJournal) {
 	repository, _ := evidence.NewRepositoryIdentity("github.com", []string{"owner"}, "repo")
 	gitRoot := filepath.Join(t.TempDir(), "repo")
 	if err := os.Mkdir(gitRoot, 0700); err != nil {
@@ -90,11 +90,11 @@ func newPacketWriterFixtureVariant(t *testing.T, blockedFile bool, baseFile bool
 	git := func(args ...string) string {
 		t.Helper()
 		prefix := []string{"-C", gitRoot}
-		if indexedChangedPath {
+		if indexedChangedPath || emptyIndex {
 			prefix = append(prefix, "-c", "commit.gpgsign=false")
 		}
 		cmd := exec.Command("git", append(prefix, args...)...)
-		if indexedChangedPath {
+		if indexedChangedPath || emptyIndex {
 			cmd.Env = append(os.Environ(), "GIT_AUTHOR_DATE=2001-01-01T00:00:00Z", "GIT_COMMITTER_DATE=2001-01-01T00:00:00Z")
 		}
 		data, err := cmd.CombinedOutput()
@@ -161,16 +161,18 @@ func newPacketWriterFixtureVariant(t *testing.T, blockedFile bool, baseFile bool
 	if scopeErr != nil {
 		t.Fatal(scopeErr)
 	}
-	recordPath := "a.txt"
-	if indexedChangedPath {
-		recordPath = "a.go"
-	}
-	record, recordErr := memorycore.NewRecord(memoryScope, memorycore.RecordInput{Kind: memorycore.RecordCanonicalFact, Taint: memorycore.TaintTrusted, Path: recordPath, Text: "this path has a parser invariant", EvidenceIDs: []string{strings.Repeat("9", 64)}, ProducerIdentity: strings.Repeat("7", 64), ObservedAt: time.UnixMilli(10), ValidFrom: time.UnixMilli(10)})
-	if recordErr != nil {
-		t.Fatal(recordErr)
-	}
-	if _, _, err := index.Add(context.Background(), memoryScope, record); err != nil {
-		t.Fatal(err)
+	if !emptyIndex {
+		recordPath := "a.txt"
+		if indexedChangedPath {
+			recordPath = "a.go"
+		}
+		record, recordErr := memorycore.NewRecord(memoryScope, memorycore.RecordInput{Kind: memorycore.RecordCanonicalFact, Taint: memorycore.TaintTrusted, Path: recordPath, Text: "this path has a parser invariant", EvidenceIDs: []string{strings.Repeat("9", 64)}, ProducerIdentity: strings.Repeat("7", 64), ObservedAt: time.UnixMilli(10), ValidFrom: time.UnixMilli(10)})
+		if recordErr != nil {
+			t.Fatal(recordErr)
+		}
+		if _, _, err := index.Add(context.Background(), memoryScope, record); err != nil {
+			t.Fatal(err)
+		}
 	}
 	policyIdentity := strings.Repeat("f", 64)
 	memoryTaskHandler, _ := memoryhandler.NewHandler(store, contextTestClock{time.UnixMilli(220)}, index, strings.Repeat("6", 64), policyIdentity, "reviewer", []string{"."}, 10, 20)
@@ -190,19 +192,21 @@ func newPacketWriterFixtureVariant(t *testing.T, blockedFile bool, baseFile bool
 		t.Fatal(err)
 	}
 	wrappedJournal := &failingPacketJournal{RunJournal: journal, fail: failAppend}
-	coordinator, _ := controlplane.NewCoordinator(wrappedJournal)
-	if indexedChangedPath {
-		// The coordinator retains the reader passed at construction; restore the
-		// process-global reader even if construction panics.
+	var coordinator *controlplane.Coordinator
+	if indexedChangedPath || emptyIndex {
+		// NewCoordinator retains this reader. Restore the process-global reader
+		// even if construction panics; never seed the rest of the producer run.
 		coordinator, err = func() (*controlplane.Coordinator, error) {
 			originalRandom := rand.Reader
 			defer func() { rand.Reader = originalRandom }()
 			rand.Reader = bytes.NewReader(bytes.Repeat([]byte{0x42}, 1024))
 			return controlplane.NewCoordinator(wrappedJournal)
 		}()
-		if err != nil {
-			t.Fatal(err)
-		}
+	} else {
+		coordinator, err = controlplane.NewCoordinator(wrappedJournal)
+	}
+	if err != nil {
+		t.Fatal(err)
 	}
 	_, _ = coordinator.Open(context.Background(), plan, time.UnixMilli(100))
 	var contextRequest controlplane.TaskExecutionRequest
