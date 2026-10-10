@@ -82,6 +82,10 @@ func newPacketWriterFixture(t *testing.T, blockedFile bool, baseFile bool, legac
 }
 
 func newPacketWriterFixtureVariant(t *testing.T, blockedFile bool, baseFile bool, legacy bool, crossedRoot bool, failAppend bool, indexedChangedPath bool, emptyIndex bool) (*PacketAuthority, controlplane.TaskExecutionRequest, *controlplane.Coordinator, artifact.Store, string, func(), *failingPacketJournal) {
+	return newPacketWriterFixtureWithDuplicate(t, blockedFile, baseFile, legacy, crossedRoot, failAppend, indexedChangedPath, emptyIndex, false)
+}
+
+func newPacketWriterFixtureWithDuplicate(t *testing.T, blockedFile bool, baseFile bool, legacy bool, crossedRoot bool, failAppend bool, indexedChangedPath bool, emptyIndex bool, duplicateReference bool) (*PacketAuthority, controlplane.TaskExecutionRequest, *controlplane.Coordinator, artifact.Store, string, func(), *failingPacketJournal) {
 	repository, _ := evidence.NewRepositoryIdentity("github.com", []string{"owner"}, "repo")
 	gitRoot := filepath.Join(t.TempDir(), "repo")
 	if err := os.Mkdir(gitRoot, 0700); err != nil {
@@ -90,11 +94,11 @@ func newPacketWriterFixtureVariant(t *testing.T, blockedFile bool, baseFile bool
 	git := func(args ...string) string {
 		t.Helper()
 		prefix := []string{"-C", gitRoot}
-		if indexedChangedPath || emptyIndex {
+		if indexedChangedPath || emptyIndex || duplicateReference {
 			prefix = append(prefix, "-c", "commit.gpgsign=false")
 		}
 		cmd := exec.Command("git", append(prefix, args...)...)
-		if indexedChangedPath || emptyIndex {
+		if indexedChangedPath || emptyIndex || duplicateReference {
 			cmd.Env = append(os.Environ(), "GIT_AUTHOR_DATE=2001-01-01T00:00:00Z", "GIT_COMMITTER_DATE=2001-01-01T00:00:00Z")
 		}
 		data, err := cmd.CombinedOutput()
@@ -110,20 +114,31 @@ func newPacketWriterFixtureVariant(t *testing.T, blockedFile bool, baseFile bool
 			t.Fatal(err)
 		}
 	}
+	testBody := "package p\nfunc TestChanged(){_=Changed()}\n"
+	if duplicateReference {
+		testBody = "package p\nfunc TestChanged(){_=Changed();_=Changed()}\n"
+	}
 	write("a.go", "package p\nfunc Changed() int{return 1}\n")
-	write("a_test.go", "package p\nfunc TestChanged(){_=Changed()}\n")
+	write("a_test.go", testBody)
 	write("z_unselected.txt", "unchanged\n")
 	git("add", ".")
 	git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "base")
 	baseRevision, _ := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithmSHA1, git("rev-parse", "HEAD"))
 	write("a.go", "package p\nfunc Changed() int{return 2}\n")
-	write("a_test.go", "package p\nfunc TestChanged(){_=Changed()}\n")
+	write("a_test.go", testBody)
 	git("add", ".")
 	git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "head")
 	headRevision, _ := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithmSHA1, git("rev-parse", "HEAD"))
+	if duplicateReference {
+		for _, revision := range []evidence.RevisionIdentity{baseRevision, headRevision} {
+			if got := git("show", revision.Digest()+":a_test.go"); got+"\n" != testBody {
+				t.Fatal("STOP: Git test source differs from unchanged map source")
+			}
+		}
+	}
 
 	adapterIdentity, _ := evidence.NewSourceAdapterIdentity(evidence.SourceAdapterKindGit, "test-source", "1.0.0", []evidence.SourceAdapterCapability{evidence.SourceCapabilityReadManifest, evidence.SourceCapabilityReadContent})
-	adapter := &contextTestSource{identity: adapterIdentity, results: map[string]scm.SourceAdapterResult{baseRevision.Identity(): makeSourceResult(t, map[string][]byte{"a.go": []byte("package p\nfunc Changed() int{return 1}\n"), "a_test.go": []byte("package p\nfunc TestChanged(){_=Changed()}\n"), "z_unselected.txt": []byte("unchanged\n")}), headRevision.Identity(): makeSourceResult(t, map[string][]byte{"a.go": []byte("package p\nfunc Changed() int{return 2}\n"), "a_test.go": []byte("package p\nfunc TestChanged(){_=Changed()}\n"), "z_unselected.txt": []byte("unchanged\n")})}}
+	adapter := &contextTestSource{identity: adapterIdentity, results: map[string]scm.SourceAdapterResult{baseRevision.Identity(): makeSourceResult(t, map[string][]byte{"a.go": []byte("package p\nfunc Changed() int{return 1}\n"), "a_test.go": []byte(testBody), "z_unselected.txt": []byte("unchanged\n")}), headRevision.Identity(): makeSourceResult(t, map[string][]byte{"a.go": []byte("package p\nfunc Changed() int{return 2}\n"), "a_test.go": []byte(testBody), "z_unselected.txt": []byte("unchanged\n")})}}
 	root := t.TempDir()
 	store, err := artifact.NewFileStore(filepath.Join(root, "artifacts"))
 	if err != nil {
@@ -193,7 +208,7 @@ func newPacketWriterFixtureVariant(t *testing.T, blockedFile bool, baseFile bool
 	}
 	wrappedJournal := &failingPacketJournal{RunJournal: journal, fail: failAppend}
 	var coordinator *controlplane.Coordinator
-	if indexedChangedPath || emptyIndex {
+	if indexedChangedPath || emptyIndex || duplicateReference {
 		// NewCoordinator retains this reader. Restore the process-global reader
 		// even if construction panics; never seed the rest of the producer run.
 		coordinator, err = func() (*controlplane.Coordinator, error) {
