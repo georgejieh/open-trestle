@@ -10,6 +10,7 @@ import (
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/internal/sourceinput"
+	"github.com/georgejieh/open-trestle/internal/sourceoutput"
 )
 
 // Input authorizes one exact read-only complete-content acquisition.
@@ -20,7 +21,8 @@ var (
 	// This variable initially shares the lower sentinel; reassignment does not alter codec errors.
 	ErrInvalidInput = sourceinput.ErrInvalidInput
 	// ErrInvalidOutput identifies malformed source snapshot or file output.
-	ErrInvalidOutput = errors.New("invalid source acquisition output")
+	// This initially shares the lower sentinel. Reassigning either exported variable does not synchronize them.
+	ErrInvalidOutput = sourceoutput.ErrInvalidOutput
 	// ErrInvalidHandler identifies incomplete handler dependencies or identity.
 	ErrInvalidHandler = errors.New("invalid source acquisition handler")
 )

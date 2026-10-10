@@ -17,6 +17,7 @@ import (
 	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/internal/scm"
+	"github.com/georgejieh/open-trestle/internal/sourceoutput"
 )
 
 // Handler acquires one exact repository revision and persists protected source artifacts.
@@ -188,7 +189,7 @@ func (h *Handler) persistSnapshot(
 		if !exists {
 			return taskFailure(controlplane.RunFailureInternal)
 		}
-		payload, err := encodeFile(execution.Identity(), file, content)
+		payload, err := sourceoutput.EncodeFile(execution.Identity(), file, content)
 		if err != nil {
 			return taskFailure(controlplane.RunFailureResourceLimit)
 		}
@@ -203,13 +204,10 @@ func (h *Handler) persistSnapshot(
 		if _, err := h.store.Put(ctx, value, now); err != nil {
 			return taskFailure(storeWriteFailure(ctx, err))
 		}
-		references = append(references, FileReference{
-			path: file.Path(), digest: file.Digest(), sizeBytes: file.SizeBytes(),
-			artifactIdentity: value.Identity(),
-		})
+		references = append(references, sourceoutput.NewFileReference(file.Path(), file.Digest(), file.SizeBytes(), value.Identity()))
 	}
-	sort.Slice(references, func(first, second int) bool { return references[first].path < references[second].path })
-	index, err := newSnapshot(
+	sort.Slice(references, func(first, second int) bool { return references[first].Path() < references[second].Path() })
+	index, err := sourceoutput.NewSnapshot(
 		"", execution.RequestIdentity(), execution.ReceiptIdentity(),
 		execution.Identity(), input.Repository().Identity(), input.Revision().Identity(),
 		input.SourceAdapterIdentity(), manifest.Identity(), references,
@@ -217,7 +215,7 @@ func (h *Handler) persistSnapshot(
 	if err != nil {
 		return taskFailure(controlplane.RunFailureInternal)
 	}
-	payload, err := encodeSnapshot(index)
+	payload, err := sourceoutput.EncodeSnapshot(index)
 	if err != nil {
 		return taskFailure(controlplane.RunFailureResourceLimit)
 	}

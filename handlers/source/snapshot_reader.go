@@ -95,7 +95,7 @@ type SnapshotReader struct {
 }
 
 func NewSnapshotReader(ctx context.Context, store SnapshotArtifactReader, clock artifact.Clock, scope audit.ReviewScope, snapshotArtifactIdentity, snapshotIdentity string, limits SnapshotReadLimits) (*SnapshotReader, error) {
-	if nilInterface(ctx) || ctx.Err() != nil || nilInterface(store) || nilInterface(clock) || scope.Validate() != nil || !validDigest(snapshotArtifactIdentity) || !validDigest(snapshotIdentity) || !limits.valid() {
+	if nilInterface(ctx) || ctx.Err() != nil || nilInterface(store) || nilInterface(clock) || scope.Validate() != nil || !validSourceDigest(snapshotArtifactIdentity) || !validSourceDigest(snapshotIdentity) || !limits.valid() {
 		return nil, ErrSnapshotRead
 	}
 	at := clock.Now()
