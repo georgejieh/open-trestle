@@ -202,11 +202,14 @@ func buildSARIFLog(evaluation ciEvaluation) (sarifLog, error) {
 
 func buildDiagnosticSetSARIF(set diagnostics.Set) (sarifLog, error) {
 	version := set.SchemaVersion()
-	if version != 5 && version != 6 {
+	if version != 1 && version != 5 && version != 6 {
 		return sarifLog{}, fmt.Errorf("unsupported diagnostic SARIF schema version %d", version)
 	}
 	if err := set.Validate(); err != nil {
 		return sarifLog{}, fmt.Errorf("diagnostic set is invalid: %w", err)
+	}
+	if version == 1 {
+		return buildHistoricalV1DiagnosticSetSARIF(set)
 	}
 	if version == 5 {
 		return buildVerifiedDiagnosticSetSARIF(set)
@@ -236,6 +239,58 @@ func buildDeterministicDiagnosticSetSARIF(set diagnostics.Set) (sarifLog, error)
 		results[index] = sarifResult{RuleID: staticDebugOutputSARIFRule, Level: level, Message: sarifMessage{Text: observation.Title() + ": " + observation.Message()}, Locations: []sarifLocation{{PhysicalLocation: sarifPhysicalLocation{ArtifactLocation: sarifArtifactLocation{URI: sarifArtifactURI(observation.Path())}, Region: sarifRegion{StartLine: int(observation.StartLine()), EndLine: int(observation.EndLine())}}}}, Fingerprints: map[string]string{"openTrestleObservationId/v1": observation.Identity()}, Properties: sarifResultProperties{EvidenceIDs: evidence, ObservationIdentity: observation.Identity(), AnalysisResultID: set.AnalysisResultIdentity(), CheckID: check.Identity()}}
 	}
 	return sarifLog{Schema: sarifSchemaURI, Version: "2.1.0", Runs: []sarifRun{{Tool: sarifTool{Driver: sarifDriver{Name: "Open Trestle", Rules: []sarifRule{{ID: staticDebugOutputSARIFRule, ShortDescription: sarifMessage{Text: "Debug output left in source"}, DefaultConfiguration: sarifConfiguration{Level: "warning"}}}}}, Results: results, Properties: sarifRunProperties{Status: review.OutcomeInconclusive, Reason: "deterministic_check_" + check.State().String(), SnapshotID: set.SnapshotIdentity(), Revision: set.HeadRevision(), DiagnosticSetID: set.Identity(), AnalysisResultID: set.AnalysisResultIdentity(), ChangeID: check.ChangeIdentity(), CheckID: check.Identity(), CheckState: check.State().String()}}}}, nil
+}
+
+// Version 1 has findings but records neither source coverage nor candidate accounting.
+func buildHistoricalV1DiagnosticSetSARIF(set diagnostics.Set) (sarifLog, error) {
+	findings := set.Findings()
+	results := make([]sarifResult, len(findings))
+	for i, finding := range findings {
+		level, err := diagnosticSARIFLevel(finding.Severity())
+		if err != nil {
+			return sarifLog{}, err
+		}
+		results[i] = sarifResult{
+			RuleID: verifiedFindingSARIFRule, Level: level,
+			Message: sarifMessage{Text: finding.Title() + ": " + finding.Message()},
+			Locations: []sarifLocation{{PhysicalLocation: sarifPhysicalLocation{
+				ArtifactLocation: sarifArtifactLocation{URI: sarifArtifactURI(finding.Path())},
+				Region:           sarifRegion{StartLine: int(finding.StartLine()), EndLine: int(finding.EndLine())},
+			}}},
+			Fingerprints: map[string]string{
+				"openTrestleVerifiedFindingId/v1":  finding.Identity(),
+				"openTrestleFindingFingerprint/v1": finding.Fingerprint(),
+			},
+			Properties: sarifResultProperties{EvidenceIDs: finding.EvidenceIDs()},
+		}
+	}
+	rules := make([]sarifRule, 0, 1)
+	if len(findings) != 0 {
+		rules = append(rules, sarifRule{
+			ID:                   verifiedFindingSARIFRule,
+			ShortDescription:     sarifMessage{Text: "Independently verified finding"},
+			DefaultConfiguration: sarifConfiguration{Level: "warning"},
+		})
+	}
+	log := sarifLog{Schema: sarifSchemaURI, Version: "2.1.0", Runs: []sarifRun{{
+		Tool:    sarifTool{Driver: sarifDriver{Name: "Open Trestle", Rules: rules}},
+		Results: results,
+		Properties: sarifRunProperties{
+			Status:     review.OutcomeInconclusive,
+			Reason:     "review status is advisory; no approval asserted; source coverage unavailable; candidate accounting unavailable",
+			SnapshotID: set.SnapshotIdentity(), Revision: set.HeadRevision(), DiagnosticSetID: set.Identity(),
+			VerifiedSetID: set.VerifiedSetIdentity(),
+		},
+	}}}
+	// The writer adds one newline. Reject the entire log before writing any bytes.
+	encoded, err := json.Marshal(log)
+	if err != nil {
+		return sarifLog{}, fmt.Errorf("encode version 1 SARIF: %w", err)
+	}
+	if len(encoded)+1 > maxDiagnosticSARIFBytes {
+		return sarifLog{}, fmt.Errorf("version 1 SARIF exceeds %d-byte limit", maxDiagnosticSARIFBytes)
+	}
+	return log, nil
 }
 
 // Version 5 findings are independently verified diagnostics, not deterministic observations.
