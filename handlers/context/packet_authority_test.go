@@ -86,6 +86,13 @@ func newPacketWriterFixtureVariant(t *testing.T, blockedFile bool, baseFile bool
 }
 
 func newPacketWriterFixtureWithDuplicate(t *testing.T, blockedFile bool, baseFile bool, legacy bool, crossedRoot bool, failAppend bool, indexedChangedPath bool, emptyIndex bool, duplicateReference bool) (*PacketAuthority, controlplane.TaskExecutionRequest, *controlplane.Coordinator, artifact.Store, string, func(), *failingPacketJournal) {
+	return newPacketWriterFixtureWithMemoryExpiry(t, blockedFile, baseFile, legacy, crossedRoot, failAppend, indexedChangedPath, emptyIndex, duplicateReference, time.Time{})
+}
+
+func newPacketWriterFixtureWithMemoryExpiry(t *testing.T, blockedFile bool, baseFile bool, legacy bool, crossedRoot bool, failAppend bool, indexedChangedPath bool, emptyIndex bool, duplicateReference bool, memoryValidUntil time.Time) (*PacketAuthority, controlplane.TaskExecutionRequest, *controlplane.Coordinator, artifact.Store, string, func(), *failingPacketJournal) {
+	if !memoryValidUntil.IsZero() && (!indexedChangedPath || emptyIndex) {
+		t.Fatal("memory expiry requires the indexed changed-path record")
+	}
 	repository, _ := evidence.NewRepositoryIdentity("github.com", []string{"owner"}, "repo")
 	gitRoot := filepath.Join(t.TempDir(), "repo")
 	if err := os.Mkdir(gitRoot, 0700); err != nil {
@@ -181,7 +188,11 @@ func newPacketWriterFixtureWithDuplicate(t *testing.T, blockedFile bool, baseFil
 		if indexedChangedPath {
 			recordPath = "a.go"
 		}
-		record, recordErr := memorycore.NewRecord(memoryScope, memorycore.RecordInput{Kind: memorycore.RecordCanonicalFact, Taint: memorycore.TaintTrusted, Path: recordPath, Text: "this path has a parser invariant", EvidenceIDs: []string{strings.Repeat("9", 64)}, ProducerIdentity: strings.Repeat("7", 64), ObservedAt: time.UnixMilli(10), ValidFrom: time.UnixMilli(10)})
+		recordInput := memorycore.RecordInput{Kind: memorycore.RecordCanonicalFact, Taint: memorycore.TaintTrusted, Path: recordPath, Text: "this path has a parser invariant", EvidenceIDs: []string{strings.Repeat("9", 64)}, ProducerIdentity: strings.Repeat("7", 64), ObservedAt: time.UnixMilli(10), ValidFrom: time.UnixMilli(10)}
+		if indexedChangedPath {
+			recordInput.ValidUntil = memoryValidUntil
+		}
+		record, recordErr := memorycore.NewRecord(memoryScope, recordInput)
 		if recordErr != nil {
 			t.Fatal(recordErr)
 		}
