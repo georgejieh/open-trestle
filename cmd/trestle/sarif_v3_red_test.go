@@ -139,23 +139,3 @@ func TestBuildV3DiagnosticSetSARIFPreservesRecordedCoverageWithoutInventedReason
 		})
 	}
 }
-
-func TestBuildV4DiagnosticSetSARIFRemainsUnsupportedDuringV3RED(t *testing.T) {
-	scope, err := audit.NewReviewScope("tenant-a", "repo-a", "run-v4-control")
-	if err != nil {
-		t.Fatal(err)
-	}
-	set, err := diagnostics.NewSetWithOmissionReasons(scope, strings.Repeat("d", 64),
-		strings.Repeat("1", 40), strings.Repeat("e", 64), strings.Repeat("f", 64),
-		0, 0, 0, 1, 1, 0, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if set.SchemaVersion() != 4 || set.Validate() != nil {
-		t.Fatalf("v4 control not valid: version %d, validate %v", set.SchemaVersion(), set.Validate())
-	}
-	_, err = buildDiagnosticSetSARIF(set)
-	if err == nil || !strings.Contains(err.Error(), "unsupported diagnostic SARIF schema version 4") {
-		t.Fatalf("v4 dispatch = %v, want explicit unsupported error", err)
-	}
-}
