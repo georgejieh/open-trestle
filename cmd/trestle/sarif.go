@@ -202,7 +202,7 @@ func buildSARIFLog(evaluation ciEvaluation) (sarifLog, error) {
 
 func buildDiagnosticSetSARIF(set diagnostics.Set) (sarifLog, error) {
 	version := set.SchemaVersion()
-	if version != 1 && version != 2 && version != 5 && version != 6 {
+	if version != 1 && version != 2 && version != 3 && version != 5 && version != 6 {
 		return sarifLog{}, fmt.Errorf("unsupported diagnostic SARIF schema version %d", version)
 	}
 	if err := set.Validate(); err != nil {
@@ -213,6 +213,9 @@ func buildDiagnosticSetSARIF(set diagnostics.Set) (sarifLog, error) {
 	}
 	if version == 2 {
 		return buildHistoricalV2DiagnosticSetSARIF(set)
+	}
+	if version == 3 {
+		return buildHistoricalV3DiagnosticSetSARIF(set)
 	}
 	if version == 5 {
 		return buildVerifiedDiagnosticSetSARIF(set)
@@ -353,6 +356,73 @@ func buildHistoricalV2DiagnosticSetSARIF(set diagnostics.Set) (sarifLog, error) 
 	}
 	if len(encoded)+1 > maxDiagnosticSARIFBytes {
 		return sarifLog{}, fmt.Errorf("version 2 SARIF exceeds %d-byte limit", maxDiagnosticSARIFBytes)
+	}
+	return log, nil
+}
+
+// Version 3 records source selection counts but not omission reasons.
+func buildHistoricalV3DiagnosticSetSARIF(set diagnostics.Set) (sarifLog, error) {
+	findings := set.Findings()
+	results := make([]sarifResult, len(findings))
+	for i, finding := range findings {
+		level, err := diagnosticSARIFLevel(finding.Severity())
+		if err != nil {
+			return sarifLog{}, err
+		}
+		results[i] = sarifResult{
+			RuleID: verifiedFindingSARIFRule, Level: level,
+			Message: sarifMessage{Text: finding.Title() + ": " + finding.Message()},
+			Locations: []sarifLocation{{PhysicalLocation: sarifPhysicalLocation{
+				ArtifactLocation: sarifArtifactLocation{URI: sarifArtifactURI(finding.Path())},
+				Region:           sarifRegion{StartLine: int(finding.StartLine()), EndLine: int(finding.EndLine())},
+			}}},
+			Fingerprints: map[string]string{
+				"openTrestleVerifiedFindingId/v1":  finding.Identity(),
+				"openTrestleFindingFingerprint/v1": finding.Fingerprint(),
+			},
+			Properties: sarifResultProperties{EvidenceIDs: finding.EvidenceIDs()},
+		}
+	}
+	rules := make([]sarifRule, 0, 1)
+	if len(findings) != 0 {
+		rules = append(rules, sarifRule{
+			ID:                   verifiedFindingSARIFRule,
+			ShortDescription:     sarifMessage{Text: "Independently verified finding"},
+			DefaultConfiguration: sarifConfiguration{Level: "warning"},
+		})
+	}
+	reason := "review status is advisory; no approval asserted"
+	if set.InconclusiveCount() > 0 {
+		reason += "; candidate verification inconclusive"
+	}
+	if set.RejectedCount() > 0 {
+		reason += "; rejected candidates"
+	}
+	if set.SourceOmittedCount() > 0 {
+		reason += "; source selection partial; omission reasons unavailable"
+	}
+	log := sarifLog{Schema: sarifSchemaURI, Version: "2.1.0", Runs: []sarifRun{{
+		Tool:    sarifTool{Driver: sarifDriver{Name: "Open Trestle", Rules: rules}},
+		Results: results,
+		Properties: sarifRunProperties{
+			Status:     review.OutcomeInconclusive,
+			Reason:     reason,
+			SnapshotID: set.SnapshotIdentity(), Revision: set.HeadRevision(), DiagnosticSetID: set.Identity(),
+			VerifiedSetID: set.VerifiedSetIdentity(), VerificationContextID: set.VerificationContextIdentity(),
+			CandidateCount: sarifPointer(set.CandidateCount()), VerifiedCount: sarifPointer(set.VerifiedCount()),
+			RejectedCount: sarifPointer(set.RejectedCount()), InconclusiveCount: sarifPointer(set.InconclusiveCount()),
+			SourceAnalyzedCount: sarifPointer(set.SourceAnalyzedCount()),
+			SourceSelectedCount: sarifPointer(set.SourceSelectedCount()),
+			SourceOmittedCount:  sarifPointer(set.SourceOmittedCount()),
+		},
+	}}}
+	// The writer adds one newline. Reject the entire log before writing any bytes.
+	encoded, err := json.Marshal(log)
+	if err != nil {
+		return sarifLog{}, fmt.Errorf("encode version 3 SARIF: %w", err)
+	}
+	if len(encoded)+1 > maxDiagnosticSARIFBytes {
+		return sarifLog{}, fmt.Errorf("version 3 SARIF exceeds %d-byte limit", maxDiagnosticSARIFBytes)
 	}
 	return log, nil
 }
