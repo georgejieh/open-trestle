@@ -2,7 +2,11 @@
 
 `trestle local-git model-review` is an explicit request for model calls. It does not
 change `local-git review`, which remains deterministic. This command cannot publish
-a forge review or create a required check.
+a forge review or create a required check. For private source, prefer a local model
+or a provider whose zero-data-retention terms and account settings you have
+verified. Route-policy checks and `store: false` cannot prove how a provider
+retains or uses data. This CLI's direct model-review path does not permit a
+non-local request (see Authority and egress below).
 
 ```text
 trestle local-git model-review \

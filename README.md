@@ -71,7 +71,10 @@ The design rules that follow from that:
   approval, proof of correctness, or a security guarantee. Coverage, limits, and
   abstentions stay visible so a reviewer can see what was actually checked.
 - **Operator ownership.** Local-only, controlled-hybrid, and air-gapped deployments
-  are first-class targets, not afterthoughts.
+  are first-class targets, not afterthoughts. For private source, prefer local
+  models or a provider whose zero-data-retention terms and account settings you
+  have verified. Open Trestle checks declared route policy, not a provider's
+  actual retention behavior.
 
 ## Architecture
 
