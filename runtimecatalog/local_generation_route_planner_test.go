@@ -143,6 +143,33 @@ func largeSanitizedGenerationRequest(t *testing.T, scope audit.ReviewScope) prov
 	return generationRequest
 }
 
+func TestPlanLocalGenerationRouteRejectsRequestThatVerifierCannotFit(t *testing.T) {
+	scope, small := readableGenerationRequest(t)
+	large := largeSanitizedGenerationRequest(t, scope)
+	definitions := localPairDefinitions(t)
+	definitions[1].Capabilities, _ = provider.NewModelCapabilities(32000, 8192, []provider.ModelFeature{provider.ModelFeatureStructuredOutput})
+	inventory, err := runtimeconfig.NewRouteInventory(context.Background(), definitions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := localPairPolicy(t, inventory, true, []string{"adapter-b"}, "distinct_provider", nil)
+	pair, err := ResolveLocalGenerationRoutePair(policy, inventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PlanLocalGenerationRoute(context.Background(), scope, small, policy, inventory, pair); err != nil {
+		t.Fatalf("small request should fit both routes: %v", err)
+	}
+	budget, err := review.ModelRequestBudget(large, policy.Budget())
+	if err != nil || uint64(budget.EstimatedInputTokens())+uint64(budget.MaxOutputTokens()) <= 32000 {
+		t.Fatalf("large request must exceed verifier context: %v", err)
+	}
+	plan, err := PlanLocalGenerationRoute(context.Background(), scope, large, policy, inventory, pair)
+	if err == nil || plan.SelectionIdentity() != "" {
+		t.Fatal("generation planned despite unavailable bound verifier")
+	}
+}
+
 func TestPlanLocalGenerationRouteNeverFallsBackFromIneligiblePinnedRecord(t *testing.T) {
 	scope, small := readableGenerationRequest(t)
 	large := largeSanitizedGenerationRequest(t, scope)

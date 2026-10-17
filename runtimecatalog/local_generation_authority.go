@@ -214,9 +214,9 @@ func PlanLocalGenerationRoute(ctx context.Context, scope audit.ReviewScope, requ
 	if err != nil || current != pair {
 		return fail()
 	}
-	var candidate gateway.ObservedRouteCandidate
+	var candidate, verifier gateway.ObservedRouteCandidate
 	var observation provider.RoutePerformanceObservation
-	candidateCount, observationCount := 0, 0
+	candidateCount, verifierCount, observationCount := 0, 0, 0
 	for _, route := range inventory.Candidates() {
 		record := route.ResolvedRecord().RouteRegistryRecord()
 		if record.Identity() == pair.GenerationRecordIdentity() {
@@ -226,6 +226,10 @@ func PlanLocalGenerationRoute(ctx context.Context, scope audit.ReviewScope, requ
 				return fail()
 			}
 		}
+		if record.Identity() == pair.VerificationRecordIdentity() {
+			verifier = route
+			verifierCount++
+		}
 	}
 	for _, value := range inventory.PerformanceObservations() {
 		if value.RecordIdentity() == pair.GenerationRecordIdentity() {
@@ -233,7 +237,7 @@ func PlanLocalGenerationRoute(ctx context.Context, scope audit.ReviewScope, requ
 			observationCount++
 		}
 	}
-	if candidateCount != 1 || observationCount != 1 || observation.ObservationRevision() != pair.PerformanceRevision() || ctx.Err() != nil {
+	if candidateCount != 1 || verifierCount != 1 || observationCount != 1 || observation.ObservationRevision() != pair.PerformanceRevision() || ctx.Err() != nil {
 		return fail()
 	}
 	budget, err := review.ModelRequestBudget(request, configuration.Budget())
@@ -242,6 +246,10 @@ func PlanLocalGenerationRoute(ctx context.Context, scope audit.ReviewScope, requ
 	}
 	input, err := gateway.NewReviewRoutingInput(scope, request, configuration.Requirements(), configuration.Constraints())
 	if err != nil {
+		return fail()
+	}
+	verifierEligibility, err := gateway.FilterEligibleRoutes(input, budget, inventory.RegistryRevision(), []gateway.ObservedRouteCandidate{verifier})
+	if err != nil || len(verifierEligibility.EligibleRoutes()) != 1 || len(verifierEligibility.RejectedRoutes()) != 0 {
 		return fail()
 	}
 	eligibility, err := gateway.FilterEligibleRoutes(input, budget, inventory.RegistryRevision(), []gateway.ObservedRouteCandidate{candidate})
