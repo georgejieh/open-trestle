@@ -87,6 +87,41 @@ func (o *localPacketOwner) PreparePacket(ctx context.Context, request controlpla
 	return prepared, err
 }
 
+// LoadPreparedPacket returns the exact stored packet only while its enrolled
+// owner, lease, and journal checkpoint remain live. It grants no model authority.
+func (o *localPacketOwner) LoadPreparedPacket(ctx context.Context, request controlplane.TaskExecutionRequest, prepared controlplane.PreparedContextPacket) (artifact.Artifact, error) {
+	if o == nil || o.store == nil || o.journal == nil || o.clock == nil || ctx == nil || request.Validate() != nil || prepared.Identity() == "" {
+		return artifact.Artifact{}, contexthandler.ErrPacketAuthority
+	}
+	coordinator, err := controlplane.NewCoordinator(o.journal)
+	if err != nil {
+		return artifact.Artifact{}, errors.Join(contexthandler.ErrPacketAuthority, err)
+	}
+	var stored artifact.Artifact
+	err = o.journal.WithEffectSection(ctx, func() error {
+		now := o.clock.Now().UTC()
+		if !ownerPacketTimeValid(ctx, request, now) || !now.Before(time.UnixMilli(prepared.Descriptor().ExpiresAtMilliseconds)) {
+			return contexthandler.ErrPacketAuthority
+		}
+		value, getErr := o.store.Get(ctx, request.Plan().Scope(), prepared.Descriptor().ArtifactIdentity, now)
+		if getErr != nil {
+			return errors.Join(contexthandler.ErrPacketAuthority, getErr)
+		}
+		if value.Kind() != artifact.KindContextPacket || value.Protection() != artifact.ProtectionProcessPrivate || value.ExpiresAt().UnixMilli() != prepared.Descriptor().ExpiresAtMilliseconds {
+			return contexthandler.ErrPacketAuthority
+		}
+		if err := o.packetFence(ctx, coordinator, request, prepared, value); err != nil {
+			return err
+		}
+		stored = value
+		return nil
+	})
+	if err != nil {
+		return artifact.Artifact{}, err
+	}
+	return stored, nil
+}
+
 func ownerPacketTimeValid(ctx context.Context, request controlplane.TaskExecutionRequest, now time.Time) bool {
 	return ctx.Err() == nil && now.UnixMilli() > 0 && now.Before(request.Lease().ExpiresAt())
 }

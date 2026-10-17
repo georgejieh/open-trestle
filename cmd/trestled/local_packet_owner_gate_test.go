@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -14,6 +15,42 @@ import (
 	"github.com/georgejieh/open-trestle/controlplane"
 	contexthandler "github.com/georgejieh/open-trestle/handlers/context"
 )
+
+func TestLocalPacketOwnerLoadsOnlyLivePreparedPacket(t *testing.T) {
+	ctx := context.Background()
+	fixture := newLocalPacketOwnerFixture(t)
+	prepared, err := fixture.owner.PreparePacket(ctx, fixture.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := fixture.owner.LoadPreparedPacket(ctx, fixture.request, prepared)
+	if err != nil || loaded.Identity() != prepared.Descriptor().ArtifactIdentity || loaded.Kind() != artifact.KindContextPacket {
+		t.Fatalf("live packet read: %v", err)
+	}
+	stored, err := fixture.store.Get(ctx, fixture.request.Plan().Scope(), loaded.Identity(), fixture.clock.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, wantErr := artifact.Encode(stored)
+	got, gotErr := artifact.Encode(loaded)
+	if wantErr != nil || gotErr != nil || !bytes.Equal(want, got) {
+		t.Fatal("loaded packet differs from stored envelope")
+	}
+	if _, err := fixture.owner.LoadPreparedPacket(ctx, fixture.request, controlplane.PreparedContextPacket{}); !errors.Is(err, contexthandler.ErrPacketAuthority) {
+		t.Fatalf("unprepared packet read: %v", err)
+	}
+	changedRoot := *fixture.owner
+	changedRoot.sourceRootDigest = strings.Repeat("a", 64)
+	if _, err := changedRoot.LoadPreparedPacket(ctx, fixture.request, prepared); !errors.Is(err, contexthandler.ErrPacketAuthority) {
+		t.Fatalf("changed source root read: %v", err)
+	}
+	if _, err := fixture.coordinator.CancelRun(ctx, fixture.request.Plan(), time.UnixMilli(240)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.owner.LoadPreparedPacket(ctx, fixture.request, prepared); !errors.Is(err, contexthandler.ErrPacketAuthority) {
+		t.Fatalf("terminal packet read: %v", err)
+	}
+}
 
 // This suite intentionally uses only the Git-qualified boot-returned owner and
 // the raw boot journal/store. No constructed packet authority is privileged.
