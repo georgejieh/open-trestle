@@ -76,6 +76,9 @@ func validateLocalFullAdmissionConfig(c LocalFullReviewAdmissionConfig) error {
 	if len(references) < 2 {
 		return ErrInvalidLocalFullReview
 	}
+	if _, err := ResolveLocalGenerationRoutePair(c.Policy, c.Inventory); err != nil {
+		return ErrInvalidLocalFullReview
+	}
 	return nil
 }
 

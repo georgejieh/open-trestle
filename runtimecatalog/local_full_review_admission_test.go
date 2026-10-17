@@ -20,7 +20,7 @@ import (
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 )
 
-func fullAdmissionPolicy(t *testing.T) (runtimeconfig.RuntimePolicy, runtimeconfig.RouteInventory) {
+func fullAdmissionPolicy(t *testing.T, withoutVerifier ...bool) (runtimeconfig.RuntimePolicy, runtimeconfig.RouteInventory) {
 	t.Helper()
 	capabilities, _ := provider.NewModelCapabilities(128000, 8192, []provider.ModelFeature{provider.ModelFeatureStructuredOutput})
 	price, _ := provider.NewRoutePricing(1000000, 1000000)
@@ -41,8 +41,14 @@ func fullAdmissionPolicy(t *testing.T) (runtimeconfig.RuntimePolicy, runtimeconf
 		record := candidate.ResolvedRecord().RouteRegistryRecord()
 		records[record.RouteCandidateDeclaration().RouteCapabilityDeclaration().RouteReference().AdapterID()] = record.Identity()
 	}
-	document, _ := json.Marshal(map[string]any{
-		"schema_version": 1, "inventory_identity": inventory.Identity(), "review_policy_identity": strings.Repeat("e", 64),
+	schemaVersion := 2
+	verificationRecord := records["adapter-b"]
+	if len(withoutVerifier) > 0 && withoutVerifier[0] {
+		schemaVersion = 1
+		verificationRecord = ""
+	}
+	documentFields := map[string]any{
+		"schema_version": schemaVersion, "inventory_identity": inventory.Identity(), "review_policy_identity": strings.Repeat("e", 64),
 		"min_context_tokens": 32000, "min_output_tokens": 4096, "required_features": []string{"structured_output"},
 		"classification": "confidential", "allowed_zones": []string{"local"}, "content_logging_allowed": false,
 		"estimated_input_tokens": 1000, "max_output_tokens": 4096, "max_cost_micro_usd": 1000000,
@@ -50,7 +56,11 @@ func fullAdmissionPolicy(t *testing.T) (runtimeconfig.RuntimePolicy, runtimeconf
 		"verification_independence": "distinct_provider", "publication_minimum_severity": "medium", "publication_max_inline_findings": 20,
 		"publication_minimum_independence": "distinct_provider", "publication_block_on_inconclusive": true,
 		"connections": []map[string]string{{"implementation": "openai_responses", "adapter_id": "adapter-a", "endpoint": "http://127.0.0.1:11434/v1", "credential_environment": "OPEN_TRESTLE_PROVIDER_FIXTURE_A"}, {"implementation": "openai_responses", "adapter_id": "adapter-b", "endpoint": "http://127.0.0.1:11435/v1", "credential_environment": "OPEN_TRESTLE_PROVIDER_FIXTURE_B"}},
-	})
+	}
+	if verificationRecord != "" {
+		documentFields["verification_route_record_identity"] = verificationRecord
+	}
+	document, _ := json.Marshal(documentFields)
 	policy, err := runtimeconfig.DecodeRuntimePolicy(context.Background(), bytes.NewReader(document), inventory)
 	if err != nil {
 		t.Fatal(err)
@@ -124,6 +134,21 @@ func TestLocalFullAdmissionPersistsBoundNineTaskPlanAndDeduplicates(t *testing.T
 	conflict, _ := NewLocalFullReviewIntent(intent.Scope(), intent.Repository(), intent.BaseRevision(), otherHead, intent.ReviewPolicyIdentity(), intent.InventoryIdentity(), intent.RuntimePolicyIdentity(), intent.CreatedAt())
 	if _, err := admitter.Admit(context.Background(), conflict, intent.CreatedAt().Add(2*time.Second)); !errors.Is(err, ErrLocalFullReviewConflict) {
 		t.Fatalf("conflict=%v", err)
+	}
+}
+
+func TestLocalFullAdmissionRequiresPinnedIndependentVerifierPair(t *testing.T) {
+	intent, config, journal, store := fullAdmissionFixture(t, "run-unbound-routes")
+	config.Policy, config.Inventory = fullAdmissionPolicy(t, true)
+	intent, _ = NewLocalFullReviewIntent(intent.Scope(), intent.Repository(), intent.BaseRevision(), intent.HeadRevision(), config.Policy.ReviewPolicyIdentity(), config.Inventory.Identity(), config.Policy.Identity(), intent.CreatedAt())
+	if _, err := ResolveLocalGenerationRoutePair(config.Policy, config.Inventory); !errors.Is(err, ErrInvalidLocalGenerationRoutePair) {
+		t.Fatalf("fixture unexpectedly has a bound generation/verifier pair: %v", err)
+	}
+	if _, err := NewLocalFullReviewAdmitter(journal, store, config); !errors.Is(err, ErrInvalidLocalFullReview) {
+		t.Fatalf("admission accepted routes without an explicit verifier: %v", err)
+	}
+	if _, found, err := journal.LoadPlan(context.Background(), intent.Scope()); err != nil || found {
+		t.Fatalf("invalid route pair opened plan: found=%t err=%v", found, err)
 	}
 }
 
