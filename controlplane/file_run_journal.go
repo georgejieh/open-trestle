@@ -43,7 +43,8 @@ var (
 	ErrRunJournalPersistence = errors.New("run journal persistence failure")
 )
 
-// FileRunJournal is a durable local journal with one exclusive writer per root.
+// FileRunJournal is a durable local journal with one cooperative writer lease per root.
+// Normal operations are path-based; borrowed rooted inventory does not pin their lifetime.
 type FileRunJournal struct {
 	mu             sync.Mutex
 	gateMu         sync.Mutex

@@ -152,7 +152,8 @@ func (s *MemoryStore) Delete(ctx context.Context, authorization DeletionAuthoriz
 	return receipt, nil
 }
 
-// FileStore is a private exclusive-writer local artifact store.
+// FileStore uses private paths and a cooperative exclusive writer lease.
+// Normal operations are path-based; startup root checks do not pin their lifetime.
 type FileStore struct {
 	mu                 sync.Mutex
 	root               string
