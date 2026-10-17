@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"reflect"
+	"time"
 
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/internal/gateway"
@@ -200,6 +202,25 @@ func (p LocalGenerationRoutePlan) InventoryIdentity() string   { return p.invent
 func (p LocalGenerationRoutePlan) PairIdentity() string        { return p.pairIdentity }
 func (p LocalGenerationRoutePlan) RegistryRevision() uint64    { return p.registryRevision }
 func (p LocalGenerationRoutePlan) PerformanceRevision() uint64 { return p.performanceRevision }
+
+// GrantLocalGenerationRoute records the selection only if the original actual
+// request and pinned pair still produce the same complete route plan.
+func GrantLocalGenerationRoute(ctx context.Context, scope audit.ReviewScope, request provider.Request, configuration runtimeconfig.RuntimePolicy, inventory runtimeconfig.RouteInventory, pair LocalGenerationRoutePair, planned LocalGenerationRoutePlan, ledger audit.Ledger, at time.Time) (gateway.RouteAttemptAuthorization, error) {
+	fail := func() (gateway.RouteAttemptAuthorization, error) {
+		return gateway.RouteAttemptAuthorization{}, ErrInvalidLocalGenerationRoutePair
+	}
+	if ctx == nil || ctx.Err() != nil || ledger == nil || at.UnixMilli() <= 0 {
+		return fail()
+	}
+	current, err := PlanLocalGenerationRoute(ctx, scope, request, configuration, inventory, pair)
+	if err != nil || !reflect.DeepEqual(current, planned) || current.authorization.Validate() != nil || current.authorization.RequestIdentity() != request.Identity() {
+		return fail()
+	}
+	if _, err := gateway.RecordRouteSelection(ctx, ledger, scope, current.selection, at); err != nil {
+		return gateway.RouteAttemptAuthorization{}, err
+	}
+	return current.authorization, nil
+}
 
 // PlanLocalGenerationRoute checks the actual sanitized request against only the bound generation record.
 // It neither writes a selection event nor grants independently usable dispatch authority.

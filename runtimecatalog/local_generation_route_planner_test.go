@@ -51,6 +51,71 @@ func TestPlanLocalGenerationRouteBindsActualSanitizedRequest(t *testing.T) {
 	}
 }
 
+type failingSelectionLedger struct{ audit.Ledger }
+
+func (failingSelectionLedger) Append(context.Context, string, audit.Event) error {
+	return audit.ErrAuditHeadConflict
+}
+
+func TestGrantLocalGenerationRouteRecordsOnlyExactPlannedSelection(t *testing.T) {
+	ctx := context.Background()
+	scope, request := readableGenerationRequest(t)
+	inventory, err := runtimeconfig.NewRouteInventory(ctx, localPairDefinitions(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := localPairPolicy(t, inventory, true, []string{"adapter-b"}, "distinct_provider", nil)
+	pair, err := ResolveLocalGenerationRoutePair(policy, inventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger := audit.NewMemoryLedger()
+	plan, err := PlanLocalGenerationRoute(ctx, scope, request, policy, inventory, pair)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := GrantLocalGenerationRoute(ctx, scope, request, policy, inventory, pair, plan, ledger, time.UnixMilli(100))
+	if err != nil || grant.Validate() != nil || grant.RequestIdentity() != request.Identity() || grant.RouteRecordIdentity() != pair.GenerationRecordIdentity() || grant.SelectionReceiptIdentity() != plan.SelectionIdentity() {
+		t.Fatalf("actual request grant: %v", err)
+	}
+	events, err := ledger.Read(ctx, scope, 0, 10)
+	if err != nil || len(events) != 1 || events[0].Kind() != audit.EventRouteSelected || events[0].SubjectIdentity() != plan.SelectionIdentity() {
+		t.Fatalf("selection not recorded: %v", err)
+	}
+	again, err := GrantLocalGenerationRoute(ctx, scope, request, policy, inventory, pair, plan, ledger, time.UnixMilli(101))
+	if err != nil || again.Identity() != grant.Identity() {
+		t.Fatalf("idempotent grant: %v", err)
+	}
+	changed := plan
+	changed.authorization = gateway.RouteAttemptAuthorization{}
+	if value, err := GrantLocalGenerationRoute(ctx, scope, request, policy, inventory, pair, changed, ledger, time.UnixMilli(102)); err == nil || value.Identity() != "" {
+		t.Fatalf("changed plan granted: %v", err)
+	}
+	if value, err := GrantLocalGenerationRoute(ctx, scope, request, policy, inventory, pair, plan, nil, time.UnixMilli(102)); err == nil || value.Identity() != "" {
+		t.Fatalf("missing ledger granted: %v", err)
+	}
+	var typedNil *audit.MemoryLedger
+	if value, err := GrantLocalGenerationRoute(ctx, scope, request, policy, inventory, pair, plan, typedNil, time.UnixMilli(102)); err == nil || value.Identity() != "" {
+		t.Fatalf("typed nil ledger granted: %v", err)
+	}
+	if value, err := GrantLocalGenerationRoute(ctx, scope, request, policy, inventory, pair, plan, failingSelectionLedger{audit.NewMemoryLedger()}, time.UnixMilli(102)); err == nil || value.Identity() != "" {
+		t.Fatalf("failed selection write granted: %v", err)
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if value, err := GrantLocalGenerationRoute(canceled, scope, request, policy, inventory, pair, plan, ledger, time.UnixMilli(102)); err == nil || value.Identity() != "" {
+		t.Fatalf("canceled grant: %v", err)
+	}
+	other, _ := audit.NewReviewScope("tenant", "repository", "run-other")
+	if value, err := GrantLocalGenerationRoute(ctx, other, request, policy, inventory, pair, plan, ledger, time.UnixMilli(102)); err == nil || value.Identity() != "" {
+		t.Fatalf("cross-scope grant: %v", err)
+	}
+	stored, err := ledger.Read(ctx, scope, 0, 10)
+	if err != nil || len(stored) != 1 {
+		t.Fatalf("invalid grant wrote selection: %v", err)
+	}
+}
+
 func TestLocalGenerationRoutePlanPublicSurfaceIsIdentityOnly(t *testing.T) {
 	typeOfPlan := reflect.TypeOf(LocalGenerationRoutePlan{})
 	for index := 0; index < typeOfPlan.NumField(); index++ {
