@@ -27,18 +27,32 @@ func NewGenerationPolicyAuthorizer(policyIdentity string, requirements provider.
 	return authorizer, nil
 }
 
-type StaticVerificationRouteInventory struct{ inventory runtimeconfig.RouteInventory }
+type StaticVerificationRouteInventory struct {
+	inventory runtimeconfig.RouteInventory
+	selected  *modelhandler.VerificationRouteSnapshot
+}
 
 func NewStaticVerificationRouteInventory(inventory runtimeconfig.RouteInventory) (StaticVerificationRouteInventory, error) {
 	if inventory.Validate() != nil {
 		return StaticVerificationRouteInventory{}, ErrInvalidRouteAuthority
 	}
-	return StaticVerificationRouteInventory{inventory}, nil
+	return StaticVerificationRouteInventory{inventory: inventory}, nil
 }
-func (i StaticVerificationRouteInventory) Identity() string { return i.inventory.Identity() }
+func (i StaticVerificationRouteInventory) Identity() string {
+	if i.selected != nil {
+		return i.selected.Identity()
+	}
+	return i.inventory.Identity()
+}
 func (i StaticVerificationRouteInventory) Snapshot(ctx context.Context, scope audit.ReviewScope) (modelhandler.VerificationRouteSnapshot, error) {
 	if ctx == nil || ctx.Err() != nil || scope.Validate() != nil || i.inventory.Validate() != nil {
 		return modelhandler.VerificationRouteSnapshot{}, ErrInvalidRouteAuthority
+	}
+	if i.selected != nil {
+		if i.selected.Validate() != nil {
+			return modelhandler.VerificationRouteSnapshot{}, ErrInvalidRouteAuthority
+		}
+		return *i.selected, nil
 	}
 	snapshot, err := modelhandler.NewVerificationRouteSnapshot(i.inventory.RegistryRevision(), i.inventory.PerformanceRevision(), i.inventory.Candidates(), i.inventory.PerformanceObservations())
 	if err != nil {
@@ -47,7 +61,7 @@ func (i StaticVerificationRouteInventory) Snapshot(ctx context.Context, scope au
 	return snapshot, nil
 }
 func NewVerificationPolicyAuthorizer(inventory StaticVerificationRouteInventory, requirements provider.ModelRequirements, constraints policy.ProviderDataConstraints, budget provider.ModelCostBudget, ranking gateway.RouteRankingPolicy, independence gateway.RouteIndependencePolicy, ledger audit.Ledger, clock artifact.Clock) (*modelhandler.PolicyVerificationAuthorizer, error) {
-	if inventory.inventory.Validate() != nil {
+	if inventory.inventory.Validate() != nil || inventory.selected != nil && inventory.selected.Validate() != nil {
 		return nil, ErrInvalidRouteAuthority
 	}
 	authorizer, err := modelhandler.NewPolicyVerificationAuthorizer(inventory, requirements, constraints, budget, ranking, independence, ledger, clock)
@@ -66,6 +80,26 @@ func NewGenerationPolicyAuthorizerFromRuntimePolicy(configuration runtimeconfig.
 func NewVerificationPolicyAuthorizerFromRuntimePolicy(configuration runtimeconfig.RuntimePolicy, inventory StaticVerificationRouteInventory, ledger audit.Ledger, clock artifact.Clock) (*modelhandler.PolicyVerificationAuthorizer, error) {
 	if configuration.Validate() != nil || configuration.ValidateAgainstInventory(inventory.inventory) != nil || configuration.InventoryIdentity() != inventory.Identity() {
 		return nil, ErrInvalidRouteAuthority
+	}
+	if verificationID := configuration.VerificationRouteRecordIdentity(); verificationID != "" {
+		var route gateway.ObservedRouteCandidate
+		var observation provider.RoutePerformanceObservation
+		found := 0
+		for index, candidate := range inventory.inventory.Candidates() {
+			if candidate.ResolvedRecord().RouteRegistryRecord().Identity() == verificationID {
+				route = candidate
+				observation = inventory.inventory.PerformanceObservations()[index]
+				found++
+			}
+		}
+		if found != 1 {
+			return nil, ErrInvalidRouteAuthority
+		}
+		snapshot, err := modelhandler.NewVerificationRouteSnapshot(inventory.inventory.RegistryRevision(), inventory.inventory.PerformanceRevision(), []gateway.ObservedRouteCandidate{route}, []provider.RoutePerformanceObservation{observation})
+		if err != nil {
+			return nil, ErrInvalidRouteAuthority
+		}
+		inventory = StaticVerificationRouteInventory{inventory: inventory.inventory, selected: &snapshot}
 	}
 	// A generation pin cannot also pin a route that independence excludes.
 	ranking, err := gateway.NewRouteRankingPolicy(configuration.Ranking().PreferredRoutes())

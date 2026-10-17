@@ -124,3 +124,66 @@ func TestRuntimeGenerationPinDoesNotPinIndependentVerifier(t *testing.T) {
 		t.Fatal("generation pin was removed")
 	}
 }
+
+func TestExplicitVerifierGrantDoesNotFallBackToAnotherEligibleRoute(t *testing.T) {
+	ctx := context.Background()
+	definitions := localPairDefinitions(t)
+	third := definitions[1]
+	third.Route, _ = provider.NewRouteReference(provider.ProviderZoneLocal, "provider-c", "adapter-c", "connection-c", "model-c", "1")
+	definitions[1].Health = provider.RouteHealthUnhealthy
+	definitions = append(definitions, third)
+	inventory, err := runtimeconfig.NewRouteInventory(ctx, definitions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := localPairPolicy(t, inventory, true, []string{"adapter-c"}, "distinct_provider", func(document map[string]any) {
+		connections := document["connections"].([]map[string]string)
+		document["connections"] = append(connections, map[string]string{"implementation": "openai_responses", "adapter_id": "adapter-c", "endpoint": "http://127.0.0.1:11436/v1", "credential_environment": "OPEN_TRESTLE_PROVIDER_FIXTURE_C"})
+	})
+	generation, err := NewGenerationPolicyAuthorizerFromRuntimePolicy(policy, inventory, audit.NewMemoryLedger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, _ := audit.NewReviewScope("tenant-a", "repo-a", "run-exact-verifier")
+	request, rawVerificationRequest := readableModelRequests(t, scope)
+	sanitized, _, err := testsupport.NewCleanVerificationSanitizer().SanitizeVerification(ctx, rawVerificationRequest, scope.Identity())
+	if err != nil {
+		t.Fatal(err)
+	}
+	verificationRequest, err := sanitized.ProviderRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorization, err := generation.Authorize(ctx, scope, request, policy.ReviewPolicyIdentity(), time.UnixMilli(100))
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage, _ := provider.NewRouteTokenUsage(1, 1, 0)
+	outcome, err := gateway.NewSuccessfulRouteAttemptOutcome(authorization, strings.Repeat("b", 64), usage, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconciliation, err := gateway.ReconcileAuthorizedRouteAttemptCost(authorization, outcome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := gateway.NewSuccessfulRouteOutputReceipt(gateway.RouteOutputCandidateBatch, strings.Repeat("c", 64), strings.Repeat("d", 64), request, authorization, outcome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, err := gateway.NewRouteExecutionRecord(authorization, outcome, reconciliation, output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := NewStaticVerificationRouteInventory(inventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier, err := NewVerificationPolicyAuthorizerFromRuntimePolicy(policy, view, audit.NewMemoryLedger(), catalogFixedClock{at: time.UnixMilli(200)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if authority, err := verifier.Authorize(ctx, scope, verificationRequest, execution); err == nil || authority.Identity() != "" {
+		t.Fatalf("unhealthy explicit verifier was replaced by another route: authority=%s err=%v", authority.Identity(), err)
+	}
+}
