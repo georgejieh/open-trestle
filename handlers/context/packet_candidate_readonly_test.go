@@ -11,6 +11,8 @@ import (
 	"github.com/georgejieh/open-trestle/artifact"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
+	"github.com/georgejieh/open-trestle/internal/review"
+	"github.com/georgejieh/open-trestle/internal/testsupport"
 )
 
 // This reader deliberately exposes no Put method to the candidate builder.
@@ -108,6 +110,52 @@ func TestBuildPacketCandidateMatchesUnwiredPrepareWithoutWriting(t *testing.T) {
 	events, err := journal.Read(ctx, scope, 0, 100)
 	if err != nil || len(events) != len(beforeEvents)+1 || events[len(events)-1].Identity() != prepared.Identity() || events[len(events)-1].Kind() != controlplane.RunEventContextPacketPrepared {
 		t.Fatalf("unwired Prepare did not append exactly one v4 event: %v", err)
+	}
+}
+
+func TestBuildSanitizedPacketCandidateDoesNotGrantOrPersistInput(t *testing.T) {
+	authority, request, coordinator, store, _, closeFixture, journal := newPacketWriterFixture(t, false, false, false, false, false)
+	defer closeFixture()
+	ctx, scope, at := context.Background(), request.Plan().Scope(), time.UnixMilli(230)
+	_, state, err := coordinator.Resume(ctx, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := BuildPacketCandidate(ctx, packetCandidateGetReader{source: store}, request, state, contextTestClock{at}, authority.ownerRoot, at, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := packetCandidateEvents(t, journal, scope)
+	sanitized, err := BuildSanitizedPacketCandidate(ctx, candidate, testsupport.NewCleanGenerationSanitizer(), at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestArtifact, receiptArtifact := sanitized.RequestArtifact(), sanitized.ReceiptArtifact()
+	if requestArtifact.Kind() != artifact.KindSanitizedModelRequest || receiptArtifact.Kind() != artifact.KindSanitizedEgressReceipt ||
+		review.ValidateSanitizedEgressArtifacts(candidate.Artifact(), requestArtifact, receiptArtifact, testsupport.NewCleanGenerationSanitizer().ExpectedBinaryDigests()) != nil {
+		t.Fatal("sanitized packet lacks exact scanner and packet lineage")
+	}
+	modelRequest, err := sanitized.Request()
+	if err != nil || modelRequest.Identity() == "" || modelRequest.Identity() != sanitized.Receipt().SanitizedRequestIdentity() || sanitized.Receipt().RawRequestIdentity() != sanitized.RawRequestIdentity() {
+		t.Fatalf("sanitized request does not match receipt: %v", err)
+	}
+	for _, value := range []artifact.Artifact{requestArtifact, receiptArtifact} {
+		if _, err := store.Get(ctx, scope, value.Identity(), at); !errors.Is(err, artifact.ErrArtifactNotFound) {
+			t.Fatalf("sanitization wrote artifact: %v", err)
+		}
+	}
+	if after := packetCandidateEvents(t, journal, scope); !reflect.DeepEqual(before, after) {
+		t.Fatal("sanitization wrote journal")
+	}
+	broken := candidate
+	broken.value = artifact.Artifact{}
+	if _, err := BuildSanitizedPacketCandidate(ctx, broken, testsupport.NewCleanGenerationSanitizer(), at); err == nil {
+		t.Fatal("malformed packet gained sanitized candidate")
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := BuildSanitizedPacketCandidate(canceled, candidate, testsupport.NewCleanGenerationSanitizer(), at); err == nil {
+		t.Fatal("canceled sanitization succeeded")
 	}
 }
 

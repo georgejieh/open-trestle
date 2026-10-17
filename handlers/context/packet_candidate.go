@@ -1,6 +1,7 @@
 package context
 
 import (
+	"bytes"
 	"context"
 	"slices"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"github.com/georgejieh/open-trestle/artifact"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
+	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/review"
 )
 
@@ -32,6 +34,51 @@ func (c PacketCandidate) Descriptor() controlplane.ContextPacketDescriptor {
 	descriptor.Provenance = slices.Clone(descriptor.Provenance)
 	descriptor.DependencyIdentities = slices.Clone(descriptor.DependencyIdentities)
 	return descriptor
+}
+
+// SanitizedPacketCandidate is a read-only packet projection. Neither the scanner
+// result nor these unpersisted artifacts authorize route selection or dispatch.
+type SanitizedPacketCandidate struct {
+	packet                           PacketCandidate
+	request                          review.SanitizedModelRequest
+	receipt                          review.SanitizedEgressReceipt
+	requestArtifact, receiptArtifact artifact.Artifact
+	scanner                          review.ScannerBinaryDigests
+}
+
+func (c SanitizedPacketCandidate) Packet() PacketCandidate                { return c.packet }
+func (c SanitizedPacketCandidate) RequestArtifact() artifact.Artifact     { return c.requestArtifact }
+func (c SanitizedPacketCandidate) ReceiptArtifact() artifact.Artifact     { return c.receiptArtifact }
+func (c SanitizedPacketCandidate) Receipt() review.SanitizedEgressReceipt { return c.receipt }
+func (c SanitizedPacketCandidate) RawRequestIdentity() string             { return c.request.RawRequestIdentity() }
+func (c SanitizedPacketCandidate) Scanner() review.ScannerBinaryDigests   { return c.scanner }
+func (c SanitizedPacketCandidate) Request() (provider.Request, error) {
+	return c.request.ProviderRequest()
+}
+
+// BuildSanitizedPacketCandidate scans only a source-bound candidate. No artifact
+// Put or audit append occurs here; the owner must re-fence before any effects.
+func BuildSanitizedPacketCandidate(ctx context.Context, candidate PacketCandidate, sanitizer review.GenerationRequestSanitizer, at time.Time) (SanitizedPacketCandidate, error) {
+	if nilInterface(ctx) || nilInterface(sanitizer) || ctx.Err() != nil || !validDigest(sanitizer.Identity()) ||
+		candidate.value.Validate() != nil || candidate.value.Kind() != artifact.KindContextPacket ||
+		candidate.packet.Validate() != nil || candidate.snapshot.Validate() != nil ||
+		candidate.descriptor.ArtifactIdentity != candidate.value.Identity() || candidate.descriptor.SnapshotIdentity != candidate.snapshot.Identity() ||
+		candidate.packet.SnapshotIdentity() != candidate.snapshot.Identity() || !at.Before(candidate.value.ExpiresAt()) || at.Before(candidate.value.CreatedAt()) {
+		return SanitizedPacketCandidate{}, ErrPacketAuthority
+	}
+	raw, err := candidate.packet.ProviderRequest()
+	if err != nil || !bytes.Equal(raw.Payload(), candidate.value.Payload()) {
+		return SanitizedPacketCandidate{}, ErrPacketAuthority
+	}
+	request, receipt, err := sanitizer.SanitizeGeneration(ctx, raw, candidate.value.Scope().Identity())
+	if err != nil || ctx.Err() != nil {
+		return SanitizedPacketCandidate{}, ErrPacketAuthority
+	}
+	requestArtifact, receiptArtifact, err := review.NewSanitizedEgressArtifacts(candidate.value, request, receipt, sanitizer.ExpectedBinaryDigests(), at)
+	if err != nil {
+		return SanitizedPacketCandidate{}, ErrPacketAuthority
+	}
+	return SanitizedPacketCandidate{candidate, request, receipt, requestArtifact, receiptArtifact, sanitizer.ExpectedBinaryDigests()}, nil
 }
 
 // readOnlyPacketStore adapts assembly's Store dependency without granting it writes.
