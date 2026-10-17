@@ -54,6 +54,11 @@ func TestBuildPacketCandidateMatchesUnwiredPrepareWithoutWriting(t *testing.T) {
 	}
 	expected := candidate.Artifact()
 	descriptor := candidate.Descriptor()
+	packet, snapshot := candidate.Packet(), candidate.Snapshot()
+	providerRequest, requestErr := packet.ProviderRequest()
+	if requestErr != nil || packet.Identity() == "" || snapshot.Identity() != descriptor.SnapshotIdentity || packet.SnapshotIdentity() != snapshot.Identity() || packet.ReviewScopeIdentity() != scope.Identity() || !bytes.Equal(providerRequest.Payload(), expected.Payload()) {
+		t.Fatalf("candidate omitted its source-bound typed packet: %v", requestErr)
+	}
 	if expected.Validate() != nil || descriptor.ArtifactIdentity != expected.Identity() || descriptor.PayloadDigest != expected.PayloadDigest() || descriptor.SourceRootIdentity != authority.ownerRoot || descriptor.SnapshotIdentity == "" {
 		t.Fatal("candidate does not describe its full packet artifact")
 	}

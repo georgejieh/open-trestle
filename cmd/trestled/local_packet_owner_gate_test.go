@@ -27,6 +27,10 @@ func TestLocalPacketOwnerLoadsOnlyLivePreparedPacket(t *testing.T) {
 	if err != nil || loaded.Identity() != prepared.Descriptor().ArtifactIdentity || loaded.Kind() != artifact.KindContextPacket {
 		t.Fatalf("live packet read: %v", err)
 	}
+	candidate, candidateErr := fixture.owner.LoadPreparedPacketCandidate(ctx, fixture.request, prepared)
+	if candidateErr != nil || candidate.Artifact().Identity() != loaded.Identity() || candidate.Packet().Identity() == "" || candidate.Snapshot().Identity() != prepared.Descriptor().SnapshotIdentity {
+		t.Fatalf("live typed packet read: %v", candidateErr)
+	}
 	stored, err := fixture.store.Get(ctx, fixture.request.Plan().Scope(), loaded.Identity(), fixture.clock.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -39,16 +43,30 @@ func TestLocalPacketOwnerLoadsOnlyLivePreparedPacket(t *testing.T) {
 	if _, err := fixture.owner.LoadPreparedPacket(ctx, fixture.request, controlplane.PreparedContextPacket{}); !errors.Is(err, contexthandler.ErrPacketAuthority) {
 		t.Fatalf("unprepared packet read: %v", err)
 	}
+	if candidate, err := fixture.owner.LoadPreparedPacketCandidate(ctx, fixture.request, controlplane.PreparedContextPacket{}); !errors.Is(err, contexthandler.ErrPacketAuthority) || candidate.Packet().Identity() != "" {
+		t.Fatalf("unprepared typed packet read: %v", err)
+	}
 	changedRoot := *fixture.owner
 	changedRoot.sourceRootDigest = strings.Repeat("a", 64)
 	if _, err := changedRoot.LoadPreparedPacket(ctx, fixture.request, prepared); !errors.Is(err, contexthandler.ErrPacketAuthority) {
 		t.Fatalf("changed source root read: %v", err)
+	}
+	if candidate, err := changedRoot.LoadPreparedPacketCandidate(ctx, fixture.request, prepared); !errors.Is(err, contexthandler.ErrPacketAuthority) || candidate.Packet().Identity() != "" {
+		t.Fatalf("changed root typed packet read: %v", err)
+	}
+	expired := *fixture.owner
+	expired.clock = localPacketFixtureClock{at: fixture.request.Lease().ExpiresAt()}
+	if candidate, err := expired.LoadPreparedPacketCandidate(ctx, fixture.request, prepared); !errors.Is(err, contexthandler.ErrPacketAuthority) || candidate.Packet().Identity() != "" {
+		t.Fatalf("expired lease typed packet read: %v", err)
 	}
 	if _, err := fixture.coordinator.CancelRun(ctx, fixture.request.Plan(), time.UnixMilli(240)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fixture.owner.LoadPreparedPacket(ctx, fixture.request, prepared); !errors.Is(err, contexthandler.ErrPacketAuthority) {
 		t.Fatalf("terminal packet read: %v", err)
+	}
+	if candidate, err := fixture.owner.LoadPreparedPacketCandidate(ctx, fixture.request, prepared); !errors.Is(err, contexthandler.ErrPacketAuthority) || candidate.Packet().Identity() != "" {
+		t.Fatalf("terminal typed packet read: %v", err)
 	}
 }
 

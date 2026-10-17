@@ -90,14 +90,24 @@ func (o *localPacketOwner) PreparePacket(ctx context.Context, request controlpla
 // LoadPreparedPacket returns the exact stored packet only while its enrolled
 // owner, lease, and journal checkpoint remain live. It grants no model authority.
 func (o *localPacketOwner) LoadPreparedPacket(ctx context.Context, request controlplane.TaskExecutionRequest, prepared controlplane.PreparedContextPacket) (artifact.Artifact, error) {
+	candidate, err := o.LoadPreparedPacketCandidate(ctx, request, prepared)
+	if err != nil {
+		return artifact.Artifact{}, err
+	}
+	return candidate.Artifact(), nil
+}
+
+// LoadPreparedPacketCandidate returns the reassembled typed packet only under the
+// same live owner, lease, and v4 journal fence as the persisted byte read.
+func (o *localPacketOwner) LoadPreparedPacketCandidate(ctx context.Context, request controlplane.TaskExecutionRequest, prepared controlplane.PreparedContextPacket) (contexthandler.PacketCandidate, error) {
 	if o == nil || o.store == nil || o.journal == nil || o.clock == nil || ctx == nil || request.Validate() != nil || prepared.Identity() == "" {
-		return artifact.Artifact{}, contexthandler.ErrPacketAuthority
+		return contexthandler.PacketCandidate{}, contexthandler.ErrPacketAuthority
 	}
 	coordinator, err := controlplane.NewCoordinator(o.journal)
 	if err != nil {
-		return artifact.Artifact{}, errors.Join(contexthandler.ErrPacketAuthority, err)
+		return contexthandler.PacketCandidate{}, errors.Join(contexthandler.ErrPacketAuthority, err)
 	}
-	var stored artifact.Artifact
+	var result contexthandler.PacketCandidate
 	err = o.journal.WithEffectSection(ctx, func() error {
 		now := o.clock.Now().UTC()
 		if !ownerPacketTimeValid(ctx, request, now) || !now.Before(time.UnixMilli(prepared.Descriptor().ExpiresAtMilliseconds)) {
@@ -113,13 +123,26 @@ func (o *localPacketOwner) LoadPreparedPacket(ctx context.Context, request contr
 		if err := o.packetFence(ctx, coordinator, request, prepared, value); err != nil {
 			return err
 		}
-		stored = value
+		_, state, resumeErr := coordinator.Resume(ctx, request.Plan().Scope())
+		if resumeErr != nil {
+			return errors.Join(contexthandler.ErrPacketAuthority, resumeErr)
+		}
+		candidate, buildErr := contexthandler.BuildPacketCandidate(ctx, o.store, request, state, o.clock, o.sourceRootDigest, o.clock.Now().UTC(), value.CreatedAt())
+		if buildErr != nil || !reflect.DeepEqual(candidate.Descriptor(), prepared.Descriptor()) {
+			return errors.Join(contexthandler.ErrPacketAuthority, buildErr)
+		}
+		encoded, encodeErr := artifact.Encode(candidate.Artifact())
+		stored, storedErr := artifact.Encode(value)
+		if encodeErr != nil || storedErr != nil || !bytes.Equal(encoded, stored) {
+			return errors.Join(contexthandler.ErrPacketAuthority, encodeErr, storedErr)
+		}
+		result = candidate
 		return nil
 	})
 	if err != nil {
-		return artifact.Artifact{}, err
+		return contexthandler.PacketCandidate{}, err
 	}
-	return stored, nil
+	return result, nil
 }
 
 func ownerPacketTimeValid(ctx context.Context, request controlplane.TaskExecutionRequest, now time.Time) bool {

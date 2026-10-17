@@ -30,6 +30,8 @@ var ErrPacketAuthority = errors.New("packet authority or effect fence unavailabl
 type packetBuild struct {
 	value          artifact.Artifact
 	root, snapshot string
+	packet         review.ContextPacket
+	snapshotValue  review.ReviewSnapshot
 }
 
 // packetAssembler checks the source-bound packet without owning any effect boundary.
@@ -207,7 +209,7 @@ func (p packetAssembler) rebuild(ctx context.Context, request controlplane.TaskE
 		review.ValidateRecordedContextPacketRequest(value.Payload(), assembly.Packet.Identity(), request.Plan().Scope().Identity(), assembly.Packet.MemoryScopeIdentity(), assembly.Packet.MemoryIdentity(), assembly.Snapshot, assembly.Packet.EvidenceItems()) != nil {
 		return packetBuild{}, ErrPacketAuthority
 	}
-	return packetBuild{value: value, root: root, snapshot: assembly.Snapshot.Identity()}, nil
+	return packetBuild{value: value, root: root, snapshot: assembly.Snapshot.Identity(), packet: assembly.Packet, snapshotValue: assembly.Snapshot}, nil
 }
 
 func (p packetAssembler) sourceChain(ctx context.Context, request controlplane.TaskExecutionRequest, state controlplane.ReviewRunState, baseArtifact, headArtifact, changeArtifact artifact.Artifact, packetExpiry time.Time) (string, error) {

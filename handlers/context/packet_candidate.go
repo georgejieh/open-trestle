@@ -8,6 +8,7 @@ import (
 	"github.com/georgejieh/open-trestle/artifact"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
+	"github.com/georgejieh/open-trestle/internal/review"
 )
 
 // ArtifactReader exposes only the read operation needed to build a packet candidate.
@@ -19,9 +20,13 @@ type ArtifactReader interface {
 type PacketCandidate struct {
 	value      artifact.Artifact
 	descriptor controlplane.ContextPacketDescriptor
+	packet     review.ContextPacket
+	snapshot   review.ReviewSnapshot
 }
 
-func (c PacketCandidate) Artifact() artifact.Artifact { return c.value }
+func (c PacketCandidate) Artifact() artifact.Artifact     { return c.value }
+func (c PacketCandidate) Packet() review.ContextPacket    { return c.packet }
+func (c PacketCandidate) Snapshot() review.ReviewSnapshot { return c.snapshot }
 func (c PacketCandidate) Descriptor() controlplane.ContextPacketDescriptor {
 	descriptor := c.descriptor
 	descriptor.Provenance = slices.Clone(descriptor.Provenance)
@@ -83,5 +88,5 @@ func BuildPacketCandidate(ctx context.Context, reader ArtifactReader, request co
 	if !validDigest(descriptor.SnapshotIdentity) {
 		return PacketCandidate{}, ErrPacketAuthority
 	}
-	return PacketCandidate{value: value, descriptor: descriptor}, nil
+	return PacketCandidate{value: value, descriptor: descriptor, packet: built.packet, snapshot: built.snapshotValue}, nil
 }
