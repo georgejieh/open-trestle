@@ -14,6 +14,8 @@ import (
 	"github.com/georgejieh/open-trestle/artifact"
 	"github.com/georgejieh/open-trestle/controlplane"
 	contexthandler "github.com/georgejieh/open-trestle/handlers/context"
+	"github.com/georgejieh/open-trestle/internal/review"
+	"github.com/georgejieh/open-trestle/internal/testsupport"
 )
 
 func TestLocalPacketOwnerLoadsOnlyLivePreparedPacket(t *testing.T) {
@@ -67,6 +69,50 @@ func TestLocalPacketOwnerLoadsOnlyLivePreparedPacket(t *testing.T) {
 	}
 	if candidate, err := fixture.owner.LoadPreparedPacketCandidate(ctx, fixture.request, prepared); !errors.Is(err, contexthandler.ErrPacketAuthority) || candidate.Packet().Identity() != "" {
 		t.Fatalf("terminal typed packet read: %v", err)
+	}
+}
+
+func TestLocalPacketOwnerSanitizesPersistedPacketWithoutInputEffect(t *testing.T) {
+	ctx := context.Background()
+	fixture := newLocalPacketOwnerFixture(t)
+	prepared, err := fixture.owner.PreparePacket(ctx, fixture.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := fixture.request.Plan().Scope()
+	before, err := fixture.journal.Read(ctx, scope, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sanitizer := testsupport.NewCleanGenerationSanitizer()
+	candidate, err := fixture.owner.SanitizePreparedPacket(ctx, fixture.request, prepared, sanitizer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet := candidate.Packet()
+	if packet.Artifact().Identity() != prepared.Descriptor().ArtifactIdentity || packet.Snapshot().Identity() != prepared.Descriptor().SnapshotIdentity ||
+		review.ValidateSanitizedEgressArtifacts(packet.Artifact(), candidate.RequestArtifact(), candidate.ReceiptArtifact(), sanitizer.ExpectedBinaryDigests()) != nil {
+		t.Fatal("persisted packet did not produce exact sanitized artifacts")
+	}
+	for _, value := range []artifact.Artifact{candidate.RequestArtifact(), candidate.ReceiptArtifact()} {
+		if _, err := fixture.store.Get(ctx, scope, value.Identity(), fixture.clock.Now()); !errors.Is(err, artifact.ErrArtifactNotFound) {
+			t.Fatalf("sanitization wrote artifact: %v", err)
+		}
+	}
+	after, err := fixture.journal.Read(ctx, scope, 0, 100)
+	if err != nil || !reflect.DeepEqual(before, after) {
+		t.Fatalf("sanitization wrote journal: %v", err)
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := fixture.owner.SanitizePreparedPacket(canceled, fixture.request, prepared, sanitizer); !errors.Is(err, contexthandler.ErrPacketAuthority) {
+		t.Fatalf("canceled owner sanitization: %v", err)
+	}
+	if _, err := fixture.coordinator.CancelRun(ctx, fixture.request.Plan(), time.UnixMilli(240)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.owner.SanitizePreparedPacket(ctx, fixture.request, prepared, sanitizer); !errors.Is(err, contexthandler.ErrPacketAuthority) {
+		t.Fatalf("terminal owner sanitization: %v", err)
 	}
 }
 

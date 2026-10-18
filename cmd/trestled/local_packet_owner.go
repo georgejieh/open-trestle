@@ -10,6 +10,7 @@ import (
 	"github.com/georgejieh/open-trestle/artifact"
 	"github.com/georgejieh/open-trestle/controlplane"
 	contexthandler "github.com/georgejieh/open-trestle/handlers/context"
+	"github.com/georgejieh/open-trestle/internal/review"
 )
 
 // localPacketOwner is minted only by the Git-qualified local startup gate.
@@ -143,6 +144,23 @@ func (o *localPacketOwner) LoadPreparedPacketCandidate(ctx context.Context, requ
 		return contexthandler.PacketCandidate{}, err
 	}
 	return result, nil
+}
+
+// SanitizePreparedPacket scans the exact live owner packet, then checks the
+// owner fence again. It returns unpersisted artifacts, not route authority.
+func (o *localPacketOwner) SanitizePreparedPacket(ctx context.Context, request controlplane.TaskExecutionRequest, prepared controlplane.PreparedContextPacket, sanitizer review.GenerationRequestSanitizer) (contexthandler.SanitizedPacketCandidate, error) {
+	packet, err := o.LoadPreparedPacketCandidate(ctx, request, prepared)
+	if err != nil {
+		return contexthandler.SanitizedPacketCandidate{}, errors.Join(contexthandler.ErrPacketAuthority, err)
+	}
+	candidate, err := contexthandler.BuildSanitizedPacketCandidate(ctx, packet, sanitizer, o.clock.Now().UTC())
+	if err != nil {
+		return contexthandler.SanitizedPacketCandidate{}, errors.Join(contexthandler.ErrPacketAuthority, err)
+	}
+	if _, err := o.LoadPreparedPacketCandidate(ctx, request, prepared); err != nil {
+		return contexthandler.SanitizedPacketCandidate{}, err
+	}
+	return candidate, nil
 }
 
 func ownerPacketTimeValid(ctx context.Context, request controlplane.TaskExecutionRequest, now time.Time) bool {
