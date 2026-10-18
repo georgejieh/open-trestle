@@ -46,6 +46,7 @@ type SanitizedPacketCandidate struct {
 	receipt                          review.SanitizedEgressReceipt
 	requestArtifact, receiptArtifact artifact.Artifact
 	scanner                          review.ScannerBinaryDigests
+	sanitizerIdentity                string
 }
 
 func (c SanitizedPacketCandidate) Packet() PacketCandidate                { return c.packet }
@@ -54,6 +55,7 @@ func (c SanitizedPacketCandidate) ReceiptArtifact() artifact.Artifact     { retu
 func (c SanitizedPacketCandidate) Receipt() review.SanitizedEgressReceipt { return c.receipt }
 func (c SanitizedPacketCandidate) RawRequestIdentity() string             { return c.request.RawRequestIdentity() }
 func (c SanitizedPacketCandidate) Scanner() review.ScannerBinaryDigests   { return c.scanner }
+func (c SanitizedPacketCandidate) SanitizerIdentity() string              { return c.sanitizerIdentity }
 func (c SanitizedPacketCandidate) Request() (provider.Request, error) {
 	return c.request.ProviderRequest()
 }
@@ -80,7 +82,7 @@ func BuildSanitizedPacketCandidate(ctx context.Context, candidate PacketCandidat
 	if err != nil {
 		return SanitizedPacketCandidate{}, ErrPacketAuthority
 	}
-	return SanitizedPacketCandidate{candidate, request, receipt, requestArtifact, receiptArtifact, sanitizer.ExpectedBinaryDigests()}, nil
+	return SanitizedPacketCandidate{packet: candidate, request: request, receipt: receipt, requestArtifact: requestArtifact, receiptArtifact: receiptArtifact, scanner: sanitizer.ExpectedBinaryDigests(), sanitizerIdentity: sanitizer.Identity()}, nil
 }
 
 // BuildAuthorizedPacketInput assembles an unpersisted input from a real grant.

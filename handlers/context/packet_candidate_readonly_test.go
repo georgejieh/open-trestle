@@ -130,9 +130,13 @@ func TestBuildSanitizedPacketCandidateDoesNotGrantOrPersistInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := packetCandidateEvents(t, journal, scope)
-	sanitized, err := BuildSanitizedPacketCandidate(ctx, candidate, testsupport.NewCleanGenerationSanitizer(), at)
+	sanitizer := testsupport.NewCleanGenerationSanitizer()
+	sanitized, err := BuildSanitizedPacketCandidate(ctx, candidate, sanitizer, at)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if sanitized.SanitizerIdentity() != sanitizer.Identity() {
+		t.Fatal("sanitized candidate lost exact sanitizer identity")
 	}
 	requestArtifact, receiptArtifact := sanitized.RequestArtifact(), sanitized.ReceiptArtifact()
 	if requestArtifact.Kind() != artifact.KindSanitizedModelRequest || receiptArtifact.Kind() != artifact.KindSanitizedEgressReceipt ||
