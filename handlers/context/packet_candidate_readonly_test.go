@@ -216,6 +216,22 @@ func TestBuildAuthorizedPacketInputRequiresSanitizedGrant(t *testing.T) {
 	if _, err := BuildAuthorizedPacketInput(ctx, wrongArtifact, grant, request, strings.Repeat("e", 64), at); err == nil {
 		t.Fatal("unbound packet descriptor produced task input")
 	}
+	wrongEvent := sanitized
+	wrongEvent.packet.descriptor.LeaseEventIdentity = strings.Repeat("a", 64)
+	if _, err := BuildAuthorizedPacketInput(ctx, wrongEvent, grant, request, strings.Repeat("e", 64), at); err == nil {
+		t.Fatal("packet from another lease event produced task input")
+	}
+	wrongSnapshot := sanitized
+	wrongSnapshot.packet.descriptor.SnapshotIdentity = strings.Repeat("a", 64)
+	if _, err := BuildAuthorizedPacketInput(ctx, wrongSnapshot, grant, request, strings.Repeat("e", 64), at); err == nil {
+		t.Fatal("packet from another snapshot produced task input")
+	}
+	wrongProvenance := sanitized
+	wrongProvenance.packet.descriptor.Provenance = append([]string(nil), packet.Descriptor().Provenance...)
+	wrongProvenance.packet.descriptor.Provenance[0] = strings.Repeat("a", 64)
+	if _, err := BuildAuthorizedPacketInput(ctx, wrongProvenance, grant, request, strings.Repeat("e", 64), at); err == nil {
+		t.Fatal("packet with altered provenance produced task input")
+	}
 	if _, err := BuildAuthorizedPacketInput(ctx, sanitized, grant, controlplane.TaskExecutionRequest{}, strings.Repeat("e", 64), at); err == nil {
 		t.Fatal("unbound execution produced task input")
 	}
