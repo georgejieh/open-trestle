@@ -206,6 +206,16 @@ func TestBuildAuthorizedPacketInputRequiresSanitizedGrant(t *testing.T) {
 	if input.Kind() != artifact.KindTaskInput || !reflect.DeepEqual(input.Provenance(), sortedInputParents(analysis.OutputIdentity(), memory.OutputIdentity(), request.Plan().PolicyIdentity(), strings.Repeat("e", 64), packet.Artifact().Identity(), grant.Identity(), sanitized.RequestArtifact().Identity(), sanitized.ReceiptArtifact().Identity())) {
 		t.Fatal("task input provenance does not bind dependencies, policy, and grant")
 	}
+	wrongLease := sanitized
+	wrongLease.packet.descriptor.LeaseIdentity = strings.Repeat("a", 64)
+	if _, err := BuildAuthorizedPacketInput(ctx, wrongLease, grant, request, strings.Repeat("e", 64), at); err == nil {
+		t.Fatal("packet from another lease produced task input")
+	}
+	wrongArtifact := sanitized
+	wrongArtifact.packet.descriptor.ArtifactIdentity = strings.Repeat("a", 64)
+	if _, err := BuildAuthorizedPacketInput(ctx, wrongArtifact, grant, request, strings.Repeat("e", 64), at); err == nil {
+		t.Fatal("unbound packet descriptor produced task input")
+	}
 	if _, err := BuildAuthorizedPacketInput(ctx, sanitized, grant, controlplane.TaskExecutionRequest{}, strings.Repeat("e", 64), at); err == nil {
 		t.Fatal("unbound execution produced task input")
 	}

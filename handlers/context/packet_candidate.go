@@ -91,6 +91,9 @@ func BuildAuthorizedPacketInput(ctx context.Context, candidate SanitizedPacketCa
 	memory, hasMemory := execution.DependencyOutput("memory")
 	if nilInterface(ctx) || ctx.Err() != nil || execution.Validate() != nil || !hasAnalysis || !hasMemory || !analysis.Available() || !memory.Available() ||
 		execution.Task().Kind() != controlplane.TaskAssembleContext || execution.Plan().Scope().Identity() != packet.value.Scope().Identity() || !validDigest(authorizerIdentity) ||
+		packet.descriptor.ArtifactIdentity != packet.value.Identity() || packet.descriptor.LeaseIdentity != execution.Lease().Identity() ||
+		packet.descriptor.LeaseEventIdentity != execution.Lease().EventIdentity() || packet.descriptor.SnapshotIdentity != packet.snapshot.Identity() ||
+		!slices.Equal(packet.descriptor.Provenance, packet.value.Provenance()) ||
 		!slices.Contains(packet.value.Provenance(), analysis.OutputIdentity()) || !slices.Contains(packet.value.Provenance(), memory.OutputIdentity()) ||
 		authorization.Validate() != nil || candidate.request.Validate() != nil || candidate.receipt.Validate() != nil ||
 		packet.value.Validate() != nil || packet.packet.Validate() != nil || packet.snapshot.Validate() != nil ||
