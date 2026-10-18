@@ -253,6 +253,28 @@ func TestBuildAuthorizedPacketInputRequiresSanitizedGrant(t *testing.T) {
 	if _, err := BuildAuthorizedPacketInput(ctx, wrongProvenance, grant, request, strings.Repeat("e", 64), at); err == nil {
 		t.Fatal("packet with altered provenance produced task input")
 	}
+	for _, test := range []struct {
+		name   string
+		change func(*controlplane.ContextPacketDescriptor)
+	}{
+		{"payload_digest", func(d *controlplane.ContextPacketDescriptor) { d.PayloadDigest = strings.Repeat("a", 64) }},
+		{"classification", func(d *controlplane.ContextPacketDescriptor) { d.Classification = "restricted" }},
+		{"protection", func(d *controlplane.ContextPacketDescriptor) { d.Protection = "envelope_encrypted" }},
+		{"dependencies", func(d *controlplane.ContextPacketDescriptor) {
+			d.DependencyIdentities = []string{strings.Repeat("a", 64)}
+		}},
+		{"created_at", func(d *controlplane.ContextPacketDescriptor) { d.CreatedAtMilliseconds++ }},
+		{"expires_at", func(d *controlplane.ContextPacketDescriptor) { d.ExpiresAtMilliseconds++ }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			changed := sanitized
+			changed.packet.descriptor = packet.Descriptor()
+			test.change(&changed.packet.descriptor)
+			if _, err := BuildAuthorizedPacketInput(ctx, changed, grant, request, strings.Repeat("e", 64), at); !errors.Is(err, ErrPacketAuthority) {
+				t.Fatalf("altered packet descriptor produced task input: %v", err)
+			}
+		})
+	}
 	if _, err := BuildAuthorizedPacketInput(ctx, sanitized, grant, controlplane.TaskExecutionRequest{}, strings.Repeat("e", 64), at); err == nil {
 		t.Fatal("unbound execution produced task input")
 	}

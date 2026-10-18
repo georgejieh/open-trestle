@@ -99,7 +99,11 @@ func BuildAuthorizedPacketInput(ctx context.Context, candidate SanitizedPacketCa
 		execution.Task().Kind() != controlplane.TaskAssembleContext || execution.Plan().Scope().Identity() != packet.value.Scope().Identity() || !validDigest(authorizerIdentity) ||
 		packet.descriptor.ArtifactIdentity != packet.value.Identity() || packet.descriptor.LeaseIdentity != execution.Lease().Identity() ||
 		packet.descriptor.LeaseEventIdentity != execution.Lease().EventIdentity() || packet.descriptor.SnapshotIdentity != packet.snapshot.Identity() ||
+		packet.descriptor.PayloadDigest != packet.value.PayloadDigest() || packet.descriptor.Classification != packet.value.Classification().String() ||
+		packet.descriptor.Protection != packet.value.Protection().String() || packet.descriptor.CreatedAtMilliseconds != packet.value.CreatedAt().UnixMilli() ||
+		packet.descriptor.ExpiresAtMilliseconds != packet.value.ExpiresAt().UnixMilli() ||
 		!slices.Equal(packet.descriptor.Provenance, packet.value.Provenance()) ||
+		!slices.Equal(packet.descriptor.DependencyIdentities, sortedPair(analysis.OutputIdentity(), memory.OutputIdentity())) ||
 		!slices.Contains(packet.value.Provenance(), analysis.OutputIdentity()) || !slices.Contains(packet.value.Provenance(), memory.OutputIdentity()) ||
 		authorization.Validate() != nil || candidate.request.Validate() != nil || candidate.receipt.Validate() != nil ||
 		packet.value.Validate() != nil || packet.packet.Validate() != nil || packet.snapshot.Validate() != nil ||
