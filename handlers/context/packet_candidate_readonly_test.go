@@ -5,12 +5,16 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/georgejieh/open-trestle/artifact"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
+	modelhandler "github.com/georgejieh/open-trestle/handlers/model"
+	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/internal/testsupport"
 )
@@ -156,6 +160,71 @@ func TestBuildSanitizedPacketCandidateDoesNotGrantOrPersistInput(t *testing.T) {
 	cancel()
 	if _, err := BuildSanitizedPacketCandidate(canceled, candidate, testsupport.NewCleanGenerationSanitizer(), at); err == nil {
 		t.Fatal("canceled sanitization succeeded")
+	}
+}
+
+func sortedInputParents(values ...string) []string {
+	sort.Strings(values)
+	return values
+}
+
+func TestBuildAuthorizedPacketInputRequiresSanitizedGrant(t *testing.T) {
+	authority, request, coordinator, store, _, closeFixture, journal := newPacketWriterFixture(t, false, false, false, false, false)
+	defer closeFixture()
+	ctx, scope, at := context.Background(), request.Plan().Scope(), time.UnixMilli(230)
+	_, state, err := coordinator.Resume(ctx, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet, err := BuildPacketCandidate(ctx, packetCandidateGetReader{source: store}, request, state, contextTestClock{at}, authority.ownerRoot, at, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sanitized, err := BuildSanitizedPacketCandidate(ctx, packet, testsupport.NewCleanGenerationSanitizer(), at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := packetCandidateEvents(t, journal, scope)
+	modelRequest, err := sanitized.Request()
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := routeAuthorization(scope, modelRequest, "local-fixture", "adapter", "local-fixture", "model", "1", strings.Repeat("c", 64), strings.Repeat("d", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	analysis, _ := request.DependencyOutput("analysis")
+	memory, _ := request.DependencyOutput("memory")
+	input, err := BuildAuthorizedPacketInput(ctx, sanitized, grant, request, strings.Repeat("e", 64), at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := modelhandler.ParseGenerationInput(input.Payload())
+	if err != nil || !parsed.IsSanitized() || parsed.Authorization().Identity() != grant.Identity() || parsed.ContextArtifactIdentity() != packet.Artifact().Identity() || parsed.SanitizedRequestArtifactIdentity() != sanitized.RequestArtifact().Identity() || parsed.SanitizedEgressReceiptArtifactIdentity() != sanitized.ReceiptArtifact().Identity() {
+		t.Fatalf("authorized input lineage: %v", err)
+	}
+	if input.Kind() != artifact.KindTaskInput || !reflect.DeepEqual(input.Provenance(), sortedInputParents(analysis.OutputIdentity(), memory.OutputIdentity(), request.Plan().PolicyIdentity(), strings.Repeat("e", 64), packet.Artifact().Identity(), grant.Identity(), sanitized.RequestArtifact().Identity(), sanitized.ReceiptArtifact().Identity())) {
+		t.Fatal("task input provenance does not bind dependencies, policy, and grant")
+	}
+	if _, err := BuildAuthorizedPacketInput(ctx, sanitized, grant, controlplane.TaskExecutionRequest{}, strings.Repeat("e", 64), at); err == nil {
+		t.Fatal("unbound execution produced task input")
+	}
+	if _, err := BuildAuthorizedPacketInput(ctx, sanitized, gateway.RouteAttemptAuthorization{}, request, strings.Repeat("e", 64), at); err == nil {
+		t.Fatal("zero grant produced task input")
+	}
+	wrong, _ := audit.NewReviewScope("tenant", "repository", "other")
+	foreign, err := routeAuthorization(wrong, modelRequest, "local-fixture", "adapter", "local-fixture", "model", "1", strings.Repeat("c", 64), strings.Repeat("d", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BuildAuthorizedPacketInput(ctx, sanitized, foreign, request, strings.Repeat("e", 64), at); err == nil {
+		t.Fatal("foreign grant produced task input")
+	}
+	if _, err := store.Get(ctx, scope, input.Identity(), at); !errors.Is(err, artifact.ErrArtifactNotFound) {
+		t.Fatalf("builder persisted input: %v", err)
+	}
+	if after := packetCandidateEvents(t, journal, scope); !reflect.DeepEqual(before, after) {
+		t.Fatal("builder advanced journal")
 	}
 }
 

@@ -9,6 +9,8 @@ import (
 	"github.com/georgejieh/open-trestle/artifact"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
+	modelhandler "github.com/georgejieh/open-trestle/handlers/model"
+	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/review"
 )
@@ -79,6 +81,37 @@ func BuildSanitizedPacketCandidate(ctx context.Context, candidate PacketCandidat
 		return SanitizedPacketCandidate{}, ErrPacketAuthority
 	}
 	return SanitizedPacketCandidate{candidate, request, receipt, requestArtifact, receiptArtifact, sanitizer.ExpectedBinaryDigests()}, nil
+}
+
+// BuildAuthorizedPacketInput assembles an unpersisted input from a real grant.
+// Its caller must prove the grant was audited and recheck the owner before v5.
+func BuildAuthorizedPacketInput(ctx context.Context, candidate SanitizedPacketCandidate, authorization gateway.RouteAttemptAuthorization, execution controlplane.TaskExecutionRequest, authorizerIdentity string, at time.Time) (artifact.Artifact, error) {
+	packet := candidate.Packet()
+	analysis, hasAnalysis := execution.DependencyOutput("analysis")
+	memory, hasMemory := execution.DependencyOutput("memory")
+	if nilInterface(ctx) || ctx.Err() != nil || execution.Validate() != nil || !hasAnalysis || !hasMemory || !analysis.Available() || !memory.Available() ||
+		execution.Task().Kind() != controlplane.TaskAssembleContext || execution.Plan().Scope().Identity() != packet.value.Scope().Identity() || !validDigest(authorizerIdentity) ||
+		!slices.Contains(packet.value.Provenance(), analysis.OutputIdentity()) || !slices.Contains(packet.value.Provenance(), memory.OutputIdentity()) ||
+		authorization.Validate() != nil || candidate.request.Validate() != nil || candidate.receipt.Validate() != nil ||
+		packet.value.Validate() != nil || packet.packet.Validate() != nil || packet.snapshot.Validate() != nil ||
+		!at.Before(packet.value.ExpiresAt()) || at.Before(candidate.requestArtifact.CreatedAt()) ||
+		review.ValidateSanitizedEgressArtifacts(packet.value, candidate.requestArtifact, candidate.receiptArtifact, candidate.scanner) != nil {
+		return artifact.Artifact{}, ErrPacketAuthority
+	}
+	request, err := candidate.Request()
+	if err != nil || authorization.RequestIdentity() != request.Identity() || authorization.ReviewScopeIdentity() != packet.value.Scope().Identity() {
+		return artifact.Artifact{}, ErrPacketAuthority
+	}
+	input, err := modelhandler.NewSanitizedGenerationInput(packet.value, packet.packet, packet.snapshot, candidate.requestArtifact, candidate.receiptArtifact, candidate.scanner, authorization)
+	if err != nil {
+		return artifact.Artifact{}, ErrPacketAuthority
+	}
+	provenance := []string{analysis.OutputIdentity(), memory.OutputIdentity(), execution.Plan().PolicyIdentity(), authorizerIdentity}
+	value, err := modelhandler.NewGenerationInputArtifact(input, packet.value, provenance, at)
+	if err != nil {
+		return artifact.Artifact{}, ErrPacketAuthority
+	}
+	return value, nil
 }
 
 // readOnlyPacketStore adapts assembly's Store dependency without granting it writes.
