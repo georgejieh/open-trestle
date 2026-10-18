@@ -63,7 +63,11 @@ func (c SanitizedPacketCandidate) Request() (provider.Request, error) {
 // BuildSanitizedPacketCandidate scans only a source-bound candidate. No artifact
 // Put or audit append occurs here; the owner must re-fence before any effects.
 func BuildSanitizedPacketCandidate(ctx context.Context, candidate PacketCandidate, sanitizer review.GenerationRequestSanitizer, at time.Time) (SanitizedPacketCandidate, error) {
-	if nilInterface(ctx) || nilInterface(sanitizer) || ctx.Err() != nil || !validDigest(sanitizer.Identity()) ||
+	if nilInterface(ctx) || nilInterface(sanitizer) || ctx.Err() != nil {
+		return SanitizedPacketCandidate{}, ErrPacketAuthority
+	}
+	sanitizerIdentity, scanner := sanitizer.Identity(), sanitizer.ExpectedBinaryDigests()
+	if !validDigest(sanitizerIdentity) ||
 		candidate.value.Validate() != nil || candidate.value.Kind() != artifact.KindContextPacket ||
 		candidate.packet.Validate() != nil || candidate.snapshot.Validate() != nil ||
 		candidate.descriptor.ArtifactIdentity != candidate.value.Identity() || candidate.descriptor.SnapshotIdentity != candidate.snapshot.Identity() ||
@@ -78,11 +82,11 @@ func BuildSanitizedPacketCandidate(ctx context.Context, candidate PacketCandidat
 	if err != nil || ctx.Err() != nil {
 		return SanitizedPacketCandidate{}, ErrPacketAuthority
 	}
-	requestArtifact, receiptArtifact, err := review.NewSanitizedEgressArtifacts(candidate.value, request, receipt, sanitizer.ExpectedBinaryDigests(), at)
-	if err != nil {
+	requestArtifact, receiptArtifact, err := review.NewSanitizedEgressArtifacts(candidate.value, request, receipt, scanner, at)
+	if err != nil || sanitizer.Identity() != sanitizerIdentity || sanitizer.ExpectedBinaryDigests() != scanner || ctx.Err() != nil {
 		return SanitizedPacketCandidate{}, ErrPacketAuthority
 	}
-	return SanitizedPacketCandidate{packet: candidate, request: request, receipt: receipt, requestArtifact: requestArtifact, receiptArtifact: receiptArtifact, scanner: sanitizer.ExpectedBinaryDigests(), sanitizerIdentity: sanitizer.Identity()}, nil
+	return SanitizedPacketCandidate{packet: candidate, request: request, receipt: receipt, requestArtifact: requestArtifact, receiptArtifact: receiptArtifact, scanner: scanner, sanitizerIdentity: sanitizerIdentity}, nil
 }
 
 // BuildAuthorizedPacketInput assembles an unpersisted input from a real grant.

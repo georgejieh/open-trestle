@@ -15,6 +15,7 @@ import (
 	"github.com/georgejieh/open-trestle/controlplane"
 	modelhandler "github.com/georgejieh/open-trestle/handlers/model"
 	"github.com/georgejieh/open-trestle/internal/gateway"
+	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/internal/testsupport"
 )
@@ -117,6 +118,18 @@ func TestBuildPacketCandidateMatchesUnwiredPrepareWithoutWriting(t *testing.T) {
 	}
 }
 
+type changingIdentitySanitizer struct {
+	testsupport.CleanGenerationSanitizer
+	identity string
+}
+
+func (s *changingIdentitySanitizer) Identity() string { return s.identity }
+func (s *changingIdentitySanitizer) SanitizeGeneration(ctx context.Context, raw provider.Request, scope string) (review.SanitizedModelRequest, review.SanitizedEgressReceipt, error) {
+	request, receipt, err := s.CleanGenerationSanitizer.SanitizeGeneration(ctx, raw, scope)
+	s.identity = strings.Repeat("9", 64)
+	return request, receipt, err
+}
+
 func TestBuildSanitizedPacketCandidateDoesNotGrantOrPersistInput(t *testing.T) {
 	authority, request, coordinator, store, _, closeFixture, journal := newPacketWriterFixture(t, false, false, false, false, false)
 	defer closeFixture()
@@ -130,6 +143,10 @@ func TestBuildSanitizedPacketCandidateDoesNotGrantOrPersistInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := packetCandidateEvents(t, journal, scope)
+	drifting := &changingIdentitySanitizer{identity: strings.Repeat("8", 64)}
+	if value, err := BuildSanitizedPacketCandidate(ctx, candidate, drifting, at); err == nil || value.SanitizerIdentity() != "" {
+		t.Fatal("sanitizer identity changed during scan but candidate was issued")
+	}
 	sanitizer := testsupport.NewCleanGenerationSanitizer()
 	sanitized, err := BuildSanitizedPacketCandidate(ctx, candidate, sanitizer, at)
 	if err != nil {
