@@ -46,21 +46,24 @@ var (
 // FileRunJournal is a durable local journal with one cooperative writer lease per root.
 // Normal operations are path-based; borrowed rooted inventory does not pin their lifetime.
 type FileRunJournal struct {
-	mu             sync.Mutex
-	gateMu         sync.Mutex
-	gate           chan struct{}
-	closingSignal  chan struct{}
-	closing        bool
-	root, lockPath string
-	rootInfo       os.FileInfo // constructor-captured inode, never caller-held authority
-	lockFile       *filelock.Lock
-	closeOwnedRoot func(*os.Root) error // test-only close seam; nil uses os.Root.Close
+	mu              sync.Mutex
+	scopeGateActive *scopeGateGrant // protected by mu
+	gateMu          sync.Mutex
+	gate            chan struct{}
+	closingSignal   chan struct{}
+	closing         bool
+	root, lockPath  string
+	rootInfo        os.FileInfo // constructor-captured inode, never caller-held authority
+	lockFile        *filelock.Lock
+	closeOwnedRoot  func(*os.Root) error // test-only close seam; nil uses os.Root.Close
 	// Optional fault-injection seams; production uses syncRoot and lockFile.Close.
 	syncOnClose               func() error
 	closeLock                 func(*filelock.Lock) error
 	onContendedGateWait       func() // test observer, set before concurrent use only
 	contentionWatcher         chan struct{}
 	afterCanceledStreamRename func(audit.ReviewScope) error // test-only instance seam; set before concurrent use
+	afterPlanRename           func(audit.ReviewScope) error // test-only instance seam; set before concurrent use
+	afterStreamRename         func(audit.ReviewScope) error // test-only instance seam; set before concurrent use
 	closed                    bool
 }
 
@@ -298,6 +301,9 @@ func (j *FileRunJournal) WithEffectSection(ctx context.Context, effect func() er
 	if err := validateFileRunContext(ctx); err != nil {
 		return err
 	}
+	if j.insideScopeGate(ctx) {
+		return effect()
+	}
 	return j.withEffectSection(ctx, effect)
 }
 
@@ -391,6 +397,9 @@ func (j *FileRunJournal) SavePlan(ctx context.Context, plan ReviewRunPlan) error
 	defer j.mu.Unlock()
 	if j.closed {
 		return ErrRunJournalClosed
+	}
+	if err := j.checkScopeGate(ctx, plan.Scope()); err != nil {
+		return err
 	}
 	existing, found, err := j.loadPlan(plan.Scope())
 	if err != nil {
@@ -494,6 +503,11 @@ func (j *FileRunJournal) replacePlan(ctx context.Context, plan ReviewRunPlan) er
 		return fmt.Errorf("%w: %v", ErrRunJournalPersistence, err)
 	}
 	cleaned = true
+	if j.afterPlanRename != nil {
+		if err := j.afterPlanRename(plan.Scope()); err != nil {
+			return errors.Join(ErrRunJournalPersistence, err)
+		}
+	}
 	return j.syncRoot()
 }
 
@@ -574,6 +588,9 @@ func (j *FileRunJournal) appendValidated(ctx context.Context, expectedHead strin
 		return ErrRunJournalClosed
 	}
 	if err := fileRunContextDone(ctx); err != nil {
+		return err
+	}
+	if err := j.checkScopeGate(ctx, event.Scope()); err != nil {
 		return err
 	}
 	stream, err := j.loadStream(event.Scope())
@@ -809,6 +826,11 @@ func (j *FileRunJournal) replaceStream(ctx context.Context, scope audit.ReviewSc
 		return fmt.Errorf("%w: %v", ErrRunJournalPersistence, err)
 	}
 	cleaned = true
+	if j.afterStreamRename != nil {
+		if err := j.afterStreamRename(scope); err != nil {
+			return errors.Join(ErrRunJournalPersistence, err)
+		}
+	}
 	if len(events) > 0 && events[len(events)-1].Kind() == RunEventCanceled && j.afterCanceledStreamRename != nil {
 		if err := j.afterCanceledStreamRename(scope); err != nil {
 			return errors.Join(ErrRunJournalPersistence, err)

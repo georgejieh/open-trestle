@@ -140,6 +140,13 @@ func (j *FileRunJournal) inspectStartupInventory(ctx context.Context, historical
 			}
 			continue
 		}
+		if strings.HasSuffix(name, scopeIntentSuffix) {
+			base := strings.TrimSuffix(name, scopeIntentSuffix)
+			if !inventoryDigest(base) || mode != 0o600 || !mode.IsRegular() || !fileauthority.TrustedOwner(info) || info.Size() <= 0 || info.Size() > 1024 {
+				return zero, ErrInvalidStartupInventoryEntry
+			}
+			return zero, ErrScopeIntentUnresolved
+		}
 		var base string
 		var isPlan bool
 		switch {
