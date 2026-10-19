@@ -2,7 +2,9 @@ package controlplane
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -171,5 +173,45 @@ func TestJournalScopeIntentAppendRenameErrorRequiresReconciliation(t *testing.T)
 		return nil
 	}); err != nil {
 		t.Fatalf("exact event proof=%v", err)
+	}
+}
+
+func TestJournalScopeIntentPreparedPreflightRunsBeforeMarkerAndValidatesExpected(t *testing.T) {
+	journal, err := NewFileRunJournal(filepath.Join(t.TempDir(), "journal"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	plan := runPlanFixture(t)
+	scope, expected := plan.Scope(), plan.Identity()
+	marker := journal.scopeIntentPath(scope)
+	err = journal.WithScopeIntentPrepared(context.Background(), scope, "packet-prepare", func(context.Context) (string, error) {
+		if _, err := os.Lstat(marker); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("marker preceded preflight: %v", err)
+		}
+		return expected, nil
+	}, func(context.Context) error {
+		encoded, err := os.ReadFile(marker)
+		if err != nil {
+			return err
+		}
+		var record scopeIntentRecord
+		if err := json.Unmarshal(encoded, &record); err != nil {
+			return err
+		}
+		if record.Expected != expected {
+			t.Fatalf("marker expected=%s", record.Expected)
+		}
+		return nil
+	}, func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = journal.WithScopeIntentPrepared(context.Background(), scope, "packet-prepare", func(context.Context) (string, error) { return "invalid", nil }, func(context.Context) error { t.Fatal("effect entered"); return nil }, func(context.Context) error { return nil })
+	if !errors.Is(err, ErrInvalidRunJournalEffectSection) {
+		t.Fatalf("invalid expected=%v", err)
+	}
+	if _, err := os.Lstat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("invalid preflight marker: %v", err)
 	}
 }

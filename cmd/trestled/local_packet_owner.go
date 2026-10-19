@@ -33,34 +33,30 @@ func (o *localPacketOwner) PreparePacket(ctx context.Context, request controlpla
 	}
 	var prepared controlplane.PreparedContextPacket
 	var expected artifact.Artifact
-	preflight := func(inner context.Context) error {
+	var candidate contexthandler.PacketCandidate
+	preflight := func(inner context.Context) (string, error) {
 		now := o.clock.Now().UTC()
 		if !ownerPacketTimeValid(inner, request, now) {
-			return contexthandler.ErrPacketAuthority
+			return "", contexthandler.ErrPacketAuthority
 		}
 		plan, state, err := coordinator.Resume(inner, request.Plan().Scope())
 		if err != nil || plan.Identity() != request.Plan().Identity() || state.Status() != controlplane.ReviewRunActive {
-			return errors.Join(contexthandler.ErrPacketAuthority, err)
+			return "", errors.Join(contexthandler.ErrPacketAuthority, err)
 		}
-		return nil
+		candidate, err = contexthandler.BuildPacketCandidate(inner, o.store, request, state, o.clock, o.sourceRootDigest, now, now)
+		if err != nil {
+			return "", errors.Join(contexthandler.ErrPacketAuthority, err)
+		}
+		expected = candidate.Artifact()
+		return expected.Identity(), nil
 	}
-	err = o.journal.WithScopeIntentChecked(ctx, request.Plan().Scope(), "packet-prepare", request.Lease().Identity(), preflight, func(ctx context.Context) error {
+	err = o.journal.WithScopeIntentPrepared(ctx, request.Plan().Scope(), "packet-prepare", preflight, func(ctx context.Context) error {
 		now := o.clock.Now().UTC()
 		if !ownerPacketTimeValid(ctx, request, now) {
 			return contexthandler.ErrPacketAuthority
 		}
-		plan, state, resumeErr := coordinator.Resume(ctx, request.Plan().Scope())
-		if resumeErr != nil || plan.Identity() != request.Plan().Identity() || state.Status() != controlplane.ReviewRunActive {
-			return errors.Join(contexthandler.ErrPacketAuthority, resumeErr)
-		}
-		// Candidate construction performs the source full-chain proof using only
-		// Get on the actual boot store, while cancellation remains outside the gate.
-		candidate, buildErr := contexthandler.BuildPacketCandidate(ctx, o.store, request, state, o.clock, o.sourceRootDigest, now, now)
-		if buildErr != nil {
-			return errors.Join(contexthandler.ErrPacketAuthority, buildErr)
-		}
+
 		value, descriptor := candidate.Artifact(), candidate.Descriptor()
-		expected = value
 		now = o.clock.Now().UTC()
 		if !ownerPacketTimeValid(ctx, request, now) || !now.Before(value.ExpiresAt()) {
 			return contexthandler.ErrPacketAuthority

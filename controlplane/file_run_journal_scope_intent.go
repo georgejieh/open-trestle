@@ -40,14 +40,32 @@ func (j *FileRunJournal) WithScopeIntent(ctx context.Context, scope audit.Review
 // WithScopeIntentChecked runs a read-only preflight under the gate before
 // recording intent. An ordinary conflict cannot poison an existing scope.
 func (j *FileRunJournal) WithScopeIntentChecked(ctx context.Context, scope audit.ReviewScope, kind, expected string, preflight, effect, verify func(context.Context) error) error {
-	if j == nil || effect == nil || verify == nil || scope.Validate() != nil || len(kind) == 0 || len(kind) > 64 || strings.ContainsAny(kind, "/\\\n\r") || !validControlPlaneDigest(expected) {
+	if !validControlPlaneDigest(expected) {
+		return ErrInvalidRunJournalEffectSection
+	}
+	return j.WithScopeIntentPrepared(ctx, scope, kind, func(inner context.Context) (string, error) {
+		if preflight != nil {
+			if err := preflight(inner); err != nil {
+				return "", err
+			}
+		}
+		return expected, nil
+	}, effect, verify)
+}
+
+// WithScopeIntentPrepared derives the content-free expected identity in a
+// trusted read-only preflight under the journal gate, before recording intent.
+func (j *FileRunJournal) WithScopeIntentPrepared(ctx context.Context, scope audit.ReviewScope, kind string, preflight func(context.Context) (string, error), effect, verify func(context.Context) error) error {
+	if j == nil || preflight == nil || effect == nil || verify == nil || scope.Validate() != nil || len(kind) == 0 || len(kind) > 64 || strings.ContainsAny(kind, "/\\\n\r") {
 		return ErrInvalidRunJournalEffectSection
 	}
 	return j.WithScopeGate(ctx, scope, func(inner context.Context) error {
-		if preflight != nil {
-			if err := preflight(inner); err != nil {
-				return err
-			}
+		expected, err := preflight(inner)
+		if err != nil {
+			return err
+		}
+		if !validControlPlaneDigest(expected) {
+			return ErrInvalidRunJournalEffectSection
 		}
 		path := j.scopeIntentPath(scope)
 		j.mu.Lock()
