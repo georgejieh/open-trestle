@@ -33,6 +33,33 @@ func (f *RunFinalizer) ReconcileRun(ctx context.Context, scope audit.ReviewScope
 	if f == nil || isNilRunJournal(f.journal) || f.coordinator == nil || ctx == nil || ctx.Err() != nil || scope.Validate() != nil {
 		return ReviewRunState{}, false, ErrInvalidRunFinalizer
 	}
+	if journal, ok := f.journal.(*FileRunJournal); ok {
+		plan, found, err := journal.LoadPlan(ctx, scope)
+		if err != nil {
+			return ReviewRunState{}, false, err
+		}
+		if !found {
+			return ReviewRunState{}, false, ErrRunNotOpened
+		}
+		var result ReviewRunState
+		var changed bool
+		err = journal.WithScopeIntent(ctx, scope, "run-finalize", plan.Identity(), func(inner context.Context) error {
+			var operationErr error
+			result, changed, operationErr = f.reconcileRun(inner, scope, at)
+			return operationErr
+		}, func(inner context.Context) error {
+			_, observed, readErr := f.coordinator.Resume(inner, scope)
+			if readErr != nil || observed.HeadIdentity() != result.HeadIdentity() || observed.Revision() != result.Revision() {
+				return errors.Join(ErrRunJournalHeadConflict, readErr)
+			}
+			return nil
+		})
+		return result, changed, err
+	}
+	return f.reconcileRun(ctx, scope, at)
+}
+
+func (f *RunFinalizer) reconcileRun(ctx context.Context, scope audit.ReviewScope, at time.Time) (ReviewRunState, bool, error) {
 	plan, state, err := f.coordinator.Resume(ctx, scope)
 	if err != nil {
 		return ReviewRunState{}, false, err

@@ -32,7 +32,19 @@ func (o *localPacketOwner) PreparePacket(ctx context.Context, request controlpla
 		return controlplane.PreparedContextPacket{}, errors.Join(contexthandler.ErrPacketAuthority, err)
 	}
 	var prepared controlplane.PreparedContextPacket
-	err = o.journal.WithEffectSection(ctx, func() error {
+	var expected artifact.Artifact
+	preflight := func(inner context.Context) error {
+		now := o.clock.Now().UTC()
+		if !ownerPacketTimeValid(inner, request, now) {
+			return contexthandler.ErrPacketAuthority
+		}
+		plan, state, err := coordinator.Resume(inner, request.Plan().Scope())
+		if err != nil || plan.Identity() != request.Plan().Identity() || state.Status() != controlplane.ReviewRunActive {
+			return errors.Join(contexthandler.ErrPacketAuthority, err)
+		}
+		return nil
+	}
+	err = o.journal.WithScopeIntentChecked(ctx, request.Plan().Scope(), "packet-prepare", request.Lease().Identity(), preflight, func(ctx context.Context) error {
 		now := o.clock.Now().UTC()
 		if !ownerPacketTimeValid(ctx, request, now) {
 			return contexthandler.ErrPacketAuthority
@@ -48,6 +60,7 @@ func (o *localPacketOwner) PreparePacket(ctx context.Context, request controlpla
 			return errors.Join(contexthandler.ErrPacketAuthority, buildErr)
 		}
 		value, descriptor := candidate.Artifact(), candidate.Descriptor()
+		expected = value
 		now = o.clock.Now().UTC()
 		if !ownerPacketTimeValid(ctx, request, now) || !now.Before(value.ExpiresAt()) {
 			return contexthandler.ErrPacketAuthority
@@ -84,6 +97,20 @@ func (o *localPacketOwner) PreparePacket(ctx context.Context, request controlpla
 			return errors.Join(contexthandler.ErrPacketAuthority, wantErr, gotErr)
 		}
 		return o.packetFence(ctx, coordinator, request, prepared, value)
+	}, func(inner context.Context) error {
+		if err := o.packetFence(inner, coordinator, request, prepared, expected); err != nil {
+			return err
+		}
+		stored, err := o.store.Get(inner, request.Plan().Scope(), expected.Identity(), o.clock.Now().UTC())
+		if err != nil {
+			return err
+		}
+		want, wantErr := artifact.Encode(expected)
+		got, gotErr := artifact.Encode(stored)
+		if wantErr != nil || gotErr != nil || !bytes.Equal(want, got) {
+			return errors.Join(contexthandler.ErrPacketAuthority, wantErr, gotErr)
+		}
+		return nil
 	})
 	return prepared, err
 }
@@ -109,7 +136,7 @@ func (o *localPacketOwner) LoadPreparedPacketCandidate(ctx context.Context, requ
 		return contexthandler.PacketCandidate{}, errors.Join(contexthandler.ErrPacketAuthority, err)
 	}
 	var result contexthandler.PacketCandidate
-	err = o.journal.WithEffectSection(ctx, func() error {
+	err = o.journal.WithScopeGate(ctx, request.Plan().Scope(), func(ctx context.Context) error {
 		now := o.clock.Now().UTC()
 		if !ownerPacketTimeValid(ctx, request, now) || !now.Before(time.UnixMilli(prepared.Descriptor().ExpiresAtMilliseconds)) {
 			return contexthandler.ErrPacketAuthority

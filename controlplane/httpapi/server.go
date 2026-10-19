@@ -664,6 +664,10 @@ func parseRunActionPath(escapedPath, action string) (audit.ReviewScope, bool) {
 	return scope, matched && !cancelRoute
 }
 func (s *Server) finalizeRun(ctx context.Context, writer http.ResponseWriter, request *http.Request, requestID string, scope audit.ReviewScope, at time.Time) {
+	if s.localFullAdmitter != nil {
+		writeForbidden(writer, requestID)
+		return
+	}
 	encoded, status, err := readJSONRequest(request, maxWorkerRequestBytes)
 	if err != nil {
 		writeAPIError(writer, status, requestID, "invalid_request", "The finalization request is invalid.")
@@ -814,6 +818,10 @@ func (s *Server) handleWorkerOperation(
 	action string,
 	at time.Time,
 ) {
+	if s.localFullAdmitter != nil {
+		writeForbidden(writer, requestID)
+		return
+	}
 	capability := CapabilityTaskClaim
 	if action == "complete" {
 		capability = CapabilityTaskComplete

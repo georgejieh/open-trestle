@@ -1,6 +1,7 @@
 package runtimecatalog
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"time"
@@ -35,6 +36,7 @@ type LocalFullReviewAdmissionConfig struct {
 
 type LocalFullReviewAdmitter struct {
 	coordinator *controlplane.Coordinator
+	journal     controlplane.RunJournal
 	store       artifact.Store
 	config      LocalFullReviewAdmissionConfig
 }
@@ -47,7 +49,7 @@ func NewLocalFullReviewAdmitter(journal controlplane.RunJournal, store artifact.
 	if err != nil {
 		return nil, ErrInvalidLocalFullReview
 	}
-	return &LocalFullReviewAdmitter{coordinator, store, config}, nil
+	return &LocalFullReviewAdmitter{coordinator: coordinator, journal: journal, store: store, config: config}, nil
 }
 
 func validateLocalFullAdmissionConfig(c LocalFullReviewAdmissionConfig) error {
@@ -98,42 +100,104 @@ func (a *LocalFullReviewAdmitter) Admit(ctx context.Context, intent LocalFullRev
 		return controlplane.ReviewRunState{}, err
 	}
 	plan := prepared.Plan()
+	var state controlplane.ReviewRunState
+	wasExisting := false
+	operation := func(inner context.Context) error {
+		var operationErr error
+		state, wasExisting, operationErr = a.admitPrepared(inner, intent, prepared, at)
+		return operationErr
+	}
+	if journal, ok := a.journal.(*controlplane.FileRunJournal); ok {
+		preflight := func(inner context.Context) error {
+			existing, _, resumeErr := a.coordinator.Resume(inner, intent.Scope())
+			if resumeErr == nil {
+				if existing.Identity() != plan.Identity() {
+					return ErrLocalFullReviewConflict
+				}
+				return nil
+			}
+			if !errors.Is(resumeErr, controlplane.ErrRunNotOpened) {
+				return resumeErr
+			}
+			when := at.UTC()
+			if when.Before(intent.CreatedAt()) || when.Sub(intent.CreatedAt()) > localDeterministicIntentFreshness || !intent.CreatedAt().Add(a.config.Retention).After(when) {
+				return ErrLocalFullReviewExpired
+			}
+			for _, revision := range []evidence.RevisionIdentity{intent.BaseRevision(), intent.HeadRevision()} {
+				if err := a.config.Source.ValidateLocalRevision(inner, revision); err != nil {
+					if errors.Is(err, scm.LocalGitRevisionResourceLimit) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+						return err
+					}
+					return ErrInvalidLocalFullReview
+				}
+			}
+			return nil
+		}
+		err = journal.WithScopeIntentChecked(ctx, intent.Scope(), "full-admission", plan.Identity(), preflight, operation, func(inner context.Context) error {
+			persisted, observed, readErr := a.coordinator.Resume(inner, intent.Scope())
+			if readErr != nil || persisted.Identity() != plan.Identity() || observed.HeadIdentity() != state.HeadIdentity() || observed.Revision() != state.Revision() {
+				return errors.Join(controlplane.ErrRunJournalHeadConflict, readErr)
+			}
+			if !wasExisting {
+				for _, input := range prepared.Inputs() {
+					stored, getErr := a.store.Get(inner, intent.Scope(), input.Identity(), at.UTC())
+					if getErr != nil {
+						return getErr
+					}
+					want, wantErr := artifact.Encode(input)
+					got, gotErr := artifact.Encode(stored)
+					if wantErr != nil || gotErr != nil || !bytes.Equal(want, got) {
+						return errors.Join(ErrInvalidLocalFullReview, wantErr, gotErr)
+					}
+				}
+			}
+			return nil
+		})
+		return state, err
+	}
+	err = operation(ctx)
+	return state, err
+}
+
+func (a *LocalFullReviewAdmitter) admitPrepared(ctx context.Context, intent LocalFullReviewIntent, prepared PreparedReviewRun, at time.Time) (controlplane.ReviewRunState, bool, error) {
+	plan := prepared.Plan()
 	existing, _, resumeErr := a.coordinator.Resume(ctx, intent.Scope())
 	if resumeErr == nil {
 		if existing.Identity() != plan.Identity() {
-			return controlplane.ReviewRunState{}, ErrLocalFullReviewConflict
+			return controlplane.ReviewRunState{}, true, ErrLocalFullReviewConflict
 		}
-		return a.coordinator.Advance(ctx, existing, at.UTC())
+		state, err := a.coordinator.Advance(ctx, existing, at.UTC())
+		return state, true, err
 	}
 	if !errors.Is(resumeErr, controlplane.ErrRunNotOpened) {
-		return controlplane.ReviewRunState{}, resumeErr
+		return controlplane.ReviewRunState{}, false, resumeErr
 	}
 	at = at.UTC()
 	if at.Before(intent.CreatedAt()) || at.Sub(intent.CreatedAt()) > localDeterministicIntentFreshness || !intent.CreatedAt().Add(a.config.Retention).After(at) {
-		return controlplane.ReviewRunState{}, ErrLocalFullReviewExpired
+		return controlplane.ReviewRunState{}, false, ErrLocalFullReviewExpired
 	}
 	for _, revision := range []evidence.RevisionIdentity{intent.BaseRevision(), intent.HeadRevision()} {
 		if err := a.config.Source.ValidateLocalRevision(ctx, revision); err != nil {
 			if errors.Is(err, scm.LocalGitRevisionResourceLimit) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return controlplane.ReviewRunState{}, err
+				return controlplane.ReviewRunState{}, false, err
 			}
-			return controlplane.ReviewRunState{}, ErrInvalidLocalFullReview
+			return controlplane.ReviewRunState{}, false, ErrInvalidLocalFullReview
 		}
 	}
 	for _, input := range prepared.Inputs() {
 		if input.Scope().Identity() != intent.Scope().Identity() || !input.ExpiresAt().After(at) {
-			return controlplane.ReviewRunState{}, ErrInvalidLocalFullReview
+			return controlplane.ReviewRunState{}, false, ErrInvalidLocalFullReview
 		}
 		if _, err := a.store.Put(ctx, input, at); err != nil {
-			return controlplane.ReviewRunState{}, err
+			return controlplane.ReviewRunState{}, false, err
 		}
 	}
 	state, err := a.coordinator.Open(ctx, plan, at)
 	if errors.Is(err, controlplane.ErrRunPlanConflict) {
-		return controlplane.ReviewRunState{}, ErrLocalFullReviewConflict
+		return controlplane.ReviewRunState{}, false, ErrLocalFullReviewConflict
 	}
 	if err == nil {
 		state, err = a.coordinator.Advance(ctx, plan, at)
 	}
-	return state, err
+	return state, false, err
 }
