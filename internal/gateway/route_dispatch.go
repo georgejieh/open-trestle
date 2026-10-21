@@ -270,6 +270,10 @@ func (r RouteDispatchResult) validateFields() error {
 }
 
 func deriveRouteDispatchResultIdentity(result RouteDispatchResult) string {
+	return deriveRouteDispatchIdentity(result.authorizationIdentity, result.status, result.response.Identity(), result.failure, result.replaySafety, result.usage, result.retryAfterMilliseconds)
+}
+
+func deriveRouteDispatchIdentity(authorization string, status RouteDispatchStatus, responseIdentity string, failure RouteFailureClass, replaySafety RouteReplaySafety, usage provider.RouteTokenUsage, retryAfter uint32) string {
 	preimage := struct {
 		Contract      string `json:"contract"`
 		Version       int    `json:"version"`
@@ -285,11 +289,11 @@ func deriveRouteDispatchResultIdentity(result RouteDispatchResult) string {
 		RetryAfter    uint32 `json:"retry_after_milliseconds"`
 	}{
 		Contract: "open-trestle/route-dispatch-result", Version: 1,
-		Authorization: result.authorizationIdentity, Status: result.status.String(), Response: result.response.Identity(),
-		Failure: result.failure.String(), ReplaySafety: result.replaySafety.String(),
-		UsageKnown: result.usage.IsKnown(), InputTokens: result.usage.InputTokens(),
-		OutputTokens: result.usage.OutputTokens(), CachedTokens: result.usage.CachedInputTokens(),
-		RetryAfter: result.retryAfterMilliseconds,
+		Authorization: authorization, Status: status.String(), Response: responseIdentity,
+		Failure: failure.String(), ReplaySafety: replaySafety.String(),
+		UsageKnown: usage.IsKnown(), InputTokens: usage.InputTokens(),
+		OutputTokens: usage.OutputTokens(), CachedTokens: usage.CachedInputTokens(),
+		RetryAfter: retryAfter,
 	}
 	encoded, _ := json.Marshal(preimage)
 	digest := sha256.Sum256(encoded)

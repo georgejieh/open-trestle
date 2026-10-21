@@ -47,6 +47,20 @@ func (r CompletedRouteAttemptRecord) Validate() error {
 	}
 	return nil
 }
+
+// DispatchResultIdentity derives the audited result identity from validated accounting.
+// It does not recreate or validate response content.
+func (r CompletedRouteAttemptRecord) DispatchResultIdentity() (string, error) {
+	if r.Validate() != nil {
+		return "", ErrInvalidCompletedRouteAttemptRecord
+	}
+	status := RouteDispatchFailed
+	if r.outcome.Status() == RouteAttemptSucceeded {
+		status = RouteDispatchSucceeded
+	}
+	return deriveRouteDispatchIdentity(r.authorization.Identity(), status, r.outcome.ResponseIdentity(), r.outcome.Failure(), r.outcome.ReplaySafety(), r.outcome.Usage(), r.outcome.RetryAfterMilliseconds()), nil
+}
+
 func (r CompletedRouteAttemptRecord) deriveIdentity() string {
 	encoded, err := json.Marshal([]any{"open-trestle/completed-route-attempt", 1, r.authorization.Identity(), r.outcome.Identity(), r.reconciliation.Identity()})
 	if err != nil {
