@@ -60,7 +60,7 @@ type localPacketOwnerFixture struct {
 	clock       localPacketFixtureClock
 }
 
-func newLocalPacketOwnerFixture(t *testing.T) localPacketOwnerFixture {
+func prepareLocalPacketOwnerFixture(t *testing.T) (localPacketOwnerFixture, controlplane.ReviewRunPlan, []controlplane.TaskHandler) {
 	t.Helper()
 	ctx := context.Background()
 	root := t.TempDir()
@@ -249,10 +249,25 @@ func newLocalPacketOwnerFixture(t *testing.T) localPacketOwnerFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return localPacketOwnerFixture{store: store, journal: journal, owner: owner, resources: resources, coordinator: coordinator, rootDigest: digest, statePath: statePath, setupPath: setupPath, setupPlan: setupPlan, repository: repository, gitRoot: gitRoot, objectStore: objectStore, adapter: adapter, clock: clock}, plan, []controlplane.TaskHandler{sourceHandler, sourceHandler, changeHandler, analysisHandler, memoryHandler}
+}
+
+func newLocalPacketOwnerFixture(t *testing.T) localPacketOwnerFixture {
+	t.Helper()
+	f, plan, handlers := prepareLocalPacketOwnerFixture(t)
+	ctx := context.Background()
+	coordinator := f.coordinator
+	tasks := make([]controlplane.TaskDefinition, 0, 6)
+	for _, key := range []string{"source-base", "source-head", "change", "analysis", "memory", "context"} {
+		task, ok := plan.Task(key)
+		if !ok {
+			t.Fatalf("missing fixture task %s", key)
+		}
+		tasks = append(tasks, task)
+	}
 	if _, err := coordinator.Open(ctx, plan, time.UnixMilli(100)); err != nil {
 		t.Fatal(err)
 	}
-	handlers := []controlplane.TaskHandler{sourceHandler, sourceHandler, changeHandler, analysisHandler, memoryHandler}
 	for i, handler := range handlers {
 		task := tasks[i]
 		at := time.UnixMilli(int64(101 + 2*i))
@@ -296,7 +311,8 @@ func newLocalPacketOwnerFixture(t *testing.T) localPacketOwnerFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return localPacketOwnerFixture{store: store, journal: journal, owner: owner, resources: resources, coordinator: coordinator, request: request, rootDigest: digest, statePath: statePath, setupPath: setupPath, setupPlan: setupPlan, repository: repository, gitRoot: gitRoot, objectStore: objectStore, adapter: adapter, clock: clock}
+	f.request = request
+	return f
 }
 
 // assertLocalPacketOracle checks the wire against persisted upstream artifacts, not a

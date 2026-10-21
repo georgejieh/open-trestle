@@ -51,14 +51,14 @@ type recordedNamesFixture struct {
 func newRecordedNamesFixture(t *testing.T, alter func([]controlplane.TaskDefinition) []controlplane.TaskDefinition, attempt2 string, suffix bool) recordedNamesFixture {
 	t.Helper()
 	ctx := context.Background()
-	f := newLocalPacketOwnerFixture(t)
-	baseTask, _ := f.request.Plan().Task("source-base")
-	headTask, _ := f.request.Plan().Task("source-head")
-	oldBase, err := f.store.Get(ctx, f.request.Plan().Scope(), baseTask.InputIdentity(), f.clock.Now())
+	f, initialPlan, _ := prepareLocalPacketOwnerFixture(t)
+	baseTask, _ := initialPlan.Task("source-base")
+	headTask, _ := initialPlan.Task("source-head")
+	oldBase, err := f.store.Get(ctx, initialPlan.Scope(), baseTask.InputIdentity(), f.clock.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	oldHead, err := f.store.Get(ctx, f.request.Plan().Scope(), headTask.InputIdentity(), f.clock.Now())
+	oldHead, err := f.store.Get(ctx, initialPlan.Scope(), headTask.InputIdentity(), f.clock.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func newRecordedNamesFixture(t *testing.T, alter func([]controlplane.TaskDefinit
 	if err != nil {
 		t.Fatal(err)
 	}
-	memory, err := memoryhandler.NewHandler(f.store, f.clock, memorycore.NewLexicalIndex(), strings.Repeat("6", 64), f.request.Plan().PolicyIdentity(), "reviewer", []string{"."}, 10, 20)
+	memory, err := memoryhandler.NewHandler(f.store, f.clock, memorycore.NewLexicalIndex(), strings.Repeat("6", 64), initialPlan.PolicyIdentity(), "reviewer", []string{"."}, 10, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func newRecordedNamesFixture(t *testing.T, alter func([]controlplane.TaskDefinit
 	if err != nil {
 		t.Fatal(err)
 	}
-	preparedRequest, err := runtimecatalog.NewPreparedReviewRequest(runtimecatalog.PreparedReviewRequestOptions{Scope: f.request.Plan().Scope(), HostRequestIdentity: strings.Repeat("e", 64), Repository: f.repository, BaseRevision: baseInput.Revision(), HeadRevision: headInput.Revision(), SourceAdapter: f.adapter.Identity(), SourceRootIdentity: f.rootDigest, InventoryIdentity: strings.Repeat("a", 64), RuntimePolicyIdentity: strings.Repeat("b", 64), ReviewPolicyIdentity: f.request.Plan().PolicyIdentity(), Classification: oldBase.Classification(), Protection: oldBase.Protection(), CreatedAt: oldBase.CreatedAt(), Retention: oldBase.ExpiresAt().Sub(oldBase.CreatedAt()), Catalog: catalog, RequireBoundSource: true})
+	preparedRequest, err := runtimecatalog.NewPreparedReviewRequest(runtimecatalog.PreparedReviewRequestOptions{Scope: initialPlan.Scope(), HostRequestIdentity: strings.Repeat("e", 64), Repository: f.repository, BaseRevision: baseInput.Revision(), HeadRevision: headInput.Revision(), SourceAdapter: f.adapter.Identity(), SourceRootIdentity: f.rootDigest, InventoryIdentity: strings.Repeat("a", 64), RuntimePolicyIdentity: strings.Repeat("b", 64), ReviewPolicyIdentity: initialPlan.PolicyIdentity(), Classification: oldBase.Classification(), Protection: oldBase.Protection(), CreatedAt: oldBase.CreatedAt(), Retention: oldBase.ExpiresAt().Sub(oldBase.CreatedAt()), Catalog: catalog, RequireBoundSource: true})
 	if err != nil {
 		t.Fatal(err)
 	}
