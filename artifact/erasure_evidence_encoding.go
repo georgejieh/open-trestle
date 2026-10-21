@@ -120,7 +120,8 @@ func (e ErasureEvidence) validate() (attemptResponseRecord, error) {
 	if _, err := erasureMetadataEncode(r, maxEncodedErasureEvidenceBytes); err != nil {
 		return attemptResponseRecord{}, err
 	}
-	if err := evidencePayloadShape(r); err != nil {
+	response, err := evidencePayloadShape(r)
+	if err != nil {
 		return attemptResponseRecord{}, err
 	}
 	if e.ref.Validate() != nil {
@@ -129,12 +130,10 @@ func (e ErasureEvidence) validate() (attemptResponseRecord, error) {
 	if r.NamespaceIdentity != e.ref.NamespaceIdentity() || r.ScopeIdentity != e.ref.Scope().Identity() || r.OperationIdentity != e.ref.OperationIdentity() {
 		return attemptResponseRecord{}, ErrErasureIdentityMismatch
 	}
-	var response attemptResponseRecord
 	body, _ := hex.DecodeString(r.RecordHex)
 	switch r.Kind {
 	case "response":
-		var err error
-		response, err = parseAttemptResponse(body, e.ref)
+		response, err = bindAttemptResponse(response, e.ref)
 		if err != nil {
 			return attemptResponseRecord{}, err
 		}
@@ -232,39 +231,43 @@ func newErasureEvidence(ref ErasureOperationRef, kind, slot, attempt string, at 
 	return ParseErasureEvidence(encoded, ref)
 }
 
-func evidencePayloadShape(r erasureEvidenceRecord) error {
+func evidencePayloadShape(r erasureEvidenceRecord) (attemptResponseRecord, error) {
+	var response attemptResponseRecord
 	body, _ := hex.DecodeString(r.RecordHex)
 	switch r.Kind {
 	case "response":
-		var response attemptResponseRecord
 		if !erasureMetadataDecode(body, maxEncodedAttemptResponseBytes, &response) {
-			return ErrInvalidErasureContract
+			return attemptResponseRecord{}, ErrInvalidErasureContract
 		}
 		if err := response.shape(); err != nil {
-			return err
+			return attemptResponseRecord{}, err
 		}
-		return responseBodyShape(response)
+		if err := responseBodyShape(response); err != nil {
+			return attemptResponseRecord{}, err
+		}
 	case "fence":
 		var version objectVersionRecord
 		if !erasureMetadataDecode(body, 4096, &version) || version.Contract != objectVersionContract || version.SchemaVersion != 1 ||
 			!validDigest(version.Identity) || (ExactObjectKey{version.NamespaceIdentity, version.Key}).Validate() != nil ||
 			version.Kind != "data" || !validObjectVersionID(version.VersionID) {
-			return ErrInvalidErasureContract
+			return attemptResponseRecord{}, ErrInvalidErasureContract
 		}
 	case "verification":
 		var verification erasureVerificationRecord
 		if !erasureMetadataDecode(body, 8192, &verification) {
-			return ErrInvalidErasureContract
+			return attemptResponseRecord{}, ErrInvalidErasureContract
 		}
 		if err := verification.shape(); err != nil {
-			return err
+			return attemptResponseRecord{}, err
 		}
 	case "candidate":
 		var attestation erasureAttestationV2Record
 		if !erasureMetadataDecode(body, 8192, &attestation) {
-			return ErrInvalidErasureContract
+			return attemptResponseRecord{}, ErrInvalidErasureContract
 		}
-		return attestation.shape()
+		if err := attestation.shape(); err != nil {
+			return attemptResponseRecord{}, err
+		}
 	}
-	return nil
+	return response, nil
 }
