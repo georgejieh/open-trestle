@@ -133,7 +133,14 @@ func TestRepositorySupervisorDiscoversAndExecutesLocalRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	supervisor, err := NewRepositorySupervisor(journal, catalog, RepositorySupervisorOptions{TenantID: "tenant-a", RepositoryIDs: []string{"repo-a"}, WorkerIdentity: "local-worker", PollInterval: time.Second, RenewalInterval: 50 * time.Millisecond, ExecutionTimeout: time.Second, Clock: workerSystemClock{}, FinalizeSettled: true})
+	finalCalls := 0
+	supervisor, err := NewRepositorySupervisor(journal, catalog, RepositorySupervisorOptions{TenantID: "tenant-a", RepositoryIDs: []string{"repo-a"}, WorkerIdentity: "local-worker", PollInterval: time.Second, RenewalInterval: 50 * time.Millisecond, ExecutionTimeout: time.Second, Clock: workerSystemClock{}, FinalizeSettled: true, OnTerminal: func(_ context.Context, terminal controlplane.ReviewRunState) error {
+		if terminal.Plan().Scope().Identity() != scope.Identity() || terminal.Status() != controlplane.ReviewRunSucceeded {
+			t.Fatal("foreign or active terminal state")
+		}
+		finalCalls++
+		return nil
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,6 +152,12 @@ func TestRepositorySupervisorDiscoversAndExecutesLocalRuns(t *testing.T) {
 	task, _ := receipt.Task("source")
 	if err != nil || receipt.Status() != controlplane.ReviewRunSucceeded || task.Status() != controlplane.TaskRuntimeSucceeded || receipt.OutputIdentity() != task.OutputIdentity() {
 		t.Fatalf("receipt=(%#v,%v)", receipt, err)
+	}
+	if finalCalls != 1 {
+		t.Fatalf("terminal projector calls=%d", finalCalls)
+	}
+	if _, err := supervisor.RunOnce(context.Background()); err != nil || finalCalls != 2 {
+		t.Fatalf("terminal replay calls=%d err=%v", finalCalls, err)
 	}
 }
 
@@ -219,5 +232,36 @@ func TestRunnerUsesNotificationBeforePollingFallback(t *testing.T) {
 	}
 	if control.claims != 1 || control.acks != 1 || base.completes != 1 {
 		t.Fatalf("claims=%d acks=%d completes=%d", control.claims, control.acks, base.completes)
+	}
+}
+
+type fixedWorkerClock struct{ at time.Time }
+
+func (c fixedWorkerClock) Now() time.Time { return c.at }
+
+func TestRepositorySupervisorUsesConfiguredClockForLeaseAdmission(t *testing.T) {
+	for _, at := range []time.Time{time.Unix(1000, 0).UTC(), time.Unix(4102444800, 0).UTC()} {
+		t.Run(at.Format("2006"), func(t *testing.T) {
+			journal := controlplane.NewMemoryRunJournal()
+			scope, _ := audit.NewReviewScope("tenant-a", "repo-a", "run-clock")
+			handler := delayedHandler{identity: strings.Repeat("d", 64), delay: 100 * time.Millisecond}
+			catalog, _ := controlplane.NewTaskHandlerCatalog([]controlplane.TaskHandler{handler})
+			plan := workerPlan(t, scope, catalog)
+			coordinator, _ := controlplane.NewCoordinator(journal)
+			if _, err := coordinator.Open(context.Background(), plan, at.Add(-time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			supervisor, err := NewRepositorySupervisor(journal, catalog, RepositorySupervisorOptions{TenantID: "tenant-a", RepositoryIDs: []string{"repo-a"}, WorkerIdentity: "clock-worker", PollInterval: time.Second, RenewalInterval: 50 * time.Millisecond, ExecutionTimeout: time.Second, Clock: fixedWorkerClock{at: at}, FinalizeSettled: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if worked, err := supervisor.RunOnce(context.Background()); err != nil || !worked {
+				t.Fatalf("configured-clock run worked=%t err=%v", worked, err)
+			}
+			receipt, err := coordinator.Receipt(context.Background(), scope)
+			if err != nil || receipt.Status() != controlplane.ReviewRunSucceeded {
+				t.Fatalf("configured-clock receipt status=%s err=%v", receipt.Status(), err)
+			}
+		})
 	}
 }

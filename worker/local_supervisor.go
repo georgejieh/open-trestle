@@ -262,6 +262,7 @@ type RepositorySupervisorOptions struct {
 	PollInterval, RenewalInterval, ExecutionTimeout time.Duration
 	Clock                                           Clock
 	FinalizeSettled                                 bool
+	OnTerminal                                      func(context.Context, controlplane.ReviewRunState) error
 }
 type RepositorySupervisor struct {
 	journal   controlplane.RunJournal
@@ -284,7 +285,7 @@ func NewRepositorySupervisor(journal controlplane.RunJournal, catalog controlpla
 		}
 	}
 	options.RepositoryIDs = canonical
-	if nilWorkerValue(journal) || catalog.Validate() != nil || !validLocalScopeID(options.TenantID) || !validRepos || !validLocalWorkerIdentity(options.WorkerIdentity) || options.PollInterval < minimumPollInterval || options.PollInterval > maximumPollInterval || options.RenewalInterval < minimumRenewalInterval || options.RenewalInterval > maximumRenewalInterval || options.ExecutionTimeout < minimumExecutionTime || options.ExecutionTimeout > maximumExecutionTime || options.RenewalInterval >= options.ExecutionTimeout || nilWorkerValue(options.Clock) {
+	if nilWorkerValue(journal) || catalog.Validate() != nil || !validLocalScopeID(options.TenantID) || !validRepos || !validLocalWorkerIdentity(options.WorkerIdentity) || options.PollInterval < minimumPollInterval || options.PollInterval > maximumPollInterval || options.RenewalInterval < minimumRenewalInterval || options.RenewalInterval > maximumRenewalInterval || options.ExecutionTimeout < minimumExecutionTime || options.ExecutionTimeout > maximumExecutionTime || options.RenewalInterval >= options.ExecutionTimeout || nilWorkerValue(options.Clock) || options.OnTerminal != nil && !options.FinalizeSettled {
 		return nil, ErrInvalidRepositorySupervisor
 	}
 	finalizer, err := controlplane.NewRunFinalizer(journal)
@@ -344,7 +345,7 @@ func (s *RepositorySupervisor) RunOnce(ctx context.Context) (bool, error) {
 			if err != nil {
 				return workedAny, err
 			}
-			runner, err := New(control, s.catalog, Options{Scope: plan.Scope(), PollInterval: s.options.PollInterval, RenewalInterval: s.options.RenewalInterval, ExecutionTimeout: s.options.ExecutionTimeout})
+			runner, err := New(control, s.catalog, Options{Scope: plan.Scope(), PollInterval: s.options.PollInterval, RenewalInterval: s.options.RenewalInterval, ExecutionTimeout: s.options.ExecutionTimeout, Clock: s.options.Clock})
 			if err != nil {
 				return workedAny, err
 			}
@@ -361,11 +362,16 @@ func (s *RepositorySupervisor) RunOnce(ctx context.Context) (bool, error) {
 				}
 			}
 			if settled && s.options.FinalizeSettled {
-				_, finalized, finalizeErr := s.finalizer.ReconcileRun(ctx, plan.Scope(), s.options.Clock.Now().UTC())
+				terminal, finalized, finalizeErr := s.finalizer.ReconcileRun(ctx, plan.Scope(), s.options.Clock.Now().UTC())
 				if finalizeErr != nil {
 					return workedAny, fmt.Errorf("finalize repository run: %w", finalizeErr)
 				}
 				workedAny = workedAny || finalized
+				if terminal.Status() != controlplane.ReviewRunActive && s.options.OnTerminal != nil {
+					if err := s.options.OnTerminal(ctx, terminal); err != nil {
+						return workedAny, fmt.Errorf("project terminal repository run: %w", err)
+					}
+				}
 			}
 		}
 		if len(plans) < maximumSupervisorPlansPerPage {

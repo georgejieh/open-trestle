@@ -58,6 +58,14 @@ type Options struct {
 	ExecutionTimeout          time.Duration
 	NotificationWait          time.Duration
 	NotificationLeaseDuration time.Duration
+	Clock                     Clock
+}
+
+// OwnerContextSettler completes a context task inside the daemon-owned
+// journal effect, without passing through generic CompleteTask.
+type OwnerContextSettler interface {
+	controlplane.TaskHandler
+	ExecuteAndSettle(context.Context, controlplane.TaskExecutionRequest) error
 }
 
 // Runner claims and executes one task at a time from an exact handler catalog.
@@ -78,6 +86,12 @@ func New(control Control, catalog controlplane.TaskHandlerCatalog, options Optio
 	notificationsDisabled := options.NotificationWait == 0 && options.NotificationLeaseDuration == 0
 	notificationsEnabled := options.NotificationWait >= minimumPollInterval && options.NotificationWait <= maximumPollInterval && options.NotificationLeaseDuration >= options.ExecutionTimeout && options.NotificationLeaseDuration <= maximumExecutionTime
 	if nilControl(control) || catalog.Validate() != nil || options.Scope.Validate() != nil || !validPoll || !validRenewal || !validExecution || options.RenewalInterval >= options.ExecutionTimeout || !notificationsDisabled && !notificationsEnabled {
+		return nil, ErrInvalidWorker
+	}
+	if options.Clock == nil {
+		options.Clock = systemClock{}
+	}
+	if nilWorkerValue(options.Clock) {
 		return nil, ErrInvalidWorker
 	}
 	return &Runner{control: control, catalog: catalog, options: options}, nil
@@ -174,7 +188,7 @@ func (r *Runner) RunOnce(ctx context.Context) (bool, bool, error) {
 		if ctx.Err() != nil {
 			return false, false, ctx.Err()
 		}
-		if !validLeaseForPlan(lease, plan, taskReceipt) {
+		if !validLeaseForPlan(lease, plan, taskReceipt, r.options.Clock.Now().UTC()) {
 			return false, false, ErrWorkerLease
 		}
 		completedReceipt, err := r.execute(ctx, plan, receipt, handler, lease)
@@ -217,9 +231,22 @@ func (r *Runner) execute(ctx context.Context, plan controlplane.ReviewRunPlan, r
 	drained := make(chan struct{})
 	r.active = drained
 	r.mu.Unlock()
+	owner, ownerOnly := handler.(OwnerContextSettler)
+	if ownerOnly && task.Kind() != controlplane.TaskAssembleContext {
+		r.mu.Lock()
+		close(drained)
+		r.active = nil
+		r.mu.Unlock()
+		return controlplane.ReviewRunReceipt{}, ErrWorkerState
+	}
 	completions := make(chan controlplane.TaskCompletion, 1)
+	ownerResults := make(chan error, 1)
 	go func() {
 		defer func() { r.mu.Lock(); close(drained); r.active = nil; r.mu.Unlock() }()
+		if ownerOnly {
+			executeOwnerContext(executionContext, owner, request, ownerResults)
+			return
+		}
 		executeHandler(executionContext, handler, request, completions)
 	}()
 	defer func() {
@@ -236,6 +263,25 @@ func (r *Runner) execute(ctx context.Context, plan controlplane.ReviewRunPlan, r
 	currentLease := lease
 	for {
 		select {
+		case ownerErr := <-ownerResults:
+			if executionContext.Err() != nil {
+				return result, ErrWorkerExecution
+			}
+			if ownerErr != nil {
+				return result, ownerErr
+			}
+			settled, err := r.control.GetRun(ctx, r.options.Scope)
+			if err != nil {
+				return controlplane.ReviewRunReceipt{}, err
+			}
+			taskReceipt, found := settled.Task(task.Key())
+			settledInput := taskReceipt.Status() == controlplane.TaskRuntimeSucceeded
+			settledAbstention := taskReceipt.Status() == controlplane.TaskRuntimeFailed && (taskReceipt.Failure() == controlplane.RunFailurePolicy || taskReceipt.Failure() == controlplane.RunFailureResourceLimit) && taskReceipt.OutputIdentity() != ""
+			expiredOwner := taskReceipt.Status() == controlplane.TaskRuntimeFailed && taskReceipt.Failure() == controlplane.RunFailurePolicy && taskReceipt.OutputIdentity() == "" && !r.options.Clock.Now().UTC().Before(lease.ExpiresAt())
+			if !found || (!settledInput && !settledAbstention && !expiredOwner) || settledInput && taskReceipt.OutputIdentity() == "" {
+				return controlplane.ReviewRunReceipt{}, ErrWorkerState
+			}
+			return settled, nil
 		case completion := <-completions:
 			if executionContext.Err() != nil {
 				return result, ErrWorkerExecution
@@ -249,7 +295,11 @@ func (r *Runner) execute(ctx context.Context, plan controlplane.ReviewRunPlan, r
 			}
 			return receipt, nil
 		case <-timer.C:
-			if time.Until(currentLease.ExpiresAt()) <= 0 {
+			if ownerOnly {
+				timer.Reset(r.options.RenewalInterval)
+				continue
+			}
+			if !r.options.Clock.Now().UTC().Before(currentLease.ExpiresAt()) {
 				return controlplane.ReviewRunReceipt{}, ErrWorkerLease
 			}
 			renewed, err := r.control.RenewTaskLease(ctx, r.options.Scope, currentLease)
@@ -306,6 +356,19 @@ func (r *Runner) Wait(ctx context.Context) error {
 	}
 }
 
+func executeOwnerContext(ctx context.Context, handler OwnerContextSettler, request controlplane.TaskExecutionRequest, output chan<- error) {
+	err := ErrWorkerExecution
+	func() {
+		defer func() {
+			if recover() != nil {
+				err = ErrWorkerExecution
+			}
+		}()
+		err = handler.ExecuteAndSettle(ctx, request)
+	}()
+	output <- err
+}
+
 func executeHandler(ctx context.Context, handler controlplane.TaskHandler, request controlplane.TaskExecutionRequest, output chan<- controlplane.TaskCompletion) {
 	completion := controlplane.TaskCompletion{}
 	func() {
@@ -352,17 +415,21 @@ func claimCandidate(task controlplane.ReviewTaskReceipt) bool {
 	retryable := task.Status() == controlplane.TaskRuntimeFailed && task.Failure().Retryable() && task.Attempts() < task.MaxAttempts()
 	return availableOrLeased || retryable
 }
-func validLeaseForPlan(lease controlplane.TaskLease, plan controlplane.ReviewRunPlan, receipt controlplane.ReviewTaskReceipt) bool {
+func validLeaseForPlan(lease controlplane.TaskLease, plan controlplane.ReviewRunPlan, receipt controlplane.ReviewTaskReceipt, at time.Time) bool {
 	validIdentity := lease.Validate() == nil && lease.PlanIdentity() == plan.Identity() && lease.TaskIdentity() == receipt.TaskIdentity()
 	validTask := lease.TaskKey() == receipt.Key() && lease.HandlerIdentity() == receipt.HandlerIdentity()
-	return validIdentity && validTask && lease.ExpiresAt().After(time.Now().UTC())
+	return validIdentity && validTask && lease.ExpiresAt().After(at)
 }
 func sameLeaseAuthority(previous, renewed controlplane.TaskLease) bool {
 	validIdentity := renewed.Validate() == nil && previous.PlanIdentity() == renewed.PlanIdentity() && previous.TaskIdentity() == renewed.TaskIdentity()
 	validTask := previous.TaskKey() == renewed.TaskKey() && previous.HandlerIdentity() == renewed.HandlerIdentity()
 	validAuthority := previous.WorkerIdentity() == renewed.WorkerIdentity() && previous.Attempt() == renewed.Attempt()
-	return validIdentity && validTask && validAuthority && renewed.ExpiresAt().After(previous.ExpiresAt())
+	return validIdentity && validTask && validAuthority && (renewed.ExpiresAt().After(previous.ExpiresAt()) || renewed.Identity() == previous.Identity())
 }
+
+type systemClock struct{}
+
+func (systemClock) Now() time.Time { return time.Now().UTC() }
 
 type conflictError interface {
 	StatusCode() int
