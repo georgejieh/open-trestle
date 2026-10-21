@@ -86,11 +86,11 @@ func runRemoteScopeOperation(operation string, args []string, stdout, stderr io.
 	tenantID := flags.String("tenant", "", "tenant identifier")
 	repositoryID := flags.String("repository", "", "repository identifier")
 	runID := flags.String("run", "", "review-run identifier")
-	format := flags.String("format", "run", "status output: run, json, or sarif")
+	format := flags.String("format", "run", "status output: run, progress, json, or sarif")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
-	if flags.NArg() != 0 || *tenantID == "" || *repositoryID == "" || *runID == "" || (*format != "run" && (*format != "json" && *format != "sarif" || operation != "status")) {
+	if flags.NArg() != 0 || *tenantID == "" || *repositoryID == "" || *runID == "" || (*format != "run" && (*format != "progress" && *format != "json" && *format != "sarif" || operation != "status")) {
 		writeRunsScopeUsage(stderr, operation)
 		return 2
 	}
@@ -111,6 +111,14 @@ func runRemoteScopeOperation(operation string, args []string, stdout, stderr io.
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), remoteCommandTimeout)
 	defer cancel()
+	if operation == "status" && *format == "progress" {
+		progress, progressErr := apiClient.GetRunProgress(ctx, scope)
+		if progressErr != nil {
+			fmt.Fprintf(stderr, "runs status: %v\n", progressErr)
+			return 1
+		}
+		return writeJSONResult(progress, stdout, stderr, 0)
+	}
 	var receipt controlplane.ReviewRunReceipt
 	if operation == "status" {
 		receipt, err = apiClient.GetRun(ctx, scope)
@@ -207,5 +215,5 @@ func writeRunsSubmitUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "usage: trestle runs submit --plan PATH [--server URL]")
 }
 func writeRunsScopeUsage(stderr io.Writer, operation string) {
-	fmt.Fprintf(stderr, "usage: trestle runs %s --tenant ID --repository ID --run ID [--server URL] [--format run|json|sarif]\n", operation)
+	fmt.Fprintf(stderr, "usage: trestle runs %s --tenant ID --repository ID --run ID [--server URL] [--format run|progress|json|sarif]\n", operation)
 }

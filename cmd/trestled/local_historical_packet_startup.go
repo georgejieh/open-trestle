@@ -8,9 +8,11 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"time"
 
 	"github.com/georgejieh/open-trestle/artifact"
 	"github.com/georgejieh/open-trestle/controlplane"
+	contexthandler "github.com/georgejieh/open-trestle/handlers/context"
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/internal/scm"
 	"github.com/georgejieh/open-trestle/setup"
@@ -34,6 +36,9 @@ const (
 	historicalPacketConservativeRefusal
 	historicalPacketInputIntentQuarantined
 	historicalPacketInputArtifactMissing
+	historicalPacketOwnerSettledCandidate
+	historicalPacketOwnerPreparedCandidate
+	historicalPacketExpiredV4Candidate
 )
 
 type historicalGateFaultProbe struct {
@@ -43,7 +48,7 @@ type historicalGateFaultProbe struct {
 
 // This only classifies replayed intent and physically observed bytes for refusal.
 // Neither the journal nor the owner checksum authenticates source/snapshot bytes.
-func inspectRecordedHistoricalPackets(ctx context.Context, journal *controlplane.FileRunJournal, pending *artifact.PendingFileStore, recorded *localSourceOwnerRecordedSnapshot, statePath, artifactPath, setupPath string, expected *setup.Plan, tenant, repositoryID string, repository evidence.RepositoryIdentity, gitRoot *os.Root, originalGitIdentity localSourceDirectoryIdentity, objectStore *scm.LocalGitObjectStore, adapter *scm.LocalGitSourceAdapter, sourceDigest string, classification *historicalPacketStartupClass, probe *historicalGateFaultProbe) error {
+func inspectRecordedHistoricalPackets(ctx context.Context, journal *controlplane.FileRunJournal, pending *artifact.PendingFileStore, recorded *localSourceOwnerRecordedSnapshot, statePath, artifactPath, setupPath string, expected *setup.Plan, tenant, repositoryID string, repository evidence.RepositoryIdentity, gitRoot *os.Root, originalGitIdentity localSourceDirectoryIdentity, objectStore *scm.LocalGitObjectStore, adapter *scm.LocalGitSourceAdapter, sourceDigest string, classification *historicalPacketStartupClass, pendingV4 *[]historicalExpiredPacketCheckpoint, now time.Time, probe *historicalGateFaultProbe) error {
 	return journal.WithOwnedHistoricalPacketFacts(ctx, func(stateRoot *os.Root, scan controlplane.HistoricalPacketScan) error {
 		return pending.WithOwnedRoot(func(artifactRoot *os.Root) error {
 			recheck := func() error {
@@ -131,6 +136,9 @@ func inspectRecordedHistoricalPackets(ctx context.Context, journal *controlplane
 					conservative := false
 					linkedInput := false
 					allMissingLinked := true
+					allOwnerSettled := true
+					allOwnerVersioned := true
+					anyOwnerPrepared := false
 					index := 0
 					for _, fact := range facts {
 						if index >= len(observations) || !reflect.DeepEqual(observations[index].expectation, expectedPackets[index]) {
@@ -150,8 +158,33 @@ func inspectRecordedHistoricalPackets(ctx context.Context, journal *controlplane
 						default:
 							return errPhysicalPacketObservationUncertain
 						}
+						if observations[index].kind != physicalPacketIntact {
+							allOwnerSettled = false
+							allOwnerVersioned = false
+						}
 						index++
-						if _, linked := fact.LinkedInputEvent(); linked {
+						linked, hasLinked := fact.LinkedInputEvent()
+						if !hasLinked {
+							allOwnerSettled = false
+							allOwnerVersioned = false
+						}
+						if hasLinked {
+							task, exists := fact.Plan().Task(linked.TaskKey())
+							settlement, hasSettlement := fact.TaskSettlementEvent()
+							terminal, hasTerminal := fact.TerminalEvent()
+							settled := hasSettlement && settlement.Kind() == controlplane.RunEventContextInputSettled && settlement.PreviousIdentity() == linked.Identity() && settlement.OutputIdentity() == linked.InputDescriptor().Input.ArtifactIdentity && (!hasTerminal || terminal.Kind() == controlplane.RunEventSucceeded || terminal.Kind() == controlplane.RunEventCanceled)
+							expiredTerminal := hasSettlement && settlement.Kind() == controlplane.RunEventTaskFailed && settlement.Failure() == controlplane.RunFailurePolicy && settlement.OutputIdentity() == "" && settlement.PreviousIdentity() == linked.Identity() && (!hasTerminal || terminal.Kind() == controlplane.RunEventFailed)
+							settled = settled || expiredTerminal
+							preparedHead := !hasSettlement && !hasTerminal && fact.FinalHeadIdentity() == linked.Identity()
+							if !exists || task.HandlerIdentity() != contexthandler.PacketAuthorityHandlerIdentity() || !settled {
+								allOwnerSettled = false
+							}
+							if !exists || task.HandlerIdentity() != contexthandler.PacketAuthorityHandlerIdentity() || !(settled || preparedHead) {
+								allOwnerVersioned = false
+							}
+							if preparedHead {
+								anyOwnerPrepared = true
+							}
 							linkedInput = true
 							if index+3 > len(observations) {
 								return errPhysicalPacketObservationUncertain
@@ -164,8 +197,14 @@ func inspectRecordedHistoricalPackets(ctx context.Context, journal *controlplane
 								}
 								switch observed.kind {
 								case physicalPacketMissing:
-								case physicalPacketIntact, physicalPacketMismatch:
+									allOwnerSettled = false
+									allOwnerVersioned = false
+								case physicalPacketIntact:
 									tripleMissing = false
+								case physicalPacketMismatch:
+									tripleMissing = false
+									allOwnerSettled = false
+									allOwnerVersioned = false
 								default:
 									return errPhysicalPacketObservationUncertain
 								}
@@ -177,6 +216,17 @@ func inspectRecordedHistoricalPackets(ctx context.Context, journal *controlplane
 					if index != len(observations) {
 						return errPhysicalPacketObservationUncertain
 					}
+					anyUnlinked, anyLinked := false, false
+					for _, fact := range facts {
+						if _, linked := fact.LinkedInputEvent(); linked {
+							anyLinked = true
+						} else {
+							anyUnlinked = true
+						}
+					}
+					if anyUnlinked && anyLinked && !hasV4Missing && !hasV4Mismatch {
+						return errHistoricalPacketObservedAtStartup
+					}
 					switch {
 					case hasV4Missing:
 						selected = historicalPacketMissing
@@ -184,10 +234,36 @@ func inspectRecordedHistoricalPackets(ctx context.Context, journal *controlplane
 						selected = historicalPacketMismatch
 					case linkedInput && allMissingLinked:
 						selected = historicalPacketInputArtifactMissing
+					case linkedInput && allOwnerSettled:
+						selected = historicalPacketOwnerSettledCandidate
+					case linkedInput && allOwnerVersioned && anyOwnerPrepared:
+						selected = historicalPacketOwnerPreparedCandidate
 					case linkedInput:
 						selected = historicalPacketInputIntentQuarantined
 					case conservative:
 						selected = historicalPacketConservativeRefusal
+					}
+					eligibleExpiry := anyUnlinked
+					for _, fact := range facts {
+						if !recordedV4PlanShape(fact.Plan()) || expiredPacketCheckpointValid(fact, now) != nil {
+							eligibleExpiry = false
+						}
+					}
+					if selected == historicalPacketObserved {
+						if eligibleExpiry {
+							checkpoints := make([]historicalExpiredPacketCheckpoint, 0, len(facts))
+							for _, fact := range facts {
+								if err := expiredPacketCheckpointValid(fact, now); err != nil {
+									return err
+								}
+								if err := observeBorrowedHistoricalRecordedV4Names(ctx, artifactRoot, fact, historicalRecordedSourceBinding{RootIdentity: sourceDigest, RepositoryIdentity: repository.Identity(), AdapterIdentity: adapter.Identity().Identity()}); err != nil {
+									return err
+								}
+								checkpoints = append(checkpoints, expiredPacketCheckpoint(fact))
+							}
+							*pendingV4 = checkpoints
+							selected = historicalPacketExpiredV4Candidate
+						}
 					}
 					*classification = selected // Provisional until all postchecks and borrowed roots close.
 					if probe != nil && probe.afterClassified != nil {

@@ -52,6 +52,35 @@ export interface RunReceipt {
   failure: Failure;
   tasks: RunTask[];
 }
+export type ProgressState = "not_run" | "available" | "partial" | "unavailable";
+interface ProgressAxis {
+  state: ProgressState;
+  artifact_identity?: string;
+}
+export interface RunProgress {
+  run: RunReceipt;
+  progress: {
+    change: ProgressAxis & { files?: number; ranges?: number };
+    deterministic: ProgressAxis & {
+      applicable_files?: number;
+      applicable_ranges?: number;
+      checked_files?: number;
+      checked_ranges?: number;
+      observations?: number;
+    };
+    context: ProgressAxis & {
+      analyzed?: number;
+      selected?: number;
+      omitted?: number;
+    };
+    verification: ProgressAxis & {
+      candidates?: number;
+      verified?: number;
+      rejected?: number;
+      inconclusive?: number;
+    };
+  };
+}
 export type DiagnosticSeverity = "error" | "warning" | "information" | "hint";
 export interface Diagnostic {
   identity: string;
@@ -159,7 +188,21 @@ export type DiagnosticSet =
       source_coverage?: never;
       verified_set_identity?: never;
       findings?: never;
-    });
+    })
+  | {
+      contract: "open-trestle/review-diagnostic-set";
+      schema_version: 7;
+      identity: string;
+      tenant_id: string;
+      repository_id: string;
+      review_run_id: string;
+      snapshot_identity: string;
+      head_revision: string;
+      outcome:
+        "completed" | "failed" | "canceled" | "abstained" | "inconclusive";
+      deterministic?: Extract<DiagnosticSet, { schema_version: 6 }>;
+      verified?: Extract<DiagnosticSet, { schema_version: 5 }>;
+    };
 
 export type RuntimeComponentState = "starting" | "ready";
 export interface RuntimeHandler {

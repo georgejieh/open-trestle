@@ -100,6 +100,10 @@ func (j *FileRunJournal) WithScopeIntentPrepared(ctx context.Context, scope audi
 		if err != nil {
 			return errors.Join(ErrScopeIntentUnresolved, err)
 		}
+		markerBytes, markerInfo, err := readOwnerInputPreparationMarker(path)
+		if err != nil || !bytes.Equal(markerBytes, encoded) {
+			return errors.Join(ErrScopeIntentUnresolved, err)
+		}
 		if err := effect(inner); err != nil {
 			return errors.Join(ErrScopeIntentUnresolved, err)
 		}
@@ -111,6 +115,9 @@ func (j *FileRunJournal) WithScopeIntentPrepared(ctx context.Context, scope audi
 		}
 		j.mu.Lock()
 		defer j.mu.Unlock()
+		if err := matchOwnerInputPreparationMarker(path, markerBytes, markerInfo); err != nil {
+			return err
+		}
 		if err := os.Remove(path); err != nil {
 			return errors.Join(ErrScopeIntentUnresolved, err)
 		}
@@ -132,15 +139,13 @@ func (j *FileRunJournal) ReconcileScopeIntent(ctx context.Context, scope audit.R
 		return err
 	}
 	return j.withEffectSection(ctx, func() error {
-		j.mu.Lock()
 		path := j.scopeIntentPath(scope)
-		encoded, err := os.ReadFile(path)
-		j.mu.Unlock()
-		if err != nil || len(encoded) > 1024 {
-			return errors.Join(ErrScopeIntentUnresolved, err)
+		encoded, markerInfo, err := readOwnerInputPreparationMarker(path)
+		if err != nil {
+			return err
 		}
-		var actual scopeIntentRecord
-		if err := json.Unmarshal(encoded, &actual); err != nil || actual != (scopeIntentRecord{Version: 1, Scope: scope.Identity(), Kind: kind, Expected: expected}) {
+		canonical, err := json.Marshal(scopeIntentRecord{Version: 1, Scope: scope.Identity(), Kind: kind, Expected: expected})
+		if err != nil || !bytes.Equal(encoded, append(canonical, '\n')) {
 			return errors.Join(ErrScopeIntentUnresolved, err)
 		}
 		if err := verify(ctx); err != nil {
@@ -151,9 +156,8 @@ func (j *FileRunJournal) ReconcileScopeIntent(ctx context.Context, scope audit.R
 		}
 		j.mu.Lock()
 		defer j.mu.Unlock()
-		current, err := os.ReadFile(path)
-		if err != nil || !bytes.Equal(current, encoded) {
-			return errors.Join(ErrScopeIntentUnresolved, err)
+		if err := matchOwnerInputPreparationMarker(path, encoded, markerInfo); err != nil {
+			return err
 		}
 		if err := os.Remove(path); err != nil {
 			return errors.Join(ErrScopeIntentUnresolved, err)

@@ -1,17 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   ApiError,
-  CURRENT_INTEGRATION_PERMISSION_CHECKER_IDENTITY,
-  hasCurrentIntegrationPermissionAuthority,
   fetchRun,
   fetchRuntimeStatus,
-  fetchSetupSession,
-  initializeSetup,
   parseDiagnosticEnvelope,
   parseRunEnvelope,
-  parseSetupCheckResult,
-  parseSetupSession,
-  runSetupCheck,
   parseRuntimeStatusEnvelope,
 } from "./api";
 import {
@@ -19,6 +12,15 @@ import {
   runtimeStatusIdentity,
   type RuntimeConfigurationWire,
 } from "./runtimeIdentity";
+import {
+  CURRENT_INTEGRATION_PERMISSION_CHECKER_IDENTITY,
+  hasCurrentIntegrationPermissionAuthority,
+  fetchSetupSession,
+  initializeSetup,
+  parseSetupCheckResult,
+  parseSetupSession,
+  runSetupCheck,
+} from "./setupApi";
 import { setupTestPlan } from "./setup-test-data";
 
 describe("current integration diagnostic parity", () => {
@@ -202,11 +204,13 @@ describe("API client", () => {
       diagnostics,
     };
     expect(
-      parseDiagnosticEnvelope(envelope, {
-        tenant: "tenant-a",
-        repository: "repo-a",
-        run: "run-a",
-      }).coverage,
+      (
+        parseDiagnosticEnvelope(envelope, {
+          tenant: "tenant-a",
+          repository: "repo-a",
+          run: "run-a",
+        }) as Extract<import("./types").DiagnosticSet, { schema_version: 2 }>
+      ).coverage,
     ).toEqual(diagnostics.coverage);
     expect(() =>
       parseDiagnosticEnvelope(
@@ -254,11 +258,16 @@ describe("API client", () => {
       diagnostics,
     };
     expect(
-      parseDiagnosticEnvelope(envelope, {
-        tenant: "tenant-a",
-        repository: "repo-a",
-        run: "run-a",
-      }).source_coverage,
+      (
+        parseDiagnosticEnvelope(envelope, {
+          tenant: "tenant-a",
+          repository: "repo-a",
+          run: "run-a",
+        }) as Extract<
+          import("./types").DiagnosticSet,
+          { schema_version: 3 | 4 | 5 }
+        >
+      ).source_coverage,
     ).toEqual(diagnostics.source_coverage);
     expect(() =>
       parseDiagnosticEnvelope(
@@ -339,11 +348,16 @@ describe("API client", () => {
       diagnostics,
     };
     expect(
-      parseDiagnosticEnvelope(envelope, {
-        tenant: "tenant-a",
-        repository: "repo-a",
-        run: "run-a",
-      }).source_coverage,
+      (
+        parseDiagnosticEnvelope(envelope, {
+          tenant: "tenant-a",
+          repository: "repo-a",
+          run: "run-a",
+        }) as Extract<
+          import("./types").DiagnosticSet,
+          { schema_version: 3 | 4 | 5 }
+        >
+      ).source_coverage,
     ).toEqual(diagnostics.source_coverage);
     expect(() =>
       parseDiagnosticEnvelope(
@@ -1882,6 +1896,26 @@ describe("API client", () => {
     if (parsed.schema_version !== 6) throw new Error("unexpected schema");
     expect(parsed.observations).toEqual([observation]);
     expect("findings" in parsed).toBe(false);
+    for (const patch of [
+      { analysis_result_identity: "" },
+      { check_identity: "0".repeat(64) },
+      { extra: "not admitted" },
+      { title: "" },
+      { evidence_ids: [digest("2"), digest("2")] },
+    ]) {
+      expect(() =>
+        parseDiagnosticEnvelope(
+          {
+            ...envelope,
+            diagnostics: {
+              ...envelope.diagnostics,
+              observations: [{ ...observation, ...patch }],
+            },
+          },
+          { tenant: "tenant-a", repository: "repo-a", run: "run-a" },
+        ),
+      ).toThrow(ApiError);
+    }
     expect(() =>
       parseDiagnosticEnvelope(
         {
@@ -1906,5 +1940,176 @@ describe("API client", () => {
         { tenant: "tenant-a", repository: "repo-a", run: "run-a" },
       ),
     ).toThrow();
+  });
+
+  it("parses nested V7 evidence and refuses incomplete or mismatched terminal parts", () => {
+    const hex = (char: string) => char.repeat(64);
+    const scope = { tenant: "tenant-a", repository: "repo-a", run: "run-a" };
+    const root = {
+      contract: "open-trestle/review-diagnostic-set",
+      schema_version: 7,
+      identity: hex("1"),
+      tenant_id: scope.tenant,
+      repository_id: scope.repository,
+      review_run_id: scope.run,
+      snapshot_identity: hex("2"),
+      head_revision: "3".repeat(40),
+      outcome: "completed",
+    };
+    const { outcome: _outcome, ...partCommon } = root;
+    const check = {
+      identity: hex("4"),
+      source_check_identity: hex("5"),
+      analysis_result_identity: hex("6"),
+      change_identity: hex("7"),
+      key: "static_debug_output",
+      rule_version: 1,
+      state: "failed",
+      applicable_files: 1,
+      applicable_ranges: 1,
+      checked_files: 1,
+      checked_ranges: 1,
+      matches: 1,
+    };
+    const deterministic = {
+      ...partCommon,
+      schema_version: 6,
+      identity: hex("8"),
+      analysis_result_identity: hex("6"),
+      checks: [check],
+      observations: [
+        {
+          identity: hex("9"),
+          source_identity: hex("a"),
+          fingerprint: hex("b"),
+          analysis_result_identity: hex("6"),
+          check_identity: hex("4"),
+          title: "Exact source match",
+          message: "Human review required.",
+          severity: "warning",
+          path: "main.go",
+          start_line: 1,
+          end_line: 1,
+          evidence_ids: [hex("c")],
+        },
+      ],
+    };
+    const verified = {
+      ...partCommon,
+      schema_version: 5,
+      identity: hex("d"),
+      verified_set_identity: hex("e"),
+      coverage: {
+        candidate_count: 1,
+        verified_count: 1,
+        rejected_count: 0,
+        inconclusive_count: 0,
+      },
+      source_coverage: {
+        verification_context_identity: hex("f"),
+        analyzed_count: 1,
+        selected_count: 1,
+        omitted_count: 0,
+        omissions: [],
+      },
+      checks: [check],
+      findings: [
+        {
+          identity: hex("a"),
+          source_identity: hex("b"),
+          fingerprint: hex("c"),
+          title: "Verified issue",
+          message: "Independent route.",
+          severity: "error",
+          path: "main.go",
+          start_line: 2,
+          end_line: 2,
+          evidence_ids: [hex("d")],
+        },
+      ],
+    };
+    const envelope = (diagnostics: unknown) => ({
+      contract: "open-trestle/api-response",
+      schema_version: 1,
+      request_id: "request-v7",
+      diagnostics,
+    });
+    const parsed = parseDiagnosticEnvelope(
+      envelope({ ...root, deterministic, verified }),
+      scope,
+    );
+    expect(parsed.schema_version).toBe(7);
+    if (parsed.schema_version !== 7) throw new Error("unexpected schema");
+    expect(parsed.deterministic?.observations).toHaveLength(1);
+    expect(parsed.verified?.findings).toHaveLength(1);
+    const selectedSnapshot = hex("f");
+    const withDistinctV5Snapshot = parseDiagnosticEnvelope(
+      envelope({
+        ...root,
+        deterministic,
+        verified: {
+          ...verified,
+          snapshot_identity: selectedSnapshot,
+        },
+      }),
+      scope,
+    );
+    expect(withDistinctV5Snapshot.schema_version).toBe(7);
+    if (withDistinctV5Snapshot.schema_version === 7)
+      expect(withDistinctV5Snapshot.verified?.snapshot_identity).toBe(
+        selectedSnapshot,
+      );
+    for (const outcome of ["failed", "canceled", "abstained", "inconclusive"]) {
+      const early = parseDiagnosticEnvelope(
+        envelope({
+          ...root,
+          outcome,
+          snapshot_identity: "",
+          head_revision: "",
+        }),
+        scope,
+      );
+      expect(early.schema_version).toBe(7);
+      if (early.schema_version === 7) expect(early.verified).toBeUndefined();
+    }
+    for (const bad of [
+      { ...root },
+      { ...root, deterministic },
+      { ...root, verified },
+      {
+        ...root,
+        deterministic,
+        verified: { ...verified, checks: [{ ...check, identity: hex("a") }] },
+      },
+      {
+        ...root,
+        deterministic: { ...deterministic, snapshot_identity: hex("f") },
+        verified,
+      },
+      {
+        ...root,
+        deterministic,
+        verified: { ...verified, head_revision: "f".repeat(40) },
+      },
+      {
+        ...root,
+        deterministic,
+        verified: { ...verified, snapshot_identity: "" },
+      },
+      {
+        ...root,
+        deterministic: {
+          ...deterministic,
+          observations: [
+            { ...deterministic.observations[0], check_identity: hex("a") },
+          ],
+        },
+        verified,
+      },
+      { ...root, deterministic, verified, unexpected: "field" },
+    ])
+      expect(() => parseDiagnosticEnvelope(envelope(bad), scope)).toThrow(
+        ApiError,
+      );
   });
 });

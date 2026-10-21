@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/georgejieh/open-trestle/internal/fileauthority"
 
@@ -45,6 +47,8 @@ func startLocalSourceOwnerGateWithProbe(ctx context.Context, resources *daemon, 
 	var pending *artifact.PendingFileStore
 	var journal *controlplane.FileRunJournal
 	var classification historicalPacketStartupClass
+	var startupScopeIntents []string
+	var pendingV4 []historicalExpiredPacketCheckpoint
 	// Saved pre-constructor roots must close, successfully, before deletion recovery.
 	preflight := func() (result error) {
 		var snapshot *localSourceOwnerSnapshot
@@ -103,7 +107,13 @@ func startLocalSourceOwnerGateWithProbe(ctx context.Context, resources *daemon, 
 		}
 		resources.closers = append(resources.closers, journal)
 		if recorded != nil {
-			return inspectRecordedHistoricalPackets(ctx, journal, pending, recorded, statePath, artifactPath, setupPath, expected, tenant, repositoryID, repository, gitRoot, originalGitIdentity, objectStore, adapter, sourceDigest, &classification, probe)
+			for name := range recorded.StateEntries {
+				if strings.HasSuffix(name, ".scope-intent.json") {
+					startupScopeIntents = append(startupScopeIntents, strings.TrimSuffix(name, ".scope-intent.json"))
+				}
+			}
+			sort.Strings(startupScopeIntents)
+			return inspectRecordedHistoricalPackets(ctx, journal, pending, recorded, statePath, artifactPath, setupPath, expected, tenant, repositoryID, repository, gitRoot, originalGitIdentity, objectStore, adapter, sourceDigest, &classification, &pendingV4, clock.Now().UTC(), probe)
 		}
 		return journal.WithOwnedRoot(ctx, func(stateRoot *os.Root) error {
 			return pending.WithOwnedRoot(func(artifactRoot *os.Root) error {
@@ -219,6 +229,15 @@ func startLocalSourceOwnerGateWithProbe(ctx context.Context, resources *daemon, 
 		return nil, nil, nil, errHistoricalInputIntentQuarantinedAtStartup
 	case historicalPacketInputArtifactMissing:
 		return nil, nil, nil, errHistoricalInputArtifactMissingAtStartup
+	case historicalPacketOwnerSettledCandidate, historicalPacketOwnerPreparedCandidate:
+		// The source gate has proved only replay and physical envelopes.
+		// Admission remains blocked until the FileLedger audit is rechecked.
+	}
+	if len(pendingV4) > 0 && len(startupScopeIntents) > 0 {
+		return nil, nil, nil, controlplane.ErrScopeIntentUnresolved
+	}
+	if len(startupScopeIntents) > 0 && classification != historicalPacketOwnerSettledCandidate && classification != historicalPacketOwnerPreparedCandidate {
+		return nil, nil, nil, controlplane.ErrScopeIntentUnresolved
 	}
 	active, err := pending.Activate()
 	if err != nil {
@@ -227,7 +246,7 @@ func startLocalSourceOwnerGateWithProbe(ctx context.Context, resources *daemon, 
 	// Replace the already registered pending closer. The journal remains last.
 	resources.closers[len(resources.closers)-2] = active
 	if gitEnabled {
-		return active, journal, &localPacketOwner{store: active, journal: journal, sourceRootDigest: sourceDigest, clock: clock}, nil
+		return active, journal, &localPacketOwner{store: active, journal: journal, sourceRootDigest: sourceDigest, gitIdentity: originalGitIdentity, pendingSettlementAudit: classification == historicalPacketOwnerSettledCandidate || classification == historicalPacketOwnerPreparedCandidate, startupScopeIntents: startupScopeIntents, pendingExpiredPackets: pendingV4, statePath: statePath, sourceBinding: historicalRecordedSourceBinding{RootIdentity: sourceDigest, RepositoryIdentity: repository.Identity(), AdapterIdentity: adapter.Identity().Identity()}, clock: clock}, nil
 	}
 	return active, journal, nil, nil
 }

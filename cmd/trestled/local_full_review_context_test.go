@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -14,27 +16,29 @@ import (
 	"github.com/georgejieh/open-trestle/client"
 	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/controlplane/httpapi"
+	modelhandler "github.com/georgejieh/open-trestle/handlers/model"
 	sourcehandler "github.com/georgejieh/open-trestle/handlers/source"
 	"github.com/georgejieh/open-trestle/internal/provider"
 	reviewcore "github.com/georgejieh/open-trestle/internal/review"
+	"github.com/georgejieh/open-trestle/internal/testsupport"
 	"github.com/georgejieh/open-trestle/runtimecatalog"
 	"github.com/georgejieh/open-trestle/worker"
 )
 
-type blockedGenerationSanitizer struct {
+type countingGenerationSanitizer struct {
 	reviewcore.GenerationRequestSanitizer
 	calls *int
 }
 
-func (s blockedGenerationSanitizer) SanitizeGeneration(context.Context, provider.Request, string) (reviewcore.SanitizedModelRequest, reviewcore.SanitizedEgressReceipt, error) {
+func (s countingGenerationSanitizer) SanitizeGeneration(ctx context.Context, request provider.Request, scope string) (reviewcore.SanitizedModelRequest, reviewcore.SanitizedEgressReceipt, error) {
 	*s.calls++
-	return reviewcore.SanitizedModelRequest{}, reviewcore.SanitizedEgressReceipt{}, reviewcore.ErrSanitizedEgressUnavailable
+	return s.GenerationRequestSanitizer.SanitizeGeneration(ctx, request, scope)
 }
 
 func TestDaemonFullLocalReviewBuildsBoundContextWithoutGeneration(t *testing.T) {
 	args, getenv, repository, base, head, policy, inventory := localFullDaemonFixture(t)
 	sanitizerCalls := 0
-	deps := daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: blockedGenerationSanitizer{GenerationRequestSanitizer: reviewcore.NewFixedGenerationRequestSanitizer(), calls: &sanitizerCalls}, verificationSanitizer: reviewcore.NewFixedVerificationRequestSanitizer()}
+	deps := daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: countingGenerationSanitizer{GenerationRequestSanitizer: testsupport.NewCleanGenerationSanitizer(), calls: &sanitizerCalls}, verificationSanitizer: reviewcore.NewFixedVerificationRequestSanitizer()}
 	d, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, deps)
 	if err != nil {
 		t.Fatal(err)
@@ -64,6 +68,35 @@ func TestDaemonFullLocalReviewBuildsBoundContextWithoutGeneration(t *testing.T) 
 	worked, err := supervisor.RunOnce(context.Background())
 	if err != nil || !worked {
 		t.Fatalf("pre-model work=%t err=%v", worked, err)
+	}
+	// Check physical writes, not just completion events: the old handler wrote
+	// a packet before any owner preparation and only then completed the task.
+	packetEvents, err := d.journal.Read(context.Background(), scope, 0, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preparedPackets := map[string]bool{}
+	for _, event := range packetEvents {
+		if event.TaskKey() == "context" && event.Kind() == controlplane.RunEventContextPacketPrepared {
+			preparedPackets[event.PacketDescriptor().ArtifactIdentity] = true
+		}
+	}
+	artifactLeaves, err := filepath.Glob(filepath.Join(daemonTestFlagValue(t, args, "--state-dir"), "artifacts", "*.artifact.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, leaf := range artifactLeaves {
+		encoded, readErr := os.ReadFile(leaf)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		stored, parseErr := artifact.Parse(encoded)
+		if parseErr != nil {
+			t.Fatal(parseErr)
+		}
+		if stored.Scope().Identity() == scope.Identity() && stored.Kind() == artifact.KindContextPacket && !preparedPackets[stored.Identity()] {
+			t.Fatalf("physical context packet %s has no owner journal lineage", stored.Identity())
+		}
 	}
 	receipt, err := api.GetRun(context.Background(), scope)
 	if err != nil {
@@ -97,9 +130,48 @@ func TestDaemonFullLocalReviewBuildsBoundContextWithoutGeneration(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if value.Kind() != artifact.KindContextPacket {
-		t.Fatalf("context output kind=%s, want packet", value.Kind())
+	if value.Kind() != artifact.KindTaskInput {
+		t.Fatalf("context output kind=%s, want task_input", value.Kind())
 	}
+	events, err := d.journal.Read(context.Background(), scope, 0, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packetIndex, inputIndex, settledIndex := -1, -1, -1
+	packetIdentity := ""
+	for i, event := range events {
+		if event.TaskKey() != "context" {
+			continue
+		}
+		switch event.Kind() {
+		case controlplane.RunEventContextPacketPrepared:
+			packetIndex, packetIdentity = i, event.PacketDescriptor().ArtifactIdentity
+		case controlplane.RunEventContextInputPrepared:
+			inputIndex = i
+			if event.InputDescriptor().Input.ArtifactIdentity != value.Identity() || event.InputDescriptor().PacketArtifactIdentity != packetIdentity {
+				t.Fatal("prepared input does not bind the stored task_input and packet")
+			}
+		case controlplane.RunEventContextInputSettled:
+			settledIndex = i
+			if event.OutputIdentity() != value.Identity() {
+				t.Fatal("settlement does not bind stored task_input")
+			}
+		case controlplane.RunEventTaskSucceeded:
+			t.Fatal("generic task success after owner packet")
+		}
+	}
+	if packetIndex < 0 || inputIndex <= packetIndex || settledIndex <= inputIndex {
+		t.Fatalf("context bypassed owner packet/input preparation: packet=%d input=%d settled=%d", packetIndex, inputIndex, settledIndex)
+	}
+	packetValue, err := d.artifactStore.Get(context.Background(), scope, packetIdentity, time.Now().UTC())
+	if err != nil || packetValue.Kind() != artifact.KindContextPacket {
+		t.Fatalf("prepared physical packet: %v", err)
+	}
+	parsed, err := modelhandler.ParseGenerationInput(value.Payload())
+	if err != nil || !parsed.IsSanitized() || parsed.ContextArtifactIdentity() != packetIdentity {
+		t.Fatalf("invalid sanitized context handoff: %v", err)
+	}
+
 	var packet struct {
 		Contract       string `json:"contract"`
 		SourceCoverage struct {
@@ -109,11 +181,11 @@ func TestDaemonFullLocalReviewBuildsBoundContextWithoutGeneration(t *testing.T) 
 		} `json:"source_coverage"`
 		Sources []json.RawMessage `json:"sources"`
 	}
-	if err := json.Unmarshal(value.Payload(), &packet); err != nil || packet.Contract != "open-trestle/review-context-packet" || packet.SourceCoverage.Selected == 0 || len(packet.Sources) != packet.SourceCoverage.Selected || packet.SourceCoverage.Analyzed != packet.SourceCoverage.Selected+packet.SourceCoverage.Omitted {
+	if err := json.Unmarshal(packetValue.Payload(), &packet); err != nil || packet.Contract != "open-trestle/review-context-packet" || packet.SourceCoverage.Selected == 0 || len(packet.Sources) != packet.SourceCoverage.Selected || packet.SourceCoverage.Analyzed != packet.SourceCoverage.Selected+packet.SourceCoverage.Omitted {
 		t.Fatalf("context packet coverage=%+v err=%v", packet.SourceCoverage, err)
 	}
 	worked, err = supervisor.RunOnce(context.Background())
-	if err != nil || worked || sanitizerCalls != 0 {
+	if err != nil || worked || sanitizerCalls == 0 {
 		t.Fatalf("model work escaped restricted catalog: worked=%t err=%v sanitizer_calls=%d", worked, err, sanitizerCalls)
 	}
 }

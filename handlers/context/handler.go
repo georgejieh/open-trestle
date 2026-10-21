@@ -168,6 +168,12 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 	if ctx.Err() != nil {
 		return failure(controlplane.RunFailureCanceled)
 	}
+	// A journaled packet-only worker cannot persist a packet or abstention
+	// outside the daemon owner's scope-intent effect. Until it carries the
+	// owner-bound settlement protocol, fail before source assembly or Put.
+	if h.packetOnly && h.preparer != nil {
+		return failure(controlplane.RunFailurePolicy)
+	}
 	at := h.clock.Now().UTC()
 	if at.UnixMilli() <= 0 || at.After(request.Lease().ExpiresAt()) {
 		return failure(controlplane.RunFailureCanceled)
@@ -290,6 +296,22 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 		return failure(controlplane.RunFailureInternal)
 	}
 	return completion
+}
+
+// InspectAbstention reuses the context assembler without persisting its output.
+// The daemon owner must reassemble and verify under its scope intent before Put.
+func (h *Handler) InspectAbstention(ctx context.Context, request controlplane.TaskExecutionRequest, at time.Time) (artifact.Artifact, controlplane.RunFailure, error) {
+	if h == nil || h.Validate() != nil || ctx == nil || ctx.Err() != nil || request.Validate() != nil || request.Task().Kind() != controlplane.TaskAssembleContext || request.Task().HandlerIdentity() != PacketAuthorityHandlerIdentity() {
+		return artifact.Artifact{}, 0, ErrPacketAuthority
+	}
+	_, _, value, failureCode := h.assembleAt(ctx, request, at, at)
+	if failureCode == 0 {
+		return artifact.Artifact{}, 0, nil
+	}
+	if value == nil || validateContextAbstentionArtifact(*value, request) != nil || (failureCode != controlplane.RunFailurePolicy && failureCode != controlplane.RunFailureResourceLimit) {
+		return artifact.Artifact{}, 0, ErrPacketAuthority
+	}
+	return *value, failureCode, nil
 }
 
 func (h *Handler) assemble(ctx context.Context, request controlplane.TaskExecutionRequest, at time.Time) (modelhandler.InvestigationAssembly, provider.Request, *artifact.Artifact, controlplane.RunFailure) {

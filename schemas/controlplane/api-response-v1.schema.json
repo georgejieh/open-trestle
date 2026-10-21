@@ -73,6 +73,9 @@
         },
         {
           "$ref": "urn:open-trestle:schema:diagnostics:set:v6"
+        },
+        {
+          "$ref": "urn:open-trestle:schema:diagnostics:set:v7"
         }
       ]
     },

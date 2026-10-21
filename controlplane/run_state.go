@@ -333,6 +333,16 @@ func (s *ReviewRunState) applyTaskEvent(event RunEvent, runtime *TaskRuntimeStat
 		}
 		runtime.preparedEvent = event
 		runtime.preparedEventIdentity = event.Identity()
+	case RunEventContextInputSettled:
+		prepared := runtime.preparedEvent
+		if runtime.definition.Kind() != TaskAssembleContext || prepared.Kind() != RunEventContextInputPrepared || runtime.preparedEventIdentity != prepared.Identity() || event.PreviousIdentity() != prepared.Identity() || !runtime.matchesLeaseResult(event) || event.OutputIdentity() != prepared.inputDescriptor.Input.ArtifactIdentity {
+			return ErrPreparedContextInput
+		}
+		runtime.status = TaskRuntimeSucceeded
+		runtime.outputIdentity = event.OutputIdentity()
+		runtime.preparedEvent = RunEvent{}
+		runtime.workerIdentity = ""
+		runtime.leaseExpiresAtMillis = 0
 	case RunEventContextAbstentionPrepared:
 		if runtime.definition.Kind() != TaskAssembleContext || runtime.preparedEventIdentity != "" || !runtime.matchesLeaseResult(event) || event.occurredAtMillis > runtime.leaseExpiresAtMillis {
 			return ErrPreparedContextAbstention

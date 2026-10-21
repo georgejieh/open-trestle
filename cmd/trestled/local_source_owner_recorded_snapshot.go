@@ -279,6 +279,10 @@ func recordedEntryValid(name string, info os.FileInfo, artifact bool) bool {
 	case "artifacts", "audit", "diagnostics", "webhook-inbox", "setup":
 		return ownerDirectoryInfo(info)
 	}
+	if strings.HasSuffix(name, ".scope-intent.json") {
+		base := strings.TrimSuffix(name, ".scope-intent.json")
+		return recordedDigest(base) && recordedPrivateSingleLink(info) && info.Size() > 0 && info.Size() <= 1024
+	}
 	suffix := ".run-plan.json"
 	if strings.HasSuffix(name, ".run.jsonl") {
 		suffix = ".run.jsonl"

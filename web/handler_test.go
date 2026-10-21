@@ -1,11 +1,14 @@
 package webconsole
 
 import (
+	"bytes"
 	"io"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -140,5 +143,47 @@ func TestHandlerServesSetupApplicationWithoutQueryState(t *testing.T) {
 	NewHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "https://trestle.test/console/setup?token=secret", nil))
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("query=%d", response.Code)
+	}
+}
+
+func TestHandlerServesExactDistributionBytes(t *testing.T) {
+	err := fs.WalkDir(os.DirFS("dist"), ".", func(name string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		content, err := os.ReadFile(filepath.Join("dist", filepath.FromSlash(name)))
+		if err != nil {
+			return err
+		}
+		url := "/console/" + name
+		status := http.StatusOK
+		if name == "index.html" {
+			url = "/console/"
+		} else if name == "not-found.html" {
+			url = "/console/missing"
+			status = http.StatusNotFound
+		}
+		t.Run(name, func(t *testing.T) {
+			for _, method := range []string{http.MethodGet, http.MethodHead} {
+				response := httptest.NewRecorder()
+				NewHandler().ServeHTTP(response, httptest.NewRequest(method, "https://trestle.test"+url, nil))
+				if response.Code != status || response.Header().Get("Content-Length") != strconv.Itoa(len(content)) {
+					t.Fatalf("%s %s=(%d,%q), want status %d and length %d", method, url, response.Code, response.Header(), status, len(content))
+				}
+				if method == http.MethodGet && !bytes.Equal(response.Body.Bytes(), content) {
+					t.Fatalf("%s does not serve the exact distribution bytes", url)
+				}
+				if method == http.MethodHead && response.Body.Len() != 0 {
+					t.Fatalf("HEAD %s returned a body", url)
+				}
+			}
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

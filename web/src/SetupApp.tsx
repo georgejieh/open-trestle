@@ -2,15 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { ShieldCheck } from "./ShieldCheck";
 import { InstrumentIcon, StatusIcon, type StatusValue } from "./Icons";
 import { Identity } from "./Identity";
+import { ApiError, validAccessToken } from "./api";
 import {
-  ApiError,
   fetchSetupSession,
   hasCurrentIntegrationPermissionAuthority,
   initializeSetup,
   runSetupCheck,
-  validAccessToken,
   validSetupBundlePath,
-} from "./api";
+} from "./setupApi";
 import type {
   SetupCheckInput,
   SetupCheckKey,

@@ -41,6 +41,19 @@ func TestNewReadinessHandlerBindsBothPolicies(t *testing.T) {
 	}
 }
 
+func TestFinalOnlyReadinessDoesNotClaimDiagnosticSlot(t *testing.T) {
+	store, _ := artifact.NewMemoryStore(artifact.ProtectionProcessPrivate, 10)
+	policy, _ := review.NewPublicationPolicy(review.SeverityMedium, 10, gateway.RouteIndependenceDistinctProvider, true)
+	legacy, err := NewReadinessHandler(store, diagnostics.NewMemoryStore(), fixedClock{time.UnixMilli(100)}, strings.Repeat("a", 64), policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	final, err := NewFinalOnlyReadinessHandler(store, fixedClock{time.UnixMilli(100)}, strings.Repeat("a", 64), policy)
+	if err != nil || final.Validate() != nil || final.HandlerIdentity() != legacy.HandlerIdentity() || !final.finalOnly || final.diagnosticStore != nil {
+		t.Fatalf("final=%#v err=%v", final, err)
+	}
+}
+
 func TestPublicationInputRoundTripsExactTarget(t *testing.T) {
 	scope, _ := audit.NewReviewScope("tenant", "repository", "run")
 	repository, _ := evidence.NewRepositoryIdentity("github.com", []string{"owner"}, "repo")

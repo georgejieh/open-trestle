@@ -80,36 +80,39 @@ type sarifRegion struct {
 }
 
 type sarifRunProperties struct {
-	Status                review.Outcome  `json:"trestleStatus"`
-	Reason                string          `json:"trestleReason,omitempty"`
-	FixtureID             string          `json:"trestleFixtureId,omitempty"`
-	RequestID             string          `json:"trestleRequestId,omitempty"`
-	SnapshotID            string          `json:"trestleSnapshotId,omitempty"`
-	Revision              string          `json:"trestleRevision,omitempty"`
-	DiagnosticSetID       string          `json:"trestleDiagnosticSetId,omitempty"`
-	AnalysisResultID      string          `json:"trestleAnalysisResultId,omitempty"`
-	ChangeID              string          `json:"trestleChangeId,omitempty"`
-	CheckID               string          `json:"trestleCheckId,omitempty"`
-	CheckState            string          `json:"trestleCheckState,omitempty"`
-	VerifiedSetID         string          `json:"trestleVerifiedSetId,omitempty"`
-	VerificationContextID string          `json:"trestleVerificationContextId,omitempty"`
-	SourceCheckID         string          `json:"trestleSourceCheckId,omitempty"`
-	CheckAnalysisResultID string          `json:"trestleCheckAnalysisResultId,omitempty"`
-	CheckKey              string          `json:"trestleCheckKey,omitempty"`
-	CheckRuleVersion      *uint16         `json:"trestleCheckRuleVersion,omitempty"`
-	ApplicableFiles       *uint32         `json:"trestleApplicableFiles,omitempty"`
-	ApplicableRanges      *uint32         `json:"trestleApplicableRanges,omitempty"`
-	CheckedFiles          *uint32         `json:"trestleCheckedFiles,omitempty"`
-	CheckedRanges         *uint32         `json:"trestleCheckedRanges,omitempty"`
-	MatchCount            *uint32         `json:"trestleMatchCount,omitempty"`
-	CandidateCount        *uint16         `json:"trestleCandidateCount,omitempty"`
-	VerifiedCount         *uint16         `json:"trestleVerifiedCount,omitempty"`
-	RejectedCount         *uint16         `json:"trestleRejectedCount,omitempty"`
-	InconclusiveCount     *uint16         `json:"trestleInconclusiveCount,omitempty"`
-	SourceAnalyzedCount   *uint32         `json:"trestleSourceAnalyzedCount,omitempty"`
-	SourceSelectedCount   *uint32         `json:"trestleSourceSelectedCount,omitempty"`
-	SourceOmittedCount    *uint32         `json:"trestleSourceOmittedCount,omitempty"`
-	Omissions             []sarifOmission `json:"trestleOmissions,omitempty"`
+	Status                review.Outcome           `json:"trestleStatus"`
+	FinalOutcome          diagnostics.FinalOutcome `json:"trestleFinalOutcome,omitempty"`
+	Reason                string                   `json:"trestleReason,omitempty"`
+	FixtureID             string                   `json:"trestleFixtureId,omitempty"`
+	RequestID             string                   `json:"trestleRequestId,omitempty"`
+	SnapshotID            string                   `json:"trestleSnapshotId,omitempty"`
+	SourceSnapshotID      string                   `json:"trestleSourceSnapshotId,omitempty"`
+	ReviewSnapshotID      string                   `json:"trestleReviewSnapshotId,omitempty"`
+	Revision              string                   `json:"trestleRevision,omitempty"`
+	DiagnosticSetID       string                   `json:"trestleDiagnosticSetId,omitempty"`
+	AnalysisResultID      string                   `json:"trestleAnalysisResultId,omitempty"`
+	ChangeID              string                   `json:"trestleChangeId,omitempty"`
+	CheckID               string                   `json:"trestleCheckId,omitempty"`
+	CheckState            string                   `json:"trestleCheckState,omitempty"`
+	VerifiedSetID         string                   `json:"trestleVerifiedSetId,omitempty"`
+	VerificationContextID string                   `json:"trestleVerificationContextId,omitempty"`
+	SourceCheckID         string                   `json:"trestleSourceCheckId,omitempty"`
+	CheckAnalysisResultID string                   `json:"trestleCheckAnalysisResultId,omitempty"`
+	CheckKey              string                   `json:"trestleCheckKey,omitempty"`
+	CheckRuleVersion      *uint16                  `json:"trestleCheckRuleVersion,omitempty"`
+	ApplicableFiles       *uint32                  `json:"trestleApplicableFiles,omitempty"`
+	ApplicableRanges      *uint32                  `json:"trestleApplicableRanges,omitempty"`
+	CheckedFiles          *uint32                  `json:"trestleCheckedFiles,omitempty"`
+	CheckedRanges         *uint32                  `json:"trestleCheckedRanges,omitempty"`
+	MatchCount            *uint32                  `json:"trestleMatchCount,omitempty"`
+	CandidateCount        *uint16                  `json:"trestleCandidateCount,omitempty"`
+	VerifiedCount         *uint16                  `json:"trestleVerifiedCount,omitempty"`
+	RejectedCount         *uint16                  `json:"trestleRejectedCount,omitempty"`
+	InconclusiveCount     *uint16                  `json:"trestleInconclusiveCount,omitempty"`
+	SourceAnalyzedCount   *uint32                  `json:"trestleSourceAnalyzedCount,omitempty"`
+	SourceSelectedCount   *uint32                  `json:"trestleSourceSelectedCount,omitempty"`
+	SourceOmittedCount    *uint32                  `json:"trestleSourceOmittedCount,omitempty"`
+	Omissions             []sarifOmission          `json:"trestleOmissions,omitempty"`
 }
 
 type sarifOmission struct {
@@ -202,7 +205,7 @@ func buildSARIFLog(evaluation ciEvaluation) (sarifLog, error) {
 
 func buildDiagnosticSetSARIF(set diagnostics.Set) (sarifLog, error) {
 	version := set.SchemaVersion()
-	if version != 1 && version != 2 && version != 3 && version != 4 && version != 5 && version != 6 {
+	if version != 1 && version != 2 && version != 3 && version != 4 && version != 5 && version != 6 && version != 7 {
 		return sarifLog{}, fmt.Errorf("unsupported diagnostic SARIF schema version %d", version)
 	}
 	if err := set.Validate(); err != nil {
@@ -222,6 +225,9 @@ func buildDiagnosticSetSARIF(set diagnostics.Set) (sarifLog, error) {
 	}
 	if version == 5 {
 		return buildVerifiedDiagnosticSetSARIF(set)
+	}
+	if version == 7 {
+		return buildFinalDiagnosticSetSARIF(set)
 	}
 	return buildDeterministicDiagnosticSetSARIF(set)
 }

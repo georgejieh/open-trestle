@@ -1,0 +1,512 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:controlplane:run-progress-response:v1",
+  "title": "Open Trestle run progress response v1",
+  "description": "Read-only counts bound to one unchanged canonical receipt. Missing counts are unknown, not zero. Native parsers enforce completed-task, scope, lineage and count equations. This response is not diagnostics or approval.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "request_id",
+    "run",
+    "progress"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/run-progress-response"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "run": {
+      "oneOf": [
+        {
+          "$ref": "urn:open-trestle:schema:controlplane:review-run-receipt:v1"
+        },
+        {
+          "$ref": "urn:open-trestle:schema:controlplane:review-run-receipt:v2"
+        }
+      ]
+    },
+    "progress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "change",
+        "deterministic",
+        "context",
+        "verification"
+      ],
+      "properties": {
+        "change": {
+          "$ref": "#/$defs/change"
+        },
+        "deterministic": {
+          "$ref": "#/$defs/deterministic"
+        },
+        "context": {
+          "$ref": "#/$defs/context"
+        },
+        "verification": {
+          "$ref": "#/$defs/verification"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "artifact_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "not_run",
+            "available",
+            "unavailable"
+          ]
+        },
+        "artifact_identity": {
+          "$ref": "#/$defs/artifact_identity"
+        },
+        "files": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4096
+        },
+        "ranges": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "available"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "artifact_identity",
+              "files",
+              "ranges"
+            ]
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "files"
+                  ]
+                },
+                {
+                  "required": [
+                    "ranges"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "not_run"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "artifact_identity"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "deterministic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "not_run",
+            "available",
+            "partial",
+            "unavailable"
+          ]
+        },
+        "artifact_identity": {
+          "$ref": "#/$defs/artifact_identity"
+        },
+        "applicable_files": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4096
+        },
+        "applicable_ranges": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "checked_files": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4096
+        },
+        "checked_ranges": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "observations": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8192
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "available",
+                  "partial"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "artifact_identity"
+            ]
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "applicable_files"
+                  ]
+                },
+                {
+                  "required": [
+                    "applicable_ranges"
+                  ]
+                },
+                {
+                  "required": [
+                    "checked_files"
+                  ]
+                },
+                {
+                  "required": [
+                    "checked_ranges"
+                  ]
+                },
+                {
+                  "required": [
+                    "observations"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "not_run"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "artifact_identity"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "anyOf": [
+              {
+                "required": [
+                  "applicable_files"
+                ]
+              },
+              {
+                "required": [
+                  "applicable_ranges"
+                ]
+              },
+              {
+                "required": [
+                  "checked_files"
+                ]
+              },
+              {
+                "required": [
+                  "checked_ranges"
+                ]
+              }
+            ]
+          },
+          "then": {
+            "required": [
+              "applicable_files",
+              "applicable_ranges",
+              "checked_files",
+              "checked_ranges"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "partial"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "applicable_files",
+              "applicable_ranges",
+              "checked_files",
+              "checked_ranges"
+            ]
+          }
+        }
+      ],
+      "description": "partial records an evidenced incomplete deterministic check. Historical evidence can omit check counts or observations. When check counts exist, all four are present; checked counts cannot exceed applicable counts."
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "not_run",
+            "available",
+            "unavailable"
+          ]
+        },
+        "artifact_identity": {
+          "$ref": "#/$defs/artifact_identity"
+        },
+        "analyzed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65664
+        },
+        "selected": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32
+        },
+        "omitted": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65664
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "available"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "artifact_identity",
+              "analyzed",
+              "selected",
+              "omitted"
+            ]
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "analyzed"
+                  ]
+                },
+                {
+                  "required": [
+                    "selected"
+                  ]
+                },
+                {
+                  "required": [
+                    "omitted"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "not_run"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "artifact_identity"
+              ]
+            }
+          }
+        }
+      ],
+      "description": "When available, artifact_identity identifies the recorded context packet, not a distinct sanitized task input. Native parsing requires analyzed = selected + omitted."
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "not_run",
+            "available",
+            "unavailable"
+          ]
+        },
+        "artifact_identity": {
+          "$ref": "#/$defs/artifact_identity"
+        },
+        "candidates": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16
+        },
+        "verified": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16
+        },
+        "rejected": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16
+        },
+        "inconclusive": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "available"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "artifact_identity",
+              "candidates",
+              "verified",
+              "rejected",
+              "inconclusive"
+            ]
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "candidates"
+                  ]
+                },
+                {
+                  "required": [
+                    "verified"
+                  ]
+                },
+                {
+                  "required": [
+                    "rejected"
+                  ]
+                },
+                {
+                  "required": [
+                    "inconclusive"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "not_run"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "artifact_identity"
+              ]
+            }
+          }
+        }
+      ],
+      "description": "Native parsing requires candidates = verified + rejected + inconclusive. Counts do not grant publication or approval authority."
+    }
+  }
+}

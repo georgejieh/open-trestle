@@ -12,12 +12,15 @@ import {
   ApiError,
   fetchDiagnostics,
   fetchRun,
+  fetchRunProgress,
   fetchRuntimeStatus,
+} from "./api";
+import {
   fetchSetupSession,
   initializeSetup,
   parseSetupSession,
   runSetupCheck,
-} from "./api";
+} from "./setupApi";
 import { setupTestPlan } from "./setup-test-data";
 import type { DiagnosticSet, SetupPlan } from "./types";
 vi.mock("./api", async () => {
@@ -25,8 +28,16 @@ vi.mock("./api", async () => {
   return {
     ...actual,
     fetchRun: vi.fn(),
+    fetchRunProgress: vi.fn(),
     fetchDiagnostics: vi.fn(),
     fetchRuntimeStatus: vi.fn(),
+  };
+});
+vi.mock("./setupApi", async () => {
+  const actual =
+    await vi.importActual<typeof import("./setupApi")>("./setupApi");
+  return {
+    ...actual,
     fetchSetupSession: vi.fn(),
     initializeSetup: vi.fn(),
     runSetupCheck: vi.fn(),
@@ -128,6 +139,8 @@ describe("console", () => {
   beforeEach(() => {
     sessionStorage.clear();
     vi.mocked(fetchRun).mockReset();
+    vi.mocked(fetchRunProgress).mockReset();
+    vi.mocked(fetchRunProgress).mockRejectedValue(new Error("not available"));
     vi.mocked(fetchDiagnostics).mockReset();
     vi.mocked(fetchRuntimeStatus).mockReset();
     vi.mocked(fetchSetupSession).mockReset();
@@ -137,6 +150,276 @@ describe("console", () => {
     vi.mocked(fetchRuntimeStatus).mockRejectedValue(
       new Error("not authorized"),
     );
+  });
+  it("refreshes artifact counts without replacing diagnostics or treating unknown as zero", async () => {
+    vi.mocked(fetchRun).mockResolvedValue(receipt);
+    vi.mocked(fetchDiagnostics).mockRejectedValue(new Error("not ready"));
+    vi.mocked(fetchRunProgress)
+      .mockResolvedValueOnce({
+        run: receipt,
+        progress: {
+          change: { state: "available", files: 3, ranges: 8 },
+          deterministic: {
+            state: "partial",
+            applicable_files: 2,
+            applicable_ranges: 4,
+            checked_files: 1,
+            checked_ranges: 2,
+            observations: 0,
+          },
+          context: { state: "not_run" },
+          verification: { state: "unavailable" },
+        },
+      })
+      .mockRejectedValueOnce(new ApiError("progress_changed"));
+    render(<App />);
+    for (const [name, value] of [
+      ["Tenant", "tenant-a"],
+      ["Repository", "repo-a"],
+      ["Run", "run-a"],
+      ["Access token", "x".repeat(32)],
+    ])
+      fireEvent.change(screen.getByLabelText(name!), { target: { value } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
+    await screen.findByText("Changed files: 3");
+    expect(screen.getByText("Changed ranges: 8")).toBeInTheDocument();
+    expect(screen.getByText("Checked ranges: 2")).toBeInTheDocument();
+    expect(screen.getByText("Observations: 0")).toBeInTheDocument();
+    expect(screen.getByText("Selected sources: Unknown")).toBeInTheDocument();
+    expect(screen.getByText("Verified: Unknown")).toBeInTheDocument();
+    expect(screen.getByText(/These counts do not approve/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await screen.findByText(/run advanced while progress was read/i);
+    expect(screen.queryByText("Changed files: 3")).not.toBeInTheDocument();
+    expect(screen.getByText("Changed files: Unknown")).toBeInTheDocument();
+    expect(fetchRunProgress).toHaveBeenCalledTimes(2);
+    expect(fetchDiagnostics).toHaveBeenCalledTimes(2);
+  });
+  it("aborts and ignores a late progress response after changing scope", async () => {
+    vi.mocked(fetchRun).mockResolvedValue(receipt);
+    let finish!: (value: import("./types").RunProgress) => void;
+    let signal: AbortSignal | undefined;
+    vi.mocked(fetchRunProgress).mockImplementation(
+      (_scope, _token, _receipt, _fetcher, requestSignal) => {
+        signal = requestSignal;
+        return new Promise((resolve) => {
+          finish = resolve;
+        });
+      },
+    );
+    render(<App />);
+    for (const [name, value] of [
+      ["Tenant", "tenant-a"],
+      ["Repository", "repo-a"],
+      ["Run", "run-a"],
+      ["Access token", "x".repeat(32)],
+    ])
+      fireEvent.change(screen.getByLabelText(name!), { target: { value } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
+    await screen.findByRole("heading", { name: "Artifact-backed progress" });
+    fireEvent.click(screen.getByRole("button", { name: "Change scope" }));
+    expect(signal?.aborted).toBe(true);
+    await act(async () =>
+      finish({
+        run: receipt,
+        progress: {
+          change: { state: "available", files: 999 },
+          deterministic: { state: "not_run" },
+          context: { state: "not_run" },
+          verification: { state: "not_run" },
+        },
+      }),
+    );
+    expect(screen.queryByText("Changed files: 999")).not.toBeInTheDocument();
+    expect(fetchDiagnostics).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("heading", { name: "Locate a review run" }),
+    ).toBeInTheDocument();
+  });
+  it("keeps V7 observations separate from findings and names missing terminal evidence", async () => {
+    const base = {
+      contract: "open-trestle/review-diagnostic-set" as const,
+      identity: digest,
+      tenant_id: "tenant-a",
+      repository_id: "repo-a",
+      review_run_id: "run-a",
+      snapshot_identity: "1".repeat(64),
+      head_revision: "2".repeat(40),
+    };
+    const check = {
+      identity: "3".repeat(64),
+      source_check_identity: "4".repeat(64),
+      analysis_result_identity: "5".repeat(64),
+      change_identity: "6".repeat(64),
+      key: "static_debug_output" as const,
+      rule_version: 1 as const,
+      state: "failed" as const,
+      applicable_files: 1,
+      applicable_ranges: 1,
+      checked_files: 1,
+      checked_ranges: 1,
+      matches: 1,
+    };
+    const deterministic: Extract<DiagnosticSet, { schema_version: 6 }> = {
+      ...base,
+      schema_version: 6,
+      analysis_result_identity: check.analysis_result_identity,
+      checks: [check],
+      observations: [
+        {
+          identity: "7".repeat(64),
+          source_identity: "8".repeat(64),
+          fingerprint: "9".repeat(64),
+          analysis_result_identity: check.analysis_result_identity,
+          check_identity: check.identity,
+          title: "Exact match",
+          message: "Observed in changed range",
+          severity: "warning",
+          path: "main.go",
+          start_line: 1,
+          end_line: 1,
+          evidence_ids: [digest],
+        },
+      ],
+    };
+    const verified: Extract<DiagnosticSet, { schema_version: 5 }> = {
+      ...base,
+      schema_version: 5,
+      verified_set_identity: "b".repeat(64),
+      coverage: {
+        candidate_count: 1,
+        verified_count: 1,
+        rejected_count: 0,
+        inconclusive_count: 0,
+      },
+      source_coverage: {
+        verification_context_identity: "c".repeat(64),
+        analyzed_count: 1,
+        selected_count: 1,
+        omitted_count: 0,
+        omissions: [],
+      },
+      checks: [check],
+      findings: [
+        {
+          identity: "d".repeat(64),
+          source_identity: "e".repeat(64),
+          fingerprint: "f".repeat(64),
+          title: "Verified issue",
+          message: "Independent confirmation",
+          severity: "error",
+          path: "other.go",
+          start_line: 2,
+          end_line: 2,
+          evidence_ids: [digest],
+        },
+      ],
+    };
+    vi.mocked(fetchRun).mockResolvedValue({
+      ...receipt,
+      status: "succeeded",
+      output_identity: digest,
+    });
+    vi.mocked(fetchDiagnostics)
+      .mockResolvedValueOnce({
+        ...base,
+        schema_version: 7,
+        outcome: "completed",
+        deterministic,
+        verified,
+      })
+      .mockResolvedValueOnce({
+        ...base,
+        schema_version: 7,
+        outcome: "inconclusive",
+      })
+      .mockResolvedValueOnce({
+        ...base,
+        schema_version: 7,
+        outcome: "completed",
+        deterministic: {
+          ...deterministic,
+          checks: [{ ...check, state: "passed", matches: 0 }],
+          observations: [],
+        },
+        verified: {
+          ...verified,
+          checks: [{ ...check, state: "passed", matches: 0 }],
+          coverage: {
+            candidate_count: 0,
+            verified_count: 0,
+            rejected_count: 0,
+            inconclusive_count: 0,
+          },
+          findings: [],
+        },
+      });
+    render(<App />);
+    for (const [name, value] of [
+      ["Tenant", "tenant-a"],
+      ["Repository", "repo-a"],
+      ["Run", "run-a"],
+      ["Access token", "x".repeat(32)],
+    ] as const)
+      fireEvent.change(screen.getByLabelText(name), { target: { value } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
+    await screen.findByRole("heading", {
+      name: "Execution complete, advisory review",
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Review 2/i }));
+    expect(
+      screen.getByRole("heading", { name: "Full review completed" }),
+    ).toBeInTheDocument();
+    expect(
+      within(
+        screen.getByRole("region", { name: "Deterministic observations" }),
+      ).getByText("Exact match"),
+    ).toBeInTheDocument();
+    expect(
+      within(
+        screen.getByRole("region", { name: "Verified findings" }),
+      ).getByText("Verified issue"),
+    ).toBeInTheDocument();
+    const coverageSections = [
+      screen.getByRole("region", { name: "Deterministic rule coverage" }),
+      screen.getByRole("region", { name: "Review coverage" }),
+    ];
+    const coverageIds = coverageSections.map((section) => {
+      const titleId = section.getAttribute("aria-labelledby");
+      expect(titleId).toBeTruthy();
+      expect(section.querySelector(`[id="${titleId}"]`)).toBeInTheDocument();
+      return titleId;
+    });
+    expect(new Set(coverageIds).size).toBe(coverageIds.length);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await screen.findByRole("heading", {
+      name: "Execution complete, review inconclusive",
+    });
+    expect(
+      screen.getByText(/Missing evidence was not run/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Verification is not available/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Verified issue")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await screen.findByRole("heading", {
+      name: "Execution complete, advisory review",
+    });
+    expect(
+      screen
+        .getByRole("heading", { name: "No verified findings" })
+        .closest("section"),
+    ).not.toHaveClass("verified");
+    expect(
+      screen.getByText(/empty final finding list is not a clear result/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "No deterministic observations" }),
+    ).toBeInTheDocument();
   });
   it("starts with a scoped connection form and does not persist tokens", () => {
     render(<App />);
@@ -586,6 +869,8 @@ describe("console", () => {
         expect(fetchRuntimeStatus).toHaveBeenCalledExactlyOnceWith(
           { tenant: "tenant-b", repository: "repo-b", run: "run-b" },
           "y".repeat(32),
+          undefined,
+          expect.any(AbortSignal),
         );
         expect(screen.getByText("run-b")).toBeInTheDocument();
       } else {

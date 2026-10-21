@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/georgejieh/open-trestle/artifact"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/diagnostics"
@@ -65,6 +66,7 @@ type Server struct {
 	clock                 Clock
 	requestLimiter        RateLimiter
 	principalLimiter      RateLimiter
+	progressArtifacts     artifact.Reader
 	diagnosticReader      DiagnosticReader
 	notificationQueue     controlplane.TaskNotificationQueue
 	notificationScheduler *controlplane.TaskNotificationScheduler
@@ -312,6 +314,10 @@ func (s *Server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			return
 		}
 		s.submitRun(ctx, writer, request, requestID, principal, at)
+		return
+	}
+	if scope, matched := parseRunActionPath(path, "progress"); matched {
+		s.handleRunProgress(ctx, writer, request, requestID, principal, scope, at)
 		return
 	}
 	planScope, planMatched := parseRunActionPath(path, "plan")

@@ -38,6 +38,7 @@ type ReadinessHandler struct {
 	publicationPolicy    review.PublicationPolicy
 	pipeline             *modelhandler.InvestigationPipeline
 	contentScanner       review.PublicationContentScanner
+	finalOnly            bool
 }
 
 func NewReadinessHandler(store artifact.Store, diagnosticStore diagnostics.Store, clock artifact.Clock, reviewPolicyIdentity string, policy review.PublicationPolicy, scanners ...review.PublicationContentScanner) (*ReadinessHandler, error) {
@@ -49,6 +50,19 @@ func NewReadinessHandler(store artifact.Store, diagnosticStore diagnostics.Store
 	h.identity = deriveHandlerIdentity(reviewPolicyIdentity, policy.Identity(), scanner.Identity())
 	return h, nil
 }
+
+// NewFinalOnlyReadinessHandler evaluates readiness without claiming the full
+// review's immutable diagnostic slot before terminal settlement.
+func NewFinalOnlyReadinessHandler(store artifact.Store, clock artifact.Clock, reviewPolicyIdentity string, policy review.PublicationPolicy, scanners ...review.PublicationContentScanner) (*ReadinessHandler, error) {
+	h, err := NewReadinessHandler(store, diagnostics.NewMemoryStore(), clock, reviewPolicyIdentity, policy, scanners...)
+	if err != nil {
+		return nil, err
+	}
+	h.diagnosticStore = nil
+	h.finalOnly = true
+	return h, nil
+}
+
 func NewInvestigationReadinessHandler(store artifact.Store, diagnosticStore diagnostics.Store, clock artifact.Clock, reviewPolicyIdentity string, policy review.PublicationPolicy, pipeline *modelhandler.InvestigationPipeline, scanners ...review.PublicationContentScanner) (*ReadinessHandler, error) {
 	scanner := selectContentScanner(scanners)
 	if nilInterface(store) || nilInterface(diagnosticStore) || nilInterface(clock) || !validDigest(reviewPolicyIdentity) || policy.Validate() != nil || pipeline == nil || pipeline.Validate() != nil || nilInterface(scanner) || !validDigest(scanner.Identity()) {
@@ -64,6 +78,7 @@ func NewInvestigationReadinessHandler(store artifact.Store, diagnosticStore diag
 	}
 	return &ReadinessHandler{identity: identity, store: store, diagnosticStore: diagnosticStore, clock: clock, reviewPolicyIdentity: reviewPolicyIdentity, publicationPolicy: policy, pipeline: pipeline, contentScanner: scanner}, nil
 }
+
 func selectContentScanner(scanners []review.PublicationContentScanner) review.PublicationContentScanner {
 	if len(scanners) == 0 {
 		return review.NewFixedPublicationContentScanner()
@@ -94,7 +109,7 @@ func (h *ReadinessHandler) Kind() controlplane.TaskKind {
 	return controlplane.TaskEvaluatePublication
 }
 func (h *ReadinessHandler) Validate() error {
-	if h == nil || nilInterface(h.store) || nilInterface(h.diagnosticStore) || nilInterface(h.clock) || !validDigest(h.reviewPolicyIdentity) || h.publicationPolicy.Validate() != nil || nilInterface(h.contentScanner) || !validDigest(h.contentScanner.Identity()) {
+	if h == nil || nilInterface(h.store) || (nilInterface(h.diagnosticStore) != h.finalOnly) || nilInterface(h.clock) || !validDigest(h.reviewPolicyIdentity) || h.publicationPolicy.Validate() != nil || nilInterface(h.contentScanner) || !validDigest(h.contentScanner.Identity()) {
 		return ErrInvalidReadinessHandler
 	}
 	if h.pipeline != nil {
@@ -375,11 +390,13 @@ func (h *ReadinessHandler) Execute(ctx context.Context, request controlplane.Tas
 			return failure(controlplane.RunFailurePolicy)
 		}
 	}
-	if _, _, err := review.MaterializeDiagnosticSetWithDeterministicChecks(
-		ctx, h.diagnosticStore, request.Plan().Scope(), changeResult.HeadRevision().Digest(),
-		verification.IndependentReceipt(), verification.VerifiedFindings(), verification.VerificationContext().SourceCoverage(), deterministicChecks,
-	); err != nil {
-		return failure(diagnosticWriteFailure(ctx, err))
+	if !h.finalOnly {
+		if _, _, err := review.MaterializeDiagnosticSetWithDeterministicChecks(
+			ctx, h.diagnosticStore, request.Plan().Scope(), changeResult.HeadRevision().Digest(),
+			verification.IndependentReceipt(), verification.VerifiedFindings(), verification.VerificationContext().SourceCoverage(), deterministicChecks,
+		); err != nil {
+			return failure(diagnosticWriteFailure(ctx, err))
+		}
 	}
 	readiness, err := review.EvaluatePublicationReadiness(h.publicationPolicy, verification.IndependentReceipt(), verification.VerifiedFindings(), verification.VerificationContext(), selection, contentScan)
 	if err != nil {

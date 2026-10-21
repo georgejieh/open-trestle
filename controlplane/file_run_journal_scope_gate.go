@@ -14,9 +14,11 @@ var ErrScopeGateBusy = errors.New("journal scope gate busy")
 
 type scopeGateContextKey struct{}
 type scopeGateGrant struct {
-	journal *FileRunJournal
-	scope   string
-	live    atomic.Bool
+	journal                         *FileRunJournal
+	scope                           string
+	live                            atomic.Bool
+	ownerInputPreparationTransition bool
+	ownerContextExpiryTransition    bool
 }
 
 // WithScopeGate serializes a synchronous in-process effect with cancellation
@@ -40,6 +42,37 @@ func (j *FileRunJournal) WithScopeGate(ctx context.Context, scope audit.ReviewSc
 			return fmt.Errorf("%w: %v", ErrRunJournalPersistence, err)
 		}
 		if j.scopeGateActive != nil {
+			j.mu.Unlock()
+			return ErrScopeGateBusy
+		}
+		j.scopeGateActive = grant
+		grant.live.Store(true)
+		j.mu.Unlock()
+		defer func() {
+			j.mu.Lock()
+			grant.live.Store(false)
+			j.scopeGateActive = nil
+			j.mu.Unlock()
+		}()
+		return effect(context.WithValue(ctx, scopeGateContextKey{}, grant))
+	})
+}
+
+// withOwnerInputPreparationTransition is the only marker-preserving append grant.
+// The caller owns the effect gate and must reprove before clearing the marker.
+func (j *FileRunJournal) withOwnerInputPreparationTransition(ctx context.Context, scope audit.ReviewScope, effect func(context.Context) error) error {
+	return j.withOwnerContextTransition(ctx, scope, false, effect)
+}
+
+func (j *FileRunJournal) withOwnerContextExpiryTransition(ctx context.Context, scope audit.ReviewScope, effect func(context.Context) error) error {
+	return j.withOwnerContextTransition(ctx, scope, true, effect)
+}
+
+func (j *FileRunJournal) withOwnerContextTransition(ctx context.Context, scope audit.ReviewScope, expiry bool, effect func(context.Context) error) error {
+	return j.withEffectSection(ctx, func() error {
+		grant := &scopeGateGrant{journal: j, scope: scope.Identity(), ownerInputPreparationTransition: !expiry, ownerContextExpiryTransition: expiry}
+		j.mu.Lock()
+		if j.closed || j.scopeGateActive != nil {
 			j.mu.Unlock()
 			return ErrScopeGateBusy
 		}

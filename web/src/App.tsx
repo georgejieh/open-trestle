@@ -3,6 +3,7 @@ import {
   lazy,
   Suspense,
   useMemo,
+  useEffect,
   useRef,
   useState,
   type FormEvent,
@@ -15,6 +16,7 @@ import {
   ApiError,
   fetchDiagnostics,
   fetchRun,
+  fetchRunProgress,
   fetchRuntimeStatus,
   validAccessToken,
   validScope,
@@ -25,6 +27,7 @@ import type {
   DiagnosticSet,
   DeterministicObservation,
   RunReceipt,
+  RunProgress,
   RunTask,
   RuntimeStatus,
   Scope,
@@ -287,12 +290,25 @@ function CheckOutcome({ check }: { check: DiagnosticDeterministicCheck }) {
 }
 
 function diagnosticItemCount(set: DiagnosticSet): number {
+  if (set.schema_version === 7)
+    return (
+      (set.deterministic?.observations.length ?? 0) +
+      (set.verified?.findings.length ?? 0)
+    );
   return set.schema_version === 6
     ? set.observations.length
     : set.findings.length;
 }
 
 function diagnosticsRequireReview(set: DiagnosticSet): boolean {
+  if (set.schema_version === 7)
+    return (
+      set.outcome !== "completed" ||
+      !set.deterministic ||
+      !set.verified ||
+      diagnosticsRequireReview(set.deterministic) ||
+      diagnosticsRequireReview(set.verified)
+    );
   if (set.schema_version === 6)
     return set.observations.length > 0 || set.checks[0].state !== "passed";
   if (set.findings.length > 0) return true;
@@ -321,22 +337,128 @@ function primaryRunHeading(
   if (busy && !diagnostics) return "Execution complete, loading review state";
   if (!diagnostics && diagnosticNote)
     return "Execution complete, review state unavailable";
+  if (diagnostics?.schema_version === 7)
+    return diagnostics.outcome === "completed"
+      ? "Execution complete, advisory review"
+      : `Execution complete, review ${diagnostics.outcome}`;
   if (diagnostics && diagnosticsRequireReview(diagnostics))
     return "Execution complete, review required";
   return "Execution complete";
 }
 
-function CoverageLedger({ set }: { set: DiagnosticSet | null }) {
-  if (!set) return null;
+function ProgressCoverage({
+  progress,
+  note,
+}: {
+  progress: RunProgress | null;
+  note: string;
+}) {
+  const counts = progress?.progress;
+  const axes = [
+    {
+      name: "Change",
+      axis: counts?.change,
+      values: [
+        ["Changed files", counts?.change.files],
+        ["Changed ranges", counts?.change.ranges],
+      ],
+    },
+    {
+      name: "Deterministic analysis",
+      axis: counts?.deterministic,
+      values: [
+        ["Applicable files", counts?.deterministic.applicable_files],
+        ["Applicable ranges", counts?.deterministic.applicable_ranges],
+        ["Checked files", counts?.deterministic.checked_files],
+        ["Checked ranges", counts?.deterministic.checked_ranges],
+        ["Observations", counts?.deterministic.observations],
+      ],
+    },
+    {
+      name: "Model context",
+      axis: counts?.context,
+      values: [
+        ["Analyzed sources", counts?.context.analyzed],
+        ["Selected sources", counts?.context.selected],
+        ["Omitted sources", counts?.context.omitted],
+      ],
+    },
+    {
+      name: "Candidate verification",
+      axis: counts?.verification,
+      values: [
+        ["Candidates", counts?.verification.candidates],
+        ["Verified", counts?.verification.verified],
+        ["Rejected", counts?.verification.rejected],
+        ["Inconclusive", counts?.verification.inconclusive],
+      ],
+    },
+  ];
+  return (
+    <section
+      className="spine-panel"
+      aria-labelledby="progress-coverage-title"
+      aria-busy={!progress && !note}
+    >
+      <div className="section-head">
+        <div>
+          <h2 id="progress-coverage-title">Artifact-backed progress</h2>
+          <p>
+            Counts from this exact run receipt. Refresh to read the latest
+            evidence.
+          </p>
+        </div>
+      </div>
+      {note && (
+        <p className="note" role="status">
+          {note}
+        </p>
+      )}
+      {axes.map(({ name, axis, values }) => (
+        <section className="coverage-ledger" aria-label={name} key={name}>
+          <h3>{name}</h3>
+          <p>
+            {axis
+              ? axis.state.replaceAll("_", " ")
+              : note
+                ? "Unavailable"
+                : "Loading"}
+          </p>
+          <ul className="coverage-facts" aria-label={`${name} counts`}>
+            {values.map(([label, count]) => (
+              <li key={label}>
+                {label}: {count ?? "Unknown"}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+      <p>
+        Missing counts are unknown, not zero. Source counts are not
+        repository-wide. Observations are not verified findings. These counts do
+        not approve the change or prove correctness.
+      </p>
+    </section>
+  );
+}
+
+function CoverageLedger({
+  set,
+  axis,
+}: {
+  set: DiagnosticSet | null;
+  axis?: "deterministic" | "verified";
+}) {
+  if (!set || set.schema_version === 7) return null;
+  const titleId = axis
+    ? `review-coverage-${axis}-title`
+    : "review-coverage-title";
   if (set.schema_version === 6) {
     const check = set.checks[0];
     return (
-      <section
-        className="coverage-ledger"
-        aria-labelledby="review-coverage-title"
-      >
+      <section className="coverage-ledger" aria-labelledby={titleId}>
         <div>
-          <h3 id="review-coverage-title">Deterministic rule coverage</h3>
+          <h3 id={titleId}>Deterministic rule coverage</h3>
           <p>Exact changed-range accounting for one local static rule.</p>
         </div>
         <ul className="coverage-facts" aria-label="Deterministic rule coverage">
@@ -378,12 +500,9 @@ function CoverageLedger({ set }: { set: DiagnosticSet | null }) {
   const incomplete =
     coverage.inconclusive_count > 0 || (sourceCoverage?.omitted_count ?? 0) > 0;
   return (
-    <section
-      className="coverage-ledger"
-      aria-labelledby="review-coverage-title"
-    >
+    <section className="coverage-ledger" aria-labelledby={titleId}>
       <div>
-        <h3 id="review-coverage-title">Review coverage</h3>
+        <h3 id={titleId}>Review coverage</h3>
         <p>Exact candidate outcomes and bounded source selection.</p>
       </div>
       <ul
@@ -432,7 +551,53 @@ function CoverageLedger({ set }: { set: DiagnosticSet | null }) {
   );
 }
 
-function Findings({ set }: { set: DiagnosticSet | null }) {
+function Findings({
+  set,
+  terminal = false,
+}: {
+  set: DiagnosticSet | null;
+  terminal?: boolean;
+}) {
+  if (set?.schema_version === 7) {
+    return (
+      <>
+        <section aria-label="Terminal review outcome">
+          <h3>Full review {set.outcome}</h3>
+          <p>
+            {set.outcome === "completed"
+              ? "Review completed. Read the separate deterministic and verified results below; an empty list does not approve the change."
+              : `Review ${set.outcome}. Available evidence is shown below. Missing evidence was not run and is not a clear result.`}
+          </p>
+        </section>
+        <section aria-label="Deterministic observations">
+          <h3>Deterministic observations</h3>
+          {set.deterministic ? (
+            <>
+              <CoverageLedger set={set.deterministic} axis="deterministic" />
+              <Findings set={set.deterministic} terminal />
+            </>
+          ) : (
+            <p className="note">
+              Deterministic analysis is not available; no rule was cleared.
+            </p>
+          )}
+        </section>
+        <section aria-label="Verified findings">
+          <h3>Verified findings</h3>
+          {set.verified ? (
+            <>
+              <CoverageLedger set={set.verified} axis="verified" />
+              <Findings set={set.verified} terminal />
+            </>
+          ) : (
+            <p className="note">
+              Verification is not available; no finding verdict is implied.
+            </p>
+          )}
+        </section>
+      </>
+    );
+  }
   if (!set)
     return (
       <section className="empty-state">
@@ -449,7 +614,11 @@ function Findings({ set }: { set: DiagnosticSet | null }) {
       return (
         <section className="empty-state">
           <StatusIcon
-            value={set.checks[0].state === "passed" ? "passed" : "incomplete"}
+            value={
+              !terminal && set.checks[0].state === "passed"
+                ? "passed"
+                : "incomplete"
+            }
           />
           <h2>No deterministic observations</h2>
           <p>
@@ -487,24 +656,26 @@ function Findings({ set }: { set: DiagnosticSet | null }) {
       gateRequiresReview;
     return (
       <section
-        className={`empty-state${hasCandidateCoverage || incomplete || gateNotCleared ? "" : " verified"}`}
+        className={`empty-state${terminal || hasCandidateCoverage || incomplete || gateNotCleared ? "" : " verified"}`}
       >
-        {incomplete || gateNotCleared ? (
+        {terminal || incomplete || gateNotCleared ? (
           <StatusIcon value="incomplete" />
         ) : (
           <StatusIcon value="passed" />
         )}
         <h2>No verified findings</h2>
         <p>
-          {incomplete
-            ? gateRequiresReview
-              ? "No candidate was promoted, but a deterministic check requires review. Human review is still required."
-              : "No candidate was promoted, but review coverage remains incomplete. Human review is still required."
-            : gateNotCleared
-              ? "No candidate was promoted, and the deterministic check was not cleared. Human review is still required."
-              : hasCandidateCoverage
-                ? "No candidate was promoted. Rejected candidates are not cleared deterministic gates, and this does not approve the change."
-                : "The diagnostic set is valid and contains zero promoted findings. This is not proof that the change is correct."}
+          {terminal && !incomplete && !gateNotCleared
+            ? "No candidate was promoted. An empty final finding list is not a clear result and does not approve the change."
+            : incomplete
+              ? gateRequiresReview
+                ? "No candidate was promoted, but a deterministic check requires review. Human review is still required."
+                : "No candidate was promoted, but review coverage remains incomplete. Human review is still required."
+              : gateNotCleared
+                ? "No candidate was promoted, and the deterministic check was not cleared. Human review is still required."
+                : hasCandidateCoverage
+                  ? "No candidate was promoted. Rejected candidates are not cleared deterministic gates, and this does not approve the change."
+                  : "The diagnostic set is valid and contains zero promoted findings. This is not proof that the change is correct."}
         </p>
       </section>
     );
@@ -795,6 +966,8 @@ function ReviewConsole() {
   const [receipt, setReceipt] = useState<RunReceipt | null>(null);
   const [diagnostics, setDiagnostics] = useState<DiagnosticSet | null>(null);
   const [diagnosticNote, setDiagnosticNote] = useState("");
+  const [progress, setProgress] = useState<RunProgress | null>(null);
+  const [progressNote, setProgressNote] = useState("");
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(
     null,
   );
@@ -804,6 +977,14 @@ function ReviewConsole() {
   const [view, setView] = useState<View>("overview");
   const [selectedTask, setSelectedTask] = useState("");
   const operationRef = useRef(0);
+  const requestRef = useRef<AbortController | null>(null);
+  useEffect(
+    () => () => {
+      operationRef.current++;
+      requestRef.current?.abort();
+    },
+    [],
+  );
   const selected = useMemo(
     () =>
       receipt?.tasks.find((task) => task.key === selectedTask) ??
@@ -812,12 +993,22 @@ function ReviewConsole() {
   );
   async function connect(nextScope: Scope, nextToken: string) {
     const operation = ++operationRef.current;
+    requestRef.current?.abort();
+    const controller = new AbortController();
+    requestRef.current = controller;
+    setProgress(null);
+    setProgressNote("");
     setBusy(true);
     setError("");
     setDiagnosticNote("");
     setRuntimeNote("");
     try {
-      const next = await fetchRun(nextScope, nextToken);
+      const next = await fetchRun(
+        nextScope,
+        nextToken,
+        undefined,
+        controller.signal,
+      );
       if (operation !== operationRef.current) return;
       setScope(nextScope);
       setToken(nextToken);
@@ -828,7 +1019,31 @@ function ReviewConsole() {
       } catch {}
       if (operation !== operationRef.current) return;
       try {
-        const nextDiagnostics = await fetchDiagnostics(nextScope, nextToken);
+        const nextProgress = await fetchRunProgress(
+          nextScope,
+          nextToken,
+          next,
+          undefined,
+          controller.signal,
+        );
+        if (operation !== operationRef.current) return;
+        setProgress(nextProgress);
+      } catch (err) {
+        if (operation !== operationRef.current) return;
+        setProgressNote(
+          err instanceof ApiError && err.code === "progress_changed"
+            ? "The run advanced while progress was read. Refresh to read current counts."
+            : "Artifact-backed counts could not be verified. Refresh to try again.",
+        );
+      }
+      if (operation !== operationRef.current) return;
+      try {
+        const nextDiagnostics = await fetchDiagnostics(
+          nextScope,
+          nextToken,
+          undefined,
+          controller.signal,
+        );
         if (operation !== operationRef.current) return;
         setDiagnostics(nextDiagnostics);
       } catch (err) {
@@ -842,7 +1057,12 @@ function ReviewConsole() {
       }
       if (operation !== operationRef.current) return;
       try {
-        const nextRuntime = await fetchRuntimeStatus(nextScope, nextToken);
+        const nextRuntime = await fetchRuntimeStatus(
+          nextScope,
+          nextToken,
+          undefined,
+          controller.signal,
+        );
         if (operation !== operationRef.current) return;
         setRuntimeStatus(nextRuntime);
       } catch {
@@ -865,6 +1085,9 @@ function ReviewConsole() {
   }
   function disconnect() {
     operationRef.current++;
+    requestRef.current?.abort();
+    setProgress(null);
+    setProgressNote("");
     setBusy(false);
     setToken("");
     setReceipt(null);
@@ -1032,12 +1255,16 @@ function ReviewConsole() {
                   <dt>
                     {diagnostics?.schema_version === 6
                       ? "Deterministic observations"
-                      : "Verified findings"}
+                      : diagnostics?.schema_version === 7
+                        ? "Review items"
+                        : "Verified findings"}
                   </dt>
                   <dd>
-                    {diagnostics
-                      ? diagnosticItemCount(diagnostics)
-                      : "Not available"}
+                    {diagnostics?.schema_version === 7
+                      ? `${diagnostics.deterministic?.observations.length ?? "n/a"} observations / ${diagnostics.verified?.findings.length ?? "n/a"} verified findings`
+                      : diagnostics
+                        ? diagnosticItemCount(diagnostics)
+                        : "Not available"}
                   </dd>
                 </div>
               </dl>
@@ -1068,6 +1295,7 @@ function ReviewConsole() {
                 provider authority.
               </p>
             </section>
+            <ProgressCoverage progress={progress} note={progressNote} />
             <section className="spine-panel">
               <div className="section-head">
                 <div>
@@ -1116,14 +1344,20 @@ function ReviewConsole() {
               </div>
               {diagnostics && (
                 <span className="set-count">
-                  {diagnosticItemCount(diagnostics)}{" "}
-                  {diagnosticItemCount(diagnostics) === 1
-                    ? diagnostics.schema_version === 6
-                      ? "observation"
-                      : "finding"
-                    : diagnostics.schema_version === 6
-                      ? "observations"
-                      : "findings"}
+                  {diagnostics.schema_version === 7 ? (
+                    `${diagnostics.deterministic?.observations.length ?? "n/a"} observations / ${diagnostics.verified?.findings.length ?? "n/a"} verified findings`
+                  ) : (
+                    <>
+                      {diagnosticItemCount(diagnostics)}{" "}
+                      {diagnosticItemCount(diagnostics) === 1
+                        ? diagnostics.schema_version === 6
+                          ? "observation"
+                          : "finding"
+                        : diagnostics.schema_version === 6
+                          ? "observations"
+                          : "findings"}
+                    </>
+                  )}
                 </span>
               )}
             </div>

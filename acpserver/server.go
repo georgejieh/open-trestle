@@ -319,8 +319,22 @@ func (s *Server) runPrompt(prompt *admittedPrompt) []any {
 	if setErr == nil && set.Validate() == nil && set.Scope().Identity() == s.scope.Identity() {
 		if encodedSet, encodeErr := diagnostics.EncodeSet(set); encodeErr == nil {
 			label, omitted := "Verified diagnostics", "Verified diagnostics omitted: ACP message size limit."
-			if set.SchemaVersion() == 6 {
+			switch set.SchemaVersion() {
+			case 6:
 				label, omitted = "Deterministic review observations", "Deterministic review observations omitted: ACP message size limit."
+			case 7:
+				label, omitted = "Final review diagnostics", "Final review diagnostics omitted: ACP message size limit."
+				text += "\n\nFinal review outcome: " + string(set.Outcome()) + ".\nA terminal outcome does not approve the change or prove correctness."
+				if set.AnalysisResultIdentity() == "" {
+					text += "\nDeterministic observations: unknown (evidence unavailable)."
+				} else {
+					text += fmt.Sprintf("\nDeterministic observations: %d (not independently verified).", len(set.DeterministicObservations()))
+				}
+				if set.VerifiedSetIdentity() == "" {
+					text += "\nVerified findings: unknown (evidence unavailable)."
+				} else {
+					text += fmt.Sprintf("\nVerified findings: %d.", set.VerifiedCount())
+				}
 			}
 			candidate := text + "\n\n" + label + ":\n" + string(encodedSet)
 			frame, frameErr := json.Marshal(agentMessage(prompt.sessionID, candidate))

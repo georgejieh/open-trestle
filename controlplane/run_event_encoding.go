@@ -76,7 +76,7 @@ func ParseRunEvent(encoded []byte) (RunEvent, error) {
 	if err != nil || !bytes.Equal(canonical, encoded) {
 		return RunEvent{}, ErrInvalidRunEventEncoding
 	}
-	if record.Contract != "open-trestle/review-run-event-record" || (record.SchemaVersion != 1 && record.SchemaVersion != 2 && record.SchemaVersion != 3 && record.SchemaVersion != 4 && record.SchemaVersion != 5) || len(encoded) > runEventMaxBytesForVersion(record.SchemaVersion) {
+	if record.Contract != "open-trestle/review-run-event-record" || (record.SchemaVersion != 1 && record.SchemaVersion != 2 && record.SchemaVersion != 3 && record.SchemaVersion != 4 && record.SchemaVersion != 5 && record.SchemaVersion != 6) || len(encoded) > runEventMaxBytesForVersion(record.SchemaVersion) {
 		return RunEvent{}, ErrInvalidRunEventEncoding
 	}
 	scope, err := audit.NewReviewScope(record.TenantID, record.RepositoryID, record.ReviewRunID)
@@ -141,7 +141,7 @@ func runEventToRecord(event RunEvent) runEventRecord {
 	return record
 }
 func parseRunEventKind(value string) (RunEventKind, error) {
-	for kind := RunEventOpened; kind <= RunEventContextInputPrepared; kind++ {
+	for kind := RunEventOpened; kind <= RunEventContextInputSettled; kind++ {
 		if kind.String() == value {
 			return kind, nil
 		}
@@ -164,6 +164,9 @@ func eventContextFailureOutputKind(event RunEvent) string {
 	return contextFailureOutputKind(event.kind == RunEventContextAbstentionPrepared || event.kind == RunEventTaskFailed && event.outputIdentity != "")
 }
 func runEventVersion(event RunEvent) int {
+	if event.kind == RunEventContextInputSettled {
+		return 6
+	}
 	if event.kind == RunEventContextInputPrepared {
 		return 5
 	}

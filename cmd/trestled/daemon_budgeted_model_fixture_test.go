@@ -103,15 +103,16 @@ type daemonBudgetedModelCapture struct {
 }
 
 type daemonBudgetedModelEndpoint struct {
-	mu             sync.Mutex
-	server         *httptest.Server
-	name           string
-	model          string
-	key            string
-	calls          int
-	aggregateBytes int64
-	captures       []daemonBudgetedModelCapture
-	failures       []string
+	mu                  sync.Mutex
+	server              *httptest.Server
+	name                string
+	verificationOutcome string
+	model               string
+	key                 string
+	calls               int
+	aggregateBytes      int64
+	captures            []daemonBudgetedModelCapture
+	failures            []string
 }
 
 type daemonBudgetedModelFixture struct {
@@ -329,13 +330,21 @@ func (e *daemonBudgetedModelEndpoint) outputForPacket(t *testing.T, packet daemo
 			e.fail("verification request lost independent route or candidate lineage")
 			return nil, false
 		}
+		outcome, severity := e.verificationOutcome, "none"
+		if outcome == "" {
+			outcome, severity = "verified", "high"
+		}
+		if outcome != "verified" && outcome != "rejected" && outcome != "inconclusive" {
+			e.fail("invalid fixture verification outcome")
+			return nil, false
+		}
 		verdicts := make([]any, 0, len(packet.Candidates))
 		for _, candidate := range packet.Candidates {
 			if candidate.ID == "" || !slices.Contains(candidate.Evidence, selected.ID) {
 				e.fail("verification candidate did not carry allowed evidence")
 				return nil, false
 			}
-			verdicts = append(verdicts, map[string]any{"candidate_id": candidate.ID, "outcome": "verified", "severity": "high", "rationale": "The cited source range is present in the exact verifier context.", "evidence_ids": []string{selected.ID}})
+			verdicts = append(verdicts, map[string]any{"candidate_id": candidate.ID, "outcome": outcome, "severity": severity, "rationale": "The cited source range is present in the exact verifier context.", "evidence_ids": []string{selected.ID}})
 		}
 		return map[string]any{"schema_version": 1, "verdicts": verdicts}, true
 	default:

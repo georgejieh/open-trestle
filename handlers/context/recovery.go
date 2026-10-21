@@ -21,6 +21,16 @@ var ErrContextAbstentionRecovery = errors.New("context abstention recovery block
 // RecoverPreparedContextAbstention resolves a durable journal intent before
 // any expired-lease settlement or supervisor can advance its review run.
 func RecoverPreparedContextAbstention(ctx context.Context, coordinator *controlplane.Coordinator, store artifact.Store, plan controlplane.ReviewRunPlan, at time.Time) error {
+	return recoverPreparedContextAbstention(ctx, coordinator, store, plan, at, journaledPacketOnlyHandlerIdentity())
+}
+
+// RecoverOwnerPreparedContextAbstention is called only after the daemon's
+// Git-qualified owner gate has admitted this versioned handler.
+func RecoverOwnerPreparedContextAbstention(ctx context.Context, coordinator *controlplane.Coordinator, store artifact.Store, plan controlplane.ReviewRunPlan, at time.Time) error {
+	return recoverPreparedContextAbstention(ctx, coordinator, store, plan, at, PacketAuthorityHandlerIdentity())
+}
+
+func recoverPreparedContextAbstention(ctx context.Context, coordinator *controlplane.Coordinator, store artifact.Store, plan controlplane.ReviewRunPlan, at time.Time, handlerIdentity string) error {
 	if ctx == nil || coordinator == nil || nilInterface(store) || plan.Validate() != nil || at.IsZero() {
 		return ErrContextAbstentionRecovery
 	}
@@ -32,7 +42,7 @@ func RecoverPreparedContextAbstention(ctx context.Context, coordinator *controlp
 		return nil
 	}
 	task, found := plan.Task("context")
-	if !found || task.Kind() != controlplane.TaskAssembleContext || task.HandlerIdentity() != journaledPacketOnlyHandlerIdentity() {
+	if !found || task.Kind() != controlplane.TaskAssembleContext || task.HandlerIdentity() != handlerIdentity {
 		return nil
 	}
 	runtime, found := state.Task(task.Key())

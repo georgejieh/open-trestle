@@ -33,6 +33,7 @@ Control-plane schemas:
 - `schemas/controlplane/review-run-event-v3.schema.json`
 - `schemas/controlplane/review-run-event-v4.schema.json`
 - `schemas/controlplane/review-run-event-v5.schema.json`
+- `schemas/controlplane/review-run-event-v6.schema.json`
 - `schemas/controlplane/review-run-receipt-v1.schema.json`
 - `schemas/controlplane/review-run-receipt-v2.schema.json`
 - `schemas/controlplane/review-task-lease-v1.schema.json`
@@ -45,6 +46,11 @@ Control-plane schemas:
 - `schemas/controlplane/task-notification-claim-request-v1.schema.json`
 - `schemas/controlplane/api-response-v1.schema.json`
 - `schemas/controlplane/runtime-status-response-v1.schema.json`
+- `schemas/controlplane/run-progress-response-v1.schema.json`
+
+The run-progress response v1 is a separate read-only HTTP envelope with exactly `contract`, `schema_version`, `request_id`, `run`, and `progress`. It references the unchanged canonical receipt v1 or v2. Its four axes are `change`, `deterministic`, `context`, and `verification`, each with a bounded state, optional immutable artifact identity, and only its declared count fields. The schema inventory contains 107 documents. The strict native client additionally validates scope, completed-task binding, exact non-context output identities, count equations, and checked-versus-applicable bounds. Schema validation cannot establish artifact lineage or receipt-head consistency.
+
+`not_run` and `unavailable` carry no counts; absent counts mean unknown, not zero. Only an evidenced incomplete deterministic check uses `partial`. The available context artifact identity is the source-proven context packet, which can differ from the receipt's sanitized generation-input output after v6 settlement. Other available axis identities equal their corresponding completed task outputs. The daemon uses at most ten indexed scoped artifact loads and existing canonical parsers, checks the unchanged receipt head, and returns `409 progress_changed` on advancement. It writes no provisional diagnostics, grants no approval, and performs no model or publication effect. `runs status --format progress` emits a single bound `{run, progress}` object rather than the HTTP envelope. See [read-only run progress](daemon-api.md#read-only-run-progress).
 
 The local file-backed full-review context worker emits a v3 `context_abstention_prepared` event before writing any abstention artifact. Its bounded canonical artifact envelope contains omission metadata only, not repository source bytes or a model claim. Recovery must verify the exact scope, plan, task, provenance, failure class, and artifact identity before a v2 failed-task event links the result. Old v1 no-output failures and v2 linked failures remain readable. The PostgreSQL journal's current 1 MiB event limit does not qualify v3; local full review rejects nonlocal stores.
 
@@ -138,18 +144,19 @@ Diagnostic schemas:
 - `schemas/diagnostics/verified-diagnostic-set-v4.schema.json`
 - `schemas/diagnostics/verified-diagnostic-set-v5.schema.json`
 - `schemas/diagnostics/deterministic-diagnostic-set-v6.schema.json`
+- `schemas/diagnostics/full-review-diagnostic-set-v7.schema.json`
 
 Webhook schemas:
 
 - `schemas/webhook/verified-delivery-v1.schema.json`
 - `schemas/webhook/response-v1.schema.json`
 
-The daemon API response carries exactly one run receipt, immutable run plan, task lease, task-notification lease, diagnostic set, or sanitized error. Diagnostic versions 1 through 5 contain independently verified finding contracts. Version 6 contains deterministic observations and does not represent them as verified findings. Nested contracts are referenced by their schema URNs.
+The daemon API response carries exactly one run receipt, immutable run plan, task lease, task-notification lease, diagnostic set, or sanitized error. Diagnostic versions 1 through 5 contain independently verified finding contracts. Version 6 contains deterministic observations and does not represent them as verified findings. Version 7 is a final-only full-review result with a terminal outcome and optional exact version 6 deterministic and version 5 verified records; absent verified evidence is not zero verified findings. Active task status remains in the unchanged run receipt. Separately bound evidence counts use the run-progress response, not a provisional diagnostic set. Nested contracts are referenced by their schema URNs.
 
 Every schema has a stable versioned `urn:open-trestle:schema:...` identity, rejects unknown object properties, and declares explicit bounds. The plan, receipt, event, lease, and completion encoders have repository tests that compare their canonical top-level record shape and constants with these documents.
 
 A `review-task-lease` and a `task-notification-lease` contain bearer secrets. It is suitable only for the authorized worker transport. Do not place it in logs, diagnostics, URLs, model context, audit events, or public state. `review-run-receipt` and `review-run-event` are intentionally secret-free.
 
-The v5 `context_input_prepared` event advances the exact v4 packet checkpoint under the same task, attempt, lease and worker. Its bounded public descriptor is untrusted claims about artifact envelopes and route/scanner identities. It is not proof of an actual scanner run, route selection, audit join, stored sanitized request, receipt, generation input or authorization. It contains no recoverable request, receipt, input, authorization, or repository bytes. Neither this event nor a route-audit subject grants task success or model authority. Ordinary completion, lease renewal and expiry reclaim remain blocked. Trusted recovery can append a no-output policy failure after lease expiry; there is no v5 success settlement API until independent exact-byte and selection proof is specified and verified. Existing v1-v4 encodings and v3 abstention behavior remain unchanged.
+The v5 `context_input_prepared` event advances the exact v4 packet checkpoint under the same task, attempt, lease and worker. Its bounded public descriptor is untrusted claims about artifact envelopes and route/scanner identities. It is not proof of an actual scanner run, route selection, audit join, stored sanitized request, receipt, generation input or authorization. It contains no recoverable request, receipt, input, authorization, or repository bytes. Neither this event nor a route-audit subject grants task success or model authority. Ordinary completion, lease renewal and expiry reclaim remain blocked. Trusted recovery may append a no-output policy failure after lease expiry. A distinct owner-only v6 `context_input_settled` event can settle a recorded v5 preparation only after exact stored-byte, audit, and scoped selection proof; generic task completion cannot do so. Existing v1-v4 encodings and v3 abstention behavior remain unchanged.
 
 Consumers must treat all strings, tool descriptions, repository material, and webhook fields as untrusted data even after structural validation. They must not infer publication authority, provider access, or policy approval from a schema-valid document. Those decisions require the corresponding content-addressed policy and effect receipts.

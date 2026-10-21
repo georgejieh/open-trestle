@@ -29,6 +29,71 @@ A worker claim returns a short-lived capability containing a random lease secret
 
 Retry timing comes from the immutable task definition. Only closed retryable failure classes can become available again. Permanent failures propagate through dependent tasks without executing them. Cancellation is terminal and invalidates outstanding work.
 
+## Owner context preparation and lease expiry
+
+The opt-in local model pipeline uses an owner-only context handler. Its fixed
+30-second lease is not renewed. Packet preparation (v4), input preparation (v5),
+and input settlement (v6) remain distinct from generic task success. The owner
+checks the original lease before new preparation, route, artifact, or settlement
+work. Expiry cannot authorize a new route, a retry, or a late successful output.
+
+Production input preparation and settlement share the original typed scope
+intent. The marker remains through route effects, ordered request/receipt/input
+writes, v6 append, exact physical and audit readback, and checked marker removal.
+The runner does not cancel this owner solely because the lease timer expires;
+the execution timeout and bounded drain still apply. This lets the owner finish
+synchronous proof or terminal cleanup, not perform new expired work.
+
+| Observed boundary | Outcome |
+| --- | --- |
+| Expiry before v4 | Refuse preparation without a packet effect. |
+| Marker-free complete v4, expiry before route preparation | No route or v5 is granted. The narrow startup proof below may record policy/no-output failure; uncertain or partial state remains refused. |
+| Route effect before v5 | Preserve the intent and audit. No route regrant; unknown effects remain quarantined. |
+| v5 with an exactly known successful write prefix of zero, one, or two input envelopes | An in-process expiry may record policy/no-output failure, but retains the marker. Restart remains quarantined. A failed write is not proof of absence. |
+| Complete v5 after expiry | Terminal recovery requires the exact packet and all three input envelopes plus the matching route audit. It records only policy/no-output failure and clears only an exact recognized marker. |
+| Marker-free legacy v5 | Live state remains refused. Expired complete state requires the same full physical and audit proof before terminal recovery. |
+| Expiry before v6 append | No late success. Preserve the intent for complete-v5 terminal proof. |
+| v6 committed, verification or cleanup interrupted | Restart rechecks exact committed settlement, artifacts, and audit before marker reconciliation; no repeated dispatch. |
+| Missing, mismatched, unknown partial, or retention-expired evidence | Preserve quarantine. Generic terminal events do not attest stored bytes or authorize marker removal. |
+
+A successful task receipt alone is not owner proof. Marker-free v5 terminal
+restart still requires complete matching physical envelopes and route-audit
+lineage. Read-only historical facts and inventory predicates alone do not grant
+startup or recovery authority.
+
+Cancellation after v6 settlement can reopen only when replay proves every
+candidate, verification, and readiness task has no attempt or output and remains
+pending or available. The exact context envelopes and route-selection audit must
+still match. Any route attempt, dispatch, cost reconciliation, continuation, or
+publication effect refuses this narrow path. A claimed task is not proof of an
+absent effect, even when no response was observed. The canceled result stays
+terminal; it neither resumes model work nor prevents a later independent run.
+
+Marker-free complete-v4 startup is limited to the exact first-attempt local
+nine-task recipe, either at its prepared head or a recognized policy-failure
+cleanup prefix. The original lease must be expired at the actual check time
+(expiry inclusive), while packet retention must remain live (expiry exclusive).
+Each recorded envelope must expire no earlier than the packet. Before store
+activation, startup checks canonical bytes and exact same-scope names against the
+configured source root/repository/adapter. After current pipeline construction,
+it repeats that proof and checks all current bindings and review policy before
+any recovery append.
+The scope audit must be stable and either empty or contain only snapshot-bound
+events; that allowance does not validate source-audit lineage. Source-file names
+do not attest their contents or retention.
+
+Under exclusive boot ownership before services run, startup finishes the read-only
+witnesses, rechecks the exact journal head and time under the scope gate, and may
+append only policy/no-output failure. It then repeats the full proof before boot
+continues. Any scope marker, mixed v4/v5 history, unknown effect, unsupported tail
+or failed proof remains refused; this path removes no marker and grants no route,
+retry or late success. A changed head refuses the append. An uncertain append or
+failed postproof is not successful recovery and requires full reproof on restart.
+This is cooperative owner custody, not protection against raw same-UID writes.
+The narrow synthetic path and static guards do not establish a packaged full-boot
+result, append-uncertainty fault coverage, general partial-crash recovery or v1
+completion.
+
 ## Current boundary
 
 The package provides the task graph, canonical encodings, memory and durable local journals, replay, optimistic coordination, claims, renewals, retries, dependency propagation, completion, cancellation, restart recovery, content-free task notifications, and automatic terminal finalization. The standalone daemon and PostgreSQL runtime adapter are available. An operational lock-recovery command is not included. See [PostgreSQL canonical ledgers](postgresql-storage.md).

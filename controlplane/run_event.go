@@ -52,6 +52,7 @@ const (
 	RunEventContextAbstentionPrepared
 	RunEventContextPacketPrepared
 	RunEventContextInputPrepared
+	RunEventContextInputSettled
 )
 
 func (k RunEventKind) String() string {
@@ -82,6 +83,8 @@ func (k RunEventKind) String() string {
 		return "context_packet_prepared"
 	case RunEventContextInputPrepared:
 		return "context_input_prepared"
+	case RunEventContextInputSettled:
+		return "context_input_settled"
 	default:
 		return ""
 	}
@@ -178,7 +181,7 @@ func NewRunEvent(
 	if kind == RunEventContextPacketPrepared {
 		return RunEvent{}, ErrPreparedContextPacket
 	}
-	if kind == RunEventContextInputPrepared {
+	if kind == RunEventContextInputPrepared || kind == RunEventContextInputSettled {
 		return RunEvent{}, ErrPreparedContextInput
 	}
 	if sequence == 0 {
@@ -322,7 +325,7 @@ func (e RunEvent) validateFields() error {
 		if e.retryAtMillis != 0 && (!e.failure.Retryable() || e.retryAtMillis < e.occurredAtMillis) {
 			return ErrInvalidRunEventTime
 		}
-	case RunEventContextInputPrepared:
+	case RunEventContextInputPrepared, RunEventContextInputSettled:
 		if !hasTask || e.attempt == 0 || !validControlPlaneDigest(e.leaseTokenIdentity) || e.workerIdentity != "" || e.leaseExpiresAtMillis != 0 || !validControlPlaneDigest(e.outputIdentity) || e.failure != 0 || e.retryAtMillis != 0 {
 			return ErrInvalidRunEventOutput
 		}
@@ -382,6 +385,9 @@ func runMillisToTime(value int64) time.Time {
 }
 func deriveRunEventIdentity(event RunEvent) string {
 	version := 1
+	if event.kind == RunEventContextInputSettled {
+		version = 6
+	}
 	if event.kind == RunEventContextInputPrepared {
 		version = 5
 	}

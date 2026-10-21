@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { chmod, mkdtemp, rm } from "node:fs/promises";
 import test from "node:test";
 import { chromium } from "playwright-core";
@@ -41,7 +43,7 @@ test(
   { timeout: 10_000 },
   async (t) => {
     const previousTemporary = process.env.TMPDIR;
-    const temporary = await mkdtemp("/dev/shm/otdr-");
+    const temporary = await mkdtemp(join(tmpdir(), "otdr-"));
     await chmod(temporary, 0o700);
     process.env.TMPDIR = temporary;
     let switchReads = 0;

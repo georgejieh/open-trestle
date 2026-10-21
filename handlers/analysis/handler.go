@@ -295,7 +295,7 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 	}
 	var projected diagnostics.Set
 	if !nilInterface(h.diagnosticStore) {
-		projected, err = buildDiagnosticSet(request.Plan().Scope(), change, result, check, observations)
+		projected, err = BuildDiagnosticSet(request.Plan().Scope(), change, result, check, observations)
 		if err != nil {
 			return failure(diagnosticWriteFailure(ctx, err))
 		}
@@ -314,7 +314,9 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 	}
 	return completion
 }
-func buildDiagnosticSet(scope audit.ReviewScope, change changehandler.Result, result Result, check DeterministicCheck, observations []Observation) (diagnostics.Set, error) {
+
+// BuildDiagnosticSet projects validated deterministic evidence without writing a diagnostic slot.
+func BuildDiagnosticSet(scope audit.ReviewScope, change changehandler.Result, result Result, check DeterministicCheck, observations []Observation) (diagnostics.Set, error) {
 	if len(observations) > diagnostics.MaxDeterministicObservations {
 		return diagnostics.Set{}, diagnostics.ErrSetResourceLimit
 	}

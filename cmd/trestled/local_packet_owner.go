@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"time"
 
@@ -16,11 +17,18 @@ import (
 // localPacketOwner is minted only by the Git-qualified local startup gate.
 // Its journal's effect section excludes a durable cancellation until Put returns.
 type localPacketOwner struct {
-	store            *artifact.FileStore
-	journal          *controlplane.FileRunJournal
-	sourceRootDigest string
-	clock            artifact.Clock
-	beforeRawPut     func() // test-only, installed before concurrent use
+	store                  *artifact.FileStore
+	journal                *controlplane.FileRunJournal
+	sourceRootDigest       string
+	gitIdentity            localSourceDirectoryIdentity
+	pendingSettlementAudit bool
+	startupScopeIntents    []string
+	clock                  artifact.Clock
+	pendingExpiredPackets  []historicalExpiredPacketCheckpoint
+	statePath              string
+	sourceBinding          historicalRecordedSourceBinding
+	beforeRawPut           func() // test-only, installed before concurrent use
+	beforeInputPut         func() // test-only, installed before concurrent use
 }
 
 func (o *localPacketOwner) PreparePacket(ctx context.Context, request controlplane.TaskExecutionRequest) (controlplane.PreparedContextPacket, error) {
@@ -174,14 +182,14 @@ func (o *localPacketOwner) LoadPreparedPacketCandidate(ctx context.Context, requ
 func (o *localPacketOwner) SanitizePreparedPacket(ctx context.Context, request controlplane.TaskExecutionRequest, prepared controlplane.PreparedContextPacket, sanitizer review.GenerationRequestSanitizer) (contexthandler.SanitizedPacketCandidate, error) {
 	packet, err := o.LoadPreparedPacketCandidate(ctx, request, prepared)
 	if err != nil {
-		return contexthandler.SanitizedPacketCandidate{}, errors.Join(contexthandler.ErrPacketAuthority, err)
+		return contexthandler.SanitizedPacketCandidate{}, fmt.Errorf("load prepared packet: %w", errors.Join(contexthandler.ErrPacketAuthority, err))
 	}
 	candidate, err := contexthandler.BuildSanitizedPacketCandidate(ctx, packet, sanitizer, o.clock.Now().UTC())
 	if err != nil {
-		return contexthandler.SanitizedPacketCandidate{}, errors.Join(contexthandler.ErrPacketAuthority, err)
+		return contexthandler.SanitizedPacketCandidate{}, fmt.Errorf("sanitize prepared packet: %w", errors.Join(contexthandler.ErrPacketAuthority, err))
 	}
 	if _, err := o.LoadPreparedPacketCandidate(ctx, request, prepared); err != nil {
-		return contexthandler.SanitizedPacketCandidate{}, err
+		return contexthandler.SanitizedPacketCandidate{}, fmt.Errorf("recheck prepared packet: %w", err)
 	}
 	return candidate, nil
 }

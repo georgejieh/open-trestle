@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:diagnostics:set:v7",
+  "title": "Open Trestle terminal full-review diagnostic set v7",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "identity",
+    "tenant_id",
+    "repository_id",
+    "review_run_id",
+    "snapshot_identity",
+    "head_revision",
+    "outcome"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/review-diagnostic-set"
+    },
+    "schema_version": {
+      "const": 7
+    },
+    "identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "repository_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "review_run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "snapshot_identity": {
+      "type": "string",
+      "pattern": "^(?:$|[0-9a-f]{64})$"
+    },
+    "head_revision": {
+      "type": "string",
+      "pattern": "^(?:$|[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "outcome": {
+      "enum": [
+        "completed",
+        "failed",
+        "canceled",
+        "abstained",
+        "inconclusive"
+      ]
+    },
+    "deterministic": {
+      "$ref": "urn:open-trestle:schema:diagnostics:set:v6"
+    },
+    "verified": {
+      "$ref": "urn:open-trestle:schema:diagnostics:set:v5"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "completed"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "deterministic",
+          "verified"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "verified"
+        ]
+      },
+      "then": {
+        "required": [
+          "deterministic"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "snapshot_identity": {
+            "const": ""
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "head_revision": {
+            "const": ""
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "head_revision": {
+            "const": ""
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "snapshot_identity": {
+            "const": ""
+          }
+        }
+      }
+    }
+  ],
+  "description": "The runtime derives identity from exact bytes, validates embedded V5 and V6 identities, binds their common scope/head/check, and enforces the shared one MiB budget. The top-level and V6 snapshot is the physical source snapshot; the V5 snapshot is the selected review snapshot and need not equal it. Absent evidence means not run, not clean or verified."
+}

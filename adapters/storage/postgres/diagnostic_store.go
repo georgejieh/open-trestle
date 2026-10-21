@@ -185,23 +185,35 @@ func (s *DiagnosticStore) newDiagnosticArtifact(set diagnostics.Set, at time.Tim
 	if err != nil {
 		return artifact.Artifact{}, err
 	}
-	kind, origin, authorityIdentity := artifact.KindVerifiedFindingSet, artifact.OriginIndependentVerifier, set.VerifiedSetIdentity()
+	kind, origin, provenance := diagnosticArtifactAuthority(set)
+	return artifact.New(
+		set.Scope(), kind, "application/json", s.options.Classification,
+		origin, s.options.Protection, provenance, encoded, at, at.Add(s.options.Retention),
+	)
+}
+
+// A terminal set is assembled by the host from independent evidence, not
+// issued by either evidence producer. Missing evidence contributes no lineage.
+func diagnosticArtifactAuthority(set diagnostics.Set) (artifact.Kind, artifact.Origin, []string) {
+	kind, origin := artifact.KindVerifiedFindingSet, artifact.OriginIndependentVerifier
+	provenance := []string{set.Identity(), set.SnapshotIdentity(), set.VerifiedSetIdentity()}
 	if set.SchemaVersion() == 6 {
-		kind, origin, authorityIdentity = artifact.KindDeterministicEvidence, artifact.OriginDeterministicTool, set.AnalysisResultIdentity()
+		kind, origin = artifact.KindDeterministicEvidence, artifact.OriginDeterministicTool
+		provenance[2] = set.AnalysisResultIdentity()
+	} else if set.SchemaVersion() == 7 {
+		kind, origin = artifact.KindRunExport, artifact.OriginHost
+		provenance = append(provenance, set.AnalysisResultIdentity(), set.ReviewSnapshotIdentity())
 	}
-	provenance := []string{set.Identity(), set.SnapshotIdentity(), authorityIdentity}
 	sort.Strings(provenance)
 	canonical := provenance[:0]
 	for _, identity := range provenance {
-		if len(canonical) == 0 || canonical[len(canonical)-1] != identity {
+		if identity != "" && (len(canonical) == 0 || canonical[len(canonical)-1] != identity) {
 			canonical = append(canonical, identity)
 		}
 	}
-	return artifact.New(
-		set.Scope(), kind, "application/json", s.options.Classification,
-		origin, s.options.Protection, canonical, encoded, at, at.Add(s.options.Retention),
-	)
+	return kind, origin, canonical
 }
+
 func (s *DiagnosticStore) loadDiagnosticArtifact(ctx context.Context, scope audit.ReviewScope, mapping diagnosticMapping, at time.Time) (diagnostics.Set, error) {
 	value, err := s.artifacts.Get(ctx, scope, mapping.artifactIdentity, at)
 	if err != nil {
@@ -211,12 +223,16 @@ func (s *DiagnosticStore) loadDiagnosticArtifact(ctx context.Context, scope audi
 	if err != nil || set.Identity() != mapping.setIdentity || set.Scope().Identity() != scope.Identity() {
 		return diagnostics.Set{}, ErrCorruptRecord
 	}
-	expectedKind, expectedOrigin, authorityIdentity := artifact.KindVerifiedFindingSet, artifact.OriginIndependentVerifier, set.VerifiedSetIdentity()
-	if set.SchemaVersion() == 6 {
-		expectedKind, expectedOrigin, authorityIdentity = artifact.KindDeterministicEvidence, artifact.OriginDeterministicTool, set.AnalysisResultIdentity()
-	}
+	expectedKind, expectedOrigin, expectedProvenance := diagnosticArtifactAuthority(set)
 	provenance := value.Provenance()
-	validLineage := slices.Contains(provenance, mapping.setIdentity) && slices.Contains(provenance, set.SnapshotIdentity()) && slices.Contains(provenance, authorityIdentity)
+	validLineage := slices.Equal(provenance, expectedProvenance)
+	if set.SchemaVersion() != 7 {
+		authorityIdentity := set.VerifiedSetIdentity()
+		if set.SchemaVersion() == 6 {
+			authorityIdentity = set.AnalysisResultIdentity()
+		}
+		validLineage = slices.Contains(provenance, mapping.setIdentity) && slices.Contains(provenance, set.SnapshotIdentity()) && slices.Contains(provenance, authorityIdentity)
+	}
 	validType := value.Kind() == expectedKind && value.MediaType() == "application/json"
 	validPolicy := value.Classification() == s.options.Classification && value.Protection() == s.options.Protection
 	validArtifact := validType && validPolicy && value.Origin() == expectedOrigin && value.ExpiresAt().Equal(mapping.expiresAt) && validLineage

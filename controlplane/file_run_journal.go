@@ -575,6 +575,9 @@ func (j *FileRunJournal) Append(ctx context.Context, expectedHead string, event 
 	if err := event.Validate(); err != nil {
 		return err
 	}
+	if event.Kind() == RunEventContextInputSettled {
+		return ErrPreparedContextInput
+	}
 	if event.Kind() == RunEventCanceled {
 		return j.withEffectSection(ctx, func() error { return j.appendValidated(ctx, expectedHead, event) })
 	}
@@ -592,6 +595,14 @@ func (j *FileRunJournal) appendValidated(ctx context.Context, expectedHead strin
 	}
 	if err := j.checkScopeGate(ctx, event.Scope()); err != nil {
 		return err
+	}
+	if grant, ok := ctx.Value(scopeGateContextKey{}).(*scopeGateGrant); ok {
+		if grant.ownerInputPreparationTransition && event.Kind() != RunEventContextInputSettled {
+			return ErrPreparedContextInput
+		}
+		if grant.ownerContextExpiryTransition && (event.Kind() != RunEventTaskFailed || event.Failure() != RunFailurePolicy || event.OutputIdentity() != "" || !event.RetryAt().IsZero()) {
+			return ErrPreparedContextInput
+		}
 	}
 	stream, err := j.loadStream(event.Scope())
 	if err != nil {

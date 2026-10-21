@@ -200,12 +200,13 @@ func (s OmissionSummary) Validate() error {
 type Set struct {
 	identity, snapshotIdentity, headRevision, verifiedSetIdentity, sourceContextIdentity string
 	scope                                                                                audit.ReviewScope
-	analysisResultIdentity                                                               string
+	analysisResultIdentity, reviewSnapshotIdentity                                       string
 	findings                                                                             []Finding
 	omissionSummaries                                                                    []OmissionSummary
 	deterministicChecks                                                                  []DeterministicCheck
 	deterministicObservations                                                            []DeterministicObservation
 	schemaVersion                                                                        int
+	finalOutcome                                                                         FinalOutcome
 	candidateCount, rejectedCount, inconclusiveCount                                     uint16
 	sourceAnalyzedCount, sourceSelectedCount, sourceOmittedCount                         uint32
 }
@@ -297,13 +298,17 @@ func newSet(scope audit.ReviewScope, snapshotIdentity, headRevision, verifiedSet
 	set.identity = deriveSetIdentity(set)
 	return set, nil
 }
-func (s Set) Identity() string                    { return s.identity }
-func (s Set) Scope() audit.ReviewScope            { return s.scope }
-func (s Set) SnapshotIdentity() string            { return s.snapshotIdentity }
+func (s Set) Identity() string         { return s.identity }
+func (s Set) Scope() audit.ReviewScope { return s.scope }
+func (s Set) SnapshotIdentity() string { return s.snapshotIdentity }
+
+// ReviewSnapshotIdentity is the selected model review snapshot for V7 only.
+func (s Set) ReviewSnapshotIdentity() string      { return s.reviewSnapshotIdentity }
 func (s Set) HeadRevision() string                { return s.headRevision }
 func (s Set) VerifiedSetIdentity() string         { return s.verifiedSetIdentity }
 func (s Set) AnalysisResultIdentity() string      { return s.analysisResultIdentity }
 func (s Set) SchemaVersion() int                  { return s.schemaVersion }
+func (s Set) Outcome() FinalOutcome               { return s.finalOutcome }
 func (s Set) CandidateCount() uint16              { return s.candidateCount }
 func (s Set) VerifiedCount() uint16               { return uint16(len(s.findings)) }
 func (s Set) RejectedCount() uint16               { return s.rejectedCount }
@@ -337,13 +342,16 @@ func (s Set) Validate() error {
 		rebuilt, err = NewSetWithDeterministicChecks(s.scope, s.snapshotIdentity, s.headRevision, s.verifiedSetIdentity, s.sourceContextIdentity, s.candidateCount, s.rejectedCount, s.inconclusiveCount, s.sourceAnalyzedCount, s.sourceSelectedCount, s.sourceOmittedCount, s.omissionSummaries, s.deterministicChecks, s.findings)
 	} else if s.schemaVersion == 6 {
 		rebuilt, err = NewSetWithDeterministicObservations(s.scope, s.snapshotIdentity, s.headRevision, s.analysisResultIdentity, s.deterministicChecks, s.deterministicObservations)
+	} else if s.schemaVersion == 7 {
+		deterministic, verified := s.finalParts()
+		rebuilt, err = NewFinalReviewSet(s.scope, s.snapshotIdentity, s.headRevision, s.finalOutcome, deterministic, verified)
 	} else {
 		return ErrInvalidSet
 	}
 	if err != nil {
 		return err
 	}
-	if rebuilt.identity != s.identity || rebuilt.candidateCount != s.candidateCount || rebuilt.rejectedCount != s.rejectedCount || rebuilt.inconclusiveCount != s.inconclusiveCount || rebuilt.analysisResultIdentity != s.analysisResultIdentity || rebuilt.sourceContextIdentity != s.sourceContextIdentity || rebuilt.sourceAnalyzedCount != s.sourceAnalyzedCount || rebuilt.sourceSelectedCount != s.sourceSelectedCount || rebuilt.sourceOmittedCount != s.sourceOmittedCount {
+	if rebuilt.identity != s.identity || rebuilt.finalOutcome != s.finalOutcome || rebuilt.candidateCount != s.candidateCount || rebuilt.rejectedCount != s.rejectedCount || rebuilt.inconclusiveCount != s.inconclusiveCount || rebuilt.analysisResultIdentity != s.analysisResultIdentity || rebuilt.reviewSnapshotIdentity != s.reviewSnapshotIdentity || rebuilt.sourceContextIdentity != s.sourceContextIdentity || rebuilt.sourceAnalyzedCount != s.sourceAnalyzedCount || rebuilt.sourceSelectedCount != s.sourceSelectedCount || rebuilt.sourceOmittedCount != s.sourceOmittedCount {
 		return ErrInvalidSetIdentity
 	}
 	if len(rebuilt.omissionSummaries) != len(s.omissionSummaries) {
@@ -545,6 +553,8 @@ func EncodeSet(set Set) ([]byte, error) {
 		encoded, err = json.Marshal(setToRecordV5(set))
 	case 6:
 		encoded, err = json.Marshal(setToRecordV6(set))
+	case 7:
+		encoded, err = json.Marshal(setToRecordV7(set))
 	}
 	if err != nil {
 		return nil, ErrInvalidSetEncoding
@@ -577,6 +587,8 @@ func ParseSet(encoded []byte) (Set, error) {
 		return parseSetV5(encoded)
 	case 6:
 		return parseSetV6(encoded)
+	case 7:
+		return parseSetV7(encoded)
 	default:
 		return Set{}, ErrInvalidSetEncoding
 	}
@@ -880,6 +892,11 @@ func deterministicObservationLess(a, b DeterministicObservation) bool {
 }
 
 func deriveSetIdentity(set Set) string {
+	if set.schemaVersion == 7 {
+		record := setToRecordV7(set)
+		record.Identity = ""
+		return hashValue(record)
+	}
 	if set.schemaVersion == 6 {
 		record := setToRecordV6(set)
 		record.Identity = ""

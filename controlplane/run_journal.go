@@ -165,6 +165,9 @@ func (j *MemoryRunJournal) Append(ctx context.Context, expectedHead string, even
 	if err := event.Validate(); err != nil {
 		return err
 	}
+	if event.Kind() == RunEventContextInputSettled {
+		return ErrPreparedContextInput
+	}
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	events := j.streams[event.Scope().Identity()]

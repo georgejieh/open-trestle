@@ -56,7 +56,7 @@ trestle runs status --tenant example --repository example-repository --run run-1
 trestle runs cancel --tenant example --repository example-repository --run run-123
 ```
 
-Each successful run command prints one canonical, secret-free `ReviewRunReceipt` JSON record. The plan input must be an unchanged regular file and is bounded to 1 MiB. The client rejects plaintext remote endpoints and never follows redirects with bearer authority.
+The default run output is one canonical, secret-free `ReviewRunReceipt` JSON record. `runs status --format json|sarif` instead reads the stored diagnostic set. `runs status --format progress` prints one bound object with exactly `run` and `progress`, obtained from one scoped progress response. It does not fetch a second receipt or merge receipt revisions. The CLI object omits the HTTP contract, version, and request ID; it is not the HTTP response envelope. The plan input must be an unchanged regular file and is bounded to 1 MiB. The client rejects plaintext remote endpoints and never follows redirects with bearer authority.
 
 ## Runtime status
 
@@ -93,9 +93,27 @@ Run endpoints:
 
 - `POST /api/v1/runs` accepts a canonical `ReviewRunPlan`.
 - `GET /api/v1/tenants/{tenant}/repositories/{repository}/runs/{run}` returns a `ReviewRunReceipt`.
-- `GET .../runs/{run}/diagnostics` returns the immutable canonical diagnostic set for that scope. Versions 1 through 5 contain independently verified finding state. Version 2 includes exact candidate, verified, rejected, and inconclusive counts. Version 3 also includes the supplying verification-context identity and bounded analyzed, selected, and omitted source counts. Version 4 adds sorted content-free aggregate omission reasons whose counts equal the omitted total. Version 5 adds one exact deterministic check bound to its analysis result and change. Version 6 instead contains one deterministic check and exact observations bound to an analysis-result identity; it has no verified-finding set and grants no independent-verification authority.
+- `GET .../runs/{run}/progress` requires `run_read` and returns read-only evidence counts bound to an unchanged canonical receipt.
+- `GET .../runs/{run}/diagnostics` returns the immutable canonical diagnostic set for that scope. Versions 1 through 5 contain independently verified finding state. Version 2 includes exact candidate, verified, rejected, and inconclusive counts. Version 3 also includes the supplying verification-context identity and bounded analyzed, selected, and omitted source counts. Version 4 adds sorted content-free aggregate omission reasons whose counts equal the omitted total. Version 5 adds one exact deterministic check bound to its analysis result and change. Version 6 instead contains one deterministic check and exact observations bound to an analysis-result identity; it has no verified-finding set and grants no independent-verification authority. Version 7 is a terminal-only full-review set with a final outcome and optional exact version 6 deterministic and version 5 verified evidence. Its top-level snapshot identifies the physical head source; the nested verified snapshot identifies the selected review snapshot and need not be equal. An absent verified section is unknown, not zero findings.
 - `POST .../runs/{run}/cancel` accepts an empty body.
 - `POST .../runs/{run}/finalize` accepts a canonical `TaskCompletion` for an explicitly authorized controller. Its output or failure must exactly equal the disposition derived from replayed task state. Runtime-enabled daemon operation normally finalizes automatically.
+
+### Read-only run progress
+
+`GET /api/v1/tenants/{tenant}/repositories/{repository}/runs/{run}/progress` accepts no body. It requires one bearer credential, the exact tenant/repository allowlist, and `run_read`. The ordinary pre-authentication and per-principal rate limits below apply. There is no separate worker, model, or publication permission in this read.
+
+The success response follows [`run-progress-response-v1.schema.json`](../schemas/controlplane/run-progress-response-v1.schema.json). It has exactly `contract: open-trestle/run-progress-response`, `schema_version: 1`, a bounded `request_id`, `run`, and `progress`. Its `run` field is the unchanged canonical `ReviewRunReceipt` (version 1 or 2), not a new progress-bearing receipt version. Its `progress` field has four independent axes:
+
+- `change`: changed `files` and `ranges`.
+- `deterministic`: `applicable_files`, `applicable_ranges`, `checked_files`, `checked_ranges`, and exact `observations` count when the recorded schema supplies it. Observations are not independently verified findings.
+- `context`: `analyzed`, `selected`, and `omitted` source counts.
+- `verification`: `candidates`, `verified`, `rejected`, and `inconclusive` counts.
+
+Each axis has a `state` and, when evidence is referenced, an immutable `artifact_identity`. `not_run` means no completed result is recorded, including pending, available, or leased work. `unavailable` means its evidence cannot be established, including failed or skipped tasks, missing, expired, unsupported, or malformed artifacts, or an unavailable upstream lineage. A succeeded task may retain its output identity while its counts remain unavailable. `available` means the counts came from canonical evidence. Only deterministic coverage uses `partial`: its recorded check explicitly reports incomplete coverage. Missing counts are unknown, not zero. Counts are absent for `not_run` and `unavailable`; numeric zero is returned only when recorded evidence proves zero. Historical deterministic evidence may supply all four check counts without observations, or omit the check counts.
+
+For `change`, `deterministic`, and `verification`, a present `artifact_identity` is the matching succeeded task's output identity. For available `context`, it is the recorded context-packet artifact proved through the context task output and upstream lineage. A v6 context-input settlement can have a distinct sanitized generation-input output identity in the receipt; the progress packet identity does not replace or relabel that output. Before packet provenance is established, an unavailable context axis can retain the succeeded task's original output identity. Context counts obey `analyzed = selected + omitted`. Verification counts obey `candidates = verified + rejected + inconclusive`. Neither available coverage nor a verified count asserts approval or publication authority.
+
+The handler reads only exact scoped artifacts referenced by completed tasks and their canonical lineage, with at most ten indexed artifact loads. Existing artifact and parser byte limits apply. It does not scan storage, execute tasks, call providers, publish preliminary diagnostics, or change canonical state. Receipt identity is checked again after evidence retrieval. If the run advanced, `409 progress_changed` asks the caller to refresh rather than combine counts from different receipt revisions. A progress read does not promise that the run cannot advance after the response.
 
 Worker endpoints:
 
@@ -230,4 +248,4 @@ This mode requires local metadata and artifacts, one authorized logical reposito
 
 The setup plan is an initialized `local_single_node` scope and denied-effect posture fence only. Its root identity, profile, tenant, repository, local storage posture, denied egress, disabled publication, and disabled dynamic validation must match. This deterministic path performs no setup, inference, provider, egress, or publication effect, so it does not consume or imply `Plan.Ready()`. Policy, local-inference, dry-run, backup, observer, and other pending setup gates remain pending. This narrow evaluation admission must not be described as setup readiness or supported deployment authority.
 
-A successful local run can be read through the existing run, plan, diagnostics, runtime, TUI, and embedded-console paths. Diagnostic set version 6 carries deterministic observations rather than verified findings. `runs status --format json|sarif` reads that same stored set.
+A successful local run can be read through the existing run, plan, diagnostics, runtime, TUI, and embedded-console paths. Deterministic-only diagnostic set version 6 carries observations rather than verified findings. Full-review version 7 retains observations and independently verified findings as separate sections. `runs status --format json|sarif` reads that same stored set. Active run receipts report task status; their unchanged wire does not include coverage counts. The scoped read-only progress endpoint supplies separately bound evidence counts without creating provisional diagnostics.

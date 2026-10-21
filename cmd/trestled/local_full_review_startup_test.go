@@ -5,14 +5,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/georgejieh/open-trestle/audit"
+	"github.com/georgejieh/open-trestle/client"
 	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/controlplane/httpapi"
 	contexthandler "github.com/georgejieh/open-trestle/handlers/context"
+	"github.com/georgejieh/open-trestle/runtimecatalog"
 )
 
 func startupContextPlan(t *testing.T, scope audit.ReviewScope, identity string) controlplane.ReviewRunPlan {
@@ -92,7 +95,7 @@ func TestLocalFullStartupAcceptsCurrentContextAndTerminalOldPlan(t *testing.T) {
 	if _, err := c.Open(context.Background(), plan, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
-	if err := checkLocalFullReviewStartupPlans(context.Background(), d.journal, "tenant-a", []string{"repo-a"}, current); err != nil {
+	if err := checkLocalFullReviewStartupPlans(context.Background(), d.journal, "tenant-a", []string{"repo-a"}, current, strings.Repeat("f", 64)); err != nil {
 		t.Fatalf("current plan rejected: %v", err)
 	}
 	terminalScope, _ := audit.NewReviewScope("tenant-a", "repo-a", "terminal-old")
@@ -104,7 +107,7 @@ func TestLocalFullStartupAcceptsCurrentContextAndTerminalOldPlan(t *testing.T) {
 	if _, err := c.CancelRun(context.Background(), old, now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if err := checkLocalFullReviewStartupPlans(context.Background(), d.journal, "tenant-a", []string{"repo-a"}, current); err != nil {
+	if err := checkLocalFullReviewStartupPlans(context.Background(), d.journal, "tenant-a", []string{"repo-a"}, current, strings.Repeat("f", 64)); err != nil {
 		t.Fatalf("terminal plan rejected: %v", err)
 	}
 }
@@ -115,7 +118,7 @@ func (j failingStartupListJournal) ListPlans(context.Context, string, string, st
 	return nil, fmt.Errorf("listing failed")
 }
 func TestLocalFullStartupFailsClosedOnListError(t *testing.T) {
-	err := checkLocalFullReviewStartupPlans(context.Background(), failingStartupListJournal{controlplane.NewMemoryRunJournal()}, "tenant-a", []string{"repo-a"}, strings.Repeat("a", 64))
+	err := checkLocalFullReviewStartupPlans(context.Background(), failingStartupListJournal{controlplane.NewMemoryRunJournal()}, "tenant-a", []string{"repo-a"}, strings.Repeat("a", 64), strings.Repeat("f", 64))
 	if err == nil || errors.Is(err, ErrDaemonPlanIncompatible) {
 		t.Fatalf("listing failure=%v", err)
 	}
@@ -135,7 +138,7 @@ func TestLocalFullStartupFailsClosedOnReadError(t *testing.T) {
 	if _, err := coordinator.Open(context.Background(), plan, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
-	err := checkLocalFullReviewStartupPlans(context.Background(), failingStartupReadJournal{journal}, "tenant-a", []string{"repo-a"}, strings.Repeat("a", 64))
+	err := checkLocalFullReviewStartupPlans(context.Background(), failingStartupReadJournal{journal}, "tenant-a", []string{"repo-a"}, strings.Repeat("a", 64), strings.Repeat("f", 64))
 	if err == nil || errors.Is(err, ErrDaemonPlanIncompatible) {
 		t.Fatalf("read failure=%v", err)
 	}
@@ -156,7 +159,117 @@ func TestLocalFullStartupChecksLaterPage(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := checkLocalFullReviewStartupPlans(context.Background(), journal, "tenant-a", []string{"repo-a"}, current); !errors.Is(err, ErrDaemonPlanIncompatible) {
+	if err := checkLocalFullReviewStartupPlans(context.Background(), journal, "tenant-a", []string{"repo-a"}, current, strings.Repeat("f", 64)); !errors.Is(err, ErrDaemonPlanIncompatible) {
 		t.Fatalf("later page incompatible=%v", err)
 	}
+}
+
+func TestLocalFullStartupRejectsActiveLegacyAnalysisWithoutMutatingOrBlockingTerminal(t *testing.T) {
+	args, getenv, repository, base, head, policy, inventory := localFullDaemonFixture(t)
+	d, err := buildDaemon(context.Background(), args, getenv, &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	scope, _ := audit.NewReviewScope("tenant-a", "repo-a", "legacy-analysis-template")
+	intent, err := runtimecatalog.NewLocalFullReviewIntent(scope, repository, base, head, policy.ReviewPolicyIdentity(), inventory.Identity(), policy.Identity(), time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(d.server.Handler)
+	api, err := client.NewLocal(server.URL, getenv("OPEN_TRESTLE_API_TOKEN"), server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := api.SubmitLocalFullReview(ctx, intent); err != nil {
+		t.Fatal(err)
+	}
+	template, err := api.GetRunPlan(ctx, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.Close()
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	oldTasks := make([]controlplane.TaskDefinition, 0, template.TaskCount())
+	for _, task := range template.Tasks() {
+		identity := task.HandlerIdentity()
+		if task.Key() == "analysis" {
+			identity = strings.Repeat("a", 64)
+		}
+		old, err := controlplane.NewTaskDefinition(task.Key(), task.Kind(), task.InputIdentity(), identity, task.Dependencies(), task.MaxAttempts(), task.RetryDelayMilliseconds(), task.LeaseDurationMilliseconds(), task.Required())
+		if err != nil {
+			t.Fatal(err)
+		}
+		oldTasks = append(oldTasks, old)
+	}
+	activeScope, _ := audit.NewReviewScope("tenant-a", "repo-a", "legacy-analysis-active")
+	legacy, err := controlplane.NewReviewRunPlan(activeScope, template.RequestIdentity(), template.PolicyIdentity(), template.Mode(), oldTasks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal := controlplane.NewMemoryRunJournal()
+	coordinator, _ := controlplane.NewCoordinator(journal)
+	before, err := coordinator.Open(ctx, legacy, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := checkLocalFullReviewStartupPlans(ctx, journal, "tenant-a", []string{"repo-a"}, templateTaskIdentity(t, template, "context"), templateTaskIdentity(t, template, "analysis")); !errors.Is(err, ErrDaemonPlanIncompatible) {
+		t.Fatalf("active legacy analysis accepted: %v", err)
+	}
+	_, after, err := coordinator.Resume(ctx, activeScope)
+	if err != nil || after.Revision() != before.Revision() || after.HeadIdentity() != before.HeadIdentity() {
+		t.Fatalf("active scope mutated: %v", err)
+	}
+	if _, err := coordinator.CancelRun(ctx, legacy, time.Now().UTC().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkLocalFullReviewStartupPlans(ctx, journal, "tenant-a", []string{"repo-a"}, templateTaskIdentity(t, template, "context"), templateTaskIdentity(t, template, "analysis")); err != nil {
+		t.Fatalf("terminal legacy scope refused: %v", err)
+	}
+}
+
+func TestLocalFullStartupIgnoresNonFullAnalysisHandlerMismatch(t *testing.T) {
+	ctx := context.Background()
+	journal := controlplane.NewMemoryRunJournal()
+	scope, _ := audit.NewReviewScope("tenant-a", "repo-a", "deterministic-analysis")
+	constant := strings.Repeat("a", 64)
+	makeTask := func(key string, kind controlplane.TaskKind, deps []string, handler string) controlplane.TaskDefinition {
+		t.Helper()
+		task, err := controlplane.NewTaskDefinition(key, kind, constant, handler, deps, 1, 0, 1000, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return task
+	}
+	plan, err := controlplane.NewReviewRunPlan(scope, strings.Repeat("b", 64), strings.Repeat("c", 64), controlplane.ReviewRunLocal, []controlplane.TaskDefinition{
+		makeTask("source-base", controlplane.TaskAcquireSource, nil, constant),
+		makeTask("source-head", controlplane.TaskAcquireSource, nil, constant),
+		makeTask("change", controlplane.TaskBuildChange, []string{"source-base", "source-head"}, constant),
+		makeTask("analysis", controlplane.TaskInspectDeterministic, []string{"change"}, constant),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator, _ := controlplane.NewCoordinator(journal)
+	if _, err := coordinator.Open(ctx, plan, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if isLocalFullReviewPlan(plan) {
+		t.Fatal("deterministic plan misclassified as full review")
+	}
+	if err := checkLocalFullReviewStartupPlans(ctx, journal, "tenant-a", []string{"repo-a"}, strings.Repeat("d", 64), strings.Repeat("e", 64)); err != nil {
+		t.Fatalf("deterministic-only analysis mismatch refused: %v", err)
+	}
+}
+
+func templateTaskIdentity(t *testing.T, plan controlplane.ReviewRunPlan, key string) string {
+	t.Helper()
+	task, exists := plan.Task(key)
+	if !exists {
+		t.Fatalf("missing task %s", key)
+	}
+	return task.HandlerIdentity()
 }

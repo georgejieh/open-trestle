@@ -133,6 +133,10 @@ func rootedEntryValid(name string, info os.FileInfo) error {
 			if size > maxRunJournalStreamBytes {
 				return ErrStartupInventoryLimit
 			}
+		case strings.HasSuffix(name, scopeIntentSuffix):
+			if !inventoryDigest(strings.TrimSuffix(name, scopeIntentSuffix)) || !mode.IsRegular() || mode != 0o600 || size <= 0 || size > 1024 {
+				return ErrInvalidStartupInventoryEntry
+			}
 		default:
 			return ErrInvalidStartupInventoryEntry
 		}
