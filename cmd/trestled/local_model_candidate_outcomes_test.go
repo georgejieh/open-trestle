@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -15,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/georgejieh/open-trestle/acpserver"
 	postgresstore "github.com/georgejieh/open-trestle/adapters/storage/postgres"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/client"
@@ -55,11 +55,14 @@ func TestDaemonLocalModelWorkersEmptyAndMalformedCandidates(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			command := func(args []string) []byte {
-				t.Helper()
+			newCommand := func(args []string) *exec.Cmd {
 				cmd := exec.Command(cliPath, args...)
 				cmd.Env = append(os.Environ(), "OPEN_TRESTLE_API_TOKEN="+getenv("OPEN_TRESTLE_API_TOKEN"))
-				output, err := cmd.CombinedOutput()
+				return cmd
+			}
+			command := func(args []string) []byte {
+				t.Helper()
+				output, err := newCommand(args).CombinedOutput()
 				if err != nil {
 					t.Fatalf("CLI result: %v %s", err, output)
 				}
@@ -68,7 +71,7 @@ func TestDaemonLocalModelWorkersEmptyAndMalformedCandidates(t *testing.T) {
 			assertParity := func(scope audit.ReviewScope, set diagnostics.Set) {
 				t.Helper()
 				cliArgs := []string{"--server", server.URL}
-				assertTerminalResultParity(t, command, server.URL, api, scope, set)
+				assertTerminalResultParity(t, command, newCommand, server.URL, api, scope, set)
 				packagedAssertResultParity(t, command, cliArgs, scope, set)
 				if set.VerifiedSetIdentity() != "" {
 					packagedAssertProgressParity(t, command, cliArgs, scope, api, &set)
@@ -307,7 +310,7 @@ func TestDaemonLocalModelWorkersEmptyAndMalformedCandidates(t *testing.T) {
 	}
 }
 
-func assertTerminalResultParity(t *testing.T, command func([]string) []byte, serverURL string, api *client.Client, scope audit.ReviewScope, set diagnostics.Set) {
+func assertTerminalResultParity(t *testing.T, command func([]string) []byte, newCommand func([]string) *exec.Cmd, serverURL string, api *client.Client, scope audit.ReviewScope, set diagnostics.Set) {
 	t.Helper()
 	rendered := string(command([]string{"tui", "--server", serverURL, "--tenant", scope.TenantID(), "--repository", scope.RepositoryID(), "--run", scope.ReviewRunID(), "--plain", "--once"}))
 	for _, want := range []string{"Final review outcome: " + string(set.Outcome()), "Deterministic observations (not independently verified)", fmt.Sprintf("%d deterministic observation(s)", len(set.DeterministicObservations())), "does not approve the change"} {
@@ -323,39 +326,62 @@ func assertTerminalResultParity(t *testing.T, command func([]string) []byte, ser
 		t.Fatalf("TUI lost verified count: %s", rendered)
 	}
 
-	server, err := acpserver.New(api, scope)
+	cmd := newCommand([]string{"acp", "--server", serverURL, "--tenant", scope.TenantID(), "--repository", scope.RepositoryID(), "--run", scope.ReviewRunID()})
+	input, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	line := func(id int, method string, params any) []byte {
-		t.Helper()
-		encoded, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return append(encoded, '\n')
-	}
-	var input, output bytes.Buffer
-	input.Write(line(1, "initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}}))
-	input.Write(line(2, "session/new", map[string]any{"cwd": t.TempDir(), "mcpServers": []any{}}))
-	if err := server.Serve(context.Background(), &input, &output); err != nil {
+	output, err := cmd.StdoutPipe()
+	if err != nil {
 		t.Fatal(err)
 	}
-	initial := bytes.Split(bytes.TrimSpace(output.Bytes()), []byte{'\n'})
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if cmd.ProcessState == nil {
+			cmd.Process.Kill()
+			cmd.Wait()
+		}
+	}()
+	write := func(id int, method string, params any) {
+		t.Helper()
+		if err := json.NewEncoder(input).Encode(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	scanner := bufio.NewScanner(output)
+	scanner.Buffer(make([]byte, 64<<10), 1<<20)
+	read := func() []byte {
+		t.Helper()
+		if !scanner.Scan() {
+			t.Fatalf("ACP output ended: %v", scanner.Err())
+		}
+		return append([]byte(nil), scanner.Bytes()...)
+	}
+	write(1, "initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}})
+	var initialized struct {
+		ID     int `json:"id"`
+		Result struct {
+			ProtocolVersion int `json:"protocolVersion"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(read(), &initialized); err != nil || initialized.ID != 1 || initialized.Result.ProtocolVersion != 1 {
+		t.Fatalf("ACP initialize: %v %+v", err, initialized)
+	}
+	write(2, "session/new", map[string]any{"cwd": t.TempDir(), "mcpServers": []any{}})
 	var session struct {
+		ID     int `json:"id"`
 		Result struct {
 			SessionID string `json:"sessionId"`
 		} `json:"result"`
 	}
-	if len(initial) != 2 || json.Unmarshal(initial[1], &session) != nil || session.Result.SessionID == "" {
-		t.Fatalf("ACP session: %s", output.String())
+	if err := json.Unmarshal(read(), &session); err != nil || session.ID != 2 || session.Result.SessionID == "" {
+		t.Fatalf("ACP session: %v %+v", err, session)
 	}
-	output.Reset()
-	prompt := line(3, "session/prompt", map[string]any{"sessionId": session.Result.SessionID, "prompt": []map[string]any{{"type": "text", "text": "Show review status"}}})
-	if err := server.Serve(context.Background(), bytes.NewReader(prompt), &output); err != nil {
-		t.Fatal(err)
-	}
-	messages := bytes.Split(bytes.TrimSpace(output.Bytes()), []byte{'\n'})
+	write(3, "session/prompt", map[string]any{"sessionId": session.Result.SessionID, "prompt": []map[string]any{{"type": "text", "text": "Show review status"}}})
 	var update struct {
 		Method string `json:"method"`
 		Params struct {
@@ -373,8 +399,20 @@ func assertTerminalResultParity(t *testing.T, command func([]string) []byte, ser
 			StopReason string `json:"stopReason"`
 		} `json:"result"`
 	}
-	if len(messages) != 2 || json.Unmarshal(messages[0], &update) != nil || update.Method != "session/update" || update.Params.SessionID != session.Result.SessionID || json.Unmarshal(messages[1], &done) != nil || done.ID != 3 || done.Result.StopReason != "end_turn" {
-		t.Fatalf("ACP prompt: %s", output.String())
+	if err := json.Unmarshal(read(), &update); err != nil || update.Method != "session/update" || update.Params.SessionID != session.Result.SessionID {
+		t.Fatalf("ACP update: %v %+v", err, update)
+	}
+	if err := json.Unmarshal(read(), &done); err != nil || done.ID != 3 || done.Result.StopReason != "end_turn" {
+		t.Fatalf("ACP completion: %v %+v", err, done)
+	}
+	if err := input.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if scanner.Scan() || scanner.Err() != nil {
+		t.Fatal("unexpected ACP output after completion")
+	}
+	if err := cmd.Wait(); err != nil || stderr.Len() != 0 {
+		t.Fatalf("ACP process: %v %s", err, stderr.String())
 	}
 	text := update.Params.Update.Content.Text
 	_, encodedSet, found := strings.Cut(text, "Final review diagnostics:\n")
