@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/georgejieh/open-trestle/artifact"
+	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/internal/changecodec"
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/internal/sourceoutput"
@@ -118,5 +119,59 @@ func TestLowerChangeCodecMatchesFacadeAndTypedConstructor(t *testing.T) {
 	}
 	if _, err := changecodec.NewResult(head, base, baseSnapshot, headSnapshot, lower.Repository(), lower.BaseRevision(), lower.HeadRevision(), delta, executions, nil); !errors.Is(err, changecodec.ErrInvalidResult) {
 		t.Fatalf("wrong snapshot artifact=%v", err)
+	}
+}
+
+func TestChangeCodecParsedSnapshotsBindExactArtifacts(t *testing.T) {
+	output, base, head, _, _ := realChangeFixture(t)
+	baseSnapshot, err := sourceoutput.ParseSnapshotArtifact(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headSnapshot, err := sourceoutput.ParseSnapshotArtifact(head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := changecodec.ParseResultArtifact(output, base, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := changecodec.ParseResultArtifactWithSnapshots(output, baseSnapshot, headSnapshot)
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("parsed snapshot parity: %v", err)
+	}
+	unbound, err := sourceoutput.NewSnapshot(base.Identity(), baseSnapshot.AcquisitionRequestIdentity(), baseSnapshot.AcquisitionReceiptIdentity(), baseSnapshot.AcquisitionExecutionIdentity(), baseSnapshot.RepositoryIdentity(), baseSnapshot.RevisionIdentity(), baseSnapshot.SourceAdapterIdentity(), baseSnapshot.ManifestIdentity(), baseSnapshot.Files())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pair := range [][2]sourceoutput.Snapshot{{{}, headSnapshot}, {unbound, headSnapshot}, {headSnapshot, baseSnapshot}, {baseSnapshot, baseSnapshot}} {
+		if _, err := changecodec.ParseResultArtifactWithSnapshots(output, pair[0], pair[1]); !errors.Is(err, changecodec.ErrInvalidResult) {
+			t.Fatalf("unbound or mismatched snapshot accepted: %v", err)
+		}
+	}
+	for _, field := range []string{"scope", "classification", "protection", "provenance"} {
+		t.Run(field, func(t *testing.T) {
+			scope, classification, protection, provenance := output.Scope(), output.Classification(), output.Protection(), output.Provenance()
+			switch field {
+			case "scope":
+				scope, err = audit.NewReviewScope("tenant-a", "repo-a", "foreign")
+			case "classification":
+				classification = artifact.ClassificationPublic
+			case "protection":
+				protection = artifact.ProtectionEnvelopeEncrypted
+			case "provenance":
+				provenance = []string{baseSnapshot.Identity()}
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			foreign, err := artifact.New(scope, output.Kind(), output.MediaType(), classification, output.Origin(), protection, provenance, output.Payload(), output.CreatedAt(), output.ExpiresAt())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := changecodec.ParseResultArtifactWithSnapshots(foreign, baseSnapshot, headSnapshot); !errors.Is(err, changecodec.ErrInvalidResult) {
+				t.Fatalf("foreign envelope accepted: %v", err)
+			}
+		})
 	}
 }

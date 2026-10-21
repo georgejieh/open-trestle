@@ -262,15 +262,21 @@ func ResultArtifactReferences(value artifact.Artifact) (string, string, error) {
 }
 
 func ParseResultArtifact(value, baseArtifact, headArtifact artifact.Artifact) (Result, error) {
-	if value.Validate() != nil || value.Kind() != artifact.KindChangeModel || value.MediaType() != "application/json" || value.Origin() != artifact.OriginDeterministicTool || baseArtifact.Identity() == headArtifact.Identity() || !slices.Contains(value.Provenance(), baseArtifact.Identity()) || !slices.Contains(value.Provenance(), headArtifact.Identity()) || value.Scope().Identity() != baseArtifact.Scope().Identity() || value.Scope().Identity() != headArtifact.Scope().Identity() || value.Classification() != baseArtifact.Classification() || value.Classification() != headArtifact.Classification() || value.Protection() != baseArtifact.Protection() || value.Protection() != headArtifact.Protection() {
-		return Result{}, ErrInvalidResult
-	}
 	baseSnapshot, err := sourceoutput.ParseSnapshotArtifact(baseArtifact)
 	if err != nil {
 		return Result{}, ErrInvalidResult
 	}
 	headSnapshot, err := sourceoutput.ParseSnapshotArtifact(headArtifact)
 	if err != nil {
+		return Result{}, ErrInvalidResult
+	}
+	return ParseResultArtifactWithSnapshots(value, baseSnapshot, headSnapshot)
+}
+
+// ParseResultArtifactWithSnapshots binds a change result to already parsed,
+// immutable source indexes. It neither reads storage nor grants liveness.
+func ParseResultArtifactWithSnapshots(value artifact.Artifact, baseSnapshot, headSnapshot sourceoutput.Snapshot) (Result, error) {
+	if value.Validate() != nil || value.Kind() != artifact.KindChangeModel || value.MediaType() != "application/json" || value.Origin() != artifact.OriginDeterministicTool || baseSnapshot.ScopeIdentity() == "" || headSnapshot.ScopeIdentity() == "" || baseSnapshot.ArtifactIdentity() == headSnapshot.ArtifactIdentity() || !slices.Contains(value.Provenance(), baseSnapshot.ArtifactIdentity()) || !slices.Contains(value.Provenance(), headSnapshot.ArtifactIdentity()) || value.Scope().Identity() != baseSnapshot.ScopeIdentity() || value.Scope().Identity() != headSnapshot.ScopeIdentity() || value.Classification() != baseSnapshot.Classification() || value.Classification() != headSnapshot.Classification() || value.Protection() != baseSnapshot.Protection() || value.Protection() != headSnapshot.Protection() {
 		return Result{}, ErrInvalidResult
 	}
 	payload := value.Payload()
@@ -302,7 +308,7 @@ func ParseResultArtifact(value, baseArtifact, headArtifact artifact.Artifact) (R
 	result := fromWire(wire, repository, baseRevision, headRevision)
 	result.artifactIdentity = value.Identity()
 	result.scopeIdentity = value.Scope().Identity()
-	if result.baseSnapshotArtifact != baseArtifact.Identity() || result.headSnapshotArtifact != headArtifact.Identity() || result.baseSnapshotIdentity != baseSnapshot.Identity() || result.headSnapshotIdentity != headSnapshot.Identity() || result.repositoryIdentity != baseSnapshot.RepositoryIdentity() || result.repositoryIdentity != headSnapshot.RepositoryIdentity() || result.baseRevisionIdentity != baseSnapshot.RevisionIdentity() || result.headRevisionIdentity != headSnapshot.RevisionIdentity() || result.sourceAdapterIdentity != baseSnapshot.SourceAdapterIdentity() || result.sourceAdapterIdentity != headSnapshot.SourceAdapterIdentity() || result.baseManifestIdentity != baseSnapshot.ManifestIdentity() || result.headManifestIdentity != headSnapshot.ManifestIdentity() || result.validate(true) != nil {
+	if result.baseSnapshotArtifact != baseSnapshot.ArtifactIdentity() || result.headSnapshotArtifact != headSnapshot.ArtifactIdentity() || result.baseSnapshotIdentity != baseSnapshot.Identity() || result.headSnapshotIdentity != headSnapshot.Identity() || result.repositoryIdentity != baseSnapshot.RepositoryIdentity() || result.repositoryIdentity != headSnapshot.RepositoryIdentity() || result.baseRevisionIdentity != baseSnapshot.RevisionIdentity() || result.headRevisionIdentity != headSnapshot.RevisionIdentity() || result.sourceAdapterIdentity != baseSnapshot.SourceAdapterIdentity() || result.sourceAdapterIdentity != headSnapshot.SourceAdapterIdentity() || result.baseManifestIdentity != baseSnapshot.ManifestIdentity() || result.headManifestIdentity != headSnapshot.ManifestIdentity() || result.validate(true) != nil {
 		return Result{}, ErrInvalidResult
 	}
 	return result, nil

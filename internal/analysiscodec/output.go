@@ -444,11 +444,23 @@ func EncodeResult(result Result) ([]byte, error) {
 	return encoded, nil
 }
 func ParseResultArtifact(value, changeArtifact, baseArtifact, headArtifact artifact.Artifact) (Result, error) {
+	change, err := changecodec.ParseResultArtifact(changeArtifact, baseArtifact, headArtifact)
+	if err != nil {
+		return Result{}, ErrInvalidResult
+	}
+	return ParseResultArtifactWithChange(value, changeArtifact, change)
+}
+
+// ParseResultArtifactWithChange reuses an immutable parsed change result bound
+// to the exact artifact. Storage freshness remains the caller's responsibility.
+func ParseResultArtifactWithChange(value, changeArtifact artifact.Artifact, change changecodec.Result) (Result, error) {
+	if changeArtifact.Validate() != nil || changeArtifact.Kind() != artifact.KindChangeModel || changeArtifact.MediaType() != "application/json" || changeArtifact.Origin() != artifact.OriginDeterministicTool || change.ScopeIdentity() == "" || change.ScopeIdentity() != changeArtifact.Scope().Identity() || change.ArtifactIdentity() != changeArtifact.Identity() {
+		return Result{}, ErrInvalidResult
+	}
 	if value.Validate() != nil || value.Kind() != artifact.KindDeterministicEvidence || value.MediaType() != "application/json" || value.Origin() != artifact.OriginDeterministicTool || value.Scope().Identity() != changeArtifact.Scope().Identity() || value.Classification() != changeArtifact.Classification() || value.Protection() != changeArtifact.Protection() || !contains(value.Provenance(), changeArtifact.Identity()) {
 		return Result{}, ErrInvalidResult
 	}
-	change, err := changecodec.ParseResultArtifact(changeArtifact, baseArtifact, headArtifact)
-	if err != nil || !contains(value.Provenance(), change.Identity()) || !contains(value.Provenance(), headArtifact.Identity()) || !contains(value.Provenance(), change.HeadSnapshotIdentity()) {
+	if !contains(value.Provenance(), change.Identity()) || !contains(value.Provenance(), change.HeadSnapshotArtifactIdentity()) || !contains(value.Provenance(), change.HeadSnapshotIdentity()) {
 		return Result{}, ErrInvalidResult
 	}
 	payload := value.Payload()

@@ -355,20 +355,27 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 	if err != nil {
 		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, readFailure(ctx, err)
 	}
-	_, err = changecodec.ParseResultArtifact(changeArtifact, baseArtifact, headArtifact)
+	base, err := sourceoutput.ParseSnapshotArtifact(baseArtifact)
 	if err != nil {
-		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
-	}
-	analysis, err := analysiscodec.ParseResultArtifact(analysisArtifact, changeArtifact, baseArtifact, headArtifact)
-	if err != nil {
-		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
-	}
-	memoryResult, err := memorycodec.ParseResultArtifact(memoryArtifact, changeArtifact, baseArtifact, headArtifact)
-	if err != nil || memoryResult.ChangeArtifactIdentity() != analysis.ChangeArtifactIdentity() || memoryResult.PolicyIdentity() != request.Plan().PolicyIdentity() {
 		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 	}
 	head, err := sourceoutput.ParseSnapshotArtifact(headArtifact)
-	if err != nil || head.Identity() != analysis.HeadSnapshotIdentity() || head.ManifestIdentity() != analysis.HeadManifestIdentity() {
+	if err != nil {
+		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+	}
+	change, err := changecodec.ParseResultArtifactWithSnapshots(changeArtifact, base, head)
+	if err != nil {
+		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+	}
+	analysis, err := analysiscodec.ParseResultArtifactWithChange(analysisArtifact, changeArtifact, change)
+	if err != nil {
+		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+	}
+	memoryResult, err := memorycodec.ParseResultArtifactWithChange(memoryArtifact, changeArtifact, change)
+	if err != nil || memoryResult.ChangeArtifactIdentity() != analysis.ChangeArtifactIdentity() || memoryResult.PolicyIdentity() != request.Plan().PolicyIdentity() {
+		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+	}
+	if head.Identity() != analysis.HeadSnapshotIdentity() || head.ManifestIdentity() != analysis.HeadManifestIdentity() {
 		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 	}
 	memoryScope, err := memoryResult.MemoryScope()
