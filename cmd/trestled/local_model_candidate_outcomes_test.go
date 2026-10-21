@@ -296,6 +296,7 @@ func TestDaemonLocalModelWorkersEmptyAndMalformedCandidates(t *testing.T) {
 			if err != nil || after.Identity() != final.Identity() {
 				t.Fatalf("restart changed result: %v", err)
 			}
+			assertParity(scope, after)
 			if calls, _, _, failures := fake.generation.snapshot(); calls != 1 || len(failures) != 0 {
 				t.Fatalf("generation calls=%d failures=%v", calls, failures)
 			}
