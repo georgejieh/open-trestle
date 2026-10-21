@@ -5,7 +5,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"errors"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -165,6 +164,7 @@ func TestDaemonLocalModelWorkersEmptyAndMalformedCandidates(t *testing.T) {
 					testGenerationRejectionAuditProof(t, events, value, inputArtifact, contextArtifact, requestArtifact, receiptArtifact, linked.InputDescriptor(), route, candidate.HandlerIdentity(), time.Now().UTC())
 					testGenerationRejectionJournal(t, facts[0], events, time.Now().UTC())
 					testGenerationRejectionPhysical(t, facts[0], inventory, policy, candidate.HandlerIdentity(), args, repository)
+					testGenerationRejectionLateClock(t, d, args, getenv, facts[0], repository)
 				}
 				if found != 1 {
 					t.Fatalf("rejection events=%d", found)
@@ -175,19 +175,65 @@ func TestDaemonLocalModelWorkersEmptyAndMalformedCandidates(t *testing.T) {
 				t.Fatal(err)
 			}
 			if mode == "malformed" {
-				restarted, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
-				if restarted != nil {
-					restarted.Close()
-					t.Fatal("unproven failed model history admitted")
+				testGenerationRejectionStartupRefusals(t, args, getenv, scope)
+				d = build()
+				server = httptest.NewServer(d.server.Handler)
+				api, err = client.NewLocal(server.URL, getenv("OPEN_TRESTLE_API_TOKEN"), server.Client())
+				if err != nil {
+					t.Fatal(err)
 				}
-				if !errors.Is(err, errHistoricalInputIntentQuarantinedAtStartup) {
-					t.Fatalf("failed model startup refusal=%v", err)
+				after, err := api.GetDiagnosticSet(context.Background(), scope)
+				if err != nil || after.Identity() != final.Identity() {
+					t.Fatalf("first reopen changed rejected result: %v", err)
 				}
-				if calls, _, _, failures := fake.generation.snapshot(); calls != 1 || len(failures) != 0 {
-					t.Fatalf("malformed generation calls=%d failures=%v", calls, failures)
+				fake.generation.generationOutcome = "empty"
+				laterScope, _ := audit.NewReviewScope("tenant-a", "repo-a", "run-after-rejected-generation")
+				later, err := runtimecatalog.NewLocalFullReviewIntent(laterScope, repository, base, head, policy.ReviewPolicyIdentity(), inventory.Identity(), policy.Identity(), time.Now().UTC())
+				if err != nil {
+					t.Fatal(err)
 				}
-				if calls, _, _, failures := fake.verification.snapshot(); calls != 0 || len(failures) != 0 {
-					t.Fatalf("malformed verification calls=%d failures=%v", calls, failures)
+				if _, err := api.SubmitLocalFullReview(context.Background(), later); err != nil {
+					t.Fatal(err)
+				}
+				for _, index := range []int{1, 2, 1} {
+					if _, err := d.supervisors[index].(*worker.RepositorySupervisor).RunOnce(context.Background()); err != nil {
+						t.Fatal(err)
+					}
+				}
+				laterFinal, err := api.GetDiagnosticSet(context.Background(), laterScope)
+				if err != nil || laterFinal.Outcome() != diagnostics.FinalOutcomeCompleted || laterFinal.CandidateCount() != 0 || laterFinal.VerifiedSetIdentity() == "" {
+					t.Fatalf("later run: %v", err)
+				}
+				server.Close()
+				if err := d.Close(); err != nil {
+					t.Fatal(err)
+				}
+				d = build()
+				server = httptest.NewServer(d.server.Handler)
+				defer server.Close()
+				api, err = client.NewLocal(server.URL, getenv("OPEN_TRESTLE_API_TOKEN"), server.Client())
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, index := range []int{1, 2} {
+					if _, err := d.supervisors[index].(*worker.RepositorySupervisor).RunOnce(context.Background()); err != nil {
+						t.Fatal(err)
+					}
+				}
+				for _, wanted := range []struct {
+					scope    audit.ReviewScope
+					identity string
+				}{{scope, final.Identity()}, {laterScope, laterFinal.Identity()}} {
+					got, err := api.GetDiagnosticSet(context.Background(), wanted.scope)
+					if err != nil || got.Identity() != wanted.identity {
+						t.Fatalf("second reopen changed result: %v", err)
+					}
+				}
+				if calls, _, _, failures := fake.generation.snapshot(); calls != 2 || len(failures) != 0 {
+					t.Fatalf("generation calls=%d failures=%v", calls, failures)
+				}
+				if calls, _, _, failures := fake.verification.snapshot(); calls != 1 || len(failures) != 0 {
+					t.Fatalf("verification calls=%d failures=%v", calls, failures)
 				}
 				return
 			}

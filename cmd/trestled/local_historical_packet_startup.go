@@ -48,7 +48,7 @@ type historicalGateFaultProbe struct {
 
 // This only classifies replayed intent and physically observed bytes for refusal.
 // Neither the journal nor the owner checksum authenticates source/snapshot bytes.
-func inspectRecordedHistoricalPackets(ctx context.Context, journal *controlplane.FileRunJournal, pending *artifact.PendingFileStore, recorded *localSourceOwnerRecordedSnapshot, statePath, artifactPath, setupPath string, expected *setup.Plan, tenant, repositoryID string, repository evidence.RepositoryIdentity, gitRoot *os.Root, originalGitIdentity localSourceDirectoryIdentity, objectStore *scm.LocalGitObjectStore, adapter *scm.LocalGitSourceAdapter, sourceDigest string, classification *historicalPacketStartupClass, pendingV4 *[]historicalExpiredPacketCheckpoint, now time.Time, probe *historicalGateFaultProbe) error {
+func inspectRecordedHistoricalPackets(ctx context.Context, journal *controlplane.FileRunJournal, pending *artifact.PendingFileStore, recorded *localSourceOwnerRecordedSnapshot, statePath, artifactPath, setupPath string, expected *setup.Plan, tenant, repositoryID string, repository evidence.RepositoryIdentity, gitRoot *os.Root, originalGitIdentity localSourceDirectoryIdentity, objectStore *scm.LocalGitObjectStore, adapter *scm.LocalGitSourceAdapter, sourceDigest string, classification *historicalPacketStartupClass, pendingV4 *[]historicalExpiredPacketCheckpoint, now time.Time, probe *historicalGateFaultProbe, generationStartup *localGenerationStartupAuthority, rejectionWindows *[]generationRejectionWindow) error {
 	return journal.WithOwnedHistoricalPacketFacts(ctx, func(stateRoot *os.Root, scan controlplane.HistoricalPacketScan) error {
 		return pending.WithOwnedRoot(func(artifactRoot *os.Root) error {
 			recheck := func() error {
@@ -177,6 +177,14 @@ func inspectRecordedHistoricalPackets(ctx context.Context, journal *controlplane
 							terminal, hasTerminal := fact.TerminalEvent()
 							settled := hasSettlement && settlement.Kind() == controlplane.RunEventContextInputSettled && settlement.PreviousIdentity() == linked.Identity() && settlement.OutputIdentity() == linked.InputDescriptor().Input.ArtifactIdentity && (!hasTerminal || terminal.Kind() == controlplane.RunEventSucceeded || terminal.Kind() == controlplane.RunEventCanceled)
 							expiredTerminal := hasSettlement && settlement.Kind() == controlplane.RunEventTaskFailed && settlement.Failure() == controlplane.RunFailurePolicy && settlement.OutputIdentity() == "" && settlement.PreviousIdentity() == linked.Identity() && (!hasTerminal || terminal.Kind() == controlplane.RunEventFailed)
+							if hasTerminal && terminal.Kind() == controlplane.RunEventFailed && !expiredTerminal {
+								window, err := generationStartup.observe(ctx, stateRoot, artifactRoot, fact, historicalRecordedSourceBinding{RootIdentity: sourceDigest, RepositoryIdentity: repository.Identity(), AdapterIdentity: adapter.Identity().Identity()}, now)
+								if err != nil {
+									return errors.Join(errHistoricalInputIntentQuarantinedAtStartup, err)
+								}
+								*rejectionWindows = append(*rejectionWindows, window)
+								settled = true
+							}
 							settled = settled || expiredTerminal
 							preparedHead := !hasSettlement && !hasTerminal && fact.FinalHeadIdentity() == linked.Identity()
 							if !exists || task.HandlerIdentity() != contexthandler.PacketAuthorityHandlerIdentity() || !settled {

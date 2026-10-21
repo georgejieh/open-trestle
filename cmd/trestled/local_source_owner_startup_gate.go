@@ -24,6 +24,10 @@ func startLocalSourceOwnerGate(ctx context.Context, resources *daemon, stateDire
 }
 
 func startLocalSourceOwnerGateWithProbe(ctx context.Context, resources *daemon, stateDirectory, setupPath string, expected *setup.Plan, tenant, repositoryID string, repository evidence.RepositoryIdentity, gitRoot *os.Root, objectStore *scm.LocalGitObjectStore, adapter *scm.LocalGitSourceAdapter, sourceDigest string, clock artifact.Clock, probe *historicalGateFaultProbe) (*artifact.FileStore, *controlplane.FileRunJournal, *localPacketOwner, error) {
+	return startLocalSourceOwnerGateWithAuthority(ctx, resources, stateDirectory, setupPath, expected, tenant, repositoryID, repository, gitRoot, objectStore, adapter, sourceDigest, clock, nil, probe)
+}
+
+func startLocalSourceOwnerGateWithAuthority(ctx context.Context, resources *daemon, stateDirectory, setupPath string, expected *setup.Plan, tenant, repositoryID string, repository evidence.RepositoryIdentity, gitRoot *os.Root, objectStore *scm.LocalGitObjectStore, adapter *scm.LocalGitSourceAdapter, sourceDigest string, clock artifact.Clock, generationStartup *localGenerationStartupAuthority, probe *historicalGateFaultProbe) (*artifact.FileStore, *controlplane.FileRunJournal, *localPacketOwner, error) {
 	if clock == nil {
 		return nil, nil, nil, ErrInvalidDaemonConfiguration
 	}
@@ -49,6 +53,7 @@ func startLocalSourceOwnerGateWithProbe(ctx context.Context, resources *daemon, 
 	var classification historicalPacketStartupClass
 	var startupScopeIntents []string
 	var pendingV4 []historicalExpiredPacketCheckpoint
+	var rejectionWindows []generationRejectionWindow
 	// Saved pre-constructor roots must close, successfully, before deletion recovery.
 	preflight := func() (result error) {
 		var snapshot *localSourceOwnerSnapshot
@@ -113,7 +118,7 @@ func startLocalSourceOwnerGateWithProbe(ctx context.Context, resources *daemon, 
 				}
 			}
 			sort.Strings(startupScopeIntents)
-			return inspectRecordedHistoricalPackets(ctx, journal, pending, recorded, statePath, artifactPath, setupPath, expected, tenant, repositoryID, repository, gitRoot, originalGitIdentity, objectStore, adapter, sourceDigest, &classification, &pendingV4, clock.Now().UTC(), probe)
+			return inspectRecordedHistoricalPackets(ctx, journal, pending, recorded, statePath, artifactPath, setupPath, expected, tenant, repositoryID, repository, gitRoot, originalGitIdentity, objectStore, adapter, sourceDigest, &classification, &pendingV4, clock.Now().UTC(), probe, generationStartup, &rejectionWindows)
 		}
 		return journal.WithOwnedRoot(ctx, func(stateRoot *os.Root) error {
 			return pending.WithOwnedRoot(func(artifactRoot *os.Root) error {
@@ -216,6 +221,11 @@ func startLocalSourceOwnerGateWithProbe(ctx context.Context, resources *daemon, 
 	if err = ctx.Err(); err != nil {
 		return nil, nil, nil, err
 	}
+	for _, window := range rejectionWindows {
+		if !window.live(clock.Now().UTC()) {
+			return nil, nil, nil, errHistoricalInputIntentQuarantinedAtStartup
+		}
+	}
 	switch classification {
 	case historicalPacketObserved:
 		return nil, nil, nil, errHistoricalPacketObservedAtStartup
@@ -246,7 +256,7 @@ func startLocalSourceOwnerGateWithProbe(ctx context.Context, resources *daemon, 
 	// Replace the already registered pending closer. The journal remains last.
 	resources.closers[len(resources.closers)-2] = active
 	if gitEnabled {
-		return active, journal, &localPacketOwner{store: active, journal: journal, sourceRootDigest: sourceDigest, gitIdentity: originalGitIdentity, pendingSettlementAudit: classification == historicalPacketOwnerSettledCandidate || classification == historicalPacketOwnerPreparedCandidate, startupScopeIntents: startupScopeIntents, pendingExpiredPackets: pendingV4, statePath: statePath, sourceBinding: historicalRecordedSourceBinding{RootIdentity: sourceDigest, RepositoryIdentity: repository.Identity(), AdapterIdentity: adapter.Identity().Identity()}, clock: clock}, nil
+		return active, journal, &localPacketOwner{store: active, journal: journal, sourceRootDigest: sourceDigest, gitIdentity: originalGitIdentity, pendingSettlementAudit: classification == historicalPacketOwnerSettledCandidate || classification == historicalPacketOwnerPreparedCandidate, startupScopeIntents: startupScopeIntents, pendingExpiredPackets: pendingV4, statePath: statePath, sourceBinding: historicalRecordedSourceBinding{RootIdentity: sourceDigest, RepositoryIdentity: repository.Identity(), AdapterIdentity: adapter.Identity().Identity()}, clock: clock, generationStartup: generationStartup}, nil
 	}
 	return active, journal, nil, nil
 }

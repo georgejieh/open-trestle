@@ -365,6 +365,13 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 		daemonGitHubSourceClock = budgetedClock
 		daemonWebhookClock = budgetedClock
 	}
+	var generationStartup *localGenerationStartupAuthority
+	if *localFullReview {
+		generationStartup, err = loadLocalGenerationStartupAuthority(ctx, *runtimeRouteInventory, *runtimePolicy, getenv, deps.generationSanitizer)
+		if err != nil {
+			return nil, ErrInvalidDaemonConfiguration
+		}
+	}
 	var localObjectsRoot *os.Root
 	var localObjectStore *scm.LocalGitObjectStore
 	var localSourceAdapter *scm.LocalGitSourceAdapter
@@ -406,7 +413,7 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	budgetedErasureConstructed := false
 	artifactProtection := artifact.ProtectionProcessPrivate
 	if *artifactStoreMode == "local" && *metadataStore == "local" {
-		active, fileJournal, bootOwner, gateErr := startLocalSourceOwnerGate(ctx, resources, *stateDirectory, *setupState, &localSetupPlan, *tenantID, repositories[0], localRepository, localObjectsRoot, localObjectStore, localSourceAdapter, localRootDigest, daemonArtifactClock)
+		active, fileJournal, bootOwner, gateErr := startLocalSourceOwnerGateWithAuthority(ctx, resources, *stateDirectory, *setupState, &localSetupPlan, *tenantID, repositories[0], localRepository, localObjectsRoot, localObjectStore, localSourceAdapter, localRootDigest, daemonArtifactClock, generationStartup, nil)
 		if gateErr != nil {
 			if localGitConfigured && (errors.Is(gateErr, errLocalSourceOwnerSnapshot) || errors.Is(gateErr, errLocalMissingStateBoundary)) {
 				return nil, errors.Join(ErrInvalidDaemonConfiguration, gateErr)
@@ -680,14 +687,11 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 				return nil, ErrInvalidDaemonConfiguration
 			}
 			localHandlers = []controlplane.TaskHandler{sourceTask, changeTask, analysisTask}
-			inventory, configuration, configErr := loadRuntimeConfiguration(ctx, *runtimeRouteInventory, *runtimePolicy)
-			if configErr != nil {
-				return nil, ErrInvalidDaemonConfiguration
-			}
+			inventory, configuration := generationStartup.inventory, generationStartup.configuration
 			memoryTask, memoryErr := memoryhandler.NewHandler(artifactStore, daemonArtifactClock, memorycore.NewLexicalIndex(), daemonComponentIdentity("empty-memory-index-v1"), configuration.ReviewPolicyIdentity(), "trestled", []string{"."}, 64, 50)
-			dispatchers, dispatcherErr := runtimecatalog.NewLocalOpenAIRouteDispatcherCatalogFromRuntimePolicy(inventory, configuration, environmentOpenAICredentialResolver{getenv: getenv})
+			dispatchers := generationStartup.dispatchers
 			verificationInventory, inventoryErr := runtimecatalog.NewStaticVerificationRouteInventory(inventory)
-			if memoryErr != nil || dispatcherErr != nil || inventoryErr != nil {
+			if memoryErr != nil || inventoryErr != nil {
 				return nil, ErrInvalidDaemonConfiguration
 			}
 			verificationAuthorizer, verificationAuthErr := runtimecatalog.NewVerificationPolicyAuthorizerFromRuntimePolicy(configuration, verificationInventory, auditLedger, daemonArtifactClock)
@@ -717,6 +721,9 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 				return nil, ErrInvalidDaemonConfiguration
 			}
 			if err := checkLocalFullReviewStartupPlans(ctx, journal, *tenantID, repositories, contextTask.HandlerIdentity(), analysisTask.HandlerIdentity()); err != nil {
+				return nil, err
+			}
+			if err := verifyOwnerRejectedGenerationCatalog(ctx, packetOwner, localObjectsRoot, pipeline, configuration.ReviewPolicyIdentity()); err != nil {
 				return nil, err
 			}
 			if len(packetOwner.pendingExpiredPackets) > 0 {

@@ -27,6 +27,7 @@ type localPacketOwner struct {
 	clock                   artifact.Clock
 	pendingExpiredPackets   []historicalExpiredPacketCheckpoint
 	statePath               string
+	generationStartup       *localGenerationStartupAuthority
 	sourceBinding           historicalRecordedSourceBinding
 	beforeRawPut            func() // test-only, installed before concurrent use
 	beforeInputPut          func() // test-only, installed before concurrent use

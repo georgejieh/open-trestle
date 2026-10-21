@@ -34,15 +34,17 @@ func verifyOwnerSettledStartup(ctx context.Context, owner *localPacketOwner, led
 	if err := checkGit(); err != nil {
 		return err
 	}
-	var facts []controlplane.HistoricalContextPacketFact
-	err := owner.journal.WithOwnedHistoricalPacketFacts(ctx, func(_ *os.Root, scan controlplane.HistoricalPacketScan) error {
-		return scan(ctx, func(observed []controlplane.HistoricalContextPacketFact) error {
-			facts = append(facts, observed...)
-			return nil
-		})
-	})
+	facts, rejected, rejectionWindows, err := observeOwnerGenerationRejections(ctx, owner, checkGit)
 	if err != nil || len(facts) == 0 {
 		return errors.Join(errHistoricalInputIntentQuarantinedAtStartup, err)
+	}
+	checkRejectionsLive := func() error {
+		for _, window := range rejectionWindows {
+			if !window.live(owner.clock.Now().UTC()) {
+				return errHistoricalInputIntentQuarantinedAtStartup
+			}
+		}
+		return nil
 	}
 	coordinator, err := controlplane.NewCoordinator(owner.journal)
 	if err != nil {
@@ -65,7 +67,8 @@ func verifyOwnerSettledStartup(ctx context.Context, owner *localPacketOwner, led
 		preparedHead := !hasSettlement && !hasTerminal && fact.FinalHeadIdentity() == linked.Identity()
 		settledOwner := hasSettlement && settled.Kind() == controlplane.RunEventContextInputSettled && settled.PreviousIdentity() == linked.Identity() && settled.OutputIdentity() == linked.InputDescriptor().Input.ArtifactIdentity && (!hasTerminal || terminal.Kind() == controlplane.RunEventSucceeded || terminal.Kind() == controlplane.RunEventCanceled)
 		expiredTerminal := hasSettlement && settled.Kind() == controlplane.RunEventTaskFailed && settled.Failure() == controlplane.RunFailurePolicy && settled.OutputIdentity() == "" && settled.PreviousIdentity() == linked.Identity() && (!hasTerminal || terminal.Kind() == controlplane.RunEventFailed)
-		settledOwner = settledOwner || expiredTerminal
+		rejectedGeneration := rejected[scope.Identity()] == fact.FinalHeadIdentity()
+		settledOwner = settledOwner || expiredTerminal || rejectedGeneration
 		if !hasInput || !hasTask || task.HandlerIdentity() != contexthandler.PacketAuthorityHandlerIdentity() || packet.PacketDescriptor().SourceRootIdentity != owner.sourceRootDigest || linked.Kind() != controlplane.RunEventContextInputPrepared || !(preparedHead || settledOwner) {
 			return errHistoricalInputIntentQuarantinedAtStartup
 		}
@@ -97,6 +100,9 @@ func verifyOwnerSettledStartup(ctx context.Context, owner *localPacketOwner, led
 		}
 		if expiredTerminal {
 			expiredScopes[scope.Identity()] = true
+		}
+		if rejectedGeneration {
+			continue
 		}
 		d := linked.InputDescriptor()
 		expectations := [4]physicalPacketExpectation{
@@ -148,6 +154,9 @@ func verifyOwnerSettledStartup(ctx context.Context, owner *localPacketOwner, led
 	}
 	markerScopes := make(map[string]bool, len(owner.startupScopeIntents))
 	for _, markerScope := range owner.startupScopeIntents {
+		if _, exists := rejected[markerScope]; exists {
+			return controlplane.ErrScopeIntentUnresolved
+		}
 		markerScopes[markerScope] = true
 		if _, okay := verifiedScopes[markerScope]; !okay {
 			return controlplane.ErrScopeIntentUnresolved
@@ -161,8 +170,14 @@ func verifyOwnerSettledStartup(ctx context.Context, owner *localPacketOwner, led
 	if err := checkGit(); err != nil {
 		return err
 	}
+	if err := checkRejectionsLive(); err != nil {
+		return err
+	}
 	for scopeID := range preparedScopes {
 		if expiredScopes[scopeID] {
+			if err := checkRejectionsLive(); err != nil {
+				return err
+			}
 			if _, err := owner.journal.TerminateExpiredOwnerContextInput(ctx, owner.store, ledger, verifiedScopes[scopeID], owner.clock); err != nil {
 				return err
 			}
@@ -171,6 +186,9 @@ func verifyOwnerSettledStartup(ctx context.Context, owner *localPacketOwner, led
 	for _, markerScope := range owner.startupScopeIntents {
 		if expiredScopes[markerScope] {
 			if !preparedScopes[markerScope] {
+				if err := checkRejectionsLive(); err != nil {
+					return err
+				}
 				if _, err := owner.journal.TerminateExpiredOwnerContextInput(ctx, owner.store, ledger, verifiedScopes[markerScope], owner.clock); err != nil {
 					return err
 				}
@@ -179,6 +197,9 @@ func verifyOwnerSettledStartup(ctx context.Context, owner *localPacketOwner, led
 		}
 		scope := verifiedScopes[markerScope]
 		if preparedScopes[markerScope] {
+			if err := checkRejectionsLive(); err != nil {
+				return err
+			}
 			if err := owner.journal.ReconcilePersistedOwnerContextInputPreparation(ctx, owner.store, ledger, scope, owner.clock); err != nil {
 				return err
 			}
@@ -186,8 +207,14 @@ func verifyOwnerSettledStartup(ctx context.Context, owner *localPacketOwner, led
 		}
 		// A v6 head may carry either its own interrupted settlement marker or
 		// an older input-preparation marker left after recovery appended v6.
+		if err := checkRejectionsLive(); err != nil {
+			return err
+		}
 		if err := owner.journal.ReconcilePersistedOwnerContextInputPreparation(ctx, owner.store, ledger, scope, owner.clock); err != nil {
 			if ctx.Err() != nil {
+				return err
+			}
+			if err := checkRejectionsLive(); err != nil {
 				return err
 			}
 			if settledErr := owner.journal.ReconcilePersistedOwnerContextSettlement(ctx, owner.store, ledger, scope, owner.clock); settledErr != nil {
@@ -196,6 +223,9 @@ func verifyOwnerSettledStartup(ctx context.Context, owner *localPacketOwner, led
 		}
 	}
 	if err := checkGit(); err != nil {
+		return err
+	}
+	if err := checkRejectionsLive(); err != nil {
 		return err
 	}
 	owner.settlementAuditVerified = true
