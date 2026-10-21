@@ -107,6 +107,7 @@ type daemonBudgetedModelEndpoint struct {
 	server              *httptest.Server
 	name                string
 	verificationOutcome string
+	generationOutcome   string
 	model               string
 	key                 string
 	calls               int
@@ -318,6 +319,12 @@ func (e *daemonBudgetedModelEndpoint) outputForPacket(t *testing.T, packet daemo
 			e.fail("generation request lost generation-only route or lineage")
 			return nil, false
 		}
+		if e.generationOutcome == "empty" {
+			return map[string]any{"schema_version": 1, "candidates": []any{}}, true
+		}
+		if e.generationOutcome == "malformed" {
+			return map[string]any{"schema_version": 1, "candidates": []any{map[string]any{"claim": "missing evidence"}}}, true
+		}
 		return map[string]any{"schema_version": 1, "candidates": []any{map[string]any{
 			"title":         "Budgeted daemon candidate cites changed code",
 			"claim":         "The local external model observed the exact changed source slice through the daemon-owned context packet.",
@@ -326,7 +333,7 @@ func (e *daemonBudgetedModelEndpoint) outputForPacket(t *testing.T, packet daemo
 			"evidence_ids":  []string{selected.ID},
 		}}}, true
 	case "candidate_verification":
-		if e.model != "model-b" || packet.GenerationContext == "" || packet.CandidateBatch == "" || len(packet.Candidates) == 0 {
+		if e.model != "model-b" || packet.GenerationContext == "" || packet.CandidateBatch == "" {
 			e.fail("verification request lost independent route or candidate lineage")
 			return nil, false
 		}
