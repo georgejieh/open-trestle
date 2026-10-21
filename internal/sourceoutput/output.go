@@ -288,22 +288,23 @@ func ParseSnapshotArtifact(value artifact.Artifact) (Snapshot, error) {
 			artifactIdentity: file.ArtifactIdentity,
 		}
 	}
-	snapshot, err := NewSnapshot(
-		value.Identity(), wire.AcquisitionRequestIdentity, wire.AcquisitionReceiptIdentity,
-		wire.AcquisitionExecutionIdentity, wire.RepositoryIdentity, wire.RevisionIdentity,
-		wire.SourceAdapterIdentity, wire.ManifestIdentity, files,
-	)
-	if err != nil || snapshot.identity != wire.Identity {
-		return Snapshot{}, ErrInvalidOutput
+	snapshot := Snapshot{
+		artifactIdentity: value.Identity(), scopeIdentity: value.Scope().Identity(),
+		classification: value.Classification(), protection: value.Protection(),
+		acquisitionRequest: wire.AcquisitionRequestIdentity, acquisitionReceipt: wire.AcquisitionReceiptIdentity,
+		acquisitionExec: wire.AcquisitionExecutionIdentity, repositoryIdentity: wire.RepositoryIdentity,
+		revisionIdentity: wire.RevisionIdentity, sourceAdapterIdentity: wire.SourceAdapterIdentity,
+		manifestIdentity: wire.ManifestIdentity, files: files,
 	}
-	snapshot.scopeIdentity = value.Scope().Identity()
-	snapshot.classification = value.Classification()
-	snapshot.protection = value.Protection()
 	if snapshot.validateFields(true) != nil {
 		return Snapshot{}, ErrInvalidOutput
 	}
-	reencoded, _ := EncodeSnapshot(snapshot)
-	if !bytes.Equal(reencoded, payload) {
+	snapshot.identity = deriveSnapshotIdentity(snapshot)
+	if snapshot.identity != wire.Identity {
+		return Snapshot{}, ErrInvalidOutput
+	}
+	reencoded, err := json.Marshal(snapshotWireValue(snapshot))
+	if err != nil || !bytes.Equal(reencoded, payload) {
 		return Snapshot{}, ErrInvalidOutput
 	}
 	return snapshot, nil

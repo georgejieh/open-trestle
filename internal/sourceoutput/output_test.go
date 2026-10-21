@@ -103,3 +103,26 @@ func BenchmarkParseFileArtifactSnapshotSize(b *testing.B) {
 		})
 	}
 }
+
+func BenchmarkParseSnapshotArtifactIndexSize(b *testing.B) {
+	for _, count := range []int{100, 1000} {
+		b.Run(fmt.Sprintf("files-%d", count), func(b *testing.B) {
+			_, parsed, file, _ := snapshotFileFixture(b, count)
+			payload, err := sourceoutput.EncodeSnapshot(parsed)
+			if err != nil {
+				b.Fatal(err)
+			}
+			value, err := artifact.New(file.Scope(), artifact.KindSourceSnapshot, file.MediaType(), file.Classification(), file.Origin(), file.Protection(), file.Provenance(), payload, file.CreatedAt(), file.ExpiresAt())
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				if _, err := sourceoutput.ParseSnapshotArtifact(value); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
