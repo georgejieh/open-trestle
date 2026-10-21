@@ -18,6 +18,7 @@ import (
 )
 
 func TestOwnerExpiredMarkerFreeV5TerminatesAtRestart(t *testing.T) {
+	t.Parallel()
 	fixture := newLocalPacketOwnerFixture(t)
 	ctx := context.Background()
 	scope := fixture.request.Plan().Scope()
@@ -105,6 +106,7 @@ func TestOwnerExpiredMarkerFreeV5TerminatesAtRestart(t *testing.T) {
 }
 
 func TestOwnerInputExpiryBoundaries(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"before-v4", "before-input-put", "after-request-put", "after-receipt-put", "complete-v5", "unrelated-marker", "combined", "expired-settlement-marker"} {
 		t.Run(name, func(t *testing.T) {
 			f := newLocalPacketOwnerFixture(t)
@@ -255,6 +257,7 @@ func (c *expireOwnerSettlementClock) Now() time.Time {
 }
 
 func TestOwnerSanitizerExpiryKeepsV4AndGrantsNoRoute(t *testing.T) {
+	t.Parallel()
 	f := newLocalPacketOwnerFixture(t)
 	ctx := context.Background()
 	scope := f.request.Plan().Scope()
@@ -318,6 +321,7 @@ func (c *ownerPutExpiryClock) Now() time.Time {
 }
 
 func TestOwnerExpiredTerminalStartupRejectsInvalidAuditParents(t *testing.T) {
+	t.Parallel()
 	for _, mutation := range []string{"extra", "wrong-routing", "missing-selected"} {
 		t.Run(mutation, func(t *testing.T) {
 			f := newLocalPacketOwnerFixture(t)

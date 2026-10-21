@@ -108,6 +108,7 @@ func localModelWorkerFixture(t *testing.T) ([]string, func(string) string, *daem
 }
 
 func TestDaemonLocalModelWorkersRejectUnboundFlagBeforeCredentials(t *testing.T) {
+	t.Parallel()
 	calls := 0
 	getenv := func(string) string { calls++; return "" }
 	for _, args := range [][]string{{"--local-model-workers"}, {"--local-model-workers", "--local-full-review"}} {
@@ -121,6 +122,7 @@ func TestDaemonLocalModelWorkersRejectUnboundFlagBeforeCredentials(t *testing.T)
 }
 
 func TestDaemonLocalModelWorkersRejectSingleRouteBeforeDispatch(t *testing.T) {
+	t.Parallel()
 	args, getenv, fake, _, _, _, _, _ := localModelWorkerFixture(t)
 	encoded, err := os.ReadFile(fake.inventoryPath)
 	if err != nil {
@@ -147,6 +149,7 @@ func TestDaemonLocalModelWorkersRejectSingleRouteBeforeDispatch(t *testing.T) {
 }
 
 func TestDaemonLocalModelWorkersOptInOnly(t *testing.T) {
+	t.Parallel()
 	args, getenv, fake, repository, base, head, policy, inventory := localModelWorkerFixture(t)
 	d, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
 	if err != nil {
@@ -204,6 +207,7 @@ func TestDaemonLocalModelWorkersOptInOnly(t *testing.T) {
 }
 
 func TestDaemonLocalModelWorkersExecuteAdmittedReview(t *testing.T) {
+	t.Parallel()
 	args, getenv, fake, repository, base, head, policy, inventory := localModelWorkerFixture(t)
 	args = append(args, "--local-model-workers")
 	d, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
@@ -333,6 +337,7 @@ func TestDaemonLocalModelWorkersExecuteAdmittedReview(t *testing.T) {
 }
 
 func TestDaemonLocalModelWorkersResumeAfterCandidatesWithoutRedispatch(t *testing.T) {
+	t.Parallel()
 	args, getenv, fake, repository, base, head, policy, inventory := localModelWorkerFixture(t)
 	args = append(args, "--local-model-workers")
 	d, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
@@ -451,6 +456,7 @@ func TestDaemonLocalModelWorkersResumeAfterCandidatesWithoutRedispatch(t *testin
 	}
 }
 func TestDaemonLocalModelWorkersMissingVerifierDoesNotPromote(t *testing.T) {
+	t.Parallel()
 	args, getenv, fake, repository, base, head, policy, inventory := localModelWorkerFixture(t)
 	args = append(args, "--local-model-workers")
 	d, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
@@ -505,6 +511,7 @@ func TestDaemonLocalModelWorkersMissingVerifierDoesNotPromote(t *testing.T) {
 }
 
 func TestDaemonLocalModelWorkersLaterRunAndRestart(t *testing.T) {
+	t.Parallel()
 	args, getenv, fake, repository, base, head, policy, inventory := localModelWorkerFixture(t)
 	args = append(args, "--local-model-workers")
 	build := func() *daemon {
@@ -589,6 +596,7 @@ func TestDaemonLocalModelWorkersLaterRunAndRestart(t *testing.T) {
 }
 
 func TestDaemonLocalModelWorkersVerificationOutcomes(t *testing.T) {
+	t.Parallel()
 	for _, outcome := range []string{"rejected", "inconclusive"} {
 		t.Run(outcome, func(t *testing.T) {
 			args, getenv, fake, repository, base, head, policy, inventory := localModelWorkerFixture(t)
@@ -639,6 +647,7 @@ func TestDaemonLocalModelWorkersVerificationOutcomes(t *testing.T) {
 }
 
 func TestDaemonLocalModelWorkersCanceledBeforeGenerationSurvivesRestart(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"unclaimed", "claimed", "route-attempt"} {
 		t.Run(mode, func(t *testing.T) {
 			testDaemonLocalModelWorkersCanceledRestart(t, mode)
@@ -815,6 +824,7 @@ func testDaemonLocalModelWorkersCanceledRestart(t *testing.T, mode string) {
 }
 
 func TestDaemonLocalModelWorkersOfflineBackupPreservesOwnerBoundary(t *testing.T) {
+	t.Parallel()
 	for _, replaceRoot := range []bool{false, true} {
 		name := "in-place"
 		if replaceRoot {
@@ -975,8 +985,12 @@ func TestDaemonLocalModelWorkersOfflineBackupPreservesOwnerBoundary(t *testing.T
 }
 
 func TestDaemonLocalModelWorkersExpiredPacketLaterRunAndRestart(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"complete", "expired-route-attempt", "expired-orphan", "expired-marker"} {
-		t.Run(mode, func(t *testing.T) { testDaemonLocalModelWorkersExpiredPacketRestart(t, mode) })
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			testDaemonLocalModelWorkersExpiredPacketRestart(t, mode)
+		})
 	}
 }
 

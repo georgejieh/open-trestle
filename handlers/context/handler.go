@@ -315,96 +315,102 @@ func (h *Handler) InspectAbstention(ctx context.Context, request controlplane.Ta
 }
 
 func (h *Handler) assemble(ctx context.Context, request controlplane.TaskExecutionRequest, at time.Time) (modelhandler.InvestigationAssembly, provider.Request, *artifact.Artifact, controlplane.RunFailure) {
-	return h.assembleAt(ctx, request, at, at)
+	assembly, providerRequest, abstention, failureCode := h.assembleAt(ctx, request, at, at)
+	return assembly.InvestigationAssembly, providerRequest, abstention, failureCode
 }
 
-func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecutionRequest, readAt, createdAt time.Time) (modelhandler.InvestigationAssembly, provider.Request, *artifact.Artifact, controlplane.RunFailure) {
+type contextAssembly struct {
+	modelhandler.InvestigationAssembly
+	base, head sourceoutput.Snapshot
+}
+
+func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecutionRequest, readAt, createdAt time.Time) (contextAssembly, provider.Request, *artifact.Artifact, controlplane.RunFailure) {
 	analysisDependency, ok := request.DependencyOutput("analysis")
 	if !ok || !analysisDependency.Available() {
-		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+		return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 	}
 	memoryDependency, ok := request.DependencyOutput("memory")
 	if !ok || !memoryDependency.Available() {
-		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+		return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 	}
 	analysisArtifact, err := h.store.Get(ctx, request.Plan().Scope(), analysisDependency.OutputIdentity(), readAt)
 	if err != nil {
-		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, readFailure(ctx, err)
+		return contextAssembly{}, provider.Request{}, nil, readFailure(ctx, err)
 	}
 	memoryArtifact, err := h.store.Get(ctx, request.Plan().Scope(), memoryDependency.OutputIdentity(), readAt)
 	if err != nil {
-		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, readFailure(ctx, err)
+		return contextAssembly{}, provider.Request{}, nil, readFailure(ctx, err)
 	}
 	changeID, err := analysisChangeArtifactIdentity(analysisArtifact)
 	if err != nil {
-		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+		return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 	}
 	changeArtifact, err := h.store.Get(ctx, request.Plan().Scope(), changeID, readAt)
 	if err != nil {
-		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, readFailure(ctx, err)
+		return contextAssembly{}, provider.Request{}, nil, readFailure(ctx, err)
 	}
 	baseID, headID, err := changecodec.ResultArtifactReferences(changeArtifact)
 	if err != nil {
-		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+		return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 	}
 	baseArtifact, err := h.store.Get(ctx, request.Plan().Scope(), baseID, readAt)
 	if err != nil {
-		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, readFailure(ctx, err)
+		return contextAssembly{}, provider.Request{}, nil, readFailure(ctx, err)
 	}
 	headArtifact, err := h.store.Get(ctx, request.Plan().Scope(), headID, readAt)
 	if err != nil {
-		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, readFailure(ctx, err)
+		return contextAssembly{}, provider.Request{}, nil, readFailure(ctx, err)
 	}
 	base, err := sourceoutput.ParseSnapshotArtifact(baseArtifact)
 	if err != nil {
-		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+		return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 	}
 	head, err := sourceoutput.ParseSnapshotArtifact(headArtifact)
 	if err != nil {
-		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+		return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 	}
 	change, err := changecodec.ParseResultArtifactWithSnapshots(changeArtifact, base, head)
 	if err != nil {
-		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+		return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 	}
 	analysis, err := analysiscodec.ParseResultArtifactWithChange(analysisArtifact, changeArtifact, change)
 	if err != nil {
-		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+		return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 	}
 	memoryResult, err := memorycodec.ParseResultArtifactWithChange(memoryArtifact, changeArtifact, change)
 	if err != nil || memoryResult.ChangeArtifactIdentity() != analysis.ChangeArtifactIdentity() || memoryResult.PolicyIdentity() != request.Plan().PolicyIdentity() {
-		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+		return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 	}
 	if head.Identity() != analysis.HeadSnapshotIdentity() || head.ManifestIdentity() != analysis.HeadManifestIdentity() {
-		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+		return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 	}
 	memoryScope, err := memoryResult.MemoryScope()
 	if err != nil {
-		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+		return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 	}
 	queries := memoryResult.Queries()
 	if len(queries) == 0 && !h.packetOnly {
-		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailurePolicy
+		return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailurePolicy
 	}
 	retrievals := make([]memorycore.LexicalRetrieval, len(queries))
 	memoryItems := 0
 	for index, query := range queries {
 		retrievals[index], err = query.Retrieval(memoryScope, memoryResult.AsOf())
 		if err != nil {
-			return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+			return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 		}
 		memoryItems += len(retrievals[index].Items())
 	}
 	contents, manifest, expires, loadFailure := h.loadHead(ctx, request.Plan().Scope(), head, readAt, minimumTime(analysisArtifact.ExpiresAt(), memoryArtifact.ExpiresAt(), changeArtifact.ExpiresAt(), baseArtifact.ExpiresAt(), headArtifact.ExpiresAt()))
 	if loadFailure != 0 {
-		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, loadFailure
+		return contextAssembly{}, provider.Request{}, nil, loadFailure
 	}
 	defer clearContents(contents)
 	omissions := make([]review.ContextSourceOmission, 0, len(analysis.Gaps()))
 	for _, gap := range analysis.Gaps() {
 		omission, omissionErr := review.NewContextSourceOmission(gap.Path(), gap.StartLine(), gap.EndLine(), "analysis_"+gap.Reason())
 		if omissionErr != nil {
-			return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+			return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 		}
 		omissions = append(omissions, omission)
 	}
@@ -412,7 +418,7 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 	for _, gap := range semanticProfile.Gaps() {
 		omission, omissionErr := review.NewContextSourceOmission(gap.Path(), 0, 0, "semantic_"+string(gap.Reason()))
 		if omissionErr != nil {
-			return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+			return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 		}
 		omissions = append(omissions, omission)
 	}
@@ -420,23 +426,23 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 	for _, item := range analysis.Items() {
 		content, exists := contents[item.Path()]
 		if !exists {
-			return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+			return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 		}
 		repositoryFile, err := evidence.NewRepositoryFile(item.Path(), content)
 		if err != nil || repositoryFile.Identity() != item.FileIdentity() || repositoryFile.Digest() != item.FileDigest() {
-			return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+			return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 		}
 		rangeValue, err := evidence.NewSourceRange(item.Path(), item.StartLine(), item.EndLine())
 		if err != nil {
-			return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+			return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 		}
 		slice, ok := physicalLineSlice(content, item.StartLine(), item.EndLine())
 		if !ok {
-			return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+			return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 		}
 		binding, err := evidence.BindSourceSlice(repositoryFile, content, rangeValue, slice)
 		if err != nil || binding.Identity() != item.BindingIdentity() || binding.SliceBytes() != item.SliceBytes() {
-			return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+			return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 		}
 		reason := ""
 		switch {
@@ -452,24 +458,24 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 		if reason != "" {
 			omission, omissionErr := review.NewContextSourceOmission(item.Path(), item.StartLine(), item.EndLine(), reason)
 			if omissionErr != nil {
-				return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInternal
+				return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInternal
 			}
 			omissions = append(omissions, omission)
 			continue
 		}
 		evidenceItem, err := item.EvidenceItem()
 		if err != nil {
-			return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+			return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 		}
 		source, err := review.NewBoundContextSource(review.ContextStageChangedHunk, memorycore.TaintRepositoryControlled, evidenceItem, slice, binding)
 		if err != nil {
-			return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+			return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 		}
 		candidates = append(candidates, source)
 	}
 	candidates, omissions, semanticFailure := appendSemanticCandidates(contents, memoryScope, semanticProfile, candidates, omissions)
 	if semanticFailure != 0 {
-		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, semanticFailure
+		return contextAssembly{}, provider.Request{}, nil, semanticFailure
 	}
 	makeAbstention := func(reason string, failureCode controlplane.RunFailure, sourceOmissions []review.ContextSourceOmission) (*artifact.Artifact, controlplane.RunFailure) {
 		value, err := newContextAbstentionArtifact(request, analysisArtifact, memoryArtifact, changeArtifact, headArtifact, head.Identity(), sourceOmissions, reason, failureCode, createdAt, expires)
@@ -493,24 +499,24 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 			reason = "unsupported_language"
 		}
 		abstention, failureCode := makeAbstention(reason, controlplane.RunFailurePolicy, omissions)
-		return modelhandler.InvestigationAssembly{}, provider.Request{}, abstention, failureCode
+		return contextAssembly{}, provider.Request{}, abstention, failureCode
 	}
 	limits, _ := review.NewContextLimits(maximumContextPacketSourceBytes, uint8(min(50, memoryItems)))
 	selection, err := review.SelectContextSources(candidates, limits)
 	if err != nil {
-		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureResourceLimit
+		return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureResourceLimit
 	}
 	if selection.SelectedCount() == 0 {
 		for _, candidate := range candidates {
 			rangeValue := candidate.EvidenceItem().SourceRange()
 			omission, err := review.NewContextSourceOmission(rangeValue.Path(), rangeValue.StartLine(), rangeValue.EndLine(), "packet_budget")
 			if err != nil {
-				return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+				return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 			}
 			omissions = append(omissions, omission)
 		}
 		abstention, failureCode := makeAbstention("packet_budget_zero_selection", controlplane.RunFailureResourceLimit, omissions)
-		return modelhandler.InvestigationAssembly{}, provider.Request{}, abstention, failureCode
+		return contextAssembly{}, provider.Request{}, abstention, failureCode
 	}
 	ranges := make([]evidence.SourceRange, selection.SelectedCount())
 	for index, source := range selection.SelectedSources() {
@@ -518,28 +524,28 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 	}
 	snapshot, err := review.NewAcquiredReviewPipelineSnapshot(request.Plan().Scope().ReviewRunID(), manifest, ranges)
 	if err != nil {
-		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+		return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 	}
 	packet, err := review.NewContextPacketWithAccounting(request.Plan().Scope(), memoryScope, snapshot, review.ContextTaskCandidateGeneration, candidates, retrievals, omissions, limits)
 	if err != nil {
-		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+		return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
 	}
 	providerRequest, err := packet.ProviderRequest()
 	if err != nil {
-		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureInternal
+		return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInternal
 	}
 	contextProvenance := []string{analysisArtifact.Identity(), memoryArtifact.Identity(), changeArtifact.Identity(), headArtifact.Identity(), analysis.Identity(), memoryResult.Identity()}
 	sort.Strings(contextProvenance)
 	contextArtifact, err := artifact.New(request.Plan().Scope(), artifact.KindContextPacket, "application/json", analysisArtifact.Classification(), artifact.OriginHost, analysisArtifact.Protection(), contextProvenance, providerRequest.Payload(), createdAt, expires)
 	if err != nil {
-		return modelhandler.InvestigationAssembly{}, provider.Request{}, nil, controlplane.RunFailureResourceLimit
+		return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureResourceLimit
 	}
-	return modelhandler.InvestigationAssembly{
+	return contextAssembly{InvestigationAssembly: modelhandler.InvestigationAssembly{
 		Packet: packet, Snapshot: snapshot, MemoryScope: memoryScope,
 		InitialContextArtifact: contextArtifact,
 		AnalysisArtifact:       analysisArtifact, MemoryArtifact: memoryArtifact, ChangeArtifact: changeArtifact,
 		BaseSnapshotArtifact: baseArtifact, HeadSnapshotArtifact: headArtifact,
-	}, providerRequest, nil, 0
+	}, base: base, head: head}, providerRequest, nil, 0
 }
 
 func (h *Handler) loadHead(ctx context.Context, scope audit.ReviewScope, head sourceoutput.Snapshot, at, expires time.Time) (map[string][]byte, evidence.RepositoryManifest, time.Time, controlplane.RunFailure) {

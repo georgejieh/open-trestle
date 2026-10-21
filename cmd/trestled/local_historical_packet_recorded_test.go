@@ -16,6 +16,7 @@ import (
 )
 
 func TestPhysicalRecordedRoleClosedAndExclusive(t *testing.T) {
+	t.Parallel()
 	f := newPhysicalPacketTestFixture(t)
 	pairs := []struct {
 		kind   artifact.Kind
@@ -80,6 +81,7 @@ func TestPhysicalRecordedRoleClosedAndExclusive(t *testing.T) {
 }
 
 func TestPhysicalRecordedCanonicalFailureStillRereads(t *testing.T) {
+	t.Parallel()
 	f := newPhysicalPacketTestFixture(t)
 	// A recorded task-input selection of existing packet bytes must mismatch,
 	// but preserve the same normal callback and byte-reread semantics.
@@ -165,6 +167,7 @@ func (f physicalRecordedFixture) observe(t *testing.T, closer func(*os.File) err
 	})
 }
 func TestPhysicalRecordedExactNames(t *testing.T) {
+	t.Parallel()
 	f := newPhysicalRecordedFixture(t)
 	if err := f.observe(t, (*os.File).Close, f.names.root); err != nil {
 		t.Fatal(err)
@@ -203,6 +206,7 @@ func TestPhysicalRecordedExactNames(t *testing.T) {
 	}
 }
 func TestPhysicalRecordedRefusalStillRereadsAllEight(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"parser", "canonical", "unknown", "late drift", "close error"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newPhysicalRecordedFixture(t)
@@ -264,6 +268,7 @@ func TestPhysicalRecordedRefusalStillRereadsAllEight(t *testing.T) {
 }
 
 func TestPhysicalRecordedBudgetBeforeAnyRead(t *testing.T) {
+	t.Parallel()
 	f := newPhysicalRecordedFixture(t)
 	for _, name := range f.selected[:3] {
 		if err := os.Truncate(filepath.Join(f.root, name), physicalPacketFileLimit); err != nil {
@@ -283,6 +288,7 @@ func TestPhysicalRecordedBudgetBeforeAnyRead(t *testing.T) {
 	}
 }
 func TestPhysicalRecordedLateNameAndRootChanges(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"name", "root"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newPhysicalRecordedFixture(t)
@@ -310,6 +316,7 @@ func TestPhysicalRecordedLateNameAndRootChanges(t *testing.T) {
 	}
 }
 func TestPhysicalRecordedCancellation(t *testing.T) {
+	t.Parallel()
 	f := newPhysicalRecordedFixture(t)
 	pending, err := artifact.OpenPendingFileStore(f.root)
 	if err != nil {
@@ -338,6 +345,7 @@ func TestPhysicalRecordedCancellation(t *testing.T) {
 }
 
 func TestPhysicalRecordedSelectedByteBudgetBoundary(t *testing.T) {
+	t.Parallel()
 	for _, over := range []bool{false, true} {
 		t.Run(fmt.Sprint(over), func(t *testing.T) {
 			f := newPhysicalRecordedFixture(t)

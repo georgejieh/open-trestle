@@ -199,7 +199,7 @@ func (p packetAssembler) rebuild(ctx context.Context, request controlplane.TaskE
 	if failure != 0 || abstention != nil {
 		return packetBuild{}, ErrPacketAuthority
 	}
-	root, err := p.sourceChain(ctx, request, state, assembly.BaseSnapshotArtifact, assembly.HeadSnapshotArtifact, assembly.ChangeArtifact, assembly.InitialContextArtifact.ExpiresAt())
+	root, err := p.sourceChain(ctx, request, state, assembly)
 	if err != nil {
 		return packetBuild{}, err
 	}
@@ -212,17 +212,12 @@ func (p packetAssembler) rebuild(ctx context.Context, request controlplane.TaskE
 	return packetBuild{value: value, root: root, snapshot: assembly.Snapshot.Identity(), packet: assembly.Packet, snapshotValue: assembly.Snapshot}, nil
 }
 
-func (p packetAssembler) sourceChain(ctx context.Context, request controlplane.TaskExecutionRequest, state controlplane.ReviewRunState, baseArtifact, headArtifact, changeArtifact artifact.Artifact, packetExpiry time.Time) (string, error) {
+func (p packetAssembler) sourceChain(ctx context.Context, request controlplane.TaskExecutionRequest, state controlplane.ReviewRunState, assembly contextAssembly) (string, error) {
 	reader := leaseBoundReads{Store: p.store, clock: p.clock, lease: request.Lease()}
-	base, err := sourceoutput.ParseSnapshotArtifact(baseArtifact)
-	if err != nil {
-		return "", ErrPacketAuthority
-	}
-	head, err := sourceoutput.ParseSnapshotArtifact(headArtifact)
-	if err != nil {
-		return "", ErrPacketAuthority
-	}
-	change, err := changecodec.ParseResultArtifact(changeArtifact, baseArtifact, headArtifact)
+	baseArtifact, headArtifact, changeArtifact := assembly.BaseSnapshotArtifact, assembly.HeadSnapshotArtifact, assembly.ChangeArtifact
+	base, head := assembly.base, assembly.head
+	packetExpiry := assembly.InitialContextArtifact.ExpiresAt()
+	change, err := changecodec.ParseResultArtifactWithSnapshots(changeArtifact, base, head)
 	if err != nil {
 		return "", ErrPacketAuthority
 	}

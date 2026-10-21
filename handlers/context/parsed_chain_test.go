@@ -32,6 +32,17 @@ func TestParsedContextChainMatchesIndependentCodecs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !reflect.DeepEqual(assembly.base, base) || !reflect.DeepEqual(assembly.head, head) {
+		t.Fatal("assembly snapshots differ from independent decoding")
+	}
+	exposed := assembly.head.Files()
+	if len(exposed) == 0 {
+		t.Fatal("head snapshot has no files")
+	}
+	exposed[0] = sourceoutput.FileReference{}
+	if !reflect.DeepEqual(assembly.head, head) {
+		t.Fatal("snapshot accessor changed assembly")
+	}
 	change, err := changecodec.ParseResultArtifactWithSnapshots(assembly.ChangeArtifact, base, head)
 	if err != nil {
 		t.Fatal(err)

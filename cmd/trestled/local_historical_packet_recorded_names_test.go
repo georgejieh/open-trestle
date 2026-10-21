@@ -237,12 +237,14 @@ func newRecordedNamesFixture(t *testing.T, alter func([]controlplane.TaskDefinit
 }
 
 func TestRecordedHistoricalV4NamesRejectsEmpty(t *testing.T) {
+	t.Parallel()
 	if ids, err := recordedHistoricalV4Names(controlplane.HistoricalContextPacketFact{}, historicalRecordedV4Artifacts{}, historicalRecordedSourceBinding{}); err == nil || ids != nil {
 		t.Fatal("empty accepted")
 	}
 }
 
 func TestRecordedHistoricalV4NamesExactRecipeAndNameOnlySourceRefs(t *testing.T) {
+	t.Parallel()
 	f := newRecordedNamesFixture(t, nil, "", false)
 	ids, err := recordedHistoricalV4Names(f.fact, f.a, f.binding)
 	if err != nil {
@@ -278,6 +280,7 @@ func TestRecordedHistoricalV4NamesExactRecipeAndNameOnlySourceRefs(t *testing.T)
 }
 
 func TestRecordedHistoricalV4NamesRefusesWrongInputsAndCatalog(t *testing.T) {
+	t.Parallel()
 	f := newRecordedNamesFixture(t, nil, "", false)
 	for _, tc := range []struct {
 		name   string
@@ -319,6 +322,7 @@ func TestRecordedHistoricalV4NamesRefusesWrongInputsAndCatalog(t *testing.T) {
 }
 
 func TestRecordedHistoricalV4NamesRefusesRetryAndSuffix(t *testing.T) {
+	t.Parallel()
 	for _, key := range []string{"source-base", "change", "analysis", "memory"} {
 		t.Run(key, func(t *testing.T) {
 			f := newRecordedNamesFixture(t, nil, key, false)
@@ -334,6 +338,7 @@ func TestRecordedHistoricalV4NamesRefusesRetryAndSuffix(t *testing.T) {
 }
 
 func TestRecordedHistoricalV4NamesSourceRefCollisionConsistencyAndBound(t *testing.T) {
+	t.Parallel()
 	known := strings.Repeat("a", 64)
 	id := strings.Repeat("b", 64)
 	digest := strings.Repeat("c", 64)
@@ -359,6 +364,7 @@ func TestRecordedHistoricalV4NamesSourceRefCollisionConsistencyAndBound(t *testi
 }
 
 func TestRecordedHistoricalV4NamesRefusesRecipeAndCanonicalArtifactAlternatives(t *testing.T) {
+	t.Parallel()
 	f := newRecordedNamesFixture(t, nil, "", false)
 	for _, mutation := range []string{"required", "lease", "handler", "deps"} {
 		t.Run(mutation, func(t *testing.T) {
@@ -436,6 +442,7 @@ func TestRecordedHistoricalV4NamesRefusesRecipeAndCanonicalArtifactAlternatives(
 }
 
 func TestRecordedV4SplitRequiresPreparedTaskRecipe(t *testing.T) {
+	t.Parallel()
 	f := newRecordedNamesFixture(t, nil, "", false)
 	for _, task := range f.fact.Plan().Tasks() {
 		if task.Kind() == controlplane.TaskAcquireSource {
@@ -462,6 +469,7 @@ func TestRecordedV4SplitRequiresPreparedTaskRecipe(t *testing.T) {
 }
 
 func TestRecordedV4SplitBindingAndClosedExpiryTail(t *testing.T) {
+	t.Parallel()
 	f := newRecordedNamesFixture(t, nil, "", false)
 	for _, binding := range []historicalRecordedSourceBinding{{}, {RootIdentity: f.binding.RootIdentity, RepositoryIdentity: strings.Repeat("a", 64), AdapterIdentity: f.binding.AdapterIdentity}, {RootIdentity: f.binding.RootIdentity, RepositoryIdentity: f.binding.RepositoryIdentity, AdapterIdentity: strings.Repeat("a", 64)}} {
 		if _, err := recordedHistoricalV4Names(f.fact, f.a, binding); err == nil {

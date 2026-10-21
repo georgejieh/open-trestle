@@ -57,6 +57,7 @@ func historicalAuditFixture(t *testing.T, kinds []audit.EventKind) (*audit.FileL
 	return ledger, scope, root
 }
 func TestHistoricalPacketRouteAbsenceEmptyAndAllowedKind(t *testing.T) {
+	t.Parallel()
 	for _, count := range []int{0, 1, 64, 65, 128, 129} {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
 			kinds := make([]audit.EventKind, count)
@@ -88,6 +89,7 @@ func TestHistoricalPacketRouteAbsenceEmptyAndAllowedKind(t *testing.T) {
 	}
 }
 func TestHistoricalPacketRouteAbsenceRejectsLaterKinds(t *testing.T) {
+	t.Parallel()
 	for kind := audit.EventRouteSelected; kind <= audit.EventInvestigationToolCompleted; kind++ {
 		if kind == audit.EventReviewSnapshotBound {
 			continue
@@ -102,6 +104,7 @@ func TestHistoricalPacketRouteAbsenceRejectsLaterKinds(t *testing.T) {
 	}
 }
 func TestHistoricalPacketRouteAbsenceRefusesUnstableReads(t *testing.T) {
+	t.Parallel()
 	kinds := make([]audit.EventKind, 65)
 	for i := range kinds {
 		kinds[i] = audit.EventReviewSnapshotBound
@@ -153,6 +156,7 @@ func TestHistoricalPacketRouteAbsenceRefusesUnstableReads(t *testing.T) {
 	}
 }
 func TestHistoricalPacketRouteAbsenceInvalidInputsAndClosedLedger(t *testing.T) {
+	t.Parallel()
 	ledger, scope, _ := historicalAuditFixture(t, nil)
 	for _, check := range []func() error{
 		func() error { _, err := observeHistoricalPacketRouteAbsence(nil, ledger, scope); return err },
@@ -178,18 +182,21 @@ func TestHistoricalPacketRouteAbsenceInvalidInputsAndClosedLedger(t *testing.T) 
 // The predicate checks allowed kinds, not source closure. This arbitrary subject
 // and missing six source parents pass without proving an acquired snapshot.
 func TestHistoricalPacketRouteAbsenceArbitrarySnapshotBoundIsNotSourceValidation(t *testing.T) {
+	t.Parallel()
 	ledger, scope, _ := historicalAuditFixture(t, []audit.EventKind{audit.EventReviewSnapshotBound})
 	if _, err := observeHistoricalPacketRouteAbsence(context.Background(), ledger, scope); err != nil {
 		t.Fatal(err)
 	}
 }
 func TestHistoricalPacketRouteAbsenceRouteBeforeSnapshotWithoutV5(t *testing.T) {
+	t.Parallel()
 	ledger, scope, _ := historicalAuditFixture(t, []audit.EventKind{audit.EventRouteSelected, audit.EventReviewSnapshotBound})
 	if result, err := observeHistoricalPacketRouteAbsence(context.Background(), ledger, scope); err == nil || result != (localHistoricalPacketAuditHead{}) {
 		t.Fatal("route-only historical scope accepted")
 	}
 }
 func TestHistoricalPacketRouteAbsencePageChainAndFinalHeadChecks(t *testing.T) {
+	t.Parallel()
 	kinds := make([]audit.EventKind, 65)
 	for i := range kinds {
 		kinds[i] = audit.EventReviewSnapshotBound
@@ -240,6 +247,7 @@ func TestHistoricalPacketRouteAbsencePageChainAndFinalHeadChecks(t *testing.T) {
 }
 
 func TestHistoricalPacketRouteAbsenceLateFileCorruption(t *testing.T) {
+	t.Parallel()
 	kinds := make([]audit.EventKind, 65)
 	for i := range kinds {
 		kinds[i] = audit.EventReviewSnapshotBound

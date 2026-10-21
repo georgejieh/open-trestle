@@ -29,6 +29,7 @@ import (
 )
 
 func TestDaemonLocalModelWorkersEmptyAndMalformedCandidates(t *testing.T) {
+	t.Parallel()
 	cliPath := filepath.Join(t.TempDir(), "trestle")
 	buildCLI := exec.Command("go", "build", "-o", cliPath, "../trestle")
 	if output, err := buildCLI.CombinedOutput(); err != nil {
@@ -36,6 +37,7 @@ func TestDaemonLocalModelWorkersEmptyAndMalformedCandidates(t *testing.T) {
 	}
 	for _, mode := range []string{"empty", "malformed"} {
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
 			args, getenv, fake, repository, base, head, policy, inventory := localModelWorkerFixture(t)
 			fake.generation.generationOutcome = mode
 			args = append(args, "--local-model-workers")

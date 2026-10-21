@@ -96,6 +96,7 @@ func restartExpiryStartup(t *testing.T, f recordedNamesFixture, at time.Time) (*
 }
 
 func TestCompleteV4ExpiryStartupPreActivateAcceptsCompleteExpiredRecipe(t *testing.T) {
+	t.Parallel()
 	f := expiryStartupFixture(t)
 	_, owner, err := restartExpiryStartup(t, f, f.fact.LeaseEvent().LeaseExpiresAt())
 	if err != nil || owner == nil {
@@ -103,6 +104,7 @@ func TestCompleteV4ExpiryStartupPreActivateAcceptsCompleteExpiredRecipe(t *testi
 	}
 }
 func TestCompleteV4ExpiryStartupTerminatesAndReproves(t *testing.T) {
+	t.Parallel()
 	f := expiryStartupFixture(t)
 	at := f.fact.LeaseEvent().LeaseExpiresAt()
 	r, owner, err := restartExpiryStartup(t, f, at)
@@ -150,6 +152,7 @@ func controlplaneCoordinator(t *testing.T, o *localPacketOwner) *controlplane.Co
 }
 
 func TestCompleteV4ExpiryStartupTimeAndPhysicalRefusals(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"live", "retention-equality", "orphan", "missing", "corrupt", "marker", "deletion-receipt", "wrong-tail"} {
 		t.Run(mode, func(t *testing.T) {
 			f := expiryStartupFixture(t)
@@ -221,6 +224,7 @@ func TestCompleteV4ExpiryStartupTimeAndPhysicalRefusals(t *testing.T) {
 }
 
 func TestCompleteV4ExpiryStartupEnrollmentAndAuditRefusals(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"policy", "source", "catalog-0", "catalog-1", "catalog-2", "catalog-3", "catalog-4", "catalog-5", "catalog-6", "catalog-7", "route", "closed-ledger", "head-drift"} {
 		t.Run(mode, func(t *testing.T) {
 			f := expiryStartupFixture(t)
@@ -285,6 +289,7 @@ func TestCompleteV4ExpiryStartupEnrollmentAndAuditRefusals(t *testing.T) {
 }
 
 func TestCompleteV4ExpiryStartupClosedInterruptedPrefixes(t *testing.T) {
+	t.Parallel()
 	for count := 0; count <= 4; count++ {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
 			f := expiryStartupFixture(t)
@@ -347,6 +352,7 @@ func TestCompleteV4ExpiryStartupClosedInterruptedPrefixes(t *testing.T) {
 }
 
 func TestCompleteV4ExpiryStartupPhysicalCloseFailureDoesNotAppend(t *testing.T) {
+	t.Parallel()
 	f := expiryStartupFixture(t)
 	old := f.ownerFixture
 	r := &daemon{}
@@ -363,6 +369,7 @@ func TestCompleteV4ExpiryStartupPhysicalCloseFailureDoesNotAppend(t *testing.T) 
 }
 
 func TestCompleteV4ExpiryStartupNonFullBootCannotBypass(t *testing.T) {
+	t.Parallel()
 	f := expiryStartupFixture(t)
 	old := f.ownerFixture
 	before := ownerStartupJournalBytes(t, old.statePath)
@@ -381,6 +388,7 @@ func TestCompleteV4ExpiryStartupNonFullBootCannotBypass(t *testing.T) {
 }
 
 func TestCompleteV4ExpiryStartupMixedLinkedV5RefusesBeforeActivation(t *testing.T) {
+	t.Parallel()
 	f := expiryStartupFixture(t)
 	old := f.ownerFixture
 	ctx := context.Background()
@@ -496,6 +504,7 @@ func (c *expiryStartupStepClock) Now() time.Time {
 }
 
 func TestCompleteV4ExpiryStartupClockDriftBeforeGateDoesNotAppend(t *testing.T) {
+	t.Parallel()
 	f := expiryStartupFixture(t)
 	_, owner, err := restartExpiryStartup(t, f, f.fact.LeaseEvent().LeaseExpiresAt())
 	if err != nil {
