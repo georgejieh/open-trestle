@@ -163,6 +163,7 @@ func TestDaemonLocalModelWorkersEmptyAndMalformedCandidates(t *testing.T) {
 						t.Fatal(err)
 					}
 					testGenerationRejectionAuditProof(t, events, value, inputArtifact, contextArtifact, requestArtifact, receiptArtifact, linked.InputDescriptor(), route, candidate.HandlerIdentity(), time.Now().UTC())
+					testGenerationRejectionJournal(t, facts[0], events, time.Now().UTC())
 				}
 				if found != 1 {
 					t.Fatalf("rejection events=%d", found)
