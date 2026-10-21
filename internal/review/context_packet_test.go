@@ -19,7 +19,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/provider"
 )
 
-func contextPacketFixture(t *testing.T, content string) (audit.ReviewScope, memory.Scope, ReviewSnapshot, ContextSource, memory.LexicalRetrieval) {
+func contextPacketFixture(t testing.TB, content string) (audit.ReviewScope, memory.Scope, ReviewSnapshot, ContextSource, memory.LexicalRetrieval) {
 	t.Helper()
 	reviewScope, err := audit.NewReviewScope("tenant", "repository", "review-run")
 	if err != nil {

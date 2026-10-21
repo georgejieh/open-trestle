@@ -412,3 +412,27 @@ func TestProgressExpiredEvidenceUnknown(t *testing.T) {
 		t.Fatalf("body=%s", response.Body.String())
 	}
 }
+
+func BenchmarkRunProgressHTTPRepeated(b *testing.B) {
+	server, plan, reader := progressFixture(b, "produced-v4-failed-one-observation", "analysis")
+	endpoint := "https://trestle.test/api/v1/tenants/tenant/repositories/repository/runs/" + plan.Scope().ReviewRunID() + "/progress"
+	before, err := server.coordinator.Receipt(context.Background(), plan.Scope())
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		response := httptest.NewRecorder()
+		server.ServeHTTP(response, authenticatedRequest(http.MethodGet, endpoint, nil))
+		if response.Code != http.StatusOK {
+			b.Fatalf("progress response=%d", response.Code)
+		}
+	}
+	b.StopTimer()
+	after, err := server.coordinator.Receipt(context.Background(), plan.Scope())
+	if err != nil || before.Identity() != after.Identity() {
+		b.Fatal("progress read changed receipt", err)
+	}
+	b.ReportMetric(float64(reader.reads)/float64(b.N), "artifact_gets/op")
+}

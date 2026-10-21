@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -95,5 +96,72 @@ func TestParseRecordedContextBindsCanonicalHeadSnapshot(t *testing.T) {
 	sum := sha256.Sum256(legacyPayload)
 	if err != nil || legacyResult.Identity() != hex.EncodeToString(sum[:]) {
 		t.Fatalf("legacy readback: %v", err)
+	}
+}
+
+func BenchmarkParseRecordedContextRepositoryIndex(b *testing.B) {
+	for _, fileCount := range []int{100, 10000} {
+		b.Run(fmt.Sprintf("files_%d", fileCount), func(b *testing.B) {
+			scope, memoryScope, _, source, retrieval := contextPacketFixture(b, "content")
+			content := []byte(strings.Repeat("line\n", 9) + "content")
+			selected, err := evidence.NewRepositoryFile("internal/example.go", content)
+			if err != nil {
+				b.Fatal(err)
+			}
+			files := []evidence.RepositoryFile{selected}
+			refs := []sourceoutput.FileReference{sourceoutput.NewFileReference(selected.Path(), selected.Digest(), selected.SizeBytes(), strings.Repeat("7", 64))}
+			for i := 1; i < fileCount; i++ {
+				file, err := evidence.NewRepositoryFile(fmt.Sprintf("unselected/%05d.go", i), []byte("package example\n"))
+				if err != nil {
+					b.Fatal(err)
+				}
+				files = append(files, file)
+				refs = append(refs, sourceoutput.NewFileReference(file.Path(), file.Digest(), file.SizeBytes(), fmt.Sprintf("%064x", i)))
+			}
+			manifest, err := evidence.NewRepositoryManifest(files)
+			if err != nil {
+				b.Fatal(err)
+			}
+			snapshot, err := NewAcquiredReviewPipelineSnapshot(scope.ReviewRunID(), manifest, []evidence.SourceRange{source.EvidenceItem().SourceRange()})
+			if err != nil {
+				b.Fatal(err)
+			}
+			limits, _ := NewContextLimits(1<<20, 5)
+			packet, err := NewContextPacket(scope, memoryScope, snapshot, ContextTaskCandidateGeneration, []ContextSource{source}, retrieval, limits)
+			if err != nil {
+				b.Fatal(err)
+			}
+			request, err := packet.ProviderRequest()
+			if err != nil {
+				b.Fatal(err)
+			}
+			head, err := sourceoutput.NewSnapshot(strings.Repeat("c", 64), strings.Repeat("1", 64), strings.Repeat("2", 64), strings.Repeat("3", 64), strings.Repeat("4", 64), strings.Repeat("5", 64), strings.Repeat("6", 64), manifest.Identity(), refs)
+			if err != nil {
+				b.Fatal(err)
+			}
+			encoded, err := sourceoutput.EncodeSnapshot(head)
+			if err != nil {
+				b.Fatal(err)
+			}
+			value, err := artifact.New(scope, artifact.KindSourceSnapshot, "application/json", artifact.ClassificationConfidential, artifact.OriginRepository, artifact.ProtectionProcessPrivate, []string{strings.Repeat("3", 64)}, encoded, time.UnixMilli(10), time.UnixMilli(1000))
+			if err != nil {
+				b.Fatal(err)
+			}
+			head, err = sourceoutput.ParseSnapshotArtifact(value)
+			if err != nil {
+				b.Fatal(err)
+			}
+			payload := request.Payload()
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				result, err := ParseRecordedContext(payload, scope, head)
+				if err != nil || result.Selected() != 1 || result.Snapshot().Identity() != snapshot.Identity() {
+					b.Fatalf("recorded context changed: %v", err)
+				}
+			}
+			b.StopTimer()
+			b.ReportMetric(float64(fileCount), "indexed_files/op")
+		})
 	}
 }
