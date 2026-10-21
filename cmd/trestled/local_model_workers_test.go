@@ -7,10 +7,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -969,5 +971,199 @@ func TestDaemonLocalModelWorkersOfflineBackupPreservesOwnerBoundary(t *testing.T
 				}
 			}
 		})
+	}
+}
+
+func TestDaemonLocalModelWorkersExpiredPacketLaterRunAndRestart(t *testing.T) {
+	for _, mode := range []string{"complete", "expired-route-attempt", "expired-orphan", "expired-marker"} {
+		t.Run(mode, func(t *testing.T) { testDaemonLocalModelWorkersExpiredPacketRestart(t, mode) })
+	}
+}
+
+func testDaemonLocalModelWorkersExpiredPacketRestart(t *testing.T, mode string) {
+	args, getenv, fake, repository, base, head, policy, inventory := localModelWorkerFixture(t)
+	args = append(args, "--local-model-workers")
+	clock := &daemonBudgetedHandlerClock{at: time.Now().UTC().Truncate(time.Millisecond)}
+	var d *daemon
+	var expiryErr error
+	sanitizerCalled := false
+	sanitizer := expireOwnerSanitizer{GenerationRequestSanitizer: daemonTestGenerationSanitizer(), expire: func() {
+		sanitizerCalled = true
+		facts, err := d.journal.(*controlplane.FileRunJournal).InspectHistoricalContextPackets(context.Background())
+		if err != nil || len(facts) != 1 {
+			expiryErr = fmt.Errorf("packet facts count=%d: %v", len(facts), err)
+			return
+		}
+		clock.mu.Lock()
+		clock.at = facts[0].LeaseEvent().LeaseExpiresAt().Add(time.Millisecond)
+		clock.mu.Unlock()
+	}}
+	build := func(expire bool) *daemon {
+		t.Helper()
+		deps := daemonDependencies{openPostgres: postgresstore.Open, clock: clock, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()}
+		if expire {
+			deps.generationSanitizer = sanitizer
+		}
+		built, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, deps)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return built
+	}
+	d = build(true)
+	t.Cleanup(func() { d.Close() })
+	server := httptest.NewServer(d.server.Handler)
+	t.Cleanup(func() { server.Close() })
+	api, err := client.NewLocal(server.URL, getenv("OPEN_TRESTLE_API_TOKEN"), server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, _ := audit.NewReviewScope("tenant-a", "repo-a", "run-expired-packet")
+	intent, err := runtimecatalog.NewLocalFullReviewIntent(scope, repository, base, head, policy.ReviewPolicyIdentity(), inventory.Identity(), policy.Identity(), clock.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := api.SubmitLocalFullReview(context.Background(), intent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.supervisors[1].(*worker.RepositorySupervisor).RunOnce(context.Background()); err == nil {
+		t.Fatal("expired packet worker unexpectedly succeeded")
+	}
+	if expiryErr != nil || !sanitizerCalled {
+		t.Fatalf("sanitizer called=%t err=%v", sanitizerCalled, expiryErr)
+	}
+	facts, err := d.journal.(*controlplane.FileRunJournal).InspectHistoricalContextPackets(context.Background())
+	if err != nil || len(facts) != 1 || facts[0].FinalHeadIdentity() != facts[0].PreparedEvent().Identity() {
+		t.Fatalf("not exact v4: %v", err)
+	}
+	packetIdentity := facts[0].PreparedEvent().PacketDescriptor().ArtifactIdentity
+	for _, endpoint := range []*daemonBudgetedModelEndpoint{fake.generation, fake.verification} {
+		if calls, _, _, failures := endpoint.snapshot(); calls != 0 || len(failures) != 0 {
+			t.Fatalf("expired packet dispatched: calls=%d failures=%v", calls, failures)
+		}
+	}
+	server.Close()
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+	d = build(false)
+	server = httptest.NewServer(d.server.Handler)
+	api, err = client.NewLocal(server.URL, getenv("OPEN_TRESTLE_API_TOKEN"), server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.supervisors[1].(*worker.RepositorySupervisor).RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	expiredFinal, err := api.GetDiagnosticSet(context.Background(), scope)
+	if err != nil || expiredFinal.Outcome() != diagnostics.FinalOutcomeFailed || len(expiredFinal.Findings()) != 0 {
+		t.Fatalf("expired final=%s err=%v", expiredFinal.Outcome(), err)
+	}
+	laterScope, _ := audit.NewReviewScope("tenant-a", "repo-a", "run-after-expired-packet")
+	laterIntent, err := runtimecatalog.NewLocalFullReviewIntent(laterScope, repository, base, head, policy.ReviewPolicyIdentity(), inventory.Identity(), policy.Identity(), clock.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := api.SubmitLocalFullReview(context.Background(), laterIntent); err != nil {
+		t.Fatal(err)
+	}
+	for _, index := range []int{1, 2, 1} {
+		if _, err := d.supervisors[index].(*worker.RepositorySupervisor).RunOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	laterFinal, err := api.GetDiagnosticSet(context.Background(), laterScope)
+	if err != nil || laterFinal.Outcome() != diagnostics.FinalOutcomeCompleted {
+		t.Fatalf("later final=%s err=%v", laterFinal.Outcome(), err)
+	}
+	server.Close()
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if mode != "complete" {
+		statePath := daemonTestFlagValue(t, args, "--state-dir")
+		journalPath := filepath.Join(statePath, scope.Identity()+".run.jsonl")
+		before, err := os.ReadFile(journalPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mode == "expired-route-attempt" {
+			ledger, err := audit.NewFileLedger(filepath.Join(statePath, "audit"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			last, present, err := ledger.Head(context.Background(), scope)
+			if err != nil {
+				ledger.Close()
+				t.Fatal(err)
+			}
+			sequence, previous := uint64(1), ""
+			if present {
+				sequence, previous = last.Sequence()+1, last.Identity()
+			}
+			event, err := audit.NewEvent(scope, sequence, previous, audit.EventRouteAttemptClaimed, packetIdentity, nil, clock.Now())
+			if err != nil {
+				ledger.Close()
+				t.Fatal(err)
+			}
+			if err := ledger.Append(context.Background(), last.Identity(), event); err != nil {
+				ledger.Close()
+				t.Fatal(err)
+			}
+			if err := ledger.Close(); err != nil {
+				t.Fatal(err)
+			}
+		} else if mode == "expired-marker" {
+			marker := filepath.Join(statePath, scope.Identity()+".scope-intent.json")
+			if err := os.WriteFile(marker, []byte("unknown"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			orphan := filepath.Join(statePath, "artifacts", scope.Identity()+"-"+strings.Repeat("0", 64)+".artifact.json")
+			if err := os.WriteFile(orphan, []byte("unproven"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		restarted, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{openPostgres: postgresstore.Open, clock: clock, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
+		if restarted != nil {
+			restarted.Close()
+			t.Fatal("unproven mixed history admitted")
+		}
+		if err == nil {
+			t.Fatal("unproven mixed history returned no refusal")
+		}
+		after, readErr := os.ReadFile(journalPath)
+		if readErr != nil || !bytes.Equal(before, after) {
+			t.Fatalf("mixed refusal mutated expired journal: %v", readErr)
+		}
+		return
+	}
+	d = build(false)
+	server = httptest.NewServer(d.server.Handler)
+	api, err = client.NewLocal(server.URL, getenv("OPEN_TRESTLE_API_TOKEN"), server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, index := range []int{1, 2} {
+		if _, err := d.supervisors[index].(*worker.RepositorySupervisor).RunOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, expected := range []struct {
+		scope    audit.ReviewScope
+		identity string
+	}{{scope, expiredFinal.Identity()}, {laterScope, laterFinal.Identity()}} {
+		got, err := api.GetDiagnosticSet(context.Background(), expected.scope)
+		if err != nil || got.Identity() != expected.identity {
+			t.Fatalf("mixed expired/completed restart changed result: %v", err)
+		}
+	}
+	if _, err := d.artifactStore.Get(context.Background(), scope, packetIdentity, clock.Now()); err != nil {
+		t.Fatalf("expired packet evidence lost: %v", err)
+	}
+	for _, endpoint := range []*daemonBudgetedModelEndpoint{fake.generation, fake.verification} {
+		if calls, _, _, failures := endpoint.snapshot(); calls != 1 || len(failures) != 0 {
+			t.Fatalf("mixed restart calls=%d failures=%v", calls, failures)
+		}
 	}
 }

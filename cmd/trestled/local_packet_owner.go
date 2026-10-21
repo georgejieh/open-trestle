@@ -17,18 +17,19 @@ import (
 // localPacketOwner is minted only by the Git-qualified local startup gate.
 // Its journal's effect section excludes a durable cancellation until Put returns.
 type localPacketOwner struct {
-	store                  *artifact.FileStore
-	journal                *controlplane.FileRunJournal
-	sourceRootDigest       string
-	gitIdentity            localSourceDirectoryIdentity
-	pendingSettlementAudit bool
-	startupScopeIntents    []string
-	clock                  artifact.Clock
-	pendingExpiredPackets  []historicalExpiredPacketCheckpoint
-	statePath              string
-	sourceBinding          historicalRecordedSourceBinding
-	beforeRawPut           func() // test-only, installed before concurrent use
-	beforeInputPut         func() // test-only, installed before concurrent use
+	store                   *artifact.FileStore
+	journal                 *controlplane.FileRunJournal
+	sourceRootDigest        string
+	gitIdentity             localSourceDirectoryIdentity
+	pendingSettlementAudit  bool
+	settlementAuditVerified bool
+	startupScopeIntents     []string
+	clock                   artifact.Clock
+	pendingExpiredPackets   []historicalExpiredPacketCheckpoint
+	statePath               string
+	sourceBinding           historicalRecordedSourceBinding
+	beforeRawPut            func() // test-only, installed before concurrent use
+	beforeInputPut          func() // test-only, installed before concurrent use
 }
 
 func (o *localPacketOwner) PreparePacket(ctx context.Context, request controlplane.TaskExecutionRequest) (controlplane.PreparedContextPacket, error) {

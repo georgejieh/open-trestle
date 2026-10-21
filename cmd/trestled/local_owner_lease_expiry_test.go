@@ -294,6 +294,10 @@ type expireOwnerSanitizer struct {
 	expire func()
 }
 
+func (s expireOwnerSanitizer) PublicationContentScanner() review.PublicationContentScanner {
+	return publicationContentScannerFromGenerationSanitizer(s.GenerationRequestSanitizer)
+}
+
 func (s expireOwnerSanitizer) SanitizeGeneration(ctx context.Context, request provider.Request, scope string) (review.SanitizedModelRequest, review.SanitizedEgressReceipt, error) {
 	sanitized, receipt, err := s.GenerationRequestSanitizer.SanitizeGeneration(ctx, request, scope)
 	s.expire()

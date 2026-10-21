@@ -52,6 +52,9 @@ func verifyOwnerSettledStartup(ctx context.Context, owner *localPacketOwner, led
 	preparedScopes := make(map[string]bool)
 	expiredScopes := make(map[string]bool)
 	for _, fact := range facts {
+		if _, linked := fact.LinkedInputEvent(); !linked && slices.Contains(owner.pendingExpiredPackets, expiredPacketCheckpoint(fact)) {
+			continue
+		}
 		plan, packet := fact.Plan(), fact.PreparedEvent()
 		scope := plan.Scope()
 		verifiedScopes[scope.Identity()] = scope
@@ -192,5 +195,9 @@ func verifyOwnerSettledStartup(ctx context.Context, owner *localPacketOwner, led
 			}
 		}
 	}
-	return checkGit()
+	if err := checkGit(); err != nil {
+		return err
+	}
+	owner.settlementAuditVerified = true
+	return nil
 }

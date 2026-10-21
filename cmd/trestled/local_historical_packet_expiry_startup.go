@@ -174,6 +174,14 @@ func observeOwnerExpiredPackets(ctx context.Context, owner *localPacketOwner, le
 				return observed[i].PreparedEvent().Sequence() < observed[j].PreparedEvent().Sequence()
 			})
 			for _, fact := range observed {
+				if _, linked := fact.LinkedInputEvent(); linked {
+					// Mixed startup admits only already settled owner scopes. Their
+					// separate byte/audit proof ran before this read-only V4 proof.
+					if !owner.settlementAuditVerified {
+						return errHistoricalPacketExpiryStartup
+					}
+					continue
+				}
 				plan := fact.Plan()
 				record, err := readLocalSourceOwnerRecord(root, owner.statePath)
 				if err != nil {

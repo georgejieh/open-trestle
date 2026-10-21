@@ -98,6 +98,19 @@ completion.
 
 The package provides the task graph, canonical encodings, memory and durable local journals, replay, optimistic coordination, claims, renewals, retries, dependency propagation, completion, cancellation, restart recovery, content-free task notifications, and automatic terminal finalization. The standalone daemon and PostgreSQL runtime adapter are available. An operational lock-recovery command is not included. See [PostgreSQL canonical ledgers](postgresql-storage.md).
 
+
+A previously policy-terminated context packet (V4) may coexist with a later
+owner-settled context input (V6) at restart. This is a narrow composition of two
+existing proofs, not generic mixed-history recovery. Every unlinked packet must
+have the exact expired policy-failure tail, the current nine-task recipe and
+catalog, retained canonical source/context envelopes and exact same-scope file
+names, and no route effects in its audit stream. Each linked scope must have its
+own V6 settlement and pass the existing byte, replay and route-audit proof before
+the V4 proof completes. A live packet, prepared-only input (V5), unknown marker,
+extra same-scope artifact, or unmatched effect still refuses startup. Restart
+preserves both terminal diagnostic identities and does not dispatch either model
+route again.
+
 ## Transport boundary
 
 The public `controlplane` package owns these runtime contracts. The authenticated HTTP adapter, Go client, CLI, and daemon use the same canonical plan, lease, completion, and receipt encodings. See [Daemon API and client](daemon-api.md).

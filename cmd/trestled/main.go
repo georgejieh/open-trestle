@@ -348,6 +348,9 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 		}
 	}()
 	var daemonArtifactClock artifact.Clock = httpapi.SystemClock{}
+	if localGitConfigured && *localFullReview {
+		daemonArtifactClock = deps.clock
+	}
 	var daemonGitHubSourceClock githubsource.BrokerClock = githubsource.SystemBrokerClock{}
 	var daemonWebhookClock githubwebhook.Clock = githubwebhook.SystemClock{}
 	var budgetedClock daemonErasureClock
@@ -687,7 +690,7 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 			if memoryErr != nil || dispatcherErr != nil || inventoryErr != nil {
 				return nil, ErrInvalidDaemonConfiguration
 			}
-			verificationAuthorizer, verificationAuthErr := runtimecatalog.NewVerificationPolicyAuthorizerFromRuntimePolicy(configuration, verificationInventory, auditLedger, httpapi.SystemClock{})
+			verificationAuthorizer, verificationAuthErr := runtimecatalog.NewVerificationPolicyAuthorizerFromRuntimePolicy(configuration, verificationInventory, auditLedger, daemonArtifactClock)
 			contextCoordinator, coordinatorErr := controlplane.NewCoordinator(journal)
 			if coordinatorErr != nil {
 				return nil, coordinatorErr
@@ -736,7 +739,7 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 			if projectorErr != nil {
 				return nil, ErrInvalidDaemonConfiguration
 			}
-			localSupervisor, supervisorErr := worker.NewRepositorySupervisor(journal, preModelCatalog, worker.RepositorySupervisorOptions{TenantID: *tenantID, RepositoryIDs: []string(repositories), WorkerIdentity: "trestled-local-premodel", PollInterval: time.Second, RenewalInterval: 10 * time.Second, ExecutionTimeout: 30 * time.Minute, Clock: httpapi.SystemClock{}, FinalizeSettled: true, OnTerminal: finalProjector.Project})
+			localSupervisor, supervisorErr := worker.NewRepositorySupervisor(journal, preModelCatalog, worker.RepositorySupervisorOptions{TenantID: *tenantID, RepositoryIDs: []string(repositories), WorkerIdentity: "trestled-local-premodel", PollInterval: time.Second, RenewalInterval: 10 * time.Second, ExecutionTimeout: 30 * time.Minute, Clock: daemonArtifactClock, FinalizeSettled: true, OnTerminal: finalProjector.Project})
 			if supervisorErr != nil {
 				return nil, ErrInvalidDaemonConfiguration
 			}
@@ -747,7 +750,7 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 				if catalogErr != nil {
 					return nil, ErrInvalidDaemonConfiguration
 				}
-				modelSupervisor, supervisorErr := worker.NewRepositorySupervisor(journal, modelCatalog, worker.RepositorySupervisorOptions{TenantID: *tenantID, RepositoryIDs: []string(repositories), WorkerIdentity: "trestled-local-model", PollInterval: time.Second, RenewalInterval: 10 * time.Second, ExecutionTimeout: 30 * time.Minute, Clock: httpapi.SystemClock{}, FinalizeSettled: true})
+				modelSupervisor, supervisorErr := worker.NewRepositorySupervisor(journal, modelCatalog, worker.RepositorySupervisorOptions{TenantID: *tenantID, RepositoryIDs: []string(repositories), WorkerIdentity: "trestled-local-model", PollInterval: time.Second, RenewalInterval: 10 * time.Second, ExecutionTimeout: 30 * time.Minute, Clock: daemonArtifactClock, FinalizeSettled: true})
 				if supervisorErr != nil {
 					return nil, ErrInvalidDaemonConfiguration
 				}
@@ -1016,7 +1019,7 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	}
 	var apiHandler *httpapi.Server
 	if localGitConfigured && *localFullReview {
-		apiHandler, err = httpapi.NewServerWithLocalFullRuntimeAdministrationAndRateLimiters(journal, authenticator, httpapi.SystemClock{}, diagnosticStore, taskNotificationQueue, statusService, requestLimiter, principalLimiter, localFullAdmitter)
+		apiHandler, err = httpapi.NewServerWithLocalFullRuntimeAdministrationAndRateLimiters(journal, authenticator, daemonArtifactClock, diagnosticStore, taskNotificationQueue, statusService, requestLimiter, principalLimiter, localFullAdmitter)
 	} else if localGitConfigured {
 		apiHandler, err = httpapi.NewServerWithLocalDeterministicRuntimeAdministrationAndRateLimiters(journal, authenticator, httpapi.SystemClock{}, diagnosticStore, taskNotificationQueue, statusService, requestLimiter, principalLimiter, localReviewAdmitter)
 	} else {
