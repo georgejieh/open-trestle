@@ -68,7 +68,9 @@ func Parse(encoded []byte) (Artifact, error) {
 	if err != nil {
 		return Artifact{}, err
 	}
-	artifact, err := New(
+	// Payload is a fresh base64-decoded []byte without a custom unmarshaler.
+	// Keep the decoded record local so this call transfers exclusive ownership.
+	artifact, err := artifactFromBorrowedPayload(
 		scope, kind, value.MediaType, classification, origin, protection,
 		value.Provenance, value.Payload,
 		time.UnixMilli(value.CreatedAtMilliseconds), time.UnixMilli(value.ExpiresAtMilliseconds),

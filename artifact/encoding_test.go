@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -113,5 +114,26 @@ func TestParseArtifactCanonicalInputShape(t *testing.T) {
 				t.Fatalf("Parse=%v", err)
 			}
 		})
+	}
+}
+
+func TestParseArtifactOwnsDecodedPayload(t *testing.T) {
+	value := codecFixture(t, 256<<10)
+	encoded, err := Encode(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := Parse(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantPayload, wantProvenance := value.Payload(), value.Provenance()
+	clear(encoded)
+	payload := parsed.Payload()
+	payload[0] = 'z'
+	provenance := parsed.Provenance()
+	provenance[0] = strings.Repeat("c", 64)
+	if parsed.Validate() != nil || parsed.Identity() != value.Identity() || !bytes.Equal(parsed.Payload(), wantPayload) || !slices.Equal(parsed.Provenance(), wantProvenance) {
+		t.Fatal("parsed artifact shares encoded input or accessor output")
 	}
 }

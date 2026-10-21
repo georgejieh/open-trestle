@@ -209,8 +209,8 @@ func New(
 	return value, nil
 }
 
-// artifactFromBorrowedPayload validates and hashes without retaining a copy.
-// Callers must copy the payload before exposing the returned value.
+// artifactFromBorrowedPayload validates and hashes while retaining the caller's slice.
+// Callers must own the payload exclusively or copy it before exposing the value.
 func artifactFromBorrowedPayload(
 	scope audit.ReviewScope,
 	kind Kind,
