@@ -36,14 +36,20 @@ type historicalRecordedV4Artifacts struct {
 // Current pipeline enrollment is checked separately.
 // Canonical physical reads and their final witnesses remain the caller's job.
 func recordedHistoricalV4Names(fact controlplane.HistoricalContextPacketFact, a historicalRecordedV4Artifacts, binding historicalRecordedSourceBinding) ([]string, error) {
-	plan, prepared := fact.Plan(), fact.PreparedEvent()
-	if !binding.valid() || !recordedV4PlanShape(plan) || prepared.Validate() != nil || prepared.Kind() != controlplane.RunEventContextPacketPrepared || prepared.TaskKey() != "context" || prepared.Attempt() != 1 || prepared.PlanIdentity() != plan.Identity() || prepared.Scope() != plan.Scope() {
-		return nil, errHistoricalRecordedV4Names
-	}
 	if fact.ExpiryTail() != controlplane.ContextPacketExpiryTailActiveExactV4 && fact.ExpiryTail() != controlplane.ContextPacketExpiryTailExpiredV4PolicyTerminated {
 		return nil, errHistoricalRecordedV4Names
 	}
 	if _, ok := fact.LinkedInputEvent(); ok {
+		return nil, errHistoricalRecordedV4Names
+	}
+	return recordedHistoricalAncestorNames(fact, a, binding)
+}
+
+// recordedHistoricalAncestorNames checks the common recorded source lineage.
+// Callers must separately prove their exact journal suffix and scope name set.
+func recordedHistoricalAncestorNames(fact controlplane.HistoricalContextPacketFact, a historicalRecordedV4Artifacts, binding historicalRecordedSourceBinding) ([]string, error) {
+	plan, prepared := fact.Plan(), fact.PreparedEvent()
+	if !binding.valid() || !recordedV4PlanShape(plan) || prepared.Validate() != nil || prepared.Kind() != controlplane.RunEventContextPacketPrepared || prepared.TaskKey() != "context" || prepared.Attempt() != 1 || prepared.PlanIdentity() != plan.Identity() || prepared.Scope() != plan.Scope() {
 		return nil, errHistoricalRecordedV4Names
 	}
 	contextTask, _ := plan.Task("context")

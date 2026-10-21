@@ -203,6 +203,12 @@ func (p LocalGenerationRoutePlan) PairIdentity() string        { return p.pairId
 func (p LocalGenerationRoutePlan) RegistryRevision() uint64    { return p.registryRevision }
 func (p LocalGenerationRoutePlan) PerformanceRevision() uint64 { return p.performanceRevision }
 
+// MatchesLocalGenerationAuthorization compares the complete planned authorization
+// without recording a selection or exposing a dispatch grant.
+func MatchesLocalGenerationAuthorization(p LocalGenerationRoutePlan, value gateway.RouteAttemptAuthorization) bool {
+	return p.authorization.Validate() == nil && value.Validate() == nil && reflect.DeepEqual(p.authorization, value)
+}
+
 // GrantLocalGenerationRoute records the selection only if the original actual
 // request and pinned pair still produce the same complete route plan.
 func GrantLocalGenerationRoute(ctx context.Context, scope audit.ReviewScope, request provider.Request, configuration runtimeconfig.RuntimePolicy, inventory runtimeconfig.RouteInventory, pair LocalGenerationRoutePair, planned LocalGenerationRoutePlan, ledger audit.Ledger, at time.Time) (gateway.RouteAttemptAuthorization, error) {
