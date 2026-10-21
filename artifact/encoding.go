@@ -78,8 +78,8 @@ func Parse(encoded []byte) (Artifact, error) {
 	if artifact.identity != value.Identity || artifact.payloadDigest != value.PayloadDigest {
 		return Artifact{}, ErrInvalidArtifactIdentity
 	}
-	reencoded, _ := Encode(artifact)
-	if !bytes.Equal(reencoded, encoded) {
+	reencoded, err := json.Marshal(toRecord(artifact))
+	if err != nil || !bytes.Equal(reencoded, encoded) {
 		return Artifact{}, ErrInvalidEncoding
 	}
 	return artifact, nil
