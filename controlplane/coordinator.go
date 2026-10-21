@@ -438,7 +438,7 @@ func (c *Coordinator) RenewTaskLease(ctx context.Context, plan ReviewRunPlan, le
 			return TaskLease{}, ReviewRunState{}, ErrRunTransitionLeaseMismatch
 		}
 		expiresAt := at.Add(time.Duration(runtime.Definition().LeaseDurationMilliseconds()) * time.Millisecond)
-		if !expiresAt.After(runtime.LeaseExpiresAt()) {
+		if expiresAt.UnixMilli() <= runtime.leaseExpiresAtMillis {
 			current := lease
 			current.eventIdentity = runtime.lastEventIdentity
 			current.expiresAtMillis = runtime.leaseExpiresAtMillis
