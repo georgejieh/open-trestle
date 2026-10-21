@@ -70,7 +70,8 @@
         "investigation_turn",
         "investigation_tool_result",
         "sanitized_model_request",
-        "sanitized_egress_receipt"
+        "sanitized_egress_receipt",
+        "generation_rejection"
       ]
     },
     "media_type": {

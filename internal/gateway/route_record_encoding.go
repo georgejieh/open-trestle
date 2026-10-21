@@ -338,33 +338,40 @@ func ParseRouteExecutionRecord(encoded []byte) (RouteExecutionRecord, error) {
 }
 
 func routeExecutionWireValue(record RouteExecutionRecord) routeExecutionWire {
-	outcome := record.Outcome()
-	actual := record.Reconciliation().ActualCost()
 	output := record.Output()
 	return routeExecutionWire{
 		Contract: "open-trestle/route-execution-record", SchemaVersion: 1, Identity: record.Identity(),
-		Authorization: routeAuthorizationWireValue(record.Authorization()),
-		Outcome: routeOutcomeWire{
-			Identity: outcome.Identity(), Status: outcome.Status().String(),
-			ResponseIdentity: outcome.ResponseIdentity(), UsageKnown: outcome.Usage().IsKnown(),
-			InputTokens: outcome.Usage().InputTokens(), OutputTokens: outcome.Usage().OutputTokens(),
-			CachedInputTokens: outcome.Usage().CachedInputTokens(), Failure: outcome.Failure().String(),
-			ReplaySafety: outcome.ReplaySafety().String(), RetryAfterMilliseconds: outcome.RetryAfterMilliseconds(),
-			DurationMilliseconds: outcome.DurationMilliseconds(),
-		},
-		Reconciliation: routeReconciliationWire{
-			Identity: record.Reconciliation().Identity(), Status: record.Reconciliation().Status().String(),
-			ReservedCostMicroUSD: record.Reconciliation().ReservedCostMicroUSD(), ActualKnown: actual.IsKnown(),
-			ActualInputCostMicroUSD: actual.InputCostMicroUSD(), ActualOutputCostMicroUSD: actual.OutputCostMicroUSD(),
-			ActualTotalCostMicroUSD:           actual.TotalCostMicroUSD(),
-			RemainingAfterReservationMicroUSD: record.Reconciliation().RemainingAfterReservationMicroUSD(),
-			RemainingCostMicroUSD:             record.Reconciliation().RemainingCostMicroUSD(),
-			BudgetOverrunMicroUSD:             record.Reconciliation().BudgetOverrunMicroUSD(),
-		},
+		Authorization:  routeAuthorizationWireValue(record.Authorization()),
+		Outcome:        routeOutcomeWireValue(record.Outcome()),
+		Reconciliation: routeReconciliationWireValue(record.Reconciliation()),
 		Output: routeOutputWire{
 			Identity: output.Identity(), Kind: output.Kind().String(),
 			ContextIdentity: output.ContextIdentity(), ArtifactIdentity: output.ArtifactIdentity(),
 		},
+	}
+}
+
+func routeOutcomeWireValue(outcome RouteAttemptOutcome) routeOutcomeWire {
+	return routeOutcomeWire{
+		Identity: outcome.Identity(), Status: outcome.Status().String(),
+		ResponseIdentity: outcome.ResponseIdentity(), UsageKnown: outcome.Usage().IsKnown(),
+		InputTokens: outcome.Usage().InputTokens(), OutputTokens: outcome.Usage().OutputTokens(),
+		CachedInputTokens: outcome.Usage().CachedInputTokens(), Failure: outcome.Failure().String(),
+		ReplaySafety: outcome.ReplaySafety().String(), RetryAfterMilliseconds: outcome.RetryAfterMilliseconds(),
+		DurationMilliseconds: outcome.DurationMilliseconds(),
+	}
+}
+
+func routeReconciliationWireValue(value RouteCostReconciliation) routeReconciliationWire {
+	actual := value.ActualCost()
+	return routeReconciliationWire{
+		Identity: value.Identity(), Status: value.Status().String(),
+		ReservedCostMicroUSD: value.ReservedCostMicroUSD(), ActualKnown: actual.IsKnown(),
+		ActualInputCostMicroUSD: actual.InputCostMicroUSD(), ActualOutputCostMicroUSD: actual.OutputCostMicroUSD(),
+		ActualTotalCostMicroUSD:           actual.TotalCostMicroUSD(),
+		RemainingAfterReservationMicroUSD: value.RemainingAfterReservationMicroUSD(),
+		RemainingCostMicroUSD:             value.RemainingCostMicroUSD(),
+		BudgetOverrunMicroUSD:             value.BudgetOverrunMicroUSD(),
 	}
 }
 

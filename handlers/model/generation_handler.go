@@ -85,6 +85,10 @@ func deriveGenerationHandlerIdentity(catalogIdentity string, expected review.Sca
 	if !validDigest(catalogIdentity) {
 		return ""
 	}
+	schemaVersion := 3
+	if requiresSanitized {
+		schemaVersion = 4
+	}
 	encoded, err := json.Marshal(struct {
 		Contract           string `json:"contract"`
 		SchemaVersion      int    `json:"schema_version"`
@@ -95,7 +99,7 @@ func deriveGenerationHandlerIdentity(catalogIdentity string, expected review.Sca
 		SanitizationPolicy string `json:"sanitization_policy"`
 		Scanner            string `json:"scanner"`
 		BuildProfile       string `json:"build_profile"`
-	}{"open-trestle/model-generation-handler", 3, catalogIdentity, expected.LauncherSHA256, expected.WorkerSHA256, requiresSanitized, review.SanitizationPolicyIdentity, secretscan.ScannerName, secretscan.BuildProfile})
+	}{"open-trestle/model-generation-handler", schemaVersion, catalogIdentity, expected.LauncherSHA256, expected.WorkerSHA256, requiresSanitized, review.SanitizationPolicyIdentity, secretscan.ScannerName, secretscan.BuildProfile})
 	if err != nil {
 		return ""
 	}
@@ -237,6 +241,10 @@ func (h *GenerationHandler) Execute(ctx context.Context, task controlplane.TaskE
 		dispatchResult.Response(), input.Snapshot(), input.EvidenceItems(),
 	)
 	if err != nil {
+		if errors.Is(err, review.ErrInvalidCandidateDocumentShape) {
+			// Failure to persist the witness remains an unproven internal failure.
+			_ = h.recordDocumentShapeRejection(ctx, task, inputArtifact, contextArtifact, input, outcome, reconciliation)
+		}
 		return generationFailure(controlplane.RunFailureInternal)
 	}
 	outputReceipt, err := gateway.NewSuccessfulRouteOutputReceipt(

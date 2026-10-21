@@ -16,6 +16,7 @@ import (
 	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/controlplane/httpapi"
 	"github.com/georgejieh/open-trestle/diagnostics"
+	modelhandler "github.com/georgejieh/open-trestle/handlers/model"
 	"github.com/georgejieh/open-trestle/runtimecatalog"
 	"github.com/georgejieh/open-trestle/worker"
 )
@@ -86,6 +87,52 @@ func TestDaemonLocalModelWorkersEmptyAndMalformedCandidates(t *testing.T) {
 			}
 			if mode == "empty" && (progress.Progress.Verification.Verified == nil || *progress.Progress.Verification.Verified != 0) {
 				t.Fatal("empty verification did not expose measured zero")
+			}
+			if mode == "malformed" {
+				var ledger *audit.FileLedger
+				for _, closer := range d.closers {
+					if value, ok := closer.(*audit.FileLedger); ok {
+						ledger = value
+					}
+				}
+				if ledger == nil {
+					t.Fatal("daemon audit ledger missing")
+				}
+				events, err := ledger.Read(context.Background(), scope, 0, 64)
+				if err != nil {
+					t.Fatal(err)
+				}
+				contextTask, _ := receipt.Task("context")
+				inputArtifact, err := d.artifactStore.Get(context.Background(), scope, contextTask.OutputIdentity(), time.Now().UTC())
+				if err != nil {
+					t.Fatal(err)
+				}
+				input, err := modelhandler.ParseGenerationInput(inputArtifact.Payload())
+				if err != nil {
+					t.Fatal(err)
+				}
+				contextArtifact, err := d.artifactStore.Get(context.Background(), scope, input.ContextArtifactIdentity(), time.Now().UTC())
+				if err != nil {
+					t.Fatal(err)
+				}
+				found := 0
+				for _, event := range events {
+					if event.Kind() != audit.EventGenerationRejected {
+						continue
+					}
+					found++
+					value, err := d.artifactStore.Get(context.Background(), scope, event.SubjectIdentity(), time.Now().UTC())
+					if err != nil {
+						t.Fatal(err)
+					}
+					rejection, err := modelhandler.ParseGenerationRejectionArtifact(value, inputArtifact, contextArtifact)
+					if err != nil || rejection.Attempt().Authorization().Identity() != input.Authorization().Identity() || rejection.HandlerIdentity() != candidate.HandlerIdentity() {
+						t.Fatalf("stored rejection lineage: %v", err)
+					}
+				}
+				if found != 1 {
+					t.Fatalf("rejection events=%d", found)
+				}
 			}
 			server.Close()
 			if err := d.Close(); err != nil {

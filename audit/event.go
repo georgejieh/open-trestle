@@ -156,6 +156,7 @@ const (
 	EventArtifactDeleted
 	EventInvestigationToolClaimed
 	EventInvestigationToolCompleted
+	EventGenerationRejected
 )
 
 func (k EventKind) String() string {
@@ -204,13 +205,15 @@ func (k EventKind) String() string {
 		return "investigation_tool_claimed"
 	case EventInvestigationToolCompleted:
 		return "investigation_tool_completed"
+	case EventGenerationRejected:
+		return "generation_rejected"
 	default:
 		return ""
 	}
 }
 
 func ParseEventKind(value string) (EventKind, error) {
-	for kind := EventRouteSelected; kind <= EventInvestigationToolCompleted; kind++ {
+	for kind := EventRouteSelected; kind <= EventGenerationRejected; kind++ {
 		if kind.String() == value {
 			return kind, nil
 		}

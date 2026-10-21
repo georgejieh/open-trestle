@@ -51,6 +51,7 @@ const (
 	KindInvestigationToolResult
 	KindSanitizedModelRequest
 	KindSanitizedEgressReceipt
+	KindGenerationRejection
 )
 
 func (k Kind) String() string {
@@ -91,6 +92,8 @@ func (k Kind) String() string {
 		return "sanitized_model_request"
 	case KindSanitizedEgressReceipt:
 		return "sanitized_egress_receipt"
+	case KindGenerationRejection:
+		return "generation_rejection"
 	default:
 		return ""
 	}
