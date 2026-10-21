@@ -17,6 +17,7 @@ import (
 	"github.com/georgejieh/open-trestle/controlplane/httpapi"
 	"github.com/georgejieh/open-trestle/diagnostics"
 	modelhandler "github.com/georgejieh/open-trestle/handlers/model"
+	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/runtimecatalog"
 	"github.com/georgejieh/open-trestle/worker"
 )
@@ -129,6 +130,39 @@ func TestDaemonLocalModelWorkersEmptyAndMalformedCandidates(t *testing.T) {
 					if err != nil || rejection.Attempt().Authorization().Identity() != input.Authorization().Identity() || rejection.HandlerIdentity() != candidate.HandlerIdentity() {
 						t.Fatalf("stored rejection lineage: %v", err)
 					}
+					facts, err := d.journal.(*controlplane.FileRunJournal).InspectHistoricalContextPackets(context.Background())
+					if err != nil || len(facts) != 1 {
+						t.Fatalf("rejection historical facts: %v", err)
+					}
+					linked, ok := facts[0].LinkedInputEvent()
+					if !ok {
+						t.Fatal("rejection input link missing")
+					}
+					requestArtifact, err := d.artifactStore.Get(context.Background(), scope, input.SanitizedRequestArtifactIdentity(), time.Now().UTC())
+					if err != nil {
+						t.Fatal(err)
+					}
+					sanitized, err := review.ParseSanitizedModelRequest(requestArtifact.Payload())
+					if err != nil {
+						t.Fatal(err)
+					}
+					request, err := sanitized.ProviderRequest()
+					if err != nil {
+						t.Fatal(err)
+					}
+					pair, err := runtimecatalog.ResolveLocalGenerationRoutePair(policy, inventory)
+					if err != nil {
+						t.Fatal(err)
+					}
+					route, err := runtimecatalog.PlanLocalGenerationRoute(context.Background(), scope, request, policy, inventory, pair)
+					if err != nil {
+						t.Fatal(err)
+					}
+					receiptArtifact, err := d.artifactStore.Get(context.Background(), scope, input.SanitizedEgressReceiptArtifactIdentity(), time.Now().UTC())
+					if err != nil {
+						t.Fatal(err)
+					}
+					testGenerationRejectionAuditProof(t, events, value, inputArtifact, contextArtifact, requestArtifact, receiptArtifact, linked.InputDescriptor(), route, candidate.HandlerIdentity(), time.Now().UTC())
 				}
 				if found != 1 {
 					t.Fatalf("rejection events=%d", found)
