@@ -61,6 +61,7 @@ const (
 type physicalPacketObservation struct {
 	expectation physicalPacketExpectation
 	kind        physicalPacketObservationKind
+	value       artifact.Artifact // Provisional until the outer physical postchecks succeed.
 }
 type physicalPacketLeaf struct {
 	info   os.FileInfo
@@ -239,6 +240,7 @@ func observeBorrowedHistoricalFilesWithRecorded(ctx context.Context, borrowed *o
 		}
 	}()
 	kinds := make(map[string]physicalPacketObservationKind, len(unique))
+	values := make(map[string]artifact.Artifact, len(unique))
 	var parsedRecorded map[string]artifact.Artifact
 	if recorded != nil {
 		parsedRecorded = make(map[string]artifact.Artifact, 8)
@@ -271,6 +273,7 @@ func observeBorrowedHistoricalFilesWithRecorded(ctx context.Context, borrowed *o
 		canonical = nil
 		if valid {
 			kinds[name] = physicalPacketIntact
+			values[name] = parsed
 			if recorded != nil {
 				parsedRecorded[name] = parsed
 			}
@@ -278,7 +281,7 @@ func observeBorrowedHistoricalFilesWithRecorded(ctx context.Context, borrowed *o
 	}
 	observations := make([]physicalPacketObservation, len(expected))
 	for i, e := range expected {
-		observations[i] = physicalPacketObservation{expectation: e, kind: kinds[names[i]]}
+		observations[i] = physicalPacketObservation{expectation: e, kind: kinds[names[i]], value: values[names[i]]}
 	}
 	var callbackErr error
 	if recorded == nil {
