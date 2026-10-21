@@ -146,7 +146,7 @@ func buildPreparedReview(ctx context.Context, request PreparedReviewRequest) (Pr
 		for _, key := range spec.dependencies {
 			dependencies = append(dependencies, identities[key])
 		}
-		input := preparedDigest([]any{"open-trestle/prepared-review-task-input", 1, request.identity, spec.kind.String(), dependencies})
+		input := preparedTaskInputIdentity(request.identity, spec.kind, dependencies)
 		if i < 2 {
 			input = inputs[i].Identity()
 		}
@@ -184,6 +184,33 @@ func (p PreparedReviewRun) Validate() error {
 	}
 	return nil
 }
+
+// ValidatePreparedReviewPlanTaskInputs checks prepared non-source input recipes.
+// It does not validate pipeline shape, enrollment, or source artifact contents.
+func ValidatePreparedReviewPlanTaskInputs(plan controlplane.ReviewRunPlan) error {
+	if plan.Validate() != nil || plan.Mode() != controlplane.ReviewRunLocal {
+		return ErrInvalidPreparedReview
+	}
+	for _, task := range plan.Tasks() {
+		if task.Kind() == controlplane.TaskAcquireSource {
+			continue
+		}
+		dependencies := make([]string, 0, len(task.Dependencies()))
+		for _, key := range task.Dependencies() {
+			dependency, _ := plan.Task(key) // Plan validation proves each dependency exists and keys are sorted.
+			dependencies = append(dependencies, dependency.Identity())
+		}
+		if task.InputIdentity() != preparedTaskInputIdentity(plan.RequestIdentity(), task.Kind(), dependencies) {
+			return ErrInvalidPreparedReview
+		}
+	}
+	return nil
+}
+
+func preparedTaskInputIdentity(request string, kind controlplane.TaskKind, dependencies []string) string {
+	return preparedDigest([]any{"open-trestle/prepared-review-task-input", 1, request, kind.String(), dependencies})
+}
+
 func preparedDigest(value any) string {
 	encoded, _ := json.Marshal(value)
 	digest := sha256.Sum256(encoded)
