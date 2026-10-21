@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"strings"
 
 	"github.com/georgejieh/open-trestle/artifact"
 	"github.com/georgejieh/open-trestle/internal/evidence"
@@ -341,11 +340,18 @@ func deriveSnapshotIdentity(snapshot Snapshot) string {
 }
 
 func validDigest(value string) bool {
-	if len(value) != sha256.Size*2 || value != strings.ToLower(value) || strings.Trim(value, "0") == "" {
+	if len(value) != sha256.Size*2 {
 		return false
 	}
-	decoded, err := hex.DecodeString(value)
-	return err == nil && hex.EncodeToString(decoded) == value
+	nonzero := false
+	for index := range len(value) {
+		digit := value[index]
+		if !(digit >= '0' && digit <= '9' || digit >= 'a' && digit <= 'f') {
+			return false
+		}
+		nonzero = nonzero || digit != '0'
+	}
+	return nonzero
 }
 
 func hasProvenance(values []string, expected string) bool {
