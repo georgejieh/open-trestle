@@ -25,6 +25,7 @@ const (
 // not attest physical artifact bytes or authorize dispatch or startup.
 type HistoricalContextPacketFact struct {
 	plan          *ReviewRunPlan // one independently owned plan per retained scope
+	replay        *[]RunEvent    // one private event snapshot per retained scope
 	prepared      RunEvent
 	lease         RunEvent
 	upstream      []RunEvent
@@ -62,6 +63,21 @@ func (f HistoricalContextPacketFact) Plan() ReviewRunPlan {
 	}
 	return cloneHistoricalPlan(*f.plan)
 }
+
+// ReplayEvents returns independent copies of the fully replayed stream that
+// produced this fact. Rooted observations remain provisional until their outer
+// physical postchecks succeed. These events grant no startup authority.
+func (f HistoricalContextPacketFact) ReplayEvents() []RunEvent {
+	if f.replay == nil {
+		return nil
+	}
+	result := make([]RunEvent, len(*f.replay))
+	for i, event := range *f.replay {
+		result[i] = cloneHistoricalEvent(event)
+	}
+	return result
+}
+
 func (f HistoricalContextPacketFact) PreparedEvent() RunEvent {
 	return cloneHistoricalEvent(f.prepared)
 }
@@ -130,6 +146,7 @@ func historicalFactsForStream(plan ReviewRunPlan, events []RunEvent, state Revie
 	active := make(map[string]checkpoint)
 	facts := make([]HistoricalContextPacketFact, 0)
 	var owned *ReviewRunPlan
+	var replay *[]RunEvent
 	var terminal RunEvent
 	overflow := false
 	tailIndex, skipIndex := -1, 0
@@ -205,8 +222,13 @@ func historicalFactsForStream(plan ReviewRunPlan, events []RunEvent, state Revie
 			if owned == nil {
 				cloned := cloneHistoricalPlan(plan)
 				owned = &cloned
+				copied := make([]RunEvent, len(events))
+				for i, event := range events {
+					copied[i] = cloneHistoricalEvent(event)
+				}
+				replay = &copied
 			}
-			facts = append(facts, HistoricalContextPacketFact{plan: owned, prepared: cloneHistoricalEvent(event), lease: cloneHistoricalEvent(lease), upstream: upstream, transitive: transitive})
+			facts = append(facts, HistoricalContextPacketFact{plan: owned, replay: replay, prepared: cloneHistoricalEvent(event), lease: cloneHistoricalEvent(lease), upstream: upstream, transitive: transitive})
 			active[event.TaskKey()] = checkpoint{index: len(facts) - 1, identity: event.Identity()}
 			tailIndex, skipIndex = len(facts)-1, 0
 			tail = ContextPacketExpiryTailActiveExactV4
