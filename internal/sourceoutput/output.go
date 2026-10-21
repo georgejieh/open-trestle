@@ -150,7 +150,9 @@ func EncodeFile(
 
 // ParseFileArtifact validates and decodes one exact source-file artifact.
 func ParseFileArtifact(value artifact.Artifact, snapshot Snapshot, reference FileReference) (File, error) {
-	if snapshot.validateFields(true) != nil || !snapshotContainsReference(snapshot, reference) ||
+	// Only ParseSnapshotArtifact binds a scope, after validating the immutable
+	// index. Revalidating every indexed file here makes whole-snapshot reads quadratic.
+	if snapshot.scopeIdentity == "" || !snapshotContainsReference(snapshot, reference) ||
 		value.Validate() != nil || value.Identity() != reference.ArtifactIdentity() ||
 		value.Scope().Identity() != snapshot.ScopeIdentity() || value.Classification() != snapshot.Classification() ||
 		value.Protection() != snapshot.Protection() || value.Kind() != artifact.KindSourceFile ||
