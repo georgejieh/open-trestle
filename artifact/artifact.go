@@ -201,6 +201,27 @@ func New(
 	payload []byte,
 	createdAt, expiresAt time.Time,
 ) (Artifact, error) {
+	value, err := artifactFromBorrowedPayload(scope, kind, mediaType, classification, origin, protection, provenance, payload, createdAt, expiresAt)
+	if err != nil {
+		return Artifact{}, err
+	}
+	value.payload = append([]byte(nil), payload...)
+	return value, nil
+}
+
+// artifactFromBorrowedPayload validates and hashes without retaining a copy.
+// Callers must copy the payload before exposing the returned value.
+func artifactFromBorrowedPayload(
+	scope audit.ReviewScope,
+	kind Kind,
+	mediaType string,
+	classification Classification,
+	origin Origin,
+	protection Protection,
+	provenance []string,
+	payload []byte,
+	createdAt, expiresAt time.Time,
+) (Artifact, error) {
 	createdMillis, expiresMillis := createdAt.UnixMilli(), expiresAt.UnixMilli()
 	canonicalProvenance := append([]string(nil), provenance...)
 	sort.Strings(canonicalProvenance)
@@ -218,7 +239,7 @@ func New(
 	artifact := Artifact{
 		scope: scope, kind: kind, mediaType: mediaType,
 		classification: classification, origin: origin, protection: protection,
-		provenance: canonicalProvenance, payload: append([]byte(nil), payload...),
+		provenance: canonicalProvenance, payload: payload,
 		payloadDigest: hashBytes(payload), createdAtMillis: createdMillis, expiresAtMillis: expiresMillis,
 	}
 	artifact.identity = deriveIdentity(artifact)
@@ -237,7 +258,7 @@ func (a Artifact) Payload() []byte                { return append([]byte(nil), a
 func (a Artifact) CreatedAt() time.Time           { return time.UnixMilli(a.createdAtMillis).UTC() }
 func (a Artifact) ExpiresAt() time.Time           { return time.UnixMilli(a.expiresAtMillis).UTC() }
 func (a Artifact) Validate() error {
-	rebuilt, err := New(a.scope, a.kind, a.mediaType, a.classification, a.origin, a.protection, a.provenance, a.payload, time.UnixMilli(a.createdAtMillis), time.UnixMilli(a.expiresAtMillis))
+	rebuilt, err := artifactFromBorrowedPayload(a.scope, a.kind, a.mediaType, a.classification, a.origin, a.protection, a.provenance, a.payload, time.UnixMilli(a.createdAtMillis), time.UnixMilli(a.expiresAtMillis))
 	if err != nil {
 		return err
 	}
