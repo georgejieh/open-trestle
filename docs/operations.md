@@ -347,6 +347,17 @@ identities match the recovery-point record. This is an in-place, stopped-daemon
 recovery procedure, not portable backup qualification, a filesystem snapshot
 protocol, or proof of power-loss durability.
 
+A terminal diagnostic result does not prove that startup can safely replay every
+failed model attempt. A malformed generation response can leave a failed run with
+an inconclusive result while its recorded route effects still require startup
+quarantine. Do not delete its journal, audit events, artifacts or owner record to
+force a restart. Stop the daemon and retain the complete recovery point. If
+startup refuses that history, use a separately initialized state root and a new
+run ID for unrelated work, preserving the original state for review. This is
+isolation of unproven history, not successful in-place recovery.
+
+This evaluation profile is not yet qualified as a supported v1 installation.
+
 ## Backup and restore
 
 A complete backup must preserve PostgreSQL metadata, publication attempts, the publication authority singleton, protected artifact objects, envelope metadata, and the keys needed to decrypt retained objects. Database and object-store snapshots must represent one documented recovery point. A database snapshot without its corresponding protected objects is incomplete. A restored object set without the matching metadata is also incomplete.
@@ -365,7 +376,7 @@ The authority receipt detects a fresh or independently initialized database. It 
 
 ## Retire an old active review plan after a typed incompatibility
 
-For the supported local full-review profile, a context abstention first appends a bounded, content-free v3 prepare event to the private file journal. Only then does the daemon put the scoped deterministic artifact and append the failed-task result. On restart, before any supervisor or listener can settle an expired context lease, the daemon replays an unresolved prepare, validates its exact plan/task/scope/provenance and artifact bytes, restores a missing artifact from the journaled envelope, and writes one linked failed-task result. A corrupt, expired, ambiguous, or unavailable prepared artifact stops startup; it never becomes an empty-output success or model-ready task. This is a local FileRunJournal and local artifact-store path, not a qualified PostgreSQL/S3 full-review migration. The existing full-local daemon configuration rejects those nonlocal stores; their current event storage bound is not a v3 conformance claim.
+For the local full-review evaluation profile, a context abstention first appends a bounded, content-free v3 prepare event to the private file journal. Only then does the daemon put the scoped deterministic artifact and append the failed-task result. On restart, before any supervisor or listener can settle an expired context lease, the daemon replays an unresolved prepare, validates its exact plan/task/scope/provenance and artifact bytes, restores a missing artifact from the journaled envelope, and writes one linked failed-task result. A corrupt, expired, ambiguous, or unavailable prepared artifact stops startup; it never becomes an empty-output success or model-ready task. This is a local FileRunJournal and local artifact-store path, not a qualified PostgreSQL/S3 full-review migration. The existing full-local daemon configuration rejects those nonlocal stores; their current event storage bound is not a v3 conformance claim.
 
 If replay or startup reports a typed incompatibility for an old active review plan, halt dispatch and publication for that plan. Do not treat an incompatible journal as a completed review or silently rewrite its immutable plan and events. For the local single-node profile, stop the daemon and take a consistent backup of the entire private `--state-dir` (journal, artifacts, and diagnostics) together with the configured `--setup-state` file, before any disposition. Record the recovery point and confirm the backup can be read. For PostgreSQL/S3 profiles, use their consistent metadata/object/envelope-key backup procedure instead. Do not copy a live file journal piecemeal.
 
