@@ -248,7 +248,11 @@ func (l *FileLedger) loadStream(scope ReviewScope) ([]Event, error) {
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrAuditPersistence, err)
 	}
-	scanner := bufio.NewScanner(file)
+	return parseFileAuditStream(file, scope)
+}
+
+func parseFileAuditStream(reader io.Reader, scope ReviewScope) ([]Event, error) {
+	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 4<<10), maxEncodedAuditEventBytes+1)
 	events := make([]Event, 0, 64)
 	previous := ""
