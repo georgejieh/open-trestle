@@ -342,3 +342,49 @@ func TestProgressIndependentCanonicalHashCalibration(t *testing.T) {
 		t.Fatal("independent canonical hash calibration")
 	}
 }
+
+func TestAttemptResponseMetadataBridgeCopies(t *testing.T) {
+	for _, tc := range []struct {
+		name, attempt string
+		entries, body bool
+	}{
+		{"list_provider_order", "list_provider_order", true, false},
+		{"initial_response", "initial", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			evidence := evMetaEvidence(t, tc.name)
+			attempt := evMetaAttempt(t, tc.attempt)
+			first, err := artifact.ParseAttemptResponseEvidence(evidence, attempt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (len(first.Page.Entries) > 0) != tc.entries || (len(first.CanonicalRecord) > 0) != tc.body {
+				t.Fatal("response fixture does not exercise its mutation probe")
+			}
+			if tc.entries {
+				first.Page.Entries[0] = artifact.VersionEntry{}
+			}
+			if tc.body {
+				first.CanonicalRecord[0] ^= 1
+			}
+			next, err := artifact.ParseAttemptResponseEvidence(evidence, attempt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.entries && (len(next.Page.Entries) == 0 || first.Page.Entries[0].Version.Identity() == next.Page.Entries[0].Version.Identity()) {
+				t.Fatal("entry mutation did not remain isolated")
+			}
+			if tc.body && bytes.Equal(first.CanonicalRecord, next.CanonicalRecord) {
+				t.Fatal("body mutation did not remain isolated")
+			}
+			rebuilt, err := artifact.NewAttemptResponseEvidence(next)
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := artifact.EncodeErasureEvidence(rebuilt)
+			if err != nil || string(encoded) != evMetaWire(tc.name) {
+				t.Fatal("response mutation reached evidence or next parse", err)
+			}
+		})
+	}
+}
