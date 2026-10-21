@@ -47,3 +47,10 @@ The current pending labels intentionally distinguish two actual test references 
 The Linux-only Python wrapper `open_trestle_eval.performance` runs a once-built CLI with at least one warm-up and ten measured processes. It uses `time.perf_counter_ns` and `os.wait4` to record wall time, CPU time, and per-process peak RSS. It verifies identical candidate output digests and identities for every run. Its observation is environment-specific, nondeterministic, not a golden, not a threshold, and not release evidence.
 
 A person other than the fixture author must review every base/head diff, changed range, positive label, negative or near-miss label, expected coverage outcome, and recorded mismatch against the exact corpus identity. Only a later, separate reviewed contract may record that decision. The pending candidate does not satisfy the roadmap quality release gate.
+
+
+## Pending model response contract candidate
+
+`trestle evaluate model-contract-candidate` runs eight compiled synthetic response fixtures through the production candidate and verification parsers. Cases cover verified, rejected, inconclusive and empty responses, missing evidence, an out-of-range near miss and a missing verdict. The report records expected and observed structural outcomes, an exact corpus identity and a report identity. It contains no source text or model response text.
+
+This command makes no model call. Its fixtures are original synthetic contract assertions, not independently adjudicated findings. `review_state` remains `pending`, `release_evidence_eligible` is false and `quality_measured` is false. Exit code `4` means the candidate report was written, not approval. The `passed` field describes only whether the structural outcomes matched. Parser acceptance does not prove that a claim is correct. The report measures no precision, recall, route independence, token cost or model latency, and does not replace the required real-route qualification and adjudicated quality corpus.

@@ -11,6 +11,9 @@ type staticDebugEvaluationRunner func() ([]byte, bool, error)
 type deterministicCorpusCandidateRunner func() ([]byte, string, error)
 
 func runEvaluate(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 1 && args[0] == "model-contract-candidate" {
+		return runModelContractCandidate(stdout, stderr)
+	}
 	if len(args) == 1 && args[0] == "deterministic-corpus-candidate" {
 		return runDeterministicCorpusCandidate(stdout, stderr, runDeterministicCorpusCandidateEvaluation)
 	}
@@ -82,6 +85,23 @@ func runDeterministicCorpusCandidateEvaluation() ([]byte, string, error) {
 	return encoded, report.ExecutionStatus(), err
 }
 
+func runModelContractCandidate(stdout, stderr io.Writer) int {
+	if stdout == nil || stderr == nil {
+		return 2
+	}
+	encoded, err := evaluation.EvaluateModelContractCandidate()
+	if err != nil {
+		fmt.Fprintln(stderr, "model contract candidate evaluation failed")
+		return 1
+	}
+	written, err := stdout.Write(append(encoded, '\n'))
+	if err != nil || written != len(encoded)+1 {
+		fmt.Fprintln(stderr, "write evaluation result failed")
+		return 1
+	}
+	return 4
+}
+
 func writeEvaluateUsage(stderr io.Writer) {
-	fmt.Fprintln(stderr, "usage: trestle evaluate static-debug | deterministic-corpus-candidate")
+	fmt.Fprintln(stderr, "usage: trestle evaluate static-debug | deterministic-corpus-candidate | model-contract-candidate")
 }

@@ -69,3 +69,11 @@ func TestRunDeterministicCorpusCandidateExitClasses(t *testing.T) {
 		})
 	}
 }
+
+func TestRunEvaluateModelContractCandidatePreservesPendingReview(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"evaluate", "model-contract-candidate"}, &stdout, &stderr)
+	if code != 4 || stderr.Len() != 0 || bytes.Count(stdout.Bytes(), []byte{'\n'}) != 1 || !bytes.Contains(stdout.Bytes(), []byte(`"release_evidence_eligible":false`)) || !bytes.Contains(stdout.Bytes(), []byte(`"quality_measured":false`)) || !bytes.Contains(stdout.Bytes(), []byte(`"review_state":"pending"`)) {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
