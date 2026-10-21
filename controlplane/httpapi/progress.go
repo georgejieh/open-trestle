@@ -10,10 +10,10 @@ import (
 	"github.com/georgejieh/open-trestle/artifact"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
-	analysis "github.com/georgejieh/open-trestle/handlers/analysis"
 	change "github.com/georgejieh/open-trestle/handlers/change"
 	contextreader "github.com/georgejieh/open-trestle/handlers/context"
 	model "github.com/georgejieh/open-trestle/handlers/model"
+	analysis "github.com/georgejieh/open-trestle/internal/analysiscodec"
 )
 
 const (
@@ -203,7 +203,7 @@ func (s *Server) readRunProgress(ctx context.Context, receipt controlplane.Revie
 	if err != nil {
 		return progress
 	}
-	analyzed, err := analysis.ParseResultArtifact(evidence, changeArtifact, base, head)
+	analyzed, err := analysis.ParseResultArtifactWithChange(evidence, changeArtifact, changed)
 	if err != nil {
 		return progress
 	}
