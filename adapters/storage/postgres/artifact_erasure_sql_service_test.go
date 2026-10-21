@@ -985,12 +985,12 @@ func erasureSQLCheck(expression string, r erasureRow) bool {
 		}
 		v := erasureSQLText(r, "payload_digest")
 		return erasureSQLHex.MatchString(v)
-	case "kind IN ('source_snapshot', 'change_model', 'deterministic_evidence', 'retrieval_result', 'context_packet', 'candidate_batch', 'verification_batch', 'verified_finding_set', 'publication_plan', 'run_export', 'task_input', 'webhook_delivery', 'source_file', 'publication_receipt', 'investigation_turn', 'investigation_tool_result', 'sanitized_model_request', 'sanitized_egress_receipt')":
+	case "kind IN ('source_snapshot', 'change_model', 'deterministic_evidence', 'retrieval_result', 'context_packet', 'candidate_batch', 'verification_batch', 'verified_finding_set', 'publication_plan', 'run_export', 'task_input', 'webhook_delivery', 'source_file', 'publication_receipt', 'investigation_turn', 'investigation_tool_result', 'sanitized_model_request', 'sanitized_egress_receipt', 'generation_rejection')":
 		if r["kind"] == nil {
 			return true
 		}
 		switch erasureSQLText(r, "kind") {
-		case "source_snapshot", "change_model", "deterministic_evidence", "retrieval_result", "context_packet", "candidate_batch", "verification_batch", "verified_finding_set", "publication_plan", "run_export", "task_input", "webhook_delivery", "source_file", "publication_receipt", "investigation_turn", "investigation_tool_result", "sanitized_model_request", "sanitized_egress_receipt":
+		case "source_snapshot", "change_model", "deterministic_evidence", "retrieval_result", "context_packet", "candidate_batch", "verification_batch", "verified_finding_set", "publication_plan", "run_export", "task_input", "webhook_delivery", "source_file", "publication_receipt", "investigation_turn", "investigation_tool_result", "sanitized_model_request", "sanitized_egress_receipt", "generation_rejection":
 			return true
 		}
 		return false

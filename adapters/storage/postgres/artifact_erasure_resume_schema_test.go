@@ -239,8 +239,8 @@ func newResumeCatalog(t *testing.T) erasureCatalog {
 	for _, name := range resumeFixtureTableNames {
 		c.Rows["trigger_inventory"] = append(c.Rows["trigger_inventory"], []driver.Value{c.OIDs[name], true, "O", true})
 	}
-	if len(c.Rows["migration_rows"]) != 14 {
-		t.Fatal("current catalog must include fourteen migration rows")
+	if len(c.Rows["migration_rows"]) != len(orderedMigrations) {
+		t.Fatal("current catalog must include every migration row")
 	}
 	return c
 }
@@ -383,8 +383,8 @@ func TestResumeVerifierRejectsEveryDescriptorMutation(t *testing.T) {
 		}
 	}
 }
-func TestResumeNormalFourteenRegistry(t *testing.T) {
-	if len(orderedMigrations) != 14 || orderedMigrations[13] != "migrations/0014_sanitized_egress_artifact_kinds.sql" {
+func TestResumeNormalMigrationRegistry(t *testing.T) {
+	if len(orderedMigrations) != 15 || orderedMigrations[14] != "migrations/0015_generation_rejection_artifact_kind.sql" {
 		t.Fatal("normal migration registry")
 	}
 	for i, pin := range erasureOldMigrations {
