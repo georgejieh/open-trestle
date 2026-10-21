@@ -265,7 +265,7 @@ func (e RunEvent) Validate() error {
 	if e.kind == RunEventContextInputPrepared && (!e.inputDescriptor.valid(e.scope) || e.inputDescriptor.Input.ArtifactIdentity != e.outputIdentity) {
 		return ErrInvalidRunEventOutput
 	}
-	if e.kind != RunEventContextInputPrepared && !reflect.DeepEqual(e.inputDescriptor, ContextInputDescriptor{}) {
+	if e.kind != RunEventContextInputPrepared && !reflect.ValueOf(e.inputDescriptor).IsZero() {
 		return ErrInvalidRunEventEncoding
 	}
 	if e.kind == RunEventContextPacketPrepared && (!e.packetDescriptor.valid(e.scope) || e.packetDescriptor.ArtifactIdentity != e.outputIdentity) {
