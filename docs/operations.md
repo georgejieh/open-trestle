@@ -347,14 +347,20 @@ identities match the recovery-point record. This is an in-place, stopped-daemon
 recovery procedure, not portable backup qualification, a filesystem snapshot
 protocol, or proof of power-loss durability.
 
-A terminal diagnostic result does not prove that startup can safely replay every
-failed model attempt. A malformed generation response can leave a failed run with
-an inconclusive result while its recorded route effects still require startup
-quarantine. Do not delete its journal, audit events, artifacts or owner record to
-force a restart. Stop the daemon and retain the complete recovery point. If
-startup refuses that history, use a separately initialized state root and a new
-run ID for unrelated work, preserving the original state for review. This is
-isolation of unproven history, not successful in-place recovery.
+A terminal internal failure alone does not permit restart. For an initial generation
+attempt rejected only for candidate-document shape, startup can admit the retained
+failed run only after fresh journal, five-event audit, exact artifact, current
+route, handler, scanner, and full pipeline-catalog checks succeed. The failed run
+remains inconclusive with no candidate output. Restart does not dispatch that
+history again. The rejection witness retains no response text.
+
+Missing, expired, changed, extra, uncertain, or unsupported evidence, and unresolved
+effect markers, still stop startup. This path does not recover arbitrary failed
+or partial model effects. Do not delete the journal, audit events, artifacts or
+owner record to force a restart. Stop the daemon and retain the complete recovery
+point. If startup refuses that history, use a separately initialized state root
+and a new run ID for unrelated work, preserving the original state for review.
+This is isolation of unproven history, not successful in-place recovery.
 
 This evaluation profile is not yet qualified as a supported v1 installation.
 
