@@ -130,7 +130,6 @@ func (e ErasureEvidence) validate() (attemptResponseRecord, error) {
 	if r.NamespaceIdentity != e.ref.NamespaceIdentity() || r.ScopeIdentity != e.ref.Scope().Identity() || r.OperationIdentity != e.ref.OperationIdentity() {
 		return attemptResponseRecord{}, ErrErasureIdentityMismatch
 	}
-	body, _ := hex.DecodeString(r.RecordHex)
 	switch r.Kind {
 	case "response":
 		response, err = bindAttemptResponse(response, e.ref)
@@ -141,6 +140,7 @@ func (e ErasureEvidence) validate() (attemptResponseRecord, error) {
 			return attemptResponseRecord{}, ErrErasureBindingMismatch
 		}
 	case "fence":
+		body, _ := hex.DecodeString(r.RecordHex)
 		version, err := ParseObjectVersion(body)
 		if err != nil {
 			return attemptResponseRecord{}, err
@@ -152,6 +152,7 @@ func (e ErasureEvidence) validate() (attemptResponseRecord, error) {
 			return attemptResponseRecord{}, ErrErasureBindingMismatch
 		}
 	case "verification":
+		body, _ := hex.DecodeString(r.RecordHex)
 		verification, err := ParseErasureVerification(body, e.ref)
 		if err != nil {
 			return attemptResponseRecord{}, err
@@ -165,6 +166,7 @@ func (e ErasureEvidence) validate() (attemptResponseRecord, error) {
 			return attemptResponseRecord{}, ErrErasureBindingMismatch
 		}
 	case "candidate":
+		body, _ := hex.DecodeString(r.RecordHex)
 		attestation, err := ParseErasureAttestationV2(body, e.ref.Scope())
 		if err != nil {
 			return attemptResponseRecord{}, err
