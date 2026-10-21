@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/georgejieh/open-trestle/audit"
 	"io"
+	"slices"
 	"time"
 )
 
@@ -78,8 +79,9 @@ func Parse(encoded []byte) (Artifact, error) {
 	if artifact.identity != value.Identity || artifact.payloadDigest != value.PayloadDigest {
 		return Artifact{}, ErrInvalidArtifactIdentity
 	}
-	reencoded, err := json.Marshal(toRecord(artifact))
-	if err != nil || !bytes.Equal(reencoded, encoded) {
+	// All record fields round-trip exactly after validation except provenance,
+	// which New sorts. The input envelope was already checked for canonical JSON.
+	if !slices.Equal(artifact.provenance, value.Provenance) {
 		return Artifact{}, ErrInvalidEncoding
 	}
 	return artifact, nil

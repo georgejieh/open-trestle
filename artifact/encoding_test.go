@@ -92,3 +92,26 @@ func BenchmarkParseArtifactPayloadSize(b *testing.B) {
 		})
 	}
 }
+
+func TestParseArtifactCanonicalInputShape(t *testing.T) {
+	value := codecFixture(t, 100)
+	encoded, err := Encode(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string][]byte{
+		"unknown":     append(append([]byte(nil), encoded[:len(encoded)-1]...), []byte(`,"extra":0}`)...),
+		"duplicate":   bytes.Replace(encoded, []byte(`"schema_version":1`), []byte(`"schema_version":1,"schema_version":1`), 1),
+		"escaped-key": bytes.Replace(encoded, []byte(`"contract"`), []byte(`"contr\u0061ct"`), 1),
+		"leading":     append([]byte(" "), encoded...),
+		"trailing":    append(append([]byte(nil), encoded...), []byte("{}")...),
+		"null":        []byte("null"),
+	}
+	for name, input := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Parse(input); !errors.Is(err, ErrInvalidEncoding) {
+				t.Fatalf("Parse=%v", err)
+			}
+		})
+	}
+}
