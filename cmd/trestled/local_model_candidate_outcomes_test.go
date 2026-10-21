@@ -5,10 +5,17 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/georgejieh/open-trestle/acpserver"
 	postgresstore "github.com/georgejieh/open-trestle/adapters/storage/postgres"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/client"
@@ -22,6 +29,11 @@ import (
 )
 
 func TestDaemonLocalModelWorkersEmptyAndMalformedCandidates(t *testing.T) {
+	cliPath := filepath.Join(t.TempDir(), "trestle")
+	buildCLI := exec.Command("go", "build", "-o", cliPath, "../trestle")
+	if output, err := buildCLI.CombinedOutput(); err != nil {
+		t.Fatalf("build CLI: %v %s", err, output)
+	}
 	for _, mode := range []string{"empty", "malformed"} {
 		t.Run(mode, func(t *testing.T) {
 			args, getenv, fake, repository, base, head, policy, inventory := localModelWorkerFixture(t)
@@ -43,6 +55,31 @@ func TestDaemonLocalModelWorkersEmptyAndMalformedCandidates(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			command := func(args []string) []byte {
+				t.Helper()
+				cmd := exec.Command(cliPath, args...)
+				cmd.Env = append(os.Environ(), "OPEN_TRESTLE_API_TOKEN="+getenv("OPEN_TRESTLE_API_TOKEN"))
+				output, err := cmd.CombinedOutput()
+				if err != nil {
+					t.Fatalf("CLI result: %v %s", err, output)
+				}
+				return bytes.TrimSpace(output)
+			}
+			assertParity := func(scope audit.ReviewScope, set diagnostics.Set) {
+				t.Helper()
+				cliArgs := []string{"--server", server.URL}
+				assertTerminalResultParity(t, command, server.URL, api, scope, set)
+				packagedAssertResultParity(t, command, cliArgs, scope, set)
+				if set.VerifiedSetIdentity() != "" {
+					packagedAssertProgressParity(t, command, cliArgs, scope, api, &set)
+					return
+				}
+				progress := packagedAssertProgressParity(t, command, cliArgs, scope, api, nil)
+				coverage := progress.Progress.Verification
+				if coverage.State != "unavailable" || coverage.Candidates != nil || coverage.Verified != nil || coverage.Rejected != nil || coverage.Inconclusive != nil {
+					t.Fatal("failed generation invented verification counts")
+				}
+			}
 			scope, _ := audit.NewReviewScope("tenant-a", "repo-a", "run-candidates-"+mode)
 			intent, err := runtimecatalog.NewLocalFullReviewIntent(scope, repository, base, head, policy.ReviewPolicyIdentity(), inventory.Identity(), policy.Identity(), time.Now().UTC())
 			if err != nil {
@@ -60,6 +97,7 @@ func TestDaemonLocalModelWorkersEmptyAndMalformedCandidates(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			assertParity(scope, final)
 			if len(final.Findings()) != 0 || final.VerifiedCount() != 0 {
 				t.Fatal("empty or invalid candidates promoted findings")
 			}
@@ -186,6 +224,7 @@ func TestDaemonLocalModelWorkersEmptyAndMalformedCandidates(t *testing.T) {
 				if err != nil || after.Identity() != final.Identity() {
 					t.Fatalf("first reopen changed rejected result: %v", err)
 				}
+				assertParity(scope, after)
 				fake.generation.generationOutcome = "empty"
 				laterScope, _ := audit.NewReviewScope("tenant-a", "repo-a", "run-after-rejected-generation")
 				later, err := runtimecatalog.NewLocalFullReviewIntent(laterScope, repository, base, head, policy.ReviewPolicyIdentity(), inventory.Identity(), policy.Identity(), time.Now().UTC())
@@ -204,6 +243,7 @@ func TestDaemonLocalModelWorkersEmptyAndMalformedCandidates(t *testing.T) {
 				if err != nil || laterFinal.Outcome() != diagnostics.FinalOutcomeCompleted || laterFinal.CandidateCount() != 0 || laterFinal.VerifiedSetIdentity() == "" {
 					t.Fatalf("later run: %v", err)
 				}
+				assertParity(laterScope, laterFinal)
 				server.Close()
 				if err := d.Close(); err != nil {
 					t.Fatal(err)
@@ -228,6 +268,7 @@ func TestDaemonLocalModelWorkersEmptyAndMalformedCandidates(t *testing.T) {
 					if err != nil || got.Identity() != wanted.identity {
 						t.Fatalf("second reopen changed result: %v", err)
 					}
+					assertParity(wanted.scope, got)
 				}
 				if calls, _, _, failures := fake.generation.snapshot(); calls != 2 || len(failures) != 0 {
 					t.Fatalf("generation calls=%d failures=%v", calls, failures)
@@ -263,5 +304,99 @@ func TestDaemonLocalModelWorkersEmptyAndMalformedCandidates(t *testing.T) {
 				t.Fatalf("verification calls=%d want=%d failures=%v", calls, wantVerification, failures)
 			}
 		})
+	}
+}
+
+func assertTerminalResultParity(t *testing.T, command func([]string) []byte, serverURL string, api *client.Client, scope audit.ReviewScope, set diagnostics.Set) {
+	t.Helper()
+	rendered := string(command([]string{"tui", "--server", serverURL, "--tenant", scope.TenantID(), "--repository", scope.RepositoryID(), "--run", scope.ReviewRunID(), "--plain", "--once"}))
+	for _, want := range []string{"Final review outcome: " + string(set.Outcome()), "Deterministic observations (not independently verified)", fmt.Sprintf("%d deterministic observation(s)", len(set.DeterministicObservations())), "does not approve the change"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("TUI missing %q: %s", want, rendered)
+		}
+	}
+	if set.VerifiedSetIdentity() == "" {
+		if !strings.Contains(rendered, "Verified findings: unknown (evidence unavailable).") || strings.Contains(rendered, "0 verified finding(s)") || strings.Contains(rendered, "0 candidate(s)") {
+			t.Fatalf("TUI invented verification: %s", rendered)
+		}
+	} else if !strings.Contains(rendered, fmt.Sprintf("%d verified finding(s)", set.VerifiedCount())) {
+		t.Fatalf("TUI lost verified count: %s", rendered)
+	}
+
+	server, err := acpserver.New(api, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := func(id int, method string, params any) []byte {
+		t.Helper()
+		encoded, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return append(encoded, '\n')
+	}
+	var input, output bytes.Buffer
+	input.Write(line(1, "initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}}))
+	input.Write(line(2, "session/new", map[string]any{"cwd": t.TempDir(), "mcpServers": []any{}}))
+	if err := server.Serve(context.Background(), &input, &output); err != nil {
+		t.Fatal(err)
+	}
+	initial := bytes.Split(bytes.TrimSpace(output.Bytes()), []byte{'\n'})
+	var session struct {
+		Result struct {
+			SessionID string `json:"sessionId"`
+		} `json:"result"`
+	}
+	if len(initial) != 2 || json.Unmarshal(initial[1], &session) != nil || session.Result.SessionID == "" {
+		t.Fatalf("ACP session: %s", output.String())
+	}
+	output.Reset()
+	prompt := line(3, "session/prompt", map[string]any{"sessionId": session.Result.SessionID, "prompt": []map[string]any{{"type": "text", "text": "Show review status"}}})
+	if err := server.Serve(context.Background(), bytes.NewReader(prompt), &output); err != nil {
+		t.Fatal(err)
+	}
+	messages := bytes.Split(bytes.TrimSpace(output.Bytes()), []byte{'\n'})
+	var update struct {
+		Method string `json:"method"`
+		Params struct {
+			SessionID string `json:"sessionId"`
+			Update    struct {
+				Content struct {
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"update"`
+		} `json:"params"`
+	}
+	var done struct {
+		ID     int `json:"id"`
+		Result struct {
+			StopReason string `json:"stopReason"`
+		} `json:"result"`
+	}
+	if len(messages) != 2 || json.Unmarshal(messages[0], &update) != nil || update.Method != "session/update" || update.Params.SessionID != session.Result.SessionID || json.Unmarshal(messages[1], &done) != nil || done.ID != 3 || done.Result.StopReason != "end_turn" {
+		t.Fatalf("ACP prompt: %s", output.String())
+	}
+	text := update.Params.Update.Content.Text
+	_, encodedSet, found := strings.Cut(text, "Final review diagnostics:\n")
+	got, err := diagnostics.ParseSet([]byte(encodedSet))
+	if !found || err != nil || got.Identity() != set.Identity() {
+		t.Fatalf("ACP final result mismatch: %v %s", err, text)
+	}
+	receipt, err := api.GetRun(context.Background(), scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, rest, found := strings.Cut(text, "Run receipt:\n")
+	receiptJSON, _, _ := strings.Cut(rest, "\n\n")
+	gotReceipt, err := controlplane.ParseReviewRunReceipt([]byte(receiptJSON))
+	if !found || err != nil || gotReceipt.Identity() != receipt.Identity() || !strings.Contains(text, "Final review outcome: "+string(set.Outcome())) {
+		t.Fatalf("ACP receipt/outcome mismatch: %v %s", err, text)
+	}
+	if set.VerifiedSetIdentity() == "" {
+		if !strings.Contains(text, "Verified findings: unknown (evidence unavailable).") || strings.Contains(text, "Verified findings: 0.") {
+			t.Fatalf("ACP invented verification: %s", text)
+		}
+	} else if !strings.Contains(text, fmt.Sprintf("Verified findings: %d.", set.VerifiedCount())) {
+		t.Fatalf("ACP lost verified count: %s", text)
 	}
 }
