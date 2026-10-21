@@ -23,6 +23,7 @@ func testGenerationRejectionAuditProof(t *testing.T, events []audit.Event, value
 	if err := check(events, value, handler, now); err != nil {
 		t.Fatalf("actual rejection audit refused: %v", err)
 	}
+	testGenerationRejectionNoninitial(t, events, value, input, packet, requestArtifact, receiptArtifact, descriptor, route, handler, now)
 	rebuild := func(change func(int, audit.Event) (audit.EventKind, string, []string, time.Time), source []audit.Event) []audit.Event {
 		result := make([]audit.Event, len(source))
 		previous := ""
