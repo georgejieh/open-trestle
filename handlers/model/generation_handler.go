@@ -81,6 +81,16 @@ func (h *GenerationHandler) Validate() error {
 	return nil
 }
 
+// SanitizedGenerationHandlerIdentity derives the sanitized handler identity without
+// constructing a store, ledger, clock, or dispatching a provider request. It does
+// not enroll a handler or validate scanner files at the configured digests.
+func SanitizedGenerationHandlerIdentity(catalog gateway.RouteDispatcherCatalog, expected review.ScannerBinaryDigests) (string, error) {
+	if catalog.Validate() != nil {
+		return "", ErrInvalidGenerationHandler
+	}
+	return deriveGenerationHandlerIdentity(catalog.Identity(), expected, true), nil
+}
+
 func deriveGenerationHandlerIdentity(catalogIdentity string, expected review.ScannerBinaryDigests, requiresSanitized bool) string {
 	if !validDigest(catalogIdentity) {
 		return ""
