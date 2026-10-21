@@ -322,6 +322,31 @@ OPEN_TRESTLE_POSTGRES_URL="$APPLICATION_URL" \
 
 The commands print no connection string or operator digest. Failure output is content-free. Pass the identity from `trestle admin postgres identity` to every PostgreSQL daemon as `--postgres-database-authority-identity`; startup fails before serving if the exact runtime database authority differs.
 
+## Local full-review recovery point
+
+Stop the daemon before copying its private `--state-dir`, the configured
+`--setup-state` file and its `.receipts` directory. Retain the exact route inventory,
+runtime policy, source Git object store, setup-root identity, binary version and
+scanner digests with the recovery-point record. Keep credentials separate. Do not
+copy a live journal or combine files from different recovery points. Protect backup
+bytes with the same private modes and access controls as the originals.
+
+The local source-owner record binds the absolute paths and Linux directory
+identities of the state root, artifact root and Git object root. Restoring regular
+file bytes into those same retained directories can preserve that ownership.
+Recreating a directory, restoring to another path or moving to another machine is
+not a supported re-enrollment: startup refuses an owner mismatch even when the
+copied bytes are otherwise complete. Do not edit or remove the owner record to
+bypass that refusal. Retain the backup and use a separately initialized state root
+for a new run if the original ownership cannot be preserved.
+
+Before restarting workers, compare the closed backup inventory and file hashes
+with the restored bytes, verify the configured setup and source identities, and
+replay terminal receipts and diagnostics without dispatch. Confirm their exact
+identities match the recovery-point record. This is an in-place, stopped-daemon
+recovery procedure, not portable backup qualification, a filesystem snapshot
+protocol, or proof of power-loss durability.
+
 ## Backup and restore
 
 A complete backup must preserve PostgreSQL metadata, publication attempts, the publication authority singleton, protected artifact objects, envelope metadata, and the keys needed to decrypt retained objects. Database and object-store snapshots must represent one documented recovery point. A database snapshot without its corresponding protected objects is incomplete. A restored object set without the matching metadata is also incomplete.

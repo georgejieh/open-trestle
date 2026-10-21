@@ -811,3 +811,163 @@ func testDaemonLocalModelWorkersCanceledRestart(t *testing.T, mode string) {
 		}
 	}
 }
+
+func TestDaemonLocalModelWorkersOfflineBackupPreservesOwnerBoundary(t *testing.T) {
+	for _, replaceRoot := range []bool{false, true} {
+		name := "in-place"
+		if replaceRoot {
+			name = "replacement-root"
+		}
+		t.Run(name, func(t *testing.T) {
+			args, getenv, fake, repository, base, head, policy, inventory := localModelWorkerFixture(t)
+			args = append(args, "--local-model-workers")
+			deps := daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()}
+			d, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, deps)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { d.Close() }()
+			server := httptest.NewServer(d.server.Handler)
+			defer func() { server.Close() }()
+			api, err := client.NewLocal(server.URL, getenv("OPEN_TRESTLE_API_TOKEN"), server.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			scope, _ := audit.NewReviewScope("tenant-a", "repo-a", "run-backup")
+			intent, err := runtimecatalog.NewLocalFullReviewIntent(scope, repository, base, head, policy.ReviewPolicyIdentity(), inventory.Identity(), policy.Identity(), time.Now().UTC())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := api.SubmitLocalFullReview(context.Background(), intent); err != nil {
+				t.Fatal(err)
+			}
+			for _, index := range []int{1, 2, 1} {
+				if _, err := d.supervisors[index].(*worker.RepositorySupervisor).RunOnce(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, err := api.GetDiagnosticSet(context.Background(), scope)
+			if err != nil || before.Outcome() != diagnostics.FinalOutcomeCompleted {
+				t.Fatalf("backup result=%s err=%v", before.Outcome(), err)
+			}
+			server.Close()
+			if err := d.Close(); err != nil {
+				t.Fatal(err)
+			}
+			statePath := daemonTestFlagValue(t, args, "--state-dir")
+			setupPath := daemonTestFlagValue(t, args, "--setup-state")
+			backup := t.TempDir()
+			if err := os.Chmod(backup, 0700); err != nil {
+				t.Fatal(err)
+			}
+			// The daemon is closed. Copy regular owned bytes and modes, never links.
+			saved := map[string]string{}
+			err = filepath.WalkDir(filepath.Dir(setupPath), func(path string, entry os.DirEntry, walkErr error) error {
+				if walkErr != nil {
+					return walkErr
+				}
+				if entry.IsDir() {
+					return nil
+				}
+				info, err := entry.Info()
+				if err != nil {
+					return err
+				}
+				if !info.Mode().IsRegular() {
+					return errors.New("backup fixture contains a nonregular file")
+				}
+				body, err := os.ReadFile(path)
+				if err != nil {
+					return err
+				}
+				relative, err := filepath.Rel(filepath.Dir(setupPath), path)
+				if err != nil {
+					return err
+				}
+				copyPath := filepath.Join(backup, relative)
+				if err := os.MkdirAll(filepath.Dir(copyPath), 0700); err != nil {
+					return err
+				}
+				if err := os.WriteFile(copyPath, body, info.Mode().Perm()); err != nil {
+					return err
+				}
+				saved[path] = copyPath
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if replaceRoot {
+				if err := os.Rename(statePath, statePath+"-retained"); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(statePath, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// Simulate lost journal bytes only after capturing the closed recovery point.
+			journalPath := filepath.Join(statePath, scope.Identity()+".run.jsonl")
+			if !replaceRoot {
+				if err := os.WriteFile(journalPath, []byte("damaged\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				broken, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, deps)
+				if broken != nil {
+					broken.Close()
+				}
+				if err == nil {
+					t.Fatal("damaged recovery point accepted")
+				}
+			}
+			for path, copyPath := range saved {
+				body, err := os.ReadFile(copyPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				info, err := os.Stat(copyPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, body, info.Mode().Perm()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			restored, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, deps)
+			if replaceRoot {
+				if restored != nil {
+					restored.Close()
+				}
+				if !errors.Is(err, ErrLocalSourceOwnerMismatch) {
+					t.Fatalf("replacement owner root not refused: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			d = restored
+			server = httptest.NewServer(d.server.Handler)
+			api, err = client.NewLocal(server.URL, getenv("OPEN_TRESTLE_API_TOKEN"), server.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, index := range []int{1, 2} {
+				if _, err := d.supervisors[index].(*worker.RepositorySupervisor).RunOnce(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			after, err := api.GetDiagnosticSet(context.Background(), scope)
+			if err != nil || after.Identity() != before.Identity() {
+				t.Fatalf("restored result changed: %v", err)
+			}
+			for _, endpoint := range []*daemonBudgetedModelEndpoint{fake.generation, fake.verification} {
+				if calls, _, _, failures := endpoint.snapshot(); calls != 1 || len(failures) != 0 {
+					t.Fatalf("restore dispatched: calls=%d failures=%v", calls, failures)
+				}
+			}
+		})
+	}
+}
