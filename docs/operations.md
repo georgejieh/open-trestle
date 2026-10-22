@@ -390,7 +390,11 @@ An operator may use a compatible stage-2 runtime and authenticated `trestle runs
 
 ## Shutdown and health
 
-Use `/healthz` for process liveness and `/readyz` for dependency readiness. Both responses are content-free. Send `SIGTERM` for shutdown. The daemon applies a ten-second bound to HTTP listener shutdown, cancels supervisor contexts, then waits for supervisors to return before closing durable stores. The supervisor join is intentionally not a hard timeout because closing storage beneath active work would be unsafe. Handlers are required to honor cancellation, but a defective handler can delay process exit. Configure the service manager with an explicit termination grace period and alert on an overrun.
+Use `/healthz` for process liveness and `/readyz` for dependency readiness. Both responses are content-free. Send `SIGTERM` for shutdown. The daemon cancels supervisor contexts, gives HTTP shutdown ten seconds, waits for supervisor return values, then closes owned stores. The wait for supervisor return values has no timeout.
+
+Shutdown does not yet guarantee that every handler has exited before stores close. A supervisor can return `ErrWorkerDrain` while a canceled task handler is still running. HTTP shutdown can return a deadline error while a request handler is still running. In both cases the daemon can close stores before handler exit and returns a failure. Closing HTTP connections is not proof that request handlers have exited. Handlers must honor cancellation, but a defective supervisor can also delay process exit.
+
+Configure the service manager with an explicit termination grace period and alert on an overrun or failed shutdown. Before backup or restart, confirm that the old daemon process and any processes it started have exited. A listening socket closing or a shutdown error is not proof that all work has stopped. This limitation is not a supported interrupted-recovery guarantee.
 
 Do not infer review or publication success from health endpoints. Query the authenticated run receipt and canonical review diagnostics instead. Versions 1 through 5 contain independently verified finding state; version 6 contains deterministic observations that remain unverified and require their own review disposition.
 
