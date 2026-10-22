@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -133,6 +134,99 @@ func TestRunnerCancellationWaitsForStartedHandlerCleanup(t *testing.T) {
 			replayed, changed, err := finalizer.ReconcileRun(cleanup, scope, time.Now().UTC())
 			if err != nil || changed || replayed.HeadIdentity() != state.HeadIdentity() {
 				t.Fatal("finalizer changed terminal cancellation after drain")
+			}
+		})
+	}
+}
+
+func TestRepositorySupervisorPreservesCancellationDrainFailure(t *testing.T) {
+	for _, blocked := range []bool{false, true} {
+		name := "drained"
+		if blocked {
+			name = "blocked"
+		}
+		t.Run(name, func(t *testing.T) {
+			handler := &cancellationDrainHandler{entered: make(chan struct{}), canceled: make(chan struct{}), release: make(chan struct{}), exited: make(chan struct{})}
+			scope, err := audit.NewReviewScope("tenant-a", "repo-a", "supervisor-cancel")
+			if err != nil {
+				t.Fatal(err)
+			}
+			catalog, err := controlplane.NewTaskHandlerCatalog([]controlplane.TaskHandler{handler})
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan := workerPlan(t, scope, catalog)
+			journal := controlplane.NewMemoryRunJournal()
+			coordinator, err := controlplane.NewCoordinator(journal)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := coordinator.Open(context.Background(), plan, time.Now().UTC().Add(-time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			supervisor, err := NewRepositorySupervisor(journal, catalog, RepositorySupervisorOptions{TenantID: "tenant-a", RepositoryIDs: []string{"repo-a"}, WorkerIdentity: "drain-worker", PollInterval: time.Second, RenewalInterval: 50 * time.Millisecond, ExecutionTimeout: 5 * time.Second, Clock: workerSystemClock{}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			var releaseOnce sync.Once
+			release := func() { releaseOnce.Do(func() { close(handler.release) }) }
+			done := make(chan struct{})
+			var runErr error
+			go func() {
+				runErr = supervisor.Run(ctx)
+				close(done)
+			}()
+			t.Cleanup(func() {
+				cancel()
+				release()
+				select {
+				case <-done:
+				case <-time.After(3 * time.Second):
+					t.Error("supervisor did not return during cleanup")
+				}
+				select {
+				case <-handler.entered:
+					select {
+					case <-handler.exited:
+					case <-time.After(3 * time.Second):
+						t.Error("handler did not exit during cleanup")
+					}
+				default:
+				}
+			})
+			select {
+			case <-handler.entered:
+			case <-done:
+				t.Fatalf("supervisor returned before handler entry: %v", runErr)
+			case <-time.After(3 * time.Second):
+				t.Fatal("handler did not start")
+			}
+			cancel()
+			select {
+			case <-handler.canceled:
+			case <-time.After(3 * time.Second):
+				t.Fatal("handler did not observe cancellation")
+			}
+			if !blocked {
+				release()
+			}
+			select {
+			case <-done:
+			case <-time.After(3 * time.Second):
+				t.Fatal("supervisor did not finish bounded drain")
+			}
+			if blocked {
+				if !errors.Is(runErr, ErrWorkerDrain) {
+					t.Fatalf("supervisor hid incomplete handler drain: %v", runErr)
+				}
+				select {
+				case <-handler.exited:
+					t.Fatal("blocked handler unexpectedly exited")
+				default:
+				}
+			} else if runErr != nil {
+				t.Fatalf("drained cancellation failed: %v", runErr)
 			}
 		})
 	}

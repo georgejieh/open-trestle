@@ -307,7 +307,7 @@ func (s *RepositorySupervisor) Run(ctx context.Context) error {
 	for {
 		_, err := s.RunOnce(ctx)
 		if err != nil {
-			if ctx.Err() != nil {
+			if ctx.Err() != nil && !errors.Is(err, ErrWorkerDrain) {
 				return nil
 			}
 			return err
