@@ -1,6 +1,8 @@
 import hashlib
 import json
 import os
+import signal
+import subprocess
 import stat
 import sys
 import time
@@ -11,6 +13,7 @@ from unittest.mock import patch
 
 from open_trestle_eval.performance import (
     PerformanceMeasurementError,
+    _run_once,
     measure_candidate,
     nearest_rank_percentile,
 )
@@ -246,6 +249,80 @@ class PerformanceMeasurementTest(unittest.TestCase):
                     timeout_seconds=0.1,
                 )
             self.assertLess(time.monotonic() - started, 2.0)
+
+    def test_capture_failures_kill_and_reap_candidate(self) -> None:
+        for target, failure in (
+            ("_drain_ready", KeyboardInterrupt()),
+            ("os.set_blocking", OSError("capture setup failed")),
+        ):
+            with self.subTest(target=target):
+                processes: list[subprocess.Popen] = []
+                popen = subprocess.Popen
+
+                def launch(*args, **kwargs):
+                    process = popen(*args, **kwargs)
+                    processes.append(process)
+                    return process
+
+                try:
+                    with patch("open_trestle_eval.performance.subprocess.Popen", side_effect=launch):
+                        with patch("open_trestle_eval.performance." + target, side_effect=failure):
+                            with self.assertRaises(type(failure)) as raised:
+                                _run_once([sys.executable, "-c", "import time; time.sleep(30)"], 1.0)
+                    self.assertIs(raised.exception, failure)
+                    self.assertEqual(len(processes), 1)
+                    process = processes[0]
+                    self.assertEqual(process.returncode, -signal.SIGKILL)
+                    with self.assertRaises(ChildProcessError):
+                        os.waitpid(process.pid, os.WNOHANG)
+                    self.assertTrue(process.stdout.closed)
+                    self.assertTrue(process.stderr.closed)
+                finally:
+                    for process in processes:
+                        if process.poll() is None:
+                            os.killpg(process.pid, signal.SIGKILL)
+                        process.wait()
+
+    def test_interruption_after_reaping_preserves_status(self) -> None:
+        processes: list[subprocess.Popen] = []
+        popen = subprocess.Popen
+        wait4 = os.wait4
+        reaped = False
+        interruption = KeyboardInterrupt()
+
+        def launch(*args, **kwargs):
+            process = popen(*args, **kwargs)
+            processes.append(process)
+            return process
+
+        def reap(*args):
+            nonlocal reaped
+            result = wait4(*args)
+            if result[0] != 0:
+                reaped = True
+            return result
+
+        def interrupt_after_reap(*args):
+            if reaped:
+                raise interruption
+
+        try:
+            with patch("open_trestle_eval.performance.subprocess.Popen", side_effect=launch):
+                with patch("open_trestle_eval.performance.os.wait4", side_effect=reap):
+                    with patch("open_trestle_eval.performance._drain_ready", side_effect=interrupt_after_reap):
+                        with self.assertRaises(KeyboardInterrupt) as raised:
+                            _run_once([sys.executable, "-c", "raise SystemExit(3)"], 1.0)
+            self.assertIs(raised.exception, interruption)
+            self.assertEqual(processes[0].returncode, 3)
+            with self.assertRaises(ChildProcessError):
+                os.waitpid(processes[0].pid, os.WNOHANG)
+            self.assertTrue(processes[0].stdout.closed)
+            self.assertTrue(processes[0].stderr.closed)
+        finally:
+            for process in processes:
+                if process.poll() is None:
+                    os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
 
     def test_rejects_wrong_json_types_in_pending_envelope(self) -> None:
         for field, value in (

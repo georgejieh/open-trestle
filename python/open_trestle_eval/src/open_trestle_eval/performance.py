@@ -85,22 +85,23 @@ def _run_once(command: Sequence[str], timeout_seconds: float) -> dict[str, Any]:
     except (OSError, ValueError) as error:
         raise PerformanceMeasurementError("candidate process did not start") from error
     assert process.stdout is not None and process.stderr is not None
-    stdout = _Capture()
-    stderr = _Capture()
-    capture_by_descriptor = {
-        process.stdout.fileno(): stdout,
-        process.stderr.fileno(): stderr,
-    }
-    selector = selectors.DefaultSelector()
-    for descriptor in capture_by_descriptor:
-        os.set_blocking(descriptor, False)
-        selector.register(descriptor, selectors.EVENT_READ)
-    deadline = time.monotonic() + timeout_seconds
+    selector: selectors.BaseSelector | None = None
     usage = None
     status = None
-    failure: str | None = None
-    term_sent_at: float | None = None
     try:
+        stdout = _Capture()
+        stderr = _Capture()
+        capture_by_descriptor = {
+            process.stdout.fileno(): stdout,
+            process.stderr.fileno(): stderr,
+        }
+        selector = selectors.DefaultSelector()
+        for descriptor in capture_by_descriptor:
+            os.set_blocking(descriptor, False)
+            selector.register(descriptor, selectors.EVENT_READ)
+        deadline = time.monotonic() + timeout_seconds
+        failure: str | None = None
+        term_sent_at: float | None = None
         while status is None or selector.get_map():
             now = time.monotonic()
             if failure is None and (stdout.oversized or stderr.oversized):
@@ -132,8 +133,16 @@ def _run_once(command: Sequence[str], timeout_seconds: float) -> dict[str, Any]:
         if status is None:
             _signal_group(process, signal.SIGKILL)
             _, status, usage = os.wait4(process.pid, 0)
+    except BaseException:
+        _signal_group(process, signal.SIGKILL)
+        if status is None:
+            process.wait()
+        else:
+            process.returncode = os.waitstatus_to_exitcode(status)
+        raise
     finally:
-        selector.close()
+        if selector is not None:
+            selector.close()
         process.stdout.close()
         process.stderr.close()
     process.returncode = os.waitstatus_to_exitcode(status)
