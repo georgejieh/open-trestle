@@ -6,6 +6,7 @@ import time
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from open_trestle_eval.performance import (
     PerformanceMeasurementError,
@@ -80,6 +81,26 @@ class PerformanceMeasurementTest(unittest.TestCase):
     def test_rejects_excessive_warmups(self) -> None:
         with self.assertRaisesRegex(ValueError, "measurement bounds"):
             measure_candidate(["/does/not/exist"], warmup_count=101, sample_count=10)
+
+    def test_rejects_nonfinite_timeout_before_process_start(self) -> None:
+        observation = {
+            "stdout_sha256": "a" * 64,
+            "report_identity": "b" * 64,
+            "corpus_identity": "c" * 64,
+            "elapsed_ns": 1,
+            "user_cpu_ns": 1,
+            "system_cpu_ns": 0,
+            "max_rss_kib": 1,
+        }
+        for timeout in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(timeout=timeout):
+                with patch(
+                    "open_trestle_eval.performance._run_once",
+                    return_value=observation,
+                ) as run_once:
+                    with self.assertRaisesRegex(ValueError, "invalid timeout"):
+                        measure_candidate([sys.executable], timeout_seconds=timeout)
+                    run_once.assert_not_called()
 
     def test_rejects_timeout_and_oversized_output(self) -> None:
         with tempfile.TemporaryDirectory() as value:

@@ -208,7 +208,7 @@ def measure_candidate(
         raise PerformanceMeasurementError("Linux wait4 is required")
     if not command or warmup_count < 1 or warmup_count > _MAX_WARMUP_COUNT or sample_count < 10 or sample_count > 1000:
         raise ValueError("invalid measurement bounds")
-    if timeout_seconds <= 0 or timeout_seconds > 600:
+    if not math.isfinite(timeout_seconds) or timeout_seconds <= 0 or timeout_seconds > 600:
         raise ValueError("invalid timeout")
     executable = Path(command[0]).resolve(strict=True)
     observations = []
