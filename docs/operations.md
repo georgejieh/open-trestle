@@ -343,9 +343,14 @@ for a new run if the original ownership cannot be preserved.
 Before restarting workers, compare the closed backup inventory and file hashes
 with the restored bytes, verify the configured setup and source identities, and
 replay terminal receipts and diagnostics without dispatch. Confirm their exact
-identities match the recovery-point record. This is an in-place, stopped-daemon
-recovery procedure, not portable backup qualification, a filesystem snapshot
-protocol, or proof of power-loss durability.
+identities match the recovery-point record. This guide does not yet provide an
+executable replay-only procedure for that check. Normal daemon startup is not a
+read-only verifier: it can recover stored effects and starts pre-model workers
+even when `--local-model-workers` is disabled. Do not start the daemon as a
+substitute for the replay-only check. If that check cannot be performed, retain
+the stopped state and recovery point; do not treat the restore as qualified.
+These are in-place, stopped-daemon recovery requirements, not portable backup
+qualification, a filesystem snapshot protocol, or proof of power-loss durability.
 
 A terminal internal failure alone does not permit restart. For an initial generation
 attempt rejected only for candidate-document shape, startup can admit the retained
