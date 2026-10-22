@@ -283,11 +283,11 @@ class PerformanceMeasurementTest(unittest.TestCase):
                             os.killpg(process.pid, signal.SIGKILL)
                         process.wait()
 
-    def test_interruption_after_reaping_preserves_status(self) -> None:
+    def test_interruption_after_exit_observation_preserves_status(self) -> None:
         processes: list[subprocess.Popen] = []
         popen = subprocess.Popen
-        wait4 = os.wait4
-        reaped = False
+        waitid = os.waitid
+        observed = False
         interruption = KeyboardInterrupt()
 
         def launch(*args, **kwargs):
@@ -295,21 +295,21 @@ class PerformanceMeasurementTest(unittest.TestCase):
             processes.append(process)
             return process
 
-        def reap(*args):
-            nonlocal reaped
-            result = wait4(*args)
-            if result[0] != 0:
-                reaped = True
+        def observe(*args):
+            nonlocal observed
+            result = waitid(*args)
+            if result is not None:
+                observed = True
             return result
 
-        def interrupt_after_reap(*args):
-            if reaped:
+        def interrupt_after_observation(*args):
+            if observed:
                 raise interruption
 
         try:
             with patch("open_trestle_eval.performance.subprocess.Popen", side_effect=launch):
-                with patch("open_trestle_eval.performance.os.wait4", side_effect=reap):
-                    with patch("open_trestle_eval.performance._drain_ready", side_effect=interrupt_after_reap):
+                with patch("open_trestle_eval.performance.os.waitid", side_effect=observe):
+                    with patch("open_trestle_eval.performance._drain_ready", side_effect=interrupt_after_observation):
                         with self.assertRaises(KeyboardInterrupt) as raised:
                             _run_once([sys.executable, "-c", "raise SystemExit(3)"], 1.0)
             self.assertIs(raised.exception, interruption)
@@ -323,6 +323,75 @@ class PerformanceMeasurementTest(unittest.TestCase):
                 if process.poll() is None:
                     os.killpg(process.pid, signal.SIGKILL)
                 process.wait()
+
+    def test_report_rejection_signals_before_reaping_leader(self) -> None:
+        for body, message in (
+            ("print('not json')\nraise SystemExit(0)\n", "candidate process returned an invalid status"),
+            ("print('not json')\nraise SystemExit(3)\n", "candidate process returned invalid JSON"),
+            ("print('[]')\nraise SystemExit(3)\n", "candidate process returned an invalid report"),
+            ("print('{}')\nraise SystemExit(3)\n", "candidate report is not pending"),
+            (f"print({candidate(identity='invalid')!r})\nraise SystemExit(3)\n", "candidate report identity is invalid"),
+        ):
+            with self.subTest(message=message):
+                processes = []
+
+                def observe_signal(process, sent_signal):
+                    observed = os.waitid(
+                        os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT
+                    )
+                    self.assertIsNotNone(observed)
+                    self.assertEqual(observed.si_pid, process.pid)
+                    self.assertEqual(sent_signal, signal.SIGKILL)
+                    processes.append(process)
+
+                with tempfile.TemporaryDirectory() as value:
+                    command = self.write_program(Path(value), body)
+                    with patch("open_trestle_eval.performance._signal_group", side_effect=observe_signal) as signal_group:
+                        with self.assertRaises(PerformanceMeasurementError) as raised:
+                            _run_once([str(command)], 1.0)
+                    self.assertEqual(str(raised.exception), message)
+                    signal_group.assert_called_once()
+                    process = processes[0]
+                    self.assertIn(process.returncode, (0, 3))
+                    with self.assertRaises(ChildProcessError):
+                        os.waitpid(process.pid, os.WNOHANG)
+                    self.assertTrue(process.stdout.closed)
+                    self.assertTrue(process.stderr.closed)
+
+    def test_result_failure_after_reap_does_not_signal_group(self) -> None:
+        processes = []
+        popen = subprocess.Popen
+        failure = RuntimeError("result assembly interrupted")
+
+        def launch(*args, **kwargs):
+            process = popen(*args, **kwargs)
+            processes.append(process)
+            return process
+
+        with tempfile.TemporaryDirectory() as value:
+            command = self.write_program(Path(value), f"print({candidate()!r})\nraise SystemExit(3)\n")
+            with patch("open_trestle_eval.performance.subprocess.Popen", side_effect=launch):
+                with patch("open_trestle_eval.performance._signal_group") as signal_group:
+                    with patch("open_trestle_eval.performance.hashlib.sha256", side_effect=failure):
+                        with self.assertRaises(RuntimeError) as raised:
+                            _run_once([str(command)], 1.0)
+            self.assertIs(raised.exception, failure)
+            signal_group.assert_not_called()
+            self.assertEqual(processes[0].returncode, 3)
+            with self.assertRaises(ChildProcessError):
+                os.waitpid(processes[0].pid, os.WNOHANG)
+            self.assertTrue(processes[0].stdout.closed)
+            self.assertTrue(processes[0].stderr.closed)
+
+    def test_valid_report_does_not_signal_group(self) -> None:
+        for code in (3, 4):
+            with self.subTest(code=code):
+                with tempfile.TemporaryDirectory() as value:
+                    command = self.write_program(Path(value), f"print({candidate()!r})\nraise SystemExit({code})\n")
+                    with patch("open_trestle_eval.performance._signal_group") as signal_group:
+                        result = _run_once([str(command)], 1.0)
+                    signal_group.assert_not_called()
+                    self.assertEqual(result["report_identity"], "a" * 64)
 
     def test_rejects_wrong_json_types_in_pending_envelope(self) -> None:
         for field, value in (

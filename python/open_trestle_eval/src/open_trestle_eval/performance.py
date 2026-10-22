@@ -86,93 +86,86 @@ def _run_once(command: Sequence[str], timeout_seconds: float) -> dict[str, Any]:
         raise PerformanceMeasurementError("candidate process did not start") from error
     assert process.stdout is not None and process.stderr is not None
     selector: selectors.BaseSelector | None = None
-    usage = None
-    status = None
+    exited = None
     try:
-        stdout = _Capture()
-        stderr = _Capture()
-        capture_by_descriptor = {
-            process.stdout.fileno(): stdout,
-            process.stderr.fileno(): stderr,
+        try:
+            stdout = _Capture()
+            stderr = _Capture()
+            capture_by_descriptor = {
+                process.stdout.fileno(): stdout,
+                process.stderr.fileno(): stderr,
+            }
+            selector = selectors.DefaultSelector()
+            for descriptor in capture_by_descriptor:
+                os.set_blocking(descriptor, False)
+                selector.register(descriptor, selectors.EVENT_READ)
+            deadline = time.monotonic() + timeout_seconds
+            failure: str | None = None
+            term_sent_at: float | None = None
+            while exited is None or selector.get_map():
+                now = time.monotonic()
+                if failure is None and (stdout.oversized or stderr.oversized):
+                    failure = "candidate process output exceeded the limit"
+                    term_sent_at = now
+                    _signal_group(process, signal.SIGTERM)
+                if failure is None and now >= deadline:
+                    failure = "candidate process timed out"
+                    term_sent_at = now
+                    _signal_group(process, signal.SIGTERM)
+                if term_sent_at is not None and now - term_sent_at >= 0.1:
+                    _signal_group(process, signal.SIGKILL)
+                _drain_ready(selector, capture_by_descriptor, 0.005)
+                if exited is None:
+                    try:
+                        exited = os.waitid(
+                            os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT
+                        )
+                    except ChildProcessError as error:
+                        raise PerformanceMeasurementError(
+                            "candidate process could not be reaped"
+                        ) from error
+                if failure is not None and exited is not None and not selector.get_map():
+                    break
+                if failure is not None and term_sent_at is not None and now - term_sent_at >= 0.5:
+                    break
+        finally:
+            if selector is not None:
+                selector.close()
+            process.stdout.close()
+            process.stderr.close()
+        if failure is not None:
+            raise PerformanceMeasurementError(failure)
+        elapsed_ns = time.perf_counter_ns() - started
+        if exited is None or exited.si_code != os.CLD_EXITED or exited.si_status not in (3, 4):
+            raise PerformanceMeasurementError("candidate process returned an invalid status")
+        try:
+            decoded = decode_candidate_response(bytes(stdout.content))
+        except CandidateResponseDecodeError as error:
+            raise PerformanceMeasurementError("candidate process returned invalid JSON") from error
+        if not isinstance(decoded, dict):
+            raise PerformanceMeasurementError("candidate process returned an invalid report")
+        required = {
+            "contract": "open-trestle/deterministic-corpus-candidate-result",
+            "schema_version": 1,
+            "review_state": "pending",
+            "release_evidence_eligible": False,
+            "golden_status": "prohibited_pending_human_review",
         }
-        selector = selectors.DefaultSelector()
-        for descriptor in capture_by_descriptor:
-            os.set_blocking(descriptor, False)
-            selector.register(descriptor, selectors.EVENT_READ)
-        deadline = time.monotonic() + timeout_seconds
-        failure: str | None = None
-        term_sent_at: float | None = None
-        while status is None or selector.get_map():
-            now = time.monotonic()
-            if failure is None and (stdout.oversized or stderr.oversized):
-                failure = "candidate process output exceeded the limit"
-                term_sent_at = now
-                _signal_group(process, signal.SIGTERM)
-            if failure is None and now >= deadline:
-                failure = "candidate process timed out"
-                term_sent_at = now
-                _signal_group(process, signal.SIGTERM)
-            if term_sent_at is not None and now - term_sent_at >= 0.1:
-                _signal_group(process, signal.SIGKILL)
-            _drain_ready(selector, capture_by_descriptor, 0.005)
-            if status is None:
-                try:
-                    waited_pid, waited_status, waited_usage = os.wait4(
-                        process.pid, os.WNOHANG
-                    )
-                except ChildProcessError as error:
-                    raise PerformanceMeasurementError(
-                        "candidate process could not be reaped"
-                    ) from error
-                if waited_pid == process.pid:
-                    status, usage = waited_status, waited_usage
-            if failure is not None and status is not None and not selector.get_map():
-                break
-            if failure is not None and term_sent_at is not None and now - term_sent_at >= 0.5:
-                break
-        if status is None:
-            _signal_group(process, signal.SIGKILL)
-            _, status, usage = os.wait4(process.pid, 0)
+        if any(
+            type(decoded.get(key)) is not type(value) or decoded.get(key) != value
+            for key, value in required.items()
+        ):
+            raise PerformanceMeasurementError("candidate report is not pending")
+        report_identity = decoded.get("identity")
+        corpus_identity = decoded.get("corpus_identity")
+        if not _is_digest(report_identity) or not _is_digest(corpus_identity):
+            raise PerformanceMeasurementError("candidate report identity is invalid")
     except BaseException:
         _signal_group(process, signal.SIGKILL)
-        if status is None:
-            process.wait()
-        else:
-            process.returncode = os.waitstatus_to_exitcode(status)
         raise
     finally:
-        if selector is not None:
-            selector.close()
-        process.stdout.close()
-        process.stderr.close()
-    process.returncode = os.waitstatus_to_exitcode(status)
-    if failure is not None:
-        raise PerformanceMeasurementError(failure)
-    elapsed_ns = time.perf_counter_ns() - started
-    if process.returncode not in (3, 4):
-        raise PerformanceMeasurementError("candidate process returned an invalid status")
-    try:
-        decoded = decode_candidate_response(bytes(stdout.content))
-    except CandidateResponseDecodeError as error:
-        raise PerformanceMeasurementError("candidate process returned invalid JSON") from error
-    if not isinstance(decoded, dict):
-        raise PerformanceMeasurementError("candidate process returned an invalid report")
-    required = {
-        "contract": "open-trestle/deterministic-corpus-candidate-result",
-        "schema_version": 1,
-        "review_state": "pending",
-        "release_evidence_eligible": False,
-        "golden_status": "prohibited_pending_human_review",
-    }
-    if any(
-        type(decoded.get(key)) is not type(value) or decoded.get(key) != value
-        for key, value in required.items()
-    ):
-        raise PerformanceMeasurementError("candidate report is not pending")
-    report_identity = decoded.get("identity")
-    corpus_identity = decoded.get("corpus_identity")
-    if not _is_digest(report_identity) or not _is_digest(corpus_identity):
-        raise PerformanceMeasurementError("candidate report identity is invalid")
+        _, status, usage = os.wait4(process.pid, 0)
+        process.returncode = os.waitstatus_to_exitcode(status)
     assert usage is not None
     return {
         "stdout_sha256": hashlib.sha256(stdout.content).hexdigest(),
