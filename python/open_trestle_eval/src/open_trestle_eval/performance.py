@@ -154,7 +154,10 @@ def _run_once(command: Sequence[str], timeout_seconds: float) -> dict[str, Any]:
         "release_evidence_eligible": False,
         "golden_status": "prohibited_pending_human_review",
     }
-    if any(decoded.get(key) != value for key, value in required.items()):
+    if any(
+        type(decoded.get(key)) is not type(value) or decoded.get(key) != value
+        for key, value in required.items()
+    ):
         raise PerformanceMeasurementError("candidate report is not pending")
     report_identity = decoded.get("identity")
     corpus_identity = decoded.get("corpus_identity")

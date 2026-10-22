@@ -170,6 +170,27 @@ class PerformanceMeasurementTest(unittest.TestCase):
                 )
             self.assertLess(time.monotonic() - started, 2.0)
 
+    def test_rejects_wrong_json_types_in_pending_envelope(self) -> None:
+        for field, value in (
+            ("schema_version", True),
+            ("schema_version", 1.0),
+            ("release_evidence_eligible", 0),
+            ("release_evidence_eligible", 0.0),
+        ):
+            with self.subTest(field=field, value=value):
+                report = json.loads(candidate())
+                report[field] = value
+                encoded = json.dumps(report, separators=(",", ":"))
+                with tempfile.TemporaryDirectory() as directory:
+                    command = self.write_program(
+                        Path(directory),
+                        f"import sys\nprint({encoded!r})\nsys.exit(3)\n",
+                    )
+                    with self.assertRaisesRegex(
+                        PerformanceMeasurementError, "candidate report is not pending"
+                    ):
+                        measure_candidate([str(command)])
+
     def test_rejects_wrong_exit_and_nonpending_report(self) -> None:
         with tempfile.TemporaryDirectory() as value:
             root = Path(value)
