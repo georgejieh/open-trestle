@@ -8,8 +8,9 @@ import json
 import math
 import os
 import platform
-import signal
 import selectors
+import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -213,11 +214,18 @@ def measure_candidate(
         raise ValueError("invalid measurement bounds")
     if not math.isfinite(timeout_seconds) or timeout_seconds <= 0 or timeout_seconds > 600:
         raise ValueError("invalid timeout")
-    executable = Path(command[0]).resolve(strict=True)
+    program = command[0]
+    if os.path.dirname(program) == "":
+        selected = shutil.which(program)
+        if selected is None:
+            raise PerformanceMeasurementError("candidate process did not start")
+        program = selected
+    executable = Path(program).resolve(strict=True)
+    resolved_command = [str(executable), *command[1:]]
     binary_sha256 = _file_sha256(executable)
     observations = []
     for _ in range(warmup_count + sample_count):
-        observations.append(_run_once(command, timeout_seconds))
+        observations.append(_run_once(resolved_command, timeout_seconds))
         try:
             current_sha256 = _file_sha256(executable)
         except OSError:

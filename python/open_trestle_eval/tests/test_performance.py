@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import stat
@@ -63,6 +64,82 @@ class PerformanceMeasurementTest(unittest.TestCase):
         for sample in result["samples"]:
             for key, number in sample.items():
                 self.assertLessEqual(number, sample_schema["properties"][key]["maximum"])
+
+    def test_hashes_the_executable_selected_from_path(self) -> None:
+        with tempfile.TemporaryDirectory() as value:
+            root = Path(value)
+            work = root / "work"
+            commands = root / "bin"
+            work.mkdir()
+            commands.mkdir()
+            self.write_program(work, "raise SystemExit('wrong executable')\n")
+            selected = self.write_program(
+                commands,
+                f"import sys\nprint({candidate()!r})\nsys.exit(3)\n",
+            )
+            previous = Path.cwd()
+            try:
+                os.chdir(work)
+                with patch.dict(os.environ, {"PATH": str(commands) + os.pathsep + os.environ["PATH"]}):
+                    result = measure_candidate(["candidate"], warmup_count=1, sample_count=10)
+            finally:
+                os.chdir(previous)
+            self.assertEqual(result["binary_sha256"], hashlib.sha256(selected.read_bytes()).hexdigest())
+
+    def test_resolves_path_only_command_and_preserves_arguments(self) -> None:
+        with tempfile.TemporaryDirectory() as value:
+            root = Path(value)
+            command = self.write_program(
+                root,
+                "import sys\n"
+                "assert sys.argv[1:] == ['argument with spaces', '--flag']\n"
+                f"print({candidate()!r})\nsys.exit(3)\n",
+            )
+            with patch.dict(os.environ, {"PATH": str(root) + os.pathsep + os.environ["PATH"]}):
+                result = measure_candidate([command.name, "argument with spaces", "--flag"])
+            self.assertEqual(result["binary_sha256"], hashlib.sha256(command.read_bytes()).hexdigest())
+
+    def test_rejects_missing_path_command_before_process_start(self) -> None:
+        with patch.dict(os.environ, {"PATH": ""}):
+            with patch("open_trestle_eval.performance._run_once") as run_once:
+                with self.assertRaisesRegex(PerformanceMeasurementError, "candidate process did not start"):
+                    measure_candidate(["missing-candidate-command"])
+                run_once.assert_not_called()
+
+    def test_pins_the_resolved_launch_path(self) -> None:
+        observation = {
+            "stdout_sha256": "a" * 64,
+            "report_identity": "b" * 64,
+            "corpus_identity": "c" * 64,
+            "elapsed_ns": 1,
+            "user_cpu_ns": 1,
+            "system_cpu_ns": 0,
+            "max_rss_kib": 1,
+        }
+        with tempfile.TemporaryDirectory() as value:
+            root = Path(value)
+            command = self.write_program(root, "raise SystemExit(3)\n")
+            with patch.dict(os.environ, {"PATH": str(root)}):
+                with patch("open_trestle_eval.performance._run_once", return_value=observation) as run_once:
+                    measure_candidate([command.name, "argument"])
+            self.assertEqual(run_once.call_count, 11)
+            for call in run_once.call_args_list:
+                self.assertEqual(call.args[0], [str(command.resolve()), "argument"])
+
+    def test_executes_and_hashes_the_symlink_target(self) -> None:
+        with tempfile.TemporaryDirectory() as value:
+            root = Path(value)
+            target = root / "target"
+            program = self.write_program(
+                root,
+                "import sys\n"
+                f"assert sys.argv[0] == {str(target)!r}\n"
+                f"print({candidate()!r})\nsys.exit(3)\n",
+            )
+            program.rename(target)
+            program.symlink_to(target)
+            result = measure_candidate([str(program)])
+            self.assertEqual(result["binary_sha256"], hashlib.sha256(target.read_bytes()).hexdigest())
 
     def test_rejects_executable_changes_during_measurement(self) -> None:
         with tempfile.TemporaryDirectory() as value:
