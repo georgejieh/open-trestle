@@ -64,6 +64,42 @@ class PerformanceMeasurementTest(unittest.TestCase):
             for key, number in sample.items():
                 self.assertLessEqual(number, sample_schema["properties"][key]["maximum"])
 
+    def test_rejects_executable_changes_during_measurement(self) -> None:
+        with tempfile.TemporaryDirectory() as value:
+            root = Path(value)
+            counter = root / "counter"
+            command = self.write_program(
+                root,
+                "import pathlib,sys\n"
+                f"counter=pathlib.Path({str(counter)!r})\n"
+                "count=int(counter.read_text())+1 if counter.exists() else 1\n"
+                "counter.write_text(str(count))\n"
+                "p=pathlib.Path(__file__)\n"
+                "p.write_text(p.read_text()+'# changed\\n')\n"
+                f"print({candidate()!r})\n"
+                "sys.exit(3)\n",
+            )
+            with self.assertRaisesRegex(
+                PerformanceMeasurementError, "candidate executable changed"
+            ):
+                measure_candidate([str(command)], warmup_count=1, sample_count=10)
+            self.assertEqual(counter.read_text(), "1")
+
+    def test_rejects_missing_executable_without_exposing_path(self) -> None:
+        with tempfile.TemporaryDirectory() as value:
+            command = self.write_program(
+                Path(value),
+                "import pathlib,sys\n"
+                "pathlib.Path(__file__).unlink()\n"
+                f"print({candidate()!r})\n"
+                "sys.exit(3)\n",
+            )
+            with self.assertRaises(PerformanceMeasurementError) as raised:
+                measure_candidate([str(command)], warmup_count=1, sample_count=10)
+            self.assertEqual(str(raised.exception), "candidate executable changed")
+            self.assertIsNone(raised.exception.__cause__)
+            self.assertTrue(raised.exception.__suppress_context__)
+
     def test_rejects_output_drift(self) -> None:
         with tempfile.TemporaryDirectory() as value:
             root = Path(value)

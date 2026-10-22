@@ -211,9 +211,16 @@ def measure_candidate(
     if not math.isfinite(timeout_seconds) or timeout_seconds <= 0 or timeout_seconds > 600:
         raise ValueError("invalid timeout")
     executable = Path(command[0]).resolve(strict=True)
+    binary_sha256 = _file_sha256(executable)
     observations = []
     for _ in range(warmup_count + sample_count):
         observations.append(_run_once(command, timeout_seconds))
+        try:
+            current_sha256 = _file_sha256(executable)
+        except OSError:
+            raise PerformanceMeasurementError("candidate executable changed") from None
+        if current_sha256 != binary_sha256:
+            raise PerformanceMeasurementError("candidate executable changed")
     baseline = observations[0]
     for observation in observations[1:]:
         if (
@@ -237,7 +244,7 @@ def measure_candidate(
         "schema_version": 1,
         "release_evidence_eligible": False,
         "observation_scope": "environment_specific_not_a_golden_or_gate",
-        "binary_sha256": _file_sha256(executable),
+        "binary_sha256": binary_sha256,
         "stdout_sha256": baseline["stdout_sha256"],
         "report_identity": baseline["report_identity"],
         "corpus_identity": baseline["corpus_identity"],
