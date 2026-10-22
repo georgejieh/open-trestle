@@ -618,7 +618,8 @@ func TestDaemonLocalModelWorkersVerificationOutcomes(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := api.SubmitLocalFullReview(context.Background(), intent); err != nil {
+			admitted, err := api.SubmitLocalFullReview(context.Background(), intent)
+			if err != nil {
 				t.Fatal(err)
 			}
 			for _, index := range []int{1, 2, 1} {
@@ -640,6 +641,59 @@ func TestDaemonLocalModelWorkersVerificationOutcomes(t *testing.T) {
 			for _, endpoint := range []*daemonBudgetedModelEndpoint{fake.generation, fake.verification} {
 				if calls, _, _, failures := endpoint.snapshot(); calls != 1 || len(failures) != 0 {
 					t.Fatalf("dispatch calls=%d failures=%v", calls, failures)
+				}
+			}
+			canonical, err := diagnostics.EncodeSet(final)
+			if err != nil {
+				t.Fatal(err)
+			}
+			beforeProgress, err := json.Marshal(progress)
+			if err != nil {
+				t.Fatal(err)
+			}
+			server.Close()
+			if err := d.Close(); err != nil {
+				t.Fatal(err)
+			}
+			d, err = buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer d.Close()
+			server = httptest.NewServer(d.server.Handler)
+			defer server.Close()
+			api, err = client.NewLocal(server.URL, getenv("OPEN_TRESTLE_API_TOKEN"), server.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			replay, err := api.SubmitLocalFullReview(context.Background(), intent)
+			if err != nil || replay.PlanIdentity() != admitted.PlanIdentity() {
+				t.Fatalf("verdict replay changed plan: %v", err)
+			}
+			for _, index := range []int{1, 2} {
+				if _, err := d.supervisors[index].(*worker.RepositorySupervisor).RunOnce(context.Background()); err != nil {
+					t.Fatalf("verdict restart supervisor %d: %v", index, err)
+				}
+			}
+			reopened, err := api.GetDiagnosticSet(context.Background(), scope)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reencoded, err := diagnostics.EncodeSet(reopened)
+			if err != nil || !bytes.Equal(canonical, reencoded) {
+				t.Fatalf("verdict changed after restart: %v", err)
+			}
+			reopenedProgress, err := api.GetRunProgress(context.Background(), scope)
+			if err != nil {
+				t.Fatal(err)
+			}
+			afterProgress, err := json.Marshal(reopenedProgress)
+			if err != nil || !bytes.Equal(beforeProgress, afterProgress) {
+				t.Fatalf("verdict progress changed after restart: %v", err)
+			}
+			for _, endpoint := range []*daemonBudgetedModelEndpoint{fake.generation, fake.verification} {
+				if calls, _, _, failures := endpoint.snapshot(); calls != 1 || len(failures) != 0 {
+					t.Fatalf("verdict restart redispatched: calls=%d failures=%v", calls, failures)
 				}
 			}
 		})
