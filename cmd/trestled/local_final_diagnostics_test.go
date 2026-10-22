@@ -3,8 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -450,5 +454,150 @@ func TestLocalFinalProjectorValidContextAbstention(t *testing.T) {
 	result, err := d.diagnosticStore.GetDiagnosticSet(context.Background(), scope)
 	if err != nil || result.Outcome() != diagnostics.FinalOutcomeAbstained || result.AnalysisResultIdentity() == "" || result.VerifiedSetIdentity() != "" {
 		t.Fatalf("abstention=%s analysis=%q verified=%q err=%v", result.Outcome(), result.AnalysisResultIdentity(), result.VerifiedSetIdentity(), err)
+	}
+
+	packagedAssertCoverageAbstention(t, daemonTestFlagValue(t, args, "--state-dir"), scope, plan.Identity(), result)
+	canonical, err := diagnostics.EncodeSet(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	progress, err := api.GetRunProgress(context.Background(), scope)
+	if err != nil || progress.Progress.Change.State != "available" || progress.Progress.Deterministic.State != "available" || progress.Progress.Context.State != "unavailable" || progress.Progress.Context.ArtifactIdentity != "" || progress.Progress.Context.Analyzed != nil || progress.Progress.Context.Selected != nil || progress.Progress.Context.Omitted != nil || progress.Progress.Verification.State != "unavailable" || progress.Progress.Verification.Candidates != nil || progress.Progress.Verification.Verified != nil || progress.Progress.Verification.Rejected != nil || progress.Progress.Verification.Inconclusive != nil {
+		t.Fatalf("abstention progress invented coverage or verification: %+v %v", progress.Progress, err)
+	}
+	server.Close()
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+	d, err = buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	server = httptest.NewServer(d.server.Handler)
+	defer server.Close()
+	api, err = client.NewLocal(server.URL, getenv("OPEN_TRESTLE_API_TOKEN"), server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := api.SubmitLocalFullReview(context.Background(), intent)
+	if err != nil || replay.PlanIdentity() != plan.Identity() {
+		t.Fatalf("abstention replay: %v", err)
+	}
+	reopened, err := api.GetDiagnosticSet(context.Background(), scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packagedAssertCoverageAbstention(t, daemonTestFlagValue(t, args, "--state-dir"), scope, plan.Identity(), reopened)
+	reencoded, err := diagnostics.EncodeSet(reopened)
+	if err != nil || !bytes.Equal(canonical, reencoded) {
+		t.Fatalf("abstention changed after restart: %v", err)
+	}
+	reopenedProgress, err := api.GetRunProgress(context.Background(), scope)
+	if err != nil || reopenedProgress.Run.Identity() != progress.Run.Identity() || !reflect.DeepEqual(reopenedProgress.Progress, progress.Progress) {
+		t.Fatalf("abstention progress changed after restart: %v", err)
+	}
+}
+
+func packagedAssertCoverageAbstention(t *testing.T, state string, scope audit.ReviewScope, plan string, set diagnostics.Set) {
+	t.Helper()
+	if set.SchemaVersion() != 7 || set.Outcome() != diagnostics.FinalOutcomeAbstained || set.AnalysisResultIdentity() == "" || set.VerifiedSetIdentity() != "" || len(set.Findings()) != 0 {
+		t.Fatal("coverage refusal was not a content-linked abstention")
+	}
+	encoded, err := os.ReadFile(filepath.Join(state, scope.Identity()+".run.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous, output := "", ""
+	preparedAt, failedAt, terminalAt, failed, terminal := -1, -1, -1, 0, 0
+	for index, line := range bytes.Split(bytes.TrimSpace(encoded), []byte("\n")) {
+		event, err := controlplane.ParseRunEvent(line)
+		if err != nil || event.Scope().Identity() != scope.Identity() || event.PlanIdentity() != plan || event.Sequence() != uint64(index+1) || event.PreviousIdentity() != previous {
+			t.Fatalf("abstention journal chain: %v", err)
+		}
+		previous = event.Identity()
+		if event.Kind() == controlplane.RunEventFailed {
+			terminal++
+			terminalAt = index
+		}
+		if event.TaskKey() != "context" {
+			continue
+		}
+		if event.Kind() == controlplane.RunEventContextAbstentionPrepared {
+			if preparedAt >= 0 {
+				t.Fatal("duplicate abstention prepare")
+			}
+			preparedAt = index
+			output = event.OutputIdentity()
+			encodedPrepare, err := controlplane.EncodeRunEvent(event)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var prepare struct {
+				Artifact []byte `json:"prepared_artifact"`
+			}
+			if err := json.Unmarshal(encodedPrepare, &prepare); err != nil {
+				t.Fatal(err)
+			}
+			physical, err := os.ReadFile(filepath.Join(state, "artifacts", scope.Identity()+"-"+output+".artifact.json"))
+			if err != nil || !bytes.Equal(physical, prepare.Artifact) {
+				t.Fatalf("abstention physical readback: %v", err)
+			}
+			value, err := artifact.Parse(physical)
+			if err != nil || value.Scope().Identity() != scope.Identity() || value.Identity() != output || value.Kind() != artifact.KindDeterministicEvidence {
+				t.Fatalf("abstention physical binding: %v", err)
+			}
+			var payload struct {
+				Contract  string `json:"contract"`
+				Scope     string `json:"review_scope_identity"`
+				Plan      string `json:"plan_identity"`
+				Task      string `json:"task_identity"`
+				Omissions []struct {
+					Path   string `json:"path"`
+					Reason string `json:"reason"`
+					Count  int    `json:"count"`
+				} `json:"source_omissions"`
+			}
+			if err := json.Unmarshal(value.Payload(), &payload); err != nil || payload.Contract != "open-trestle/context-abstention" || payload.Scope != scope.Identity() || payload.Plan != plan || payload.Task != event.TaskIdentity() {
+				t.Fatalf("abstention payload binding: %v", err)
+			}
+			found := false
+			for _, omission := range payload.Omissions {
+				if omission.Path == "module.py" && omission.Reason == "unsupported_language" && omission.Count > 0 {
+					found = true
+				}
+			}
+			if !found || bytes.Contains(value.Payload(), []byte("unsupported-marker")) {
+				t.Fatal("coverage omission missing or source leaked")
+			}
+		}
+		if event.Kind() == controlplane.RunEventTaskFailed {
+			if output == "" || event.OutputIdentity() != output {
+				t.Fatal("context failure lost abstention identity")
+			}
+			failed++
+			failedAt = index
+		}
+	}
+	if preparedAt < 0 || failedAt <= preparedAt || failed != 1 || terminal != 1 || terminalAt <= failedAt {
+		t.Fatal("abstention did not settle exactly once after prepare")
+	}
+	auditBytes, err := os.ReadFile(filepath.Join(state, "audit", scope.Identity()+".audit.jsonl"))
+	if os.IsNotExist(err) {
+		return
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous = ""
+	for index, line := range bytes.Split(bytes.TrimSpace(auditBytes), []byte("\n")) {
+		event, err := audit.ParseEvent(line)
+		if err != nil || event.Scope().Identity() != scope.Identity() || event.Sequence() != uint64(index+1) || event.PreviousIdentity() != previous {
+			t.Fatalf("abstention audit chain: %v", err)
+		}
+		previous = event.Identity()
+		if event.Kind() == audit.EventRouteAttemptClaimed || event.Kind() == audit.EventRouteDispatchCompleted || event.Kind() == audit.EventPublicationClaimed || event.Kind() == audit.EventPublicationCompleted {
+			t.Fatal("coverage abstention dispatched a route or publication")
+		}
 	}
 }
