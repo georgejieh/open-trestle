@@ -41,6 +41,7 @@ type startupInventoryWalkResult struct {
 	facts     []HistoricalContextPacketFact
 	hasPacket bool
 	overflow  bool
+	receipts  []ReviewRunReceipt
 }
 
 // InspectStartupInventory preserves its blanket v4 refusal and zero-on-error
@@ -196,6 +197,10 @@ func streamFromJournal(j *FileRunJournal) func(ReviewRunPlan) ([]RunEvent, error
 
 // walkInventoryPlans preserves the legacy all-scope ordering for both entry sources.
 func walkInventoryPlans(ctx context.Context, historical bool, plans, streams map[string]struct{}, readPlan func(string) (ReviewRunPlan, error), loadStream func(ReviewRunPlan) ([]RunEvent, error)) (startupInventoryWalkResult, error) {
+	return walkInventoryPlansWithReceipts(ctx, historical, false, plans, streams, readPlan, loadStream)
+}
+
+func walkInventoryPlansWithReceipts(ctx context.Context, historical, collectReceipts bool, plans, streams map[string]struct{}, readPlan func(string) (ReviewRunPlan, error), loadStream func(ReviewRunPlan) ([]RunEvent, error)) (startupInventoryWalkResult, error) {
 	zero := startupInventoryWalkResult{}
 	for base := range streams {
 		if _, ok := plans[base]; !ok {
@@ -245,6 +250,13 @@ func walkInventoryPlans(ctx context.Context, historical bool, plans, streams map
 		state, err := ReplayReviewRun(plan, events)
 		if err != nil {
 			return zero, fmt.Errorf("%w: %v", ErrInvalidStartupInventoryEntry, err)
+		}
+		if collectReceipts {
+			receipt, err := NewReviewRunReceipt(state)
+			if err != nil {
+				return zero, err
+			}
+			zero.receipts = append(zero.receipts, receipt)
 		}
 		for _, event := range events {
 			if event.Kind() == RunEventContextPacketPrepared {

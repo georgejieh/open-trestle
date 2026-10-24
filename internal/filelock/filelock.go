@@ -77,3 +77,43 @@ func (l *Lock) Close() error {
 	}
 	return nil
 }
+
+// AcquireExisting opens an existing cooperative lock without creating,
+// changing permissions, or syncing it. It is suitable for offline readers.
+func AcquireExisting(path string) (*Lock, error) {
+	information, err := os.Lstat(path)
+	if err != nil || !information.Mode().IsRegular() || information.Mode()&os.ModeSymlink != 0 {
+		return nil, ErrInvalidPath
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("%w: open", ErrOperation)
+	}
+	fail := func(err error) (*Lock, error) { return nil, errors.Join(err, file.Close()) }
+	opened, err := file.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(information, opened) {
+		return fail(ErrInvalidPath)
+	}
+	if err := platformLock(file); err != nil {
+		return fail(err)
+	}
+	current, err := os.Lstat(path)
+	if err != nil || !os.SameFile(opened, current) {
+		return fail(ErrInvalidPath)
+	}
+	return &Lock{file: file}, nil
+}
+
+// SameFile reports whether info still names the locked file, not a replacement.
+func (l *Lock) SameFile(info os.FileInfo) bool {
+	if l == nil || info == nil {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return false
+	}
+	opened, err := l.file.Stat()
+	return err == nil && os.SameFile(opened, info)
+}

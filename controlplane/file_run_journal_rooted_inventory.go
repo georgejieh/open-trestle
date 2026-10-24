@@ -346,9 +346,17 @@ func (j *FileRunJournal) rootedInitial(ctx context.Context, root *os.Root) ([]Hi
 	if e := j.rootedJournalValid(root); e != nil {
 		return nil, nil, nil, e
 	}
+	result, entries, witnesses, e := readRootedInventory(ctx, root, false)
+	if e == nil {
+		e = j.rootedScanStatus(ctx)
+	}
+	return result.facts, entries, witnesses, e
+}
+
+func readRootedInventory(ctx context.Context, root *os.Root, collectReceipts bool) (startupInventoryWalkResult, map[string]rootedEntry, map[string]rootedLeaf, error) {
 	entries, e := enumerateRooted(root)
 	if e != nil {
-		return nil, nil, nil, e
+		return startupInventoryWalkResult{}, nil, nil, e
 	}
 	plans, streams := make(map[string]struct{}), make(map[string]struct{})
 	var advertised int64
@@ -362,11 +370,11 @@ func (j *FileRunJournal) rootedInitial(ctx context.Context, root *os.Root) ([]Hi
 		}
 		advertised += entry.info.Size()
 		if advertised > maxStartupInventoryEncodedBytes {
-			return nil, nil, nil, ErrStartupInventoryLimit
+			return startupInventoryWalkResult{}, nil, nil, ErrStartupInventoryLimit
 		}
 	}
 	if len(plans) > maxStartupInventoryPlans {
-		return nil, nil, nil, ErrStartupInventoryLimit
+		return startupInventoryWalkResult{}, nil, nil, ErrStartupInventoryLimit
 	}
 	witnesses := make(map[string]rootedLeaf, len(plans)+len(streams))
 	var actual int64
@@ -414,17 +422,14 @@ func (j *FileRunJournal) rootedInitial(ctx context.Context, root *os.Root) ([]Hi
 		witnesses[name] = rootedLeaf{entry, hash}
 		return events, nil
 	}
-	result, e := walkInventoryPlans(ctx, true, plans, streams, readPlan, load)
+	result, e := walkInventoryPlansWithReceipts(ctx, !collectReceipts, collectReceipts, plans, streams, readPlan, load)
 	if e == nil && result.overflow {
 		e = ErrStartupInventoryLimit
 	}
-	if e == nil {
-		e = j.rootedScanStatus(ctx)
-	}
 	if e != nil {
-		return nil, nil, nil, e
+		return startupInventoryWalkResult{}, nil, nil, e
 	}
-	return result.facts, entries, witnesses, nil
+	return result, entries, witnesses, nil
 }
 func (j *FileRunJournal) rootedFinal(ctx context.Context, root *os.Root, entries map[string]rootedEntry, witnesses map[string]rootedLeaf) error {
 	if e := j.rootedScanStatus(ctx); e != nil {
