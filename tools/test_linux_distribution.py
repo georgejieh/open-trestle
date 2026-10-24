@@ -124,6 +124,84 @@ def _run(archive: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+class StagedTemporaryOwnershipTest(unittest.TestCase):
+    def test_failed_writer_preserves_replacement_at_temporary_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            replacement = b"operator replacement\n"
+            temporary = parent / ".payload.open-trestle-owned-transaction"
+
+            def writer(handle):
+                handle.write(b"partial staged bytes")
+                temporary.unlink()
+                temporary.write_bytes(replacement)
+                raise OSError("synthetic writer failure")
+
+            with self.assertRaisesRegex(OSError, "synthetic writer failure"):
+                linux_distribution_runtime._stage_file(parent, "payload", 0o444, writer, "owned-transaction")
+            self.assertEqual(temporary.read_bytes(), replacement)
+
+    def test_failed_writer_removes_only_its_own_temporary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            def writer(handle):
+                handle.write(b"partial")
+                raise OSError("synthetic writer failure")
+            with self.assertRaisesRegex(OSError, "synthetic writer failure"):
+                linux_distribution_runtime._stage_file(parent, "payload", 0o444, writer, "owned-transaction")
+            self.assertEqual(list(parent.iterdir()), [])
+
+    def test_successful_writer_refuses_replacement_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            temporary = parent / ".payload.open-trestle-owned-transaction"
+            replacement = b"operator replacement\n"
+            def writer(handle):
+                handle.write(b"staged bytes")
+                temporary.unlink()
+                temporary.write_bytes(replacement)
+            with self.assertRaisesRegex(ValueError, "ownership changed"):
+                linux_distribution_runtime._stage_file(parent, "payload", 0o444, writer, "owned-transaction")
+            self.assertEqual(temporary.read_bytes(), replacement)
+
+    def test_cleanup_preserves_replacement_swapped_at_capture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            temporary = parent / ".payload.open-trestle-owned-transaction"
+            replacement = b"operator replacement at capture\n"
+            rename = linux_distribution_runtime._rename_noreplace
+            swapped = False
+            def capture(parent, source, destination):
+                nonlocal swapped
+                if not swapped and source == temporary.name:
+                    swapped = True
+                    temporary.unlink()
+                    temporary.write_bytes(replacement)
+                return rename(parent, source, destination)
+            def writer(handle):
+                handle.write(b"partial")
+                raise OSError("synthetic writer failure")
+            with patch.object(linux_distribution_runtime, "_rename_noreplace", capture):
+                with self.assertRaisesRegex(OSError, "synthetic writer failure"):
+                    linux_distribution_runtime._stage_file(parent, "payload", 0o444, writer, "owned-transaction")
+            self.assertTrue(swapped)
+            self.assertEqual(temporary.read_bytes(), replacement)
+            self.assertEqual(list(parent.iterdir()), [temporary])
+
+    def test_cleanup_error_preserves_writer_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            failure = OSError("writer failure")
+            cleanup_failure = OSError("capture failure")
+            def writer(handle):
+                raise failure
+            with patch.object(linux_distribution_runtime, "_unlink_owned_file", side_effect=cleanup_failure):
+                with self.assertRaises(OSError) as caught:
+                    linux_distribution_runtime._stage_file(parent, "payload", 0o444, writer, "owned-transaction")
+            self.assertIs(caught.exception, failure)
+            self.assertIs(caught.exception.__cause__, cleanup_failure)
+
+
 class BuilderTest(unittest.TestCase):
     def test_build_is_byte_deterministic_stored_and_exact(self):
         with tempfile.TemporaryDirectory() as directory:

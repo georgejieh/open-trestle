@@ -767,7 +767,9 @@ def _open_new_file(parent: Path, name: str, mode: int) -> BinaryIO:
 def _stage_file(parent: Path, final_name: str, mode: int, writer: Callable[[BinaryIO], None], transaction: str, production: bool = False) -> str:
     temporary = f".{final_name}.open-trestle-{transaction}"
     handle = _open_new_file(parent, temporary, mode)
+    owned = None
     try:
+        owned = os.fstat(handle.fileno())
         writer(handle)
         handle.flush()
         os.fchmod(handle.fileno(), mode)
@@ -776,13 +778,16 @@ def _stage_file(parent: Path, final_name: str, mode: int, writer: Callable[[Bina
         os.fsync(handle.fileno())
         if os.fstat(handle.fileno()).st_mode & 0o777 != mode:
             raise ValueError("staged file mode is invalid")
-    except BaseException:
-        handle.close()
+        current = os.lstat(parent / temporary)
+        if (current.st_dev, current.st_ino) != (owned.st_dev, owned.st_ino):
+            raise ValueError("staged temporary ownership changed")
+    except BaseException as error:
         try:
-            os.unlink(parent / temporary)
-            _fsync_directory(parent)
-        except FileNotFoundError:
-            pass
+            handle.close()
+            if owned is not None:
+                _unlink_owned_file(parent / temporary, None, (owned.st_dev, owned.st_ino))
+        except BaseException as cleanup_error:
+            raise error from cleanup_error
         raise
     handle.close()
     _fsync_directory(parent)
@@ -874,7 +879,8 @@ def _matches_owned_file(path: Path, item: InstalledFile, identity: tuple[int, in
         return False
 
 
-def _unlink_owned_file(path: Path, item: InstalledFile, identity: tuple[int, int]) -> bool:
+def _unlink_owned_file(path: Path, item: InstalledFile | None, identity: tuple[int, int]) -> bool:
+    """Capture and remove an owned inode; None allows incomplete staging bytes."""
     parent = path.parent
     quarantine_name = f".{path.name}.open-trestle-remove-{uuid.uuid4().hex}"
     try:
@@ -882,12 +888,12 @@ def _unlink_owned_file(path: Path, item: InstalledFile, identity: tuple[int, int
     except FileNotFoundError:
         return False
     quarantine_path = parent / quarantine_name
-    if captured_identity != identity or not _matches_owned_file(quarantine_path, item, identity):
+    if captured_identity != identity or (item is not None and not _matches_owned_file(quarantine_path, item, identity)):
         try:
             _rename_noreplace(parent, quarantine_name, path.name)
             _fsync_directory(parent)
         except OSError as error:
-            raise ValueError(f"could not restore changed file: {item.path}") from error
+            raise ValueError(f"could not restore changed file: {item.path if item is not None else path.name}") from error
         return False
     parent_descriptor = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0))
     try:
