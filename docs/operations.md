@@ -416,3 +416,49 @@ OPEN_TRESTLE_API_TOKEN="$OBSERVER_TOKEN" \
 ```
 
 The optional `OPEN_TRESTLE_OBSERVER_TOKEN` configured on `trestled` has `run_read` and `runtime_read` only. Use it for this command. The required `OPEN_TRESTLE_API_TOKEN` is the full-authority operator and worker credential and should not be placed in a read-only console. Compare `configuration_identity`, route and policy identities, storage posture, publication-fence state, handler identities, and component readiness with the deployment record. The command does not reveal service endpoints or credentials. A ready runtime still does not imply that a review succeeded or publication is safe.
+
+## Offline in-place recovery comparison
+
+Stop the daemon and every child process before taking a consistent copy. Keep the
+original state, artifact, setup and Git object directories. The owner record binds
+Linux directory identity and absolute paths. Recreating those directories is not
+supported re-enrollment, even if file bytes match.
+
+The `trestled recovery-point` command emits a private canonical comparison record
+on stdout. Save it outside the state directory under operator-only permissions.
+Retain the matching state and Git object bytes, setup receipt ledger, daemon binary,
+scanner and scanner-worker binaries, route inventory and runtime policy. Credentials
+are separate and are never read by these offline commands.
+
+```
+umask 077
+trestled recovery-point --state-dir /private/state \
+  --repository-authority local.example --repository-namespace team \
+  --repository-name repository --binary /retained/trestled \
+  --scanner /retained/scanner --scanner-worker /retained/scanner-worker \
+  --route-inventory /retained/routes.json --runtime-policy /retained/policy.json \
+  > /private/recovery-point.json
+```
+
+After restoring regular leaf bytes into the retained directories, run
+`trestled verify-restore` with the same flags and
+`--record /private/recovery-point.json`. It compares private inventory hashes,
+owner/setup identities, replayed receipts, artifact/deletion records, diagnostics,
+audit history, Git object bytes and retained runtime inputs. It does not construct
+a daemon, dispatch work, run scanners, call providers, repair files or recover
+pending effects. A held existing writer lock or unresolved effect refuses the
+comparison. Completed deletions remain observations; they do not authorize erasure.
+Nonempty webhook intake is outside this publication-disabled local comparison.
+
+A `matched` result means the observed stopped bytes match the record. Active runs
+produce `matched_pending`. Both report `restart_authorized:false`. Neither proves
+backup freshness, authenticates the recovery record, or decides that uncertain
+history is safe to restart. Preserve refused state for operator review. Never edit
+an owner record or delete an uncertain marker to make the command pass.
+
+The command currently supports setup at `state/setup/plan.json` only. It bounds the
+record at 4 MiB, each state/Git inventory at 30,000 entries and 256 MiB of regular
+file bytes, depth 8, and 500 runs. Exceeding a bound is refusal, not corruption or
+proof of absence. Existing canonical store/parser bounds also apply. This is not
+a filesystem snapshot protocol, portable restore, supported installed profile,
+physical power-loss test, or v1 acceptance claim.

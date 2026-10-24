@@ -471,10 +471,10 @@ func (s *FileStore) Get(ctx context.Context, scope audit.ReviewScope, identity s
 	return value, nil
 }
 func (s *FileStore) artifactPath(scope audit.ReviewScope, identity string) string {
-	return filepath.Join(s.root, scope.Identity()+"-"+identity+artifactFileSuffix)
+	return filepath.Join(s.root, artifactFileName(scope, identity))
 }
 func (s *FileStore) deletionPath(scope audit.ReviewScope, identity string) string {
-	return filepath.Join(s.root, scope.Identity()+"-"+identity+deletionFileSuffix)
+	return filepath.Join(s.root, artifactDeletionFileName(scope, identity))
 }
 func (s *FileStore) Delete(ctx context.Context, authorization DeletionAuthorization, at time.Time) (DeletionReceipt, error) {
 	if err := validateContext(ctx); err != nil {

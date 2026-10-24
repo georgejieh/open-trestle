@@ -1103,6 +1103,9 @@ func runDaemon(ctx context.Context, args []string, getenv func(string) string, s
 	if ctx.Err() != nil {
 		return nil
 	}
+	if len(args) > 0 && (args[0] == "recovery-point" || args[0] == "verify-restore") {
+		return runLocalRecoveryCommand(ctx, args, stdout, stderr)
+	}
 	d, err := buildDaemon(ctx, args, getenv, stderr)
 	if err != nil {
 		if onlyDaemonStartupCancellation(err, ctx.Err()) {

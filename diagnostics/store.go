@@ -225,7 +225,7 @@ func (s *FileStore) GetDiagnosticSet(ctx context.Context, scope audit.ReviewScop
 	return set, nil
 }
 func (s *FileStore) setPath(scope audit.ReviewScope) string {
-	return filepath.Join(s.root, scope.Identity()+diagnosticSetSuffix)
+	return filepath.Join(s.root, diagnosticSetFileName(scope))
 }
 func (s *FileStore) ensureOpen() error {
 	if s == nil {
