@@ -73,9 +73,18 @@ type Runner struct {
 	control Control
 	catalog controlplane.TaskHandlerCatalog
 	options Options
-	stepMu  sync.Mutex
-	mu      sync.Mutex
-	active  chan struct{}
+	// step serializes runner bodies. It is a channel so a waiting body can
+	// observe its own cancellation instead of blocking on a mutex it cannot
+	// release.
+	step        chan struct{}
+	mu          sync.Mutex
+	active      *handlerExecution
+	terminalErr error
+}
+
+type handlerExecution struct {
+	done         chan struct{}
+	ownerResults chan error
 }
 
 // New constructs a worker without claiming work.
@@ -94,7 +103,9 @@ func New(control Control, catalog controlplane.TaskHandlerCatalog, options Optio
 	if nilWorkerValue(options.Clock) {
 		return nil, ErrInvalidWorker
 	}
-	return &Runner{control: control, catalog: catalog, options: options}, nil
+	runner := &Runner{control: control, catalog: catalog, options: options, step: make(chan struct{}, 1)}
+	runner.step <- struct{}{}
+	return runner, nil
 }
 
 // Run polls until the run or all of its tasks settle, or context is canceled.
@@ -105,7 +116,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	for {
 		worked, settled, err := r.RunOnce(ctx)
 		if err != nil {
-			if ctx.Err() != nil && !errors.Is(err, ErrWorkerDrain) {
+			if ctx.Err() != nil && isPureContextCancellation(err) {
 				return nil
 			}
 			return err
@@ -119,6 +130,9 @@ func (r *Runner) Run(ctx context.Context) error {
 		if notifications, ok := r.control.(NotificationControl); ok && r.options.NotificationWait > 0 {
 			lease, found, notificationErr := notifications.ClaimTaskNotification(ctx, r.options.Scope, r.options.NotificationWait, r.options.NotificationLeaseDuration)
 			if ctx.Err() != nil {
+				if notificationErr != nil && !isPureContextCancellation(notificationErr) {
+					return notificationErr
+				}
 				return nil
 			}
 			if notificationErr == nil && found {
@@ -152,13 +166,22 @@ func (r *Runner) Run(ctx context.Context) error {
 
 // RunOnce observes state and executes at most one claimable matching task.
 func (r *Runner) RunOnce(ctx context.Context) (bool, bool, error) {
-	if r == nil || nilControl(r.control) || ctx == nil || ctx.Err() != nil {
+	if r == nil || nilControl(r.control) || ctx == nil {
 		return false, false, ErrInvalidWorker
 	}
-	if !r.stepMu.TryLock() {
-		return false, false, ErrInvalidWorker
+	if ctx.Err() != nil {
+		return false, false, ctx.Err()
 	}
-	defer r.stepMu.Unlock()
+	if !r.acquireStep(ctx) {
+		return false, false, ctx.Err()
+	}
+	defer r.releaseStep()
+	if err := r.handlerError(); err != nil {
+		return false, false, err
+	}
+	if r.hasActiveHandler() {
+		return false, false, ErrWorkerDrain
+	}
 	receipt, err := r.control.GetRun(ctx, r.options.Scope)
 	if err != nil {
 		return false, false, err
@@ -228,21 +251,21 @@ func (r *Runner) execute(ctx context.Context, plan controlplane.ReviewRunPlan, r
 		r.mu.Unlock()
 		return result, ErrWorkerDrain
 	}
-	drained := make(chan struct{})
-	r.active = drained
+	execution := &handlerExecution{done: make(chan struct{}), ownerResults: make(chan error, 1)}
+	r.active = execution
 	r.mu.Unlock()
 	owner, ownerOnly := handler.(OwnerContextSettler)
 	if ownerOnly && task.Kind() != controlplane.TaskAssembleContext {
 		r.mu.Lock()
-		close(drained)
+		close(execution.done)
 		r.active = nil
 		r.mu.Unlock()
 		return controlplane.ReviewRunReceipt{}, ErrWorkerState
 	}
 	completions := make(chan controlplane.TaskCompletion, 1)
-	ownerResults := make(chan error, 1)
+	ownerResults := execution.ownerResults
 	go func() {
-		defer func() { r.mu.Lock(); close(drained); r.active = nil; r.mu.Unlock() }()
+		defer close(execution.done)
 		if ownerOnly {
 			executeOwnerContext(executionContext, owner, request, ownerResults)
 			return
@@ -255,8 +278,13 @@ func (r *Runner) execute(ctx context.Context, plan controlplane.ReviewRunPlan, r
 		defer stop()
 		if err := r.Wait(cleanup); err != nil {
 			result = controlplane.ReviewRunReceipt{}
-			resultErr = err
+			if resultErr == nil {
+				resultErr = err
+			} else {
+				resultErr = errors.Join(resultErr, err)
+			}
 		}
+		resultErr = errors.Join(resultErr, r.handlerError())
 	}()
 	timer := time.NewTimer(r.options.RenewalInterval)
 	defer timer.Stop()
@@ -265,7 +293,7 @@ func (r *Runner) execute(ctx context.Context, plan controlplane.ReviewRunPlan, r
 		select {
 		case ownerErr := <-ownerResults:
 			if executionContext.Err() != nil {
-				return result, ErrWorkerExecution
+				return result, errors.Join(cancellationError(ctx), ownerErr)
 			}
 			if ownerErr != nil {
 				return result, ownerErr
@@ -284,7 +312,7 @@ func (r *Runner) execute(ctx context.Context, plan controlplane.ReviewRunPlan, r
 			return settled, nil
 		case completion := <-completions:
 			if executionContext.Err() != nil {
-				return result, ErrWorkerExecution
+				return result, cancellationError(ctx)
 			}
 			if completion.Validate() != nil {
 				return controlplane.ReviewRunReceipt{}, ErrWorkerExecution
@@ -315,15 +343,77 @@ func (r *Runner) execute(ctx context.Context, plan controlplane.ReviewRunPlan, r
 				}
 				return receipt, nil
 			}
-			if err != nil || !sameLeaseAuthority(currentLease, renewed) {
+			if err != nil {
+				if isPureContextCancellation(err) {
+					return controlplane.ReviewRunReceipt{}, err
+				}
+				return controlplane.ReviewRunReceipt{}, errors.Join(ErrWorkerLease, err)
+			}
+			if !sameLeaseAuthority(currentLease, renewed) {
 				return controlplane.ReviewRunReceipt{}, ErrWorkerLease
 			}
 			currentLease = renewed
 			timer.Reset(r.options.RenewalInterval)
 		case <-executionContext.Done():
-			return controlplane.ReviewRunReceipt{}, ErrWorkerExecution
+			return controlplane.ReviewRunReceipt{}, cancellationError(ctx)
 		}
 	}
+}
+
+// acquireStep serializes one runner body. The wait is context-selectable, so
+// a canceled caller never blocks behind another body.
+func (r *Runner) acquireStep(ctx context.Context) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	select {
+	case <-ctx.Done():
+		return false
+	case <-r.step:
+		return true
+	}
+}
+
+func (r *Runner) releaseStep() {
+	r.step <- struct{}{}
+}
+
+func (r *Runner) hasActiveHandler() bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.active == nil {
+		return false
+	}
+	select {
+	case <-r.active.done:
+		return false
+	default:
+		return true
+	}
+}
+
+// handlerError collects an owner result only after the handler returned.
+func (r *Runner) handlerError() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.active != nil {
+		select {
+		case <-r.active.done:
+			select {
+			case err := <-r.active.ownerResults:
+				if err != nil && !isPureContextCancellation(err) {
+					r.terminalErr = errors.Join(r.terminalErr, err)
+				}
+			default:
+			}
+			r.active = nil
+		default:
+		}
+	}
+	return r.terminalErr
 }
 
 // Wait observes registered handlers only; it never cancels or starts execution.
@@ -339,21 +429,72 @@ func (r *Runner) Wait(ctx context.Context) error {
 		return nil
 	}
 	select {
-	case <-active:
+	case <-active.done:
 		return nil
 	default:
 	}
 	select {
-	case <-active:
+	case <-active.done:
 		return nil
 	case <-ctx.Done():
 		select {
-		case <-active:
+		case <-active.done:
 			return nil
 		default:
 			return ErrWorkerDrain
 		}
 	}
+}
+
+// cancellationError reports why an execution stopped. A canceled caller
+// context is reported as that cancellation, so a caller can ignore it. An
+// execution timeout stays an execution failure.
+func cancellationError(ctx context.Context) error {
+	if ctx != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return ErrWorkerExecution
+}
+
+// isPureContextCancellation reports whether err carries only context
+// cancellation. An error that joins an independent fault with a cancellation
+// is not pure, so the independent fault survives.
+func isPureContextCancellation(err error) bool {
+	return isPureError(err, context.Canceled) || isPureError(err, context.DeadlineExceeded)
+}
+
+// isPureError reports whether err carries only the target error. An error that
+// joins the target with an independent error is not pure.
+func isPureError(err error, target error) bool {
+	if err == nil || target == nil {
+		return false
+	}
+	visited := 0
+	var walk func(error, int) bool
+	walk = func(current error, depth int) bool {
+		if current == nil || depth >= 64 || visited >= 256 {
+			return false
+		}
+		visited++
+		if joined, ok := current.(interface{ Unwrap() []error }); ok {
+			any := false
+			for _, child := range joined.Unwrap() {
+				if child == nil {
+					continue
+				}
+				if !walk(child, depth+1) {
+					return false
+				}
+				any = true
+			}
+			return any
+		}
+		if single, ok := current.(interface{ Unwrap() error }); ok {
+			return walk(single.Unwrap(), depth+1)
+		}
+		return current == target
+	}
+	return walk(err, 0)
 }
 
 func executeOwnerContext(ctx context.Context, handler OwnerContextSettler, request controlplane.TaskExecutionRequest, output chan<- error) {

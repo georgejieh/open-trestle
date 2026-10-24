@@ -83,6 +83,7 @@ type daemonSupervisor interface {
 
 type daemon struct {
 	server                 *http.Server
+	admission              *daemonAdmission
 	journal                controlplane.RunJournal
 	inboxStore             webhook.Store
 	diagnosticStore        diagnostics.Store
@@ -90,8 +91,18 @@ type daemon struct {
 	supervisors            []daemonSupervisor
 	supervisorNames        []string
 	closers                []io.Closer
-	closeOnce              sync.Once
+	closeMu                sync.Mutex
+	finishStarted          bool
+	runStarted             bool
+	finishGate             chan struct{}
+	runtimeContext         context.Context
+	stopRuntime            context.CancelFunc
+	runtimeResults         []*daemonRuntimeResult
+	shutdownDone           chan struct{}
+	shutdownErr            error
+	closersDone            chan struct{}
 	closeErr               error
+	handlerDrainTimeout    time.Duration
 	tlsCertificate, tlsKey string
 }
 
@@ -100,6 +111,10 @@ func main() {
 	err := runDaemon(ctx, os.Args[1:], os.Getenv, os.Stdout, os.Stderr)
 	stop()
 	if err != nil {
+		var incomplete *daemonShutdownIncomplete
+		if errors.As(err, &incomplete) {
+			fmt.Fprintln(os.Stderr, "trestled: shutdown incomplete; terminating with cleanup unconfirmed")
+		}
 		fmt.Fprintf(os.Stderr, "trestled: %v\n", err)
 		os.Exit(1)
 	}
@@ -340,7 +355,9 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	if err != nil {
 		return nil, ErrInvalidDaemonConfiguration
 	}
-	resources := &daemon{}
+	runtimeContext, stopRuntime := context.WithCancel(context.Background())
+	resources := &daemon{runtimeContext: runtimeContext, stopRuntime: stopRuntime}
+	resources.admission = &daemonAdmission{runtime: runtimeContext}
 	built := false
 	defer func() {
 		if !built {
@@ -1058,8 +1075,10 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	rootMux.Handle("/readyz", healthHandler)
 	rootMux.Handle("/", handler)
 	handler = rootMux
+	handler = resources.admission.wrap(handler)
 	server := &http.Server{
 		Addr: *listenAddress, Handler: handler,
+		BaseContext:       func(net.Listener) context.Context { return runtimeContext },
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second,
 		WriteTimeout: 20 * time.Second, IdleTimeout: 60 * time.Second,
 		MaxHeaderBytes: 16 << 10, ErrorLog: log.New(stderr, "trestled: ", log.LstdFlags),
@@ -1077,78 +1096,72 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	built = true
 	return resources, nil
 }
-func runDaemon(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) (runErr error) {
+func runDaemon(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) error {
 	if ctx == nil || stdout == nil {
 		return ErrInvalidDaemonConfiguration
 	}
 	if ctx.Err() != nil {
 		return nil
 	}
-	daemon, err := buildDaemon(ctx, args, getenv, stderr)
+	d, err := buildDaemon(ctx, args, getenv, stderr)
 	if err != nil {
 		if onlyDaemonStartupCancellation(err, ctx.Err()) {
 			return nil
 		}
 		return err
 	}
-	defer func() { runErr = errors.Join(runErr, daemon.Close()) }()
+	return d.run(ctx, stdout)
+}
+
+func (d *daemon) run(ctx context.Context, stdout io.Writer) (runErr error) {
+	defer func() { runErr = errors.Join(runErr, d.Close()) }()
 	if ctx.Err() != nil {
 		return nil
 	}
-	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", daemon.server.Addr)
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", d.server.Addr)
 	if err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(stdout, "trestled listening on %s\n", listener.Addr().String()); err != nil {
 		return errors.Join(err, listener.Close())
 	}
-	runtimeContext, stopRuntime := context.WithCancel(ctx)
-	defer stopRuntime()
-	type runtimeResult struct {
-		server bool
-		err    error
+	d.closeMu.Lock()
+	if d.finishStarted || d.runStarted {
+		d.closeMu.Unlock()
+		return errors.Join(ErrDaemonRuntimeUnavailable, listener.Close())
 	}
-	results := make(chan runtimeResult, len(daemon.supervisors)+1)
-	go func() {
-		if daemon.tlsCertificate != "" {
-			results <- runtimeResult{server: true, err: daemon.server.ServeTLS(listener, daemon.tlsCertificate, daemon.tlsKey)}
-			return
+	d.runStarted = true
+	if d.runtimeContext == nil {
+		d.runtimeContext, d.stopRuntime = context.WithCancel(context.Background())
+	}
+	returned := make(chan struct{}, len(d.supervisors)+1)
+	start := func(run func() error) {
+		result := &daemonRuntimeResult{done: make(chan struct{})}
+		d.runtimeResults = append(d.runtimeResults, result)
+		go func() {
+			result.err = run()
+			if d.runtimeContext.Err() == nil && (result.err == nil || onlyDaemonStartupCancellation(result.err, context.Canceled) || onlyDaemonStartupCancellation(result.err, http.ErrServerClosed) || onlyDaemonStartupCancellation(result.err, worker.ErrRepositorySupervisorShutdown)) {
+				result.err = errors.Join(ErrDaemonRuntimeUnavailable, result.err)
+			}
+			close(result.done)
+			returned <- struct{}{}
+		}()
+	}
+	start(func() error {
+		if d.tlsCertificate != "" {
+			return d.server.ServeTLS(listener, d.tlsCertificate, d.tlsKey)
 		}
-		results <- runtimeResult{server: true, err: daemon.server.Serve(listener)}
-	}()
-	for _, supervisor := range daemon.supervisors {
-		current := supervisor
-		go func() { results <- runtimeResult{err: current.Run(runtimeContext)} }()
+		return d.server.Serve(listener)
+	})
+	for _, supervisor := range d.supervisors {
+		start(func() error { return supervisor.Run(d.runtimeContext) })
 	}
-	firstErr := error(nil)
-	resultConsumed := false
+	d.closeMu.Unlock()
 	select {
-	case result := <-results:
-		resultConsumed = true
-		if result.err != nil && !errors.Is(result.err, http.ErrServerClosed) {
-			firstErr = result.err
-		}
-		if result.err == nil && !result.server && ctx.Err() == nil {
-			firstErr = ErrDaemonRuntimeUnavailable
-		}
+	case <-returned:
 	case <-ctx.Done():
 	}
-	stopRuntime()
-	shutdownContext, cancel := context.WithTimeout(context.Background(), daemonShutdownTimeout)
-	shutdownErr := daemon.server.Shutdown(shutdownContext)
-	cancel()
-	remaining := len(daemon.supervisors) + 1
-	if resultConsumed {
-		remaining--
-	}
-	for range remaining {
-		result := <-results
-		if result.err != nil && !errors.Is(result.err, http.ErrServerClosed) {
-			firstErr = errors.Join(firstErr, result.err)
-		}
-	}
-	firstErr = errors.Join(firstErr, shutdownErr)
-	return firstErr
+	return nil
 }
 
 // Ignore a build interruption only when the entire bounded error tree is
@@ -1164,6 +1177,9 @@ func onlyDaemonStartupCancellation(err, cancellation error) bool {
 			return false, false
 		}
 		visited++
+		if _, incomplete := current.(*daemonShutdownIncomplete); incomplete {
+			return false, false
+		}
 		if children, ok := current.(interface{ Unwrap() []error }); ok {
 			values := children.Unwrap()
 			any := false
@@ -1196,16 +1212,13 @@ func (d *daemon) Close() error {
 	if d == nil {
 		return nil
 	}
-	d.closeOnce.Do(func() {
-		for index := len(d.closers) - 1; index >= 0; index-- {
-			if d.closers[index] == nil {
-				continue
-			}
-			d.closeErr = errors.Join(d.closeErr, d.closers[index].Close())
-		}
-		d.closers = nil
-	})
-	return d.closeErr
+	timeout := d.handlerDrainTimeout
+	if timeout <= 0 {
+		timeout = daemonShutdownTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return d.Finish(ctx)
 }
 
 func parseReviewRunMode(value string) (controlplane.ReviewRunMode, error) {
