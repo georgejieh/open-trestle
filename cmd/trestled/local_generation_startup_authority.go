@@ -14,10 +14,11 @@ import (
 )
 
 type localGenerationStartupAuthority struct {
-	inventory     runtimeconfig.RouteInventory
-	configuration runtimeconfig.RuntimePolicy
-	dispatchers   gateway.RouteDispatcherCatalog
-	sanitizer     review.GenerationRequestSanitizer
+	inventory             runtimeconfig.RouteInventory
+	configuration         runtimeconfig.RuntimePolicy
+	dispatchers           gateway.RouteDispatcherCatalog
+	sanitizer             review.GenerationRequestSanitizer
+	verificationSanitizer review.VerificationRequestSanitizer
 }
 
 func loadLocalGenerationStartupAuthority(ctx context.Context, inventoryPath, policyPath string, getenv func(string) string, sanitizer review.GenerationRequestSanitizer) (*localGenerationStartupAuthority, error) {
@@ -40,6 +41,13 @@ func (a *localGenerationStartupAuthority) observe(ctx context.Context, stateRoot
 	handler, err := modelhandler.SanitizedGenerationHandlerIdentity(a.dispatchers, scanner)
 	if err != nil {
 		return generationRejectionWindow{}, err
+	}
+	terminal, hasTerminal := fact.TerminalEvent()
+	if hasTerminal && terminal.Kind() == controlplane.RunEventFailed && terminal.Failure() == controlplane.RunFailureResourceLimit {
+		if daemonNilDependency(a.verificationSanitizer) {
+			return generationRejectionWindow{}, errTerminalModelExpiry
+		}
+		return observeTerminalModelExpiryPhysical(ctx, stateRoot, artifactRoot, fact, a.configuration, a.inventory, handler, scanner, a.verificationSanitizer.ExpectedBinaryDigests(), binding, now)
 	}
 	return observeGenerationRejectionPhysicalWindow(ctx, stateRoot, artifactRoot, fact, a.configuration, a.inventory, handler, scanner, binding, now)
 }

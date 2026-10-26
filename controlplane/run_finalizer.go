@@ -11,6 +11,8 @@ import (
 
 var ErrInvalidRunFinalizer = errors.New("invalid review run finalizer")
 
+var errRunAlreadyTerminal = errors.New("review run already terminal")
+
 // RunFinalizer derives terminal disposition solely from the immutable plan and journal.
 type RunFinalizer struct {
 	journal     RunJournal
@@ -43,7 +45,17 @@ func (f *RunFinalizer) ReconcileRun(ctx context.Context, scope audit.ReviewScope
 		}
 		var result ReviewRunState
 		var changed bool
-		err = journal.WithScopeIntent(ctx, scope, "run-finalize", plan.Identity(), func(inner context.Context) error {
+		err = journal.WithScopeIntentChecked(ctx, scope, "run-finalize", plan.Identity(), func(inner context.Context) error {
+			_, observed, readErr := f.coordinator.Resume(inner, scope)
+			if readErr != nil {
+				return readErr
+			}
+			if observed.Status() != ReviewRunActive {
+				result = observed
+				return errRunAlreadyTerminal
+			}
+			return nil
+		}, func(inner context.Context) error {
 			var operationErr error
 			result, changed, operationErr = f.reconcileRun(inner, scope, at)
 			return operationErr
@@ -54,6 +66,9 @@ func (f *RunFinalizer) ReconcileRun(ctx context.Context, scope audit.ReviewScope
 			}
 			return nil
 		})
+		if err == errRunAlreadyTerminal {
+			return result, false, nil
+		}
 		return result, changed, err
 	}
 	return f.reconcileRun(ctx, scope, at)

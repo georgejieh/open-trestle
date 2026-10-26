@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -35,7 +37,7 @@ func TestPackagedLocalFullReviewPreModel(t *testing.T) {
 	if os.Getenv("OPEN_TRESTLE_PACKAGED_PREMODEL") != "1" {
 		t.Skip("opt-in packaged integration fixture")
 	}
-	testPackagedLocalFullReview(t, false)
+	testPackagedLocalFullReview(t, false, false)
 }
 
 // Set OPEN_TRESTLE_PACKAGED_MODEL_WORKERS=1 to exercise owned Responses routes.
@@ -43,15 +45,29 @@ func TestPackagedLocalFullReviewModelWorkers(t *testing.T) {
 	if os.Getenv("OPEN_TRESTLE_PACKAGED_MODEL_WORKERS") != "1" {
 		t.Skip("opt-in packaged model integration fixture")
 	}
-	testPackagedLocalFullReview(t, true)
+	testPackagedLocalFullReview(t, true, false)
 }
 
-func testPackagedLocalFullReview(t *testing.T, modelWorkers bool) {
+// TestPackagedLocalFullReviewDevelopment exercises installed entry points with
+// synthetic sanitizers. It cannot qualify the fixed scanner or prescribed storage.
+func TestPackagedLocalFullReviewDevelopment(t *testing.T) {
+	if os.Getenv("OPEN_TRESTLE_PACKAGED_DEVELOPMENT") != "1" {
+		t.Skip("opt-in synthetic packaged development fixture")
+	}
+	t.Log("development fixture: alternate storage and synthetic sanitizers; no installed-profile qualification")
+	testPackagedLocalFullReview(t, true, true)
+}
+
+func testPackagedLocalFullReview(t *testing.T, modelWorkers, development bool) {
 	t.Helper()
 	if _, err := os.Stat("/dev/shm"); err != nil {
 		t.Fatal(err)
 	}
-	root, err := os.MkdirTemp("/dev/shm", "trestle-premodel-")
+	sourceParent := "/dev/shm"
+	if development {
+		sourceParent = t.TempDir()
+	}
+	root, err := os.MkdirTemp(sourceParent, "trestle-premodel-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,6 +107,9 @@ func testPackagedLocalFullReview(t *testing.T, modelWorkers bool) {
 		return command(repo, []string{"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0"}, "git", args...)
 	}
 	git("init", "--quiet", "--object-format=sha1", "--template="+template)
+	if err := os.Chmod(filepath.Join(repo, ".git", "objects"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	writeSource := func(body string) {
 		t.Helper()
 		if err := os.WriteFile(filepath.Join(repo, "main.go"), []byte(body), 0600); err != nil {
@@ -122,6 +141,49 @@ func testPackagedLocalFullReview(t *testing.T, modelWorkers bool) {
 		}
 		if args[i] == "--state-dir" {
 			args[i+1] = filepath.Join(root, "state")
+		}
+	}
+	state := daemonTestFlagValue(t, args, "--state-dir")
+	setupPath := filepath.Join(state, "setup", "plan.json")
+	if err := os.MkdirAll(filepath.Dir(setupPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	originalSetup := daemonTestFlagValue(t, args, "--setup-state")
+	setupBytes, err := os.ReadFile(originalSetup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(setupPath, setupBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lockBytes, err := os.ReadFile(originalSetup + ".lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(setupPath+".lock", lockBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	receiptSource := originalSetup + ".receipts"
+	if err := os.Mkdir(setupPath+".receipts", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	receipts, err := os.ReadDir(receiptSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range receipts {
+		body, err := os.ReadFile(filepath.Join(receiptSource, entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(setupPath+".receipts", entry.Name()), body, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Preserve the existing setup ledger, not a newly initialized plan.
+	for i := range args {
+		if args[i] == "--setup-state" {
+			args[i+1] = setupPath
 		}
 	}
 	var routeCalls atomic.Int64
@@ -171,12 +233,66 @@ func testPackagedLocalFullReview(t *testing.T, modelWorkers bool) {
 	}
 	revision := string(command("../..", nil, "git", "rev-parse", "HEAD"))
 	scannerFlags := packagedScannerBuildFlags(t)
+	candidateBarrierPath := filepath.Join(build, "candidate-persisted")
+	developmentOverlay := ""
+	if development {
+		original, err := os.ReadFile("main.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		source := string(original)
+		needle := "generationSanitizer: reviewcore.NewFixedGenerationRequestSanitizer(), verificationSanitizer: reviewcore.NewFixedVerificationRequestSanitizer()"
+		if strings.Count(source, needle) != 1 {
+			t.Fatal("development dependency seam changed")
+		}
+		source = strings.Replace(source, needle, "generationSanitizer: testsupport.NewCleanGenerationSanitizer(), verificationSanitizer: testsupport.NewCleanVerificationSanitizer()", 1)
+		source = strings.Replace(source, "import (", "import (\n \"github.com/georgejieh/open-trestle/internal/testsupport\"", 1)
+		overlayMain := filepath.Join(build, "main-development.go")
+		if err := os.WriteFile(overlayMain, []byte(source), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		mainPath, err := filepath.Abs("main.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		artifactSource, err := os.ReadFile("../../artifact/store.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		artifactNeedle := "if err := s.persist(destination, encoded); err != nil {\n\t\treturn false, err\n\t}\n\treturn true, nil"
+		if bytes.Count(artifactSource, []byte(artifactNeedle)) != 1 {
+			t.Fatal("candidate persist seam changed")
+		}
+		barrier := "if err := s.persist(destination, encoded); err != nil {\n\t\treturn false, err\n\t}\n if value.Kind()==KindCandidateBatch&&value.Scope().ReviewRunID()==\"run-packaged-put-interrupted\" { if err:=os.WriteFile(" + strconv.Quote(candidateBarrierPath) + ",[]byte(value.Identity()),0600);err!=nil{return false,err};select{} }\n return true,nil"
+		artifactSource = bytes.Replace(artifactSource, []byte(artifactNeedle), []byte(barrier), 1)
+		overlayArtifact := filepath.Join(build, "artifact-development.go")
+		if err := os.WriteFile(overlayArtifact, artifactSource, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		artifactPath, err := filepath.Abs("../../artifact/store.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := json.Marshal(map[string]any{"Replace": map[string]string{mainPath: overlayMain, artifactPath: overlayArtifact}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		developmentOverlay = filepath.Join(build, "development-overlay.json")
+		if err := os.WriteFile(developmentOverlay, encoded, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, entry := range []struct{ name, kind string }{{"trestle", "./cmd/trestle"}, {"trestled", "./cmd/trestled"}} {
 		flags := "-s -w -buildid="
 		if entry.name == "trestled" {
 			flags = scannerFlags
 		}
-		cmd := exec.Command(filepath.Join(runtime.GOROOT(), "bin", "go"), "build", "-trimpath", "-buildvcs=false", "-ldflags="+flags, "-o", filepath.Join(build, entry.name), entry.kind)
+		buildArgs := []string{"build", "-p=1", "-trimpath", "-buildvcs=false", "-ldflags=" + flags, "-o", filepath.Join(build, entry.name)}
+		if development && entry.name == "trestled" {
+			buildArgs = append(buildArgs, "-overlay="+developmentOverlay)
+		}
+		buildArgs = append(buildArgs, entry.kind)
+		cmd := exec.Command(filepath.Join(runtime.GOROOT(), "bin", "go"), buildArgs...)
 		cmd.Dir = "../.."
 		cmd.Env = append(os.Environ(), "GOWORK=off", "GOTOOLCHAIN=local", "GOPROXY=off", "GOSUMDB=off", "CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64")
 		out, e := cmd.CombinedOutput()
@@ -216,26 +332,26 @@ func testPackagedLocalFullReview(t *testing.T, modelWorkers bool) {
 	if e := os.Mkdir(filepath.Join(stage, "data"), 0755); e != nil {
 		t.Fatal(e)
 	}
-	licenses, e := os.ReadDir("../../.container/licenses")
-	if e != nil {
-		t.Fatal(e)
+	if err := filepath.WalkDir("../../.container/licenses", func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if !entry.Type().IsRegular() {
+			return fmt.Errorf("nonregular license: %s", path)
+		}
+		relative, err := filepath.Rel("../../.container", path)
+		if err != nil {
+			return err
+		}
+		copyFile(path, filepath.Join(stage, relative), 0444)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
-	for _, dir := range licenses {
-		if !dir.IsDir() {
-			t.Fatal("unexpected license entry")
-		}
-		files, e := os.ReadDir(filepath.Join("../../.container/licenses", dir.Name()))
-		if e != nil {
-			t.Fatal(e)
-		}
-		for _, file := range files {
-			if file.IsDir() {
-				t.Fatal("nested license directory")
-			}
-			name := filepath.Join("licenses", dir.Name(), file.Name())
-			copyFile(filepath.Join("../../.container", name), filepath.Join(stage, name), 0444)
-		}
-	}
+
 	archive := filepath.Join(build, "open-trestle-premodel.pyz")
 	command("../..", nil, "python3", "tools/linux_distribution.py", "--staging", stage, "--version", "0.1.0-dev", "--revision", revision, "--created", "2026-10-19T00:00:00Z", "--output", archive)
 	command("../..", nil, "python3", archive, "verify-archive")
@@ -314,7 +430,7 @@ func testPackagedLocalFullReview(t *testing.T, modelWorkers bool) {
 	if !ready {
 		t.Fatalf("packaged daemon not ready: %s", daemonLog())
 	}
-	cliArgs := []string{"local-git", "submit-review", "--objects-root", filepath.Join(repo, ".git", "objects"), "--repository-authority", "local.test", "--repository-namespace", "team", "--repository-name", "repository", "--revision-algorithm", "sha1", "--base-revision-digest", base, "--head-revision-digest", head, "--server", "http://" + address, "--tenant", "tenant-a", "--repository", "repo-a", "--run", "run-packaged-premodel", "--review-policy-identity", policy.ReviewPolicyIdentity(), "--inventory-identity", inventory.Identity(), "--runtime-policy-identity", policy.Identity(), "--created-at-unix-milliseconds", "1792368000000"}
+	cliArgs := []string{"local-git", "submit-review", "--objects-root", filepath.Join(repo, ".git", "objects"), "--repository-authority", "local.test", "--repository-namespace", "team", "--repository-name", "repository", "--revision-algorithm", "sha1", "--base-revision-digest", base, "--head-revision-digest", head, "--server", "http://" + address, "--tenant", "tenant-a", "--repository", "repo-a", "--run", "run-packaged-premodel", "--review-policy-identity", policy.ReviewPolicyIdentity(), "--inventory-identity", inventory.Identity(), "--runtime-policy-identity", policy.Identity(), "--created-at-unix-milliseconds", strconv.FormatInt(time.Now().UTC().UnixMilli(), 10)}
 	submit := func() []byte {
 		cmd := exec.Command(cli, cliArgs...)
 		cmd.Env = isolatedEnv
@@ -329,6 +445,13 @@ func testPackagedLocalFullReview(t *testing.T, modelWorkers bool) {
 			api: api, model: model, barrier: barrier, scope: scope, cli: cli,
 			cliArgs: cliArgs, daemon: daemon, daemonArgs: args, env: isolatedEnv,
 			process: proc, logFile: logFile, log: daemonLog, state: daemonTestFlagValue(t, args, "--state-dir"),
+			candidateBarrierPath: func() string {
+				if development {
+					return candidateBarrierPath
+				}
+				return ""
+			}(),
+			recoveryArgs: []string{"--state-dir", state, "--repository-authority", "local.test", "--repository-namespace", "team", "--repository-name", "repository", "--binary", daemon, "--scanner", filepath.Join(dest, "usr/local/libexec/open-trestle/open-trestle-secret-scanner"), "--scanner-worker", filepath.Join(dest, "usr/local/libexec/open-trestle/open-trestle-secret-scanner-worker"), "--route-inventory", inventoryPath, "--runtime-policy", policyPath},
 		})
 		return
 	}
@@ -386,7 +509,6 @@ func testPackagedLocalFullReview(t *testing.T, modelWorkers bool) {
 	if statuses["candidates"] != controlplane.TaskRuntimeAvailable || statuses["verification"] != controlplane.TaskRuntimePending || statuses["readiness"] != controlplane.TaskRuntimePending {
 		t.Fatalf("model boundary: %v", statuses)
 	}
-	state := daemonTestFlagValue(t, args, "--state-dir")
 	artifacts := filepath.Join(state, "artifacts")
 	physical := func(identity string, kind artifact.Kind) artifact.Artifact {
 		t.Helper()

@@ -435,8 +435,10 @@ func physicalExpectationIdentity(e physicalPacketExpectation) string {
 
 func physicalRecordedPair(kind artifact.Kind, origin artifact.Origin) bool {
 	switch kind {
-	case artifact.KindTaskInput, artifact.KindGenerationRejection:
+	case artifact.KindTaskInput, artifact.KindGenerationRejection, artifact.KindSanitizedModelRequest, artifact.KindSanitizedEgressReceipt:
 		return origin == artifact.OriginHost
+	case artifact.KindCandidateBatch:
+		return origin == artifact.OriginModel
 	case artifact.KindSourceSnapshot:
 		return origin == artifact.OriginRepository
 	case artifact.KindChangeModel, artifact.KindDeterministicEvidence:

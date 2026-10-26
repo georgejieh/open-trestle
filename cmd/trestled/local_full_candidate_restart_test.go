@@ -351,6 +351,47 @@ func TestDaemonLocalFullCandidatePutSyntheticRestartPreservesDispatchFence(t *te
 	if genCalls != 1 || verCalls != 0 || len(genFailures)+len(verFailures) != 0 {
 		t.Fatalf("restarted traffic gen=%d verify=%d failures=%v/%v", genCalls, verCalls, genFailures, verFailures)
 	}
+
+	terminalState, err := coordinator.Advance(ctx, plan, future.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminalCompletion, ready, err := terminalState.TerminalCompletion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ready {
+		t.Fatal("candidate fixture has no terminal completion")
+	}
+	if _, err := coordinator.FailRun(ctx, plan, terminalCompletion.Failure(), future.Now()); err != nil {
+		t.Fatal(err)
+	}
+	testTerminalCandidateExpiryProof(t, ctx, d, args, repository, policy, inventory, candidate.HandlerIdentity(), outputArtifact, future.Now())
+	journalBeforeSecond, err := os.ReadFile(streamPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+	second, err := buildDaemonWithDependencies(ctx, args, getenv, &bytes.Buffer{}, deps)
+	if err != nil {
+		t.Fatalf("second startup after exhausted candidate lease: %v", err)
+	}
+	defer second.Close()
+	journalAfterSecond, err := os.ReadFile(streamPath)
+	if err != nil || !bytes.Equal(journalBeforeSecond, journalAfterSecond) {
+		t.Fatalf("second startup changed terminal journal: %v", err)
+	}
+	if value, err := second.artifactStore.Get(ctx, scope, outputID, future.Now()); err != nil || value.Identity() != outputArtifact.Identity() {
+		t.Fatalf("second startup candidate changed: %v", err)
+	}
+	if calls, _, _, _ := model.generation.snapshot(); calls != 1 {
+		t.Fatalf("second startup generation calls=%d", calls)
+	}
+	if calls, _, _, _ := model.verification.snapshot(); calls != 0 {
+		t.Fatalf("second startup verification calls=%d", calls)
+	}
 }
 
 func assertCandidateRestartAudit(t *testing.T, events []audit.Event) {

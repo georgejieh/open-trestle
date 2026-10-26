@@ -388,6 +388,7 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 		if err != nil {
 			return nil, ErrInvalidDaemonConfiguration
 		}
+		generationStartup.verificationSanitizer = deps.verificationSanitizer
 	}
 	var localObjectsRoot *os.Root
 	var localObjectStore *scm.LocalGitObjectStore

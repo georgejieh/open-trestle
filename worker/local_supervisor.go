@@ -17,6 +17,8 @@ const maximumSupervisorPlansPerPage = 100
 
 var ErrInvalidRepositorySupervisor = errors.New("invalid repository worker supervisor")
 
+var errLocalRunAlreadyTerminal = errors.New("local worker run already terminal")
+
 // ErrRepositorySupervisorShutdown identifies a supervisor that sealed admission
 // and refuses new work.
 var ErrRepositorySupervisorShutdown = errors.New("repository worker supervisor is shut down")
@@ -59,7 +61,23 @@ func (c *LocalControl) GetRun(ctx context.Context, scope audit.ReviewScope) (con
 		if !found {
 			return controlplane.ReviewRunReceipt{}, controlplane.ErrRunNotOpened
 		}
-		err = journal.WithScopeIntent(ctx, scope, "worker-get-run", plan.Identity(), operation, func(inner context.Context) error {
+		err = journal.WithScopeIntentChecked(ctx, scope, "worker-get-run", plan.Identity(), func(inner context.Context) error {
+			observedPlan, observed, readErr := c.coordinator.Resume(inner, scope)
+			if readErr != nil {
+				return readErr
+			}
+			if observedPlan.Identity() != plan.Identity() {
+				return controlplane.ErrRunPlanConflict
+			}
+			if observed.Status() == controlplane.ReviewRunActive {
+				return nil
+			}
+			receipt, readErr = controlplane.NewReviewRunReceipt(observed)
+			if readErr != nil {
+				return readErr
+			}
+			return errLocalRunAlreadyTerminal
+		}, operation, func(inner context.Context) error {
 			_, observed, err := c.coordinator.Resume(inner, scope)
 			if err != nil {
 				return err
@@ -69,6 +87,9 @@ func (c *LocalControl) GetRun(ctx context.Context, scope audit.ReviewScope) (con
 			}
 			return nil
 		})
+		if err == errLocalRunAlreadyTerminal {
+			return receipt, nil
+		}
 		return receipt, err
 	}
 	if err := operation(ctx); err != nil {
@@ -509,7 +530,7 @@ func (s *RepositorySupervisor) Run(ctx context.Context) error {
 	for {
 		_, err := s.runOnce(operationContext)
 		if err != nil {
-			if operationContext.Err() != nil && isPureContextCancellation(err) {
+			if operationContext.Err() != nil && (isPureContextCancellation(err) || isPureError(err, controlplane.ErrRunJournalContextDone)) {
 				return nil
 			}
 			return err

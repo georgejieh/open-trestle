@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -70,6 +71,8 @@ type packagedModelWorkerRun struct {
 	logFile                  *os.File
 	log                      func() string
 	state                    string
+	recoveryArgs             []string
+	candidateBarrierPath     string
 }
 
 func testPackagedModelWorkerLifecycle(t *testing.T, run packagedModelWorkerRun) {
@@ -97,7 +100,7 @@ func testPackagedModelWorkerLifecycle(t *testing.T, run packagedModelWorkerRun) 
 		t.Helper()
 		deadline := time.NewTimer(timeout)
 		defer deadline.Stop()
-		ticker := time.NewTicker(100 * time.Millisecond)
+		ticker := time.NewTicker(500 * time.Millisecond)
 		defer ticker.Stop()
 		for {
 			set, err := run.api.GetDiagnosticSet(ctx, scope)
@@ -106,7 +109,8 @@ func testPackagedModelWorkerLifecycle(t *testing.T, run packagedModelWorkerRun) 
 			}
 			select {
 			case <-deadline.C:
-				t.Fatalf("terminal diagnostics unavailable: %v daemon=%s", err, run.log())
+				receipt, receiptErr := run.api.GetRun(ctx, scope)
+				t.Fatalf("terminal diagnostics unavailable scope=%s: %v receipt=%+v receipt_error=%v daemon=%s", scope.ReviewRunID(), err, receipt, receiptErr, run.log())
 			case <-ticker.C:
 			}
 		}
@@ -124,6 +128,7 @@ func testPackagedModelWorkerLifecycle(t *testing.T, run packagedModelWorkerRun) 
 		}
 	}
 	admitted := submit(run.cliArgs, run.scope)
+	t.Log("await initial completed review")
 	final := awaitSet(run.scope, 30*time.Second)
 	if final.SchemaVersion() != 7 || final.Outcome() != diagnostics.FinalOutcomeCompleted || final.VerifiedSetIdentity() == "" || final.VerifiedCount() != 1 || len(final.Findings()) != 1 || len(final.DeterministicChecks()) != 1 || len(final.DeterministicObservations()) != 1 || final.SnapshotIdentity() == "" || final.ReviewSnapshotIdentity() == "" || final.SnapshotIdentity() == final.ReviewSnapshotIdentity() {
 		t.Fatalf("invalid completed V7 outcome=%s verified=%d findings=%d observations=%d", final.Outcome(), final.VerifiedCount(), len(final.Findings()), len(final.DeterministicObservations()))
@@ -181,6 +186,42 @@ func testPackagedModelWorkerLifecycle(t *testing.T, run packagedModelWorkerRun) 
 	if err := run.process.Wait(); err == nil {
 		t.Fatal("interrupted daemon exited successfully")
 	}
+	// The observation is independent of startup: a match cannot authorize restart.
+	offline := func(action string, extra ...string) ([]byte, error) {
+		t.Helper()
+		cmd := exec.Command(run.daemon, append(append([]string{action}, run.recoveryArgs...), extra...)...)
+		cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir()}
+		return cmd.CombinedOutput()
+	}
+	point, err := offline("recovery-point")
+	if err != nil {
+		t.Fatalf("stopped comparison record: %s %v", point, err)
+	}
+	pointPath := filepath.Join(t.TempDir(), "recovery-point.json")
+	if err := os.WriteFile(pointPath, point, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	matched, err := offline("verify-restore", "--record", pointPath)
+	if err != nil || string(matched) != "{\"status\":\"matched_pending\",\"restart_authorized\":false}\n" {
+		t.Fatalf("pending comparison: %s %v", matched, err)
+	}
+	ownerPath := filepath.Join(run.state, ".local-source-owner.json")
+	ownerBytes, err := os.ReadFile(ownerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ownerPath, []byte("corrupt owner"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := offline("verify-restore", "--record", pointPath); err == nil {
+		t.Fatalf("corrupt owner accepted: %s", output)
+	}
+	if err := os.WriteFile(ownerPath, ownerBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := offline("verify-restore", "--record", pointPath); err != nil {
+		t.Fatalf("restored owner bytes: %s %v", output, err)
+	}
 	journalBytes, err := os.ReadFile(filepath.Join(run.state, interrupted.Identity()+".run.jsonl"))
 	if err != nil {
 		t.Fatal(err)
@@ -214,6 +255,7 @@ func testPackagedModelWorkerLifecycle(t *testing.T, run packagedModelWorkerRun) 
 	if replay := submit(interruptedArgs, interrupted); replay.PlanIdentity() != interruptedAdmission.PlanIdentity() {
 		t.Fatal("restart replay changed plan")
 	}
+	t.Log("await interrupted review after restart")
 	uncertain := awaitSet(interrupted, time.Until(expires)+20*time.Second)
 	if uncertain.SchemaVersion() != 7 || uncertain.Outcome() != diagnostics.FinalOutcomeInconclusive || uncertain.VerifiedSetIdentity() != "" || len(uncertain.Findings()) != 0 || uncertain.AnalysisResultIdentity() == "" {
 		t.Fatalf("uncertain verification promoted outcome=%s verified=%s", uncertain.Outcome(), uncertain.VerifiedSetIdentity())
@@ -230,18 +272,284 @@ func testPackagedModelWorkerLifecycle(t *testing.T, run packagedModelWorkerRun) 
 	if !bytes.Equal(candidateBytes, packagedReadArtifact(t, run.state, interrupted, candidateID)) {
 		t.Fatal("candidate bytes changed after restart")
 	}
+	interruptedTerminalJournal, err := os.ReadFile(filepath.Join(run.state, interrupted.Identity()+".run.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	interruptedAuditPath := filepath.Join(run.state, "audit", interrupted.Identity()+".audit.jsonl")
+	interruptedTerminalAudit, err := os.ReadFile(interruptedAuditPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	packagedAssertResultParity(t, command, interruptedArgs, interrupted, uncertain)
-	packagedAssertProgressParity(t, command, interruptedArgs, interrupted, run.api, &uncertain)
+	interruptedProgress := packagedAssertProgressParity(t, command, interruptedArgs, interrupted, run.api, &uncertain)
 	cleanAgain, err := run.api.GetDiagnosticSet(ctx, run.scope)
 	if err != nil || cleanAgain.Identity() != final.Identity() {
 		t.Fatalf("completed diagnostic changed after restart: %v", err)
 	}
 	packagedAssertResultParity(t, command, run.cliArgs, run.scope, cleanAgain)
-	packagedAssertProgressParity(t, command, run.cliArgs, run.scope, run.api, &cleanAgain)
+	completedProgress := packagedAssertProgressParity(t, command, run.cliArgs, run.scope, run.api, &cleanAgain)
 	assertCalls(2, 2)
 	packagedAssertRouteAudit(t, run.state, run.scope, 2)
 	packagedAssertRouteAudit(t, run.state, interrupted, 1)
-	t.Logf("packaged model workers: completed=%s interrupted=%s candidate=%s verifier_already_claimed=true generation_calls=2 verification_calls=2 physical_crash_acceptance=false", final.Identity(), uncertain.Identity(), candidateID)
+	later, err := audit.NewReviewScope(run.scope.TenantID(), run.scope.RepositoryID(), "run-packaged-later")
+	if err != nil {
+		t.Fatal(err)
+	}
+	laterArgs := append([]string(nil), run.cliArgs...)
+	for i := range laterArgs {
+		if laterArgs[i] == "--run" {
+			laterArgs[i+1] = later.ReviewRunID()
+		}
+	}
+	laterAdmission := submit(laterArgs, later)
+	t.Log("await unrelated later review")
+	laterSet := awaitSet(later, 30*time.Second)
+	if laterSet.Outcome() != diagnostics.FinalOutcomeCompleted || laterSet.VerifiedCount() != 1 {
+		t.Fatalf("unrelated later review failed: %s", laterSet.Outcome())
+	}
+	packagedAssertResultParity(t, command, laterArgs, later, laterSet)
+	laterProgress := packagedAssertProgressParity(t, command, laterArgs, later, run.api, &laterSet)
+	assertCalls(3, 3)
+	if err := restarted.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.Wait(); err != nil {
+		t.Fatalf("graceful packaged stop: %v daemon=%s", err, run.log())
+	}
+	second := exec.Command(run.daemon, run.daemonArgs...)
+	second.Env = run.env
+	second.Stdout, second.Stderr = run.logFile, run.logFile
+	if err := second.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if second.ProcessState == nil {
+			second.Process.Kill()
+			second.Wait()
+		}
+	})
+	packagedAwaitReady(t, run.cliArgs, run.log)
+	for _, item := range []struct {
+		args      []string
+		scope     audit.ReviewScope
+		admission controlplane.ReviewRunReceipt
+		set       diagnostics.Set
+		progress  client.RunProgress
+	}{
+		{run.cliArgs, run.scope, admitted, final, completedProgress}, {interruptedArgs, interrupted, interruptedAdmission, uncertain, interruptedProgress}, {laterArgs, later, laterAdmission, laterSet, laterProgress},
+	} {
+		if replay := submit(item.args, item.scope); replay.PlanIdentity() != item.admission.PlanIdentity() {
+			t.Fatal("second restart replay changed plan")
+		}
+		current, err := run.api.GetDiagnosticSet(ctx, item.scope)
+		if err != nil || current.Identity() != item.set.Identity() {
+			t.Fatalf("second restart diagnostics changed: %v", err)
+		}
+		packagedAssertResultParity(t, command, item.args, item.scope, current)
+		progress := packagedAssertProgressParity(t, command, item.args, item.scope, run.api, &current)
+		if progress.Run.Identity() != item.progress.Run.Identity() || !reflect.DeepEqual(progress.Progress, item.progress.Progress) {
+			t.Fatal("second restart changed terminal progress")
+		}
+	}
+	if !bytes.Equal(candidateBytes, packagedReadArtifact(t, run.state, interrupted, candidateID)) {
+		t.Fatal("second restart changed candidate bytes")
+	}
+	currentReceipt, err := run.api.GetRun(ctx, interrupted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidateAfter, _ := currentReceipt.Task("candidates")
+	verificationAfter, _ := currentReceipt.Task("verification")
+	if candidateAfter.OutputIdentity() != candidateID || candidateAfter.Status() != controlplane.TaskRuntimeSucceeded || verificationAfter.Status() != controlplane.TaskRuntimeFailed || verificationAfter.OutputIdentity() != "" || verificationAfter.Failure() != controlplane.RunFailureResourceLimit {
+		t.Fatal("second restart changed terminal task result")
+	}
+	currentJournal, err := os.ReadFile(filepath.Join(run.state, interrupted.Identity()+".run.jsonl"))
+	if err != nil || !bytes.Equal(currentJournal, interruptedTerminalJournal) {
+		t.Fatalf("second restart changed terminal journal: %v", err)
+	}
+	currentAudit, err := os.ReadFile(interruptedAuditPath)
+	if err != nil || !bytes.Equal(currentAudit, interruptedTerminalAudit) {
+		t.Fatalf("second restart changed terminal verifier audit: %v", err)
+	}
+	packagedAssertRouteAudit(t, run.state, interrupted, 1)
+	assertCalls(3, 3)
+	if err := second.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Wait(); err != nil {
+		t.Fatalf("second graceful stop: %v daemon=%s", err, run.log())
+	}
+	t.Log("verifier second restart exact audit and terminal progress retained; begin candidate interruption")
+	if run.candidateBarrierPath != "" {
+		blocked := exec.Command(run.daemon, run.daemonArgs...)
+		blocked.Env = run.env
+		blocked.Stdout, blocked.Stderr = run.logFile, run.logFile
+		if err := blocked.Start(); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if blocked.ProcessState == nil {
+				blocked.Process.Kill()
+				blocked.Wait()
+			}
+		})
+		packagedAwaitReady(t, run.cliArgs, run.log)
+		putScope, err := audit.NewReviewScope(run.scope.TenantID(), run.scope.RepositoryID(), "run-packaged-put-interrupted")
+		if err != nil {
+			t.Fatal(err)
+		}
+		putArgs := append([]string(nil), run.cliArgs...)
+		for i := range putArgs {
+			if putArgs[i] == "--run" {
+				putArgs[i+1] = putScope.ReviewRunID()
+			}
+		}
+		submit(putArgs, putScope)
+		deadline := time.NewTimer(30 * time.Second)
+		defer deadline.Stop()
+		tick := time.NewTicker(100 * time.Millisecond)
+		defer tick.Stop()
+		var persisted []byte
+	waiting:
+		for {
+			persisted, err = os.ReadFile(run.candidateBarrierPath)
+			if err == nil {
+				break waiting
+			}
+			select {
+			case <-deadline.C:
+				t.Fatalf("candidate persistence barrier missing: %s", run.log())
+			case <-tick.C:
+			}
+		}
+		candidateBeforeKill := packagedReadArtifact(t, run.state, putScope, string(persisted))
+
+		journalPath := filepath.Join(run.state, putScope.Identity()+".run.jsonl")
+		journalAtBarrier, err := os.ReadFile(journalPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		leased := false
+		for _, line := range bytes.Split(bytes.TrimSpace(journalAtBarrier), []byte("\n")) {
+			event, err := controlplane.ParseRunEvent(line)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if event.TaskKey() == "candidates" {
+				if event.Kind() == controlplane.RunEventTaskLeased {
+					leased = true
+				}
+				if event.Kind() == controlplane.RunEventTaskSucceeded || event.Kind() == controlplane.RunEventTaskFailed {
+					t.Fatal("candidate fixture missed unsettled persistence boundary")
+				}
+			}
+		}
+		if !leased {
+			t.Fatal("candidate persistence has no journal lease")
+		}
+
+		if err := blocked.Process.Kill(); err != nil {
+			t.Fatal(err)
+		}
+		if err := blocked.Wait(); err == nil {
+			t.Fatal("candidate interruption unexpectedly clean")
+		}
+		// Persisted bytes alone do not authorize task success or another dispatch.
+
+		resumed := exec.Command(run.daemon, run.daemonArgs...)
+		resumed.Env = run.env
+		resumed.Stdout, resumed.Stderr = run.logFile, run.logFile
+		if err := resumed.Start(); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if resumed.ProcessState == nil {
+				resumed.Process.Kill()
+				resumed.Wait()
+			}
+		})
+		packagedAwaitReady(t, run.cliArgs, run.log)
+		retained := awaitSet(putScope, time.Minute)
+		if retained.Outcome() != diagnostics.FinalOutcomeInconclusive || retained.VerifiedSetIdentity() != "" || len(retained.Findings()) != 0 {
+			t.Fatal("unsettled candidate was promoted")
+		}
+		expiredReceipt, err := run.api.GetRun(ctx, putScope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		expiredCandidate, _ := expiredReceipt.Task("candidates")
+		unrunVerifier, _ := expiredReceipt.Task("verification")
+		if expiredCandidate.Status() != controlplane.TaskRuntimeFailed || expiredCandidate.Failure() != controlplane.RunFailureResourceLimit || expiredCandidate.Attempts() != 1 || expiredCandidate.OutputIdentity() != "" || unrunVerifier.Attempts() != 0 || unrunVerifier.OutputIdentity() != "" {
+			t.Fatal("unsettled candidate retried or gained output authority")
+		}
+		packagedAssertResultParity(t, command, putArgs, putScope, retained)
+		retainedProgress := packagedAssertProgressParity(t, command, putArgs, putScope, run.api, &retained)
+		if err := resumed.Process.Signal(syscall.SIGTERM); err != nil {
+			t.Fatal(err)
+		}
+		if err := resumed.Wait(); err != nil {
+			t.Fatalf("persist-interrupted first graceful stop: %v daemon=%s", err, run.log())
+		}
+
+		terminalJournal, err := os.ReadFile(journalPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		auditPath := filepath.Join(run.state, "audit", putScope.Identity()+".audit.jsonl")
+		terminalAudit, err := os.ReadFile(auditPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Log("candidate first restart inconclusive; begin second restart")
+		candidateSecond := exec.Command(run.daemon, run.daemonArgs...)
+		candidateSecond.Env = run.env
+		candidateSecond.Stdout, candidateSecond.Stderr = run.logFile, run.logFile
+		if err := candidateSecond.Start(); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if candidateSecond.ProcessState == nil {
+				candidateSecond.Process.Kill()
+				candidateSecond.Wait()
+			}
+		})
+		packagedAwaitReady(t, run.cliArgs, run.log)
+		if replay := submit(putArgs, putScope); replay.PlanIdentity() != expiredReceipt.PlanIdentity() {
+			t.Fatal("persist-interrupted replay changed plan")
+		}
+		currentSet, err := run.api.GetDiagnosticSet(ctx, putScope)
+		if err != nil || currentSet.Identity() != retained.Identity() {
+			t.Fatalf("persist-interrupted second restart changed diagnostics: %v", err)
+		}
+		currentReceipt, err := run.api.GetRun(ctx, putScope)
+		if err != nil || currentReceipt.Identity() != expiredReceipt.Identity() {
+			t.Fatalf("persist-interrupted second restart changed receipt: %v", err)
+		}
+		for path, expected := range map[string][]byte{journalPath: terminalJournal, auditPath: terminalAudit} {
+			current, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(current, expected) {
+				t.Fatalf("persist-interrupted second restart changed %s: %v", filepath.Base(path), err)
+			}
+		}
+		packagedAssertResultParity(t, command, putArgs, putScope, currentSet)
+		currentProgress := packagedAssertProgressParity(t, command, putArgs, putScope, run.api, &currentSet)
+		if currentProgress.Run.Identity() != retainedProgress.Run.Identity() || !reflect.DeepEqual(currentProgress.Progress, retainedProgress.Progress) {
+			t.Fatal("persist-interrupted second restart changed terminal progress")
+		}
+		if err := candidateSecond.Process.Signal(syscall.SIGTERM); err != nil {
+			t.Fatal(err)
+		}
+		if err := candidateSecond.Wait(); err != nil {
+			t.Fatalf("persist-interrupted second graceful stop: %v daemon=%s", err, run.log())
+		}
+		if !bytes.Equal(candidateBeforeKill, packagedReadArtifact(t, run.state, putScope, string(persisted))) {
+			t.Fatal("restart changed persisted candidate bytes")
+		}
+		assertCalls(4, 3)
+		t.Log("exact candidate Put interruption retained; one expired attempt, no verifier dispatch or unverified promotion")
+	}
+	t.Logf("packaged model workers: completed=%s interrupted=%s candidate=%s verifier_already_claimed=true terminal_restart_dedupe=true physical_crash_acceptance=false", final.Identity(), uncertain.Identity(), candidateID)
 }
 
 func packagedAssertProgressParity(t *testing.T, command func([]string) []byte, args []string, scope audit.ReviewScope, api *client.Client, final *diagnostics.Set) client.RunProgress {
@@ -270,14 +578,17 @@ func packagedAssertProgressParity(t *testing.T, command func([]string) []byte, a
 	if !found || contextTask.OutputIdentity() == coverage.Context.ArtifactIdentity {
 		t.Fatal("context packet identity confused with authorized task input")
 	}
+	if coverage.Context.Analyzed == nil || coverage.Context.Selected == nil || coverage.Context.Omitted == nil || *coverage.Context.Analyzed != *coverage.Context.Selected+*coverage.Context.Omitted || *coverage.Context.Selected == 0 {
+		t.Fatal("packaged progress lost context source coverage")
+	}
 	if final != nil {
-		if coverage.Context.Analyzed == nil || coverage.Context.Selected == nil || coverage.Context.Omitted == nil || *coverage.Context.Analyzed != int(final.SourceAnalyzedCount()) || *coverage.Context.Selected != int(final.SourceSelectedCount()) || *coverage.Context.Omitted != int(final.SourceOmittedCount()) {
-			t.Fatal("packaged progress differs from final source accounting")
+		if final.VerifiedSetIdentity() != "" && (coverage.Context.Analyzed == nil || coverage.Context.Selected == nil || coverage.Context.Omitted == nil || *coverage.Context.Analyzed != int(final.SourceAnalyzedCount()) || *coverage.Context.Selected != int(final.SourceSelectedCount()) || *coverage.Context.Omitted != int(final.SourceOmittedCount())) {
+			t.Fatalf("packaged progress differs from final source accounting scope=%s progress=%+v final analyzed=%d selected=%d omitted=%d", scope.ReviewRunID(), coverage.Context, final.SourceAnalyzedCount(), final.SourceSelectedCount(), final.SourceOmittedCount())
 		}
 		if final.VerifiedSetIdentity() != "" && (coverage.Verification.State != "available" || coverage.Verification.Candidates == nil || coverage.Verification.Verified == nil || coverage.Verification.Rejected == nil || coverage.Verification.Inconclusive == nil || *coverage.Verification.Candidates != int(final.CandidateCount()) || *coverage.Verification.Verified != int(final.VerifiedCount()) || *coverage.Verification.Rejected != int(final.RejectedCount()) || *coverage.Verification.Inconclusive != int(final.InconclusiveCount())) {
 			t.Fatal("packaged progress differs from final verification accounting")
 		}
-		if final.VerifiedSetIdentity() == "" && (coverage.Verification.Verified != nil || coverage.Verification.Rejected != nil || coverage.Verification.Inconclusive != nil) {
+		if final.VerifiedSetIdentity() == "" && (coverage.Verification.State == "available" || coverage.Verification.Candidates != nil || coverage.Verification.Verified != nil || coverage.Verification.Rejected != nil || coverage.Verification.Inconclusive != nil) {
 			t.Fatal("packaged progress invented unavailable verification counts")
 		}
 	}
@@ -380,6 +691,15 @@ func packagedAssertResultParity(t *testing.T, command func([]string) []byte, arg
 	encoded, err := diagnostics.EncodeSet(set)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if set.VerifiedSetIdentity() == "" {
+		var envelope map[string]json.RawMessage
+		if err := json.Unmarshal(encoded, &envelope); err != nil {
+			t.Fatal(err)
+		}
+		if _, exists := envelope["verified"]; exists || set.VerificationContextIdentity() != "" || set.ReviewSnapshotIdentity() != "" {
+			t.Fatal("incomplete final record invented verification lineage")
+		}
 	}
 	if !bytes.Equal(command(append(statusArgs, "--format", "json")), encoded) {
 		t.Fatal("packaged CLI JSON differs from canonical API set")
