@@ -135,10 +135,37 @@ The `decoded` result reports structural inventory and route-record identities
 only. It does not establish policy binding, live health, quality, or execution
 authorization. Use `config validate` separately to check the pair.
 
-Copy the reported `inventory_identity` into `runtime-policy.json` after editing
-the inventory. The shipped example pair is already structurally bound.
-Leave `preferred_route_record_identities` empty unless you intentionally pin or
-prefer route record identities reported by the same command.
+For a daemon generation/verifier pair, prepare a policy template and bind its
+identities with the supported offline command:
+
+```sh
+trestle config bind \
+  --route-inventory /protected/routes.json \
+  --runtime-policy-template /protected/runtime-policy.template.json \
+  --generation-adapter local-generation \
+  --verification-adapter local-verification
+```
+
+Each adapter must select exactly one local record, and the adapters must differ.
+The command emits one runtime-policy-v2 JSON document to stdout. It does not write
+files, read credentials, contact a provider, approve routes, or change setup state.
+Save the output as a new protected file before validation. No output file is
+opened by the command, so the operator controls its path, permissions and any
+replacement.
+
+Empty, omitted or all-zero binding identities are placeholders. Existing nonzero
+inventory, generation-pin and verifier identities must match the selected records.
+Other policy values, including constraints, independence and connections, are
+preserved. A v1 template cannot contain the v2 verifier field; a v2 template may
+omit it before binding. Null values, unknown or duplicate fields, conflicting
+bindings and ambiguous adapter selections are refused. Inputs must pass the
+protected-file checks described above. Pending routes remain pending and cannot
+be executed merely because binding and validation succeed.
+
+For a historical v1 policy, copy the reported `inventory_identity` into
+`runtime-policy.json` after editing the inventory. The shipped example pair is
+already structurally bound. Leave `preferred_route_record_identities` empty unless
+you intentionally pin or prefer records reported by the same inventory command.
 
 After binding, validate the pair without provider calls:
 

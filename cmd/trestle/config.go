@@ -15,6 +15,9 @@ func runConfig(args []string, stdout, stderr io.Writer) int {
 		writeConfigUsage(stderr)
 		return 2
 	}
+	if args[0] == "bind" {
+		return runConfigBind(args[1:], stdout, stderr)
+	}
 	if args[0] == "inventory-identity" {
 		return runConfigInventoryIdentity(args[1:], stdout, stderr)
 	}
