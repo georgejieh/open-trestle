@@ -122,6 +122,7 @@ func validCredentialAuthority(mode CredentialMode, credentials APIKeyProvider, i
 type Config struct {
 	RequestProfile      RequestProfile
 	OpenRouterAuthority *OpenRouterRouteAuthority
+	OpenCodeGoAuthority *OpenCodeGoRouteAuthority
 	Clock               artifact.Clock
 	CredentialMode      CredentialMode
 	Protocol            Protocol
@@ -141,6 +142,7 @@ type Config struct {
 type Adapter struct {
 	requestProfile        RequestProfile
 	openRouterAuthority   *OpenRouterRouteAuthority
+	openCodeGoAuthority   *OpenCodeGoRouteAuthority
 	clock                 artifact.Clock
 	credentialMode        CredentialMode
 	protocol              Protocol
@@ -176,7 +178,7 @@ func New(config Config) (*Adapter, error) {
 	}
 	endpoint, err := provider.ParseServiceEndpoint(endpointValue)
 	locality, localityErr := provider.ClassifyServiceEndpoint(endpointValue)
-	zoneMatches := config.Zone == provider.ProviderZoneLocal && locality == provider.ServiceEndpointLoopback || config.Zone == provider.ProviderZonePrivateRemote && locality == provider.ServiceEndpointRemote || config.Zone == provider.ProviderZoneBrokeredRemote && config.RequestProfile == RequestProfileOpenRouterZDRChatV1 && endpointValue == "https://openrouter.ai/api/v1"
+	zoneMatches := config.Zone == provider.ProviderZoneLocal && locality == provider.ServiceEndpointLoopback || config.Zone == provider.ProviderZonePrivateRemote && locality == provider.ServiceEndpointRemote || config.Zone == provider.ProviderZoneBrokeredRemote && (config.RequestProfile == RequestProfileOpenRouterZDRChatV1 && endpointValue == "https://openrouter.ai/api/v1" || config.RequestProfile == RequestProfileOpenCodeGoChatV1 && endpointValue == "https://opencode.ai/inference/go/openai/v1")
 	if err != nil || localityErr != nil || !zoneMatches || !validCredentialAuthority(mode, config.Credentials, config.CredentialIdentity, config.Zone, locality) {
 		return nil, ErrInvalidConfig
 	}
@@ -211,6 +213,7 @@ func New(config Config) (*Adapter, error) {
 	adapter := &Adapter{
 		requestProfile:      config.RequestProfile,
 		openRouterAuthority: cloneOpenRouterAuthority(config.OpenRouterAuthority),
+		openCodeGoAuthority: cloneOpenCodeGoAuthority(config.OpenCodeGoAuthority),
 		clock:               config.Clock,
 		credentialMode:      mode,
 		protocol:            protocol,
@@ -225,7 +228,7 @@ func New(config Config) (*Adapter, error) {
 		httpClientIdentity:  strings.Clone(httpClientIdentity),
 		httpClient:          client,
 	}
-	if !adapter.validRequestProfile() || !adapter.profileAuthorityCurrent() {
+	if !adapter.validServiceProfile() || !adapter.serviceProfileCurrent() {
 		return nil, ErrInvalidConfig
 	}
 	adapter.configurationIdentity = deriveConfigurationIdentity(adapter)
@@ -312,10 +315,10 @@ func deriveConfigurationIdentity(a *Adapter) string {
 		}{"open-trestle/openai-no-auth-adapter", 1, encoded, a.protocol, a.credentialMode})
 	}
 	if a.requestProfile != "" {
-		if !a.validRequestProfile() {
+		if !a.validServiceProfile() {
 			return ""
 		}
-		encoded = a.profileIdentityPreimage(encoded)
+		encoded = a.serviceIdentityPreimage(encoded)
 	}
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
@@ -355,12 +358,12 @@ func validConfigurationIdentity(identity string) bool {
 
 // Validate verifies the immutable adapter configuration.
 func (a *Adapter) Validate() error {
-	if a == nil || !a.protocol.valid() || a.endpoint == nil || a.httpClient == nil || !a.validRequestProfile() || !validEndpoint(a.endpoint) || !validConfigurationIdentity(a.httpClientIdentity) || a.configurationIdentity != deriveConfigurationIdentity(a) {
+	if a == nil || !a.protocol.valid() || a.endpoint == nil || a.httpClient == nil || !a.validServiceProfile() || !validEndpoint(a.endpoint) || !validConfigurationIdentity(a.httpClientIdentity) || a.configurationIdentity != deriveConfigurationIdentity(a) {
 		return ErrInvalidConfig
 	}
 	_, err := provider.NewRouteReference(a.zone, a.providerID, a.adapterID, a.connectionID, "model", "")
 	locality, localityErr := provider.ClassifyServiceEndpoint(a.endpoint.String())
-	zoneMatches := a.zone == provider.ProviderZoneLocal && locality == provider.ServiceEndpointLoopback || a.zone == provider.ProviderZonePrivateRemote && locality == provider.ServiceEndpointRemote || a.zone == provider.ProviderZoneBrokeredRemote && a.requestProfile == RequestProfileOpenRouterZDRChatV1
+	zoneMatches := a.zone == provider.ProviderZoneLocal && locality == provider.ServiceEndpointLoopback || a.zone == provider.ProviderZonePrivateRemote && locality == provider.ServiceEndpointRemote || a.zone == provider.ProviderZoneBrokeredRemote && (a.requestProfile == RequestProfileOpenRouterZDRChatV1 || a.requestProfile == RequestProfileOpenCodeGoChatV1)
 	if err != nil || localityErr != nil || !zoneMatches || !validCredentialAuthority(a.credentialMode, a.credentials, a.credentialIdentity, a.zone, locality) || a.contentLoggingMode.Validate() != nil || a.httpClient.Timeout <= 0 || a.httpClient.Timeout > maximumRequestTimeout {
 		return ErrInvalidConfig
 	}
@@ -391,14 +394,14 @@ func (a *Adapter) dispatchRoute(ctx context.Context, request gateway.RouteDispat
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
 	}
 	authorization := request.Authorization()
-	if authorization.ContentLoggingMode() != a.contentLoggingMode || a.requestProfile != "" && authorization.RouteRecordIdentity() != a.openRouterAuthority.RouteRecordIdentity {
+	if authorization.ContentLoggingMode() != a.contentLoggingMode || a.requestProfile != "" && authorization.RouteRecordIdentity() != a.serviceProfileRecord() {
 		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
 	}
 	scopeIdentity, err := review.ModelRequestReviewScopeIdentity(request.Request())
 	if err != nil || scopeIdentity != authorization.ReviewScopeIdentity() {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
 	}
-	if a.requestProfile != "" && proof.ValidateRepositoryScope(a.openRouterAuthority.TenantID, a.openRouterAuthority.RepositoryID, authorization.ReviewScopeIdentity(), request.Request().Identity()) != nil {
+	if a.requestProfile != "" && !a.serviceProofMatches(proof, authorization.ReviewScopeIdentity(), request.Request().Identity()) {
 		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
 	}
 	return a.executeWithDispatchProof(ctx, authorization.RouteReference(), authorization.MaxOutputTokens(), request.Request(), proof.ReceiptIdentity(), proof)
@@ -445,7 +448,7 @@ func (a *Adapter) executeWithDispatchProof(
 	if scopeErr != nil {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
 	}
-	if !a.profileAuthorityMatches(route) || a.requestProfile != "" && (proof.ValidateRepositoryScope(a.openRouterAuthority.TenantID, a.openRouterAuthority.RepositoryID, reviewScopeIdentity, providerRequest.Identity()) != nil || receiptIdentity != proof.ReceiptIdentity()) {
+	if !a.serviceProfileMatches(route) || a.requestProfile != "" && (!a.serviceProofMatches(proof, reviewScopeIdentity, providerRequest.Identity()) || receiptIdentity != proof.ReceiptIdentity()) {
 		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
 	}
 	payload := providerRequest.Payload()
@@ -482,7 +485,7 @@ func (a *Adapter) executeWithDispatchProof(
 	if err != nil {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
 	}
-	if !a.profileAuthorityMatches(route) || a.requestProfile != "" && (proof.ValidateRepositoryScope(a.openRouterAuthority.TenantID, a.openRouterAuthority.RepositoryID, reviewScopeIdentity, providerRequest.Identity()) != nil || receiptIdentity != proof.ReceiptIdentity()) {
+	if !a.serviceProfileMatches(route) || a.requestProfile != "" && (!a.serviceProofMatches(proof, reviewScopeIdentity, providerRequest.Identity()) || receiptIdentity != proof.ReceiptIdentity()) {
 		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
 	}
 	var credentials APIKey
@@ -499,7 +502,10 @@ func (a *Adapter) executeWithDispatchProof(
 	if err != nil {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
 	}
-	if !a.profileAuthorityMatches(route) || a.requestProfile != "" && (proof.ValidateRepositoryScope(a.openRouterAuthority.TenantID, a.openRouterAuthority.RepositoryID, reviewScopeIdentity, providerRequest.Identity()) != nil || receiptIdentity != proof.ReceiptIdentity()) {
+	if !a.serviceProfileMatches(route) || a.requestProfile != "" && (!a.serviceProofMatches(proof, reviewScopeIdentity, providerRequest.Identity()) || receiptIdentity != proof.ReceiptIdentity()) {
+		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
+	}
+	if a.requestProfile == RequestProfileOpenCodeGoChatV1 && a.setOpenCodeGoHeaders(request, proof, reviewScopeIdentity, providerRequest.Identity()) != nil {
 		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
 	}
 	response, err := a.httpClient.Do(request)
@@ -522,7 +528,12 @@ func (a *Adapter) executeWithDispatchProof(
 	if !ok {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayOutcomeUnknown, 0)
 	}
-	normalized, err := a.normalizeProviderResponse(content, route)
+	var normalized provider.Response
+	if a.requestProfile == RequestProfileOpenCodeGoChatV1 {
+		normalized, err = normalizeOpenCodeGoResponse(content, route)
+	} else {
+		normalized, err = a.normalizeProviderResponse(content, route)
+	}
 	if err != nil {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayOutcomeUnknown, 0)
 	}

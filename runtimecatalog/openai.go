@@ -20,6 +20,7 @@ import (
 type OpenAIConnectionDefinition struct {
 	RequestProfile      openai.RequestProfile
 	OpenRouterAuthority *openai.OpenRouterRouteAuthority
+	OpenCodeGoAuthority *openai.OpenCodeGoRouteAuthority
 	Clock               artifact.Clock
 	CredentialMode      openai.CredentialMode
 	Protocol            openai.Protocol
@@ -61,7 +62,7 @@ func NewOpenAIRouteDispatcherCatalog(inventory runtimeconfig.RouteInventory, con
 		}
 		seen[connection.AdapterID] = struct{}{}
 		route := candidate.RouteCapabilityDeclaration().RouteReference()
-		adapter, err := openai.New(openai.Config{RequestProfile: connection.RequestProfile, OpenRouterAuthority: connection.OpenRouterAuthority, Clock: connection.Clock, CredentialMode: connection.CredentialMode, Protocol: connection.Protocol, AdapterID: connection.AdapterID, ProviderID: route.ProviderID(), ConnectionID: route.ConnectionID(), Zone: route.Zone(), ContentLoggingMode: candidate.ContentLoggingMode(), Endpoint: connection.Endpoint, Credentials: connection.Credentials, CredentialIdentity: connection.CredentialIdentity, HTTPClient: connection.HTTPClient, HTTPClientIdentity: connection.HTTPClientIdentity})
+		adapter, err := openai.New(openai.Config{RequestProfile: connection.RequestProfile, OpenRouterAuthority: connection.OpenRouterAuthority, OpenCodeGoAuthority: connection.OpenCodeGoAuthority, Clock: connection.Clock, CredentialMode: connection.CredentialMode, Protocol: connection.Protocol, AdapterID: connection.AdapterID, ProviderID: route.ProviderID(), ConnectionID: route.ConnectionID(), Zone: route.Zone(), ContentLoggingMode: candidate.ContentLoggingMode(), Endpoint: connection.Endpoint, Credentials: connection.Credentials, CredentialIdentity: connection.CredentialIdentity, HTTPClient: connection.HTTPClient, HTTPClientIdentity: connection.HTTPClientIdentity})
 		if err != nil {
 			return gateway.RouteDispatcherCatalog{}, ErrInvalidRouteAuthority
 		}
@@ -105,7 +106,17 @@ func NewOpenAIRouteDispatcherCatalogWithOptions(inventory runtimeconfig.RouteInv
 	connections := configuration.Connections()
 	// Refuse every stale declaration before resolving any credential provider.
 	for _, connection := range connections {
-		if connection.RequestProfile() != "" && !inventory.OpenRouterPrivacyCurrent(connection.BrokeredAuthority().RouteRecordIdentity(), options.Clock.Now()) {
+		switch connection.RequestProfile() {
+		case "":
+		case runtimeconfig.OpenRouterZDRChatProfile:
+			if !inventory.OpenRouterPrivacyCurrent(connection.BrokeredAuthority().RouteRecordIdentity(), options.Clock.Now()) {
+				return gateway.RouteDispatcherCatalog{}, ErrInvalidRouteAuthority
+			}
+		case runtimeconfig.OpenCodeGoChatProfile:
+			if !inventory.OpenCodeGoPrivacyCurrent(connection.OpenCodeGoAuthority().RouteRecordIdentity(), options.Clock.Now()) {
+				return gateway.RouteDispatcherCatalog{}, ErrInvalidRouteAuthority
+			}
+		default:
 			return gateway.RouteDispatcherCatalog{}, ErrInvalidRouteAuthority
 		}
 	}
@@ -123,8 +134,9 @@ func NewOpenAIRouteDispatcherCatalogWithOptions(inventory runtimeconfig.RouteInv
 			}
 		}
 		var profileAuthority *openai.OpenRouterRouteAuthority
+		var goAuthority *openai.OpenCodeGoRouteAuthority
 		var profileClock artifact.Clock
-		if connection.RequestProfile() != "" {
+		if connection.RequestProfile() == runtimeconfig.OpenRouterZDRChatProfile {
 			authority := connection.BrokeredAuthority()
 			var route provider.RouteReference
 			for _, candidate := range inventory.Candidates() {
@@ -136,7 +148,19 @@ func NewOpenAIRouteDispatcherCatalogWithOptions(inventory runtimeconfig.RouteInv
 			profileAuthority = &openai.OpenRouterRouteAuthority{Route: route, RouteRecordIdentity: authority.RouteRecordIdentity(), EvidenceIdentity: authority.EvidenceManifestDigest(), AccountPolicyIdentity: authority.AccountPolicyIdentity(), CredentialIdentity: connection.CredentialIdentity(), TenantID: authority.TenantID(), RepositoryID: authority.RepositoryID(), ProviderSlug: authority.ProviderSlug(), ValidFrom: authority.ValidFrom(), ValidUntil: authority.ValidUntil()}
 			profileClock = options.Clock
 		}
-		definitions[i] = OpenAIConnectionDefinition{RequestProfile: openai.RequestProfile(connection.RequestProfile()), OpenRouterAuthority: profileAuthority, Clock: profileClock, HTTPClient: options.HTTPClient, HTTPClientIdentity: options.HTTPClientIdentity, CredentialMode: openai.CredentialMode(connection.CredentialMode()), Protocol: openai.Protocol(connection.Implementation()), AdapterID: connection.AdapterID(), Endpoint: connection.Endpoint(), CredentialIdentity: connection.CredentialIdentity(), Credentials: credentials}
+		if connection.RequestProfile() == runtimeconfig.OpenCodeGoChatProfile {
+			authority := connection.OpenCodeGoAuthority()
+			var route provider.RouteReference
+			for _, candidate := range inventory.Candidates() {
+				record := candidate.ResolvedRecord().RouteRegistryRecord()
+				if record.Identity() == authority.RouteRecordIdentity() {
+					route = record.RouteCandidateDeclaration().RouteCapabilityDeclaration().RouteReference()
+				}
+			}
+			goAuthority = &openai.OpenCodeGoRouteAuthority{Route: route, RouteRecordIdentity: authority.RouteRecordIdentity(), EvidenceIdentity: authority.EvidenceManifestDigest(), AccountPolicyIdentity: authority.AccountPolicyIdentity(), CredentialIdentity: connection.CredentialIdentity(), TenantID: authority.TenantID(), RepositoryID: authority.RepositoryID(), ValidFrom: authority.ValidFrom(), ValidUntil: authority.ValidUntil()}
+			profileClock = options.Clock
+		}
+		definitions[i] = OpenAIConnectionDefinition{RequestProfile: openai.RequestProfile(connection.RequestProfile()), OpenRouterAuthority: profileAuthority, OpenCodeGoAuthority: goAuthority, Clock: profileClock, HTTPClient: options.HTTPClient, HTTPClientIdentity: options.HTTPClientIdentity, CredentialMode: openai.CredentialMode(connection.CredentialMode()), Protocol: openai.Protocol(connection.Implementation()), AdapterID: connection.AdapterID(), Endpoint: connection.Endpoint(), CredentialIdentity: connection.CredentialIdentity(), Credentials: credentials}
 	}
 	return NewOpenAIRouteDispatcherCatalog(inventory, definitions)
 }

@@ -12,7 +12,17 @@ func setupConnectionEndpointMatchesZone(connection runtimeconfig.ProviderConnect
 	if zone != provider.ProviderZoneBrokeredRemote {
 		return connection.RequestProfile() == "" && endpointMatchesZone(connection.Endpoint(), zone)
 	}
-	return connection.RequestProfile() == runtimeconfig.OpenRouterZDRChatProfile && connection.Implementation() == "openai_chat_completions" && connection.CredentialMode() == "bearer" && connection.Endpoint() == "https://openrouter.ai/api/v1"
+	if connection.Implementation() != "openai_chat_completions" || connection.CredentialMode() != "bearer" {
+		return false
+	}
+	switch connection.RequestProfile() {
+	case runtimeconfig.OpenRouterZDRChatProfile:
+		return connection.Endpoint() == "https://openrouter.ai/api/v1"
+	case runtimeconfig.OpenCodeGoChatProfile:
+		return connection.Endpoint() == "https://opencode.ai/inference/go/openai/v1"
+	default:
+		return false
+	}
 }
 
 func setupBrokeredRoutePairMatches(plan Plan, inventory runtimeconfig.RouteInventory, policy runtimeconfig.RuntimePolicy, now time.Time) bool {
@@ -20,7 +30,7 @@ func setupBrokeredRoutePairMatches(plan Plan, inventory runtimeconfig.RouteInven
 		return false
 	}
 	pinned, hasPin := policy.Ranking().PinnedRoute()
-	if !hasPin || pinned.Zone() != provider.ProviderZoneBrokeredRemote || pinned.ProviderID() != "openrouter" {
+	if !hasPin || pinned.Zone() != provider.ProviderZoneBrokeredRemote || (pinned.ProviderID() != "openrouter" && pinned.ProviderID() != "opencode-go") {
 		return false
 	}
 	connections := map[string]runtimeconfig.ProviderConnection{}
@@ -36,12 +46,22 @@ func setupBrokeredRoutePairMatches(plan Plan, inventory runtimeconfig.RouteInven
 			return false
 		}
 		if reference == pinned {
-			authority := connection.BrokeredAuthority()
-			if connection.RequestProfile() != runtimeconfig.OpenRouterZDRChatProfile || !authority.Current(now) || authority.TenantID() != plan.TenantID() || authority.RepositoryID() != plan.RepositoryID() || authority.RouteRecordIdentity() != record.Identity() || authority.EvidenceManifestDigest() != record.EvidenceManifestDigest() {
+			switch pinned.ProviderID() {
+			case "openrouter":
+				authority := connection.BrokeredAuthority()
+				if connection.RequestProfile() != runtimeconfig.OpenRouterZDRChatProfile || !authority.Current(now) || authority.TenantID() != plan.TenantID() || authority.RepositoryID() != plan.RepositoryID() || authority.RouteRecordIdentity() != record.Identity() || authority.EvidenceManifestDigest() != record.EvidenceManifestDigest() {
+					return false
+				}
+			case "opencode-go":
+				authority := connection.OpenCodeGoAuthority()
+				if connection.RequestProfile() != runtimeconfig.OpenCodeGoChatProfile || !authority.Current(now) || !inventory.OpenCodeGoPrivacyCurrent(record.Identity(), now) || authority.TenantID() != plan.TenantID() || authority.RepositoryID() != plan.RepositoryID() || authority.RouteRecordIdentity() != record.Identity() || authority.EvidenceManifestDigest() != record.EvidenceManifestDigest() {
+					return false
+				}
+			default:
 				return false
 			}
 			generation++
-		} else if record.Identity() == policy.VerificationRouteRecordIdentity() && reference.Zone() == provider.ProviderZonePrivateRemote && reference.ProviderID() != "openrouter" && connection.RequestProfile() == "" {
+		} else if record.Identity() == policy.VerificationRouteRecordIdentity() && reference.Zone() == provider.ProviderZonePrivateRemote && reference.ProviderID() != pinned.ProviderID() && connection.RequestProfile() == "" {
 			verification++
 		} else {
 			return false

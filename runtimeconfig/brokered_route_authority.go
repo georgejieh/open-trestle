@@ -89,6 +89,9 @@ func decodeBrokeredAuthority(w *brokeredRouteAuthorityWire) (BrokeredRouteAuthor
 }
 
 func validatePolicyProfileFields(encoded []byte, version int) bool {
+	if version == 4 {
+		return validateV4PolicyProfileFields(encoded)
+	}
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(encoded, &fields) != nil {
 		return false
@@ -99,6 +102,9 @@ func validatePolicyProfileFields(encoded []byte, version int) bool {
 	}
 	allowed := map[string]bool{"route_record_identity": true, "evidence_manifest_digest": true, "account_policy_identity": true, "tenant_id": true, "repository_id": true, "provider_slug": true, "valid_from": true, "valid_until": true}
 	for _, c := range connections {
+		if _, present := c["opencode_go_authority"]; present {
+			return false
+		}
 		for key := range c {
 			if strings.EqualFold(key, "request_profile") && key != "request_profile" || strings.EqualFold(key, "brokered_route_authority") && key != "brokered_route_authority" {
 				return false
@@ -125,9 +131,12 @@ func validatePolicyProfileFields(encoded []byte, version int) bool {
 
 func validConnectionProfile(c ProviderConnection, version int) bool {
 	if c.requestProfile == "" {
-		return c.brokeredAuthority == (BrokeredRouteAuthority{})
+		return c.brokeredAuthority == (BrokeredRouteAuthority{}) && c.openCodeGoAuthority == (OpenCodeGoRouteAuthority{})
 	}
-	return version == 3 && c.requestProfile == OpenRouterZDRChatProfile && c.brokeredAuthority.valid() && c.implementation == "openai_chat_completions" && c.credentialMode == "bearer" && c.endpoint == "https://openrouter.ai/api/v1"
+	if c.requestProfile == OpenCodeGoChatProfile {
+		return version == 4 && c.brokeredAuthority == (BrokeredRouteAuthority{}) && c.openCodeGoAuthority.valid() && c.implementation == "openai_chat_completions" && c.credentialMode == "bearer" && c.endpoint == "https://opencode.ai/inference/go/openai/v1"
+	}
+	return (version == 3 || version == 4) && c.openCodeGoAuthority == (OpenCodeGoRouteAuthority{}) && c.requestProfile == OpenRouterZDRChatProfile && c.brokeredAuthority.valid() && c.implementation == "openai_chat_completions" && c.credentialMode == "bearer" && c.endpoint == "https://openrouter.ai/api/v1"
 }
 
 func (c ProviderConnection) RequestProfile() string                    { return c.requestProfile }

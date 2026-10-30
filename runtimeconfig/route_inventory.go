@@ -43,6 +43,7 @@ type RouteInventory struct {
 	candidates          []gateway.ObservedRouteCandidate
 	performance         []provider.RoutePerformanceObservation
 	openRouterPrivacy   []openRouterPrivacyProjection
+	openCodeGoPrivacy   []openCodeGoPrivacyProjection
 }
 
 func NewRouteInventory(ctx context.Context, definitions []RouteDefinition) (RouteInventory, error) {
@@ -54,6 +55,7 @@ func NewRouteInventory(ctx context.Context, definitions []RouteDefinition) (Rout
 	type inventoryEntry struct {
 		candidate gateway.ObservedRouteCandidate
 		privacy   openRouterPrivacyProjection
+		goPrivacy openCodeGoPrivacyProjection
 	}
 	entries := make([]inventoryEntry, 0, len(definitions))
 	seen := make(map[string]struct{}, len(definitions))
@@ -108,19 +110,21 @@ func NewRouteInventory(ctx context.Context, definitions []RouteDefinition) (Rout
 		if err != nil {
 			return RouteInventory{}, ErrInvalidRouteInventory
 		}
-		entries = append(entries, inventoryEntry{observed, extractOpenRouterPrivacy(definition.EvidenceManifest, record)})
+		entries = append(entries, inventoryEntry{observed, extractOpenRouterPrivacy(definition.EvidenceManifest, record), extractOpenCodeGoPrivacy(definition.EvidenceManifest, record)})
 		performance = append(performance, observation)
 	}
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].candidate.ResolvedRecord().RouteRegistryRecord().Identity() < entries[j].candidate.ResolvedRecord().RouteRegistryRecord().Identity()
 	})
 	privacy := make([]openRouterPrivacyProjection, 0, len(entries))
+	goPrivacy := make([]openCodeGoPrivacyProjection, 0, len(entries))
 	for _, entry := range entries {
 		candidates = append(candidates, entry.candidate)
 		privacy = append(privacy, entry.privacy)
+		goPrivacy = append(goPrivacy, entry.goPrivacy)
 	}
 	sort.Slice(performance, func(i, j int) bool { return performance[i].RecordIdentity() < performance[j].RecordIdentity() })
-	value := RouteInventory{registryRevision: registryRevision, performanceRevision: performanceRevision, candidates: candidates, performance: performance, openRouterPrivacy: privacy}
+	value := RouteInventory{registryRevision: registryRevision, performanceRevision: performanceRevision, candidates: candidates, performance: performance, openRouterPrivacy: privacy, openCodeGoPrivacy: goPrivacy}
 	value.identity = inventoryIdentity(value)
 	return value, nil
 }
@@ -134,7 +138,7 @@ func (i RouteInventory) PerformanceObservations() []provider.RoutePerformanceObs
 	return append([]provider.RoutePerformanceObservation(nil), i.performance...)
 }
 func (i RouteInventory) Validate() error {
-	if i.registryRevision == 0 || i.performanceRevision == 0 || len(i.candidates) == 0 || len(i.candidates) > maxInventoryRoutes || len(i.candidates) != len(i.performance) || len(i.candidates) != len(i.openRouterPrivacy) || i.identity != inventoryIdentity(i) {
+	if i.registryRevision == 0 || i.performanceRevision == 0 || len(i.candidates) == 0 || len(i.candidates) > maxInventoryRoutes || len(i.candidates) != len(i.performance) || len(i.candidates) != len(i.openRouterPrivacy) || len(i.candidates) != len(i.openCodeGoPrivacy) || i.identity != inventoryIdentity(i) {
 		return ErrInvalidRouteInventory
 	}
 	previous := ""
@@ -148,6 +152,10 @@ func (i RouteInventory) Validate() error {
 		}
 		projection := i.openRouterPrivacy[index]
 		if projection != (openRouterPrivacyProjection{}) && !projection.matchesRecord(candidate.ResolvedRecord().RouteRegistryRecord()) {
+			return ErrInvalidRouteInventory
+		}
+		goProjection := i.openCodeGoPrivacy[index]
+		if goProjection != (openCodeGoPrivacyProjection{}) && !goProjection.matchesRecord(candidate.ResolvedRecord().RouteRegistryRecord()) {
 			return ErrInvalidRouteInventory
 		}
 		previous = identity
