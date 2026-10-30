@@ -335,8 +335,8 @@ func TestRepositorySupervisorKeepsSingleRunnerUntilHandlerExit(t *testing.T) {
 }
 
 // TestRepositorySupervisorReleasesPlanAfterHandlerExit proves that the plan
-// ownership of an escaped handler is released at the actual handler exit, so
-// a later pass can take the plan over.
+// ownership of an escaped handler is released after its runner observes the
+// execution wrapper complete, so a later pass can take the plan over.
 func TestRepositorySupervisorReleasesPlanAfterHandlerExit(t *testing.T) {
 	counter := &planStartCounter{}
 	source, build := planHandlers(counter)
@@ -374,16 +374,32 @@ func TestRepositorySupervisorReleasesPlanAfterHandlerExit(t *testing.T) {
 	if taken := journal.loadCount() - loads; taken != 0 {
 		t.Fatalf("a later pass took over the plan of a live handler: plan loads=%d", taken)
 	}
+	supervisor.lifecycleMu.Lock()
+	retained := supervisor.runners[scope.Identity()]
+	supervisor.lifecycleMu.Unlock()
+	if retained == nil {
+		t.Fatal("live handler lost its retained runner")
+	}
 	close(source.release)
+	wait, stopWait := context.WithTimeout(context.Background(), 3*time.Second)
+	defer stopWait()
+	if err := retained.Wait(wait); err != nil {
+		t.Fatalf("handler execution wrapper did not complete: %v", err)
+	}
 	select {
 	case <-source.exited:
-	case <-time.After(3 * time.Second):
-		t.Fatal("handler did not exit")
+	default:
+		t.Fatal("execution completed before handler exit marker")
 	}
 	loads = journal.loadCount()
-	_, _ = supervisor.RunOnce(context.Background())
+	if _, err := supervisor.RunOnce(context.Background()); err != nil {
+		t.Fatalf("post-completion pass failed: %v", err)
+	}
 	if taken := journal.loadCount() - loads; taken == 0 {
 		t.Fatal("the released plan was never loaded again")
+	}
+	if _, peak := counter.snapshot(); peak != 1 {
+		t.Fatalf("the plan ran overlapping handlers: peak=%d", peak)
 	}
 }
 
