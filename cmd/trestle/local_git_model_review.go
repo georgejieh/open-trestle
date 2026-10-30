@@ -16,11 +16,13 @@ import (
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 	"io"
 	"os"
+	"strings"
 	"time"
 )
 
 type localModelReviewOptions struct {
 	objects, inventory, policy, tenant, repository, format string
+	checkout, baseSelection, headSelection                 string
 	investigation, retainedMemory                          string
 	egress                                                 localreview.Egress
 	objectStoreProfile                                     scm.LocalGitObjectStoreProfile
@@ -43,7 +45,8 @@ func parseLocalModelReview(args []string) (localModelReviewOptions, evidence.Rep
 	for _, flag := range sourceFlags {
 		allowed[flag] = true
 	}
-	if len(args) < 26 || len(args) > 32 || len(args)%2 != 0 {
+	allowed["--checkout"], allowed["--base"], allowed["--head"] = true, true, true
+	if len(args) < 24 || len(args) > 32 || len(args)%2 != 0 {
 		return fail()
 	}
 	values := map[string]string{}
@@ -54,17 +57,44 @@ func parseLocalModelReview(args []string) (localModelReviewOptions, evidence.Rep
 		}
 		values[flag] = value
 	}
+	checkout := values["--checkout"] != ""
+	if checkout {
+		for _, flag := range []string{"--objects-root", "--revision-algorithm", "--base-revision-digest", "--head-revision-digest", "--object-store"} {
+			if values[flag] != "" {
+				return fail()
+			}
+		}
+		if !checkoutSelection.MatchString(values["--base"]) || !checkoutSelection.MatchString(values["--head"]) {
+			return fail()
+		}
+	} else if values["--base"] != "" || values["--head"] != "" {
+		return fail()
+	}
 	for flag := range allowed {
+		if checkout && (flag == "--objects-root" || flag == "--revision-algorithm" || flag == "--base-revision-digest" || flag == "--head-revision-digest") || !checkout && (flag == "--checkout" || flag == "--base" || flag == "--head") {
+			continue
+		}
 		if flag != "--format" && flag != "--investigation-policy" && flag != "--retained-memory-input" && flag != "--object-store" && values[flag] == "" {
 			return fail()
 		}
 	}
-	sourceArgs := []string{}
-	for _, flag := range sourceFlags {
-		sourceArgs = append(sourceArgs, flag, values[flag])
+	var source localGitChangeOptions
+	var repository evidence.RepositoryIdentity
+	var base, head evidence.RevisionIdentity
+	var err error
+	if checkout {
+		repository, err = evidence.NewRepositoryIdentity(values["--repository-authority"], strings.Split(values["--repository-namespace"], "/"), values["--repository-name"])
+	} else {
+		sourceArgs := []string{}
+		for _, flag := range sourceFlags {
+			sourceArgs = append(sourceArgs, flag, values[flag])
+		}
+		source, repository, base, head, err = parseLocalGitChangeOptions(sourceArgs)
+		if base.Identity() == head.Identity() {
+			return fail()
+		}
 	}
-	source, repository, base, head, err := parseLocalGitChangeOptions(sourceArgs)
-	if err != nil || base.Identity() == head.Identity() {
+	if err != nil {
 		return fail()
 	}
 	if _, err := audit.NewReviewScope(values["--tenant"], values["--repository"], "intent-validation"); err != nil {
@@ -93,6 +123,10 @@ func parseLocalModelReview(args []string) (localModelReviewOptions, evidence.Rep
 		return fail()
 	}
 	o = localModelReviewOptions{objects: source.objectsRoot, inventory: values["--route-inventory"], policy: values["--runtime-policy"], tenant: values["--tenant"], repository: values["--repository"], format: format, investigation: values["--investigation-policy"], retainedMemory: values["--retained-memory-input"], egress: egress, objectStoreProfile: objectStoreProfile, timeout: timeout}
+	o.checkout, o.baseSelection, o.headSelection = values["--checkout"], values["--base"], values["--head"]
+	if checkout {
+		o.objectStoreProfile = scm.LocalGitObjectStoreProfileLooseAndPackIndexV1
+	}
 	return o, repository, base, head, nil
 }
 func runLocalGitModelReview(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -137,6 +171,24 @@ func runLocalGitModelReview(ctx context.Context, args []string, stdout, stderr i
 		}
 		if execution.Err() != nil {
 			return unstarted("canceled")
+		}
+	}
+	if options.checkout != "" {
+		source, err := resolveLocalCheckout(execution, options.checkout, options.baseSelection, options.headSelection)
+		if err != nil {
+			if execution.Err() != nil {
+				return unstarted("canceled")
+			}
+			return unstarted("incomplete")
+		}
+		options.objects = source.objects
+		base, err = evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithm(source.algorithm), source.base)
+		if err != nil {
+			return unstarted("incomplete")
+		}
+		head, err = evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithm(source.algorithm), source.head)
+		if err != nil {
+			return unstarted("incomplete")
 		}
 	}
 	var retainedInput *runtimeconfig.RetainedMemoryInput
@@ -252,5 +304,6 @@ func writeLocalModelResult(format string, result localreview.Result, stdout, std
 	return result.ExitCode()
 }
 func writeLocalGitModelReviewUsage(stderr io.Writer) {
+	fmt.Fprintln(stderr, "       checkout source alternative: --checkout PATH --base FULL_REF_OR_COMMIT --head FULL_REF_OR_COMMIT (replaces --objects-root and revision flags)")
 	fmt.Fprintln(stderr, "usage: trestle local-git model-review --objects-root PATH --repository-authority AUTHORITY --repository-namespace SEGMENT[/SEGMENT...] --repository-name NAME --revision-algorithm sha1|sha256 --base-revision-digest HEX --head-revision-digest HEX --tenant ID --repository ID --route-inventory PATH --runtime-policy PATH --egress local-only|policy-approved --timeout DURATION [--object-store loose-only|loose-and-pack-index-v1] [--format json|text] [--investigation-policy PATH | --retained-memory-input PATH]")
 }

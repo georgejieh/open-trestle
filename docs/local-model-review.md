@@ -33,6 +33,48 @@ JSON is the default; `--format text` selects a short human-readable summary.
 loose-object-only behavior. There are no publish, resume, state, or existing-run
 identity flags.
 
+## Ordinary checkout source selection
+
+Instead of the object-root and three revision flags, select two immutable commits
+from an ordinary local checkout:
+
+```sh
+trestle local-git model-review \
+  --checkout /path/to/repository \
+  --base refs/heads/main --head HEAD \
+  --repository-authority example.test \
+  --repository-namespace team --repository-name repository \
+  --tenant TENANT --repository REPOSITORY \
+  --route-inventory /protected/routes.json \
+  --runtime-policy /protected/policy.json \
+  --egress local-only --timeout 5m --format text
+```
+
+`--base` and `--head` are both required. Each accepts `HEAD`, an exact full
+lowercase commit digest, or a full `refs/heads/...` or `refs/tags/...` name.
+There is no default base, inferred merge base, short branch name, revision
+expression, index review or dirty-worktree review. Annotated tags must resolve
+to commits. Equal selected commits refuse. Do not combine checkout selection
+with `--objects-root`, revision flags or `--object-store`.
+
+This explicit source form requires installed Git supporting `--no-lazy-fetch`.
+Git resolves the shared object directory (including linked worktrees), object
+format and selected commit IDs. The existing immutable reader then authenticates
+those exact objects using `loose-and-pack-index-v1`; its pack, alternates, missing
+object, symlink and gitlink restrictions still apply. Ref changes after selection
+do not relabel acquired evidence. Concurrent object removal can make a review
+incomplete. No atomic checkout snapshot or origin authentication is claimed.
+
+Preparation runs no shell, fetch, checkout, filter, textconv, hook, credential
+helper or maintenance command. It clears inherited Git overrides and global/system
+configuration, disables lazy fetching, replacements and transports, and bounds
+metadata output and execution time. Repository configuration and includes remain
+ordinary same-user metadata reads; do not point it at an untrusted checkout if
+those reads are not permitted. No provider credential is resolved by preparation.
+The subsequent model review still uses the explicit protected policy and egress
+checks. This convenience form is foreground-only; it does not enroll a checkout
+as a durable daemon source root or grant publication authority.
+
 ## Runtime policy route-pair boundary
 
 The existing `local-git model-review` command and historical runtime policy v1 keep their current behavior. A single entry in `preferred_route_record_identities` is a ranking hint, not an exact verifier grant. Runtime policy v2 adds required `verification_route_record_identity`, which must name one record in the bound inventory and differ from the generation pin. The preliminary local generation route-pair resolver uses only that explicit grant, requires local-only zones with logging disabled, and checks both routes against eligibility and configured independence. Preferred-route hints cannot substitute for the grant or redirect the pair. Neither a schema-valid v2 document nor a preflight pair authorizes an actual model request. Generation and verification need separate eligibility checks for their actual sanitized requests, exact record pins, and no fallback before dispatch. The foreground `local-git model-review` command retains its historical behavior. The opt-in durable full-review daemon resolves the explicit v2 pair before constructing its generation worker; its generation and verification handlers still require separate authorization for each sanitized request. Preflight resolution alone is not dispatch authority.
@@ -57,8 +99,9 @@ The packed subset has deliberate limits:
   external bases are refused.
 - Duplicate object IDs across admitted packs are refused. Repacking during a run
   can make the source invalid or incomplete.
-- Multi-pack-index, promisor objects, alternates, refs, worktrees, and Git
-  subprocess fallback are out of scope.
+- Multi-pack-index, promisor objects and alternates are unsupported by this
+  reader. Refs and linked worktrees require the explicit checkout selection
+  above; there is no Git subprocess fallback during object acquisition.
 - The command validates selected bytes and bounded pack/index structure, but it
   does not claim an atomic repository snapshot. It also does not grant extra
   filesystem permissions or comprehensive source clearance.
@@ -92,10 +135,11 @@ references, through the existing credential resolver.
 Repository and audit labels are host-supplied scope labels, not proof of Git
 origin, forge authentication, or permission to publish. The opened source root is
 bound to its session. Only the requested immutable Git commits are acquired. The
-command never shells out or falls back to the mutable worktree. Without the
+object-root path never invokes Git or falls back to the mutable worktree.
+Explicit checkout selection invokes only the bounded metadata commands above. Without the
 packed opt-in, pack-only repositories remain unsupported. With the packed opt-in,
 only the narrow pack/index subset above is supported. Alternates, worktree
-pointer files, symlink/gitlink source entries, unavailable objects, and other
+pointer files supplied as object roots, symlink/gitlink source entries, unavailable objects, and other
 unsupported Git layouts do not produce comprehensive clearance.
 
 ## Local Responses configuration bootstrap
@@ -147,6 +191,8 @@ trestle config bind \
 ```
 
 Each adapter must select exactly one local record, and the adapters must differ.
+The selected pair must satisfy the template's verification independence level;
+this static check does not require live health or approval.
 The command emits one runtime-policy-v2 JSON document to stdout. It does not write
 files, read credentials, contact a provider, approve routes, or change setup state.
 Save the output as a new protected file before validation. No output file is
