@@ -13,6 +13,7 @@ import (
 
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/provider"
+	"github.com/georgejieh/open-trestle/runtimecatalog"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 )
 
@@ -261,6 +262,13 @@ func runtimePolicyMatchesSetup(plan Plan, inventory runtimeconfig.RouteInventory
 		}
 	} else {
 		return false
+	}
+	if policy.VerificationRouteRecordIdentity() != "" {
+		if posture.Inference() != InferenceLocalOnly {
+			return false
+		}
+		_, err := runtimecatalog.ResolveLocalGenerationRoutePair(policy, inventory)
+		return err == nil
 	}
 	if _, pinned := policy.Ranking().PinnedRoute(); pinned {
 		return false

@@ -424,10 +424,26 @@ trestle config inventory-identity \
   --route-inventory /etc/open-trestle/routes.json
 ```
 
-Copy the reported `inventory_identity` into the runtime policy, and optionally add
-route pins or preferences from the reported `route_record_identities`. This command
-decodes only protected local configuration. It does not contact providers and does
-not prove policy binding, reachability, health, quality, or live conformance.
+For a historical v1 policy, copy the reported `inventory_identity` into the runtime
+policy and optionally add preferences from the reported `route_record_identities`.
+Setup continues to reject generation pins in v1 policies. For a local generation
+and explicit verifier pair, bind a v2 policy instead:
+
+```sh
+trestle config bind \
+  --route-inventory /etc/open-trestle/routes.json \
+  --runtime-policy-template /etc/open-trestle/runtime-policy.template.json \
+  --generation-adapter local-generation \
+  --verification-adapter local-verification
+```
+
+Save its stdout as a new protected runtime-policy file before validation. The
+adapters must identify different local records that satisfy the policy's
+independence requirement. Binding does not approve routes, establish readiness,
+read credentials, contact providers, or change setup state. See
+[local configuration bootstrap](local-model-review.md#local-responses-configuration-bootstrap).
+Inventory identity decoding likewise does not prove policy binding, reachability,
+health, quality, or live conformance.
 
 Validate the protected route inventory and bound runtime policy next:
 
@@ -452,7 +468,7 @@ trestle setup check policy \
 
 The checker double-reads protected regular files and pins their full path ancestry. Files and ancestors must be owned by the current user or root. Configuration files cannot be group or other writable. Shared writable ancestors require the same sticky-directory protections as local storage checks. The checker does not resolve a credential reference or connect to an endpoint.
 
-A passing policy must match the selected setup posture. It uses only declared privacy zones, binds every adapter to one unambiguous zone, provider, connection, logging, endpoint, and credential authority, disables content logging, stays within the profile cost cap, provides at least two currently approved and usable routes at the required independence level, and uses canonical endpoint locality. Local and air-gapped profiles accept only numeric loopback endpoints and local routes. Remote routes reject conventional localhost names and non-unicast numeric addresses; the offline check does not resolve approved DNS names. The policy must block publication on inconclusive verification, and its publication independence floor cannot be weaker than its verification floor. Exact route pins are rejected because removing the generation route for independent verification would make the pin unavailable.
+A passing policy must match the selected setup posture. It uses only declared privacy zones, binds every adapter to one unambiguous zone, provider, connection, logging, endpoint, and credential authority, disables content logging, stays within the profile cost cap, provides at least two currently approved and usable routes at the required independence level, and uses canonical endpoint locality. Local and air-gapped profiles accept only numeric loopback endpoints and local routes. Remote routes reject conventional localhost names and non-unicast numeric addresses; the offline check does not resolve approved DNS names. The policy must block publication on inconclusive verification, and its publication independence floor cannot be weaker than its verification floor. Local v2 policies must bind an exact generation pin and an explicit verifier record. Those selected records must both be eligible and satisfy the required independence level; another usable pair in the inventory cannot substitute for them. Historical v1 policies remain unpinned. Remote setup postures do not accept the local v2 pair contract.
 
 For `local_single_node` and `air_gapped`, validate actual local inference after the exact policy receipt is durable:
 
@@ -467,7 +483,7 @@ trestle setup check inference \
   --approved-by platform-owner
 ```
 
-This is an explicit functional probe, not an offline validation. It reads each selected credential environment only at dispatch time and attempts at most two fixed, secret-free prompts against independently routed models from the approved local inventory. It stops after the first failed step; a pass requires exactly one generation response and one independent-verification response. Both adapters must return the exact empty candidate and verification contracts through the normal strict response admission path. Each request permits at most 256 output tokens, reported input above 1,024 tokens is rejected, and the check has one 90-second total deadline. It performs no retry or fallback. Its HTTP transport disables proxies and connection reuse, accepts only canonical numeric-loopback dial targets, and never performs DNS resolution. Provider storage is disabled, content logging must be disabled by policy, and the checker has no publisher, source writer, or dynamic-validation authority.
+This is an explicit functional probe, not an offline validation. It reads each selected credential environment only at dispatch time and attempts at most two fixed, secret-free prompts against independently routed models from the approved local inventory. It stops after the first failed step; a pass requires exactly one generation response and one independent-verification response. Both adapters must return the exact empty candidate and verification contracts through the normal strict response admission path. Each request permits at most 256 output tokens, reported input above 1,024 tokens is rejected, and the check has one 90-second total deadline. For v2, generation uses the pinned record and verification uses only the explicit verifier record, ranked without the generation pin. For v1, verification retains ordered preferences after excluding non-independent routes. It performs no retry or fallback. Its HTTP transport disables proxies and connection reuse, accepts only canonical numeric-loopback dial targets, and never performs DNS resolution. Provider storage is disabled, content logging must be disabled by policy, and the checker has no publisher, source writer, or dynamic-validation authority.
 
 The plan stores only content-derived configuration, execution, and receipt identities. It does not store the credential, prompt, model text, endpoint, model name, token counts, or failure body. A passing result proves that the exact approved local generation and independent-verification paths completed the fixed contract at that time. It does not establish review quality, throughput, future availability, remote fallback, or permission to publish. Authentication, malformed output, or policy mismatch blocks the check. A transient connection, timeout, rate-limit, or server failure records `unavailable`.
 
@@ -484,7 +500,7 @@ trestle setup check dry-run \
   --approved-by platform-owner
 ```
 
-The dry run uses fixed content and local deterministic dispatchers. It exercises the configured eligibility filter, ranking, generation authorization, independent verification authorization, provider-neutral dispatch contract, strict candidate and verifier output admission, terminal attempt records, cost reconciliation, output lineage, and independence receipt. It has a five-second bound and is constructed without a publisher, source writer, validation process, network client, or credential resolver. It cannot publish, mutate source, invoke dynamic validation, or contact a configured model endpoint. A changed or missing policy file produces a blocked or unavailable receipt instead of reusing older evidence.
+The dry run uses fixed content and local deterministic dispatchers. It uses the same generation/verifier record selection as the inference check, including the explicit v2 verifier and generation-only pin. It exercises the configured eligibility filter, ranking, generation authorization, independent verification authorization, provider-neutral dispatch contract, strict candidate and verifier output admission, terminal attempt records, cost reconciliation, output lineage, and independence receipt. It has a five-second bound and is constructed without a publisher, source writer, validation process, network client, or credential resolver. It cannot publish, mutate source, invoke dynamic validation, or contact a configured model endpoint. A changed or missing policy file produces a blocked or unavailable receipt instead of reusing older evidence.
 
 ## Signed offline bundle validation
 

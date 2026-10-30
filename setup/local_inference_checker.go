@@ -146,7 +146,7 @@ func executeSetupLocalInference(ctx context.Context, plan Plan, inventory runtim
 	if err != nil {
 		return "", err
 	}
-	candidateAuthorization, err := authorizeSetupRoute(scope, candidateRequest, inventory, policy, inventory.Candidates(), probeRequirements, probeBudget)
+	candidateAuthorization, err := authorizeSetupRoute(scope, candidateRequest, inventory, policy, policy.Ranking(), inventory.Candidates(), probeRequirements, probeBudget)
 	if err != nil {
 		return "", err
 	}
@@ -162,17 +162,11 @@ func executeSetupLocalInference(ctx context.Context, plan Plan, inventory runtim
 	if err != nil {
 		return "", err
 	}
-	independent := make([]gateway.ObservedRouteCandidate, 0)
-	for _, candidate := range inventory.Candidates() {
-		if gateway.VerifyIndependentRouteCandidate(policy.Independence(), candidateAuthorization, candidate) == nil {
-			independent = append(independent, candidate)
-		}
-	}
 	verificationRequest, err := provider.NewRequest(provider.CapabilityReviewV1, "application/json", []byte(`{"contract":"open-trestle/setup-local-inference-probe","schema_version":1,"task":"independent_verification","instruction":"Return only this exact JSON object with no markdown or extra fields.","required_output":{"schema_version":1,"verdicts":[]}}`))
 	if err != nil {
 		return "", err
 	}
-	verificationAuthorization, err := authorizeSetupRoute(scope, verificationRequest, inventory, policy, independent, probeRequirements, probeBudget)
+	verificationAuthorization, err := authorizeSetupVerification(scope, verificationRequest, inventory, policy, candidateAuthorization, probeRequirements, probeBudget)
 	if err != nil {
 		return "", err
 	}

@@ -181,17 +181,11 @@ func executeSetupDryRun(ctx context.Context, plan Plan, inventory runtimeconfig.
 	if err != nil {
 		return "", err
 	}
-	independent := make([]gateway.ObservedRouteCandidate, 0)
-	for _, candidate := range inventory.Candidates() {
-		if gateway.VerifyIndependentRouteCandidate(policy.Independence(), generationAuthorization, candidate) == nil {
-			independent = append(independent, candidate)
-		}
-	}
 	verificationRequest, err := provider.NewRequest(provider.CapabilityReviewV1, "application/json", []byte(`{"contract":"open-trestle/setup-dry-run","task":"independent_verification"}`))
 	if err != nil {
 		return "", err
 	}
-	verificationAuthorization, err := authorizeSetupDryRun(scope, verificationRequest, inventory, policy, independent)
+	verificationAuthorization, err := authorizeSetupVerification(scope, verificationRequest, inventory, policy, generationAuthorization, policy.Requirements(), policy.Budget())
 	if err != nil {
 		return "", err
 	}
@@ -216,9 +210,26 @@ func executeSetupDryRun(ctx context.Context, plan Plan, inventory runtimeconfig.
 	return dryRunIdentity("execution", plan.RootIdentity(), inventory.Identity(), policy.Identity(), generation.Identity(), candidates.Identity(), verification.Identity(), verdicts.Identity(), independence.Identity(), "publication_attempts:0", "source_mutations:0", "dynamic_validation_attempts:0"), nil
 }
 func authorizeSetupDryRun(scope audit.ReviewScope, request provider.Request, inventory runtimeconfig.RouteInventory, policy runtimeconfig.RuntimePolicy, candidates []gateway.ObservedRouteCandidate) (gateway.RouteAttemptAuthorization, error) {
-	return authorizeSetupRoute(scope, request, inventory, policy, candidates, policy.Requirements(), policy.Budget())
+	return authorizeSetupRoute(scope, request, inventory, policy, policy.Ranking(), candidates, policy.Requirements(), policy.Budget())
 }
-func authorizeSetupRoute(scope audit.ReviewScope, request provider.Request, inventory runtimeconfig.RouteInventory, policy runtimeconfig.RuntimePolicy, candidates []gateway.ObservedRouteCandidate, requirements provider.ModelRequirements, budget provider.ModelCostBudget) (gateway.RouteAttemptAuthorization, error) {
+func authorizeSetupVerification(scope audit.ReviewScope, request provider.Request, inventory runtimeconfig.RouteInventory, policy runtimeconfig.RuntimePolicy, generation gateway.RouteAttemptAuthorization, requirements provider.ModelRequirements, budget provider.ModelCostBudget) (gateway.RouteAttemptAuthorization, error) {
+	independent := make([]gateway.ObservedRouteCandidate, 0)
+	verificationID := policy.VerificationRouteRecordIdentity()
+	for _, candidate := range inventory.Candidates() {
+		if verificationID != "" && candidate.ResolvedRecord().RouteRegistryRecord().Identity() != verificationID {
+			continue
+		}
+		if gateway.VerifyIndependentRouteCandidate(policy.Independence(), generation, candidate) == nil {
+			independent = append(independent, candidate)
+		}
+	}
+	ranking, err := gateway.NewRouteRankingPolicy(policy.Ranking().PreferredRoutes())
+	if err != nil {
+		return gateway.RouteAttemptAuthorization{}, err
+	}
+	return authorizeSetupRoute(scope, request, inventory, policy, ranking, independent, requirements, budget)
+}
+func authorizeSetupRoute(scope audit.ReviewScope, request provider.Request, inventory runtimeconfig.RouteInventory, policy runtimeconfig.RuntimePolicy, rankingPolicy gateway.RouteRankingPolicy, candidates []gateway.ObservedRouteCandidate, requirements provider.ModelRequirements, budget provider.ModelCostBudget) (gateway.RouteAttemptAuthorization, error) {
 	routing, err := gateway.NewReviewRoutingInput(scope, request, requirements, policy.Constraints())
 	if err != nil {
 		return gateway.RouteAttemptAuthorization{}, err
@@ -237,7 +248,7 @@ func authorizeSetupRoute(scope audit.ReviewScope, request provider.Request, inve
 			observations = append(observations, observation)
 		}
 	}
-	ranking, err := gateway.RankEligibleRoutes(eligibility, policy.Ranking(), inventory.PerformanceRevision(), observations)
+	ranking, err := gateway.RankEligibleRoutes(eligibility, rankingPolicy, inventory.PerformanceRevision(), observations)
 	if err != nil {
 		return gateway.RouteAttemptAuthorization{}, err
 	}

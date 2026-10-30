@@ -287,6 +287,74 @@ func TestSetupPolicyCheckIsOfflineAndReceiptDriven(t *testing.T) {
 		t.Fatal("policy details persisted")
 	}
 }
+func TestSetupBoundV2PolicyCompletesOfflineDryRun(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	inventoryPath, templatePath, _, _, _ := setupPolicyCLIPaths(t, root, "local")
+	var stdout, stderr bytes.Buffer
+	if code := runConfig([]string{"bind", "--route-inventory", inventoryPath, "--runtime-policy-template", templatePath, "--generation-adapter", "adapter-a", "--verification-adapter", "adapter-b"}, &stdout, &stderr); code != 0 || stderr.Len() != 0 {
+		t.Fatalf("bind=(%d,%q,%q)", code, stdout.String(), stderr.String())
+	}
+	var bound struct {
+		SchemaVersion                   int    `json:"schema_version"`
+		PinnedRouteRecordIdentity       string `json:"pinned_route_record_identity"`
+		VerificationRouteRecordIdentity string `json:"verification_route_record_identity"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &bound); err != nil || bound.SchemaVersion != 2 {
+		t.Fatalf("bound policy version=%d err=%v", bound.SchemaVersion, err)
+	}
+	policyPath := filepath.Join(root, "bound-policy.json")
+	if err := os.WriteFile(policyPath, stdout.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	inventory, policy, err := runtimeconfig.LoadProtectedConfiguration(context.Background(), inventoryPath, policyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	records := map[string]string{}
+	for _, candidate := range inventory.Candidates() {
+		record := candidate.ResolvedRecord().RouteRegistryRecord()
+		records[record.RouteCandidateDeclaration().RouteCapabilityDeclaration().RouteReference().AdapterID()] = record.Identity()
+	}
+	pin, pinned := policy.Ranking().PinnedRoute()
+	if !pinned || pin.AdapterID() != "adapter-a" || bound.PinnedRouteRecordIdentity != records["adapter-a"] || policy.VerificationRouteRecordIdentity() != records["adapter-b"] || bound.VerificationRouteRecordIdentity != records["adapter-b"] {
+		t.Fatal("binder did not preserve the exact generation/verifier pair")
+	}
+	state := filepath.Join(root, "plan.json")
+	stdout.Reset()
+	stderr.Reset()
+	if code := runSetupWithClock([]string{"init", "--profile", "local_single_node", "--tenant", "tenant-a", "--repository", "repo-a", "--recovery-owner", "owner", "--state", state}, &stdout, &stderr, fixedSetupClock{setupTimeCLI()}); code != 0 || stderr.Len() != 0 {
+		t.Fatalf("init=(%d,%q,%q)", code, stdout.String(), stderr.String())
+	}
+	args := []string{"check", "policy", "--state", state, "--route-inventory", inventoryPath, "--runtime-policy", policyPath, "--approve-inventory-identity", inventory.Identity(), "--approve-runtime-policy-identity", policy.Identity(), "--approve-review-policy-identity", policy.ReviewPolicyIdentity(), "--approved-by", "owner"}
+	for index, check := range []struct {
+		command string
+		key     setupcore.CheckKey
+	}{{"policy", setupcore.CheckPolicyValidated}, {"dry-run", setupcore.CheckDryRunValidated}} {
+		args[1] = check.command
+		stdout.Reset()
+		stderr.Reset()
+		code := runSetupWithClock(args, &stdout, &stderr, fixedSetupClock{setupTimeCLI().Add(time.Duration(index+1) * time.Second)})
+		receipt, err := setupcore.DecodeCheckReceipt(bytes.TrimSpace(stdout.Bytes()))
+		if code != 0 || stderr.Len() != 0 || err != nil || receipt.Key() != check.key || receipt.State() != setupcore.CheckPassed {
+			t.Fatalf("%s=(%d,%q,%q) receipt=%v", check.command, code, stdout.String(), stderr.String(), err)
+		}
+	}
+	plan, err := setupcore.InspectStateFile(context.Background(), state)
+	if err != nil || plan.Revision() != 3 || len(plan.Receipts()) != 2 {
+		t.Fatalf("bound v2 receipt chain revision=%d err=%v", plan.Revision(), err)
+	}
+	encoded, err := setupcore.EncodePlan(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encoded, []byte("127.0.0.1")) || bytes.Contains(encoded, []byte("OPEN_TRESTLE_PROVIDER")) {
+		t.Fatal("policy details persisted")
+	}
+}
+
 func TestSetupPolicyCheckPersistsUnavailableOutcome(t *testing.T) {
 	root := t.TempDir()
 	_ = os.Chmod(root, 0o700)
