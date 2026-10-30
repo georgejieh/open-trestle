@@ -86,8 +86,23 @@ The stdlib-only builder emits an executable Python zip application plus a detach
 SHA-256 file. Every member uses `ZIP_STORED`, fixed Unix metadata and a fixed timestamp.
 The canonical manifest binds each install path, source identity, mode, size, digest and
 ELF role. The input inventory is exact: `trestle`, `trestled`, the scanner launcher and
-worker, project LICENSE and NOTICE, all reviewed runtime license files, and the three
-scanner release-evidence files. The CA bundle, empty data directory, source, tests,
+worker, the manual model-catalog wrapper, project LICENSE and NOTICE, all reviewed
+runtime license files, and the three scanner release-evidence files. Manifest version 2
+requires `scripts/model_catalog.py` as non-executable mode `0444` data, installed at
+`/usr/local/share/open-trestle/scripts/model_catalog.py`. Invoke it with Python:
+
+```sh
+python3 /usr/local/share/open-trestle/scripts/model_catalog.py \
+  --trestle /usr/local/bin/trestle refresh \
+  --sources /private/model-sources.json --current /private/model-catalog.json \
+  --proposal /private/model-proposal.json
+```
+
+The wrapper delegates to the explicit installed CLI and does not download or run models.
+The current lifecycle validator still accepts exact manifest-version-1 archives without
+the wrapper, so a new candidate can validate and restore its older predecessor. Use the
+new candidate for upgrade; an older embedded lifecycle cannot parse version 2. Receipt,
+transaction and smoke schemas are unchanged. The CA bundle, empty data directory, source, tests,
 private references and build tools are not included. Unexpected, missing, symlinked,
 wrong-mode, changing, non-amd64 or dynamically linked inputs stop the build. Existing
 output or sidecar paths are never replaced. Build into a directory under the exclusive

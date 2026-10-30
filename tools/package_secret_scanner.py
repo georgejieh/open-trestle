@@ -646,7 +646,10 @@ def validate_staging(root: Path, expected_files: set[str]) -> tuple[str, ...]:
         path = PurePosixPath(relative)
         if forbidden_segments.intersection(part.lower() for part in path.parts):
             raise ValueError("source, test, private reference, or build tool in staging")
-        if path.suffix.lower() in forbidden_suffixes or path.name in {"go", "gcc", "make", "ld", "zig", "clang", "lld", "musl-gcc"}:
+        if relative == "scripts/model_catalog.py":
+            if stat.S_IMODE((root / relative).stat().st_mode) != 0o444:
+                raise ValueError("catalog script mode is not read-only")
+        elif path.suffix.lower() in forbidden_suffixes or path.name in {"go", "gcc", "make", "ld", "zig", "clang", "lld", "musl-gcc"}:
             raise ValueError("source, test, private reference, or build tool in staging")
     for relative in EXECUTABLE_PATHS:
         path = root / relative
@@ -791,6 +794,7 @@ def _copy_file(source: Path, destination: Path, mode: int = 0o444) -> None:
 def _expected_staging_files(repository: Path) -> set[str]:
     files = {
         "ca-certificates.crt", "LICENSE", "NOTICE", "trestle", "trestled",
+        "scripts/model_catalog.py",
         "libexec/open-trestle/open-trestle-secret-scanner",
         "libexec/open-trestle/open-trestle-secret-scanner-worker",
         "release/secret-scanner-release.json",
@@ -868,6 +872,7 @@ def package(repository: Path, output: Path) -> None:
         _copy_file(Path("/etc/ssl/certs/ca-certificates.crt").resolve(), output / "ca-certificates.crt")
         _copy_file(repository / "LICENSE", output / "LICENSE")
         _copy_file(repository / "NOTICE", output / "NOTICE")
+        _copy_file(repository / "tools/model_catalog.py", output / "scripts/model_catalog.py")
         shutil.copytree(repository / "THIRD_PARTY_LICENSES", output / "licenses")
         for path in (output / "licenses").rglob("*"):
             if path.is_file():

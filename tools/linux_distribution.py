@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 FIXED_ZIP_TIME = (1980, 1, 1, 0, 0, 0)
 SHEBANG = b"#!/usr/bin/env python3\n"
 RELEASE_FILES = frozenset(
@@ -50,6 +50,7 @@ EXPECTED_ROOT = frozenset(
         "libexec",
         "licenses",
         "release",
+        "scripts",
         "trestle",
         "trestled",
     }
@@ -259,10 +260,12 @@ def _collect_payload(staging: Path) -> tuple[Payload, ...]:
             raise ValueError("staging libexec inventory is invalid")
         if {path for path in files if path.startswith("release/")} != RELEASE_FILES:
             raise ValueError("staging release evidence inventory is invalid")
+        if {path for path in files if path.startswith("scripts/")} != {"scripts/model_catalog.py"}:
+            raise ValueError("staging script inventory is invalid")
         license_files = sorted(path for path in files if path.startswith("licenses/"))
         if not license_files:
             raise ValueError("staging license inventory is empty")
-        expected_files = set(EXECUTABLES) | {"LICENSE", "NOTICE", "ca-certificates.crt"} | RELEASE_FILES | set(license_files)
+        expected_files = set(EXECUTABLES) | {"LICENSE", "NOTICE", "ca-certificates.crt", "scripts/model_catalog.py"} | RELEASE_FILES | set(license_files)
         if files != expected_files:
             raise ValueError("staging file inventory is invalid")
         payload: list[Payload] = []
@@ -270,7 +273,7 @@ def _collect_payload(staging: Path) -> tuple[Payload, ...]:
             body = _read_stable(staging / source, 0o555, source, root_descriptor, file_statuses[source])
             _validate_elf(body, source, elf_type)
             payload.append(Payload(source, target, 0o555, len(body), hashlib.sha256(body).hexdigest(), True, body))
-        document_sources = ["LICENSE", "NOTICE", *license_files, *sorted(RELEASE_FILES)]
+        document_sources = ["LICENSE", "NOTICE", "scripts/model_catalog.py", *license_files, *sorted(RELEASE_FILES)]
         for source in document_sources:
             body = _read_stable(staging / source, 0o444, source, root_descriptor, file_statuses[source])
             if source == "LICENSE" or source == "NOTICE":

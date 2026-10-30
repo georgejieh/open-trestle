@@ -329,6 +329,7 @@ func testPackagedLocalFullReview(t *testing.T, modelWorkers, development bool) {
 	for _, name := range []string{"trestle", "trestled"} {
 		copyFile(filepath.Join(build, name), filepath.Join(stage, name), 0555)
 	}
+	copyFile("../../tools/model_catalog.py", filepath.Join(stage, "scripts/model_catalog.py"), 0444)
 	if e := os.Mkdir(filepath.Join(stage, "data"), 0755); e != nil {
 		t.Fatal(e)
 	}

@@ -154,6 +154,25 @@ class PackageInventoryTest(unittest.TestCase):
             self.assertEqual(set(inventory), expected)
             self.assertTrue(all(not path.endswith((".go", ".c", ".py")) for path in inventory))
 
+    def test_catalog_wrapper_is_the_only_admitted_script(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            expected = self._make_staging(root)
+            script = root / "scripts/model_catalog.py"
+            script.parent.mkdir()
+            script.write_bytes(Path(package_secret_scanner.__file__).with_name("model_catalog.py").read_bytes())
+            script.chmod(0o444)
+            expected.add("scripts/model_catalog.py")
+            self.assertIn("scripts/model_catalog.py", package_secret_scanner.validate_staging(root, expected))
+            script.chmod(0o644)
+            with self.assertRaisesRegex(ValueError, "script mode"):
+                package_secret_scanner.validate_staging(root, expected)
+            script.chmod(0o444)
+            other = root / "scripts/other.py"
+            other.write_text("private script")
+            with self.assertRaises(ValueError):
+                package_secret_scanner.validate_staging(root, expected | {"scripts/other.py"})
+
     def test_source_tests_private_references_and_build_tools_are_rejected(self):
         forbidden = (
             "workers/secret-scanner/launcher/launcher.c",

@@ -21,6 +21,7 @@ from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Callable
 
 SCHEMA_VERSION = 1
+MANIFEST_SCHEMA_VERSION = 2
 CONTROL_SCHEMA_VERSION = 3
 TRANSACTION_SCHEMA_VERSION = 1
 TARGET = "linux-amd64"
@@ -503,7 +504,7 @@ def _validate_sidecar(archive_path: Path, sidecar_path: Path, digest: str) -> No
 def _manifest_files(document: object) -> tuple[InstalledFile, ...]:
     if not isinstance(document, dict) or set(document) != {"schema_version", "name", "version", "target", "revision", "created", "files"}:
         raise ValueError("manifest fields are invalid")
-    if document["schema_version"] != SCHEMA_VERSION or document["name"] != "open-trestle":
+    if document["schema_version"] not in {1, MANIFEST_SCHEMA_VERSION} or document["name"] != "open-trestle":
         raise ValueError("manifest identity is invalid")
     if document["target"] != TARGET:
         raise ValueError("manifest target is invalid")
@@ -535,6 +536,8 @@ def _manifest_files(document: object) -> tuple[InstalledFile, ...]:
             expected_path = "usr/local/share/licenses/open-trestle/" + source_name
         elif source_name.startswith("licenses/"):
             expected_path = "usr/local/share/licenses/open-trestle/third-party/" + source_name.removeprefix("licenses/")
+        elif source_name == "scripts/model_catalog.py" and document["schema_version"] == MANIFEST_SCHEMA_VERSION:
+            expected_path = "usr/local/share/open-trestle/scripts/model_catalog.py"
         elif source_name in RELEASE_SOURCES:
             expected_path = "usr/local/share/open-trestle/" + source_name
         else:
@@ -563,6 +566,8 @@ def _manifest_files(document: object) -> tuple[InstalledFile, ...]:
         "usr/local/share/open-trestle/release/secret-scanner.spdx.json",
         "usr/local/share/open-trestle/release/vulnerability-scan.json",
     }
+    if document["schema_version"] == MANIFEST_SCHEMA_VERSION:
+        required_docs.add("usr/local/share/open-trestle/scripts/model_catalog.py")
     paths = {item.path for item in files}
     if not required_docs <= paths or not any(path.startswith("usr/local/share/licenses/open-trestle/third-party/") for path in paths):
         raise ValueError("manifest documentation inventory is incomplete")

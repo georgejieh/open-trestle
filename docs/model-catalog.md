@@ -93,6 +93,67 @@ numeric address. Private, loopback, and link-local remote addresses are refused.
 Redirects are never followed. Refresh sends GET only to the supplied metadata
 URLs, and does not discover other URLs in response metadata.
 
+## OpenCode Go and Ollama Cloud metadata examples
+
+These named services publish metadata endpoints compatible with the existing
+source kinds. The examples below select metadata sources only. They do not
+configure inference or establish route support, account entitlement, privacy
+approval or permission to send repository content.
+
+```json
+{
+  "schema_version": 1,
+  "sources": [
+    {
+      "id": "my-opencode-go-catalog",
+      "kind": "openai_models",
+      "url": "https://opencode.ai/inference/go/v1/models"
+    },
+    {
+      "id": "my-ollama-cloud-catalog",
+      "kind": "ollama_tags",
+      "url": "https://ollama.com/api/tags"
+    }
+  ]
+}
+```
+
+Save the manifest in an owned protected directory. Use the existing manual
+`trestle config models refresh` command with `--allow-remote` and a new proposal
+path. Review exact IDs, metadata, source failures and the two digests before
+running `trestle config models apply`. Apply does not fetch or activate anything.
+Source IDs above are examples; choose stable IDs for your configuration.
+
+Both documented endpoints returned public metadata without a key on October 30,
+2026. Schema version 1 never reads credentials. Do not put inference keys into
+these URLs or assume every metadata endpoint is permanently unauthenticated.
+If the service later documents authenticated discovery, review that contract and
+use the existing schema version 2 credential-reference mechanism where supported.
+Do not scrape login caches or add literal keys.
+
+OpenCode Go reads `data[].id` exactly, such as `glm-5.3-flash`. Do not prepend
+OpenCode's client configuration namespace `opencode-go/` to direct API IDs.
+Ollama Cloud reads `models[].name` exactly, such as `gemma4:31b`; do not replace it
+with the CLI alias `gemma4:cloud`. These are examples observed in metadata, not
+recommended defaults or model approvals. Model availability and aliases can move.
+
+Pricing, model limits, reasoning fields, capabilities and API base URLs remain
+untrusted observations. They cannot change connection authority, approve
+retention, download weights or enable inference. OpenCode Go privacy differs by
+model. Ollama on loopback can expose cloud-backed models; an address alone does
+not prove local execution. Named inference profiles need separate qualification.
+
+A 403 or malformed response is reported as `metadata_unavailable`, not an empty
+successful catalog. Previous successful entries are retained for that source;
+review `failures` even if refresh exits successfully. Do not infer that a failed
+metadata refresh means a model was removed or that a successful one allows use.
+
+Official documentation (retrieved October 30, 2026):
+
+- [OpenCode Go](https://opencode.ai/v2/docs/console/go), Models and API sections.
+- [Ollama Cloud](https://docs.ollama.com/cloud), direct API and model catalog.
+- [Ollama list models API](https://docs.ollama.com/api/tags).
+
 ## Review and apply
 
 Protect the manifest and its directory before running either command. Files and
@@ -158,8 +219,9 @@ keys, duplicate selectors, invalid selectors, malformed documents, and unexpecte
 shapes fail the affected source. No scheduler, route approval or activation hook
 is installed.
 
-The optional wrapper executes this same product command and does not build or
-fetch anything itself:
+The installed wrapper at `/usr/local/share/open-trestle/scripts/model_catalog.py`
+and the source-tree wrapper execute this same product command. Neither builds or
+fetches anything itself:
 
 ```sh
 python3 tools/model_catalog.py --trestle /opt/trestle/bin/trestle refresh \

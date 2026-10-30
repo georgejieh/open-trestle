@@ -51,6 +51,7 @@ def _staging(root: Path, marker: bytes = b"one") -> Path:
     )
     _write(staging / "LICENSE", b"project license\n", 0o444)
     _write(staging / "NOTICE", b"project notice\n", 0o444)
+    _write(staging / "scripts/model_catalog.py", Path(linux_distribution.__file__).with_name("model_catalog.py").read_bytes(), 0o444)
     _write(staging / "licenses/dependency/LICENSE", b"dependency license\n", 0o444)
     _write(staging / "release/secret-scanner-release.json", b"{}\n", 0o444)
     _write(staging / "release/secret-scanner.spdx.json", b"{}\n", 0o444)
@@ -203,6 +204,22 @@ class StagedTemporaryOwnershipTest(unittest.TestCase):
 
 
 class BuilderTest(unittest.TestCase):
+    def test_build_rejects_unknown_script_beside_model_catalog(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            staging = _staging(root)
+            _write(staging / "scripts/unknown.py", b"raise SystemExit(0)\n", 0o444)
+            output = root / "out.pyz"
+
+            with self.assertRaises(ValueError):
+                linux_distribution.build_distribution(
+                    staging, Path(linux_distribution_runtime.__file__), output,
+                    "0.1.0-dev", REVISION, CREATED,
+                )
+
+            self.assertFalse(output.exists())
+            self.assertFalse(Path(str(output) + ".sha256").exists())
+
     def test_build_is_byte_deterministic_stored_and_exact(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -438,6 +455,69 @@ class ArchiveVerificationTest(unittest.TestCase):
 
 
 class LifecycleTest(unittest.TestCase):
+    def test_installed_model_catalog_script_has_exact_bytes_help_and_owned_removal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            staging = _staging(root / "build")
+            wrapper = Path(linux_distribution.__file__).with_name("model_catalog.py").read_bytes()
+            archive = root / "candidate.pyz"
+            relative = "usr/local/share/open-trestle/scripts/model_catalog.py"
+            linux_distribution.build_distribution(
+                staging, Path(linux_distribution_runtime.__file__), archive,
+                "0.1.0-dev", REVISION, CREATED,
+            )
+            with zipfile.ZipFile(archive) as package:
+                manifest = json.loads(package.read("manifest.json"))
+                entry = next(item for item in manifest["files"] if item["source"] == "scripts/model_catalog.py")
+                self.assertEqual(entry, {
+                    "path": "payload/" + relative,
+                    "source": "scripts/model_catalog.py",
+                    "mode": 0o444,
+                    "size": len(wrapper),
+                    "sha256": hashlib.sha256(wrapper).hexdigest(),
+                    "elf": False,
+                })
+                self.assertEqual(package.read(entry["path"]), wrapper)
+
+            destdir = root / "root"
+            sentinel = destdir / "etc/open-trestle/config.json"
+            _write(sentinel, b"operator config\n", 0o600)
+            installed = _run(archive, "install", "--destdir", str(destdir))
+            self.assertEqual(installed.returncode, 0, installed.stderr)
+            script = destdir / relative
+            self.assertEqual(script.read_bytes(), wrapper)
+            self.assertEqual(stat.S_IMODE(script.stat().st_mode), 0o444)
+            verified = _run(archive, "verify-installed", "--destdir", str(destdir))
+            self.assertEqual(verified.returncode, 0, verified.stderr)
+
+            working = root / "without-source"
+            working.mkdir()
+            help_result = subprocess.run(
+                [sys.executable, "-I", str(script), "--help"],
+                cwd=working,
+                env={"HOME": str(working), "LANG": "C", "PATH": "/usr/bin:/bin", "TZ": "UTC"},
+                stdin=subprocess.DEVNULL,
+                text=True,
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+            self.assertEqual(help_result.returncode, 0, help_result.stderr)
+            self.assertIn("--trestle", help_result.stdout)
+            self.assertIn("refresh", help_result.stdout)
+            self.assertIn("apply", help_result.stdout)
+            self.assertEqual(help_result.stderr, "")
+
+            removed = _run(archive, "uninstall", "--destdir", str(destdir))
+            self.assertEqual(removed.returncode, 0, removed.stderr)
+            self.assertFalse(script.exists())
+            self.assertEqual(sentinel.read_bytes(), b"operator config\n")
+            self.assertEqual(stat.S_IMODE(sentinel.stat().st_mode), 0o600)
+            self.assertEqual(
+                {str(path.relative_to(destdir)) for path in destdir.rglob("*") if path.is_file()},
+                {"etc/open-trestle/config.json"},
+            )
+
     def test_empty_destdir_install_uninstall_removes_every_package_created_path(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -722,6 +802,41 @@ class LifecycleTest(unittest.TestCase):
         for version in ("1.0.0-01", "1.0.0-a..b", "01.0.0", ("1" * 256) + ".0.0"):
             with self.subTest(version=version), self.assertRaises(ValueError):
                 precedence(version)
+
+    def test_upgrade_from_scriptless_manifest_restores_exact_predecessor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first, _ = _build(root / "old", b"old", "0.1.0-dev")
+            with zipfile.ZipFile(first) as source:
+                manifest = json.loads(source.read("manifest.json"))
+                payload = tuple(
+                    linux_distribution.Payload(
+                        item["source"], item["path"].removeprefix("payload/"), item["mode"],
+                        item["size"], item["sha256"], item["elf"], source.read(item["path"]),
+                    ) for item in manifest["files"] if item["source"] != "scripts/model_catalog.py"
+                )
+                runtime = source.read("__main__.py")
+            manifest["schema_version"] = 1
+            manifest["files"] = [item for item in manifest["files"] if item["source"] != "scripts/model_catalog.py"]
+            first.chmod(0o644)
+            with first.open("w+b") as output:
+                linux_distribution._write_archive(output, runtime, linux_distribution._canonical_json(manifest), payload)
+            first.chmod(0o555)
+            sidecar = Path(str(first) + ".sha256")
+            sidecar.chmod(0o644)
+            sidecar.write_text(f"{hashlib.sha256(first.read_bytes()).hexdigest()}  {first.name}\n")
+            sidecar.chmod(0o444)
+            second, _ = _build(root / "new", b"new", "0.2.0-dev")
+            destdir = root / "installed"
+            destdir.mkdir()
+            linux_distribution_runtime.install(first, destdir)
+            script = destdir / "usr/local/share/open-trestle/scripts/model_catalog.py"
+            self.assertFalse(script.exists())
+            linux_distribution_runtime.upgrade(second, destdir)
+            self.assertEqual(script.read_bytes(), Path(linux_distribution.__file__).with_name("model_catalog.py").read_bytes())
+            linux_distribution_runtime.rollback_version(second, destdir)
+            self.assertFalse(script.exists())
+            self.assertEqual((destdir / "usr/local/bin/trestle").read_bytes(), _elf(b"trestle-old"))
 
     def test_embedded_upgrade_rollback_version_and_upgraded_uninstall_commands(self):
         with tempfile.TemporaryDirectory() as directory:
