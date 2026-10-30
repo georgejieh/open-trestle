@@ -13,6 +13,8 @@ var ErrInvalidRunFinalizer = errors.New("invalid review run finalizer")
 
 var errRunAlreadyTerminal = errors.New("review run already terminal")
 
+var errFinalizerObservationStale = errors.New("finalizer observation is stale")
+
 // RunFinalizer derives terminal disposition solely from the immutable plan and journal.
 type RunFinalizer struct {
 	journal     RunJournal
@@ -54,6 +56,13 @@ func (f *RunFinalizer) ReconcileRun(ctx context.Context, scope audit.ReviewScope
 				result = observed
 				return errRunAlreadyTerminal
 			}
+			if validRunMillis(at.UnixMilli()) && at.UnixMilli() < observed.LastOccurredAt().UnixMilli() {
+				result = observed
+				return errFinalizerObservationStale
+			}
+			if !transitionTimeAllowed(observed, at) {
+				return ErrRunTransitionSequenceMismatch
+			}
 			return nil
 		}, func(inner context.Context) error {
 			var operationErr error
@@ -66,7 +75,7 @@ func (f *RunFinalizer) ReconcileRun(ctx context.Context, scope audit.ReviewScope
 			}
 			return nil
 		})
-		if err == errRunAlreadyTerminal {
+		if err == errRunAlreadyTerminal || err == errFinalizerObservationStale {
 			return result, false, nil
 		}
 		return result, changed, err
