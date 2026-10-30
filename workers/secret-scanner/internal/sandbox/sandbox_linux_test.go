@@ -22,7 +22,7 @@ func TestInstallAppliesDenyRulesToPreexistingLockedThread(t *testing.T) {
 		runSeccompHelper()
 		return
 	}
-	command := exec.Command(os.Args[0], "-test.run=^TestInstallAppliesDenyRulesToPreexistingLockedThread$")
+	command := exec.Command(sandboxTestExecutable(t), "-test.run=^TestInstallAppliesDenyRulesToPreexistingLockedThread$")
 	command.Env = append(os.Environ(), sandboxHelperEnvironment+"=1")
 	output, err := command.CombinedOutput()
 	if err != nil {
@@ -122,7 +122,7 @@ func TestSilenceStandardErrorSuppressesUnrecoveredPanic(t *testing.T) {
 		go func() { panic("repository secret") }()
 		select {}
 	}
-	command := exec.Command(os.Args[0], "-test.run=^TestSilenceStandardErrorSuppressesUnrecoveredPanic$")
+	command := exec.Command(sandboxTestExecutable(t), "-test.run=^TestSilenceStandardErrorSuppressesUnrecoveredPanic$")
 	command.Env = append(os.Environ(), helperEnvironment+"=1")
 	output, err := command.CombinedOutput()
 	if err == nil {
