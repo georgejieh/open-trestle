@@ -1,0 +1,317 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:evaluation:adjudication-result:v1",
+  "title": "Open Trestle deterministic adjudication score v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "identity",
+    "scorer_identity",
+    "corpus_identity",
+    "truth_identity",
+    "evaluator_identity",
+    "adjudication_sha256",
+    "observed_sha256",
+    "observed_report_identity",
+    "provenance_status",
+    "acceptance_status",
+    "release_evidence_eligible",
+    "execution_status",
+    "targets",
+    "cases"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/evaluation-adjudication-result"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "scorer_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "corpus_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "truth_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "evaluator_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "adjudication_sha256": {
+      "$ref": "#/$defs/digest"
+    },
+    "observed_sha256": {
+      "$ref": "#/$defs/digest"
+    },
+    "observed_report_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "provenance_status": {
+      "const": "externally_asserted"
+    },
+    "acceptance_status": {
+      "const": "not_decided"
+    },
+    "release_evidence_eligible": {
+      "const": false
+    },
+    "execution_status": {
+      "enum": [
+        "matched",
+        "mismatch"
+      ]
+    },
+    "targets": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key",
+          "version",
+          "family",
+          "match_unit",
+          "case_count",
+          "expected_count",
+          "observed_count",
+          "true_positive_count",
+          "false_positive_count",
+          "false_negative_count",
+          "precision_numerator",
+          "precision_denominator",
+          "recall_numerator",
+          "recall_denominator",
+          "coverage_numerator",
+          "coverage_denominator",
+          "abstention_numerator",
+          "abstention_denominator",
+          "applicable_units",
+          "analyzed_units",
+          "abstained_units",
+          "unsupported_units",
+          "not_applicable_units",
+          "abstention_reasons"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._-]{0,63}$"
+          },
+          "version": {
+            "const": 1
+          },
+          "family": {
+            "enum": [
+              "finding_rule",
+              "structural_analyzer"
+            ]
+          },
+          "match_unit": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "case_count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4294967295
+          },
+          "expected_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "observed_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "true_positive_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "false_positive_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "false_negative_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "precision_numerator": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "precision_denominator": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "recall_numerator": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "recall_denominator": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "coverage_numerator": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "coverage_denominator": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "abstention_numerator": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "abstention_denominator": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "applicable_units": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "analyzed_units": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "abstained_units": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "unsupported_units": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "not_applicable_units": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "abstention_reasons": {
+            "type": "array",
+            "maxItems": 3,
+            "uniqueItems": true,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "reason",
+                "count"
+              ],
+              "properties": {
+                "reason": {
+                  "enum": [
+                    "parse_failure",
+                    "source_unavailable",
+                    "limit_exceeded"
+                  ]
+                },
+                "count": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 4294967295
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 48,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "target_key",
+          "expected_count",
+          "observed_count",
+          "true_positive_count",
+          "false_positive_count",
+          "false_negative_count",
+          "coverage_mismatch_count"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._-]{0,63}$"
+          },
+          "target_key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._-]{0,63}$"
+          },
+          "expected_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "observed_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "true_positive_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "false_positive_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "false_negative_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "coverage_mismatch_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    }
+  }
+}
