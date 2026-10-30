@@ -17,7 +17,9 @@ import (
 	"github.com/georgejieh/open-trestle/internal/review"
 )
 
-type ProviderConnection struct{ implementation, adapterID, endpoint, credentialEnvironment, credentialIdentity string }
+type ProviderConnection struct{ implementation, adapterID, endpoint, credentialEnvironment, credentialIdentity, credentialMode string }
+
+func (c ProviderConnection) CredentialMode() string { return c.credentialMode }
 
 func (c ProviderConnection) Implementation() string        { return c.implementation }
 func (c ProviderConnection) AdapterID() string             { return c.adapterID }
@@ -58,7 +60,7 @@ func (p RuntimePolicy) Validate() error {
 	}
 	seen := map[string]struct{}{}
 	for _, c := range p.connections {
-		if !validProviderImplementation(c.implementation) || p.schemaVersion == 1 && c.implementation != "openai_responses" || provider.ValidateAdapterID(c.adapterID) != nil || !validProviderConnectionEndpoint(c.endpoint) || !validCredentialEnvironment(c.credentialEnvironment) || c.credentialIdentity != credentialEnvironmentIdentity(c.credentialEnvironment) {
+		if !validProviderImplementation(c.implementation) || p.schemaVersion == 1 && c.implementation != "openai_responses" || provider.ValidateAdapterID(c.adapterID) != nil || !validProviderConnectionEndpoint(c.endpoint) || !validConnectionCredentials(c, p.schemaVersion) {
 			return ErrInvalidRouteInventory
 		}
 		if _, ok := seen[c.adapterID]; ok {
@@ -111,11 +113,19 @@ func (p RuntimePolicy) ValidateAgainstInventory(inventory RouteInventory) error 
 		}
 		locality, err := provider.ClassifyServiceEndpoint(connection.endpoint)
 		zoneMatches := namespace.zone == provider.ProviderZoneLocal && locality == provider.ServiceEndpointLoopback || namespace.zone == provider.ProviderZonePrivateRemote && locality == provider.ServiceEndpointRemote
-		if err != nil || !zoneMatches {
+		if err != nil || !zoneMatches || connection.credentialMode == "none" && namespace.zone != provider.ProviderZoneLocal {
 			return ErrInvalidRouteInventory
 		}
 	}
 	return nil
+}
+
+func validConnectionCredentials(c ProviderConnection, version int) bool {
+	if c.credentialMode == "none" {
+		locality, err := provider.ClassifyServiceEndpoint(c.endpoint)
+		return version == 2 && err == nil && locality == provider.ServiceEndpointLoopback && c.credentialEnvironment == "" && c.credentialIdentity == ""
+	}
+	return c.credentialMode == "bearer" && validCredentialEnvironment(c.credentialEnvironment) && c.credentialIdentity == credentialEnvironmentIdentity(c.credentialEnvironment)
 }
 
 func validProviderImplementation(value string) bool {
@@ -154,7 +164,8 @@ type providerConnectionWire struct {
 	Implementation        string `json:"implementation"`
 	AdapterID             string `json:"adapter_id"`
 	Endpoint              string `json:"endpoint"`
-	CredentialEnvironment string `json:"credential_environment"`
+	CredentialEnvironment string `json:"credential_environment,omitempty"`
+	CredentialMode        string `json:"credential_mode,omitempty"`
 }
 
 func DecodeRuntimePolicy(ctx context.Context, reader io.Reader, inventory RouteInventory) (RuntimePolicy, error) {
@@ -175,11 +186,37 @@ func DecodeRuntimePolicy(ctx context.Context, reader io.Reader, inventory RouteI
 			return RuntimePolicy{}, ErrInvalidRouteInventory
 		}
 	}
+	var rawConnections []map[string]json.RawMessage
+	if json.Unmarshal(fields["connections"], &rawConnections) != nil {
+		return RuntimePolicy{}, ErrInvalidRouteInventory
+	}
+	for _, connection := range rawConnections {
+		for key := range connection {
+			if strings.EqualFold(key, "credential_mode") && key != "credential_mode" || strings.EqualFold(key, "credential_environment") && key != "credential_environment" {
+				return RuntimePolicy{}, ErrInvalidRouteInventory
+			}
+		}
+		modeRaw, hasMode := connection["credential_mode"]
+		_, hasEnvironment := connection["credential_environment"]
+		if hasMode {
+			var mode string
+			if json.Unmarshal(modeRaw, &mode) != nil || (mode != "bearer" && mode != "none") || mode == "none" && hasEnvironment {
+				return RuntimePolicy{}, ErrInvalidRouteInventory
+			}
+		}
+	}
 	decoder := json.NewDecoder(bytes.NewReader(encoded))
 	decoder.DisallowUnknownFields()
 	var wire runtimePolicyWire
 	if decoder.Decode(&wire) != nil || decoder.Decode(&struct{}{}) != io.EOF || (wire.SchemaVersion != 1 && wire.SchemaVersion != 2) || (wire.SchemaVersion == 1 && hasVerificationGrant) || (wire.SchemaVersion == 2 && (wire.VerificationRouteRecordIdentity == nil || !nonzeroDigest(*wire.VerificationRouteRecordIdentity) || *wire.VerificationRouteRecordIdentity == wire.PinnedRouteRecordIdentity)) || wire.InventoryIdentity != inventory.Identity() || !nonzeroDigest(wire.ReviewPolicyIdentity) {
 		return RuntimePolicy{}, ErrInvalidRouteInventory
+	}
+	if wire.SchemaVersion == 1 {
+		for _, connection := range rawConnections {
+			if _, present := connection["credential_mode"]; present {
+				return RuntimePolicy{}, ErrInvalidRouteInventory
+			}
+		}
 	}
 	features := make([]provider.ModelFeature, len(wire.RequiredFeatures))
 	for i, v := range wire.RequiredFeatures {
@@ -266,7 +303,15 @@ func DecodeRuntimePolicy(ctx context.Context, reader io.Reader, inventory RouteI
 	}
 	connections := make([]ProviderConnection, len(wire.Connections))
 	for i, v := range wire.Connections {
-		connections[i] = ProviderConnection{v.Implementation, v.AdapterID, v.Endpoint, v.CredentialEnvironment, credentialEnvironmentIdentity(v.CredentialEnvironment)}
+		mode := v.CredentialMode
+		if mode == "" {
+			mode = "bearer"
+		}
+		identity := ""
+		if mode == "bearer" {
+			identity = credentialEnvironmentIdentity(v.CredentialEnvironment)
+		}
+		connections[i] = ProviderConnection{v.Implementation, v.AdapterID, v.Endpoint, v.CredentialEnvironment, identity, mode}
 	}
 	sort.Slice(connections, func(i, j int) bool { return connections[i].adapterID < connections[j].adapterID })
 	value := RuntimePolicy{schemaVersion: wire.SchemaVersion, verificationRouteRecordIdentity: verificationID, inventoryIdentity: inventory.Identity(), reviewPolicyIdentity: wire.ReviewPolicyIdentity, requirements: requirements, constraints: constraints, budget: budget, ranking: ranking, independence: independence, publication: publicationPolicy, connections: connections}
@@ -279,7 +324,11 @@ func DecodeRuntimePolicy(ctx context.Context, reader io.Reader, inventory RouteI
 func runtimePolicyIdentity(p RuntimePolicy) string {
 	connections := make([]providerConnectionWire, len(p.connections))
 	for i, c := range p.connections {
-		connections[i] = providerConnectionWire{c.implementation, c.adapterID, c.endpoint, c.credentialEnvironment}
+		mode := ""
+		if c.credentialMode == "none" {
+			mode = "none"
+		}
+		connections[i] = providerConnectionWire{Implementation: c.implementation, AdapterID: c.adapterID, Endpoint: c.endpoint, CredentialEnvironment: c.credentialEnvironment, CredentialMode: mode}
 	}
 	encoded, _ := json.Marshal(struct {
 		Contract                                                                                 string `json:"contract"`

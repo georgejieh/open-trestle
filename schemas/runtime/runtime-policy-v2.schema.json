@@ -162,12 +162,14 @@
         "required": [
           "implementation",
           "adapter_id",
-          "endpoint",
-          "credential_environment"
+          "endpoint"
         ],
         "properties": {
           "implementation": {
-            "enum": ["openai_responses", "openai_chat_completions"]
+            "enum": [
+              "openai_responses",
+              "openai_chat_completions"
+            ]
           },
           "adapter_id": {
             "type": "string",
@@ -228,8 +230,46 @@
             "minLength": 23,
             "maxLength": 128,
             "pattern": "^OPEN_TRESTLE_PROVIDER_[A-Z0-9_]+$"
+          },
+          "credential_mode": {
+            "type": "string",
+            "enum": [
+              "bearer",
+              "none"
+            ]
           }
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "credential_mode": {
+                  "const": "none"
+                }
+              },
+              "required": [
+                "credential_mode"
+              ]
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "credential_environment"
+                ]
+              },
+              "properties": {
+                "endpoint": {
+                  "pattern": "^https?://(?:127\\.[0-9]+\\.[0-9]+\\.[0-9]+|\\[::1\\])(?::|/|$)"
+                }
+              }
+            },
+            "else": {
+              "required": [
+                "credential_environment"
+              ]
+            }
+          }
+        ]
       }
     },
     "verification_route_record_identity": {

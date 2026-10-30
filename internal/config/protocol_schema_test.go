@@ -394,6 +394,13 @@ func TestRuntimePolicyV2SchemaExactVerifierGrant(t *testing.T) {
 			}
 			delete(implementation, "const")
 			implementation["enum"] = []any{"openai_responses", "openai_chat_completions"}
+			items["required"] = []any{"implementation", "adapter_id", "endpoint"}
+			fields["credential_mode"] = map[string]any{"type": "string", "enum": []any{"bearer", "none"}}
+			items["allOf"] = []any{map[string]any{
+				"if":   map[string]any{"properties": map[string]any{"credential_mode": map[string]any{"const": "none"}}, "required": []any{"credential_mode"}},
+				"then": map[string]any{"not": map[string]any{"required": []any{"credential_environment"}}, "properties": map[string]any{"endpoint": map[string]any{"pattern": `^https?://(?:127\.[0-9]+\.[0-9]+\.[0-9]+|\[::1\])(?::|/|$)`}}},
+				"else": map[string]any{"required": []any{"credential_environment"}},
+			}}
 			if !reflect.DeepEqual(expected, properties[key]) {
 				t.Fatal("v2 connection protocol contract changed")
 			}

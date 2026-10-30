@@ -93,8 +93,24 @@ func (p Protocol) valid() bool {
 	return p == ProtocolResponses || p == ProtocolChatCompletions
 }
 
+// CredentialMode selects bearer authentication or explicit local no-auth.
+type CredentialMode string
+
+const (
+	CredentialModeBearer CredentialMode = "bearer"
+	CredentialModeNone   CredentialMode = "none"
+)
+
+func validCredentialAuthority(mode CredentialMode, credentials APIKeyProvider, identity string, zone provider.ProviderZone, locality provider.ServiceEndpointLocality) bool {
+	if mode == CredentialModeNone {
+		return zone == provider.ProviderZoneLocal && locality == provider.ServiceEndpointLoopback && credentials == nil && identity == ""
+	}
+	return mode == CredentialModeBearer && !nilInterface(credentials) && validConfigurationIdentity(identity)
+}
+
 // Config binds one adapter instance to an exact approved route namespace.
 type Config struct {
+	CredentialMode     CredentialMode
 	Protocol           Protocol
 	AdapterID          string
 	ProviderID         string
@@ -110,6 +126,7 @@ type Config struct {
 
 // Adapter executes exact authorized requests against its configured protocol.
 type Adapter struct {
+	credentialMode        CredentialMode
 	protocol              Protocol
 	adapterID             string
 	providerID            string
@@ -133,6 +150,10 @@ func New(config Config) (*Adapter, error) {
 	if !protocol.valid() {
 		return nil, ErrInvalidConfig
 	}
+	mode := config.CredentialMode
+	if mode == "" {
+		mode = CredentialModeBearer
+	}
 	endpointValue := config.Endpoint
 	if endpointValue == "" {
 		endpointValue = defaultEndpoint
@@ -140,7 +161,7 @@ func New(config Config) (*Adapter, error) {
 	endpoint, err := provider.ParseServiceEndpoint(endpointValue)
 	locality, localityErr := provider.ClassifyServiceEndpoint(endpointValue)
 	zoneMatches := config.Zone == provider.ProviderZoneLocal && locality == provider.ServiceEndpointLoopback || config.Zone == provider.ProviderZonePrivateRemote && locality == provider.ServiceEndpointRemote
-	if err != nil || localityErr != nil || !zoneMatches || nilInterface(config.Credentials) || !validConfigurationIdentity(config.CredentialIdentity) {
+	if err != nil || localityErr != nil || !zoneMatches || !validCredentialAuthority(mode, config.Credentials, config.CredentialIdentity, config.Zone, locality) {
 		return nil, ErrInvalidConfig
 	}
 	if config.ContentLoggingMode.Validate() != nil {
@@ -172,6 +193,7 @@ func New(config Config) (*Adapter, error) {
 	endpointCopy := *endpoint
 	endpointCopy.Path = strings.TrimSuffix(endpointCopy.Path, "/")
 	adapter := &Adapter{
+		credentialMode:     mode,
 		protocol:           protocol,
 		adapterID:          strings.Clone(config.AdapterID),
 		providerID:         strings.Clone(config.ProviderID),
@@ -258,6 +280,15 @@ func deriveConfigurationIdentity(a *Adapter) string {
 		HTTPClient          string `json:"http_client"`
 		TimeoutMilliseconds int64  `json:"timeout_milliseconds"`
 	}{contract, version, a.adapterID, a.providerID, a.connectionID, a.zone.String(), a.contentLoggingMode.String(), a.endpoint.String(), a.credentialIdentity, a.httpClientIdentity, a.httpClient.Timeout.Milliseconds()})
+	if a.credentialMode == CredentialModeNone {
+		encoded, _ = json.Marshal(struct {
+			Contract       string          `json:"contract"`
+			Version        int             `json:"version"`
+			Configuration  json.RawMessage `json:"configuration"`
+			Protocol       Protocol        `json:"protocol"`
+			CredentialMode CredentialMode  `json:"credential_mode"`
+		}{"open-trestle/openai-no-auth-adapter", 1, encoded, a.protocol, a.credentialMode})
+	}
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }
@@ -296,13 +327,13 @@ func validConfigurationIdentity(identity string) bool {
 
 // Validate verifies the immutable adapter configuration.
 func (a *Adapter) Validate() error {
-	if a == nil || !a.protocol.valid() || a.endpoint == nil || a.httpClient == nil || nilInterface(a.credentials) || !validEndpoint(a.endpoint) || !validConfigurationIdentity(a.credentialIdentity) || !validConfigurationIdentity(a.httpClientIdentity) || a.configurationIdentity != deriveConfigurationIdentity(a) {
+	if a == nil || !a.protocol.valid() || a.endpoint == nil || a.httpClient == nil || !validEndpoint(a.endpoint) || !validConfigurationIdentity(a.httpClientIdentity) || a.configurationIdentity != deriveConfigurationIdentity(a) {
 		return ErrInvalidConfig
 	}
 	_, err := provider.NewRouteReference(a.zone, a.providerID, a.adapterID, a.connectionID, "model", "")
 	locality, localityErr := provider.ClassifyServiceEndpoint(a.endpoint.String())
 	zoneMatches := a.zone == provider.ProviderZoneLocal && locality == provider.ServiceEndpointLoopback || a.zone == provider.ProviderZonePrivateRemote && locality == provider.ServiceEndpointRemote
-	if err != nil || localityErr != nil || !zoneMatches || a.contentLoggingMode.Validate() != nil || a.httpClient.Timeout <= 0 || a.httpClient.Timeout > maximumRequestTimeout {
+	if err != nil || localityErr != nil || !zoneMatches || !validCredentialAuthority(a.credentialMode, a.credentials, a.credentialIdentity, a.zone, locality) || a.contentLoggingMode.Validate() != nil || a.httpClient.Timeout <= 0 || a.httpClient.Timeout > maximumRequestTimeout {
 		return ErrInvalidConfig
 	}
 	return nil
@@ -406,12 +437,15 @@ func (a *Adapter) executeWithSanitizedReceipt(
 	if err != nil {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
 	}
-	credentials, err := a.credentials.Retrieve(ctx)
-	if ctx.Err() != nil {
-		return failed(gateway.RouteFailureCancelled, gateway.RouteReplayNotDispatched, 0)
-	}
-	if err != nil || credentials.Validate() != nil {
-		return failed(gateway.RouteFailureAuthentication, gateway.RouteReplayNotDispatched, 0)
+	var credentials APIKey
+	if a.credentialMode == CredentialModeBearer {
+		credentials, err = a.credentials.Retrieve(ctx)
+		if ctx.Err() != nil {
+			return failed(gateway.RouteFailureCancelled, gateway.RouteReplayNotDispatched, 0)
+		}
+		if err != nil || credentials.Validate() != nil {
+			return failed(gateway.RouteFailureAuthentication, gateway.RouteReplayNotDispatched, 0)
+		}
 	}
 	request, err := a.newRequest(ctx, credentials, modelSelector(route), maxOutputTokens, instructions, payload)
 	if err != nil {
@@ -512,7 +546,9 @@ func (a *Adapter) newRequest(
 	if err != nil {
 		return nil, err
 	}
-	request.Header.Set("Authorization", "Bearer "+credentials.value)
+	if a.credentialMode == CredentialModeBearer {
+		request.Header.Set("Authorization", "Bearer "+credentials.value)
+	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
 	return request, nil

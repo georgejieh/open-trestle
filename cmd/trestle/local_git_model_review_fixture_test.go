@@ -93,6 +93,7 @@ type localModelCapture struct {
 }
 
 type localModelEndpoint struct {
+	noAuth          bool
 	chatCompletions bool
 	mu              sync.Mutex
 	calls           int
@@ -130,11 +131,16 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 	m.mu.Lock()
 	m.calls++
 	m.mu.Unlock()
+	expectedAuthorization := "Bearer " + localModelKey
+	if m.noAuth {
+		expectedAuthorization = ""
+	}
+	_, hasAuthorization := r.Header["Authorization"]
 	path := "/v1/responses"
 	if m.chatCompletions {
 		path = "/v1/chat/completions"
 	}
-	if r.Method != http.MethodPost || r.URL.Path != path || r.Header.Get("Authorization") != "Bearer "+localModelKey {
+	if r.Method != http.MethodPost || r.URL.Path != path || r.Header.Get("Authorization") != expectedAuthorization || m.noAuth && hasAuthorization {
 		t.Error("model transport lost endpoint, method, or test credential binding")
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
@@ -316,6 +322,7 @@ type localModelFixture struct {
 }
 
 type localModelFixtureOptions struct {
+	noAuth                                                bool
 	chatCompletions                                       bool
 	generationMode, verificationMode                      string
 	verifierPending, remote, expensive, capacity, partial bool
@@ -327,7 +334,7 @@ func newLocalModelFixture(t *testing.T, options localModelFixtureOptions) *local
 	endpoints := make([]string, 0, 2)
 	for i, mode := range []string{options.generationMode, options.verificationMode} {
 		name := []string{"a", "b"}[i]
-		endpoint := &localModelEndpoint{chatCompletions: options.chatCompletions, mode: mode, model: "model-" + name, entered: make(chan struct{}), canceled: make(chan struct{}), stop: make(chan struct{})}
+		endpoint := &localModelEndpoint{noAuth: options.noAuth, chatCompletions: options.chatCompletions, mode: mode, model: "model-" + name, entered: make(chan struct{}), canceled: make(chan struct{}), stop: make(chan struct{})}
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { endpoint.serve(t, w, r) }))
 		t.Cleanup(func() { close(endpoint.stop); server.Close() })
 		endpoints = append(endpoints, server.URL+"/v1")
@@ -337,8 +344,10 @@ func newLocalModelFixture(t *testing.T, options localModelFixtureOptions) *local
 			f.verification = endpoint
 		}
 	}
-	t.Setenv("OPEN_TRESTLE_PROVIDER_LOCAL_TEST_A", localModelKey)
-	t.Setenv("OPEN_TRESTLE_PROVIDER_LOCAL_TEST_B", localModelKey)
+	if !options.noAuth {
+		t.Setenv("OPEN_TRESTLE_PROVIDER_LOCAL_TEST_A", localModelKey)
+		t.Setenv("OPEN_TRESTLE_PROVIDER_LOCAL_TEST_B", localModelKey)
+	}
 	base := map[string][]byte{
 		"a.go":      []byte("package p\nfunc Changed(x int) int { if x == 0 { return 0 }; return 10 / x }\n// " + localModelSecret + "\n"),
 		"caller.go": []byte("package p\nfunc Consume() int { return Changed(0) }\n"),
@@ -410,7 +419,13 @@ func newLocalModelFixture(t *testing.T, options localModelFixtureOptions) *local
 			{"implementation": implementation, "adapter_id": "adapter-b", "endpoint": endpoints[1], "credential_environment": "OPEN_TRESTLE_PROVIDER_LOCAL_TEST_B"},
 		},
 	}
-	if options.chatCompletions {
+	if options.noAuth {
+		for _, connection := range policyDocument["connections"].([]map[string]string) {
+			connection["credential_mode"] = "none"
+			delete(connection, "credential_environment")
+		}
+	}
+	if options.chatCompletions || options.noAuth {
 		policyDocument["schema_version"] = 2
 		policyDocument["verification_route_record_identity"] = records["adapter-b"]
 	}
