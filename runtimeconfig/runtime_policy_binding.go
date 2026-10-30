@@ -67,6 +67,9 @@ func bindRuntimePolicy(ctx context.Context, inventory RouteInventory, template [
 	if decoder.Decode(&wire) != nil || decoder.Decode(&struct{}{}) != io.EOF || (wire.SchemaVersion != 1 && wire.SchemaVersion != 2) || (wire.SchemaVersion == 1 && wire.VerificationRouteRecordIdentity != nil) || !bindingMatches(wire.InventoryIdentity, inventory.Identity()) || !bindingMatches(wire.PinnedRouteRecordIdentity, generationID) || wire.VerificationRouteRecordIdentity != nil && !bindingMatches(*wire.VerificationRouteRecordIdentity, verificationID) {
 		return nil, ErrInvalidRouteInventory
 	}
+	if validatePolicyCredentialFields(template, wire.SchemaVersion) != nil {
+		return nil, ErrInvalidRouteInventory
+	}
 	wire.SchemaVersion = 2
 	wire.InventoryIdentity = inventory.Identity()
 	wire.PinnedRouteRecordIdentity = generationID

@@ -168,6 +168,40 @@ type providerConnectionWire struct {
 	CredentialMode        string `json:"credential_mode,omitempty"`
 }
 
+func validatePolicyCredentialFields(encoded []byte, schemaVersion int) error {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(encoded, &fields) != nil {
+		return ErrInvalidRouteInventory
+	}
+	var rawConnections []map[string]json.RawMessage
+	if json.Unmarshal(fields["connections"], &rawConnections) != nil {
+		return ErrInvalidRouteInventory
+	}
+	for _, connection := range rawConnections {
+		for key := range connection {
+			if strings.EqualFold(key, "credential_mode") && key != "credential_mode" || strings.EqualFold(key, "credential_environment") && key != "credential_environment" {
+				return ErrInvalidRouteInventory
+			}
+		}
+		modeRaw, hasMode := connection["credential_mode"]
+		_, hasEnvironment := connection["credential_environment"]
+		if hasMode {
+			var mode string
+			if json.Unmarshal(modeRaw, &mode) != nil || (mode != "bearer" && mode != "none") || mode == "none" && hasEnvironment {
+				return ErrInvalidRouteInventory
+			}
+		}
+	}
+	if schemaVersion == 1 {
+		for _, connection := range rawConnections {
+			if _, present := connection["credential_mode"]; present {
+				return ErrInvalidRouteInventory
+			}
+		}
+	}
+	return nil
+}
+
 func DecodeRuntimePolicy(ctx context.Context, reader io.Reader, inventory RouteInventory) (RuntimePolicy, error) {
 	if ctx == nil || ctx.Err() != nil || reader == nil || inventory.Validate() != nil {
 		return RuntimePolicy{}, ErrInvalidRouteInventory
@@ -186,37 +220,14 @@ func DecodeRuntimePolicy(ctx context.Context, reader io.Reader, inventory RouteI
 			return RuntimePolicy{}, ErrInvalidRouteInventory
 		}
 	}
-	var rawConnections []map[string]json.RawMessage
-	if json.Unmarshal(fields["connections"], &rawConnections) != nil {
-		return RuntimePolicy{}, ErrInvalidRouteInventory
-	}
-	for _, connection := range rawConnections {
-		for key := range connection {
-			if strings.EqualFold(key, "credential_mode") && key != "credential_mode" || strings.EqualFold(key, "credential_environment") && key != "credential_environment" {
-				return RuntimePolicy{}, ErrInvalidRouteInventory
-			}
-		}
-		modeRaw, hasMode := connection["credential_mode"]
-		_, hasEnvironment := connection["credential_environment"]
-		if hasMode {
-			var mode string
-			if json.Unmarshal(modeRaw, &mode) != nil || (mode != "bearer" && mode != "none") || mode == "none" && hasEnvironment {
-				return RuntimePolicy{}, ErrInvalidRouteInventory
-			}
-		}
-	}
 	decoder := json.NewDecoder(bytes.NewReader(encoded))
 	decoder.DisallowUnknownFields()
 	var wire runtimePolicyWire
 	if decoder.Decode(&wire) != nil || decoder.Decode(&struct{}{}) != io.EOF || (wire.SchemaVersion != 1 && wire.SchemaVersion != 2) || (wire.SchemaVersion == 1 && hasVerificationGrant) || (wire.SchemaVersion == 2 && (wire.VerificationRouteRecordIdentity == nil || !nonzeroDigest(*wire.VerificationRouteRecordIdentity) || *wire.VerificationRouteRecordIdentity == wire.PinnedRouteRecordIdentity)) || wire.InventoryIdentity != inventory.Identity() || !nonzeroDigest(wire.ReviewPolicyIdentity) {
 		return RuntimePolicy{}, ErrInvalidRouteInventory
 	}
-	if wire.SchemaVersion == 1 {
-		for _, connection := range rawConnections {
-			if _, present := connection["credential_mode"]; present {
-				return RuntimePolicy{}, ErrInvalidRouteInventory
-			}
-		}
+	if validatePolicyCredentialFields(encoded, wire.SchemaVersion) != nil {
+		return RuntimePolicy{}, ErrInvalidRouteInventory
 	}
 	features := make([]provider.ModelFeature, len(wire.RequiredFeatures))
 	for i, v := range wire.RequiredFeatures {
