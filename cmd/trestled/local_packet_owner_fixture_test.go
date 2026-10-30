@@ -61,6 +61,10 @@ type localPacketOwnerFixture struct {
 }
 
 func prepareLocalPacketOwnerFixture(t *testing.T) (localPacketOwnerFixture, controlplane.ReviewRunPlan, []controlplane.TaskHandler) {
+	return prepareLocalPacketOwnerFixtureWithUnselected(t, false)
+}
+
+func prepareLocalPacketOwnerFixtureWithUnselected(t *testing.T, unselected bool) (localPacketOwnerFixture, controlplane.ReviewRunPlan, []controlplane.TaskHandler) {
 	t.Helper()
 	ctx := context.Background()
 	root := t.TempDir()
@@ -71,8 +75,15 @@ func prepareLocalPacketOwnerFixture(t *testing.T) (localPacketOwnerFixture, cont
 	if err := os.MkdirAll(objects, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	base := daemonTestRevision(t, objects, []byte("package main\nfunc main() {}\n"))
-	head := daemonTestRevision(t, objects, []byte("package main\nimport \"fmt\"\nfunc main() { fmt.Println(\"debug\") }\n"))
+	makeRevision := daemonTestRevision
+	if unselected {
+		extra := daemonWriteLooseObject(t, objects, "blob", []byte("unselected immutable source witness\n"))
+		makeRevision = func(t *testing.T, objects string, source []byte) evidence.RevisionIdentity {
+			return singleBuildRevisionWithUnselected(t, objects, source, extra)
+		}
+	}
+	base := makeRevision(t, objects, []byte("package main\nfunc main() {}\n"))
+	head := makeRevision(t, objects, []byte("package main\nimport \"fmt\"\nfunc main() { fmt.Println(\"debug\") }\n"))
 	setupDirectory := filepath.Join(root, "setup")
 	if err := os.Mkdir(setupDirectory, 0o700); err != nil {
 		t.Fatal(err)
@@ -253,8 +264,12 @@ func prepareLocalPacketOwnerFixture(t *testing.T) (localPacketOwnerFixture, cont
 }
 
 func newLocalPacketOwnerFixture(t *testing.T) localPacketOwnerFixture {
+	return newLocalPacketOwnerFixtureWithUnselected(t, false)
+}
+
+func newLocalPacketOwnerFixtureWithUnselected(t *testing.T, unselected bool) localPacketOwnerFixture {
 	t.Helper()
-	f, plan, handlers := prepareLocalPacketOwnerFixture(t)
+	f, plan, handlers := prepareLocalPacketOwnerFixtureWithUnselected(t, unselected)
 	ctx := context.Background()
 	coordinator := f.coordinator
 	tasks := make([]controlplane.TaskDefinition, 0, 6)

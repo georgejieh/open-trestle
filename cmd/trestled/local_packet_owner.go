@@ -154,21 +154,13 @@ func (o *localPacketOwner) LoadPreparedPacketCandidate(ctx context.Context, requ
 		if value.Kind() != artifact.KindContextPacket || value.Protection() != artifact.ProtectionProcessPrivate || value.ExpiresAt().UnixMilli() != prepared.Descriptor().ExpiresAtMilliseconds {
 			return contexthandler.ErrPacketAuthority
 		}
-		if err := o.packetFence(ctx, coordinator, request, prepared, value); err != nil {
-			return err
+		candidate, fenceErr := o.packetFenceCandidate(ctx, coordinator, request, prepared, value)
+		if fenceErr != nil {
+			return fenceErr
 		}
-		_, state, resumeErr := coordinator.Resume(ctx, request.Plan().Scope())
-		if resumeErr != nil {
-			return errors.Join(contexthandler.ErrPacketAuthority, resumeErr)
-		}
-		candidate, buildErr := contexthandler.BuildPacketCandidate(ctx, o.store, request, state, o.clock, o.sourceRootDigest, o.clock.Now().UTC(), value.CreatedAt())
-		if buildErr != nil || !reflect.DeepEqual(candidate.Descriptor(), prepared.Descriptor()) {
-			return errors.Join(contexthandler.ErrPacketAuthority, buildErr)
-		}
-		encoded, encodeErr := artifact.Encode(candidate.Artifact())
-		stored, storedErr := artifact.Encode(value)
-		if encodeErr != nil || storedErr != nil || !bytes.Equal(encoded, stored) {
-			return errors.Join(contexthandler.ErrPacketAuthority, encodeErr, storedErr)
+		now = o.clock.Now().UTC()
+		if !ownerPacketTimeValid(ctx, request, now) || !now.Before(value.ExpiresAt()) {
+			return contexthandler.ErrPacketAuthority
 		}
 		result = candidate
 		return nil
@@ -201,31 +193,36 @@ func ownerPacketTimeValid(ctx context.Context, request controlplane.TaskExecutio
 }
 
 func (o *localPacketOwner) packetFence(ctx context.Context, coordinator *controlplane.Coordinator, request controlplane.TaskExecutionRequest, prepared controlplane.PreparedContextPacket, expected artifact.Artifact) error {
+	_, err := o.packetFenceCandidate(ctx, coordinator, request, prepared, expected)
+	return err
+}
+
+func (o *localPacketOwner) packetFenceCandidate(ctx context.Context, coordinator *controlplane.Coordinator, request controlplane.TaskExecutionRequest, prepared controlplane.PreparedContextPacket, expected artifact.Artifact) (contexthandler.PacketCandidate, error) {
 	now := o.clock.Now().UTC()
 	if !ownerPacketTimeValid(ctx, request, now) || !now.Before(expected.ExpiresAt()) {
-		return contexthandler.ErrPacketAuthority
+		return contexthandler.PacketCandidate{}, contexthandler.ErrPacketAuthority
 	}
 	plan, state, err := coordinator.Resume(ctx, request.Plan().Scope())
 	if err != nil || plan.Identity() != request.Plan().Identity() || state.Status() != controlplane.ReviewRunActive || state.HeadIdentity() != prepared.Identity() {
-		return errors.Join(contexthandler.ErrPacketAuthority, err)
+		return contexthandler.PacketCandidate{}, errors.Join(contexthandler.ErrPacketAuthority, err)
 	}
 	head, present, headErr := o.journal.Head(ctx, request.Plan().Scope())
 	if headErr != nil || !present || head.Identity() != prepared.Identity() || !reflect.DeepEqual(head.PacketDescriptor(), prepared.Descriptor()) {
-		return errors.Join(contexthandler.ErrPacketAuthority, headErr)
+		return contexthandler.PacketCandidate{}, errors.Join(contexthandler.ErrPacketAuthority, headErr)
 	}
 	runtime, found := state.Task(request.Task().Key())
 	current, hasPrepared := runtime.PreparedContextPacket()
 	if !found || !hasPrepared || current.Identity() != prepared.Identity() || !reflect.DeepEqual(current.Descriptor(), prepared.Descriptor()) {
-		return contexthandler.ErrPacketAuthority
+		return contexthandler.PacketCandidate{}, contexthandler.ErrPacketAuthority
 	}
 	candidate, buildErr := contexthandler.BuildPacketCandidate(ctx, o.store, request, state, o.clock, o.sourceRootDigest, now, expected.CreatedAt())
 	if buildErr != nil || !reflect.DeepEqual(candidate.Descriptor(), prepared.Descriptor()) {
-		return errors.Join(contexthandler.ErrPacketAuthority, buildErr)
+		return contexthandler.PacketCandidate{}, errors.Join(contexthandler.ErrPacketAuthority, buildErr)
 	}
 	want, wantErr := artifact.Encode(expected)
 	got, gotErr := artifact.Encode(candidate.Artifact())
 	if wantErr != nil || gotErr != nil || !bytes.Equal(want, got) {
-		return errors.Join(contexthandler.ErrPacketAuthority, wantErr, gotErr)
+		return contexthandler.PacketCandidate{}, errors.Join(contexthandler.ErrPacketAuthority, wantErr, gotErr)
 	}
-	return nil
+	return candidate, nil
 }
