@@ -75,4 +75,6 @@ func runConfig(args []string, stdout, stderr io.Writer) int {
 }
 func writeConfigUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "usage: trestle config validate --route-inventory PATH --runtime-policy PATH")
+	writeConfigBindUsage(writer)
+	writeConfigInventoryIdentityUsage(writer)
 }

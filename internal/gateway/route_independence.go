@@ -141,6 +141,27 @@ type RouteIndependenceReceipt struct {
 	secondRoute                 provider.RouteReference
 }
 
+// VerifyIndependentRouteRecords checks static separation without requiring runtime readiness or dispatch authority.
+func VerifyIndependentRouteRecords(policy RouteIndependencePolicy, first, second provider.RouteRegistryRecord) error {
+	if err := policy.Validate(); err != nil {
+		return err
+	}
+	if err := first.Validate(); err != nil {
+		return err
+	}
+	if err := second.Validate(); err != nil {
+		return err
+	}
+	if !routeAttemptsSatisfyIndependence(RouteIndependenceReceipt{
+		policy:              policy,
+		firstRecordIdentity: first.Identity(), firstRoute: first.RouteCandidateDeclaration().RouteCapabilityDeclaration().RouteReference(),
+		secondRecordIdentity: second.Identity(), secondRoute: second.RouteCandidateDeclaration().RouteCapabilityDeclaration().RouteReference(),
+	}) {
+		return ErrRouteAttemptsNotIndependent
+	}
+	return nil
+}
+
 // VerifyIndependentRouteCandidate rejects an insufficient verifier candidate before selection.
 func VerifyIndependentRouteCandidate(
 	policy RouteIndependencePolicy,

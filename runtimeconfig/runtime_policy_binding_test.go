@@ -26,6 +26,7 @@ func bindingInventoryDocument(t *testing.T) []byte {
 	second.AdapterID = "adapter-b"
 	second.ConnectionID = "connection-b"
 	second.ModelID = "model-b"
+	second.ProviderID = "provider-b"
 	wire.Routes = []routeDefinitionWire{first, second}
 	return bindingMarshal(t, wire)
 }
@@ -75,6 +76,44 @@ func bindingRecordIDs(inventory RouteInventory) map[string]string {
 		ids[reference.AdapterID()] = record.Identity()
 	}
 	return ids
+}
+
+func TestBindRuntimePolicyChecksStaticIndependence(t *testing.T) {
+	for _, level := range []string{"distinct_route", "distinct_model", "distinct_provider"} {
+		for _, separation := range []string{"route", "model", "version", "provider"} {
+			t.Run(level+"/"+separation, func(t *testing.T) {
+				var inventoryWire routeInventoryWire
+				if err := json.Unmarshal(bindingInventoryDocument(t), &inventoryWire); err != nil {
+					t.Fatal(err)
+				}
+				first := inventoryWire.Routes[0]
+				second := first
+				second.AdapterID = "adapter-b"
+				second.ConnectionID = "connection-b"
+				switch separation {
+				case "model":
+					second.ModelID = "model-b"
+				case "version":
+					second.ModelVersion = "version-b"
+				case "provider":
+					second.ProviderID = "provider-b"
+				}
+				inventoryWire.Routes = []routeDefinitionWire{first, second}
+				inventory := bindingInventory(t, bindingMarshal(t, inventoryWire))
+				var template runtimePolicyWire
+				if err := json.Unmarshal(bindingTemplate(t), &template); err != nil {
+					t.Fatal(err)
+				}
+				template.VerificationIndependence = level
+				template.PublicationMinimumIndependence = level
+				encoded, err := bindRuntimePolicy(context.Background(), inventory, bindingMarshal(t, template), "adapter-a", "adapter-b")
+				valid := level == "distinct_route" || level == "distinct_model" && separation != "route" || separation == "provider"
+				if valid && err != nil || !valid && (err == nil || encoded != nil) {
+					t.Fatalf("static independence valid=%v err=%v bytes=%d", valid, err, len(encoded))
+				}
+			})
+		}
+	}
 }
 
 func TestBindRuntimePolicyPreservesTemplateAndPendingInventory(t *testing.T) {

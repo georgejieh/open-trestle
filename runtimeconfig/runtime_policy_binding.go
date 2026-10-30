@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/georgejieh/open-trestle/internal/fileauthority"
+	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/provider"
 )
 
@@ -54,8 +55,9 @@ func bindRuntimePolicy(ctx context.Context, inventory RouteInventory, template [
 	if ctx == nil || ctx.Err() != nil || inventory.Validate() != nil || provider.ValidateAdapterID(generationAdapterID) != nil || provider.ValidateAdapterID(verificationAdapterID) != nil || generationAdapterID == verificationAdapterID || len(template) == 0 || len(template) >= 1<<20 || validateUniqueJSONKeys(template) != nil || !bindingDocumentHasNoNull(template) {
 		return nil, ErrInvalidRouteInventory
 	}
-	generationID, generationOK := uniqueLocalBindingRecord(inventory, generationAdapterID)
-	verificationID, verificationOK := uniqueLocalBindingRecord(inventory, verificationAdapterID)
+	generation, generationOK := uniqueLocalBindingRecord(inventory, generationAdapterID)
+	verification, verificationOK := uniqueLocalBindingRecord(inventory, verificationAdapterID)
+	generationID, verificationID := generation.Identity(), verification.Identity()
 	if !generationOK || !verificationOK || generationID == verificationID {
 		return nil, ErrInvalidRouteInventory
 	}
@@ -73,26 +75,27 @@ func bindRuntimePolicy(ctx context.Context, inventory RouteInventory, template [
 	if err != nil {
 		return nil, ErrInvalidRouteInventory
 	}
-	if _, err := DecodeRuntimePolicy(ctx, bytes.NewReader(encoded), inventory); err != nil || ctx.Err() != nil {
+	policy, err := DecodeRuntimePolicy(ctx, bytes.NewReader(encoded), inventory)
+	if err != nil || ctx.Err() != nil || gateway.VerifyIndependentRouteRecords(policy.Independence(), generation, verification) != nil {
 		return nil, ErrInvalidRouteInventory
 	}
 	return encoded, nil
 }
 
-func uniqueLocalBindingRecord(inventory RouteInventory, adapterID string) (string, bool) {
-	identity := ""
+func uniqueLocalBindingRecord(inventory RouteInventory, adapterID string) (provider.RouteRegistryRecord, bool) {
+	var selected provider.RouteRegistryRecord
 	for _, candidate := range inventory.Candidates() {
 		record := candidate.ResolvedRecord().RouteRegistryRecord()
 		reference := record.RouteCandidateDeclaration().RouteCapabilityDeclaration().RouteReference()
 		if reference.AdapterID() != adapterID {
 			continue
 		}
-		if identity != "" || reference.Zone() != provider.ProviderZoneLocal {
-			return "", false
+		if selected.Identity() != "" || reference.Zone() != provider.ProviderZoneLocal {
+			return provider.RouteRegistryRecord{}, false
 		}
-		identity = record.Identity()
+		selected = record
 	}
-	return identity, identity != ""
+	return selected, selected.Identity() != ""
 }
 
 func bindingMatches(value, expected string) bool {

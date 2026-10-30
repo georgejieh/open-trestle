@@ -36,7 +36,9 @@ func TestRunConfigBindEmitsCanonicalPolicyWithoutApprovingOrContactingRoutes(t *
 	defer server.Close()
 	t.Setenv("OPEN_TRESTLE_PROVIDER_BIND_A", "")
 	t.Setenv("OPEN_TRESTLE_PROVIDER_BIND_B", "")
-	inventoryBytes := configIdentityInventoryDocument(t, "local-model-generation", "local-model-verification")
+	inventoryBytes := bytes.Replace(configIdentityInventoryDocument(t, "local-model-generation", "local-model-verification"),
+		[]byte(`"provider_id":"openai","adapter_id":"openai-responses-2"`),
+		[]byte(`"provider_id":"verifier","adapter_id":"openai-responses-2"`), 1)
 	templateBytes := configBindTemplate(server.URL + "/v1")
 	inventoryPath := writeConfigIdentityProtectedFile(t, "routes.json", inventoryBytes, 0o600)
 	templatePath := writeConfigIdentityProtectedFile(t, "template.json", templateBytes, 0o600)
@@ -120,6 +122,7 @@ func TestRunConfigBindRefusesInvalidInputsWithoutStdoutOrContact(t *testing.T) {
 		generation   string
 		verification string
 	}{
+		"same provider":         {inventory, template, "openai-responses-1", "openai-responses-2"},
 		"same adapter":          {inventory, template, "openai-responses-1", "openai-responses-1"},
 		"missing generation":    {inventory, template, "absent", "openai-responses-2"},
 		"missing verification":  {inventory, template, "openai-responses-1", "absent"},

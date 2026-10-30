@@ -13,6 +13,18 @@ import (
 	"testing"
 )
 
+func TestConfigUsageListsSupportedOperations(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"config"}, &stdout, &stderr); code != 2 || stdout.Len() != 0 {
+		t.Fatalf("code=%d stdout=%q", code, stdout.String())
+	}
+	for _, operation := range []string{"config validate", "config bind", "config inventory-identity"} {
+		if !strings.Contains(stderr.String(), operation) {
+			t.Errorf("missing %q from help: %s", operation, stderr.String())
+		}
+	}
+}
+
 func TestRunConfigValidatesExactInventoryPolicyPair(t *testing.T) {
 	root := t.TempDir()
 	inventoryPath := filepath.Join(root, "inventory.json")
