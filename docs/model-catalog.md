@@ -41,12 +41,49 @@ privacy evidence, readiness, entitlement, or approval. A moving alias remains a
 moving alias; refresh does not resolve it to immutable weights or rebind any
 approved route. Stable identity is `(source_id, exact selector)`.
 
-Initial support is **unauthenticated public/local metadata only**. No credential
-files, environment variables, login caches, or API keys are read. No auth header
-is sent. URLs must not contain credentials, query strings, or fragments. An
-authenticated endpoint fails without discarding its previous entries. Authenticated
-refresh needs a separately reviewed environment-reference contract, not a secret
-command-line flag.
+Schema version 1 remains unauthenticated: it never reads a credential or sends
+an auth header. For a metadata endpoint that requires bearer authentication,
+use schema version 2 with an explicit environment reference:
+
+```json
+{
+  "schema_version": 2,
+  "sources": [
+    {
+      "id": "authenticated-metadata",
+      "kind": "openai_models",
+      "url": "https://openrouter.ai/api/v1/models",
+      "credential_environment": "OPEN_TRESTLE_PROVIDER_CATALOG"
+    }
+  ]
+}
+```
+
+Provision that variable through your secure credential interface before refresh.
+The manifest stores its name, never its value. Only `OPEN_TRESTLE_PROVIDER_`
+references using uppercase letters, digits and underscores are accepted. Literal
+keys, empty references, nulls and alternate field spellings are refused. Changing
+a source's credential reference requires a new source ID, like changing its URL.
+A version 2 source without the field remains unauthenticated. No login cache is read.
+
+Refresh validates the complete manifest and remote opt-in before resolving any
+credential. It retrieves a referenced key only for that source's bounded GET.
+A missing or header-unsafe key records `metadata_unavailable` without making an
+unauthenticated request. Redirects do not forward credentials. Apply reads no
+credentials and makes no requests. Proposals and catalogs retain only the reference.
+A version 2 manifest produces a version 2 catalog; the proposal envelope remains
+version 1. Existing version 1 catalogs and proposals keep their wire format.
+
+URLs must not contain credentials, query strings, or fragments. The endpoint is
+explicit operator authority, not a URL discovered in model metadata. Choose a
+reference dedicated to that endpoint. An authenticated numeric-loopback HTTP source
+sends the bearer in plaintext to whichever process listens on that port; verify
+that listener before refresh. A manifest cannot reuse one reference across distinct
+origins. Authenticated discovery does not prove
+retention, model eligibility, account privacy or permission to run inference.
+OpenRouter documents bearer authentication for its model catalog; check each
+service's current discovery contract before choosing a URL. This command does
+not turn an inference endpoint into a discovery API.
 
 Numeric loopback HTTP/HTTPS endpoints are accepted without remote permission.
 Hostnames such as `localhost` are not local authority. Other endpoints require

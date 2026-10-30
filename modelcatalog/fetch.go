@@ -13,7 +13,7 @@ import (
 )
 
 func validateSource(source Source, allowRemote bool) error {
-	if !sourceIDValid(source.ID) {
+	if !sourceIDValid(source.ID) || source.CredentialEnvironment != "" && !validCredentialReference(source.CredentialEnvironment) {
 		return ErrInvalid
 	}
 	endpoint, err := url.Parse(source.URL)
@@ -54,7 +54,7 @@ func publicAddress(ip netip.Addr) bool {
 	ip = ip.Unmap()
 	return ip.Zone() == "" && ip.IsGlobalUnicast() && !ip.IsPrivate() && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() && !netip.MustParsePrefix("100.64.0.0/10").Contains(ip)
 }
-func fetch(ctx context.Context, source Source) (Snapshot, error) {
+func fetchWithCredentials(ctx context.Context, source Source, resolver CredentialResolver) (Snapshot, error) {
 	requestCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	endpoint, _ := url.Parse(source.URL)
@@ -91,6 +91,19 @@ func fetch(ctx context.Context, source Source) (Snapshot, error) {
 	}
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("User-Agent", "open-trestle/modelcatalog")
+	if source.CredentialEnvironment != "" {
+		if resolver == nil {
+			return Snapshot{}, ErrInvalid
+		}
+		provider, err := resolver.ResolveOpenAICredentials(source.CredentialEnvironment)
+		if err != nil || provider == nil {
+			return Snapshot{}, ErrInvalid
+		}
+		key, err := provider.Retrieve(requestCtx)
+		if err != nil || key.Authorize(request) != nil {
+			return Snapshot{}, ErrInvalid
+		}
+	}
 	response, err := client.Do(request)
 	if err != nil {
 		return Snapshot{}, err
@@ -108,4 +121,16 @@ func fetch(ctx context.Context, source Source) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	return Snapshot{source, time.Now().UTC().Format(time.RFC3339Nano), Digest(data), models}, nil
+}
+
+func validCredentialReference(value string) bool {
+	if len(value) < 23 || len(value) > 128 || !strings.HasPrefix(value, "OPEN_TRESTLE_PROVIDER_") {
+		return false
+	}
+	for _, r := range value {
+		if r != '_' && (r < 'A' || r > 'Z') && (r < '0' || r > '9') {
+			return false
+		}
+	}
+	return true
 }

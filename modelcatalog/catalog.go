@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/url"
 	"reflect"
 	"sort"
 	"strconv"
@@ -16,6 +17,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/georgejieh/open-trestle/adapters/providers/openai"
 )
 
 const (
@@ -35,10 +38,37 @@ var (
 )
 
 type Source struct {
-	ID   string `json:"id"`
-	Kind string `json:"kind"`
-	URL  string `json:"url"`
+	ID                    string `json:"id"`
+	Kind                  string `json:"kind"`
+	URL                   string `json:"url"`
+	CredentialEnvironment string `json:"credential_environment,omitempty"`
 }
+
+func (s *Source) UnmarshalJSON(data []byte) error {
+	type sourceFields Source
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(data, &fields) != nil {
+		return ErrInvalid
+	}
+	for name := range fields {
+		if strings.EqualFold(name, "credential_environment") && name != "credential_environment" {
+			return ErrInvalid
+		}
+	}
+	if raw, present := fields["credential_environment"]; present {
+		var reference string
+		if json.Unmarshal(raw, &reference) != nil || !validCredentialReference(reference) {
+			return ErrInvalid
+		}
+	}
+	var value sourceFields
+	if decode(data, &value, true) != nil {
+		return ErrInvalid
+	}
+	*s = Source(value)
+	return nil
+}
+
 type Manifest struct {
 	SchemaVersion int      `json:"schema_version"`
 	Sources       []Source `json:"sources"`
@@ -278,25 +308,34 @@ func parseModels(kind string, data []byte) ([]Model, error) {
 	return models, nil
 }
 func validateManifest(manifest Manifest, allowRemote bool) error {
-	if manifest.SchemaVersion != 1 || manifest.Sources == nil || len(manifest.Sources) == 0 || len(manifest.Sources) > maxSources {
+	if (manifest.SchemaVersion != 1 && manifest.SchemaVersion != 2) || manifest.Sources == nil || len(manifest.Sources) == 0 || len(manifest.Sources) > maxSources {
 		return ErrInvalid
 	}
 	seen := map[string]bool{}
+	credentialOrigins := map[string]string{}
 	for _, source := range manifest.Sources {
-		if seen[source.ID] || validateSource(source, allowRemote) != nil {
+		if seen[source.ID] || validateSource(source, allowRemote) != nil || manifest.SchemaVersion == 1 && source.CredentialEnvironment != "" {
 			return ErrInvalid
+		}
+		if source.CredentialEnvironment != "" {
+			endpoint, _ := url.Parse(source.URL)
+			origin := endpoint.Scheme + "://" + endpoint.Host
+			if prior, found := credentialOrigins[source.CredentialEnvironment]; found && prior != origin {
+				return ErrInvalid
+			}
+			credentialOrigins[source.CredentialEnvironment] = origin
 		}
 		seen[source.ID] = true
 	}
 	return nil
 }
 func validateCatalog(catalog Catalog) error {
-	if catalog.SchemaVersion != 1 || catalog.Sources == nil || catalog.Failures == nil || len(catalog.Sources) > maxSources {
+	if (catalog.SchemaVersion != 1 && catalog.SchemaVersion != 2) || catalog.Sources == nil || catalog.Failures == nil || len(catalog.Sources) > maxSources {
 		return ErrInvalid
 	}
 	seen := map[string]bool{}
 	for _, snapshot := range catalog.Sources {
-		if validateSource(snapshot.Source, true) != nil || seen[snapshot.Source.ID] || snapshot.Models == nil || len(snapshot.Models) > maxModels {
+		if validateSource(snapshot.Source, true) != nil || catalog.SchemaVersion == 1 && snapshot.Source.CredentialEnvironment != "" || seen[snapshot.Source.ID] || snapshot.Models == nil || len(snapshot.Models) > maxModels {
 			return ErrInvalid
 		}
 		seen[snapshot.Source.ID] = true
@@ -405,6 +444,16 @@ func catalogDiff(before, after Catalog) Diff {
 
 // Refresh writes a new review proposal, never the current catalog.
 func Refresh(ctx context.Context, sourcesPath, currentPath, proposalPath string, allowRemote bool) (Review, error) {
+	return RefreshWithCredentials(ctx, sourcesPath, currentPath, proposalPath, allowRemote, nil)
+}
+
+// CredentialResolver binds a reference to a deferred credential provider.
+type CredentialResolver interface {
+	ResolveOpenAICredentials(string) (openai.APIKeyProvider, error)
+}
+
+// RefreshWithCredentials reads referenced credentials only for validated metadata requests.
+func RefreshWithCredentials(ctx context.Context, sourcesPath, currentPath, proposalPath string, allowRemote bool, resolver CredentialResolver) (Review, error) {
 	if ctx == nil || ctx.Err() != nil {
 		return Review{}, ErrInvalid
 	}
@@ -427,7 +476,7 @@ func Refresh(ctx context.Context, sourcesPath, currentPath, proposalPath string,
 	for _, snapshot := range current.Sources {
 		previous[snapshot.Source.ID] = snapshot
 	}
-	next := Catalog{SchemaVersion: 1, Sources: []Snapshot{}, Failures: []Failure{}}
+	next := Catalog{SchemaVersion: manifest.SchemaVersion, Sources: []Snapshot{}, Failures: []Failure{}}
 	for _, source := range manifest.Sources {
 		if old, ok := previous[source.ID]; ok && old.Source != source {
 			return Review{}, ErrInvalid
@@ -436,7 +485,7 @@ func Refresh(ctx context.Context, sourcesPath, currentPath, proposalPath string,
 	bounded, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	for _, source := range manifest.Sources {
-		snapshot, fetchErr := fetch(bounded, source)
+		snapshot, fetchErr := fetchWithCredentials(bounded, source, resolver)
 		if fetchErr != nil {
 			snapshot = Snapshot{Source: source, Models: []Model{}}
 			if old, ok := previous[source.ID]; ok {

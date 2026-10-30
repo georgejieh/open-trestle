@@ -70,6 +70,15 @@ func (k APIKey) Validate() error {
 	return nil
 }
 
+// Authorize sets a validated bearer credential on a caller-authorized request.
+func (k APIKey) Authorize(request *http.Request) error {
+	if request == nil || k.Validate() != nil {
+		return ErrInvalidAPIKey
+	}
+	request.Header.Set("Authorization", "Bearer "+k.value)
+	return nil
+}
+
 func (k APIKey) String() string   { return "OpenAI API key" }
 func (k APIKey) GoString() string { return "openai.APIKey{<redacted>}" }
 func (k APIKey) Format(state fmt.State, verb rune) {
