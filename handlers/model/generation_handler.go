@@ -113,6 +113,16 @@ func deriveGenerationHandlerIdentity(catalogIdentity string, expected review.Sca
 	if err != nil {
 		return ""
 	}
+	if requiresSanitized {
+		encoded, err = json.Marshal(struct {
+			Contract string          `json:"contract"`
+			Version  int             `json:"version"`
+			Handler  json.RawMessage `json:"handler"`
+		}{"open-trestle/repository-scoped-generation-handler", 1, encoded})
+		if err != nil {
+			return ""
+		}
+	}
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }
@@ -193,6 +203,10 @@ func (h *GenerationHandler) Execute(ctx context.Context, task controlplane.TaskE
 			return generationFailure(controlplane.RunFailureInvalidInput)
 		}
 		dispatchProof, err = newGenerationDispatchProof(contextArtifact, requestArtifact, receiptArtifact, h.expected)
+		if err != nil {
+			return generationFailure(controlplane.RunFailureInvalidInput)
+		}
+		dispatchProof, err = bindSanitizedDispatchProofScope(dispatchProof, task.Plan().Scope())
 		if err != nil {
 			return generationFailure(controlplane.RunFailureInvalidInput)
 		}

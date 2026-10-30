@@ -53,7 +53,7 @@ func (c *DryRunChecker) Check(ctx context.Context, plan Plan) CheckResult {
 		case runtimePolicyLoadBlocked:
 			outcome = "configuration_invalid"
 		case runtimePolicyLoadValid:
-			if !c.policy.approval.validate(plan, inventory, policy) || !runtimePolicyMatchesSetup(plan, inventory, policy) || !passedPolicyReceiptMatches(plan, loadedIdentity) {
+			if !c.policy.approval.validate(plan, inventory, policy) || !c.policy.matchesSetup(plan, inventory, policy) || !passedPolicyReceiptMatches(plan, loadedIdentity) {
 				outcome = "policy_mismatch"
 				break
 			}

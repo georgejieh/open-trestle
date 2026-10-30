@@ -70,7 +70,7 @@ func (c *LocalInferenceChecker) Check(ctx context.Context, plan Plan) CheckResul
 		case runtimePolicyLoadBlocked:
 			outcome = "configuration_invalid"
 		case runtimePolicyLoadValid:
-			if plan.Posture().Inference() != InferenceLocalOnly || !c.policy.approval.validate(plan, inventory, policy) || !runtimePolicyMatchesSetup(plan, inventory, policy) || !passedPolicyReceiptMatches(plan, loadedIdentity) {
+			if plan.Posture().Inference() != InferenceLocalOnly || !c.policy.approval.validate(plan, inventory, policy) || !c.policy.matchesSetup(plan, inventory, policy) || !passedPolicyReceiptMatches(plan, loadedIdentity) {
 				outcome = "policy_mismatch"
 				break
 			}

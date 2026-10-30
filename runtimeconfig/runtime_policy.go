@@ -17,7 +17,11 @@ import (
 	"github.com/georgejieh/open-trestle/internal/review"
 )
 
-type ProviderConnection struct{ implementation, adapterID, endpoint, credentialEnvironment, credentialIdentity, credentialMode string }
+type ProviderConnection struct {
+	implementation, adapterID, endpoint, credentialEnvironment, credentialIdentity, credentialMode string
+	requestProfile                                                                                 string
+	brokeredAuthority                                                                              BrokeredRouteAuthority
+}
 
 func (c ProviderConnection) CredentialMode() string { return c.credentialMode }
 
@@ -55,12 +59,12 @@ func (p RuntimePolicy) Connections() []ProviderConnection {
 	return append([]ProviderConnection(nil), p.connections...)
 }
 func (p RuntimePolicy) Validate() error {
-	if (p.schemaVersion != 1 && p.schemaVersion != 2) || (p.schemaVersion == 1 && p.verificationRouteRecordIdentity != "") || (p.schemaVersion == 2 && !nonzeroDigest(p.verificationRouteRecordIdentity)) || !nonzeroDigest(p.inventoryIdentity) || !nonzeroDigest(p.reviewPolicyIdentity) || p.requirements.Validate() != nil || p.constraints.Validate() != nil || p.budget.Validate() != nil || p.ranking.Validate() != nil || p.independence.Validate() != nil || p.publication.Validate() != nil || len(p.connections) == 0 || len(p.connections) > 64 || p.identity != runtimePolicyIdentity(p) {
+	if (p.schemaVersion != 1 && p.schemaVersion != 2 && p.schemaVersion != 3) || (p.schemaVersion == 1 && p.verificationRouteRecordIdentity != "") || (p.schemaVersion >= 2 && !nonzeroDigest(p.verificationRouteRecordIdentity)) || !nonzeroDigest(p.inventoryIdentity) || !nonzeroDigest(p.reviewPolicyIdentity) || p.requirements.Validate() != nil || p.constraints.Validate() != nil || p.budget.Validate() != nil || p.ranking.Validate() != nil || p.independence.Validate() != nil || p.publication.Validate() != nil || len(p.connections) == 0 || len(p.connections) > 64 || p.identity != runtimePolicyIdentity(p) {
 		return ErrInvalidRouteInventory
 	}
 	seen := map[string]struct{}{}
 	for _, c := range p.connections {
-		if !validProviderImplementation(c.implementation) || p.schemaVersion == 1 && c.implementation != "openai_responses" || provider.ValidateAdapterID(c.adapterID) != nil || !validProviderConnectionEndpoint(c.endpoint) || !validConnectionCredentials(c, p.schemaVersion) {
+		if !validProviderImplementation(c.implementation) || p.schemaVersion == 1 && c.implementation != "openai_responses" || provider.ValidateAdapterID(c.adapterID) != nil || !validProviderConnectionEndpoint(c.endpoint) || (!validConnectionCredentials(c, p.schemaVersion) || !validConnectionProfile(c, p.schemaVersion)) {
 			return ErrInvalidRouteInventory
 		}
 		if _, ok := seen[c.adapterID]; ok {
@@ -91,7 +95,7 @@ func (p RuntimePolicy) ValidateAgainstInventory(inventory RouteInventory) error 
 		}
 		namespaces[reference.AdapterID()] = value
 	}
-	if p.schemaVersion == 2 {
+	if p.schemaVersion >= 2 {
 		found := false
 		for _, candidate := range inventory.Candidates() {
 			if candidate.ResolvedRecord().RouteRegistryRecord().Identity() == p.verificationRouteRecordIdentity {
@@ -113,6 +117,12 @@ func (p RuntimePolicy) ValidateAgainstInventory(inventory RouteInventory) error 
 		}
 		locality, err := provider.ClassifyServiceEndpoint(connection.endpoint)
 		zoneMatches := namespace.zone == provider.ProviderZoneLocal && locality == provider.ServiceEndpointLoopback || namespace.zone == provider.ProviderZonePrivateRemote && locality == provider.ServiceEndpointRemote
+		if connection.requestProfile != "" {
+			if !validBrokeredInventoryBinding(connection, inventory) {
+				return ErrInvalidRouteInventory
+			}
+			zoneMatches = namespace.zone == provider.ProviderZoneBrokeredRemote && locality == provider.ServiceEndpointRemote
+		}
 		if err != nil || !zoneMatches || connection.credentialMode == "none" && namespace.zone != provider.ProviderZoneLocal {
 			return ErrInvalidRouteInventory
 		}
@@ -123,7 +133,7 @@ func (p RuntimePolicy) ValidateAgainstInventory(inventory RouteInventory) error 
 func validConnectionCredentials(c ProviderConnection, version int) bool {
 	if c.credentialMode == "none" {
 		locality, err := provider.ClassifyServiceEndpoint(c.endpoint)
-		return version == 2 && err == nil && locality == provider.ServiceEndpointLoopback && c.credentialEnvironment == "" && c.credentialIdentity == ""
+		return version >= 2 && err == nil && locality == provider.ServiceEndpointLoopback && c.credentialEnvironment == "" && c.credentialIdentity == ""
 	}
 	return c.credentialMode == "bearer" && validCredentialEnvironment(c.credentialEnvironment) && c.credentialIdentity == credentialEnvironmentIdentity(c.credentialEnvironment)
 }
@@ -161,11 +171,13 @@ type runtimePolicyWire struct {
 	Connections                     []providerConnectionWire `json:"connections"`
 }
 type providerConnectionWire struct {
-	Implementation        string `json:"implementation"`
-	AdapterID             string `json:"adapter_id"`
-	Endpoint              string `json:"endpoint"`
-	CredentialEnvironment string `json:"credential_environment,omitempty"`
-	CredentialMode        string `json:"credential_mode,omitempty"`
+	Implementation        string                      `json:"implementation"`
+	AdapterID             string                      `json:"adapter_id"`
+	Endpoint              string                      `json:"endpoint"`
+	CredentialEnvironment string                      `json:"credential_environment,omitempty"`
+	CredentialMode        string                      `json:"credential_mode,omitempty"`
+	RequestProfile        string                      `json:"request_profile,omitempty"`
+	BrokeredAuthority     *brokeredRouteAuthorityWire `json:"brokered_route_authority,omitempty"`
 }
 
 func validatePolicyCredentialFields(encoded []byte, schemaVersion int) error {
@@ -223,10 +235,10 @@ func DecodeRuntimePolicy(ctx context.Context, reader io.Reader, inventory RouteI
 	decoder := json.NewDecoder(bytes.NewReader(encoded))
 	decoder.DisallowUnknownFields()
 	var wire runtimePolicyWire
-	if decoder.Decode(&wire) != nil || decoder.Decode(&struct{}{}) != io.EOF || (wire.SchemaVersion != 1 && wire.SchemaVersion != 2) || (wire.SchemaVersion == 1 && hasVerificationGrant) || (wire.SchemaVersion == 2 && (wire.VerificationRouteRecordIdentity == nil || !nonzeroDigest(*wire.VerificationRouteRecordIdentity) || *wire.VerificationRouteRecordIdentity == wire.PinnedRouteRecordIdentity)) || wire.InventoryIdentity != inventory.Identity() || !nonzeroDigest(wire.ReviewPolicyIdentity) {
+	if decoder.Decode(&wire) != nil || decoder.Decode(&struct{}{}) != io.EOF || (wire.SchemaVersion != 1 && wire.SchemaVersion != 2 && wire.SchemaVersion != 3) || (wire.SchemaVersion == 1 && hasVerificationGrant) || (wire.SchemaVersion >= 2 && (wire.VerificationRouteRecordIdentity == nil || !nonzeroDigest(*wire.VerificationRouteRecordIdentity) || *wire.VerificationRouteRecordIdentity == wire.PinnedRouteRecordIdentity)) || wire.InventoryIdentity != inventory.Identity() || !nonzeroDigest(wire.ReviewPolicyIdentity) {
 		return RuntimePolicy{}, ErrInvalidRouteInventory
 	}
-	if validatePolicyCredentialFields(encoded, wire.SchemaVersion) != nil {
+	if validatePolicyCredentialFields(encoded, wire.SchemaVersion) != nil || !validatePolicyProfileFields(encoded, wire.SchemaVersion) {
 		return RuntimePolicy{}, ErrInvalidRouteInventory
 	}
 	features := make([]provider.ModelFeature, len(wire.RequiredFeatures))
@@ -322,7 +334,15 @@ func DecodeRuntimePolicy(ctx context.Context, reader io.Reader, inventory RouteI
 		if mode == "bearer" {
 			identity = credentialEnvironmentIdentity(v.CredentialEnvironment)
 		}
-		connections[i] = ProviderConnection{v.Implementation, v.AdapterID, v.Endpoint, v.CredentialEnvironment, identity, mode}
+		var authority BrokeredRouteAuthority
+		if v.RequestProfile != "" {
+			var ok bool
+			authority, ok = decodeBrokeredAuthority(v.BrokeredAuthority)
+			if !ok {
+				return RuntimePolicy{}, ErrInvalidRouteInventory
+			}
+		}
+		connections[i] = ProviderConnection{implementation: v.Implementation, adapterID: v.AdapterID, endpoint: v.Endpoint, credentialEnvironment: v.CredentialEnvironment, credentialIdentity: identity, credentialMode: mode, requestProfile: v.RequestProfile, brokeredAuthority: authority}
 	}
 	sort.Slice(connections, func(i, j int) bool { return connections[i].adapterID < connections[j].adapterID })
 	value := RuntimePolicy{schemaVersion: wire.SchemaVersion, verificationRouteRecordIdentity: verificationID, inventoryIdentity: inventory.Identity(), reviewPolicyIdentity: wire.ReviewPolicyIdentity, requirements: requirements, constraints: constraints, budget: budget, ranking: ranking, independence: independence, publication: publicationPolicy, connections: connections}
@@ -339,7 +359,7 @@ func runtimePolicyIdentity(p RuntimePolicy) string {
 		if c.credentialMode == "none" {
 			mode = "none"
 		}
-		connections[i] = providerConnectionWire{Implementation: c.implementation, AdapterID: c.adapterID, Endpoint: c.endpoint, CredentialEnvironment: c.credentialEnvironment, CredentialMode: mode}
+		connections[i] = providerConnectionWire{Implementation: c.implementation, AdapterID: c.adapterID, Endpoint: c.endpoint, CredentialEnvironment: c.credentialEnvironment, CredentialMode: mode, RequestProfile: c.requestProfile, BrokeredAuthority: c.brokeredAuthority.wire()}
 	}
 	encoded, _ := json.Marshal(struct {
 		Contract                                                                                 string `json:"contract"`
@@ -348,14 +368,14 @@ func runtimePolicyIdentity(p RuntimePolicy) string {
 		Connections                                                                              []providerConnectionWire `json:"connections"`
 	}{"open-trestle/runtime-policy", 1, p.inventoryIdentity, p.reviewPolicyIdentity, requirementsIdentity(p.requirements), constraintsIdentity(p.constraints), budgetIdentity(p.budget), p.ranking.Identity(), p.independence.Identity(), p.publication.Identity(), connections})
 	// Keep the v1 preimage unchanged for existing receipts and local admission.
-	if p.schemaVersion == 2 {
+	if p.schemaVersion >= 2 {
 		encoded, _ = json.Marshal(struct {
 			Contract                                                                                 string `json:"contract"`
 			Version                                                                                  int    `json:"version"`
 			Inventory, Policy, Requirements, Constraints, Budget, Ranking, Independence, Publication string
 			Connections                                                                              []providerConnectionWire `json:"connections"`
 			VerificationRouteRecordIdentity                                                          string                   `json:"verification_route_record_identity"`
-		}{"open-trestle/runtime-policy", 2, p.inventoryIdentity, p.reviewPolicyIdentity, requirementsIdentity(p.requirements), constraintsIdentity(p.constraints), budgetIdentity(p.budget), p.ranking.Identity(), p.independence.Identity(), p.publication.Identity(), connections, p.verificationRouteRecordIdentity})
+		}{"open-trestle/runtime-policy", p.schemaVersion, p.inventoryIdentity, p.reviewPolicyIdentity, requirementsIdentity(p.requirements), constraintsIdentity(p.constraints), budgetIdentity(p.budget), p.ranking.Identity(), p.independence.Identity(), p.publication.Identity(), connections, p.verificationRouteRecordIdentity})
 	}
 	sum := sha256.Sum256(encoded)
 	return hex.EncodeToString(sum[:])

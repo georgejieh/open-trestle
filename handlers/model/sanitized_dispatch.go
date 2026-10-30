@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/georgejieh/open-trestle/artifact"
+	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/review"
@@ -33,6 +34,8 @@ type SanitizedDispatchProof struct {
 	reviewScopeIdentity string
 	requestIdentity     string
 	receiptIdentity     string
+	tenantID            string
+	repositoryID        string
 }
 
 func newGenerationDispatchProof(raw, requestArtifact, receiptArtifact artifact.Artifact, expected review.ScannerBinaryDigests) (SanitizedDispatchProof, error) {
@@ -107,12 +110,39 @@ func (p SanitizedDispatchProof) ValidateRequest(reviewScopeIdentity, requestIden
 	return nil
 }
 
+func bindSanitizedDispatchProofScope(p SanitizedDispatchProof, scope audit.ReviewScope) (SanitizedDispatchProof, error) {
+	if p.validate() != nil || scope.Validate() != nil || scope.Identity() != p.reviewScopeIdentity ||
+		(p.tenantID != "" && (p.tenantID != scope.TenantID() || p.repositoryID != scope.RepositoryID())) {
+		return SanitizedDispatchProof{}, errInvalidSanitizedDispatchProof
+	}
+	p.tenantID, p.repositoryID = scope.TenantID(), scope.RepositoryID()
+	p.identity = deriveSanitizedDispatchProofIdentity(p)
+	if p.validate() != nil {
+		return SanitizedDispatchProof{}, errInvalidSanitizedDispatchProof
+	}
+	return p, nil
+}
+
+// ValidateRepositoryScope checks trusted repository attestation and exact request/run binding.
+func (p SanitizedDispatchProof) ValidateRepositoryScope(tenantID, repositoryID, reviewScopeIdentity, requestIdentity string) error {
+	if p.ValidateRequest(reviewScopeIdentity, requestIdentity) != nil || p.tenantID == "" || p.repositoryID == "" ||
+		p.tenantID != tenantID || p.repositoryID != repositoryID {
+		return errInvalidSanitizedDispatchProof
+	}
+	return nil
+}
+
 func (p SanitizedDispatchProof) validate() error {
 	if p.kind != sanitizedDispatchGeneration && p.kind != sanitizedDispatchVerification ||
 		!validSanitizedDispatchIdentity(p.identity) || !validSanitizedDispatchIdentity(p.reviewScopeIdentity) ||
 		!validSanitizedDispatchIdentity(p.requestIdentity) || !validSanitizedDispatchIdentity(p.receiptIdentity) ||
 		p.identity != deriveSanitizedDispatchProofIdentity(p) {
 		return errInvalidSanitizedDispatchProof
+	}
+	if p.tenantID != "" || p.repositoryID != "" {
+		if _, err := audit.NewReviewScope(p.tenantID, p.repositoryID, "proof-validation"); err != nil {
+			return errInvalidSanitizedDispatchProof
+		}
 	}
 	return nil
 }
@@ -128,6 +158,18 @@ func deriveSanitizedDispatchProofIdentity(p SanitizedDispatchProof) string {
 	}{"open-trestle/sanitized-egress-dispatch-proof", 1, string(p.kind), p.reviewScopeIdentity, p.requestIdentity, p.receiptIdentity})
 	if err != nil {
 		return ""
+	}
+	if p.tenantID != "" || p.repositoryID != "" {
+		encoded, err = json.Marshal(struct {
+			Contract   string          `json:"contract"`
+			Version    int             `json:"version"`
+			Proof      json.RawMessage `json:"proof"`
+			Tenant     string          `json:"tenant_id"`
+			Repository string          `json:"repository_id"`
+		}{"open-trestle/repository-sanitized-egress-dispatch-proof", 1, encoded, p.tenantID, p.repositoryID})
+		if err != nil {
+			return ""
+		}
 	}
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])

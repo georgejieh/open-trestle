@@ -76,6 +76,14 @@ func deriveVerificationHandlerIdentity(catalog, authorizer, sanitizer string, ex
 	if err != nil {
 		return ""
 	}
+	encoded, err = json.Marshal(struct {
+		Contract string          `json:"contract"`
+		Version  int             `json:"version"`
+		Handler  json.RawMessage `json:"handler"`
+	}{"open-trestle/repository-scoped-verification-handler", 1, encoded})
+	if err != nil {
+		return ""
+	}
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }
@@ -197,6 +205,10 @@ func (h *VerificationHandler) Execute(ctx context.Context, task controlplane.Tas
 		generationArtifact, generationInputArtifact, generationContextArtifact,
 		reloadedRequest, reloadedReceipt, h.expected,
 	)
+	if err != nil {
+		return generationFailure(controlplane.RunFailureInvalidInput)
+	}
+	dispatchProof, err = bindSanitizedDispatchProofScope(dispatchProof, task.Plan().Scope())
 	if err != nil {
 		return generationFailure(controlplane.RunFailureInvalidInput)
 	}

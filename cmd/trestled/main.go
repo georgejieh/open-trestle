@@ -882,7 +882,7 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 					statusInventoryIdentity = inventory.Identity()
 					statusPolicyIdentity = configuration.Identity()
 					statusRouteCount = uint32(len(inventory.Candidates()))
-					dispatchers, dispatcherErr := runtimecatalog.NewOpenAIRouteDispatcherCatalogFromRuntimePolicy(inventory, configuration, environmentOpenAICredentialResolver{getenv: getenv})
+					dispatchers, dispatcherErr := runtimecatalog.NewOpenAIRouteDispatcherCatalogWithOptions(inventory, configuration, environmentOpenAICredentialResolver{getenv: getenv}, runtimecatalog.OpenAICatalogOptions{Clock: daemonArtifactClock, HTTPClient: deps.modelHTTPClient, HTTPClientIdentity: deps.modelHTTPClientIdentity})
 					generationAuthorizer, authErr := runtimecatalog.NewGenerationPolicyAuthorizerFromRuntimePolicy(configuration, inventory, auditLedger)
 					verificationInventory, inventoryErr := runtimecatalog.NewStaticVerificationRouteInventory(inventory)
 					if dispatcherErr != nil || authErr != nil || inventoryErr != nil {
