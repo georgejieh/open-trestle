@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:provider:route-reference:v2",
+  "title": "Open Trestle Route Reference v2",
+  "description": "Canonical interchange shape for an unresolved provider route reference with exact opaque model selectors. Model text never supplies endpoint, filesystem, or credential authority. Validation does not prove registry membership, provider truth, eligibility, reachability, or execution.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "provider_zone",
+    "provider_id",
+    "adapter_id",
+    "connection_id",
+    "model_id",
+    "model_version"
+  ],
+  "$defs": {
+    "provider_zone": {
+      "type": "string",
+      "enum": [
+        "local",
+        "private_remote",
+        "brokered_remote",
+        "subscription_oauth"
+      ]
+    },
+    "registry_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z]",
+      "not": {
+        "pattern": "[^a-z0-9._-]"
+      }
+    },
+    "connection_id": {
+      "description": "Opaque non-secret logical connection label, not an endpoint or credential.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z]",
+      "not": {
+        "anyOf": [
+          {
+            "pattern": "[^a-z0-9._/-]"
+          },
+          {
+            "pattern": "//"
+          },
+          {
+            "pattern": "/[^a-z]"
+          },
+          {
+            "pattern": "/$"
+          }
+        ]
+      }
+    },
+    "model_id": {
+      "description": "Exact provider model label with an optional single final :tag. Host:port and opaque-URI lookalikes are inert model text, not endpoint authority. A tagged model requires an empty model_version.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "anyOf": [
+        {
+          "description": "Provider model namespace label. It cannot contain URI schemes, ports, or embedded versions.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "pattern": "^[A-Za-z0-9]",
+          "not": {
+            "anyOf": [
+              {
+                "pattern": "[^A-Za-z0-9._+/-]"
+              },
+              {
+                "pattern": "//"
+              },
+              {
+                "pattern": "/[^A-Za-z0-9]"
+              },
+              {
+                "pattern": "/$"
+              }
+            ]
+          }
+        },
+        {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]*(/[A-Za-z0-9][A-Za-z0-9._+-]*)*:[A-Za-z0-9][A-Za-z0-9._+-]*$",
+          "not": {
+            "pattern": "[^A-Za-z0-9._+/:-]"
+          }
+        }
+      ]
+    },
+    "model_version": {
+      "description": "Exact version or tag selector. Empty means no selector is bound.",
+      "type": "string",
+      "oneOf": [
+        {
+          "const": ""
+        },
+        {
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9]",
+          "not": {
+            "pattern": "[^A-Za-z0-9._+-]"
+          }
+        }
+      ]
+    }
+  },
+  "properties": {
+    "provider_zone": {
+      "$ref": "#/$defs/provider_zone"
+    },
+    "provider_id": {
+      "$ref": "#/$defs/registry_id"
+    },
+    "adapter_id": {
+      "$ref": "#/$defs/registry_id"
+    },
+    "connection_id": {
+      "$ref": "#/$defs/connection_id"
+    },
+    "model_id": {
+      "$ref": "#/$defs/model_id"
+    },
+    "model_version": {
+      "$ref": "#/$defs/model_version"
+    }
+  },
+  "if": {
+    "properties": {
+      "model_id": {
+        "pattern": ":"
+      }
+    },
+    "required": [
+      "model_id"
+    ]
+  },
+  "then": {
+    "properties": {
+      "model_version": {
+        "const": ""
+      }
+    }
+  }
+}

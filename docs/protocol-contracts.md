@@ -9,6 +9,7 @@ Routing, policy, provider, and review schemas:
 - `schemas/provider/model-requirements-v1.schema.json`
 - `schemas/provider/model-capabilities-v1.schema.json`
 - `schemas/provider/route-reference-v1.schema.json`
+- `schemas/provider/route-reference-v2.schema.json`
 - `schemas/provider/route-capability-declaration-v1.schema.json`
 - `schemas/review/model-candidate-batch-v1.schema.json`
 - `schemas/review/model-investigation-output-v1.schema.json`
@@ -20,6 +21,8 @@ Routing, policy, provider, and review schemas:
 - `schemas/review/local-git-review-result-v2.schema.json`
 - `schemas/secret-scanner/secret-scan-request-v1.schema.json`
 - `schemas/secret-scanner/secret-scan-response-v1.schema.json`
+
+Route-reference schema v1 remains the historical untagged model grammar with unchanged bytes. Schema v2 preserves the six-field wire shape and adds one optional final `:tag` in `model_id`; tagged model IDs require empty `model_version`. Untagged model IDs retain the existing nonempty-version selector behavior. Host:port and opaque-URI-looking tagged values are inert model text, never endpoint, filesystem, or credential authority. The runtime inventory and durable route authorization v1 schemas already bound these fields broadly; native route validation enforces the stronger grammar. The capability-declaration v1 schema still references the historical route-reference v1 subset. No schema version changes route identity preimages. Native Go tests exercise selector semantics; schema tests check structure and unchanged v1 bytes, not full JSON Schema semantic validation.
 
 The investigation output schema uses a closed `oneOf`: a candidate batch or one host-defined snapshot tool call. A valid proposal is not permission to execute a tool. Runtime parsing, the retained model response, source bindings, and policy limits still govern admission.
 
@@ -48,7 +51,7 @@ Control-plane schemas:
 - `schemas/controlplane/runtime-status-response-v1.schema.json`
 - `schemas/controlplane/run-progress-response-v1.schema.json`
 
-The run-progress response v1 is a separate read-only HTTP envelope with exactly `contract`, `schema_version`, `request_id`, `run`, and `progress`. It references the unchanged canonical receipt v1 or v2. Its four axes are `change`, `deterministic`, `context`, and `verification`, each with a bounded state, optional immutable artifact identity, and only its declared count fields. The schema inventory contains 109 documents. The strict native client additionally validates scope, completed-task binding, exact non-context output identities, count equations, and checked-versus-applicable bounds. Schema validation cannot establish artifact lineage or receipt-head consistency.
+The run-progress response v1 is a separate read-only HTTP envelope with exactly `contract`, `schema_version`, `request_id`, `run`, and `progress`. It references the unchanged canonical receipt v1 or v2. Its four axes are `change`, `deterministic`, `context`, and `verification`, each with a bounded state, optional immutable artifact identity, and only its declared count fields. The schema inventory contains 110 documents. The strict native client additionally validates scope, completed-task binding, exact non-context output identities, count equations, and checked-versus-applicable bounds. Schema validation cannot establish artifact lineage or receipt-head consistency.
 
 `not_run` and `unavailable` carry no counts; absent counts mean unknown, not zero. Only an evidenced incomplete deterministic check uses `partial`. The available context artifact identity is the source-proven context packet, which can differ from the receipt's sanitized generation-input output after v6 settlement. Other available axis identities equal their corresponding completed task outputs. The daemon uses at most ten indexed scoped artifact loads and existing canonical parsers, checks the unchanged receipt head, and returns `409 progress_changed` on advancement. It writes no provisional diagnostics, grants no approval, and performs no model or publication effect. `runs status --format progress` emits a single bound `{run, progress}` object rather than the HTTP envelope. See [read-only run progress](daemon-api.md#read-only-run-progress).
 

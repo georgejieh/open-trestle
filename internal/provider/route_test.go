@@ -146,11 +146,6 @@ func TestNewRouteReferenceRejectsInvalidFields(t *testing.T) {
 		{name: "model endpoint", mutate: func(_ *ProviderZone, _ *string, _ *string, _ *string, v *string, _ *string) {
 			*v = "https://user:token@evil.example/v1"
 		}, want: ErrInvalidModelID},
-		{name: "model opaque URI", mutate: func(_ *ProviderZone, _ *string, _ *string, _ *string, v *string, _ *string) {
-			*v = "https:evil.example"
-		}, want: ErrInvalidModelID},
-		{name: "model host port", mutate: func(_ *ProviderZone, _ *string, _ *string, _ *string, v *string, _ *string) { *v = "evil.example:443" }, want: ErrInvalidModelID},
-		{name: "model IP port", mutate: func(_ *ProviderZone, _ *string, _ *string, _ *string, v *string, _ *string) { *v = "127.0.0.1:8080" }, want: ErrInvalidModelID},
 		{name: "model double slash", mutate: func(_ *ProviderZone, _ *string, _ *string, _ *string, v *string, _ *string) { *v = "org//model" }, want: ErrInvalidModelID},
 		{name: "model dot segment", mutate: func(_ *ProviderZone, _ *string, _ *string, _ *string, v *string, _ *string) { *v = "org/../model" }, want: ErrInvalidModelID},
 		{name: "model embedded version", mutate: func(_ *ProviderZone, _ *string, _ *string, _ *string, v *string, _ *string) { *v = "Model@v1" }, want: ErrInvalidModelID},
