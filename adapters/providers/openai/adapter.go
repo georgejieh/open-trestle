@@ -1,4 +1,4 @@
-// Package openai provides a bounded adapter for the OpenAI Responses API.
+// Package openai provides bounded OpenAI Responses and Chat Completions adapters.
 package openai
 
 import (
@@ -81,8 +81,21 @@ type APIKeyProvider interface {
 	Retrieve(context.Context) (APIKey, error)
 }
 
+// Protocol identifies an exact supported OpenAI wire contract.
+type Protocol string
+
+const (
+	ProtocolResponses       Protocol = "openai_responses"
+	ProtocolChatCompletions Protocol = "openai_chat_completions"
+)
+
+func (p Protocol) valid() bool {
+	return p == ProtocolResponses || p == ProtocolChatCompletions
+}
+
 // Config binds one adapter instance to an exact approved route namespace.
 type Config struct {
+	Protocol           Protocol
 	AdapterID          string
 	ProviderID         string
 	ConnectionID       string
@@ -95,8 +108,9 @@ type Config struct {
 	HTTPClient         *http.Client
 }
 
-// Adapter executes exact authorized requests against the Responses API.
+// Adapter executes exact authorized requests against its configured protocol.
 type Adapter struct {
+	protocol              Protocol
 	adapterID             string
 	providerID            string
 	connectionID          string
@@ -112,6 +126,13 @@ type Adapter struct {
 
 // New validates configuration without retrieving credentials or making a request.
 func New(config Config) (*Adapter, error) {
+	protocol := config.Protocol
+	if protocol == "" {
+		protocol = ProtocolResponses
+	}
+	if !protocol.valid() {
+		return nil, ErrInvalidConfig
+	}
 	endpointValue := config.Endpoint
 	if endpointValue == "" {
 		endpointValue = defaultEndpoint
@@ -151,6 +172,7 @@ func New(config Config) (*Adapter, error) {
 	endpointCopy := *endpoint
 	endpointCopy.Path = strings.TrimSuffix(endpointCopy.Path, "/")
 	adapter := &Adapter{
+		protocol:           protocol,
 		adapterID:          strings.Clone(config.AdapterID),
 		providerID:         strings.Clone(config.ProviderID),
 		connectionID:       strings.Clone(config.ConnectionID),
@@ -219,6 +241,10 @@ func deriveConfigurationIdentity(a *Adapter) string {
 	if a == nil || a.endpoint == nil {
 		return ""
 	}
+	contract, version := "open-trestle/openai-responses-adapter", 4
+	if a.protocol == ProtocolChatCompletions {
+		contract, version = "open-trestle/openai-chat-completions-adapter", 1
+	}
 	encoded, _ := json.Marshal(struct {
 		Contract            string `json:"contract"`
 		Version             int    `json:"version"`
@@ -231,7 +257,7 @@ func deriveConfigurationIdentity(a *Adapter) string {
 		Credential          string `json:"credential"`
 		HTTPClient          string `json:"http_client"`
 		TimeoutMilliseconds int64  `json:"timeout_milliseconds"`
-	}{"open-trestle/openai-responses-adapter", 4, a.adapterID, a.providerID, a.connectionID, a.zone.String(), a.contentLoggingMode.String(), a.endpoint.String(), a.credentialIdentity, a.httpClientIdentity, a.httpClient.Timeout.Milliseconds()})
+	}{contract, version, a.adapterID, a.providerID, a.connectionID, a.zone.String(), a.contentLoggingMode.String(), a.endpoint.String(), a.credentialIdentity, a.httpClientIdentity, a.httpClient.Timeout.Milliseconds()})
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }
@@ -270,7 +296,7 @@ func validConfigurationIdentity(identity string) bool {
 
 // Validate verifies the immutable adapter configuration.
 func (a *Adapter) Validate() error {
-	if a == nil || a.endpoint == nil || a.httpClient == nil || nilInterface(a.credentials) || !validEndpoint(a.endpoint) || !validConfigurationIdentity(a.credentialIdentity) || !validConfigurationIdentity(a.httpClientIdentity) || a.configurationIdentity != deriveConfigurationIdentity(a) {
+	if a == nil || !a.protocol.valid() || a.endpoint == nil || a.httpClient == nil || nilInterface(a.credentials) || !validEndpoint(a.endpoint) || !validConfigurationIdentity(a.credentialIdentity) || !validConfigurationIdentity(a.httpClientIdentity) || a.configurationIdentity != deriveConfigurationIdentity(a) {
 		return ErrInvalidConfig
 	}
 	_, err := provider.NewRouteReference(a.zone, a.providerID, a.adapterID, a.connectionID, "model", "")
@@ -411,7 +437,12 @@ func (a *Adapter) executeWithSanitizedReceipt(
 	if !ok {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayOutcomeUnknown, 0)
 	}
-	normalized, err := normalizeResponse(content, route)
+	var normalized provider.Response
+	if a.protocol == ProtocolChatCompletions {
+		normalized, err = normalizeChatResponse(content, route)
+	} else {
+		normalized, err = normalizeResponse(content, route)
+	}
 	if err != nil {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayOutcomeUnknown, 0)
 	}
@@ -454,22 +485,29 @@ func (a *Adapter) newRequest(
 	if strings.TrimSpace(instructions) == "" {
 		return nil, errors.New("invalid model request instructions")
 	}
-	wire := requestWire{
-		Model:        model,
-		Instructions: instructions,
-		Input: []requestInput{{
-			Role:    "user",
-			Content: []requestInputContent{{Type: "input_text", Text: string(payload)}},
-		}},
-		MaxOutputTokens: maxOutputTokens,
-		Store:           false,
+	var wire any
+	path := "/responses"
+	if a.protocol == ProtocolChatCompletions {
+		path = "/chat/completions"
+		wire = chatRequestWire{Model: model, Messages: []chatRequestMessage{{Role: "system", Content: instructions}, {Role: "user", Content: string(payload)}}, MaxTokens: maxOutputTokens, Stream: false}
+	} else {
+		wire = requestWire{
+			Model:        model,
+			Instructions: instructions,
+			Input: []requestInput{{
+				Role:    "user",
+				Content: []requestInputContent{{Type: "input_text", Text: string(payload)}},
+			}},
+			MaxOutputTokens: maxOutputTokens,
+			Store:           false,
+		}
 	}
 	content, err := json.Marshal(wire)
 	if err != nil {
 		return nil, err
 	}
 	requestURL := *a.endpoint
-	requestURL.Path += "/responses"
+	requestURL.Path += path
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL.String(), bytes.NewReader(content))
 	if err != nil {
 		return nil, err
@@ -736,6 +774,10 @@ func validateJSONShape(content []byte) error {
 }
 
 func scanJSONValue(decoder *json.Decoder) error {
+	return scanJSONValueWithKeys(decoder, canonicalResponseKey)
+}
+
+func scanJSONValueWithKeys(decoder *json.Decoder, validKey func(string) bool) error {
 	token, err := decoder.Token()
 	if err != nil {
 		return err
@@ -753,7 +795,7 @@ func scanJSONValue(decoder *json.Decoder) error {
 				return err
 			}
 			key, ok := keyToken.(string)
-			if !ok || !canonicalResponseKey(key) {
+			if !ok || !validKey(key) {
 				return ErrInvalidConfig
 			}
 			folded := strings.ToLower(key)
@@ -761,14 +803,14 @@ func scanJSONValue(decoder *json.Decoder) error {
 				return ErrInvalidConfig
 			}
 			keys[folded] = struct{}{}
-			if err := scanJSONValue(decoder); err != nil {
+			if err := scanJSONValueWithKeys(decoder, validKey); err != nil {
 				return err
 			}
 		}
 		return consumeDelimiter(decoder, '}')
 	case '[':
 		for decoder.More() {
-			if err := scanJSONValue(decoder); err != nil {
+			if err := scanJSONValueWithKeys(decoder, validKey); err != nil {
 				return err
 			}
 		}
@@ -852,10 +894,15 @@ func writeRedacted(state fmt.State, verb rune, normal, detailed string) {
 	_, _ = state.Write([]byte(value))
 }
 
-func (a *Adapter) String() string   { return "OpenAI Responses adapter" }
+func (a *Adapter) String() string {
+	if a != nil && a.protocol == ProtocolChatCompletions {
+		return "OpenAI Chat Completions adapter"
+	}
+	return "OpenAI Responses adapter"
+}
 func (a *Adapter) GoString() string { return "openai.Adapter{<redacted>}" }
 func (a *Adapter) Format(state fmt.State, verb rune) {
-	writeRedacted(state, verb, "OpenAI Responses adapter", "openai.Adapter{<redacted>}")
+	writeRedacted(state, verb, a.String(), "openai.Adapter{<redacted>}")
 }
 
 var _ gateway.RouteDispatcher = (*Adapter)(nil)

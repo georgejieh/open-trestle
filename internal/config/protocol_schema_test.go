@@ -380,7 +380,24 @@ func TestRuntimePolicyV2SchemaExactVerifierGrant(t *testing.T) {
 		t.Fatal("v2 field or version mismatch")
 	}
 	for key, value := range prior {
-		if key != "schema_version" && !reflect.DeepEqual(value, properties[key]) {
+		if key == "connections" {
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			expected := schemaFixtureObject(t, encoded)
+			items := schemaFixtureMap(t, expected["items"])
+			fields := schemaFixtureMap(t, items["properties"])
+			implementation := schemaFixtureMap(t, fields["implementation"])
+			if !reflect.DeepEqual(implementation, map[string]any{"const": "openai_responses"}) {
+				t.Fatal("v1 protocol contract changed")
+			}
+			delete(implementation, "const")
+			implementation["enum"] = []any{"openai_responses", "openai_chat_completions"}
+			if !reflect.DeepEqual(expected, properties[key]) {
+				t.Fatal("v2 connection protocol contract changed")
+			}
+		} else if key != "schema_version" && !reflect.DeepEqual(value, properties[key]) {
 			t.Fatalf("v1 property changed: %s", key)
 		}
 	}

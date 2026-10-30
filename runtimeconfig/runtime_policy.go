@@ -58,7 +58,7 @@ func (p RuntimePolicy) Validate() error {
 	}
 	seen := map[string]struct{}{}
 	for _, c := range p.connections {
-		if c.implementation != "openai_responses" || provider.ValidateAdapterID(c.adapterID) != nil || !validProviderConnectionEndpoint(c.endpoint) || !validCredentialEnvironment(c.credentialEnvironment) || c.credentialIdentity != credentialEnvironmentIdentity(c.credentialEnvironment) {
+		if !validProviderImplementation(c.implementation) || p.schemaVersion == 1 && c.implementation != "openai_responses" || provider.ValidateAdapterID(c.adapterID) != nil || !validProviderConnectionEndpoint(c.endpoint) || !validCredentialEnvironment(c.credentialEnvironment) || c.credentialIdentity != credentialEnvironmentIdentity(c.credentialEnvironment) {
 			return ErrInvalidRouteInventory
 		}
 		if _, ok := seen[c.adapterID]; ok {
@@ -116,6 +116,10 @@ func (p RuntimePolicy) ValidateAgainstInventory(inventory RouteInventory) error 
 		}
 	}
 	return nil
+}
+
+func validProviderImplementation(value string) bool {
+	return value == "openai_responses" || value == "openai_chat_completions"
 }
 
 func validProviderConnectionEndpoint(raw string) bool {

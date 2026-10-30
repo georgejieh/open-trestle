@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/georgejieh/open-trestle/adapters/providers/openai"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/provider"
@@ -118,7 +119,7 @@ func ResolveLocalGenerationRoutePair(configuration runtimeconfig.RuntimePolicy, 
 		for _, connection := range configuration.Connections() {
 			if connection.AdapterID() == reference.AdapterID() {
 				locality, err := provider.ClassifyServiceEndpoint(connection.Endpoint())
-				if err != nil || locality != provider.ServiceEndpointLoopback || connection.Implementation() != "openai_responses" {
+				if err != nil || locality != provider.ServiceEndpointLoopback || (connection.Implementation() != string(openai.ProtocolResponses) && connection.Implementation() != string(openai.ProtocolChatCompletions)) {
 					return fail()
 				}
 				connections++

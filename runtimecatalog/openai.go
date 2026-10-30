@@ -17,6 +17,7 @@ import (
 )
 
 type OpenAIConnectionDefinition struct {
+	Protocol           openai.Protocol
 	AdapterID          string
 	Endpoint           string
 	CredentialIdentity string
@@ -55,7 +56,7 @@ func NewOpenAIRouteDispatcherCatalog(inventory runtimeconfig.RouteInventory, con
 		}
 		seen[connection.AdapterID] = struct{}{}
 		route := candidate.RouteCapabilityDeclaration().RouteReference()
-		adapter, err := openai.New(openai.Config{AdapterID: connection.AdapterID, ProviderID: route.ProviderID(), ConnectionID: route.ConnectionID(), Zone: route.Zone(), ContentLoggingMode: candidate.ContentLoggingMode(), Endpoint: connection.Endpoint, Credentials: connection.Credentials, CredentialIdentity: connection.CredentialIdentity, HTTPClient: connection.HTTPClient, HTTPClientIdentity: connection.HTTPClientIdentity})
+		adapter, err := openai.New(openai.Config{Protocol: connection.Protocol, AdapterID: connection.AdapterID, ProviderID: route.ProviderID(), ConnectionID: route.ConnectionID(), Zone: route.Zone(), ContentLoggingMode: candidate.ContentLoggingMode(), Endpoint: connection.Endpoint, Credentials: connection.Credentials, CredentialIdentity: connection.CredentialIdentity, HTTPClient: connection.HTTPClient, HTTPClientIdentity: connection.HTTPClientIdentity})
 		if err != nil {
 			return gateway.RouteDispatcherCatalog{}, ErrInvalidRouteAuthority
 		}
@@ -82,14 +83,14 @@ func NewOpenAIRouteDispatcherCatalogFromRuntimePolicy(inventory runtimeconfig.Ro
 	connections := configuration.Connections()
 	definitions := make([]OpenAIConnectionDefinition, len(connections))
 	for i, connection := range connections {
-		if connection.Implementation() != "openai_responses" {
+		if connection.Implementation() != string(openai.ProtocolResponses) && connection.Implementation() != string(openai.ProtocolChatCompletions) {
 			return gateway.RouteDispatcherCatalog{}, ErrInvalidRouteAuthority
 		}
 		credentials, err := resolver.ResolveOpenAICredentials(connection.CredentialEnvironment())
 		if err != nil || credentials == nil {
 			return gateway.RouteDispatcherCatalog{}, ErrInvalidRouteAuthority
 		}
-		definitions[i] = OpenAIConnectionDefinition{AdapterID: connection.AdapterID(), Endpoint: connection.Endpoint(), CredentialIdentity: connection.CredentialIdentity(), Credentials: credentials}
+		definitions[i] = OpenAIConnectionDefinition{Protocol: openai.Protocol(connection.Implementation()), AdapterID: connection.AdapterID(), Endpoint: connection.Endpoint(), CredentialIdentity: connection.CredentialIdentity(), Credentials: credentials}
 	}
 	return NewOpenAIRouteDispatcherCatalog(inventory, definitions)
 }
@@ -110,14 +111,14 @@ func NewLocalOpenAIRouteDispatcherCatalogFromRuntimePolicy(inventory runtimeconf
 	definitions := make([]OpenAIConnectionDefinition, len(connections))
 	for i, connection := range connections {
 		locality, err := provider.ClassifyServiceEndpoint(connection.Endpoint())
-		if err != nil || locality != provider.ServiceEndpointLoopback || connection.Implementation() != "openai_responses" {
+		if err != nil || locality != provider.ServiceEndpointLoopback || (connection.Implementation() != string(openai.ProtocolResponses) && connection.Implementation() != string(openai.ProtocolChatCompletions)) {
 			return gateway.RouteDispatcherCatalog{}, ErrInvalidRouteAuthority
 		}
 		credentials, err := resolver.ResolveOpenAICredentials(connection.CredentialEnvironment())
 		if err != nil || credentials == nil {
 			return gateway.RouteDispatcherCatalog{}, ErrInvalidRouteAuthority
 		}
-		definitions[i] = OpenAIConnectionDefinition{AdapterID: connection.AdapterID(), Endpoint: connection.Endpoint(), CredentialIdentity: connection.CredentialIdentity(), Credentials: credentials, HTTPClient: client, HTTPClientIdentity: clientIdentity}
+		definitions[i] = OpenAIConnectionDefinition{Protocol: openai.Protocol(connection.Implementation()), AdapterID: connection.AdapterID(), Endpoint: connection.Endpoint(), CredentialIdentity: connection.CredentialIdentity(), Credentials: credentials, HTTPClient: client, HTTPClientIdentity: clientIdentity}
 	}
 	return NewOpenAIRouteDispatcherCatalog(inventory, definitions)
 }

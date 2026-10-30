@@ -167,7 +167,7 @@
         ],
         "properties": {
           "implementation": {
-            "const": "openai_responses"
+            "enum": ["openai_responses", "openai_chat_completions"]
           },
           "adapter_id": {
             "type": "string",

@@ -93,16 +93,17 @@ type localModelCapture struct {
 }
 
 type localModelEndpoint struct {
-	mu         sync.Mutex
-	calls      int
-	captures   []localModelCapture
-	mode       string
-	model      string
-	entered    chan struct{}
-	canceled   chan struct{}
-	stop       chan struct{}
-	enterOnce  sync.Once
-	cancelOnce sync.Once
+	chatCompletions bool
+	mu              sync.Mutex
+	calls           int
+	captures        []localModelCapture
+	mode            string
+	model           string
+	entered         chan struct{}
+	canceled        chan struct{}
+	stop            chan struct{}
+	enterOnce       sync.Once
+	cancelOnce      sync.Once
 }
 
 func (m *localModelEndpoint) snapshot() (int, []localModelCapture) {
@@ -129,7 +130,11 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 	m.mu.Lock()
 	m.calls++
 	m.mu.Unlock()
-	if r.Method != http.MethodPost || r.URL.Path != "/v1/responses" || r.Header.Get("Authorization") != "Bearer "+localModelKey {
+	path := "/v1/responses"
+	if m.chatCompletions {
+		path = "/v1/chat/completions"
+	}
+	if r.Method != http.MethodPost || r.URL.Path != path || r.Header.Get("Authorization") != "Bearer "+localModelKey {
 		t.Error("model transport lost endpoint, method, or test credential binding")
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
@@ -141,24 +146,48 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	var wire struct {
-		Model     string `json:"model"`
-		Store     bool   `json:"store"`
-		MaxOutput uint32 `json:"max_output_tokens"`
-		Input     []struct {
-			Role    string `json:"role"`
-			Content []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
-		} `json:"input"`
+	var payload []byte
+	var chatInstructions string
+	if m.chatCompletions {
+		var wire struct {
+			Model    string `json:"model"`
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+			MaxTokens uint32 `json:"max_tokens"`
+			Stream    bool   `json:"stream"`
+		}
+		var fields map[string]json.RawMessage
+		decoder := json.NewDecoder(bytes.NewReader(encoded))
+		decoder.DisallowUnknownFields()
+		if json.Unmarshal(encoded, &fields) != nil || len(fields) != 4 || decoder.Decode(&wire) != nil || wire.Model != m.model || wire.MaxTokens != 4096 || wire.Stream || len(wire.Messages) != 2 || wire.Messages[0].Role != "system" || wire.Messages[1].Role != "user" || string(fields["stream"]) != "false" {
+			t.Error("model request lost exact bounded Chat Completions wire")
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		chatInstructions = wire.Messages[0].Content
+		payload = []byte(wire.Messages[1].Content)
+	} else {
+		var wire struct {
+			Model     string `json:"model"`
+			Store     bool   `json:"store"`
+			MaxOutput uint32 `json:"max_output_tokens"`
+			Input     []struct {
+				Role    string `json:"role"`
+				Content []struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"input"`
+		}
+		if json.Unmarshal(encoded, &wire) != nil || wire.Model != m.model || wire.Store || wire.MaxOutput != 4096 || len(wire.Input) != 1 || wire.Input[0].Role != "user" || len(wire.Input[0].Content) != 1 || wire.Input[0].Content[0].Type != "input_text" {
+			t.Error("model request lost exact bounded Responses wire")
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		payload = []byte(wire.Input[0].Content[0].Text)
 	}
-	if json.Unmarshal(encoded, &wire) != nil || wire.Model != m.model || wire.Store || wire.MaxOutput != 4096 || len(wire.Input) != 1 || wire.Input[0].Role != "user" || len(wire.Input[0].Content) != 1 || wire.Input[0].Content[0].Type != "input_text" {
-		t.Error("model request lost exact bounded Responses wire")
-		http.Error(w, "invalid request", http.StatusBadRequest)
-		return
-	}
-	payload := []byte(wire.Input[0].Content[0].Text)
 	var packet localModelPacket
 	request, requestErr := provider.NewRequest(provider.CapabilityReviewV1, "application/json", payload)
 	if json.Unmarshal(payload, &packet) != nil || requestErr != nil || packet.Version != 3 {
@@ -172,6 +201,12 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 		err = review.ValidateVerificationModelRequest(request, packet.Scope)
 	} else {
 		err = fmt.Errorf("unexpected model task")
+	}
+	if m.chatCompletions {
+		instructions, instructionErr := review.TrustedModelRequestInstructions(payload)
+		if instructionErr != nil || instructions != chatInstructions {
+			err = fmt.Errorf("Chat system instructions differ from pinned host instructions")
+		}
 	}
 	if err != nil {
 		t.Error("model-visible instructions, schema, or authority do not match the host contract")
@@ -254,6 +289,17 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 		"output": []any{map[string]any{"id": "message-" + m.model, "type": "message", "role": "assistant", "status": "completed", "content": []any{map[string]any{"type": "output_text", "text": string(text)}}}},
 		"usage":  map[string]any{"input_tokens": 100, "output_tokens": 100, "total_tokens": 200},
 	}
+	if m.chatCompletions {
+		message := map[string]any{"role": "assistant", "content": string(text), "refusal": nil}
+		if m.mode == "malformed_refusal" {
+			message["refusal"] = "blocked"
+		}
+		response = map[string]any{
+			"id": "chatcmpl-" + m.model, "object": "chat.completion", "model": m.model,
+			"choices": []any{map[string]any{"index": 0, "finish_reason": "stop", "message": message}},
+			"usage":   map[string]any{"prompt_tokens": 100, "completion_tokens": 100, "total_tokens": 200},
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		t.Error(err)
@@ -270,6 +316,7 @@ type localModelFixture struct {
 }
 
 type localModelFixtureOptions struct {
+	chatCompletions                                       bool
 	generationMode, verificationMode                      string
 	verifierPending, remote, expensive, capacity, partial bool
 }
@@ -280,7 +327,7 @@ func newLocalModelFixture(t *testing.T, options localModelFixtureOptions) *local
 	endpoints := make([]string, 0, 2)
 	for i, mode := range []string{options.generationMode, options.verificationMode} {
 		name := []string{"a", "b"}[i]
-		endpoint := &localModelEndpoint{mode: mode, model: "model-" + name, entered: make(chan struct{}), canceled: make(chan struct{}), stop: make(chan struct{})}
+		endpoint := &localModelEndpoint{chatCompletions: options.chatCompletions, mode: mode, model: "model-" + name, entered: make(chan struct{}), canceled: make(chan struct{}), stop: make(chan struct{})}
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { endpoint.serve(t, w, r) }))
 		t.Cleanup(func() { close(endpoint.stop); server.Close() })
 		endpoints = append(endpoints, server.URL+"/v1")
@@ -309,6 +356,12 @@ func newLocalModelFixture(t *testing.T, options localModelFixtureOptions) *local
 		zone = provider.ProviderZonePrivateRemote
 		endpoints = []string{"https://provider-a.invalid/v1", "https://provider-b.invalid/v1"}
 	}
+	evidenceManifest := []byte(`{"fixture":"operator-approved local Responses contract"}`)
+	implementation := "openai_responses"
+	if options.chatCompletions {
+		implementation = "openai_chat_completions"
+		evidenceManifest = []byte(`{"fixture":"operator-approved local Chat Completions contract"}`)
+	}
 	routes := make([]map[string]any, 0, 2)
 	for i, name := range []string{"a", "b"} {
 		status := provider.RouteRegistryApproved
@@ -330,7 +383,7 @@ func newLocalModelFixture(t *testing.T, options localModelFixtureOptions) *local
 			"max_context_tokens": contextTokens, "max_output_tokens": outputTokens, "features": []string{"structured_output"}, "content_logging": provider.ContentLoggingDisabled.String(),
 			"pricing_known": true, "input_micro_usd_per_million_tokens": price, "output_micro_usd_per_million_tokens": price,
 			"quality": provider.RouteQualityTier3.String(), "registry_revision": 7, "registry_status": status.String(),
-			"evidence_manifest_base64": base64.StdEncoding.EncodeToString([]byte(`{"fixture":"operator-approved local Responses contract"}`)),
+			"evidence_manifest_base64": base64.StdEncoding.EncodeToString(evidenceManifest),
 			"operational_revision":     9, "health": provider.RouteHealthHealthy.String(), "quota": provider.RouteQuotaAvailable.String(),
 			"performance_revision": 11, "latency_known": true, "p95_latency_milliseconds": 2500, "latency_sample_count": 100,
 		})
@@ -346,17 +399,22 @@ func newLocalModelFixture(t *testing.T, options localModelFixtureOptions) *local
 		records[record.RouteCandidateDeclaration().RouteCapabilityDeclaration().RouteReference().AdapterID()] = record.Identity()
 	}
 	f.generationRoute, f.verificationRoute = records["adapter-a"], records["adapter-b"]
-	policyBytes := localModelJSON(t, map[string]any{
+	policyDocument := map[string]any{
 		"schema_version": 1, "inventory_identity": inventory.Identity(), "review_policy_identity": localModelDigest([]byte("local-review-policy")),
 		"min_context_tokens": 1, "min_output_tokens": 1, "required_features": []string{"structured_output"}, "classification": "confidential", "allowed_zones": []string{zone.String()}, "content_logging_allowed": false,
 		"estimated_input_tokens": 1, "max_output_tokens": 4096, "max_cost_micro_usd": 0,
 		"pinned_route_record_identity": records["adapter-a"], "preferred_route_record_identities": []string{records["adapter-b"]}, "verification_independence": "distinct_provider",
 		"publication_minimum_severity": "medium", "publication_max_inline_findings": 20, "publication_minimum_independence": "distinct_provider", "publication_block_on_inconclusive": true,
 		"connections": []map[string]string{
-			{"implementation": "openai_responses", "adapter_id": "adapter-a", "endpoint": endpoints[0], "credential_environment": "OPEN_TRESTLE_PROVIDER_LOCAL_TEST_A"},
-			{"implementation": "openai_responses", "adapter_id": "adapter-b", "endpoint": endpoints[1], "credential_environment": "OPEN_TRESTLE_PROVIDER_LOCAL_TEST_B"},
+			{"implementation": implementation, "adapter_id": "adapter-a", "endpoint": endpoints[0], "credential_environment": "OPEN_TRESTLE_PROVIDER_LOCAL_TEST_A"},
+			{"implementation": implementation, "adapter_id": "adapter-b", "endpoint": endpoints[1], "credential_environment": "OPEN_TRESTLE_PROVIDER_LOCAL_TEST_B"},
 		},
-	})
+	}
+	if options.chatCompletions {
+		policyDocument["schema_version"] = 2
+		policyDocument["verification_route_record_identity"] = records["adapter-b"]
+	}
+	policyBytes := localModelJSON(t, policyDocument)
 	configuration, err := runtimeconfig.DecodeRuntimePolicy(context.Background(), bytes.NewReader(policyBytes), inventory)
 	if err != nil {
 		t.Fatal(err)

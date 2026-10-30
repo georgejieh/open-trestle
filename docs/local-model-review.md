@@ -142,6 +142,29 @@ only the narrow pack/index subset above is supported. Alternates, worktree
 pointer files supplied as object roots, symlink/gitlink source entries, unavailable objects, and other
 unsupported Git layouts do not produce comprehensive clearance.
 
+## Chat Completions transport
+
+In runtime policy v2, set a protected connection's `implementation` to
+`openai_chat_completions` to select Chat Completions instead of
+`openai_responses`. The endpoint remains the API base, for example
+`http://127.0.0.1:8080/v1`. Changing implementation changes the policy and adapter
+identities; recompute bindings and obtain any required exact approvals.
+
+Chat sends `POST /v1/chat/completions` for that base, with the exact model
+selector, a trusted system message, the authorized user payload, `max_tokens`,
+and `stream:false`. It uses the same bearer credential resolver, request bounds,
+locality checks, sanitization proofs and audit path as Responses. It does not
+send tools or claim provider retention settings. Responses keeps its existing
+wire format and identity. Neither transport activates or approves a route.
+
+Only bounded text/refusal output from one assistant choice is accepted. The
+returned model selector must match exactly. Tool calls, streaming and unsupported
+fields fail closed. Model-specific `developer` roles or
+`max_completion_tokens` profiles are not inferred. A compatible wire response
+is not evidence of model quality, privacy terms or live server readiness. Test
+your exact server and model before approving the route. The existing local
+credential requirement remains; this transport does not add anonymous access.
+
 ## Local Responses configuration bootstrap
 
 The files in [`examples/local-model-review/`](../examples/local-model-review/) are
