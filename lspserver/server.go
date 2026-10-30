@@ -223,6 +223,10 @@ type lspDiagnostic struct {
 }
 
 func toLSPDiagnostic(set diagnostics.Set, finding diagnostics.Finding) lspDiagnostic {
+	snapshotIdentity := set.SnapshotIdentity()
+	if set.SchemaVersion() == 7 {
+		snapshotIdentity = set.ReviewSnapshotIdentity()
+	}
 	return lspDiagnostic{
 		Range: lspRange{
 			Start: lspPosition{Line: finding.StartLine() - 1},
@@ -233,7 +237,7 @@ func toLSPDiagnostic(set diagnostics.Set, finding diagnostics.Finding) lspDiagno
 		Data: map[string]any{
 			"diagnostic_identity": finding.Identity(), "source_identity": finding.SourceIdentity(),
 			"evidence_ids": finding.EvidenceIDs(), "diagnostic_set_identity": set.Identity(),
-			"snapshot_identity": set.SnapshotIdentity(), "head_revision": set.HeadRevision(),
+			"snapshot_identity": snapshotIdentity, "head_revision": set.HeadRevision(),
 		},
 	}
 }
