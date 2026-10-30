@@ -75,6 +75,63 @@ The subsequent model review still uses the explicit protected policy and egress
 checks. This convenience form is foreground-only; it does not enroll a checkout
 as a durable daemon source root or grant publication authority.
 
+## Headless CI use
+
+`trestle ci --format=json|sarif PATH` reviews a local fixture file through the
+deterministic fixture path. It does not select an arbitrary checkout or invoke
+models. For noninteractive model-backed review of a checkout, use the existing
+foreground command below. It needs no terminal prompt and creates no durable
+run or publication effect.
+
+Prepare both commits in the checkout before this command. Set `BASE_COMMIT` and
+`HEAD_COMMIT` to distinct full lowercase commit digests for the intended review;
+there is no inferred merge base or fetch. Set tenant and repository IDs to the
+scope approved by your operator. Provision the protected route inventory, runtime
+policy and any required credential references separately. They must bind the
+approved generation and independent-verification pair; this command does not
+approve them or choose defaults. Use the supported configuration preparation
+steps below rather than hand-constructing identities.
+
+```sh
+trestle local-git model-review \
+  --checkout /approved/repository \
+  --base "$BASE_COMMIT" --head "$HEAD_COMMIT" \
+  --repository-authority example.test \
+  --repository-namespace team --repository-name repository \
+  --tenant TENANT --repository REPOSITORY \
+  --route-inventory /protected/routes.json \
+  --runtime-policy /protected/policy.json \
+  --egress local-only --timeout 5m --format json
+```
+
+Replace the example paths and identity labels with approved values. The repository
+identity fields describe the selected repository; they do not authenticate an
+origin or trigger a network request. Checkout mode must not be combined with
+object-root, revision-digest or object-store flags. The CI runner needs the
+supported installed Git version and permission to read the selected objects.
+No repository hooks, credential helpers, fetch, source writer or publisher is
+run by this command. The explicitly selected model routes are contacted only
+through their existing policy and credential boundaries. This example uses
+`local-only`, which refuses remote routes.
+
+Capture stdout as one terminal JSON receipt and retain the process exit status.
+The receipt uses `open-trestle/local-git-model-review-result`, schema version 1;
+inspect `status`, `ci_disposition`, `run_status`, `limitations` and `diagnostics`
+together. A succeeded run means the pipeline finished, not that the repository
+is clear. Verified findings use `ci_disposition: blocked`; no candidates,
+incomplete evidence or abstention remain `inconclusive`. Refusal and failure
+remain distinct terminal statuses. The [exit table](#results-and-limits) below
+is authoritative: exit 4 covers findings or policy/resource refusal, 3 covers
+no-candidate/incomplete/canceled outcomes, 2 is invalid intent, and 1 is failure.
+There is no exit-0 branch or comprehensive-clearance result in this version.
+Do not mask a nonzero status or treat an empty finding list as CI approval.
+
+The command reports JSON or text, not SARIF. For a separately admitted daemon
+run, `runs status --format json|sarif` retrieves the canonical result; successful
+retrieval is not a review-pass decision. Neither export creates publication
+permission. This headless example remains ephemeral and cannot resume an older
+run. It does not establish model quality or live provider qualification.
+
 ## Runtime policy route-pair boundary
 
 The existing `local-git model-review` command and historical runtime policy v1 keep their current behavior. A single entry in `preferred_route_record_identities` is a ranking hint, not an exact verifier grant. Runtime policy v2 adds required `verification_route_record_identity`, which must name one record in the bound inventory and differ from the generation pin. The preliminary local generation route-pair resolver uses only that explicit grant, requires local-only zones with logging disabled, and checks both routes against eligibility and configured independence. Preferred-route hints cannot substitute for the grant or redirect the pair. Neither a schema-valid v2 document nor a preflight pair authorizes an actual model request. Generation and verification need separate eligibility checks for their actual sanitized requests, exact record pins, and no fallback before dispatch. The foreground `local-git model-review` command retains its historical behavior. The opt-in durable full-review daemon resolves the explicit v2 pair before constructing its generation worker; its generation and verification handlers still require separate authorization for each sanitized request. Preflight resolution alone is not dispatch authority.

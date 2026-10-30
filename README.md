@@ -107,13 +107,17 @@ publication gate.
 |---|---|
 | `trestled` | Local or server review daemon |
 | `trestle` | CLI and terminal user interface |
-| `trestle ci` | Headless review for CI pipelines |
+| `trestle ci` | Deterministic review of local fixture files, not arbitrary checkouts |
 | `trestle lsp` | Read-only editor diagnostics |
 | `trestle mcp` | Scoped Model Context Protocol server |
 | `trestle acp` | Agent Client Protocol endpoint |
 | VS Code extension | Packaged read-only verified findings over the LSP boundary; deterministic observations remain outside LSP findings |
 | Web console | Read-only run, diagnostic, and runtime inspection |
 | Forge adapters | Verified webhook intake; governed publication behind an explicit effect gate |
+
+For noninteractive model-backed review of an explicit checkout base/head pair, use
+[`trestle local-git model-review`](docs/local-model-review.md#headless-ci-use).
+Its conservative CI disposition is not a repository-clearance claim.
 
 ## Quick start
 
