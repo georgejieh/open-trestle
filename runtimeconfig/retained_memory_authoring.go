@@ -13,6 +13,7 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
+	"github.com/georgejieh/open-trestle/diagnostics"
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/internal/fileauthority"
 	"github.com/georgejieh/open-trestle/internal/memory"
@@ -252,6 +253,7 @@ func retainedFeedbackTextDisallowed(value rune) bool {
 }
 
 type retainedFeedbackScanner struct {
+	review      *diagnostics.Set
 	encoded     []byte
 	ctx         context.Context
 	offset      int
@@ -309,41 +311,72 @@ func (s *retainedFeedbackScanner) object() (RetainedMemoryFeedback, bool) {
 		return RetainedMemoryFeedback{}, false
 	}
 	item := RetainedMemoryFeedback{}
-	seenPath, seenText := false, false
+	seen := map[string]bool{}
+	decision := ""
+	var start uint32
+	maximum := 2
+	if s.review != nil {
+		maximum = 4
+	}
 	for field := 0; ; field++ {
-		if s.ctx.Err() != nil || field >= 2 {
+		if s.ctx.Err() != nil || field >= maximum {
 			return RetainedMemoryFeedback{}, false
 		}
 		key, ok := s.stringToken(false)
-		if !ok || !s.take(':') {
+		if !ok || seen[key] || !s.take(':') {
 			return RetainedMemoryFeedback{}, false
 		}
+		seen[key] = true
 		switch key {
 		case "path":
-			if seenPath {
+			value, ok := s.stringToken(false)
+			if !ok {
+				return RetainedMemoryFeedback{}, false
+			}
+			item.Path = value
+		case "text":
+			value, ok := s.stringToken(true)
+			if !ok || !validRetainedFeedbackText(value) {
+				return RetainedMemoryFeedback{}, false
+			}
+			item.Text = value
+		case "decision":
+			if s.review == nil {
 				return RetainedMemoryFeedback{}, false
 			}
 			value, ok := s.stringToken(false)
 			if !ok {
 				return RetainedMemoryFeedback{}, false
 			}
-			item.Path = value
-			seenPath = true
-		case "text":
-			if seenText {
+			decision = value
+		case "start_line":
+			if s.review == nil {
 				return RetainedMemoryFeedback{}, false
 			}
-			value, ok := s.stringToken(true)
-			if !ok || len(value) > retainedTextLimit {
+			s.space()
+			beginning := s.offset
+			for s.offset < len(s.encoded) && s.encoded[s.offset] >= '0' && s.encoded[s.offset] <= '9' {
+				s.offset++
+			}
+			number := s.encoded[beginning:s.offset]
+			if len(number) == 0 || number[0] == '0' || json.Unmarshal(number, &start) != nil || start == 0 {
 				return RetainedMemoryFeedback{}, false
 			}
-			item.Text = value
-			seenText = true
 		default:
 			return RetainedMemoryFeedback{}, false
 		}
 		if s.take('}') {
-			return item, seenPath && seenText
+			if !seen["path"] || !seen["text"] || seen["decision"] != seen["start_line"] {
+				return RetainedMemoryFeedback{}, false
+			}
+			if seen["decision"] {
+				value, ok := feedbackDecisionText(*s.review, item.Path, start, decision, item.Text)
+				if !ok {
+					return RetainedMemoryFeedback{}, false
+				}
+				item.Text = value
+			}
+			return item, true
 		}
 		if !s.take(',') {
 			return RetainedMemoryFeedback{}, false
