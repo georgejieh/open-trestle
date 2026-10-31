@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -237,13 +238,21 @@ func New(config Config) (*Adapter, error) {
 
 func boundedClient(configured *http.Client) (*http.Client, error) {
 	if configured == nil {
-		transport := http.DefaultTransport.(*http.Transport).Clone()
-		transport.TLSClientConfig = cloneTLSConfig(transport.TLSClientConfig)
-		transport.TLSClientConfig.MinVersion = tls.VersionTLS12
-		transport.MaxResponseHeaderBytes = maximumHeaderBytes
-		configured = &http.Client{Transport: transport, Timeout: defaultRequestTimeout}
+		configured = &http.Client{}
 	}
 	clone := *configured
+	if clone.Transport == nil {
+		clone.Transport = &http.Transport{
+			DialContext:            (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+			ForceAttemptHTTP2:      true,
+			MaxIdleConns:           100,
+			IdleConnTimeout:        90 * time.Second,
+			TLSHandshakeTimeout:    10 * time.Second,
+			ExpectContinueTimeout:  time.Second,
+			TLSClientConfig:        &tls.Config{MinVersion: tls.VersionTLS12},
+			MaxResponseHeaderBytes: maximumHeaderBytes,
+		}
+	}
 	if clone.Timeout == 0 {
 		clone.Timeout = defaultRequestTimeout
 	}
@@ -252,13 +261,6 @@ func boundedClient(configured *http.Client) (*http.Client, error) {
 	}
 	clone.CheckRedirect = func(*http.Request, []*http.Request) error { return ErrInvalidConfig }
 	return &clone, nil
-}
-
-func cloneTLSConfig(config *tls.Config) *tls.Config {
-	if config == nil {
-		return &tls.Config{}
-	}
-	return config.Clone()
 }
 
 func validEndpoint(endpoint *url.URL) bool {
@@ -330,7 +332,7 @@ func defaultHTTPClientIdentity() string {
 		Timeout        int64  `json:"timeout_milliseconds"`
 		MaximumHeaders int64  `json:"maximum_header_bytes"`
 		MinimumTLS     uint16 `json:"minimum_tls_version"`
-	}{"open-trestle/openai-default-http-client", 1, defaultRequestTimeout.Milliseconds(), maximumHeaderBytes, tls.VersionTLS12})
+	}{"open-trestle/openai-default-http-client", 2, defaultRequestTimeout.Milliseconds(), maximumHeaderBytes, tls.VersionTLS12})
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }
