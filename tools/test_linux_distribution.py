@@ -204,6 +204,29 @@ class StagedTemporaryOwnershipTest(unittest.TestCase):
 
 
 class BuilderTest(unittest.TestCase):
+    def test_build_rejects_mode_correct_altered_or_stale_catalog_wrapper(self) -> None:
+        source = Path(linux_distribution.__file__).with_name("model_catalog.py").read_bytes()
+        stale = source.replace(b'            command.add_argument("--expected-current", required=True)\n', b"")
+        self.assertNotEqual(stale, source)
+        for name, body in (("altered", source + b"# altered fixture\n"), ("stale", stale)):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                staging = _staging(root)
+                script = staging / "scripts/model_catalog.py"
+                script.chmod(0o644)
+                _write(script, body, 0o444)
+                output = root / "out.pyz"
+
+                with self.assertRaisesRegex(ValueError, "catalog script digest mismatch"):
+                    linux_distribution.build_distribution(
+                        staging, Path(linux_distribution_runtime.__file__), output,
+                        "0.1.0-dev", REVISION, CREATED,
+                    )
+
+                self.assertFalse(output.exists())
+                self.assertFalse(Path(str(output) + ".sha256").exists())
+                self.assertEqual(list(root.glob(".*.tmp")), [])
+
     def test_build_rejects_unknown_script_beside_model_catalog(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

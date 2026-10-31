@@ -50,6 +50,7 @@ LAUNCHER_BUILD_ENVIRONMENT = {
 WORKER_BUILD_FLAGS = (
     "-trimpath", "-buildvcs=false", "-ldflags=-s -w -buildid=",
 )
+RELEASE_SOURCE_PATHS = {"scripts/model_catalog.py": "tools/model_catalog.py"}
 EXECUTABLE_PATHS = frozenset({
     "trestle",
     "trestled",
@@ -635,8 +636,25 @@ def _staging_files(root: Path) -> set[str]:
     return files
 
 
-def validate_staging(root: Path, expected_files: set[str]) -> tuple[str, ...]:
-    """Verify an exact runtime-only staging tree."""
+def release_input_digests(repository: Path) -> dict[str, str]:
+    """Bind staged scripts to the maintained repository release inputs."""
+    digests: dict[str, str] = {}
+    for target, source in RELEASE_SOURCE_PATHS.items():
+        path = repository / source
+        if path.is_symlink() or not path.is_file():
+            raise ValueError(f"release input is unavailable: {source}")
+        digests[target] = _sha256(path)
+    return digests
+
+
+def validate_staging(
+    root: Path,
+    expected_files: set[str],
+    expected_source_digests: dict[str, str] | None = None,
+) -> tuple[str, ...]:
+    """Verify an exact runtime-only staging tree against reviewed source inputs."""
+    if expected_source_digests is None:
+        expected_source_digests = release_input_digests(Path(__file__).resolve().parent.parent)
     actual = _staging_files(root)
     if actual != expected_files:
         raise ValueError("staging inventory mismatch")
@@ -649,6 +667,8 @@ def validate_staging(root: Path, expected_files: set[str]) -> tuple[str, ...]:
         if relative == "scripts/model_catalog.py":
             if stat.S_IMODE((root / relative).stat().st_mode) != 0o444:
                 raise ValueError("catalog script mode is not read-only")
+            if _sha256(root / relative) != expected_source_digests.get(relative):
+                raise ValueError("catalog script digest mismatch")
         elif path.suffix.lower() in forbidden_suffixes or path.name in {"go", "gcc", "make", "ld", "zig", "clang", "lld", "musl-gcc"}:
             raise ValueError("source, test, private reference, or build tool in staging")
     for relative in EXECUTABLE_PATHS:
@@ -794,7 +814,7 @@ def _copy_file(source: Path, destination: Path, mode: int = 0o444) -> None:
 def _expected_staging_files(repository: Path) -> set[str]:
     files = {
         "ca-certificates.crt", "LICENSE", "NOTICE", "trestle", "trestled",
-        "scripts/model_catalog.py",
+        *RELEASE_SOURCE_PATHS,
         "libexec/open-trestle/open-trestle-secret-scanner",
         "libexec/open-trestle/open-trestle-secret-scanner-worker",
         "release/secret-scanner-release.json",
@@ -810,6 +830,7 @@ def _expected_staging_files(repository: Path) -> set[str]:
 def package(repository: Path, output: Path) -> None:
     """Build deterministic scanner binaries and create the runtime staging tree."""
     repository = repository.resolve()
+    expected_source_digests = release_input_digests(repository)
     output = output.resolve()
     if output == repository or repository not in output.parents:
         raise ValueError("staging output must be a repository subdirectory")
@@ -872,7 +893,8 @@ def package(repository: Path, output: Path) -> None:
         _copy_file(Path("/etc/ssl/certs/ca-certificates.crt").resolve(), output / "ca-certificates.crt")
         _copy_file(repository / "LICENSE", output / "LICENSE")
         _copy_file(repository / "NOTICE", output / "NOTICE")
-        _copy_file(repository / "tools/model_catalog.py", output / "scripts/model_catalog.py")
+        for target, source in RELEASE_SOURCE_PATHS.items():
+            _copy_file(repository / source, output / target)
         shutil.copytree(repository / "THIRD_PARTY_LICENSES", output / "licenses")
         for path in (output / "licenses").rglob("*"):
             if path.is_file():
@@ -916,7 +938,7 @@ def package(repository: Path, output: Path) -> None:
         trestled = (output / "trestled").read_bytes()
         if launcher_digest.encode("ascii") not in trestled or worker_digest.encode("ascii") not in trestled:
             raise ValueError("trestled does not contain both scanner digests")
-    validate_staging(output, _expected_staging_files(repository))
+    validate_staging(output, _expected_staging_files(repository), expected_source_digests)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -931,7 +953,11 @@ def main(argv: list[str] | None = None) -> int:
     repository = Path(__file__).resolve().parent.parent
     try:
         if arguments.verify:
-            validate_staging(repository / arguments.verify, _expected_staging_files(repository))
+            validate_staging(
+                repository / arguments.verify,
+                _expected_staging_files(repository),
+                release_input_digests(repository),
+            )
         else:
             package(repository, repository / arguments.output)
     except (OSError, ValueError, json.JSONDecodeError) as error:

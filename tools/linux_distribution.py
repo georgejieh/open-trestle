@@ -19,6 +19,8 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
+from package_secret_scanner import release_input_digests
+
 SCHEMA_VERSION = 2
 FIXED_ZIP_TIME = (1980, 1, 1, 0, 0, 0)
 SHEBANG = b"#!/usr/bin/env python3\n"
@@ -234,7 +236,7 @@ def _walk_staging(root_descriptor: int) -> tuple[dict[str, os.stat_result], set[
     return files, directories
 
 
-def _collect_payload(staging: Path) -> tuple[Payload, ...]:
+def _collect_payload(staging: Path, expected_source_digests: dict[str, str]) -> tuple[Payload, ...]:
     try:
         path_status = os.lstat(staging)
         root_descriptor = os.open(staging, os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0))
@@ -276,6 +278,8 @@ def _collect_payload(staging: Path) -> tuple[Payload, ...]:
         document_sources = ["LICENSE", "NOTICE", "scripts/model_catalog.py", *license_files, *sorted(RELEASE_FILES)]
         for source in document_sources:
             body = _read_stable(staging / source, 0o444, source, root_descriptor, file_statuses[source])
+            if source == "scripts/model_catalog.py" and hashlib.sha256(body).hexdigest() != expected_source_digests.get(source):
+                raise ValueError("catalog script digest mismatch")
             if source == "LICENSE" or source == "NOTICE":
                 target = f"usr/local/share/licenses/open-trestle/{source}"
             elif source.startswith("licenses/"):
@@ -427,7 +431,8 @@ def build_distribution(
     runtime_body = _read_stable(runtime, stat.S_IMODE(os.lstat(runtime).st_mode), "lifecycle runtime")
     if b"extractall" in runtime_body or b".extract(" in runtime_body:
         raise ValueError("lifecycle runtime must not use ZIP extraction APIs")
-    payload = _collect_payload(staging)
+    expected_source_digests = release_input_digests(Path(__file__).resolve().parent.parent)
+    payload = _collect_payload(staging, expected_source_digests)
     manifest_document = {
         "created": created,
         "files": [

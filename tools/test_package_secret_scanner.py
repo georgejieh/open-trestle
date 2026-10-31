@@ -173,6 +173,23 @@ class PackageInventoryTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 package_secret_scanner.validate_staging(root, expected | {"scripts/other.py"})
 
+    def test_mode_correct_altered_or_stale_catalog_wrapper_is_rejected(self) -> None:
+        source = Path(package_secret_scanner.__file__).with_name("model_catalog.py").read_bytes()
+        stale = source.replace(b'            command.add_argument("--expected-current", required=True)\n', b"")
+        self.assertNotEqual(stale, source)
+        for name, body in (("altered", source + b"# altered fixture\n"), ("stale", stale)):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                expected = self._make_staging(root)
+                script = root / "scripts/model_catalog.py"
+                script.parent.mkdir()
+                script.write_bytes(body)
+                script.chmod(0o444)
+                expected.add("scripts/model_catalog.py")
+
+                with self.assertRaisesRegex(ValueError, "catalog script digest mismatch"):
+                    package_secret_scanner.validate_staging(root, expected)
+
     def test_source_tests_private_references_and_build_tools_are_rejected(self):
         forbidden = (
             "workers/secret-scanner/launcher/launcher.c",
