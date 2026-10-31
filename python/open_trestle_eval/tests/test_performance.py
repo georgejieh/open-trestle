@@ -15,6 +15,7 @@ from open_trestle_eval.performance import (
     PerformanceMeasurementError,
     _run_once,
     measure_candidate,
+    measure_model_review,
     nearest_rank_percentile,
 )
 
@@ -424,6 +425,156 @@ class PerformanceMeasurementTest(unittest.TestCase):
             nonpending = self.write_program(root, f"import sys\nprint({accepted!r})\nsys.exit(3)\n")
             with self.assertRaises(PerformanceMeasurementError):
                 measure_candidate([str(nonpending)], warmup_count=1, sample_count=10)
+
+
+@unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux wait4")
+class ModelReviewPerformanceTest(unittest.TestCase):
+    def test_captures_one_process_exact_bytes_without_promoting_result(self) -> None:
+        with tempfile.TemporaryDirectory() as value:
+            directory = Path(value)
+            counter = directory / "counter"
+            captured = b'{"synthetic":"not a validated model result"}\n'
+            body = (
+                "import pathlib,sys\n"
+                f"p=pathlib.Path({str(counter)!r})\n"
+                "p.write_text(p.read_text()+'x' if p.exists() else 'x')\n"
+                f"sys.stdout.buffer.write({captured!r})\n"
+                "raise SystemExit(4)\n"
+            )
+            program = directory / "fake-review.py"
+            program.write_text(body)
+            output = directory / "capture.json"
+            observation = measure_model_review([sys.executable, str(program)], result_output=output)
+            self.assertEqual(counter.read_text(), "x")
+            self.assertEqual(output.read_bytes(), captured)
+            self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(observation["result_sha256"], hashlib.sha256(captured).hexdigest())
+        self.assertEqual(observation["sample_count"], 1)
+        self.assertEqual(observation["warmup_count"], 0)
+        self.assertEqual(observation["exit_code"], 4)
+        self.assertFalse(observation["release_evidence_eligible"])
+        self.assertFalse(observation["result_validated"])
+        self.assertGreater(observation["elapsed_ns"], 0)
+        self.assertGreater(observation["max_rss_kib"], 0)
+        self.assertGreaterEqual(observation["user_cpu_ns"], 0)
+        self.assertGreaterEqual(observation["system_cpu_ns"], 0)
+        self.assertNotIn("synthetic", json.dumps(observation))
+        self.assertNotIn(str(program), json.dumps(observation))
+
+    def test_rejects_invalid_capture_or_exit(self) -> None:
+        for captured, code in ((b'{}', 3), (b'{}\n\n', 3), (b'{}\r\n', 3), (b'{}\n', 0)):
+            with self.subTest(captured=captured, code=code):
+                with tempfile.TemporaryDirectory() as value:
+                    with self.assertRaises(PerformanceMeasurementError):
+                        measure_model_review(
+                            [sys.executable, "-c", f"import sys; sys.stdout.buffer.write({captured!r}); sys.exit({code})"],
+                            result_output=Path(value) / "capture",
+                        )
+        with tempfile.TemporaryDirectory() as value:
+            with self.assertRaisesRegex(PerformanceMeasurementError, "output exceeded the limit"):
+                measure_model_review(
+                    [sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'x'*(256*1024)+b'\\n'); sys.exit(3)"],
+                    result_output=Path(value) / "capture",
+                )
+
+    def test_captures_above_deterministic_limit_up_to_model_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as value:
+            output = Path(value) / "capture"
+            result = measure_model_review(
+                [sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'x'*(256*1024-1)+b'\\n'); sys.exit(3)"],
+                result_output=output,
+            )
+            self.assertEqual(output.stat().st_size, 256 * 1024)
+            self.assertEqual(result["result_sha256"], hashlib.sha256(output.read_bytes()).hexdigest())
+
+    def test_timeout_and_executable_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as value:
+            directory = Path(value)
+            with self.assertRaisesRegex(PerformanceMeasurementError, "timed out"):
+                measure_model_review([sys.executable, "-c", "import time; time.sleep(10)"], result_output=directory / "timeout", timeout_seconds=0.05)
+            program = directory / "review"
+            program.write_text("#!/usr/bin/env python3\nimport pathlib,sys\np=pathlib.Path(__file__); p.write_text(p.read_text()+'# drift\\n')\nprint('{}')\nsys.exit(3)\n")
+            program.chmod(0o700)
+            with self.assertRaisesRegex(PerformanceMeasurementError, "executable changed"):
+                measure_model_review([str(program)], result_output=directory / "drift")
+
+    def test_output_refuses_existing_file_and_symlinks_before_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as value:
+            directory = Path(value)
+            existing = directory / "existing"
+            existing.write_bytes(b"preserve")
+            link = directory / "link"
+            link.symlink_to(existing)
+            ancestor = directory / "ancestor"
+            ancestor.symlink_to(directory, target_is_directory=True)
+            for output in (existing, link, ancestor / "new"):
+                with self.subTest(output=output):
+                    with patch("open_trestle_eval.performance._run_once") as run_once:
+                        with self.assertRaises(OSError):
+                            measure_model_review([sys.executable], result_output=output)
+                        run_once.assert_not_called()
+            self.assertEqual(existing.read_bytes(), b"preserve")
+
+    def test_invalid_timeout_refuses_launch(self) -> None:
+        for timeout in (0, 601, float("nan"), float("inf")):
+            with self.subTest(timeout=timeout):
+                with patch("open_trestle_eval.performance._run_once") as run_once:
+                    with self.assertRaises(ValueError):
+                        measure_model_review([sys.executable], result_output=Path("unused"), timeout_seconds=timeout)
+                    run_once.assert_not_called()
+
+    def test_stderr_limit_is_not_expanded_for_model_capture(self) -> None:
+        with tempfile.TemporaryDirectory() as value:
+            with self.assertRaisesRegex(PerformanceMeasurementError, "output exceeded the limit"):
+                measure_model_review(
+                    [sys.executable, "-c", "import sys; sys.stderr.write('x'*70000); print('{}'); sys.exit(3)"],
+                    result_output=Path(value) / "capture",
+                )
+
+    def test_capture_setup_failure_reaps_model_command(self) -> None:
+        processes = []
+        popen = subprocess.Popen
+
+        def launch(*args, **kwargs):
+            process = popen(*args, **kwargs)
+            processes.append(process)
+            return process
+
+        with tempfile.TemporaryDirectory() as value:
+            with patch("open_trestle_eval.performance.subprocess.Popen", side_effect=launch):
+                with patch("open_trestle_eval.performance.os.set_blocking", side_effect=OSError("setup failed")):
+                    with self.assertRaises(OSError):
+                        measure_model_review(
+                            [sys.executable, "-c", "import time; time.sleep(30)"],
+                            result_output=Path(value) / "capture",
+                        )
+        self.assertEqual(len(processes), 1)
+        self.assertEqual(processes[0].returncode, -signal.SIGKILL)
+        with self.assertRaises(ChildProcessError):
+            os.waitpid(processes[0].pid, os.WNOHANG)
+
+    def test_cli_single_capture_and_rejects_repeat_or_output_conflicts(self) -> None:
+        environment = dict(os.environ)
+        environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+        with tempfile.TemporaryDirectory() as value:
+            directory = Path(value)
+            result = directory / "result"
+            observation = directory / "observation"
+            base = [sys.executable, "-m", "open_trestle_eval.performance", "--mode", "model-review"]
+            command = ["--", sys.executable, "-c", "print('{}'); raise SystemExit(3)"]
+            run = subprocess.run(base + ["--result-output", str(result), "--output", str(observation)] + command, env=environment, capture_output=True)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            self.assertEqual(result.read_bytes(), b'{}\n')
+            self.assertEqual(json.loads(observation.read_bytes())["result_sha256"], hashlib.sha256(result.read_bytes()).hexdigest())
+            self.assertEqual(observation.stat().st_mode & 0o777, 0o600)
+            for extra in ([], ["--warmups", "0"], ["--samples", "1"], ["--result-output", str(result)], ["--result-output", str(directory / "unused"), "--output", str(observation)], ["--result-output", str(directory / "same"), "--output", str(directory / "same")]):
+                with self.subTest(extra=extra):
+                    marker = directory / "launched"
+                    forbidden = ["--", sys.executable, "-c", f"from pathlib import Path; Path({str(marker)!r}).touch()"]
+                    rejected = subprocess.run(base + extra + forbidden, env=environment, capture_output=True)
+                    self.assertNotEqual(rejected.returncode, 0)
+                    self.assertFalse(marker.exists())
+            self.assertEqual(result.read_bytes(), b'{}\n')
 
 
 class PercentileTest(unittest.TestCase):
