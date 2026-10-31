@@ -556,7 +556,16 @@ func RenderResult(writer io.Writer, r Result) error {
 	var buffer bytes.Buffer
 	fmt.Fprintf(&buffer, "status: %s\nci: %s\nrun: %s\n", r.wire.Status, r.wire.CI, r.wire.RunStatus)
 	for _, finding := range r.diagnostics.Findings() {
-		fmt.Fprintf(&buffer, "finding: %s %s\nsource: %s:%d-%d\n", finding.Severity().String(), finding.Title(), finding.Path(), finding.StartLine(), finding.EndLine())
+		fmt.Fprintf(&buffer, "finding: %s %s\nsource: %s:%d-%d\nmessage: %s\nevidence: %s\n", finding.Severity().String(), finding.Title(), finding.Path(), finding.StartLine(), finding.EndLine(), finding.Message(), strings.Join(finding.EvidenceIDs(), ", "))
+	}
+	if r.diagnostics.VerifiedSetIdentity() != "" {
+		fmt.Fprintf(&buffer, "coverage: candidates=%d verified=%d rejected=%d inconclusive=%d\n", r.diagnostics.CandidateCount(), r.diagnostics.VerifiedCount(), r.diagnostics.RejectedCount(), r.diagnostics.InconclusiveCount())
+	}
+	if r.diagnostics.VerificationContextIdentity() != "" {
+		fmt.Fprintf(&buffer, "source coverage: analyzed=%d selected=%d omitted=%d\n", r.diagnostics.SourceAnalyzedCount(), r.diagnostics.SourceSelectedCount(), r.diagnostics.SourceOmittedCount())
+		for _, omission := range r.diagnostics.OmissionSummaries() {
+			fmt.Fprintf(&buffer, "source omission: %s=%d\n", omission.Reason().String(), omission.Count())
+		}
 	}
 	fmt.Fprintf(&buffer, "limitations: %s\ncomprehensive clearance: false\n", strings.Join(r.wire.Limitations, ", "))
 	if buffer.Len() > MaxResultTextBytes {
