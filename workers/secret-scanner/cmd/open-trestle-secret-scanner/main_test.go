@@ -197,7 +197,7 @@ func buildWorker(t *testing.T, directory string) string {
 	workerPath := filepath.Join(directory, "worker")
 	command := exec.Command("go", "build", "-trimpath", "-buildvcs=false", "-ldflags=-s -w -buildid=", "-o", workerPath, ".")
 	command.Dir = "."
-	command.Env = append(os.Environ(), "GOWORK=off", "GOTOOLCHAIN=go1.26.8", "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0")
+	command.Env = append(os.Environ(), "GOWORK=off", "GOTOOLCHAIN=go1.26.10", "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0")
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("worker build failed: %v; output=%s", err, output)
 	}

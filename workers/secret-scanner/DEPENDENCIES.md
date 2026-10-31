@@ -1,6 +1,6 @@
 # Secret scanner dependencies
 
-The secret scanner is an isolated Go module. It builds with Go 1.26.8 and does not add dependencies to the repository root module.
+The secret scanner is an isolated Go module. It builds with Go 1.26.10 and does not add dependencies to the repository root module.
 
 ## Betterleaks pin
 
@@ -30,7 +30,7 @@ The linked launcher contains musl 1.2.5 and Zig compiler-rt 0.14.1. Both are MIT
 The following versions are the unique module inputs reported by:
 
 ```text
-GOWORK=off GOTOOLCHAIN=go1.26.8 go list -deps -f '{{with .Module}}{{if .Version}}{{.Path}} {{.Version}}{{end}}{{end}}' ./internal/adapter
+GOWORK=off GOTOOLCHAIN=go1.26.10 go list -deps -f '{{with .Module}}{{if .Version}}{{.Path}} {{.Version}}{{end}}{{end}}' ./internal/adapter
 ```
 
 - `dario.cat/mergo v1.0.2`
@@ -81,9 +81,9 @@ GOWORK=off GOTOOLCHAIN=go1.26.8 go list -deps -f '{{with .Module}}{{if .Version}
 - `go4.org v0.0.0-20260112195520-a5071408f32f`
 - `golang.org/x/crypto v0.53.0`
 - `golang.org/x/exp v0.0.0-20250218142911-aa4b98e5adaa`
-- `golang.org/x/sync v0.21.0`
+- `golang.org/x/sync v0.22.0`
 - `golang.org/x/sys v0.46.0`
-- `golang.org/x/text v0.39.0`
+- `golang.org/x/text v0.41.0`
 - `go.yaml.in/yaml/v3 v3.0.4`
 
 `go.mod` and `go.sum` are authoritative for module resolution and checksums. `THIRD_PARTY_LICENSES/secret-scanner/MODULES.json` binds the reviewed license and notice files to every module in the linked production binary. `tools/package_secret_scanner.py` derives the final inventory with `go version -m` and fails on any missing, unknown, replaced, or changed module or legal file.

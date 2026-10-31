@@ -263,8 +263,8 @@ class ArtifactCollectionTest(unittest.TestCase):
         components = (
             release_evidence.Component("npm", "react", "19.2.8", "MIT"),
             release_evidence.Component("gomod", "github.com/jackc/pgx/v5", "v5.9.2"),
-            release_evidence.Component("gomod", "golang.org/x/sync", "v0.21.0"),
-            release_evidence.Component("gomod", "golang.org/x/text", "v0.39.0"),
+            release_evidence.Component("gomod", "golang.org/x/sync", "v0.22.0"),
+            release_evidence.Component("gomod", "golang.org/x/text", "v0.41.0"),
         )
         first = release_evidence.encode_spdx(
             artifacts,
@@ -314,8 +314,8 @@ class ArtifactCollectionTest(unittest.TestCase):
             [
                 ("Open Trestle", "0.1.0"),
                 ("github.com/jackc/pgx/v5", "v5.9.2"),
-                ("golang.org/x/sync", "v0.21.0"),
-                ("golang.org/x/text", "v0.39.0"),
+                ("golang.org/x/sync", "v0.22.0"),
+                ("golang.org/x/text", "v0.41.0"),
                 ("react", "19.2.8"),
             ],
         )
@@ -774,12 +774,12 @@ class ComponentInventoryTest(unittest.TestCase):
 
     def test_go_build_info_inventory_uses_embedded_runtime_dependencies(self):
         components = release_evidence.parse_go_components(
-            """binary: go1.26.8
+            """binary: go1.26.10
 	path	github.com/example/tool
 	mod	github.com/example/project	(devel)	
 	dep	github.com/jackc/pgx/v5	v5.9.2	h1:sum
-	dep	golang.org/x/sync	v0.21.0	h1:sum
-	dep	golang.org/x/text	v0.39.0	h1:sum
+	dep	golang.org/x/sync	v0.22.0	h1:sum
+	dep	golang.org/x/text	v0.41.0	h1:sum
 	build	CGO_ENABLED=0
 """
         )
@@ -788,8 +788,8 @@ class ComponentInventoryTest(unittest.TestCase):
             [(item.ecosystem, item.name, item.version) for item in components],
             [
                 ("gomod", "github.com/jackc/pgx/v5", "v5.9.2"),
-                ("gomod", "golang.org/x/sync", "v0.21.0"),
-                ("gomod", "golang.org/x/text", "v0.39.0"),
+                ("gomod", "golang.org/x/sync", "v0.22.0"),
+                ("gomod", "golang.org/x/text", "v0.41.0"),
             ],
         )
 
@@ -813,7 +813,7 @@ class ComponentInventoryTest(unittest.TestCase):
             binary = Path(directory) / "trestle"
             binary.write_bytes(b"binary")
             run.return_value.stdout = (
-                "trestle: go1.26.8\n"
+                "trestle: go1.26.10\n"
                 "\tdep\texample.org/runtime\tv1.2.3\th1:sum\n"
             )
 
@@ -845,7 +845,7 @@ class ComponentInventoryTest(unittest.TestCase):
 
     def test_go_build_info_replacements_fail_closed(self):
         build_info = (
-            "trestle: go1.26.8\n"
+            "trestle: go1.26.10\n"
             "\tdep\texample.org/runtime\tv1.2.3\th1:sum\n"
             "\t=>\t../local-runtime\t(devel)\t\n"
         )

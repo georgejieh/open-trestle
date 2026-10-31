@@ -73,13 +73,13 @@ class LinkedLicenseTest(unittest.TestCase):
                 outside.unlink(missing_ok=True)
 
     def test_root_build_metadata_uses_the_pinned_toolchain(self):
-        package_secret_scanner.verify_root_build_info("trestled: go1.26.8\n")
+        package_secret_scanner.verify_root_build_info("trestled: go1.26.10\n")
 
         with self.assertRaisesRegex(ValueError, "root Go toolchain metadata mismatch"):
-            package_secret_scanner.verify_root_build_info("trestled: go1.26.7\n")
+            package_secret_scanner.verify_root_build_info("trestled: go1.26.8\n")
 
     def test_worker_build_metadata_is_closed(self):
-        valid = """worker: go1.26.8
+        valid = """worker: go1.26.10
 \tbuild\t-trimpath=true
 \tbuild\tCGO_ENABLED=0
 \tbuild\tGOARCH=amd64
@@ -87,7 +87,7 @@ class LinkedLicenseTest(unittest.TestCase):
 """
         package_secret_scanner.verify_worker_build_info(valid)
         for changed in (
-            valid.replace("go1.26.8", "go1.26.7"),
+            valid.replace("go1.26.10", "go1.26.8"),
             valid.replace("CGO_ENABLED=0", "CGO_ENABLED=1"),
             valid.replace("GOARCH=amd64", "GOARCH=arm64"),
         ):
@@ -393,11 +393,11 @@ class ReleaseEvidenceTest(unittest.TestCase):
 
         self.assertEqual(document["launcher"]["sha256"], launcher)
         self.assertEqual(document["worker"]["sha256"], worker)
-        self.assertEqual(document["worker"]["go_toolchain"], "go1.26.8")
-        self.assertEqual(document["root_client"]["go_toolchain"], "go1.26.8")
+        self.assertEqual(document["worker"]["go_toolchain"], "go1.26.10")
+        self.assertEqual(document["root_client"]["go_toolchain"], "go1.26.10")
         self.assertEqual(
             document["build_profile"],
-            "public_detect_run_re2_purego_go1.26.8_linux_amd64_v1",
+            "public_detect_run_re2_purego_go1.26.10_linux_amd64_v1",
         )
         self.assertEqual(
             {item["name"] for item in sbom["packages"]},
@@ -492,11 +492,11 @@ class ReleaseContractTest(unittest.TestCase):
         repository_root = Path(__file__).resolve().parent.parent
         go_mod = (repository_root / "go.mod").read_text()
         self.assertIn("\ngo 1.25.0\n", go_mod)
-        self.assertIn("\ntoolchain go1.26.8\n", go_mod)
+        self.assertIn("\ntoolchain go1.26.10\n", go_mod)
         for dependency in (
             "github.com/jackc/pgx/v5 v5.9.2",
-            "golang.org/x/sync v0.21.0",
-            "golang.org/x/text v0.39.0",
+            "golang.org/x/sync v0.22.0",
+            "golang.org/x/text v0.41.0",
         ):
             self.assertIn(dependency, go_mod)
         self.assertNotIn("golang.org/x/crypto", go_mod)
@@ -504,8 +504,8 @@ class ReleaseContractTest(unittest.TestCase):
         expected_licenses = {
             "aws-sdk-go-v2-1.45.1-Apache-2.0.txt",
             "aws-smithy-go-1.28.1-Apache-2.0.txt",
-            "golang-x-sync-v0.21.0-BSD-3-Clause.txt",
-            "golang-x-text-v0.39.0-BSD-3-Clause.txt",
+            "golang-x-sync-v0.22.0-BSD-3-Clause.txt",
+            "golang-x-text-v0.41.0-BSD-3-Clause.txt",
             "lucide-react-1.39.0-ISC.txt",
             "pgpassfile-v1.0.0-MIT.txt",
             "pgservicefile-MIT.txt",
@@ -519,8 +519,8 @@ class ReleaseContractTest(unittest.TestCase):
             expected_licenses,
         )
         expected_license_sha256 = {
-            "golang-x-sync-v0.21.0-BSD-3-Clause.txt": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
-            "golang-x-text-v0.39.0-BSD-3-Clause.txt": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
+            "golang-x-sync-v0.22.0-BSD-3-Clause.txt": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
+            "golang-x-text-v0.41.0-BSD-3-Clause.txt": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
             "pgx-v5.9.2-MIT.txt": "467f95e074fe23079a5623ed652619682692041b8551da27e3c2ddb9659a1507",
         }
         for filename, expected in expected_license_sha256.items():
@@ -562,17 +562,17 @@ class ReleaseContractTest(unittest.TestCase):
         self.assertIn("go-version-file: go.mod", workflow)
         self.assertIn("go-version-file: workers/secret-scanner/go.mod", workflow)
         for command in (
-            "GOWORK=off GOTOOLCHAIN=go1.26.8 go mod verify",
-            "GOWORK=off GOTOOLCHAIN=go1.26.8 go test -p=1 -timeout=30m ./...",
-            "GOWORK=off GOTOOLCHAIN=go1.26.8 go test -race -p=1 -timeout=30m ./...",
-            "GOWORK=off GOTOOLCHAIN=go1.26.8 go vet ./...",
-            "GOWORK=off GOTOOLCHAIN=go1.26.8 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -run='^$' -exec=true ./...",
-            "GOWORK=off GOTOOLCHAIN=go1.26.8 CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go test -run='^$' -exec=true ./...",
-            "GOWORK=off GOTOOLCHAIN=go1.26.8 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go test -run='^$' -exec=true ./...",
+            "GOWORK=off GOTOOLCHAIN=go1.26.10 go mod verify",
+            "GOWORK=off GOTOOLCHAIN=go1.26.10 go test -p=1 -timeout=30m ./...",
+            "GOWORK=off GOTOOLCHAIN=go1.26.10 go test -race -p=1 -timeout=30m ./...",
+            "GOWORK=off GOTOOLCHAIN=go1.26.10 go vet ./...",
+            "GOWORK=off GOTOOLCHAIN=go1.26.10 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -run='^$' -exec=true ./...",
+            "GOWORK=off GOTOOLCHAIN=go1.26.10 CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go test -run='^$' -exec=true ./...",
+            "GOWORK=off GOTOOLCHAIN=go1.26.10 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go test -run='^$' -exec=true ./...",
         ):
             self.assertIn(command, workflow)
-        self.assertIn("GOWORK=off GOTOOLCHAIN=go1.26.8 go test -timeout=15m ./...", workflow)
-        self.assertIn("GOWORK=off GOTOOLCHAIN=go1.26.8 go test -race", workflow)
+        self.assertIn("GOWORK=off GOTOOLCHAIN=go1.26.10 go test -timeout=15m ./...", workflow)
+        self.assertIn("GOWORK=off GOTOOLCHAIN=go1.26.10 go test -race", workflow)
         self.assertIn("python3 tools/package_secret_scanner.py", workflow)
         self.assertIn("python3 tools/package_secret_scanner.py --verify .container", workflow)
         self.assertIn("umask 022", workflow)

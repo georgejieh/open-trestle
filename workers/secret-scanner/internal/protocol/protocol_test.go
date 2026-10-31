@@ -52,7 +52,7 @@ func TestFrozenBetterleaksIdentity(t *testing.T) {
 	if RulesetIdentity != "27ded783c81940d13c22cc46556a3f8184baf397bff08a69fcfae87991925f42" || RulesetRuleCount != 417 {
 		t.Fatal("unexpected ruleset identity")
 	}
-	if BuildProfile != "public_detect_run_re2_purego_go1.26.8_linux_amd64_v1" {
+	if BuildProfile != "public_detect_run_re2_purego_go1.26.10_linux_amd64_v1" {
 		t.Fatal("unexpected build profile")
 	}
 	match := Match{SourceOrdinal: 0, RuleID: "github-pat", StartByte: 7, EndByteExclusive: 12}
@@ -244,6 +244,9 @@ func TestResponseProtocolRejectsInvalidMetadataMatchesAndSpans(t *testing.T) {
 	})
 	set("ruleset identity", func(response *Response) { response.RulesetIdentity = strings.Repeat("b", 64) })
 	set("build profile", func(response *Response) { response.BuildProfile = "native" })
+	set("previous Go patch profile", func(response *Response) {
+		response.BuildProfile = "public_detect_run_re2_purego_go1.26.8_linux_amd64_v1"
+	})
 	set("retired build profile", func(response *Response) { response.BuildProfile = "pure_go_" + "linux_amd64_v1" })
 	set("nil matches", func(response *Response) { response.Matches = nil })
 	set("unknown rule", func(response *Response) {

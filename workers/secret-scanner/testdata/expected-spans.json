@@ -7,9 +7,9 @@
     "scanner_commit": "5eab48332cc48565864514e3bc6de89df091a7c4",
     "ruleset_identity": "27ded783c81940d13c22cc46556a3f8184baf397bff08a69fcfae87991925f42",
     "ruleset_rule_count": 417,
-    "build_profile": "public_detect_run_re2_purego_go1.26.8_linux_amd64_v1"
+    "build_profile": "public_detect_run_re2_purego_go1.26.10_linux_amd64_v1"
   },
-  "coverage_manifest_sha256": "dcc8c25d47a5a89013c5a96baba11bbde7e84b25c71b25f61bcbca7e00618008",
+  "coverage_manifest_sha256": "53c62b3cfe43508303471bd4ed8c0805af4b7607ceeb5597dff96dcbdb174c7a",
   "fixtures": [
     {
       "id": "github-pat",

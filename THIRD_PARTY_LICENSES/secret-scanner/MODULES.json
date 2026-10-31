@@ -651,19 +651,19 @@
     {
       "files": [
         {
-          "file": "golang.org_x_sync_v0.21.0/LICENSE",
+          "file": "golang.org_x_sync_v0.22.0/LICENSE",
           "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
           "upstream_path": "LICENSE"
         },
         {
-          "file": "golang.org_x_sync_v0.21.0/PATENTS",
+          "file": "golang.org_x_sync_v0.22.0/PATENTS",
           "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc",
           "upstream_path": "PATENTS"
         }
       ],
       "license": "BSD-3-Clause",
       "module": "golang.org/x/sync",
-      "version": "v0.21.0"
+      "version": "v0.22.0"
     },
     {
       "files": [
@@ -685,19 +685,19 @@
     {
       "files": [
         {
-          "file": "golang.org_x_text_v0.39.0/LICENSE",
+          "file": "golang.org_x_text_v0.41.0/LICENSE",
           "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
           "upstream_path": "LICENSE"
         },
         {
-          "file": "golang.org_x_text_v0.39.0/PATENTS",
+          "file": "golang.org_x_text_v0.41.0/PATENTS",
           "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc",
           "upstream_path": "PATENTS"
         }
       ],
       "license": "BSD-3-Clause",
       "module": "golang.org/x/text",
-      "version": "v0.39.0"
+      "version": "v0.41.0"
     }
   ],
   "schema_version": 1,

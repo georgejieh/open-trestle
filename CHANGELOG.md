@@ -32,5 +32,6 @@ All notable changes to released versions of Open Trestle will be documented in t
 
 ### Security
 
+- Updated the Go build toolchain to 1.26.10 and golang.org/x/text to v0.41.0, with the required x/sync v0.22.0 dependency, across both runtime modules and the isolated scanner profile. The product Go minimum remains 1.25.0.
 - Added fail-closed validators for untrusted input, size and identity bounds, tenant and authorization scope, provider routes, source bindings, and publication effects.
 - Added request-time credential boundaries and protected secret storage, emitted bounded content-free public failures, and disabled incidental npm audit and update-notifier requests during package installation. Vulnerability reporting remains a separate authorized release gate.

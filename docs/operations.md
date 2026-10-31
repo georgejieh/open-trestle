@@ -2,15 +2,15 @@
 
 ## Build
 
-The root module declares Go 1.25.0 and is built with Go 1.26.8. The isolated secret-scanner module declares Go 1.25.0 and is built with Go 1.26.8. Keep the toolchains separate and disable workspace discovery for both:
+The root module declares Go 1.25.0 and is built with Go 1.26.10. The isolated secret-scanner module declares Go 1.25.0 and is built with Go 1.26.10. Keep the toolchains separate and disable workspace discovery for both:
 
 ```sh
-GOWORK=off GOTOOLCHAIN=go1.26.8 go mod verify
-GOWORK=off GOTOOLCHAIN=go1.26.8 go test ./...
+GOWORK=off GOTOOLCHAIN=go1.26.10 go mod verify
+GOWORK=off GOTOOLCHAIN=go1.26.10 go test ./...
 (
   cd workers/secret-scanner
-  GOWORK=off GOTOOLCHAIN=go1.26.8 go mod verify
-  GOWORK=off GOTOOLCHAIN=go1.26.8 go test ./...
+  GOWORK=off GOTOOLCHAIN=go1.26.10 go mod verify
+  GOWORK=off GOTOOLCHAIN=go1.26.10 go test ./...
 )
 ```
 
@@ -60,7 +60,7 @@ python3 tools/package_secret_scanner.py --verify .container
 docker build --network=none -t open-trestle:local .
 ```
 
-The tool verifies the root and worker Go pins, Betterleaks module and ruleset identities, linked license inventory, launcher source and build contract, and the complete pinned Zig 0.14.1 x86_64-linux-musl toolchain archive and extracted tree. It builds the static launcher twice with separate Zig caches, builds the Go worker twice, and requires byte-identical outputs for both binaries. It then records both SHA-256 values, emits scanner release evidence and SPDX with SHA-1 and SHA-256 file checksums, injects both SHA-256 digests into the Go 1.26.8 `trestled` binary, and admits only the fixed staging inventory. The launcher uses empty-environment static-PIE flags. The worker uses `GOWORK=off`, Go 1.26.8, `GOOS=linux`, `GOARCH=amd64`, `CGO_ENABLED=0`, `-trimpath`, `-buildvcs=false`, and an empty build ID.
+The tool verifies the root and worker Go pins, Betterleaks module and ruleset identities, linked license inventory, launcher source and build contract, and the complete pinned Zig 0.14.1 x86_64-linux-musl toolchain archive and extracted tree. It builds the static launcher twice with separate Zig caches, builds the Go worker twice, and requires byte-identical outputs for both binaries. It then records both SHA-256 values, emits scanner release evidence and SPDX with SHA-1 and SHA-256 file checksums, injects both SHA-256 digests into the Go 1.26.10 `trestled` binary, and admits only the fixed staging inventory. The launcher uses empty-environment static-PIE flags. The worker uses `GOWORK=off`, Go 1.26.10, `GOOS=linux`, `GOARCH=amd64`, `CGO_ENABLED=0`, `-trimpath`, `-buildvcs=false`, and an empty build ID.
 
 The included `Dockerfile` copies that staging tree into a scratch image with no registry base. The image runs `trestled` as UID and GID 65532. Supply runtime authority files through read-only mounts and credentials through the documented environment variables. Do not bake route inventories, policies, tokens, database URLs, or key material into an image. The image includes the project license, NOTICE, exact runtime third-party license texts, and scanner release evidence.
 
