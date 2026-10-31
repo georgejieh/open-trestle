@@ -202,7 +202,9 @@ func TestCommonRuntimePolicyCatalogOpenCodeConsoleUsesGenerationHandler(t *testi
 	requiredCheck(t, err)
 	part, err := provider.NewResponsePart(provider.ResponsePartStructuredData, "application/json", []byte(consoleCallerCandidateContent))
 	requiredCheck(t, err)
-	expectedResponse, err := provider.NewResponse(provider.CapabilityReviewV1, provider.ResponseFinishStop, []provider.ResponsePart{part}, usage)
+	reportedBound, err := provider.NewRouteReportedDebitUpperBoundMicroUSD(4120)
+	requiredCheck(t, err)
+	expectedResponse, err := provider.NewResponseWithReportedDebitUpperBound(provider.CapabilityReviewV1, provider.ResponseFinishStop, []provider.ResponsePart{part}, usage, reportedBound)
 	requiredCheck(t, err)
 	var previousAuthorization, previousRequest string
 	for index, run := range []string{"console-run-a", "console-run-a", "console-run-b"} {
@@ -237,7 +239,7 @@ func TestCommonRuntimePolicyCatalogOpenCodeConsoleUsesGenerationHandler(t *testi
 			t.Fatal("Console caller did not admit the expected typed empty candidate batch")
 		}
 		execution := result.RouteExecution()
-		if execution.Validate() != nil || execution.Authorization().Identity() != authorization.Identity() || execution.Outcome().AuthorizationIdentity() != authorization.Identity() || execution.Outcome().ResponseIdentity() != expectedResponse.Identity() || result.Candidates().ResponseIdentity() != expectedResponse.Identity() {
+		if execution.Validate() != nil || execution.Authorization().Identity() != authorization.Identity() || execution.Outcome().AuthorizationIdentity() != authorization.Identity() || execution.Outcome().ReportedDebitUpperBound() != reportedBound || execution.Outcome().ResponseIdentity() != expectedResponse.Identity() || result.Candidates().ResponseIdentity() != expectedResponse.Identity() {
 			t.Fatal("Console response/content/usage lineage changed or retained reasoning")
 		}
 		observed := execution.Outcome().Usage()
@@ -257,7 +259,7 @@ func TestCommonRuntimePolicyCatalogOpenCodeConsoleUsesGenerationHandler(t *testi
 		requiredCheck(t, err)
 		roundTrip, err := gateway.ParseRouteExecutionRecord(encodedExecution)
 		requiredCheck(t, err)
-		if roundTrip.Identity() != execution.Identity() || roundTrip.Reconciliation().ActualCost().IsKnown() || roundTrip.Outcome().Usage().IsKnown() {
+		if roundTrip.Identity() != execution.Identity() || roundTrip.Outcome().ReportedDebitUpperBound() != reportedBound || roundTrip.Reconciliation().ActualCost().IsKnown() || roundTrip.Outcome().Usage().IsKnown() {
 			t.Fatal("durable execution invented native usage or actual charge")
 		}
 		if bytes.Contains(output.Payload(), []byte(consoleCallerReasoningSentinel)) {
