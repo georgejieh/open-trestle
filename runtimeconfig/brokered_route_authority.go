@@ -89,6 +89,20 @@ func decodeBrokeredAuthority(w *brokeredRouteAuthorityWire) (BrokeredRouteAuthor
 }
 
 func validatePolicyProfileFields(encoded []byte, version int) bool {
+	if version == 5 {
+		return validateV5PolicyProfileFields(encoded)
+	}
+	var historical struct {
+		Connections []map[string]json.RawMessage `json:"connections"`
+	}
+	if json.Unmarshal(encoded, &historical) != nil {
+		return false
+	}
+	for _, c := range historical.Connections {
+		if _, present := c["opencode_console_authority"]; present {
+			return false
+		}
+	}
 	if version == 4 {
 		return validateV4PolicyProfileFields(encoded)
 	}
@@ -131,12 +145,18 @@ func validatePolicyProfileFields(encoded []byte, version int) bool {
 
 func validConnectionProfile(c ProviderConnection, version int) bool {
 	if c.requestProfile == "" {
-		return c.brokeredAuthority == (BrokeredRouteAuthority{}) && c.openCodeGoAuthority == (OpenCodeGoRouteAuthority{})
+		return c.brokeredAuthority == (BrokeredRouteAuthority{}) && c.openCodeGoAuthority == (OpenCodeGoRouteAuthority{}) && c.openCodeConsoleAuthority == (OpenCodeConsoleRouteAuthority{})
+	}
+	if c.requestProfile == OpenCodeConsoleChatProfile {
+		return version == 5 && c.brokeredAuthority == (BrokeredRouteAuthority{}) && c.openCodeGoAuthority == (OpenCodeGoRouteAuthority{}) && c.openCodeConsoleAuthority.valid() && c.implementation == "openai_chat_completions" && c.credentialMode == "bearer" && c.endpoint == "https://opencode.ai/inference/openai/v1"
+	}
+	if c.openCodeConsoleAuthority != (OpenCodeConsoleRouteAuthority{}) {
+		return false
 	}
 	if c.requestProfile == OpenCodeGoChatProfile {
-		return version == 4 && c.brokeredAuthority == (BrokeredRouteAuthority{}) && c.openCodeGoAuthority.valid() && c.implementation == "openai_chat_completions" && c.credentialMode == "bearer" && c.endpoint == "https://opencode.ai/inference/go/openai/v1"
+		return (version == 4 || version == 5) && c.brokeredAuthority == (BrokeredRouteAuthority{}) && c.openCodeGoAuthority.valid() && c.implementation == "openai_chat_completions" && c.credentialMode == "bearer" && c.endpoint == "https://opencode.ai/inference/go/openai/v1"
 	}
-	return (version == 3 || version == 4) && c.openCodeGoAuthority == (OpenCodeGoRouteAuthority{}) && c.requestProfile == OpenRouterZDRChatProfile && c.brokeredAuthority.valid() && c.implementation == "openai_chat_completions" && c.credentialMode == "bearer" && c.endpoint == "https://openrouter.ai/api/v1"
+	return (version == 3 || version == 4 || version == 5) && c.openCodeGoAuthority == (OpenCodeGoRouteAuthority{}) && c.requestProfile == OpenRouterZDRChatProfile && c.brokeredAuthority.valid() && c.implementation == "openai_chat_completions" && c.credentialMode == "bearer" && c.endpoint == "https://openrouter.ai/api/v1"
 }
 
 func (c ProviderConnection) RequestProfile() string                    { return c.requestProfile }

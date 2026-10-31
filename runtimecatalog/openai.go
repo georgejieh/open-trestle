@@ -18,18 +18,19 @@ import (
 )
 
 type OpenAIConnectionDefinition struct {
-	RequestProfile      openai.RequestProfile
-	OpenRouterAuthority *openai.OpenRouterRouteAuthority
-	OpenCodeGoAuthority *openai.OpenCodeGoRouteAuthority
-	Clock               artifact.Clock
-	CredentialMode      openai.CredentialMode
-	Protocol            openai.Protocol
-	AdapterID           string
-	Endpoint            string
-	CredentialIdentity  string
-	Credentials         openai.APIKeyProvider
-	HTTPClient          *http.Client
-	HTTPClientIdentity  string
+	RequestProfile           openai.RequestProfile
+	OpenRouterAuthority      *openai.OpenRouterRouteAuthority
+	OpenCodeGoAuthority      *openai.OpenCodeGoRouteAuthority
+	OpenCodeConsoleAuthority *openai.OpenCodeConsoleRouteAuthority
+	Clock                    artifact.Clock
+	CredentialMode           openai.CredentialMode
+	Protocol                 openai.Protocol
+	AdapterID                string
+	Endpoint                 string
+	CredentialIdentity       string
+	Credentials              openai.APIKeyProvider
+	HTTPClient               *http.Client
+	HTTPClientIdentity       string
 }
 
 func NewOpenAIRouteDispatcherCatalog(inventory runtimeconfig.RouteInventory, connections []OpenAIConnectionDefinition) (gateway.RouteDispatcherCatalog, error) {
@@ -62,7 +63,7 @@ func NewOpenAIRouteDispatcherCatalog(inventory runtimeconfig.RouteInventory, con
 		}
 		seen[connection.AdapterID] = struct{}{}
 		route := candidate.RouteCapabilityDeclaration().RouteReference()
-		adapter, err := openai.New(openai.Config{RequestProfile: connection.RequestProfile, OpenRouterAuthority: connection.OpenRouterAuthority, OpenCodeGoAuthority: connection.OpenCodeGoAuthority, Clock: connection.Clock, CredentialMode: connection.CredentialMode, Protocol: connection.Protocol, AdapterID: connection.AdapterID, ProviderID: route.ProviderID(), ConnectionID: route.ConnectionID(), Zone: route.Zone(), ContentLoggingMode: candidate.ContentLoggingMode(), Endpoint: connection.Endpoint, Credentials: connection.Credentials, CredentialIdentity: connection.CredentialIdentity, HTTPClient: connection.HTTPClient, HTTPClientIdentity: connection.HTTPClientIdentity})
+		adapter, err := openai.New(openai.Config{RequestProfile: connection.RequestProfile, OpenRouterAuthority: connection.OpenRouterAuthority, OpenCodeGoAuthority: connection.OpenCodeGoAuthority, OpenCodeConsoleAuthority: connection.OpenCodeConsoleAuthority, Clock: connection.Clock, CredentialMode: connection.CredentialMode, Protocol: connection.Protocol, AdapterID: connection.AdapterID, ProviderID: route.ProviderID(), ConnectionID: route.ConnectionID(), Zone: route.Zone(), ContentLoggingMode: candidate.ContentLoggingMode(), Endpoint: connection.Endpoint, Credentials: connection.Credentials, CredentialIdentity: connection.CredentialIdentity, HTTPClient: connection.HTTPClient, HTTPClientIdentity: connection.HTTPClientIdentity})
 		if err != nil {
 			return gateway.RouteDispatcherCatalog{}, ErrInvalidRouteAuthority
 		}
@@ -116,6 +117,10 @@ func NewOpenAIRouteDispatcherCatalogWithOptions(inventory runtimeconfig.RouteInv
 			if !inventory.OpenCodeGoPrivacyCurrent(connection.OpenCodeGoAuthority().RouteRecordIdentity(), options.Clock.Now()) {
 				return gateway.RouteDispatcherCatalog{}, ErrInvalidRouteAuthority
 			}
+		case runtimeconfig.OpenCodeConsoleChatProfile:
+			if !inventory.OpenCodeConsolePrivacyCurrent(connection.OpenCodeConsoleAuthority().RouteRecordIdentity(), options.Clock.Now()) {
+				return gateway.RouteDispatcherCatalog{}, ErrInvalidRouteAuthority
+			}
 		default:
 			return gateway.RouteDispatcherCatalog{}, ErrInvalidRouteAuthority
 		}
@@ -135,6 +140,7 @@ func NewOpenAIRouteDispatcherCatalogWithOptions(inventory runtimeconfig.RouteInv
 		}
 		var profileAuthority *openai.OpenRouterRouteAuthority
 		var goAuthority *openai.OpenCodeGoRouteAuthority
+		var consoleAuthority *openai.OpenCodeConsoleRouteAuthority
 		var profileClock artifact.Clock
 		if connection.RequestProfile() == runtimeconfig.OpenRouterZDRChatProfile {
 			authority := connection.BrokeredAuthority()
@@ -160,7 +166,19 @@ func NewOpenAIRouteDispatcherCatalogWithOptions(inventory runtimeconfig.RouteInv
 			goAuthority = &openai.OpenCodeGoRouteAuthority{Route: route, RouteRecordIdentity: authority.RouteRecordIdentity(), EvidenceIdentity: authority.EvidenceManifestDigest(), AccountPolicyIdentity: authority.AccountPolicyIdentity(), CredentialIdentity: connection.CredentialIdentity(), TenantID: authority.TenantID(), RepositoryID: authority.RepositoryID(), ValidFrom: authority.ValidFrom(), ValidUntil: authority.ValidUntil()}
 			profileClock = options.Clock
 		}
-		definitions[i] = OpenAIConnectionDefinition{RequestProfile: openai.RequestProfile(connection.RequestProfile()), OpenRouterAuthority: profileAuthority, OpenCodeGoAuthority: goAuthority, Clock: profileClock, HTTPClient: options.HTTPClient, HTTPClientIdentity: options.HTTPClientIdentity, CredentialMode: openai.CredentialMode(connection.CredentialMode()), Protocol: openai.Protocol(connection.Implementation()), AdapterID: connection.AdapterID(), Endpoint: connection.Endpoint(), CredentialIdentity: connection.CredentialIdentity(), Credentials: credentials}
+		if connection.RequestProfile() == runtimeconfig.OpenCodeConsoleChatProfile {
+			authority := connection.OpenCodeConsoleAuthority()
+			var route provider.RouteReference
+			for _, candidate := range inventory.Candidates() {
+				record := candidate.ResolvedRecord().RouteRegistryRecord()
+				if record.Identity() == authority.RouteRecordIdentity() {
+					route = record.RouteCandidateDeclaration().RouteCapabilityDeclaration().RouteReference()
+				}
+			}
+			consoleAuthority = &openai.OpenCodeConsoleRouteAuthority{Route: route, RouteRecordIdentity: authority.RouteRecordIdentity(), EvidenceIdentity: authority.EvidenceManifestDigest(), AccountPolicyIdentity: authority.AccountPolicyIdentity(), CredentialIdentity: connection.CredentialIdentity(), TenantID: authority.TenantID(), RepositoryID: authority.RepositoryID(), ValidFrom: authority.ValidFrom(), ValidUntil: authority.ValidUntil()}
+			profileClock = options.Clock
+		}
+		definitions[i] = OpenAIConnectionDefinition{RequestProfile: openai.RequestProfile(connection.RequestProfile()), OpenRouterAuthority: profileAuthority, OpenCodeGoAuthority: goAuthority, OpenCodeConsoleAuthority: consoleAuthority, Clock: profileClock, HTTPClient: options.HTTPClient, HTTPClientIdentity: options.HTTPClientIdentity, CredentialMode: openai.CredentialMode(connection.CredentialMode()), Protocol: openai.Protocol(connection.Implementation()), AdapterID: connection.AdapterID(), Endpoint: connection.Endpoint(), CredentialIdentity: connection.CredentialIdentity(), Credentials: credentials}
 	}
 	return NewOpenAIRouteDispatcherCatalog(inventory, definitions)
 }

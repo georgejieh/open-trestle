@@ -1,0 +1,11 @@
+{
+  "schema_version": 2,
+  "sources": [
+    {
+      "id": "opencode-console",
+      "kind": "openai_models",
+      "url": "https://opencode.ai/inference/v1/models",
+      "credential_environment": "OPEN_TRESTLE_PROVIDER_OPENCODE_CONSOLE"
+    }
+  ]
+}

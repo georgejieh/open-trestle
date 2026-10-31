@@ -121,43 +121,45 @@ func validCredentialAuthority(mode CredentialMode, credentials APIKeyProvider, i
 
 // Config binds one adapter instance to an exact approved route namespace.
 type Config struct {
-	RequestProfile      RequestProfile
-	OpenRouterAuthority *OpenRouterRouteAuthority
-	OpenCodeGoAuthority *OpenCodeGoRouteAuthority
-	Clock               artifact.Clock
-	CredentialMode      CredentialMode
-	Protocol            Protocol
-	AdapterID           string
-	ProviderID          string
-	ConnectionID        string
-	Zone                provider.ProviderZone
-	ContentLoggingMode  provider.ContentLoggingMode
-	Endpoint            string
-	Credentials         APIKeyProvider
-	CredentialIdentity  string
-	HTTPClientIdentity  string
-	HTTPClient          *http.Client
+	RequestProfile           RequestProfile
+	OpenRouterAuthority      *OpenRouterRouteAuthority
+	OpenCodeGoAuthority      *OpenCodeGoRouteAuthority
+	OpenCodeConsoleAuthority *OpenCodeConsoleRouteAuthority
+	Clock                    artifact.Clock
+	CredentialMode           CredentialMode
+	Protocol                 Protocol
+	AdapterID                string
+	ProviderID               string
+	ConnectionID             string
+	Zone                     provider.ProviderZone
+	ContentLoggingMode       provider.ContentLoggingMode
+	Endpoint                 string
+	Credentials              APIKeyProvider
+	CredentialIdentity       string
+	HTTPClientIdentity       string
+	HTTPClient               *http.Client
 }
 
 // Adapter executes exact authorized requests against its configured protocol.
 type Adapter struct {
-	requestProfile        RequestProfile
-	openRouterAuthority   *OpenRouterRouteAuthority
-	openCodeGoAuthority   *OpenCodeGoRouteAuthority
-	clock                 artifact.Clock
-	credentialMode        CredentialMode
-	protocol              Protocol
-	adapterID             string
-	providerID            string
-	connectionID          string
-	zone                  provider.ProviderZone
-	contentLoggingMode    provider.ContentLoggingMode
-	endpoint              *url.URL
-	credentials           APIKeyProvider
-	credentialIdentity    string
-	httpClientIdentity    string
-	configurationIdentity string
-	httpClient            *http.Client
+	requestProfile           RequestProfile
+	openRouterAuthority      *OpenRouterRouteAuthority
+	openCodeGoAuthority      *OpenCodeGoRouteAuthority
+	openCodeConsoleAuthority *OpenCodeConsoleRouteAuthority
+	clock                    artifact.Clock
+	credentialMode           CredentialMode
+	protocol                 Protocol
+	adapterID                string
+	providerID               string
+	connectionID             string
+	zone                     provider.ProviderZone
+	contentLoggingMode       provider.ContentLoggingMode
+	endpoint                 *url.URL
+	credentials              APIKeyProvider
+	credentialIdentity       string
+	httpClientIdentity       string
+	configurationIdentity    string
+	httpClient               *http.Client
 }
 
 // New validates configuration without retrieving credentials or making a request.
@@ -179,7 +181,7 @@ func New(config Config) (*Adapter, error) {
 	}
 	endpoint, err := provider.ParseServiceEndpoint(endpointValue)
 	locality, localityErr := provider.ClassifyServiceEndpoint(endpointValue)
-	zoneMatches := config.Zone == provider.ProviderZoneLocal && locality == provider.ServiceEndpointLoopback || config.Zone == provider.ProviderZonePrivateRemote && locality == provider.ServiceEndpointRemote || config.Zone == provider.ProviderZoneBrokeredRemote && (config.RequestProfile == RequestProfileOpenRouterZDRChatV1 && endpointValue == "https://openrouter.ai/api/v1" || config.RequestProfile == RequestProfileOpenCodeGoChatV1 && endpointValue == "https://opencode.ai/inference/go/openai/v1")
+	zoneMatches := config.Zone == provider.ProviderZoneLocal && locality == provider.ServiceEndpointLoopback || config.Zone == provider.ProviderZonePrivateRemote && locality == provider.ServiceEndpointRemote || config.Zone == provider.ProviderZoneBrokeredRemote && (config.RequestProfile == RequestProfileOpenRouterZDRChatV1 && endpointValue == "https://openrouter.ai/api/v1" || config.RequestProfile == RequestProfileOpenCodeGoChatV1 && endpointValue == "https://opencode.ai/inference/go/openai/v1" || config.RequestProfile == RequestProfileOpenCodeConsoleChatV1 && endpointValue == "https://opencode.ai/inference/openai/v1")
 	if err != nil || localityErr != nil || !zoneMatches || !validCredentialAuthority(mode, config.Credentials, config.CredentialIdentity, config.Zone, locality) {
 		return nil, ErrInvalidConfig
 	}
@@ -212,22 +214,23 @@ func New(config Config) (*Adapter, error) {
 	endpointCopy := *endpoint
 	endpointCopy.Path = strings.TrimSuffix(endpointCopy.Path, "/")
 	adapter := &Adapter{
-		requestProfile:      config.RequestProfile,
-		openRouterAuthority: cloneOpenRouterAuthority(config.OpenRouterAuthority),
-		openCodeGoAuthority: cloneOpenCodeGoAuthority(config.OpenCodeGoAuthority),
-		clock:               config.Clock,
-		credentialMode:      mode,
-		protocol:            protocol,
-		adapterID:           strings.Clone(config.AdapterID),
-		providerID:          strings.Clone(config.ProviderID),
-		connectionID:        strings.Clone(config.ConnectionID),
-		zone:                config.Zone,
-		contentLoggingMode:  config.ContentLoggingMode,
-		endpoint:            &endpointCopy,
-		credentials:         config.Credentials,
-		credentialIdentity:  strings.Clone(config.CredentialIdentity),
-		httpClientIdentity:  strings.Clone(httpClientIdentity),
-		httpClient:          client,
+		requestProfile:           config.RequestProfile,
+		openRouterAuthority:      cloneOpenRouterAuthority(config.OpenRouterAuthority),
+		openCodeGoAuthority:      cloneOpenCodeGoAuthority(config.OpenCodeGoAuthority),
+		openCodeConsoleAuthority: cloneOpenCodeConsoleAuthority(config.OpenCodeConsoleAuthority),
+		clock:                    config.Clock,
+		credentialMode:           mode,
+		protocol:                 protocol,
+		adapterID:                strings.Clone(config.AdapterID),
+		providerID:               strings.Clone(config.ProviderID),
+		connectionID:             strings.Clone(config.ConnectionID),
+		zone:                     config.Zone,
+		contentLoggingMode:       config.ContentLoggingMode,
+		endpoint:                 &endpointCopy,
+		credentials:              config.Credentials,
+		credentialIdentity:       strings.Clone(config.CredentialIdentity),
+		httpClientIdentity:       strings.Clone(httpClientIdentity),
+		httpClient:               client,
 	}
 	if !adapter.validServiceProfile() || !adapter.serviceProfileCurrent() {
 		return nil, ErrInvalidConfig
@@ -365,7 +368,7 @@ func (a *Adapter) Validate() error {
 	}
 	_, err := provider.NewRouteReference(a.zone, a.providerID, a.adapterID, a.connectionID, "model", "")
 	locality, localityErr := provider.ClassifyServiceEndpoint(a.endpoint.String())
-	zoneMatches := a.zone == provider.ProviderZoneLocal && locality == provider.ServiceEndpointLoopback || a.zone == provider.ProviderZonePrivateRemote && locality == provider.ServiceEndpointRemote || a.zone == provider.ProviderZoneBrokeredRemote && (a.requestProfile == RequestProfileOpenRouterZDRChatV1 || a.requestProfile == RequestProfileOpenCodeGoChatV1)
+	zoneMatches := a.zone == provider.ProviderZoneLocal && locality == provider.ServiceEndpointLoopback || a.zone == provider.ProviderZonePrivateRemote && locality == provider.ServiceEndpointRemote || a.zone == provider.ProviderZoneBrokeredRemote && (a.requestProfile == RequestProfileOpenRouterZDRChatV1 || a.requestProfile == RequestProfileOpenCodeGoChatV1 || a.requestProfile == RequestProfileOpenCodeConsoleChatV1)
 	if err != nil || localityErr != nil || !zoneMatches || !validCredentialAuthority(a.credentialMode, a.credentials, a.credentialIdentity, a.zone, locality) || a.contentLoggingMode.Validate() != nil || a.httpClient.Timeout <= 0 || a.httpClient.Timeout > maximumRequestTimeout {
 		return ErrInvalidConfig
 	}
@@ -507,6 +510,9 @@ func (a *Adapter) executeWithDispatchProof(
 	if !a.serviceProfileMatches(route) || a.requestProfile != "" && (!a.serviceProofMatches(proof, reviewScopeIdentity, providerRequest.Identity()) || receiptIdentity != proof.ReceiptIdentity()) {
 		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
 	}
+	if a.requestProfile == RequestProfileOpenCodeConsoleChatV1 && a.setOpenCodeConsoleHeaders(request, proof, reviewScopeIdentity, providerRequest.Identity()) != nil {
+		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
+	}
 	if a.requestProfile == RequestProfileOpenCodeGoChatV1 && a.setOpenCodeGoHeaders(request, proof, reviewScopeIdentity, providerRequest.Identity()) != nil {
 		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
 	}
@@ -524,6 +530,10 @@ func (a *Adapter) executeWithDispatchProof(
 		return failed(gateway.RouteFailureTransport, gateway.RouteReplayOutcomeUnknown, 0)
 	}
 	if response.StatusCode != http.StatusOK {
+		if a.requestProfile == RequestProfileOpenCodeConsoleChatV1 && response.StatusCode == http.StatusPaymentRequired {
+			drainAndClose(response.Body)
+			return failed(gateway.RouteFailureBudgetExhausted, gateway.RouteReplayNoSideEffect, 0)
+		}
 		return classifyHTTPFailure(response)
 	}
 	content, ok := readBounded(response)
@@ -531,7 +541,9 @@ func (a *Adapter) executeWithDispatchProof(
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayOutcomeUnknown, 0)
 	}
 	var normalized provider.Response
-	if a.requestProfile == RequestProfileOpenCodeGoChatV1 {
+	if a.requestProfile == RequestProfileOpenCodeConsoleChatV1 {
+		normalized, err = normalizeOpenCodeConsoleResponse(content, route)
+	} else if a.requestProfile == RequestProfileOpenCodeGoChatV1 {
 		normalized, err = normalizeOpenCodeGoResponse(content, route)
 	} else {
 		normalized, err = a.normalizeProviderResponse(content, route)

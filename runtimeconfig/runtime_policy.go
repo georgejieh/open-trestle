@@ -22,6 +22,7 @@ type ProviderConnection struct {
 	requestProfile                                                                                 string
 	brokeredAuthority                                                                              BrokeredRouteAuthority
 	openCodeGoAuthority                                                                            OpenCodeGoRouteAuthority
+	openCodeConsoleAuthority                                                                       OpenCodeConsoleRouteAuthority
 }
 
 func (c ProviderConnection) CredentialMode() string { return c.credentialMode }
@@ -60,7 +61,7 @@ func (p RuntimePolicy) Connections() []ProviderConnection {
 	return append([]ProviderConnection(nil), p.connections...)
 }
 func (p RuntimePolicy) Validate() error {
-	if (p.schemaVersion != 1 && p.schemaVersion != 2 && p.schemaVersion != 3 && p.schemaVersion != 4) || (p.schemaVersion == 1 && p.verificationRouteRecordIdentity != "") || (p.schemaVersion >= 2 && !nonzeroDigest(p.verificationRouteRecordIdentity)) || !nonzeroDigest(p.inventoryIdentity) || !nonzeroDigest(p.reviewPolicyIdentity) || p.requirements.Validate() != nil || p.constraints.Validate() != nil || p.budget.Validate() != nil || p.ranking.Validate() != nil || p.independence.Validate() != nil || p.publication.Validate() != nil || len(p.connections) == 0 || len(p.connections) > 64 || p.identity != runtimePolicyIdentity(p) {
+	if (p.schemaVersion != 1 && p.schemaVersion != 2 && p.schemaVersion != 3 && p.schemaVersion != 4 && p.schemaVersion != 5) || (p.schemaVersion == 1 && p.verificationRouteRecordIdentity != "") || (p.schemaVersion >= 2 && !nonzeroDigest(p.verificationRouteRecordIdentity)) || !nonzeroDigest(p.inventoryIdentity) || !nonzeroDigest(p.reviewPolicyIdentity) || p.requirements.Validate() != nil || p.constraints.Validate() != nil || p.budget.Validate() != nil || p.ranking.Validate() != nil || p.independence.Validate() != nil || p.publication.Validate() != nil || len(p.connections) == 0 || len(p.connections) > 64 || p.identity != runtimePolicyIdentity(p) {
 		return ErrInvalidRouteInventory
 	}
 	seen := map[string]struct{}{}
@@ -128,6 +129,10 @@ func (p RuntimePolicy) ValidateAgainstInventory(inventory RouteInventory) error 
 				if !validOpenCodeGoInventoryBinding(connection, inventory) {
 					return ErrInvalidRouteInventory
 				}
+			case OpenCodeConsoleChatProfile:
+				if !validOpenCodeConsoleInventoryBinding(connection, inventory) {
+					return ErrInvalidRouteInventory
+				}
 			default:
 				return ErrInvalidRouteInventory
 			}
@@ -181,14 +186,15 @@ type runtimePolicyWire struct {
 	Connections                     []providerConnectionWire `json:"connections"`
 }
 type providerConnectionWire struct {
-	Implementation        string                        `json:"implementation"`
-	AdapterID             string                        `json:"adapter_id"`
-	Endpoint              string                        `json:"endpoint"`
-	CredentialEnvironment string                        `json:"credential_environment,omitempty"`
-	CredentialMode        string                        `json:"credential_mode,omitempty"`
-	RequestProfile        string                        `json:"request_profile,omitempty"`
-	BrokeredAuthority     *brokeredRouteAuthorityWire   `json:"brokered_route_authority,omitempty"`
-	OpenCodeGoAuthority   *openCodeGoRouteAuthorityWire `json:"opencode_go_authority,omitempty"`
+	Implementation           string                             `json:"implementation"`
+	AdapterID                string                             `json:"adapter_id"`
+	Endpoint                 string                             `json:"endpoint"`
+	CredentialEnvironment    string                             `json:"credential_environment,omitempty"`
+	CredentialMode           string                             `json:"credential_mode,omitempty"`
+	RequestProfile           string                             `json:"request_profile,omitempty"`
+	BrokeredAuthority        *brokeredRouteAuthorityWire        `json:"brokered_route_authority,omitempty"`
+	OpenCodeGoAuthority      *openCodeGoRouteAuthorityWire      `json:"opencode_go_authority,omitempty"`
+	OpenCodeConsoleAuthority *openCodeConsoleRouteAuthorityWire `json:"opencode_console_authority,omitempty"`
 }
 
 func validatePolicyCredentialFields(encoded []byte, schemaVersion int) error {
@@ -246,7 +252,7 @@ func DecodeRuntimePolicy(ctx context.Context, reader io.Reader, inventory RouteI
 	decoder := json.NewDecoder(bytes.NewReader(encoded))
 	decoder.DisallowUnknownFields()
 	var wire runtimePolicyWire
-	if decoder.Decode(&wire) != nil || decoder.Decode(&struct{}{}) != io.EOF || (wire.SchemaVersion != 1 && wire.SchemaVersion != 2 && wire.SchemaVersion != 3 && wire.SchemaVersion != 4) || (wire.SchemaVersion == 1 && hasVerificationGrant) || (wire.SchemaVersion >= 2 && (wire.VerificationRouteRecordIdentity == nil || !nonzeroDigest(*wire.VerificationRouteRecordIdentity) || *wire.VerificationRouteRecordIdentity == wire.PinnedRouteRecordIdentity)) || wire.InventoryIdentity != inventory.Identity() || !nonzeroDigest(wire.ReviewPolicyIdentity) {
+	if decoder.Decode(&wire) != nil || decoder.Decode(&struct{}{}) != io.EOF || (wire.SchemaVersion != 1 && wire.SchemaVersion != 2 && wire.SchemaVersion != 3 && wire.SchemaVersion != 4 && wire.SchemaVersion != 5) || (wire.SchemaVersion == 1 && hasVerificationGrant) || (wire.SchemaVersion >= 2 && (wire.VerificationRouteRecordIdentity == nil || !nonzeroDigest(*wire.VerificationRouteRecordIdentity) || *wire.VerificationRouteRecordIdentity == wire.PinnedRouteRecordIdentity)) || wire.InventoryIdentity != inventory.Identity() || !nonzeroDigest(wire.ReviewPolicyIdentity) {
 		return RuntimePolicy{}, ErrInvalidRouteInventory
 	}
 	if validatePolicyCredentialFields(encoded, wire.SchemaVersion) != nil || !validatePolicyProfileFields(encoded, wire.SchemaVersion) {
@@ -347,6 +353,7 @@ func DecodeRuntimePolicy(ctx context.Context, reader io.Reader, inventory RouteI
 		}
 		var authority BrokeredRouteAuthority
 		var goAuthority OpenCodeGoRouteAuthority
+		var consoleAuthority OpenCodeConsoleRouteAuthority
 		switch v.RequestProfile {
 		case OpenRouterZDRChatProfile:
 			var ok bool
@@ -360,8 +367,14 @@ func DecodeRuntimePolicy(ctx context.Context, reader io.Reader, inventory RouteI
 			if !ok {
 				return RuntimePolicy{}, ErrInvalidRouteInventory
 			}
+		case OpenCodeConsoleChatProfile:
+			var ok bool
+			consoleAuthority, ok = decodeOpenCodeConsoleAuthority(v.OpenCodeConsoleAuthority)
+			if !ok {
+				return RuntimePolicy{}, ErrInvalidRouteInventory
+			}
 		}
-		connections[i] = ProviderConnection{implementation: v.Implementation, adapterID: v.AdapterID, endpoint: v.Endpoint, credentialEnvironment: v.CredentialEnvironment, credentialIdentity: identity, credentialMode: mode, requestProfile: v.RequestProfile, brokeredAuthority: authority, openCodeGoAuthority: goAuthority}
+		connections[i] = ProviderConnection{implementation: v.Implementation, adapterID: v.AdapterID, endpoint: v.Endpoint, credentialEnvironment: v.CredentialEnvironment, credentialIdentity: identity, credentialMode: mode, requestProfile: v.RequestProfile, brokeredAuthority: authority, openCodeGoAuthority: goAuthority, openCodeConsoleAuthority: consoleAuthority}
 	}
 	sort.Slice(connections, func(i, j int) bool { return connections[i].adapterID < connections[j].adapterID })
 	value := RuntimePolicy{schemaVersion: wire.SchemaVersion, verificationRouteRecordIdentity: verificationID, inventoryIdentity: inventory.Identity(), reviewPolicyIdentity: wire.ReviewPolicyIdentity, requirements: requirements, constraints: constraints, budget: budget, ranking: ranking, independence: independence, publication: publicationPolicy, connections: connections}
@@ -378,7 +391,7 @@ func runtimePolicyIdentity(p RuntimePolicy) string {
 		if c.credentialMode == "none" {
 			mode = "none"
 		}
-		connections[i] = providerConnectionWire{Implementation: c.implementation, AdapterID: c.adapterID, Endpoint: c.endpoint, CredentialEnvironment: c.credentialEnvironment, CredentialMode: mode, RequestProfile: c.requestProfile, BrokeredAuthority: c.brokeredAuthority.wire(), OpenCodeGoAuthority: c.openCodeGoAuthority.wire()}
+		connections[i] = providerConnectionWire{Implementation: c.implementation, AdapterID: c.adapterID, Endpoint: c.endpoint, CredentialEnvironment: c.credentialEnvironment, CredentialMode: mode, RequestProfile: c.requestProfile, BrokeredAuthority: c.brokeredAuthority.wire(), OpenCodeGoAuthority: c.openCodeGoAuthority.wire(), OpenCodeConsoleAuthority: c.openCodeConsoleAuthority.wire()}
 	}
 	encoded, _ := json.Marshal(struct {
 		Contract                                                                                 string `json:"contract"`

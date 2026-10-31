@@ -40,6 +40,12 @@ func cloneOpenCodeGoAuthority(value *OpenCodeGoRouteAuthority) *OpenCodeGoRouteA
 }
 
 func (a *Adapter) validServiceProfile() bool {
+	if a.requestProfile == RequestProfileOpenCodeConsoleChatV1 {
+		return a.validOpenCodeConsoleProfile()
+	}
+	if a.openCodeConsoleAuthority != nil {
+		return false
+	}
 	if a.requestProfile != RequestProfileOpenCodeGoChatV1 {
 		return a.openCodeGoAuthority == nil && a.validRequestProfile()
 	}
@@ -55,6 +61,9 @@ func (a *Adapter) validServiceProfile() bool {
 }
 
 func (a *Adapter) serviceProfileCurrent() bool {
+	if a.requestProfile == RequestProfileOpenCodeConsoleChatV1 {
+		return a.openCodeConsoleProfileCurrent()
+	}
 	if a.requestProfile != RequestProfileOpenCodeGoChatV1 {
 		return a.profileAuthorityCurrent()
 	}
@@ -66,6 +75,9 @@ func (a *Adapter) serviceProfileCurrent() bool {
 }
 
 func (a *Adapter) serviceProfileMatches(route provider.RouteReference) bool {
+	if a.requestProfile == RequestProfileOpenCodeConsoleChatV1 {
+		return a.openCodeConsoleProfileMatches(route)
+	}
 	if a.requestProfile != RequestProfileOpenCodeGoChatV1 {
 		return a.profileAuthorityMatches(route)
 	}
@@ -73,6 +85,9 @@ func (a *Adapter) serviceProfileMatches(route provider.RouteReference) bool {
 }
 
 func (a *Adapter) serviceProfileRecord() string {
+	if a.requestProfile == RequestProfileOpenCodeConsoleChatV1 {
+		return a.openCodeConsoleAuthority.RouteRecordIdentity
+	}
 	if a.requestProfile == RequestProfileOpenCodeGoChatV1 {
 		return a.openCodeGoAuthority.RouteRecordIdentity
 	}
@@ -80,6 +95,9 @@ func (a *Adapter) serviceProfileRecord() string {
 }
 
 func (a *Adapter) serviceProofMatches(proof modelhandler.SanitizedDispatchProof, scope, request string) bool {
+	if a.requestProfile == RequestProfileOpenCodeConsoleChatV1 {
+		return a.openCodeConsoleProofMatches(proof, scope, request)
+	}
 	if a.requestProfile == "" {
 		return true
 	}
@@ -93,6 +111,9 @@ func (a *Adapter) serviceProofMatches(proof modelhandler.SanitizedDispatchProof,
 }
 
 func (a *Adapter) serviceIdentityPreimage(configuration []byte) []byte {
+	if a.requestProfile == RequestProfileOpenCodeConsoleChatV1 {
+		return a.openCodeConsoleIdentityPreimage(configuration)
+	}
 	if a.requestProfile != RequestProfileOpenCodeGoChatV1 {
 		return a.profileIdentityPreimage(configuration)
 	}

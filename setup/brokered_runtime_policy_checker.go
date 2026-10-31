@@ -20,6 +20,8 @@ func setupConnectionEndpointMatchesZone(connection runtimeconfig.ProviderConnect
 		return connection.Endpoint() == "https://openrouter.ai/api/v1"
 	case runtimeconfig.OpenCodeGoChatProfile:
 		return connection.Endpoint() == "https://opencode.ai/inference/go/openai/v1"
+	case runtimeconfig.OpenCodeConsoleChatProfile:
+		return connection.Endpoint() == "https://opencode.ai/inference/openai/v1"
 	default:
 		return false
 	}
@@ -30,7 +32,7 @@ func setupBrokeredRoutePairMatches(plan Plan, inventory runtimeconfig.RouteInven
 		return false
 	}
 	pinned, hasPin := policy.Ranking().PinnedRoute()
-	if !hasPin || pinned.Zone() != provider.ProviderZoneBrokeredRemote || (pinned.ProviderID() != "openrouter" && pinned.ProviderID() != "opencode-go") {
+	if !hasPin || pinned.Zone() != provider.ProviderZoneBrokeredRemote || (pinned.ProviderID() != "openrouter" && pinned.ProviderID() != "opencode-go" && pinned.ProviderID() != "opencode-console") {
 		return false
 	}
 	connections := map[string]runtimeconfig.ProviderConnection{}
@@ -55,6 +57,11 @@ func setupBrokeredRoutePairMatches(plan Plan, inventory runtimeconfig.RouteInven
 			case "opencode-go":
 				authority := connection.OpenCodeGoAuthority()
 				if connection.RequestProfile() != runtimeconfig.OpenCodeGoChatProfile || !authority.Current(now) || !inventory.OpenCodeGoPrivacyCurrent(record.Identity(), now) || authority.TenantID() != plan.TenantID() || authority.RepositoryID() != plan.RepositoryID() || authority.RouteRecordIdentity() != record.Identity() || authority.EvidenceManifestDigest() != record.EvidenceManifestDigest() {
+					return false
+				}
+			case "opencode-console":
+				authority := connection.OpenCodeConsoleAuthority()
+				if connection.RequestProfile() != runtimeconfig.OpenCodeConsoleChatProfile || !authority.Current(now) || !inventory.OpenCodeConsolePrivacyCurrent(record.Identity(), now) || authority.TenantID() != plan.TenantID() || authority.RepositoryID() != plan.RepositoryID() || authority.RouteRecordIdentity() != record.Identity() || authority.EvidenceManifestDigest() != record.EvidenceManifestDigest() {
 					return false
 				}
 			default:
