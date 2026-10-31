@@ -58,7 +58,7 @@ func (r CompletedRouteAttemptRecord) DispatchResultIdentity() (string, error) {
 	if r.outcome.Status() == RouteAttemptSucceeded {
 		status = RouteDispatchSucceeded
 	}
-	return deriveRouteDispatchIdentity(r.authorization.Identity(), status, r.outcome.ResponseIdentity(), r.outcome.Failure(), r.outcome.ReplaySafety(), r.outcome.Usage(), r.outcome.RetryAfterMilliseconds()), nil
+	return deriveRouteDispatchIdentity(r.authorization.Identity(), status, r.outcome.ResponseIdentity(), r.outcome.Failure(), r.outcome.ReplaySafety(), r.outcome.Usage(), r.outcome.RetryAfterMilliseconds(), r.outcome.ReportedDebitUpperBound()), nil
 }
 
 func (r CompletedRouteAttemptRecord) deriveIdentity() string {

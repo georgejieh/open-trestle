@@ -174,7 +174,7 @@ func TestRouteAttemptRecordsAreContentAddressedAndRedacted(t *testing.T) {
 	if forgedOutcome.Validate() != ErrInvalidRouteAttemptOutcomeIdentity {
 		t.Fatal("forged outcome identity accepted")
 	}
-	if reflect.TypeOf(authorization).NumField() != 19 || reflect.TypeOf(outcome).NumField() != 9 {
+	if reflect.TypeOf(authorization).NumField() != 19 || reflect.TypeOf(outcome).NumField() != 10 {
 		t.Fatalf("unexpected record fields: authorization=%d outcome=%d", reflect.TypeOf(authorization).NumField(), reflect.TypeOf(outcome).NumField())
 	}
 	for _, value := range []any{authorization, outcome} {

@@ -25,7 +25,7 @@ const (
 	turnSizePartLimit             = 2 << 20
 	turnSizePartCount             = 64
 	turnSizeArtifactPayloadLimit  = 16 << 20
-	turnSizeMetadataCeiling       = 941298
+	turnSizeMetadataCeiling       = 941490
 	turnSizeResponseBase64Ceiling = 11185064
 )
 
@@ -44,9 +44,9 @@ func turnSizeMetadataOracle(t *testing.T, value reflect.Type, name string, tag r
 		size := uint64(2)
 		for i := 0; i < value.NumField(); i++ {
 			field := value.Field(i)
-			key := field.Tag.Get("json")
-			if key == "" || strings.Contains(key, ",") {
-				t.Fatal("wire field lacks an exact JSON key")
+			key, options, hasOptions := strings.Cut(field.Tag.Get("json"), ",")
+			if key == "" || hasOptions && (options != "omitempty" || key != "reported_debit_upper_bound" || field.Type != reflect.TypeOf((*reportedDebitUpperBoundWire)(nil))) {
+				t.Fatal("wire field lacks an exact supported JSON key/options")
 			}
 			size += encodedLength(key) + 1 + turnSizeMetadataOracle(t, field.Type, key, field.Tag)
 			if i > 0 {
@@ -54,6 +54,11 @@ func turnSizeMetadataOracle(t *testing.T, value reflect.Type, name string, tag r
 			}
 		}
 		return size
+	case reflect.Pointer:
+		if value != reflect.TypeOf((*reportedDebitUpperBoundWire)(nil)) || name != "reported_debit_upper_bound" || tag.Get("json") != "reported_debit_upper_bound,omitempty" {
+			t.Fatal("unsupported optional wire pointer")
+		}
+		return turnSizeMetadataOracle(t, value.Elem(), "", "")
 	case reflect.Slice:
 		count, err := strconv.ParseUint(tag.Get("limit"), 10, 16)
 		if err != nil || count == 0 {
@@ -149,7 +154,7 @@ func TestInvestigationTurnSizeUsefulAdmissionMonotonicityAndOverflow(t *testing.
 		}
 	}
 	oversized, err := EstimateInvestigationTurnPayloadBytes(turnSizeRequestLimit)
-	if err != nil || oversized != 23311174 || oversized <= turnSizeArtifactPayloadLimit {
+	if err != nil || oversized != 23311366 || oversized <= turnSizeArtifactPayloadLimit {
 		t.Fatalf("valid maximum request must return an inadmissible bound, not an error: (%d, %v)", oversized, err)
 	}
 	base := uint64(turnSizeMetadataCeiling + turnSizeResponseBase64Ceiling)
@@ -178,7 +183,7 @@ func turnSizeCloneShape(shape *investigationTurnShape) *investigationTurnShape {
 	if shape.fields != nil {
 		copy.fields = make([]investigationTurnField, len(shape.fields))
 		for i, field := range shape.fields {
-			copy.fields[i] = investigationTurnField{prefix: field.prefix, shape: turnSizeCloneShape(field.shape)}
+			copy.fields[i] = investigationTurnField{prefix: field.prefix, optional: field.optional, shape: turnSizeCloneShape(field.shape)}
 		}
 	}
 	copy.element = turnSizeCloneShape(shape.element)
@@ -233,6 +238,34 @@ func TestInvestigationTurnSizeShapeFailsClosed(t *testing.T) {
 		name   string
 		mutate func(*investigationTurnShape)
 	}{
+		{"nil bound pointer element", func(s *investigationTurnShape) {
+			turnSizeField(t, s, "dispatch", "reported_debit_upper_bound").element = nil
+		}},
+		{"bound pointer element kind", func(s *investigationTurnShape) {
+			turnSizeField(t, s, "dispatch", "reported_debit_upper_bound").element.kind = reflect.Slice
+		}},
+		{"bound pointer field name", func(s *investigationTurnShape) {
+			turnSizeField(t, s, "dispatch", "reported_debit_upper_bound").element.fields[0].prefix = `"other":`
+		}},
+		{"bound pointer width", func(s *investigationTurnShape) {
+			turnSizeField(t, s, "dispatch", "reported_debit_upper_bound").element.fields[0].shape.bits = 32
+		}},
+		{"bound pointer extra member", func(s *investigationTurnShape) {
+			b := turnSizeField(t, s, "dispatch", "reported_debit_upper_bound").element
+			b.fields = append(b.fields, investigationTurnField{prefix: `"extra":`, shape: &investigationTurnShape{kind: reflect.Bool}})
+		}},
+		{"unsupported optional scalar", func(s *investigationTurnShape) { s.fields[0].optional = true }},
+		{"required bound pointer", func(s *investigationTurnShape) {
+			for i := range s.fields {
+				if s.fields[i].prefix == `"dispatch":` {
+					for j := range s.fields[i].shape.fields {
+						if s.fields[i].shape.fields[j].prefix == `"reported_debit_upper_bound":` {
+							s.fields[i].shape.fields[j].optional = false
+						}
+					}
+				}
+			}
+		}},
 		{"missing request", func(s *investigationTurnShape) { request(s).payload = "" }},
 		{"missing response", func(s *investigationTurnShape) { response(s).payload = "" }},
 		{"unknown payload", func(s *investigationTurnShape) { response(s).payload = "future" }},

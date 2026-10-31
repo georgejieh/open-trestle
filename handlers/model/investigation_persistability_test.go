@@ -27,7 +27,8 @@ import (
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 )
 
-const persistTurnRequestBoundary = 3488139
+// The retained-turn cap minus worst-case metadata and response base64 leaves request capacity.
+const persistTurnRequestBoundary = ((16 << 20) - 941490 - 11185064) / 4 * 3
 const persistBudget = uint64(1 << 40)
 
 type persistStore struct {
@@ -443,6 +444,11 @@ func TestInvestigationPersistabilityInitialTurnGateUsesActualRequest(t *testing.
 		if f.bootstrap != uint64(16*2*(2*(wantAngles+1)+512*2)) {
 			t.Fatal("initial ranges lost repeated full-file scan accounting")
 		}
+	}
+	measuredSmall, smallErr := gateway.EstimateInvestigationTurnPayloadBytes(uint64(small))
+	measuredLarge, largeErr := gateway.EstimateInvestigationTurnPayloadBytes(uint64(large))
+	if smallErr != nil || largeErr != nil || measuredSmall > 16<<20 || measuredLarge <= 16<<20 {
+		t.Fatalf("actual requests do not straddle conservative turn admission: small=%d bound=%d err=%v large=%d bound=%d err=%v", small, measuredSmall, smallErr, large, measuredLarge, largeErr)
 	}
 	admitted, err := model.NewInvestigation(context.Background(), positive.options)
 	upperCheck(t, err)

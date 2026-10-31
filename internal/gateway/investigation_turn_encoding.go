@@ -7,6 +7,7 @@ import (
 	"errors"
 	"reflect"
 	"strconv"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/georgejieh/open-trestle/internal/provider"
@@ -57,22 +58,24 @@ type investigationTurnPartWire struct {
 }
 
 type investigationTurnResponseWire struct {
-	Capability   string                      `json:"capability"`
-	FinishReason string                      `json:"finish_reason"`
-	Identity     string                      `json:"identity"`
-	Parts        []investigationTurnPartWire `json:"parts" limit:"64"`
-	Usage        investigationTurnUsageWire  `json:"usage"`
+	Capability              string                       `json:"capability"`
+	FinishReason            string                       `json:"finish_reason"`
+	Identity                string                       `json:"identity"`
+	Parts                   []investigationTurnPartWire  `json:"parts" limit:"64"`
+	Usage                   investigationTurnUsageWire   `json:"usage"`
+	ReportedDebitUpperBound *reportedDebitUpperBoundWire `json:"reported_debit_upper_bound,omitempty"`
 }
 
 type investigationTurnDispatchWire struct {
-	AuthorizationIdentity  string                        `json:"authorization_identity"`
-	Failure                string                        `json:"failure"`
-	Identity               string                        `json:"identity"`
-	ReplaySafety           string                        `json:"replay_safety"`
-	Response               investigationTurnResponseWire `json:"response"`
-	RetryAfterMilliseconds uint32                        `json:"retry_after_milliseconds"`
-	Status                 string                        `json:"status"`
-	Usage                  investigationTurnUsageWire    `json:"usage"`
+	AuthorizationIdentity   string                        `json:"authorization_identity"`
+	Failure                 string                        `json:"failure"`
+	Identity                string                        `json:"identity"`
+	ReplaySafety            string                        `json:"replay_safety"`
+	Response                investigationTurnResponseWire `json:"response"`
+	RetryAfterMilliseconds  uint32                        `json:"retry_after_milliseconds"`
+	Status                  string                        `json:"status"`
+	Usage                   investigationTurnUsageWire    `json:"usage"`
+	ReportedDebitUpperBound *reportedDebitUpperBoundWire  `json:"reported_debit_upper_bound,omitempty"`
 }
 
 type investigationTurnOperationalWire struct {
@@ -199,8 +202,9 @@ type investigationTurnShape struct {
 }
 
 type investigationTurnField struct {
-	prefix string
-	shape  *investigationTurnShape
+	optional bool
+	prefix   string
+	shape    *investigationTurnShape
 }
 
 var investigationTurnEncodingShape = newInvestigationTurnShape(reflect.TypeOf(investigationTurnWire{}), "", "")
@@ -212,8 +216,12 @@ func newInvestigationTurnShape(value reflect.Type, name string, tag reflect.Stru
 		shape.fields = make([]investigationTurnField, value.NumField())
 		for i := 0; i < value.NumField(); i++ {
 			field := value.Field(i)
-			key := field.Tag.Get("json")
-			shape.fields[i] = investigationTurnField{prefix: `"` + key + `":`, shape: newInvestigationTurnShape(field.Type, key, field.Tag)}
+			key, options, _ := strings.Cut(field.Tag.Get("json"), ",")
+			shape.fields[i] = investigationTurnField{prefix: `"` + key + `":`, optional: options == "omitempty" && field.Type == reflect.TypeOf((*reportedDebitUpperBoundWire)(nil)), shape: newInvestigationTurnShape(field.Type, key, field.Tag)}
+		}
+	case reflect.Pointer:
+		if value == reflect.TypeOf((*reportedDebitUpperBoundWire)(nil)) {
+			shape.element = newInvestigationTurnShape(value.Elem(), "", "")
 		}
 	case reflect.Slice:
 		shape.element = newInvestigationTurnShape(value.Elem(), "", "")
@@ -262,17 +270,27 @@ func (s *investigationTurnScan) value(shape *investigationTurnShape, depth int) 
 		return false
 	}
 	switch shape.kind {
+	case reflect.Pointer:
+		return shape.element != nil && s.value(shape.element, depth+1)
 	case reflect.Struct:
 		if !s.take("{") {
 			return false
 		}
-		for i, field := range shape.fields {
-			if i > 0 && !s.take(",") {
+		written := false
+		for _, field := range shape.fields {
+			start := s.offset
+			matched := (!written || s.take(",")) && s.take(field.prefix)
+			if !matched {
+				s.offset = start
+				if field.optional {
+					continue
+				}
 				return false
 			}
-			if !s.take(field.prefix) || !s.value(field.shape, depth+1) {
+			if !s.value(field.shape, depth+1) {
 				return false
 			}
+			written = true
 		}
 		return s.take("}")
 	case reflect.Slice:
@@ -583,7 +601,7 @@ func investigationTurnResponseValue(response provider.Response) investigationTur
 	for _, part := range response.Parts() {
 		parts = append(parts, investigationTurnPartWire{Kind: part.Kind().String(), MediaType: part.MediaType(), PayloadBase64: base64.StdEncoding.EncodeToString(part.Payload())})
 	}
-	return investigationTurnResponseWire{Capability: response.Capability().String(), FinishReason: response.FinishReason().String(), Identity: response.Identity(), Parts: parts, Usage: investigationTurnUsageValue(response.Usage())}
+	return investigationTurnResponseWire{Capability: response.Capability().String(), FinishReason: response.FinishReason().String(), Identity: response.Identity(), Parts: parts, Usage: investigationTurnUsageValue(response.Usage()), ReportedDebitUpperBound: reportedDebitUpperBoundWireValue(response.ReportedDebitUpperBound())}
 }
 
 func investigationTurnWireValue(record InvestigationTurnRecord) investigationTurnWire {
@@ -595,6 +613,7 @@ func investigationTurnWireValue(record InvestigationTurnRecord) investigationTur
 		Dispatch: investigationTurnDispatchWire{
 			AuthorizationIdentity: dispatch.AuthorizationIdentity(), Failure: dispatch.Failure().String(), Identity: dispatch.Identity(), ReplaySafety: dispatch.ReplaySafety().String(),
 			Response: investigationTurnResponseValue(dispatch.Response()), RetryAfterMilliseconds: dispatch.RetryAfterMilliseconds(), Status: dispatch.Status().String(), Usage: investigationTurnUsageValue(dispatch.Usage()),
+			ReportedDebitUpperBound: reportedDebitUpperBoundWireValue(dispatch.ReportedDebitUpperBound()),
 		},
 		EstimateVersion: record.estimateVersion, FinishedMilliseconds: record.finishedMillis, Identity: record.identity,
 		MaxOutputTokens: record.maxOutput, Ordinal: record.ordinal, OriginalCapMicroUSD: record.originalCap,
@@ -602,6 +621,7 @@ func investigationTurnWireValue(record InvestigationTurnRecord) investigationTur
 			Identity: outcome.Identity(), Status: outcome.Status().String(), ResponseIdentity: outcome.ResponseIdentity(), UsageKnown: outcome.Usage().IsKnown(),
 			InputTokens: outcome.Usage().InputTokens(), OutputTokens: outcome.Usage().OutputTokens(), CachedInputTokens: outcome.Usage().CachedInputTokens(),
 			Failure: outcome.Failure().String(), ReplaySafety: outcome.ReplaySafety().String(), RetryAfterMilliseconds: outcome.RetryAfterMilliseconds(), DurationMilliseconds: outcome.DurationMilliseconds(),
+			ReportedDebitUpperBound: reportedDebitUpperBoundWireValue(outcome.ReportedDebitUpperBound()),
 		},
 		OwnerIdentity: record.ownerIdentity, PolicyIdentity: record.policyIdentity, PreviousTurnIdentity: record.previous,
 		Ranking: investigationTurnRankingValue(record.ranking),
@@ -852,7 +872,11 @@ func parseInvestigationTurnResponse(wire investigationTurnResponseWire) (provide
 		}
 		parts = append(parts, part)
 	}
-	response, err := provider.NewResponse(capability, finish, parts, usage)
+	bound, err := parseReportedDebitUpperBoundWire(wire.ReportedDebitUpperBound)
+	if err != nil {
+		return provider.Response{}, err
+	}
+	response, err := provider.NewResponseWithReportedDebitUpperBound(capability, finish, parts, usage, bound)
 	if err != nil || response.Identity() != wire.Identity {
 		return provider.Response{}, errInvestigationTurnEncoding
 	}
@@ -869,6 +893,10 @@ func parseInvestigationTurnDispatch(wire investigationTurnDispatchWire) (RouteDi
 	}
 	usage, err := parseInvestigationTurnUsage(wire.Usage)
 	if err != nil || usage != response.Usage() {
+		return RouteDispatchResult{}, errInvestigationTurnEncoding
+	}
+	bound, err := parseReportedDebitUpperBoundWire(wire.ReportedDebitUpperBound)
+	if err != nil || bound != response.ReportedDebitUpperBound() {
 		return RouteDispatchResult{}, errInvestigationTurnEncoding
 	}
 	dispatch, err := NewSuccessfulRouteDispatchResult(response)

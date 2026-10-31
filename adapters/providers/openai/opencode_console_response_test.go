@@ -95,3 +95,34 @@ func TestOpenCodeConsoleUsageUnknownAndOptionalCharge(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenCodeConsoleReportedDebitUpperBoundEligibility(t *testing.T) {
+	for _, tt := range []struct {
+		name, cost    string
+		qualification bool
+		present       bool
+		want          uint64
+	}{
+		{"positive", `"cost":0.00412,`, true, true, 4120},
+		{"zero", `"cost":0,`, true, true, 0},
+		{"ceil", `"cost":0.00000001,`, true, true, 1},
+		{"null", `"cost":null,`, true, false, 0},
+		{"missing", "", true, false, 0},
+		{"unqualified", `"cost":0.00412,`, false, false, 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			body := strings.Replace(consoleResponseFixture(), `"cost":0.00412,`, tt.cost, 1)
+			if !tt.qualification {
+				body = strings.Replace(body, `,"opencode":{"billing_source":"balance","list_cost":0.00412,"tokens":{"input":1200,"output":300,"reasoning":120,"cache_read":8000,"cache_write_5m":0,"cache_write_1h":0}}`, "", 1)
+			}
+			response, err := normalizeOpenCodeConsoleResponse([]byte(body), testRoute(t, "model", ""))
+			if err != nil || response.Usage().IsKnown() || response.ReportedDebitUpperBound().IsPresent() != tt.present || response.ReportedDebitUpperBound().MicroUSD() != tt.want {
+				t.Fatalf("bound mismatch: %v", err)
+			}
+		})
+	}
+	body := strings.Replace(consoleResponseFixture(), `"cost":0.00412`, `"cost":4611686018427.387905`, 1)
+	if _, err := normalizeOpenCodeConsoleResponse([]byte(body), testRoute(t, "model", "")); err == nil {
+		t.Fatal("unsupported money accepted")
+	}
+}

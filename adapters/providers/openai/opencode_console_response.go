@@ -49,9 +49,20 @@ func normalizeOpenCodeConsoleResponse(content []byte, route provider.RouteRefere
 	if err != nil {
 		return provider.Response{}, err
 	}
-	// The neutral two-rate contract cannot represent Console's billed counters or
-	// provisional charge. Unknown usage keeps its existing budget reservation.
-	return provider.NewResponse(response.Capability(), response.FinishReason(), response.Parts(), provider.NewUnknownRouteTokenUsage())
+	// Billed counters remain outside the neutral two-rate contract. The reported
+	// debit bound does not settle actual cost or release the reservation.
+	var bound provider.RouteReportedDebitUpperBound
+	if wire.Usage != nil && len(wire.Usage.OpenCode) != 0 && !nullOrAbsent(wire.Usage.Cost) {
+		amount, err := parseOpenCodeConsoleMicroUSD(wire.Usage.Cost)
+		if err != nil {
+			return provider.Response{}, err
+		}
+		bound, err = provider.NewRouteReportedDebitUpperBoundMicroUSD(amount)
+		if err != nil {
+			return provider.Response{}, ErrInvalidConfig
+		}
+	}
+	return provider.NewResponseWithReportedDebitUpperBound(response.Capability(), response.FinishReason(), response.Parts(), provider.NewUnknownRouteTokenUsage(), bound)
 }
 
 func normalizeOpenCodeConsoleUsage(w *openCodeGoUsageWire) (*chatUsageWire, error) {

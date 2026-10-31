@@ -171,19 +171,20 @@ func (s RouteDispatchStatus) Validate() error {
 
 // RouteDispatchResult is content-addressed normalized adapter output.
 type RouteDispatchResult struct {
-	identity               string
-	authorizationIdentity  string
-	status                 RouteDispatchStatus
-	response               provider.Response
-	failure                RouteFailureClass
-	replaySafety           RouteReplaySafety
-	usage                  provider.RouteTokenUsage
-	retryAfterMilliseconds uint32
+	identity                string
+	authorizationIdentity   string
+	status                  RouteDispatchStatus
+	response                provider.Response
+	failure                 RouteFailureClass
+	replaySafety            RouteReplaySafety
+	usage                   provider.RouteTokenUsage
+	reportedDebitUpperBound provider.RouteReportedDebitUpperBound
+	retryAfterMilliseconds  uint32
 }
 
 // NewSuccessfulRouteDispatchResult records one validated provider response.
 func NewSuccessfulRouteDispatchResult(response provider.Response) (RouteDispatchResult, error) {
-	result := RouteDispatchResult{status: RouteDispatchSucceeded, response: response, usage: response.Usage()}
+	result := RouteDispatchResult{status: RouteDispatchSucceeded, response: response, usage: response.Usage(), reportedDebitUpperBound: response.ReportedDebitUpperBound()}
 	if err := result.validateFields(); err != nil {
 		return RouteDispatchResult{}, err
 	}
@@ -211,9 +212,12 @@ func (r RouteDispatchResult) Response() provider.Response     { return r.respons
 func (r RouteDispatchResult) Failure() RouteFailureClass      { return r.failure }
 func (r RouteDispatchResult) ReplaySafety() RouteReplaySafety { return r.replaySafety }
 func (r RouteDispatchResult) Usage() provider.RouteTokenUsage { return r.usage }
-func (r RouteDispatchResult) RetryAfterMilliseconds() uint32  { return r.retryAfterMilliseconds }
-func (r RouteDispatchResult) String() string                  { return "route dispatch result" }
-func (r RouteDispatchResult) GoString() string                { return "gateway.RouteDispatchResult{<redacted>}" }
+func (r RouteDispatchResult) ReportedDebitUpperBound() provider.RouteReportedDebitUpperBound {
+	return r.reportedDebitUpperBound
+}
+func (r RouteDispatchResult) RetryAfterMilliseconds() uint32 { return r.retryAfterMilliseconds }
+func (r RouteDispatchResult) String() string                 { return "route dispatch result" }
+func (r RouteDispatchResult) GoString() string               { return "gateway.RouteDispatchResult{<redacted>}" }
 func (r RouteDispatchResult) Format(state fmt.State, verb rune) {
 	formatted := "route dispatch result"
 	if verb == 'q' {
@@ -242,6 +246,9 @@ func (r RouteDispatchResult) validateFields() error {
 	if err := r.status.Validate(); err != nil {
 		return err
 	}
+	if err := r.reportedDebitUpperBound.Validate(); err != nil {
+		return err
+	}
 	if err := r.usage.Validate(); err != nil {
 		return err
 	}
@@ -249,12 +256,12 @@ func (r RouteDispatchResult) validateFields() error {
 		if err := r.response.Validate(); err != nil {
 			return err
 		}
-		if r.usage != r.response.Usage() || r.failure != 0 || r.replaySafety != 0 || r.retryAfterMilliseconds != 0 {
+		if r.reportedDebitUpperBound != r.response.ReportedDebitUpperBound() || r.usage != r.response.Usage() || r.failure != 0 || r.replaySafety != 0 || r.retryAfterMilliseconds != 0 {
 			return ErrInvalidRouteDispatchResult
 		}
 		return nil
 	}
-	if r.response.Identity() != "" {
+	if r.response.Identity() != "" || r.reportedDebitUpperBound.IsPresent() {
 		return ErrInvalidRouteDispatchResult
 	}
 	if err := r.failure.Validate(); err != nil {
@@ -270,30 +277,32 @@ func (r RouteDispatchResult) validateFields() error {
 }
 
 func deriveRouteDispatchResultIdentity(result RouteDispatchResult) string {
-	return deriveRouteDispatchIdentity(result.authorizationIdentity, result.status, result.response.Identity(), result.failure, result.replaySafety, result.usage, result.retryAfterMilliseconds)
+	return deriveRouteDispatchIdentity(result.authorizationIdentity, result.status, result.response.Identity(), result.failure, result.replaySafety, result.usage, result.retryAfterMilliseconds, result.reportedDebitUpperBound)
 }
 
-func deriveRouteDispatchIdentity(authorization string, status RouteDispatchStatus, responseIdentity string, failure RouteFailureClass, replaySafety RouteReplaySafety, usage provider.RouteTokenUsage, retryAfter uint32) string {
+func deriveRouteDispatchIdentity(authorization string, status RouteDispatchStatus, responseIdentity string, failure RouteFailureClass, replaySafety RouteReplaySafety, usage provider.RouteTokenUsage, retryAfter uint32, bound provider.RouteReportedDebitUpperBound) string {
 	preimage := struct {
-		Contract      string `json:"contract"`
-		Version       int    `json:"version"`
-		Authorization string `json:"authorization"`
-		Status        string `json:"status"`
-		Response      string `json:"response"`
-		Failure       string `json:"failure"`
-		ReplaySafety  string `json:"replay_safety"`
-		UsageKnown    bool   `json:"usage_known"`
-		InputTokens   uint32 `json:"input_tokens"`
-		OutputTokens  uint32 `json:"output_tokens"`
-		CachedTokens  uint32 `json:"cached_tokens"`
-		RetryAfter    uint32 `json:"retry_after_milliseconds"`
+		Contract                string                       `json:"contract"`
+		Version                 int                          `json:"version"`
+		Authorization           string                       `json:"authorization"`
+		Status                  string                       `json:"status"`
+		Response                string                       `json:"response"`
+		Failure                 string                       `json:"failure"`
+		ReplaySafety            string                       `json:"replay_safety"`
+		UsageKnown              bool                         `json:"usage_known"`
+		InputTokens             uint32                       `json:"input_tokens"`
+		OutputTokens            uint32                       `json:"output_tokens"`
+		CachedTokens            uint32                       `json:"cached_tokens"`
+		RetryAfter              uint32                       `json:"retry_after_milliseconds"`
+		ReportedDebitUpperBound *reportedDebitUpperBoundWire `json:"reported_debit_upper_bound,omitempty"`
 	}{
 		Contract: "open-trestle/route-dispatch-result", Version: 1,
 		Authorization: authorization, Status: status.String(), Response: responseIdentity,
 		Failure: failure.String(), ReplaySafety: replaySafety.String(),
 		UsageKnown: usage.IsKnown(), InputTokens: usage.InputTokens(),
 		OutputTokens: usage.OutputTokens(), CachedTokens: usage.CachedInputTokens(),
-		RetryAfter: retryAfter,
+		RetryAfter:              retryAfter,
+		ReportedDebitUpperBound: reportedDebitUpperBoundWireValue(bound),
 	}
 	encoded, _ := json.Marshal(preimage)
 	digest := sha256.Sum256(encoded)
@@ -312,7 +321,7 @@ func NewRouteAttemptOutcomeFromDispatch(authorization RouteAttemptAuthorization,
 		return RouteAttemptOutcome{}, ErrRouteDispatchAuthorizationMismatch
 	}
 	if result.Status() == RouteDispatchSucceeded {
-		return NewSuccessfulRouteAttemptOutcome(authorization, result.Response().Identity(), result.Usage(), durationMilliseconds)
+		return NewSuccessfulRouteAttemptOutcomeWithReportedDebitUpperBound(authorization, result.Response().Identity(), result.Usage(), durationMilliseconds, result.ReportedDebitUpperBound())
 	}
 	return NewFailedRouteAttemptOutcome(authorization, result.Failure(), result.ReplaySafety(), result.Usage(), result.RetryAfterMilliseconds(), durationMilliseconds)
 }

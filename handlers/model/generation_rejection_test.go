@@ -68,7 +68,7 @@ func (l *rejectionLedger) Append(ctx context.Context, previous string, event aud
 }
 
 func TestGenerationHandlerPersistsContentFreeRejectionAfterReadback(t *testing.T) {
-	for _, mode := range []string{"complete", "put failure", "uncertain put", "read failure", "audit failure", "envelope rejection"} {
+	for _, mode := range []string{"complete", "reported debit bound", "put failure", "uncertain put", "read failure", "audit failure", "envelope rejection"} {
 		t.Run(mode, func(t *testing.T) {
 			scope, snapshot, packet, contextArtifact, raw := generationContextFixture(t)
 			sanitized, _, requestArtifact, receiptArtifact, expected := sanitizedGenerationFixture(t, scope, contextArtifact, raw, "")
@@ -87,7 +87,15 @@ func TestGenerationHandlerPersistsContentFreeRejectionAfterReadback(t *testing.T
 			if mode == "envelope rejection" {
 				finish = provider.ResponseFinishLength
 			}
-			response, err := provider.NewResponse(provider.CapabilityReviewV1, finish, []provider.ResponsePart{part}, usage)
+			var bound provider.RouteReportedDebitUpperBound
+			if mode == "reported debit bound" {
+				usage = provider.NewUnknownRouteTokenUsage()
+				bound, err = provider.NewRouteReportedDebitUpperBoundMicroUSD(4120)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			response, err := provider.NewResponseWithReportedDebitUpperBound(provider.CapabilityReviewV1, finish, []provider.ResponsePart{part}, usage, bound)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -128,7 +136,7 @@ func TestGenerationHandlerPersistsContentFreeRejectionAfterReadback(t *testing.T
 				t.Fatal(err)
 			}
 			want := 4
-			if mode == "complete" {
+			if mode == "complete" || mode == "reported debit bound" {
 				want = 5
 			}
 			if len(events) != want {
@@ -142,7 +150,7 @@ func TestGenerationHandlerPersistsContentFreeRejectionAfterReadback(t *testing.T
 			if mode == "envelope rejection" && (store.rejection.Identity() != "" || ledger.observed) {
 				t.Fatal("non-shape failure produced a rejection witness")
 			}
-			if mode != "complete" {
+			if mode != "complete" && mode != "reported debit bound" {
 				return
 			}
 			event := events[4]
@@ -163,6 +171,12 @@ func TestGenerationHandlerPersistsContentFreeRejectionAfterReadback(t *testing.T
 			rejection, err := ParseGenerationRejectionArtifact(value, inputArtifact, contextArtifact)
 			if err != nil || rejection.Attempt().Outcome().ResponseIdentity() != response.Identity() || rejection.Attempt().Authorization().Identity() != authorization.Identity() || rejection.HandlerIdentity() != handler.HandlerIdentity() {
 				t.Fatalf("rejection lineage: %v", err)
+			}
+			if rejection.Attempt().Outcome().ReportedDebitUpperBound() != bound {
+				t.Fatal("rejection lost debit evidence")
+			}
+			if bound.IsPresent() && (rejection.Attempt().Reconciliation().ActualCost().IsKnown() || rejection.Attempt().Outcome().Usage().IsKnown() || rejection.Attempt().Reconciliation().RemainingCostMicroUSD() != authorization.RemainingCostAfterMicroUSD()) {
+				t.Fatal("rejection changed unknown accounting")
 			}
 			if value.Origin() != artifact.OriginHost || value.Classification() != contextArtifact.Classification() || value.Protection() != contextArtifact.Protection() || !value.ExpiresAt().Equal(contextArtifact.ExpiresAt()) {
 				t.Fatal("rejection changed protection or retention")

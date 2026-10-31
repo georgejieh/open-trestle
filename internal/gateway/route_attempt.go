@@ -323,31 +323,37 @@ func (s RouteAttemptOutcomeStatus) Validate() error {
 
 // RouteAttemptOutcome is a content-addressed terminal result for one authorization.
 type RouteAttemptOutcome struct {
-	identity               string
-	authorizationIdentity  string
-	status                 RouteAttemptOutcomeStatus
-	responseIdentity       string
-	usage                  provider.RouteTokenUsage
-	failure                RouteFailureClass
-	replaySafety           RouteReplaySafety
-	retryAfterMilliseconds uint32
-	durationMilliseconds   uint64
+	identity                string
+	authorizationIdentity   string
+	status                  RouteAttemptOutcomeStatus
+	responseIdentity        string
+	usage                   provider.RouteTokenUsage
+	reportedDebitUpperBound provider.RouteReportedDebitUpperBound
+	failure                 RouteFailureClass
+	replaySafety            RouteReplaySafety
+	retryAfterMilliseconds  uint32
+	durationMilliseconds    uint64
 }
 
 // NewSuccessfulRouteAttemptOutcome records a terminal successful adapter result.
 func NewSuccessfulRouteAttemptOutcome(authorization RouteAttemptAuthorization, responseIdentity string, usage provider.RouteTokenUsage, durationMilliseconds uint64) (RouteAttemptOutcome, error) {
-	return newRouteAttemptOutcome(authorization, RouteAttemptSucceeded, responseIdentity, usage, 0, 0, 0, durationMilliseconds)
+	return NewSuccessfulRouteAttemptOutcomeWithReportedDebitUpperBound(authorization, responseIdentity, usage, durationMilliseconds, provider.RouteReportedDebitUpperBound{})
+}
+
+// NewSuccessfulRouteAttemptOutcomeWithReportedDebitUpperBound records qualified debit evidence.
+func NewSuccessfulRouteAttemptOutcomeWithReportedDebitUpperBound(authorization RouteAttemptAuthorization, responseIdentity string, usage provider.RouteTokenUsage, durationMilliseconds uint64, bound provider.RouteReportedDebitUpperBound) (RouteAttemptOutcome, error) {
+	return newRouteAttemptOutcome(authorization, RouteAttemptSucceeded, responseIdentity, usage, 0, 0, 0, durationMilliseconds, bound)
 }
 
 // NewFailedRouteAttemptOutcome records a terminal adapter failure using closed classifications.
 func NewFailedRouteAttemptOutcome(authorization RouteAttemptAuthorization, failure RouteFailureClass, safety RouteReplaySafety, usage provider.RouteTokenUsage, retryAfterMilliseconds uint32, durationMilliseconds uint64) (RouteAttemptOutcome, error) {
-	return newRouteAttemptOutcome(authorization, RouteAttemptFailed, "", usage, failure, safety, retryAfterMilliseconds, durationMilliseconds)
+	return newRouteAttemptOutcome(authorization, RouteAttemptFailed, "", usage, failure, safety, retryAfterMilliseconds, durationMilliseconds, provider.RouteReportedDebitUpperBound{})
 }
-func newRouteAttemptOutcome(a RouteAttemptAuthorization, status RouteAttemptOutcomeStatus, responseIdentity string, usage provider.RouteTokenUsage, failure RouteFailureClass, safety RouteReplaySafety, retryAfter uint32, duration uint64) (RouteAttemptOutcome, error) {
+func newRouteAttemptOutcome(a RouteAttemptAuthorization, status RouteAttemptOutcomeStatus, responseIdentity string, usage provider.RouteTokenUsage, failure RouteFailureClass, safety RouteReplaySafety, retryAfter uint32, duration uint64, bound provider.RouteReportedDebitUpperBound) (RouteAttemptOutcome, error) {
 	if err := a.Validate(); err != nil {
 		return RouteAttemptOutcome{}, err
 	}
-	o := RouteAttemptOutcome{authorizationIdentity: a.Identity(), status: status, responseIdentity: responseIdentity, usage: usage, failure: failure, replaySafety: safety, retryAfterMilliseconds: retryAfter, durationMilliseconds: duration}
+	o := RouteAttemptOutcome{authorizationIdentity: a.Identity(), status: status, responseIdentity: responseIdentity, usage: usage, failure: failure, replaySafety: safety, retryAfterMilliseconds: retryAfter, durationMilliseconds: duration, reportedDebitUpperBound: bound}
 	if err := validateRouteAttemptOutcomeFields(o); err != nil {
 		return RouteAttemptOutcome{}, err
 	}
@@ -359,12 +365,15 @@ func (o RouteAttemptOutcome) AuthorizationIdentity() string     { return o.autho
 func (o RouteAttemptOutcome) Status() RouteAttemptOutcomeStatus { return o.status }
 func (o RouteAttemptOutcome) ResponseIdentity() string          { return o.responseIdentity }
 func (o RouteAttemptOutcome) Usage() provider.RouteTokenUsage   { return o.usage }
-func (o RouteAttemptOutcome) Failure() RouteFailureClass        { return o.failure }
-func (o RouteAttemptOutcome) ReplaySafety() RouteReplaySafety   { return o.replaySafety }
-func (o RouteAttemptOutcome) RetryAfterMilliseconds() uint32    { return o.retryAfterMilliseconds }
-func (o RouteAttemptOutcome) DurationMilliseconds() uint64      { return o.durationMilliseconds }
-func (o RouteAttemptOutcome) String() string                    { return "route attempt outcome" }
-func (o RouteAttemptOutcome) GoString() string                  { return "gateway.RouteAttemptOutcome{<redacted>}" }
+func (o RouteAttemptOutcome) ReportedDebitUpperBound() provider.RouteReportedDebitUpperBound {
+	return o.reportedDebitUpperBound
+}
+func (o RouteAttemptOutcome) Failure() RouteFailureClass      { return o.failure }
+func (o RouteAttemptOutcome) ReplaySafety() RouteReplaySafety { return o.replaySafety }
+func (o RouteAttemptOutcome) RetryAfterMilliseconds() uint32  { return o.retryAfterMilliseconds }
+func (o RouteAttemptOutcome) DurationMilliseconds() uint64    { return o.durationMilliseconds }
+func (o RouteAttemptOutcome) String() string                  { return "route attempt outcome" }
+func (o RouteAttemptOutcome) GoString() string                { return "gateway.RouteAttemptOutcome{<redacted>}" }
 func (o RouteAttemptOutcome) Format(state fmt.State, verb rune) {
 	formatted := "route attempt outcome"
 	if verb == 'q' {
@@ -390,6 +399,9 @@ func validateRouteAttemptOutcomeFields(o RouteAttemptOutcome) error {
 	if err := o.status.Validate(); err != nil {
 		return err
 	}
+	if err := o.reportedDebitUpperBound.Validate(); err != nil {
+		return err
+	}
 	if err := o.usage.Validate(); err != nil {
 		return err
 	}
@@ -405,7 +417,7 @@ func validateRouteAttemptOutcomeFields(o RouteAttemptOutcome) error {
 		}
 		return nil
 	}
-	if o.responseIdentity != "" {
+	if o.responseIdentity != "" || o.reportedDebitUpperBound.IsPresent() {
 		return ErrInvalidRouteAttemptOutcome
 	}
 	if err := o.failure.Validate(); err != nil {
@@ -421,19 +433,20 @@ func validateRouteAttemptOutcomeFields(o RouteAttemptOutcome) error {
 }
 func deriveRouteAttemptOutcomeIdentity(o RouteAttemptOutcome) string {
 	preimage := struct {
-		Contract              string `json:"contract"`
-		Version               int    `json:"version"`
-		AuthorizationIdentity string `json:"authorization_identity"`
-		Status                string `json:"status"`
-		ResponseIdentity      string `json:"response_identity"`
-		UsageKnown            bool   `json:"usage_known"`
-		InputTokens           uint32 `json:"input_tokens"`
-		OutputTokens          uint32 `json:"output_tokens"`
-		CachedInputTokens     uint32 `json:"cached_input_tokens"`
-		Failure               string `json:"failure"`
-		ReplaySafety          string `json:"replay_safety"`
-		RetryAfter            uint32 `json:"retry_after_milliseconds"`
-		Duration              uint64 `json:"duration_milliseconds"`
+		Contract                string                       `json:"contract"`
+		Version                 int                          `json:"version"`
+		AuthorizationIdentity   string                       `json:"authorization_identity"`
+		Status                  string                       `json:"status"`
+		ResponseIdentity        string                       `json:"response_identity"`
+		UsageKnown              bool                         `json:"usage_known"`
+		InputTokens             uint32                       `json:"input_tokens"`
+		OutputTokens            uint32                       `json:"output_tokens"`
+		CachedInputTokens       uint32                       `json:"cached_input_tokens"`
+		Failure                 string                       `json:"failure"`
+		ReplaySafety            string                       `json:"replay_safety"`
+		RetryAfter              uint32                       `json:"retry_after_milliseconds"`
+		Duration                uint64                       `json:"duration_milliseconds"`
+		ReportedDebitUpperBound *reportedDebitUpperBoundWire `json:"reported_debit_upper_bound,omitempty"`
 	}{
 		Contract: "open-trestle/route-attempt-outcome", Version: 1,
 		AuthorizationIdentity: o.authorizationIdentity, Status: o.status.String(), ResponseIdentity: o.responseIdentity,
@@ -441,6 +454,7 @@ func deriveRouteAttemptOutcomeIdentity(o RouteAttemptOutcome) string {
 		InputTokens: o.usage.InputTokens(), OutputTokens: o.usage.OutputTokens(), CachedInputTokens: o.usage.CachedInputTokens(),
 		Failure: o.failure.String(), ReplaySafety: o.replaySafety.String(),
 		RetryAfter: o.retryAfterMilliseconds, Duration: o.durationMilliseconds,
+		ReportedDebitUpperBound: reportedDebitUpperBoundWireValue(o.ReportedDebitUpperBound()),
 	}
 	encoded, _ := json.Marshal(preimage)
 	digest := sha256.Sum256(encoded)

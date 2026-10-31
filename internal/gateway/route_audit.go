@@ -86,10 +86,10 @@ func RecordRouteDispatchCompleted(ctx context.Context, ledger audit.Ledger, scop
 		return audit.Event{}, ErrRouteAuditRecordMismatch
 	}
 	if result.Status() == RouteDispatchSucceeded {
-		if outcome.Status() != RouteAttemptSucceeded || outcome.ResponseIdentity() != result.Response().Identity() || outcome.Usage() != result.Usage() {
+		if outcome.Status() != RouteAttemptSucceeded || outcome.ResponseIdentity() != result.Response().Identity() || outcome.ReportedDebitUpperBound() != result.ReportedDebitUpperBound() || outcome.Usage() != result.Usage() {
 			return audit.Event{}, ErrRouteAuditRecordMismatch
 		}
-	} else if outcome.Status() != RouteAttemptFailed || outcome.ResponseIdentity() != "" || outcome.Failure() != result.Failure() || outcome.ReplaySafety() != result.ReplaySafety() || outcome.RetryAfterMilliseconds() != result.RetryAfterMilliseconds() || outcome.Usage() != result.Usage() {
+	} else if outcome.Status() != RouteAttemptFailed || outcome.ResponseIdentity() != "" || outcome.Failure() != result.Failure() || outcome.ReplaySafety() != result.ReplaySafety() || outcome.RetryAfterMilliseconds() != result.RetryAfterMilliseconds() || outcome.ReportedDebitUpperBound() != result.ReportedDebitUpperBound() || outcome.Usage() != result.Usage() {
 		return audit.Event{}, ErrRouteAuditRecordMismatch
 	}
 	if err := requireRouteAuditEvent(ctx, ledger, scope, audit.EventRouteAttemptClaimed, authorization.Identity()); err != nil {

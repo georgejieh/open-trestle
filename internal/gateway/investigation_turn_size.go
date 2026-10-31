@@ -96,7 +96,7 @@ func (w *investigationTurnSizeWalk) value(shape *investigationTurnShape, path st
 		}
 	}
 	w.ancestors[depth] = shape
-	if shape.limit < 0 || shape.payload != "" && shape.kind != reflect.String || shape.element != nil && shape.kind != reflect.Slice || len(shape.fields) != 0 && shape.kind != reflect.Struct || shape.selectionCount && shape.kind != reflect.Slice {
+	if shape.limit < 0 || shape.payload != "" && shape.kind != reflect.String || shape.element != nil && shape.kind != reflect.Slice && shape.kind != reflect.Pointer || len(shape.fields) != 0 && shape.kind != reflect.Struct || shape.selectionCount && shape.kind != reflect.Slice {
 		return 0, errInvestigationTurnSize
 	}
 	switch path {
@@ -138,6 +138,21 @@ func (w *investigationTurnSizeWalk) value(shape *investigationTurnShape, path st
 		}
 	}
 	switch shape.kind {
+	case reflect.Pointer:
+		switch path {
+		case "dispatch.reported_debit_upper_bound", "dispatch.response.reported_debit_upper_bound", "outcome.reported_debit_upper_bound":
+		default:
+			return 0, errInvestigationTurnSize
+		}
+		if shape.bits != 0 || shape.limit != 0 || shape.element == nil || shape.element.kind != reflect.Struct || len(shape.element.fields) != 1 {
+			return 0, errInvestigationTurnSize
+		}
+		field := shape.element.fields[0]
+		if field.prefix != `"micro_usd":` || field.optional || field.shape == nil || field.shape.kind != reflect.Uint64 || field.shape.bits != 64 {
+			return 0, errInvestigationTurnSize
+		}
+		// Count the optional object as present; absence cannot increase its encoding.
+		return w.value(shape.element, path, depth+1)
 	case reflect.Struct:
 		if shape.bits != 0 || shape.limit != 0 {
 			return 0, errInvestigationTurnSize
@@ -156,6 +171,9 @@ func (w *investigationTurnSizeWalk) value(shape *investigationTurnShape, path st
 			childPath := name
 			if path != "" {
 				childPath = path + "." + name
+			}
+			if field.shape == nil || field.optional != (field.shape.kind == reflect.Pointer) {
+				return 0, errInvestigationTurnSize
 			}
 			child, err := w.value(field.shape, childPath, depth+1)
 			if err != nil {

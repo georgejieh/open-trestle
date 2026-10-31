@@ -116,13 +116,26 @@ as free. USD values use bounded exact decimal arithmetic and upward micro-USD
 rounding; source numbers have at most 64 bytes and exponent magnitude at most 64,
 and the rounded result must fit uint64. Malformed/unknown extensions refuse.
 
-Reported cost and billed counters are validated then discarded, not substituted
-for the existing two-rate `RouteActualCost`. Native-token tariffs do not express
-Console billing or cached prices. Accurate billed usage and cost settlement are
-unsupported; V1-04 remains incomplete. This is not service qualification. A later
-typed settlement contract needs deliberate identity/schema review before it can
-retain native counters and monetary information independently. The upstream says
-reported charge may exceed final debit when balance runs out, never be lower.
+A completed, valid reply with explicit `billing_source:"balance"`, no
+`estimated:true` and numeric `usage.cost` retains a typed
+`RouteReportedDebitUpperBound`. The existing supported money domain bounds this
+evidence at 1 << 62 microUSD. Exact rational parsing rounds upward, preserving
+the documented eventual account debit <= reported cost relation. Present numeric
+zero is distinct from absent evidence. Missing/null cost, list price alone or a
+missing billing block supplies no bound. The constructor validates representation;
+it does not establish provider provenance or authorize spending.
+
+The response, dispatch, attempt outcome and existing durable records bind this
+optional evidence in their identities. Absent evidence preserves legacy bytes
+and identities. Strict older readers reject extended records. Accounting-only
+completion records retain the bound even if output admission later fails.
+Billed counters are still discarded, and the bound is never substituted for
+`RouteActualCost`. Actual cost remains UNKNOWN and the full reservation remains
+held. Native-token tariffs do not express Console billing or cached prices.
+Accurate billed usage and cost settlement are unsupported; V1-04 remains
+incomplete. This is not service qualification or proof of a conservative
+pre-dispatch all-billed quantity/rate bound. The upstream says reported charge
+may exceed final debit when balance runs out, never be lower.
 Neither parse failure nor cancellation reverses spend. Retaining a reservation
 is not proof that it bounds the final charge. The representative table on
 October 31 lists $0.15 input/$0.50 output/$0.03 cached-read per million tokens.
