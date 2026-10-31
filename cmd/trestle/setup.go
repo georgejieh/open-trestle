@@ -47,6 +47,8 @@ func runSetupWithDependencies(args []string, stdout, stderr io.Writer, clock set
 		return 2
 	}
 	switch args[0] {
+	case "bootstrap":
+		return runSetupBootstrap(args[1:], stdout, stderr)
 	case "init":
 		return runSetupInit(args[1:], stdout, stderr, clock)
 	case "inspect":
@@ -540,6 +542,7 @@ func runSetupBackup(args []string, stdout, stderr io.Writer) int {
 }
 
 func writeSetupUsage(writer io.Writer) {
+	fmt.Fprintln(writer, "usage: trestle setup bootstrap init|check|inspect (local-first protected configuration and first-review commands)")
 	fmt.Fprintln(writer, "usage: trestle setup init --profile PROFILE --tenant ID --repository ID --recovery-owner NAME --state PATH")
 	fmt.Fprintln(writer, "       trestle setup inspect --state PATH [--expected-root-identity HEX64]")
 	fmt.Fprintln(writer, "       trestle setup check storage --state PATH --storage-root PATH")
