@@ -148,7 +148,12 @@
     "esbuild": "0.28.2",
     "prettier": "3.9.6",
     "typescript": "7.0.2",
-    "vitest": "4.1.11"
+    "vitest": "4.1.12"
+  },
+  "overrides": {
+    "@vscode/vsce": {
+      "minimatch": "11.0.1"
+    }
   },
   "icon": "icon.png",
   "extensionKind": [
