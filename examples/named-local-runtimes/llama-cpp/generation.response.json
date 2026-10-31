@@ -1,0 +1,33 @@
+{
+  "id": "chatcmpl-offline-fixture",
+  "object": "chat.completion",
+  "created": 0,
+  "model": "trestle-generation",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "{\"schema_version\":1,\"candidates\":[]}",
+        "reasoning_content": "Synthetic private reasoning; not review output."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 120,
+    "completion_tokens": 30,
+    "total_tokens": 150
+  },
+  "timings": {
+    "cache_n": 0,
+    "prompt_n": 120,
+    "prompt_ms": 30.958,
+    "prompt_per_token_ms": 0.257983,
+    "prompt_per_second": 3876.22,
+    "predicted_n": 30,
+    "predicted_ms": 661.064,
+    "predicted_per_token_ms": 22.035466,
+    "predicted_per_second": 45.381384
+  }
+}

@@ -3,6 +3,7 @@ package openai
 import (
 	"bytes"
 	"encoding/json"
+	"unicode/utf8"
 
 	"github.com/georgejieh/open-trestle/internal/provider"
 )
@@ -28,6 +29,24 @@ type chatResponseWire struct {
 	Usage             *chatUsageWire   `json:"usage"`
 	SystemFingerprint *string          `json:"system_fingerprint"`
 	ServiceTier       *string          `json:"service_tier"`
+	Timings           *chatTimingsWire `json:"timings"`
+}
+
+// llama.cpp reports timings separately from authoritative token usage.
+type chatTimingsWire struct {
+	CacheTokens           uint64  `json:"cache_n"`
+	PromptTokens          uint64  `json:"prompt_n"`
+	PromptMilliseconds    float64 `json:"prompt_ms"`
+	PromptPerToken        float64 `json:"prompt_per_token_ms"`
+	PromptPerSecond       float64 `json:"prompt_per_second"`
+	PredictedTokens       uint64  `json:"predicted_n"`
+	PredictedMilliseconds float64 `json:"predicted_ms"`
+	PredictedPerToken     float64 `json:"predicted_per_token_ms"`
+	PredictedPerSecond    float64 `json:"predicted_per_second"`
+}
+
+func (t *chatTimingsWire) valid() bool {
+	return t == nil || t.PromptMilliseconds >= 0 && t.PromptPerToken >= 0 && t.PromptPerSecond >= 0 && t.PredictedMilliseconds >= 0 && t.PredictedPerToken >= 0 && t.PredictedPerSecond >= 0
 }
 
 type chatChoiceWire struct {
@@ -38,13 +57,14 @@ type chatChoiceWire struct {
 }
 
 type chatMessageWire struct {
-	Role         string            `json:"role"`
-	Content      *string           `json:"content"`
-	Refusal      *string           `json:"refusal"`
-	Annotations  []json.RawMessage `json:"annotations"`
-	ToolCalls    []json.RawMessage `json:"tool_calls"`
-	FunctionCall json.RawMessage   `json:"function_call"`
-	Audio        json.RawMessage   `json:"audio"`
+	Role             string            `json:"role"`
+	Content          *string           `json:"content"`
+	ReasoningContent *string           `json:"reasoning_content"`
+	Refusal          *string           `json:"refusal"`
+	Annotations      []json.RawMessage `json:"annotations"`
+	ToolCalls        []json.RawMessage `json:"tool_calls"`
+	FunctionCall     json.RawMessage   `json:"function_call"`
+	Audio            json.RawMessage   `json:"audio"`
 }
 
 type chatUsageWire struct {
@@ -68,13 +88,13 @@ type chatCompletionDetailsWire struct {
 }
 
 func normalizeChatResponse(content []byte, route provider.RouteReference) (provider.Response, error) {
-	if len(content) == 0 || len(content) > maximumResponseBytes || validateChatJSONShape(content) != nil {
+	if len(content) == 0 || len(content) > maximumResponseBytes || !utf8.Valid(content) || validateChatJSONShape(content) != nil {
 		return provider.Response{}, ErrInvalidConfig
 	}
 	decoder := json.NewDecoder(bytes.NewReader(content))
 	decoder.DisallowUnknownFields()
 	var wire chatResponseWire
-	if decoder.Decode(&wire) != nil || requireJSONEOF(decoder) != nil || wire.ID == "" || len(wire.ID) > 512 || wire.Object != "chat.completion" || wire.Model != modelSelector(route) || len(wire.Choices) != 1 || wire.SystemFingerprint != nil && len(*wire.SystemFingerprint) > 512 || wire.ServiceTier != nil && len(*wire.ServiceTier) > 64 {
+	if decoder.Decode(&wire) != nil || requireJSONEOF(decoder) != nil || wire.ID == "" || len(wire.ID) > 512 || wire.Object != "chat.completion" || wire.Model != modelSelector(route) || !wire.Timings.valid() || len(wire.Choices) != 1 || wire.SystemFingerprint != nil && len(*wire.SystemFingerprint) > 512 || wire.ServiceTier != nil && len(*wire.ServiceTier) > 64 {
 		return provider.Response{}, ErrInvalidConfig
 	}
 	choice := wire.Choices[0]
@@ -86,7 +106,7 @@ func normalizeChatResponse(content []byte, route provider.RouteReference) (provi
 		return provider.Response{}, ErrInvalidConfig
 	}
 	message := choice.Message
-	if message.Role != "assistant" || len(message.Annotations) != 0 || len(message.ToolCalls) != 0 || !nullOrAbsent(message.FunctionCall) || !nullOrAbsent(message.Audio) {
+	if message.Role != "assistant" || message.ReasoningContent != nil && (!utf8.ValidString(*message.ReasoningContent) || len(*message.ReasoningContent) > maximumResponseBytes) || len(message.Annotations) != 0 || len(message.ToolCalls) != 0 || !nullOrAbsent(message.FunctionCall) || !nullOrAbsent(message.Audio) {
 		return provider.Response{}, ErrInvalidConfig
 	}
 	item := messageContentWire{Type: "output_text"}

@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "routes": [
+    {
+      "zone": "local",
+      "provider_id": "vllm",
+      "adapter_id": "local-generation",
+      "connection_id": "vllm/generation",
+      "model_id": "trestle-generation",
+      "model_version": "",
+      "max_context_tokens": 8192,
+      "max_output_tokens": 1024,
+      "features": [
+        "structured_output"
+      ],
+      "content_logging": "unknown",
+      "pricing_known": false,
+      "input_micro_usd_per_million_tokens": 0,
+      "output_micro_usd_per_million_tokens": 0,
+      "quality": "tier_1",
+      "registry_revision": 1,
+      "registry_status": "pending",
+      "evidence_manifest_base64": "eyJjb250cmFjdCI6Im9wZW4tdHJlc3RsZS9uYW1lZC1sb2NhbC1ydW50aW1lLWV4YW1wbGUiLCJzY2hlbWFfdmVyc2lvbiI6MSwicnVudGltZSI6InZsbG0iLCJyb2xlIjoiZ2VuZXJhdGlvbiIsImRlY2xhcmF0aW9uIjoiVW5xdWFsaWZpZWQgb3BlcmF0b3IgdGVtcGxhdGU7IG5vdCBlbXBpcmljYWwgY29uZm9ybWFuY2Ugb3IgcHJpdmFjeSBldmlkZW5jZSIsIm1vZGVsX3NlbGVjdG9yIjoidHJlc3RsZS1nZW5lcmF0aW9uIiwib3BlcmF0b3JfbXVzdF9yZXBsYWNlX2Zvcl9wcm9kdWN0aW9uIjp0cnVlfQ==",
+      "operational_revision": 1,
+      "health": "unknown",
+      "quota": "unknown",
+      "performance_revision": 1,
+      "latency_known": false,
+      "p95_latency_milliseconds": 0,
+      "latency_sample_count": 0
+    },
+    {
+      "zone": "local",
+      "provider_id": "vllm",
+      "adapter_id": "local-verification",
+      "connection_id": "vllm/verification",
+      "model_id": "trestle-verification",
+      "model_version": "",
+      "max_context_tokens": 8192,
+      "max_output_tokens": 1024,
+      "features": [
+        "structured_output"
+      ],
+      "content_logging": "unknown",
+      "pricing_known": false,
+      "input_micro_usd_per_million_tokens": 0,
+      "output_micro_usd_per_million_tokens": 0,
+      "quality": "tier_1",
+      "registry_revision": 1,
+      "registry_status": "pending",
+      "evidence_manifest_base64": "eyJjb250cmFjdCI6Im9wZW4tdHJlc3RsZS9uYW1lZC1sb2NhbC1ydW50aW1lLWV4YW1wbGUiLCJzY2hlbWFfdmVyc2lvbiI6MSwicnVudGltZSI6InZsbG0iLCJyb2xlIjoidmVyaWZpY2F0aW9uIiwiZGVjbGFyYXRpb24iOiJVbnF1YWxpZmllZCBvcGVyYXRvciB0ZW1wbGF0ZTsgbm90IGVtcGlyaWNhbCBjb25mb3JtYW5jZSBvciBwcml2YWN5IGV2aWRlbmNlIiwibW9kZWxfc2VsZWN0b3IiOiJ0cmVzdGxlLXZlcmlmaWNhdGlvbiIsIm9wZXJhdG9yX211c3RfcmVwbGFjZV9mb3JfcHJvZHVjdGlvbiI6dHJ1ZX0=",
+      "operational_revision": 1,
+      "health": "unknown",
+      "quota": "unknown",
+      "performance_revision": 1,
+      "latency_known": false,
+      "p95_latency_milliseconds": 0,
+      "latency_sample_count": 0
+    }
+  ]
+}

@@ -2,6 +2,8 @@ package setup
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -9,6 +11,7 @@ import (
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/internal/gateway"
+	"github.com/georgejieh/open-trestle/internal/memory"
 	"github.com/georgejieh/open-trestle/internal/provider"
 	reviewcore "github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
@@ -142,7 +145,7 @@ func executeSetupLocalInference(ctx context.Context, plan Plan, inventory runtim
 	if err != nil {
 		return "", err
 	}
-	candidateRequest, err := provider.NewRequest(provider.CapabilityReviewV1, "application/json", []byte(`{"contract":"open-trestle/setup-local-inference-probe","schema_version":1,"task":"candidate_generation","instruction":"Return only this exact JSON object with no markdown or extra fields.","required_output":{"schema_version":1,"candidates":[]}}`))
+	packet, candidateRequest, err := setupLocalInferenceRequest(ctx, scope, snapshot, sourceRange)
 	if err != nil {
 		return "", err
 	}
@@ -162,7 +165,19 @@ func executeSetupLocalInference(ctx context.Context, plan Plan, inventory runtim
 	if err != nil {
 		return "", err
 	}
-	verificationRequest, err := provider.NewRequest(provider.CapabilityReviewV1, "application/json", []byte(`{"contract":"open-trestle/setup-local-inference-probe","schema_version":1,"task":"independent_verification","instruction":"Return only this exact JSON object with no markdown or extra fields.","required_output":{"schema_version":1,"verdicts":[]}}`))
+	rawGeneration, err := packet.ProviderRequest()
+	if err != nil {
+		return "", err
+	}
+	verificationContext, err := reviewcore.NewVerificationRequestContext(rawGeneration.Payload(), packet.Identity(), scope.Identity(), packet.MemoryScopeIdentity(), packet.MemoryIdentity(), snapshot, packet.EvidenceItems(), candidates)
+	if err != nil {
+		return "", err
+	}
+	rawVerification, err := verificationContext.ProviderRequest()
+	if err != nil {
+		return "", err
+	}
+	verificationRequest, err := reviewcore.NewLocalVerificationRequest(rawVerification, scope.Identity())
 	if err != nil {
 		return "", err
 	}
@@ -190,6 +205,49 @@ func executeSetupLocalInference(ctx context.Context, plan Plan, inventory runtim
 		return "", err
 	}
 	return dryRunIdentity("local-inference-execution", plan.RootIdentity(), inventory.Identity(), policy.Identity(), catalog.Identity(), generation.Identity(), candidates.Identity(), verification.Identity(), verdicts.Identity(), independence.Identity(), "attempts:2", "fallbacks:0", "publication_attempts:0", "dynamic_validation_attempts:0"), nil
+}
+
+func setupLocalInferenceRequest(ctx context.Context, scope audit.ReviewScope, snapshot reviewcore.ReviewSnapshot, location evidence.SourceRange) (reviewcore.ContextPacket, provider.Request, error) {
+	memoryScope, err := memory.NewScope(scope.TenantID(), scope.RepositoryID(), "setup-local-inference", memory.RefVisibilityExact, dryRunIdentity("local-inference-ref", scope.Identity()), []string{location.Path()})
+	if err != nil {
+		return reviewcore.ContextPacket{}, provider.Request{}, err
+	}
+	content := []byte("func setupProbe() {}\n")
+	digest := sha256.Sum256(content)
+	item, err := evidence.NewEvidenceItem("setup-probe", evidence.EvidenceKindSource, hex.EncodeToString(digest[:]), location)
+	if err != nil {
+		return reviewcore.ContextPacket{}, provider.Request{}, err
+	}
+	source, err := reviewcore.NewContextSource(reviewcore.ContextStageChangedHunk, memory.TaintRepositoryControlled, item, content)
+	if err != nil {
+		return reviewcore.ContextPacket{}, provider.Request{}, err
+	}
+	query, err := memory.NewLexicalQuery(memoryScope, location.Path(), nil, nil, time.UnixMilli(1), 1)
+	if err != nil {
+		return reviewcore.ContextPacket{}, provider.Request{}, err
+	}
+	retrieval, err := memory.NewLexicalIndex().Search(ctx, memoryScope, query)
+	if err != nil {
+		return reviewcore.ContextPacket{}, provider.Request{}, err
+	}
+	limits, err := reviewcore.NewContextLimits(1024, 0)
+	if err != nil {
+		return reviewcore.ContextPacket{}, provider.Request{}, err
+	}
+	packet, err := reviewcore.NewContextPacket(scope, memoryScope, snapshot, reviewcore.ContextTaskCandidateGeneration, []reviewcore.ContextSource{source}, retrieval, limits)
+	if err != nil {
+		return reviewcore.ContextPacket{}, provider.Request{}, err
+	}
+	raw, err := packet.ProviderRequest()
+	if err != nil {
+		return reviewcore.ContextPacket{}, provider.Request{}, err
+	}
+	sanitized, err := reviewcore.NewSanitizedModelRequest(scope.Identity(), raw, raw)
+	if err != nil {
+		return reviewcore.ContextPacket{}, provider.Request{}, err
+	}
+	request, err := sanitized.ProviderRequest()
+	return packet, request, err
 }
 
 type localInferenceAdmission func(provider.Response) (string, error)

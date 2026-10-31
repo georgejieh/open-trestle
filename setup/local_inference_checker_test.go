@@ -10,6 +10,7 @@ import (
 
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/provider"
+	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 )
 
@@ -58,25 +59,22 @@ func (d countingLocalInferenceDispatcher) DispatchRoute(ctx context.Context, req
 	d.factory.dispatches++
 	d.factory.records = append(d.factory.records, request.Authorization().RouteRecordIdentity())
 	d.factory.maxOutput = append(d.factory.maxOutput, request.Authorization().MaxOutputTokens())
-	if d.factory.outputTokens > 0 || d.factory.inputTokens > 0 {
-		document := `{"schema_version":1,"verdicts":[]}`
-		if strings.Contains(string(request.Request().Payload()), "candidate_generation") {
-			document = `{"schema_version":1,"candidates":[]}`
-		}
-		part, _ := provider.NewResponsePart(provider.ResponsePartStructuredData, "application/json", []byte(document))
-		inputTokens, outputTokens := d.factory.inputTokens, d.factory.outputTokens
-		if inputTokens == 0 {
-			inputTokens = 1
-		}
-		if outputTokens == 0 {
-			outputTokens = 1
-		}
-		usage, _ := provider.NewRouteTokenUsage(inputTokens, outputTokens, 0)
-		response, _ := provider.NewResponse(provider.CapabilityReviewV1, provider.ResponseFinishStop, []provider.ResponsePart{part}, usage)
-		result, _ := gateway.NewSuccessfulRouteDispatchResult(response)
-		return result
+	document := `{"schema_version":1,"verdicts":[]}`
+	if _, err := review.SanitizedCandidatePayload(request.Request(), request.Authorization().ReviewScopeIdentity()); err == nil || strings.Contains(string(request.Request().Payload()), "candidate_generation") {
+		document = `{"schema_version":1,"candidates":[]}`
 	}
-	return d.setupDryRunDispatcher.DispatchRoute(ctx, request)
+	part, _ := provider.NewResponsePart(provider.ResponsePartStructuredData, "application/json", []byte(document))
+	inputTokens, outputTokens := d.factory.inputTokens, d.factory.outputTokens
+	if inputTokens == 0 {
+		inputTokens = 1
+	}
+	if outputTokens == 0 {
+		outputTokens = 1
+	}
+	usage, _ := provider.NewRouteTokenUsage(inputTokens, outputTokens, 0)
+	response, _ := provider.NewResponse(provider.CapabilityReviewV1, provider.ResponseFinishStop, []provider.ResponsePart{part}, usage)
+	result, _ := gateway.NewSuccessfulRouteDispatchResult(response)
+	return result
 }
 
 type localInferenceFailureDispatcher struct {
