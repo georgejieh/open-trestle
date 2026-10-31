@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -42,7 +43,7 @@ func runLSP(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "lsp: %v\n", err)
 			return 1
 		}
-		set, err := diagnostics.ParseSet(encoded)
+		set, err := diagnostics.ParseSet(bytes.TrimSuffix(encoded, []byte("\n")))
 		if err != nil {
 			fmt.Fprintf(stderr, "lsp: invalid diagnostic set: %v\n", err)
 			return 1
