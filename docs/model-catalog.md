@@ -104,7 +104,7 @@ Check your runtime version and listener before refresh.
 | --- | --- | --- |
 | llama.cpp, direct single-model server | `openai_models`, `http://127.0.0.1:8080/v1/models` for generation and port `8081` for verification | The documented `data[].id` list has one loaded-model entry. `--alias` sets its ID; without an alias, the ID is the model-file path. It is not a disk inventory. |
 | Ollama local | `ollama_tags`, `http://127.0.0.1:11434/api/tags` | Read `models[].name` exactly. This available-model list is not the running-model list at `/api/ps`. A selector or loopback address does not prove local weights or local execution. |
-| vLLM | No list mapping established here | The recipes select one `--served-model-name` per process. The model-list endpoint and response shape still need verification for the selected runtime version; Chat compatibility does not establish them. |
+| vLLM | `openai_models`, `http://127.0.0.1:8000/v1/models` for generation and port `8001` for verification | At retrieved upstream tree `3a90cc6fd0504b52bf47d58e8d70cff4b03f2c19`, GET `/v1/models` serializes `data[].id`: configured served names (or the model argument), plus registered LoRA names. The recipes use one served name per process. This is static source evidence, not a commit/release pin or installed-server result; verify the selected version and list authentication before refresh. |
 | LM Studio on Mac | `/v1/models` is documented; catalog kind not established here | The list contains models visible to the server and may include downloaded models with Just-In-Time loading. Confirm the response envelope and how loaded `--identifier` values appear before choosing a catalog kind. |
 
 These are metadata mappings, not service conformance or route approval. Aliases
@@ -122,6 +122,11 @@ Official sources:
 - [llama.cpp server](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md), direct `GET /v1/models` and `--alias`.
 - [Ollama list models](https://docs.ollama.com/api/tags) and [local API authentication](https://docs.ollama.com/api/authentication).
 - [vLLM serve options](https://docs.vllm.ai/en/stable/cli/serve), `--served-model-name`.
+  Retrieved tree evidence (not a commit/release pin):
+  [vLLM list router](https://raw.githubusercontent.com/vllm-project/vllm/3a90cc6fd0504b52bf47d58e8d70cff4b03f2c19/vllm/entrypoints/openai/models/api_router.py),
+  [vLLM list handler](https://raw.githubusercontent.com/vllm-project/vllm/3a90cc6fd0504b52bf47d58e8d70cff4b03f2c19/vllm/entrypoints/openai/models/serving.py),
+  [vLLM response classes](https://raw.githubusercontent.com/vllm-project/vllm/3a90cc6fd0504b52bf47d58e8d70cff4b03f2c19/vllm/entrypoints/serve/engine/protocol.py), and
+  [vLLM served-name initialization](https://raw.githubusercontent.com/vllm-project/vllm/3a90cc6fd0504b52bf47d58e8d70cff4b03f2c19/vllm/entrypoints/launchers/api_server/app_state.py).
 - [LM Studio model listing](https://lmstudio.ai/docs/developer/openai-compat/models) and [loaded identifiers](https://lmstudio.ai/docs/cli/local-models/load).
 
 ## OpenCode Go and Ollama Cloud metadata examples
