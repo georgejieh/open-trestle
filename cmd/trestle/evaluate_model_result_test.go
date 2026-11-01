@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/georgejieh/open-trestle/diagnostics"
 	"github.com/georgejieh/open-trestle/evaluation"
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/localreview"
@@ -249,5 +251,80 @@ func TestEvaluateModelResultRejectsChangedSealedLineage(t *testing.T) {
 		if _, err := localreview.ParseCompletedResult(bad); err == nil {
 			t.Fatal("invalid framing/input accepted")
 		}
+	}
+}
+
+func TestCompletedImportRejectsV7NoncompletedOutcome(t *testing.T) {
+	f, captured := modelResultCorpusCapture(t, false, false)
+	parsed, err := localreview.ParseCompletedResult(captured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := parsed.CompletedMetadata()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := metadata.Diagnostics
+	// Reproduce the public source-check identity preimage in diagnostics/check.go.
+	change := strings.Repeat("7", 64)
+	analysis := strings.Repeat("8", 64)
+	sourceCheck := localModelDigest([]byte(fmt.Sprintf(`{"contract":"open-trestle/deterministic-check","version":1,"key":"static_debug_output","rule_version":1,"change_identity":"%s","state":"passed","applicable_files":1,"applicable_ranges":1,"checked_files":1,"checked_ranges":1,"matches":0}`, change)))
+	check, err := diagnostics.NewDeterministicCheck(sourceCheck, analysis, change, diagnostics.CheckPassed, 1, 1, 1, 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deterministic, err := diagnostics.NewSetWithDeterministicObservations(old.Scope(), old.SnapshotIdentity(), old.HeadRevision(), analysis, []diagnostics.DeterministicCheck{check}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := diagnostics.NewSetWithDeterministicChecks(old.Scope(), old.SnapshotIdentity(), old.HeadRevision(), old.VerifiedSetIdentity(), old.VerificationContextIdentity(), old.CandidateCount(), old.RejectedCount(), old.InconclusiveCount(), old.SourceAnalyzedCount(), old.SourceSelectedCount(), old.SourceOmittedCount(), old.OmissionSummaries(), []diagnostics.DeterministicCheck{check}, old.Findings())
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldJSON, err := diagnostics.EncodeSet(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Count(captured, oldJSON) != 1 {
+		t.Fatal("diagnostic payload not unique")
+	}
+	for _, outcome := range []diagnostics.FinalOutcome{diagnostics.FinalOutcomeCompleted, diagnostics.FinalOutcomeFailed, diagnostics.FinalOutcomeCanceled, diagnostics.FinalOutcomeAbstained, diagnostics.FinalOutcomeInconclusive} {
+		t.Run(string(outcome), func(t *testing.T) {
+			final, err := diagnostics.NewFinalReviewSet(old.Scope(), old.SnapshotIdentity(), old.HeadRevision(), outcome, deterministic, verified)
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := diagnostics.EncodeSet(final)
+			if err != nil {
+				t.Fatal(err)
+			}
+			nested, err := diagnostics.ParseSet(encoded)
+			if err != nil || nested.Outcome() != outcome || nested.VerificationContextIdentity() != old.VerificationContextIdentity() || nested.CandidateCount() != old.CandidateCount() || nested.HeadRevision() != old.HeadRevision() || nested.VerifiedCount() != old.VerifiedCount() {
+				t.Fatalf("constructor preconditions failed: %v", err)
+			}
+			changed := bytes.Replace(captured, oldJSON, encoded, 1)
+			_, parseErr := localreview.ParseCompletedResult(changed)
+			if outcome == diagnostics.FinalOutcomeCompleted {
+				if parseErr != nil {
+					t.Fatalf("completed V7 control refused: %v", parseErr)
+				}
+			} else if parseErr == nil {
+				t.Fatal("succeeded v1 result accepted contradictory noncompleted diagnostic outcome")
+			}
+			file := filepath.Join(t.TempDir(), "result.json")
+			if err := os.WriteFile(file, changed, 0600); err != nil {
+				t.Fatal(err)
+			}
+			args := append([]string{"--result", file, "--result-sha256", localModelDigest(changed), "--case", "debug_direct_and_multiline"}, localGitChangeArgs(f.objects, evidence.RevisionAlgorithmSHA1, f.base, f.head)...)
+			var out, stderr bytes.Buffer
+			code := runEvaluateModelResult(args, &out, &stderr)
+			if outcome == diagnostics.FinalOutcomeCompleted {
+				if code != 4 || out.Len() == 0 || stderr.Len() != 0 {
+					t.Fatalf("completed import control: exit=%d output=%d stderr=%s", code, out.Len(), &stderr)
+				}
+			} else if code != 1 || out.Len() != 0 {
+				t.Fatalf("noncompleted import: exit=%d output=%d", code, out.Len())
+			}
+		})
 	}
 }

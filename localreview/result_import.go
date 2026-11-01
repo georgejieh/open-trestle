@@ -48,7 +48,7 @@ func ParseCompletedResult(encoded []byte) (Result, error) {
 		return Result{}, ErrInvalidResult
 	}
 	set, err := diagnostics.ParseSet(wire.Diagnostics)
-	if err != nil || set.Scope().Identity() != wire.Scope || set.Scope().ReviewRunID() != wire.Run || set.VerificationContextIdentity() != wire.VerificationContext || int(set.CandidateCount()) != len(wire.CandidateIDs) {
+	if err != nil || set.SchemaVersion() == 7 && set.Outcome() != diagnostics.FinalOutcomeCompleted || set.Scope().Identity() != wire.Scope || set.Scope().ReviewRunID() != wire.Run || set.VerificationContextIdentity() != wire.VerificationContext || int(set.CandidateCount()) != len(wire.CandidateIDs) {
 		return Result{}, ErrInvalidResult
 	}
 	algorithm := evidence.RevisionAlgorithmSHA1
