@@ -93,6 +93,37 @@ numeric address. Private, loopback, and link-local remote addresses are refused.
 Redirects are never followed. Refresh sends GET only to the supplied metadata
 URLs, and does not discover other URLs in response metadata.
 
+## Named local runtime catalogs
+
+The URLs below use the ports in [the named local runtime recipes](named-local-runtimes.md).
+Use them only for your explicitly configured listeners. These mappings were checked
+against official documentation on November 1, 2026, not against installed servers.
+Check your runtime version and listener before refresh.
+
+| Runtime | Metadata source | Scope and selector |
+| --- | --- | --- |
+| llama.cpp, direct single-model server | `openai_models`, `http://127.0.0.1:8080/v1/models` for generation and port `8081` for verification | The documented `data[].id` list has one loaded-model entry. `--alias` sets its ID; without an alias, the ID is the model-file path. It is not a disk inventory. |
+| Ollama local | `ollama_tags`, `http://127.0.0.1:11434/api/tags` | Read `models[].name` exactly. This available-model list is not the running-model list at `/api/ps`. A selector or loopback address does not prove local weights or local execution. |
+| vLLM | No list mapping established here | The recipes select one `--served-model-name` per process. The model-list endpoint and response shape still need verification for the selected runtime version; Chat compatibility does not establish them. |
+| LM Studio on Mac | `/v1/models` is documented; catalog kind not established here | The list contains models visible to the server and may include downloaded models with Just-In-Time loading. Confirm the response envelope and how loaded `--identifier` values appear before choosing a catalog kind. |
+
+These are metadata mappings, not service conformance or route approval. Aliases
+are API selectors, not immutable weight identities. The existing manual selector
+recipes do not prove that a runtime lacks a discovery API.
+
+Ollama's local API does not require authentication. The llama.cpp recipes do not
+set a key; its documented optional key settings do not establish list-endpoint
+authentication behavior here. For an explicitly authenticated listener, verify its
+list contract and use the schema-2 credential reference above. Never add a dummy
+key or read a runtime's login cache.
+
+Official sources:
+
+- [llama.cpp server](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md), direct `GET /v1/models` and `--alias`.
+- [Ollama list models](https://docs.ollama.com/api/tags) and [local API authentication](https://docs.ollama.com/api/authentication).
+- [vLLM serve options](https://docs.vllm.ai/en/stable/cli/serve), `--served-model-name`.
+- [LM Studio model listing](https://lmstudio.ai/docs/developer/openai-compat/models) and [loaded identifiers](https://lmstudio.ai/docs/cli/local-models/load).
+
 ## OpenCode Go and Ollama Cloud metadata examples
 
 These named services publish metadata endpoints compatible with the existing
