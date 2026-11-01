@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -60,6 +59,11 @@ func TestPackagedLocalFullReviewDevelopment(t *testing.T) {
 
 func testPackagedLocalFullReview(t *testing.T, modelWorkers, development bool) {
 	t.Helper()
+	staging, err := readPackagedStaging()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("packaged staging: path=%s release_sha256=%s launcher_sha256=%s worker_sha256=%s", staging.root, staging.releaseSHA256, staging.launcherSHA256, staging.workerSHA256)
 	if _, err := os.Stat("/dev/shm"); err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +236,7 @@ func testPackagedLocalFullReview(t *testing.T, modelWorkers, development bool) {
 		t.Fatal(e)
 	}
 	revision := string(command("../..", nil, "git", "rev-parse", "HEAD"))
-	scannerFlags := packagedScannerBuildFlags(t)
+	scannerFlags := staging.scannerFlags
 	candidateBarrierPath := filepath.Join(build, "candidate-persisted")
 	developmentOverlay := ""
 	if development {
@@ -304,53 +308,13 @@ func testPackagedLocalFullReview(t *testing.T, modelWorkers, development bool) {
 	if e := os.Mkdir(stage, 0755); e != nil {
 		t.Fatal(e)
 	}
-	// Use the repository's fixed staged non-Go runtime members, but never reuse
-	// the staged trestle binaries: those are rebuilt from this working tree.
-	copyFile := func(source, target string, mode os.FileMode) {
-		t.Helper()
-		body, e := os.ReadFile(source)
-		if e != nil {
-			t.Fatal(e)
-		}
-		if e = os.MkdirAll(filepath.Dir(target), 0755); e != nil {
-			t.Fatal(e)
-		}
-		if e = os.WriteFile(target, body, mode); e != nil {
-			t.Fatal(e)
-		}
-	}
-	for _, name := range []string{"LICENSE", "NOTICE", "ca-certificates.crt", "release/secret-scanner-release.json", "release/secret-scanner.spdx.json", "release/vulnerability-scan.json", "libexec/open-trestle/open-trestle-secret-scanner", "libexec/open-trestle/open-trestle-secret-scanner-worker"} {
-		mode := os.FileMode(0444)
-		if strings.HasPrefix(name, "libexec/") {
-			mode = 0555
-		}
-		copyFile(filepath.Join("../..", ".container", name), filepath.Join(stage, name), mode)
-	}
+	staging.copyRuntimeMembers(t, stage)
 	for _, name := range []string{"trestle", "trestled"} {
-		copyFile(filepath.Join(build, name), filepath.Join(stage, name), 0555)
+		copyPackagedFile(t, filepath.Join(build, name), filepath.Join(stage, name), 0555)
 	}
-	copyFile("../../tools/model_catalog.py", filepath.Join(stage, "scripts/model_catalog.py"), 0444)
+	copyPackagedFile(t, "../../tools/model_catalog.py", filepath.Join(stage, "scripts/model_catalog.py"), 0444)
 	if e := os.Mkdir(filepath.Join(stage, "data"), 0755); e != nil {
 		t.Fatal(e)
-	}
-	if err := filepath.WalkDir("../../.container/licenses", func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		if !entry.Type().IsRegular() {
-			return fmt.Errorf("nonregular license: %s", path)
-		}
-		relative, err := filepath.Rel("../../.container", path)
-		if err != nil {
-			return err
-		}
-		copyFile(path, filepath.Join(stage, relative), 0444)
-		return nil
-	}); err != nil {
-		t.Fatal(err)
 	}
 
 	archive := filepath.Join(build, "open-trestle-premodel.pyz")

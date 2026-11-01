@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -12,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -36,7 +39,6 @@ func TestSetupBootstrapDevelopmentDaemonFirstReview(t *testing.T) {
 	if !ready.Ready || probes.Load() != 2 || initial.Ready {
 		t.Fatal("setup did not reach honestly checked readiness")
 	}
-	ready = bootstrapInvoke(t, []string{"prepare-review", "--directory", dir}, 0)
 	build := t.TempDir()
 	mainPath, err := filepath.Abs("../trestled/main.go")
 	if err != nil {
@@ -62,7 +64,7 @@ func TestSetupBootstrapDevelopmentDaemonFirstReview(t *testing.T) {
 		t.Fatal(err)
 	}
 	binary := filepath.Join(build, "trestled")
-	compile := exec.Command(filepath.Join(runtime.GOROOT(), "bin", "go"), "build", "-overlay="+overlayPath, "-o", binary, "./cmd/trestled")
+	compile := exec.Command(filepath.Join(runtime.GOROOT(), "bin", "go"), "build", "-p=1", "-overlay="+overlayPath, "-o", binary, "./cmd/trestled")
 	compile.Dir = "../.."
 	if output, err := compile.CombinedOutput(); err != nil {
 		t.Fatalf("build development daemon: %v %s", err, output)
@@ -90,7 +92,14 @@ func TestSetupBootstrapDevelopmentDaemonFirstReview(t *testing.T) {
 	if err := process.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = process.Process.Kill(); _ = process.Wait(); _ = log.Close() })
+	waited := false
+	t.Cleanup(func() {
+		if !waited {
+			_ = process.Process.Kill()
+			_ = process.Wait()
+		}
+		_ = log.Close()
+	})
 	daemonLog := func() string { body, _ := os.ReadFile(filepath.Join(build, "daemon.log")); return string(body) }
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -111,6 +120,16 @@ func TestSetupBootstrapDevelopmentDaemonFirstReview(t *testing.T) {
 			}
 		}
 	}
+	var preparedOut, preparedErr bytes.Buffer
+	if code := runSetupBootstrap([]string{"prepare-review", "--directory", dir}, &preparedOut, &preparedErr); code != 0 || preparedErr.Len() != 0 || json.Unmarshal(preparedOut.Bytes(), &ready) != nil {
+		t.Fatalf("prepare live first-review intent: %d %s %s", code, preparedOut.String(), preparedErr.String())
+	}
+	intentPath := filepath.Join(dir, "review-intent.json")
+	retainedIntent, err := os.ReadFile(intentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retainedIntentIdentity := sha256.Sum256(retainedIntent)
 	submit := replaceLocalGitChangeValue(append([]string(nil), ready.ReviewCommand[3:]...), "--server", "http://"+address)
 	var stdout, stderr bytes.Buffer
 	if code := runLocalGitSubmitReview(submit, &stdout, &stderr); code != 0 {
@@ -179,4 +198,145 @@ func TestSetupBootstrapDevelopmentDaemonFirstReview(t *testing.T) {
 	if generation != 1 || verification != 1 {
 		t.Fatalf("durable fake pair calls=%d/%d", generation, verification)
 	}
+	currentIntent, err := os.ReadFile(intentPath)
+	if err != nil || sha256.Sum256(currentIntent) != retainedIntentIdentity || !bytes.Equal(currentIntent, retainedIntent) {
+		t.Fatal("review replay changed persisted first-review intent", err)
+	}
+	t.Logf("retained first-review intent sha256=%x admitted_plan=%s replay_plan=%s", retainedIntentIdentity, admitted.PlanIdentity(), replay.PlanIdentity())
+	terminal, err := api.GetRun(ctx, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diagnostic, err := api.GetDiagnosticSet(ctx, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := process.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	waitErr := process.Wait()
+	waited = true
+	if waitErr != nil {
+		t.Fatalf("graceful daemon stop: %v log=%s", waitErr, daemonLog())
+	}
+	flagValue := func(name string) string {
+		t.Helper()
+		for i := 0; i < len(launch)-1; i++ {
+			if launch[i] == name {
+				return launch[i+1]
+			}
+		}
+		t.Fatalf("missing emitted launch flag %s", name)
+		return ""
+	}
+	state := flagValue("--state-dir")
+	objects := flagValue("--local-git-objects-root")
+	flags := []string{"--state-dir", state,
+		"--repository-authority", flagValue("--local-git-repository-authority"),
+		"--repository-namespace", flagValue("--local-git-repository-namespace"),
+		"--repository-name", flagValue("--local-git-repository-name"),
+		"--binary", binary}
+	// Offline comparison retains inert scanner assets; this is not scanner execution.
+	for _, role := range []string{"scanner", "scanner-worker"} {
+		path := filepath.Join(build, role)
+		if err := os.WriteFile(path, []byte("retained development fixture "+role), 0500); err != nil {
+			t.Fatal(err)
+		}
+		flags = append(flags, "--"+role, path)
+	}
+	flags = append(flags, "--route-inventory", flagValue("--runtime-route-inventory"), "--runtime-policy", flagValue("--runtime-policy"))
+	before, identities := bootstrapRecoveryInventory(t, state, objects)
+	invokeRecovery := func(action string, extra ...string) ([]byte, []byte, error) {
+		t.Helper()
+		command := exec.Command(binary, append(append([]string{action}, flags...), extra...)...)
+		command.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + build}
+		var output, failure bytes.Buffer
+		command.Stdout, command.Stderr = &output, &failure
+		err := command.Run()
+		currentIntent, intentErr := os.ReadFile(intentPath)
+		if intentErr != nil || sha256.Sum256(currentIntent) != retainedIntentIdentity || !bytes.Equal(currentIntent, retainedIntent) {
+			t.Fatal("offline comparison changed persisted first-review intent", intentErr)
+		}
+		after, current := bootstrapRecoveryInventory(t, state, objects)
+		if len(after) != len(before) {
+			t.Fatal("offline comparison changed state or Git inventory")
+		}
+		for path, original := range before {
+			if after[path] != original || !os.SameFile(identities[path], current[path]) {
+				t.Fatalf("offline comparison mutated %s", path)
+			}
+		}
+		return output.Bytes(), failure.Bytes(), err
+	}
+	raw, failure, err := invokeRecovery("recovery-point")
+	if err != nil {
+		_, layoutErr := os.Lstat(filepath.Join(state, "setup", "plan.json.lock"))
+		if os.IsNotExist(layoutErr) && bytes.Contains(failure, []byte("invalid file lock path")) {
+			t.Fatalf("bootstrap first review succeeded and daemon exited; offline recovery layout missing STATE/setup/plan.json.lock: %v %s", err, failure)
+		}
+		t.Fatalf("offline recovery failed outside expected layout boundary: %v %s", err, failure)
+	}
+	var point struct {
+		SetupPath string `json:"setup_path"`
+		Runs      []struct {
+			Receipt    string `json:"receipt"`
+			Diagnostic string `json:"diagnostic"`
+		} `json:"runs"`
+		Assets []struct {
+			Role   string `json:"role"`
+			Path   string `json:"path"`
+			SHA256 string `json:"sha256"`
+		} `json:"assets"`
+	}
+	if len(failure) != 0 || json.Unmarshal(raw, &point) != nil || point.SetupPath != filepath.Join(state, "setup", "plan.json") || len(point.Runs) != 1 || point.Runs[0].Receipt != terminal.Identity() || point.Runs[0].Diagnostic != diagnostic.Identity() || len(point.Assets) != 5 {
+		t.Fatalf("recovery point lost setup/run/asset identity: %s stderr=%s", raw, failure)
+	}
+	for _, asset := range point.Assets {
+		body, err := os.ReadFile(asset.Path)
+		if err != nil || asset.SHA256 != fmt.Sprintf("%x", sha256.Sum256(body)) {
+			t.Fatalf("recovery asset identity mismatch: %s %v", asset.Role, err)
+		}
+	}
+	record := filepath.Join(build, "recovery-point.json")
+	if err := os.WriteFile(record, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	output, failure, err := invokeRecovery("verify-restore", "--record", record)
+	if err != nil || len(failure) != 0 || string(output) != "{\"status\":\"matched\",\"restart_authorized\":false}\n" {
+		t.Fatalf("stopped bootstrap compare: %v %s %s", err, output, failure)
+	}
+}
+
+func bootstrapRecoveryInventory(t *testing.T, roots ...string) (map[string]string, map[string]os.FileInfo) {
+	t.Helper()
+	entries := map[string]string{}
+	identities := map[string]os.FileInfo{}
+	for _, root := range roots {
+		err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			digest := ""
+			if info.Mode().IsRegular() {
+				body, err := os.ReadFile(path)
+				if err != nil {
+					return err
+				}
+				digest = fmt.Sprintf("%x", sha256.Sum256(body))
+			} else if !info.IsDir() {
+				return fmt.Errorf("unsupported recovery fixture entry %s", path)
+			}
+			entries[path] = fmt.Sprintf("%v:%d:%s", info.Mode(), info.Size(), digest)
+			identities[path] = info
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	return entries, identities
 }

@@ -73,19 +73,22 @@ func (s Snapshot) Format(state fmt.State, verb rune) {
 // File is one exact repository file decoded from a protected artifact.
 type File struct {
 	artifactIdentity, acquisitionExecution string
-	path, digest                           string
-	sizeBytes                              int
+	repositoryFile                         evidence.RepositoryFile
 	content                                []byte
 }
 
 func (f File) ArtifactIdentity() string             { return f.artifactIdentity }
 func (f File) AcquisitionExecutionIdentity() string { return f.acquisitionExecution }
-func (f File) Path() string                         { return f.path }
-func (f File) Digest() string                       { return f.digest }
-func (f File) SizeBytes() int                       { return f.sizeBytes }
-func (f File) Content() []byte                      { return append([]byte(nil), f.content...) }
-func (f File) String() string                       { return "source file" }
-func (f File) GoString() string                     { return "source.File{<redacted>}" }
+func (f File) Path() string                         { return f.repositoryFile.Path() }
+func (f File) Digest() string                       { return f.repositoryFile.Digest() }
+func (f File) SizeBytes() int                       { return f.repositoryFile.SizeBytes() }
+
+// RepositoryFile returns the immutable metadata validated with this file's content.
+func (f File) RepositoryFile() evidence.RepositoryFile { return f.repositoryFile }
+
+func (f File) Content() []byte  { return append([]byte(nil), f.content...) }
+func (f File) String() string   { return "source file" }
+func (f File) GoString() string { return "source.File{<redacted>}" }
 func (f File) Format(state fmt.State, verb rune) {
 	writeSourceOutputRedacted(state, verb, "source file", "source.File{<redacted>}")
 }
@@ -186,8 +189,8 @@ func ParseFileArtifact(value artifact.Artifact, snapshot Snapshot, reference Fil
 	}
 	return File{
 		artifactIdentity: value.Identity(), acquisitionExecution: wire.AcquisitionExecutionIdentity,
-		path: wire.Path, digest: wire.Digest, sizeBytes: wire.SizeBytes,
-		content: append([]byte(nil), wire.Content...),
+		repositoryFile: file,
+		content:        append([]byte(nil), wire.Content...),
 	}, nil
 }
 

@@ -83,11 +83,26 @@ func TestSetupBootstrapOwnedCheckoutFirstReview(t *testing.T) {
 	if initial.Status != "pending" || initial.Ready || probes.Load() != 0 || !slices.Contains(initial.Pending, "local_inference_validated") {
 		t.Fatal("initialization claimed readiness or made a model call")
 	}
-	for _, name := range []string{"routes.json", "policy-template.json", "policy.json", "plan.json", "bootstrap.json"} {
+	for _, name := range []string{"routes.json", "policy-template.json", "policy.json", "runs/setup/plan.json", "bootstrap.json"} {
 		info, err := os.Stat(filepath.Join(dir, name))
 		if err != nil || info.Mode().Perm() != 0600 {
 			t.Fatal("bootstrap did not protect output", name, err)
 		}
+	}
+	for _, path := range []string{filepath.Join(dir, "runs"), filepath.Join(dir, "runs", "setup"), filepath.Join(dir, "runs", "setup", "plan.json.receipts")} {
+		info, err := os.Lstat(path)
+		if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 {
+			t.Fatal("bootstrap did not protect setup ancestor/ledger", path, err)
+		}
+	}
+	for _, name := range []string{"plan.json", "plan.json.lock", "plan.json.receipts", "plan.json.next"} {
+		if _, err := os.Lstat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Fatal("bootstrap duplicated the setup ledger at its old path", name)
+		}
+	}
+	setupIndex := slices.Index(initial.LaunchCommand, "--setup-state")
+	if setupIndex < 0 || initial.LaunchCommand[setupIndex+1] != filepath.Join(dir, "runs", "setup", "plan.json") {
+		t.Fatal("launch command omitted canonical recovery-compatible setup path")
 	}
 	// A repeated initialization resumes identical output rather than overwriting it.
 	before := stringMustRead(t, filepath.Join(dir, "policy.json"))
@@ -151,7 +166,7 @@ func TestSetupBootstrapOwnedCheckoutFirstReview(t *testing.T) {
 	if ready.LaunchCommand[0] != "trestled" || !slices.Contains(ready.LaunchCommand, "--local-model-workers") || !slices.Contains(ready.LaunchCommand, filepath.Join(dir, "runs")) {
 		t.Fatal("launch command omitted review workers or wrong state root")
 	}
-	plan, errPlan := setupcore.InspectStateFile(context.Background(), filepath.Join(dir, "plan.json"))
+	plan, errPlan := setupcore.InspectStateFile(context.Background(), filepath.Join(dir, "runs", "setup", "plan.json"))
 	if errPlan != nil || !plan.Ready() {
 		t.Fatal("no canonical ready setup", errPlan)
 	}
@@ -285,5 +300,97 @@ func TestSetupBootstrapExplicitCredentialReferencesAndChatTransport(t *testing.T
 	bootstrapInvoke(t, []string{"prepare-review", "--directory", dir}, 4)
 	if _, err := os.Lstat(filepath.Join(dir, "review-intent.json")); !os.IsNotExist(err) {
 		t.Fatal("pending setup gained review intent")
+	}
+}
+
+func TestSetupBootstrapRefusesLegacyLedgerWithoutMutation(t *testing.T) {
+	for _, name := range []string{"plan.json", "plan.json.lock", "plan.json.receipts", "plan.json.next"} {
+		t.Run(name, func(t *testing.T) {
+			args, dir, _, probes := bootstrapFixture(t)
+			path := filepath.Join(dir, name)
+			if name == "plan.json.receipts" {
+				if err := os.Mkdir(path, 0700); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(path, []byte("retained old setup output"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.Lstat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, command := range [][]string{args, {"inspect", "--directory", dir}, {"check", "--directory", dir, "--approved-by", "owner"}, {"prepare-review", "--directory", dir}} {
+				bootstrapInvoke(t, command, 4)
+			}
+			after, err := os.Lstat(path)
+			entries, readErr := os.ReadDir(dir)
+			if err != nil || readErr != nil || len(entries) != 1 || !os.SameFile(before, after) || before.Mode() != after.Mode() || before.Size() != after.Size() || probes.Load() != 0 {
+				t.Fatal("legacy setup output was changed, migrated or used", err, readErr)
+			}
+			if !before.IsDir() && stringMustRead(t, path) != "retained old setup output" {
+				t.Fatal("legacy setup bytes changed")
+			}
+		})
+	}
+}
+
+func TestSetupBootstrapPrivateSetupDirectoriesAndRetry(t *testing.T) {
+	for _, kind := range []string{"partial private", "broad runs", "linked runs", "broad setup", "linked setup"} {
+		t.Run(kind, func(t *testing.T) {
+			args, dir, _, probes := bootstrapFixture(t)
+			runs := filepath.Join(dir, "runs")
+			setup := filepath.Join(runs, "setup")
+			if kind == "linked runs" {
+				if err := os.Symlink(t.TempDir(), runs); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err := os.Mkdir(runs, 0700); err != nil {
+					t.Fatal(err)
+				}
+				if kind == "broad runs" {
+					if err := os.Chmod(runs, 0755); err != nil {
+						t.Fatal(err)
+					}
+				} else if kind == "linked setup" {
+					if err := os.Symlink(t.TempDir(), setup); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					if err := os.Mkdir(setup, 0700); err != nil {
+						t.Fatal(err)
+					}
+					if kind == "broad setup" {
+						if err := os.Chmod(setup, 0755); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+			}
+			before, err := os.Lstat(runs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := 4
+			if kind == "partial private" {
+				want = 3
+			}
+			initial := bootstrapInvoke(t, args, want)
+			if kind == "partial private" {
+				repeated := bootstrapInvoke(t, args, 3)
+				if repeated.Plan != initial.Plan {
+					t.Fatal("private partial-directory retry changed plan")
+				}
+			} else {
+				entries, err := os.ReadDir(dir)
+				if err != nil || len(entries) != 1 {
+					t.Fatal("unsafe setup ancestry wrote configuration", err)
+				}
+			}
+			after, err := os.Lstat(runs)
+			if err != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() || probes.Load() != 0 {
+				t.Fatal("bootstrap replaced directory or changed private prerequisite", err)
+			}
+		})
 	}
 }

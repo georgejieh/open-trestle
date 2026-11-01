@@ -572,8 +572,8 @@ func (h *Handler) loadHead(ctx context.Context, scope audit.ReviewScope, head so
 			return nil, evidence.RepositoryManifest{}, time.Time{}, controlplane.RunFailureInvalidInput
 		}
 		content := file.Content()
-		repositoryFile, err := evidence.NewRepositoryFile(reference.Path(), content)
-		if err != nil || repositoryFile.Digest() != reference.Digest() || repositoryFile.SizeBytes() != reference.SizeBytes() {
+		repositoryFile := file.RepositoryFile()
+		if repositoryFile.Path() != reference.Path() || repositoryFile.Digest() != reference.Digest() || repositoryFile.SizeBytes() != reference.SizeBytes() {
 			clear(content)
 			clearContents(contents)
 			return nil, evidence.RepositoryManifest{}, time.Time{}, controlplane.RunFailureInvalidInput

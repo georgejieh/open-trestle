@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -750,32 +751,119 @@ func packagedAssertResultParity(t *testing.T, command func([]string) []byte, arg
 	}
 }
 
-func packagedScannerBuildFlags(t *testing.T) string {
-	t.Helper()
-	encoded, err := os.ReadFile("../../.container/release/secret-scanner-release.json")
+type packagedStaging struct {
+	root, scannerFlags, releaseSHA256, launcherSHA256, workerSHA256 string
+}
+
+func readPackagedStaging() (packagedStaging, error) {
+	selected, ok := os.LookupEnv("OPEN_TRESTLE_PACKAGED_STAGING")
+	if !ok {
+		selected = "../../.container"
+	}
+	if selected == "" {
+		return packagedStaging{}, fmt.Errorf("empty packaged staging selection")
+	}
+	absolute, err := filepath.Abs(selected)
 	if err != nil {
-		t.Fatal(err)
+		return packagedStaging{}, err
+	}
+	root, err := filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return packagedStaging{}, err
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		return packagedStaging{}, err
+	}
+	if !info.IsDir() {
+		return packagedStaging{}, fmt.Errorf("packaged staging is not a directory: %s", root)
+	}
+	encoded, err := os.ReadFile(filepath.Join(root, "release/secret-scanner-release.json"))
+	if err != nil {
+		return packagedStaging{}, err
 	}
 	var manifest struct {
+		SchemaVersion int    `json:"schema_version"`
+		Scanner       string `json:"scanner"`
+		Launcher      struct {
+			SHA256 string `json:"sha256"`
+		} `json:"launcher"`
+		Worker struct {
+			SHA256 string `json:"sha256"`
+		} `json:"worker"`
 		RootClient struct {
 			Launcher string `json:"launcher_sha256"`
 			Worker   string `json:"worker_sha256"`
 		} `json:"root_client"`
 	}
 	if err := json.Unmarshal(encoded, &manifest); err != nil {
-		t.Fatal(err)
+		return packagedStaging{}, err
+	}
+	if manifest.SchemaVersion != 1 || manifest.Scanner != "betterleaks" || manifest.Launcher.SHA256 != manifest.RootClient.Launcher || manifest.Worker.SHA256 != manifest.RootClient.Worker {
+		return packagedStaging{}, fmt.Errorf("invalid staged scanner release manifest: %s", root)
 	}
 	for _, item := range []struct{ name, digest string }{{"open-trestle-secret-scanner", manifest.RootClient.Launcher}, {"open-trestle-secret-scanner-worker", manifest.RootClient.Worker}} {
-		body, err := os.ReadFile(filepath.Join("../../.container/libexec/open-trestle", item.name))
+		body, err := os.ReadFile(filepath.Join(root, "libexec/open-trestle", item.name))
 		if err != nil {
-			t.Fatal(err)
+			return packagedStaging{}, err
 		}
 		digest := sha256.Sum256(body)
 		if len(item.digest) != 64 || hex.EncodeToString(digest[:]) != item.digest {
-			t.Fatalf("staged %s differs from release digest", item.name)
+			return packagedStaging{}, fmt.Errorf("staged %s differs from release digest: %s", item.name, root)
 		}
 	}
-	return "-s -w -buildid= -X github.com/georgejieh/open-trestle/internal/secretscan.expectedSecretScannerLauncherSHA256=" + manifest.RootClient.Launcher + " -X github.com/georgejieh/open-trestle/internal/secretscan.expectedSecretScannerWorkerSHA256=" + manifest.RootClient.Worker
+	releaseDigest := sha256.Sum256(encoded)
+	return packagedStaging{
+		root:           root,
+		scannerFlags:   "-s -w -buildid= -X github.com/georgejieh/open-trestle/internal/secretscan.expectedSecretScannerLauncherSHA256=" + manifest.RootClient.Launcher + " -X github.com/georgejieh/open-trestle/internal/secretscan.expectedSecretScannerWorkerSHA256=" + manifest.RootClient.Worker,
+		releaseSHA256:  hex.EncodeToString(releaseDigest[:]),
+		launcherSHA256: manifest.RootClient.Launcher,
+		workerSHA256:   manifest.RootClient.Worker,
+	}, nil
+}
+
+func copyPackagedFile(t *testing.T, source, target string, mode os.FileMode) {
+	t.Helper()
+	body, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, body, mode); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (staging packagedStaging) copyRuntimeMembers(t *testing.T, destination string) {
+	t.Helper()
+	for _, name := range []string{"LICENSE", "NOTICE", "ca-certificates.crt", "release/secret-scanner-release.json", "release/secret-scanner.spdx.json", "release/vulnerability-scan.json", "libexec/open-trestle/open-trestle-secret-scanner", "libexec/open-trestle/open-trestle-secret-scanner-worker"} {
+		mode := os.FileMode(0444)
+		if strings.HasPrefix(name, "libexec/") {
+			mode = 0555
+		}
+		copyPackagedFile(t, filepath.Join(staging.root, name), filepath.Join(destination, name), mode)
+	}
+	if err := filepath.WalkDir(filepath.Join(staging.root, "licenses"), func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if !entry.Type().IsRegular() {
+			return fmt.Errorf("nonregular license: %s", path)
+		}
+		relative, err := filepath.Rel(staging.root, path)
+		if err != nil {
+			return err
+		}
+		copyPackagedFile(t, path, filepath.Join(destination, relative), 0444)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func packagedAssertRouteAudit(t *testing.T, state string, scope audit.ReviewScope, completed int) {

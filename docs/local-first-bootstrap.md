@@ -77,15 +77,29 @@ services, cloud model selectors, browser sessions or sign-in token caches.
 
 ## Check and resume
 
-Initialization writes protected `0600` inventory, policy template, bound policy,
-setup plan/receipt ledger and `bootstrap.json` beneath the existing private
-`0700` directory. It uses the existing configuration binder and protected
-writers. It returns `pending` (exit 3), not a false ready state. Repeating the
+Initialization writes protected `0600` inventory, policy template, bound policy
+and `bootstrap.json` beneath the existing private `0700` directory. It creates
+private `0700` `runs` and `runs/setup` directories there. The single setup plan
+is `runs/setup/plan.json`, with its `.lock` and `.receipts` ledger beside it.
+The emitted daemon uses `runs` as its state root and that same nested setup
+plan. It uses the existing configuration binder and protected writers. It returns `pending` (exit 3), not a false ready state. Repeating the
 same initialization accepts byte-identical files without overwriting them.
 A different configuration at an existing output path refuses. Interrupted
 initialization can be repeated with the same selections; unknown or partial
 files are not overwritten or deleted. Inspect and preserve them before choosing
 a fresh private directory. Never modify the plan or receipt ledger by hand.
+
+Older bootstrap directories with `plan.json`, `plan.json.lock`,
+`plan.json.receipts` or `plan.json.next` directly under the bootstrap directory
+are refused by these bootstrap commands, including `init` and `inspect`. No
+legacy setup is copied, moved, deleted or automatically migrated. Preserve the
+old root and its commands and use a fresh private bootstrap directory for a new
+selection. An earlier emitted daemon command with an external setup plan is
+not inherently startup-blocked, but it does not supply the nested setup layout
+required by offline `recovery-point`. Moving owner-bound state directories or
+copying only the plan is not a supported repair. Any offline transfer of setup
+history needs separate review and the complete verified receipt ledger; this
+bootstrap command does not perform that transfer or qualify old run recovery.
 
 Provision separate random operator and observer tokens of at least 32 bytes in
 `OPEN_TRESTLE_API_TOKEN` and `OPEN_TRESTLE_OBSERVER_TOKEN`, respectively. Use your
@@ -176,6 +190,18 @@ or status retrieval is not review approval. Read findings, coverage, omissions,
 abstention and uncertainty. Empty diagnostics and no-candidate results are not
 repository clearance. See [daemon API](daemon-api.md), [setup](setup.md), and
 [local model review](local-model-review.md) for recovery and result limits.
+
+## Stopped-state recovery comparison
+
+For a newly initialized bootstrap, the emitted `--state-dir` is `DIR/runs` and
+`--setup-state` is `DIR/runs/setup/plan.json`. This is the nested setup layout
+required by the [offline recovery comparison](operations.md#offline-in-place-recovery-comparison).
+Stop the daemon with SIGTERM and wait for process and worker exit before taking
+a consistent backup or running `recovery-point` and `verify-restore`. Retain
+state, artifact and Git-root directory identities and the exact runtime assets.
+A matching comparison reports `restart_authorized:false`; it does not approve
+restart, model quality, power-loss durability or portable restore. A setup-only
+backup preserves the setup receipt ledger, not application state.
 
 A new change or different model configuration needs a new explicit bootstrap
 selection in a fresh protected directory. This command does not mutate old runs,

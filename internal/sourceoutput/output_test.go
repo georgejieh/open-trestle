@@ -1,6 +1,7 @@
 package sourceoutput_test
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"testing"
@@ -14,6 +15,11 @@ import (
 
 func snapshotFileFixture(t testing.TB, count int) (sourceoutput.Snapshot, sourceoutput.Snapshot, artifact.Artifact, sourceoutput.FileReference) {
 	t.Helper()
+	return snapshotFileFixtureWithContent(t, count, []byte("owned source bytes\n"))
+}
+
+func snapshotFileFixtureWithContent(t testing.TB, count int, content []byte) (sourceoutput.Snapshot, sourceoutput.Snapshot, artifact.Artifact, sourceoutput.FileReference) {
+	t.Helper()
 	scope, err := audit.NewReviewScope("tenant-a", "repo-a", "source-parser")
 	if err != nil {
 		t.Fatal(err)
@@ -22,7 +28,6 @@ func snapshotFileFixture(t testing.TB, count int) (sourceoutput.Snapshot, source
 	refs := make([]sourceoutput.FileReference, count)
 	var selected artifact.Artifact
 	for i := range refs {
-		content := []byte("owned source bytes\n")
 		file, err := evidence.NewRepositoryFile(fmt.Sprintf("file-%05d.txt", i), content)
 		if err != nil {
 			t.Fatal(err)
@@ -124,5 +129,82 @@ func BenchmarkParseSnapshotArtifactIndexSize(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+func TestParseFileArtifactContentCopies(t *testing.T) {
+	for _, content := range [][]byte{nil, []byte("owned synthetic repository evidence\n"), {0, 255, 1, 0}} {
+		_, snapshot, value, ref := snapshotFileFixtureWithContent(t, 2, content)
+		file, err := sourceoutput.ParseFileArtifact(value, snapshot, ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, err := evidence.NewRepositoryFile(ref.Path(), content)
+		if err != nil {
+			t.Fatal(err)
+		}
+		payload := value.Payload()
+		clear(payload)
+		exposed := file.Content()
+		if !bytes.Equal(exposed, content) {
+			t.Fatal("parsed content differs from supplied bytes")
+		}
+		clear(exposed)
+		if !bytes.Equal(file.Content(), content) || file.Path() != want.Path() || file.Digest() != want.Digest() || file.SizeBytes() != want.SizeBytes() {
+			t.Fatal("caller mutation changed parsed file")
+		}
+		again, err := sourceoutput.ParseFileArtifact(value, snapshot, ref)
+		if err != nil || !bytes.Equal(again.Content(), content) {
+			t.Fatalf("artifact payload changed through accessor: %v", err)
+		}
+	}
+}
+
+func BenchmarkParseFileArtifactLoadHead(b *testing.B) {
+	_, sharedSnapshot, shared, sharedRef := snapshotFileFixtureWithContent(b, 1001, []byte("owned synthetic repository evidence\n"))
+	_, mainSnapshot, main, mainRef := snapshotFileFixtureWithContent(b, 1001, []byte("package main\nimport \"fmt\"\nfunc main() { fmt.Println(\"large synthetic fixture\") }\n"))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		for i := 0; i < 1001; i++ {
+			snapshot, value, ref := sharedSnapshot, shared, sharedRef
+			if i == 1000 {
+				snapshot, value, ref = mainSnapshot, main, mainRef
+			}
+			file, err := sourceoutput.ParseFileArtifact(value, snapshot, ref)
+			if err != nil {
+				b.Fatal(err)
+			}
+			content := file.Content()
+			repositoryFile := file.RepositoryFile()
+			if repositoryFile.Path() != ref.Path() || repositoryFile.Digest() != ref.Digest() || repositoryFile.SizeBytes() != ref.SizeBytes() {
+				b.Fatal("repository metadata differs")
+			}
+			clear(content)
+		}
+	}
+}
+
+func TestParseFileArtifactRepositoryFileProjection(t *testing.T) {
+	if (sourceoutput.File{}).RepositoryFile() != (evidence.RepositoryFile{}) {
+		t.Fatal("zero file exposes valid metadata")
+	}
+	for _, content := range [][]byte{nil, []byte("owned synthetic repository evidence\n"), {0, 255, 1, 0}} {
+		_, snapshot, value, ref := snapshotFileFixtureWithContent(t, 2, content)
+		file, err := sourceoutput.ParseFileArtifact(value, snapshot, ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, err := evidence.NewRepositoryFile(ref.Path(), content)
+		if err != nil || file.RepositoryFile() != want {
+			t.Fatalf("projected metadata differs from independent construction: %v", err)
+		}
+		exposed := file.Content()
+		clear(exposed)
+		metadata := file.RepositoryFile()
+		metadata = evidence.RepositoryFile{}
+		if metadata.Identity() != "" || file.RepositoryFile() != want || !bytes.Equal(file.Content(), content) {
+			t.Fatal("caller mutation changed content or projected metadata")
+		}
 	}
 }

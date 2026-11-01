@@ -143,6 +143,11 @@ func runSetupBootstrapWithContext(ctx context.Context, args []string, stdout, st
 	if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 || fileauthority.CheckDirectory(directoryAbs) != nil {
 		return writeSetupBootstrapRefusal(stdout)
 	}
+	for _, name := range []string{"plan.json", "plan.json.lock", "plan.json.receipts", "plan.json.next"} {
+		if _, err := os.Lstat(filepath.Join(directoryAbs, name)); !os.IsNotExist(err) {
+			return writeSetupBootstrapRefusal(stdout)
+		}
+	}
 	if args[0] == "init" {
 		for name, value := range values {
 			if allowed[name] && (len(*value) > 4096 || !strings.HasSuffix(name, "-credential-environment") && *value == "") {
@@ -285,6 +290,9 @@ func initializeSetupBootstrap(ctx context.Context, dir string, values map[string
 	if err != nil {
 		return err
 	}
+	if err := ensureSetupBootstrapDirectories(ctx, dir); err != nil {
+		return err
+	}
 	routes := []map[string]any{}
 	connections := []map[string]string{}
 	for _, role := range []string{"generation", "verification"} {
@@ -320,7 +328,7 @@ func initializeSetupBootstrap(ctx context.Context, dir string, values map[string
 	if err != nil {
 		return err
 	}
-	state := filepath.Join(dir, "plan.json")
+	state := filepath.Join(dir, "runs", "setup", "plan.json")
 	if _, err := os.Lstat(state); os.IsNotExist(err) {
 		store, err := setupcore.OpenStateFile(state)
 		if err != nil {
@@ -344,6 +352,42 @@ func initializeSetupBootstrap(ctx context.Context, dir string, values map[string
 
 	encoded, _ := json.Marshal(manifest)
 	return ensureSetupBootstrapFile(ctx, filepath.Join(dir, "bootstrap.json"), encoded)
+}
+
+func ensureSetupBootstrapDirectories(ctx context.Context, dir string) error {
+	for _, path := range []string{filepath.Join(dir, "runs"), filepath.Join(dir, "runs", "setup")} {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		parent, err := fileauthority.PinDirectory(filepath.Dir(path))
+		if err != nil {
+			return err
+		}
+		created := false
+		if err := os.Mkdir(path, 0700); err != nil {
+			if !os.IsExist(err) {
+				return err
+			}
+		} else {
+			created = true
+		}
+		info, err := os.Lstat(path)
+		if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 || fileauthority.CheckDirectory(path) != nil || parent.Recheck() != nil {
+			return errors.New("unsafe bootstrap setup directory")
+		}
+		if created {
+			file, err := os.Open(filepath.Dir(path))
+			if err != nil {
+				return err
+			}
+			err = file.Sync()
+			closeErr := file.Close()
+			if err != nil || closeErr != nil {
+				return errors.Join(err, closeErr)
+			}
+		}
+	}
+	return nil
 }
 
 func ensureSetupBootstrapFile(ctx context.Context, path string, content []byte) error {
@@ -379,6 +423,12 @@ func loadSetupBootstrap(ctx context.Context, dir string) (setupBootstrapManifest
 	fail := func() (setupBootstrapManifest, setupcore.Plan, runtimeconfig.RouteInventory, runtimeconfig.RuntimePolicy, error) {
 		return manifest, setupcore.Plan{}, runtimeconfig.RouteInventory{}, runtimeconfig.RuntimePolicy{}, errors.New("bootstrap configuration refused")
 	}
+	for _, path := range []string{filepath.Join(dir, "runs"), filepath.Join(dir, "runs", "setup")} {
+		info, err := os.Lstat(path)
+		if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 || fileauthority.CheckDirectory(path) != nil {
+			return fail()
+		}
+	}
 	for _, name := range []string{"routes.json", "policy-template.json", "policy.json"} {
 		if _, err := readSetupBootstrapFile(filepath.Join(dir, name)); err != nil {
 			return fail()
@@ -393,7 +443,7 @@ func loadSetupBootstrap(ctx context.Context, dir string) (setupBootstrapManifest
 	if decoder.Decode(&manifest) != nil || decoder.Decode(&struct{}{}) != io.EOF || manifest.Contract != "open-trestle/local-first-bootstrap" || manifest.Version != 1 {
 		return fail()
 	}
-	plan, err := setupcore.InspectStateFile(ctx, filepath.Join(dir, "plan.json"))
+	plan, err := setupcore.InspectStateFile(ctx, filepath.Join(dir, "runs", "setup", "plan.json"))
 	if err != nil || plan.Profile() != setupcore.ProfileLocalSingleNode || plan.RootIdentity() != manifest.Root {
 		return fail()
 	}
@@ -426,7 +476,7 @@ func loadSetupBootstrap(ctx context.Context, dir string) (setupBootstrapManifest
 }
 
 func checkSetupBootstrap(ctx context.Context, dir, backupDir, owner string, allowProbe bool, plan setupcore.Plan, inventory runtimeconfig.RouteInventory, policy runtimeconfig.RuntimePolicy, clock setupClock) error {
-	store, err := setupcore.OpenStateFile(filepath.Join(dir, "plan.json"))
+	store, err := setupcore.OpenStateFile(filepath.Join(dir, "runs", "setup", "plan.json"))
 	if err != nil {
 		return err
 	}
@@ -439,7 +489,7 @@ func checkSetupBootstrap(ctx context.Context, dir, backupDir, owner string, allo
 	if err != nil {
 		return err
 	}
-	storage, err := setupcore.NewStateStorageChecker(dir)
+	storage, err := setupcore.NewStateStorageChecker(filepath.Join(dir, "runs", "setup"))
 	if err != nil {
 		return err
 	}
@@ -515,15 +565,15 @@ func checkSetupBootstrap(ctx context.Context, dir, backupDir, owner string, allo
 	}
 	snapshot := filepath.Join(backupDir, current.Identity()+".json")
 	if _, err := os.Lstat(snapshot); os.IsNotExist(err) {
-		if _, err := setupcore.CreateBackupSnapshot(ctx, filepath.Join(dir, "plan.json"), snapshot, current.Identity()); err != nil {
+		if _, err := setupcore.CreateBackupSnapshot(ctx, filepath.Join(dir, "runs", "setup", "plan.json"), snapshot, current.Identity()); err != nil {
 			return err
 		}
 	}
-	backup, err := setupcore.NewBackupSnapshotChecker(filepath.Join(dir, "plan.json"), snapshot, current)
+	backup, err := setupcore.NewBackupSnapshotChecker(filepath.Join(dir, "runs", "setup", "plan.json"), snapshot, current)
 	if err != nil {
 		return err
 	}
-	reopened, err := setupcore.OpenStateFile(filepath.Join(dir, "plan.json"))
+	reopened, err := setupcore.OpenStateFile(filepath.Join(dir, "runs", "setup", "plan.json"))
 	if err != nil {
 		return err
 	}
@@ -551,7 +601,7 @@ func setupBootstrapCommands(dir string, manifest setupBootstrapManifest, plan se
 	source := []string{"--objects-root", manifest.Objects, "--repository-authority", values["--repository-authority"], "--repository-namespace", values["--repository-namespace"], "--repository-name", values["--repository-name"], "--revision-algorithm", manifest.Algorithm, "--base-revision-digest", values["--base"], "--head-revision-digest", values["--head"]}
 	submit := append([]string{"trestle", "local-git", "submit-review"}, source...)
 	submit = append(submit, "--server", "http://127.0.0.1:8741", "--tenant", plan.TenantID(), "--repository", plan.RepositoryID(), "--run", manifest.Run, "--review-policy-identity", policy.ReviewPolicyIdentity(), "--inventory-identity", manifest.Inventory, "--runtime-policy-identity", manifest.Policy, "--created-at-unix-milliseconds", strconv.FormatInt(manifest.CreatedAt, 10))
-	launch := []string{"trestled", "--listen", "127.0.0.1:8741", "--state-dir", filepath.Join(dir, "runs"), "--setup-state", filepath.Join(dir, "plan.json"), "--expected-setup-root-identity", manifest.Root, "--tenant", plan.TenantID(), "--repository", plan.RepositoryID(), "--local-git-objects-root", manifest.Objects, "--local-git-repository-authority", values["--repository-authority"], "--local-git-repository-namespace", values["--repository-namespace"], "--local-git-repository-name", values["--repository-name"], "--local-full-review", "--local-model-workers", "--runtime-route-inventory", filepath.Join(dir, "routes.json"), "--runtime-policy", filepath.Join(dir, "policy.json")}
+	launch := []string{"trestled", "--listen", "127.0.0.1:8741", "--state-dir", filepath.Join(dir, "runs"), "--setup-state", filepath.Join(dir, "runs", "setup", "plan.json"), "--expected-setup-root-identity", manifest.Root, "--tenant", plan.TenantID(), "--repository", plan.RepositoryID(), "--local-git-objects-root", manifest.Objects, "--local-git-repository-authority", values["--repository-authority"], "--local-git-repository-namespace", values["--repository-namespace"], "--local-git-repository-name", values["--repository-name"], "--local-full-review", "--local-model-workers", "--runtime-route-inventory", filepath.Join(dir, "routes.json"), "--runtime-policy", filepath.Join(dir, "policy.json")}
 	status := []string{"trestle", "runs", "status", "--server", "http://127.0.0.1:8741", "--tenant", plan.TenantID(), "--repository", plan.RepositoryID(), "--run", manifest.Run, "--format", "json"}
 	return submit, launch, status
 }
