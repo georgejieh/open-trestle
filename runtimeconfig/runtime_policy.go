@@ -18,6 +18,7 @@ import (
 )
 
 type ProviderConnection struct {
+	localStructuredOutput                                                                          bool
 	implementation, adapterID, endpoint, credentialEnvironment, credentialIdentity, credentialMode string
 	requestProfile                                                                                 string
 	brokeredAuthority                                                                              BrokeredRouteAuthority
@@ -26,6 +27,9 @@ type ProviderConnection struct {
 }
 
 func (c ProviderConnection) CredentialMode() string { return c.credentialMode }
+
+// LocalStructuredOutput reports the explicit local Chat schema wire option.
+func (c ProviderConnection) LocalStructuredOutput() bool { return c.localStructuredOutput }
 
 func (c ProviderConnection) Implementation() string        { return c.implementation }
 func (c ProviderConnection) AdapterID() string             { return c.adapterID }
@@ -66,7 +70,7 @@ func (p RuntimePolicy) Validate() error {
 	}
 	seen := map[string]struct{}{}
 	for _, c := range p.connections {
-		if !validProviderImplementation(c.implementation) || p.schemaVersion == 1 && c.implementation != "openai_responses" || provider.ValidateAdapterID(c.adapterID) != nil || !validProviderConnectionEndpoint(c.endpoint) || (!validConnectionCredentials(c, p.schemaVersion) || !validConnectionProfile(c, p.schemaVersion)) {
+		if !validProviderImplementation(c.implementation) || p.schemaVersion == 1 && c.implementation != "openai_responses" || provider.ValidateAdapterID(c.adapterID) != nil || !validProviderConnectionEndpoint(c.endpoint) || (!validConnectionCredentials(c, p.schemaVersion) || !validConnectionProfile(c, p.schemaVersion)) || !validConnectionStructuredOutput(c, p.schemaVersion) {
 			return ErrInvalidRouteInventory
 		}
 		if _, ok := seen[c.adapterID]; ok {
@@ -138,11 +142,19 @@ func (p RuntimePolicy) ValidateAgainstInventory(inventory RouteInventory) error 
 			}
 			zoneMatches = namespace.zone == provider.ProviderZoneBrokeredRemote && locality == provider.ServiceEndpointRemote
 		}
-		if err != nil || !zoneMatches || connection.credentialMode == "none" && namespace.zone != provider.ProviderZoneLocal {
+		if err != nil || !zoneMatches || (connection.credentialMode == "none" || connection.localStructuredOutput) && namespace.zone != provider.ProviderZoneLocal {
 			return ErrInvalidRouteInventory
 		}
 	}
 	return nil
+}
+
+func validConnectionStructuredOutput(c ProviderConnection, version int) bool {
+	if !c.localStructuredOutput {
+		return true
+	}
+	locality, err := provider.ClassifyServiceEndpoint(c.endpoint)
+	return version == 2 && c.implementation == "openai_chat_completions" && c.requestProfile == "" && err == nil && locality == provider.ServiceEndpointLoopback
 }
 
 func validConnectionCredentials(c ProviderConnection, version int) bool {
@@ -186,6 +198,7 @@ type runtimePolicyWire struct {
 	Connections                     []providerConnectionWire `json:"connections"`
 }
 type providerConnectionWire struct {
+	LocalStructuredOutput    bool                               `json:"local_structured_output,omitempty"`
 	Implementation           string                             `json:"implementation"`
 	AdapterID                string                             `json:"adapter_id"`
 	Endpoint                 string                             `json:"endpoint"`
@@ -210,6 +223,13 @@ func validatePolicyCredentialFields(encoded []byte, schemaVersion int) error {
 		for key := range connection {
 			if strings.EqualFold(key, "credential_mode") && key != "credential_mode" || strings.EqualFold(key, "credential_environment") && key != "credential_environment" {
 				return ErrInvalidRouteInventory
+			}
+		}
+		for key, value := range connection {
+			if strings.EqualFold(key, "local_structured_output") {
+				if key != "local_structured_output" || schemaVersion != 2 || string(value) != "true" && string(value) != "false" {
+					return ErrInvalidRouteInventory
+				}
 			}
 		}
 		modeRaw, hasMode := connection["credential_mode"]
@@ -374,7 +394,7 @@ func DecodeRuntimePolicy(ctx context.Context, reader io.Reader, inventory RouteI
 				return RuntimePolicy{}, ErrInvalidRouteInventory
 			}
 		}
-		connections[i] = ProviderConnection{implementation: v.Implementation, adapterID: v.AdapterID, endpoint: v.Endpoint, credentialEnvironment: v.CredentialEnvironment, credentialIdentity: identity, credentialMode: mode, requestProfile: v.RequestProfile, brokeredAuthority: authority, openCodeGoAuthority: goAuthority, openCodeConsoleAuthority: consoleAuthority}
+		connections[i] = ProviderConnection{localStructuredOutput: v.LocalStructuredOutput, implementation: v.Implementation, adapterID: v.AdapterID, endpoint: v.Endpoint, credentialEnvironment: v.CredentialEnvironment, credentialIdentity: identity, credentialMode: mode, requestProfile: v.RequestProfile, brokeredAuthority: authority, openCodeGoAuthority: goAuthority, openCodeConsoleAuthority: consoleAuthority}
 	}
 	sort.Slice(connections, func(i, j int) bool { return connections[i].adapterID < connections[j].adapterID })
 	value := RuntimePolicy{schemaVersion: wire.SchemaVersion, verificationRouteRecordIdentity: verificationID, inventoryIdentity: inventory.Identity(), reviewPolicyIdentity: wire.ReviewPolicyIdentity, requirements: requirements, constraints: constraints, budget: budget, ranking: ranking, independence: independence, publication: publicationPolicy, connections: connections}
@@ -391,7 +411,7 @@ func runtimePolicyIdentity(p RuntimePolicy) string {
 		if c.credentialMode == "none" {
 			mode = "none"
 		}
-		connections[i] = providerConnectionWire{Implementation: c.implementation, AdapterID: c.adapterID, Endpoint: c.endpoint, CredentialEnvironment: c.credentialEnvironment, CredentialMode: mode, RequestProfile: c.requestProfile, BrokeredAuthority: c.brokeredAuthority.wire(), OpenCodeGoAuthority: c.openCodeGoAuthority.wire(), OpenCodeConsoleAuthority: c.openCodeConsoleAuthority.wire()}
+		connections[i] = providerConnectionWire{LocalStructuredOutput: c.localStructuredOutput, Implementation: c.implementation, AdapterID: c.adapterID, Endpoint: c.endpoint, CredentialEnvironment: c.credentialEnvironment, CredentialMode: mode, RequestProfile: c.requestProfile, BrokeredAuthority: c.brokeredAuthority.wire(), OpenCodeGoAuthority: c.openCodeGoAuthority.wire(), OpenCodeConsoleAuthority: c.openCodeConsoleAuthority.wire()}
 	}
 	encoded, _ := json.Marshal(struct {
 		Contract                                                                                 string `json:"contract"`

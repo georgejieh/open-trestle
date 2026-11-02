@@ -141,8 +141,19 @@ func ModelRequestReviewScopeIdentity(request provider.Request) (string, error) {
 
 // TrustedModelRequestInstructions returns only a pinned host instruction contract.
 func TrustedModelRequestInstructions(payload []byte) (string, error) {
+	instructions, _, err := trustedModelRequestOutputContract(payload)
+	return instructions, err
+}
+
+// TrustedModelRequestOutputSchema returns a copy of the validated host-pinned schema.
+func TrustedModelRequestOutputSchema(payload []byte) (json.RawMessage, error) {
+	_, schema, err := trustedModelRequestOutputContract(payload)
+	return schema, err
+}
+
+func trustedModelRequestOutputContract(payload []byte) (string, json.RawMessage, error) {
 	if len(payload) == 0 || len(payload) > maxProviderContextPacketBytes || rejectAmbiguousModelRequestJSON(payload) != nil {
-		return "", ErrInvalidModelRequestContract
+		return "", nil, ErrInvalidModelRequestContract
 	}
 	var header struct {
 		Contract             string          `json:"contract"`
@@ -153,7 +164,7 @@ func TrustedModelRequestInstructions(payload []byte) (string, error) {
 		OutputSchemaIdentity string          `json:"output_schema_identity"`
 	}
 	if err := json.Unmarshal(payload, &header); err != nil {
-		return "", ErrInvalidModelRequestContract
+		return "", nil, ErrInvalidModelRequestContract
 	}
 	var instructions string
 	var schema json.RawMessage
@@ -171,12 +182,12 @@ func TrustedModelRequestInstructions(payload []byte) (string, error) {
 		schema = InvestigationOutputSchema()
 		identity = investigationSchemaIdentity
 	default:
-		return "", ErrInvalidModelRequestContract
+		return "", nil, ErrInvalidModelRequestContract
 	}
 	if contractErr != nil || header.Instructions != instructions || header.OutputSchemaIdentity != identity || !bytes.Equal(header.OutputSchema, schema) {
-		return "", ErrInvalidModelRequestContract
+		return "", nil, ErrInvalidModelRequestContract
 	}
-	return instructions, nil
+	return instructions, append(json.RawMessage(nil), schema...), nil
 }
 
 // SanitizedCandidatePayload returns a defensive copy of the validated inner provider payload.

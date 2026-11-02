@@ -6,13 +6,34 @@ import (
 	"unicode/utf8"
 
 	"github.com/georgejieh/open-trestle/internal/provider"
+	"github.com/georgejieh/open-trestle/internal/review"
 )
 
 type chatRequestWire struct {
-	Model     string               `json:"model"`
-	Messages  []chatRequestMessage `json:"messages"`
-	MaxTokens uint32               `json:"max_tokens"`
-	Stream    bool                 `json:"stream"`
+	ResponseFormat *chatResponseFormat  `json:"response_format,omitempty"`
+	Model          string               `json:"model"`
+	Messages       []chatRequestMessage `json:"messages"`
+	MaxTokens      uint32               `json:"max_tokens"`
+	Stream         bool                 `json:"stream"`
+}
+
+type chatResponseFormat struct {
+	Type       string         `json:"type"`
+	JSONSchema chatJSONSchema `json:"json_schema"`
+}
+
+type chatJSONSchema struct {
+	Name   string          `json:"name"`
+	Strict bool            `json:"strict"`
+	Schema json.RawMessage `json:"schema"`
+}
+
+func localStructuredResponseFormat(payload []byte) (*chatResponseFormat, error) {
+	schema, err := review.TrustedModelRequestOutputSchema(payload)
+	if err != nil {
+		return nil, err
+	}
+	return &chatResponseFormat{Type: "json_schema", JSONSchema: chatJSONSchema{Name: "open_trestle_review", Strict: true, Schema: schema}}, nil
 }
 
 type chatRequestMessage struct {

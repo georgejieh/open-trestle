@@ -222,6 +222,34 @@ is not evidence of model quality, privacy terms or live server readiness. Test
 your exact server and model before approving the route. The existing local
 credential requirement remains; this transport does not add anonymous access.
 
+For an explicitly opted-in local connection, set `local_structured_output: true`
+in the protected v2 JSON policy as a JSON boolean. It is supported only with
+`openai_chat_completions`, a canonical numeric-loopback endpoint and no request
+profile. Both bearer and explicit local no-auth configurations are supported.
+Omitting the field or setting it to false preserves legacy wire bytes and
+identities. The field is not accepted in other policy versions.
+
+When enabled, Chat also sends `response_format` with `type: json_schema`,
+`strict: true`, the fixed name `open_trestle_review` and the exact host-pinned
+candidate, verifier or investigation schema validated from the authorized inner
+request. It does not accept a caller-selected schema or change temperature.
+True changes the policy, adapter and catalog identities; bind the changed
+protected policy and obtain fresh exact approvals where required.
+
+The existing `estimated_input_tokens` policy value must cover the larger of the
+normal host byte-based request estimate and the inner payload bytes plus the
+serialized `response_format` object (including its field wrapper) plus 256
+framing bytes. Dispatch refuses an insufficient approved reservation before
+credential retrieval or HTTP. This estimate is conservative byte accounting,
+not exact tokenization. Set a justified reservation that fits the route's
+approved context capacity; no budget is increased after authorization.
+
+Server support for these schema keywords is not assumed. Unsupported requests
+fail through the existing transport and strict response checks, without a
+simplified schema, retry or fallback. Schema transport does not establish
+factual accuracy or qualify a model. Candidate coverage, evidence, usage,
+tool-call and authorization checks remain unchanged.
+
 ## Local Responses configuration bootstrap
 
 The files in [`examples/local-model-review/`](../examples/local-model-review/) are

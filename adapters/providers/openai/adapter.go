@@ -121,6 +121,7 @@ func validCredentialAuthority(mode CredentialMode, credentials APIKeyProvider, i
 
 // Config binds one adapter instance to an exact approved route namespace.
 type Config struct {
+	LocalStructuredOutput    bool
 	RequestProfile           RequestProfile
 	OpenRouterAuthority      *OpenRouterRouteAuthority
 	OpenCodeGoAuthority      *OpenCodeGoRouteAuthority
@@ -142,6 +143,7 @@ type Config struct {
 
 // Adapter executes exact authorized requests against its configured protocol.
 type Adapter struct {
+	localStructuredOutput    bool
 	requestProfile           RequestProfile
 	openRouterAuthority      *OpenRouterRouteAuthority
 	openCodeGoAuthority      *OpenCodeGoRouteAuthority
@@ -168,7 +170,7 @@ func New(config Config) (*Adapter, error) {
 	if protocol == "" {
 		protocol = ProtocolResponses
 	}
-	if !protocol.valid() {
+	if !protocol.valid() || config.LocalStructuredOutput && (protocol != ProtocolChatCompletions || config.RequestProfile != "" || config.Zone != provider.ProviderZoneLocal) {
 		return nil, ErrInvalidConfig
 	}
 	mode := config.CredentialMode
@@ -182,7 +184,7 @@ func New(config Config) (*Adapter, error) {
 	endpoint, err := provider.ParseServiceEndpoint(endpointValue)
 	locality, localityErr := provider.ClassifyServiceEndpoint(endpointValue)
 	zoneMatches := config.Zone == provider.ProviderZoneLocal && locality == provider.ServiceEndpointLoopback || config.Zone == provider.ProviderZonePrivateRemote && locality == provider.ServiceEndpointRemote || config.Zone == provider.ProviderZoneBrokeredRemote && (config.RequestProfile == RequestProfileOpenRouterZDRChatV1 && endpointValue == "https://openrouter.ai/api/v1" || config.RequestProfile == RequestProfileOpenCodeGoChatV1 && endpointValue == "https://opencode.ai/inference/go/openai/v1" || config.RequestProfile == RequestProfileOpenCodeConsoleChatV1 && endpointValue == "https://opencode.ai/inference/openai/v1")
-	if err != nil || localityErr != nil || !zoneMatches || !validCredentialAuthority(mode, config.Credentials, config.CredentialIdentity, config.Zone, locality) {
+	if err != nil || localityErr != nil || !zoneMatches || config.LocalStructuredOutput && locality != provider.ServiceEndpointLoopback || !validCredentialAuthority(mode, config.Credentials, config.CredentialIdentity, config.Zone, locality) {
 		return nil, ErrInvalidConfig
 	}
 	if config.ContentLoggingMode.Validate() != nil {
@@ -214,6 +216,7 @@ func New(config Config) (*Adapter, error) {
 	endpointCopy := *endpoint
 	endpointCopy.Path = strings.TrimSuffix(endpointCopy.Path, "/")
 	adapter := &Adapter{
+		localStructuredOutput:    config.LocalStructuredOutput,
 		requestProfile:           config.RequestProfile,
 		openRouterAuthority:      cloneOpenRouterAuthority(config.OpenRouterAuthority),
 		openCodeGoAuthority:      cloneOpenCodeGoAuthority(config.OpenCodeGoAuthority),
@@ -325,6 +328,14 @@ func deriveConfigurationIdentity(a *Adapter) string {
 		}
 		encoded = a.serviceIdentityPreimage(encoded)
 	}
+	if a.localStructuredOutput {
+		encoded, _ = json.Marshal(struct {
+			Contract      string          `json:"contract"`
+			Version       int             `json:"version"`
+			Configuration json.RawMessage `json:"configuration"`
+			Enabled       bool            `json:"local_structured_output"`
+		}{"open-trestle/openai-local-structured-output-adapter", 1, encoded, true})
+	}
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }
@@ -369,7 +380,7 @@ func (a *Adapter) Validate() error {
 	_, err := provider.NewRouteReference(a.zone, a.providerID, a.adapterID, a.connectionID, "model", "")
 	locality, localityErr := provider.ClassifyServiceEndpoint(a.endpoint.String())
 	zoneMatches := a.zone == provider.ProviderZoneLocal && locality == provider.ServiceEndpointLoopback || a.zone == provider.ProviderZonePrivateRemote && locality == provider.ServiceEndpointRemote || a.zone == provider.ProviderZoneBrokeredRemote && (a.requestProfile == RequestProfileOpenRouterZDRChatV1 || a.requestProfile == RequestProfileOpenCodeGoChatV1 || a.requestProfile == RequestProfileOpenCodeConsoleChatV1)
-	if err != nil || localityErr != nil || !zoneMatches || !validCredentialAuthority(a.credentialMode, a.credentials, a.credentialIdentity, a.zone, locality) || a.contentLoggingMode.Validate() != nil || a.httpClient.Timeout <= 0 || a.httpClient.Timeout > maximumRequestTimeout {
+	if err != nil || localityErr != nil || !zoneMatches || a.localStructuredOutput && (a.protocol != ProtocolChatCompletions || a.requestProfile != "" || a.zone != provider.ProviderZoneLocal || locality != provider.ServiceEndpointLoopback) || !validCredentialAuthority(a.credentialMode, a.credentials, a.credentialIdentity, a.zone, locality) || a.contentLoggingMode.Validate() != nil || a.httpClient.Timeout <= 0 || a.httpClient.Timeout > maximumRequestTimeout {
 		return ErrInvalidConfig
 	}
 	return nil
@@ -409,7 +420,7 @@ func (a *Adapter) dispatchRoute(ctx context.Context, request gateway.RouteDispat
 	if a.requestProfile != "" && !a.serviceProofMatches(proof, authorization.ReviewScopeIdentity(), request.Request().Identity()) {
 		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
 	}
-	return a.executeWithDispatchProof(ctx, authorization.RouteReference(), authorization.MaxOutputTokens(), request.Request(), proof.ReceiptIdentity(), proof)
+	return a.executeWithDispatchProof(ctx, authorization.RouteReference(), authorization.MaxOutputTokens(), request.Request(), proof.ReceiptIdentity(), proof, authorization.CostBudget())
 }
 
 func (a *Adapter) execute(
@@ -428,7 +439,7 @@ func (a *Adapter) executeWithSanitizedReceipt(
 	providerRequest provider.Request,
 	receiptIdentity string,
 ) gateway.RouteDispatchResult {
-	return a.executeWithDispatchProof(ctx, route, maxOutputTokens, providerRequest, receiptIdentity, modelhandler.SanitizedDispatchProof{})
+	return a.executeWithDispatchProof(ctx, route, maxOutputTokens, providerRequest, receiptIdentity, modelhandler.SanitizedDispatchProof{}, provider.ModelCostBudget{})
 }
 
 func (a *Adapter) executeWithDispatchProof(
@@ -438,6 +449,7 @@ func (a *Adapter) executeWithDispatchProof(
 	providerRequest provider.Request,
 	receiptIdentity string,
 	proof modelhandler.SanitizedDispatchProof,
+	approvedBudget provider.ModelCostBudget,
 ) gateway.RouteDispatchResult {
 	if nilInterface(ctx) {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
@@ -489,6 +501,21 @@ func (a *Adapter) executeWithDispatchProof(
 	instructions, err := review.TrustedModelRequestInstructions(payload)
 	if err != nil {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
+	}
+	if a.localStructuredOutput {
+		format, err := localStructuredResponseFormat(payload)
+		if err != nil {
+			return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
+		}
+		framing, err := json.Marshal(struct {
+			Format *chatResponseFormat `json:"response_format"`
+		}{format})
+		baseline, budgetErr := review.ModelRequestBudget(providerRequest, approvedBudget)
+		// This is a byte-based reservation, not exact tokenizer accounting.
+		required := max(uint64(baseline.EstimatedInputTokens()), uint64(len(payload))+uint64(len(framing))+256)
+		if err != nil || budgetErr != nil || uint64(approvedBudget.EstimatedInputTokens()) < required {
+			return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
+		}
 	}
 	if !a.serviceProfileMatches(route) || a.requestProfile != "" && (!a.serviceProofMatches(proof, reviewScopeIdentity, providerRequest.Identity()) || receiptIdentity != proof.ReceiptIdentity()) {
 		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
@@ -594,7 +621,15 @@ func (a *Adapter) newRequest(
 	path := "/responses"
 	if a.protocol == ProtocolChatCompletions {
 		path = "/chat/completions"
-		wire = chatRequestWire{Model: model, Messages: []chatRequestMessage{{Role: "system", Content: instructions}, {Role: "user", Content: string(payload)}}, MaxTokens: maxOutputTokens, Stream: false}
+		chat := chatRequestWire{Model: model, Messages: []chatRequestMessage{{Role: "system", Content: instructions}, {Role: "user", Content: string(payload)}}, MaxTokens: maxOutputTokens, Stream: false}
+		if a.localStructuredOutput {
+			format, err := localStructuredResponseFormat(payload)
+			if err != nil {
+				return nil, err
+			}
+			chat.ResponseFormat = format
+		}
+		wire = chat
 	} else {
 		wire = requestWire{
 			Model:        model,
