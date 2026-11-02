@@ -18,9 +18,6 @@ describe("diagnostic authority copy", () => {
     );
     expect(packageDocument.description).toMatch(/verified findings/i);
     expect(packageDocument.description).toMatch(/versions 1 through 5/i);
-    expect(source).toContain(
-      'diagnosticCollectionName: "Open Trestle verified findings"',
-    );
     expect(source).toMatch(/deterministic observations.*outside LSP findings/i);
     expect(source).not.toContain("Read-only verified diagnostics are active");
   });

@@ -19,7 +19,9 @@ if (
 if (properties["openTrestle.autoStart"]?.default !== false)
   throw new Error("automatic startup must default off");
 if (
-  Object.keys(manifest.dependencies ?? {}).join(",") !== "vscode-languageclient"
+  Object.keys(manifest.dependencies ?? {})
+    .sort()
+    .join(",") !== "vscode-jsonrpc,vscode-languageserver-protocol"
 )
   throw new Error("unexpected runtime dependency");
 const bundle = new URL("dist/extension.js", root);
@@ -48,14 +50,8 @@ const bundled = [
   ),
 ].sort();
 const expectedPackages = [
-  "balanced-match",
-  "brace-expansion",
-  "minimatch",
-  "semver",
   "vscode-jsonrpc",
-  "vscode-languageclient",
   "vscode-languageserver-protocol",
-  "vscode-languageserver-textdocument",
   "vscode-languageserver-types",
 ];
 if (JSON.stringify(bundled) !== JSON.stringify(expectedPackages))
@@ -67,11 +63,7 @@ const expected = [
   "extension/LICENSE.txt",
   "extension/NOTICE",
   "extension/readme.md",
-  "extension/THIRD_PARTY_LICENSES/balanced-match-4.0.4-MIT.txt",
-  "extension/THIRD_PARTY_LICENSES/brace-expansion-5.0.12-MIT.txt",
-  "extension/THIRD_PARTY_LICENSES/minimatch-10.2.6-BlueOak-1.0.0.txt",
-  "extension/THIRD_PARTY_LICENSES/semver-7.8.5-ISC.txt",
-  "extension/THIRD_PARTY_LICENSES/vscode-languageclient-family-MIT.txt",
+  "extension/THIRD_PARTY_LICENSES/vscode-protocol-family-MIT.txt",
   "extension/dist/extension.js",
   "extension/icon.png",
   "extension/package.json",
