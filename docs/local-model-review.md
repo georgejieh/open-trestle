@@ -361,10 +361,18 @@ Use the `open-trestle/retained-memory-input` schema version 1 envelope implement
 in [`runtimeconfig/retained_memory_input.go`](../runtimeconfig/retained_memory_input.go)
 and its protected loader. This is not a free-form notes file. The loader checks
 record identities, operator-note references, declared scope, repository identity,
-and runtime-policy identity. A narrow authoring command can build this contract
-from an explicitly selected protected feedback file. It does not run review,
-resolve credentials, call providers, ingest model output, curate memory, or update
-other memory stores.
+and runtime-policy identity. The authoring command can build this contract from
+an explicitly selected protected feedback file. It does not run review, resolve
+credentials, call providers, or update other memory stores.
+
+The example below authors path/text preferences for an explicit head. For
+feedback on verified findings, use `--review-input` with a protected completed
+foreground result instead of the two revision flags. That mode derives the head
+and finding identities; it does not establish human adjudication. See
+[Manual review feedback](local-feedback.md) for decision selectors, later opt-in
+reuse, and exact-input removal with `--remove-input`. Removal requires the
+matching review, scope and policy; it does not revoke copies or change past
+results.
 
 ```text
 trestle local-git retained-memory-input \
@@ -381,8 +389,9 @@ trestle local-git retained-memory-input \
   --output /protected/operator-feedback.json --format json
 ```
 
-All flags except `--format` are required. The authoring command accepts only
-`--egress local-only`. `--timeout` must be one second to 15 minutes. `--valid-for`
+For this explicit-head example, all flags except `--format` are required. The
+authoring command accepts only `--egress local-only`. `--timeout` must be one
+second to 15 minutes. `--valid-for`
 must use whole milliseconds, exceed the timeout, and be at most seven days. The
 command samples the clock once after protected configuration and feedback load,
 then sets each record's `observed_at` and `valid_from` to that millisecond.
@@ -393,8 +402,9 @@ The feedback file is a protected convenience JSON file, not the wire contract:
 [{"path":"src/file.go","text":"operator advisory text"}]
 ```
 
-It is limited to 64 KiB, 1 to 16 records, exact `path` and `text` keys, no unknown
-or duplicate keys, no comments, no trailing tokens, no nested values, and no null,
+This path/text form is limited to 64 KiB, 1 to 16 records, exact `path` and
+`text` keys, no unknown or duplicate keys, no comments, no trailing tokens, no
+nested values, and no null,
 boolean, or numeric values. Paths must be clean repository-relative printable
 paths, not `.`, `..`, absolute, backslash-containing, or duplicated. Text must be
 non-empty after trimming and may contain newline and tab. Hidden controls and
@@ -427,8 +437,9 @@ The file is loaded after protected runtime configuration and before opening the
 source root or resolving credentials. Existing owner, ancestor, symlink,
 replacement, and group/world-write checks apply. These are integrity checks, not
 a guarantee of confidentiality or an atomic filesystem snapshot. Use mode `0600`
-and a suitable private directory for sensitive advice. The command never edits,
-curates, migrates, or deletes the input.
+and a suitable private directory for sensitive advice. The model-review command
+never edits, curates, migrates, or deletes the input. Explicit removal uses the
+separate authoring command described in [Manual review feedback](local-feedback.md).
 
 Successfully constructed opted-in Session results replace `empty_memory_index`
 with `retained_input_advisory_not_all_records_selected` and
