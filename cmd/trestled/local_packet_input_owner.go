@@ -29,14 +29,18 @@ type localPreparedContextInput struct {
 // PrepareInput records the v5 checkpoint and its exact physical envelopes.
 // It does not settle the task or grant a model dispatch.
 func (o *localPacketOwner) PrepareInput(ctx context.Context, request controlplane.TaskExecutionRequest, packet controlplane.PreparedContextPacket, sanitizer review.GenerationRequestSanitizer, policy runtimeconfig.RuntimePolicy, inventory runtimeconfig.RouteInventory, pair runtimecatalog.LocalGenerationRoutePair, ledger *audit.FileLedger, authorizerIdentity string) (localPreparedContextInput, error) {
-	return o.prepareInput(ctx, request, packet, sanitizer, policy, inventory, pair, ledger, authorizerIdentity, false)
+	return o.prepareInput(ctx, request, packet, sanitizer, policy, inventory, pair, ledger, authorizerIdentity, false, false)
 }
 
 func (o *localPacketOwner) PrepareAndSettleInput(ctx context.Context, request controlplane.TaskExecutionRequest, packet controlplane.PreparedContextPacket, sanitizer review.GenerationRequestSanitizer, policy runtimeconfig.RuntimePolicy, inventory runtimeconfig.RouteInventory, pair runtimecatalog.LocalGenerationRoutePair, ledger *audit.FileLedger, authorizerIdentity string) (localPreparedContextInput, error) {
-	return o.prepareInput(ctx, request, packet, sanitizer, policy, inventory, pair, ledger, authorizerIdentity, true)
+	return o.prepareInput(ctx, request, packet, sanitizer, policy, inventory, pair, ledger, authorizerIdentity, true, false)
 }
 
-func (o *localPacketOwner) prepareInput(ctx context.Context, request controlplane.TaskExecutionRequest, packet controlplane.PreparedContextPacket, sanitizer review.GenerationRequestSanitizer, policy runtimeconfig.RuntimePolicy, inventory runtimeconfig.RouteInventory, pair runtimecatalog.LocalGenerationRoutePair, ledger *audit.FileLedger, authorizerIdentity string, settle bool) (localPreparedContextInput, error) {
+func (o *localPacketOwner) prepareAndSettleInputAfterPacket(ctx context.Context, request controlplane.TaskExecutionRequest, packet controlplane.PreparedContextPacket, sanitizer review.GenerationRequestSanitizer, policy runtimeconfig.RuntimePolicy, inventory runtimeconfig.RouteInventory, pair runtimecatalog.LocalGenerationRoutePair, ledger *audit.FileLedger, authorizerIdentity string) (localPreparedContextInput, error) {
+	return o.prepareInput(ctx, request, packet, sanitizer, policy, inventory, pair, ledger, authorizerIdentity, true, true)
+}
+
+func (o *localPacketOwner) prepareInput(ctx context.Context, request controlplane.TaskExecutionRequest, packet controlplane.PreparedContextPacket, sanitizer review.GenerationRequestSanitizer, policy runtimeconfig.RuntimePolicy, inventory runtimeconfig.RouteInventory, pair runtimecatalog.LocalGenerationRoutePair, ledger *audit.FileLedger, authorizerIdentity string, settle, afterPacket bool) (localPreparedContextInput, error) {
 	fail := func(err error) (localPreparedContextInput, error) {
 		return localPreparedContextInput{}, errors.Join(contexthandler.ErrPacketAuthority, err)
 	}
@@ -49,8 +53,15 @@ func (o *localPacketOwner) prepareInput(ctx context.Context, request controlplan
 	}
 	// This method takes its two gated reads outside the new effect section:
 	// WithScopeGate is intentionally not reentrant.
-	candidate, err := o.SanitizePreparedPacket(ctx, request, packet, sanitizer)
+	candidate, expiry, err := o.sanitizePreparedPacket(ctx, request, packet, sanitizer)
 	if err != nil {
+		if settle && afterPacket && !expiry.sampledAt.IsZero() {
+			if terminateErr := o.terminatePacketRecheckExpiry(ctx, request, packet, expiry); terminateErr == nil {
+				return localPreparedContextInput{}, nil
+			} else {
+				return fail(errors.Join(err, terminateErr))
+			}
+		}
 		return fail(err)
 	}
 	modelRequest, err := candidate.Request()

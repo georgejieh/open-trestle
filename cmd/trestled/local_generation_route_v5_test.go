@@ -233,6 +233,10 @@ func TestPlanAndGrantProducesV5TaskInput(t *testing.T) {
 // Both generation and verification routes are ProviderZoneLocal, matching the
 // contract required by ResolveLocalGenerationRoutePair.
 func localGenerationInventoryAndPolicyForTest(ctx context.Context, t *testing.T) (runtimeconfig.RouteInventory, runtimeconfig.RuntimePolicy, error) {
+	return localGenerationInventoryAndPolicyWithReviewPolicyForTest(ctx, t, strings.Repeat("e", 64))
+}
+
+func localGenerationInventoryAndPolicyWithReviewPolicyForTest(ctx context.Context, t *testing.T, reviewPolicyIdentity string) (runtimeconfig.RouteInventory, runtimeconfig.RuntimePolicy, error) {
 	t.Helper()
 	capabilities, err := provider.NewModelCapabilities(128000, 8192, []provider.ModelFeature{provider.ModelFeatureStructuredOutput})
 	if err != nil {
@@ -286,7 +290,7 @@ func localGenerationInventoryAndPolicyForTest(ctx context.Context, t *testing.T)
 		"schema_version":                     2,
 		"verification_route_record_identity": records["adapter-b"],
 		"inventory_identity":                 inventory.Identity(),
-		"review_policy_identity":             strings.Repeat("e", 64),
+		"review_policy_identity":             reviewPolicyIdentity,
 		"min_context_tokens":                 32000,
 		"min_output_tokens":                  4096,
 		"required_features":                  []string{"structured_output"},

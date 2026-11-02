@@ -134,6 +134,10 @@ func (o *localPacketOwner) LoadPreparedPacket(ctx context.Context, request contr
 // LoadPreparedPacketCandidate returns the reassembled typed packet only under the
 // same live owner, lease, and v4 journal fence as the persisted byte read.
 func (o *localPacketOwner) LoadPreparedPacketCandidate(ctx context.Context, request controlplane.TaskExecutionRequest, prepared controlplane.PreparedContextPacket) (contexthandler.PacketCandidate, error) {
+	return o.loadPreparedPacketCandidate(ctx, request, prepared, nil)
+}
+
+func (o *localPacketOwner) loadPreparedPacketCandidate(ctx context.Context, request controlplane.TaskExecutionRequest, prepared controlplane.PreparedContextPacket, expiredAt *time.Time) (contexthandler.PacketCandidate, error) {
 	if o == nil || o.store == nil || o.journal == nil || o.clock == nil || ctx == nil || request.Validate() != nil || prepared.Identity() == "" {
 		return contexthandler.PacketCandidate{}, contexthandler.ErrPacketAuthority
 	}
@@ -145,6 +149,9 @@ func (o *localPacketOwner) LoadPreparedPacketCandidate(ctx context.Context, requ
 	err = o.journal.WithScopeGate(ctx, request.Plan().Scope(), func(ctx context.Context) error {
 		now := o.clock.Now().UTC()
 		if !ownerPacketTimeValid(ctx, request, now) || !now.Before(time.UnixMilli(prepared.Descriptor().ExpiresAtMilliseconds)) {
+			if expiredAt != nil && ctx.Err() == nil && now.UnixMilli() > 0 && !now.Before(request.Lease().ExpiresAt()) && now.Before(time.UnixMilli(prepared.Descriptor().ExpiresAtMilliseconds)) {
+				*expiredAt = now
+			}
 			return contexthandler.ErrPacketAuthority
 		}
 		value, getErr := o.store.Get(ctx, request.Plan().Scope(), prepared.Descriptor().ArtifactIdentity, now)
@@ -174,18 +181,28 @@ func (o *localPacketOwner) LoadPreparedPacketCandidate(ctx context.Context, requ
 // SanitizePreparedPacket scans the exact live owner packet, then checks the
 // owner fence again. It returns unpersisted artifacts, not route authority.
 func (o *localPacketOwner) SanitizePreparedPacket(ctx context.Context, request controlplane.TaskExecutionRequest, prepared controlplane.PreparedContextPacket, sanitizer review.GenerationRequestSanitizer) (contexthandler.SanitizedPacketCandidate, error) {
+	candidate, _, err := o.sanitizePreparedPacket(ctx, request, prepared, sanitizer)
+	return candidate, err
+}
+
+func (o *localPacketOwner) sanitizePreparedPacket(ctx context.Context, request controlplane.TaskExecutionRequest, prepared controlplane.PreparedContextPacket, sanitizer review.GenerationRequestSanitizer) (contexthandler.SanitizedPacketCandidate, localPacketRecheckExpiry, error) {
 	packet, err := o.LoadPreparedPacketCandidate(ctx, request, prepared)
 	if err != nil {
-		return contexthandler.SanitizedPacketCandidate{}, fmt.Errorf("load prepared packet: %w", errors.Join(contexthandler.ErrPacketAuthority, err))
+		return contexthandler.SanitizedPacketCandidate{}, localPacketRecheckExpiry{}, fmt.Errorf("load prepared packet: %w", errors.Join(contexthandler.ErrPacketAuthority, err))
 	}
 	candidate, err := contexthandler.BuildSanitizedPacketCandidate(ctx, packet, sanitizer, o.clock.Now().UTC())
 	if err != nil {
-		return contexthandler.SanitizedPacketCandidate{}, fmt.Errorf("sanitize prepared packet: %w", errors.Join(contexthandler.ErrPacketAuthority, err))
+		return contexthandler.SanitizedPacketCandidate{}, localPacketRecheckExpiry{}, fmt.Errorf("sanitize prepared packet: %w", errors.Join(contexthandler.ErrPacketAuthority, err))
 	}
-	if _, err := o.LoadPreparedPacketCandidate(ctx, request, prepared); err != nil {
-		return contexthandler.SanitizedPacketCandidate{}, fmt.Errorf("recheck prepared packet: %w", err)
+	var expiredAt time.Time
+	if _, err := o.loadPreparedPacketCandidate(ctx, request, prepared, &expiredAt); err != nil {
+		expiry := localPacketRecheckExpiry{}
+		if !expiredAt.IsZero() {
+			expiry = localPacketRecheckExpiry{packet: packet, sampledAt: expiredAt}
+		}
+		return contexthandler.SanitizedPacketCandidate{}, expiry, fmt.Errorf("recheck prepared packet: %w", err)
 	}
-	return candidate, nil
+	return candidate, localPacketRecheckExpiry{}, nil
 }
 
 func ownerPacketTimeValid(ctx context.Context, request controlplane.TaskExecutionRequest, now time.Time) bool {

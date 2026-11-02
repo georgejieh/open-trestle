@@ -58,7 +58,7 @@ func (h *localContextOwnerTask) ExecuteAndSettle(ctx context.Context, request co
 		return fmt.Errorf("owner packet preparation: %w", err)
 	}
 	authorizerIdentity := daemonComponentIdentity("local-context-route-authorizer-v1:" + h.configuration.Identity() + ":" + h.pair.Identity())
-	_, err = h.owner.PrepareAndSettleInput(ctx, request, packet, h.sanitizer, h.configuration, h.inventory, h.pair, h.ledger, authorizerIdentity)
+	_, err = h.owner.prepareAndSettleInputAfterPacket(ctx, request, packet, h.sanitizer, h.configuration, h.inventory, h.pair, h.ledger, authorizerIdentity)
 	if err != nil {
 		return fmt.Errorf("owner input preparation and settlement: %w", err)
 	}

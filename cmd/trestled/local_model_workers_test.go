@@ -1055,7 +1055,8 @@ func testDaemonLocalModelWorkersExpiredPacketRestart(t *testing.T, mode string) 
 	var d *daemon
 	var expiryErr error
 	sanitizerCalled := false
-	sanitizer := expireOwnerSanitizer{GenerationRequestSanitizer: daemonTestGenerationSanitizer(), expire: func() {
+	injectedReturnReached := false
+	sanitizer := bootPacketExpirySanitizer{GenerationRequestSanitizer: expireOwnerSanitizer{GenerationRequestSanitizer: daemonTestGenerationSanitizer(), expire: func() {
 		sanitizerCalled = true
 		facts, err := d.journal.(*controlplane.FileRunJournal).InspectHistoricalContextPackets(context.Background())
 		if err != nil || len(facts) != 1 {
@@ -1065,7 +1066,7 @@ func testDaemonLocalModelWorkersExpiredPacketRestart(t *testing.T, mode string) 
 		clock.mu.Lock()
 		clock.at = facts[0].LeaseEvent().LeaseExpiresAt().Add(time.Millisecond)
 		clock.mu.Unlock()
-	}}
+	}}, injected: &injectedReturnReached}
 	build := func(expire bool) *daemon {
 		t.Helper()
 		deps := daemonDependencies{openPostgres: postgresstore.Open, clock: clock, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()}
@@ -1097,14 +1098,18 @@ func testDaemonLocalModelWorkersExpiredPacketRestart(t *testing.T, mode string) 
 	if _, err := d.supervisors[1].(*worker.RepositorySupervisor).RunOnce(context.Background()); err == nil {
 		t.Fatal("expired packet worker unexpectedly succeeded")
 	}
-	if expiryErr != nil || !sanitizerCalled {
-		t.Fatalf("sanitizer called=%t err=%v", sanitizerCalled, expiryErr)
+	if expiryErr != nil || !sanitizerCalled || !injectedReturnReached {
+		t.Fatalf("sanitizer called=%t injected=%t err=%v", sanitizerCalled, injectedReturnReached, expiryErr)
 	}
 	facts, err := d.journal.(*controlplane.FileRunJournal).InspectHistoricalContextPackets(context.Background())
 	if err != nil || len(facts) != 1 || facts[0].FinalHeadIdentity() != facts[0].PreparedEvent().Identity() {
 		t.Fatalf("not exact v4: %v", err)
 	}
 	packetIdentity := facts[0].PreparedEvent().PacketDescriptor().ArtifactIdentity
+	marker := filepath.Join(daemonTestFlagValue(t, args, "--state-dir"), scope.Identity()+".scope-intent.json")
+	if _, err := os.Lstat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("boot fixture has unresolved marker: %v", err)
+	}
 	for _, endpoint := range []*daemonBudgetedModelEndpoint{fake.generation, fake.verification} {
 		if calls, _, _, failures := endpoint.snapshot(); calls != 0 || len(failures) != 0 {
 			t.Fatalf("expired packet dispatched: calls=%d failures=%v", calls, failures)
