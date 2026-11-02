@@ -50,7 +50,7 @@ func TestLocalStructuredOutputPolicyBindingAndLegacyIdentity(t *testing.T) {
 	if json.Unmarshal(template, &doc) != nil {
 		t.Fatal("template")
 	}
-	doc["schema_version"] = 2
+	doc["schema_version"] = 6
 	connections := doc["connections"].([]any)
 	for _, c := range connections {
 		c.(map[string]any)["local_structured_output"] = true
@@ -72,8 +72,8 @@ func TestLocalStructuredOutputPolicyBindingAndLegacyIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	old, err := DecodeRuntimePolicy(context.Background(), bytes.NewReader(disabled), inventory)
-	if err != nil || old.Identity() != legacy.Identity() || !bytes.Equal(disabled, original) {
-		t.Fatal("explicit false changed legacy identity or bound bytes")
+	if err != nil || old.Identity() == legacy.Identity() || bytes.Equal(disabled, original) {
+		t.Fatal("explicit v6 false silently migrated to legacy v2")
 	}
 }
 
@@ -114,6 +114,7 @@ func TestLocalStructuredOutputPolicyRejectsInvalidDeclarations(t *testing.T) {
 			if json.Unmarshal(original, &doc) != nil {
 				t.Fatal("policy")
 			}
+			doc["schema_version"] = 6
 			c := doc["connections"].([]any)[0].(map[string]any)
 			test.mutate(doc, c)
 			if _, err := DecodeRuntimePolicy(context.Background(), bytes.NewReader(bindingMarshal(t, doc)), inventory); err == nil {
@@ -124,5 +125,163 @@ func TestLocalStructuredOutputPolicyRejectsInvalidDeclarations(t *testing.T) {
 	duplicate := bytes.Replace(original, []byte(`"implementation":`), []byte(`"local_structured_output":false,"local_structured_output":false,"implementation":`), 1)
 	if _, err := DecodeRuntimePolicy(context.Background(), bytes.NewReader(duplicate), inventory); err == nil {
 		t.Fatal("accepted duplicate option")
+	}
+}
+
+func TestRuntimePolicyV6GenericBinding(t *testing.T) {
+	inventory := bindingInventory(t, bindingInventoryDocument(t))
+	var template map[string]any
+	if err := json.Unmarshal(bindingTemplate(t), &template); err != nil {
+		t.Fatal(err)
+	}
+	template["schema_version"] = 6
+	for _, value := range template["connections"].([]any) {
+		value.(map[string]any)["implementation"] = "openai_chat_completions"
+	}
+	omitted, err := bindRuntimePolicy(context.Background(), inventory, bindingMarshal(t, template), "adapter-a", "adapter-b")
+	if err != nil {
+		t.Fatalf("explicit v6 template refused: %v", err)
+	}
+	plain, err := DecodeRuntimePolicy(context.Background(), bytes.NewReader(omitted), inventory)
+	if err != nil || plain.schemaVersion != 6 {
+		t.Fatalf("v6 not retained: %v", err)
+	}
+	for _, enabled := range []bool{false, true} {
+		for _, noAuth := range []bool{false, true} {
+			for _, value := range template["connections"].([]any) {
+				c := value.(map[string]any)
+				c["local_structured_output"] = enabled
+				if noAuth {
+					delete(c, "credential_environment")
+					c["credential_mode"] = "none"
+				}
+			}
+			bound, err := bindRuntimePolicy(context.Background(), inventory, bindingMarshal(t, template), "adapter-a", "adapter-b")
+			if err != nil {
+				t.Fatalf("v6 enabled=%v noAuth=%v: %v", enabled, noAuth, err)
+			}
+			policy, err := DecodeRuntimePolicy(context.Background(), bytes.NewReader(bound), inventory)
+			if err != nil || policy.schemaVersion != 6 || policy.ValidateAgainstInventory(inventory) != nil {
+				t.Fatalf("bound v6 invalid: %v", err)
+			}
+			for _, c := range policy.Connections() {
+				if c.LocalStructuredOutput() != enabled {
+					t.Fatal("option lost")
+				}
+			}
+			if !enabled && !noAuth && (!bytes.Equal(bound, omitted) || policy.Identity() != plain.Identity()) {
+				t.Fatal("v6 false differs from omitted")
+			}
+			if enabled && policy.Identity() == plain.Identity() {
+				t.Fatal("v6 true lost identity")
+			}
+		}
+		if err := json.Unmarshal(bindingTemplate(t), &template); err != nil {
+			t.Fatal(err)
+		}
+		template["schema_version"] = 6
+		for _, value := range template["connections"].([]any) {
+			value.(map[string]any)["implementation"] = "openai_chat_completions"
+		}
+	}
+	legacyTemplate := bytes.Replace(bindingMarshal(t, template), []byte(`"schema_version":6`), []byte(`"schema_version":2`), 1)
+	legacy, err := bindRuntimePolicy(context.Background(), inventory, legacyTemplate, "adapter-a", "adapter-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := DecodeRuntimePolicy(context.Background(), bytes.NewReader(legacy), inventory)
+	if err != nil || old.Identity() == plain.Identity() {
+		t.Fatal("explicit v6 migrated legacy identity")
+	}
+}
+
+func TestRuntimePolicyV6RejectsHistoricalOptionsAndMalformedFields(t *testing.T) {
+	inventory := bindingInventory(t, bindingInventoryDocument(t))
+	bound, err := bindRuntimePolicy(context.Background(), inventory, bindingTemplate(t), "adapter-a", "adapter-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for version := 1; version <= 5; version++ {
+		for _, enabled := range []bool{false, true} {
+			var doc map[string]any
+			if err := json.Unmarshal(bound, &doc); err != nil {
+				t.Fatal(err)
+			}
+			doc["schema_version"] = version
+			if version == 1 {
+				delete(doc, "verification_route_record_identity")
+			}
+			doc["connections"].([]any)[0].(map[string]any)["local_structured_output"] = enabled
+			if _, err := DecodeRuntimePolicy(context.Background(), bytes.NewReader(bindingMarshal(t, doc)), inventory); err == nil {
+				t.Errorf("v%d accepted option=%v", version, enabled)
+			}
+			if _, err := bindRuntimePolicy(context.Background(), inventory, bindingMarshal(t, doc), "adapter-a", "adapter-b"); err == nil {
+				t.Errorf("binder accepted v%d option=%v", version, enabled)
+			}
+		}
+	}
+	base := bytes.Replace(bound, []byte(`"schema_version":2`), []byte(`"schema_version":6`), 1)
+	base = bytes.ReplaceAll(base, []byte("openai_responses"), []byte("openai_chat_completions"))
+	for _, field := range []string{
+		`"local_structured_output":null`, `"local_structured_output":"false"`, `"local_structured_output":0`,
+		`"Local_Structured_Output":false`, `"local_structured_output":false,"local_structured_output":true`,
+		`"request_profile":""`, `"request_profile":null`, `"Request_Profile":""`, `"brokered_route_authority":null`, `"brokered_route_authority":{}`, `"Brokered_Route_Authority":{}`,
+		`"opencode_go_authority":{}`, `"opencode_go_authority":null`, `"OpenCode_Go_Authority":{}`, `"opencode_console_authority":{}`, `"opencode_console_authority":null`, `"OpenCode_Console_Authority":{}`,
+	} {
+		for _, option := range []string{"", `"local_structured_output":false,`, `"local_structured_output":true,`} {
+			t.Run(option+field, func(t *testing.T) {
+				encoded := bytes.Replace(base, []byte(`"implementation":`), []byte(option+field+`,"implementation":`), 1)
+				if _, err := DecodeRuntimePolicy(context.Background(), bytes.NewReader(encoded), inventory); err == nil {
+					t.Fatal("decoder accepted malformed or named-profile field")
+				}
+				if _, err := bindRuntimePolicy(context.Background(), inventory, encoded, "adapter-a", "adapter-b"); err == nil {
+					t.Fatal("binder accepted malformed or named-profile field")
+				}
+			})
+		}
+	}
+}
+
+func TestRuntimePolicyV6LocalRestrictions(t *testing.T) {
+	inventory := bindingInventory(t, bindingInventoryDocument(t))
+	bound, err := bindRuntimePolicy(context.Background(), inventory, bindingTemplate(t), "adapter-a", "adapter-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, endpoint := range []string{"http://127.0.0.1:11434/v1", "https://127.2.3.4/v1", "http://[::1]:11434/v1", "http://localhost:11434/v1", "https://api.example.test/v1", "http://127.0.0.1.example.test/v1"} {
+		for _, implementation := range []string{"openai_chat_completions", "openai_responses"} {
+			var doc map[string]any
+			if err := json.Unmarshal(bound, &doc); err != nil {
+				t.Fatal(err)
+			}
+			doc["schema_version"] = 6
+			c := doc["connections"].([]any)[0].(map[string]any)
+			c["local_structured_output"], c["implementation"], c["endpoint"] = true, implementation, endpoint
+			_, err := DecodeRuntimePolicy(context.Background(), bytes.NewReader(bindingMarshal(t, doc)), inventory)
+			valid := implementation == "openai_chat_completions" && (endpoint == "http://127.0.0.1:11434/v1" || endpoint == "https://127.2.3.4/v1" || endpoint == "http://[::1]:11434/v1")
+			if valid != (err == nil) {
+				t.Errorf("endpoint=%s implementation=%s valid=%v err=%v", endpoint, implementation, valid, err)
+			}
+		}
+	}
+	var wire routeInventoryWire
+	if err := json.Unmarshal(bindingInventoryDocument(t), &wire); err != nil {
+		t.Fatal(err)
+	}
+	wire.Routes[0].Zone = "private_remote"
+	nonlocal := bindingInventory(t, bindingMarshal(t, wire))
+	var doc map[string]any
+	if err := json.Unmarshal(bound, &doc); err != nil {
+		t.Fatal(err)
+	}
+	doc["schema_version"], doc["inventory_identity"] = 6, nonlocal.Identity()
+	ids := bindingRecordIDs(nonlocal)
+	doc["pinned_route_record_identity"], doc["verification_route_record_identity"] = ids["adapter-a"], ids["adapter-b"]
+	for _, value := range doc["connections"].([]any) {
+		c := value.(map[string]any)
+		c["implementation"], c["local_structured_output"] = "openai_chat_completions", true
+	}
+	if _, err := DecodeRuntimePolicy(context.Background(), bytes.NewReader(bindingMarshal(t, doc)), nonlocal); err == nil {
+		t.Fatal("option accepted nonlocal inventory namespace")
 	}
 }

@@ -223,11 +223,15 @@ your exact server and model before approving the route. The existing local
 credential requirement remains; this transport does not add anonymous access.
 
 For an explicitly opted-in local connection, set `local_structured_output: true`
-in the protected v2 JSON policy as a JSON boolean. It is supported only with
+in an explicitly versioned protected v6 JSON policy as a JSON boolean. It is supported only with
 `openai_chat_completions`, a canonical numeric-loopback endpoint and no request
 profile. Both bearer and explicit local no-auth configurations are supported.
-Omitting the field or setting it to false preserves legacy wire bytes and
-identities. The field is not accepted in other policy versions.
+Within v6, omitting the field or setting it to false produces the same bound
+bytes and policy identity. Explicit v6 retains its own versioned identity; it
+does not migrate historical v1/v2 policies. Versions 1 through 5 reject the
+field even when false. Historical v1/v2 templates without the option still bind
+to v2 with unchanged bytes and identities. V6 is generic only: named request
+profiles and brokered, OpenCode Go or Console authorities are not accepted.
 
 When enabled, Chat also sends `response_format` with `type: json_schema`,
 `strict: true`, the fixed name `open_trestle_review` and the exact host-pinned
@@ -301,7 +305,9 @@ trestle config bind \
 Each adapter must select exactly one local record, and the adapters must differ.
 The selected pair must satisfy the template's verification independence level;
 this static check does not require live health or approval.
-The command emits one runtime-policy-v2 JSON document to stdout. It does not write
+The command emits one runtime-policy-v2 JSON document for a historical v1/v2
+template, or runtime-policy-v6 for an explicit v6 template. It never upgrades a
+historical template to v6 or adds the schema option. It does not write
 files, read credentials, contact a provider, approve routes, or change setup state.
 Save the output as a new protected file before validation. No output file is
 opened by the command, so the operator controls its path, permissions and any
@@ -310,8 +316,9 @@ replacement.
 Empty, omitted or all-zero binding identities are placeholders. Existing nonzero
 inventory, generation-pin and verifier identities must match the selected records.
 Other policy values, including constraints, independence and connections, are
-preserved. A v1 template cannot contain the v2 verifier field; a v2 template may
-omit it before binding. Null values, unknown or duplicate fields, conflicting
+preserved. A v1 template cannot contain the verifier field; v2 and v6 templates
+may omit it before binding. Only an explicit v6 template may contain
+`local_structured_output`. Null values, unknown or duplicate fields, conflicting
 bindings and ambiguous adapter selections are refused. Inputs must pass the
 protected-file checks described above. Pending routes remain pending and cannot
 be executed merely because binding and validation succeed.

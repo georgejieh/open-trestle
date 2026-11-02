@@ -65,7 +65,7 @@ func (p RuntimePolicy) Connections() []ProviderConnection {
 	return append([]ProviderConnection(nil), p.connections...)
 }
 func (p RuntimePolicy) Validate() error {
-	if (p.schemaVersion != 1 && p.schemaVersion != 2 && p.schemaVersion != 3 && p.schemaVersion != 4 && p.schemaVersion != 5) || (p.schemaVersion == 1 && p.verificationRouteRecordIdentity != "") || (p.schemaVersion >= 2 && !nonzeroDigest(p.verificationRouteRecordIdentity)) || !nonzeroDigest(p.inventoryIdentity) || !nonzeroDigest(p.reviewPolicyIdentity) || p.requirements.Validate() != nil || p.constraints.Validate() != nil || p.budget.Validate() != nil || p.ranking.Validate() != nil || p.independence.Validate() != nil || p.publication.Validate() != nil || len(p.connections) == 0 || len(p.connections) > 64 || p.identity != runtimePolicyIdentity(p) {
+	if (p.schemaVersion != 1 && p.schemaVersion != 2 && p.schemaVersion != 3 && p.schemaVersion != 4 && p.schemaVersion != 5 && p.schemaVersion != 6) || (p.schemaVersion == 1 && p.verificationRouteRecordIdentity != "") || (p.schemaVersion >= 2 && !nonzeroDigest(p.verificationRouteRecordIdentity)) || !nonzeroDigest(p.inventoryIdentity) || !nonzeroDigest(p.reviewPolicyIdentity) || p.requirements.Validate() != nil || p.constraints.Validate() != nil || p.budget.Validate() != nil || p.ranking.Validate() != nil || p.independence.Validate() != nil || p.publication.Validate() != nil || len(p.connections) == 0 || len(p.connections) > 64 || p.identity != runtimePolicyIdentity(p) {
 		return ErrInvalidRouteInventory
 	}
 	seen := map[string]struct{}{}
@@ -154,7 +154,7 @@ func validConnectionStructuredOutput(c ProviderConnection, version int) bool {
 		return true
 	}
 	locality, err := provider.ClassifyServiceEndpoint(c.endpoint)
-	return version == 2 && c.implementation == "openai_chat_completions" && c.requestProfile == "" && err == nil && locality == provider.ServiceEndpointLoopback
+	return version == 6 && c.implementation == "openai_chat_completions" && c.requestProfile == "" && err == nil && locality == provider.ServiceEndpointLoopback
 }
 
 func validConnectionCredentials(c ProviderConnection, version int) bool {
@@ -221,13 +221,19 @@ func validatePolicyCredentialFields(encoded []byte, schemaVersion int) error {
 	}
 	for _, connection := range rawConnections {
 		for key := range connection {
+			if schemaVersion == 6 {
+				switch strings.ToLower(key) {
+				case "request_profile", "brokered_route_authority", "opencode_go_authority", "opencode_console_authority":
+					return ErrInvalidRouteInventory
+				}
+			}
 			if strings.EqualFold(key, "credential_mode") && key != "credential_mode" || strings.EqualFold(key, "credential_environment") && key != "credential_environment" {
 				return ErrInvalidRouteInventory
 			}
 		}
 		for key, value := range connection {
 			if strings.EqualFold(key, "local_structured_output") {
-				if key != "local_structured_output" || schemaVersion != 2 || string(value) != "true" && string(value) != "false" {
+				if key != "local_structured_output" || schemaVersion != 6 || string(value) != "true" && string(value) != "false" {
 					return ErrInvalidRouteInventory
 				}
 			}
@@ -272,7 +278,7 @@ func DecodeRuntimePolicy(ctx context.Context, reader io.Reader, inventory RouteI
 	decoder := json.NewDecoder(bytes.NewReader(encoded))
 	decoder.DisallowUnknownFields()
 	var wire runtimePolicyWire
-	if decoder.Decode(&wire) != nil || decoder.Decode(&struct{}{}) != io.EOF || (wire.SchemaVersion != 1 && wire.SchemaVersion != 2 && wire.SchemaVersion != 3 && wire.SchemaVersion != 4 && wire.SchemaVersion != 5) || (wire.SchemaVersion == 1 && hasVerificationGrant) || (wire.SchemaVersion >= 2 && (wire.VerificationRouteRecordIdentity == nil || !nonzeroDigest(*wire.VerificationRouteRecordIdentity) || *wire.VerificationRouteRecordIdentity == wire.PinnedRouteRecordIdentity)) || wire.InventoryIdentity != inventory.Identity() || !nonzeroDigest(wire.ReviewPolicyIdentity) {
+	if decoder.Decode(&wire) != nil || decoder.Decode(&struct{}{}) != io.EOF || (wire.SchemaVersion != 1 && wire.SchemaVersion != 2 && wire.SchemaVersion != 3 && wire.SchemaVersion != 4 && wire.SchemaVersion != 5 && wire.SchemaVersion != 6) || (wire.SchemaVersion == 1 && hasVerificationGrant) || (wire.SchemaVersion >= 2 && (wire.VerificationRouteRecordIdentity == nil || !nonzeroDigest(*wire.VerificationRouteRecordIdentity) || *wire.VerificationRouteRecordIdentity == wire.PinnedRouteRecordIdentity)) || wire.InventoryIdentity != inventory.Identity() || !nonzeroDigest(wire.ReviewPolicyIdentity) {
 		return RuntimePolicy{}, ErrInvalidRouteInventory
 	}
 	if validatePolicyCredentialFields(encoded, wire.SchemaVersion) != nil || !validatePolicyProfileFields(encoded, wire.SchemaVersion) {

@@ -64,13 +64,15 @@ func bindRuntimePolicy(ctx context.Context, inventory RouteInventory, template [
 	decoder := json.NewDecoder(bytes.NewReader(template))
 	decoder.DisallowUnknownFields()
 	var wire runtimePolicyWire
-	if decoder.Decode(&wire) != nil || decoder.Decode(&struct{}{}) != io.EOF || (wire.SchemaVersion != 1 && wire.SchemaVersion != 2) || (wire.SchemaVersion == 1 && wire.VerificationRouteRecordIdentity != nil) || !bindingMatches(wire.InventoryIdentity, inventory.Identity()) || !bindingMatches(wire.PinnedRouteRecordIdentity, generationID) || wire.VerificationRouteRecordIdentity != nil && !bindingMatches(*wire.VerificationRouteRecordIdentity, verificationID) {
+	if decoder.Decode(&wire) != nil || decoder.Decode(&struct{}{}) != io.EOF || (wire.SchemaVersion != 1 && wire.SchemaVersion != 2 && wire.SchemaVersion != 6) || (wire.SchemaVersion == 1 && wire.VerificationRouteRecordIdentity != nil) || !bindingMatches(wire.InventoryIdentity, inventory.Identity()) || !bindingMatches(wire.PinnedRouteRecordIdentity, generationID) || wire.VerificationRouteRecordIdentity != nil && !bindingMatches(*wire.VerificationRouteRecordIdentity, verificationID) {
 		return nil, ErrInvalidRouteInventory
 	}
 	if validatePolicyCredentialFields(template, wire.SchemaVersion) != nil {
 		return nil, ErrInvalidRouteInventory
 	}
-	wire.SchemaVersion = 2
+	if wire.SchemaVersion != 6 {
+		wire.SchemaVersion = 2
+	}
 	wire.InventoryIdentity = inventory.Identity()
 	wire.PinnedRouteRecordIdentity = generationID
 	wire.VerificationRouteRecordIdentity = &verificationID

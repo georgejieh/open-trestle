@@ -17,6 +17,7 @@ import (
 func structuredPolicy(t *testing.T, inventory runtimeconfig.RouteInventory, enabled bool, input uint64, noAuth ...bool) runtimeconfig.RuntimePolicy {
 	t.Helper()
 	return localPairPolicy(t, inventory, true, []string{"adapter-b"}, "distinct_provider", func(doc map[string]any) {
+		doc["schema_version"] = 6
 		var connections []map[string]any
 		for _, old := range doc["connections"].([]map[string]string) {
 			c := map[string]any{}
