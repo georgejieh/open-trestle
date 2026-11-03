@@ -120,6 +120,100 @@ class LinkedLicenseTest(unittest.TestCase):
                 )
 
 
+class RootBinaryPackageTest(unittest.TestCase):
+    def _package(self, root, *, missing_digest=None, wrong_toolchain=None):
+        root_mod = b"module example.org/test\n\ngo 1.25.0\ntoolchain go1.26.10\n"
+        files = {
+            "go.mod": root_mod,
+            "workers/secret-scanner/go.mod": root_mod,
+            "workers/secret-scanner/go.sum": b"",
+            "workers/secret-scanner/launcher/launcher.c": b"launcher source",
+            "workers/secret-scanner/launcher/build.mk": b"launcher build",
+            "THIRD_PARTY_LICENSES/secret-scanner/MODULES.json": b"{}",
+            "tools/model_catalog.py": b"# catalog\n",
+            "LICENSE": b"license",
+            "NOTICE": b"notice",
+        }
+        for relative, content in files.items():
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        launcher_digest = hashlib.sha256(b"launcher").hexdigest()
+        worker_digest = hashlib.sha256(b"worker").hexdigest()
+        builds = {}
+
+        def run(arguments, **_kwargs):
+            if arguments[:2] == ["go", "build"]:
+                output = Path(arguments[arguments.index("-o") + 1])
+                builds[output.name] = arguments
+                content = next(
+                    item for item in arguments if item.startswith("-ldflags=")
+                ).encode("ascii")
+                if missing_digest and output.name == missing_digest[0]:
+                    content = content.replace(missing_digest[1].encode("ascii"), b"")
+                output.write_bytes(content)
+                return ""
+            self.assertEqual(arguments[:3], ["go", "version", "-m"])
+            name = Path(arguments[-1]).name
+            version = "go1.26.8" if name == wrong_toolchain else "go1.26.10"
+            return (
+                f"{name}: {version}\n"
+                "\tbuild\t-trimpath=true\n\tbuild\tCGO_ENABLED=0\n"
+                "\tbuild\tGOARCH=amd64\n\tbuild\tGOOS=linux\n"
+            )
+
+        # Replace compiler/toolchain work, not root build argument construction
+        # or its artifact and metadata checks.
+        with patch.multiple(
+            package_secret_scanner,
+            release_input_digests=lambda _root: {},
+            verify_launcher_build_contract=lambda _root: None,
+            provision_launcher_toolchain=lambda *_args: (root, {}, "0" * 64),
+            verify_launcher_licenses=lambda *_args: [],
+            _build_launcher=lambda _root, path, *_args: path.write_bytes(b"launcher"),
+            _build_worker=lambda _root, path, *_args: path.write_bytes(b"worker"),
+            verify_static_pie_launcher=lambda _path: None,
+            verify_linked_licenses=lambda *_args: [],
+            encode_release_evidence=lambda **_kwargs: (b"{}", b"{}"),
+            validate_staging=lambda *_args: None,
+            _run=run,
+        ):
+            package_secret_scanner.package(root, root / "staging")
+        return builds, launcher_digest, worker_digest
+
+    def test_both_root_binaries_receive_scanner_digest_linker_flags(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            builds, launcher, worker = self._package(root)
+            self.assertEqual(set(builds), {"trestle", "trestled"})
+            for name, arguments in builds.items():
+                with self.subTest(binary=name):
+                    flags = next(item for item in arguments if item.startswith("-ldflags="))
+                    self.assertIn(f"expectedSecretScannerLauncherSHA256={launcher}", flags)
+                    self.assertIn(f"expectedSecretScannerWorkerSHA256={worker}", flags)
+                    self.assertIn("-s -w -buildid=", flags)
+                    self.assertEqual(arguments[-1], f"./cmd/{name}")
+                    self.assertEqual(stat.S_IMODE((root / "staging" / name).stat().st_mode), 0o555)
+
+    def test_either_missing_scanner_digest_rejects_either_root_binary(self):
+        for name in ("trestle", "trestled"):
+            for source in (b"launcher", b"worker"):
+                with self.subTest(binary=name, scanner=source):
+                    with tempfile.TemporaryDirectory() as directory:
+                        with self.assertRaisesRegex(ValueError, f"{name} does not contain both scanner digests"):
+                            self._package(
+                                Path(directory),
+                                missing_digest=(name, hashlib.sha256(source).hexdigest()),
+                            )
+
+    def test_wrong_toolchain_rejects_either_root_binary(self):
+        for name in ("trestle", "trestled"):
+            with self.subTest(binary=name):
+                with tempfile.TemporaryDirectory() as directory:
+                    with self.assertRaisesRegex(ValueError, "root Go toolchain metadata mismatch"):
+                        self._package(Path(directory), wrong_toolchain=name)
+
+
 class PackageInventoryTest(unittest.TestCase):
     def _make_staging(self, root: Path) -> set[str]:
         files = {

@@ -926,18 +926,17 @@ def package(repository: Path, output: Path) -> None:
             f"-X github.com/georgejieh/open-trestle/internal/secretscan.expectedSecretScannerWorkerSHA256={worker_digest}"
         )
         for command, name in (("./cmd/trestle", "trestle"), ("./cmd/trestled", "trestled")):
-            flags = "-s -w -buildid=" if name == "trestle" else root_flags
             _run(
-                ["go", "build", "-trimpath", "-buildvcs=false", f"-ldflags={flags}", "-o", str(output / name), command],
+                ["go", "build", "-trimpath", "-buildvcs=false", f"-ldflags={root_flags}", "-o", str(output / name), command],
                 cwd=repository,
                 environment=root_environment,
             )
             (output / name).chmod(0o555)
-        root_build_info = _run(["go", "version", "-m", str(output / "trestled")], cwd=repository)
-        verify_root_build_info(root_build_info)
-        trestled = (output / "trestled").read_bytes()
-        if launcher_digest.encode("ascii") not in trestled or worker_digest.encode("ascii") not in trestled:
-            raise ValueError("trestled does not contain both scanner digests")
+            root_build_info = _run(["go", "version", "-m", str(output / name)], cwd=repository)
+            verify_root_build_info(root_build_info)
+            binary = (output / name).read_bytes()
+            if launcher_digest.encode("ascii") not in binary or worker_digest.encode("ascii") not in binary:
+                raise ValueError(f"{name} does not contain both scanner digests")
     validate_staging(output, _expected_staging_files(repository), expected_source_digests)
 
 
