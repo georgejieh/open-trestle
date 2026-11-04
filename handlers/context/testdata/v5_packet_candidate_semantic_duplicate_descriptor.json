@@ -1,0 +1,24 @@
+{
+  "artifact_identity": "40bbc2ff2b41923e6ed5703433f24b5c564d6e780958cd4dc21deb5d3d295160",
+  "lease_identity": "1d29ed4c94954eaef72df99c4cd8d3658ff70c42c07f6b22ca80040f02988c49",
+  "lease_event_identity": "72ae755d07b2b76b43c0e9ded7e14e8538977800e2e6bb43d71fbc15bed7f7c5",
+  "payload_digest": "235944c4d295697e602aca5280185087f87d204d59d4cee134ecc85d3ea2784f",
+  "classification": "confidential",
+  "protection": "process_private",
+  "provenance": [
+    "30ce6fdcc7252be2fa0aa834856d3f0ab54e9b2d442b90c71ce22e6c39dd919e",
+    "33a909b0a65a26e5b45b794bc3585cf5de7c404569b6fc5297f6709282d7c328",
+    "33f175ef8895bbb05762eacc5ca82a2e7a96d72774646209c3e28b603496ace9",
+    "464611347e7cf807a881c28770d713c50bc308dd0f6d30f5d9834267b2442c61",
+    "71069904c2a1723c9d3c19bbe437df4af14cad2e39208997ee9991b21c45165d",
+    "8e39ff33ecb6bbcff75985934425e69563fd854497e1efdb501b23e47b6f0be8"
+  ],
+  "source_root_identity": "8888888888888888888888888888888888888888888888888888888888888888",
+  "snapshot_identity": "f1a3b6c993b5af6eda0c213aab9d804a5634beecae1b2296b55ab6bd4c0727b1",
+  "dependency_identities": [
+    "33f175ef8895bbb05762eacc5ca82a2e7a96d72774646209c3e28b603496ace9",
+    "71069904c2a1723c9d3c19bbe437df4af14cad2e39208997ee9991b21c45165d"
+  ],
+  "created_at_milliseconds": 230,
+  "expires_at_milliseconds": 120000
+}

@@ -175,14 +175,14 @@ func TestInvestigationContextManifestSizeMatchesResolvedRouteBoundary(t *testing
 	}
 }
 
-func TestInvestigationContextV3ControlAndCanonicalV4Contract(t *testing.T) {
+func TestInvestigationContextCurrentControlAndCanonicalV4Contract(t *testing.T) {
 	f := newV4Fixture(t)
 	before, err := f.initial.ProviderRequest()
 	v4Check(t, err)
 	var current contextPacketWire
 	v4Check(t, json.Unmarshal(before.Payload(), &current))
-	if current.SchemaVersion != 3 || current.ToolCalls != "proposals_only" || current.OutputSchemaIdentity != ModelCandidateBatchSchemaIdentity {
-		t.Fatal("current v3 constructor contract changed")
+	if current.SchemaVersion != 5 || current.ToolCalls != "proposals_only" || current.OutputSchemaIdentity != ModelCandidateBatchSchemaIdentity {
+		t.Fatal("current v5 constructor contract changed")
 	}
 	v4Check(t, ValidateCandidateModelRequest(before, f.binding.Scope.Identity()))
 	v4 := v4Initial(t, f)
@@ -358,12 +358,12 @@ func TestInvestigationV4ProjectsExactCurrentVerifierV3(t *testing.T) {
 	expected.GenerationContextIdentity = final.Identity()
 	payload := v4JSON(t, expected)
 	if !bytes.Equal(projected.Payload(), payload) || projected.Identity() != v4Hash(payload) || projected.GenerationContextIdentity() != final.Identity() || projected.SnapshotIdentity() != f.expandedSnapshot.Identity() || projected.CandidateBatchIdentity() != candidates.Identity() {
-		t.Fatal("named projection changed current v3 mapping or final lineage")
+		t.Fatal("named projection changed current v5 mapping or final lineage")
 	}
 	request, err := projected.ProviderRequest()
 	v4Check(t, err)
 	v4Check(t, ValidateVerificationModelRequest(request, f.binding.Scope.Identity()))
-	if expected.SchemaVersion != 3 || expected.ToolCalls != "proposals_only" || !reflect.DeepEqual(projected.EvidenceItems(), f.expanded.EvidenceItems()) || len(expected.SourceOmissions) != 1 || expected.Sources[1].Stage != "repository_context" {
+	if expected.SchemaVersion != 5 || expected.ToolCalls != "proposals_only" || !reflect.DeepEqual(projected.EvidenceItems(), f.expanded.EvidenceItems()) || len(expected.SourceOmissions) != 1 || expected.Sources[1].Stage != "repository_context" {
 		t.Fatal("projection inflated source grades/omissions or granted verifier tools")
 	}
 	if _, err := NewInvestigationVerificationRequestContext(final, CandidateBatch{}); err == nil {

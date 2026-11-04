@@ -731,7 +731,7 @@ func ValidateContextPacketRequest(
 	return nil
 }
 
-// ValidateRecordedContextPacketRequest verifies exact v2 or v3 bytes for readback.
+// ValidateRecordedContextPacketRequest verifies exact v2, v3 or v5 bytes for readback.
 // It does not admit a legacy context for a new model attempt.
 func ValidateRecordedContextPacketRequest(
 	payload []byte,

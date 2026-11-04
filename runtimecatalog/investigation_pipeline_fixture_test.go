@@ -417,7 +417,7 @@ func (d *bridgeDispatcher) document(p bridgePacket) (map[string]any, error) {
 		return fail()
 	}
 	if p.Task == "candidate_verification" {
-		if d.adapter != "adapter-b" || p.Version != 3 || p.GenerationContext == "" || p.CandidateBatch == "" || len(ids) != 2 || len(p.Candidates) != 1 {
+		if d.adapter != "adapter-b" || p.Version != 5 || p.GenerationContext == "" || p.CandidateBatch == "" || len(ids) != 2 || len(p.Candidates) != 1 {
 			return fail()
 		}
 		return map[string]any{"schema_version": 1, "verdicts": []any{map[string]any{"candidate_id": p.Candidates[0].ID, "outcome": "verified", "severity": "high", "rationale": "The division guard is absent and the cited deployment text enables zero requests.", "evidence_ids": ids}}}, nil

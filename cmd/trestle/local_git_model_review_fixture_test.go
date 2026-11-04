@@ -196,7 +196,7 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 	}
 	var packet localModelPacket
 	request, requestErr := provider.NewRequest(provider.CapabilityReviewV1, "application/json", payload)
-	if json.Unmarshal(payload, &packet) != nil || requestErr != nil || packet.Version != 3 {
+	if json.Unmarshal(payload, &packet) != nil || requestErr != nil || packet.Version != 5 {
 		t.Error("model did not receive the actual v3 context")
 		http.Error(w, "invalid context", http.StatusBadRequest)
 		return

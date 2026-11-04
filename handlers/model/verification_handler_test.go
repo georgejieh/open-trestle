@@ -88,9 +88,14 @@ func appendSelectionEvent(t *testing.T, ledger audit.Ledger, scope audit.ReviewS
 
 func completedGenerationFixture(t *testing.T) (audit.ReviewScope, *artifact.MemoryStore, audit.Ledger, artifact.Artifact, artifact.Artifact, artifact.Artifact, GenerationResult) {
 	t.Helper()
+	return completedGenerationFixtureWithDispatch(t, successfulProviderResult(t))
+}
+
+func completedGenerationFixtureWithDispatch(t *testing.T, dispatch gateway.RouteDispatchResult) (audit.ReviewScope, *artifact.MemoryStore, audit.Ledger, artifact.Artifact, artifact.Artifact, artifact.Artifact, GenerationResult) {
+	t.Helper()
 	scope, snapshot, packet, contextArtifact, providerRequest := generationContextFixture(t)
 	authorization := generationAuthorization(t, scope, providerRequest)
-	dispatcher := &recordingDispatcher{adapterID: "test-model", result: successfulProviderResult(t)}
+	dispatcher := &recordingDispatcher{adapterID: "test-model", result: dispatch}
 	catalog, _ := gateway.NewRouteDispatcherCatalog([]gateway.RouteDispatcher{dispatcher})
 	ledger := audit.NewMemoryLedger()
 	seedRouteSelection(t, ledger, scope, authorization)

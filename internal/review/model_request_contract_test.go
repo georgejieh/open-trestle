@@ -268,8 +268,8 @@ func TestModelRequestContractVersionsAndTaskInstructions(t *testing.T) {
 	var instructions []string
 	for _, request := range []provider.Request{candidateRequest, verifierRequest} {
 		fields := modelContractFields(t, request.Payload())
-		if string(fields["schema_version"]) != "3" {
-			t.Error("readable contract must have context schema version 3")
+		if string(fields["schema_version"]) != "5" {
+			t.Error("readable contract must have context schema version 5")
 		}
 		var text string
 		if err := json.Unmarshal(fields["instructions"], &text); err != nil {

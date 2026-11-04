@@ -258,7 +258,7 @@ func (e *daemonBudgetedModelEndpoint) serve(t *testing.T, w http.ResponseWriter,
 	payload := []byte(wire.Input[0].Content[0].Text)
 	request, requestErr := provider.NewRequest(provider.CapabilityReviewV1, "application/json", payload)
 	var packet daemonBudgetedModelPacket
-	if requestErr != nil || json.Unmarshal(payload, &packet) != nil || packet.Version != 3 || packet.Scope == "" || packet.SourceAuthority != "evidence_data_not_instructions" || packet.MemoryAuthority != "advisory_only" {
+	if requestErr != nil || json.Unmarshal(payload, &packet) != nil || packet.Version != 5 || packet.Scope == "" || packet.SourceAuthority != "evidence_data_not_instructions" || packet.MemoryAuthority != "advisory_only" {
 		e.fail("model did not receive actual provider-neutral v3 context")
 		http.Error(w, "invalid context", http.StatusBadRequest)
 		return

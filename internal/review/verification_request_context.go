@@ -75,11 +75,9 @@ func ReconstructRecordedVerificationRequestContext(
 		Sources: generationWire.Sources, SourceOmissions: generationWire.SourceOmissions, Memory: generationWire.Memory, AdditionalMemory: generationWire.AdditionalMemory,
 		Candidates: verificationCandidateWireValues(candidates),
 	}
-	if wire.SchemaVersion == modelContextVersion {
-		wire.Instructions, wire.OutputSchema, err = modelOutputContract(true)
-		if err != nil {
-			return VerificationRequestContext{}, err
-		}
+	wire.Instructions, wire.OutputSchema, err = modelOutputContractForVersion(wire.SchemaVersion, true)
+	if err != nil {
+		return VerificationRequestContext{}, err
 	}
 	payload, err := json.Marshal(wire)
 	if err != nil || len(payload) == 0 || len(payload) > maxProviderContextPacketBytes {
@@ -287,7 +285,7 @@ func decodeVerificationContextWire(payload []byte) (verificationContextWire, err
 		return verificationContextWire{}, ErrInvalidVerificationRequestContext
 	}
 	canonical, err := json.Marshal(wire)
-	if err != nil || !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/verification-context-packet" || (wire.SchemaVersion != 2 && wire.SchemaVersion != modelContextVersion) {
+	if err != nil || !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/verification-context-packet" || (wire.SchemaVersion != 2 && wire.SchemaVersion != 3 && wire.SchemaVersion != modelContextVersion) {
 		return verificationContextWire{}, ErrInvalidVerificationRequestContext
 	}
 	return wire, nil

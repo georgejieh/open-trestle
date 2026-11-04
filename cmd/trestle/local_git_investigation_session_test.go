@@ -197,7 +197,7 @@ func requireInvestigationSessionReceipt(t *testing.T, prepared runtimecatalog.Pr
 		}
 	}
 	verifier := captures[4]
-	if verifier.packet.Task != "candidate_verification" || verifier.packet.Version != 3 || receipt.GenerationRequest != captures[3].request || receipt.VerificationRequest == verifier.request || receipt.Context != verifier.packet.GenerationContext || receipt.CandidateBatch != verifier.packet.CandidateBatch || len(verifier.packet.Candidates) != 1 || len(receipt.CandidateIDs) != 1 || receipt.CandidateIDs[0] != verifier.packet.Candidates[0].ID {
+	if verifier.packet.Task != "candidate_verification" || verifier.packet.Version != 5 || receipt.GenerationRequest != captures[3].request || receipt.VerificationRequest == verifier.request || receipt.Context != verifier.packet.GenerationContext || receipt.CandidateBatch != verifier.packet.CandidateBatch || len(verifier.packet.Candidates) != 1 || len(receipt.CandidateIDs) != 1 || receipt.CandidateIDs[0] != verifier.packet.Candidates[0].ID {
 		t.Fatal("final result is disconnected from actual final generation and verifier")
 	}
 	if receipt.Independence != "distinct_provider" || receipt.GenerationRoute == receipt.VerificationRoute || receipt.Diagnostics.Coverage.VerifiedCount != 1 || len(receipt.Diagnostics.Findings) != 1 {

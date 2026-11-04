@@ -184,7 +184,7 @@ func TestOldCodePacketCandidateSemanticDuplicate(t *testing.T) {
 	if err := json.Unmarshal(value.Payload(), &packet); err != nil {
 		t.Fatal(err)
 	}
-	if packet.SchemaVersion != 3 || packet.Coverage.Analyzed != 3 || packet.Coverage.PreselectionOmitted != 1 || packet.Coverage.Available != 2 || packet.Coverage.Selected != 2 || packet.Coverage.Omitted != 1 || len(packet.Omissions) != 1 {
+	if packet.SchemaVersion != 5 || packet.Coverage.Analyzed != 3 || packet.Coverage.PreselectionOmitted != 1 || packet.Coverage.Available != 2 || packet.Coverage.Selected != 2 || packet.Coverage.Omitted != 1 || len(packet.Omissions) != 1 {
 		t.Fatalf("STOP: coverage/omission changed: %+v", packet)
 	}
 	omission := packet.Omissions[0]
@@ -287,7 +287,7 @@ func TestOldCodePacketCandidateSemanticDuplicate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	goldenPaths := map[string][]byte{"testdata/old_packet_candidate_semantic_duplicate_envelope.json": encoded, "testdata/old_packet_candidate_semantic_duplicate_descriptor.json": append(descriptorBytes, '\n')}
+	goldenPaths := map[string][]byte{"testdata/v5_packet_candidate_semantic_duplicate_envelope.json": encoded, "testdata/v5_packet_candidate_semantic_duplicate_descriptor.json": append(descriptorBytes, '\n')}
 	for path, actual := range goldenPaths {
 		expected, err := os.ReadFile(path)
 		if err != nil {
@@ -298,7 +298,7 @@ func TestOldCodePacketCandidateSemanticDuplicate(t *testing.T) {
 		}
 	}
 	var fixed controlplane.ContextPacketDescriptor
-	expectedDescriptor, err := os.ReadFile("testdata/old_packet_candidate_semantic_duplicate_descriptor.json")
+	expectedDescriptor, err := os.ReadFile("testdata/v5_packet_candidate_semantic_duplicate_descriptor.json")
 	if err != nil {
 		t.Fatal(err)
 	}

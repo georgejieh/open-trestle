@@ -200,7 +200,7 @@ func TestGenerationRouteFactoryBudgetsFullReadableRequest(t *testing.T) {
 			schemaPair := append([]byte(`"output_schema":`), fields["output_schema"]...)
 			legacy := bytes.Replace(rawPayload, append(instructionPair, ','), nil, 1)
 			legacy = bytes.Replace(legacy, append(schemaPair, ','), nil, 1)
-			legacy = bytes.Replace(legacy, []byte(`"schema_version":3`), []byte(`"schema_version":2`), 1)
+			legacy = bytes.Replace(legacy, []byte(`"schema_version":5`), []byte(`"schema_version":2`), 1)
 			duplicate := append([]byte{'{'}, instructionPair...)
 			duplicate = append(append(duplicate, ','), rawPayload[1:]...)
 			for name, payload := range map[string][]byte{

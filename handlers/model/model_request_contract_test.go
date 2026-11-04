@@ -61,7 +61,7 @@ func requireDispatchedContract(t *testing.T, request provider.Request, schemaIde
 	if err := json.Unmarshal(payload, &wire); err != nil {
 		t.Fatal(err)
 	}
-	if wire.Version != 3 || wire.Instructions == "" || wire.Schema == nil || wire.SchemaIdentity != schemaIdentity {
+	if wire.Version != 5 || wire.Instructions == "" || wire.Schema == nil || wire.SchemaIdentity != schemaIdentity {
 		t.Error("dispatched request lacks the current readable output contract")
 	}
 	rebuilt, err := provider.NewRequest(request.Capability(), request.MediaType(), request.Payload())

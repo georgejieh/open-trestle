@@ -100,7 +100,7 @@ func (e *investigationEndpoint) serve(t *testing.T, w http.ResponseWriter, r *ht
 	e.mu.Unlock()
 	var output any
 	if p.Task == "candidate_verification" {
-		if wire.Model != "model-b" || p.Version != 3 || len(p.Candidates) != 1 || p.GenerationContext == "" {
+		if wire.Model != "model-b" || p.Version != 5 || len(p.Candidates) != 1 || p.GenerationContext == "" {
 			t.Error("independent verifier lost candidate lineage")
 		}
 		ids := []string{}
