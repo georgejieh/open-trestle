@@ -51,12 +51,14 @@ func (e Entry) HeadDigest() string        { return e.headDigest }
 func (e Entry) HeadSizeBytes() int        { return e.headSize }
 
 type Result struct {
+	schemaVersion                                                                                                                                                                                                                                                                       int
 	identity, artifactIdentity, scopeIdentity, baseSnapshotArtifact, headSnapshotArtifact, baseSnapshotIdentity, headSnapshotIdentity, repositoryIdentity, baseRevisionIdentity, headRevisionIdentity, sourceAdapterIdentity, baseManifestIdentity, headManifestIdentity, deltaIdentity string
 	repository                                                                                                                                                                                                                                                                          evidence.RepositoryIdentity
 	baseRevision, headRevision                                                                                                                                                                                                                                                          evidence.RevisionIdentity
 	entries                                                                                                                                                                                                                                                                             []Entry
 }
 
+func (r Result) SchemaVersion() int                      { return r.schemaVersion }
 func (r Result) Identity() string                        { return r.identity }
 func (r Result) ArtifactIdentity() string                { return r.artifactIdentity }
 func (r Result) ScopeIdentity() string                   { return r.scopeIdentity }
@@ -129,6 +131,7 @@ func NewResult(baseArtifact, headArtifact artifact.Artifact, baseSnapshot, headS
 	if baseArtifact.Validate() != nil || headArtifact.Validate() != nil || baseSnapshot.ArtifactIdentity() != baseArtifact.Identity() || headSnapshot.ArtifactIdentity() != headArtifact.Identity() || repository.Identity() != baseSnapshot.RepositoryIdentity() || repository.Identity() != headSnapshot.RepositoryIdentity() || baseRevision.Identity() != baseSnapshot.RevisionIdentity() || headRevision.Identity() != headSnapshot.RevisionIdentity() || baseSnapshot.SourceAdapterIdentity() != headSnapshot.SourceAdapterIdentity() || delta.BaseManifestIdentity() != baseSnapshot.ManifestIdentity() || delta.HeadManifestIdentity() != headSnapshot.ManifestIdentity() || len(executions) != len(delta.Entries()) || len(executions) > MaxChangedEntries {
 		return Result{}, ErrInvalidResult
 	}
+	schemaVersion := 1
 	entries := make([]Entry, len(executions))
 	deltaEntries := delta.Entries()
 	seenExtraRanges := 0
@@ -153,6 +156,12 @@ func NewResult(baseArtifact, headArtifact artifact.Artifact, baseSnapshot, headS
 			lineMap := execution.LineMap()
 			value.fileChangeIdentity, value.lineMapIdentity = change.Identity(), lineMap.Identity()
 			ranges = change.ChangedRanges()
+			// Version 2 distinguishes review-slice availability from supported diff execution.
+			if entry.Kind() == evidence.RepositoryFileDeltaModified && len(ranges) == 0 {
+				schemaVersion = 2
+				value.status, value.reason = "unsupported", "no_changed_head_lines"
+				value.fileChangeIdentity, value.lineMapIdentity = "", ""
+			}
 		}
 		for _, sourceRange := range ranges {
 			if sourceRange.Path() != entry.Path() {
@@ -165,7 +174,7 @@ func NewResult(baseArtifact, headArtifact artifact.Artifact, baseSnapshot, headS
 	if seenExtraRanges != len(extraRanges) {
 		return Result{}, ErrInvalidResult
 	}
-	result := Result{baseSnapshotArtifact: baseArtifact.Identity(), headSnapshotArtifact: headArtifact.Identity(), baseSnapshotIdentity: baseSnapshot.Identity(), headSnapshotIdentity: headSnapshot.Identity(), repository: repository, repositoryIdentity: repository.Identity(), baseRevision: baseRevision, headRevision: headRevision, baseRevisionIdentity: baseRevision.Identity(), headRevisionIdentity: headRevision.Identity(), sourceAdapterIdentity: baseSnapshot.SourceAdapterIdentity(), baseManifestIdentity: baseSnapshot.ManifestIdentity(), headManifestIdentity: headSnapshot.ManifestIdentity(), deltaIdentity: delta.Identity(), entries: entries}
+	result := Result{schemaVersion: schemaVersion, baseSnapshotArtifact: baseArtifact.Identity(), headSnapshotArtifact: headArtifact.Identity(), baseSnapshotIdentity: baseSnapshot.Identity(), headSnapshotIdentity: headSnapshot.Identity(), repository: repository, repositoryIdentity: repository.Identity(), baseRevision: baseRevision, headRevision: headRevision, baseRevisionIdentity: baseRevision.Identity(), headRevisionIdentity: headRevision.Identity(), sourceAdapterIdentity: baseSnapshot.SourceAdapterIdentity(), baseManifestIdentity: baseSnapshot.ManifestIdentity(), headManifestIdentity: headSnapshot.ManifestIdentity(), deltaIdentity: delta.Identity(), entries: entries}
 	result.identity = deriveIdentity(result)
 	if result.validate(false) != nil {
 		return Result{}, ErrInvalidResult
@@ -173,12 +182,12 @@ func NewResult(baseArtifact, headArtifact artifact.Artifact, baseSnapshot, headS
 	return result, nil
 }
 func (r Result) validate(requireArtifact bool) error {
-	if r.repository.Identity() != r.repositoryIdentity || r.baseRevision.Identity() != r.baseRevisionIdentity || r.headRevision.Identity() != r.headRevisionIdentity || r.baseRevisionIdentity == r.headRevisionIdentity || !validDigest(r.baseSnapshotArtifact) || !validDigest(r.headSnapshotArtifact) || !validDigest(r.baseSnapshotIdentity) || !validDigest(r.headSnapshotIdentity) || !validDigest(r.sourceAdapterIdentity) || !validDigest(r.baseManifestIdentity) || !validDigest(r.headManifestIdentity) || !validDigest(r.deltaIdentity) || len(r.entries) > MaxChangedEntries || requireArtifact && (!validDigest(r.artifactIdentity) || !validDigest(r.scopeIdentity)) {
+	if (r.schemaVersion != 1 && r.schemaVersion != 2) || r.repository.Identity() != r.repositoryIdentity || r.baseRevision.Identity() != r.baseRevisionIdentity || r.headRevision.Identity() != r.headRevisionIdentity || r.baseRevisionIdentity == r.headRevisionIdentity || !validDigest(r.baseSnapshotArtifact) || !validDigest(r.headSnapshotArtifact) || !validDigest(r.baseSnapshotIdentity) || !validDigest(r.headSnapshotIdentity) || !validDigest(r.sourceAdapterIdentity) || !validDigest(r.baseManifestIdentity) || !validDigest(r.headManifestIdentity) || !validDigest(r.deltaIdentity) || len(r.entries) > MaxChangedEntries || requireArtifact && (!validDigest(r.artifactIdentity) || !validDigest(r.scopeIdentity)) {
 		return ErrInvalidResult
 	}
 	previous := ""
 	for _, entry := range r.entries {
-		if entry.path <= previous || !validEntry(entry) {
+		if entry.path <= previous || !validEntry(entry, r.schemaVersion) {
 			return ErrInvalidResult
 		}
 		previous = entry.path
@@ -188,7 +197,7 @@ func (r Result) validate(requireArtifact bool) error {
 	}
 	return nil
 }
-func validEntry(e Entry) bool {
+func validEntry(e Entry, schemaVersion int) bool {
 	if _, err := evidence.NewSourceRange(e.path, 1, 1); err != nil {
 		return false
 	}
@@ -211,7 +220,7 @@ func validEntry(e Entry) bool {
 		if e.fileChangeIdentity != "" || e.lineMapIdentity != "" {
 			return false
 		}
-		validReason := e.reason == "resource_limit" || e.kind == "added" && (e.reason == "added_file" || e.reason == "unsupported_content") || e.kind == "removed" && e.reason == "removed_file" || e.kind == "modified" && e.reason == "unsupported_content"
+		validReason := e.reason == "resource_limit" || e.kind == "added" && (e.reason == "added_file" || e.reason == "unsupported_content") || e.kind == "removed" && e.reason == "removed_file" || e.kind == "modified" && (e.reason == "unsupported_content" || schemaVersion == 2 && e.reason == "no_changed_head_lines")
 		if !validReason || e.kind != "added" && len(e.ranges) != 0 {
 			return false
 		}
@@ -255,7 +264,7 @@ func ResultArtifactReferences(value artifact.Artifact) (string, string, error) {
 		return "", "", ErrInvalidResult
 	}
 	canonical, _ := json.Marshal(wire)
-	if !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/change-model-result" || wire.SchemaVersion != 1 || !validDigest(wire.BaseSnapshotArtifact) || !validDigest(wire.HeadSnapshotArtifact) || wire.BaseSnapshotArtifact == wire.HeadSnapshotArtifact {
+	if !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/change-model-result" || (wire.SchemaVersion != 1 && wire.SchemaVersion != 2) || !validDigest(wire.BaseSnapshotArtifact) || !validDigest(wire.HeadSnapshotArtifact) || wire.BaseSnapshotArtifact == wire.HeadSnapshotArtifact {
 		return "", "", ErrInvalidResult
 	}
 	return wire.BaseSnapshotArtifact, wire.HeadSnapshotArtifact, nil
@@ -290,7 +299,7 @@ func ParseResultArtifactWithSnapshots(value artifact.Artifact, baseSnapshot, hea
 		return Result{}, ErrInvalidResult
 	}
 	canonical, _ := json.Marshal(wire)
-	if !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/change-model-result" || wire.SchemaVersion != 1 {
+	if !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/change-model-result" || (wire.SchemaVersion != 1 && wire.SchemaVersion != 2) {
 		return Result{}, ErrInvalidResult
 	}
 	repository, err := evidence.NewRepositoryIdentity(wire.RepositoryAuthority, wire.RepositoryNamespace, wire.RepositoryName)
@@ -322,7 +331,7 @@ func toWire(r Result) resultWire {
 		}
 		entries[i] = entryWire{e.path, e.kind, e.deltaIdentity, e.baseIdentity, e.baseDigest, e.baseSize, e.headIdentity, e.headDigest, e.headSize, e.status, e.reason, e.executionIdentity, e.fileChangeIdentity, e.lineMapIdentity, ranges}
 	}
-	return resultWire{"open-trestle/change-model-result", 1, r.identity, r.baseSnapshotArtifact, r.headSnapshotArtifact, r.baseSnapshotIdentity, r.headSnapshotIdentity, r.repository.Authority(), r.repository.Namespace(), r.repository.Name(), r.repositoryIdentity, r.baseRevision.Kind(), r.baseRevision.Algorithm(), r.baseRevision.Digest(), r.baseRevisionIdentity, r.headRevision.Kind(), r.headRevision.Algorithm(), r.headRevision.Digest(), r.headRevisionIdentity, r.sourceAdapterIdentity, r.baseManifestIdentity, r.headManifestIdentity, r.deltaIdentity, entries}
+	return resultWire{"open-trestle/change-model-result", r.schemaVersion, r.identity, r.baseSnapshotArtifact, r.headSnapshotArtifact, r.baseSnapshotIdentity, r.headSnapshotIdentity, r.repository.Authority(), r.repository.Namespace(), r.repository.Name(), r.repositoryIdentity, r.baseRevision.Kind(), r.baseRevision.Algorithm(), r.baseRevision.Digest(), r.baseRevisionIdentity, r.headRevision.Kind(), r.headRevision.Algorithm(), r.headRevision.Digest(), r.headRevisionIdentity, r.sourceAdapterIdentity, r.baseManifestIdentity, r.headManifestIdentity, r.deltaIdentity, entries}
 }
 func fromWire(w resultWire, repository evidence.RepositoryIdentity, base, head evidence.RevisionIdentity) Result {
 	entries := make([]Entry, len(w.Entries))
@@ -333,7 +342,7 @@ func fromWire(w resultWire, repository evidence.RepositoryIdentity, base, head e
 		}
 		entries[i] = Entry{e.Path, e.Kind, e.DeltaIdentity, e.Status, e.Reason, e.ExecutionIdentity, e.FileChangeIdentity, e.LineMapIdentity, e.BaseIdentity, e.BaseDigest, e.BaseSize, e.HeadIdentity, e.HeadDigest, e.HeadSize, ranges}
 	}
-	return Result{identity: w.Identity, baseSnapshotArtifact: w.BaseSnapshotArtifact, headSnapshotArtifact: w.HeadSnapshotArtifact, baseSnapshotIdentity: w.BaseSnapshotIdentity, headSnapshotIdentity: w.HeadSnapshotIdentity, repository: repository, repositoryIdentity: w.RepositoryIdentity, baseRevision: base, headRevision: head, baseRevisionIdentity: w.BaseRevisionIdentity, headRevisionIdentity: w.HeadRevisionIdentity, sourceAdapterIdentity: w.SourceAdapterIdentity, baseManifestIdentity: w.BaseManifestIdentity, headManifestIdentity: w.HeadManifestIdentity, deltaIdentity: w.DeltaIdentity, entries: entries}
+	return Result{identity: w.Identity, schemaVersion: w.SchemaVersion, baseSnapshotArtifact: w.BaseSnapshotArtifact, headSnapshotArtifact: w.HeadSnapshotArtifact, baseSnapshotIdentity: w.BaseSnapshotIdentity, headSnapshotIdentity: w.HeadSnapshotIdentity, repository: repository, repositoryIdentity: w.RepositoryIdentity, baseRevision: base, headRevision: head, baseRevisionIdentity: w.BaseRevisionIdentity, headRevisionIdentity: w.HeadRevisionIdentity, sourceAdapterIdentity: w.SourceAdapterIdentity, baseManifestIdentity: w.BaseManifestIdentity, headManifestIdentity: w.HeadManifestIdentity, deltaIdentity: w.DeltaIdentity, entries: entries}
 }
 func deriveIdentity(r Result) string {
 	wire := toWire(r)

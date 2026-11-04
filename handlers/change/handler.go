@@ -60,7 +60,7 @@ func deriveHandlerIdentity() string {
 	encoded, _ := json.Marshal(struct {
 		Contract      string `json:"contract"`
 		SchemaVersion int    `json:"schema_version"`
-	}{"open-trestle/change-model-handler", 2})
+	}{"open-trestle/change-model-handler", 3})
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }

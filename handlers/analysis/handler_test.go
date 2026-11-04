@@ -237,3 +237,119 @@ func TestDiagnosticWriteFailureClassifiesDiagnosticStoreCapacity(t *testing.T) {
 		t.Fatalf("diagnostic store capacity mapped to %s", got)
 	}
 }
+
+func TestHandlerKeepsNoChangedHeadLinesGap(t *testing.T) {
+	for _, after := range []string{"keep\n", ""} {
+		t.Run(after, func(t *testing.T) {
+			output, change, base, head := deletionAnalysisFixture(t, map[string][]byte{"a.txt": []byte("guard\nkeep\n")}, map[string][]byte{"a.txt": []byte(after)})
+			result, err := ParseResultArtifact(output, change, base, head)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.SchemaVersion() != 5 || len(result.Items()) != 0 || len(result.Observations()) != 0 || len(result.Gaps()) != 1 {
+				t.Fatalf("invalid deletion analysis: %#v", result)
+			}
+			gap := result.Gaps()[0]
+			if gap.Path() != "a.txt" || gap.Reason() != "no_changed_head_lines" || gap.StartLine() != 0 || gap.EndLine() != 0 {
+				t.Fatalf("gap=%#v", gap)
+			}
+			check := result.Checks()[0]
+			if check.State() != CheckNotApplicable || check.ApplicableFiles() != 0 || check.ApplicableRanges() != 0 || check.CheckedRanges() != 0 {
+				t.Fatalf("deletion was counted as checked: %#v", check)
+			}
+			if result.SemanticImpact().Identity() == "" || len(result.SemanticImpact().Gaps()) != 1 || result.SemanticImpact().Gaps()[0].Path() != "a.txt" {
+				t.Fatal("deletion path was lost from semantic profiling")
+			}
+		})
+	}
+}
+
+func TestHandlerKeepsV5MixedObservations(t *testing.T) {
+	output, change, base, head := deletionAnalysisFixture(t,
+		map[string][]byte{"a.txt": []byte("guard\nkeep\n")},
+		map[string][]byte{"a.txt": []byte("keep\n"), "gate.go": []byte("package gate\nimport \"fmt\"\nfunc run() { fmt.Println(\"debug\") }\n")})
+	result, err := ParseResultArtifact(output, change, base, head)
+	if err != nil || result.SchemaVersion() != 5 || len(result.Gaps()) != 1 || len(result.Observations()) != 1 || result.Observations()[0].Path() != "gate.go" || len(result.Items()) != 1 {
+		t.Fatalf("mixed v5 result=%#v err=%v", result, err)
+	}
+}
+
+func deletionAnalysisFixture(t *testing.T, baseFiles, headFiles map[string][]byte) (artifact.Artifact, artifact.Artifact, artifact.Artifact, artifact.Artifact) {
+	t.Helper()
+	repository, _ := evidence.NewRepositoryIdentity("github.com", []string{"owner"}, "repo")
+	baseRevision, _ := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithmSHA1, strings.Repeat("1", 40))
+	headRevision, _ := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithmSHA1, strings.Repeat("2", 40))
+	adapterIdentity, _ := evidence.NewSourceAdapterIdentity(evidence.SourceAdapterKindGit, "test-source", "1.0.0", []evidence.SourceAdapterCapability{evidence.SourceCapabilityReadManifest, evidence.SourceCapabilityReadContent})
+	adapter := &testSource{identity: adapterIdentity, results: map[string]scm.SourceAdapterResult{
+		baseRevision.Identity(): makeSourceResult(t, baseFiles),
+		headRevision.Identity(): makeSourceResult(t, headFiles),
+	}}
+	store, _ := artifact.NewMemoryStore(artifact.ProtectionProcessPrivate, 100)
+	scope, _ := audit.NewReviewScope("tenant", "repository", "multiline")
+	baseInput, _ := sourcehandler.NewInput(repository, baseRevision, adapterIdentity)
+	headInput, _ := sourcehandler.NewInput(repository, headRevision, adapterIdentity)
+	baseArtifact, _ := sourcehandler.NewInputArtifact(scope, baseInput, artifact.ClassificationConfidential, artifact.ProtectionProcessPrivate, []string{strings.Repeat("a", 64)}, time.UnixMilli(50), time.UnixMilli(10000))
+	headArtifact, _ := sourcehandler.NewInputArtifact(scope, headInput, artifact.ClassificationConfidential, artifact.ProtectionProcessPrivate, []string{strings.Repeat("b", 64)}, time.UnixMilli(50), time.UnixMilli(10000))
+	_, _ = store.Put(context.Background(), baseArtifact, time.UnixMilli(50))
+	_, _ = store.Put(context.Background(), headArtifact, time.UnixMilli(50))
+	sourceTaskHandler, _ := sourcehandler.NewHandler(store, adapter, testClock{time.UnixMilli(200)})
+	changeTaskHandler, _ := changehandler.NewHandler(store, testClock{time.UnixMilli(210)})
+	analysisTaskHandler, _ := NewHandlerWithDiagnostics(store, diagnostics.NewMemoryStore(), testClock{time.UnixMilli(220)})
+	baseTask, _ := controlplane.NewTaskDefinition("source-base", controlplane.TaskAcquireSource, baseArtifact.Identity(), sourceTaskHandler.HandlerIdentity(), nil, 1, 1000, 30000, true)
+	headTask, _ := controlplane.NewTaskDefinition("source-head", controlplane.TaskAcquireSource, headArtifact.Identity(), sourceTaskHandler.HandlerIdentity(), nil, 1, 1000, 30000, true)
+	changeTask, _ := controlplane.NewTaskDefinition("change", controlplane.TaskBuildChange, strings.Repeat("c", 64), changeTaskHandler.HandlerIdentity(), []string{"source-base", "source-head"}, 1, 1000, 30000, true)
+	analysisTask, _ := controlplane.NewTaskDefinition("analysis", controlplane.TaskInspectDeterministic, strings.Repeat("d", 64), analysisTaskHandler.HandlerIdentity(), []string{"change"}, 1, 1000, 30000, true)
+	plan, err := controlplane.NewReviewRunPlan(scope, strings.Repeat("e", 64), strings.Repeat("f", 64), controlplane.ReviewRunAdvisory, []controlplane.TaskDefinition{baseTask, headTask, changeTask, analysisTask})
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator, _ := controlplane.NewCoordinator(controlplane.NewMemoryRunJournal())
+	_, _ = coordinator.Open(context.Background(), plan, time.UnixMilli(100))
+	execute := func(task controlplane.TaskDefinition, handler controlplane.TaskHandler, at time.Time) string {
+		state, err := coordinator.Advance(context.Background(), plan, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lease, acquired, err := coordinator.ClaimTask(context.Background(), plan, task.Key(), task.HandlerIdentity(), "worker", at)
+		if err != nil || !acquired {
+			t.Fatalf("claim %s=(%v,%v)", task.Key(), acquired, err)
+		}
+		dependencies, err := controlplane.TaskDependencyOutputsFromState(state, task)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request, err := controlplane.NewTaskExecutionRequestWithDependencies(plan, task, lease, dependencies)
+		if err != nil {
+			t.Fatal(err)
+		}
+		completion := handler.Execute(context.Background(), request)
+		if completion.Status() != controlplane.TaskCompletionSucceeded {
+			t.Fatalf("%s completion status=%s failure=%s, want succeeded", task.Key(), completion.Status(), completion.Failure())
+		}
+		if _, err := coordinator.CompleteTask(context.Background(), plan, lease, completion, at.Add(time.Millisecond)); err != nil {
+			t.Fatal(err)
+		}
+		return completion.OutputIdentity()
+	}
+	baseOutputID := execute(baseTask, sourceTaskHandler, time.UnixMilli(101))
+	headOutputID := execute(headTask, sourceTaskHandler, time.UnixMilli(103))
+	changeOutputID := execute(changeTask, changeTaskHandler, time.UnixMilli(105))
+	analysisOutputID := execute(analysisTask, analysisTaskHandler, time.UnixMilli(107))
+	analysisOutput, _ := store.Get(context.Background(), scope, analysisOutputID, time.UnixMilli(221))
+	changeOutput, _ := store.Get(context.Background(), scope, changeOutputID, time.UnixMilli(221))
+	baseOutput, _ := store.Get(context.Background(), scope, baseOutputID, time.UnixMilli(221))
+	headOutput, _ := store.Get(context.Background(), scope, headOutputID, time.UnixMilli(221))
+	return analysisOutput, changeOutput, baseOutput, headOutput
+}
+
+func TestNoChangedHeadLinesGapSurvivesEvidenceLimit(t *testing.T) {
+	_, change, base, head := deletionAnalysisFixture(t, map[string][]byte{"a.txt": []byte("guard\nkeep\n")}, map[string][]byte{"a.txt": []byte("keep\n")})
+	result, err := changehandler.ParseResultArtifact(change, base, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gap, ok := wholeEntryGap(result.Entries()[0], true)
+	if !ok || gap.Reason() != "no_changed_head_lines" || gap.StartLine() != 0 || gap.EndLine() != 0 {
+		t.Fatalf("mandatory deletion gap replaced at evidence limit: %#v, %v", gap, ok)
+	}
+}

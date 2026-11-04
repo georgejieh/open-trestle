@@ -159,7 +159,7 @@ func contextSourceOmissionCategory(reason string) (ContextSourceOmissionCategory
 		return ContextOmissionAuthorization, nil
 	case "candidate_limit", "source_size_limit", "analysis_resource_limit", "analysis_slice_resource_limit", "analysis_evidence_limit", "semantic_limit_exceeded", "semantic_candidate_limit", "semantic_source_size_limit", "packet_budget":
 		return ContextOmissionResourceLimit, nil
-	case "analysis_removed_file", "analysis_unsupported_content", "analysis_empty_added_file", "semantic_unsupported_language", "unsupported_language":
+	case "analysis_removed_file", "analysis_unsupported_content", "analysis_empty_added_file", "analysis_no_changed_head_lines", "semantic_unsupported_language", "unsupported_language":
 		return ContextOmissionUnsupported, nil
 	case "semantic_parse_failure", "semantic_source_unavailable":
 		return ContextOmissionAnalysisFailure, nil

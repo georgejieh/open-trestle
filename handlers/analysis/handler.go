@@ -82,10 +82,27 @@ func deriveHandlerIdentity(projectDiagnostics bool) string {
 		Contract             string `json:"contract"`
 		SchemaVersion        int    `json:"schema_version"`
 		DiagnosticProjection bool   `json:"diagnostic_projection"`
-	}{"open-trestle/deterministic-evidence-handler", 4, projectDiagnostics})
+	}{"open-trestle/deterministic-evidence-handler", 5, projectDiagnostics})
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }
+func wholeEntryGap(entry changehandler.Entry, evidenceLimit bool) (Gap, bool) {
+	if len(entry.Ranges()) == 0 && entry.Reason() == "no_changed_head_lines" {
+		return analysiscodec.NewGap(entry, 0, 0, entry.Reason()), true
+	}
+	if evidenceLimit {
+		return analysiscodec.NewGap(entry, 0, 0, "evidence_limit"), true
+	}
+	if len(entry.Ranges()) == 0 {
+		reason := entry.Reason()
+		if entry.Kind() == "added" {
+			reason = "empty_added_file"
+		}
+		return analysiscodec.NewGap(entry, 0, 0, reason), true
+	}
+	return Gap{}, false
+}
+
 func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutionRequest) controlplane.TaskCompletion {
 	if nilInterface(ctx) || h.Validate() != nil || request.Validate() != nil || request.Task().Kind() != controlplane.TaskInspectDeterministic || request.Task().HandlerIdentity() != h.identity || !equalStrings(request.Task().Dependencies(), []string{"change"}) {
 		return failure(controlplane.RunFailureInvalidInput)
@@ -158,16 +175,8 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 			applicableFiles++
 			applicableRanges += uint32(len(ranges))
 		}
-		if evidenceLimit {
-			gaps = append(gaps, analysiscodec.NewGap(entry, 0, 0, "evidence_limit"))
-			continue
-		}
-		if len(ranges) == 0 {
-			reason := entry.Reason()
-			if entry.Kind() == "added" {
-				reason = "empty_added_file"
-			}
-			gaps = append(gaps, analysiscodec.NewGap(entry, 0, 0, reason))
+		if gap, ok := wholeEntryGap(entry, evidenceLimit); ok {
+			gaps = append(gaps, gap)
 			continue
 		}
 		reference, ok := references[entry.Path()]

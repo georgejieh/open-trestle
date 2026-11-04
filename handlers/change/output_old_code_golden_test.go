@@ -40,7 +40,7 @@ func realChangeFixture(t *testing.T) (artifact.Artifact, artifact.Artifact, arti
 	_, _ = store.Put(context.Background(), headArtifact, time.UnixMilli(50))
 	sourceHandler, _ := sourcehandler.NewHandler(store, adapter, fixedClock{time.UnixMilli(200)})
 	changeHandler, _ := NewHandler(store, fixedClock{time.UnixMilli(210)})
-	if changeHandler.HandlerIdentity() != "1a574001085da1114defaf7d093fb91bb05abd684e40d3fc05cd2c20fdd0482d" {
+	if changeHandler.HandlerIdentity() != "af559535868494caf3a8e78d0df23ebda6f7c186caa06c57b3a9dac7ee78b276" {
 		t.Fatalf("handler identity=%s", changeHandler.HandlerIdentity())
 	}
 	baseTask, _ := controlplane.NewTaskDefinition("source-base", controlplane.TaskAcquireSource, baseArtifact.Identity(), sourceHandler.HandlerIdentity(), nil, 1, 1000, 30000, true)
@@ -245,7 +245,7 @@ func TestOldCodeChangeNegativeControls(t *testing.T) {
 	requireRejected("trailing whitespace", rewrap(append(append([]byte(nil), payload...), ' '), output.Provenance()), base, head, false)
 	requireRejected("trailing value", rewrap(append(append([]byte(nil), payload...), []byte(`{}`)...), output.Provenance()), base, head, false)
 	requireRejected("wrong contract", rewrap(replaceOnce(t, payload, []byte(`open-trestle/change-model-result`), []byte(`open-trestle/other-result`)), output.Provenance()), base, head, false)
-	requireRejected("wrong schema", rewrap(replaceOnce(t, payload, []byte(`"schema_version":1`), []byte(`"schema_version":2`)), output.Provenance()), base, head, false)
+	requireRejected("wrong schema", rewrap(replaceOnce(t, payload, []byte(`"schema_version":1`), []byte(`"schema_version":3`)), output.Provenance()), base, head, false)
 	identityField := []byte(`"identity":"` + "4c765836bb0d985a6a99596a3e8b3ef37083fe88cf1458f54717b34c3d471884" + `"`)
 	bogusIdentity := replaceOnce(t, payload, identityField, []byte(`"identity":"`+strings.Repeat("f", 64)+`"`))
 	requireRejected("wrong result identity", rewrap(bogusIdentity, output.Provenance()), base, head, true)

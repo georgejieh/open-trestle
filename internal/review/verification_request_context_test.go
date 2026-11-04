@@ -79,7 +79,7 @@ func TestContextSourceOmissionCategoriesCoverCanonicalReasons(t *testing.T) {
 	tests := map[ContextSourceOmissionCategory][]string{
 		ContextOmissionAuthorization:   {"path_not_authorized", "semantic_path_not_authorized"},
 		ContextOmissionResourceLimit:   {"candidate_limit", "source_size_limit", "analysis_resource_limit", "analysis_slice_resource_limit", "analysis_evidence_limit", "semantic_limit_exceeded", "semantic_candidate_limit", "semantic_source_size_limit"},
-		ContextOmissionUnsupported:     {"analysis_removed_file", "analysis_unsupported_content", "analysis_empty_added_file", "semantic_unsupported_language"},
+		ContextOmissionUnsupported:     {"analysis_removed_file", "analysis_unsupported_content", "analysis_empty_added_file", "analysis_no_changed_head_lines", "semantic_unsupported_language"},
 		ContextOmissionAnalysisFailure: {"semantic_parse_failure", "semantic_source_unavailable"},
 		ContextOmissionDuplicate:       {"semantic_duplicate_source"},
 	}
@@ -109,5 +109,39 @@ func TestPublicationInstructionRiskReadsDurableVerificationContext(t *testing.T)
 	verification, _ := NewVerificationRequestContext(generationRequest.Payload(), generation.Identity(), scope.Identity(), generation.MemoryScopeIdentity(), generation.MemoryIdentity(), snapshot, generation.EvidenceItems(), candidates)
 	if risks := publicationInstructionRiskEvidence(verification); risks != nil {
 		t.Fatalf("clean durable verification context risks=%v", risks)
+	}
+}
+
+func TestVerificationRequestContextPreservesDeletionReviewOmission(t *testing.T) {
+	scope, memoryScope, snapshot, source, retrieval := contextPacketFixture(t, "line 10\n")
+	limits, _ := NewContextLimits(1<<20, 5)
+	omission, err := NewContextSourceOmission("deleted-guard.go", 0, 0, "analysis_no_changed_head_lines")
+	if err != nil {
+		t.Fatal(err)
+	}
+	generation, err := NewContextPacketWithAccounting(scope, memoryScope, snapshot, ContextTaskCandidateGeneration, []ContextSource{source}, []memory.LexicalRetrieval{retrieval}, []ContextSourceOmission{omission}, limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := generation.ProviderRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, _, _ := candidateFixture(t, `{"schema_version":1,"candidates":[]}`)
+	candidates, err := ParseCandidateBatch(response, snapshot, generation.EvidenceItems())
+	if err != nil {
+		t.Fatal(err)
+	}
+	verification, err := NewVerificationRequestContext(request.Payload(), generation.Identity(), scope.Identity(), generation.MemoryScopeIdentity(), generation.MemoryIdentity(), snapshot, generation.EvidenceItems(), candidates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire verificationContextWire
+	if json.Unmarshal(verification.Payload(), &wire) != nil || len(wire.SourceOmissions) != 1 || wire.SourceOmissions[0].Path != "deleted-guard.go" || wire.SourceOmissions[0].StartLine != 0 || wire.SourceOmissions[0].EndLine != 0 || wire.SourceOmissions[0].Reason != omission.Reason() {
+		t.Fatal("deletion review omission lost or converted into head-line evidence")
+	}
+	coverage := verification.SourceCoverage()
+	if coverage.AnalyzedCount() != 2 || coverage.SelectedCount() != 1 || coverage.OmittedCount() != 1 || len(coverage.OmissionSummaries()) != 1 || coverage.OmissionSummaries()[0].Reason() != ContextOmissionUnsupported {
+		t.Fatal("deletion omission lost from verifier coverage")
 	}
 }

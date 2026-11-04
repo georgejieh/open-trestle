@@ -539,6 +539,15 @@ claimed scopes and concurrent different-scope work. Each explicit CLI invocation
 creates fresh identities. All state is ephemeral. Repeating a command starts new
 model work; it is not durable deduplication or resume.
 
+## Deletion-only changes
+
+A supported diff can contain deletions without any changed head lines. The review
+records these as `no_changed_head_lines`, with no invented source range. Analysis
+carries the omission into context as `analysis_no_changed_head_lines`. Existing
+semantic references may still supply reviewable head source. If no source remains,
+the run refuses with `all_sources_omitted`; that is not a completed model review or
+clearance. Empty head files follow the same rule.
+
 ## Results and limits
 
 By default, JSON uses `open-trestle/local-git-model-review-result`, schema version 1. It includes
