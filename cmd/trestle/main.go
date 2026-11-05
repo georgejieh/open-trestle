@@ -64,6 +64,9 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	if len(args) >= 1 && args[0] == "runs" {
 		return runRemote(args[1:], stdout, stderr)
 	}
+	if len(args) >= 1 && args[0] == "profiles" {
+		return runProfiles(args[1:], stdout, stderr)
+	}
 	if len(args) >= 2 && args[0] == "local-git" {
 		switch args[1] {
 		case "model-review":
@@ -176,6 +179,7 @@ func writeUsage(stderr io.Writer) {
 	writeEvaluateUsage(stderr)
 	writeAdminUsage(stderr)
 	writeRunsUsage(stderr)
+	writeProfilesUsage(stderr)
 	writeMCPUsage(stderr)
 	writeLSPUsage(stderr)
 	writeACPUsage(stderr)
