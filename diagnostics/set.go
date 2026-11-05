@@ -288,7 +288,7 @@ func newSet(scope audit.ReviewScope, snapshotIdentity, headRevision, verifiedSet
 		return Set{}, ErrInvalidSet
 	}
 	canonical := append([]Finding(nil), findings...)
-	sort.Slice(canonical, func(i, j int) bool { return findingLess(canonical[i], canonical[j]) })
+	sort.SliceStable(canonical, func(i, j int) bool { return findingLess(canonical[i], canonical[j]) })
 	for index, finding := range canonical {
 		if finding.Validate() != nil || index > 0 && canonical[index-1].Identity() == finding.Identity() {
 			return Set{}, ErrInvalidSet
