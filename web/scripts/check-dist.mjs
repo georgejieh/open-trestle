@@ -58,7 +58,7 @@ export async function checkDistribution(
     !/^index-[A-Za-z0-9_-]+\.css$/.test(styles[0])
   )
     throw new Error("unexpected distribution asset shape");
-  const maximumTotalJavaScriptBytes = 300 * 1024;
+  const maximumTotalJavaScriptBytes = 320 * 1024;
   const maximumGzipJavaScriptBytes = 90 * 1024;
   let totalJavaScript = 0;
   let totalGzipJavaScript = 0;

@@ -246,7 +246,7 @@ input {
   padding: 0 13px;
   color: var(--ink);
   background: #fff;
-  border: 1px solid #aeb8b4;
+  border: 1px solid #7f8b87;
   border-radius: 8px;
   transition:
     border-color 0.16s,
@@ -657,6 +657,7 @@ button:disabled {
 }
 .run-summary dt,
 .authority-ledger dt,
+.finding-evidence dt,
 .inspector dt {
   color: var(--muted);
   font-size: 0.71rem;
@@ -885,7 +886,7 @@ button:disabled {
 }
 .spine-panel.full .task-spine li {
   display: grid;
-  grid-template-columns: 47px 1fr;
+  grid-template-columns: 47px minmax(0, 1fr);
   padding: 0;
 }
 .spine-panel.full .depth-index {
@@ -897,7 +898,8 @@ button:disabled {
   margin: 0;
   min-height: 82px;
   display: grid;
-  grid-template-columns: minmax(120px, 1fr) minmax(150px, 1.2fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) 7.5rem;
+  column-gap: 10px;
   align-items: center;
   border-top: 0;
   border-left: 2px solid transparent;
@@ -981,6 +983,48 @@ button:disabled {
   margin: 22px 0 6px;
   padding: 20px 0;
   border-block: 1px solid var(--rule);
+}
+.coverage-ledger + .coverage-ledger {
+  margin-top: 0;
+  border-top: 0;
+}
+.findings-view .coverage-ledger:not(:has(+ .coverage-ledger)) {
+  margin-bottom: 0;
+  border-bottom: 0;
+}
+.coverage-caveat {
+  margin: 14px 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+main[tabindex="-1"]:focus {
+  outline: 3px solid var(--cobalt);
+  outline-offset: 5px;
+}
+.run-main .error-banner {
+  margin: 18px 0 0;
+  width: 100%;
+}
+.spine-panel.full {
+  container-type: inline-size;
+}
+.spine-panel.full li button > .state {
+  justify-self: end;
+}
+@container (max-width: 520px) {
+  .spine-panel.full li button {
+    grid-template-columns: minmax(0, 1fr) 7.5rem;
+    row-gap: 2px;
+  }
+  .spine-panel.full li button .task-kind {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .spine-panel.full li button > .state {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
 }
 .coverage-ledger h3 {
   margin: 0;
@@ -1353,6 +1397,7 @@ button:disabled {
   }
   .spine-panel.full li button {
     display: flex;
+    align-items: flex-start;
   }
   .finding-list li {
     grid-template-columns: 1fr;
@@ -1611,7 +1656,7 @@ button:disabled {
   width: 100%;
   min-height: 46px;
   padding: 9px 12px;
-  border: 1px solid #aeb8b4;
+  border: 1px solid #7f8b87;
   border-radius: 8px;
   background: #fff;
   color: var(--ink);
@@ -2029,4 +2074,8 @@ button:disabled {
   .confirmation-actions .primary-button {
     min-width: 0;
   }
+}
+.setup-header h1::first-letter,
+#setup-check-title::first-letter {
+  text-transform: uppercase;
 }

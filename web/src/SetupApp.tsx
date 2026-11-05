@@ -1889,7 +1889,7 @@ export default function SetupConsole() {
         <Brand />
         <a href="/console/">Review console</a>
       </header>
-      <main id="main">
+      <main id="main" tabIndex={-1}>
         {notice && (
           <div className="success-banner" role="status">
             <StatusIcon value="passed" />

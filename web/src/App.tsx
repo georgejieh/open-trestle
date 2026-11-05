@@ -8,6 +8,7 @@ import {
   useState,
   type FormEvent,
   type ReactNode,
+  type RefObject,
 } from "react";
 import { ShieldCheck } from "./ShieldCheck";
 import { InstrumentIcon, StatusIcon, type StatusValue } from "./Icons";
@@ -189,10 +190,12 @@ function TaskSpine({
   tasks,
   selected,
   onSelect,
+  selectedTaskRef,
 }: {
   tasks: RunTask[];
   selected: string;
   onSelect: (key: string) => void;
+  selectedTaskRef?: RefObject<HTMLButtonElement | null>;
 }) {
   return (
     <ol className="task-spine">
@@ -202,6 +205,7 @@ function TaskSpine({
             {String(index + 1).padStart(2, "0")}
           </span>
           <button
+            ref={task.key === selected ? selectedTaskRef : undefined}
             type="button"
             onClick={() => onSelect(task.key)}
             aria-current={selected === task.key ? "step" : undefined}
@@ -433,7 +437,7 @@ function ProgressCoverage({
           </ul>
         </section>
       ))}
-      <p>
+      <p className="coverage-caveat">
         Missing counts are unknown, not zero. Source counts are not
         repository-wide. Observations are not verified findings. These counts do
         not approve the change or prove correctness.
@@ -978,6 +982,32 @@ function ReviewConsole() {
   const [selectedTask, setSelectedTask] = useState("");
   const operationRef = useRef(0);
   const requestRef = useRef<AbortController | null>(null);
+  const inspectorRef = useRef<HTMLElement | null>(null);
+  const selectedTaskButtonRef = useRef<HTMLButtonElement | null>(null);
+  const [focusSelectedTask, setFocusSelectedTask] = useState(false);
+  const [inspectorScroll, setInspectorScroll] = useState(0);
+  function selectTaskInJournal(key: string) {
+    setSelectedTask(key);
+    setInspectorScroll((count) => count + 1);
+  }
+  function selectTaskFromOverview(key: string) {
+    setView("tasks");
+    setFocusSelectedTask(true);
+    selectTaskInJournal(key);
+  }
+  useEffect(() => {
+    // Below the medium breakpoint the inspector stacks after the journal, so
+    // bring the selected task's evidence into view once it has rendered.
+    if (inspectorScroll === 0) return;
+    if (!window.matchMedia?.("(max-width: 980px)").matches) return;
+    const reduced = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    inspectorRef.current?.scrollIntoView({
+      block: "start",
+      behavior: reduced ? "auto" : "smooth",
+    });
+  }, [inspectorScroll]);
   useEffect(
     () => () => {
       operationRef.current++;
@@ -991,7 +1021,18 @@ function ReviewConsole() {
       receipt?.tasks[0],
     [receipt, selectedTask],
   );
+  useEffect(() => {
+    if (!focusSelectedTask || view !== "tasks") return;
+    selectedTaskButtonRef.current?.focus();
+    setFocusSelectedTask(false);
+  }, [focusSelectedTask, view]);
   async function connect(nextScope: Scope, nextToken: string) {
+    const refreshing =
+      receipt !== null &&
+      nextToken === token &&
+      nextScope.tenant === scope.tenant &&
+      nextScope.repository === scope.repository &&
+      nextScope.run === scope.run;
     const operation = ++operationRef.current;
     requestRef.current?.abort();
     const controller = new AbortController();
@@ -1013,7 +1054,11 @@ function ReviewConsole() {
       setScope(nextScope);
       setToken(nextToken);
       setReceipt(next);
-      setSelectedTask(next.tasks[0]?.key ?? "");
+      setSelectedTask((current) =>
+        refreshing && next.tasks.some((task) => task.key === current)
+          ? current
+          : (next.tasks[0]?.key ?? ""),
+      );
       try {
         sessionStorage.setItem("open-trestle-scope", JSON.stringify(nextScope));
       } catch {}
@@ -1072,6 +1117,22 @@ function ReviewConsole() {
       }
     } catch (err) {
       if (operation !== operationRef.current) return;
+      // A transient daemon failure during Refresh keeps the last verified
+      // receipt and the in-memory token, and says so. Authentication, scope,
+      // and validation failures still end the session.
+      if (
+        refreshing &&
+        err instanceof ApiError &&
+        (err.code === "timeout" || err.code === "unavailable")
+      ) {
+        setProgressNote(
+          "Artifact-backed counts could not be refreshed. Refresh to try again.",
+        );
+        setError(
+          `${err.message} Showing the last verified journal revision ${receipt.revision}.`,
+        );
+        return;
+      }
       setToken("");
       setReceipt(null);
       setDiagnostics(null);
@@ -1103,7 +1164,7 @@ function ReviewConsole() {
           Skip to main content
         </a>
         <Brand />
-        <main id="main">
+        <main id="main" tabIndex={-1}>
           <Locator initial={scope} onConnect={connect} busy={busy} />
           {error && (
             <div className="error-banner" role="alert">
@@ -1180,7 +1241,7 @@ function ReviewConsole() {
         <Brand />
         <button onClick={disconnect}>Change</button>
       </header>
-      <main id="main" className="run-main">
+      <main id="main" tabIndex={-1} className="run-main">
         <header className="run-header">
           <div>
             <div className="scope-line">
@@ -1199,6 +1260,7 @@ function ReviewConsole() {
           <div className="header-actions">
             <div
               className="operational-status"
+              role="group"
               aria-label={`Operational run status ${receipt.status}`}
             >
               <span>Operational run status</span>
@@ -1213,6 +1275,15 @@ function ReviewConsole() {
             </button>
           </div>
         </header>
+        {error && (
+          <div className="error-banner" role="alert">
+            <StatusIcon value="failed" />
+            <div>
+              <strong>Refresh failed</strong>
+              <p>{error}</p>
+            </div>
+          </div>
+        )}
         <nav className="mobile-tabs" aria-label="Run views">
           {(["overview", "tasks", "findings", "runtime"] as View[]).map(
             (item) => (
@@ -1307,7 +1378,7 @@ function ReviewConsole() {
               <TaskSpine
                 tasks={receipt.tasks}
                 selected={selected?.key ?? ""}
-                onSelect={setSelectedTask}
+                onSelect={selectTaskFromOverview}
               />
             </section>
           </div>
@@ -1324,10 +1395,15 @@ function ReviewConsole() {
               <TaskSpine
                 tasks={receipt.tasks}
                 selected={selected?.key ?? ""}
-                onSelect={setSelectedTask}
+                onSelect={selectTaskInJournal}
+                selectedTaskRef={selectedTaskButtonRef}
               />
             </section>
-            <aside className="inspector" aria-label="Task evidence inspector">
+            <aside
+              className="inspector"
+              aria-label="Task evidence inspector"
+              ref={inspectorRef}
+            >
               <TaskInspector task={selected} />
             </aside>
           </div>

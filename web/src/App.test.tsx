@@ -22,7 +22,7 @@ import {
   runSetupCheck,
 } from "./setupApi";
 import { setupTestPlan } from "./setup-test-data";
-import type { DiagnosticSet, SetupPlan } from "./types";
+import type { DiagnosticSet, RunReceipt, SetupPlan } from "./types";
 vi.mock("./api", async () => {
   const actual = await vi.importActual<typeof import("./api")>("./api");
   return {
@@ -197,6 +197,112 @@ describe("console", () => {
     expect(screen.getByText("Changed files: Unknown")).toBeInTheDocument();
     expect(fetchRunProgress).toHaveBeenCalledTimes(2);
     expect(fetchDiagnostics).toHaveBeenCalledTimes(2);
+  });
+  const twoTaskReceipt: RunReceipt = {
+    ...receipt,
+    tasks: [
+      receipt.tasks[0]!,
+      {
+        ...receipt.tasks[0]!,
+        key: "change",
+        kind: "build_change",
+        task_identity: "2".repeat(64),
+      },
+    ],
+  };
+  async function connectTwoTaskRun() {
+    vi.mocked(fetchDiagnostics).mockRejectedValue(new Error("not ready"));
+    vi.mocked(fetchRunProgress).mockRejectedValue(new Error("not ready"));
+    render(<App />);
+    for (const [name, value] of [
+      ["Tenant", "tenant-a"],
+      ["Repository", "repo-a"],
+      ["Run", "run-a"],
+      ["Access token", "x".repeat(32)],
+    ])
+      fireEvent.change(screen.getByLabelText(name!), { target: { value } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled(),
+    );
+  }
+  it("moves focus into the task view after a focused overview task is activated", async () => {
+    vi.mocked(fetchRun).mockResolvedValue(twoTaskReceipt);
+    await connectTwoTaskRun();
+    const overviewTask = screen.getByRole("button", { name: /^change/ });
+    overviewTask.focus();
+    expect(overviewTask).toHaveFocus();
+    fireEvent.click(overviewTask);
+    const selectedTask = await screen.findByRole("button", { name: /^change/ });
+    expect(selectedTask).toHaveFocus();
+    expect(
+      within(
+        screen.getByRole("complementary", { name: "Task evidence inspector" }),
+      ).getByRole("heading", { name: "change" }),
+    ).toBeInTheDocument();
+  });
+  it("keeps the session and selection when a refresh fails transiently", async () => {
+    vi.mocked(fetchRun)
+      .mockResolvedValueOnce(twoTaskReceipt)
+      .mockRejectedValueOnce(new ApiError("unavailable"));
+    await connectTwoTaskRun();
+    fireEvent.click(screen.getByRole("button", { name: /^change/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Refresh failed");
+    expect(alert).toHaveTextContent(
+      "Showing the last verified journal revision",
+    );
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled();
+    expect(
+      within(
+        screen.getByRole("complementary", { name: "Task evidence inspector" }),
+      ).getByRole("heading", { name: "change" }),
+    ).toBeInTheDocument();
+  });
+  it("keeps the access token after a timed-out refresh", async () => {
+    vi.mocked(fetchRun)
+      .mockResolvedValueOnce(twoTaskReceipt)
+      .mockRejectedValueOnce(new ApiError("timeout"))
+      .mockResolvedValueOnce(twoTaskReceipt);
+    await connectTwoTaskRun();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(fetchRun).toHaveBeenCalledTimes(3));
+    const expectedScope = {
+      tenant: "tenant-a",
+      repository: "repo-a",
+      run: "run-a",
+    };
+    expect(fetchRun).toHaveBeenNthCalledWith(
+      2,
+      expectedScope,
+      "x".repeat(32),
+      undefined,
+      expect.any(AbortSignal),
+    );
+    expect(fetchRun).toHaveBeenNthCalledWith(
+      3,
+      expectedScope,
+      "x".repeat(32),
+      undefined,
+      expect.any(AbortSignal),
+    );
+    expect(
+      screen.getByRole("heading", { name: "Execution in progress" }),
+    ).toBeInTheDocument();
+  });
+  it("ends the session when a refresh is no longer authenticated", async () => {
+    vi.mocked(fetchRun)
+      .mockResolvedValueOnce(twoTaskReceipt)
+      .mockRejectedValueOnce(new ApiError("unauthenticated"));
+    await connectTwoTaskRun();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await screen.findByRole("heading", { name: "Locate a review run" });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "The access token was not accepted",
+    );
   });
   it("aborts and ignores a late progress response after changing scope", async () => {
     vi.mocked(fetchRun).mockResolvedValue(receipt);
