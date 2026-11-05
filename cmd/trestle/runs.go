@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -60,7 +61,10 @@ func runRemoteSubmit(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "runs submit: %v\n", err)
 		return 1
 	}
-	plan, err := controlplane.ParseReviewRunPlan(encoded)
+	// The canonical plan has no terminal newline, but files written by editors
+	// and shell redirection end with one. Accept exactly one; the client
+	// re-encodes the parsed plan before sending.
+	plan, err := controlplane.ParseReviewRunPlan(bytes.TrimSuffix(encoded, []byte("\n")))
 	if err != nil {
 		fmt.Fprintf(stderr, "runs submit: invalid review run plan: %v\n", err)
 		return 1
@@ -168,7 +172,12 @@ func writeRemoteReceipt(receipt controlplane.ReviewRunReceipt, stdout, stderr io
 	}
 	return 0
 }
+
 func readRegularBoundedFile(path string, limit int64) ([]byte, error) {
+	return readRegularBoundedFileWithOpener(path, limit, openRegularInputFileNative)
+}
+
+func readRegularBoundedFileWithOpener(path string, limit int64, openFile func(string) (*os.File, error)) ([]byte, error) {
 	information, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
@@ -176,21 +185,42 @@ func readRegularBoundedFile(path string, limit int64) ([]byte, error) {
 	if !information.Mode().IsRegular() {
 		return nil, errors.New("input must be a regular file")
 	}
-	if information.Size() > limit {
-		return nil, errors.New("input exceeds size limit")
-	}
-	file, err := os.Open(path)
+
+	file, err := openFile(path)
 	if err != nil {
+		information, statErr := os.Lstat(path)
+		if statErr == nil && !information.Mode().IsRegular() {
+			return nil, errors.New("input must be a regular file")
+		}
 		return nil, err
 	}
 	defer file.Close()
+
 	opened, err := file.Stat()
 	if err != nil {
 		return nil, err
 	}
-	if !opened.Mode().IsRegular() || !os.SameFile(information, opened) {
+	if !opened.Mode().IsRegular() {
+		return nil, errors.New("input must be a regular file")
+	}
+	if !os.SameFile(information, opened) {
 		return nil, errors.New("input must be an unchanged regular file")
 	}
+	if opened.Size() > limit {
+		return nil, errors.New("input exceeds size limit")
+	}
+
+	information, err = os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !information.Mode().IsRegular() {
+		return nil, errors.New("input must be a regular file")
+	}
+	if !os.SameFile(information, opened) {
+		return nil, errors.New("input must be an unchanged regular file")
+	}
+
 	encoded, err := io.ReadAll(io.LimitReader(file, limit+1))
 	if err != nil {
 		return nil, err

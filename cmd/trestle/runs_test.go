@@ -13,7 +13,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -71,6 +73,147 @@ func TestRunRemoteCommandsUseDaemonContracts(t *testing.T) {
 		t.Fatalf("requests=%d", requests)
 	}
 }
+
+func TestReadRegularBoundedFileRejectsDirectFIFOBeforeOpening(t *testing.T) {
+	mkfifo, err := exec.LookPath("mkfifo")
+	if err != nil {
+		t.Skip("mkfifo is unavailable")
+	}
+	path := filepath.Join(t.TempDir(), "input.json")
+	if output, err := exec.Command(mkfifo, path).CombinedOutput(); err != nil {
+		t.Fatalf("mkfifo error=%v output=%q", err, output)
+	}
+	opened := false
+	_, err = readRegularBoundedFileWithOpener(path, 1<<20, func(string) (*os.File, error) {
+		opened = true
+		return nil, os.ErrInvalid
+	})
+	if opened {
+		t.Fatal("direct FIFO reached opener")
+	}
+	if err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("read error=%v, want regular-file rejection", err)
+	}
+}
+
+func TestReadRegularBoundedFileRejectsReplacementAtOpen(t *testing.T) {
+	for _, replacement := range []string{"fifo", "symlink", "regular", "regular-before"} {
+		t.Run(replacement, func(t *testing.T) {
+			if runtime.GOOS == "windows" && replacement == "regular" {
+				t.Skip("Windows prevents replacing an open input file")
+			}
+			directory := t.TempDir()
+			sourcePath := filepath.Join(directory, "input.json")
+			if err := os.WriteFile(sourcePath, []byte("original"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			targetPath := filepath.Join(directory, "target.json")
+			if err := os.WriteFile(targetPath, []byte("target"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			mkfifo := ""
+			switch replacement {
+			case "fifo":
+				var err error
+				mkfifo, err = exec.LookPath("mkfifo")
+				if err != nil {
+					t.Skip("mkfifo is unavailable")
+				}
+			case "symlink":
+				probePath := filepath.Join(directory, "probe-link.json")
+				if err := os.Symlink(targetPath, probePath); err != nil {
+					t.Skipf("symlink is unavailable: %v", err)
+				}
+				if err := os.Remove(probePath); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestReadRegularBoundedFileReplacementHelper$")
+			command.Env = append(os.Environ(),
+				"OPEN_TRESTLE_TEST_REPLACE_REGULAR_INPUT=1",
+				"OPEN_TRESTLE_TEST_REPLACE_KIND="+replacement,
+				"OPEN_TRESTLE_TEST_REPLACE_PATH="+sourcePath,
+				"OPEN_TRESTLE_TEST_REPLACE_TARGET="+targetPath,
+				"OPEN_TRESTLE_TEST_REPLACE_MKFIFO="+mkfifo,
+			)
+			output, err := command.CombinedOutput()
+			if ctx.Err() == context.DeadlineExceeded {
+				t.Fatalf("read blocked after %s replacement at open; output=%q", replacement, output)
+			}
+			if err != nil {
+				t.Fatalf("read after %s replacement at open: %v; output=%q", replacement, err, output)
+			}
+		})
+	}
+}
+
+func TestReadRegularBoundedFileReplacementHelper(t *testing.T) {
+	if os.Getenv("OPEN_TRESTLE_TEST_REPLACE_REGULAR_INPUT") != "1" {
+		return
+	}
+
+	sourcePath := os.Getenv("OPEN_TRESTLE_TEST_REPLACE_PATH")
+	targetPath := os.Getenv("OPEN_TRESTLE_TEST_REPLACE_TARGET")
+	replacement := os.Getenv("OPEN_TRESTLE_TEST_REPLACE_KIND")
+	replaced := false
+	openFile := func(path string) (*os.File, error) {
+		if path == sourcePath && !replaced {
+			replaced = true
+			if replacement == "regular" {
+				file, err := openRegularInputFileNative(path)
+				if err != nil {
+					return nil, err
+				}
+				if err := os.Remove(sourcePath); err != nil {
+					file.Close()
+					t.Fatal(err)
+				}
+				if err := os.Rename(targetPath, sourcePath); err != nil {
+					file.Close()
+					t.Fatal(err)
+				}
+				return file, nil
+			}
+			if err := os.Remove(sourcePath); err != nil {
+				t.Fatal(err)
+			}
+			switch replacement {
+			case "fifo":
+				if output, err := exec.Command(os.Getenv("OPEN_TRESTLE_TEST_REPLACE_MKFIFO"), sourcePath).CombinedOutput(); err != nil {
+					t.Fatalf("mkfifo error=%v output=%q", err, output)
+				}
+			case "symlink":
+				if err := os.Symlink(targetPath, sourcePath); err != nil {
+					t.Fatal(err)
+				}
+			case "regular-before":
+				if err := os.Rename(targetPath, sourcePath); err != nil {
+					t.Fatal(err)
+				}
+			default:
+				t.Fatalf("unknown replacement %q", replacement)
+			}
+		}
+		return openRegularInputFileNative(path)
+	}
+
+	_, err := readRegularBoundedFileWithOpener(sourcePath, 1<<20, openFile)
+	if !replaced {
+		t.Fatal("input was not replaced at open")
+	}
+	want := "regular file"
+	if replacement == "regular" || replacement == "regular-before" {
+		want = "unchanged regular file"
+	}
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("read error=%v, want %q rejection", err, want)
+	}
+}
+
 func TestRunRemoteRejectsMissingCredentialAndUnsafePlanInput(t *testing.T) {
 	t.Setenv("OPEN_TRESTLE_API_TOKEN", "")
 	var stdout, stderr bytes.Buffer
@@ -430,5 +573,46 @@ func TestRunStatusReadsStoredDeterministicSetAcrossFileStoreReopen(t *testing.T)
 	}
 	if err := reopened.Close(); err != nil {
 		t.Fatalf("close reopened diagnostic writer: %v", err)
+	}
+}
+
+func TestRunSubmitAcceptsPlanFileWithOneTrailingNewline(t *testing.T) {
+	plan, receipt := remotePlanAndReceipt(t)
+	encodedReceipt, _ := controlplane.EncodeReviewRunReceipt(receipt)
+	response, _ := json.Marshal(map[string]any{"contract": "open-trestle/api-response", "schema_version": 1, "request_id": "request-1", "run": json.RawMessage(encodedReceipt)})
+	var submitted []byte
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		submitted, _ = io.ReadAll(request.Body)
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusAccepted)
+		_, _ = writer.Write(response)
+	}))
+	defer server.Close()
+	t.Setenv("OPEN_TRESTLE_API_URL", server.URL)
+	t.Setenv("OPEN_TRESTLE_API_TOKEN", "01234567890123456789012345678901")
+	canonical, _ := controlplane.EncodeReviewRunPlan(plan)
+	directory := t.TempDir()
+	for _, tc := range []struct {
+		name    string
+		content []byte
+		exit    int
+	}{
+		{"exact", canonical, 0},
+		{"one newline", append(bytes.Clone(canonical), '\n'), 0},
+		{"two newlines", append(bytes.Clone(canonical), '\n', '\n'), 1},
+		{"carriage return", append(bytes.Clone(canonical), '\r', '\n'), 1},
+	} {
+		path := filepath.Join(directory, strings.ReplaceAll(tc.name, " ", "-")+".json")
+		if err := os.WriteFile(path, tc.content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		submitted = nil
+		var stdout, stderr bytes.Buffer
+		if exit := run([]string{"runs", "submit", "--plan", path}, &stdout, &stderr); exit != tc.exit {
+			t.Fatalf("%s: exit=%d stderr=%q", tc.name, exit, stderr.String())
+		}
+		if (tc.exit == 0) != bytes.Equal(submitted, canonical) {
+			t.Fatalf("%s: submitted body=%q", tc.name, submitted)
+		}
 	}
 }
