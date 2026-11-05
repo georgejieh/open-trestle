@@ -11,7 +11,7 @@ trestle acp \
   --server http://127.0.0.1:8741
 ```
 
-The process implements ACP v1 initialization, `session/new`, `session/prompt`, `session/update`, and `session/cancel` over newline-delimited JSON-RPC stdio. Messages are bounded to 1 MiB. Standard output contains protocol messages only.
+The process implements ACP v1 initialization, `session/new`, `session/prompt`, `session/update`, and `session/cancel` over newline-delimited JSON-RPC stdio. Messages are bounded to 1 MiB. Standard output contains protocol messages only. A client that requests a protocol version above 1 is answered with version 1 as ACP negotiation requires; only a missing or zero version is rejected.
 
 Each process is bound to the tenant, repository, and run from its launch configuration. Sessions are cryptographically random, process-local, and capped at 64. Prompt requests are validated and admitted before a worker starts. At most eight prompts may be active, with one per session; their admission remains held until output completes. Invalid, duplicate, or excess requests create no prompt worker. A stalled output stream applies bounded backpressure rather than accumulating workers. Session creation requires an absolute clean working directory but never reads it. Additional directories and client-provided MCP servers are rejected.
 

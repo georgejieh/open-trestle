@@ -242,3 +242,40 @@ func TestServerCancellationStopsActivePrompt(t *testing.T) {
 		t.Fatalf("messages=%s", encoded)
 	}
 }
+
+// ACP v1 negotiation: asking for a newer version is answered with the latest
+// version this agent supports rather than an error, so the client can decide
+// whether to continue. Zero, negative and non-numeric versions stay invalid.
+func TestInitializeNegotiatesDownToSupportedVersion(t *testing.T) {
+	scope, _, _ := acpFixture(t)
+	for _, tc := range []struct {
+		params string
+		accept bool
+	}{
+		{`{"protocolVersion":1}`, true},
+		{`{"protocolVersion":2}`, true},
+		{`{"protocolVersion":70000}`, true},
+		{`{"protocolVersion":0}`, false},
+		{`{"protocolVersion":-1}`, false},
+		{`{"protocolVersion":"1"}`, false},
+		{`{}`, false},
+	} {
+		server, _ := New(&cancelService{started: make(chan struct{})}, scope)
+		encoded, _ := json.Marshal(server.initialize(rpcRequest{ID: json.RawMessage("1"), Params: json.RawMessage(tc.params)}))
+		var response struct {
+			Result struct {
+				ProtocolVersion int `json:"protocolVersion"`
+			} `json:"result"`
+			Error *struct{} `json:"error"`
+		}
+		if err := json.Unmarshal(encoded, &response); err != nil {
+			t.Fatal(err)
+		}
+		if tc.accept != (response.Error == nil) || tc.accept && response.Result.ProtocolVersion != ProtocolVersion {
+			t.Fatalf("%s: response=%s", tc.params, encoded)
+		}
+		if tc.accept != server.initialized {
+			t.Fatalf("%s: initialized=%v", tc.params, server.initialized)
+		}
+	}
+}

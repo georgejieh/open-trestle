@@ -190,12 +190,15 @@ func (s *Server) handle(ctx context.Context, encoded []byte) []any {
 }
 func (s *Server) initialize(request rpcRequest) any {
 	var params struct {
-		ProtocolVersion    uint16                     `json:"protocolVersion"`
+		ProtocolVersion    uint64                     `json:"protocolVersion"`
 		ClientCapabilities map[string]json.RawMessage `json:"clientCapabilities,omitempty"`
 		ClientInfo         json.RawMessage            `json:"clientInfo,omitempty"`
 		Meta               map[string]json.RawMessage `json:"_meta,omitempty"`
 	}
-	if decodeStrict(request.Params, &params) != nil || params.ProtocolVersion != ProtocolVersion {
+	// ACP negotiation: a client that asks for a newer version is answered with
+	// the latest version this agent supports and decides whether to continue.
+	// Only a missing or zero version is invalid.
+	if decodeStrict(request.Params, &params) != nil || params.ProtocolVersion < ProtocolVersion {
 		return rpcError(request.ID, -32602, "Unsupported ACP protocol version.")
 	}
 	s.mu.Lock()
