@@ -539,3 +539,36 @@ func TestPendingFileStoreActivationRejectsReplacedRootBeforeRecovery(t *testing.
 		t.Fatal(err)
 	}
 }
+
+func TestFileStoreGetRefusesArtifactWithInterruptedDeletion(t *testing.T) {
+	scope, _ := audit.NewReviewScope("tenant-a", "repo-a", "run-interrupted-delete")
+	store, err := NewFileStore(filepath.Join(t.TempDir(), "artifacts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	value := artifactFixture(t, scope, `{"interrupted":true}`)
+	if _, err := store.Put(context.Background(), value, time.UnixMilli(200)); err != nil {
+		t.Fatal(err)
+	}
+	injected := errors.New("injected after prepared deletion rename")
+	store.afterPersistRename = func() error { return injected }
+	authorization := deletionAuthorizationFixture(t, scope, value.Identity(), DeletionTenantErasure, time.UnixMilli(500))
+	if _, err := store.Delete(context.Background(), authorization, time.UnixMilli(500)); !errors.Is(err, injected) {
+		t.Fatalf("delete err=%v", err)
+	}
+	store.afterPersistRename = nil
+	if _, err := os.Stat(store.artifactPath(scope, value.Identity())); err != nil {
+		t.Fatalf("fixture expected bytes to remain: %v", err)
+	}
+	if got, err := store.Get(context.Background(), scope, value.Identity(), time.UnixMilli(501)); !errors.Is(err, ErrArtifactDeleted) || got.Identity() != "" {
+		t.Fatalf("get during prepared deletion=(%v,%v)", got.Identity() != "", err)
+	}
+	receipt, err := store.Delete(context.Background(), authorization, time.UnixMilli(502))
+	if err != nil || receipt.ArtifactIdentity() != value.Identity() {
+		t.Fatalf("retry delete=(%v,%v)", receipt.ArtifactIdentity(), err)
+	}
+	if _, err := store.Get(context.Background(), scope, value.Identity(), time.UnixMilli(503)); !errors.Is(err, ErrArtifactNotFound) {
+		t.Fatalf("get after completed deletion err=%v", err)
+	}
+}

@@ -458,6 +458,13 @@ func (s *FileStore) Get(ctx context.Context, scope audit.ReviewScope, identity s
 	if err := s.ensureOpen(); err != nil {
 		return Artifact{}, err
 	}
+	// A durable prepared deletion means removal is already authorized; an
+	// interrupted Delete must not leave the bytes readable until recovery.
+	if _, completed, deleting, deletionErr := s.loadDeletionExpected(s.deletionPath(scope, identity), scope, identity); deletionErr != nil {
+		return Artifact{}, deletionErr
+	} else if deleting && !completed {
+		return Artifact{}, ErrArtifactDeleted
+	}
 	value, found, err := s.load(s.artifactPath(scope, identity), scope, identity)
 	if err != nil {
 		return Artifact{}, err
