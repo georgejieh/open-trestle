@@ -39,6 +39,10 @@ type FileStore struct {
 	rootInfo       os.FileInfo
 	lockFile       *filelock.Lock
 	closed         bool
+	// replays maps a delivery replay key to the deduplication key of the stored
+	// delivery that owns it. It is rebuilt from persisted deliveries on the first
+	// write after open, so it needs no file of its own and cannot drift from them.
+	replays map[string]string
 }
 
 func NewFileStore(root string) (*FileStore, error) {
@@ -118,6 +122,12 @@ func (s *FileStore) Put(ctx context.Context, delivery VerifiedDelivery, at time.
 		}
 		return existing, false, nil
 	}
+	if err := s.loadReplayIndex(); err != nil {
+		return StoredDelivery{}, false, err
+	}
+	if _, replayed := s.replays[delivery.ReplayKey()]; replayed {
+		return StoredDelivery{}, false, ErrDeliveryReplayed
+	}
 	entries, err := os.ReadDir(s.root)
 	if err != nil {
 		return StoredDelivery{}, false, fmt.Errorf("%w: read root", ErrInboxStorePersistence)
@@ -131,9 +141,53 @@ func (s *FileStore) Put(ctx context.Context, delivery VerifiedDelivery, at time.
 		return StoredDelivery{}, false, err
 	}
 	if err := s.persist(path, encoded); err != nil {
+		// The delivery file may already be visible (for example when the
+		// directory sync fails after rename), so rebuild the replay index from
+		// disk on the next write rather than trusting the in-memory copy.
+		s.replays = nil
 		return StoredDelivery{}, false, err
 	}
+	s.replays[delivery.ReplayKey()] = delivery.DeduplicationKey()
 	return stored, true, nil
+}
+
+// loadReplayIndex derives the replay index from every persisted delivery. It
+// fails closed: a delivery file that cannot be read or does not match its path
+// leaves the index unbuilt and the write refused.
+func (s *FileStore) loadReplayIndex() error {
+	if s.replays != nil {
+		return nil
+	}
+	directoryEntries, err := os.ReadDir(s.root)
+	if err != nil {
+		return fmt.Errorf("%w: read root", ErrInboxStorePersistence)
+	}
+	if len(directoryEntries) > maxInboxStoreFiles+1 {
+		return ErrInboxStoreCapacity
+	}
+	replays := make(map[string]string)
+	for _, entry := range directoryEntries {
+		if !strings.HasSuffix(entry.Name(), deliveryFileSuffix) {
+			continue
+		}
+		path := filepath.Join(s.root, entry.Name())
+		stored, found, loadErr := s.loadPath(path)
+		if loadErr != nil {
+			return loadErr
+		}
+		if !found {
+			return ErrInboxStorePersistence
+		}
+		delivery := stored.Delivery()
+		if s.deliveryPath(delivery.Scope(), delivery.Source(), delivery.DeduplicationKey()) != path {
+			return ErrInvalidStoredDeliveryEncoding
+		}
+		if _, exists := replays[delivery.ReplayKey()]; !exists {
+			replays[delivery.ReplayKey()] = delivery.DeduplicationKey()
+		}
+	}
+	s.replays = replays
+	return nil
 }
 func (s *FileStore) Get(ctx context.Context, scope RepositoryScope, source Source, key string) (StoredDelivery, bool, error) {
 	if err := validateInboxRead(ctx, scope, source, key, 1); err != nil {

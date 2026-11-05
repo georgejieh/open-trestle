@@ -124,6 +124,10 @@ func (h *HTTPHandler) ServeHTTP(writer http.ResponseWriter, request *http.Reques
 			writeWebhookError(writer, http.StatusGone, "delivery_expired")
 			return
 		}
+		if errors.Is(acceptErr, webhook.ErrDeliveryReplayed) {
+			writeWebhookError(writer, http.StatusConflict, "delivery_replayed")
+			return
+		}
 		if errors.Is(acceptErr, webhook.ErrDeliveryConflict) {
 			writeWebhookError(writer, http.StatusConflict, "delivery_conflict")
 			return

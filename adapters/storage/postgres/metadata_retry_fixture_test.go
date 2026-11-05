@@ -237,6 +237,9 @@ func (f *metadataRetryFixture) expectPreRead(a metadataRetryAttempt) {
 	}
 	if a.rows == nil {
 		query.WillReturnError(sql.ErrNoRows)
+		if f.operation == "webhook" {
+			f.mock.ExpectQuery(`SELECT CASE WHEN replay_key IS NULL THEN 0 ELSE 1 END\s+FROM open_trestle_webhook_deliveries`).WithArgs(f.scope.TenantID(), f.scope.RepositoryID(), f.delivery.Source().String(), f.delivery.ReplayKey()).WillReturnError(sql.ErrNoRows)
+		}
 	} else {
 		query.WillReturnRows(a.rows)
 	}
@@ -346,7 +349,7 @@ func (f *metadataRetryFixture) expectAttempt(a metadataRetryAttempt) {
 		if f.operation == "diagnostic" {
 			failed = failedExec("INSERT INTO open_trestle_diagnostic_sets", f.scope.TenantID(), f.scope.RepositoryID(), f.scope.ReviewRunID(), f.scope.Identity(), f.set.Identity(), f.value.Identity(), f.value.ExpiresAt())
 		} else {
-			failed = failedExec("INSERT INTO open_trestle_webhook_deliveries", f.scope.TenantID(), f.scope.RepositoryID(), f.scope.ReviewRunID(), f.scope.Identity(), f.delivery.Scope().Identity(), f.delivery.Source().String(), f.delivery.DeduplicationKey(), f.delivery.Identity(), f.value.Identity(), f.stored.Receipt().AcceptedAt(), f.value.ExpiresAt())
+			failed = failedExec("INSERT INTO open_trestle_webhook_deliveries", f.scope.TenantID(), f.scope.RepositoryID(), f.scope.ReviewRunID(), f.scope.Identity(), f.delivery.Scope().Identity(), f.delivery.Source().String(), f.delivery.DeduplicationKey(), f.delivery.Identity(), f.value.Identity(), f.stored.Receipt().AcceptedAt(), f.value.ExpiresAt(), f.delivery.ReplayKey())
 		}
 		if failed {
 			return

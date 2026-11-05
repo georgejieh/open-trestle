@@ -131,8 +131,24 @@ func (d VerifiedDelivery) EventType() string        { return d.eventType }
 func (d VerifiedDelivery) Action() string           { return d.action }
 func (d VerifiedDelivery) VerifierIdentity() string { return d.verifierIdentity }
 func (d VerifiedDelivery) BodyDigest() string       { return d.bodyDigest }
-func (d VerifiedDelivery) Payload() []byte          { return bytesClone(d.payload) }
-func (d VerifiedDelivery) ReceivedAt() time.Time    { return time.UnixMilli(d.receivedAtMillis).UTC() }
+
+// ReplayKey identifies the signed content of a delivery independently of its
+// forge delivery ID, which travels outside the signature. Two deliveries with
+// the same replay key carry the same verified body for the same scope, source,
+// event type, and action. It is derived, never persisted in delivery encodings,
+// and does not take part in delivery or run identity.
+func (d VerifiedDelivery) ReplayKey() string {
+	return hashWebhookValue(struct {
+		Kind          string `json:"kind"`
+		ScopeIdentity string `json:"scope_identity"`
+		Source        string `json:"source"`
+		EventType     string `json:"event_type"`
+		Action        string `json:"action"`
+		BodyDigest    string `json:"body_digest"`
+	}{"open-trestle/webhook-replay-key/v1", d.scope.Identity(), d.source.String(), d.eventType, d.action, d.bodyDigest})
+}
+func (d VerifiedDelivery) Payload() []byte       { return bytesClone(d.payload) }
+func (d VerifiedDelivery) ReceivedAt() time.Time { return time.UnixMilli(d.receivedAtMillis).UTC() }
 func (d VerifiedDelivery) Validate() error {
 	rebuilt, err := NewVerifiedDelivery(d.scope, d.source, d.deliveryID, d.eventType, d.action, d.verifierIdentity, d.payload, time.UnixMilli(d.receivedAtMillis))
 	if err != nil {

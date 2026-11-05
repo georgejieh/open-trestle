@@ -106,6 +106,7 @@ func TestWebhookStoreRedeliveryPreservesOriginalInBothDuplicatePaths(t *testing.
 					mock.ExpectCommit()
 				} else {
 					mock.ExpectQuery("SELECT review_run_id, review_scope_identity, repository_scope_identity").WithArgs(scope.TenantID(), scope.RepositoryID(), original.Source().String(), original.DeduplicationKey()).WillReturnError(sql.ErrNoRows)
+					mock.ExpectQuery(`SELECT CASE WHEN replay_key IS NULL THEN 0 ELSE 1 END\s+FROM open_trestle_webhook_deliveries`).WithArgs(scope.TenantID(), scope.RepositoryID(), original.Source().String(), later.ReplayKey()).WillReturnError(sql.ErrNoRows)
 					mock.ExpectCommit()
 					expectTenantTransaction(mock, scope.TenantID())
 					mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")).WithArgs("webhook:" + scope.Identity() + ":" + original.Source().String()).WillReturnResult(sqlmock.NewResult(0, 1))

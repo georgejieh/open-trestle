@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	postgresstore "github.com/georgejieh/open-trestle/adapters/storage/postgres"
 )
 
@@ -81,8 +83,14 @@ const daemonBudgetedWebhookMappingCountSQL = `SELECT count(*)
 FROM open_trestle_webhook_deliveries
 WHERE tenant_id = $1 AND repository_id = $2 AND source = $3 AND expires_at > $4`
 const daemonBudgetedWebhookMappingInsertSQL = `INSERT INTO open_trestle_webhook_deliveries
-(tenant_id, repository_id, review_run_id, review_scope_identity, repository_scope_identity, source, deduplication_key, delivery_identity, artifact_identity, accepted_at, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+(tenant_id, repository_id, review_run_id, review_scope_identity, repository_scope_identity, source, deduplication_key, delivery_identity, artifact_identity, accepted_at, expires_at, replay_key)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
+const daemonBudgetedWebhookReplayOwnerSQL = `SELECT CASE WHEN replay_key IS NULL THEN 0 ELSE 1 END
+FROM open_trestle_webhook_deliveries
+WHERE tenant_id = $1 AND repository_id = $2 AND source = $3 AND (replay_key = $4 OR replay_key IS NULL)
+ORDER BY replay_key NULLS FIRST
+LIMIT 1`
+const daemonBudgetedWebhookReplayIndexName = "open_trestle_webhook_deliveries_replay_key_idx"
 const daemonBudgetedWebhookMappingReadSQL = `SELECT review_run_id, review_scope_identity, repository_scope_identity, deduplication_key, delivery_identity, artifact_identity, accepted_at, expires_at
 FROM open_trestle_webhook_deliveries
 WHERE tenant_id = $1 AND repository_id = $2 AND source = $3 AND deduplication_key = $4`
@@ -207,6 +215,7 @@ type daemonBudgetedWebhookRow struct {
 	Tenant, Repository, Run, ReviewScopeIdentity, RepositoryScopeIdentity string
 	Source, DeduplicationKey, DeliveryIdentity, ArtifactIdentity          string
 	AcceptedAt, ExpiresAt                                                 time.Time
+	ReplayKey                                                             string
 }
 
 type daemonBudgetedRunPlanRow struct {
@@ -514,8 +523,7 @@ func (tx *daemonBudgetedTx) Rollback() error {
 
 func (tx *daemonBudgetedTx) statement(_ context.Context, id string, a []driver.Value, query bool) ([][]driver.Value, int64, error) {
 	wantQuery := map[string]bool{
-		"run_events_before": true,
-		"authority_schemas": true, "authority_identity": true, "migration_rows": true, "role": true, "relation": true, "attributes": true, "constraints": true, "indexes": true, "policies": true, "table_privileges": true, "confirmation_privileges": true, "allowance_counter_privileges": true, "allowance_immutable_privileges": true, "user_triggers": true, "metadata_read": true, "scope_read": true, "run_plan_read": true, "run_plan_identity_read": true, "run_event_first_plan": true, "run_plans_list": true, "run_event_head": true, "run_events_read": true, "audit_event_head": true, "audit_events_read": true, "key_occupancy": true, "legacy_lineage": true, "admission_read": true, "admission_lock_read": true, "operation_presence": true, "operation_read": true, "operation_ref_read": true, "diagnostic_read": true, "webhook_read": true, "webhook_list": true, "webhook_count": true, "rate_limit_update": true, "rate_limit_conflict": true, "rate_limit_count": true,
+		"authority_schemas": true, "authority_identity": true, "migration_rows": true, "role": true, "relation": true, "attributes": true, "constraints": true, "indexes": true, "policies": true, "table_privileges": true, "confirmation_privileges": true, "allowance_counter_privileges": true, "allowance_immutable_privileges": true, "user_triggers": true, "metadata_read": true, "scope_read": true, "run_plan_read": true, "run_plan_identity_read": true, "run_event_first_plan": true, "run_plans_list": true, "run_event_head": true, "run_events_read": true, "audit_event_head": true, "audit_events_read": true, "key_occupancy": true, "legacy_lineage": true, "admission_read": true, "admission_lock_read": true, "operation_presence": true, "operation_read": true, "operation_ref_read": true, "diagnostic_read": true, "webhook_read": true, "webhook_list": true, "webhook_replay_owner": true, "run_events_before": true, "webhook_count": true, "rate_limit_update": true, "rate_limit_conflict": true, "rate_limit_count": true,
 	}[id]
 	if query != wantQuery {
 		return nil, 0, tx.conn.service.fail("query/exec mismatch for " + id)
@@ -841,8 +849,28 @@ func (tx *daemonBudgetedTx) statement(_ context.Context, id string, a []driver.V
 			}
 		}
 		return [][]driver.Value{{count}}, 0, nil
+	case "webhook_replay_owner":
+		if len(a) != 4 {
+			return nil, 0, tx.conn.service.fail("webhook_replay_owner args")
+		}
+		// Expired rows keep their replay key, so no expiry predicate applies.
+		knownReplay := false
+		for _, row := range tx.webhooks {
+			if row.Tenant == fmt.Sprint(a[0]) && row.Repository == fmt.Sprint(a[1]) && row.Source == fmt.Sprint(a[2]) {
+				if row.ReplayKey == "" {
+					return [][]driver.Value{{int64(0)}}, 0, nil
+				}
+				if row.ReplayKey == fmt.Sprint(a[3]) {
+					knownReplay = true
+				}
+			}
+		}
+		if knownReplay {
+			return [][]driver.Value{{int64(1)}}, 0, nil
+		}
+		return nil, 0, nil
 	case "webhook_insert":
-		if len(a) != 11 {
+		if len(a) != 12 {
 			return nil, 0, tx.conn.service.fail("webhook_insert args")
 		}
 		key := daemonBudgetedWebhookKey(a[0], a[1], a[5], a[6])
@@ -852,6 +880,15 @@ func (tx *daemonBudgetedTx) statement(_ context.Context, id string, a []driver.V
 		row := daemonBudgetedWebhookRow{Tenant: fmt.Sprint(a[0]), Repository: fmt.Sprint(a[1]), Run: fmt.Sprint(a[2]), ReviewScopeIdentity: fmt.Sprint(a[3]), RepositoryScopeIdentity: fmt.Sprint(a[4]), Source: fmt.Sprint(a[5]), DeduplicationKey: fmt.Sprint(a[6]), DeliveryIdentity: fmt.Sprint(a[7]), ArtifactIdentity: fmt.Sprint(a[8])}
 		row.AcceptedAt, _ = a[9].(time.Time)
 		row.ExpiresAt, _ = a[10].(time.Time)
+		// A NULL replay_key (nil) takes no part in the partial unique index.
+		if replay, isString := a[11].(string); isString && replay != "" {
+			for _, existing := range tx.webhooks {
+				if existing.Tenant == row.Tenant && existing.Repository == row.Repository && existing.Source == row.Source && existing.ReplayKey == replay {
+					return nil, 0, &pgconn.PgError{Code: "23505", ConstraintName: daemonBudgetedWebhookReplayIndexName}
+				}
+			}
+			row.ReplayKey = replay
+		}
 		tx.webhooks[key] = row
 		return nil, 1, nil
 	case "key_occupancy":
@@ -1026,6 +1063,7 @@ func daemonBudgetedStatementID(q string) string {
 		daemonBudgetedNormalizeSQL(daemonBudgetedDiagnosticMappingReadSQL):              "diagnostic_read",
 		daemonBudgetedNormalizeSQL(daemonBudgetedWebhookMappingCountSQL):                "webhook_count",
 		daemonBudgetedNormalizeSQL(daemonBudgetedWebhookMappingInsertSQL):               "webhook_insert",
+		daemonBudgetedNormalizeSQL(daemonBudgetedWebhookReplayOwnerSQL):                 "webhook_replay_owner",
 		daemonBudgetedNormalizeSQL(daemonBudgetedRunEventsBeforeSQL):                    "run_events_before",
 		daemonBudgetedNormalizeSQL(daemonBudgetedWebhookMappingReadSQL):                 "webhook_read",
 		daemonBudgetedNormalizeSQL(daemonBudgetedWebhookMappingListSQL):                 "webhook_list",
@@ -1113,6 +1151,7 @@ func daemonBudgetedColumnCounts() map[string]int {
 		"webhook_insert":                 0,
 		"webhook_list":                   8,
 		"webhook_read":                   8,
+		"webhook_replay_owner":           1,
 	}
 }
 func daemonBudgetedNormalizeSQL(q string) string { return strings.Join(strings.Fields(q), " ") }
@@ -1256,6 +1295,7 @@ var daemonBudgetedMigrationHashes = []string{
 	"1e4b1c717d8ac8dc5a5bde19ca43df203d88e2494b433ffb0d7e0e463ca49ebe",
 	"16c33dbe3ef412bbac986e324f8507210fa71a2f6894b605379663fd53f3ebc2",
 	"97e4b0dc7c3aed97acdcc7c740f11619e0c25ee463813f3fff841be5ca126aee",
+	"4be4e7f9c27aa85141d5d0cb2a4a8f9d761133fa1f936aa71980fc5cec57ac68",
 }
 
 const (
