@@ -603,3 +603,22 @@ func TestLocalModelCleanupTimeoutUsesConfiguredBoundWithThreeSecondFloor(t *test
 		}
 	}
 }
+
+// The --checkout alternative belongs only to model-review. Printed before its
+// own usage line it read as a continuation of `local-git review`, which
+// rejects --checkout.
+func TestUsageAttachesCheckoutAlternativeToModelReview(t *testing.T) {
+	var usage bytes.Buffer
+	writeUsage(&usage)
+	lines := strings.Split(strings.TrimSpace(usage.String()), "\n")
+	for index, line := range lines {
+		if !strings.Contains(line, "checkout source alternative") {
+			continue
+		}
+		if index == 0 || !strings.HasPrefix(lines[index-1], "usage: trestle local-git model-review ") {
+			t.Fatalf("checkout alternative follows %q", lines[index-1])
+		}
+		return
+	}
+	t.Fatal("checkout alternative missing from usage")
+}

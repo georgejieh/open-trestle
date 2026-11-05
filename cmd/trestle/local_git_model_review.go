@@ -304,6 +304,6 @@ func writeLocalModelResult(format string, result localreview.Result, stdout, std
 	return result.ExitCode()
 }
 func writeLocalGitModelReviewUsage(stderr io.Writer) {
-	fmt.Fprintln(stderr, "       checkout source alternative: --checkout PATH --base FULL_REF_OR_COMMIT --head FULL_REF_OR_COMMIT (replaces --objects-root and revision flags)")
 	fmt.Fprintln(stderr, "usage: trestle local-git model-review --objects-root PATH --repository-authority AUTHORITY --repository-namespace SEGMENT[/SEGMENT...] --repository-name NAME --revision-algorithm sha1|sha256 --base-revision-digest HEX --head-revision-digest HEX --tenant ID --repository ID --route-inventory PATH --runtime-policy PATH --egress local-only|policy-approved --timeout DURATION [--object-store loose-only|loose-and-pack-index-v1] [--format json|text] [--investigation-policy PATH | --retained-memory-input PATH]")
+	fmt.Fprintln(stderr, "       checkout source alternative: --checkout PATH --base FULL_REF_OR_COMMIT --head FULL_REF_OR_COMMIT (replaces --objects-root and revision flags)")
 }
