@@ -443,6 +443,18 @@ func (s ReviewRunState) canSucceed() bool {
 	}
 	return true
 }
+
+// retryPending reports a failed task that still has a scheduled retry. Optional
+// work must be terminal before success; replay acceptance of historical success
+// events is deliberately unchanged so previously stored journals still replay.
+func (s ReviewRunState) retryPending() bool {
+	for _, task := range s.tasks {
+		if task.status == TaskRuntimeFailed && task.failure.Retryable() && task.attempts < task.definition.MaxAttempts() {
+			return true
+		}
+	}
+	return false
+}
 func (s ReviewRunState) canFail() bool {
 	for _, task := range s.tasks {
 		if task.definition.Required() && (task.status == TaskRuntimeFailed && !task.RetryableAt(time.UnixMilli(maxRunEventUnixMilliseconds)) || task.status == TaskRuntimeSkipped) {
@@ -521,7 +533,7 @@ func (s ReviewRunState) TerminalCompletion() (TaskCompletion, bool, error) {
 		}
 		return completion, true, nil
 	}
-	if !s.canSucceed() {
+	if !s.canSucceed() || s.retryPending() {
 		return TaskCompletion{}, false, nil
 	}
 	resultTask, err := s.plan.ResultTask()
