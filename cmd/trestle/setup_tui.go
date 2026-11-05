@@ -330,6 +330,7 @@ func runSetupTUIWithClock(args []string, stdin io.Reader, stdout, stderr io.Writ
 	if flags.Parse(args) != nil {
 		return 2
 	}
+	*width = resolveDisplayWidth(flags, *width, *plain, stdout)
 	legacyGitHubFieldsPresent, brokerGitHubFieldsPresent := false, false
 	flags.Visit(func(f *flag.Flag) {
 		switch f.Name {

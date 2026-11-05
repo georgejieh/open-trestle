@@ -27,6 +27,7 @@ func runTUI(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
+	*width = resolveDisplayWidth(flags, *width, *plain, stdout)
 	if flags.NArg() != 0 || *tenantID == "" || *repositoryID == "" || *runID == "" {
 		writeTUIUsage(stderr)
 		return 2

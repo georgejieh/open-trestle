@@ -17,7 +17,7 @@ go run ./cmd/trestle tui \
 
 Plain HTTP is accepted only for an IP-literal loopback server. Other servers require HTTPS. Redirects are rejected so a credential cannot be forwarded to another origin.
 
-The interface refreshes every two seconds by default. The accepted interval is 250 milliseconds through one minute, and the accepted display width is 60 through 240 columns. Non-terminal output and `TERM=dumb` disable screen-control sequences automatically. `--plain` also disables them explicitly. `--once` writes one snapshot and exits, which is useful for logs and support capture.
+On an interactive terminal (no `--plain`, `TERM` not `dumb`) the display width defaults to the terminal's column count clamped to 60 through 240; an explicit `--width`, plain output and non-terminal output use 100 unless set. `trestle setup tui` follows the same rule. The interface refreshes every two seconds by default. The accepted interval is 250 milliseconds through one minute, and the accepted display width is 60 through 240 columns. Non-terminal output and `TERM=dumb` disable screen-control sequences automatically. `--plain` also disables them explicitly. `--once` writes one snapshot and exits, which is useful for logs and support capture.
 
 ## Commands
 

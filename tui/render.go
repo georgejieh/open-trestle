@@ -22,7 +22,7 @@ func (i *Interface) render(view interfaceView) error {
 	scopeText := fmt.Sprintf("%s / %s / %s", scope.TenantID(), scope.RepositoryID(), scope.ReviewRunID())
 	fmt.Fprintf(&builder, "Scope       %s\n", truncateTerminalText(scopeText, width-12))
 	fmt.Fprintf(&builder, "Run         %-12s revision %d\n", view.receipt.Status().String(), view.receipt.Revision())
-	fmt.Fprintf(&builder, "Updated     %s\n", view.refreshedAt.Format("2006-01-02 15:04:05 UTC"))
+	fmt.Fprintf(&builder, "Refreshed   %s\n", view.refreshedAt.Format("2006-01-02 15:04:05 UTC"))
 	if failure := view.receipt.Failure().String(); failure != "" {
 		fmt.Fprintf(&builder, "Disposition %s\n", failure)
 	}
