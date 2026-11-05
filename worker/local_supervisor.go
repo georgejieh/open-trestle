@@ -61,7 +61,7 @@ func (c *LocalControl) GetRun(ctx context.Context, scope audit.ReviewScope) (con
 		if !found {
 			return controlplane.ReviewRunReceipt{}, controlplane.ErrRunNotOpened
 		}
-		err = journal.WithScopeIntentChecked(ctx, scope, "worker-get-run", plan.Identity(), func(inner context.Context) error {
+		err = withLocalScopeIntent(ctx, journal, scope, "worker-get-run", plan.Identity(), func(inner context.Context) error {
 			observedPlan, observed, readErr := c.coordinator.Resume(inner, scope)
 			if readErr != nil {
 				return readErr
@@ -121,8 +121,14 @@ func (c *LocalControl) ClaimTask(ctx context.Context, scope audit.ReviewScope, k
 	if journal, ok := c.journal.(*controlplane.FileRunJournal); ok {
 		var claimed controlplane.TaskLease
 		var acquired bool
-		err = journal.WithScopeIntent(ctx, scope, "worker-claim-task", plan.Identity(),
+		var before string
+		err = withLocalScopeIntent(ctx, journal, scope, "worker-claim-task", plan.Identity(), nil,
 			func(inner context.Context) error {
+				head, _, readErr := journal.Head(inner, scope)
+				if readErr != nil {
+					return readErr
+				}
+				before = head.Identity()
 				claimed, acquired, err = c.coordinator.ClaimTask(inner, plan, key, handler, c.workerIdentity, c.clock.Now().UTC())
 				return err
 			},
@@ -131,7 +137,12 @@ func (c *LocalControl) ClaimTask(ctx context.Context, scope audit.ReviewScope, k
 					return err
 				}
 				if !acquired {
-					// Conflict/no-op: no state was mutated; leave scope un-quarantined.
+					// ClaimTask can advance other tasks without acquiring this one.
+					// Only an unchanged head proves that this was a no-op.
+					persisted, present, readErr := journal.Head(inner, scope)
+					if readErr != nil || !present || persisted.Identity() != before {
+						return errors.Join(controlplane.ErrRunJournalPersistence, readErr)
+					}
 					return nil
 				}
 				// Mutated: coordinator appended TaskLeased. Verify the event identity
@@ -176,7 +187,7 @@ func (c *LocalControl) RenewTaskLease(ctx context.Context, scope audit.ReviewSco
 	}
 	if journal, ok := c.journal.(*controlplane.FileRunJournal); ok {
 		var renewed controlplane.TaskLease
-		err = journal.WithScopeIntent(ctx, scope, "worker-renew-task-lease", lease.Identity(),
+		err = withLocalScopeIntent(ctx, journal, scope, "worker-renew-task-lease", lease.Identity(), nil,
 			func(inner context.Context) error {
 				renewed, _, err = c.coordinator.RenewTaskLease(inner, plan, lease, c.clock.Now().UTC())
 				return err
@@ -228,7 +239,7 @@ func (c *LocalControl) CompleteTask(ctx context.Context, scope audit.ReviewScope
 	}
 	if journal, ok := c.journal.(*controlplane.FileRunJournal); ok {
 		var receipt controlplane.ReviewRunReceipt
-		err = journal.WithScopeIntent(ctx, scope, "worker-complete-task", lease.Identity(),
+		err = withLocalScopeIntent(ctx, journal, scope, "worker-complete-task", lease.Identity(), nil,
 			func(inner context.Context) error {
 				var state controlplane.ReviewRunState
 				state, err = c.coordinator.CompleteTask(inner, plan, lease, completion, c.clock.Now().UTC())
@@ -272,6 +283,66 @@ func (c *LocalControl) CompleteTask(ctx context.Context, scope audit.ReviewScope
 		return controlplane.ReviewRunReceipt{}, err
 	}
 	return receipt, nil
+}
+
+// withLocalScopeIntent runs a local journal effect under a scope intent. A
+// deterministic coordinator refusal that left the journal head unchanged is
+// proven to have appended nothing, so it clears the intent and is returned to
+// the caller instead of quarantining the scope. Cancellation, persistence,
+// and any refusal after a head change keep the conservative quarantine.
+func withLocalScopeIntent(ctx context.Context, journal *controlplane.FileRunJournal, scope audit.ReviewScope, kind, expected string, preflight, effect, verify func(context.Context) error) error {
+	var before string
+	var refusal error
+	err := journal.WithScopeIntentChecked(ctx, scope, kind, expected, preflight, func(inner context.Context) error {
+		head, _, err := journal.Head(inner, scope)
+		if err != nil {
+			return err
+		}
+		before = head.Identity()
+		if err := effect(inner); err != nil {
+			if !localCoordinatorRefusal(err) {
+				return err
+			}
+			refusal = err
+		}
+		return nil
+	}, func(inner context.Context) error {
+		if refusal == nil {
+			return verify(inner)
+		}
+		head, _, err := journal.Head(inner, scope)
+		if err != nil || head.Identity() != before {
+			return errors.Join(refusal, err)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return refusal
+}
+
+// localCoordinatorRefusal identifies closed coordinator refusals that are
+// decided from replayed state before any append.
+func localCoordinatorRefusal(err error) bool {
+	if err == nil || errors.Is(err, controlplane.ErrRunJournalContextDone) || errors.Is(err, controlplane.ErrRunJournalPersistence) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	for _, refusal := range []error{
+		controlplane.ErrRunTransitionLeaseMismatch,
+		controlplane.ErrRunTransitionSequenceMismatch,
+		controlplane.ErrRunTransitionAttemptLimit,
+		controlplane.ErrRunAlreadyTerminal,
+		controlplane.ErrTaskAlreadyCompleted,
+		controlplane.ErrTaskLeaseRenewalLimit,
+		controlplane.ErrReviewTaskNotFound,
+		controlplane.ErrInvalidReviewTaskHandler,
+	} {
+		if errors.Is(err, refusal) {
+			return true
+		}
+	}
+	return false
 }
 
 type localConflict struct{}
