@@ -173,6 +173,10 @@ func (s *Store) Append(ctx context.Context, expectedHead string, event controlpl
 	if err := event.Validate(); err != nil {
 		return err
 	}
+	// Owner-only checkpoint: public writers cannot settle prepared context input.
+	if event.Kind() == controlplane.RunEventContextInputSettled {
+		return controlplane.ErrPreparedContextInput
+	}
 	encoded, err := controlplane.EncodeRunEvent(event)
 	if err != nil {
 		return err
@@ -194,6 +198,15 @@ WHERE tenant_id = $1 AND repository_id = $2 AND review_run_id = $3`, scope.Tenan
 		}
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return classifyTransactionError(err)
+		}
+		// Like the memory and file journals, this history check precedes the duplicate
+		// shortcut: a stored success is not a grant to append it through this API.
+		follows, err := publicSuccessFollowsPreparedPacket(ctx, tx, scope, event)
+		if err != nil {
+			return err
+		}
+		if follows {
+			return controlplane.ErrPreparedContextPacket
 		}
 		head, found, err := queryRunHeadTransaction(ctx, tx, scope)
 		if err != nil {
@@ -279,6 +292,49 @@ ORDER BY sequence ASC LIMIT $5`, scope.TenantID(), scope.RepositoryID(), scope.R
 		return nil, err
 	}
 	return events, nil
+}
+
+// publicSuccessFollowsPreparedPacket mirrors the controlplane journal guard of the same name:
+// a public writer cannot complete a lease that already recorded a prepared context packet
+// checkpoint. Only a success event needs the earlier history.
+func publicSuccessFollowsPreparedPacket(ctx context.Context, tx *sql.Tx, scope audit.ReviewScope, event controlplane.RunEvent) (bool, error) {
+	if event.Kind() != controlplane.RunEventTaskSucceeded {
+		return false, nil
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT sequence, event_identity, canonical_event
+FROM open_trestle_run_events
+WHERE tenant_id = $1 AND repository_id = $2 AND review_run_id = $3 AND sequence < $4
+ORDER BY sequence ASC`, scope.TenantID(), scope.RepositoryID(), scope.ReviewRunID(), event.Sequence())
+	if err != nil {
+		return false, classifyTransactionError(err)
+	}
+	defer rows.Close()
+	follows := false
+	previousSequence := uint64(0)
+	for rows.Next() {
+		var sequence uint64
+		var identity string
+		var encoded []byte
+		if err := rows.Scan(&sequence, &identity, &encoded); err != nil {
+			return false, classifyTransactionError(err)
+		}
+		earlier, parseErr := controlplane.ParseRunEvent(encoded)
+		if parseErr != nil || earlier.Identity() != identity || earlier.Sequence() != sequence || earlier.Scope().Identity() != scope.Identity() || sequence != previousSequence+1 {
+			return false, ErrCorruptRecord
+		}
+		previousSequence = sequence
+		if earlier.Kind() == controlplane.RunEventContextPacketPrepared &&
+			earlier.TaskKey() == event.TaskKey() &&
+			earlier.TaskIdentity() == event.TaskIdentity() &&
+			earlier.Attempt() == event.Attempt() &&
+			earlier.LeaseTokenIdentity() == event.LeaseTokenIdentity() {
+			follows = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, classifyTransactionError(err)
+	}
+	return follows, nil
 }
 
 func queryRunHead(ctx context.Context, tx *sql.Tx, scope audit.ReviewScope) (controlplane.RunEvent, bool, error) {

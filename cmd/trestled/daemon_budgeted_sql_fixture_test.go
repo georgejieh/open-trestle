@@ -53,6 +53,10 @@ const daemonBudgetedRunEventsReadSQL = `SELECT sequence, event_identity, canonic
 FROM open_trestle_run_events
 WHERE tenant_id = $1 AND repository_id = $2 AND review_run_id = $3 AND sequence > $4
 ORDER BY sequence ASC LIMIT $5`
+const daemonBudgetedRunEventsBeforeSQL = `SELECT sequence, event_identity, canonical_event
+FROM open_trestle_run_events
+WHERE tenant_id = $1 AND repository_id = $2 AND review_run_id = $3 AND sequence < $4
+ORDER BY sequence ASC`
 const daemonBudgetedRunEventInsertSQL = `INSERT INTO open_trestle_run_events
 (tenant_id, repository_id, review_run_id, scope_identity, plan_identity, sequence, event_identity, previous_identity, canonical_event, occurred_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
@@ -510,6 +514,7 @@ func (tx *daemonBudgetedTx) Rollback() error {
 
 func (tx *daemonBudgetedTx) statement(_ context.Context, id string, a []driver.Value, query bool) ([][]driver.Value, int64, error) {
 	wantQuery := map[string]bool{
+		"run_events_before": true,
 		"authority_schemas": true, "authority_identity": true, "migration_rows": true, "role": true, "relation": true, "attributes": true, "constraints": true, "indexes": true, "policies": true, "table_privileges": true, "confirmation_privileges": true, "allowance_counter_privileges": true, "allowance_immutable_privileges": true, "user_triggers": true, "metadata_read": true, "scope_read": true, "run_plan_read": true, "run_plan_identity_read": true, "run_event_first_plan": true, "run_plans_list": true, "run_event_head": true, "run_events_read": true, "audit_event_head": true, "audit_events_read": true, "key_occupancy": true, "legacy_lineage": true, "admission_read": true, "admission_lock_read": true, "operation_presence": true, "operation_read": true, "operation_ref_read": true, "diagnostic_read": true, "webhook_read": true, "webhook_list": true, "webhook_count": true, "rate_limit_update": true, "rate_limit_conflict": true, "rate_limit_count": true,
 	}[id]
 	if query != wantQuery {
@@ -654,6 +659,22 @@ func (tx *daemonBudgetedTx) statement(_ context.Context, id string, a []driver.V
 				break
 			}
 			rows = append(rows, []driver.Value{int64(row.Sequence), row.EventIdentity, daemonBudgetedBytes(row.CanonicalEvent)})
+		}
+		return rows, 0, nil
+	case "run_events_before":
+		if len(a) != 4 {
+			return nil, 0, tx.conn.service.fail("run_events_before args")
+		}
+		before, ok := daemonBudgetedInt64(a[3])
+		if !ok || before < 0 {
+			return nil, 0, tx.conn.service.fail("run_events_before bound")
+		}
+		events := tx.runEvents[daemonBudgetedScopeKey(a[0], a[1], a[2])]
+		rows := make([][]driver.Value, 0, len(events))
+		for _, row := range events {
+			if int64(row.Sequence) < before {
+				rows = append(rows, []driver.Value{int64(row.Sequence), row.EventIdentity, daemonBudgetedBytes(row.CanonicalEvent)})
+			}
 		}
 		return rows, 0, nil
 	case "run_event_insert":
@@ -1005,6 +1026,7 @@ func daemonBudgetedStatementID(q string) string {
 		daemonBudgetedNormalizeSQL(daemonBudgetedDiagnosticMappingReadSQL):              "diagnostic_read",
 		daemonBudgetedNormalizeSQL(daemonBudgetedWebhookMappingCountSQL):                "webhook_count",
 		daemonBudgetedNormalizeSQL(daemonBudgetedWebhookMappingInsertSQL):               "webhook_insert",
+		daemonBudgetedNormalizeSQL(daemonBudgetedRunEventsBeforeSQL):                    "run_events_before",
 		daemonBudgetedNormalizeSQL(daemonBudgetedWebhookMappingReadSQL):                 "webhook_read",
 		daemonBudgetedNormalizeSQL(daemonBudgetedWebhookMappingListSQL):                 "webhook_list",
 		daemonBudgetedNormalizeSQL(daemonBudgetedjournalSQLTenantGuc):                   "tenant_guc",
@@ -1077,6 +1099,7 @@ func daemonBudgetedColumnCounts() map[string]int {
 		"run_event_head":                 4,
 		"run_event_insert":               0,
 		"run_events_read":                3,
+		"run_events_before":              3,
 		"run_plan_identity_read":         1,
 		"run_plan_insert":                0,
 		"run_plan_read":                  2,
