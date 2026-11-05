@@ -139,3 +139,20 @@ func TestOpenRouterResponseNullableZeroMetadataAndLegacyIdentity(t *testing.T) {
 		t.Fatal("generic-shaped response changed")
 	}
 }
+
+func TestOpenRouterResponseRejectsInvalidUTF8LikeGenericChat(t *testing.T) {
+	// A raw 0xff byte inside the assistant content string is not valid UTF-8. The JSON
+	// decoder would silently replace it with U+FFFD, so the raw body must be rejected
+	// exactly as the generic, OpenCode Go and OpenCode Console normalizers reject it.
+	body := bytes.Replace(openRouterDocumentedChatResponse("model"), []byte(`\"summary\":\"ok\"`), []byte("\\\"summary\\\":\\\"o\xffk\\\""), 1)
+	if bytes.Equal(body, openRouterDocumentedChatResponse("model")) {
+		t.Fatal("fixture replacement did not apply")
+	}
+	if _, err := normalizeChatResponse(body, testRoute(t, "model", "")); err == nil {
+		t.Fatal("generic chat accepted invalid UTF-8")
+	}
+	a := &Adapter{protocol: ProtocolChatCompletions, requestProfile: RequestProfileOpenRouterZDRChatV1}
+	if response, err := a.normalizeProviderResponse(body, testRoute(t, "model", "")); err == nil {
+		t.Fatalf("OpenRouter profile accepted invalid UTF-8 and rewrote content to %q", response.Parts()[0].Payload())
+	}
+}

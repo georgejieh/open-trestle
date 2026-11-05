@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"math"
+	"unicode/utf8"
 
 	"github.com/georgejieh/open-trestle/internal/provider"
 )
@@ -77,7 +78,9 @@ func (a *Adapter) normalizeProviderResponse(content []byte, route provider.Route
 }
 
 func normalizeOpenRouterChatResponse(content []byte, route provider.RouteReference) (provider.Response, error) {
-	if len(content) == 0 || len(content) > maximumResponseBytes || validateChatJSONShape(content) != nil {
+	// Reject invalid UTF-8 before decoding: the decoder would replace it with U+FFFD and
+	// the re-marshaled generic body would then pass normalizeChatResponse's own check.
+	if len(content) == 0 || len(content) > maximumResponseBytes || !utf8.Valid(content) || validateChatJSONShape(content) != nil {
 		return provider.Response{}, ErrInvalidConfig
 	}
 	decoder := json.NewDecoder(bytes.NewReader(content))

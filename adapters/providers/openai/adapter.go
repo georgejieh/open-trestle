@@ -563,9 +563,9 @@ func (a *Adapter) executeWithDispatchProof(
 		}
 		return classifyHTTPFailure(response)
 	}
-	content, ok := readBounded(response)
-	if !ok {
-		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayOutcomeUnknown, 0)
+	content, readErr := readBounded(response)
+	if readErr != nil {
+		return failed(bodyReadFailure(ctx, readErr), gateway.RouteReplayOutcomeUnknown, 0)
 	}
 	var normalized provider.Response
 	if a.requestProfile == RequestProfileOpenCodeConsoleChatV1 {
@@ -701,19 +701,41 @@ func retryAfterMilliseconds(value string) uint32 {
 	return uint32(seconds * 1000)
 }
 
-func readBounded(response *http.Response) ([]byte, bool) {
+var errInvalidResponseBody = errors.New("invalid OpenAI response body")
+
+// readBounded returns the transport read error when the body could not be read, or
+// errInvalidResponseBody when the body was read but violated the size contract.
+func readBounded(response *http.Response) ([]byte, error) {
 	if response == nil || response.Body == nil || response.ContentLength > maximumResponseBytes {
 		if response != nil {
 			drainAndClose(response.Body)
 		}
-		return nil, false
+		return nil, errInvalidResponseBody
 	}
 	content, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
 	closeErr := response.Body.Close()
-	if err != nil || closeErr != nil || len(content) == 0 || len(content) > maximumResponseBytes {
-		return nil, false
+	if err != nil {
+		return nil, err
 	}
-	return content, true
+	if closeErr != nil || len(content) == 0 || len(content) > maximumResponseBytes {
+		return nil, errInvalidResponseBody
+	}
+	return content, nil
+}
+
+// bodyReadFailure keeps timeout and caller cancellation distinct from malformed bodies,
+// matching the classification already applied to failures before response headers.
+func bodyReadFailure(ctx context.Context, err error) gateway.RouteFailureClass {
+	if errors.Is(err, errInvalidResponseBody) {
+		return gateway.RouteFailureInvalidResponse
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return gateway.RouteFailureTimeout
+	}
+	if ctx.Err() != nil {
+		return gateway.RouteFailureCancelled
+	}
+	return gateway.RouteFailureTransport
 }
 
 type responseWire struct {
@@ -771,6 +793,10 @@ func modelSelector(route provider.RouteReference) string {
 }
 
 func normalizeResponse(content []byte, route provider.RouteReference) (provider.Response, error) {
+	// The decoder would silently replace invalid UTF-8 with U+FFFD, rewriting model output.
+	if !utf8.Valid(content) {
+		return provider.Response{}, ErrInvalidConfig
+	}
 	if err := validateJSONShape(content); err != nil {
 		return provider.Response{}, err
 	}
