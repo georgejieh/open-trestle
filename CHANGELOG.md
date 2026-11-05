@@ -20,6 +20,7 @@ All notable changes to released versions of Open Trestle will be documented in t
 - Added a deterministic unsigned Linux amd64 candidate pyz with strict archive verification, no-overwrite staged installation, receipt-bound verification, bounded smoke evidence, rollback, and ownership-preserving uninstall for explicit local evaluation.
 - Added a packaged local single-node journey over a real temporary Git repository, with candidate-to-source revision binding, durable daemon review state, CLI/TUI/console inspection, deterministic JSON and SARIF, before-and-after restart browser receipts, bounded process and network output, process-group cleanup, port-rebind proof, and source-state preservation.
 - Added bounded same-target candidate upgrades and one-use immediate version rollback with protected old/new generation bindings, caught pre-commit failure restoration, and canonical content-free lifecycle evidence. Crash and power-loss recovery remains unproven.
+- Added a planning-only specialist review-profile catalog (`agentprofile`) with nine embedded, content-identified profiles, strict versioned tier-to-route assignments, a deterministic router with explainable difficulty scoring, explicit tier escalation, verifier-independence marking, budget-cap omissions, and `trestle profiles list|plan`. Profiles are candidate-only; plans are not yet dispatched by review runs and never bypass gateway eligibility.
 
 ### Changed
 
@@ -29,6 +30,17 @@ All notable changes to released versions of Open Trestle will be documented in t
 - Made web and VS Code distributions reproducible and freshness-checked in CI, with package-local npm policy that separates locked dependency retrieval from automatic audit requests and update checks.
 - Sealed packaged alpha verification to a stable output-owned candidate copy and a no-follow working-tree snapshot bounded by entry count and regular-file bytes, including ignored and assume-unchanged files and recorded symlink targets outside `.git`.
 - Independently validate phase-bound browser receipts and screenshot files, including strict JSON value types, exact review identities, fatal-zero browser metrics, viewport and PNG image dimensions, PNG structure and CRCs, and on-disk byte digests.
+
+### Fixed
+
+- Refused a signed GitHub webhook body replayed under a new delivery ID with `409 delivery_replayed` in the memory, file, and PostgreSQL inboxes; same-ID redelivery is unchanged. PostgreSQL upgrades refuse new-ID intake while legacy replay keys still require trusted backfill.
+- Kept a run open while an optional task still has a retry pending, refused reads of artifacts with an interrupted authorized deletion, and stopped proven unchanged-head deterministic coordinator refusals from permanently quarantining a local scope. Cancellation, persistence, and changed-head refusals remain quarantined.
+- Aligned the PostgreSQL run journal with the memory and file journals on owner context-input and prepared-packet guards.
+- Classified provider response-body read failures as timeout, cancelled, or transport failures rather than invalid responses, and rejected invalid UTF-8 in OpenRouter and Responses output.
+- Preserved historical diagnostic-set identities and exact readback for tied findings, and rejected memory expiry boundaries at or before the Unix epoch.
+- Accepted version-5 deletion analysis in publication readiness without changing historical artifact contracts.
+- Answered malformed MCP requests under their own id, negotiated newer ACP protocol versions down to version 1, accepted one trailing newline in `runs submit --plan` files, and sized both terminal interfaces to the terminal when `--width` is not given.
+- Kept the console session and selected task through a transient refresh failure with a visible alert, opened the selected task from the overview, and fixed task-row overflow, misalignment, input-border contrast, and evidence typography.
 
 ### Security
 
