@@ -74,6 +74,9 @@ func (s *Server) Serve(ctx context.Context, input io.Reader, output io.Writer) e
 	}
 }
 func (s *Server) handle(ctx context.Context, encoded []byte) any {
+	if !utf8.Valid(encoded) {
+		return errorResponse(json.RawMessage("null"), -32700, "Message must be valid UTF-8.", nil)
+	}
 	if notification, recognized := parseCancellationNotification(encoded); recognized {
 		_ = notification
 		return nil
@@ -83,7 +86,7 @@ func (s *Server) handle(ctx context.Context, encoded []byte) any {
 	}
 	request, err := parseRequest(encoded)
 	if err != nil {
-		return errorResponse(json.RawMessage("null"), -32700, "Invalid JSON-RPC request.", nil)
+		return invalidRequestResponse(encoded)
 	}
 	meta, metaErr := parseRequestMeta(request.Params)
 	if metaErr != nil {
@@ -149,10 +152,27 @@ type requestMetadata struct {
 
 func parseRequest(encoded []byte) (mcpRequest, error) {
 	var request mcpRequest
-	if decodeStrict(encoded, &request) != nil || request.JSONRPC != "2.0" || !validRequestID(request.ID) || request.Method == "" || len(request.Method) > 128 || len(request.Params) == 0 {
+	if decodeStrict(encoded, &request) != nil || request.JSONRPC != "2.0" || !validRequestID(request.ID) || request.Method == "" || len(request.Method) > 128 {
 		return mcpRequest{}, errors.New("invalid request")
 	}
 	return request, nil
+}
+
+// invalidRequestResponse classifies a message that is not a valid request. Text
+// that is not JSON is a parse error. Any other malformed request is an invalid
+// request, and it echoes a well-formed identifier so the client can correlate
+// the failure instead of waiting for a response that would carry a null id.
+func invalidRequestResponse(encoded []byte) any {
+	if !json.Valid(encoded) {
+		return errorResponse(json.RawMessage("null"), -32700, "Invalid JSON-RPC request.", nil)
+	}
+	var envelope struct {
+		ID json.RawMessage `json:"id"`
+	}
+	if json.Unmarshal(encoded, &envelope) == nil && validRequestID(envelope.ID) {
+		return errorResponse(envelope.ID, -32600, "Invalid JSON-RPC request.", nil)
+	}
+	return errorResponse(json.RawMessage("null"), -32600, "Invalid JSON-RPC request.", nil)
 }
 func parseRequestMeta(encoded []byte) (requestMetadata, error) {
 	var params map[string]json.RawMessage

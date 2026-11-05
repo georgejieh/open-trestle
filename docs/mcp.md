@@ -8,7 +8,7 @@ export OPEN_TRESTLE_API_TOKEN="replace-with-a-random-secret-of-at-least-32-bytes
 trestle mcp
 ```
 
-The process reads newline-delimited UTF-8 JSON-RPC messages from standard input and writes only JSON-RPC messages to standard output. Diagnostics go to standard error. Input is bounded to 1 MiB per line. Redirects and remote plaintext daemon URLs remain forbidden by the shared client.
+The process reads newline-delimited UTF-8 JSON-RPC messages from standard input and writes only JSON-RPC messages to standard output. Diagnostics go to standard error. Input is bounded to 1 MiB per line. Text that is not JSON receives `-32700` with a null id. Valid JSON that is not a valid request receives `-32600`, under the request's own id when it carries a well-formed one, so a client never waits on an uncorrelatable reply. Redirects and remote plaintext daemon URLs remain forbidden by the shared client.
 
 The server implements the stateless MCP `2026-07-28` request model. Each request must declare `io.modelcontextprotocol/protocolVersion` and `io.modelcontextprotocol/clientCapabilities` in `_meta`. `server/discover` reports the exact supported version and tool capability. Unsupported versions return the standard `-32022` error with the supported version list.
 
