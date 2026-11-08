@@ -44,6 +44,7 @@ import (
 	modelhandler "github.com/georgejieh/open-trestle/handlers/model"
 	publicationhandler "github.com/georgejieh/open-trestle/handlers/publication"
 	sourcehandler "github.com/georgejieh/open-trestle/handlers/source"
+	"github.com/georgejieh/open-trestle/internal/buildinfo"
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/internal/fileauthority"
 	memorycore "github.com/georgejieh/open-trestle/internal/memory"
@@ -1103,6 +1104,12 @@ func runDaemon(ctx context.Context, args []string, getenv func(string) string, s
 	}
 	if ctx.Err() != nil {
 		return nil
+	}
+	if len(args) > 0 && args[0] == "build-info" {
+		if len(args) != 1 {
+			return ErrInvalidDaemonConfiguration
+		}
+		return buildinfo.Write(stdout, "trestled")
 	}
 	if len(args) > 0 && (args[0] == "recovery-point" || args[0] == "verify-restore") {
 		return runLocalRecoveryCommand(ctx, args, stdout, stderr)

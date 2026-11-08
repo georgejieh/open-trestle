@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/georgejieh/open-trestle/internal/buildinfo"
 	"github.com/georgejieh/open-trestle/internal/config"
 	"github.com/georgejieh/open-trestle/internal/review"
 )
@@ -49,6 +50,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 }
 
 func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "build-info" {
+		if len(args) != 1 {
+			fmt.Fprintln(stderr, "usage: trestle build-info")
+			return 2
+		}
+		if err := buildinfo.Write(stdout, "trestle"); err != nil {
+			fmt.Fprintf(stderr, "build-info: %v\n", err)
+			return 1
+		}
+		return 0
+	}
 	if len(args) >= 1 && args[0] == "setup" {
 		return runSetup(args[1:], stdout, stderr)
 	}
@@ -171,6 +183,7 @@ func runReview(fixturePath string, stdout, stderr io.Writer) int {
 
 func writeUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "usage: trestle validate-fixture <path>")
+	fmt.Fprintln(stderr, "       trestle build-info")
 	fmt.Fprintln(stderr, "       trestle review <path>")
 	fmt.Fprintln(stderr, "       trestle ci --format=json <path>")
 	fmt.Fprintln(stderr, "       trestle ci --format=sarif <path>")

@@ -19,6 +19,8 @@ import uuid
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
 
+from local_alpha_system import capture_source_state
+
 SCANNER_NAME = "betterleaks"
 SCANNER_VERSION = "v1.8.1"
 SCANNER_COMMIT = "5eab48332cc48565864514e3bc6de89df091a7c4"
@@ -827,9 +829,62 @@ def _expected_staging_files(repository: Path) -> set[str]:
     return files
 
 
+def source_binding(repository: Path) -> dict[str, str]:
+    """Bind clean committed, indexed, and live tracked source using the existing verifier."""
+    try:
+        state = capture_source_state(repository)
+    except (OSError, RuntimeError) as error:
+        raise ValueError("protected packaging requires verified clean source") from error
+    if not state.clean:
+        raise ValueError("protected packaging requires verified clean source")
+    # Ignored staging and toolchain caches change during the build, not tracked inputs.
+    fields = (
+        state.git_authority_sha256, state.committed_tree_sha256,
+        state.live_tracked_tree_sha256, state.index_sha256,
+        state.index_flags_sha256, state.status_sha256,
+    )
+    return {
+        "source_revision": state.revision,
+        "source_tree": state.tree_identity,
+        "verified_source": hashlib.sha256(_canonical_json(fields)).hexdigest(),
+    }
+
+
+def verify_root_provenance(payload: str, program: str, binding: dict[str, str]) -> None:
+    """Require the built executable to report the exact protected source inputs."""
+    try:
+        document = json.loads(payload)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"{program} source provenance mismatch") from error
+    expected = {
+        "contract": "open-trestle/build-info", "schema_version": 1,
+        "program": program, "source_bound": True,
+        "source_revision": binding["source_revision"],
+        "source_tree": binding["source_tree"],
+    }
+    if (
+        not isinstance(document, dict)
+        or type(document.get("schema_version")) is not int
+        or type(document.get("source_bound")) is not bool
+        or document != expected
+    ):
+        raise ValueError(f"{program} source provenance mismatch")
+
+
+def verify_packaged_provenance(repository: Path, staging: Path, binding: dict[str, str]) -> None:
+    """Inspect both native product entry points without loading daemon runtime configuration."""
+    for name in ("trestle", "trestled"):
+        payload = _run(
+            [str(staging / name), "build-info"], cwd=repository,
+            environment={"HOME": "/nonexistent", "LANG": "C", "PATH": "/usr/bin:/bin", "TZ": "UTC"},
+        )
+        verify_root_provenance(payload, name, binding)
+
+
 def package(repository: Path, output: Path) -> None:
     """Build deterministic scanner binaries and create the runtime staging tree."""
     repository = repository.resolve()
+    binding = source_binding(repository)
     expected_source_digests = release_input_digests(repository)
     output = output.resolve()
     if output == repository or repository not in output.parents:
@@ -920,10 +975,13 @@ def package(repository: Path, output: Path) -> None:
         for path in release_dir.iterdir():
             path.chmod(0o444)
         root_environment = _environment(ROOT_GO, go_tmp)
+        root_environment.update({"GOENV": "off", "GOFLAGS": "", "GOEXPERIMENT": ""})
         root_flags = (
             "-s -w -buildid= "
             f"-X github.com/georgejieh/open-trestle/internal/secretscan.expectedSecretScannerLauncherSHA256={launcher_digest} "
-            f"-X github.com/georgejieh/open-trestle/internal/secretscan.expectedSecretScannerWorkerSHA256={worker_digest}"
+            f"-X github.com/georgejieh/open-trestle/internal/secretscan.expectedSecretScannerWorkerSHA256={worker_digest} "
+            f"-X github.com/georgejieh/open-trestle/internal/buildinfo.sourceRevision={binding['source_revision']} "
+            f"-X github.com/georgejieh/open-trestle/internal/buildinfo.sourceTree={binding['source_tree']}"
         )
         for command, name in (("./cmd/trestle", "trestle"), ("./cmd/trestled", "trestled")):
             _run(
@@ -937,6 +995,9 @@ def package(repository: Path, output: Path) -> None:
             binary = (output / name).read_bytes()
             if launcher_digest.encode("ascii") not in binary or worker_digest.encode("ascii") not in binary:
                 raise ValueError(f"{name} does not contain both scanner digests")
+    verify_packaged_provenance(repository, output, binding)
+    if source_binding(repository) != binding:
+        raise ValueError("source changed during packaging")
     validate_staging(output, _expected_staging_files(repository), expected_source_digests)
 
 
@@ -952,11 +1013,15 @@ def main(argv: list[str] | None = None) -> int:
     repository = Path(__file__).resolve().parent.parent
     try:
         if arguments.verify:
+            binding = source_binding(repository)
             validate_staging(
                 repository / arguments.verify,
                 _expected_staging_files(repository),
                 release_input_digests(repository),
             )
+            verify_packaged_provenance(repository, repository / arguments.verify, binding)
+            if source_binding(repository) != binding:
+                raise ValueError("source changed during package verification")
         else:
             package(repository, repository / arguments.output)
     except (OSError, ValueError, json.JSONDecodeError) as error:

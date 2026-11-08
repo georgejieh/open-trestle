@@ -121,7 +121,7 @@ class LinkedLicenseTest(unittest.TestCase):
 
 
 class RootBinaryPackageTest(unittest.TestCase):
-    def _package(self, root, *, missing_digest=None, wrong_toolchain=None):
+    def _package(self, root, *, missing_digest=None, wrong_toolchain=None, wrong_provenance=None, changed_source=False):
         root_mod = b"module example.org/test\n\ngo 1.25.0\ntoolchain go1.26.10\n"
         files = {
             "go.mod": root_mod,
@@ -142,7 +142,21 @@ class RootBinaryPackageTest(unittest.TestCase):
         worker_digest = hashlib.sha256(b"worker").hexdigest()
         builds = {}
 
+        binding = {"source_revision": "a" * 40, "source_tree": "b" * 40}
+        source_calls = []
+
+        def capture(_root):
+            source_calls.append(True)
+            return {**binding, "verified_source": "changed" if changed_source and len(source_calls) > 1 else "stable"}
+
         def run(arguments, **_kwargs):
+            if arguments[-1:] == ["build-info"]:
+                name = Path(arguments[0]).name
+                return json.dumps({
+                    "contract": "open-trestle/build-info", "schema_version": 1,
+                    "program": name, "source_bound": True, **binding,
+                    **({"source_revision": "c" * 40} if name == wrong_provenance else {}),
+                })
             if arguments[:2] == ["go", "build"]:
                 output = Path(arguments[arguments.index("-o") + 1])
                 builds[output.name] = arguments
@@ -166,7 +180,9 @@ class RootBinaryPackageTest(unittest.TestCase):
         # or its artifact and metadata checks.
         with patch.multiple(
             package_secret_scanner,
+            create=True,
             release_input_digests=lambda _root: {},
+            source_binding=capture,
             verify_launcher_build_contract=lambda _root: None,
             provision_launcher_toolchain=lambda *_args: (root, {}, "0" * 64),
             verify_launcher_licenses=lambda *_args: [],
@@ -192,6 +208,10 @@ class RootBinaryPackageTest(unittest.TestCase):
                     self.assertIn(f"expectedSecretScannerLauncherSHA256={launcher}", flags)
                     self.assertIn(f"expectedSecretScannerWorkerSHA256={worker}", flags)
                     self.assertIn("-s -w -buildid=", flags)
+                    self.assertIn("internal/buildinfo.sourceRevision=" + "a" * 40, flags)
+                    self.assertIn("internal/buildinfo.sourceTree=" + "b" * 40, flags)
+                    self.assertIn("-trimpath", arguments)
+                    self.assertIn("-buildvcs=false", arguments)
                     self.assertEqual(arguments[-1], f"./cmd/{name}")
                     self.assertEqual(stat.S_IMODE((root / "staging" / name).stat().st_mode), 0o555)
 
@@ -205,6 +225,17 @@ class RootBinaryPackageTest(unittest.TestCase):
                                 Path(directory),
                                 missing_digest=(name, hashlib.sha256(source).hexdigest()),
                             )
+
+    def test_wrong_embedded_source_rejects_either_root_binary(self):
+        for name in ("trestle", "trestled"):
+            with self.subTest(binary=name), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaisesRegex(ValueError, "provenance mismatch"):
+                    self._package(Path(directory), wrong_provenance=name)
+
+    def test_source_changed_during_packaging_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "source changed during packaging"):
+                self._package(Path(directory), changed_source=True)
 
     def test_wrong_toolchain_rejects_either_root_binary(self):
         for name in ("trestle", "trestled"):
@@ -698,6 +729,51 @@ class ReleaseContractTest(unittest.TestCase):
             'test ! -s "$RUNNER_TEMP/scanner-stderr"',
         ):
             self.assertIn(required, workflow)
+
+
+class SourceProvenanceTest(unittest.TestCase):
+    def test_source_binding_uses_verified_state_not_caller_revision(self):
+        from types import SimpleNamespace
+        state = SimpleNamespace(
+            revision="a" * 40, tree_identity="b" * 40, clean=True,
+            git_authority_sha256="authority", committed_tree_sha256="committed",
+            live_tracked_tree_sha256="live", index_sha256="index",
+            index_flags_sha256="flags", status_sha256="status",
+        )
+        with patch.object(package_secret_scanner, "capture_source_state", return_value=state):
+            binding = package_secret_scanner.source_binding(Path("checkout"))
+        self.assertEqual(binding["source_revision"], "a" * 40)
+        self.assertEqual(binding["source_tree"], "b" * 40)
+        state.clean = False
+        with patch.object(package_secret_scanner, "capture_source_state", return_value=state):
+            with self.assertRaisesRegex(ValueError, "clean source"):
+                package_secret_scanner.source_binding(Path("checkout"))
+
+    def test_source_capture_failure_is_not_accepted(self):
+        with patch.object(package_secret_scanner, "capture_source_state", side_effect=RuntimeError("dirty")):
+            with self.assertRaisesRegex(ValueError, "clean source"):
+                package_secret_scanner.source_binding(Path("checkout"))
+
+    def test_root_binary_document_matches_both_program_and_source(self):
+        binding = {"source_revision": "a" * 40, "source_tree": "b" * 40}
+        valid = {
+            "contract": "open-trestle/build-info", "schema_version": 1,
+            "program": "trestle", "source_bound": True, **binding,
+        }
+        package_secret_scanner.verify_root_provenance(json.dumps(valid), "trestle", binding)
+        for changed in (
+            {**valid, "program": "trestled"},
+            {**valid, "source_revision": "c" * 40},
+            {**valid, "source_tree": "d" * 40},
+            {**valid, "source_bound": False},
+            {**valid, "schema_version": True},
+            {**valid, "extra": "unexpected"},
+        ):
+            with self.subTest(changed=changed):
+                with self.assertRaisesRegex(ValueError, "provenance mismatch"):
+                    package_secret_scanner.verify_root_provenance(json.dumps(changed), "trestle", binding)
+        with self.assertRaisesRegex(ValueError, "provenance mismatch"):
+            package_secret_scanner.verify_root_provenance("not-json", "trestle", binding)
 
 
 if __name__ == "__main__":
