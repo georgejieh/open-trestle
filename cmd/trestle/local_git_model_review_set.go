@@ -351,6 +351,12 @@ type setFindingWire struct {
 	entries         []findingGroupEntry
 	narrowStart     uint32
 	narrowEnd       uint32
+	// representativeMember and representativeTokens identify the one finding
+	// whose claims decide whether a later finding is the same issue. They are
+	// the group's first finding, replaced when a more severe member becomes
+	// the reported representative.
+	representativeMember int
+	representativeTokens map[string]bool
 }
 
 type setSummaryWire struct {
@@ -539,6 +545,13 @@ func buildModelReviewSet(selection specialistSelectionWire, members []localModel
 			wire.Status, wire.CI, wire.RunStatus = "failed", "error", "unknown"
 			wire.Limitations = append(wire.Limitations, "member_result_unreadable")
 			memberFindings = append(memberFindings, nil)
+			if index == 0 {
+				// The general member's report carries the set's source
+				// coverage. Without it the set cannot state how much source
+				// was analyzed, so the loss is recorded at the set level where
+				// a CI consumer reads it, not only on the member wire.
+				set.Limitations = append(set.Limitations, "general_member_report_unreadable_source_coverage_unknown")
+			}
 		} else {
 			wire.reportAvailable = true
 			wire.Status, wire.CI, wire.RunStatus, wire.Failure = report.Status, report.CIDisposition, report.RunStatus, report.Failure
@@ -733,32 +746,35 @@ type findingGroupEntry struct {
 	evidence []string
 }
 
-// related reports whether a finding describes the same issue as one entry
-// already in the group. An identical normalized title matches only when the
-// claims also have substantial wording overlap. Shared evidence IDs are not
-// enough: they identify a changed hunk, which may contain several defects.
-// Text similarity remains heuristic, so distinct consequences are retained.
+// related reports whether a finding describes the same issue as the group's
+// representative finding. Only the representative's own claim tokens count:
+// an absorbed finding's tokens must not qualify a later merge, because that
+// makes the result depend on which member ran first and can collapse a
+// distinct defect into another defect's title and severity.
+//
+// The representative is the group's first finding. When the most severe
+// member replaces it, the group's tokens are replaced with that member's
+// tokens so the comparison always uses one finding's claims.
 func (g *setFindingWire) related(member int, tokens map[string]bool) bool {
-	for _, entry := range g.entries {
-		if entry.member == member {
-			continue
-		}
-		if tokensOverlap(entry.tokens, tokens) {
-			return true
-		}
+	if g.representativeMember == member {
+		return false
 	}
-	return false
+	return tokensOverlap(g.representativeTokens, tokens)
 }
 
 // mergeVerifiedFindings de-duplicates verified findings across members. Two
-// findings are duplicates when they share path and category, their line ranges
-// overlap (a group's covered range grows to the union of what it absorbs), and
-// they describe the same issue (see related). The group keeps the most severe
-// finding as its representative; ties keep the earliest member in run order.
-// The reported range is the narrowest contributing range (ties keep the
-// earliest). Every contributing member is listed. Matching is deterministic:
-// members in run order, findings sorted by path, range and identity. Output is
-// sorted by path, line range, category and identity.
+// findings are duplicates when they share path and category and describe the
+// same issue as the group's representative finding (see related). Only the
+// representative's claims decide a match, so the result does not depend on
+// which member ran first and a distinct defect is never reported under
+// another defect's title and severity.
+//
+// The group keeps the most severe finding as its representative; ties keep the
+// earliest member in run order. The reported range is the narrowest
+// contributing range (ties keep the earliest). Every contributing member is
+// listed. Matching is deterministic: members in run order, findings sorted by
+// path, range and identity. Output is sorted by path, line range, category
+// and identity.
 func mergeVerifiedFindings(labels []string, findings [][]localreview.ReportFinding) ([]setFindingWire, int) {
 	var groups []*setFindingWire
 	duplicates := 0
@@ -784,7 +800,9 @@ func mergeVerifiedFindings(labels []string, findings [][]localreview.ReportFindi
 			contributor := setContributorWire{Member: labels[index], FindingIdentity: finding.Identity, Severity: finding.Severity.String(), StartLine: finding.StartLine, EndLine: finding.EndLine}
 			var group *setFindingWire
 			for _, candidate := range groups {
-				if candidate.Path == finding.Path && candidate.Category == finding.Category && finding.StartLine <= candidate.coveredEnd && candidate.coveredStart <= finding.EndLine && candidate.related(index, tokens) {
+				if candidate.Path == finding.Path && candidate.Category == finding.Category &&
+					finding.StartLine <= candidate.coveredEnd && candidate.coveredStart <= finding.EndLine &&
+					candidate.related(index, tokens) {
 					group = candidate
 					break
 				}
@@ -794,20 +812,25 @@ func mergeVerifiedFindings(labels []string, findings [][]localreview.ReportFindi
 				value.Contributors = []setContributorWire{contributor}
 				value.entries = []findingGroupEntry{entry}
 				value.narrowStart, value.narrowEnd = finding.StartLine, finding.EndLine
+				value.coveredStart, value.coveredEnd = finding.StartLine, finding.EndLine
+				value.representativeMember, value.representativeTokens = index, tokens
 				groups = append(groups, &value)
 				continue
 			}
 			duplicates++
 			group.Contributors = append(group.Contributors, contributor)
 			group.entries = append(group.entries, entry)
-			group.coveredStart, group.coveredEnd = min(group.coveredStart, finding.StartLine), max(group.coveredEnd, finding.EndLine)
 			if finding.EndLine-finding.StartLine < group.narrowEnd-group.narrowStart {
 				group.narrowStart, group.narrowEnd = finding.StartLine, finding.EndLine
 			}
 			if severityRank(finding.Severity) > severityRank(group.report.Severity) {
 				replacement := setFindingFromReport(finding, title)
-				replacement.Contributors, replacement.coveredStart, replacement.coveredEnd = group.Contributors, group.coveredStart, group.coveredEnd
+				replacement.Contributors = group.Contributors
+				// The reported representative also decides later merges, so its
+				// range and claims become the group's comparison basis.
+				replacement.coveredStart, replacement.coveredEnd = finding.StartLine, finding.EndLine
 				replacement.entries, replacement.narrowStart, replacement.narrowEnd = group.entries, group.narrowStart, group.narrowEnd
+				replacement.representativeMember, replacement.representativeTokens = index, tokens
 				*group = replacement
 			}
 		}
@@ -1045,10 +1068,16 @@ func encodeModelReviewSetSARIF(set modelReviewSetWire) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !set.Complete && len(set.Findings) > 0 {
+	if !set.Complete {
 		// Some members completed and their verified findings are listed; the
 		// single-run "no findings were evaluated" wording would be false here.
-		log.Runs[0].Invocations[0].ToolExecutionNotifications = []sarifNotification{{Level: "error", Message: sarifMessage{Text: "One or more review set members did not complete (status=" + set.Status + "); the results list only verified findings from members that completed. This is not a clean result. Limitations: " + strings.Join(set.Limitations, ", ") + "."}}}
+		// The notification also names a lost source-coverage account, which a
+		// consumer needs even when no finding was produced.
+		coverage := ""
+		if set.report == nil || !set.report.HasSourceCoverage {
+			coverage = " Source coverage counts are unavailable for this run."
+		}
+		log.Runs[0].Invocations[0].ToolExecutionNotifications = []sarifNotification{{Level: "error", Message: sarifMessage{Text: "One or more review set members did not complete (status=" + set.Status + "); the results list only verified findings from members that completed. This is not a clean result." + coverage + " Limitations: " + strings.Join(set.Limitations, ", ") + "."}}}
 	}
 	encoded, err := json.Marshal(log)
 	if err != nil {
