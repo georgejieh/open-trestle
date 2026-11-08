@@ -25,6 +25,22 @@ FORBIDDEN_PREFIXES = ("references/",)
 # Local coding-agent guidance stays out of the published tree.
 FORBIDDEN_PATHS = frozenset(("AGENTS.md", "CLAUDE.md"))
 
+# Repository AI-tool configuration stays out of the published tree. These are
+# the conventions the harness recognizes when reading a repository under review
+# (see internal/review.agentConfigurationPath and
+# docs/prompt-injection-boundary.md); shipping them here would couple the
+# published tree to one vendor's local tooling.
+AGENT_CONFIGURATION_FILE_NAMES = frozenset(
+    ("agents.md", "claude.md", "gemini.md", ".cursorrules", "skill.md")
+)
+AGENT_CONFIGURATION_DIRECTORIES = frozenset(
+    (".cursor", ".claude", ".codex", ".trestle", "prompts")
+)
+# The harness ships its own specialist profiles under agentprofile/skills.
+# Those are product assets, not repository AI-tool configuration, so they stay
+# tracked.
+SHIPPED_PROFILE_PREFIXES = ("agentprofile/skills/",)
+
 
 def tracked_paths(root: Path = Path(".")) -> tuple[str, ...]:
     """Return the index's public-boundary inventory without splitting filenames."""
@@ -37,6 +53,34 @@ def tracked_paths(root: Path = Path(".")) -> tuple[str, ...]:
     return tuple(path for path in result.stdout.split("\0") if path)
 
 
+def is_agent_configuration(path: str) -> bool:
+    """Report whether a tracked path is repository AI-tool configuration.
+
+    The rules mirror internal/review.agentConfigurationPath, except that the
+    harness's own shipped specialist profiles are product assets and remain
+    tracked.
+    """
+    normalized = path.replace("\\", "/")
+    if normalized.startswith(SHIPPED_PROFILE_PREFIXES):
+        return False
+    segments = normalized.split("/")
+    base = segments[-1].lower()
+    if base in AGENT_CONFIGURATION_FILE_NAMES:
+        return True
+    if base.endswith(".prompt") or base.endswith(".prompt.md") or base.endswith(".prompty"):
+        return True
+    directories = segments[:-1]
+    for index, directory in enumerate(directories):
+        lowered = directory.lower()
+        if lowered in AGENT_CONFIGURATION_DIRECTORIES:
+            return True
+        if lowered == "skills" and base.endswith(".md"):
+            return True
+        if lowered == ".github" and index == len(directories) - 1 and base == "copilot-instructions.md":
+            return True
+    return False
+
+
 def find_violations(paths: tuple[str, ...]) -> list[str]:
     """Return missing public files and tracked private-reference paths."""
     violations: list[str] = []
@@ -47,6 +91,8 @@ def find_violations(paths: tuple[str, ...]) -> list[str]:
     for path in paths:
         if path.startswith(FORBIDDEN_PREFIXES) or path in FORBIDDEN_PATHS:
             violations.append(f"tracked private artifact: {path}")
+        elif is_agent_configuration(path):
+            violations.append(f"tracked agent-tool configuration: {path}")
     return violations
 
 
@@ -79,7 +125,8 @@ def main(argv: list[str] | None = None, *, root: Path = Path(".")) -> int:
             print(f"- {violation}", file=sys.stderr)
         return 1
     print(f"public tracked-path validation passed (mode={arguments.mode})")
-    print("Scope: required tracked paths and private-reference paths only; "
+    print("Scope: required tracked paths, private-reference paths, and "
+          "repository AI-tool configuration paths only; "
           "not a secrets, history, content, link, or release-artifact audit.")
     return 0
 

@@ -34,7 +34,48 @@ class TrackedBoundaryTest(unittest.TestCase):
     def test_tracked_local_agent_guidance_is_refused(self):
         self.assertEqual(
             boundary.find_violations((*boundary.REQUIRED_PATHS, "AGENTS.md", "CLAUDE.md", "docs/AGENTS.md")),
-            ["tracked private artifact: AGENTS.md", "tracked private artifact: CLAUDE.md"],
+            [
+                "tracked private artifact: AGENTS.md",
+                "tracked private artifact: CLAUDE.md",
+                "tracked agent-tool configuration: docs/AGENTS.md",
+            ],
+        )
+
+    def test_nested_agent_tool_configuration_is_refused(self):
+        forbidden = (
+            "docs/CLAUDE.md",
+            "pkg/CLAUDE.md",
+            "GEMINI.md",
+            ".cursorrules",
+            ".claude/settings.json",
+            ".claude/commands/review.md",
+            ".cursor/rules/go.mdc",
+            ".codex/config.toml",
+            "prompts/review.prompt",
+            ".github/prompts/review.prompt.md",
+            ".github/copilot-instructions.md",
+            "docs/review.prompt.md",
+            "docs/review.prompty",
+        )
+        for path in forbidden:
+            with self.subTest(path=path):
+                self.assertEqual(
+                    boundary.find_violations((*boundary.REQUIRED_PATHS, path)),
+                    [f"tracked agent-tool configuration: {path}"],
+                )
+
+    def test_shipped_product_profiles_and_product_paths_are_accepted(self):
+        accepted = (
+            "agentprofile/skills/backend.md",
+            "agentprofile/skills/security_probe.md",
+            "cmd/trestle/mcp.go",
+            "mcpserver/server.go",
+            "adapters/providers/codexsession/session.go",
+            "docs/mcp.md",
+            "docs/codex-chatgpt-session.md",
+        )
+        self.assertEqual(
+            boundary.find_violations((*boundary.REQUIRED_PATHS, *accepted)), []
         )
 
     def test_shipped_product_profiles_are_accepted(self):
