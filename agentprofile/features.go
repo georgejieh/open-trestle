@@ -456,19 +456,7 @@ func ChangeFeaturesFromSemanticImpact(change evidence.Change, impact semanticimp
 	if len(fileChanges) == 0 || len(fileChanges) != len(lineMaps) || !validDigest(change.Identity()) {
 		return ChangeFeatures{}, fmt.Errorf("%w: change is not canonical", ErrInvalidChangeFeatures)
 	}
-	publicAPIPaths := map[string]struct{}{}
-	publicAPIChanges := impact.PublicAPIChanges()
-	for _, declaration := range publicAPIChanges {
-		publicAPIPaths[declaration.Path()] = struct{}{}
-	}
-	changed := make(map[string]struct{}, len(fileChanges))
-	spec := ChangeFeaturesSpec{
-		Coverage: hints.Coverage, Intent: hints.Intent, ConfigFiles: hints.ConfigFiles,
-		ChangeIdentity: change.Identity(),
-	}
-	if validDigest(impact.Identity()) {
-		spec.SemanticProfileIdentity = impact.Identity()
-	}
+	files := make([]ChangedFileSpec, 0, len(fileChanges))
 	for index, fileChange := range fileChanges {
 		var added, deleted uint64
 		for _, hunk := range lineMaps[index].Hunks() {
@@ -485,12 +473,44 @@ func ChangeFeaturesFromSemanticImpact(change evidence.Change, impact semanticimp
 		if added > maxChangedLinesPerFile || deleted > maxChangedLinesPerFile {
 			return ChangeFeatures{}, fmt.Errorf("%w: changed line count exceeds bound", ErrInvalidChangeFeatures)
 		}
-		entry := ChangedFileSpec{Path: fileChange.Path(), AddedLines: uint32(added), DeletedLines: uint32(deleted)}
-		entry.Signals = append(entry.Signals, hints.FileSignals[fileChange.Path()]...)
-		if _, ok := publicAPIPaths[fileChange.Path()]; ok && !containsSignal(entry.Signals, SignalPublicAPI) {
+		files = append(files, ChangedFileSpec{Path: fileChange.Path(), AddedLines: uint32(added), DeletedLines: uint32(deleted)})
+	}
+	return changeFeaturesFromImpact(change.Identity(), files, impact, hints)
+}
+
+// ChangeFeaturesFromFileSpecs is ChangeFeaturesFromSemanticImpact for a caller that
+// already holds per-file changed line counts (for example a recorded change-model
+// artifact) rather than an evidence.Change. changeIdentity is optional provenance
+// (lowercase SHA-256 hex or empty). File signals in files are kept; path-derived,
+// hint and public-API signals are added exactly as ChangeFeaturesFromSemanticImpact adds them.
+func ChangeFeaturesFromFileSpecs(changeIdentity string, files []ChangedFileSpec, impact semanticimpact.Profile, hints AnalysisHints) (ChangeFeatures, error) {
+	if len(files) == 0 || !optionalDigest(changeIdentity) {
+		return ChangeFeatures{}, fmt.Errorf("%w: change is not canonical", ErrInvalidChangeFeatures)
+	}
+	return changeFeaturesFromImpact(changeIdentity, files, impact, hints)
+}
+
+func changeFeaturesFromImpact(changeIdentity string, files []ChangedFileSpec, impact semanticimpact.Profile, hints AnalysisHints) (ChangeFeatures, error) {
+	publicAPIPaths := map[string]struct{}{}
+	publicAPIChanges := impact.PublicAPIChanges()
+	for _, declaration := range publicAPIChanges {
+		publicAPIPaths[declaration.Path()] = struct{}{}
+	}
+	changed := make(map[string]struct{}, len(files))
+	spec := ChangeFeaturesSpec{
+		Coverage: hints.Coverage, Intent: hints.Intent, ConfigFiles: hints.ConfigFiles,
+		ChangeIdentity: changeIdentity,
+	}
+	if validDigest(impact.Identity()) {
+		spec.SemanticProfileIdentity = impact.Identity()
+	}
+	for _, file := range files {
+		entry := ChangedFileSpec{Path: file.Path, AddedLines: file.AddedLines, DeletedLines: file.DeletedLines}
+		entry.Signals = append(append(entry.Signals, file.Signals...), hints.FileSignals[file.Path]...)
+		if _, ok := publicAPIPaths[file.Path]; ok && !containsSignal(entry.Signals, SignalPublicAPI) {
 			entry.Signals = append(entry.Signals, SignalPublicAPI)
 		}
-		changed[fileChange.Path()] = struct{}{}
+		changed[file.Path] = struct{}{}
 		spec.Files = append(spec.Files, entry)
 	}
 	for hintPath := range hints.FileSignals {

@@ -257,6 +257,23 @@ func TestProfileChangeFeaturesFromSemanticImpact(t *testing.T) {
 	if _, err := ChangeFeaturesFromSemanticImpact(evidence.Change{}, impact, AnalysisHints{}); !errors.Is(err, ErrInvalidChangeFeatures) {
 		t.Fatalf("zero change accepted: %v", err)
 	}
+	// The file-spec entry point derives the identical document from equivalent counts.
+	hints := AnalysisHints{ConfigFiles: []ConfigFile{{Path: "go.mod"}}, FileSignals: map[string][]Signal{"lib/api.go": {SignalConcurrency}}}
+	fromSpecs, err := ChangeFeaturesFromFileSpecs(change.Identity(), []ChangedFileSpec{{Path: "lib/api.go", AddedLines: 2, DeletedLines: 2}}, impact, hints)
+	if err != nil || fromSpecs.Identity() != features.Identity() {
+		t.Fatalf("ChangeFeaturesFromFileSpecs() identity differs: %v", err)
+	}
+	if _, err := ChangeFeaturesFromFileSpecs("", []ChangedFileSpec{{Path: "lib/api.go"}}, impact, AnalysisHints{}); err != nil {
+		t.Fatalf("optional change identity refused: %v", err)
+	}
+	for name, files := range map[string][]ChangedFileSpec{"empty": nil, "duplicate": {{Path: "a.go"}, {Path: "a.go"}}} {
+		if _, err := ChangeFeaturesFromFileSpecs("", files, impact, AnalysisHints{}); !errors.Is(err, ErrInvalidChangeFeatures) {
+			t.Fatalf("%s file specs accepted: %v", name, err)
+		}
+	}
+	if _, err := ChangeFeaturesFromFileSpecs("NOT-A-DIGEST", []ChangedFileSpec{{Path: "lib/api.go"}}, impact, AnalysisHints{}); !errors.Is(err, ErrInvalidChangeFeatures) {
+		t.Fatalf("non-digest change identity accepted: %v", err)
+	}
 }
 
 func mustSemanticFile(t *testing.T, path, content string) semanticimpact.File {

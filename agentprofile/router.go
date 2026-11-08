@@ -504,6 +504,26 @@ func activate(profile Profile, features ChangeFeatures) ([]changedFile, []string
 	return scope, reasons, true
 }
 
+// FeatureSummary is the catalog-independent projection the router derives from
+// change features: sorted languages, file classes and security signals, and the
+// count of semantic gaps.
+type FeatureSummary struct {
+	Languages, FileClasses, SecuritySignals []string
+	SemanticGaps                            int
+}
+
+// Summary derives the same languages, file classes, security signals and
+// semantic-gap count a routing plan records, without a catalog or route
+// assignments. It is available when planning is not, for example when the
+// general review's verification failed after its change was recorded.
+func (f ChangeFeatures) Summary() FeatureSummary {
+	derived := deriveFeatureSummary(f)
+	return FeatureSummary{
+		Languages: append([]string{}, derived.languages...), FileClasses: append([]string{}, derived.fileClasses...),
+		SecuritySignals: append([]string{}, derived.securitySignals...), SemanticGaps: len(derived.semanticGaps),
+	}
+}
+
 func deriveFeatureSummary(features ChangeFeatures) derivedFeatures {
 	languages, classes, security := map[string]struct{}{}, map[string]struct{}{}, map[string]struct{}{}
 	for _, file := range features.files {
