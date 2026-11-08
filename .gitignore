@@ -1,5 +1,7 @@
 # Private local material
 references/
+/AGENTS.md
+/CLAUDE.md
 
 # Credentials and local configuration
 .env
