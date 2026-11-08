@@ -87,6 +87,16 @@ func unwrapOllamaJSONFence(content string) string {
 	return strings.TrimSpace(body)
 }
 
+// OllamaRelayedModelMatches accepts the requested cloud selector itself or the
+// remote name Ollama reports for it: "name:tag-cloud" answers as "name:tag",
+// and "name:cloud" answers as "name" or "name:<version>".
+//
+// It is exported so the setup sign-in probe can bind an answer to the
+// requested cloud selector exactly as dispatch does.
+func OllamaRelayedModelMatches(requested, reported string) bool {
+	return ollamaRelayedModelMatches(requested, reported)
+}
+
 // ollamaRelayedModelMatches accepts the requested cloud selector itself or the
 // remote name Ollama reports for it: "name:tag-cloud" answers as "name:tag",
 // and "name:cloud" answers as "name" or "name:<version>".

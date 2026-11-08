@@ -40,7 +40,7 @@ func (w *initWizard) ollamaSigninModels() error {
 	}
 	origin, _ := ollamaDaemonOrigin(endpoint)
 	w.say("  Reading the model list from %s/api/tags (no code is sent) ...", origin)
-	tags, err := ollamaReadTags(w.ctx, endpoint)
+	tags, _, err := ollamaReadTags(w.ctx, endpoint)
 	if err != nil {
 		return initStopf(initExitPending, "could not read the model list from Ollama at %s. Start Ollama on this machine (`ollama serve`, or the Ollama app), then run `trestle init` again. Nothing was written.", endpoint)
 	}

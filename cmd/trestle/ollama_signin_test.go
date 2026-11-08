@@ -24,7 +24,7 @@ import (
 // no ollama command is found and none is run. Tests that exercise the
 // production readers install them explicitly against a fake daemon.
 func TestMain(m *testing.M) {
-	ollamaReadTags = func(context.Context, string) ([]ollamaTag, error) { return nil, errOllamaTagsUnavailable }
+	ollamaReadTags = func(context.Context, string) ([]ollamaTag, bool, error) { return nil, false, errOllamaTagsUnavailable }
 	ollamaSigninProbe = func(context.Context, string, string) (ollamaProbeOutcome, string) {
 		return ollamaProbeFailed, "no daemon in tests"
 	}
@@ -467,13 +467,13 @@ func TestOllamaTagsReaderIsBoundedToLoopbackTagsDocuments(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			server := httptest.NewServer(handler)
 			defer server.Close()
-			if _, err := readOllamaDaemonTags(context.Background(), server.URL+"/v1"); !errors.Is(err, errOllamaTagsUnavailable) {
+			if _, _, err := readOllamaDaemonTags(context.Background(), server.URL+"/v1"); !errors.Is(err, errOllamaTagsUnavailable) {
 				t.Fatalf("tags reader accepted %s: %v", name, err)
 			}
 		})
 	}
 	for _, endpoint := range []string{"https://ollama.com/v1", "http://localhost:11434/v1", "http://192.0.2.1:11434/v1"} {
-		if _, err := readOllamaDaemonTags(context.Background(), endpoint); !errors.Is(err, errOllamaTagsUnavailable) {
+		if _, _, err := readOllamaDaemonTags(context.Background(), endpoint); !errors.Is(err, errOllamaTagsUnavailable) {
 			t.Fatalf("tags reader contacted a non-loopback address %s", endpoint)
 		}
 	}

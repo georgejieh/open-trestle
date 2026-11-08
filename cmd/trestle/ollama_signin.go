@@ -13,7 +13,9 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+	"unicode/utf8"
 
+	"github.com/georgejieh/open-trestle/adapters/providers/openai"
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 )
@@ -88,26 +90,38 @@ func ollamaLoopbackClient(timeout time.Duration) *http.Client {
 
 // readOllamaDaemonTags performs one bounded GET of ORIGIN/api/tags. It sends no
 // credential and no repository content.
-func readOllamaDaemonTags(ctx context.Context, endpoint string) ([]ollamaTag, error) {
+//
+// It also reports whether the server answered the Ollama tags path at all.
+// A server that answers the path with something that is not a usable model
+// list is an Ollama daemon whose list could not be read, which is different
+// from a server that has no such path. The caller uses that distinction to
+// refuse a local route when it cannot observe where a model runs.
+func readOllamaDaemonTags(ctx context.Context, endpoint string) ([]ollamaTag, bool, error) {
 	origin, err := ollamaDaemonOrigin(endpoint)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, ollamaTagsTimeout)
 	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, origin+"/api/tags", nil)
 	if err != nil {
-		return nil, errOllamaTagsUnavailable
+		return nil, false, errOllamaTagsUnavailable
 	}
 	request.Header.Set("Accept", "application/json")
 	response, err := ollamaLoopbackClient(ollamaTagsTimeout).Do(request)
 	if err != nil {
-		return nil, errOllamaTagsUnavailable
+		return nil, false, errOllamaTagsUnavailable
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(response.Body, ollamaTagsMaxBytes+1))
-	if err != nil || response.StatusCode != http.StatusOK || len(body) > ollamaTagsMaxBytes {
-		return nil, errOllamaTagsUnavailable
+	if response.StatusCode != http.StatusOK {
+		// A server that does not answer the tags path is not an Ollama
+		// daemon. It cannot relay a model to Ollama Cloud.
+		return nil, false, errOllamaTagsUnavailable
+	}
+	answered := true
+	if err != nil || len(body) > ollamaTagsMaxBytes {
+		return nil, answered, errOllamaTagsUnavailable
 	}
 	var wire struct {
 		Models *[]struct {
@@ -121,13 +135,13 @@ func readOllamaDaemonTags(ctx context.Context, endpoint string) ([]ollamaTag, er
 		} `json:"models"`
 	}
 	if json.Unmarshal(body, &wire) != nil || wire.Models == nil || len(*wire.Models) > 4096 {
-		return nil, errOllamaTagsUnavailable
+		return nil, answered, errOllamaTagsUnavailable
 	}
 	tags := make([]ollamaTag, 0, len(*wire.Models))
 	for _, entry := range *wire.Models {
 		tags = append(tags, ollamaTag{Name: entry.Name, Model: entry.Model, RemoteModel: entry.RemoteModel, RemoteHost: entry.RemoteHost, ContextLength: entry.Details.ContextLength})
 	}
-	return tags, nil
+	return tags, answered, nil
 }
 
 func ollamaFindTag(tags []ollamaTag, model string) (ollamaTag, bool) {
@@ -156,10 +170,22 @@ func ollamaCloudNameSuffix(model string) bool {
 }
 
 // ollamaLocalModelError refuses, for the local route, a model the daemon at
-// endpoint relays to Ollama Cloud. Without a readable tags list it refuses
-// names with the Ollama cloud suffix. Other servers and models pass.
+// endpoint relays to Ollama Cloud.
+//
+// The local bootstrap also accepts other loopback servers (llama.cpp, vLLM, LM
+// Studio), which have no /api/tags document at all. Such a server cannot relay
+// a model to Ollama Cloud, so a missing tags document is not by itself a
+// reason to refuse them.
+//
+// The distinction comes from the tags read itself, never from a second
+// request: readOllamaDaemonTags reports separately whether the server
+// answered the Ollama tags path and whether the answer was a usable model
+// list. A server that answers the path with an unusable list is an Ollama
+// daemon whose list could not be read, so where the model runs is unknown and
+// the local route refuses. A server that does not answer the path at all is
+// not an Ollama daemon and passes.
 func ollamaLocalModelError(ctx context.Context, endpoint, model string) error {
-	tags, err := ollamaReadTags(ctx, endpoint)
+	tags, answered, err := ollamaReadTags(ctx, endpoint)
 	if err == nil {
 		if tag, found := ollamaFindTag(tags, model); found {
 			if tag.RemoteHost != "" {
@@ -167,10 +193,20 @@ func ollamaLocalModelError(ctx context.Context, endpoint, model string) error {
 			}
 			return nil
 		}
+		// The daemon answered and does not list this model. It cannot relay a
+		// model it does not serve, so the model is not a cloud model.
+		return nil
 	}
 	if ollamaCloudNameSuffix(model) {
 		return fmt.Errorf("%s: %s", model, ollamaCloudLocalRefusal)
 	}
+	if answered {
+		// This is an Ollama daemon and its model list could not be read, so
+		// where the model runs is unknown. The local route must not guess.
+		return fmt.Errorf("%s: could not confirm that this model runs on this machine: %w at %s; start Ollama on this machine (ollama serve) and check the address, then retry", model, errOllamaTagsUnavailable, endpoint)
+	}
+	// A loopback server with no Ollama tags document cannot relay to Ollama
+	// Cloud, so it passes as local.
 	return nil
 }
 
@@ -178,7 +214,7 @@ func ollamaLocalModelError(ctx context.Context, endpoint, model string) error {
 // with the Ollama cloud suffix and remote_host https://ollama.com. An
 // unreachable daemon is reported as errOllamaTagsUnavailable.
 func checkOllamaSigninModels(ctx context.Context, endpoint string, models ...string) ([]ollamaTag, error) {
-	tags, err := ollamaReadTags(ctx, endpoint)
+	tags, _, err := ollamaReadTags(ctx, endpoint)
 	if err != nil {
 		return nil, fmt.Errorf("%w at %s: start Ollama on this machine (ollama serve) and check the address", errOllamaTagsUnavailable, endpoint)
 	}
@@ -212,6 +248,11 @@ const (
 // ("Reply with OK") to the chosen cloud model through the loopback daemon. It
 // never carries repository content. HTTP 401 or 403 means the daemon is not
 // signed in to Ollama Cloud.
+//
+// An HTTP 200 is accepted only when the answer names the requested cloud
+// selector (or the remote name Ollama reports for it), exactly as dispatch
+// binds the model of a real response. A 200 from a different model does not
+// prove the cloud path is live.
 func probeOllamaSignin(ctx context.Context, endpoint, model string) (ollamaProbeOutcome, string) {
 	if !runtimeconfig.ValidOllamaSigninEndpoint(endpoint) || !runtimeconfig.OllamaCloudModelID(model) {
 		return ollamaProbeFailed, "not an Ollama sign-in address and cloud model"
@@ -229,14 +270,44 @@ func probeOllamaSignin(ctx context.Context, endpoint, model string) (ollamaProbe
 		return ollamaProbeFailed, "no answer from the local Ollama daemon"
 	}
 	defer response.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, ollamaProbeMaxBytes))
 	switch {
 	case response.StatusCode == http.StatusOK:
+		payload, readErr := io.ReadAll(io.LimitReader(response.Body, ollamaProbeMaxBytes))
+		if readErr != nil {
+			return ollamaProbeFailed, "the answer could not be read"
+		}
+		reported, ok := ollamaProbeReportedModel(payload)
+		if !ok {
+			return ollamaProbeFailed, "the answer did not name a model"
+		}
+		if !openai.OllamaRelayedModelMatches(model, reported) {
+			return ollamaProbeFailed, "the answer came from " + reported + " rather than " + model
+		}
 		return ollamaProbeSignedIn, ""
 	case response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden:
 		return ollamaProbeNotSignedIn, fmt.Sprintf("HTTP %d", response.StatusCode)
 	}
 	return ollamaProbeFailed, fmt.Sprintf("HTTP %d", response.StatusCode)
+}
+
+// ollamaProbeReportedModel reads the model name from a Chat Completions
+// answer. It accepts only a bounded, valid JSON object with a string model
+// field; anything else is not a usable answer.
+func ollamaProbeReportedModel(payload []byte) (string, bool) {
+	if len(payload) == 0 || len(payload) > ollamaProbeMaxBytes || !utf8.Valid(payload) {
+		return "", false
+	}
+	var wire struct {
+		Model string `json:"model"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	if decoder.Decode(&wire) != nil {
+		return "", false
+	}
+	if wire.Model == "" || len(wire.Model) > 1024 || strings.ContainsAny(wire.Model, " 	\r\n/") {
+		return "", false
+	}
+	return wire.Model, true
 }
 
 // runOllamaSigninChild runs the fixed command `ollama signin`, resolved from
