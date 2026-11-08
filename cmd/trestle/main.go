@@ -33,6 +33,12 @@ func main() {
 	if len(os.Args) >= 3 && os.Args[1] == "setup" && os.Args[2] == "tui" {
 		os.Exit(runSetupTUI(os.Args[3:], os.Stdin, os.Stdout, os.Stderr))
 	}
+	if len(os.Args) >= 2 && os.Args[1] == "init" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		code := runInit(ctx, os.Args[2:], os.Stdin, os.Stdout, os.Stderr)
+		stop()
+		os.Exit(code)
+	}
 	if len(os.Args) >= 2 && os.Args[1] == "tui" {
 		os.Exit(runTUI(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
@@ -182,7 +188,8 @@ func runReview(fixturePath string, stdout, stderr io.Writer) int {
 }
 
 func writeUsage(stderr io.Writer) {
-	fmt.Fprintln(stderr, "usage: trestle validate-fixture <path>")
+	fmt.Fprintln(stderr, "usage: trestle init [--no-input] [answer flags]   (start here: guided setup and first review; see docs/getting-started.md)")
+	fmt.Fprintln(stderr, "       trestle validate-fixture <path>")
 	fmt.Fprintln(stderr, "       trestle build-info")
 	fmt.Fprintln(stderr, "       trestle review <path>")
 	fmt.Fprintln(stderr, "       trestle ci --format=json <path>")
