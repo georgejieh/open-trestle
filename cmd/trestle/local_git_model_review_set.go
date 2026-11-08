@@ -347,8 +347,6 @@ type setFindingWire struct {
 	report          localreview.ReportFinding
 	coveredStart    uint32
 	coveredEnd      uint32
-	normalizedTitle string
-	entries         []findingGroupEntry
 	narrowStart     uint32
 	narrowEnd       uint32
 	// representativeMember and representativeTokens identify the one finding
@@ -738,14 +736,6 @@ func tokensOverlap(a, b map[string]bool) bool {
 	return union > 0 && shared*findingDuplicateOverlapDenominator >= union*findingDuplicateOverlapNumerator
 }
 
-// findingGroupEntry is what the duplicate rule compares for one absorbed finding.
-type findingGroupEntry struct {
-	member   int
-	title    string
-	tokens   map[string]bool
-	evidence []string
-}
-
 // related reports whether a finding describes the same issue as the group's
 // representative finding. Only the representative's own claim tokens count:
 // letting an absorbed finding's tokens qualify a later merge would chain
@@ -796,9 +786,7 @@ func mergeVerifiedFindings(labels []string, findings [][]localreview.ReportFindi
 			return a.Identity < b.Identity
 		})
 		for _, finding := range ordered {
-			title := normalizeFindingTitle(finding.Title)
 			tokens := findingTokens(finding.Title, finding.Claim)
-			entry := findingGroupEntry{member: index, title: title, tokens: tokens, evidence: finding.EvidenceIDs}
 			contributor := setContributorWire{Member: labels[index], FindingIdentity: finding.Identity, Severity: finding.Severity.String(), StartLine: finding.StartLine, EndLine: finding.EndLine}
 			var group *setFindingWire
 			for _, candidate := range groups {
@@ -810,9 +798,8 @@ func mergeVerifiedFindings(labels []string, findings [][]localreview.ReportFindi
 				}
 			}
 			if group == nil {
-				value := setFindingFromReport(finding, title)
+				value := setFindingFromReport(finding)
 				value.Contributors = []setContributorWire{contributor}
-				value.entries = []findingGroupEntry{entry}
 				value.narrowStart, value.narrowEnd = finding.StartLine, finding.EndLine
 				value.coveredStart, value.coveredEnd = finding.StartLine, finding.EndLine
 				value.representativeMember, value.representativeTokens = index, tokens
@@ -821,17 +808,16 @@ func mergeVerifiedFindings(labels []string, findings [][]localreview.ReportFindi
 			}
 			duplicates++
 			group.Contributors = append(group.Contributors, contributor)
-			group.entries = append(group.entries, entry)
 			if finding.EndLine-finding.StartLine < group.narrowEnd-group.narrowStart {
 				group.narrowStart, group.narrowEnd = finding.StartLine, finding.EndLine
 			}
 			if severityRank(finding.Severity) > severityRank(group.report.Severity) {
-				replacement := setFindingFromReport(finding, title)
+				replacement := setFindingFromReport(finding)
 				replacement.Contributors = group.Contributors
 				// The reported representative also decides later merges, so its
 				// range and claims become the group's comparison basis.
 				replacement.coveredStart, replacement.coveredEnd = finding.StartLine, finding.EndLine
-				replacement.entries, replacement.narrowStart, replacement.narrowEnd = group.entries, group.narrowStart, group.narrowEnd
+				replacement.narrowStart, replacement.narrowEnd = group.narrowStart, group.narrowEnd
 				replacement.representativeMember, replacement.representativeTokens = index, tokens
 				*group = replacement
 			}
@@ -860,12 +846,12 @@ func mergeVerifiedFindings(labels []string, findings [][]localreview.ReportFindi
 	return out, duplicates
 }
 
-func setFindingFromReport(finding localreview.ReportFinding, normalizedTitle string) setFindingWire {
+func setFindingFromReport(finding localreview.ReportFinding) setFindingWire {
 	value := setFindingWire{
 		FindingIdentity: finding.Identity, Title: finding.Title, Claim: finding.Claim, Severity: finding.Severity.String(), Path: finding.Path,
 		StartLine: finding.StartLine, EndLine: finding.EndLine, Category: finding.Category, Fix: finding.Fix,
 		EvidenceIDs: append([]string{}, finding.EvidenceIDs...), report: finding,
-		coveredStart: finding.StartLine, coveredEnd: finding.EndLine, normalizedTitle: normalizedTitle,
+		coveredStart: finding.StartLine, coveredEnd: finding.EndLine,
 	}
 	if value.Fix != "" {
 		value.FixAuthority = localreview.FixAuthority
