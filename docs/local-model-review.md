@@ -643,19 +643,21 @@ not the single-review result:
   run did not succeed), run, scope, plan and context identities,
   route record identities, independence, diagnostic set identity, usage and cost,
   verification counts and limitations.
-- `findings`: merged verified findings. Two findings are duplicates when they
-  share path and category, their line ranges overlap (a group's covered range
-  grows to the union of what it absorbs), and they describe the same issue: an
-  identical normalized title (lowercase, punctuation collapsed), or, for findings
-  from different members, a shared evidence ID or a word overlap of at least 0.3
-  (Jaccard over the words of at least three letters or digits in title and claim,
-  without common stopwords). Within one member only an identical title merges,
-  because evidence IDs name a whole changed hunk and one member may report two
-  distinct issues in it. The group keeps the most severe finding (ties: the
-  earliest member), reports the narrowest contributing range, and lists every
-  contributor with its own finding identity, severity and range. Matching is
-  deterministic. Only members whose run succeeded contribute. The rule is a
-  heuristic (`deduplication_is_heuristic`).
+- `findings`: merged verified findings. Each group has one representative: its
+  first finding in run order, replaced by a later member's finding of higher
+  severity. A finding joins a group when it comes from a different member than
+  the representative, has the same path and category, its line range overlaps
+  the representative's range, and the words of its title and claim overlap the
+  representative's by at least 0.3 (Jaccard over the words of at least three
+  letters or digits, without common stopwords). Only the representative's range
+  and words count, so a finding cannot join a group through a finding the group
+  already absorbed, and a member's own findings are never compared with each
+  other, because one member may report two distinct issues in one changed hunk.
+  The group reports the representative (the most severe finding; ties: the
+  earliest member), the narrowest contributing range, and every contributor
+  with its own finding identity, severity and range. Matching is deterministic.
+  Only members whose run succeeded contribute. The rule is a heuristic
+  (`deduplication_is_heuristic`).
 - `summary`, `bounds`, `limitations` and `comprehensive_clearance: false`.
 
 Set status and CI disposition:
@@ -679,8 +681,11 @@ whose run did not succeed shows its failure on its line, for example
 (task candidates)`, followed by `member hint: bug_hunter: ...`. SARIF
 output is one run whose results are the merged findings, each with a
 `trestleContributors` property; when some members did not complete, the results
-still list the completed members' verified findings and the notification says the
-set is not a clean result.
+still list the completed members' verified findings and an error notification
+says the set is not a clean result, even when it lists no finding. If the
+general member's report could not be read, the set records the limitation
+`general_member_report_unreadable_source_coverage_unknown` and the notification
+says that source coverage counts are unavailable.
 
 Exit policy on the merged set: `default` maps `blocked` to 4, `inconclusive` to
 3 and `error` to 1. `findings` exits 0 only when every member completed and no

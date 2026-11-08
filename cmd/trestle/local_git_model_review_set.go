@@ -748,11 +748,12 @@ type findingGroupEntry struct {
 
 // related reports whether a finding describes the same issue as the group's
 // representative finding. Only the representative's own claim tokens count:
-// an absorbed finding's tokens must not qualify a later merge, because that
-// makes the result depend on which member ran first and can collapse a
-// distinct defect into another defect's title and severity.
+// letting an absorbed finding's tokens qualify a later merge would chain
+// findings together and can collapse a distinct defect into another defect's
+// title and severity.
 //
-// The representative is the group's first finding. When the most severe
+// The representative is the group's first finding in run order, so member
+// order still decides which finding anchors a group. When a more severe
 // member replaces it, the group's tokens are replaced with that member's
 // tokens so the comparison always uses one finding's claims.
 func (g *setFindingWire) related(member int, tokens map[string]bool) bool {
@@ -763,11 +764,12 @@ func (g *setFindingWire) related(member int, tokens map[string]bool) bool {
 }
 
 // mergeVerifiedFindings de-duplicates verified findings across members. Two
-// findings are duplicates when they share path and category and describe the
-// same issue as the group's representative finding (see related). Only the
-// representative's claims decide a match, so the result does not depend on
-// which member ran first and a distinct defect is never reported under
-// another defect's title and severity.
+// findings are duplicates when they share path and category, the finding's
+// line range overlaps the representative's range, and it describes the same
+// issue as the representative (see related). Only the representative's range
+// and claims decide a match, so a finding cannot join a group through a
+// finding the group already absorbed. Wording overlap is still a heuristic:
+// it can merge or keep apart findings that a person would judge differently.
 //
 // The group keeps the most severe finding as its representative; ties keep the
 // earliest member in run order. The reported range is the narrowest
