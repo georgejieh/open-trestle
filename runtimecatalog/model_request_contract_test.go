@@ -108,6 +108,16 @@ func readableModelRequests(t *testing.T, scope audit.ReviewScope) (provider.Requ
 
 func TestGenerationRouteFactoryBudgetsFullReadableRequest(t *testing.T) {
 	scope, request := readableGenerationRequest(t)
+	// The estimate covers the request payload and the trusted system channel.
+	inner, err := review.SanitizedCandidatePayload(request, scope.Identity())
+	if err != nil {
+		t.Fatal(err)
+	}
+	trusted, err := review.TrustedModelRequestInstructions(inner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wireBytes := len(request.Payload()) + len(trusted)
 	for _, tc := range []struct {
 		name                   string
 		contextTokens, costCap uint64
@@ -116,10 +126,10 @@ func TestGenerationRouteFactoryBudgetsFullReadableRequest(t *testing.T) {
 	}{
 		{"allowed", 128000, 100000, 1, true},
 		{"declared floor", 128000, 100000, 20000, true},
-		{"context exact", uint64(len(request.Payload()) + 356), 100000, 1, true},
-		{"context too small", uint64(len(request.Payload()) + 355), 100000, 1, false},
-		{"cost exact", 128000, uint64(len(request.Payload()) + 356), 1, true},
-		{"cost too small", 128000, uint64(len(request.Payload()) + 355), 1, false},
+		{"context exact", uint64(wireBytes + 356), 100000, 1, true},
+		{"context too small", uint64(wireBytes + 355), 100000, 1, false},
+		{"cost exact", 128000, uint64(wireBytes + 356), 1, true},
+		{"cost too small", 128000, uint64(wireBytes + 355), 1, false},
 		{"declared floor exceeds context", 20099, 100000, 20000, false},
 		{"declared floor exceeds cost", 128000, 20099, 20000, false},
 	} {
@@ -185,7 +195,7 @@ func TestGenerationRouteFactoryBudgetsFullReadableRequest(t *testing.T) {
 				t.Fatal(err)
 			}
 			estimated := uint64(authorization.CostBudget().EstimatedInputTokens())
-			if estimated != max(tc.declaredInput, uint64(len(request.Payload()))+256) || authorization.CostBudget().MaxOutputTokens() != 100 || authorization.CostBudget().MaxCostMicroUSD() != tc.costCap || authorization.MaximumCost().InputCostMicroUSD() != estimated || authorization.ReservedCostMicroUSD() != estimated+100 {
+			if estimated != max(tc.declaredInput, uint64(wireBytes)+256) || authorization.CostBudget().MaxOutputTokens() != 100 || authorization.CostBudget().MaxCostMicroUSD() != tc.costCap || authorization.MaximumCost().InputCostMicroUSD() != estimated || authorization.ReservedCostMicroUSD() != estimated+100 {
 				t.Error("full payload estimate did not reach pricing and reservation")
 			}
 			rawPayload, err := review.SanitizedCandidatePayload(request, scope.Identity())

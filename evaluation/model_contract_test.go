@@ -18,7 +18,7 @@ func TestModelContractCandidateIsDeterministicAndNotQualityApproval(t *testing.T
 	if err := decodeStrictJSON(first, maximumCorpusReportBytes, &report); err != nil {
 		t.Fatal(err)
 	}
-	if report.Contract != "open-trestle/model-contract-candidate" || report.SchemaVersion != 1 || report.ReviewState != "pending" || report.ReleaseEvidenceEligible || report.QualityMeasured || !report.Passed || len(report.Cases) != 8 || !validCorpusDigest(report.CorpusIdentity) || !validCorpusDigest(report.Identity) {
+	if report.Contract != "open-trestle/model-contract-candidate" || report.SchemaVersion != 1 || report.ReviewState != "pending" || report.ReleaseEvidenceEligible || report.QualityMeasured || !report.Passed || len(report.Cases) != 12 || !validCorpusDigest(report.CorpusIdentity) || !validCorpusDigest(report.Identity) {
 		t.Fatalf("invalid candidate report: %+v", report)
 	}
 	for _, result := range report.Cases {

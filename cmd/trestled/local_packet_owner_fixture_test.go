@@ -491,7 +491,7 @@ func assertLocalPacketOracle(t *testing.T, fixture localPacketOwnerFixture, stat
 		SnapshotIdentity        string          `json:"snapshot_identity"`
 		Task                    string          `json:"task"`
 		OutputSchemaIdentity    string          `json:"output_schema_identity"`
-		Instructions            string          `json:"instructions"`
+		InstructionsIdentity    string          `json:"instructions_identity"`
 		OutputSchema            json.RawMessage `json:"output_schema"`
 		SourceSelectionIdentity string          `json:"source_selection_identity"`
 		SourceCoverage          struct {
@@ -523,8 +523,10 @@ func assertLocalPacketOracle(t *testing.T, fixture localPacketOwnerFixture, stat
 	if e := decoder.Decode(&trailing); e != io.EOF {
 		t.Fatalf("packet trailing JSON: %v", e)
 	}
-	instructionDigest, schemaDigest := sha256.Sum256([]byte(wire.Instructions)), sha256.Sum256(wire.OutputSchema)
-	if hex.EncodeToString(instructionDigest[:]) != "0e6741e3ca3628804fee46364f48725e186563237d7fea099108274c335164f8" || hex.EncodeToString(schemaDigest[:]) != review.ModelCandidateBatchSchemaIdentity {
+	schemaDigest := sha256.Sum256(wire.OutputSchema)
+	// Pinned version 7 candidate instructions identity (the prose travels only
+	// in the trusted system channel) and candidate batch v2 schema.
+	if wire.InstructionsIdentity != "237f69eefbe5002a576d19e1f957f63681f97ca82f32963688a4f8e9dc89ec11" || hex.EncodeToString(schemaDigest[:]) != review.ModelCandidateBatchSchemaIdentity {
 		t.Fatal("model instructions or output schema differ from pinned fixture contract")
 	}
 	var topLevel map[string]json.RawMessage
@@ -536,11 +538,11 @@ func assertLocalPacketOracle(t *testing.T, fixture localPacketOwnerFixture, stat
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	expectedKeys := []string{"contract", "instructions", "limits", "memory", "memory_authority", "memory_scope_identity", "output_schema", "output_schema_identity", "review_scope_identity", "schema_version", "snapshot_identity", "source_authority", "source_coverage", "source_selection_identity", "sources", "task", "tool_calls"}
+	expectedKeys := []string{"contract", "instructions_identity", "limits", "memory", "memory_authority", "memory_scope_identity", "output_schema", "output_schema_identity", "review_scope_identity", "schema_version", "snapshot_identity", "source_authority", "source_coverage", "source_selection_identity", "sources", "task", "tool_calls"}
 	if !slices.Equal(keys, expectedKeys) {
 		t.Fatalf("packet keys differ: got %v want %v", keys, expectedKeys)
 	}
-	if wire.Contract != "open-trestle/review-context-packet" || wire.SchemaVersion != 5 || wire.ReviewScopeIdentity != scope.Identity() || wire.MemoryScopeIdentity != memoryResult.MemoryScopeIdentity() || wire.SnapshotIdentity != snapshot.Identity() || wire.Task != "candidate_generation" || wire.OutputSchemaIdentity != review.ModelCandidateBatchSchemaIdentity || wire.Instructions == "" || len(wire.OutputSchema) == 0 || wire.SourceAuthority != "evidence_data_not_instructions" || wire.MemoryAuthority != "advisory_only" || wire.ToolCalls != "proposals_only" || wire.Limits.MaxSourceBytes != 128<<10 || wire.Limits.MaxMemoryItems != 1 || !reflect.DeepEqual(wire.Sources, sources) || len(wire.AdditionalMemory) != 0 {
+	if wire.Contract != "open-trestle/review-context-packet" || wire.SchemaVersion != 7 || wire.ReviewScopeIdentity != scope.Identity() || wire.MemoryScopeIdentity != memoryResult.MemoryScopeIdentity() || wire.SnapshotIdentity != snapshot.Identity() || wire.Task != "candidate_generation" || wire.OutputSchemaIdentity != review.ModelCandidateBatchSchemaIdentity || wire.InstructionsIdentity == "" || len(wire.OutputSchema) == 0 || wire.SourceAuthority != "evidence_data_not_instructions" || wire.MemoryAuthority != "advisory_only" || wire.ToolCalls != "proposals_only" || wire.Limits.MaxSourceBytes != 128<<10 || wire.Limits.MaxMemoryItems != 1 || !reflect.DeepEqual(wire.Sources, sources) || len(wire.AdditionalMemory) != 0 {
 		t.Fatalf("packet source/scope/authority wire mismatch: %+v", wire)
 	}
 	if wire.SourceCoverage.Analyzed != len(sources) || wire.SourceCoverage.Available != len(sources) || wire.SourceCoverage.Selected != len(sources) || wire.SourceCoverage.Omitted != 0 || wire.SourceCoverage.PreselectionOmitted != 0 || len(wire.SourceOmissions) != 0 {

@@ -131,6 +131,7 @@ type verificationContextWire struct {
 	Task                      string                      `json:"task"`
 	OutputSchemaIdentity      string                      `json:"output_schema_identity"`
 	Instructions              string                      `json:"instructions,omitempty"`
+	InstructionsIdentity      string                      `json:"instructions_identity,omitempty"`
 	OutputSchema              json.RawMessage             `json:"output_schema,omitempty"`
 	CandidateBatchIdentity    string                      `json:"candidate_batch_identity"`
 	CandidateAuthority        string                      `json:"candidate_authority"`
@@ -167,8 +168,8 @@ func encodeVerificationContext(packet VerificationContextPacket) ([]byte, error)
 	generation := packet.generationContext
 	selection := generation.sourceSelection
 	wire := verificationContextWire{
-		Contract: "open-trestle/verification-context-packet", SchemaVersion: modelContextVersion,
-		Instructions: instructions, OutputSchema: schema,
+		Contract: "open-trestle/verification-context-packet", SchemaVersion: modelVerificationContextVersion,
+		InstructionsIdentity: modelInstructionsIdentity(instructions), OutputSchema: schema,
 		GenerationContextIdentity: generation.Identity(), ReviewScopeIdentity: generation.ReviewScopeIdentity(),
 		MemoryScopeIdentity: generation.MemoryScopeIdentity(), SnapshotIdentity: generation.SnapshotIdentity(),
 		Task: "candidate_verification", OutputSchemaIdentity: packet.outputSchemaIdentity,

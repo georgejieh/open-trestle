@@ -82,7 +82,7 @@ func deriveHandlerIdentity(projectDiagnostics bool) string {
 		Contract             string `json:"contract"`
 		SchemaVersion        int    `json:"schema_version"`
 		DiagnosticProjection bool   `json:"diagnostic_projection"`
-	}{"open-trestle/deterministic-evidence-handler", 5, projectDiagnostics})
+	}{"open-trestle/deterministic-evidence-handler", 6, projectDiagnostics})
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }
@@ -174,6 +174,17 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 		if applicable {
 			applicableFiles++
 			applicableRanges += uint32(len(ranges))
+		}
+		if len(ranges) == 0 && entry.Reason() == "no_changed_head_lines" && !evidenceLimit {
+			deletion, built, failureCode := h.buildDeletionContext(ctx, request.Plan().Scope(), at, base, head, entry, &loaded, &expires, len(items), len(gaps))
+			if failureCode != 0 {
+				return failure(failureCode)
+			}
+			if built {
+				items = append(items, deletion.items...)
+				gaps = append(gaps, deletion.gaps...)
+				continue
+			}
 		}
 		if gap, ok := wholeEntryGap(entry, evidenceLimit); ok {
 			gaps = append(gaps, gap)

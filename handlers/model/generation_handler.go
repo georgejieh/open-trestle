@@ -178,7 +178,7 @@ func (h *GenerationHandler) Execute(ctx context.Context, task controlplane.TaskE
 	if err := review.ValidateContextPacketRequest(
 		contextArtifact.Payload(), input.ContextIdentity(), task.Plan().Scope().Identity(), input.MemoryScopeIdentity(), input.MemoryIdentity(),
 		input.Snapshot(), input.EvidenceItems(),
-	); err != nil {
+	); err != nil || !contextOutputSchemaMatches(input, contextArtifact.Payload()) {
 		return generationFailure(controlplane.RunFailureInvalidInput)
 	}
 	var providerRequest provider.Request
@@ -261,8 +261,10 @@ func (h *GenerationHandler) Execute(ctx context.Context, task controlplane.TaskE
 	if dispatchResult.Status() == gateway.RouteDispatchFailed {
 		return generationFailure(mapRouteFailure(dispatchResult.Failure()))
 	}
-	candidates, err := review.ParseCandidateBatch(
-		dispatchResult.Response(), input.Snapshot(), input.EvidenceItems(),
+	// The context version selects the candidate schema and identifies
+	// repository_context sources that cannot anchor a candidate.
+	candidates, err := review.ParseContextCandidateBatch(
+		dispatchResult.Response(), contextArtifact.Payload(), input.Snapshot(), input.EvidenceItems(),
 	)
 	if err != nil {
 		if errors.Is(err, review.ErrInvalidCandidateDocumentShape) {
@@ -344,6 +346,11 @@ func mapRouteFailure(failure gateway.RouteFailureClass) controlplane.RunFailure 
 	case gateway.RouteFailureCancelled:
 		return controlplane.RunFailureCanceled
 	case gateway.RouteFailureInvalidResponse:
+		return controlplane.RunFailureInternal
+	case gateway.RouteFailureOutputExhausted:
+		// The closed run failure set has no output-allowance class. The run keeps
+		// the internal failure; hosts that observe the route class report it as
+		// a separate detail (localreview failure_detail model_output_exhausted).
 		return controlplane.RunFailureInternal
 	default:
 		return controlplane.RunFailureInternal

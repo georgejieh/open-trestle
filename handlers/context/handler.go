@@ -56,6 +56,7 @@ type Handler struct {
 	pipeline   *modelhandler.InvestigationPipeline
 	packetOnly bool
 	preparer   ContextAbstentionPreparer
+	specialist review.ContextSpecialist
 }
 
 func NewHandler(store artifact.Store, clock artifact.Clock, authorizer GenerationAuthorizer, sanitizer review.GenerationRequestSanitizer) (*Handler, error) {
@@ -64,7 +65,23 @@ func NewHandler(store artifact.Store, clock artifact.Clock, authorizer Generatio
 	}
 	h := &Handler{store: store, clock: clock, authorizer: authorizer, sanitizer: sanitizer}
 	sanitizerIdentity := sanitizer.Identity()
-	h.identity = deriveHandlerIdentity(authorizer.Identity(), sanitizerIdentity)
+	h.identity = deriveHandlerIdentity(authorizer.Identity(), sanitizerIdentity, review.ContextSpecialist{})
+	return h, nil
+}
+
+// NewSpecialistHandler is NewHandler for one packaged specialist profile. Its
+// candidate-generation packet carries the optional specialist block of context
+// schema version 7, and its handler identity binds the profile and catalog identities.
+func NewSpecialistHandler(store artifact.Store, clock artifact.Clock, authorizer GenerationAuthorizer, sanitizer review.GenerationRequestSanitizer, specialist review.ContextSpecialist) (*Handler, error) {
+	if specialist.IsZero() || specialist.Validate() != nil {
+		return nil, ErrInvalidHandler
+	}
+	h, err := NewHandler(store, clock, authorizer, sanitizer)
+	if err != nil {
+		return nil, err
+	}
+	h.specialist = specialist
+	h.identity = deriveHandlerIdentity(authorizer.Identity(), sanitizer.Identity(), specialist)
 	return h, nil
 }
 
@@ -130,14 +147,14 @@ func (h *Handler) Validate() error {
 	if h.packetOnly {
 		legacy := h.identity == packetOnlyHandlerIdentity() && nilInterface(h.preparer)
 		journaled := h.identity == journaledPacketOnlyHandlerIdentity() && !nilInterface(h.preparer)
-		if (!legacy && !journaled) || !nilInterface(h.authorizer) || !nilInterface(h.sanitizer) || h.pipeline != nil {
+		if (!legacy && !journaled) || !nilInterface(h.authorizer) || !nilInterface(h.sanitizer) || h.pipeline != nil || !h.specialist.IsZero() {
 			return ErrInvalidHandler
 		}
 		return nil
 	}
 	if h.pipeline != nil {
 		identity, err := h.pipeline.HandlerIdentity(controlplane.TaskAssembleContext)
-		if h.pipeline.Validate() != nil || err != nil || !validDigest(identity) || h.identity != identity || !nilInterface(h.authorizer) || !nilInterface(h.sanitizer) {
+		if h.pipeline.Validate() != nil || err != nil || !validDigest(identity) || h.identity != identity || !nilInterface(h.authorizer) || !nilInterface(h.sanitizer) || !h.specialist.IsZero() {
 			return ErrInvalidHandler
 		}
 		return nil
@@ -145,18 +162,35 @@ func (h *Handler) Validate() error {
 	if nilInterface(h.authorizer) || !validDigest(h.authorizer.Identity()) {
 		return ErrInvalidHandler
 	}
-	if nilInterface(h.sanitizer) || !validDigest(h.sanitizer.Identity()) || h.identity != deriveHandlerIdentity(h.authorizer.Identity(), h.sanitizer.Identity()) {
+	if nilInterface(h.sanitizer) || !validDigest(h.sanitizer.Identity()) || h.identity != deriveHandlerIdentity(h.authorizer.Identity(), h.sanitizer.Identity(), h.specialist) {
+		return ErrInvalidHandler
+	}
+	if !h.specialist.IsZero() && h.specialist.Validate() != nil {
 		return ErrInvalidHandler
 	}
 	return nil
 }
-func deriveHandlerIdentity(authorizer, sanitizer string) string {
+
+// contextAssemblyHandlerVersion versions the route-granting context handler.
+// Version 6 assembles version 7 generation contexts, admits non-Go changed text
+// through the text fallback, and adds root repository instruction files from the
+// base snapshot (used only when the head is byte-identical) as repository_context
+// sources. A plan that recorded the version 5 identity is not
+// executed by this handler, so a run that straddles an upgrade fails closed
+// instead of rebuilding different packet bytes; its recorded artifacts stay
+// readable through the recorded-readback validators.
+const contextAssemblyHandlerVersion = 6
+
+// deriveHandlerIdentity omits the specialist fields when no specialist is bound.
+func deriveHandlerIdentity(authorizer, sanitizer string, specialist review.ContextSpecialist) string {
 	encoded, _ := json.Marshal(struct {
-		Contract   string `json:"contract"`
-		Version    int    `json:"version"`
-		Authorizer string `json:"authorizer"`
-		Sanitizer  string `json:"sanitizer,omitempty"`
-	}{"open-trestle/context-assembly-handler", 5, authorizer, sanitizer})
+		Contract          string `json:"contract"`
+		Version           int    `json:"version"`
+		Authorizer        string `json:"authorizer"`
+		Sanitizer         string `json:"sanitizer,omitempty"`
+		SpecialistProfile string `json:"specialist_profile_identity,omitempty"`
+		SpecialistCatalog string `json:"specialist_catalog_identity,omitempty"`
+	}{"open-trestle/context-assembly-handler", contextAssemblyHandlerVersion, authorizer, sanitizer, specialist.ProfileIdentity(), specialist.CatalogIdentity()})
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }
@@ -448,8 +482,10 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 		switch {
 		case !memoryScope.AllowsPath(item.Path()):
 			reason = "path_not_authorized"
-		case !strings.HasSuffix(item.Path(), ".go"):
-			reason = "unsupported_language"
+		case !strings.HasSuffix(item.Path(), ".go") && excludedFallbackPath(item.Path()):
+			reason = "excluded_path"
+		case !strings.HasSuffix(item.Path(), ".go") && !isFallbackText(slice):
+			reason = "non_text_content"
 		case len(slice) > maximumContextSourceBytes:
 			reason = "source_size_limit"
 		case len(candidates) >= maximumContextCandidates:
@@ -491,7 +527,9 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 		}
 		unsupportedOnly := len(omissions) > 0
 		for _, omission := range omissions {
-			if omission.Reason() != "unsupported_language" && omission.Reason() != "semantic_unsupported_language" {
+			switch omission.Reason() {
+			case "unsupported_language", "semantic_unsupported_language", "excluded_path", "non_text_content":
+			default:
 				unsupportedOnly = false
 			}
 		}
@@ -518,6 +556,26 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 		abstention, failureCode := makeAbstention("packet_budget_zero_selection", controlplane.RunFailureResourceLimit, omissions)
 		return contextAssembly{}, provider.Request{}, abstention, failureCode
 	}
+	// Instruction files are added only after the abstention decisions so they can
+	// never turn an all-omitted or zero-selection change into a reviewable
+	// packet. They come from the base tree and are kept only when they fit after
+	// every changed source, so they never become selection omissions.
+	withInstructions, omissions, instructionFailure := appendRepositoryInstructionCandidates(base.Files(), contents, memoryScope, candidates, omissions)
+	if instructionFailure != 0 {
+		return contextAssembly{}, provider.Request{}, nil, instructionFailure
+	}
+	if len(withInstructions) > len(candidates) {
+		var instructions []review.ContextSource
+		instructions, omissions, instructionFailure = fitRepositoryInstructionCandidates(selection, withInstructions[len(candidates):], omissions, limits.MaxSourceBytes())
+		if instructionFailure != 0 {
+			return contextAssembly{}, provider.Request{}, nil, instructionFailure
+		}
+		candidates = append(candidates, instructions...)
+		selection, err = review.SelectContextSources(candidates, limits)
+		if err != nil {
+			return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureResourceLimit
+		}
+	}
 	ranges := make([]evidence.SourceRange, selection.SelectedCount())
 	for index, source := range selection.SelectedSources() {
 		ranges[index] = source.EvidenceItem().SourceRange()
@@ -529,6 +587,12 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 	packet, err := review.NewContextPacketWithAccounting(request.Plan().Scope(), memoryScope, snapshot, review.ContextTaskCandidateGeneration, candidates, retrievals, omissions, limits)
 	if err != nil {
 		return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+	}
+	if !h.specialist.IsZero() {
+		packet, err = packet.WithSpecialist(h.specialist)
+		if err != nil {
+			return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+		}
 	}
 	providerRequest, err := packet.ProviderRequest()
 	if err != nil {

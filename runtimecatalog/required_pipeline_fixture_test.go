@@ -138,8 +138,8 @@ func (m *requiredModel) DispatchRoute(ctx context.Context, request gateway.Route
 		if m.adapterID != "adapter-a" || len(packet.Candidates) != 0 {
 			m.t.Fatal("generation did not retain its pinned route")
 		}
-		document = map[string]any{"schema_version": 1, "candidates": []any{map[string]any{
-			"title": "Zero-valued caller now panics", "claim": "Consume calls Changed(0), but Changed now divides by x without the previous zero guard.", "severity_hint": "high",
+		document = map[string]any{"schema_version": 2, "candidates": []any{map[string]any{
+			"title": "Zero-valued caller now panics", "claim": "Consume calls Changed(0), but Changed now divides by x without the previous zero guard.", "severity_hint": "high", "category": "correctness",
 			"source_range": map[string]any{"source_id": changed.ID, "start_line": 2, "end_line": 2}, "evidence_ids": m.evidence,
 		}}}
 	case "candidate_verification":

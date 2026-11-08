@@ -27,9 +27,11 @@ func TestVersionedVerifierClarificationFixedContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	generationFields := modelContractFields(t, request.Payload())
-	var instructions string
-	if json.Unmarshal(generationFields["instructions"], &instructions) != nil || instructions != pinnedV3CandidateInstructions || string(generationFields["schema_version"]) != "5" {
-		t.Error("ordinary generation must use v5 with unchanged candidate instructions")
+	if generationFields["instructions"] != nil || string(generationFields["instructions_identity"]) != `"`+modelInstructionsIdentity(candidateOutputInstructionsV7)+`"` || string(generationFields["schema_version"]) != "7" {
+		t.Error("ordinary generation must use v7 bound to the pinned v7 candidate instructions by identity")
+	}
+	if candidateOutputInstructions != pinnedV3CandidateInstructions {
+		t.Error("recorded v3/v5 candidate instructions changed")
 	}
 	response, _, _ := candidateFixture(t, `{"schema_version":1,"candidates":[]}`)
 	empty, err := ParseCandidateBatch(response, snapshot, generation.EvidenceItems())
@@ -59,8 +61,14 @@ func TestVersionedVerifierClarificationFixedContract(t *testing.T) {
 				t.Fatal("packet and durable constructors disagree")
 			}
 			fields := modelContractFields(t, sent.Payload())
-			if json.Unmarshal(fields["instructions"], &instructions) != nil || instructions != expectedV5VerifierInstructions() || string(fields["schema_version"]) != "5" {
-				t.Error("verifier must use fixed clarified v5 instructions")
+			if fields["instructions"] != nil || string(fields["instructions_identity"]) != `"`+modelInstructionsIdentity(verificationOutputInstructionsV6)+`"` || string(fields["schema_version"]) != "6" {
+				t.Error("verifier must use the v6 contract bound by identity")
+			}
+			if trusted, err := TrustedModelRequestInstructions(sent.Payload()); err != nil || trusted != verificationOutputInstructionsV6 || !strings.HasPrefix(trusted, instructionHierarchy) {
+				t.Error("verifier system channel is not the pinned v6 contract")
+			}
+			if !strings.Contains(verificationOutputInstructionsV6, pinnedEmptyCandidateSentence) {
+				t.Error("v6 verifier contract lost the empty-candidate clarification")
 			}
 			if tc.name == "empty" && string(fields["candidates"]) != "[]" {
 				t.Error("empty candidates must be [] rather than null")
@@ -104,12 +112,7 @@ func TestVersionedVerifierClarificationRecordedContracts(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			generated.SchemaVersion = version
-			generated.Instructions = pinnedV3CandidateInstructions
-			if version == 2 {
-				generated.Instructions = ""
-				generated.OutputSchema = nil
-			}
+			generated = legacyGenerationWire(t, generated, version)
 			payload, err := json.Marshal(generated)
 			if err != nil {
 				t.Fatal(err)
@@ -128,7 +131,7 @@ func TestVersionedVerifierClarificationRecordedContracts(t *testing.T) {
 			}
 			expected.SchemaVersion = version
 			expected.GenerationContextIdentity = identity
-			expected.Instructions = pinnedV3VerifierInstructions
+			expected.Instructions, expected.InstructionsIdentity = pinnedV3VerifierInstructions, ""
 			switch version {
 			case 2:
 				expected.Instructions = ""
@@ -155,11 +158,9 @@ func TestVersionedVerifierClarificationRecordedContracts(t *testing.T) {
 			_, verifierTrustErr := TrustedModelRequestInstructions(expectedBytes)
 			_, providerErr := recorded.ProviderRequest()
 			_, constructorErr := NewVerificationRequestContext(payload, identity, generation.ReviewScopeIdentity(), generation.MemoryScopeIdentity(), generation.MemoryIdentity(), snapshot, generation.EvidenceItems(), candidates)
-			if version == 5 {
-				if ValidateCandidateModelRequest(generationRequest, generation.ReviewScopeIdentity()) != nil || ValidateVerificationModelRequest(verifierRequest, generation.ReviewScopeIdentity()) != nil || generationTrustErr != nil || verifierTrustErr != nil || providerErr != nil || constructorErr != nil {
-					t.Fatal("current execution rejected")
-				}
-			} else if ValidateCandidateModelRequest(generationRequest, generation.ReviewScopeIdentity()) == nil || ValidateVerificationModelRequest(verifierRequest, generation.ReviewScopeIdentity()) == nil || generationTrustErr == nil || verifierTrustErr == nil || providerErr == nil || constructorErr == nil {
+			// Version 5 generation is recorded readback only since version 7 and
+			// the version 5 verifier since version 6; neither grants execution.
+			if ValidateCandidateModelRequest(generationRequest, generation.ReviewScopeIdentity()) == nil || ValidateVerificationModelRequest(verifierRequest, generation.ReviewScopeIdentity()) == nil || generationTrustErr == nil || verifierTrustErr == nil || providerErr == nil || constructorErr == nil {
 				t.Fatal("historical readback granted new execution authority")
 			}
 			if version != 3 {

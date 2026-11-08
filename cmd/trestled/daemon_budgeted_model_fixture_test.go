@@ -258,8 +258,8 @@ func (e *daemonBudgetedModelEndpoint) serve(t *testing.T, w http.ResponseWriter,
 	payload := []byte(wire.Input[0].Content[0].Text)
 	request, requestErr := provider.NewRequest(provider.CapabilityReviewV1, "application/json", payload)
 	var packet daemonBudgetedModelPacket
-	if requestErr != nil || json.Unmarshal(payload, &packet) != nil || packet.Version != 5 || packet.Scope == "" || packet.SourceAuthority != "evidence_data_not_instructions" || packet.MemoryAuthority != "advisory_only" {
-		e.fail("model did not receive actual provider-neutral v3 context")
+	if requestErr != nil || json.Unmarshal(payload, &packet) != nil || packet.Task == "candidate_generation" && packet.Version != 7 || packet.Task != "candidate_generation" && packet.Version != 6 || packet.Scope == "" || packet.SourceAuthority != "evidence_data_not_instructions" || packet.MemoryAuthority != "advisory_only" {
+		e.fail("model did not receive actual provider-neutral v7 generation or v5 verification context")
 		http.Error(w, "invalid context", http.StatusBadRequest)
 		return
 	}
@@ -320,14 +320,15 @@ func (e *daemonBudgetedModelEndpoint) outputForPacket(t *testing.T, packet daemo
 			return nil, false
 		}
 		if e.generationOutcome == "empty" {
-			return map[string]any{"schema_version": 1, "candidates": []any{}}, true
+			return map[string]any{"schema_version": 2, "candidates": []any{}}, true
 		}
 		if e.generationOutcome == "malformed" {
-			return map[string]any{"schema_version": 1, "candidates": []any{map[string]any{"claim": "missing evidence"}}}, true
+			return map[string]any{"schema_version": 2, "candidates": []any{map[string]any{"claim": "missing evidence"}}}, true
 		}
-		return map[string]any{"schema_version": 1, "candidates": []any{map[string]any{
+		return map[string]any{"schema_version": 2, "candidates": []any{map[string]any{
 			"title":         "Budgeted daemon candidate cites changed code",
 			"claim":         "The local external model observed the exact changed source slice through the daemon-owned context packet.",
+			"category":      "correctness",
 			"severity_hint": "high",
 			"source_range":  map[string]any{"source_id": selected.ID, "start_line": selected.Start, "end_line": selected.Start},
 			"evidence_ids":  []string{selected.ID},

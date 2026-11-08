@@ -103,7 +103,8 @@ func (m *artifactsModel) DispatchRoute(ctx context.Context, r gateway.RouteDispa
 	}
 	m.calls = append(m.calls, r)
 	var packet struct {
-		Sources []struct {
+		SchemaVersion int `json:"schema_version"`
+		Sources       []struct {
 			ID    string `json:"source_id"`
 			Start int    `json:"start_line"`
 		} `json:"sources"`
@@ -117,7 +118,14 @@ func (m *artifactsModel) DispatchRoute(ctx context.Context, r gateway.RouteDispa
 		id = "foreign-source"
 	}
 	line := packet.Sources[0].Start
-	payload := artifactsJSON(m.t, map[string]any{"schema_version": 1, "candidates": []any{map[string]any{"title": "Zero input divides by zero", "claim": "The supplied division does not guard zero input.", "severity_hint": "high", "source_range": map[string]any{"source_id": id, "start_line": line, "end_line": line}, "evidence_ids": []string{id}}}})
+	candidate := map[string]any{"title": "Zero input divides by zero", "claim": "The supplied division does not guard zero input.", "severity_hint": "high", "source_range": map[string]any{"source_id": id, "start_line": line, "end_line": line}, "evidence_ids": []string{id}}
+	schemaVersion := 1
+	if packet.SchemaVersion == 7 {
+		// A plain version 7 generation context requests candidate batch v2;
+		// investigation contexts keep candidate batch v1.
+		schemaVersion, candidate["category"] = 2, "correctness"
+	}
+	payload := artifactsJSON(m.t, map[string]any{"schema_version": schemaVersion, "candidates": []any{candidate}})
 	part, err := provider.NewResponsePart(provider.ResponsePartStructuredData, "application/json", payload)
 	artifactsCheck(m.t, err)
 	usage, err := provider.NewRouteTokenUsage(100, 100, 0)
@@ -630,7 +638,7 @@ func TestInvestigationArtifactsKeepExistingV1AndV3CodecControlsExact(t *testing.
 	}
 	inputArtifact, err := NewGenerationInputArtifact(input, contextArtifact, []string{f.context.HeadSnapshotArtifact.Identity()}, f.clock.Now())
 	artifactsCheck(t, err)
-	candidates, err := review.ParseCandidateBatch(turn.Dispatch().Response(), f.context.Context.Snapshot(), f.packet.EvidenceItems())
+	candidates, err := review.ParseContextCandidateBatch(turn.Dispatch().Response(), request.Payload(), f.context.Context.Snapshot(), f.packet.EvidenceItems())
 	artifactsCheck(t, err)
 	output, err := gateway.NewSuccessfulRouteOutputReceipt(gateway.RouteOutputCandidateBatch, f.packet.Identity(), candidates.Identity(), request, turn.Authorization(), turn.Outcome())
 	artifactsCheck(t, err)

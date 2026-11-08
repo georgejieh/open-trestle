@@ -173,8 +173,8 @@ func (m *rmModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.Req
 	payload := []byte(wire.Input[0].Content[0].Text)
 	var packet rmModelPacket
 	request, requestErr := provider.NewRequest(provider.CapabilityReviewV1, "application/json", payload)
-	if json.Unmarshal(payload, &packet) != nil || requestErr != nil || packet.Version != 5 {
-		t.Error("model did not receive the actual v3 context")
+	if json.Unmarshal(payload, &packet) != nil || requestErr != nil || packet.Task == "candidate_generation" && packet.Version != 7 || packet.Task != "candidate_generation" && packet.Version != 6 {
+		t.Error("model did not receive the actual v7 generation or v6 verification context")
 		http.Error(w, "invalid context", http.StatusBadRequest)
 		return
 	}
@@ -228,10 +228,11 @@ func (m *rmModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.Req
 		if m.mode != "empty" {
 			candidates = append(candidates, map[string]any{
 				"title": "Zero-valued caller now panics", "claim": "Consume passes zero to Changed after removal of the division guard.", "severity_hint": "high",
+				"category": "correctness", "fix": "Restore the zero guard before dividing.",
 				"source_range": map[string]any{"source_id": changed.ID, "start_line": 2, "end_line": 2}, "evidence_ids": evidenceIDs,
 			})
 		}
-		result = map[string]any{"schema_version": 1, "candidates": candidates}
+		result = map[string]any{"schema_version": 2, "candidates": candidates}
 	case "candidate_verification":
 		if m.model != "model-b" || packet.GenerationContext == "" || packet.CandidateBatch == "" {
 			t.Error("verification lost independent provider or generation lineage")

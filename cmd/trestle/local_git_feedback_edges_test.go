@@ -97,7 +97,8 @@ func TestLocalGitFeedbackReviewRefusesAmbiguousOrUnknownFields(t *testing.T) {
 		encoded := []byte(reviewOut)
 		switch kind {
 		case "duplicate":
-			encoded = []byte(strings.Replace(reviewOut, `"schema_version":1`, `"schema_version":1,"schema_version":1`, 1))
+			version := `"schema_version":` + string(wire["schema_version"])
+			encoded = []byte(strings.Replace(reviewOut, version, version+","+version, 1))
 		case "unknown":
 			wire["unknown"] = json.RawMessage(`true`)
 			encoded = feedbackJourneyJSON(t, wire)

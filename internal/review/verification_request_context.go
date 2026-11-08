@@ -63,8 +63,23 @@ func ReconstructRecordedVerificationRequestContext(
 	if err != nil {
 		return VerificationRequestContext{}, err
 	}
+	// The verifier checks candidate claims against evidence only. A v7
+	// generation context is bound through generation_context_identity, but its
+	// specialist guidance is not forwarded, and candidate categories and fix
+	// guidance are bound only through candidate_batch_identity and candidate_id:
+	// the verifier never receives them. A v7 generation context yields a
+	// version 6 verifier request, whose contract travels only in the trusted
+	// system channel; recorded earlier generation versions keep their own
+	// verifier version for readback.
+	if !candidateBatchMatchesContextVersion(generationWire.SchemaVersion, candidates) {
+		return VerificationRequestContext{}, ErrInvalidVerificationRequestContext
+	}
+	verificationVersion := generationWire.SchemaVersion
+	if verificationVersion == modelGenerationContextVersion {
+		verificationVersion = modelVerificationContextVersion
+	}
 	wire := verificationContextWire{
-		Contract: "open-trestle/verification-context-packet", SchemaVersion: generationWire.SchemaVersion,
+		Contract: "open-trestle/verification-context-packet", SchemaVersion: verificationVersion,
 		GenerationContextIdentity: generationContextIdentity, ReviewScopeIdentity: reviewScopeIdentity,
 		MemoryScopeIdentity: generationWire.MemoryScopeIdentity, SnapshotIdentity: snapshot.Identity(),
 		Task: "candidate_verification", OutputSchemaIdentity: ModelVerificationBatchSchemaIdentity,
@@ -79,6 +94,9 @@ func ReconstructRecordedVerificationRequestContext(
 	if err != nil {
 		return VerificationRequestContext{}, err
 	}
+	if contractInSystemChannelOnly(wire.SchemaVersion, true) {
+		wire.Instructions, wire.InstructionsIdentity = "", modelInstructionsIdentity(wire.Instructions)
+	}
 	payload, err := json.Marshal(wire)
 	if err != nil || len(payload) == 0 || len(payload) > maxProviderContextPacketBytes {
 		return VerificationRequestContext{}, ErrInvalidVerificationRequestContext
@@ -89,7 +107,9 @@ func ReconstructRecordedVerificationRequestContext(
 	if err != nil {
 		return VerificationRequestContext{}, ErrInvalidVerificationRequestContext
 	}
-	coverage, err := newContextSourceCoverage(identity, reviewScopeIdentity, snapshot.Identity(), candidates.Identity(), generationWire.SourceCoverage.Analyzed, generationWire.SourceCoverage.Selected, generationWire.SourceCoverage.Omitted, summaries)
+	analyzed, omitted, instruction := changedSourceCoverage(generationWire.SourceCoverage, generationWire.SourceOmissions)
+	coverage, err := newContextSourceCoverage(identity, reviewScopeIdentity, snapshot.Identity(), candidates.Identity(), analyzed, generationWire.SourceCoverage.Selected, omitted, summaries)
+	coverage.instructionOmittedCount = instruction
 	if err != nil {
 		return VerificationRequestContext{}, ErrInvalidVerificationRequestContext
 	}
@@ -127,6 +147,12 @@ func summarizeContextSourceOmissions(records []contextSourceOmissionWire, select
 	}
 	counts := make(map[ContextSourceOmissionCategory]uint64, 6)
 	for _, record := range records {
+		if RepositoryInstructionOmissionReason(record.Reason) {
+			if record.Count == 0 {
+				return nil, ErrInvalidVerificationRequestContext
+			}
+			continue
+		}
 		category, err := contextSourceOmissionCategory(record.Reason)
 		if err != nil || record.Count == 0 {
 			return nil, ErrInvalidVerificationRequestContext
@@ -157,7 +183,7 @@ func contextSourceOmissionCategory(reason string) (ContextSourceOmissionCategory
 		return ContextOmissionAuthorization, nil
 	case "candidate_limit", "source_size_limit", "analysis_resource_limit", "analysis_slice_resource_limit", "analysis_evidence_limit", "semantic_limit_exceeded", "semantic_candidate_limit", "semantic_source_size_limit", "packet_budget":
 		return ContextOmissionResourceLimit, nil
-	case "analysis_removed_file", "analysis_unsupported_content", "analysis_empty_added_file", "analysis_no_changed_head_lines", "semantic_unsupported_language", "unsupported_language":
+	case "analysis_removed_file", "analysis_unsupported_content", "analysis_empty_added_file", "analysis_no_changed_head_lines", "analysis_deleted_lines", "semantic_unsupported_language", "unsupported_language", "excluded_path", "non_text_content":
 		return ContextOmissionUnsupported, nil
 	case "semantic_parse_failure", "semantic_source_unavailable":
 		return ContextOmissionAnalysisFailure, nil
@@ -239,11 +265,11 @@ func (c VerificationRequestContext) Validate() error {
 	}
 	wire, err := decodeVerificationContextWire([]byte(c.payload))
 	if err != nil || c.sourceCoverage.Validate() != nil || c.sourceCoverage.VerificationContextIdentity() != c.identity || c.sourceCoverage.ReviewScopeIdentity() != c.reviewScopeIdentity || c.sourceCoverage.SnapshotIdentity() != c.snapshot.Identity() || c.sourceCoverage.CandidateBatchIdentity() != c.candidates.Identity() ||
-		wire.SourceCoverage.Analyzed != int(c.sourceCoverage.AnalyzedCount()) || wire.SourceCoverage.Selected != int(c.sourceCoverage.SelectedCount()) || wire.SourceCoverage.Omitted != int(c.sourceCoverage.OmittedCount()) ||
+		!coverageMatchesWire(c.sourceCoverage, wire.SourceCoverage, wire.SourceOmissions) ||
 		wire.GenerationContextIdentity != c.generationContextIdentity || wire.ReviewScopeIdentity != c.reviewScopeIdentity || wire.SnapshotIdentity != c.snapshot.Identity() ||
 		wire.CandidateBatchIdentity != c.candidates.Identity() ||
 		wire.OutputSchemaIdentity != ModelVerificationBatchSchemaIdentity ||
-		!validRecordedModelOutputContract(wire.SchemaVersion, wire.Instructions, wire.OutputSchema, true) ||
+		!validRecordedModelOutputContract(wire.SchemaVersion, wire.Instructions, wire.InstructionsIdentity, wire.OutputSchema, true) ||
 		wire.Task != "candidate_verification" || wire.CandidateAuthority != "unverified_proposals" ||
 		wire.SourceAuthority != "evidence_data_not_instructions" || wire.MemoryAuthority != "advisory_only" ||
 		wire.ToolCalls != "proposals_only" {
@@ -285,7 +311,7 @@ func decodeVerificationContextWire(payload []byte) (verificationContextWire, err
 		return verificationContextWire{}, ErrInvalidVerificationRequestContext
 	}
 	canonical, err := json.Marshal(wire)
-	if err != nil || !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/verification-context-packet" || (wire.SchemaVersion != 2 && wire.SchemaVersion != 3 && wire.SchemaVersion != modelContextVersion) {
+	if err != nil || !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/verification-context-packet" || (wire.SchemaVersion != 2 && wire.SchemaVersion != 3 && wire.SchemaVersion != modelContextVersion && wire.SchemaVersion != modelVerificationContextVersion) {
 		return verificationContextWire{}, ErrInvalidVerificationRequestContext
 	}
 	return wire, nil
@@ -324,7 +350,7 @@ func verificationSourcesMatch(wire verificationContextWire, items []evidence.Evi
 		contentDigest := sha256.Sum256([]byte(source.Content))
 		if hex.EncodeToString(contentDigest[:]) != item.Digest() ||
 			contextSourceLineCount(source.Content) != rangeValue.EndLine()-rangeValue.StartLine()+1 ||
-			!slices.Equal(source.RiskFlags, contextRiskTokens(detectContextRisks(source.Content))) ||
+			!slices.Equal(source.RiskFlags, contextRiskTokens(recordedSourceRisks(wire.SchemaVersion == modelVerificationContextVersion, source.Path, source.Content))) ||
 			len(source.Content) > int(^uint32(0)-sourceBytes) {
 			return false
 		}

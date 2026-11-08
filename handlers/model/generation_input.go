@@ -44,9 +44,12 @@ type GenerationInput struct {
 	memoryScopeIdentity, memoryIdentity                                      string
 	sanitizedRequestArtifactIdentity, sanitizedEgressReceiptArtifactIdentity string
 	sanitizedEgressReceiptIdentity                                           string
-	snapshot                                                                 review.ReviewSnapshot
-	evidenceItems                                                            []evidence.EvidenceItem
-	authorization                                                            gateway.RouteAttemptAuthorization
+	// outputSchemaIdentity is the candidate batch schema the bound context
+	// requests: v2 for version 7 contexts, v1 for recorded earlier contexts.
+	outputSchemaIdentity string
+	snapshot             review.ReviewSnapshot
+	evidenceItems        []evidence.EvidenceItem
+	authorization        gateway.RouteAttemptAuthorization
 }
 
 // NewGenerationInput creates one durable candidate-generation authority.
@@ -118,7 +121,8 @@ func newGenerationInput(
 		reviewScopeIdentity:     contextArtifact.Scope().Identity(),
 		contextArtifactIdentity: contextArtifact.Identity(), contextIdentity: packet.Identity(), memoryScopeIdentity: packet.MemoryScopeIdentity(), memoryIdentity: packet.MemoryIdentity(),
 		sanitizedRequestArtifactIdentity: requestArtifactIdentity, sanitizedEgressReceiptArtifactIdentity: sanitizedEgressReceiptArtifactIdentity, sanitizedEgressReceiptIdentity: sanitizedEgressReceiptIdentity,
-		snapshot: snapshot, evidenceItems: append([]evidence.EvidenceItem(nil), items...),
+		outputSchemaIdentity: packet.OutputSchemaIdentity(),
+		snapshot:             snapshot, evidenceItems: append([]evidence.EvidenceItem(nil), items...),
 		authorization: authorization,
 	}
 	input.identity = deriveGenerationInputIdentity(input)
@@ -147,6 +151,9 @@ func (i GenerationInput) SanitizedEgressReceiptArtifactIdentity() string {
 func (i GenerationInput) SanitizedEgressReceiptIdentity() string {
 	return i.sanitizedEgressReceiptIdentity
 }
+
+// OutputSchemaIdentity returns the candidate batch schema identity the bound context requests.
+func (i GenerationInput) OutputSchemaIdentity() string                     { return i.outputSchemaIdentity }
 func (i GenerationInput) IsSanitized() bool                                { return i.sanitizedRequestArtifactIdentity != "" }
 func (i GenerationInput) Authorization() gateway.RouteAttemptAuthorization { return i.authorization }
 func (i GenerationInput) String() string                                   { return "model generation input" }
@@ -160,7 +167,8 @@ func (i GenerationInput) Validate() error {
 	if !validDigest(i.reviewScopeIdentity) || !validDigest(i.contextArtifactIdentity) ||
 		!validDigest(i.contextIdentity) || !validDigest(i.memoryScopeIdentity) || !validDigest(i.memoryIdentity) || i.snapshot.Validate() != nil ||
 		i.authorization.Validate() != nil || i.authorization.ReviewScopeIdentity() != i.reviewScopeIdentity ||
-		len(i.evidenceItems) > 2048 {
+		len(i.evidenceItems) > 2048 ||
+		i.outputSchemaIdentity != review.ModelCandidateBatchSchemaIdentity && i.outputSchemaIdentity != review.ModelCandidateBatchV1SchemaIdentity {
 		return ErrInvalidGenerationInput
 	}
 	sanitized := validDigest(i.sanitizedRequestArtifactIdentity) && validDigest(i.sanitizedEgressReceiptArtifactIdentity) && validDigest(i.sanitizedEgressReceiptIdentity)
@@ -184,6 +192,15 @@ func (i GenerationInput) Validate() error {
 		return ErrInvalidGenerationInput
 	}
 	return nil
+}
+
+// contextOutputSchemaMatches binds the input's recorded candidate schema to the
+// output_schema_identity of the exact context bytes it authorizes.
+func contextOutputSchemaMatches(input GenerationInput, contextPayload []byte) bool {
+	var header struct {
+		OutputSchemaIdentity string `json:"output_schema_identity"`
+	}
+	return json.Unmarshal(contextPayload, &header) == nil && header.OutputSchemaIdentity == input.outputSchemaIdentity
 }
 
 func rangeSupported(candidate evidence.SourceRange, snapshot review.ReviewSnapshot) bool {
@@ -261,7 +278,8 @@ func ParseGenerationInput(encoded []byte) (GenerationInput, error) {
 	}
 	canonical, err := json.Marshal(wire)
 	if err != nil || !bytes.Equal(canonical, encoded) || wire.Contract != "open-trestle/model-generation-input" ||
-		(wire.SchemaVersion != 1 && wire.SchemaVersion != 3) || wire.OutputSchemaIdentity != review.ModelCandidateBatchSchemaIdentity {
+		(wire.SchemaVersion != 1 && wire.SchemaVersion != 3) ||
+		wire.OutputSchemaIdentity != review.ModelCandidateBatchSchemaIdentity && wire.OutputSchemaIdentity != review.ModelCandidateBatchV1SchemaIdentity {
 		return GenerationInput{}, ErrInvalidGenerationInput
 	}
 	ranges := make([]evidence.SourceRange, len(wire.SnapshotRanges))
@@ -294,7 +312,8 @@ func ParseGenerationInput(encoded []byte) (GenerationInput, error) {
 		identity: wire.Identity, reviewScopeIdentity: wire.ReviewScopeIdentity,
 		contextArtifactIdentity: wire.ContextArtifactIdentity, contextIdentity: wire.ContextIdentity, memoryScopeIdentity: wire.MemoryScopeIdentity, memoryIdentity: wire.MemoryIdentity,
 		sanitizedRequestArtifactIdentity: wire.SanitizedRequestArtifactIdentity, sanitizedEgressReceiptArtifactIdentity: wire.SanitizedEgressReceiptArtifactIdentity, sanitizedEgressReceiptIdentity: wire.SanitizedEgressReceiptIdentity,
-		snapshot: snapshot, evidenceItems: items, authorization: authorization,
+		outputSchemaIdentity: wire.OutputSchemaIdentity,
+		snapshot:             snapshot, evidenceItems: items, authorization: authorization,
 	}
 	if err := input.Validate(); err != nil {
 		return GenerationInput{}, ErrInvalidGenerationInput
@@ -332,7 +351,7 @@ func generationInputWireValue(input GenerationInput) (generationInputWire, error
 		Contract: "open-trestle/model-generation-input", SchemaVersion: version, Identity: input.Identity(),
 		ReviewScopeIdentity: input.reviewScopeIdentity, ContextArtifactIdentity: input.contextArtifactIdentity,
 		ContextIdentity: input.contextIdentity, MemoryScopeIdentity: input.memoryScopeIdentity, MemoryIdentity: input.memoryIdentity,
-		SanitizedRequestArtifactIdentity: input.sanitizedRequestArtifactIdentity, SanitizedEgressReceiptArtifactIdentity: input.sanitizedEgressReceiptArtifactIdentity, SanitizedEgressReceiptIdentity: input.sanitizedEgressReceiptIdentity, OutputSchemaIdentity: review.ModelCandidateBatchSchemaIdentity,
+		SanitizedRequestArtifactIdentity: input.sanitizedRequestArtifactIdentity, SanitizedEgressReceiptArtifactIdentity: input.sanitizedEgressReceiptArtifactIdentity, SanitizedEgressReceiptIdentity: input.sanitizedEgressReceiptIdentity, OutputSchemaIdentity: input.outputSchemaIdentity,
 		SnapshotWorkspace: input.snapshot.Workspace(), SnapshotRevision: input.snapshot.Revision(),
 		SnapshotIdentity: input.snapshot.Identity(), SnapshotRanges: wireRanges, Evidence: items,
 		Authorization: json.RawMessage(authorization),

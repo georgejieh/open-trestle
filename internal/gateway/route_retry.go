@@ -54,6 +54,11 @@ const (
 	RouteFailurePolicyDenied
 	RouteFailureBudgetExhausted
 	RouteFailureCancelled
+	// RouteFailureOutputExhausted is a completed response that stopped at the
+	// output token limit before producing any answer, for example a reasoning
+	// model that spent the whole allowance on its trace. Replaying the same
+	// request under the same limit fails the same way, so it is not transient.
+	RouteFailureOutputExhausted
 )
 
 // String returns the stable failure token or an empty string for unknown values.
@@ -81,6 +86,8 @@ func (c RouteFailureClass) String() string {
 		return "budget_exhausted"
 	case RouteFailureCancelled:
 		return "cancelled"
+	case RouteFailureOutputExhausted:
+		return "output_exhausted"
 	default:
 		return ""
 	}
@@ -88,7 +95,7 @@ func (c RouteFailureClass) String() string {
 
 // ParseRouteFailureClass parses one exact stable failure token.
 func ParseRouteFailureClass(value string) (RouteFailureClass, error) {
-	for candidate := RouteFailureTransport; candidate <= RouteFailureCancelled; candidate++ {
+	for candidate := RouteFailureTransport; candidate <= RouteFailureOutputExhausted; candidate++ {
 		if candidate.String() == value {
 			return candidate, nil
 		}

@@ -238,8 +238,10 @@ func TestDiagnosticWriteFailureClassifiesDiagnosticStoreCapacity(t *testing.T) {
 	}
 }
 
+// An emptied head file leaves no head line to anchor a deletion, so the entry
+// keeps the version 5 whole-entry gap.
 func TestHandlerKeepsNoChangedHeadLinesGap(t *testing.T) {
-	for _, after := range []string{"keep\n", ""} {
+	for _, after := range []string{""} {
 		t.Run(after, func(t *testing.T) {
 			output, change, base, head := deletionAnalysisFixture(t, map[string][]byte{"a.txt": []byte("guard\nkeep\n")}, map[string][]byte{"a.txt": []byte(after)})
 			result, err := ParseResultArtifact(output, change, base, head)
@@ -267,7 +269,7 @@ func TestHandlerKeepsNoChangedHeadLinesGap(t *testing.T) {
 func TestHandlerKeepsV5MixedObservations(t *testing.T) {
 	output, change, base, head := deletionAnalysisFixture(t,
 		map[string][]byte{"a.txt": []byte("guard\nkeep\n")},
-		map[string][]byte{"a.txt": []byte("keep\n"), "gate.go": []byte("package gate\nimport \"fmt\"\nfunc run() { fmt.Println(\"debug\") }\n")})
+		map[string][]byte{"a.txt": []byte(""), "gate.go": []byte("package gate\nimport \"fmt\"\nfunc run() { fmt.Println(\"debug\") }\n")})
 	result, err := ParseResultArtifact(output, change, base, head)
 	if err != nil || result.SchemaVersion() != 5 || len(result.Gaps()) != 1 || len(result.Observations()) != 1 || result.Observations()[0].Path() != "gate.go" || len(result.Items()) != 1 {
 		t.Fatalf("mixed v5 result=%#v err=%v", result, err)

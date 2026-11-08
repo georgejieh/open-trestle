@@ -309,15 +309,18 @@ func TestExecuteFailsClosedBeforeCredentialOrNetwork(t *testing.T) {
 	if err := json.Unmarshal(validRequest.Payload(), &contract); err != nil {
 		t.Fatal(err)
 	}
-	for _, firstKey := range []string{"inſtructions", "instructions"} {
-		secondKey := "instructions"
+	for _, firstKey := range []string{"inſtructions_identity", "instructions_identity"} {
+		secondKey := "instructions_identity"
 		if firstKey == secondKey {
-			secondKey = "inſtructions"
+			secondKey = "inſtructions_identity"
 		}
-		replacement := append([]byte(`"`+firstKey+`":`), contract["instructions"]...)
+		replacement := append([]byte(`"`+firstKey+`":`), contract["instructions_identity"]...)
 		replacement = append(replacement, []byte(`,"`+secondKey+`":`)...)
-		replacement = append(replacement, contract["instructions"]...)
-		ambiguousPayload := bytes.Replace(validRequest.Payload(), append([]byte(`"instructions":`), contract["instructions"]...), replacement, 1)
+		replacement = append(replacement, contract["instructions_identity"]...)
+		ambiguousPayload := bytes.Replace(validRequest.Payload(), append([]byte(`"instructions_identity":`), contract["instructions_identity"]...), replacement, 1)
+		if bytes.Equal(ambiguousPayload, validRequest.Payload()) {
+			t.Fatal("ambiguous instructions fixture did not change the payload")
+		}
 		if !json.Valid(ambiguousPayload) {
 			t.Fatal("ambiguous instructions fixture is not valid JSON")
 		}
@@ -663,10 +666,10 @@ func TestRemoteExecuteRejectsUntrustedContractsBeforeInstructionsCredentialsAndN
 		SchemaVersion        int             `json:"schema_version"`
 		ReviewScopeIdentity  string          `json:"review_scope_identity"`
 		Task                 string          `json:"task"`
-		Instructions         string          `json:"instructions"`
+		InstructionsIdentity string          `json:"instructions_identity"`
 		OutputSchema         json.RawMessage `json:"output_schema"`
 		OutputSchemaIdentity string          `json:"output_schema_identity"`
-	}{"open-trestle/review-context-packet", 4, scope.ReviewScopeIdentity, review.ContextTaskCandidateGeneration.String(), review.InvestigationInstructions(), review.InvestigationOutputSchema(), "77367fd94611f87d36e4490729096db927b8d27b9d687a4b6ab515db70e2bbc4"})
+	}{"open-trestle/review-context-packet", 5, scope.ReviewScopeIdentity, review.ContextTaskCandidateGeneration.String(), "f5c77f4a3d7c06310e10a4b64280d1b8a3376515352376b253af2d862a911f08", review.InvestigationOutputSchema(), "77367fd94611f87d36e4490729096db927b8d27b9d687a4b6ab515db70e2bbc4"})
 	if err != nil {
 		t.Fatal(err)
 	}

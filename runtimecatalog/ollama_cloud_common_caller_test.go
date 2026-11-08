@@ -23,7 +23,7 @@ import (
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 )
 
-const ollamaCloudCandidateContent = `{"schema_version":1,"candidates":[]}`
+const ollamaCloudCandidateContent = `{"schema_version":2,"candidates":[]}`
 
 type ollamaCloudCredentials struct {
 	t             *testing.T
@@ -97,7 +97,7 @@ func (r *ollamaCloudTransport) RoundTrip(request *http.Request) (*http.Response,
 	if decoder.Decode(&struct{}{}) != io.EOF || wire.Model != "gemma4:31b" || wire.MaxTokens != r.authorization.MaxOutputTokens() || wire.MaxTokens != 4096 || wire.Stream || len(wire.Messages) != 2 || wire.Messages[0].Role != "system" || wire.Messages[1].Role != "user" || wire.Messages[0].Content != r.instructions || !bytes.Equal([]byte(wire.Messages[1].Content), r.payload) {
 		r.t.Fatal("Ollama selector, authorized limit or trusted body changed")
 	}
-	response := `{"id":"synthetic-ollama-response","object":"chat.completion","model":"` + r.responseModel + `","choices":[{"index":0,"message":{"role":"assistant","content":"{\"schema_version\":1,\"candidates\":[]}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1200,"completion_tokens":300,"total_tokens":1500}}`
+	response := `{"id":"synthetic-ollama-response","object":"chat.completion","model":"` + r.responseModel + `","choices":[{"index":0,"message":{"role":"assistant","content":"{\"schema_version\":2,\"candidates\":[]}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1200,"completion_tokens":300,"total_tokens":1500}}`
 	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(response)), Request: request}, nil
 }
 

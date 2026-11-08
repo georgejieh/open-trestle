@@ -45,19 +45,19 @@ func modelResultCorpusCapture(t *testing.T, empty, unknownUsage bool) (*localMod
 			return
 		}
 		rows := []any{}
-		key := "candidates"
+		key, version := "candidates", 2 // version 7 generation contexts request candidate batch v2
 		if packet.Task == "candidate_generation" {
 			if !empty {
 				s := packet.Sources[0]
-				rows = append(rows, map[string]any{"title": "Synthetic contract candidate", "claim": "Synthetic loopback assertion, not a quality label.", "severity_hint": "high", "source_range": map[string]any{"source_id": s.ID, "start_line": s.Start, "end_line": s.Start}, "evidence_ids": []string{s.ID}})
+				rows = append(rows, map[string]any{"title": "Synthetic contract candidate", "claim": "Synthetic loopback assertion, not a quality label.", "category": "correctness", "severity_hint": "high", "source_range": map[string]any{"source_id": s.ID, "start_line": s.Start, "end_line": s.Start}, "evidence_ids": []string{s.ID}})
 			}
 		} else {
-			key = "verdicts"
+			key, version = "verdicts", 1
 			for _, c := range packet.Candidates {
 				rows = append(rows, map[string]any{"candidate_id": c.ID, "outcome": "verified", "severity": "high", "rationale": "Synthetic loopback contract assertion.", "evidence_ids": c.Evidence})
 			}
 		}
-		body, _ := json.Marshal(map[string]any{"schema_version": 1, key: rows})
+		body, _ := json.Marshal(map[string]any{"schema_version": version, key: rows})
 		model := "model-a"
 		if key == "verdicts" {
 			model = "model-b"

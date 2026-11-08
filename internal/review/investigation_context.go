@@ -25,9 +25,17 @@ import (
 var ErrInvestigationContext = errors.New("invalid investigation context claims")
 
 const investigationSchemaIdentity = "77367fd94611f87d36e4490729096db927b8d27b9d687a4b6ab515db70e2bbc4"
+
+// investigationInstructionsIdentity pins the recorded version 4 text.
 const investigationInstructionsIdentity = "990e881d4038ea3c222c4c0aed5b6dad7dbff547faa5f30ff067b3ac18072c8c"
 
+// investigationInstructionsV5Identity pins the executable version 5 text.
+const investigationInstructionsV5Identity = "f5c77f4a3d7c06310e10a4b64280d1b8a3376515352376b253af2d862a911f08"
+
 func InvestigationOutputSchema() []byte { return reviewschema.InvestigationOutputSchema() }
+
+// InvestigationInstructions returns the pinned version 4 investigation rules.
+// They are the recorded version 4 contract and the rule body of version 5.
 func InvestigationInstructions() string { return reviewschema.InvestigationInstructions() }
 
 // InvestigationRouteContextClaim describes routing data, not approval or a claim.
@@ -439,8 +447,10 @@ func NewInvestigationGenerationContext(binding InvestigationContextBinding, sele
 }
 
 func encodeInvestigationContext(value InvestigationGenerationContext, results []any) ([]byte, error) {
-	schema, instructions := InvestigationOutputSchema(), InvestigationInstructions()
-	if investigationContextDigest(schema) != investigationSchemaIdentity || investigationContextDigest([]byte(instructions)) != investigationInstructionsIdentity {
+	schema, instructions := InvestigationOutputSchema(), investigationInstructionsV5
+	// The recorded version 4 text keeps its own pin; version 5 is pinned too,
+	// so neither contract can drift unnoticed.
+	if investigationContextDigest(schema) != investigationSchemaIdentity || investigationContextDigest([]byte(InvestigationInstructions())) != investigationInstructionsIdentity || investigationContextDigest([]byte(instructions)) != investigationInstructionsV5Identity {
 		return nil, ErrInvestigationContext
 	}
 	legacy, err := encodeContextPacket(value.selected)
@@ -452,8 +462,12 @@ func encodeInvestigationContext(value InvestigationGenerationContext, results []
 		return nil, ErrInvestigationContext
 	}
 	set := func(key string, v any) { wire[key], _ = json.Marshal(v) }
-	set("schema_version", 4)
-	set("instructions", instructions)
+	set("schema_version", investigationContextVersion)
+	// Investigation version 5 sends its contract only in the trusted system
+	// channel; the payload binds it by instructions_identity and carries no
+	// instruction prose.
+	delete(wire, "instructions")
+	set("instructions_identity", modelInstructionsIdentity(instructions))
 	wire["output_schema"] = json.RawMessage(schema)
 	set("output_schema_identity", investigationSchemaIdentity)
 	set("tool_calls", "host_admitted_snapshot_read_v1")
@@ -541,7 +555,9 @@ func NewInvestigationVerificationRequestContext(final InvestigationGenerationCon
 	if err != nil {
 		return VerificationRequestContext{}, ErrInvestigationContext
 	}
-	coverage, err := newContextSourceCoverage(identity, p.ReviewScopeIdentity(), final.snapshot.Identity(), candidates.Identity(), wire.SourceCoverage.Analyzed, wire.SourceCoverage.Selected, wire.SourceCoverage.Omitted, summaries)
+	analyzed, omitted, instruction := changedSourceCoverage(wire.SourceCoverage, wire.SourceOmissions)
+	coverage, err := newContextSourceCoverage(identity, p.ReviewScopeIdentity(), final.snapshot.Identity(), candidates.Identity(), analyzed, wire.SourceCoverage.Selected, omitted, summaries)
+	coverage.instructionOmittedCount = instruction
 	if err != nil {
 		return VerificationRequestContext{}, ErrInvestigationContext
 	}

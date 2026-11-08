@@ -88,7 +88,7 @@ func (r *brokeredGenerationTransport) RoundTrip(request *http.Request) (*http.Re
 		r.t.Fatal("not sanitized inner candidate context")
 	}
 	r.scopes = append(r.scopes, inner.Scope)
-	return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"id":"fixture-chat","object":"chat.completion","model":"vendor/model","choices":[{"index":0,"message":{"role":"assistant","content":"{\"schema_version\":1,\"candidates\":[]}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":10,"total_tokens":110}}`)), Request: request}, nil
+	return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"id":"fixture-chat","object":"chat.completion","model":"vendor/model","choices":[{"index":0,"message":{"role":"assistant","content":"{\"schema_version\":2,\"candidates\":[]}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":10,"total_tokens":110}}`)), Request: request}, nil
 }
 
 func brokeredRuntimePolicy(t *testing.T, now time.Time) (runtimeconfig.RuntimePolicy, runtimeconfig.RouteInventory) {

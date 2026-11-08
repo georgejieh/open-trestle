@@ -24,7 +24,7 @@ import (
 )
 
 const consoleCallerReasoningSentinel = "DO_NOT_PERSIST_REASONING_SENTINEL"
-const consoleCallerCandidateContent = `{"schema_version":1,"candidates":[]}`
+const consoleCallerCandidateContent = `{"schema_version":2,"candidates":[]}`
 
 type consoleCallerStore struct {
 	artifact.Store
@@ -96,7 +96,7 @@ func (r *consoleCallerTransport) RoundTrip(request *http.Request) (*http.Respons
 	}
 	r.sessions = append(r.sessions, session)
 	r.requests = append(r.requests, r.authorization.RequestIdentity())
-	response := `{"id":"go-fixture","object":"chat.completion","model":"glm-5.3-flash","choices":[{"index":0,"message":{"role":"assistant","content":"{\"schema_version\":1,\"candidates\":[]}","reasoning_content":"DO_NOT_PERSIST_REASONING_SENTINEL"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1200,"completion_tokens":300,"cost":0.00412,"opencode":{"billing_source":"balance","list_cost":0.00412,"tokens":{"input":1200,"output":300,"reasoning":120,"cache_read":8000,"cache_write_5m":0,"cache_write_1h":0}}}}`
+	response := `{"id":"go-fixture","object":"chat.completion","model":"glm-5.3-flash","choices":[{"index":0,"message":{"role":"assistant","content":"{\"schema_version\":2,\"candidates\":[]}","reasoning_content":"DO_NOT_PERSIST_REASONING_SENTINEL"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1200,"completion_tokens":300,"cost":0.00412,"opencode":{"billing_source":"balance","list_cost":0.00412,"tokens":{"input":1200,"output":300,"reasoning":120,"cache_read":8000,"cache_write_5m":0,"cache_write_1h":0}}}}`
 	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(response)), Request: request}, nil
 }
 

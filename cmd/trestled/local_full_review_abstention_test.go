@@ -29,7 +29,7 @@ func TestDaemonFullLocalReviewPersistsLinkedContextAbstention(t *testing.T) {
 	}{
 		{"all-oversized-go", "large.go", "source_size_limit", []byte("package main\n//" + strings.Repeat("oversized-marker", 22000) + "\nfunc Large() {}\n")},
 		{"packet-budget-zero-selection", "large.go", "packet_budget", []byte("package main\n//" + strings.Repeat("budget-marker", 12000) + "\nfunc Large() {}\n")},
-		{"unsupported-language-only", "module.py", "unsupported_language", []byte("def changed():\n    return 'unsupported-marker'\n")},
+		{"excluded-lockfile-only", "package-lock.json", "excluded_path", []byte("{\"lockfileVersion\": \"unsupported-marker\"}\n")},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {

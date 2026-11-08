@@ -23,6 +23,9 @@ type encodedCandidateBatchWire struct {
 	ResponseIdentity string                        `json:"response_identity"`
 	SnapshotIdentity string                        `json:"snapshot_identity"`
 	Findings         []encodedCandidateFindingWire `json:"findings"`
+	// RepositoryContextOmitted counts v2 proposals dropped for naming a
+	// repository_context source; omitted when zero.
+	RepositoryContextOmitted uint8 `json:"repository_context_anchor_omitted,omitempty"`
 }
 
 type encodedCandidateFindingWire struct {
@@ -30,6 +33,8 @@ type encodedCandidateFindingWire struct {
 	Ordinal           uint8                          `json:"ordinal"`
 	Title             string                         `json:"title"`
 	Claim             string                         `json:"claim"`
+	Category          string                         `json:"category,omitempty"`
+	Fix               string                         `json:"fix,omitempty"`
 	SeverityHint      string                         `json:"severity_hint"`
 	SourceReferenceID string                         `json:"source_reference_id"`
 	Path              string                         `json:"path"`
@@ -59,6 +64,8 @@ func EncodeCandidateBatch(batch CandidateBatch) ([]byte, error) {
 }
 
 // ParseEncodedCandidateBatch accepts only a canonical previously admitted candidate set.
+// Schema version 1 carries v1 candidates; version 2 carries categorized v2
+// candidates with optional fix guidance.
 func ParseEncodedCandidateBatch(encoded []byte) (CandidateBatch, error) {
 	if len(encoded) == 0 || len(encoded) > maximumEncodedCandidateBatchBytes {
 		return CandidateBatch{}, ErrInvalidCandidateBatchEncoding
@@ -74,7 +81,7 @@ func ParseEncodedCandidateBatch(encoded []byte) (CandidateBatch, error) {
 	}
 	canonical, err := json.Marshal(wire)
 	if err != nil || !bytes.Equal(canonical, encoded) ||
-		wire.Contract != "open-trestle/candidate-batch" || wire.SchemaVersion != 1 ||
+		wire.Contract != "open-trestle/candidate-batch" || (wire.SchemaVersion != 1 && wire.SchemaVersion != 2) ||
 		len(wire.Findings) > maxCandidateFindings {
 		return CandidateBatch{}, ErrInvalidCandidateBatchEncoding
 	}
@@ -93,7 +100,8 @@ func ParseEncodedCandidateBatch(encoded []byte) (CandidateBatch, error) {
 	}
 	batch := CandidateBatch{
 		identity: wire.Identity, responseIdentity: wire.ResponseIdentity,
-		snapshotIdentity: wire.SnapshotIdentity, findings: findings,
+		snapshotIdentity: wire.SnapshotIdentity, findings: findings, categorized: wire.SchemaVersion == 2,
+		repositoryContextOmitted: wire.RepositoryContextOmitted,
 	}
 	if err := batch.Validate(); err != nil {
 		return CandidateBatch{}, ErrInvalidCandidateBatchEncoding
@@ -131,7 +139,7 @@ func parseEncodedCandidateFinding(
 		snapshotIdentity: snapshotIdentity, ordinal: wire.Ordinal,
 		title: wire.Title, claim: wire.Claim, severityHint: Severity(wire.SeverityHint),
 		sourceReferenceID: wire.SourceReferenceID, sourceRange: sourceRange,
-		evidenceBindings: bindings,
+		evidenceBindings: bindings, category: CandidateCategory(wire.Category), fix: wire.Fix,
 	}
 	if err := finding.Validate(); err != nil {
 		return CandidateFinding{}, err
@@ -152,15 +160,17 @@ func encodedCandidateBatchWireValue(batch CandidateBatch) encodedCandidateBatchW
 		}
 		findings[index] = encodedCandidateFindingWire{
 			Identity: finding.Identity(), Ordinal: finding.Ordinal(),
-			Title: finding.Title(), Claim: finding.Claim(), SeverityHint: string(finding.SeverityHint()),
+			Title: finding.Title(), Claim: finding.Claim(), Category: string(finding.Category()), Fix: finding.Fix(),
+			SeverityHint:      string(finding.SeverityHint()),
 			SourceReferenceID: finding.SourceReferenceID(), Path: finding.SourceRange().Path(),
 			StartLine: finding.SourceRange().StartLine(), EndLine: finding.SourceRange().EndLine(),
 			Evidence: bindings,
 		}
 	}
 	return encodedCandidateBatchWire{
-		Contract: "open-trestle/candidate-batch", SchemaVersion: 1,
+		Contract: "open-trestle/candidate-batch", SchemaVersion: batch.SchemaVersion(),
 		Identity: batch.Identity(), ResponseIdentity: batch.ResponseIdentity(),
 		SnapshotIdentity: batch.SnapshotIdentity(), Findings: findings,
+		RepositoryContextOmitted: batch.repositoryContextOmitted,
 	}
 }

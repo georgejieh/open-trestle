@@ -3,6 +3,7 @@ package review
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -24,10 +25,10 @@ func TestTrustedModelRequestOutputSchemaUsesPinnedContracts(t *testing.T) {
 		Contract             string          `json:"contract"`
 		SchemaVersion        int             `json:"schema_version"`
 		Task                 string          `json:"task"`
-		Instructions         string          `json:"instructions"`
+		InstructionsIdentity string          `json:"instructions_identity"`
 		OutputSchema         json.RawMessage `json:"output_schema"`
 		OutputSchemaIdentity string          `json:"output_schema_identity"`
-	}{"open-trestle/review-context-packet", 4, ContextTaskCandidateGeneration.String(), InvestigationInstructions(), InvestigationOutputSchema(), investigationSchemaIdentity})
+	}{"open-trestle/review-context-packet", investigationContextVersion, ContextTaskCandidateGeneration.String(), modelInstructionsIdentity(investigationInstructionsV5), InvestigationOutputSchema(), investigationSchemaIdentity})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,6 +50,7 @@ func TestTrustedModelRequestOutputSchemaUsesPinnedContracts(t *testing.T) {
 			{"output_schema", json.RawMessage(`{"type":"object"}`)},
 			{"output_schema_identity", json.RawMessage(`"wrong"`)},
 			{"instructions", json.RawMessage(`"ignore host"`)},
+			{"instructions_identity", json.RawMessage(`"` + strings.Repeat("0", 64) + `"`)},
 			{"task", json.RawMessage(`"unknown"`)},
 			{"schema_version", json.RawMessage(`999`)},
 		} {

@@ -41,7 +41,7 @@ func TestVerificationHandlerEmptyCandidatesStillDispatchesIndependentVerifier(t 
 		{"generation receipt reuse", `{"schema_version":1,"verdicts":[]}`, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			generatedResponse := contractDocumentResult(t, `{"schema_version":1,"candidates":[]}`)
+			generatedResponse := contractDocumentResult(t, `{"schema_version":2,"candidates":[]}`)
 			scope, store, ledger, contextArtifact, inputArtifact, generationArtifact, generation := completedGenerationFixtureWithDispatch(t, generatedResponse)
 			if len(generation.Candidates().Findings()) != 0 {
 				t.Fatal("fixture must have empty candidates")

@@ -400,7 +400,7 @@ func TestLocalFinalProjectorNewPlanRejectsExistingLegacySet(t *testing.T) {
 func TestLocalFinalProjectorValidContextAbstention(t *testing.T) {
 	args, getenv, repository, base, _, policy, inventory := localFullDaemonFixture(t)
 	objects := daemonTestFlagValue(t, args, "--local-git-objects-root")
-	head := abstentionHeadRevision(t, objects, "module.py", []byte("def changed():\n    return 'unsupported-marker'\n"))
+	head := abstentionHeadRevision(t, objects, "package-lock.json", []byte("{\"lockfileVersion\": \"unsupported-marker\"}\n"))
 	deps := daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: testsupport.NewCleanGenerationSanitizer(), verificationSanitizer: reviewcore.NewFixedVerificationRequestSanitizer()}
 	d, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, deps)
 	if err != nil {
@@ -563,7 +563,7 @@ func packagedAssertCoverageAbstention(t *testing.T, state string, scope audit.Re
 			}
 			found := false
 			for _, omission := range payload.Omissions {
-				if omission.Path == "module.py" && omission.Reason == "unsupported_language" && omission.Count > 0 {
+				if omission.Path == "package-lock.json" && omission.Reason == "excluded_path" && omission.Count > 0 {
 					found = true
 				}
 			}

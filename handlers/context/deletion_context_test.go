@@ -1,0 +1,55 @@
+package context
+
+import (
+	"bytes"
+	"testing"
+)
+
+// The first live run refused this change at the context task with
+// all_sources_omitted: removing a guard changes no head line. The head lines
+// around the deletion point now enter the packet as a changed_hunk source, and
+// the deletion point is a labelled omission, so the change is reviewable.
+func TestDeletionOnlyChangeIsReviewableFromDeletionPointContext(t *testing.T) {
+	base := map[string][]byte{"calc.go": []byte("package calc\n\nfunc Div(a, b int) int {\n\tif b == 0 {\n\t\treturn 0\n\t}\n\treturn a / b\n}\n")}
+	head := map[string][]byte{"calc.go": []byte("package calc\n\nfunc Div(a, b int) int {\n\treturn a / b\n}\n")}
+	result := assembleTextFallback(t, base, head)
+	if result.failure != 0 || result.abstention != nil {
+		t.Fatalf("deletion-only change refused: failure=%s abstention=%v", result.failure, result.abstention != nil)
+	}
+	source, ok := result.sources["calc.go|changed_hunk"]
+	if !ok {
+		t.Fatalf("no changed_hunk source for the deletion point: %v", result.sources)
+	}
+	rangeValue := source.EvidenceItem().SourceRange()
+	if rangeValue.StartLine() != 1 || rangeValue.EndLine() != 5 || !bytes.Contains(source.Content(), []byte("return a / b")) {
+		t.Fatalf("deletion context %d-%d %q", rangeValue.StartLine(), rangeValue.EndLine(), source.Content())
+	}
+	if bytes.Contains(source.Content(), []byte("b == 0")) {
+		t.Fatal("removed base text entered the packet as head source")
+	}
+	found := false
+	for _, omission := range result.assembly.Packet.SourceOmissions() {
+		if omission.Path() == "calc.go" && omission.Reason() == "analysis_deleted_lines" && omission.StartLine() == 3 && omission.EndLine() == 4 {
+			found = true
+		}
+		if omission.Reason() == "analysis_no_changed_head_lines" {
+			t.Fatal("whole-entry omission recorded although deletion context was built")
+		}
+	}
+	if !found {
+		t.Fatalf("deletion point omission missing: %v", result.omissionSet)
+	}
+}
+
+// An emptied head file has no line to anchor the deletion: the existing
+// whole-entry omission and all_sources_omitted refusal remain.
+func TestDeletionToEmptyFileStillRefusesWithoutInventedSource(t *testing.T) {
+	result := assembleTextFallback(t, map[string][]byte{"a.txt": []byte("gone\n")}, map[string][]byte{"a.txt": []byte("")})
+	if result.abstention == nil {
+		t.Fatalf("emptied file produced a packet: failure=%s sources=%v", result.failure, result.sources)
+	}
+	reasons := result.omissionReasons(t)
+	if !reasons["abstention|all_sources_omitted"] || !reasons["a.txt|analysis_no_changed_head_lines"] {
+		t.Fatalf("reasons=%v", reasons)
+	}
+}

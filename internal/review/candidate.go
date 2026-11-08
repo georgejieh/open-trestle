@@ -25,7 +25,42 @@ const (
 	maxCandidateClaimRunes     = 1_024
 	maxCandidateReferenceBytes = 64
 	maxCandidateSourceLine     = 1_000_000
+	maxCandidateFixBytes       = 1_024
+	// maxCandidateFixRunes is the schema's maxLength, counted in characters.
+	// Four UTF-8 bytes per character at most keeps it within the byte bound.
+	maxCandidateFixRunes = maxCandidateFixBytes / 4
 )
+
+// CandidateCategory is the closed advisory defect category of a
+// model-candidate-batch-v2 proposal. It does not affect verification or final
+// severity. The zero value means a v1 candidate without a category.
+type CandidateCategory string
+
+const (
+	CandidateCategoryCorrectness     CandidateCategory = "correctness"
+	CandidateCategorySecurity        CandidateCategory = "security"
+	CandidateCategoryConcurrency     CandidateCategory = "concurrency"
+	CandidateCategoryPerformance     CandidateCategory = "performance"
+	CandidateCategoryReliability     CandidateCategory = "reliability"
+	CandidateCategoryMaintainability CandidateCategory = "maintainability"
+	CandidateCategoryStyle           CandidateCategory = "style"
+	CandidateCategoryDocumentation   CandidateCategory = "documentation"
+	CandidateCategoryTesting         CandidateCategory = "testing"
+)
+
+func (c CandidateCategory) String() string { return string(c) }
+
+// Validate accepts only one of the closed category values.
+func (c CandidateCategory) Validate() error {
+	switch c {
+	case CandidateCategoryCorrectness, CandidateCategorySecurity, CandidateCategoryConcurrency,
+		CandidateCategoryPerformance, CandidateCategoryReliability, CandidateCategoryMaintainability,
+		CandidateCategoryStyle, CandidateCategoryDocumentation, CandidateCategoryTesting:
+		return nil
+	default:
+		return ErrInvalidCandidateCategory
+	}
+}
 
 var (
 	// ErrInvalidCandidateResponseEnvelope identifies a non-structured, incomplete, or multipart model result.
@@ -58,6 +93,10 @@ var (
 	ErrCandidateEvidenceRangeMismatch = errors.New("candidate range not supported by cited evidence")
 	// ErrDuplicateCandidateFinding identifies a repeated semantic proposal.
 	ErrDuplicateCandidateFinding = errors.New("duplicate candidate finding")
+	// ErrInvalidCandidateCategory identifies a missing or unknown v2 candidate category.
+	ErrInvalidCandidateCategory = errors.New("invalid candidate category")
+	// ErrInvalidCandidateFix identifies empty, excessive, or schema-incompatible fix guidance.
+	ErrInvalidCandidateFix = errors.New("invalid candidate fix guidance")
 	// ErrInvalidCandidateFindingIdentity identifies finding content inconsistent with its identity.
 	ErrInvalidCandidateFindingIdentity = errors.New("invalid candidate finding identity")
 	// ErrInvalidCandidateBatchIdentity identifies batch content inconsistent with its identity.
@@ -82,6 +121,8 @@ type CandidateFinding struct {
 	sourceReferenceID string
 	sourceRange       evidence.SourceRange
 	evidenceBindings  []candidateEvidenceBinding
+	category          CandidateCategory
+	fix               string
 }
 
 func (f CandidateFinding) Identity() string                  { return f.identity }
@@ -91,6 +132,13 @@ func (f CandidateFinding) Claim() string                     { return f.claim }
 func (f CandidateFinding) SeverityHint() Severity            { return f.severityHint }
 func (f CandidateFinding) SourceReferenceID() string         { return f.sourceReferenceID }
 func (f CandidateFinding) SourceRange() evidence.SourceRange { return f.sourceRange }
+
+// Category returns the advisory v2 category, or the zero value for a v1 candidate.
+func (f CandidateFinding) Category() CandidateCategory { return f.category }
+
+// Fix returns optional untrusted plain-text fix guidance. It is never verified
+// or applied; the empty string means no guidance.
+func (f CandidateFinding) Fix() string { return f.fix }
 func (f CandidateFinding) EvidenceIDs() []string {
 	identities := make([]string, len(f.evidenceBindings))
 	for index, binding := range f.evidenceBindings {
@@ -120,6 +168,9 @@ func (f CandidateFinding) Validate() error {
 	}
 	if !isKnownSeverity(f.severityHint) {
 		return ErrInvalidCandidateSeverity
+	}
+	if err := validateCandidateGuidance(f.category, f.fix); err != nil {
+		return err
 	}
 	if !validCandidateReference(f.sourceReferenceID) {
 		return ErrInvalidCandidateReference
@@ -157,9 +208,29 @@ type CandidateBatch struct {
 	responseIdentity string
 	snapshotIdentity string
 	findings         []CandidateFinding
+	// categorized marks a model-candidate-batch-v2 batch: every finding carries a category.
+	categorized bool
+	// repositoryContextOmitted counts v2 proposals dropped at admission because
+	// their source_range named a repository_context source. It is derived only
+	// from the exact response and context bytes and is bound into the identity.
+	repositoryContextOmitted uint8
 }
 
-func (b CandidateBatch) Identity() string         { return b.identity }
+// RepositoryContextAnchorOmittedCount reports proposals dropped because they
+// were located in a repository_context source rather than reviewed code.
+func (b CandidateBatch) RepositoryContextAnchorOmittedCount() int {
+	return int(b.repositoryContextOmitted)
+}
+
+func (b CandidateBatch) Identity() string { return b.identity }
+
+// SchemaVersion returns the model candidate batch schema the batch was admitted under: 1 or 2.
+func (b CandidateBatch) SchemaVersion() int {
+	if b.categorized {
+		return 2
+	}
+	return 1
+}
 func (b CandidateBatch) ResponseIdentity() string { return b.responseIdentity }
 func (b CandidateBatch) SnapshotIdentity() string { return b.snapshotIdentity }
 func (b CandidateBatch) Findings() []CandidateFinding {
@@ -179,7 +250,7 @@ func (b CandidateBatch) Format(state fmt.State, verb rune) {
 
 // Validate verifies all candidate bindings, ordering, uniqueness, and identity.
 func (b CandidateBatch) Validate() error {
-	if !validCandidateDigest(b.responseIdentity) || !validCandidateDigest(b.snapshotIdentity) || len(b.findings) > maxCandidateFindings {
+	if !validCandidateDigest(b.responseIdentity) || !validCandidateDigest(b.snapshotIdentity) || len(b.findings)+int(b.repositoryContextOmitted) > maxCandidateFindings || b.repositoryContextOmitted > 0 && !b.categorized {
 		return ErrInvalidCandidateBatchIdentity
 	}
 	seen := make(map[string]struct{}, len(b.findings))
@@ -187,7 +258,7 @@ func (b CandidateBatch) Validate() error {
 		if err := finding.Validate(); err != nil {
 			return err
 		}
-		if finding.ordinal != uint8(index+1) || finding.responseIdentity != b.responseIdentity || finding.snapshotIdentity != b.snapshotIdentity {
+		if finding.ordinal != uint8(index+1) || finding.responseIdentity != b.responseIdentity || finding.snapshotIdentity != b.snapshotIdentity || (finding.category != "") != b.categorized {
 			return ErrInvalidCandidateBatchIdentity
 		}
 		fingerprint := deriveCandidateContentFingerprint(finding)
@@ -210,6 +281,8 @@ type candidateDocument struct {
 type candidateFindingDocument struct {
 	Title        string                       `json:"title"`
 	Claim        string                       `json:"claim"`
+	Category     string                       `json:"category,omitempty"`
+	Fix          string                       `json:"fix,omitempty"`
 	SeverityHint string                       `json:"severity_hint"`
 	SourceRange  candidateSourceRangeDocument `json:"source_range"`
 	EvidenceIDs  []string                     `json:"evidence_ids"`
@@ -224,6 +297,17 @@ type candidateSourceRangeDocument struct {
 // ValidateCandidateDocumentSyntax enforces the public model-candidate-batch-v1 schema syntax.
 // It does not establish source, evidence, or factual authority.
 func ValidateCandidateDocumentSyntax(payload []byte) error {
+	return validateCandidateDocumentSyntax(payload, 1)
+}
+
+// ValidateCandidateDocumentV2Syntax enforces the public model-candidate-batch-v2
+// schema syntax: a required closed category and optional bounded fix guidance.
+// It does not establish source, evidence, factual, category, or fix authority.
+func ValidateCandidateDocumentV2Syntax(payload []byte) error {
+	return validateCandidateDocumentSyntax(payload, 2)
+}
+
+func validateCandidateDocumentSyntax(payload []byte, version int) error {
 	if err := rejectDuplicateCandidateJSONKeys(payload); err != nil {
 		return err
 	}
@@ -243,12 +327,19 @@ func ValidateCandidateDocumentSyntax(payload []byte) error {
 	}
 	for _, encoded := range rawCandidates {
 		var candidate map[string]json.RawMessage
-		if err := json.Unmarshal(encoded, &candidate); err != nil || !exactJSONKeys(candidate, "title", "claim", "severity_hint", "source_range", "evidence_ids") || firstNonSpace(candidate["source_range"]) != '{' || firstNonSpace(candidate["evidence_ids"]) != '[' {
+		if err := json.Unmarshal(encoded, &candidate); err != nil || !exactCandidateDocumentKeys(candidate, version) || firstNonSpace(candidate["source_range"]) != '{' || firstNonSpace(candidate["evidence_ids"]) != '[' {
 			return ErrInvalidCandidateDocumentShape
 		}
 		var sourceRange map[string]json.RawMessage
 		if err := json.Unmarshal(candidate["source_range"], &sourceRange); err != nil || !exactJSONKeys(sourceRange, "source_id", "start_line", "end_line") {
 			return ErrInvalidCandidateDocumentShape
+		}
+		// A present fix must be nonblank; absence is the only way to give no guidance.
+		if raw, present := candidate["fix"]; present {
+			var fix string
+			if json.Unmarshal(raw, &fix) != nil || !validCandidateFix(fix) {
+				return ErrInvalidCandidateFix
+			}
 		}
 	}
 	var document candidateDocument
@@ -257,12 +348,20 @@ func ValidateCandidateDocumentSyntax(payload []byte) error {
 	if err := decoder.Decode(&document); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidCandidateDocumentJSON, err)
 	}
-	if document.SchemaVersion != 1 {
+	if document.SchemaVersion != version {
 		return ErrInvalidCandidateSchemaVersion
 	}
 	for _, candidate := range document.Candidates {
 		if !validCandidateTitle(candidate.Title) || !validCandidateClaim(candidate.Claim) {
 			return ErrInvalidCandidateText
+		}
+		if version == 2 {
+			if err := CandidateCategory(candidate.Category).Validate(); err != nil {
+				return err
+			}
+			if err := validateCandidateGuidance(CandidateCategory(candidate.Category), candidate.Fix); err != nil {
+				return err
+			}
 		}
 		if !isKnownSeverity(Severity(candidate.SeverityHint)) {
 			return ErrInvalidCandidateSeverity
@@ -287,8 +386,106 @@ func ValidateCandidateDocumentSyntax(payload []byte) error {
 	return nil
 }
 
-// ParseCandidateBatch strictly decodes one structured response against exact snapshot evidence.
+// exactCandidateDocumentKeys requires the exact v1 candidate keys, or for v2 the
+// v1 keys plus a string category and an optional string fix.
+func exactCandidateDocumentKeys(candidate map[string]json.RawMessage, version int) bool {
+	if version == 1 {
+		return exactJSONKeys(candidate, "title", "claim", "severity_hint", "source_range", "evidence_ids")
+	}
+	keys := []string{"title", "claim", "category", "severity_hint", "source_range", "evidence_ids"}
+	if fix, present := candidate["fix"]; present {
+		if firstNonSpace(fix) != '"' {
+			return false
+		}
+		keys = append(keys, "fix")
+	}
+	return exactJSONKeys(candidate, keys...) && firstNonSpace(candidate["category"]) == '"'
+}
+
+// validateCandidateGuidance checks a category and its optional fix guidance. A
+// v1 candidate has neither; fix guidance never appears without a category.
+func validateCandidateGuidance(category CandidateCategory, fix string) error {
+	if category == "" {
+		if fix != "" {
+			return ErrInvalidCandidateFix
+		}
+		return nil
+	}
+	if err := category.Validate(); err != nil {
+		return err
+	}
+	if fix != "" && !validCandidateFix(fix) {
+		return ErrInvalidCandidateFix
+	}
+	return nil
+}
+
+func validCandidateFix(value string) bool {
+	return len(value) <= maxCandidateFixBytes && validCandidateFreeText(value, maxCandidateFixRunes)
+}
+
+// candidateBatchMatchesContextVersion reports whether a candidate batch can be the
+// output of a generation context version. A categorized v2 batch requires a
+// version 7 context. An uncategorized v1 batch is accepted for every version so
+// that recorded readback and investigation projections keep their v1 candidates.
+func candidateBatchMatchesContextVersion(version int, batch CandidateBatch) bool {
+	return !batch.categorized || version == modelGenerationContextVersion
+}
+
+// CandidateBatchMatchesContext reports whether a batch is exactly the candidate
+// schema the recorded generation context requested: v2 for a version 7 context
+// and v1 for every earlier generation context.
+func CandidateBatchMatchesContext(contextPayload []byte, batch CandidateBatch) bool {
+	var header struct {
+		Contract      string `json:"contract"`
+		SchemaVersion int    `json:"schema_version"`
+	}
+	if len(contextPayload) == 0 || len(contextPayload) > maxProviderContextPacketBytes || json.Unmarshal(contextPayload, &header) != nil || header.Contract != "open-trestle/review-context-packet" {
+		return false
+	}
+	return batch.categorized == (header.SchemaVersion == modelGenerationContextVersion)
+}
+
+// ParseCandidateBatch strictly decodes one model-candidate-batch-v1 response
+// against exact snapshot evidence. New generation contexts request v2; use
+// ParseContextCandidateBatch for their responses.
 func ParseCandidateBatch(response provider.Response, snapshot ReviewSnapshot, evidenceItems []evidence.EvidenceItem) (CandidateBatch, error) {
+	return parseCandidateBatch(response, snapshot, evidenceItems, 1, nil)
+}
+
+// ParseContextCandidateBatch strictly decodes one response against the output
+// contract of the exact generation context bytes it answers. A version 7 context
+// requires model-candidate-batch-v2 and drops, and counts, each candidate whose
+// source_range names a repository_context source: repository instruction files
+// are advisory preferences, not reviewed code, and changed instruction lines are
+// a separate changed_hunk source. Earlier versions require v1.
+func ParseContextCandidateBatch(response provider.Response, contextPayload []byte, snapshot ReviewSnapshot, evidenceItems []evidence.EvidenceItem) (CandidateBatch, error) {
+	if len(contextPayload) == 0 || len(contextPayload) > maxProviderContextPacketBytes {
+		return CandidateBatch{}, ErrInvalidContextPacketRequest
+	}
+	wire, err := decodeGenerationContextWire(contextPayload)
+	if err != nil || wire.Contract != "open-trestle/review-context-packet" || !validRecordedModelOutputContract(wire.SchemaVersion, wire.Instructions, wire.InstructionsIdentity, wire.OutputSchema, false) {
+		return CandidateBatch{}, ErrInvalidContextPacketRequest
+	}
+	if wire.SchemaVersion != modelGenerationContextVersion {
+		return ParseCandidateBatch(response, snapshot, evidenceItems)
+	}
+	if len(wire.Sources) != len(evidenceItems) {
+		return CandidateBatch{}, ErrInvalidCandidateEvidenceSet
+	}
+	repositoryContext := make(map[string]struct{})
+	for index, source := range wire.Sources {
+		if source.SourceID != evidenceItems[index].ID() {
+			return CandidateBatch{}, ErrInvalidCandidateEvidenceSet
+		}
+		if source.Stage == ContextStageRepositoryContext.String() {
+			repositoryContext[source.SourceID] = struct{}{}
+		}
+	}
+	return parseCandidateBatch(response, snapshot, evidenceItems, 2, repositoryContext)
+}
+
+func parseCandidateBatch(response provider.Response, snapshot ReviewSnapshot, evidenceItems []evidence.EvidenceItem, version int, repositoryContext map[string]struct{}) (CandidateBatch, error) {
 	if err := response.Validate(); err != nil {
 		return CandidateBatch{}, err
 	}
@@ -304,17 +501,25 @@ func ParseCandidateBatch(response provider.Response, snapshot ReviewSnapshot, ev
 		return CandidateBatch{}, err
 	}
 	payload := parts[0].Payload()
-	if err := ValidateCandidateDocumentSyntax(payload); err != nil {
+	if err := validateCandidateDocumentSyntax(payload, version); err != nil {
 		return CandidateBatch{}, err
 	}
 	var document candidateDocument
 	if err := json.Unmarshal(payload, &document); err != nil {
 		return CandidateBatch{}, ErrInvalidCandidateDocumentJSON
 	}
-	findings := make([]CandidateFinding, len(document.Candidates))
+	findings := make([]CandidateFinding, 0, len(document.Candidates))
 	seen := make(map[string]struct{}, len(document.Candidates))
-	for index, candidate := range document.Candidates {
-		finding, err := newCandidateFinding(response.Identity(), snapshot, uint8(index+1), candidate, allowedEvidence)
+	omitted := uint8(0)
+	for _, candidate := range document.Candidates {
+		if _, anchored := repositoryContext[candidate.SourceRange.SourceID]; anchored {
+			// A proposal located in repository instruction context is not about
+			// reviewed code. Drop only that proposal, deterministically, and keep
+			// the rest; kept proposals take contiguous ordinals.
+			omitted++
+			continue
+		}
+		finding, err := newCandidateFinding(response.Identity(), snapshot, uint8(len(findings)+1), candidate, allowedEvidence)
 		if err != nil {
 			return CandidateBatch{}, err
 		}
@@ -323,12 +528,12 @@ func ParseCandidateBatch(response provider.Response, snapshot ReviewSnapshot, ev
 			return CandidateBatch{}, ErrDuplicateCandidateFinding
 		}
 		seen[fingerprint] = struct{}{}
-		findings[index] = finding
+		findings = append(findings, finding)
 	}
 	if len(findings) == 0 {
 		findings = nil
 	}
-	batch := CandidateBatch{responseIdentity: response.Identity(), snapshotIdentity: snapshot.Identity(), findings: findings}
+	batch := CandidateBatch{responseIdentity: response.Identity(), snapshotIdentity: snapshot.Identity(), findings: findings, categorized: version == 2, repositoryContextOmitted: omitted}
 	batch.identity = deriveCandidateBatchIdentity(batch)
 	if err := batch.Validate(); err != nil {
 		return CandidateBatch{}, err
@@ -363,6 +568,7 @@ func newCandidateFinding(responseIdentity string, snapshot ReviewSnapshot, ordin
 		responseIdentity: responseIdentity, snapshotIdentity: snapshot.Identity(), ordinal: ordinal,
 		title: document.Title, claim: document.Claim, severityHint: Severity(document.SeverityHint),
 		sourceReferenceID: document.SourceRange.SourceID, sourceRange: sourceRange, evidenceBindings: bindings,
+		category: CandidateCategory(document.Category), fix: document.Fix,
 	}
 	finding.identity = deriveCandidateFindingIdentity(finding)
 	return finding, nil
@@ -558,7 +764,7 @@ func deriveCandidateFindingIdentity(finding CandidateFinding) string {
 			Start: binding.sourceRange.StartLine(), End: binding.sourceRange.EndLine(),
 		}
 	}
-	preimage := struct {
+	type findingRecord struct {
 		Contract        string          `json:"contract"`
 		Version         int             `json:"version"`
 		Response        string          `json:"response"`
@@ -572,14 +778,26 @@ func deriveCandidateFindingIdentity(finding CandidateFinding) string {
 		Start           int             `json:"start"`
 		End             int             `json:"end"`
 		Evidence        []bindingRecord `json:"evidence"`
-	}{
+	}
+	preimage := findingRecord{
 		Contract: "open-trestle/candidate-finding", Version: 1,
 		Response: finding.responseIdentity, Snapshot: finding.snapshotIdentity, Ordinal: finding.ordinal,
 		Title: finding.title, Claim: finding.claim, SeverityHint: string(finding.severityHint),
 		SourceReference: finding.sourceReferenceID, Path: finding.sourceRange.Path(),
 		Start: finding.sourceRange.StartLine(), End: finding.sourceRange.EndLine(), Evidence: bindings,
 	}
-	encoded, _ := json.Marshal(preimage)
+	var encoded []byte
+	if finding.category == "" {
+		// A v1 candidate keeps its historical preimage exactly.
+		encoded, _ = json.Marshal(preimage)
+	} else {
+		preimage.Version = 2
+		encoded, _ = json.Marshal(struct {
+			findingRecord
+			Category string `json:"category"`
+			Fix      string `json:"fix"`
+		}{preimage, string(finding.category), finding.fix})
+	}
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }
@@ -614,9 +832,13 @@ func deriveCandidateBatchIdentity(batch CandidateBatch) string {
 		Response string   `json:"response"`
 		Snapshot string   `json:"snapshot"`
 		Findings []string `json:"findings"`
+		// Omitted only when nonzero, so batches without dropped proposals keep
+		// their identities.
+		RepositoryContextOmitted uint8 `json:"repository_context_anchor_omitted,omitempty"`
 	}{
-		Contract: "open-trestle/candidate-batch", Version: 1,
+		Contract: "open-trestle/candidate-batch", Version: batch.SchemaVersion(),
 		Response: batch.responseIdentity, Snapshot: batch.snapshotIdentity, Findings: findingIdentities,
+		RepositoryContextOmitted: batch.repositoryContextOmitted,
 	}
 	encoded, _ := json.Marshal(preimage)
 	digest := sha256.Sum256(encoded)

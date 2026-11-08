@@ -87,14 +87,9 @@ func TestParseRecordedContextBindsCanonicalHeadSnapshot(t *testing.T) {
 	if _, err := ParseRecordedContext(append(request.Payload(), ' '), scope, head); err == nil {
 		t.Fatal("noncanonical packet accepted")
 	}
-	for _, version := range []int{2, 3} {
+	for _, version := range []int{2, 3, 5} {
 		legacy, _ := decodeGenerationContextWire(request.Payload())
-		legacy.SchemaVersion = version
-		legacy.Instructions = pinnedV3CandidateInstructions
-		if version == 2 {
-			legacy.Instructions = ""
-			legacy.OutputSchema = nil
-		}
+		legacy = legacyGenerationWire(t, legacy, version)
 		legacyPayload, _ := json.Marshal(legacy)
 		legacyResult, err := ParseRecordedContext(legacyPayload, scope, head)
 		sum := sha256.Sum256(legacyPayload)

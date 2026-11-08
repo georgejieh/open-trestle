@@ -169,7 +169,7 @@ func ParseGenerationResultArtifact(
 		review.ValidateRecordedContextPacketRequest(
 			contextArtifact.Payload(), input.ContextIdentity(), input.ReviewScopeIdentity(), input.MemoryScopeIdentity(), input.MemoryIdentity(),
 			input.Snapshot(), input.EvidenceItems(),
-		) != nil {
+		) != nil || !contextOutputSchemaMatches(input, contextArtifact.Payload()) {
 		return GenerationResult{}, ErrInvalidGenerationResult
 	}
 	if input.IsSanitized() {
@@ -206,7 +206,8 @@ func ParseGenerationResultArtifact(
 	}
 	candidates, err := review.ParseEncodedCandidateBatch(wire.CandidateBatch)
 	if err != nil || candidates.Identity() != wire.CandidateBatchIdentity ||
-		candidates.SnapshotIdentity() != input.Snapshot().Identity() {
+		candidates.SnapshotIdentity() != input.Snapshot().Identity() ||
+		!review.CandidateBatchMatchesContext(contextArtifact.Payload(), candidates) {
 		return GenerationResult{}, ErrInvalidGenerationResult
 	}
 	routeExecution, err := gateway.ParseRouteExecutionRecord(wire.RouteExecution)

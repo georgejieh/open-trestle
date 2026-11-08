@@ -100,7 +100,7 @@ func (e *investigationEndpoint) serve(t *testing.T, w http.ResponseWriter, r *ht
 	e.mu.Unlock()
 	var output any
 	if p.Task == "candidate_verification" {
-		if wire.Model != "model-b" || p.Version != 5 || len(p.Candidates) != 1 || p.GenerationContext == "" {
+		if wire.Model != "model-b" || p.Version != 6 || len(p.Candidates) != 1 || p.GenerationContext == "" {
 			t.Error("independent verifier lost candidate lineage")
 		}
 		ids := []string{}
@@ -116,7 +116,7 @@ func (e *investigationEndpoint) serve(t *testing.T, w http.ResponseWriter, r *ht
 		output = map[string]any{"schema_version": 1, "verdicts": []any{map[string]any{"candidate_id": p.Candidates[0].ID, "outcome": "verified", "severity": "high", "rationale": "The division guard is absent and the cited deployment text enables zero requests.", "evidence_ids": ids}}}
 	} else {
 		state := p.Investigation
-		if wire.Model != "model-a" || p.Version != 4 || state.MemoryState != "empty_not_ingested" || state.Session == "" || state.Policy == "" || state.Snapshot == "" {
+		if wire.Model != "model-a" || p.Version != 5 || state.MemoryState != "empty_not_ingested" || state.Session == "" || state.Policy == "" || state.Snapshot == "" {
 			t.Error("investigation did not receive explicit v4 authority and empty memory label")
 			http.Error(w, "invalid authority", 400)
 			return

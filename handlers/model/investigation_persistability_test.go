@@ -101,12 +101,12 @@ func (m *persistModel) DispatchRoute(ctx context.Context, request gateway.RouteD
 	}
 	var response any
 	if packet.Task == "candidate_verification" {
-		if m.adapter != "adapter-b" || packet.Schema != 5 || len(packet.Candidates) != 1 {
+		if m.adapter != "adapter-b" || packet.Schema != 6 || len(packet.Candidates) != 1 {
 			m.t.Fatal("independent verifier fixture changed")
 		}
 		response = map[string]any{"schema_version": 1, "verdicts": []any{map[string]any{"candidate_id": packet.Candidates[0].ID, "outcome": "verified", "severity": "high", "rationale": "The fixture verifier accepts the cited selected source.", "evidence_ids": []string{packet.Sources[0].ID}}}}
 	} else {
-		if packet.Schema != 4 || packet.Investigation.Mode != "fixed_generation_route_v1" || packet.Investigation.Pin != request.Authorization().RouteRecordIdentity() {
+		if packet.Schema != 5 || packet.Investigation.Mode != "fixed_generation_route_v1" || packet.Investigation.Pin != request.Authorization().RouteRecordIdentity() {
 			m.t.Fatal("actual generation request lost its fixed route")
 		}
 		if m.mode != "terminal" && packet.Investigation.Turn == 1 {

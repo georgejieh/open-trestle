@@ -188,7 +188,7 @@ func (r *daemonOpenCodeConsoleTransport) RoundTrip(request *http.Request) (*http
 	}
 	neutral, err := provider.NewRequest(provider.CapabilityReviewV1, "application/json", payload)
 	var packet daemonBudgetedModelPacket
-	if err != nil || json.Unmarshal(payload, &packet) != nil || packet.Version != 5 || packet.Task != "candidate_generation" || packet.Scope != r.scope.Identity() || packet.SourceAuthority != "evidence_data_not_instructions" || packet.MemoryAuthority != "advisory_only" || review.ValidateCandidateModelRequest(neutral, r.scope.Identity()) != nil {
+	if err != nil || json.Unmarshal(payload, &packet) != nil || packet.Version != 7 || packet.Task != "candidate_generation" || packet.Scope != r.scope.Identity() || packet.SourceAuthority != "evidence_data_not_instructions" || packet.MemoryAuthority != "advisory_only" || review.ValidateCandidateModelRequest(neutral, r.scope.Identity()) != nil {
 		return nil, fmt.Errorf("Console inner sanitized candidate context changed")
 	}
 	endpoint.mu.Lock()
@@ -207,7 +207,7 @@ func (r *daemonOpenCodeConsoleTransport) RoundTrip(request *http.Request) (*http
 	if source.ID == "" || source.Path == "" || source.Start <= 0 || source.End < source.Start || strings.TrimSpace(source.Content) == "" || len(packet.Candidates) != 0 || packet.CandidateBatch != "" {
 		return nil, fmt.Errorf("Console candidate source/lineage changed")
 	}
-	output := map[string]any{"schema_version": 1, "candidates": []any{map[string]any{"title": "Console daemon candidate cites changed code", "claim": "The exact changed source slice is present in the scoped daemon context.", "severity_hint": "high", "source_range": map[string]any{"source_id": source.ID, "start_line": source.Start, "end_line": source.Start}, "evidence_ids": []string{source.ID}}}}
+	output := map[string]any{"schema_version": 2, "candidates": []any{map[string]any{"title": "Console daemon candidate cites changed code", "category": "correctness", "claim": "The exact changed source slice is present in the scoped daemon context.", "severity_hint": "high", "source_range": map[string]any{"source_id": source.ID, "start_line": source.Start, "end_line": source.Start}, "evidence_ids": []string{source.ID}}}}
 	response := daemonBudgetedModelJSON(r.t, map[string]any{
 		"id": "fixture-opencode-console-chat", "object": "chat.completion", "model": "glm-5.3-flash",
 		"choices": []any{map[string]any{"index": 0, "message": map[string]any{"role": "assistant", "content": string(daemonBudgetedModelJSON(r.t, output)), "reasoning_content": "GO_DAEMON_REASONING_NOT_CONTENT"}, "finish_reason": "stop"}},

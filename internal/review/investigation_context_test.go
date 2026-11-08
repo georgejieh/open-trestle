@@ -70,6 +70,19 @@ func v4Route(t *testing.T, name, version string) (InvestigationRouteContextClaim
 }
 func newV4Fixture(t *testing.T) v4Fixture {
 	t.Helper()
+	return newV4FixtureWith(t, "func Changed(x int) int { return 10 / x }\n", "zero<&> requests enabled\n")
+}
+
+// newV4FixtureWith builds the v4 fixture with caller-chosen one-line content
+// for the changed source and the repository_context source.
+func newV4FixtureWith(t *testing.T, changedText, notesText string) v4Fixture {
+	t.Helper()
+	return newV4FixtureAt(t, changedText, notesText, "notes.txt")
+}
+
+// newV4FixtureAt names the repository_context file a tool read supplies.
+func newV4FixtureAt(t *testing.T, changedText, notesText, notesPath string) v4Fixture {
+	t.Helper()
 	scope, err := audit.NewReviewScope("tenant", "repository", "context-only")
 	v4Check(t, err)
 	memoryScope, err := memory.NewScope("tenant", "repository", "actor", memory.RefVisibilityExact, v4Claim("policy"), []string{"."})
@@ -81,7 +94,7 @@ func newV4Fixture(t *testing.T) v4Fixture {
 	contents := []struct {
 		path, text string
 		stage      ContextStage
-	}{{"a.go", "func Changed(x int) int { return 10 / x }\n", ContextStageChangedHunk}, {"notes.txt", "zero<&> requests enabled\n", ContextStageRepositoryContext}}
+	}{{"a.go", changedText, ContextStageChangedHunk}, {notesPath, notesText, ContextStageRepositoryContext}}
 	files := []evidence.RepositoryFile{}
 	sources := []ContextSource{}
 	ranges := []evidence.SourceRange{}
@@ -145,8 +158,15 @@ func v4Initial(t *testing.T, f v4Fixture) InvestigationGenerationContext {
 }
 func v4ResultState(t *testing.T, f v4Fixture) (InvestigationContextState, artifact.Artifact) {
 	t.Helper()
+	return v4ResultStateWith(t, f, "quoted<&>")
+}
+
+// v4ResultStateWith builds one tool-result annotation whose text field is
+// caller-chosen untrusted data.
+func v4ResultStateWith(t *testing.T, f v4Fixture, text string) (InvestigationContextState, artifact.Artifact) {
+	t.Helper()
 	// This inert Host input proves annotation framing, not completed tool work.
-	payload := v4JSON(t, map[string]any{"contract": "context-only-data", "text": "quoted<&>", "sources": []any{}})
+	payload := v4JSON(t, map[string]any{"contract": "context-only-data", "text": text, "sources": []any{}})
 	value, err := artifact.New(f.binding.Scope, artifact.KindTaskInput, "application/json", artifact.ClassificationConfidential, artifact.OriginHost, artifact.ProtectionProcessPrivate, []string{v4Claim("data-provenance")}, payload, time.UnixMilli(1000), time.UnixMilli(10000))
 	v4Check(t, err)
 	annotation, err := NewInvestigationResultAnnotation(value.Identity(), value.Payload())
@@ -181,8 +201,8 @@ func TestInvestigationContextCurrentControlAndCanonicalV4Contract(t *testing.T) 
 	v4Check(t, err)
 	var current contextPacketWire
 	v4Check(t, json.Unmarshal(before.Payload(), &current))
-	if current.SchemaVersion != 5 || current.ToolCalls != "proposals_only" || current.OutputSchemaIdentity != ModelCandidateBatchSchemaIdentity {
-		t.Fatal("current v5 constructor contract changed")
+	if current.SchemaVersion != 7 || current.ToolCalls != "proposals_only" || current.OutputSchemaIdentity != ModelCandidateBatchSchemaIdentity {
+		t.Fatal("current v7 constructor contract changed")
 	}
 	v4Check(t, ValidateCandidateModelRequest(before, f.binding.Scope.Identity()))
 	v4 := v4Initial(t, f)
@@ -190,7 +210,7 @@ func TestInvestigationContextCurrentControlAndCanonicalV4Contract(t *testing.T) 
 	v4Check(t, err)
 	trusted, err := TrustedModelRequestInstructions(request.Payload())
 	v4Check(t, err)
-	if trusted != InvestigationInstructions() {
+	if trusted != investigationInstructionsV5 || !strings.HasPrefix(trusted, "Instruction hierarchy:") || !strings.HasSuffix(trusted, InvestigationInstructions()) || v4Hash([]byte(trusted)) != investigationInstructionsV5Identity {
 		t.Fatal("investigation request lost its pinned host instructions")
 	}
 	if v4.Validate() != nil || v4.Identity() != v4Hash(request.Payload()) || request.Identity() == before.Identity() {
@@ -198,7 +218,8 @@ func TestInvestigationContextCurrentControlAndCanonicalV4Contract(t *testing.T) 
 	}
 	var wire struct {
 		Version       int             `json:"schema_version"`
-		Instructions  string          `json:"instructions"`
+		Instructions  *string         `json:"instructions"`
+		IdentityBind  string          `json:"instructions_identity"`
 		Schema        json.RawMessage `json:"output_schema"`
 		SchemaID      string          `json:"output_schema_identity"`
 		Tools         string          `json:"tool_calls"`
@@ -209,10 +230,10 @@ func TestInvestigationContextCurrentControlAndCanonicalV4Contract(t *testing.T) 
 		} `json:"investigation"`
 	}
 	v4Check(t, json.Unmarshal(request.Payload(), &wire))
-	if wire.Version != 4 || wire.Tools != "host_admitted_snapshot_read_v1" || wire.Investigation.Mode != "fixed_generation_route_v1" || wire.Investigation.Memory != "empty_not_ingested" || wire.Investigation.Head != f.binding.HeadSnapshotIdentity {
+	if wire.Version != 5 || wire.Instructions != nil || wire.IdentityBind != modelInstructionsIdentity(investigationInstructionsV5) || wire.Tools != "host_admitted_snapshot_read_v1" || wire.Investigation.Mode != "fixed_generation_route_v1" || wire.Investigation.Memory != "empty_not_ingested" || wire.Investigation.Head != f.binding.HeadSnapshotIdentity {
 		t.Fatal("explicit v4 profile or claimed fixed head changed")
 	}
-	if !bytes.Equal(wire.Schema, InvestigationOutputSchema()) || wire.SchemaID != v4Hash(wire.Schema) || wire.SchemaID != "77367fd94611f87d36e4490729096db927b8d27b9d687a4b6ab515db70e2bbc4" || wire.Instructions != InvestigationInstructions() || v4Hash([]byte(wire.Instructions)) != "990e881d4038ea3c222c4c0aed5b6dad7dbff547faa5f30ff067b3ac18072c8c" {
+	if !bytes.Equal(wire.Schema, InvestigationOutputSchema()) || wire.SchemaID != v4Hash(wire.Schema) || wire.SchemaID != "77367fd94611f87d36e4490729096db927b8d27b9d687a4b6ab515db70e2bbc4" || v4Hash([]byte(InvestigationInstructions())) != "990e881d4038ea3c222c4c0aed5b6dad7dbff547faa5f30ff067b3ac18072c8c" || bytes.Contains(request.Payload(), []byte("Return only one JSON object")) {
 		t.Fatal("readable proposed host schema/instructions are not exact canonical assets")
 	}
 	copy := InvestigationOutputSchema()
@@ -358,12 +379,12 @@ func TestInvestigationV4ProjectsExactCurrentVerifierV3(t *testing.T) {
 	expected.GenerationContextIdentity = final.Identity()
 	payload := v4JSON(t, expected)
 	if !bytes.Equal(projected.Payload(), payload) || projected.Identity() != v4Hash(payload) || projected.GenerationContextIdentity() != final.Identity() || projected.SnapshotIdentity() != f.expandedSnapshot.Identity() || projected.CandidateBatchIdentity() != candidates.Identity() {
-		t.Fatal("named projection changed current v5 mapping or final lineage")
+		t.Fatal("named projection changed current v6 mapping or final lineage")
 	}
 	request, err := projected.ProviderRequest()
 	v4Check(t, err)
 	v4Check(t, ValidateVerificationModelRequest(request, f.binding.Scope.Identity()))
-	if expected.SchemaVersion != 5 || expected.ToolCalls != "proposals_only" || !reflect.DeepEqual(projected.EvidenceItems(), f.expanded.EvidenceItems()) || len(expected.SourceOmissions) != 1 || expected.Sources[1].Stage != "repository_context" {
+	if expected.SchemaVersion != 6 || expected.ToolCalls != "proposals_only" || !reflect.DeepEqual(projected.EvidenceItems(), f.expanded.EvidenceItems()) || len(expected.SourceOmissions) != 1 || expected.Sources[1].Stage != "repository_context" {
 		t.Fatal("projection inflated source grades/omissions or granted verifier tools")
 	}
 	if _, err := NewInvestigationVerificationRequestContext(final, CandidateBatch{}); err == nil {

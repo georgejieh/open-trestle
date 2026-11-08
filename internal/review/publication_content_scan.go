@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 
 	"github.com/georgejieh/open-trestle/internal/secretscan"
@@ -55,6 +56,10 @@ const (
 	verifiedFindingIdentityField verifiedFindingStringFieldClass = iota + 1
 	verifiedFindingPublishableField
 	verifiedFindingStructuredField
+	// verifiedFindingLocalOnlyField is model-authored text carried to local
+	// outputs only. It is never projected into PublishableFinding, so forge
+	// publication cannot render it without a new scanned publication field.
+	verifiedFindingLocalOnlyField
 )
 
 var verifiedFindingStringFieldClasses = map[string]verifiedFindingStringFieldClass{
@@ -62,6 +67,7 @@ var verifiedFindingStringFieldClasses = map[string]verifiedFindingStringFieldCla
 	"independentReceiptIdentity": verifiedFindingIdentityField, "snapshotIdentity": verifiedFindingIdentityField,
 	"candidateIdentity": verifiedFindingIdentityField, "verificationIdentity": verifiedFindingIdentityField,
 	"title": verifiedFindingPublishableField, "claim": verifiedFindingPublishableField, "severity": verifiedFindingStructuredField,
+	"category": verifiedFindingStructuredField, "fix": verifiedFindingLocalOnlyField,
 }
 
 func validateVerifiedFindingStringFieldFreeze() error {
@@ -73,7 +79,7 @@ func validateVerifiedFindingStringFieldFreeze() error {
 			continue
 		}
 		class, exists := verifiedFindingStringFieldClasses[field.Name]
-		if !exists || class != verifiedFindingIdentityField && class != verifiedFindingPublishableField && class != verifiedFindingStructuredField {
+		if !exists || class != verifiedFindingIdentityField && class != verifiedFindingPublishableField && class != verifiedFindingStructuredField && class != verifiedFindingLocalOnlyField {
 			return ErrUnclassifiedPublishableField
 		}
 		seen[field.Name] = struct{}{}
@@ -359,7 +365,9 @@ func publicationInstructionRiskEvidence(context PublicationVerificationContext) 
 			return []string{"invalid"}
 		}
 		for _, source := range wire.Sources {
-			if len(source.RiskFlags) != 0 {
+			// Only content risks count as publication instruction-risk evidence;
+			// the path-based agent_configuration flag marks reviewed AI material.
+			if slices.Contains(source.RiskFlags, contextRiskTokenInstructionLike) || slices.Contains(source.RiskFlags, contextRiskTokenHiddenUnicode) {
 				values = append(values, publicationRiskEvidenceIdentity(source.EvidenceDigest, source.Path, source.StartLine, source.EndLine))
 			}
 		}

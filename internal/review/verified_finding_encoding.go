@@ -36,6 +36,8 @@ type encodedVerifiedFindingWire struct {
 	VerificationIdentity string                         `json:"verification_identity"`
 	Title                string                         `json:"title"`
 	Claim                string                         `json:"claim"`
+	Category             string                         `json:"category,omitempty"`
+	Fix                  string                         `json:"fix,omitempty"`
 	Severity             string                         `json:"severity"`
 	Path                 string                         `json:"path"`
 	StartLine            int                            `json:"start_line"`
@@ -56,6 +58,7 @@ func EncodeVerifiedFindingSet(set VerifiedFindingSet) ([]byte, error) {
 }
 
 // ParseEncodedVerifiedFindingSet accepts only a canonical promoted finding set.
+// Schema version 2 is used exactly when at least one finding carries a category.
 func ParseEncodedVerifiedFindingSet(encoded []byte) (VerifiedFindingSet, error) {
 	if len(encoded) == 0 || len(encoded) > maximumEncodedVerifiedFindingSetBytes {
 		return VerifiedFindingSet{}, ErrInvalidVerifiedFindingSetEncoding
@@ -71,7 +74,7 @@ func ParseEncodedVerifiedFindingSet(encoded []byte) (VerifiedFindingSet, error) 
 	}
 	canonical, err := json.Marshal(wire)
 	if err != nil || !bytes.Equal(canonical, encoded) || wire.Contract != "open-trestle/verified-finding-set" ||
-		wire.SchemaVersion != 1 || len(wire.Findings) > maxCandidateFindings {
+		(wire.SchemaVersion != 1 && wire.SchemaVersion != 2) || len(wire.Findings) > maxCandidateFindings {
 		return VerifiedFindingSet{}, ErrInvalidVerifiedFindingSetEncoding
 	}
 	findings := make([]VerifiedFinding, len(wire.Findings))
@@ -129,6 +132,7 @@ func parseEncodedVerifiedFinding(
 		snapshotIdentity:           set.SnapshotIdentity, candidateIdentity: wire.CandidateIdentity,
 		verificationIdentity: wire.VerificationIdentity, title: wire.Title, claim: wire.Claim,
 		severity: Severity(wire.Severity), sourceRange: sourceRange, evidenceBindings: bindings,
+		category: CandidateCategory(wire.Category), fix: wire.Fix,
 	}
 	if err := finding.Validate(); err != nil {
 		return VerifiedFinding{}, err
@@ -149,13 +153,20 @@ func encodedVerifiedFindingSetWireValue(set VerifiedFindingSet) encodedVerifiedF
 		findings[index] = encodedVerifiedFindingWire{
 			Identity: finding.Identity(), Fingerprint: finding.Fingerprint(),
 			CandidateIdentity: finding.CandidateIdentity(), VerificationIdentity: finding.VerificationIdentity(),
-			Title: finding.Title(), Claim: finding.Claim(), Severity: string(finding.Severity()),
-			Path: finding.SourceRange().Path(), StartLine: finding.SourceRange().StartLine(),
+			Title: finding.Title(), Claim: finding.Claim(), Category: string(finding.Category()), Fix: finding.Fix(),
+			Severity: string(finding.Severity()),
+			Path:     finding.SourceRange().Path(), StartLine: finding.SourceRange().StartLine(),
 			EndLine: finding.SourceRange().EndLine(), Evidence: bindings,
 		}
 	}
+	version := 1
+	for _, finding := range set.findings {
+		if finding.category != "" {
+			version = 2
+		}
+	}
 	return encodedVerifiedFindingSetWire{
-		Contract: "open-trestle/verified-finding-set", SchemaVersion: 1, Identity: set.Identity(),
+		Contract: "open-trestle/verified-finding-set", SchemaVersion: version, Identity: set.Identity(),
 		IndependentReceiptIdentity: set.IndependentReceiptIdentity(),
 		CandidateBatchIdentity:     set.candidateBatchIdentity,
 		VerificationBatchIdentity:  set.verificationBatchIdentity, SnapshotIdentity: set.SnapshotIdentity(),

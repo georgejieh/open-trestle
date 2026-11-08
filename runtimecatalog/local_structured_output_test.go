@@ -47,7 +47,7 @@ func (r *structuredTransport) RoundTrip(request *http.Request) (*http.Response, 
 	r.calls++
 	r.authorization = request.Header.Get("Authorization")
 	r.body, _ = io.ReadAll(request.Body)
-	return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"id":"local","object":"chat.completion","model":"1","choices":[{"index":0,"message":{"role":"assistant","content":"{\"schema_version\":1,\"candidates\":[]}"},"finish_reason":"stop"}]}`))}, nil
+	return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"id":"local","object":"chat.completion","model":"1","choices":[{"index":0,"message":{"role":"assistant","content":"{\"schema_version\":2,\"candidates\":[]}"},"finish_reason":"stop"}]}`))}, nil
 }
 
 func TestLocalStructuredOutputFactoriesBindOption(t *testing.T) {
@@ -110,8 +110,12 @@ func TestLocalStructuredOutputDispatchRequiresReservedSchemaBytes(t *testing.T) 
 	encoded, _ := json.Marshal(struct {
 		Format any `json:"response_format"`
 	}{format})
-	required := uint64(len(inner) + len(encoded) + 256)
-	if required <= uint64(len(request.Payload())+256) {
+	trusted, err := review.TrustedModelRequestInstructions(inner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	required := uint64(len(inner) + len(trusted) + len(encoded) + 256)
+	if required <= uint64(len(request.Payload())+len(trusted)+256) {
 		t.Fatal("fixture does not expose added schema reservation")
 	}
 	inventory, err := runtimeconfig.NewRouteInventory(context.Background(), localPairDefinitions(t))

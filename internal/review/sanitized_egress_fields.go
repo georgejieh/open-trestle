@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	generationSanitizableWireShapeIdentity   = "57998c55909fd92c92c3a16d9502ea026efa7c450e48aff4011d0983470ee020"
-	verificationSanitizableWireShapeIdentity = "ddc04c990a827b5ce84e30743d0a8ad0956e9686f5e53ed1ff4a2c18e486795b"
+	generationSanitizableWireShapeIdentity   = "fb3556fc43869aa45764b5fcca91368f255b6d72924c04ae407007cb6ab5858d"
+	verificationSanitizableWireShapeIdentity = "ec5ef5853e5f246347d3bfbb021e5bc59436d8ee4bcd9d1257f708d5ebc306ec"
 )
 
 func wireShapeIdentity(root reflect.Type) string {
@@ -65,7 +65,12 @@ func parseSanitizableRequest(request provider.Request, reviewScopeIdentity strin
 		Contract      string `json:"contract"`
 		SchemaVersion int    `json:"schema_version"`
 	}
-	if json.Unmarshal(request.Payload(), &header) != nil || header.SchemaVersion != modelContextVersion {
+	// Generation admits only the executable context version 7; verification
+	// admits only version 6. Each contract is checked against its own version
+	// below too.
+	if json.Unmarshal(request.Payload(), &header) != nil ||
+		header.Contract == "open-trestle/review-context-packet" && !executableGenerationContextVersion(header.SchemaVersion) ||
+		header.Contract == "open-trestle/verification-context-packet" && header.SchemaVersion != modelVerificationContextVersion {
 		return sanitizedRequestDocument{}, ErrInvalidSanitizedModelRequest
 	}
 	switch header.Contract {
@@ -74,7 +79,12 @@ func parseSanitizableRequest(request provider.Request, reviewScopeIdentity strin
 			return sanitizedRequestDocument{}, ErrInvalidSanitizedModelRequest
 		}
 		wire, err := decodeGenerationContextWire(request.Payload())
-		if err != nil || wire.Contract != header.Contract || wire.SchemaVersion != modelContextVersion || wire.Task != ContextTaskCandidateGeneration.String() {
+		// The specialist block carries only packaged profile identity fields, not
+		// repository data, so it adds no scanned field; it is carried through the
+		// projection unchanged. That exemption holds only for a block that
+		// re-derives exactly from the embedded catalog, so any other block is
+		// refused before egress.
+		if err != nil || wire.Contract != header.Contract || wire.SchemaVersion != header.SchemaVersion || wire.Task != ContextTaskCandidateGeneration.String() || !validGenerationContextSpecialist(wire) {
 			return sanitizedRequestDocument{}, ErrInvalidSanitizedModelRequest
 		}
 		document := sanitizedRequestDocument{generation: &wire}
@@ -85,7 +95,7 @@ func parseSanitizableRequest(request provider.Request, reviewScopeIdentity strin
 			return sanitizedRequestDocument{}, ErrInvalidSanitizedModelRequest
 		}
 		wire, err := decodeVerificationContextWire(request.Payload())
-		if err != nil || wire.SchemaVersion != modelContextVersion || wire.Task != "candidate_verification" {
+		if err != nil || wire.SchemaVersion != modelVerificationContextVersion || wire.Task != "candidate_verification" {
 			return sanitizedRequestDocument{}, ErrInvalidSanitizedModelRequest
 		}
 		document := sanitizedRequestDocument{verification: &wire}

@@ -75,11 +75,49 @@ func TestVerificationRequestContextPreservesCountedGenerationOmissions(t *testin
 	}
 }
 
+// Repository instruction omissions stay in the packet's complete accounting but
+// never count against changed-source coverage, so they cannot make a review
+// incomplete; they are reported separately.
+func TestVerificationCoverageExcludesRepositoryInstructionOmissions(t *testing.T) {
+	scope, memoryScope, snapshot, source, retrieval := contextPacketFixture(t, "line 10\n")
+	limits, _ := NewContextLimits(1<<20, 5)
+	truncated, _ := NewContextSourceOmission("AGENTS.md", 82, 200, "repository_instruction_truncated")
+	changed, _ := NewContextSourceOmission("CLAUDE.md", 0, 0, "repository_instruction_changed")
+	budget, _ := NewContextSourceOmission(".trestle/review-instructions.md", 1, 3, "repository_instruction_packet_budget")
+	for _, reason := range []string{"repository_instruction_size_limit", "repository_instruction_unsupported_content", "repository_instruction_path_not_authorized", "repository_instruction_candidate_limit"} {
+		if _, err := NewContextSourceOmission("AGENTS.md", 0, 0, reason); err != nil {
+			t.Fatalf("instruction reason %s rejected: %v", reason, err)
+		}
+	}
+	generation, err := NewContextPacketWithAccounting(scope, memoryScope, snapshot, ContextTaskCandidateGeneration, []ContextSource{source}, []memory.LexicalRetrieval{retrieval}, []ContextSourceOmission{truncated, changed, budget}, limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generationRequest, _ := generation.ProviderRequest()
+	candidateResponse, _, _ := candidateFixture(t, `{"schema_version":1,"candidates":[]}`)
+	candidates, err := ParseCandidateBatch(candidateResponse, snapshot, generation.EvidenceItems())
+	if err != nil {
+		t.Fatal(err)
+	}
+	verification, err := NewVerificationRequestContext(generationRequest.Payload(), generation.Identity(), scope.Identity(), generation.MemoryScopeIdentity(), generation.MemoryIdentity(), snapshot, generation.EvidenceItems(), candidates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coverage := verification.SourceCoverage()
+	if coverage.Validate() != nil || verification.Validate() != nil || coverage.AnalyzedCount() != 1 || coverage.SelectedCount() != 1 || coverage.OmittedCount() != 0 || len(coverage.OmissionSummaries()) != 0 || coverage.InstructionContextOmittedCount() != 3 {
+		t.Fatalf("coverage analyzed=%d selected=%d omitted=%d summaries=%v instruction=%d", coverage.AnalyzedCount(), coverage.SelectedCount(), coverage.OmittedCount(), coverage.OmissionSummaries(), coverage.InstructionContextOmittedCount())
+	}
+	var wire verificationContextWire
+	if json.Unmarshal(verification.Payload(), &wire) != nil || wire.SourceCoverage.PreselectionOmitted != 3 || wire.SourceCoverage.Omitted != 3 {
+		t.Fatalf("packet accounting lost instruction omissions: %#v", wire.SourceCoverage)
+	}
+}
+
 func TestContextSourceOmissionCategoriesCoverCanonicalReasons(t *testing.T) {
 	tests := map[ContextSourceOmissionCategory][]string{
 		ContextOmissionAuthorization:   {"path_not_authorized", "semantic_path_not_authorized"},
 		ContextOmissionResourceLimit:   {"candidate_limit", "source_size_limit", "analysis_resource_limit", "analysis_slice_resource_limit", "analysis_evidence_limit", "semantic_limit_exceeded", "semantic_candidate_limit", "semantic_source_size_limit"},
-		ContextOmissionUnsupported:     {"analysis_removed_file", "analysis_unsupported_content", "analysis_empty_added_file", "analysis_no_changed_head_lines", "semantic_unsupported_language"},
+		ContextOmissionUnsupported:     {"analysis_removed_file", "analysis_unsupported_content", "analysis_empty_added_file", "analysis_no_changed_head_lines", "semantic_unsupported_language", "excluded_path", "non_text_content"},
 		ContextOmissionAnalysisFailure: {"semantic_parse_failure", "semantic_source_unavailable"},
 		ContextOmissionDuplicate:       {"semantic_duplicate_source"},
 	}

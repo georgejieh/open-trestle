@@ -511,8 +511,10 @@ func (a *Adapter) executeWithDispatchProof(
 			Format *chatResponseFormat `json:"response_format"`
 		}{format})
 		baseline, budgetErr := review.ModelRequestBudget(providerRequest, approvedBudget)
-		// This is a byte-based reservation, not exact tokenizer accounting.
-		required := max(uint64(baseline.EstimatedInputTokens()), uint64(len(payload))+uint64(len(framing))+256)
+		// This is a byte-based reservation, not exact tokenizer accounting. It
+		// covers the user payload, the trusted system channel, and the schema
+		// framing.
+		required := max(uint64(baseline.EstimatedInputTokens()), uint64(len(payload))+uint64(len(instructions))+uint64(len(framing))+256)
 		if err != nil || budgetErr != nil || uint64(approvedBudget.EstimatedInputTokens()) < required {
 			return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
 		}

@@ -283,10 +283,20 @@ func sanitizedGenerationFixture(t *testing.T, scope audit.ReviewScope, rawArtifa
 	return request, receipt, requestArtifact, receiptArtifact, expected
 }
 
+// successfulProviderResult answers a version 7 generation context with candidate batch v2.
 func successfulProviderResult(t *testing.T) gateway.RouteDispatchResult {
 	t.Helper()
-	document := `{"schema_version":1,"candidates":[{"title":"Issue","claim":"The value is not checked.","severity_hint":"high","source_range":{"source_id":"source-1","start_line":1,"end_line":1},"evidence_ids":["source-1"]}]}`
-	document = strings.ReplaceAll(document, `\"`, `"`)
+	return providerDocumentResult(t, `{"schema_version":2,"candidates":[{"title":"Issue","claim":"The value is not checked.","category":"correctness","fix":"Check the value before use.","severity_hint":"high","source_range":{"source_id":"source-1","start_line":1,"end_line":1},"evidence_ids":["source-1"]}]}`)
+}
+
+// legacyProviderResult answers a recorded pre-version-7 context with candidate batch v1.
+func legacyProviderResult(t *testing.T) gateway.RouteDispatchResult {
+	t.Helper()
+	return providerDocumentResult(t, `{"schema_version":1,"candidates":[{"title":"Issue","claim":"The value is not checked.","severity_hint":"high","source_range":{"source_id":"source-1","start_line":1,"end_line":1},"evidence_ids":["source-1"]}]}`)
+}
+
+func providerDocumentResult(t *testing.T, document string) gateway.RouteDispatchResult {
+	t.Helper()
 	part, _ := provider.NewResponsePart(provider.ResponsePartStructuredData, "application/json", []byte(document))
 	usage, _ := provider.NewRouteTokenUsage(10, 5, 0)
 	response, _ := provider.NewResponse(provider.CapabilityReviewV1, provider.ResponseFinishStop, []provider.ResponsePart{part}, usage)

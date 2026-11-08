@@ -248,7 +248,7 @@ func TestResponsesWireCarriesExactReadableReviewContracts(t *testing.T) {
 		request              provider.Request
 		schemaPath, identity string
 	}{
-		{"candidate", generationRequest, "../../../schemas/review/model-candidate-batch-v1.schema.json", review.ModelCandidateBatchSchemaIdentity},
+		{"candidate", generationRequest, "../../../schemas/review/model-candidate-batch-v2.schema.json", review.ModelCandidateBatchSchemaIdentity},
 		{"verifier", verificationRequest, "../../../schemas/review/model-verification-batch-v1.schema.json", review.ModelVerificationBatchSchemaIdentity},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -276,21 +276,25 @@ func TestResponsesWireCarriesExactReadableReviewContracts(t *testing.T) {
 				t.Fatal("wire text differs from the identity-bound payload")
 			}
 			var contract struct {
-				Instructions   string         `json:"instructions"`
-				Schema         map[string]any `json:"output_schema"`
-				SchemaIdentity string         `json:"output_schema_identity"`
+				Instructions         *string        `json:"instructions"`
+				InstructionsIdentity string         `json:"instructions_identity"`
+				Schema               map[string]any `json:"output_schema"`
+				SchemaIdentity       string         `json:"output_schema_identity"`
 			}
 			if err := json.Unmarshal([]byte(wire.Input[0].Content[0].Text), &contract); err != nil {
 				t.Fatal(err)
 			}
-			if strings.TrimSpace(contract.Instructions) == "" || contract.Schema == nil || contract.SchemaIdentity != tc.identity {
-				t.Fatal("actual HTTP body lacks the readable host output contract")
+			if contract.Instructions != nil || contract.InstructionsIdentity == "" || contract.Schema == nil || contract.SchemaIdentity != tc.identity {
+				t.Fatal("actual HTTP body carries instruction prose in the user input or lacks the bound output contract")
 			}
 			var envelope struct {
 				Instructions string `json:"instructions"`
 			}
-			if err := json.Unmarshal(encoded, &envelope); err != nil || envelope.Instructions != contract.Instructions {
+			if err := json.Unmarshal(encoded, &envelope); err != nil || strings.TrimSpace(envelope.Instructions) == "" || envelope.Instructions != instructions {
 				t.Fatal("trusted host instructions are not separated from repository-controlled input")
+			}
+			if digest := sha256.Sum256([]byte(envelope.Instructions)); hex.EncodeToString(digest[:]) != contract.InstructionsIdentity {
+				t.Fatal("system channel is not the contract bound by instructions_identity")
 			}
 			publicBytes, err := os.ReadFile(tc.schemaPath)
 			if err != nil {

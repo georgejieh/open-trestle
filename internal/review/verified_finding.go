@@ -326,6 +326,10 @@ type VerifiedFinding struct {
 	severity                   Severity
 	sourceRange                evidence.SourceRange
 	evidenceBindings           []candidateEvidenceBinding
+	// category and fix are copied from the admitted candidate. The verifier
+	// checks only the claim; category stays advisory and fix stays unverified.
+	category CandidateCategory
+	fix      string
 }
 
 func (f VerifiedFinding) Identity() string                  { return f.identity }
@@ -336,6 +340,13 @@ func (f VerifiedFinding) Title() string                     { return f.title }
 func (f VerifiedFinding) Claim() string                     { return f.claim }
 func (f VerifiedFinding) Severity() Severity                { return f.severity }
 func (f VerifiedFinding) SourceRange() evidence.SourceRange { return f.sourceRange }
+
+// Category returns the advisory candidate category; the zero value means a v1 candidate.
+func (f VerifiedFinding) Category() CandidateCategory { return f.category }
+
+// Fix returns untrusted, unverified model fix guidance; the empty string means none.
+// The verifier verified the claim, not this text, and nothing applies it.
+func (f VerifiedFinding) Fix() string { return f.fix }
 func (f VerifiedFinding) EvidenceIDs() []string {
 	identities := make([]string, len(f.evidenceBindings))
 	for index, binding := range f.evidenceBindings {
@@ -359,7 +370,8 @@ func (f VerifiedFinding) Validate() error {
 			return ErrVerifiedFindingBindingMismatch
 		}
 	}
-	if !validCandidateTitle(f.title) || !validCandidateClaim(f.claim) || !isKnownSeverity(f.severity) || !validCandidateSourceRange(f.sourceRange) || len(f.evidenceBindings) == 0 || len(f.evidenceBindings) > maxCandidateEvidence {
+	if !validCandidateTitle(f.title) || !validCandidateClaim(f.claim) || !isKnownSeverity(f.severity) || !validCandidateSourceRange(f.sourceRange) || len(f.evidenceBindings) == 0 || len(f.evidenceBindings) > maxCandidateEvidence ||
+		validateCandidateGuidance(f.category, f.fix) != nil {
 		return ErrVerifiedFindingBindingMismatch
 	}
 	previous := ""
@@ -426,6 +438,7 @@ func PromoteVerifiedCandidates(receipt IndependentVerificationReceipt, candidate
 			candidateIdentity: candidate.Identity(), verificationIdentity: result.Identity(),
 			title: candidate.Title(), claim: candidate.Claim(), severity: result.FinalSeverity(),
 			sourceRange: candidate.SourceRange(), evidenceBindings: append([]candidateEvidenceBinding(nil), result.evidenceBindings...),
+			category: candidate.Category(), fix: candidate.Fix(),
 		}
 		finding.fingerprint = deriveVerifiedFindingFingerprint(finding)
 		finding.identity = deriveVerifiedFindingIdentity(finding)
@@ -548,7 +561,7 @@ func deriveVerifiedFindingFingerprint(finding VerifiedFinding) string {
 }
 
 func deriveVerifiedFindingIdentity(finding VerifiedFinding) string {
-	preimage := struct {
+	type findingRecord struct {
 		Contract     string   `json:"contract"`
 		Version      int      `json:"version"`
 		Receipt      string   `json:"receipt"`
@@ -557,13 +570,25 @@ func deriveVerifiedFindingIdentity(finding VerifiedFinding) string {
 		Verification string   `json:"verification"`
 		Severity     string   `json:"severity"`
 		Evidence     []string `json:"evidence"`
-	}{
+	}
+	preimage := findingRecord{
 		Contract: "open-trestle/verified-finding", Version: 1,
 		Receipt: finding.independentReceiptIdentity, Fingerprint: finding.fingerprint,
 		Candidate: finding.candidateIdentity, Verification: finding.verificationIdentity,
 		Severity: string(finding.severity), Evidence: finding.EvidenceIDs(),
 	}
-	encoded, _ := json.Marshal(preimage)
+	var encoded []byte
+	if finding.category == "" {
+		// A finding promoted from a v1 candidate keeps its historical preimage.
+		encoded, _ = json.Marshal(preimage)
+	} else {
+		preimage.Version = 2
+		encoded, _ = json.Marshal(struct {
+			findingRecord
+			Category string `json:"category"`
+			Fix      string `json:"fix"`
+		}{preimage, string(finding.category), finding.fix})
+	}
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }

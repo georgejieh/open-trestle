@@ -317,7 +317,7 @@ func NewInvestigationToolOperation(b InvestigationToolEvidence, e InvestigationT
 	}
 	c := contextHeader.Investigation
 	wantRef := toolRecordIdentity([]any{"open-trestle/investigation-snapshot-ref", 1, e.SessionIdentity, e.Scope.Identity(), e.HeadArtifactIdentity, e.HeadSnapshotIdentity})
-	if contextHeader.Version != 4 || contextHeader.Scope != e.Scope.Identity() || contextHeader.Task != "candidate_generation" || contextHeader.Tools != "host_admitted_snapshot_read_v1" || c.Mode != "fixed_generation_route_v1" || c.Session != e.SessionIdentity || c.Policy != e.PolicyIdentity || c.HeadArtifact != e.HeadArtifactIdentity || c.Head != e.HeadSnapshotIdentity || c.Manifest != e.HeadManifestIdentity || c.SnapshotRef != wantRef {
+	if contextHeader.Version != 5 || contextHeader.Scope != e.Scope.Identity() || contextHeader.Task != "candidate_generation" || contextHeader.Tools != "host_admitted_snapshot_read_v1" || c.Mode != "fixed_generation_route_v1" || c.Session != e.SessionIdentity || c.Policy != e.PolicyIdentity || c.HeadArtifact != e.HeadArtifactIdentity || c.Head != e.HeadSnapshotIdentity || c.Manifest != e.HeadManifestIdentity || c.SnapshotRef != wantRef {
 		return InvestigationToolOperation{}, errToolRecord
 	}
 	if b.TurnArtifact.Validate() != nil {
