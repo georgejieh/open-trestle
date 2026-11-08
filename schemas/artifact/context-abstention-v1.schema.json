@@ -136,7 +136,12 @@
               "unsupported_language",
               "semantic_parse_failure",
               "semantic_source_unavailable",
-              "semantic_duplicate_source"
+              "semantic_duplicate_source",
+              "excluded_path",
+              "non_text_content",
+              "repository_instruction_truncated",
+              "repository_instruction_size_limit",
+              "repository_instruction_unsupported_content"
             ]
           },
           "count": {

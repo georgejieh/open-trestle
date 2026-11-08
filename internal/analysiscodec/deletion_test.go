@@ -133,7 +133,8 @@ func TestNoChangedHeadLinesRequiresVersionedExactGap(t *testing.T) {
 				{"legacy v4", func(r *Result) { r.schemaVersion = 4 }},
 				{"legacy v3", func(r *Result) { r.schemaVersion = 3 }},
 				{"legacy v2", func(r *Result) { r.schemaVersion = 2; r.checks = nil }},
-				{"unknown version", func(r *Result) { r.schemaVersion = 6 }},
+				{"version 6 without deletion context", func(r *Result) { r.schemaVersion = 6 }},
+				{"unknown version", func(r *Result) { r.schemaVersion = 7 }},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					payload := canonicalMutation(t, result, tc.mutate)

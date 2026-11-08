@@ -174,7 +174,7 @@ func TestFrozenVersionMutationAndParserRejections(t *testing.T) {
 				if item.path != entry.Path() {
 					continue
 				}
-				if item.startLine != 1 || item.endLine != 3 || deriveBindingIdentity(*item) != item.bindingIdentity || !validItem(*item, entries) {
+				if item.startLine != 1 || item.endLine != 3 || deriveBindingIdentity(*item) != item.bindingIdentity || !validItem(*item, entries, r.schemaVersion) {
 					t.Fatal("genuine gate.go coverage item must pass validItem")
 				}
 				item.startLine = 3
@@ -194,7 +194,7 @@ func TestFrozenVersionMutationAndParserRejections(t *testing.T) {
 				if containsRange(entry.Ranges(), item.startLine, item.endLine) {
 					t.Fatal("subrange unexpectedly matches exact changed range")
 				}
-				if validItem(*item, entries) {
+				if validItem(*item, entries, r.schemaVersion) {
 					t.Fatal("forged gate.go subrange passed validItem")
 				}
 				return

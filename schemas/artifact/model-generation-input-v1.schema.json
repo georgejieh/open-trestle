@@ -60,7 +60,11 @@
       }
     },
     "output_schema_identity": {
-      "const": "b79f43bd52cb67e18896dd053ab85c21efd11c4ba5a97234f3f4ce867109dc0e"
+      "description": "Candidate batch schema requested by the bound context: model-candidate-batch-v1 for recorded contexts before version 7, v2 from version 7.",
+      "enum": [
+        "b79f43bd52cb67e18896dd053ab85c21efd11c4ba5a97234f3f4ce867109dc0e",
+        "63a1bd4a1f2bea9faf93e17e0722aa0b50ba87d2a8ba80088422b8d5190f91bb"
+      ]
     },
     "snapshot_workspace": {
       "type": "string",

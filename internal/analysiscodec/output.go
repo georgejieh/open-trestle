@@ -64,6 +64,27 @@ func NewItem(entry changecodec.Entry, binding evidence.SourceSliceBinding) (Item
 	return Item{evidenceID: binding.Identity(), bindingIdentity: binding.Identity(), changeEntryIdentity: entry.Identity(), changeExecutionIdentity: entry.ExecutionIdentity(), path: entry.Path(), startLine: rangeValue.StartLine(), endLine: rangeValue.EndLine(), digest: binding.SliceDigest(), fileIdentity: binding.RepositoryFileIdentity(), fileDigest: binding.RepositoryFileDigest(), sliceBytes: binding.SliceBytes()}, nil
 }
 
+// DeletionContextReason labels a deletion point inside a deletion-only entry.
+// The gap's lines are the head lines on either side of the removed base lines;
+// the removed text itself is not supplied as source evidence.
+const DeletionContextReason = "deleted_lines"
+
+// NewDeletionContextItem binds unchanged head lines around a deletion point of
+// a deletion-only entry (reason no_changed_head_lines). Such an entry has no
+// changed head range, so the item is not contained in one; it is valid only in
+// a version 6 result together with a deleted_lines gap for the same entry.
+func NewDeletionContextItem(entry changecodec.Entry, binding evidence.SourceSliceBinding) (Item, error) {
+	rangeValue := binding.SourceRange()
+	if binding.Validate() != nil || !deletionOnlyEntry(entry) || rangeValue.Path() != entry.Path() || binding.RepositoryFileIdentity() != entry.HeadIdentity() || binding.RepositoryFileDigest() != entry.HeadDigest() {
+		return Item{}, ErrInvalidResult
+	}
+	return Item{evidenceID: binding.Identity(), bindingIdentity: binding.Identity(), changeEntryIdentity: entry.Identity(), changeExecutionIdentity: entry.ExecutionIdentity(), path: entry.Path(), startLine: rangeValue.StartLine(), endLine: rangeValue.EndLine(), digest: binding.SliceDigest(), fileIdentity: binding.RepositoryFileIdentity(), fileDigest: binding.RepositoryFileDigest(), sliceBytes: binding.SliceBytes()}, nil
+}
+
+func deletionOnlyEntry(entry changecodec.Entry) bool {
+	return entry.Reason() == "no_changed_head_lines" && entry.Kind() == "modified" && entry.Status() == "unsupported" && len(entry.Ranges()) == 0
+}
+
 func NewObservationFromBinding(check DeterministicCheck, entry changecodec.Entry, binding evidence.SourceSliceBinding) (Observation, error) {
 	rangeValue := binding.SourceRange()
 	contained := false
@@ -233,7 +254,7 @@ type resultWire struct {
 
 func (w resultWire) MarshalJSON() ([]byte, error) {
 	type current resultWire
-	if w.SchemaVersion == 4 || w.SchemaVersion == 5 {
+	if w.SchemaVersion == 4 || w.SchemaVersion == 5 || w.SchemaVersion == 6 {
 		if w.Observations == nil {
 			w.Observations = []observationWire{}
 		}
@@ -265,10 +286,19 @@ func (w resultWire) MarshalJSON() ([]byte, error) {
 func NewResult(changeArtifact artifact.Artifact, change changecodec.Result, headArtifact artifact.Artifact, head sourceoutput.Snapshot, items []Item, gaps []Gap, checks []DeterministicCheck, observations []Observation, semanticProfile semanticimpact.Profile) (Result, error) {
 	schemaVersion := 4
 	changedRanges := 0
+	deletionOnly := map[string]bool{}
 	for _, entry := range change.Entries() {
 		changedRanges += len(entry.Ranges())
 		if entry.Reason() == "no_changed_head_lines" {
 			schemaVersion = 5
+			deletionOnly[entry.Identity()] = true
+		}
+	}
+	// Version 6 adds deletion-point context: items and deleted_lines gaps on a
+	// deletion-only entry. Without them a result keeps its version 4 or 5 bytes.
+	for _, item := range items {
+		if deletionOnly[item.changeEntryIdentity] {
+			schemaVersion = 6
 		}
 	}
 	result := Result{schemaVersion: schemaVersion, changeArtifactIdentity: changeArtifact.Identity(), changeIdentity: change.Identity(), repositoryIdentity: change.Repository().Identity(), headRevisionIdentity: change.HeadRevision().Identity(), headSnapshotArtifactIdentity: headArtifact.Identity(), headSnapshotIdentity: head.Identity(), headManifestIdentity: head.ManifestIdentity(), changedEntries: len(change.Entries()), changedRanges: changedRanges, items: append([]Item(nil), items...), gaps: append([]Gap(nil), gaps...), checks: append([]DeterministicCheck(nil), checks...), observations: append([]Observation(nil), observations...), semanticProfile: semanticProfile}
@@ -287,7 +317,7 @@ func (r Result) validate(requireArtifact bool, change changecodec.Result) error 
 	if change.Identity() != r.changeIdentity || change.ArtifactIdentity() != r.changeArtifactIdentity || change.Repository().Identity() != r.repositoryIdentity || change.HeadRevision().Identity() != r.headRevisionIdentity || change.HeadSnapshotArtifactIdentity() != r.headSnapshotArtifactIdentity || change.HeadSnapshotIdentity() != r.headSnapshotIdentity || change.HeadManifestIdentity() != r.headManifestIdentity || r.changedEntries != len(change.Entries()) || len(r.items) > MaxEvidenceItems || len(r.gaps) > MaxEvidenceItems || len(r.observations) > MaxEvidenceItems || r.semanticProfile.BaseSnapshotIdentity() != change.BaseSnapshotIdentity() || r.semanticProfile.HeadSnapshotIdentity() != change.HeadSnapshotIdentity() || r.semanticProfile.ChangeModelIdentity() != change.Identity() || requireArtifact && (!validDigest(r.artifactIdentity) || !validDigest(r.scopeIdentity)) {
 		return ErrInvalidResult
 	}
-	validChecks := r.schemaVersion == 2 && len(r.checks) == 0 && len(r.observations) == 0 || r.schemaVersion == 3 && len(r.checks) == 1 && len(r.observations) == 0 || (r.schemaVersion == 4 || r.schemaVersion == 5) && len(r.checks) == 1
+	validChecks := r.schemaVersion == 2 && len(r.checks) == 0 && len(r.observations) == 0 || r.schemaVersion == 3 && len(r.checks) == 1 && len(r.observations) == 0 || (r.schemaVersion == 4 || r.schemaVersion == 5 || r.schemaVersion == 6) && len(r.checks) == 1
 	if !validChecks {
 		return ErrInvalidResult
 	}
@@ -296,7 +326,7 @@ func (r Result) validate(requireArtifact bool, change changecodec.Result) error 
 			return ErrInvalidResult
 		}
 	}
-	if (r.schemaVersion == 4 || r.schemaVersion == 5) && uint32(len(r.observations)) != r.checks[0].MatchCount() {
+	if (r.schemaVersion == 4 || r.schemaVersion == 5 || r.schemaVersion == 6) && uint32(len(r.observations)) != r.checks[0].MatchCount() {
 		return ErrInvalidResult
 	}
 	entryByIdentity := make(map[string]changecodec.Entry, r.changedEntries)
@@ -320,10 +350,14 @@ func (r Result) validate(requireArtifact bool, change changecodec.Result) error 
 	seen := make(map[string]struct{}, len(r.items))
 	covered := make(map[string]int, len(r.items)+len(r.gaps))
 	wholeEntryGap := make(map[string]bool)
+	deletionItems, deletionGaps := make(map[string]int), make(map[string]int)
 	for _, item := range r.items {
 		key := itemKey(item)
-		if key <= previous || !validItem(item, entryByIdentity) {
+		if key <= previous || !validItem(item, entryByIdentity, r.schemaVersion) {
 			return ErrInvalidResult
+		}
+		if deletionOnlyEntry(entryByIdentity[item.changeEntryIdentity]) {
+			deletionItems[item.changeEntryIdentity]++
 		}
 		if _, ok := seen[item.evidenceID]; ok {
 			return ErrInvalidResult
@@ -338,12 +372,19 @@ func (r Result) validate(requireArtifact bool, change changecodec.Result) error 
 		if key <= previous || !validGap(gap, entryByIdentity, r.schemaVersion, change.SchemaVersion()) {
 			return ErrInvalidResult
 		}
+		if gap.reason == DeletionContextReason {
+			deletionGaps[gap.changeEntryIdentity]++
+		}
 		if gap.startLine == 0 {
 			wholeEntryGap[gap.changeEntryIdentity] = true
 		} else {
 			covered[coverageKey(gap.changeEntryIdentity, gap.startLine, gap.endLine)]++
 		}
 		previous = key
+	}
+	// Version 6 exists only to carry deletion-point context.
+	if r.schemaVersion == 6 && len(deletionItems) == 0 {
+		return ErrInvalidResult
 	}
 	for _, entry := range change.Entries() {
 		if wholeEntryGap[entry.Identity()] {
@@ -355,7 +396,9 @@ func (r Result) validate(requireArtifact bool, change changecodec.Result) error 
 			continue
 		}
 		if len(entry.Ranges()) == 0 {
-			if !wholeEntryGap[entry.Identity()] {
+			// A deletion-only entry without its whole-entry gap must carry
+			// deletion-point context: at least one item and one deleted_lines gap.
+			if !wholeEntryGap[entry.Identity()] && (!deletionOnlyEntry(entry) || deletionItems[entry.Identity()] == 0 || deletionGaps[entry.Identity()] == 0) {
 				return ErrInvalidResult
 			}
 			continue
@@ -371,13 +414,14 @@ func (r Result) validate(requireArtifact bool, change changecodec.Result) error 
 	}
 	return nil
 }
-func validItem(item Item, entries map[string]changecodec.Entry) bool {
+func validItem(item Item, entries map[string]changecodec.Entry, schemaVersion int) bool {
 	entry, ok := entries[item.changeEntryIdentity]
 	if !ok || entry.ExecutionIdentity() != item.changeExecutionIdentity || entry.Path() != item.path || entry.HeadIdentity() != item.fileIdentity || entry.HeadDigest() != item.fileDigest || item.evidenceID != item.bindingIdentity || !validDigest(item.evidenceID) || !validDigest(item.digest) || item.sliceBytes <= 0 || item.sliceBytes > 1<<20 {
 		return false
 	}
 	sourceRange, err := evidence.NewSourceRange(item.path, item.startLine, item.endLine)
-	if err != nil || !containsRange(entry.Ranges(), item.startLine, item.endLine) {
+	deletionContext := schemaVersion == 6 && deletionOnlyEntry(entry)
+	if err != nil || !deletionContext && !containsRange(entry.Ranges(), item.startLine, item.endLine) {
 		return false
 	}
 	evidenceItem, err := evidence.NewEvidenceItem(item.evidenceID, evidence.EvidenceKindSource, item.digest, sourceRange)
@@ -392,7 +436,14 @@ func validGap(gap Gap, entries map[string]changecodec.Entry, schemaVersion, chan
 		return false
 	}
 	if entry.Reason() == "no_changed_head_lines" {
-		return schemaVersion == 5 && changeSchemaVersion == 2 && entry.Kind() == "modified" && entry.Status() == "unsupported" && len(entry.Ranges()) == 0 && gap.startLine == 0 && gap.endLine == 0 && gap.reason == entry.Reason()
+		if changeSchemaVersion != 2 || !deletionOnlyEntry(entry) {
+			return false
+		}
+		if gap.reason == DeletionContextReason {
+			_, err := evidence.NewSourceRange(gap.path, gap.startLine, gap.endLine)
+			return schemaVersion == 6 && err == nil
+		}
+		return (schemaVersion == 5 || schemaVersion == 6) && gap.startLine == 0 && gap.endLine == 0 && gap.reason == entry.Reason()
 	}
 	if gap.startLine == 0 && gap.endLine == 0 {
 		if gap.reason == "evidence_limit" {
@@ -481,7 +532,7 @@ func ParseResultArtifactWithChange(value, changeArtifact artifact.Artifact, chan
 		return Result{}, ErrInvalidResult
 	}
 	canonical, _ := json.Marshal(wire)
-	validVersion := wire.SchemaVersion == 2 && len(wire.Checks) == 0 && len(wire.Observations) == 0 || wire.SchemaVersion == 3 && len(wire.Checks) == 1 && len(wire.Observations) == 0 || (wire.SchemaVersion == 4 || wire.SchemaVersion == 5) && len(wire.Checks) == 1
+	validVersion := wire.SchemaVersion == 2 && len(wire.Checks) == 0 && len(wire.Observations) == 0 || wire.SchemaVersion == 3 && len(wire.Checks) == 1 && len(wire.Observations) == 0 || (wire.SchemaVersion == 4 || wire.SchemaVersion == 5 || wire.SchemaVersion == 6) && len(wire.Checks) == 1
 	if !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/deterministic-evidence-result" || !validVersion || wire.EvidenceItems != len(wire.Items) || wire.CoverageGaps != len(wire.Gaps) {
 		return Result{}, ErrInvalidResult
 	}

@@ -48,6 +48,7 @@ func (e Entry) Identity() string          { return e.deltaIdentity }
 func (e Entry) ExecutionIdentity() string { return e.executionIdentity }
 func (e Entry) HeadIdentity() string      { return e.headIdentity }
 func (e Entry) HeadDigest() string        { return e.headDigest }
+func (e Entry) BaseDigest() string        { return e.baseDigest }
 func (e Entry) HeadSizeBytes() int        { return e.headSize }
 
 type Result struct {

@@ -12,6 +12,7 @@ Routing, policy, provider, and review schemas:
 - `schemas/provider/route-reference-v2.schema.json`
 - `schemas/provider/route-capability-declaration-v1.schema.json`
 - `schemas/review/model-candidate-batch-v1.schema.json`
+- `schemas/review/model-candidate-batch-v2.schema.json`
 - `schemas/review/model-investigation-output-v1.schema.json`
 - `schemas/review/model-verification-batch-v1.schema.json`
 - `schemas/review/local-git-inspect-result-v1.schema.json`
@@ -23,6 +24,8 @@ Routing, policy, provider, and review schemas:
 - `schemas/secret-scanner/secret-scan-response-v1.schema.json`
 
 Route-reference schema v1 remains the historical untagged model grammar with unchanged bytes. Schema v2 preserves the six-field wire shape and adds one optional final `:tag` in `model_id`; tagged model IDs require empty `model_version`. Untagged model IDs retain the existing nonempty-version selector behavior. Host:port and opaque-URI-looking tagged values are inert model text, never endpoint, filesystem, or credential authority. The runtime inventory and durable route authorization v1 schemas already bound these fields broadly; native route validation enforces the stronger grammar. The capability-declaration v1 schema still references the historical route-reference v1 subset. No schema version changes route identity preimages. Native Go tests exercise selector semantics; schema tests check structure and unchanged v1 bytes, not full JSON Schema semantic validation.
+
+Candidate batch schema v1 keeps its bytes and is the output schema of recorded generation contexts before version 7. Schema v2 is the output schema of version 7 generation contexts: every candidate adds a required closed `category` (`correctness`, `security`, `concurrency`, `performance`, `reliability`, `maintainability`, `style`, `documentation`, `testing`) and an optional nonblank plain-text `fix` of at most 256 characters (the schema `maxLength`; the host parser enforces the same 256-character bound plus a 1024-byte UTF-8 wire bound, which 256 characters can never exceed). Both are advisory model output. The fix is never applied, carries no executable authority, and is not independently verified; runtime admission drops, and counts, a candidate whose `source_range` names a `repository_context` source.
 
 The investigation output schema uses a closed `oneOf`: a candidate batch or one host-defined snapshot tool call. A valid proposal is not permission to execute a tool. Runtime parsing, the retained model response, source bindings, and policy limits still govern admission.
 
