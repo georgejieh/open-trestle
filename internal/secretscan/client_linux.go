@@ -440,3 +440,16 @@ func clearRequestCopy(request *Request) {
 	clear(request.Sources)
 	*request = Request{}
 }
+
+// InstalledPrerequisite checks, without executing either program or reading any
+// source, that this binary carries scanner digests and that both installed
+// executables match them under the fixed root-owned trust policy.
+func (client *Client) InstalledPrerequisite() error {
+	if client == nil || !validDigest(client.config.expectedLauncherSHA256) || !validDigest(client.config.expectedWorkerSHA256) {
+		return ErrScannerDigestsMissing
+	}
+	if verifyTrustedExecutable(client.config, client.config.launcherPath, client.config.expectedLauncherSHA256) != nil || verifyTrustedExecutable(client.config, client.config.workerPath, client.config.expectedWorkerSHA256) != nil {
+		return ErrScannerNotInstalled
+	}
+	return nil
+}
