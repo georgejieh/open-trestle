@@ -74,6 +74,36 @@ func TestLocalRouteRefusesCloudSuffixWithoutModelList(t *testing.T) {
 	}
 }
 
+// A cloud-suffixed name is refused even when the daemon answers and does not
+// list it yet. Pulling it later would relay review content to Ollama Cloud
+// under a local declaration, and this check is the only one the local route
+// gets.
+func TestLocalRouteRefusesUnlistedCloudSuffixFromAnsweringDaemon(t *testing.T) {
+	original := ollamaReadTags
+	t.Cleanup(func() { ollamaReadTags = original })
+	ollamaReadTags = func(context.Context, string) ([]ollamaTag, bool, error) {
+		return []ollamaTag{{Name: "llama3.2:3b", Model: "llama3.2:3b"}}, true, nil
+	}
+	for _, model := range []string{"gpt-oss:120b-cloud", "deepseek-v4-pro:cloud"} {
+		if err := ollamaLocalModelError(context.Background(), "http://127.0.0.1:11434/v1", model); err == nil {
+			t.Errorf("the local route accepted unlisted cloud model %s", model)
+		}
+	}
+}
+
+// A listed cloud-suffixed model is refused even when the daemon's entry does
+// not name a remote host, as some Ollama versions omit it.
+func TestLocalRouteRefusesListedCloudSuffixWithoutRemoteHost(t *testing.T) {
+	original := ollamaReadTags
+	t.Cleanup(func() { ollamaReadTags = original })
+	ollamaReadTags = func(context.Context, string) ([]ollamaTag, bool, error) {
+		return []ollamaTag{{Name: "gpt-oss:20b-cloud", Model: "gpt-oss:20b-cloud"}}, true, nil
+	}
+	if err := ollamaLocalModelError(context.Background(), "http://127.0.0.1:11434/v1", "gpt-oss:20b-cloud"); err == nil {
+		t.Fatal("the local route accepted a listed cloud model without a remote host")
+	}
+}
+
 // The sign-in probe must not treat an HTTP 200 as proof of sign-in when the
 // answer does not name the requested cloud selector.
 func TestProbeRejectsAnswerFromAnotherModel(t *testing.T) {

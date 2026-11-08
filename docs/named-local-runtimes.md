@@ -71,8 +71,10 @@ Any returned selector must equal the configured string, including the tag.
 > `GET /api/tags` entry carries a `remote_host`, is forwarded by the local Ollama
 > to Ollama Cloud, so your source would leave this machine. The local bootstrap
 > and `trestle init` refuse such a model with "this model runs on Ollama Cloud,
-> not on this machine; use --provider ollama-signin". They ask the server's
-> `/api/tags` list once at setup, and refuse by name when no list can be read.
+> not on this machine; use --provider ollama-signin". They refuse a cloud name
+> whether or not the server lists it yet, ask the server's `/api/tags` list once
+> at setup for the `remote_host` check, and refuse when an Ollama daemon answers
+> that path but its list cannot be read.
 > To use those models deliberately, as remote egress with the sanitizer and
 > secret scanner, see
 > [Ollama signed in to Ollama Cloud](remote-model-review.md#ollama-signed-in-to-ollama-cloud).

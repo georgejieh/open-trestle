@@ -164,13 +164,20 @@ func ollamaCloudTag(tag ollamaTag) bool {
 	return tag.RemoteHost == ollamaCloudRemoteHost && runtimeconfig.OllamaCloudModelID(tag.Name)
 }
 
-// ollamaCloudNameSuffix is the name-only fallback used when no tags list is available.
+// ollamaCloudNameSuffix reports whether a model name carries the Ollama cloud
+// suffix. The local route refuses such a name whatever the tags list says.
 func ollamaCloudNameSuffix(model string) bool {
 	return strings.HasSuffix(model, ":cloud") || strings.HasSuffix(model, "-cloud")
 }
 
 // ollamaLocalModelError refuses, for the local route, a model the daemon at
 // endpoint relays to Ollama Cloud.
+//
+// A name with the Ollama cloud suffix is refused first, before the tags list
+// is consulted. The list is a point-in-time observation: a cloud model that is
+// not listed yet can be pulled later, and some daemon versions omit the remote
+// host from a listed cloud entry. Nothing at review time stops a local route
+// from using such a model, so this check must not let one through.
 //
 // The local bootstrap also accepts other loopback servers (llama.cpp, vLLM, LM
 // Studio), which have no /api/tags document at all. Such a server cannot relay
@@ -185,6 +192,9 @@ func ollamaCloudNameSuffix(model string) bool {
 // the local route refuses. A server that does not answer the path at all is
 // not an Ollama daemon and passes.
 func ollamaLocalModelError(ctx context.Context, endpoint, model string) error {
+	if ollamaCloudNameSuffix(model) {
+		return fmt.Errorf("%s: %s", model, ollamaCloudLocalRefusal)
+	}
 	tags, answered, err := ollamaReadTags(ctx, endpoint)
 	if err == nil {
 		if tag, found := ollamaFindTag(tags, model); found {
@@ -193,12 +203,9 @@ func ollamaLocalModelError(ctx context.Context, endpoint, model string) error {
 			}
 			return nil
 		}
-		// The daemon answered and does not list this model. It cannot relay a
-		// model it does not serve, so the model is not a cloud model.
+		// The daemon answered and does not list this name, which has no cloud
+		// suffix, so it cannot be one of the daemon's cloud relays.
 		return nil
-	}
-	if ollamaCloudNameSuffix(model) {
-		return fmt.Errorf("%s: %s", model, ollamaCloudLocalRefusal)
 	}
 	if answered {
 		// This is an Ollama daemon and its model list could not be read, so

@@ -91,10 +91,12 @@ when you agree to run a review.
    you just read.
 
    With a local server, a model that the local Ollama relays to Ollama Cloud is
-   refused, because it would send your source off this machine: the wizard asks
-   the server's `/api/tags` list and refuses an entry with a `remote_host`, and
-   when no such list can be read it refuses names ending in `:cloud` or
-   `-cloud`. Choose the Ollama Cloud sign-in option for those models instead.
+   refused, because it would send your source off this machine: the wizard
+   refuses any name ending in `:cloud` or `-cloud`, then asks the server's
+   `/api/tags` list and refuses an entry with a `remote_host`. If an Ollama
+   daemon answers but its list cannot be read, the wizard refuses too, because
+   it cannot tell where the model runs. Choose the Ollama Cloud sign-in option
+   for cloud models instead.
 
    With "Ollama on this machine, signed in to Ollama Cloud", the wizard checks
    that the `ollama` command is installed, reads the daemon's `/api/tags` list
