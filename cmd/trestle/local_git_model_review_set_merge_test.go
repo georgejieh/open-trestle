@@ -14,19 +14,19 @@ import (
 func TestMergedFindingDoesNotInheritAbsorbedEntryClaims(t *testing.T) {
 	representative := localreview.ReportFinding{
 		Identity: "a", Title: "Missing authorization check allows account takeover",
-		Claim: "The request reaches the account mutation without an authorization check.",
+		Claim:    "The request reaches the account mutation without an authorization check.",
 		Severity: diagnostics.SeverityError, Path: "account.go", StartLine: 10, EndLine: 20,
 		Category: "security", EvidenceIDs: []string{"hunk-1"},
 	}
 	absorbed := localreview.ReportFinding{
 		Identity: "b", Title: "Account takeover is possible because authorization is missing",
-		Claim: "The authorization check for the account mutation is absent, permitting takeover.",
+		Claim:    "The authorization check for the account mutation is absent, permitting takeover.",
 		Severity: diagnostics.SeverityError, Path: "account.go", StartLine: 18, EndLine: 30,
 		Category: "security", EvidenceIDs: []string{"hunk-2"},
 	}
 	distinct := localreview.ReportFinding{
 		Identity: "c", Title: "Unscoped query returns another tenant's token",
-		Claim: "The tenant scoped query is unscoped and returns another tenant's token.",
+		Claim:    "The tenant scoped query is unscoped and returns another tenant's token.",
 		Severity: diagnostics.SeverityError, Path: "account.go", StartLine: 28, EndLine: 40,
 		Category: "security", EvidenceIDs: []string{"hunk-3"},
 	}
@@ -52,13 +52,13 @@ func TestMergedFindingDoesNotInheritAbsorbedEntryClaims(t *testing.T) {
 func TestMergeStillCollapsesGenuineDuplicates(t *testing.T) {
 	first := localreview.ReportFinding{
 		Identity: "a", Title: "Missing authorization check allows account takeover",
-		Claim: "The request reaches the account mutation without an authorization check.",
+		Claim:    "The request reaches the account mutation without an authorization check.",
 		Severity: diagnostics.SeverityError, Path: "account.go", StartLine: 20, EndLine: 24,
 		Category: "security", EvidenceIDs: []string{"changed-hunk"},
 	}
 	second := localreview.ReportFinding{
 		Identity: "b", Title: "Account takeover is possible because authorization is missing",
-		Claim: "The authorization check for the account mutation is absent, permitting takeover.",
+		Claim:    "The authorization check for the account mutation is absent, permitting takeover.",
 		Severity: diagnostics.SeverityError, Path: "account.go", StartLine: 20, EndLine: 24,
 		Category: "security", EvidenceIDs: []string{"changed-hunk"},
 	}
