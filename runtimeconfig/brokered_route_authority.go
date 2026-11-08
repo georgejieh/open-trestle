@@ -89,6 +89,9 @@ func decodeBrokeredAuthority(w *brokeredRouteAuthorityWire) (BrokeredRouteAuthor
 }
 
 func validatePolicyProfileFields(encoded []byte, version int) bool {
+	if version == ollamaSigninPolicyVersion {
+		return validateV7PolicyProfileFields(encoded)
+	}
 	if version == 5 {
 		return validateV5PolicyProfileFields(encoded)
 	}
@@ -144,6 +147,9 @@ func validatePolicyProfileFields(encoded []byte, version int) bool {
 }
 
 func validConnectionProfile(c ProviderConnection, version int) bool {
+	if version == ollamaSigninPolicyVersion || c.requestProfile == OllamaSigninChatProfile {
+		return validOllamaSigninConnection(c, version)
+	}
 	if c.requestProfile == "" {
 		return c.brokeredAuthority == (BrokeredRouteAuthority{}) && c.openCodeGoAuthority == (OpenCodeGoRouteAuthority{}) && c.openCodeConsoleAuthority == (OpenCodeConsoleRouteAuthority{})
 	}

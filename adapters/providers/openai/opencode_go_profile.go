@@ -40,6 +40,9 @@ func cloneOpenCodeGoAuthority(value *OpenCodeGoRouteAuthority) *OpenCodeGoRouteA
 }
 
 func (a *Adapter) validServiceProfile() bool {
+	if a.requestProfile == RequestProfileOllamaSigninChatV1 {
+		return a.validOllamaSigninProfile()
+	}
 	if a.requestProfile == RequestProfileOpenCodeConsoleChatV1 {
 		return a.validOpenCodeConsoleProfile()
 	}
@@ -61,6 +64,9 @@ func (a *Adapter) validServiceProfile() bool {
 }
 
 func (a *Adapter) serviceProfileCurrent() bool {
+	if a.requestProfile == RequestProfileOllamaSigninChatV1 {
+		return a.validOllamaSigninProfile()
+	}
 	if a.requestProfile == RequestProfileOpenCodeConsoleChatV1 {
 		return a.openCodeConsoleProfileCurrent()
 	}
@@ -75,6 +81,9 @@ func (a *Adapter) serviceProfileCurrent() bool {
 }
 
 func (a *Adapter) serviceProfileMatches(route provider.RouteReference) bool {
+	if a.requestProfile == RequestProfileOllamaSigninChatV1 {
+		return a.ollamaSigninRouteMatches(route)
+	}
 	if a.requestProfile == RequestProfileOpenCodeConsoleChatV1 {
 		return a.openCodeConsoleProfileMatches(route)
 	}
@@ -82,6 +91,16 @@ func (a *Adapter) serviceProfileMatches(route provider.RouteReference) bool {
 		return a.profileAuthorityMatches(route)
 	}
 	return a.serviceProfileCurrent() && a.openCodeGoAuthority.Route == route
+}
+
+// serviceProfileRecordMatches binds a profile adapter to its one authorized
+// route record. The Ollama sign-in profile has no per-record authority; its
+// routes are bound by namespace and the Ollama cloud model suffix instead.
+func (a *Adapter) serviceProfileRecordMatches(record string) bool {
+	if a.requestProfile == RequestProfileOllamaSigninChatV1 {
+		return a.validOllamaSigninProfile()
+	}
+	return record == a.serviceProfileRecord()
 }
 
 func (a *Adapter) serviceProfileRecord() string {
@@ -95,6 +114,9 @@ func (a *Adapter) serviceProfileRecord() string {
 }
 
 func (a *Adapter) serviceProofMatches(proof modelhandler.SanitizedDispatchProof, scope, request string) bool {
+	if a.requestProfile == RequestProfileOllamaSigninChatV1 {
+		return a.ollamaSigninProofMatches(proof, scope, request)
+	}
 	if a.requestProfile == RequestProfileOpenCodeConsoleChatV1 {
 		return a.openCodeConsoleProofMatches(proof, scope, request)
 	}
@@ -111,6 +133,9 @@ func (a *Adapter) serviceProofMatches(proof modelhandler.SanitizedDispatchProof,
 }
 
 func (a *Adapter) serviceIdentityPreimage(configuration []byte) []byte {
+	if a.requestProfile == RequestProfileOllamaSigninChatV1 {
+		return a.ollamaSigninIdentityPreimage(configuration)
+	}
 	if a.requestProfile == RequestProfileOpenCodeConsoleChatV1 {
 		return a.openCodeConsoleIdentityPreimage(configuration)
 	}

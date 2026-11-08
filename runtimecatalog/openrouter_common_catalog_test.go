@@ -341,11 +341,14 @@ type brokeredPrivacyRouteFixture struct {
 }
 
 type brokeredPrivacyAccountFixture struct {
-	AuthorityLabel              string                       `json:"authority_label"`
-	CredentialReferenceIdentity string                       `json:"credential_reference_identity"`
-	ContentLogging              string                       `json:"content_logging"`
-	Training                    string                       `json:"training"`
-	ReviewEvidence              brokeredPrivacySourceFixture `json:"review_evidence"`
+	AuthorityLabel                 string                       `json:"authority_label"`
+	CredentialReferenceIdentity    string                       `json:"credential_reference_identity"`
+	ContentLogging                 string                       `json:"content_logging"`
+	Training                       string                       `json:"training"`
+	SafetyRetentionScope           string                       `json:"safety_retention_scope"`
+	EffectiveSafetyRetentionGoogle string                       `json:"effective_safety_retention_google"`
+	EffectiveSafetyRetentionOther  string                       `json:"effective_safety_retention_other"`
+	ReviewEvidence                 brokeredPrivacySourceFixture `json:"review_evidence"`
 }
 
 type brokeredPrivacyFixture struct {
@@ -401,7 +404,7 @@ func brokeredPrivacyManifest(t *testing.T, witness brokeredPrivacyFixture) ([]by
 		Contract string                        `json:"contract"`
 		Version  int                           `json:"version"`
 		Account  brokeredPrivacyAccountFixture `json:"account"`
-	}{"open-trestle/openrouter-account-policy", 1, witness.Account})
+	}{"open-trestle/openrouter-account-policy", 2, witness.Account})
 	manifest := brokeredPrivacyJSON(t, struct {
 		OpenRouterPrivacy brokeredPrivacyFixture `json:"openrouter_privacy"`
 	}{witness})
@@ -416,11 +419,11 @@ func newBrokeredPrivacyFixture(route brokeredPrivacyRouteFixture, environment, t
 		route.EffectiveSelector = route.ModelID
 	}
 	var witness brokeredPrivacyFixture
-	witness.Contract, witness.SchemaVersion = "open-trestle/openrouter-privacy-witness", 1
+	witness.Contract, witness.SchemaVersion = "open-trestle/openrouter-privacy-witness", 2
 	witness.Route = route
 	witness.Endpoint, witness.RequestProfile = "https://openrouter.ai/api/v1", "openrouter_zdr_chat_v1"
 	witness.Protocol, witness.CredentialMode = "openai_chat_completions", "bearer"
-	witness.ProviderSlug, witness.ProviderSlugScope = slug, "all_zdr_eligible_matches"
+	witness.ProviderSlug, witness.ProviderSlugScope = slug, "all_slug_matches"
 	witness.Upstream.RetentionContract, witness.Upstream.Training = "openrouter_zdr_with_documented_exceptions", "disabled"
 	witness.Broker.RetentionContract, witness.AcceptedRetentionContract = witness.Upstream.RetentionContract, witness.Upstream.RetentionContract
 	witness.Upstream.Evidence = brokeredPrivacySourceFixture{"https://evidence.fixture.invalid/upstream-model-slug-scope", from, brokeredPrivacyDigest([]byte("synthetic upstream model/slug review, not provider evidence"))}
@@ -430,7 +433,10 @@ func newBrokeredPrivacyFixture(route brokeredPrivacyRouteFixture, environment, t
 		AuthorityLabel:              "synthetic account review, not live approval",
 		CredentialReferenceIdentity: brokeredPrivacyDigest([]byte("open-trestle/provider-credential-environment/" + environment)),
 		ContentLogging:              "disabled", Training: "disabled",
-		ReviewEvidence: brokeredPrivacySourceFixture{"https://account-review.fixture.invalid/reviews/synthetic-account", from, brokeredPrivacyDigest([]byte("synthetic account review, not public privacy policy or live approval"))},
+		SafetyRetentionScope:           "effective_account_and_guardrails",
+		EffectiveSafetyRetentionGoogle: "denied",
+		EffectiveSafetyRetentionOther:  "denied",
+		ReviewEvidence:                 brokeredPrivacySourceFixture{"https://account-review.fixture.invalid/reviews/synthetic-account", from, brokeredPrivacyDigest([]byte("synthetic account review, not public privacy policy or live approval"))},
 	}
 	witness.TenantID, witness.RepositoryID = tenant, repository
 	witness.ReviewedAt, witness.ValidFrom, witness.ValidUntil = from, from, until

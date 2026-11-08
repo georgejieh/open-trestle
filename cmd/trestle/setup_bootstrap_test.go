@@ -57,7 +57,7 @@ func bootstrapFixture(t *testing.T) ([]string, string, *localModelFixture, *atom
 				if json.Unmarshal(body, &request) != nil || request.Model != endpoint.model || request.Max != 256 || r.Header.Get("Authorization") != "" {
 					t.Error("invalid bounded setup request")
 				}
-				text := `{"schema_version":1,"candidates":[]}`
+				text := `{"schema_version":2,"candidates":[]}`
 				if bytes.Contains(body, []byte("candidate_verification")) {
 					text = `{"schema_version":1,"verdicts":[]}`
 				}

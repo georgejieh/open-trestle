@@ -29,11 +29,14 @@ type privacyWitnessRouteFixture struct {
 }
 
 type privacyWitnessAccountFixture struct {
-	AuthorityLabel              string                      `json:"authority_label"`
-	CredentialReferenceIdentity string                      `json:"credential_reference_identity"`
-	ContentLogging              string                      `json:"content_logging"`
-	Training                    string                      `json:"training"`
-	ReviewEvidence              privacyWitnessSourceFixture `json:"review_evidence"`
+	AuthorityLabel                 string                      `json:"authority_label"`
+	CredentialReferenceIdentity    string                      `json:"credential_reference_identity"`
+	ContentLogging                 string                      `json:"content_logging"`
+	Training                       string                      `json:"training"`
+	SafetyRetentionScope           string                      `json:"safety_retention_scope"`
+	EffectiveSafetyRetentionGoogle string                      `json:"effective_safety_retention_google"`
+	EffectiveSafetyRetentionOther  string                      `json:"effective_safety_retention_other"`
+	ReviewEvidence                 privacyWitnessSourceFixture `json:"review_evidence"`
 }
 
 type privacyWitnessFixture struct {
@@ -89,17 +92,17 @@ func privacyFixtureAccountIdentity(t *testing.T, account privacyWitnessAccountFi
 		Contract string                       `json:"contract"`
 		Version  int                          `json:"version"`
 		Account  privacyWitnessAccountFixture `json:"account"`
-	}{"open-trestle/openrouter-account-policy", 1, account}))
+	}{"open-trestle/openrouter-account-policy", 2, account}))
 }
 
 func privacyFixtureWitness(t *testing.T) privacyWitnessFixture {
 	t.Helper()
 	var witness privacyWitnessFixture
-	witness.Contract, witness.SchemaVersion = "open-trestle/openrouter-privacy-witness", 1
+	witness.Contract, witness.SchemaVersion = "open-trestle/openrouter-privacy-witness", 2
 	witness.Route = privacyWitnessRouteFixture{"brokered_remote", "openrouter", "adapter-a", "primary/openrouter", "vendor/model", "fixture-version", "fixture-version"}
 	witness.Endpoint, witness.RequestProfile = "https://openrouter.ai/api/v1", "openrouter_zdr_chat_v1"
 	witness.Protocol, witness.CredentialMode = "openai_chat_completions", "bearer"
-	witness.ProviderSlug, witness.ProviderSlugScope = "fixture-upstream/region", "all_zdr_eligible_matches"
+	witness.ProviderSlug, witness.ProviderSlugScope = "fixture-upstream/region", "all_slug_matches"
 	witness.Upstream.RetentionContract, witness.Upstream.Training = "openrouter_zdr_with_documented_exceptions", "disabled"
 	witness.Broker.RetentionContract = witness.Upstream.RetentionContract
 	witness.AcceptedRetentionContract = witness.Upstream.RetentionContract
@@ -110,7 +113,10 @@ func privacyFixtureWitness(t *testing.T) privacyWitnessFixture {
 		AuthorityLabel:              "synthetic account review, not live approval",
 		CredentialReferenceIdentity: privacyFixtureDigest([]byte("open-trestle/provider-credential-environment/OPEN_TRESTLE_PROVIDER_OPENROUTER")),
 		ContentLogging:              "disabled", Training: "disabled",
-		ReviewEvidence: privacyWitnessSourceFixture{"https://account-review.fixture.invalid/reviews/synthetic-account", "2026-09-30T00:00:00Z", privacyFixtureDigest([]byte("synthetic account review, not public privacy policy or live approval"))},
+		SafetyRetentionScope:           "effective_account_and_guardrails",
+		EffectiveSafetyRetentionGoogle: "denied",
+		EffectiveSafetyRetentionOther:  "denied",
+		ReviewEvidence:                 privacyWitnessSourceFixture{"https://account-review.fixture.invalid/reviews/synthetic-account", "2026-09-30T00:00:00Z", privacyFixtureDigest([]byte("synthetic account review, not public privacy policy or live approval"))},
 	}
 	witness.TenantID, witness.RepositoryID = "tenant-a", "repository-a"
 	witness.ReviewedAt, witness.ValidFrom, witness.ValidUntil = "2026-09-30T00:00:00Z", "2026-10-01T00:00:00Z", "2026-11-01T00:00:00Z"

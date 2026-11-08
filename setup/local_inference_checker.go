@@ -153,19 +153,20 @@ func executeSetupLocalInference(ctx context.Context, plan Plan, inventory runtim
 	if err != nil {
 		return "", err
 	}
+	rawGeneration, err := packet.ProviderRequest()
+	if err != nil {
+		return "", err
+	}
 	var candidates reviewcore.CandidateBatch
 	generation, err := executeSetupLocalInferenceRoute(ctx, catalog, candidateRequest, candidateAuthorization, gateway.RouteOutputCandidateBatch, func(response provider.Response) (string, error) {
-		batch, parseErr := reviewcore.ParseCandidateBatch(response, snapshot, nil)
+		// The probe packet's context version selects the candidate schema.
+		batch, parseErr := reviewcore.ParseContextCandidateBatch(response, rawGeneration.Payload(), snapshot, packet.EvidenceItems())
 		if parseErr != nil || len(batch.Findings()) != 0 {
 			return "", ErrInvalidCheckerRuntime
 		}
 		candidates = batch
 		return batch.Identity(), nil
 	})
-	if err != nil {
-		return "", err
-	}
-	rawGeneration, err := packet.ProviderRequest()
 	if err != nil {
 		return "", err
 	}

@@ -3,6 +3,7 @@ package openai
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/georgejieh/open-trestle/internal/provider"
@@ -129,6 +130,9 @@ func normalizeChatResponse(content []byte, route provider.RouteReference) (provi
 	message := choice.Message
 	if message.Role != "assistant" || message.ReasoningContent != nil && (!utf8.ValidString(*message.ReasoningContent) || len(*message.ReasoningContent) > maximumResponseBytes) || len(message.Annotations) != 0 || len(message.ToolCalls) != 0 || !nullOrAbsent(message.FunctionCall) || !nullOrAbsent(message.Audio) {
 		return provider.Response{}, ErrInvalidConfig
+	}
+	if finish == provider.ResponseFinishLength && (message.Refusal == nil || *message.Refusal == "") && (message.Content == nil || strings.TrimSpace(*message.Content) == "") {
+		return provider.Response{}, errModelOutputExhausted
 	}
 	item := messageContentWire{Type: "output_text"}
 	if message.Content != nil {

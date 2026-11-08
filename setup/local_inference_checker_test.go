@@ -61,7 +61,7 @@ func (d countingLocalInferenceDispatcher) DispatchRoute(ctx context.Context, req
 	d.factory.maxOutput = append(d.factory.maxOutput, request.Authorization().MaxOutputTokens())
 	document := `{"schema_version":1,"verdicts":[]}`
 	if _, err := review.SanitizedCandidatePayload(request.Request(), request.Authorization().ReviewScopeIdentity()); err == nil || strings.Contains(string(request.Request().Payload()), "candidate_generation") {
-		document = `{"schema_version":1,"candidates":[]}`
+		document = `{"schema_version":2,"candidates":[]}`
 	}
 	part, _ := provider.NewResponsePart(provider.ResponsePartStructuredData, "application/json", []byte(document))
 	inputTokens, outputTokens := d.factory.inputTokens, d.factory.outputTokens

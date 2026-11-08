@@ -122,6 +122,9 @@ func NewOpenAIRouteDispatcherCatalogWithOptions(inventory runtimeconfig.RouteInv
 			if !inventory.OpenCodeConsolePrivacyCurrent(connection.OpenCodeConsoleAuthority().RouteRecordIdentity(), options.Clock.Now()) {
 				return gateway.RouteDispatcherCatalog{}, ErrInvalidRouteAuthority
 			}
+		case runtimeconfig.OllamaSigninChatProfile:
+			// No time-bounded declaration: the policy already bound the loopback
+			// endpoint, anonymous mode and Ollama cloud model suffix.
 		default:
 			return gateway.RouteDispatcherCatalog{}, ErrInvalidRouteAuthority
 		}

@@ -8,7 +8,7 @@
       "index": 0,
       "message": {
         "role": "assistant",
-        "content": "{\"schema_version\":1,\"candidates\":[]}",
+        "content": "{\"schema_version\":2,\"candidates\":[]}",
         "reasoning_content": "Synthetic private reasoning; not review output."
       },
       "finish_reason": "stop"

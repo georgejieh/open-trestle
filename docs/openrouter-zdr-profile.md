@@ -46,9 +46,13 @@ remote dispatch authority.
 
 ## Reachability and limits
 
-The opt-in GitHub advisory daemon is the remote composition path. Its protected
-inventory and runtime policy are explicit operator inputs. The ordinary local
-checkout path remains local-only and rejects this brokered route. A setup
+Two compositions reach this profile. The opt-in GitHub advisory daemon consumes
+protected inventory and runtime policy as explicit operator inputs. The direct
+foreground `trestle local-git model-review --egress policy-approved` path also
+admits it through the same catalog and sanitized handlers, while
+`--egress local-only` still rejects it. `trestle setup bootstrap init --provider
+openrouter-zdr` writes that protected configuration and this witness from explicit
+operator declarations; see [remote model review](remote-model-review.md). A setup
 approval receipt is a separate readiness artifact; the daemon does not consume
 it as dispatch authority. Publication remains separately authorized.
 
@@ -66,12 +70,19 @@ explicit authorization.
 ## Typed privacy witness
 
 The reserved `openrouter_privacy` member uses local contract
-`open-trestle/openrouter-privacy-witness`, schema version 1. It binds the full
+`open-trestle/openrouter-privacy-witness`, schema version 2. It binds the full
 route tuple and effective model selector (version when nonempty, otherwise model
 ID), exact endpoint/profile/protocol/bearer mode, routing slug and
-`all_zdr_eligible_matches` scope, tenant/repository, credential-reference identity
-and exact policy validity interval. The scope covers every ZDR-eligible endpoint
-matched by the slug. It is not a physical endpoint pin.
+`all_slug_matches` scope, tenant/repository, credential-reference identity
+and exact policy validity interval. The scope covers every endpoint matched by
+the slug, including its Safety Retention variants. It is not a physical endpoint
+pin.
+
+A schema version 1 witness, or one with the earlier `all_zdr_eligible_matches`
+scope or account-policy version 1, is not upgraded or reported separately: it is
+treated exactly like a missing witness, so the named profile refuses at its next
+validation. Re-record the witness at version 2 and approve the renewed
+configuration identities.
 
 Four fixed evidence objects are required: upstream model/slug retention and
 no-training evidence, broker retention/exception evidence, slug-coverage evidence
@@ -81,6 +92,23 @@ the actual account settings and key ownership. A public privacy page alone is
 not account review. Source substance remains a human obligation; the parser does
 not fetch URLs or prove that an artifact supports a claim. Roles may reference
 the same artifact, so structural acceptance is not proof of independent review.
+
+The account requires `safety_retention_scope` exactly
+`effective_account_and_guardrails`, plus `effective_safety_retention_google` and
+`effective_safety_retention_other` both exactly `denied`. Review must establish
+that the actual key's effective account and applicable guardrails deny Safety
+Retention for both groups throughout the reviewed interval. Missing, null,
+allowed, unknown or account-only declarations refuse. These are local evidence
+fields, not request parameters and not a live inspection of provider settings.
+
+OpenRouter documents that request `provider.zdr:true` follows the effective
+account/guardrail Safety Retention choice. Self-serve accounts with no saved
+choice may allow it. The Guardrails API fields
+`allow_safety_retention_google` and `allow_safety_retention_other` are not Chat
+request fields. A successful request or a ZDR label alone is not evidence of the
+required denial. Recheck the [current ZDR documentation](https://openrouter.ai/docs/guides/features/zdr)
+and actual key/account settings before approval. Provider conduct and later
+settings drift remain outside local structural validation.
 
 All declared training and content logging states are `disabled`. BYOK, private
 endpoints, tools and plugins are `excluded`. Upstream, broker and repository
@@ -120,7 +148,7 @@ do not copy this fixture as a live approval.
 {
   "openrouter_privacy": {
     "contract": "open-trestle/openrouter-privacy-witness",
-    "schema_version": 1,
+    "schema_version": 2,
     "route": {
       "zone": "brokered_remote",
       "provider_id": "openrouter",
@@ -135,7 +163,7 @@ do not copy this fixture as a live approval.
     "protocol": "openai_chat_completions",
     "credential_mode": "bearer",
     "provider_slug": "fixture-upstream/region",
-    "provider_slug_scope": "all_zdr_eligible_matches",
+    "provider_slug_scope": "all_slug_matches",
     "upstream": {
       "retention_contract": "openrouter_zdr_with_documented_exceptions",
       "training": "disabled",
@@ -163,6 +191,9 @@ do not copy this fixture as a live approval.
       "credential_reference_identity": "99d4435c2238d0cdf988ace246b7f44305262a35bd1c45ebe0559ed0d0286e4c",
       "content_logging": "disabled",
       "training": "disabled",
+      "safety_retention_scope": "effective_account_and_guardrails",
+      "effective_safety_retention_google": "denied",
+      "effective_safety_retention_other": "denied",
       "review_evidence": {
         "url": "https://account-review.fixture.invalid/reviews/synthetic-account",
         "retrieved_at": "2026-09-30T00:00:00Z",
@@ -186,8 +217,12 @@ do not copy this fixture as a live approval.
 ### Account identity calculation
 
 `account_policy_identity` is SHA-256 lowercase hexadecimal of `encoding/json.Marshal`
-of the fixed Go struct below, without a trailing newline. Field order, Go JSON
-string escaping and already-canonical UTC timestamp strings matter. The account
+of the fixed Go struct below, without a trailing newline. The wrapper contract
+is `open-trestle/openrouter-account-policy`, version 2. Account field order is
+`authority_label`, `credential_reference_identity`, `content_logging`, `training`,
+`safety_retention_scope`, `effective_safety_retention_google`,
+`effective_safety_retention_other`, `review_evidence`. Field order, Go JSON string
+escaping and already-canonical UTC timestamp strings matter. The account
 subsection includes its review evidence, so changing that evidence changes the
 account identity too. A nonzero arbitrary digest is not accepted.
 
@@ -218,11 +253,14 @@ type source struct {
 }
 
 type account struct {
-	AuthorityLabel              string `json:"authority_label"`
-	CredentialReferenceIdentity string `json:"credential_reference_identity"`
-	ContentLogging              string `json:"content_logging"`
-	Training                    string `json:"training"`
-	ReviewEvidence              source `json:"review_evidence"`
+	AuthorityLabel                 string `json:"authority_label"`
+	CredentialReferenceIdentity    string `json:"credential_reference_identity"`
+	ContentLogging                 string `json:"content_logging"`
+	Training                       string `json:"training"`
+	SafetyRetentionScope           string `json:"safety_retention_scope"`
+	EffectiveSafetyRetentionGoogle string `json:"effective_safety_retention_google"`
+	EffectiveSafetyRetentionOther  string `json:"effective_safety_retention_other"`
+	ReviewEvidence                 source `json:"review_evidence"`
 }
 
 func main() {
@@ -250,7 +288,7 @@ func main() {
 		Contract string  `json:"contract"`
 		Version  int     `json:"version"`
 		Account  account `json:"account"`
-	}{"open-trestle/openrouter-account-policy", 1, manifest.Privacy.Account})
+	}{"open-trestle/openrouter-account-policy", 2, manifest.Privacy.Account})
 	if err != nil {
 		panic(err)
 	}
@@ -267,13 +305,15 @@ key behind an unchanged reference does not prove account continuity.
 
 ### Compatibility
 
-The existing runtime-policy v3 schema bytes stay unchanged; native validation
-adds this required semantic binding. Existing profile configurations lacking a
-valid typed witness or matching derived account identity fail their next
-validation. Configurations already satisfying these rules are not invalid merely
-because they predate this change. There is no automatic rewrite or receipt
-upgrade. Renewed witness bytes change manifest/record/inventory/policy identities
-and require fresh exact setup approval. The daemon still consumes protected
+The existing runtime-policy v3 schema bytes stay unchanged. Named OpenRouter
+consumption now requires privacy witness schema version 2 and account-policy
+identity version 2. Retained v1 witness bytes and account identities do not gain
+Safety Retention authority and fail named validation, even if they previously
+passed. Generic v1/v2 opaque manifest handling and accepted identity preimages
+are unchanged. There is no automatic rewrite or receipt upgrade. Obtain fresh
+reviewed effective settings and all-slug-match evidence, author a v2 witness,
+then recompute the account, manifest, record, inventory and policy identities.
+Renewed witness bytes require fresh exact setup approval. The daemon still consumes protected
 configuration, not setup receipts.
 
 The binding uses the existing transitive chain: policy record identity and

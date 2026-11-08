@@ -49,11 +49,14 @@ func (r *openRouterPrivacyRoute) UnmarshalJSON(encoded []byte) error {
 }
 
 type openRouterPrivacyAccount struct {
-	AuthorityLabel              string                  `json:"authority_label"`
-	CredentialReferenceIdentity string                  `json:"credential_reference_identity"`
-	ContentLogging              string                  `json:"content_logging"`
-	Training                    string                  `json:"training"`
-	ReviewEvidence              openRouterPrivacySource `json:"review_evidence"`
+	AuthorityLabel                 string                  `json:"authority_label"`
+	CredentialReferenceIdentity    string                  `json:"credential_reference_identity"`
+	ContentLogging                 string                  `json:"content_logging"`
+	Training                       string                  `json:"training"`
+	SafetyRetentionScope           string                  `json:"safety_retention_scope"`
+	EffectiveSafetyRetentionGoogle string                  `json:"effective_safety_retention_google"`
+	EffectiveSafetyRetentionOther  string                  `json:"effective_safety_retention_other"`
+	ReviewEvidence                 openRouterPrivacySource `json:"review_evidence"`
 }
 
 type openRouterPrivacyWitness struct {
@@ -154,7 +157,7 @@ func (s openRouterPrivacySource) valid() bool {
 }
 
 func (a openRouterPrivacyAccount) valid() bool {
-	return validPrivacyLabel(a.AuthorityLabel) && nonzeroDigest(a.CredentialReferenceIdentity) && a.ContentLogging == "disabled" && a.Training == "disabled" && a.ReviewEvidence.valid()
+	return validPrivacyLabel(a.AuthorityLabel) && nonzeroDigest(a.CredentialReferenceIdentity) && a.ContentLogging == "disabled" && a.Training == "disabled" && a.SafetyRetentionScope == "effective_account_and_guardrails" && a.EffectiveSafetyRetentionGoogle == "denied" && a.EffectiveSafetyRetentionOther == "denied" && a.ReviewEvidence.valid()
 }
 
 func (a openRouterPrivacyAccount) identity() string {
@@ -165,7 +168,7 @@ func (a openRouterPrivacyAccount) identity() string {
 		Contract string                   `json:"contract"`
 		Version  int                      `json:"version"`
 		Account  openRouterPrivacyAccount `json:"account"`
-	}{"open-trestle/openrouter-account-policy", 1, a})
+	}{"open-trestle/openrouter-account-policy", 2, a})
 	if err != nil {
 		return ""
 	}
@@ -174,7 +177,7 @@ func (a openRouterPrivacyAccount) identity() string {
 }
 
 func (w openRouterPrivacyWitness) valid() bool {
-	if w.Contract != "open-trestle/openrouter-privacy-witness" || w.SchemaVersion != 1 || w.Endpoint != "https://openrouter.ai/api/v1" || w.RequestProfile != OpenRouterZDRChatProfile || w.Protocol != "openai_chat_completions" || w.CredentialMode != "bearer" || !validBrokeredSlug(w.ProviderSlug) || w.ProviderSlugScope != "all_zdr_eligible_matches" || w.Upstream.RetentionContract != openRouterRetentionContract || w.Broker.RetentionContract != openRouterRetentionContract || w.AcceptedRetentionContract != openRouterRetentionContract || w.Upstream.Training != "disabled" || !w.Account.valid() || w.BYOK != "excluded" || w.PrivateEndpoints != "excluded" || w.Tools != "excluded" || w.Plugins != "excluded" {
+	if w.Contract != "open-trestle/openrouter-privacy-witness" || w.SchemaVersion != 2 || w.Endpoint != "https://openrouter.ai/api/v1" || w.RequestProfile != OpenRouterZDRChatProfile || w.Protocol != "openai_chat_completions" || w.CredentialMode != "bearer" || !validBrokeredSlug(w.ProviderSlug) || w.ProviderSlugScope != "all_slug_matches" || w.Upstream.RetentionContract != openRouterRetentionContract || w.Broker.RetentionContract != openRouterRetentionContract || w.AcceptedRetentionContract != openRouterRetentionContract || w.Upstream.Training != "disabled" || !w.Account.valid() || w.BYOK != "excluded" || w.PrivateEndpoints != "excluded" || w.Tools != "excluded" || w.Plugins != "excluded" {
 		return false
 	}
 	if _, err := audit.NewReviewScope(w.TenantID, w.RepositoryID, "profile-validation"); err != nil {

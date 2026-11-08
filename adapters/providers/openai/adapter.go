@@ -112,9 +112,10 @@ const (
 	CredentialModeNone   CredentialMode = "none"
 )
 
-func validCredentialAuthority(mode CredentialMode, credentials APIKeyProvider, identity string, zone provider.ProviderZone, locality provider.ServiceEndpointLocality) bool {
+func validCredentialAuthority(mode CredentialMode, credentials APIKeyProvider, identity string, zone provider.ProviderZone, locality provider.ServiceEndpointLocality, profile RequestProfile) bool {
 	if mode == CredentialModeNone {
-		return zone == provider.ProviderZoneLocal && locality == provider.ServiceEndpointLoopback && credentials == nil && identity == ""
+		zoneAllowsNoAuth := zone == provider.ProviderZoneLocal || zone == provider.ProviderZonePrivateRemote && profile == RequestProfileOllamaSigninChatV1
+		return zoneAllowsNoAuth && locality == provider.ServiceEndpointLoopback && credentials == nil && identity == ""
 	}
 	return mode == CredentialModeBearer && !nilInterface(credentials) && validConfigurationIdentity(identity)
 }
@@ -184,7 +185,10 @@ func New(config Config) (*Adapter, error) {
 	endpoint, err := provider.ParseServiceEndpoint(endpointValue)
 	locality, localityErr := provider.ClassifyServiceEndpoint(endpointValue)
 	zoneMatches := config.Zone == provider.ProviderZoneLocal && locality == provider.ServiceEndpointLoopback || config.Zone == provider.ProviderZonePrivateRemote && locality == provider.ServiceEndpointRemote || config.Zone == provider.ProviderZoneBrokeredRemote && (config.RequestProfile == RequestProfileOpenRouterZDRChatV1 && endpointValue == "https://openrouter.ai/api/v1" || config.RequestProfile == RequestProfileOpenCodeGoChatV1 && endpointValue == "https://opencode.ai/inference/go/openai/v1" || config.RequestProfile == RequestProfileOpenCodeConsoleChatV1 && endpointValue == "https://opencode.ai/inference/openai/v1")
-	if err != nil || localityErr != nil || !zoneMatches || config.LocalStructuredOutput && locality != provider.ServiceEndpointLoopback || !validCredentialAuthority(mode, config.Credentials, config.CredentialIdentity, config.Zone, locality) {
+	// The one closed loopback exception for a non-local zone; validServiceProfile
+	// below enforces the rest of the Ollama sign-in profile.
+	zoneMatches = zoneMatches || config.Zone == provider.ProviderZonePrivateRemote && config.RequestProfile == RequestProfileOllamaSigninChatV1 && locality == provider.ServiceEndpointLoopback
+	if err != nil || localityErr != nil || !zoneMatches || config.LocalStructuredOutput && locality != provider.ServiceEndpointLoopback || !validCredentialAuthority(mode, config.Credentials, config.CredentialIdentity, config.Zone, locality, config.RequestProfile) {
 		return nil, ErrInvalidConfig
 	}
 	if config.ContentLoggingMode.Validate() != nil {
@@ -380,7 +384,8 @@ func (a *Adapter) Validate() error {
 	_, err := provider.NewRouteReference(a.zone, a.providerID, a.adapterID, a.connectionID, "model", "")
 	locality, localityErr := provider.ClassifyServiceEndpoint(a.endpoint.String())
 	zoneMatches := a.zone == provider.ProviderZoneLocal && locality == provider.ServiceEndpointLoopback || a.zone == provider.ProviderZonePrivateRemote && locality == provider.ServiceEndpointRemote || a.zone == provider.ProviderZoneBrokeredRemote && (a.requestProfile == RequestProfileOpenRouterZDRChatV1 || a.requestProfile == RequestProfileOpenCodeGoChatV1 || a.requestProfile == RequestProfileOpenCodeConsoleChatV1)
-	if err != nil || localityErr != nil || !zoneMatches || a.localStructuredOutput && (a.protocol != ProtocolChatCompletions || a.requestProfile != "" || a.zone != provider.ProviderZoneLocal || locality != provider.ServiceEndpointLoopback) || !validCredentialAuthority(a.credentialMode, a.credentials, a.credentialIdentity, a.zone, locality) || a.contentLoggingMode.Validate() != nil || a.httpClient.Timeout <= 0 || a.httpClient.Timeout > maximumRequestTimeout {
+	zoneMatches = zoneMatches || a.zone == provider.ProviderZonePrivateRemote && a.requestProfile == RequestProfileOllamaSigninChatV1 && locality == provider.ServiceEndpointLoopback
+	if err != nil || localityErr != nil || !zoneMatches || a.localStructuredOutput && (a.protocol != ProtocolChatCompletions || a.requestProfile != "" || a.zone != provider.ProviderZoneLocal || locality != provider.ServiceEndpointLoopback) || !validCredentialAuthority(a.credentialMode, a.credentials, a.credentialIdentity, a.zone, locality, a.requestProfile) || a.contentLoggingMode.Validate() != nil || a.httpClient.Timeout <= 0 || a.httpClient.Timeout > maximumRequestTimeout {
 		return ErrInvalidConfig
 	}
 	return nil
@@ -410,7 +415,7 @@ func (a *Adapter) dispatchRoute(ctx context.Context, request gateway.RouteDispat
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
 	}
 	authorization := request.Authorization()
-	if authorization.ContentLoggingMode() != a.contentLoggingMode || a.requestProfile != "" && authorization.RouteRecordIdentity() != a.serviceProfileRecord() {
+	if authorization.ContentLoggingMode() != a.contentLoggingMode || a.requestProfile != "" && !a.serviceProfileRecordMatches(authorization.RouteRecordIdentity()) {
 		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
 	}
 	scopeIdentity, err := review.ModelRequestReviewScopeIdentity(request.Request())
@@ -574,8 +579,13 @@ func (a *Adapter) executeWithDispatchProof(
 		normalized, err = normalizeOpenCodeConsoleResponse(content, route)
 	} else if a.requestProfile == RequestProfileOpenCodeGoChatV1 {
 		normalized, err = normalizeOpenCodeGoResponse(content, route)
+	} else if a.requestProfile == RequestProfileOllamaSigninChatV1 {
+		normalized, err = normalizeOllamaSigninResponse(content, route)
 	} else {
 		normalized, err = a.normalizeProviderResponse(content, route)
+	}
+	if errors.Is(err, errModelOutputExhausted) {
+		return failed(gateway.RouteFailureOutputExhausted, gateway.RouteReplayOutcomeUnknown, 0)
 	}
 	if err != nil {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayOutcomeUnknown, 0)
@@ -705,6 +715,18 @@ func retryAfterMilliseconds(value string) uint32 {
 
 var errInvalidResponseBody = errors.New("invalid OpenAI response body")
 
+// errModelOutputExhausted is a completed response that stopped at the output
+// token limit with no answer text, typically because a reasoning model spent
+// the whole allowance on its trace. It is classified apart from malformed
+// output so operators can see that the output allowance, not the model's
+// document shape, ended the request.
+var errModelOutputExhausted = errors.New("model output allowance exhausted before an answer")
+
+// errNoOutputParts is a response with no answer part (for example only a
+// reasoning item). It is refused like any malformed response unless the
+// response stopped at the output limit.
+var errNoOutputParts = errors.New("OpenAI response has no answer part")
+
 // readBounded returns the transport read error when the body could not be read, or
 // errInvalidResponseBody when the body was read but violated the size contract.
 func readBounded(response *http.Response) ([]byte, error) {
@@ -818,6 +840,12 @@ func normalizeResponse(content []byte, route provider.RouteReference) (provider.
 		return provider.Response{}, err
 	}
 	parts, err := normalizeOutput(wire.Output, wire.Status)
+	if errors.Is(err, errNoOutputParts) && finish == provider.ResponseFinishLength {
+		return provider.Response{}, errModelOutputExhausted
+	}
+	if errors.Is(err, errNoOutputParts) {
+		return provider.Response{}, ErrInvalidConfig
+	}
 	if err != nil {
 		return provider.Response{}, err
 	}
@@ -888,7 +916,7 @@ func normalizeOutput(output []json.RawMessage, responseStatus string) ([]provide
 		}
 	}
 	if len(parts) == 0 {
-		return nil, ErrInvalidConfig
+		return nil, errNoOutputParts
 	}
 	return parts, nil
 }
