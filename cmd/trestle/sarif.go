@@ -24,9 +24,23 @@ type sarifLog struct {
 }
 
 type sarifRun struct {
-	Tool       sarifTool          `json:"tool"`
-	Results    []sarifResult      `json:"results"`
-	Properties sarifRunProperties `json:"properties"`
+	Tool        sarifTool          `json:"tool"`
+	Invocations []sarifInvocation  `json:"invocations,omitempty"`
+	Results     []sarifResult      `json:"results"`
+	Properties  sarifRunProperties `json:"properties"`
+}
+
+// sarifInvocation records whether the tool ran to completion. A refused or
+// incomplete model review reports executionSuccessful=false with a notification
+// instead of a silent empty result list.
+type sarifInvocation struct {
+	ExecutionSuccessful        bool                `json:"executionSuccessful"`
+	ToolExecutionNotifications []sarifNotification `json:"toolExecutionNotifications,omitempty"`
+}
+
+type sarifNotification struct {
+	Level   string       `json:"level"`
+	Message sarifMessage `json:"message"`
 }
 
 type sarifTool struct {
@@ -49,12 +63,15 @@ type sarifConfiguration struct {
 }
 
 type sarifResult struct {
-	RuleID       string                `json:"ruleId"`
-	Level        string                `json:"level"`
-	Message      sarifMessage          `json:"message"`
-	Locations    []sarifLocation       `json:"locations"`
-	Fingerprints map[string]string     `json:"fingerprints"`
-	Properties   sarifResultProperties `json:"properties"`
+	RuleID       string            `json:"ruleId"`
+	Level        string            `json:"level"`
+	Message      sarifMessage      `json:"message"`
+	Locations    []sarifLocation   `json:"locations"`
+	Fingerprints map[string]string `json:"fingerprints,omitempty"`
+	// PartialFingerprints carry cross-run dedup keys (GitHub code scanning reads
+	// this property); omitted for results that do not define any.
+	PartialFingerprints map[string]string     `json:"partialFingerprints,omitempty"`
+	Properties          sarifResultProperties `json:"properties"`
 }
 
 type sarifMessage struct {
@@ -113,6 +130,22 @@ type sarifRunProperties struct {
 	SourceSelectedCount   *uint32                  `json:"trestleSourceSelectedCount,omitempty"`
 	SourceOmittedCount    *uint32                  `json:"trestleSourceOmittedCount,omitempty"`
 	Omissions             []sarifOmission          `json:"trestleOmissions,omitempty"`
+	// Model-review run properties; omitted by every other SARIF producer.
+	// InstructionContextOmittedCount counts advisory repository instruction
+	// files that were not supplied; it is never part of SourceOmittedCount.
+	InstructionContextOmittedCount *uint32 `json:"trestleInstructionContextOmittedCount,omitempty"`
+	// AgentConfigurationSourceCount and InstructionLikeSourceCount count review
+	// sources flagged as repository AI material or instruction-like text; such
+	// sources were reviewed as code, never followed.
+	AgentConfigurationSourceCount *int     `json:"trestleAgentConfigurationSourceCount,omitempty"`
+	InstructionLikeSourceCount    *int     `json:"trestleInstructionLikeSourceCount,omitempty"`
+	ModelReviewStatus             string   `json:"trestleModelReviewStatus,omitempty"`
+	CIDisposition                 string   `json:"trestleCiDisposition,omitempty"`
+	RunStatus                     string   `json:"trestleRunStatus,omitempty"`
+	Failure                       string   `json:"trestleFailure,omitempty"`
+	VerifierIndependence          string   `json:"trestleVerificationIndependence,omitempty"`
+	Limitations                   []string `json:"trestleLimitations,omitempty"`
+	ComprehensiveClearance        *bool    `json:"trestleComprehensiveClearance,omitempty"`
 }
 
 type sarifOmission struct {
@@ -127,6 +160,15 @@ type sarifResultProperties struct {
 	ObservationIdentity string   `json:"trestleObservationId,omitempty"`
 	AnalysisResultID    string   `json:"trestleAnalysisResultId,omitempty"`
 	CheckID             string   `json:"trestleCheckId,omitempty"`
+	// Model-review result properties. Fix text is unverified model guidance.
+	Category             string `json:"trestleCategory,omitempty"`
+	Severity             string `json:"trestleSeverity,omitempty"`
+	VerifierIndependence string `json:"trestleVerificationIndependence,omitempty"`
+	FixGuidance          string `json:"trestleFixGuidance,omitempty"`
+	FixAuthority         string `json:"trestleFixAuthority,omitempty"`
+	// Contributors names the review set members (general, or a specialist
+	// profile ID) whose verified findings were merged into this result.
+	Contributors []string `json:"trestleContributors,omitempty"`
 }
 
 func runSARIF(fixturePath string, stdout, stderr io.Writer) int {

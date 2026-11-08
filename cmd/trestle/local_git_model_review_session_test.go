@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"os"
 	"reflect"
 	"strings"
@@ -370,8 +371,12 @@ func TestLocalModelSessionCapacityAndTimingRemainBounded(t *testing.T) {
 }
 
 func TestLocalModelSessionCannotReceiveForgeOrCustomHandlerCapabilities(t *testing.T) {
-	allowed := map[string]bool{"TenantID": true, "RepositoryID": true, "Repository": true, "ObjectsRoot": true, "ObjectStoreProfile": true, "ObjectAlgorithm": true, "Inventory": true, "Policy": true, "Egress": true, "Credentials": true, "Clock": true, "Timeout": true, "ArtifactCapacity": true, "RenewalInterval": true, "Retention": true, "RetainedMemoryInput": true, "GenerationSanitizer": true, "VerificationSanitizer": true}
+	allowed := map[string]bool{"TenantID": true, "RepositoryID": true, "Repository": true, "ObjectsRoot": true, "ObjectStoreProfile": true, "ObjectAlgorithm": true, "Inventory": true, "Policy": true, "Egress": true, "Credentials": true, "Clock": true, "Timeout": true, "ArtifactCapacity": true, "RenewalInterval": true, "Retention": true, "RetainedMemoryInput": true, "GenerationSanitizer": true, "VerificationSanitizer": true, "ModelHTTPClient": true, "ModelHTTPClientIdentity": true}
 	options := reflect.TypeOf(localreview.SessionOptions{})
+	// The policy-approved transport is a plain identity-bound HTTP client, not a handler.
+	if field, ok := options.FieldByName("ModelHTTPClient"); !ok || field.Type != reflect.TypeOf((*http.Client)(nil)) {
+		t.Fatal("model transport option must remain a plain HTTP client")
+	}
 	for name, want := range map[string]reflect.Type{
 		"ObjectStoreProfile": reflect.TypeOf(scm.LocalGitObjectStoreProfile("")),
 		"ObjectAlgorithm":    reflect.TypeOf(evidence.RevisionAlgorithm("")),

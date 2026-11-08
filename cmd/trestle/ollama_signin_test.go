@@ -3,10 +3,16 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
 	"testing"
 )
 
@@ -25,6 +31,426 @@ func TestMain(m *testing.M) {
 	ollamaLookPath = func() (string, error) { return "", errors.New("ollama is not installed in tests") }
 	ollamaRunSigninChild = func(context.Context) error { return errors.New("ollama signin is not run in tests") }
 	os.Exit(m.Run())
+}
+
+func useRealOllamaTags(t *testing.T) {
+	t.Helper()
+	previous := ollamaReadTags
+	ollamaReadTags = readOllamaDaemonTags
+	t.Cleanup(func() { ollamaReadTags = previous })
+}
+
+func useRealOllamaProbe(t *testing.T) {
+	t.Helper()
+	previous := ollamaSigninProbe
+	ollamaSigninProbe = probeOllamaSignin
+	t.Cleanup(func() { ollamaSigninProbe = previous })
+}
+
+const (
+	ollamaTestGenerator = "gpt-oss:120b-cloud"
+	ollamaTestVerifier  = "qwen3.5:397b-cloud"
+)
+
+func ollamaFixtureTags() []map[string]any {
+	return []map[string]any{
+		{"name": ollamaTestGenerator, "model": ollamaTestGenerator, "remote_model": "gpt-oss:120b", "remote_host": "https://ollama.com", "details": map[string]any{"context_length": 131072}},
+		{"name": ollamaTestVerifier, "model": ollamaTestVerifier, "remote_model": "qwen3.5:397b", "remote_host": "https://ollama.com", "details": map[string]any{"context_length": 262144}},
+		{"name": "llama3.2:3b", "model": "llama3.2:3b", "details": map[string]any{"context_length": 131072}},
+		{"name": "imposter:7b-cloud", "model": "imposter:7b-cloud", "details": map[string]any{}},
+		{"name": "elsewhere:1b-cloud", "model": "elsewhere:1b-cloud", "remote_model": "elsewhere:1b", "remote_host": "https://other.example", "details": map[string]any{}},
+	}
+}
+
+// ollamaFakeDaemon answers GET /api/tags and POST /v1/chat/completions on a
+// loopback httptest server. Review requests are checked by the remote fixture
+// transport; the fixed sign-in probe is answered directly.
+type ollamaFakeDaemon struct {
+	t         *testing.T
+	server    *httptest.Server
+	tags      []map[string]any
+	transport *remoteModelTransport
+	mu        sync.Mutex
+	signedIn  bool
+	probes    int
+	refused   int
+	chats     int
+}
+
+func newOllamaFakeDaemon(t *testing.T, tags []map[string]any, transport *remoteModelTransport) *ollamaFakeDaemon {
+	t.Helper()
+	d := &ollamaFakeDaemon{t: t, tags: tags, transport: transport, signedIn: true}
+	d.server = httptest.NewServer(http.HandlerFunc(d.serve))
+	t.Cleanup(d.server.Close)
+	if transport != nil {
+		transport.target = d.endpoint() + "/chat/completions"
+	}
+	return d
+}
+
+func (d *ollamaFakeDaemon) endpoint() string { return d.server.URL + "/v1" }
+
+func (d *ollamaFakeDaemon) setSignedIn(value bool) {
+	d.mu.Lock()
+	d.signedIn = value
+	d.mu.Unlock()
+}
+
+func (d *ollamaFakeDaemon) counts() (chats, probes, refused int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.chats, d.probes, d.refused
+}
+
+func (d *ollamaFakeDaemon) serve(w http.ResponseWriter, r *http.Request) {
+	if _, present := r.Header["Authorization"]; present || r.Header.Get("Cookie") != "" {
+		d.t.Error("a request to the local Ollama daemon carried a credential")
+	}
+	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/api/tags":
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"models": d.tags})
+	case r.Method == http.MethodPost && r.URL.Path == "/v1/chat/completions":
+		body, err := io.ReadAll(io.LimitReader(r.Body, (8<<20)+1))
+		_ = r.Body.Close()
+		if err != nil {
+			http.Error(w, "unreadable", http.StatusBadRequest)
+			return
+		}
+		d.mu.Lock()
+		d.chats++
+		signedIn := d.signedIn
+		if !signedIn {
+			d.refused++
+		}
+		d.mu.Unlock()
+		if !signedIn {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+			return
+		}
+		var probe struct {
+			Model    string `json:"model"`
+			Messages []struct{ Role, Content string }
+		}
+		if json.Unmarshal(body, &probe) == nil && len(probe.Messages) == 1 && probe.Messages[0].Content == ollamaSigninProbePrompt {
+			d.mu.Lock()
+			d.probes++
+			d.mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "probe", "object": "chat.completion", "model": probe.Model, "choices": []any{map[string]any{"index": 0, "message": map[string]any{"role": "assistant", "content": "OK"}, "finish_reason": "stop"}}})
+			return
+		}
+		if d.transport == nil {
+			d.t.Error("unexpected review request to the fake Ollama daemon")
+			http.Error(w, "unexpected", http.StatusBadRequest)
+			return
+		}
+		forwarded := r.Clone(r.Context())
+		forwarded.URL.Scheme, forwarded.URL.Host = "http", r.Host
+		forwarded.Body = io.NopCloser(bytes.NewReader(body))
+		response, err := d.transport.RoundTrip(forwarded)
+		if err != nil {
+			d.t.Errorf("review request refused by the fixture: %v", err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		defer response.Body.Close()
+		for key, values := range response.Header {
+			w.Header()[key] = values
+		}
+		w.WriteHeader(response.StatusCode)
+		_, _ = io.Copy(w, response.Body)
+	default:
+		d.t.Errorf("unexpected request to the fake Ollama daemon: %s %s", r.Method, r.URL.Path)
+		http.NotFound(w, r)
+	}
+}
+
+func ollamaSigninBootstrapArgs(t *testing.T, endpoint string) ([]string, string) {
+	t.Helper()
+	args, dir := remoteBootstrapArgs(t, "ollama-cloud")
+	args = replaceLocalGitChangeValue(args, "--provider", ollamaSigninProvider)
+	args = replaceLocalGitChangeValue(args, "--generation-model", ollamaTestGenerator)
+	args = replaceLocalGitChangeValue(args, "--verification-model", ollamaTestVerifier)
+	index := slices.Index(args, "--generation-credential-environment")
+	args = slices.Delete(args, index, index+2)
+	return append(args, "--endpoint", endpoint, "--declare-ollama-cloud-signin"), dir
+}
+
+// TestSetupBootstrapOllamaSigninPolicyApprovedReview proves the documented
+// journey: init reads the daemon's tags, writes a private_remote route bound to
+// the loopback daemon with no credential, and the printed review command sends
+// sanitized generation and verification requests, without a key, to that daemon.
+func TestSetupBootstrapOllamaSigninPolicyApprovedReview(t *testing.T) {
+	remoteScannerInstalled(t)
+	useRealOllamaTags(t)
+	transport := &remoteModelTransport{t: t, anonymous: true, models: map[string]string{ollamaTestGenerator: "", ollamaTestVerifier: ""}}
+	daemon := newOllamaFakeDaemon(t, ollamaFixtureTags(), transport)
+	args, dir := ollamaSigninBootstrapArgs(t, daemon.endpoint())
+	ready, _ := remoteBootstrapInvoke(t, args, 0)
+	if !ready.Ready || ready.Provider != ollamaSigninProvider || len(ready.Pending) != 0 || len(ready.Refused) != 0 || !slices.Contains(ready.Limitations, "ollama_cloud_signin_not_verified_by_setup") || slices.Contains(ready.Limitations, "no_network_or_model_call_during_setup") {
+		t.Fatalf("Ollama sign-in bootstrap not ready or mislabelled: %+v", ready)
+	}
+	if again, _ := remoteBootstrapInvoke(t, args, 0); again.Policy != ready.Policy || again.Inventory != ready.Inventory {
+		t.Fatal("repeated init changed derived identities")
+	}
+	policy := stringMustRead(t, filepath.Join(dir, "policy.json"))
+	for _, want := range []string{`"schema_version":7`, `"request_profile":"ollama_signin_chat_v1"`, `"credential_mode":"none"`, `"allowed_zones":["private_remote"]`, `"endpoint":"` + daemon.endpoint() + `"`} {
+		if !strings.Contains(policy, want) {
+			t.Fatalf("policy lacks %s: %s", want, policy)
+		}
+	}
+	if strings.Contains(policy, "credential_environment") {
+		t.Fatal("the Ollama sign-in policy named a credential")
+	}
+	routes := stringMustRead(t, filepath.Join(dir, "routes.json"))
+	if !strings.Contains(routes, `"zone":"private_remote"`) || !strings.Contains(routes, `"provider_id":"ollama-signin"`) || strings.Contains(routes, `"zone":"local"`) {
+		t.Fatalf("routes are not private_remote ollama-signin routes: %s", routes)
+	}
+	if evidence := initDecodedEvidence(t, routes); !strings.Contains(evidence, `"remote_host":"https://ollama.com"`) || !strings.Contains(evidence, "ollama_daemon_observation") {
+		t.Fatalf("route evidence lacks the daemon observation: %s", evidence)
+	}
+	command := ready.ReviewCommand
+	if !slices.Contains(command, "policy-approved") || slices.Contains(command, "local-only") {
+		t.Fatal("review command does not use the sanitized policy-approved path")
+	}
+	var stdout, stderr bytes.Buffer
+	code := run(replaceLocalGitChangeValue(command[1:], "--format", "json"), &stdout, &stderr)
+	var receipt localModelReceipt
+	if code != 4 || json.Unmarshal(stdout.Bytes(), &receipt) != nil {
+		t.Fatalf("review exit=%d out=%s err=%s requests=%v", code, stdout.String(), stderr.String(), transport.requests)
+	}
+	if receipt.Status != "findings" || receipt.RunStatus != "succeeded" || receipt.Policy != ready.Policy || receipt.GenerationRoute == receipt.VerificationRoute || receipt.Independence != "distinct_model" {
+		t.Fatalf("review did not complete with independent routes: %+v", receipt)
+	}
+	if !slices.Equal(transport.requests, []string{"candidate_generation:" + ollamaTestGenerator, "candidate_verification:" + ollamaTestVerifier}) {
+		t.Fatalf("review did not use the two cloud models: %v", transport.requests)
+	}
+	if _, probes, _ := daemon.counts(); probes != 0 {
+		t.Fatal("setup or review sent a sign-in probe")
+	}
+	// The local-only egress mode refuses this route even though its endpoint is loopback.
+	var localOut, localErr bytes.Buffer
+	code = run(replaceLocalGitChangeValue(replaceLocalGitChangeValue(command[1:], "--format", "json"), "--egress", "local-only"), &localOut, &localErr)
+	var localReceipt localModelReceipt
+	if json.Unmarshal(localOut.Bytes(), &localReceipt) != nil || localReceipt.Status != "refused" || len(transport.requests) != 2 {
+		t.Fatalf("local-only egress ran the Ollama Cloud route: exit=%d out=%s requests=%v", code, localOut.String(), transport.requests)
+	}
+	daemon.server.Close()
+	stopped, _ := remoteBootstrapInvoke(t, []string{"check", "--directory", dir}, 3)
+	if stopped.Ready || !slices.Equal(stopped.Pending, []string{"ollama_cloud_models_listed"}) || !strings.Contains(strings.Join(stopped.Messages, " "), "ollama serve") {
+		t.Fatalf("a stopped daemon was not a clear pending prerequisite: %+v", stopped)
+	}
+}
+
+func TestSetupBootstrapOllamaSigninRefusals(t *testing.T) {
+	remoteScannerInstalled(t)
+	useRealOllamaTags(t)
+	daemon := newOllamaFakeDaemon(t, ollamaFixtureTags(), nil)
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closedEndpoint := closed.URL + "/v1"
+	closed.Close()
+	without := func(args []string, name string) []string {
+		index := slices.Index(args, name)
+		return slices.Delete(slices.Clone(args), index, index+1)
+	}
+	for _, test := range []struct {
+		name, reason string
+		mutate       func([]string) []string
+	}{
+		{"missing sign-in declaration", "refusing to send source to Ollama Cloud without consent", func(a []string) []string { return without(a, "--declare-ollama-cloud-signin") }},
+		{"non-cloud model", "is not an Ollama Cloud model", func(a []string) []string { return replaceLocalGitChangeValue(a, "--verification-model", "llama3.2:3b") }},
+		{"cloud name the daemon runs locally", "not as an Ollama Cloud model", func(a []string) []string {
+			return replaceLocalGitChangeValue(a, "--verification-model", "imposter:7b-cloud")
+		}},
+		{"cloud name relayed elsewhere", "not as an Ollama Cloud model", func(a []string) []string {
+			return replaceLocalGitChangeValue(a, "--generation-model", "elsewhere:1b-cloud")
+		}},
+		{"unlisted model", "is not listed by the Ollama daemon", func(a []string) []string {
+			return replaceLocalGitChangeValue(a, "--generation-model", "kimi-k2:1t-cloud")
+		}},
+		{"same model", "must differ", func(a []string) []string {
+			return replaceLocalGitChangeValue(a, "--verification-model", ollamaTestGenerator)
+		}},
+		{"credential variable", "sends no key", func(a []string) []string {
+			return append(a, "--generation-credential-environment", "OPEN_TRESTLE_PROVIDER_REMOTE_TEST")
+		}},
+		{"remote endpoint", "must be exactly http://127.0.0.1:PORT/v1", func(a []string) []string { return replaceLocalGitChangeValue(a, "--endpoint", "https://ollama.com/v1") }},
+		{"ipv6 loopback endpoint", "must be exactly http://127.0.0.1:PORT/v1", func(a []string) []string {
+			return replaceLocalGitChangeValue(a, "--endpoint", "http://[::1]:11434/v1")
+		}},
+		{"daemon not running", "no Ollama model list could be read", func(a []string) []string { return replaceLocalGitChangeValue(a, "--endpoint", closedEndpoint) }},
+		{"witness flag", "does not apply", func(a []string) []string {
+			return append(a, "--account-evidence", "https://evidence.fixture.invalid/account,"+remoteTestDigest)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			args, dir := ollamaSigninBootstrapArgs(t, daemon.endpoint())
+			result, stderr := remoteBootstrapInvoke(t, test.mutate(args), 4)
+			if result.Ready || result.Status != "refused" || !strings.Contains(strings.Join(result.Messages, " "), test.reason) || !strings.Contains(stderr, test.reason) {
+				t.Fatalf("refusal lacked clear reason %q: %+v %s", test.reason, result, stderr)
+			}
+			if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
+				t.Fatal("refused init wrote configuration")
+			}
+		})
+	}
+	if chats, _, _ := daemon.counts(); chats != 0 {
+		t.Fatal("bootstrap sent a model request")
+	}
+}
+
+// TestSetupBootstrapLocalRefusesOllamaCloudModels proves the local route
+// refuses a model the local Ollama relays to Ollama Cloud: by the daemon's
+// remote_host when it lists the model, and by the cloud name suffix when no
+// model list can be read.
+func TestSetupBootstrapLocalRefusesOllamaCloudModels(t *testing.T) {
+	invoke := func(t *testing.T, args []string, want int) string {
+		t.Helper()
+		var out, errOut bytes.Buffer
+		code := runSetupWithClock(append([]string{"bootstrap"}, args...), &out, &errOut, fixedSetupClock{setupTimeCLI()})
+		var result setupBootstrapResult
+		if code != want || json.Unmarshal(out.Bytes(), &result) != nil {
+			t.Fatalf("bootstrap code=%d want=%d out=%s err=%s", code, want, out.String(), errOut.String())
+		}
+		return errOut.String()
+	}
+	for _, test := range []struct{ name, flag, model string }{
+		{"-cloud name without a model list", "--generation-model", "gpt-oss:20b-cloud"},
+		{":cloud name without a model list", "--verification-model", "deepseek-v4-pro:cloud"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			args, dir, _, _ := bootstrapFixture(t)
+			stderr := invoke(t, replaceLocalGitChangeValue(args, test.flag, test.model), 4)
+			if !strings.Contains(stderr, test.model+": "+ollamaCloudLocalRefusal) {
+				t.Fatalf("local route did not refuse %s clearly: %s", test.model, stderr)
+			}
+			initAssertAbsent(t, filepath.Join(dir, "routes.json"))
+		})
+	}
+	t.Run("remote_host in the daemon's model list", func(t *testing.T) {
+		useRealOllamaTags(t)
+		daemon := newOllamaFakeDaemon(t, []map[string]any{{"name": "tuned:latest", "model": "tuned:latest", "remote_model": "tuned", "remote_host": "https://ollama.com"}}, nil)
+		args, dir, _, _ := bootstrapFixture(t)
+		args = replaceLocalGitChangeValue(replaceLocalGitChangeValue(args, "--generation-endpoint", daemon.endpoint()), "--generation-model", "tuned")
+		stderr := invoke(t, args, 4)
+		if !strings.Contains(stderr, "tuned: "+ollamaCloudLocalRefusal) {
+			t.Fatalf("local route did not refuse a remote_host model without a cloud name: %s", stderr)
+		}
+		initAssertAbsent(t, filepath.Join(dir, "routes.json"))
+		if chats, _, _ := daemon.counts(); chats != 0 {
+			t.Fatal("the local check sent a model request")
+		}
+	})
+	t.Run("a model the daemon runs locally passes", func(t *testing.T) {
+		useRealOllamaTags(t)
+		daemon := newOllamaFakeDaemon(t, ollamaFixtureTags(), nil)
+		args, dir, _, _ := bootstrapFixture(t)
+		// Both roles point at the fake daemon, so neither tags read reaches a model fixture.
+		args = replaceLocalGitChangeValue(replaceLocalGitChangeValue(args, "--generation-endpoint", daemon.endpoint()), "--generation-model", "llama3.2:3b")
+		args = replaceLocalGitChangeValue(args, "--verification-endpoint", daemon.endpoint())
+		if stderr := invoke(t, args, 3); stderr != "" {
+			t.Fatalf("a local model was refused: %s", stderr)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "routes.json")); err != nil {
+			t.Fatal("the local bootstrap did not write its configuration")
+		}
+	})
+}
+
+// TestInitOllamaSigninNotSignedInThenConsentedSigninRechecks walks the wizard
+// option: only cloud models are offered, the one synthetic test message is
+// sent only with consent, an authentication answer offers `ollama signin`
+// (run only on y), the same message is sent once more, and the first review
+// goes to the daemon with no key.
+func TestInitOllamaSigninNotSignedInThenConsentedSigninRechecks(t *testing.T) {
+	remoteScannerInstalled(t)
+	useRealOllamaTags(t)
+	useRealOllamaProbe(t)
+	transport := &remoteModelTransport{t: t, anonymous: true, models: map[string]string{ollamaTestGenerator: "", ollamaTestVerifier: ""}}
+	daemon := newOllamaFakeDaemon(t, ollamaFixtureTags(), transport)
+	daemon.setSignedIn(false)
+	previousLook, previousRun := ollamaLookPath, ollamaRunSigninChild
+	signins := 0
+	ollamaLookPath = func() (string, error) { return "/fixture/bin/ollama", nil }
+	ollamaRunSigninChild = func(context.Context) error {
+		signins++
+		daemon.setSignedIn(true)
+		return nil
+	}
+	t.Cleanup(func() { ollamaLookPath, ollamaRunSigninChild = previousLook, previousRun })
+	checkout := remoteBootstrapCheckout(t)
+	dir := filepath.Join(t.TempDir(), "setup")
+	result := runInitScript(t, checkout, []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review", "--endpoint", daemon.endpoint()},
+		"5",           // Ollama on this machine, signed in to Ollama Cloud
+		"1",           // finder: the first listed cloud model
+		"llama3.2:3b", // a local model is not offered: must re-prompt
+		"2",           // checker
+		"y",           // send the one test message
+		"y",           // run ollama signin
+		"", "8192",    // accept the listed context; output limit
+		"n",   // the plan does not charge per token
+		"yes", // route declaration
+		"yes", // Ollama Cloud sign-in declaration
+		"",    // keep names
+		"y",   // run the first review
+	)
+	if result.code != initExitDone {
+		t.Fatalf("init exit=%d\nstdout:\n%s\nstderr:\n%s", result.code, result.stdout, result.stderr)
+	}
+	for _, want := range []string{"The ollama command is installed", "Found 2 Ollama Cloud models", "llama3.2:3b is not one of the Ollama Cloud models", "uses your Ollama Cloud usage", "not signed in to Ollama Cloud (HTTP 401)", "ollama signin finished", "Your local Ollama is signed in", "No API key", "Your local Ollama lists both models as Ollama Cloud models", "A review sends the selected source to Ollama Cloud through your signed-in local Ollama (" + daemon.endpoint() + ")", "Review finished: 1 confirmed finding"} {
+		if !strings.Contains(result.stdout, want) {
+			t.Fatalf("output lacks %q:\n%s", want, result.stdout)
+		}
+	}
+	for _, unwanted := range []string{"imposter:7b-cloud", "elsewhere:1b-cloud", "API key variable"} {
+		if strings.Contains(result.stdout, unwanted) {
+			t.Fatalf("output offered or mentioned %q:\n%s", unwanted, result.stdout)
+		}
+	}
+	if _, probes, refused := daemon.counts(); signins != 1 || probes != 1 || refused != 1 {
+		t.Fatalf("sign-in check: signins=%d probes=%d unauthorized=%d (want 1 each)", signins, probes, refused)
+	}
+	if !slices.Equal(transport.requests, []string{"candidate_generation:" + ollamaTestGenerator, "candidate_verification:" + ollamaTestVerifier}) {
+		t.Fatalf("review did not use the two chosen models: %v", transport.requests)
+	}
+	initAssertProtected(t, dir, "routes.json", "policy.json", "bootstrap.json", "NEXT-STEPS.txt")
+	if policy := stringMustRead(t, filepath.Join(dir, "policy.json")); strings.Contains(policy, "credential_environment") || !strings.Contains(policy, "ollama_signin_chat_v1") {
+		t.Fatal("the wizard wrote a credential or lost the profile")
+	}
+}
+
+func TestInitOllamaSigninSendsNothingWithoutConsent(t *testing.T) {
+	remoteScannerInstalled(t)
+	useRealOllamaTags(t)
+	useRealOllamaProbe(t)
+	daemon := newOllamaFakeDaemon(t, ollamaFixtureTags(), nil)
+	daemon.setSignedIn(false)
+	checkout := remoteBootstrapCheckout(t)
+	dir := filepath.Join(t.TempDir(), "setup")
+	result := runInitScript(t, checkout, []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review", "--endpoint", daemon.endpoint()},
+		"5", "1", "2",
+		"n", // do not send the test message
+	)
+	if result.code != initExitUsage || !strings.Contains(result.stdout, "The ollama command was not found on PATH") || !strings.Contains(result.stdout, "Not checked.") {
+		t.Fatalf("init exit=%d\nstdout:\n%s\nstderr:\n%s", result.code, result.stdout, result.stderr)
+	}
+	if chats, _, _ := daemon.counts(); chats != 0 {
+		t.Fatal("a chat request was sent without consent")
+	}
+	initAssertAbsent(t, dir)
+}
+
+func TestInitLocalRefusesOllamaCloudModel(t *testing.T) {
+	checkout := remoteBootstrapCheckout(t)
+	dir := filepath.Join(t.TempDir(), "setup")
+	result := runInitScript(t, checkout, []string{"--no-input", "--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review", "--provider", "local", "--endpoint", "http://127.0.0.1:9/v1", "--verification-endpoint", "http://127.0.0.1:9/v1", "--generation-model", "gpt-oss:20b-cloud", "--verification-model", "llama3.2:3b"})
+	if result.code != initExitUsage || !strings.Contains(result.stderr, "gpt-oss:20b-cloud: "+ollamaCloudLocalRefusal) {
+		t.Fatalf("init exit=%d\nstdout:\n%s\nstderr:\n%s", result.code, result.stdout, result.stderr)
+	}
+	initAssertAbsent(t, dir)
 }
 
 func TestOllamaTagsReaderIsBoundedToLoopbackTagsDocuments(t *testing.T) {

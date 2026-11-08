@@ -231,6 +231,7 @@ func TestRetainedSessionFreshGraphsUseActualRetrievedAdvice(t *testing.T) {
 				t.Fatal("native nine-task run did not finish once")
 			}
 		}
+		assertFindingGuidance(t, r)
 		rmResultBounds(t, r, path, true)
 		m, a := rmReadMemory(t, s, p, o.Clock.Now())
 		if m.RetrieverIdentity() != inputID || m.MemoryScopeIdentity() != w.Scope.Identity || m.PolicyIdentity() != o.Policy.ReviewPolicyIdentity() || len(m.Queries()) != 1 || m.Queries()[0].Path() != "a.go" || len(m.Omissions()) != 0 {

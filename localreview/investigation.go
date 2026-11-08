@@ -27,7 +27,7 @@ type investigationSession struct {
 
 // NewInvestigationSession transfers root ownership only after inert construction succeeds.
 func NewInvestigationSession(options SessionOptions, policy review.InvestigationPolicy) (*Session, error) {
-	return newSession(options, &policy)
+	return newSession(options, &policy, review.ContextSpecialist{})
 }
 
 func validateInvestigationSessionPolicy(o SessionOptions, policy review.InvestigationPolicy) error {

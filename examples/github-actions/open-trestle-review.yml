@@ -1,0 +1,243 @@
+# Open Trestle pull-request review (example, engineering-tested offline only).
+#
+# STATUS: this workflow has never run on GitHub. The Open Trestle flags and the
+# SARIF output are covered by offline tests; the GitHub-side steps (install,
+# upload-sarif, reviewdog) are written from documentation and are unverified.
+# Read examples/github-actions/README.md before copying it.
+name: Open Trestle review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: open-trestle-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# Minimal token scope. security-events is needed only for upload-sarif;
+# pull-requests is needed only for reviewdog's inline review comments.
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+
+env:
+  # PLACEHOLDER: pick two different models your provider account can use.
+  # The review refuses to start while either still begins with YOUR_.
+  GENERATION_MODEL: YOUR_GENERATION_MODEL
+  VERIFICATION_MODEL: YOUR_DIFFERENT_VERIFICATION_MODEL
+  # PLACEHOLDER: pin to a release tag or a full commit SHA once releases exist.
+  OPEN_TRESTLE_REF: main
+  OPEN_TRESTLE_REPOSITORY: https://github.com/georgejieh/open-trestle.git
+
+jobs:
+  review:
+    # Fork pull requests receive no repository secrets and a read-only token, so
+    # this job would fail there. Skip them rather than pretend to review.
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !github.event.pull_request.draft
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      # Full history: the review needs the head commit and the merge base of the
+      # pull request's base and head, and `git merge-base` needs the history
+      # between them. A shallow checkout makes model-review stop with an
+      # explanation and no model call.
+      - name: Check out the pull request head with full history
+        uses: actions/checkout@v4 # Pin to a full commit SHA in your repository.
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Refuse to run with placeholder models
+        run: |
+          case "$GENERATION_MODEL:$VERIFICATION_MODEL" in
+            *YOUR_*) echo "::error::Set GENERATION_MODEL and VERIFICATION_MODEL in the workflow env."; exit 2 ;;
+          esac
+          if [ "$GENERATION_MODEL" = "$VERIFICATION_MODEL" ]; then
+            echo "::error::The generation and verification models must differ."; exit 2
+          fi
+
+      # ---- Install Open Trestle ---------------------------------------------
+      # PLACEHOLDER (not usable today): no Open Trestle release artifact exists
+      # yet. When one does, replace the build-from-source step below with a
+      # download of a pinned version plus its checksum, for example:
+      #
+      #   - name: Install Open Trestle (PLACEHOLDER release artifact)
+      #     run: |
+      #       curl -fsSLO "https://example.invalid/open-trestle/vX.Y.Z/open-trestle-linux-amd64.pyz"
+      #       curl -fsSLO "https://example.invalid/open-trestle/vX.Y.Z/open-trestle-linux-amd64.pyz.sha256"
+      #       sha256sum -c open-trestle-linux-amd64.pyz.sha256
+      #       sudo python3 ./open-trestle-linux-amd64.pyz install
+      #
+      # Working alternative: build the unsigned Linux candidate from source
+      # (docs/operations.md). Remote egress needs this packaged build, because a
+      # plain `go build` has no scanner digests and refuses remote requests. The
+      # steps below follow those docs; they are untested on a hosted runner.
+      - name: Fetch Open Trestle source at the pinned ref
+        run: |
+          git clone --no-tags "$OPEN_TRESTLE_REPOSITORY" "$RUNNER_TEMP/open-trestle-src"
+          git -C "$RUNNER_TEMP/open-trestle-src" checkout --detach "$OPEN_TRESTLE_REF"
+
+      - name: Set up Go for the packaging tool
+        uses: actions/setup-go@v5 # Pin to a full commit SHA in your repository.
+        with:
+          go-version-file: ${{ runner.temp }}/open-trestle-src/go.mod
+
+      - name: Build and install the packaged binary
+        working-directory: ${{ runner.temp }}/open-trestle-src
+        run: |
+          python3 tools/package_secret_scanner.py --output .container
+          python3 tools/package_secret_scanner.py --verify .container
+          REVISION="$(git rev-parse HEAD)"
+          CREATED="$(date -u -d "$(git show -s --format=%cI "$REVISION")" +%Y-%m-%dT%H:%M:%SZ)"
+          python3 tools/linux_distribution.py --staging .container --version 0.1.0-dev \
+            --revision "$REVISION" --created "$CREATED" --output open-trestle-linux-amd64.pyz
+          sha256sum -c open-trestle-linux-amd64.pyz.sha256
+          sudo ./open-trestle-linux-amd64.pyz install
+          trestle build-info
+
+      # ---- Configure the provider -------------------------------------------
+      # Bootstrap records your declarations and prints the exact review command.
+      # It makes no network or model call. ollama-cloud is used here because it
+      # needs the fewest attestations; openrouter-zdr and opencode-go need account
+      # and evidence declarations that only a human should make (see
+      # docs/remote-model-review.md). Review the provider's privacy terms before
+      # sending private source to it.
+      #
+      # The review base is the merge base of the pull request's base and head,
+      # the same comparison GitHub shows for the pull request. pull_request.base.sha
+      # is the base branch tip when the event fired; reviewing against it would
+      # count commits merged into the base branch since the branch point as part
+      # of this change. The SHAs arrive through env, never interpolated into run.
+      - name: Bootstrap the provider configuration
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          MERGE_BASE="$(git -C "$GITHUB_WORKSPACE" merge-base "$BASE_SHA" "$HEAD_SHA")" || {
+            echo "::error::No merge base between the pull request base and head."; exit 2
+          }
+          case "$MERGE_BASE" in
+            *[!0-9a-f]*|'') echo "::error::Unexpected merge base output."; exit 2 ;;
+          esac
+          install -d -m 0700 "$RUNNER_TEMP/trestle-review"
+          trestle setup bootstrap init --provider ollama-cloud \
+            --directory "$RUNNER_TEMP/trestle-review" \
+            --tenant ci --repository "${GITHUB_REPOSITORY#*/}" \
+            --checkout "$GITHUB_WORKSPACE" --base "$MERGE_BASE" --head "$HEAD_SHA" \
+            --repository-authority github.com \
+            --repository-namespace "${GITHUB_REPOSITORY%%/*}" \
+            --repository-name "${GITHUB_REPOSITORY#*/}" \
+            --generation-model "$GENERATION_MODEL" \
+            --verification-model "$VERIFICATION_MODEL" \
+            --generation-credential-environment OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD \
+            --declared-by "$GITHUB_REPOSITORY" \
+            --context-tokens 128000 --output-tokens 8192 \
+            --input-micro-usd-per-million-tokens 0 --output-micro-usd-per-million-tokens 0 \
+            --max-cost-micro-usd 0 \
+            --declare-remote-route
+
+      # ---- Review -----------------------------------------------------------
+      # Exit policy `findings`: exit 0 means the review completed and found no
+      # verified high or critical issue; it is not a clearance of the change.
+      # Exit 4 means a verified high/critical finding or a refusal; 3 means the
+      # review could not read or finish the change; 1 means an internal failure.
+      # This step records the status and always succeeds so that the SARIF is
+      # uploaded; the last step turns the status into the job result.
+      - name: Run the model review
+        id: review
+        env:
+          # Map your repository secret onto the variable NAME recorded by bootstrap.
+          OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD: ${{ secrets.OLLAMA_API_KEY }}
+        run: |
+          set +e
+          trestle setup bootstrap check --directory "$RUNNER_TEMP/trestle-review" > "$RUNNER_TEMP/check.json"
+          check=$?
+          if [ "$check" -ne 0 ]; then
+            jq -r '.messages[]' "$RUNNER_TEMP/check.json" | sed 's/^/::error::/'
+            echo "status=$check" >> "$GITHUB_OUTPUT"; echo "sarif=false" >> "$GITHUB_OUTPUT"
+            echo "upload=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Take the printed command, drop its `--format text` pair, ask for SARIF.
+          mapfile -t ARGS < <(jq -r '.review_command[3:] | (index("--format")) as $i | (.[:$i] + .[$i+2:])[]' "$RUNNER_TEMP/check.json")
+          trestle local-git model-review "${ARGS[@]}" --format sarif --exit-code-policy findings \
+            > "$RUNNER_TEMP/open-trestle.sarif" 2> "$RUNNER_TEMP/review.stderr"
+          status=$?
+          cat "$RUNNER_TEMP/review.stderr" >&2
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          if jq -e '.version == "2.1.0"' "$RUNNER_TEMP/open-trestle.sarif" > /dev/null 2>&1; then
+            echo "sarif=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "sarif=false" >> "$GITHUB_OUTPUT"
+          fi
+          # Upload to code scanning only for a run that succeeded. A refused,
+          # failed or canceled run's SARIF has no results, and uploading it for
+          # the category could close the open alerts as if they were fixed.
+          if jq -e '.runs[0].properties.trestleRunStatus == "succeeded"' "$RUNNER_TEMP/open-trestle.sarif" > /dev/null 2>&1; then
+            echo "upload=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "upload=false" >> "$GITHUB_OUTPUT"
+          fi
+          exit 0
+
+      # (a) Code scanning alerts. Needs code scanning to be available for the
+      # repository (public repositories, or GitHub Code Security on private ones).
+      #
+      # upload-sarif defaults to github.sha, which for pull_request is the
+      # temporary merge commit, not the head that was reviewed. `ref` and `sha`
+      # bind the analysis to the reviewed pull request head instead. These inputs
+      # are taken from the upload-sarif documentation and are unverified live.
+      - name: Upload SARIF to code scanning
+        if: ${{ always() && steps.review.outputs.upload == 'true' }}
+        uses: github/codeql-action/upload-sarif@v4 # Pin to a full commit SHA in your repository.
+        env:
+          PULL_REQUEST_REF: refs/pull/${{ github.event.pull_request.number }}/head
+        with:
+          sarif_file: ${{ runner.temp }}/open-trestle.sarif
+          category: open-trestle
+          ref: ${{ env.PULL_REQUEST_REF }}
+          sha: ${{ github.event.pull_request.head.sha }}
+
+      # (b) Inline pull-request review comments through reviewdog. reviewdog only
+      # comments on lines inside the pull request diff; other findings remain in
+      # code scanning and in the job summary. Findings carry the verifier's claim;
+      # fix guidance is in the SARIF properties and is unverified model text.
+      - name: Set up reviewdog
+        if: ${{ always() && steps.review.outputs.sarif == 'true' }}
+        uses: reviewdog/action-setup@v1 # Pin to a full commit SHA in your repository.
+
+      - name: Post inline review comments with reviewdog
+        if: ${{ always() && steps.review.outputs.sarif == 'true' }}
+        env:
+          REVIEWDOG_GITHUB_API_TOKEN: ${{ github.token }}
+        run: |
+          reviewdog -f=sarif -name=open-trestle -reporter=github-pr-review \
+            -filter-mode=added -fail-level=none < "$RUNNER_TEMP/open-trestle.sarif"
+
+      # Job summary. One paid model run yields one output format, so the summary
+      # is rendered from the SARIF rather than from a second text run.
+      - name: Write the job summary
+        if: ${{ always() && steps.review.outputs.sarif == 'true' }}
+        run: |
+          {
+            echo "## Open Trestle review"
+            jq -r '.runs[0] as $r | "Status: **\($r.properties.trestleModelReviewStatus)** (run: \($r.properties.trestleRunStatus), CI disposition: \($r.properties.trestleCiDisposition)); verified findings: \($r.results | length)."' "$RUNNER_TEMP/open-trestle.sarif"
+            echo
+            jq -r '.runs[0].invocations[].toolExecutionNotifications[]? | "> \(.level): \(.message.text)"' "$RUNNER_TEMP/open-trestle.sarif"
+            echo
+            jq -r '.runs[0].results[] | "- **\(.level)** `\(.locations[0].physicalLocation.artifactLocation.uri):\(.locations[0].physicalLocation.region.startLine)` \(.message.text)\(if .properties.trestleFixGuidance then "\n  - Unverified model guidance: \(.properties.trestleFixGuidance)" else "" end)"' "$RUNNER_TEMP/open-trestle.sarif"
+            echo
+            echo "_The review is bounded and is not a clearance. Fix guidance is model text the verifier did not check._"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail the job from the review status
+        if: ${{ always() }}
+        env:
+          STATUS: ${{ steps.review.outputs.status }}
+        run: |
+          echo "model-review exit status: ${STATUS:-unknown}"
+          [ "${STATUS:-unknown}" = "0" ]

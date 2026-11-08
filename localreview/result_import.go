@@ -5,13 +5,15 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/georgejieh/open-trestle/diagnostics"
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/internal/gateway"
+	"github.com/georgejieh/open-trestle/internal/review"
 )
 
-// CompletedResultMetadata contains only identities and observations in a completed v1 result.
+// CompletedResultMetadata contains only identities and observations in a completed v1 or v4 result.
 type CompletedResultMetadata struct {
 	RepositoryIdentity   string
 	BaseRevisionIdentity string
@@ -22,7 +24,8 @@ type CompletedResultMetadata struct {
 	Diagnostics          diagnostics.Set
 }
 
-// ParseCompletedResult reads the canonical emitted v1 result, not candidate or diagnostic JSON.
+// ParseCompletedResult reads the canonical emitted v1 result, or a v4 result that
+// differs only by finding_guidance, not candidate or diagnostic JSON.
 // Structural consistency and a capture hash do not authenticate its producer.
 func ParseCompletedResult(encoded []byte) (Result, error) {
 	if len(encoded) == 0 || len(encoded) > MaxResultJSONBytes || encoded[len(encoded)-1] != '\n' {
@@ -35,7 +38,7 @@ func ParseCompletedResult(encoded []byte) (Result, error) {
 		return Result{}, ErrInvalidResult
 	}
 	canonical, err := json.Marshal(wire)
-	if err != nil || !bytes.Equal(append(canonical, '\n'), encoded) || wire.Contract != "open-trestle/local-git-model-review-result" || wire.Version != 1 || wire.Investigation != nil || wire.ComprehensiveClearance || wire.RunStatus != "succeeded" || wire.Failure != "" {
+	if err != nil || !bytes.Equal(append(canonical, '\n'), encoded) || wire.Contract != "open-trestle/local-git-model-review-result" || !importableResultVersion(wire) || wire.Investigation != nil || wire.Specialist != nil || wire.ComprehensiveClearance || wire.RunStatus != "succeeded" || wire.Failure != "" || wire.FailureDetail != "" {
 		return Result{}, ErrInvalidResult
 	}
 	for _, id := range []string{wire.Scope, wire.Request, wire.Plan, wire.Output, wire.Repository, wire.Base, wire.Head, wire.Inventory, wire.Policy, wire.Context, wire.GenerationRequest, wire.VerificationRequest, wire.VerificationContext, wire.CandidateBatch, wire.Readiness, wire.GenerationRoute, wire.VerificationRoute} {
@@ -49,6 +52,9 @@ func ParseCompletedResult(encoded []byte) (Result, error) {
 	}
 	set, err := diagnostics.ParseSet(wire.Diagnostics)
 	if err != nil || set.SchemaVersion() == 7 && set.Outcome() != diagnostics.FinalOutcomeCompleted || set.Scope().Identity() != wire.Scope || set.Scope().ReviewRunID() != wire.Run || set.VerificationContextIdentity() != wire.VerificationContext || int(set.CandidateCount()) != len(wire.CandidateIDs) {
+		return Result{}, ErrInvalidResult
+	}
+	if !validImportedGuidance(wire.Guidance, set) {
 		return Result{}, ErrInvalidResult
 	}
 	algorithm := evidence.RevisionAlgorithmSHA1
@@ -107,10 +113,37 @@ func ParseCompletedResult(encoded []byte) (Result, error) {
 }
 
 func (r Result) CompletedMetadata() (CompletedResultMetadata, error) {
-	if !r.valid || r.wire.Version != 1 || r.wire.RunStatus != "succeeded" || r.diagnostics.Validate() != nil {
+	if !r.valid || !importableResultVersion(r.wire) || r.wire.RunStatus != "succeeded" || r.diagnostics.Validate() != nil {
 		return CompletedResultMetadata{}, ErrInvalidResult
 	}
 	return CompletedResultMetadata{r.wire.Repository, r.wire.Base, r.wire.Head, append([]string{}, r.wire.CandidateIDs...), r.wire.UsageKnown, r.wire.ActualCostMicroUSD, r.diagnostics}, nil
+}
+
+// importableResultVersion accepts v1 without guidance and v4 with guidance.
+func importableResultVersion(wire resultWire) bool {
+	return wire.Version == 1 && wire.Guidance == nil || wire.Version == guidanceResultVersion && len(wire.Guidance) > 0
+}
+
+// validImportedGuidance requires guidance for distinct diagnostic findings, in
+// diagnostic order, with a closed category and bounded, labeled fix text.
+func validImportedGuidance(values []findingGuidanceWire, set diagnostics.Set) bool {
+	findings := set.Findings()
+	next := 0
+	for _, value := range values {
+		for next < len(findings) && findings[next].SourceIdentity() != value.FindingIdentity {
+			next++
+		}
+		if next == len(findings) || review.CandidateCategory(value.Category).Validate() != nil ||
+			(value.Fix == "") != (value.FixAuthority == "") || value.Fix != "" && (value.FixAuthority != FixAuthority || !validImportedFix(value.Fix)) {
+			return false
+		}
+		next++
+	}
+	return true
+}
+
+func validImportedFix(value string) bool {
+	return len(value) <= 1024 && utf8.ValidString(value) && strings.TrimSpace(value) != "" && !strings.ContainsRune(value, 0)
 }
 
 func importDigest(value string) bool {

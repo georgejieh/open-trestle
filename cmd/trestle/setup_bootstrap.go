@@ -18,11 +18,13 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/internal/fileauthority"
 	"github.com/georgejieh/open-trestle/internal/localownerroot"
 	"github.com/georgejieh/open-trestle/internal/provider"
+	"github.com/georgejieh/open-trestle/internal/scm"
 	"github.com/georgejieh/open-trestle/runtimecatalog"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 	setupcore "github.com/georgejieh/open-trestle/setup"
@@ -42,7 +44,17 @@ type setupBootstrapManifest struct {
 	EphemeralReviewCommand []string `json:"ephemeral_review_command"`
 	StatusCommand          []string `json:"status_command"`
 	LaunchCommand          []string `json:"launch_command"`
+	// Scope is empty for the daemon setup. "direct-review" records a setup for
+	// the foreground checkout review only; it carries no daemon commands.
+	Scope string `json:"scope,omitempty"`
 }
+
+// The direct-review scope prepares only the foreground
+// `local-git model-review --checkout` path. That path reads objects through a
+// pinned root and authenticates every object by its digest, so it needs neither
+// the daemon's private 0700 objects root nor loose objects. The daemon scope
+// (the default) is unchanged.
+const setupBootstrapDirectReviewScope = "direct-review"
 
 type setupBootstrapReviewIntent struct {
 	Root      string `json:"setup_root_identity"`
@@ -63,6 +75,7 @@ type setupBootstrapResult struct {
 	StatusCommand          []string `json:"status_command,omitempty"`
 	LaunchCommand          []string `json:"launch_command,omitempty"`
 	Limitations            []string `json:"limitations"`
+	Scope                  string   `json:"scope,omitempty"`
 }
 
 func runSetupBootstrap(args []string, stdout, stderr io.Writer) int {
@@ -82,6 +95,9 @@ func runSetupBootstrapWithContext(ctx context.Context, args []string, stdout, st
 	if len(args) == 0 || clock == nil {
 		writeSetupBootstrapUsage(stderr)
 		return 2
+	}
+	if remoteSetupBootstrapRequested(args) {
+		return runRemoteSetupBootstrap(ctx, args, stdout, stderr, clock)
 	}
 	seen := map[string]bool{}
 	for _, argument := range args[1:] {
@@ -105,9 +121,11 @@ func runSetupBootstrapWithContext(ctx context.Context, args []string, stdout, st
 	}
 	contextTokens := flags.Uint64("context-tokens", 0, "declared capacity of both models")
 	outputTokens := flags.Uint64("output-tokens", 0, "declared output capacity of both models")
+	reviewOutputTokens := flags.Uint64("max-output-tokens", 4096, "per-request review output allowance, from 4096 to --output-tokens")
 	declare := flags.Bool("declare-local-capabilities", false, "declare local models, structured output, no logging, zero inference price and current availability")
 	probe := flags.Bool("allow-local-probe", false, "permit two bounded synthetic local model requests, not repository source")
-	if flags.Parse(args[1:]) != nil || flags.NArg() != 0 || *directory == "" {
+	scope := flags.String("scope", "", "daemon (default) or direct-review")
+	if flags.Parse(args[1:]) != nil || flags.NArg() != 0 || *directory == "" || *scope != "" && *scope != "daemon" && *scope != setupBootstrapDirectReviewScope {
 		writeSetupBootstrapUsage(stderr)
 		return 2
 	}
@@ -117,9 +135,10 @@ func runSetupBootstrapWithContext(ctx context.Context, args []string, stdout, st
 		for name := range values {
 			allowed[name] = name != "approved-by" && name != "backup-directory"
 		}
-		allowed["context-tokens"], allowed["output-tokens"], allowed["declare-local-capabilities"] = true, true, true
+		allowed["context-tokens"], allowed["output-tokens"], allowed["declare-local-capabilities"], allowed["scope"] = true, true, true, true
+		allowed["max-output-tokens"] = true
 	case "check":
-		allowed["approved-by"], allowed["backup-directory"], allowed["allow-local-probe"] = true, true, true
+		allowed["approved-by"], allowed["backup-directory"], allowed["allow-local-probe"], allowed["scope"] = true, true, true, true
 	case "inspect", "prepare-review":
 	default:
 		writeSetupBootstrapUsage(stderr)
@@ -155,11 +174,20 @@ func runSetupBootstrapWithContext(ctx context.Context, args []string, stdout, st
 				return 2
 			}
 		}
-		if !*declare || *contextTokens < 8192 || *outputTokens < 4096 || *outputTokens > *contextTokens || *values["generation-model"] == *values["verification-model"] || (*values["transport"] != "openai_responses" && *values["transport"] != "openai_chat_completions") {
+		if !*declare || *contextTokens < 8192 || *outputTokens < 4096 || *outputTokens > *contextTokens || *reviewOutputTokens < 4096 || *reviewOutputTokens > *outputTokens || *values["generation-model"] == *values["verification-model"] || (*values["transport"] != "openai_responses" && *values["transport"] != "openai_chat_completions") {
 			writeSetupBootstrapUsage(stderr)
 			return 2
 		}
-		if err := initializeSetupBootstrap(ctx, directoryAbs, values, *contextTokens, *outputTokens, clock); err != nil {
+		// A local Ollama daemon also relays Ollama Cloud models; those would send
+		// source off this machine, so the local route refuses them by the
+		// daemon's own model list (one bounded loopback GET), or by name.
+		for _, role := range []string{"generation", "verification"} {
+			if err := ollamaLocalModelError(ctx, *values[role+"-endpoint"], *values[role+"-model"]); err != nil {
+				fmt.Fprintln(stderr, "trestle setup bootstrap: "+err.Error())
+				return writeSetupBootstrapRefusal(stdout)
+			}
+		}
+		if err := initializeSetupBootstrap(ctx, directoryAbs, values, *contextTokens, *outputTokens, *reviewOutputTokens, *scope == setupBootstrapDirectReviewScope, clock); err != nil {
 			return writeSetupBootstrapRefusal(stdout)
 		}
 	}
@@ -167,11 +195,22 @@ func runSetupBootstrapWithContext(ctx context.Context, args []string, stdout, st
 	if err != nil {
 		return writeSetupBootstrapRefusal(stdout)
 	}
+	// A direct-review setup never qualifies its source for the daemon, so it
+	// cannot be checked or prepared as one. A daemon setup may be checked in the
+	// narrower direct-review scope; its daemon checks and commands are untouched.
+	direct := manifest.Scope == setupBootstrapDirectReviewScope || *scope == setupBootstrapDirectReviewScope
+	if manifest.Scope == setupBootstrapDirectReviewScope && (*scope == "daemon" || args[0] == "prepare-review") {
+		return writeSetupBootstrapRefusal(stdout)
+	}
+	if direct && *values["backup-directory"] != "" {
+		writeSetupBootstrapUsage(stderr)
+		return 2
+	}
 	if args[0] == "check" {
 		if *values["approved-by"] != plan.RecoveryOwner() {
 			return writeSetupBootstrapRefusal(stdout)
 		}
-		if err := checkSetupBootstrap(ctx, directoryAbs, *values["backup-directory"], *values["approved-by"], *probe, plan, inventory, policy, clock); err != nil {
+		if err := checkSetupBootstrap(ctx, directoryAbs, *values["backup-directory"], *values["approved-by"], *probe, direct, plan, inventory, policy, clock); err != nil {
 			return writeSetupBootstrapRefusal(stdout)
 		}
 		manifest, plan, _, _, err = loadSetupBootstrap(ctx, directoryAbs)
@@ -205,7 +244,20 @@ func runSetupBootstrapWithContext(ctx context.Context, args []string, stdout, st
 		manifest.ReviewCommand, _, _ = setupBootstrapCommands(directoryAbs, manifest, plan, policy, manifest.EphemeralReviewCommand[3:])
 	}
 	result := setupBootstrapResult{Contract: "open-trestle/local-first-bootstrap-result", Version: 1, Status: "pending", Ready: plan.Ready(), Plan: plan.Identity(), Pending: []string{}, ReviewCommand: manifest.ReviewCommand, EphemeralReviewCommand: manifest.EphemeralReviewCommand, StatusCommand: manifest.StatusCommand, LaunchCommand: manifest.LaunchCommand, Limitations: setupBootstrapLimitations()}
+	if direct {
+		// Readiness covers only the checks the foreground review relies on; the
+		// daemon commands are omitted because this result does not qualify them.
+		result.Scope, result.ReviewCommand, result.StatusCommand, result.LaunchCommand = setupBootstrapDirectReviewScope, nil, nil, nil
+		result.Limitations = append(result.Limitations, "direct_review_scope_excludes_daemon_checks")
+		result.Ready = true
+	}
 	for _, requirement := range plan.Requirements() {
+		if direct && !setupDirectReviewRequirement(requirement, *probe && args[0] == "check") {
+			continue
+		}
+		if direct && requirement.State() != setupcore.CheckPassed {
+			result.Ready = false
+		}
 		if requirement.State() != setupcore.CheckPassed {
 			result.Pending = append(result.Pending, string(requirement.Key()))
 			if requirement.State() == setupcore.CheckBlocked {
@@ -229,6 +281,20 @@ func runSetupBootstrapWithContext(ctx context.Context, args []string, stdout, st
 	return 3
 }
 
+// setupDirectReviewRequirement reports whether the direct-review scope needs a
+// plan requirement. The daemon's observer credentials and backup are excluded.
+// The synthetic local inference probe counts once it was requested or attempted,
+// so a failed probe is never hidden by a later check without the probe.
+func setupDirectReviewRequirement(requirement setupcore.Requirement, probeRequested bool) bool {
+	switch requirement.Key() {
+	case setupcore.CheckObserverCredentialPostureValidated, setupcore.CheckBackupValidated:
+		return false
+	case setupcore.CheckLocalInferenceValidated:
+		return probeRequested || requirement.State() != setupcore.CheckPending
+	}
+	return true
+}
+
 func setupBootstrapLimitations() []string {
 	return []string{"operator_declared_model_capabilities_not_service_conformance", "ready_is_setup_checks_not_release_or_review_clearance", "foreground_review_is_ephemeral_no_resume", "durable_daemon_source_is_loose_objects_only", "no_publication", "no_model_download_or_credential_provisioning"}
 }
@@ -241,7 +307,7 @@ func writeSetupBootstrapRefusal(stdout io.Writer) int {
 	return 4
 }
 
-func initializeSetupBootstrap(ctx context.Context, dir string, values map[string]*string, contextTokens, outputTokens uint64, clock setupClock) error {
+func initializeSetupBootstrap(ctx context.Context, dir string, values map[string]*string, contextTokens, outputTokens, reviewOutputTokens uint64, direct bool, clock setupClock) error {
 	value := func(name string) string { return *values[name] }
 	for _, name := range []string{"generation-endpoint", "verification-endpoint"} {
 		locality, err := provider.ClassifyServiceEndpoint(value(name))
@@ -257,29 +323,12 @@ func initializeSetupBootstrap(ctx context.Context, dir string, values map[string
 	if err != nil {
 		return err
 	}
-	root, err := localownerroot.ExistingRoot(source.objects, localownerroot.ErrUnsafePath)
-	if err != nil {
+	if direct {
+		if err := setupCheckDirectReviewSource(ctx, source); err != nil {
+			return err
+		}
+	} else if err := setupCheckDurableSource(source, value); err != nil {
 		return err
-	}
-	if root == nil {
-		return errors.New("durable source unavailable")
-	}
-	if _, err := localownerroot.ObserveDirectory(source.objects, root, localownerroot.ErrUnsafePath); err != nil {
-		_ = root.Close()
-		return err
-	}
-	repository, err := evidence.NewRepositoryIdentity(value("repository-authority"), strings.Split(value("repository-namespace"), "/"), value("repository-name"))
-	if err != nil {
-		_ = root.Close()
-		return err
-	}
-	base, baseErr := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithm(source.algorithm), source.base)
-	head, headErr := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithm(source.algorithm), source.head)
-	_, inspectBaseErr := buildLocalGitInspectResult(root, repository, base)
-	_, inspectHeadErr := buildLocalGitInspectResult(root, repository, head)
-	closeErr := root.Close()
-	if baseErr != nil || headErr != nil || inspectBaseErr != nil || inspectHeadErr != nil || closeErr != nil {
-		return errors.New("durable source requires complete loose objects")
 	}
 	// Validate scope and repository labels before writing any configuration.
 	reviewArgs := []string{"--checkout", checkout, "--base", source.base, "--head", source.head, "--repository-authority", value("repository-authority"), "--repository-namespace", value("repository-namespace"), "--repository-name", value("repository-name"), "--tenant", value("tenant"), "--repository", value("repository"), "--route-inventory", filepath.Join(dir, "routes.json"), "--runtime-policy", filepath.Join(dir, "policy.json"), "--egress", "local-only", "--timeout", "5m", "--format", "text"}
@@ -311,7 +360,7 @@ func initializeSetupBootstrap(ctx context.Context, dir string, values map[string
 		return err
 	}
 	reviewPolicy := sha256.Sum256([]byte("open-trestle/local-first-bootstrap/review-policy/v1/local-only/distinct-model/no-publication"))
-	templateBytes, _ := json.Marshal(map[string]any{"schema_version": 2, "inventory_identity": inventory.Identity(), "review_policy_identity": hex.EncodeToString(reviewPolicy[:]), "verification_route_record_identity": strings.Repeat("0", 64), "min_context_tokens": 1, "min_output_tokens": 1, "required_features": []string{"structured_output"}, "classification": "confidential", "allowed_zones": []string{"local"}, "content_logging_allowed": false, "estimated_input_tokens": 1, "max_output_tokens": 4096, "max_cost_micro_usd": 0, "pinned_route_record_identity": "", "preferred_route_record_identities": []string{}, "verification_independence": "distinct_model", "publication_minimum_severity": "medium", "publication_max_inline_findings": 20, "publication_minimum_independence": "distinct_model", "publication_block_on_inconclusive": true, "connections": connections})
+	templateBytes, _ := json.Marshal(map[string]any{"schema_version": 2, "inventory_identity": inventory.Identity(), "review_policy_identity": hex.EncodeToString(reviewPolicy[:]), "verification_route_record_identity": strings.Repeat("0", 64), "min_context_tokens": 1, "min_output_tokens": 1, "required_features": []string{"structured_output"}, "classification": "confidential", "allowed_zones": []string{"local"}, "content_logging_allowed": false, "estimated_input_tokens": 1, "max_output_tokens": reviewOutputTokens, "max_cost_micro_usd": 0, "pinned_route_record_identity": "", "preferred_route_record_identities": []string{}, "verification_independence": "distinct_model", "publication_minimum_severity": "medium", "publication_max_inline_findings": 20, "publication_minimum_independence": "distinct_model", "publication_block_on_inconclusive": true, "connections": connections})
 	for name, content := range map[string][]byte{"routes.json": inventoryBytes, "policy-template.json": templateBytes} {
 		if err := ensureSetupBootstrapFile(ctx, filepath.Join(dir, name), content); err != nil {
 			return err
@@ -348,10 +397,84 @@ func initializeSetupBootstrap(ctx context.Context, dir string, values map[string
 		return errors.New("setup scope mismatch")
 	}
 	manifest := setupBootstrapManifest{Contract: "open-trestle/local-first-bootstrap", Version: 1, Inventory: inventory.Identity(), Policy: policy.Identity(), Root: plan.RootIdentity(), Objects: source.objects, Algorithm: source.algorithm, Run: "first-review", CreatedAt: plan.CreatedAt().UnixMilli(), EphemeralReviewCommand: append([]string{"trestle", "local-git", "model-review"}, reviewArgs...)}
-	manifest.ReviewCommand, manifest.LaunchCommand, manifest.StatusCommand = setupBootstrapCommands(dir, manifest, plan, policy, reviewArgs)
+	if direct {
+		manifest.Scope = setupBootstrapDirectReviewScope
+	} else {
+		manifest.ReviewCommand, manifest.LaunchCommand, manifest.StatusCommand = setupBootstrapCommands(dir, manifest, plan, policy, reviewArgs)
+	}
 
 	encoded, _ := json.Marshal(manifest)
 	return ensureSetupBootstrapFile(ctx, filepath.Join(dir, "bootstrap.json"), encoded)
+}
+
+// setupCheckDurableSource keeps the daemon's source rules: the objects folder is
+// an owner-only 0700 root it can pin for its whole lifetime, and both commits
+// are complete loose objects.
+func setupCheckDurableSource(source localCheckoutSource, value func(string) string) error {
+	root, err := localownerroot.ExistingRoot(source.objects, localownerroot.ErrUnsafePath)
+	if err != nil {
+		return err
+	}
+	if root == nil {
+		return errors.New("durable source unavailable")
+	}
+	if _, err := localownerroot.ObserveDirectory(source.objects, root, localownerroot.ErrUnsafePath); err != nil {
+		_ = root.Close()
+		return err
+	}
+	repository, err := evidence.NewRepositoryIdentity(value("repository-authority"), strings.Split(value("repository-namespace"), "/"), value("repository-name"))
+	if err != nil {
+		_ = root.Close()
+		return err
+	}
+	base, baseErr := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithm(source.algorithm), source.base)
+	head, headErr := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithm(source.algorithm), source.head)
+	_, inspectBaseErr := buildLocalGitInspectResult(root, repository, base)
+	_, inspectHeadErr := buildLocalGitInspectResult(root, repository, head)
+	closeErr := root.Close()
+	if baseErr != nil || headErr != nil || inspectBaseErr != nil || inspectHeadErr != nil || closeErr != nil {
+		return errors.New("durable source requires complete loose objects")
+	}
+	return nil
+}
+
+// setupCheckDirectReviewSource confirms that the foreground checkout review can
+// read both selected commits with the reader it uses: a pinned objects root, the
+// packed-layout rules (no alternates, multi-pack-index or promisor packs) and
+// the loose-and-pack-index-v1 store, which verifies each object's digest. It
+// reads two commit objects and nothing else.
+func setupCheckDirectReviewSource(ctx context.Context, source localCheckoutSource) error {
+	root, err := os.OpenRoot(source.objects)
+	if err != nil {
+		return errors.New("the Git objects folder cannot be opened")
+	}
+	defer root.Close()
+	if err := scm.ValidateLocalGitPackedLayout(root); err != nil {
+		return err
+	}
+	// The labels only scope the reader; they do not affect what is read.
+	repository, err := evidence.NewRepositoryIdentity("local", []string{"open-trestle"}, "source-check")
+	if err != nil {
+		return err
+	}
+	algorithm := evidence.RevisionAlgorithm(source.algorithm)
+	store, err := scm.NewLocalGitObjectStoreWithOptions(scm.LocalGitObjectStoreOptions{ObjectsRoot: root, Repository: repository, Profile: scm.LocalGitObjectStoreProfileLooseAndPackIndexV1, ObjectAlgorithm: algorithm})
+	if err != nil {
+		return err
+	}
+	var readErr error
+	for _, commit := range []string{source.base, source.head} {
+		revision, err := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, algorithm, commit)
+		if err == nil {
+			_, err = store.ReadCommit(ctx, revision)
+		}
+		if err != nil && readErr == nil {
+			readErr = fmt.Errorf("commit %s cannot be read: %w", commit[:min(len(commit), 12)], err)
+		}
+	}
+	closing, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return errors.Join(readErr, store.Close(closing))
 }
 
 func ensureSetupBootstrapDirectories(ctx context.Context, dir string) error {
@@ -462,6 +585,13 @@ func loadSetupBootstrap(ctx context.Context, dir string) (setupBootstrapManifest
 		return fail()
 	}
 	expectedReview, expectedLaunch, expectedStatus := setupBootstrapCommands(dir, manifest, plan, policy, manifest.EphemeralReviewCommand[3:])
+	switch manifest.Scope {
+	case "":
+	case setupBootstrapDirectReviewScope:
+		expectedReview, expectedLaunch, expectedStatus = nil, nil, nil
+	default:
+		return fail()
+	}
 	if !slices.Equal(manifest.LaunchCommand, expectedLaunch) || !slices.Equal(manifest.ReviewCommand, expectedReview) || !slices.Equal(manifest.StatusCommand, expectedStatus) || !filepath.IsAbs(manifest.Objects) || (manifest.Algorithm != "sha1" && manifest.Algorithm != "sha256") || manifest.Run != "first-review" || manifest.CreatedAt != plan.CreatedAt().UnixMilli() {
 		return fail()
 	}
@@ -475,7 +605,7 @@ func loadSetupBootstrap(ctx context.Context, dir string) (setupBootstrapManifest
 	return manifest, plan, inventory, policy, nil
 }
 
-func checkSetupBootstrap(ctx context.Context, dir, backupDir, owner string, allowProbe bool, plan setupcore.Plan, inventory runtimeconfig.RouteInventory, policy runtimeconfig.RuntimePolicy, clock setupClock) error {
+func checkSetupBootstrap(ctx context.Context, dir, backupDir, owner string, allowProbe, direct bool, plan setupcore.Plan, inventory runtimeconfig.RouteInventory, policy runtimeconfig.RuntimePolicy, clock setupClock) error {
 	store, err := setupcore.OpenStateFile(filepath.Join(dir, "runs", "setup", "plan.json"))
 	if err != nil {
 		return err
@@ -506,6 +636,10 @@ func checkSetupBootstrap(ctx context.Context, dir, backupDir, owner string, allo
 		return err
 	}
 	checkers := []setupcore.Checker{storage, administrator, observer, policyChecker, dryRun}
+	if direct {
+		// The foreground review never reads the daemon's API/observer tokens.
+		checkers = []setupcore.Checker{storage, administrator, policyChecker, dryRun}
+	}
 	if allowProbe {
 		factory, err := newSetupLocalInferenceFactory(os.Getenv)
 		if err != nil {
@@ -587,10 +721,11 @@ func checkSetupBootstrap(ctx context.Context, dir, backupDir, owner string, allo
 }
 
 func writeSetupBootstrapUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: trestle setup bootstrap init --directory PATH --tenant ID --repository ID --recovery-owner NAME --checkout PATH --base FULL_REF_OR_COMMIT --head FULL_REF_OR_COMMIT --repository-authority LABEL --repository-namespace NAME --repository-name NAME --generation-endpoint URL --generation-model ID --verification-endpoint URL --verification-model ID --transport openai_responses|openai_chat_completions --context-tokens N --output-tokens N --declare-local-capabilities")
-	fmt.Fprintln(w, "       trestle setup bootstrap check --directory PATH --approved-by NAME [--allow-local-probe] [--backup-directory PATH]")
+	fmt.Fprintln(w, "usage: trestle setup bootstrap init --directory PATH --tenant ID --repository ID --recovery-owner NAME --checkout PATH --base FULL_REF_OR_COMMIT --head FULL_REF_OR_COMMIT --repository-authority LABEL --repository-namespace NAME --repository-name NAME --generation-endpoint URL --generation-model ID --verification-endpoint URL --verification-model ID --transport openai_responses|openai_chat_completions --context-tokens N --output-tokens N [--max-output-tokens N] --declare-local-capabilities [--scope direct-review]")
+	fmt.Fprintln(w, "       trestle setup bootstrap check --directory PATH --approved-by NAME [--scope direct-review] [--allow-local-probe] [--backup-directory PATH]")
 	fmt.Fprintln(w, "       trestle setup bootstrap inspect --directory PATH")
 	fmt.Fprintln(w, "       trestle setup bootstrap prepare-review --directory PATH")
+	fmt.Fprintln(w, "remote models: trestle setup bootstrap init --provider openrouter-zdr|opencode-go|ollama-cloud ... (see docs/remote-model-review.md)")
 }
 
 func setupBootstrapCommands(dir string, manifest setupBootstrapManifest, plan setupcore.Plan, policy runtimeconfig.RuntimePolicy, sourceArgs []string) ([]string, []string, []string) {

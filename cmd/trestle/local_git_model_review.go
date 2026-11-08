@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/georgejieh/open-trestle/agentprofile"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/internal/memory"
@@ -15,6 +16,7 @@ import (
 	"github.com/georgejieh/open-trestle/runtimecatalog"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -27,10 +29,32 @@ type localModelReviewOptions struct {
 	egress                                                 localreview.Egress
 	objectStoreProfile                                     scm.LocalGitObjectStoreProfile
 	timeout                                                time.Duration
+	specialist                                             review.ContextSpecialist
+	exitPolicy                                             localreview.ExitPolicy
+	// specialists is the multi-specialist request; its zero value (mode none)
+	// keeps the single-run path and output unchanged.
+	specialists specialistRequest
+}
+
+// errUnknownModelReviewProfile is a usage error for a --profile (or --specialists)
+// value that is not a packaged model-calling specialist profile.
+type errUnknownModelReviewProfile struct{ value, flag string }
+
+func (e errUnknownModelReviewProfile) Error() string {
+	flag := e.flag
+	if flag == "" {
+		flag = "--profile"
+	}
+	return fmt.Sprintf("unknown %s %q; valid profile ids: %s", flag, e.value, strings.Join(review.ContextSpecialistProfileIDs(), ", "))
 }
 
 var localReviewGenerationSanitizer review.GenerationRequestSanitizer
 var localReviewVerificationSanitizer review.VerificationRequestSanitizer
+
+// Tests replace the policy-approved model transport with an offline fake. Production
+// leaves both empty, so the adapter uses its default bounded HTTPS client.
+var localReviewModelHTTPClient *http.Client
+var localReviewModelHTTPClientIdentity string
 
 type localReviewClock struct{}
 
@@ -41,12 +65,12 @@ func parseLocalModelReview(args []string) (localModelReviewOptions, evidence.Rep
 		return o, evidence.RepositoryIdentity{}, evidence.RevisionIdentity{}, evidence.RevisionIdentity{}, fmt.Errorf("invalid explicit model review intent")
 	}
 	sourceFlags := []string{"--objects-root", "--repository-authority", "--repository-namespace", "--repository-name", "--revision-algorithm", "--base-revision-digest", "--head-revision-digest"}
-	allowed := map[string]bool{"--tenant": true, "--repository": true, "--route-inventory": true, "--runtime-policy": true, "--investigation-policy": true, "--retained-memory-input": true, "--egress": true, "--timeout": true, "--format": true, "--object-store": true}
+	allowed := map[string]bool{"--tenant": true, "--repository": true, "--route-inventory": true, "--runtime-policy": true, "--investigation-policy": true, "--retained-memory-input": true, "--egress": true, "--timeout": true, "--format": true, "--object-store": true, "--profile": true, "--exit-code-policy": true, "--specialists": true, "--max-specialists": true}
 	for _, flag := range sourceFlags {
 		allowed[flag] = true
 	}
 	allowed["--checkout"], allowed["--base"], allowed["--head"] = true, true, true
-	if len(args) < 24 || len(args) > 32 || len(args)%2 != 0 {
+	if len(args) < 24 || len(args) > 40 || len(args)%2 != 0 {
 		return fail()
 	}
 	values := map[string]string{}
@@ -74,7 +98,7 @@ func parseLocalModelReview(args []string) (localModelReviewOptions, evidence.Rep
 		if checkout && (flag == "--objects-root" || flag == "--revision-algorithm" || flag == "--base-revision-digest" || flag == "--head-revision-digest") || !checkout && (flag == "--checkout" || flag == "--base" || flag == "--head") {
 			continue
 		}
-		if flag != "--format" && flag != "--investigation-policy" && flag != "--retained-memory-input" && flag != "--object-store" && values[flag] == "" {
+		if flag != "--format" && flag != "--investigation-policy" && flag != "--retained-memory-input" && flag != "--object-store" && flag != "--profile" && flag != "--exit-code-policy" && flag != "--specialists" && flag != "--max-specialists" && values[flag] == "" {
 			return fail()
 		}
 	}
@@ -115,14 +139,49 @@ func parseLocalModelReview(args []string) (localModelReviewOptions, evidence.Rep
 	if format == "" {
 		format = "json"
 	}
-	if format != "json" && format != "text" {
+	if format != "json" && format != "text" && format != "sarif" {
 		return fail()
+	}
+	exitPolicy := localreview.ExitPolicyDefault
+	if value := values["--exit-code-policy"]; value != "" {
+		var ok bool
+		if exitPolicy, ok = localreview.ParseExitPolicy(value); !ok {
+			return fail()
+		}
 	}
 	objectStoreProfile := scm.LocalGitObjectStoreProfile(values["--object-store"])
 	if objectStoreProfile != "" && objectStoreProfile != scm.LocalGitObjectStoreProfileLooseOnly && objectStoreProfile != scm.LocalGitObjectStoreProfileLooseAndPackIndexV1 {
 		return fail()
 	}
-	o = localModelReviewOptions{objects: source.objectsRoot, inventory: values["--route-inventory"], policy: values["--runtime-policy"], tenant: values["--tenant"], repository: values["--repository"], format: format, investigation: values["--investigation-policy"], retainedMemory: values["--retained-memory-input"], egress: egress, objectStoreProfile: objectStoreProfile, timeout: timeout}
+	var specialist review.ContextSpecialist
+	if profileID := values["--profile"]; profileID != "" {
+		// A specialist applies to the direct generation request only; the
+		// investigation pipeline has its own context contract.
+		if values["--investigation-policy"] != "" {
+			return fail()
+		}
+		specialist, err = review.NewContextSpecialist(profileID)
+		if err != nil {
+			return o, evidence.RepositoryIdentity{}, evidence.RevisionIdentity{}, evidence.RevisionIdentity{}, errUnknownModelReviewProfile{value: profileID}
+		}
+	}
+	var specialists specialistRequest
+	if values["--specialists"] != "" || values["--max-specialists"] != "" {
+		// --profile is the single-specialist form; the set applies to the direct
+		// generation path only, like --profile.
+		if values["--profile"] != "" || values["--investigation-policy"] != "" {
+			return fail()
+		}
+		specialists, err = parseSpecialistRequest(values["--specialists"], values["--max-specialists"])
+		if err != nil {
+			var unknownProfile errUnknownModelReviewProfile
+			if errors.As(err, &unknownProfile) {
+				return o, evidence.RepositoryIdentity{}, evidence.RevisionIdentity{}, evidence.RevisionIdentity{}, err
+			}
+			return fail()
+		}
+	}
+	o = localModelReviewOptions{objects: source.objectsRoot, inventory: values["--route-inventory"], policy: values["--runtime-policy"], tenant: values["--tenant"], repository: values["--repository"], format: format, investigation: values["--investigation-policy"], retainedMemory: values["--retained-memory-input"], egress: egress, objectStoreProfile: objectStoreProfile, timeout: timeout, specialist: specialist, exitPolicy: exitPolicy, specialists: specialists}
 	o.checkout, o.baseSelection, o.headSelection = values["--checkout"], values["--base"], values["--head"]
 	if checkout {
 		o.objectStoreProfile = scm.LocalGitObjectStoreProfileLooseAndPackIndexV1
@@ -132,83 +191,157 @@ func parseLocalModelReview(args []string) (localModelReviewOptions, evidence.Rep
 func runLocalGitModelReview(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	options, repository, base, head, err := parseLocalModelReview(args)
 	if err != nil {
+		var unknownProfile errUnknownModelReviewProfile
+		if errors.As(err, &unknownProfile) {
+			fmt.Fprintln(stderr, unknownProfile.Error())
+		}
 		writeLocalGitModelReviewUsage(stderr)
 		return 2
 	}
 	unstarted := func(status string) int {
-		result, err := localreview.NewUnstartedResultWithObjectStoreProfile(status, options.objectStoreProfile)
+		result, err := localreview.NewUnstartedSpecialistResult(status, options.objectStoreProfile, options.specialist)
 		if err != nil {
 			return 1
 		}
-		return writeLocalModelResult(options.format, result, stdout, stderr)
+		return writeLocalModelResultWithPolicy(options.format, options.exitPolicy, result, stdout, stderr)
 	}
 	if ctx == nil {
+		if options.specialists.active() {
+			return runLocalModelReviewSet(nil, nil, options, localModelReviewInputs{}, "failed", stdout, stderr)
+		}
 		return unstarted("failed")
 	}
 	if ctx.Err() != nil {
+		if options.specialists.active() {
+			return runLocalModelReviewSet(ctx, ctx, options, localModelReviewInputs{}, "canceled", stdout, stderr)
+		}
 		return unstarted("canceled")
 	}
 	execution, cancel := context.WithTimeout(ctx, options.timeout)
 	defer cancel()
+	inputs, status := prepareLocalModelReview(execution, &options, repository, base, head, stderr)
+	if options.specialists.active() {
+		return runLocalModelReviewSet(ctx, execution, options, inputs, status, stdout, stderr)
+	}
+	if status != "" {
+		return unstarted(status)
+	}
+	member, ok := runLocalModelReviewMember(ctx, execution, options, inputs, options.specialist, false)
+	if !ok {
+		return 1
+	}
+	if member.partialCheckout {
+		fmt.Fprintln(stderr, partialCheckoutHint)
+	}
+	return writeLocalModelResultWithPolicy(options.format, options.exitPolicy, member.result, stdout, stderr)
+}
+
+// localModelReviewInputs is the protected configuration and pinned revisions
+// that every member of one invocation shares.
+type localModelReviewInputs struct {
+	inventory           runtimeconfig.RouteInventory
+	policy              runtimeconfig.RuntimePolicy
+	investigationPolicy review.InvestigationPolicy
+	retainedInput       *runtimeconfig.RetainedMemoryInput
+	repository          evidence.RepositoryIdentity
+	base, head          evidence.RevisionIdentity
+}
+
+// prepareLocalModelReview loads protected configuration and resolves the source
+// before any session exists. A non-empty status is the unstarted result status.
+func prepareLocalModelReview(execution context.Context, options *localModelReviewOptions, repository evidence.RepositoryIdentity, base, head evidence.RevisionIdentity, stderr io.Writer) (localModelReviewInputs, string) {
+	inputs := localModelReviewInputs{repository: repository}
 	inventory, policy, err := runtimeconfig.LoadProtectedConfiguration(execution, options.inventory, options.policy)
 	if err != nil {
 		if execution.Err() != nil {
-			return unstarted("canceled")
+			return inputs, "canceled"
 		}
-		return unstarted("refused")
+		return inputs, "refused"
 	}
 	if execution.Err() != nil {
-		return unstarted("canceled")
+		return inputs, "canceled"
 	}
-	var investigationPolicy review.InvestigationPolicy
+	inputs.inventory, inputs.policy = inventory, policy
 	if options.investigation != "" {
-		investigationPolicy, err = runtimeconfig.LoadProtectedInvestigationPolicy(execution, options.investigation)
-		if err != nil || investigationPolicy.ValidateRuntimeBudget(policy.Budget()) != nil {
+		inputs.investigationPolicy, err = runtimeconfig.LoadProtectedInvestigationPolicy(execution, options.investigation)
+		if err != nil || inputs.investigationPolicy.ValidateRuntimeBudget(policy.Budget()) != nil {
 			if execution.Err() != nil {
-				return unstarted("canceled")
+				return inputs, "canceled"
 			}
-			return unstarted("refused")
+			return inputs, "refused"
 		}
 		if execution.Err() != nil {
-			return unstarted("canceled")
+			return inputs, "canceled"
 		}
 	}
 	if options.checkout != "" {
 		source, err := resolveLocalCheckout(execution, options.checkout, options.baseSelection, options.headSelection)
 		if err != nil {
 			if execution.Err() != nil {
-				return unstarted("canceled")
+				return inputs, "canceled"
 			}
-			return unstarted("incomplete")
+			var unavailable errCheckoutCommitUnavailable
+			if errors.As(err, &unavailable) {
+				fmt.Fprintln(stderr, unavailable.hint())
+			}
+			return inputs, "incomplete"
 		}
 		options.objects = source.objects
 		base, err = evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithm(source.algorithm), source.base)
 		if err != nil {
-			return unstarted("incomplete")
+			return inputs, "incomplete"
 		}
 		head, err = evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithm(source.algorithm), source.head)
 		if err != nil {
-			return unstarted("incomplete")
+			return inputs, "incomplete"
 		}
 	}
-	var retainedInput *runtimeconfig.RetainedMemoryInput
+	inputs.base, inputs.head = base, head
 	if options.retainedMemory != "" {
 		scope, scopeErr := memory.NewScope(options.tenant, options.repository, "local-reviewer", memory.RefVisibilityExact, head.Identity(), []string{"."})
 		if scopeErr != nil {
 			if execution.Err() != nil {
-				return unstarted("canceled")
+				return inputs, "canceled"
 			}
-			return unstarted("refused")
+			return inputs, "refused"
 		}
 		input, loadErr := runtimeconfig.LoadProtectedRetainedMemoryInput(execution, options.retainedMemory, scope, repository, policy, localReviewClock{}.Now())
 		if execution.Err() != nil {
-			return unstarted("canceled")
+			return inputs, "canceled"
 		}
 		if loadErr != nil {
-			return unstarted("refused")
+			return inputs, "refused"
 		}
-		retainedInput = &input
+		inputs.retainedInput = &input
 	}
+	return inputs, ""
+}
+
+// localModelReviewMember is one terminal review run of an invocation.
+type localModelReviewMember struct {
+	specialist      review.ContextSpecialist
+	result          localreview.Result
+	features        agentprofile.ChangeFeatures
+	hasFeatures     bool
+	partialCheckout bool
+}
+
+// runLocalModelReviewMember runs one review session to a terminal result under
+// execution. It owns and closes its own objects root and session. ok is false
+// only when not even an unstarted result could be constructed. When
+// wantFeatures is set, the change features are read back from the run's own
+// recorded change and analysis artifacts before the session closes.
+func runLocalModelReviewMember(ctx, execution context.Context, options localModelReviewOptions, inputs localModelReviewInputs, specialist review.ContextSpecialist, wantFeatures bool) (localModelReviewMember, bool) {
+	member := localModelReviewMember{specialist: specialist}
+	unstarted := func(status string) (localModelReviewMember, bool) {
+		result, err := localreview.NewUnstartedSpecialistResult(status, options.objectStoreProfile, specialist)
+		if err != nil {
+			return member, false
+		}
+		member.result = result
+		return member, true
+	}
+	base, head := inputs.base, inputs.head
 	objects, err := os.OpenRoot(options.objects)
 	if err != nil {
 		return unstarted("incomplete")
@@ -218,13 +351,18 @@ func runLocalGitModelReview(ctx context.Context, args []string, stdout, stderr i
 		_ = objects.Close()
 		return unstarted("failed")
 	}
-	sessionOptions := localreview.SessionOptions{TenantID: options.tenant, RepositoryID: options.repository, Repository: repository, ObjectsRoot: objects, ObjectStoreProfile: options.objectStoreProfile, Inventory: inventory, Policy: policy, Egress: options.egress, Credentials: credentials, Clock: localReviewClock{}, Timeout: options.timeout, RetainedMemoryInput: retainedInput, GenerationSanitizer: localReviewGenerationSanitizer, VerificationSanitizer: localReviewVerificationSanitizer}
+	sessionOptions := localreview.SessionOptions{TenantID: options.tenant, RepositoryID: options.repository, Repository: inputs.repository, ObjectsRoot: objects, ObjectStoreProfile: options.objectStoreProfile, Inventory: inputs.inventory, Policy: inputs.policy, Egress: options.egress, Credentials: credentials, Clock: localReviewClock{}, Timeout: options.timeout, RetainedMemoryInput: inputs.retainedInput, GenerationSanitizer: localReviewGenerationSanitizer, VerificationSanitizer: localReviewVerificationSanitizer}
+	if options.egress == localreview.EgressPolicyApproved {
+		sessionOptions.ModelHTTPClient, sessionOptions.ModelHTTPClientIdentity = localReviewModelHTTPClient, localReviewModelHTTPClientIdentity
+	}
 	if options.objectStoreProfile == scm.LocalGitObjectStoreProfileLooseAndPackIndexV1 {
 		sessionOptions.ObjectAlgorithm = base.Algorithm()
 	}
 	var session *localreview.Session
 	if options.investigation != "" {
-		session, err = localreview.NewInvestigationSession(sessionOptions, investigationPolicy)
+		session, err = localreview.NewInvestigationSession(sessionOptions, inputs.investigationPolicy)
+	} else if !specialist.IsZero() {
+		session, err = localreview.NewSpecialistSession(sessionOptions, specialist)
 	} else {
 		session, err = localreview.NewSession(sessionOptions)
 	}
@@ -267,14 +405,25 @@ func runLocalGitModelReview(ctx context.Context, args []string, stdout, stderr i
 		return unstarted("refused")
 	}
 	result, runErr := session.Run(execution, prepared)
+	if wantFeatures && runErr == nil && execution.Err() == nil {
+		// Read-only replay of this run's own recorded artifacts; no model call.
+		if features, err := session.ChangeFeatures(execution, prepared); err == nil {
+			member.features, member.hasFeatures = features, true
+		}
+	}
 	// Render normal journal/artifact readback only after safe closure. On failure,
 	// emit only an unknown-state error, not a false claim that no work started.
 	// Drain failure retains ownership; there is no reaper.
 	closeErr := closeSession()
-	if runErr != nil || closeErr != nil {
-		return writeLocalModelResult(options.format, session.FailureResult(), stdout, stderr)
+	if options.checkout != "" && result.CIDisposition() == "inconclusive" && runErr == nil && result.IncompleteSourceRead() && checkoutIsPartialClone(ctx, options.checkout) {
+		member.partialCheckout = true
 	}
-	return writeLocalModelResult(options.format, result, stdout, stderr)
+	if runErr != nil || closeErr != nil {
+		member.result = session.FailureResult()
+		return member, true
+	}
+	member.result = result
+	return member, true
 }
 func localModelCleanupTimeout(configured time.Duration) time.Duration {
 	if configured < 3*time.Second {
@@ -283,12 +432,19 @@ func localModelCleanupTimeout(configured time.Duration) time.Duration {
 	return configured
 }
 func writeLocalModelResult(format string, result localreview.Result, stdout, stderr io.Writer) int {
+	return writeLocalModelResultWithPolicy(format, localreview.ExitPolicyDefault, result, stdout, stderr)
+}
+func writeLocalModelResultWithPolicy(format string, policy localreview.ExitPolicy, result localreview.Result, stdout, stderr io.Writer) int {
 	var err error
 	if format == "text" {
 		err = localreview.RenderResult(stdout, result)
 	} else {
 		var encoded []byte
-		encoded, err = localreview.EncodeResult(result)
+		if format == "sarif" {
+			encoded, err = encodeModelReviewSARIF(result)
+		} else {
+			encoded, err = localreview.EncodeResult(result)
+		}
 		if err == nil {
 			var n int
 			n, err = stdout.Write(encoded)
@@ -301,9 +457,9 @@ func writeLocalModelResult(format string, result localreview.Result, stdout, std
 		fmt.Fprintln(stderr, "write result: failed")
 		return 1
 	}
-	return result.ExitCode()
+	return result.ExitCodeFor(policy)
 }
 func writeLocalGitModelReviewUsage(stderr io.Writer) {
-	fmt.Fprintln(stderr, "usage: trestle local-git model-review --objects-root PATH --repository-authority AUTHORITY --repository-namespace SEGMENT[/SEGMENT...] --repository-name NAME --revision-algorithm sha1|sha256 --base-revision-digest HEX --head-revision-digest HEX --tenant ID --repository ID --route-inventory PATH --runtime-policy PATH --egress local-only|policy-approved --timeout DURATION [--object-store loose-only|loose-and-pack-index-v1] [--format json|text] [--investigation-policy PATH | --retained-memory-input PATH]")
+	fmt.Fprintln(stderr, "usage: trestle local-git model-review --objects-root PATH --repository-authority AUTHORITY --repository-namespace SEGMENT[/SEGMENT...] --repository-name NAME --revision-algorithm sha1|sha256 --base-revision-digest HEX --head-revision-digest HEX --tenant ID --repository ID --route-inventory PATH --runtime-policy PATH --egress local-only|policy-approved --timeout DURATION [--object-store loose-only|loose-and-pack-index-v1] [--format json|text|sarif] [--exit-code-policy default|findings|strict|always-zero] [--investigation-policy PATH | --retained-memory-input PATH] [--profile PROFILE_ID | --specialists auto|none|ID[,ID...] [--max-specialists N]]")
 	fmt.Fprintln(stderr, "       checkout source alternative: --checkout PATH --base FULL_REF_OR_COMMIT --head FULL_REF_OR_COMMIT (replaces --objects-root and revision flags)")
 }

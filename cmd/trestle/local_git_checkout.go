@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -19,30 +20,45 @@ type localCheckoutSource struct {
 
 var checkoutSelection = regexp.MustCompile(`^(HEAD|[0-9a-f]{40}|[0-9a-f]{64}|refs/(heads|tags)/[A-Za-z0-9_][A-Za-z0-9_./-]*)$`)
 
-func resolveLocalCheckout(ctx context.Context, directory, base, head string) (localCheckoutSource, error) {
-	fail := func() (localCheckoutSource, error) {
-		return localCheckoutSource{}, errors.New("checkout selection unavailable")
+// errCheckoutCommitUnavailable reports a selected base or head that could not be
+// resolved to a commit in the checkout. It carries only operator-supplied
+// selections and two repository-shape facts, never object content.
+type errCheckoutCommitUnavailable struct {
+	role, selection string
+	shallow         bool
+}
+
+func (e errCheckoutCommitUnavailable) Error() string { return "checkout selection unavailable" }
+
+// hint is the actionable operator guidance printed to stderr. No fetch is run.
+func (e errCheckoutCommitUnavailable) hint() string {
+	if e.shallow {
+		return fmt.Sprintf("model-review: the %s revision %s is not in this shallow checkout. Fetch it with `git fetch --no-tags --depth=N origin %s` (N must reach back to the base), or check out with full history (GitHub Actions: actions/checkout with fetch-depth: 0). No fetch was attempted.", e.role, e.selection, e.selection)
 	}
-	if ctx == nil || ctx.Err() != nil || directory == "" || len(directory) > 4096 || !checkoutSelection.MatchString(base) || !checkoutSelection.MatchString(head) || len(base) > 4096 || len(head) > 4096 {
-		return fail()
-	}
+	return fmt.Sprintf("model-review: the %s revision %s could not be resolved to a commit in this checkout. Check the name, or fetch it with `git fetch --no-tags origin %s`. No fetch was attempted.", e.role, e.selection, e.selection)
+}
+
+const partialCheckoutHint = "model-review: the source could not be read completely. If this checkout is a partial clone (--filter), file contents for the base or head may be missing and are never fetched on demand; re-checkout without a filter (GitHub Actions: actions/checkout with fetch-depth: 0 and no filter)."
+
+// checkoutGitRunner runs read-only, hook-free Git queries against a checkout.
+type checkoutGitRunner func(args ...string) (string, error)
+
+func newCheckoutGit(execution context.Context, directory string) (checkoutGitRunner, string, error) {
 	absolute, err := filepath.Abs(directory)
 	if err != nil {
-		return fail()
+		return nil, "", err
 	}
 	git, err := exec.LookPath("git")
 	if err != nil {
-		return fail()
+		return nil, "", err
 	}
-	execution, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
 	environment := []string{
 		"PATH=" + filepath.Dir(git), "HOME=" + os.DevNull,
 		"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull,
 		"GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "GIT_NO_LAZY_FETCH=1",
 		"GIT_NO_REPLACE_OBJECTS=1", "GIT_PAGER=cat", "LC_ALL=C",
 	}
-	run := func(args ...string) (string, error) {
+	return func(args ...string) (string, error) {
 		prefix := []string{"--no-pager", "--no-lazy-fetch", "--no-replace-objects", "-c", "protocol.allow=never", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.DevNull, "-C", absolute}
 		command := exec.CommandContext(execution, git, append(prefix, args...)...)
 		command.Env = environment
@@ -58,6 +74,34 @@ func resolveLocalCheckout(ctx context.Context, directory, base, head string) (lo
 			return "", errors.New("invalid Git metadata")
 		}
 		return value, nil
+	}, absolute, nil
+}
+
+// checkoutIsPartialClone reports a promisor remote, whose missing objects this
+// command never fetches on demand.
+func checkoutIsPartialClone(ctx context.Context, directory string) bool {
+	execution, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	git, _, err := newCheckoutGit(execution, directory)
+	if err != nil {
+		return false
+	}
+	value, err := git("config", "--get-regexp", `^remote\..*\.promisor$`)
+	return err == nil && strings.Contains(value, "true")
+}
+
+func resolveLocalCheckout(ctx context.Context, directory, base, head string) (localCheckoutSource, error) {
+	fail := func() (localCheckoutSource, error) {
+		return localCheckoutSource{}, errors.New("checkout selection unavailable")
+	}
+	if ctx == nil || ctx.Err() != nil || directory == "" || len(directory) > 4096 || !checkoutSelection.MatchString(base) || !checkoutSelection.MatchString(head) || len(base) > 4096 || len(head) > 4096 {
+		return fail()
+	}
+	execution, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	run, _, err := newCheckoutGit(execution, directory)
+	if err != nil {
+		return fail()
 	}
 	algorithm, err := run("rev-parse", "--show-object-format")
 	if err != nil || algorithm != "sha1" && algorithm != "sha256" {
@@ -88,12 +132,19 @@ func resolveLocalCheckout(ctx context.Context, directory, base, head string) (lo
 		}
 		return value, nil
 	}
+	unavailable := func(role, selection string) (localCheckoutSource, error) {
+		shallow, _ := run("rev-parse", "--is-shallow-repository")
+		return localCheckoutSource{}, errCheckoutCommitUnavailable{role: role, selection: selection, shallow: shallow == "true"}
+	}
 	baseID, err := resolve(base)
 	if err != nil {
-		return fail()
+		return unavailable("base", base)
 	}
 	headID, err := resolve(head)
-	if err != nil || baseID == headID || execution.Err() != nil {
+	if err != nil {
+		return unavailable("head", head)
+	}
+	if baseID == headID || execution.Err() != nil {
 		return fail()
 	}
 	return localCheckoutSource{objects: filepath.Clean(objects), algorithm: algorithm, base: baseID, head: headID}, nil

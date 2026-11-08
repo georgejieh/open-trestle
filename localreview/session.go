@@ -20,6 +20,7 @@ import (
 	publicationhandler "github.com/georgejieh/open-trestle/handlers/publication"
 	sourcehandler "github.com/georgejieh/open-trestle/handlers/source"
 	"github.com/georgejieh/open-trestle/internal/evidence"
+	"github.com/georgejieh/open-trestle/internal/gateway"
 	memorycore "github.com/georgejieh/open-trestle/internal/memory"
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/review"
@@ -28,6 +29,7 @@ import (
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 	"github.com/georgejieh/open-trestle/worker"
 	"io"
+	"net/http"
 	"os"
 	"reflect"
 	"sync"
@@ -67,6 +69,11 @@ type SessionOptions struct {
 	RetainedMemoryInput                 *runtimeconfig.RetainedMemoryInput
 	GenerationSanitizer                 review.GenerationRequestSanitizer
 	VerificationSanitizer               review.VerificationRequestSanitizer
+	// ModelHTTPClient optionally replaces the policy-approved adapter transport
+	// (for example an offline test transport). It is refused with local-only
+	// egress, which always uses the numeric-loopback client.
+	ModelHTTPClient         *http.Client
+	ModelHTTPClientIdentity string
 }
 type Session struct {
 	mu                               sync.Mutex
@@ -90,17 +97,34 @@ type Session struct {
 	active, blocked, closing, closed bool
 	closeErr                         error
 	investigation                    *investigationSession
+	specialist                       review.ContextSpecialist
 	activeInvestigation              *modelhandler.InvestigationPipeline
 	lastInvestigationResult          Result
+	routeFailures                    *routeFailureObserver
 }
 
 // NewSession transfers root ownership only on success and never starts work.
 func NewSession(o SessionOptions) (*Session, error) {
-	return newSession(o, nil)
+	return newSession(o, nil, review.ContextSpecialist{})
 }
 
-func newSession(o SessionOptions, investigationPolicy *review.InvestigationPolicy) (*Session, error) {
+// NewSpecialistSession is NewSession with one packaged specialist profile. Its
+// instructions are placed only into the candidate-generation request, as the
+// optional specialist block of a version 7 generation context. Route selection
+// and independent verification are unchanged, and the verifier request does not
+// carry the instructions.
+func NewSpecialistSession(o SessionOptions, specialist review.ContextSpecialist) (*Session, error) {
+	if specialist.IsZero() {
+		return nil, ErrInvalidSession
+	}
+	return newSession(o, nil, specialist)
+}
+
+func newSession(o SessionOptions, investigationPolicy *review.InvestigationPolicy, specialist review.ContextSpecialist) (*Session, error) {
 	if o.RetainedMemoryInput != nil && (investigationPolicy != nil || o.Egress != EgressLocalOnly) {
+		return nil, ErrInvalidSession
+	}
+	if !specialist.IsZero() && (investigationPolicy != nil || specialist.Validate() != nil) {
 		return nil, ErrInvalidSession
 	}
 	if _, err := audit.NewReviewScope(o.TenantID, o.RepositoryID, "session-validation"); err != nil {
@@ -210,12 +234,20 @@ func newSession(o SessionOptions, investigationPolicy *review.InvestigationPolic
 			return nil, ErrInvalidSession
 		}
 	}
-	factory := runtimecatalog.NewLocalOpenAIRouteDispatcherCatalogFromRuntimePolicy
-	if o.Egress == EgressPolicyApproved {
-		factory = runtimecatalog.NewOpenAIRouteDispatcherCatalogFromRuntimePolicy
+	if o.Egress == EgressLocalOnly && (o.ModelHTTPClient != nil || o.ModelHTTPClientIdentity != "") {
+		return nil, ErrInvalidSession
 	}
-	dispatchers, err := factory(o.Inventory, o.Policy, o.Credentials)
+	var dispatchers gateway.RouteDispatcherCatalog
+	if o.Egress == EgressPolicyApproved {
+		dispatchers, err = runtimecatalog.NewOpenAIRouteDispatcherCatalogWithOptions(o.Inventory, o.Policy, o.Credentials, runtimecatalog.OpenAICatalogOptions{Clock: o.Clock, HTTPClient: o.ModelHTTPClient, HTTPClientIdentity: o.ModelHTTPClientIdentity})
+	} else {
+		dispatchers, err = runtimecatalog.NewLocalOpenAIRouteDispatcherCatalogFromRuntimePolicy(o.Inventory, o.Policy, o.Credentials)
+	}
 	if err != nil {
+		return nil, ErrInvalidSession
+	}
+	routeFailures := &routeFailureObserver{}
+	if dispatchers, err = observeRouteDispatchers(dispatchers, routeFailures); err != nil {
 		return nil, ErrInvalidSession
 	}
 	store, err := artifact.NewMemoryStore(artifact.ProtectionProcessPrivate, o.ArtifactCapacity)
@@ -272,7 +304,14 @@ func newSession(o SessionOptions, investigationPolicy *review.InvestigationPolic
 		if sanitizer == nil {
 			sanitizer = review.NewFixedGenerationRequestSanitizer()
 		}
-		assembly, err := contexthandler.NewHandler(store, o.Clock, generationAuthority, sanitizer)
+		var assembly *contexthandler.Handler
+		if specialist.IsZero() {
+			assembly, err = contexthandler.NewHandler(store, o.Clock, generationAuthority, sanitizer)
+		} else {
+			// The verifier still checks candidates against evidence on the
+			// independent route below; it never receives the specialist text.
+			assembly, err = contexthandler.NewSpecialistHandler(store, o.Clock, generationAuthority, sanitizer, specialist)
+		}
 		if err != nil {
 			return nil, ErrInvalidSession
 		}
@@ -312,7 +351,7 @@ func newSession(o SessionOptions, investigationPolicy *review.InvestigationPolic
 	}
 	// This nonce binds a live opened root capability, not a pathname or Git origin.
 	rootID := digest("open-trestle/local-root-session/v1:" + hex.EncodeToString(nonce))
-	session := &Session{options: o, rootID: rootID, adapter: source.Identity(), objectStore: objects, classification: classification, catalog: catalog, store: store, diagnostics: diagnosticStore, ledger: ledger, journal: journal, coordinator: coordinator, finalizer: finalizer, issued: map[string]bool{}, admitted: map[string]bool{}}
+	session := &Session{options: o, rootID: rootID, adapter: source.Identity(), objectStore: objects, classification: classification, catalog: catalog, store: store, diagnostics: diagnosticStore, ledger: ledger, journal: journal, coordinator: coordinator, finalizer: finalizer, issued: map[string]bool{}, admitted: map[string]bool{}, specialist: specialist, routeFailures: routeFailures}
 	if investigationPolicy != nil {
 		profile, err := runtimecatalog.NewInvestigationProfileFromRuntimePolicy(o.Policy, o.Inventory, *investigationPolicy, dispatchers.Identity())
 		if err != nil {
@@ -391,6 +430,7 @@ func (s *Session) Run(ctx context.Context, prepared runtimecatalog.PreparedRevie
 		s.mu.Unlock()
 		return Result{}, worker.ErrWorkerDrain
 	}
+	s.routeFailures.reset()
 	if input := s.options.RetainedMemoryInput; input != nil && ctx.Err() == nil {
 		at := s.options.Clock.Now()
 		// Prepare checked the actual head; validated issued membership binds it here.
