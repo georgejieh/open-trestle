@@ -65,6 +65,18 @@ local artifact evidence; do not use `:cloud` selectors, sign in, or implicitly
 pull missing models. The template cannot attest the server environment or inspect
 its routing. Host egress restrictions provide an additional boundary when needed.
 Any returned selector must equal the configured string, including the tag.
+
+> **Warning: `:cloud` models do not run on this machine.** A model whose name
+> ends in `:cloud` or `-cloud` (for example `gpt-oss:120b-cloud`), or whose
+> `GET /api/tags` entry carries a `remote_host`, is forwarded by the local Ollama
+> to Ollama Cloud, so your source would leave this machine. The local bootstrap
+> and `trestle init` refuse such a model with "this model runs on Ollama Cloud,
+> not on this machine; use --provider ollama-signin". They ask the server's
+> `/api/tags` list once at setup, and refuse by name when no list can be read.
+> To use those models deliberately, as remote egress with the sanitizer and
+> secret scanner, see
+> [Ollama signed in to Ollama Cloud](remote-model-review.md#ollama-signed-in-to-ollama-cloud).
+
 A thinking model whose response adds unsupported fields will refuse; qualify the
 exact model/server combination rather than weakening response admission.
 

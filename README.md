@@ -38,6 +38,19 @@ This proves that exact local evaluation path only. It
 does not establish review quality, repository-wide coverage, setup readiness, or a
 supported deployment.
 
+Model-backed review is also runnable against two operator-selected local models:
+`trestle setup bootstrap` prepares a protected same-user setup and the exact daemon,
+submit, and status commands for a durable nine-stage review of one pinned base/head
+pair (see [first local model review](#first-local-model-review)), and
+`trestle local-git model-review` runs a direct, non-durable review of a checkout.
+Both report findings together with their coverage, omissions, and abstentions; neither
+is a quality claim. `trestle profiles` lists the packaged specialist review profiles
+and prints a deterministic routing plan. The direct review runs them: `--profile`
+adds one profile's instructions to a single review, and `--specialists auto|LIST`
+runs the general review plus selected specialists as separate, independently
+verified runs. The daemon does not dispatch profiles
+([agent profiles](docs/agent-profiles.md)).
+
 **What is not:** a supported production install, stable APIs, or any public claim about
 review quality. CI builds and exercises an unsigned Linux amd64 candidate package, but
 that package has no signer identity or published provenance and is only for explicit
@@ -108,6 +121,9 @@ publication gate.
 | `trestled` | Local or server review daemon |
 | `trestle` | CLI and terminal user interface |
 | `trestle ci` | Deterministic review of local fixture files, not arbitrary checkouts |
+| `trestle local-git model-review` | Direct, non-durable model-backed review of an explicit checkout base/head pair |
+| `trestle setup bootstrap` | Protected local setup and exact commands for a durable first model review |
+| `trestle profiles` | Packaged specialist profiles and deterministic routing plans; the direct review runs them via `--profile` and `--specialists`, the daemon does not |
 | `trestle lsp` | Read-only editor diagnostics |
 | `trestle mcp` | Scoped Model Context Protocol server |
 | `trestle acp` | Agent Client Protocol endpoint |
@@ -120,6 +136,26 @@ For noninteractive model-backed review of an explicit checkout base/head pair, u
 Its conservative CI disposition is not a repository-clearance claim.
 
 ## Quick start
+
+Start with the guided setup. Run it inside the Git repository you want reviewed:
+
+```sh
+cd path/to/your-repository
+trestle init
+```
+
+`trestle init` asks where the two models run (OpenRouter ZDR routes, Ollama Cloud,
+OpenCode Go, or a model server on this machine), which model finds problems and
+which different model double-checks them, and which environment variable holds
+your API key (the key itself is never asked for or stored). It shows every
+privacy or capability declaration in plain words and requires a typed `yes`,
+writes a protected configuration, runs the setup checks with a one-line fix for
+anything missing, and runs the first review only after you agree to send the
+selected source. Every answer also has a flag for `--no-input` use. Remote
+providers still need the packaged scanner-bound binary. See
+[getting started](docs/getting-started.md).
+
+### Evaluation path
 
 There is no supported runtime package. The following clean-checkout procedure reproduces
 the bounded local evaluation path and writes its evidence to a caller-selected private
@@ -268,6 +304,32 @@ go run ./cmd/trestle local-git review --objects-root PATH \
 go test ./...
 ```
 
+### First local model review
+
+Once the binaries are installed, the [local-first bootstrap](docs/local-first-bootstrap.md)
+guide walks one same-user journey with two local OpenAI-compatible model servers:
+
+1. `trestle setup bootstrap init` pins the checkout's base and head commits, the two
+   distinct local models, and a local-only, no-publication review policy into a
+   private `0700` directory.
+2. `trestle setup bootstrap check` runs the offline setup checks and, only with
+   `--allow-local-probe`, two bounded synthetic-code model probes. It returns
+   `ready` (exit 0), `pending` (exit 3) or `refused` (exit 4).
+3. `trestle setup bootstrap prepare-review` prints the exact `launch_command`,
+   `review_command` and `status_command` argument arrays. Start `trestled` with the
+   launch command, then submit within five minutes.
+4. Inspect the durable run with the status command, `trestle tui`, or the daemon's
+   web console.
+
+The daemon path currently needs a private `0700` Git objects directory with complete
+loose objects, separate operator and observer tokens of at least 32 bytes in the
+environment, and the pinned scanner binaries. Bootstrap never runs commands, installs
+services, or sends repository source. Submitting the review is the source-to-model step.
+
+For strong remote models (OpenRouter ZDR, OpenCode Go or Ollama Cloud), follow the
+[remote model review](docs/remote-model-review.md) journey: `init --provider`, `check`,
+then the printed direct `--egress policy-approved` review command.
+
 ### Unsigned Linux amd64 candidate
 
 After the scanner staging and passive vulnerability gates have completed, a Linux amd64
@@ -331,11 +393,14 @@ detection, and none of it is released or supported for production. See the
 | Architecture and roadmap | [architecture](docs/architecture.md) · [roadmap](docs/roadmap.md) |
 | Runtime | [review-run runtime](docs/review-run-runtime.md) · [daemon API](docs/daemon-api.md) · [remote workers](docs/remote-workers.md) · [task notifications](docs/task-notifications.md) |
 | Review pipeline | [source acquisition](docs/source-acquisition-handler.md) · [change model](docs/change-model-handler.md) · [evidence](docs/deterministic-evidence-handler.md) · [context assembly](docs/context-assembly-handler.md) · [candidate generation](docs/model-generation-handler.md) · [verification](docs/model-verification-handler.md) · [OpenAI provider](docs/openai-provider.md) · [publication](docs/publication-handler.md) |
-| Local Git | [inspect](docs/local-git-inspect.md) · [change evidence](docs/local-git-change.md) · [review](docs/local-git-review.md) · [model review](docs/local-model-review.md) |
+| Getting started | [`trestle init`](docs/getting-started.md) · [local-first bootstrap](docs/local-first-bootstrap.md) · [remote model review](docs/remote-model-review.md) · [setup](docs/setup.md) · [named local runtimes](docs/named-local-runtimes.md) · [model catalog](docs/model-catalog.md) |
+| Local Git | [inspect](docs/local-git-inspect.md) · [change evidence](docs/local-git-change.md) · [review](docs/local-git-review.md) · [model review](docs/local-model-review.md) · [feedback](docs/local-feedback.md) |
+| Specialist profiles | [agent profiles](docs/agent-profiles.md) |
+| Security | [prompt-injection boundary](docs/prompt-injection-boundary.md) |
 | Storage | [PostgreSQL ledgers](docs/postgresql-storage.md) · [encrypted object storage](docs/remote-artifact-storage.md) · [runtime artifacts](docs/runtime-artifacts.md) |
 | Transports | [MCP](docs/mcp.md) · [ACP](docs/acp.md) · [LSP](docs/lsp.md) · [TUI](docs/tui.md) · [web console](docs/web-console.md) · [VS Code](docs/vscode.md) · [protocol contracts](docs/protocol-contracts.md) |
 | Operations | [setup](docs/setup.md) · [operations and recovery](docs/operations.md) · [configuration validation](docs/configuration-validation.md) · [quality evaluation](docs/quality-evaluation.md) |
-| GitHub | [source acquisition](docs/github-source-acquisition.md) · [integration permissions](docs/github-integration-permissions.md) · [webhook ingress](docs/webhook-ingress.md) · [publication](docs/github-publication.md) |
+| GitHub | [pull-request review (Actions and App)](docs/github-pr-review.md) · [source acquisition](docs/github-source-acquisition.md) · [integration permissions](docs/github-integration-permissions.md) · [webhook ingress](docs/webhook-ingress.md) · [publication](docs/github-publication.md) |
 
 ## Project scope
 

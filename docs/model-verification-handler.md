@@ -29,6 +29,8 @@ Inventory failures and audit-storage failures return the closed transient author
 
 Verification tasks require `max_attempts: 1`. The handler records the attempt claim before releasing context, then records the typed provider outcome and cost reconciliation. Generic task retries cannot reuse verification authority or budget. A reconciled budget overrun fails closed.
 
+A version 7 generation context yields a verification-context schema version 6 request. Version 6 keeps the version 5 verdict rules, opens with the instruction-hierarchy paragraph of the [prompt-injection boundary](prompt-injection-boundary.md), and sends that contract only in the trusted system channel; the payload binds it by `instructions_identity`. It does not receive candidate categories, fix guidance or specialist guidance; categories and fixes are bound only through `candidate_batch_identity` and each `candidate_id`. The verifier checks the defect claim against evidence. A categorized batch is refused against a pre-version-7 generation context. New verifier requests are built only from an executable version 7 generation context. Recorded verification contexts of versions 2, 3 and 5, and recorded version 5 generation contexts, are reconstructed for readback but grant no new verification.
+
 The verifier response must contain exactly one verdict for every admitted candidate. Verified verdicts require supported source evidence and a final severity. Rejected and inconclusive verdicts remain explicit and cannot carry a final severity. Unknown candidates, omitted candidates, duplicate verdicts, unsupported evidence, or incomplete responses are rejected.
 
 ## Protected output
@@ -42,7 +44,7 @@ A successful `verified_finding_set` artifact contains and binds:
 - the promoted verified finding set
 - the generation result, context, request, response, cost, and provenance identities
 
-Only independently verified candidates are promoted. Rejected and inconclusive counts remain in the finding set. `ParseVerificationResultArtifact` reconstructs the verification context and all derived receipts, reruns independence and promotion, and compares every identity before returning data.
+Only independently verified candidates are promoted. A promoted finding copies its candidate's category and fix unchanged; the verified-finding identity binds them (preimage version 2), and the verified-finding-set encoding uses schema version 2 when any finding carries a category. The fix stays unverified model text: it is not part of `PublishableFinding`, so forge publication and its content scan do not render it, and the local JSON result labels it `unverified_model_guidance`. Rejected and inconclusive counts remain in the finding set. `ParseVerificationResultArtifact` reconstructs the verification context and all derived receipts, reruns independence and promotion, and compares every identity before returning data.
 
 `artifactvalidation.ValidatedTaskHandler` can wrap the handler with `candidate_batch` as input and `verified_finding_set` as output.
 

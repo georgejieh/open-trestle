@@ -26,6 +26,16 @@ Git commit/tree/blob objects. Packed-only source refuses during initialization;
 the command does not repack or copy your repository. Linked worktrees can use the
 resolved shared object directory if that source satisfies the same requirements.
 
+These source rules exist for the durable daemon, which pins the objects root for
+its lifetime. To prepare only the foreground `local-git model-review --checkout`
+review, add `--scope direct-review` to `init`. That scope reads both commits
+with the review's own `loose-and-pack-index-v1` reader, which verifies every
+object against its hash, so an ordinary packed clone with a `0755` objects folder
+is accepted. Alternates, multi-pack-index and promisor packs still refuse. The
+manifest records the scope and carries no daemon `review_command`,
+`launch_command` or `status_command`; `prepare-review` and `check --scope daemon`
+refuse it. `trestle init` uses this scope for local servers.
+
 Select two distinct local model IDs, their exact API bases, and a transport.
 Neither provider nor model has a shipped default. The two servers may be the same
 local service with different models. `distinct_model` verification is required;
@@ -72,8 +82,12 @@ authentication, add `--generation-credential-environment OPEN_TRESTLE_PROVIDER_L
 and/or `--verification-credential-environment OPEN_TRESTLE_PROVIDER_LOCAL_VERIFICATION`.
 Only references are stored. Provision those environment values through your
 approved secret store before checking or reviewing. Never paste secrets into
-CLI flags, checked-in files or receipts. Do not use this bootstrap for remote
-services, cloud model selectors, browser sessions or sign-in token caches.
+CLI flags, checked-in files or receipts. Do not use this local mode for remote
+services, cloud model selectors, browser sessions or sign-in token caches. For
+OpenRouter ZDR, OpenCode Go or Ollama Cloud models, use the remote mode in
+[remote model review](remote-model-review.md): `init --provider` writes the
+protected remote configuration, and `check` reports the scanner and credential
+prerequisites for the direct `--egress policy-approved` review.
 
 ## Check and resume
 
@@ -131,6 +145,16 @@ or unsupported backup location cannot become ready. Correct the dependency and
 repeat `check`. Passed checks are historical receipts, not fresh liveness checks;
 repeat calls do not silently repeat a successful inference probe. `inspect` is
 read-only and never contacts models.
+
+In the direct-review scope (recorded by `init --scope direct-review`, or
+requested with `check --scope direct-review` on a daemon setup), `check` runs the
+storage, administrator, policy and dry-run checks, plus the local inference probe
+when `--allow-local-probe` is given, and skips the observer-token and backup
+checks the foreground review never uses. Its result carries `"scope":
+"direct-review"`, omits the daemon commands, and is `ready` when those checks have
+passed (a probe that was attempted and failed still counts). The setup plan
+itself is unchanged and is not daemon-ready. `--backup-directory` is refused in
+this scope.
 
 `ready` (exit 0) means these setup checks passed. It does not mean release-ready,
 model-quality-qualified, or that a daemon is running. `pending` (exit 3) lists

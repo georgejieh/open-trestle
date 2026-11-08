@@ -52,6 +52,10 @@ and need not be equal.
 All evidence remains unsigned local output and does not establish publisher authenticity,
 production readiness or support.
 
+Both `trestle build-info` and `trestled build-info` emit the same version-1 JSON source-identity contract with the program name, `source_revision`, `source_tree`, and `source_bound`. They do not start a daemon, read route credentials, or imply release approval. Ordinary development builds report empty source identities and `source_bound: false`.
+
+Protected packaging requires clean committed source: HEAD, the index, live tracked bytes and modes, index flags, and Git authority must pass the existing source verifier. It derives the revision and tree from that check, not caller-supplied revision text, injects them into both product binaries, executes each `build-info` command to compare exact metadata, and checks tracked source again before accepting staging. `--verify` checks staged product metadata against the current clean source too. Packaging-generated ignored staging and toolchain caches may change; the verifier still reads them within its existing bounds. Run from a clean checkout and keep custom staging outputs ignored. Root product builds disable ambient Go environment files, GOFLAGS, and GOEXPERIMENT while retaining the pinned toolchain and fixed build flags. The embedded identities are local build evidence, not a publisher signature, a trusted remote attestation, or proof against an adversarial compiler or concurrent edit that is restored before the final check. They do not select a release version or independently bind the later archive's declared revision; compare that declaration and the installed binary metadata in final artifact verification.
+
 A normal root `go build` is useful for development, but it does not inject the trusted scanner binary digests. Such a `trestled` build fails closed when sanitized egress is requested. Build the release staging tree with the reviewed packaging tool instead:
 
 ```sh

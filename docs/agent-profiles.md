@@ -8,7 +8,10 @@ assigned to that tier. The package is `agentprofile`; the CLI is
 
 ## Status
 
-This is a **planning layer**. It is not yet wired into the durable generation and
+This is mainly a **planning layer**. Its production uses are in the direct
+`trestle local-git model-review` path only: one operator-chosen profile
+(`--profile`), or an automatically selected or explicitly listed set of profiles
+(`--specialists`). It is not wired into the daemon's durable generation and
 verification task graph.
 
 What exists today:
@@ -21,13 +24,52 @@ What exists today:
   the same features from an `evidence.Change` and a `semanticimpact.Profile`.
 - `agentprofile.Plan`, which returns a content-identified `RoutingPlan`.
 - `trestle profiles list` and `trestle profiles plan`.
+- `trestle local-git model-review --profile PROFILE_ID` (and
+  `localreview.NewSpecialistSession`). It places one operator-selected
+  model-calling profile's skill instructions into the candidate-generation
+  request. The skill text goes only into the trusted system channel, looked up
+  from the embedded catalog. The context's optional `specialist` block (review-context
+  schema version 7) carries only the profile and catalog identities, which bind
+  request identity, and the result reports them. The verifier request does not
+  carry the instructions. See
+  [local model review](local-model-review.md#specialist-profile-opt-in) and the
+  [prompt-injection boundary](prompt-injection-boundary.md).
+- `trestle local-git model-review --specialists auto|ID[,ID...]`. With `auto`,
+  the command derives change features from the general review's own recorded
+  change-model and semantic-impact artifacts
+  (`localreview.Session.ChangeFeatures`, then
+  `agentprofile.ChangeFeaturesFromFileSpecs`), calls `Plan`, and keeps the
+  activated, planned direct-review profiles in priority order, cut to
+  `--max-specialists` (default 3, at most 6). It then runs the general review and
+  each selected profile as its own sequential, independently verified run and
+  merges the verified findings. The selection trace records the plan identity and
+  every dropped profile with its reason. See
+  [local model review](local-model-review.md#specialist-review-set-opt-in).
 
 What does **not** exist yet:
 
-- No review run dispatches a profile. `trestle local-git model-review`, the
-  daemon, and the local review session still use one runtime-policy route pair
-  per run.
-- Skill instructions are not yet placed into model requests.
+- The daemon does not dispatch profiles. Its context-assembly handler never
+  binds a specialist block. The request validators it shares accept a version 7
+  specialist block only when the block re-derives exactly from the embedded
+  catalog.
+- `test_author` is not accepted by `--profile`: its test proposals do not fit the
+  defect-claim candidate contract.
+- No daemon fan-out. Automatic selection exists only in the direct
+  `local-git model-review` path; the daemon never runs more than one generation
+  per review run.
+- No per-profile route assignment. A `--profile` or `--specialists` run uses the
+  one runtime-policy generation and verification route pair for every member.
+  For `--specialists auto`, `Plan` needs an assignments document; the command
+  synthesizes a minimal one that maps every tier to the policy's generation route
+  (its pin, else its first preferred route, else the first inventory route) and
+  every verifier tier to its verification route. It does not read an operator
+  assignments file and has no total token cap, so `budget_cap_exceeded` does not
+  occur there. The plan's tiers, token budgets and route choice are informational.
+- Recorded change features carry changed head-line counts only (deleted lines
+  count as zero), no repository configuration files and no change description,
+  so `style_conformance` (declared style) and the intent condition of
+  `drift_auditor` never activate under `auto`; name them explicitly instead.
+  Difficulty tiers are informational.
 - `trestle profiles plan` reads a features file. It does not derive features
   from a Git change by itself.
 
@@ -54,9 +96,14 @@ Today `runtimecatalog.NewGenerationPolicyAuthorizerFromRuntimePolicy` and
    independent-verification task only when `PlanEntry.Verification()` is
    `independent`, using the existing `handlers/model` generation and verification
    handlers. Retain candidates from `unverifiable` entries as non-findings.
-3. Carry the profile skill text and the profile identity into the model request
-   and context packet (`internal/review/context_packet.go`), so the instruction
-   and its version are bound into request identity.
+3. Carry the profile identity into the context packet and the skill text into
+   the model request's system channel. This step exists for one directly
+   selected profile: `review.ContextPacket.WithSpecialist` encodes the version 7
+   `specialist` identity block (`internal/review/context_specialist.go`),
+   `review.TrustedModelRequestInstructions` appends the catalog-exact skill text
+   to the system channel, and
+   `contexthandler.NewSpecialistHandler` binds it into the handler identity.
+   Per-entry dispatch would create one such context per planned entry.
 4. Derive change features from the run's `evidence.Change` and semantic-impact
    profile with `agentprofile.ChangeFeaturesFromSemanticImpact`, instead of a
    file.

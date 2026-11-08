@@ -5,8 +5,9 @@ change `local-git review`, which remains deterministic. This command cannot publ
 a forge review or create a required check. For private source, prefer a local model
 or a provider whose zero-data-retention terms and account settings you have
 verified. Route-policy checks and `store: false` cannot prove how a provider
-retains or uses data. This CLI's direct model-review path does not permit a
-non-local request (see Authority and egress below).
+retains or uses data. `--egress policy-approved` can send sanitized, scanned
+selected source to an approved remote route (see Authority and egress below and
+[remote model review](remote-model-review.md)).
 
 ```text
 trestle local-git model-review \
@@ -115,22 +116,95 @@ through their existing policy and credential boundaries. This example uses
 `local-only`, which refuses remote routes.
 
 Capture stdout as one terminal JSON receipt and retain the process exit status.
-The receipt uses `open-trestle/local-git-model-review-result`, schema version 1;
-inspect `status`, `ci_disposition`, `run_status`, `limitations` and `diagnostics`
-together. A succeeded run means the pipeline finished, not that the repository
+The receipt uses `open-trestle/local-git-model-review-result`, schema version 1,
+or version 4 when a verified finding carries a category (see
+[Results and limits](#results-and-limits)); inspect `status`, `ci_disposition`,
+`run_status`, `limitations` and `diagnostics` together. A succeeded run means the pipeline finished, not that the repository
 is clear. Verified findings use `ci_disposition: blocked`; no candidates,
 incomplete evidence or abstention remain `inconclusive`. Refusal and failure
 remain distinct terminal statuses. The [exit table](#results-and-limits) below
 is authoritative: exit 4 covers findings or policy/resource refusal, 3 covers
 no-candidate/incomplete/canceled outcomes, 2 is invalid intent, and 1 is failure.
-There is no exit-0 branch or comprehensive-clearance result in this version.
+By default there is no exit-0 branch, and no policy yields a comprehensive-clearance
+result. The opt-in [exit-code policy](#exit-code-policy) can map a completed review
+to 0 for CI.
 Do not mask a nonzero status or treat an empty finding list as CI approval.
 
-The command reports JSON or text, not SARIF. For a separately admitted daemon
-run, `runs status --format json|sarif` retrieves the canonical result; successful
-retrieval is not a review-pass decision. Neither export creates publication
+`--format` selects `json` (default), `text` or `sarif`. For a separately admitted
+daemon run, `runs status --format json|sarif` retrieves the canonical result;
+successful retrieval is not a review-pass decision. No export creates publication
 permission. This headless example remains ephemeral and cannot resume an older
 run. It does not establish model quality or live provider qualification.
+
+### SARIF output
+
+`--format sarif` writes one newline-terminated SARIF 2.1.0 document instead of the
+JSON receipt, built from the same sealed result and the same SARIF types as the
+other Open Trestle exports. It carries only independently verified findings:
+
+| SARIF | Source |
+| --- | --- |
+| `ruleId` | `open-trestle/<category>` from the generator's advisory category, or `open-trestle/uncategorized` |
+| `level` | verified severity: high and critical are `error`, medium is `warning`, low is `note` |
+| `message.text` | `title: claim`, the text the verifier checked |
+| `locations[0].physicalLocation` | repository-relative path and start/end line |
+| `fingerprints` | `openTrestleVerifiedFindingId/v1`, the run-specific finding identity |
+| `partialFingerprints` | `openTrestleFindingFingerprint/v1` (bound to the reviewed snapshot) and `openTrestleContentHash/v1` (path, category, title and claim only) |
+| `properties` | `trestleCategory`, `trestleSeverity` (`error`, `warning` or `information`; the diagnostic severity, so high and critical are not distinguished), `trestleVerificationIndependence`, evidence IDs |
+| `properties.trestleFixGuidance` | the generator's fix text, with `trestleFixAuthority: unverified_model_guidance` |
+| run `properties` | `trestleModelReviewStatus`, `trestleCiDisposition`, `trestleRunStatus`, `trestleFailure`, sorted `trestleLimitations`, candidate/verified/rejected/inconclusive counts, source coverage and omissions, and `trestleComprehensiveClearance: false` |
+
+Fix guidance is a result property, not a SARIF `fixes[]` entry, because the SARIF
+schema requires every fix to contain machine-applicable `artifactChanges` and this
+text is unverified prose that nothing applies. The verifier checked the claim, not
+the category or the fix. `openTrestleContentHash/v1` stays equal across pushes when
+the same path, category, title and claim recur, which lets code scanning match an
+alert between runs; the model may word the same problem differently, so matching
+is best effort. Results, rules, limitations and omissions are sorted, so identical
+input yields identical bytes.
+
+A run that was refused, could not read the change, was canceled or failed is still
+valid SARIF: it has zero `results`, `invocations[0].executionSuccessful: false`
+and one `error` notification that states the status and failure. An empty result
+list from a run that completed with no candidates or with coverage gaps carries
+`executionSuccessful: true` and a `note` or `warning` notification; none of these
+is a clearance.
+
+### Exit-code policy
+
+By default the exit status follows the table in [Results and limits](#results-and-limits)
+and is never 0. A CI step that must pass on a completed review without blocking
+findings can opt in with `--exit-code-policy`. The flag changes only the process
+exit status; the JSON, text or SARIF output, its `status`, `ci_disposition` and
+`comprehensive_clearance: false` are identical under every policy. Exit 0 under
+any policy is a pipeline decision, not a statement that the change is clear.
+
+| Policy | Exit 0 when | Otherwise |
+| --- | --- | --- |
+| `default` (the behavior when the flag is absent) | never | 4, 3, 2 or 1 as in the table |
+| `findings` | the run succeeded and no verified finding has high or critical severity (including no candidates, medium or low findings only, and a completed run with coverage gaps) | the default code: 4 for a verified high or critical finding or a policy/resource refusal, 3 when the change could not be read or finished or was canceled, 1 for an internal failure |
+| `strict` | the run succeeded with no candidates at all, so no finding of any severity and no verification gap | the default code, so any verified finding is 4 and any coverage gap is 3 |
+| `always-zero` | a valid result was written, including a refused or failed run | 1 only if the result could not be written; 2 for invalid usage |
+
+A `findings` run whose diagnostics cannot be read back but whose status is
+`findings` is treated as blocking. `always-zero` is advisory-only: pair it with
+SARIF or the JSON status, because a green step then says nothing about whether the
+review ran. Invalid usage (2) and output write failure (1) are never masked.
+
+### Shallow and pull-request checkouts
+
+Checkout mode reads only the objects of the two named commits. It does not
+fetch and does not deepen a shallow clone. When a selected base or head cannot be
+resolved, the run is `incomplete` with no model call, and stderr says why. In a
+shallow checkout the message names the missing revision and the commands to run:
+`git fetch --no-tags --depth=N origin <sha>` (N must reach the base) or, in GitHub
+Actions, `actions/checkout` with `fetch-depth: 0`. A shallow clone that does hold
+both commits reviews normally. A partial clone (`--filter=...`) can resolve the
+commits but lack file contents; those are not fetched on demand, the run is
+`incomplete`, and stderr suggests re-checking out without a filter. For a pull
+request use `github.event.pull_request.base.sha` and `head.sha` as the pinned
+commits. See [GitHub pull-request review](github-pr-review.md) and the
+[example workflow](../examples/github-actions/README.md).
 
 ## Runtime policy route-pair boundary
 
@@ -178,13 +252,16 @@ ownership platforms fail closed. There is no environment-based policy fallback.
 
 `local-only` requires local routes and canonical numeric loopback endpoints. The
 existing local transport disables proxies and confines dialing. `policy-approved`
-still applies the protected inventory and policy. This command's direct review path
-does not construct the sanitized-request and receipt artifacts required for a
-private-remote call, so its non-local requests remain denied before credential
-retrieval. The standard runtime generation and independent-verification handlers are
-different: they can admit a private-remote request after separate Betterleaks scans,
+still applies the protected inventory and policy, and the direct review uses the
+standard runtime generation and independent-verification handlers. They admit a
+`private_remote` route, or a `brokered_remote` route with a current OpenRouter ZDR,
+OpenCode Go or OpenCode Console declaration, only after separate Betterleaks scans,
 a fresh zero-finding residual scan, artifact reload, and a handler-sealed dispatch
-proof. Investigation requests remain local-only. Route approval, data classification,
+proof. A binary without injected scanner digests, or without the installed
+scanner, therefore refuses remote requests before credential retrieval. Use the
+packaged binary and installed scanner described in
+[remote model review](remote-model-review.md), whose bootstrap writes the protected
+remote configuration. Investigation and retained-memory requests remain local-only. Route approval, data classification,
 logging restrictions, provider independence, capacity, and per-request cost budgets
 remain in force. Provider credentials use only explicit protected-policy environment
 references, through the existing credential resolver.
@@ -449,6 +526,170 @@ input refusal produces `refused` with exit 4; cancellation produces exit 3. Late
 Run or Close errors keep the existing conservative failure handling. Input reuse
 is not automatic retained-memory generation, cross-head reuse, or revocation.
 
+## Specialist profile (opt-in)
+
+Add `--profile PROFILE_ID` to select one packaged specialist profile from the
+embedded catalog described in [agent profiles](agent-profiles.md). Accepted IDs are
+the model-calling review profiles: `backend`, `bug_hunter`, `drift_auditor`,
+`frontend`, `security_probe` and `style_conformance`. The `orchestrator`
+(model-free) and `knowledge_graph` (gap-only) profiles are refused, and so is
+`test_author`: it proposes tests, which the defect-claim candidate contract and
+its independent verifier cannot represent.
+An unknown or refused ID is a usage error (exit 2) that lists the valid IDs before
+any configuration is read or model request is made. Do not combine `--profile` with
+`--investigation-policy`. It can be combined with `--retained-memory-input`.
+Library callers use `localreview.NewSpecialistSession(options, specialist)` with a
+value from `review.NewContextSpecialist`.
+
+The flag affects only the candidate-generation request. Its version 7 review
+context carries the optional `specialist` object with only `profile_id`,
+`profile_identity` and `catalog_identity`. The profile's exact skill markdown is
+sent only in the trusted system channel, after the version 7 host contract, under
+a `Specialist review guidance (operator-packaged profile <id>, shipped with Open
+Trestle):` heading. It is looked up in the embedded catalog, never read from the
+payload or the repository. The host contract tells the model to use that section
+to decide what to look for, without changing the output contract, evidence rules
+or authority limits. Source content keeps its `evidence_data_not_instructions`
+label. The identity block is bound into the context, sanitized request and
+provider request identities. The context-assembly handler identity also binds the profile
+and catalog identities, so the run plan identity differs from a run without the
+flag. Readback accepts a version 7 specialist block only when it re-derives
+exactly from the embedded catalog; an unknown profile ID, a mismatched identity,
+or any extra field such as instruction text or an authority label is refused.
+
+Route selection is unchanged: the same runtime-policy generation and verification
+routes and independence level apply. Independent verification still runs. Its
+request is verification-context schema version 6, binds the version 7 generation context
+through `generation_context_identity`, and does not receive the specialist
+instructions. The profile catalog's tiers, token budgets and route assignments are
+not used by this command.
+
+Without `--profile`, the version 7 request has no `specialist` block and the result
+does not report a profile. With it, the result uses schema version 3 (version 4
+when it also reports finding guidance) and adds
+`specialist` with `profile_id`, `profile_identity` and `catalog_identity`, both on
+completed and on refused or failed runs. The reported profile must match the one
+recorded in the generation context. Text output adds a `specialist profile:` line.
+The instruction text itself is not written to the result. The retained-memory
+feedback review and the [model-result evaluation](model-result-evaluation.md)
+import read only version 1 results, so they refuse version 3 results.
+
+## Specialist review set (opt-in)
+
+Add `--specialists auto` (or `--specialists ID[,ID...]`) to run the general review
+plus several packaged specialist profiles and merge their verified findings.
+`--specialists none`, or no flag, is the ordinary single review with unchanged
+output. `--profile` remains the single-specialist form and cannot be combined with
+`--specialists`; neither can `--investigation-policy`. IDs are the ones `--profile`
+accepts. An unknown ID is a usage error (exit 2) that lists the valid IDs.
+
+Selection:
+
+- `auto` derives change features from the general review's own recorded change
+  model and semantic-impact profile, after that review ran; no model is called
+  for selection and no source is read again. It calls the routing planner and
+  keeps activated, planned profiles that may steer defect review, in descending
+  priority (ties by profile ID). The rest are recorded in `selection.dropped`
+  with a reason: `not_applicable` (model-free, gap-only, `test_author`, or no
+  model call for this change), `max_specialists` (cut by the limit), or a planner
+  omission such as `tier_unassigned`. Inactive profiles are listed in
+  `selection.inactive`. If features are unavailable (for example the general
+  review did not reach analysis), `selection.status` is `features_unavailable`,
+  `selection.reason` names the general review's failed task (text:
+  `status=features_unavailable (general review failed at <task>)`), and no
+  specialist runs. When the general review recorded its change and analysis but
+  failed later, the features summary is still derived from those artifacts, so
+  languages and file classes are reported even if the plan is unavailable.
+- An explicit list runs in the given order. It is never cut: a list longer than
+  `--max-specialists` is a usage error.
+- `--max-specialists N` (1 to 6, default 3) bounds how many specialists run. It
+  needs an active `--specialists` value. It is not a spend cap on its own: every
+  member is a full run bounded by the runtime policy's per-run `max_cost`, so the
+  set's spend can reach (1 + N) × that `max_cost` (the general review plus N
+  specialists).
+
+Routes: every member uses the runtime policy's one generation and verification
+route pair and its independence level. Per-profile route assignment is not
+applied, and `selection.route_assignment` says so. The planner requires an
+assignments document, so the command builds a minimal one that maps every tier to
+the generation route the general review actually recorded and every verifier
+tier to its recorded verification route (route selection is not re-derived), and
+records that basis in `selection.plan`. If the general review recorded no route
+pair, `selection.status` is `plan_unavailable` and no specialist runs. The plan's
+tier and route choice is informational.
+
+Execution is sequential: the general review first, then each selected specialist
+as its own session and run with its own run identity, the same specialist
+generation request as `--profile`, and its own independent verification (the
+verifier never receives the profile instructions). The general review shares the
+`--timeout` window with configuration loading, and each specialist gets a fresh
+`--timeout` window, so model work is bounded by members × `--timeout`
+(`bounds.max_model_wall_time_milliseconds`), plus at most
+`bounds.member_cleanup_bound_milliseconds` of bounded close and readback per
+member. No further member starts once the invocation is canceled or a launched
+member's run did not succeed (refused, failed, canceled, or the source could not
+be read); such members appear with `launched: false` and a `not_launched_reason`.
+Nothing is retried.
+
+Output is the `open-trestle/local-git-model-review-set` schema version 1 (JSON),
+not the single-review result:
+
+- `selection`: mode, status, features summary (identity, changed file count,
+  languages, file classes, security signals, semantic gap count, public API
+  changes, reference fan-out), plan identities, selected and dropped profiles
+  with reasons, inactive profiles.
+- `members`: one entry per member (`general`, then profile IDs) with status, CI
+  disposition, run status, failure, `failure_task` and `failure_detail` (when the
+  run did not succeed), run, scope, plan and context identities,
+  route record identities, independence, diagnostic set identity, usage and cost,
+  verification counts and limitations.
+- `findings`: merged verified findings. Two findings are duplicates when they
+  share path and category, their line ranges overlap (a group's covered range
+  grows to the union of what it absorbs), and they describe the same issue: an
+  identical normalized title (lowercase, punctuation collapsed), or, for findings
+  from different members, a shared evidence ID or a word overlap of at least 0.3
+  (Jaccard over the words of at least three letters or digits in title and claim,
+  without common stopwords). Within one member only an identical title merges,
+  because evidence IDs name a whole changed hunk and one member may report two
+  distinct issues in it. The group keeps the most severe finding (ties: the
+  earliest member), reports the narrowest contributing range, and lists every
+  contributor with its own finding identity, severity and range. Matching is
+  deterministic. Only members whose run succeeded contribute. The rule is a
+  heuristic (`deduplication_is_heuristic`).
+- `summary`, `bounds`, `limitations` and `comprehensive_clearance: false`.
+
+Set status and CI disposition:
+
+| Set | `status` | `ci_disposition` | Default exit |
+|---|---|---|---|
+| A member did not complete and a merged finding is error severity (verified high or critical) | most serious member status (`failed`, `refused`, `canceled`, `incomplete`) | `blocked` | 4 |
+| A member did not complete, no error-severity merged finding | most serious member status | `failed` → `error`, `refused` → `blocked`, otherwise `inconclusive` | 1, 4 or 3 |
+| Every member completed, merged findings not empty | `findings` | `blocked` | 4 |
+| Every member completed with no candidates | `no_candidates` | `inconclusive` | 3 |
+| Every member completed, otherwise | `incomplete` | `inconclusive` | 3 |
+
+`complete` is false whenever a member did not complete. An incomplete set never
+demotes a completed member's verified high or critical finding.
+
+Text output starts with a summary (status, selection, dropped profiles, members
+run, findings by severity and category, files analyzed/selected/omitted by the
+general review), then the merged findings with a `contributors:` line. A member
+whose run did not succeed shows its failure on its line, for example
+`member: bug_hunter status=failed run=failed verified_findings=0 failure=internal
+(task candidates)`, followed by `member hint: bug_hunter: ...`. SARIF
+output is one run whose results are the merged findings, each with a
+`trestleContributors` property; when some members did not complete, the results
+still list the completed members' verified findings and the notification says the
+set is not a clean result.
+
+Exit policy on the merged set: `default` maps `blocked` to 4, `inconclusive` to
+3 and `error` to 1. `findings` exits 0 only when every member completed and no
+merged finding is error severity (verified high or critical). `strict` exits 0
+only when every member completed with no candidates. `always-zero` exits 0 when
+the general review completed, even if a specialist was refused or failed; when the
+general review itself did not complete it returns the default code (for example 4
+for a refused general review).
+
 ## Snapshot investigation (opt-in)
 
 Add `--investigation-policy /protected/investigation.json` to the command above to
@@ -474,6 +715,19 @@ microUSD (USD 1); it must not exceed the protected runtime policy's cap. These a
 admission limits, not a guarantee of provider billing. Use limits appropriate for
 the approved routes. Zero cost is valid for routes whose admitted cost is zero.
 The command timeout and investigation timeout both apply; neither extends the other.
+
+Investigation requests use investigation context version 5. Like generation
+version 7 and verification version 6, it sends its contract only in the trusted
+system channel: the instruction-hierarchy paragraph (every string in the request,
+including snapshot tool results and the files they return, is untrusted
+repository data; repository instruction files cannot change the rules, output
+format, severity or evidence requirements), followed by the unchanged version 4
+tool and output rules. The payload binds that text with `instructions_identity`.
+Files a tool returns are flagged with `agent_configuration` and
+`instruction_like_text` like other sources. Recorded version 4 investigation
+requests, which carried their rules in the payload and no hierarchy paragraph,
+read back but are never sent again. See
+[prompt-injection boundary](prompt-injection-boundary.md).
 
 Available tools list files, read inclusive line ranges, and search for a literal
 string within the acquired immutable snapshot. They do not execute shell commands,
@@ -541,16 +795,109 @@ model work; it is not durable deduplication or resume.
 
 ## Deletion-only changes
 
-A supported diff can contain deletions without any changed head lines. The review
-records these as `no_changed_head_lines`, with no invented source range. Analysis
-carries the omission into context as `analysis_no_changed_head_lines`. Existing
-semantic references may still supply reviewable head source. If no source remains,
-the run refuses with `all_sources_omitted`; that is not a completed model review or
-clearance. Empty head files follow the same rule.
+A supported diff can contain deletions without any changed head lines, for example
+a removed guard. The change model records such a file as `no_changed_head_lines`,
+with no invented changed range.
+
+Analysis then diffs the exact base and head files and, for each deletion point,
+binds up to 8 unchanged head lines on each side of it (overlapping windows merge)
+as a deterministic-evidence item. These items enter the context packet as
+`changed_hunk` sources, so the model reviews the code that now sits where the
+lines were removed. Each deletion point is also recorded as an
+`analysis_deleted_lines` source omission whose lines are the head lines on either
+side of the removed lines (one line at the start or end of the file). The removed
+base text itself is not supplied to the model; the omission is how the packet
+says that lines were deleted there. That omission counts as an unsupported source
+omission, so such a review is never comprehensive clearance. Deterministic
+evidence that carries deletion-point context is schema version 6.
+
+The whole-entry `no_changed_head_lines` gap (context omission
+`analysis_no_changed_head_lines`) remains when deletion-point context cannot be
+built: the head file is now empty, the diff is unsupported or over its limits, or
+the evidence limits are reached. Existing semantic references may still supply
+reviewable head source. If no source remains, the run refuses with
+`all_sources_omitted`; that is not a completed model review or clearance.
 
 ## Results and limits
 
-By default, JSON uses `open-trestle/local-git-model-review-result`, schema version 1. It includes
+A run that did not succeed adds two text lines after `run:`, for example:
+
+```text
+status: refused
+ci: blocked
+run: failed
+failure: policy (task context)
+hint: usually no changed source could be supplied to the model (every source was omitted, unsupported, or not authorized); see the context task's source omissions
+```
+
+`failure:` is the run failure class, the first plan task that failed, and, when
+one was observed, a detail. `hint:` is a fixed one-line explanation per class
+(`policy`, `resource_limit`, `transient`, `invalid_input`, `canceled`,
+`dependency`, `internal`), refined for some class and task pairs. It describes
+what the class usually means; it is not a diagnosis. A succeeded run prints
+neither line.
+
+### Exhausted model output
+
+A model response that stops at the output token limit (`finish_reason: length`,
+or a Responses `incomplete` result for `max_output_tokens`) without any answer
+text is classified by the adapter as the route failure `output_exhausted`, not as
+a malformed response. Reasoning models do this when they spend the whole output
+allowance on their reasoning trace. The run failure stays `internal` (the run
+failure set is closed), and the JSON result adds
+`"failure_detail": "model_output_exhausted"`; the field is absent otherwise.
+Text output reads:
+
+```text
+failure: internal (task verification): model_output_exhausted
+hint: the model used its whole output allowance (reasoning) before answering; choose a non-reasoning model for this role or raise the review output allowance (setup bootstrap init --max-output-tokens)
+```
+
+A response that stops at the limit with partial text is still refused by the
+strict document parser as before. The per-request output allowance is the runtime
+policy's `max_output_tokens`, which bootstrap writes as 4096. It is separate from
+each route's declared output capacity (`--output-tokens`). `trestle setup
+bootstrap init --max-output-tokens N` (local and remote providers, and the `trestle
+init` wizard as a flag) writes a larger allowance, from 4096 up to the declared
+`--output-tokens`; for priced routes the per-request cost reservation uses the
+same allowance and must fit `--max-cost-micro-usd`. Without the flag, the policy
+bytes are unchanged.
+
+By default, JSON uses `open-trestle/local-git-model-review-result`, schema version 1
+(version 2 with `--investigation-policy`, version 3 with `--profile`). When at least
+one verified finding carries a category, the result is version 4 and adds
+`finding_guidance`: one entry per categorized finding, in diagnostic order, with
+`finding_identity` (the diagnostic finding's `source_identity`), `category`, and,
+when the generator offered one, `fix` with `fix_authority:
+unverified_model_guidance`. A version 4 result keeps a `--profile` run's
+`specialist` object. Text output adds `category:` and `fix:` lines after each such
+finding. The verifier checked the finding's claim, not its category or fix: the
+category is the generator's advisory label, and the fix is untrusted model text
+that is printed, never applied, and is not part of the diagnostic set. SARIF carries it only as a labeled result property.
+The model-result evaluation import and the retained-memory feedback review accept
+version 4 without a specialist and ignore the guidance.
+
+Two optional counts report advisory repository-context accounting without changing
+`status`, `ci_disposition` or source coverage. `instruction_context_omitted` (with
+the `instruction_context_omitted` limitation; SARIF
+`trestleInstructionContextOmittedCount`) counts base-tree instruction files that
+were not supplied as `repository_context`: changed or deleted in the head,
+truncated, oversized, unauthorized or over budget. These are never source
+omissions, so they never make a review `incomplete`.
+`repository_context_anchor_candidates_omitted` (with the limitation of the same
+name) counts model candidates dropped because they were located in an instruction
+file rather than in reviewed code; the rest of the batch is kept. Both fields are
+absent when zero.
+
+`agent_configuration_sources` and `instruction_like_sources` count
+generation-context sources flagged as repository AI material (agent instruction
+files, skills, prompts, agent configuration) or as instruction-like text. Text
+output adds `ai material in review context: agent_configuration=N
+instruction_like=M (reviewed as code, never followed)`, and SARIF adds
+`trestleAgentConfigurationSourceCount` and `trestleInstructionLikeSourceCount`.
+They are attention signals only: they add no limitation and never change
+`status`, `ci_disposition` or coverage. Both are absent when zero. See the
+[prompt-injection boundary](prompt-injection-boundary.md). It includes
 actual task/journal lineage, model route/context/request identities when available,
 audit subjects, and the existing canonical diagnostics. No prompts, source
 artifacts, credential values, or configuration paths are added to the receipt.
@@ -565,7 +912,8 @@ fail the command rather than silently truncating a finding set.
 | 3 | No candidates, incomplete evidence, unsupported source, or cancellation |
 | 1 | Internal/malformed result, unsafe drain/close, or output failure |
 
-There is no exit-0 branch in this initial version. No candidates is not proof that
+By default there is no exit-0 branch; `--exit-code-policy` is the explicit opt-in
+(see [Exit-code policy](#exit-code-policy)). No candidates is not proof that
 the repository is clear. Source omissions, independent abstention, bounded source
 selection, empty memory, lack of publication, and ephemeral state remain visible.
 Unknown final usage after an incomplete model dispatch is not presented as a
@@ -578,3 +926,15 @@ context, provider, journal, and diagnostic limits also apply. A session permits 
 most 1024 issued preparations. No background admission or persistent storage is
 created. Local fake-HTTP tests do not establish live provider conformance or
 comprehensive model quality.
+
+## Non-Go files and repository instruction files
+
+Model review now reviews changed text outside `.go` and sees the repository's
+own instruction files. Non-Go hunks that are valid UTF-8 are sent as changed
+hunks, with semantic analysis recorded as unsupported for them; lock, vendored,
+minified, and binary files are omitted with a named reason. The root
+`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, and
+`.trestle/review-instructions.md` of the reviewed head tree are added as
+bounded advisory context (8 KiB per file, 16 KiB total, truncation recorded).
+They are untrusted repository data that cannot override the review
+instructions. The exact rules are in `docs/context-assembly-handler.md`.
