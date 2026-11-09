@@ -277,11 +277,19 @@ func PlanLocalGenerationRoute(ctx context.Context, scope audit.ReviewScope, requ
 	if err != nil {
 		return fail()
 	}
+	// An ineligible bound route is a route refusal: it carries the context
+	// shortfall counts when the request outgrows the route.
 	verifierEligibility, err := gateway.FilterEligibleRoutes(input, budget, inventory.RegistryRevision(), []gateway.ObservedRouteCandidate{verifier})
+	if err == nil && len(verifierEligibility.EligibleRoutes()) == 0 {
+		return LocalGenerationRoutePlan{}, errors.Join(ErrInvalidLocalGenerationRoutePair, gateway.RouteEligibilityRefusal(verifierEligibility, []gateway.ObservedRouteCandidate{verifier}))
+	}
 	if err != nil || len(verifierEligibility.EligibleRoutes()) != 1 || len(verifierEligibility.RejectedRoutes()) != 0 {
 		return fail()
 	}
 	eligibility, err := gateway.FilterEligibleRoutes(input, budget, inventory.RegistryRevision(), []gateway.ObservedRouteCandidate{candidate})
+	if err == nil && len(eligibility.EligibleRoutes()) == 0 {
+		return LocalGenerationRoutePlan{}, errors.Join(ErrInvalidLocalGenerationRoutePair, gateway.RouteEligibilityRefusal(eligibility, []gateway.ObservedRouteCandidate{candidate}))
+	}
 	if err != nil || len(eligibility.EligibleRoutes()) != 1 || len(eligibility.RejectedRoutes()) != 0 {
 		return fail()
 	}
