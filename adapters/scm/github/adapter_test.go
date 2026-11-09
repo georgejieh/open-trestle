@@ -96,6 +96,11 @@ type githubFixture struct {
 	apiVersionOK    atomic.Bool
 	archiveNoAuth   atomic.Bool
 	calls           atomic.Int32
+	// compare serves GET compare/{base}...{head} bodies by basehead.
+	compare       map[string]string
+	compareStatus int
+	otherCommits  map[string]bool
+	compareQuery  atomic.Value
 }
 
 func newGitHubFixture(t *testing.T) *githubFixture {
@@ -121,6 +126,24 @@ func (f *githubFixture) serveHTTP(writer http.ResponseWriter, request *http.Requ
 	treePath := "/repos/owner/repo/git/trees/" + f.tree
 	tarballPath := "/repos/owner/repo/tarball/" + f.commit
 	archivePath := "/owner/repo/archive/" + f.commit
+	if strings.HasPrefix(request.URL.Path, "/repos/owner/repo/compare/") {
+		f.compareQuery.Store(request.URL.RawQuery)
+		body, ok := f.compare[strings.TrimPrefix(request.URL.Path, "/repos/owner/repo/compare/")]
+		if f.compareStatus != 0 {
+			writer.WriteHeader(f.compareStatus)
+			return
+		}
+		if !ok {
+			writer.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = writer.Write([]byte(body))
+		return
+	}
+	if other := strings.TrimPrefix(request.URL.Path, "/repos/owner/repo/git/commits/"); other != request.URL.Path && f.otherCommits[other] {
+		_ = json.NewEncoder(writer).Encode(map[string]any{"sha": other, "tree": map[string]any{"sha": f.tree}})
+		return
+	}
 	switch request.URL.Path {
 	case commitPath:
 		for name, values := range f.commitHeaders {

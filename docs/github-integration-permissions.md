@@ -18,7 +18,9 @@ The installation must be unsuspended, owned by the configured repository owner, 
 - `contents: read`
 - `pull_requests: read`
 
-Its event list must contain exactly `pull_request`. The native issued grant must cover exactly the configured repository. Extra permissions, write access, extra events, all-repository selection, extra repositories, inconsistent pagination, and crossed account or repository identity fail closed.
+Its event list must contain exactly `pull_request`.
+
+Source acquisition uses `contents: read` for commit objects, recursive trees, tar archives, and one commit comparison. The comparison (`GET /repos/{owner}/{repo}/compare/{base}...{head}`) is listed by GitHub under repository permissions for Contents with read access, so it needs no new permission. The daemon reads it because a pull request is reviewed from the merge base of its base and head, which the webhook payload does not carry; `pull_request.base.sha` is the base branch tip when the event fired. See [GitHub source acquisition](github-source-acquisition.md#merge-base) and the [permissions required for GitHub Apps](https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps). The native issued grant must cover exactly the configured repository. Extra permissions, write access, extra events, all-repository selection, extra repositories, inconsistent pagination, and crossed account or repository identity fail closed.
 
 GitHub installation tokens are opaque. `GET /installation/repositories` cannot authenticate an arbitrary static token's installation lineage. The legacy token-provider inspector therefore refuses execution; its historical v1 identity remains available only for configuration inspection. Current evidence requires the real broker's authenticated issuance and durable accepted-attempt controls. User visibility and a native grant are separate observations, both required. Neither a browser digest, provider-supplied metadata, nor a configuration-only admin identity can mint successful evidence. A setup grant is not a daemon runtime-purpose grant or publication approval.
 
