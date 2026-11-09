@@ -66,7 +66,18 @@
       }
     },
     "candidate_batch": {
-      "$ref": "urn:open-trestle:schema:artifact:candidate-batch:v1"
+      "description": "The admitted candidates, recorded as candidate-batch v1, v2 (categorized) or v3 (uncategorized, recording removed base lines).",
+      "oneOf": [
+        {
+          "$ref": "urn:open-trestle:schema:artifact:candidate-batch:v1"
+        },
+        {
+          "$ref": "urn:open-trestle:schema:artifact:candidate-batch:v2"
+        },
+        {
+          "$ref": "urn:open-trestle:schema:artifact:candidate-batch:v3"
+        }
+      ]
     },
     "route_execution": {
       "$ref": "urn:open-trestle:schema:artifact:route-execution-record:v1"

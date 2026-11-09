@@ -64,8 +64,8 @@ The handler can be wrapped in `artifactvalidation.ValidatedTaskHandler` with `ta
 
 - `schemas/artifact/route-attempt-authorization-v1.schema.json`
 - `schemas/artifact/route-execution-record-v1.schema.json`
-- `schemas/artifact/candidate-batch-v1.schema.json` (schema versions 1 and 2)
-- `schemas/artifact/model-generation-input-v1.schema.json` (candidate schema v1 or v2)
+- `schemas/artifact/candidate-batch-v1.schema.json`, `schemas/artifact/candidate-batch-v2.schema.json` (categorized) and `schemas/artifact/candidate-batch-v3.schema.json` (uncategorized, recording removed base lines)
+- `schemas/artifact/model-generation-input-v1.schema.json` (candidate schema v1 or v2), `schemas/artifact/model-generation-input-v3.schema.json` (sanitized) and `schemas/artifact/model-generation-input-v4.schema.json` (unsanitized, with `removed_lines` evidence)
 - `schemas/review/model-candidate-batch-v1.schema.json` (recorded contexts before version 7)
 - `schemas/review/model-candidate-batch-v2.schema.json` (version 7 and 8 contexts)
 - `schemas/artifact/model-generation-result-v1.schema.json`

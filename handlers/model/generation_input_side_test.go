@@ -32,10 +32,13 @@ func boundGenerationSource(t *testing.T, path, content string, start, end int) (
 	return item, binding
 }
 
-// A generation input admits evidence outside the head snapshot only for a
-// removed_lines source, whose lines are base lines, and records which items
-// those are.
-func TestGenerationInputAdmitsOnlyRemovedLinesOutsideTheSnapshot(t *testing.T) {
+// baseEvidenceGenerationInput builds an unsanitized generation input that
+// cites removed text: a deletion point's removed lines beside its head window
+// and a removed file's text. With wholeFileOnly the change only removes the
+// file, so the snapshot has no head range and the removed file is the only
+// evidence.
+func baseEvidenceGenerationInput(t *testing.T, wholeFileOnly bool) GenerationInput {
+	t.Helper()
 	scope, _ := audit.NewReviewScope("tenant-a", "repo-a", "run-a")
 	memoryScope, _ := memory.NewScope("tenant-a", "repo-a", "actor-a", memory.RefVisibilityExact, strings.Repeat("a", 64), []string{"src"})
 	head := "package calc\n\nfunc Div(a, b int) int {\n\treturn a / b\n}\n"
@@ -55,14 +58,18 @@ func TestGenerationInputAdmitsOnlyRemovedLinesOutsideTheSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot, _ := review.NewReviewSnapshot("workspace", strings.Repeat("b", 64), []evidence.SourceRange{windowItem.SourceRange()})
+	ranges, sources := []evidence.SourceRange{windowItem.SourceRange()}, []review.ContextSource{window, removed, removedFile}
+	if wholeFileOnly {
+		ranges, sources = nil, []review.ContextSource{removedFile}
+	}
+	snapshot, _ := review.NewReviewSnapshot("workspace", strings.Repeat("b", 64), ranges)
 	query, _ := memory.NewLexicalQuery(memoryScope, "src/calc.go", nil, nil, time.UnixMilli(100), 5)
 	retrieval, err := memory.NewLexicalIndex().Search(context.Background(), memoryScope, query)
 	if err != nil {
 		t.Fatal(err)
 	}
 	limits, _ := review.NewContextLimits(1<<20, 0)
-	packet, err := review.NewContextPacket(scope, memoryScope, snapshot, review.ContextTaskCandidateGeneration, []review.ContextSource{window, removed, removedFile}, retrieval, limits)
+	packet, err := review.NewContextPacket(scope, memoryScope, snapshot, review.ContextTaskCandidateGeneration, sources, retrieval, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,6 +82,14 @@ func TestGenerationInputAdmitsOnlyRemovedLinesOutsideTheSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generation input refused removed_lines evidence: %v", err)
 	}
+	return input
+}
+
+// A generation input admits evidence outside the head snapshot only for a
+// removed_lines source, whose lines are base lines, and records which items
+// those are.
+func TestGenerationInputAdmitsOnlyRemovedLinesOutsideTheSnapshot(t *testing.T) {
+	input := baseEvidenceGenerationInput(t, false)
 	encoded, err := EncodeGenerationInput(input)
 	if err != nil || !bytes.Contains(encoded, []byte(`"schema_version":4`)) || bytes.Count(encoded, []byte(`"side":"base"`)) != 2 {
 		t.Fatalf("encoded input: %s, %v", encoded, err)

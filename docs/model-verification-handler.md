@@ -50,6 +50,6 @@ Only independently verified candidates are promoted. A promoted finding copies i
 
 ## Published schemas
 
-- `schemas/artifact/verification-batch-v1.schema.json`
-- `schemas/artifact/verified-finding-set-v1.schema.json`
+- `schemas/artifact/verification-batch-v1.schema.json` and `schemas/artifact/verification-batch-v2.schema.json` (verdicts that record removed base lines)
+- `schemas/artifact/verified-finding-set-v1.schema.json`, `schemas/artifact/verified-finding-set-v2.schema.json` (categorized) and `schemas/artifact/verified-finding-set-v3.schema.json` (uncategorized, recording removed base lines)
 - `schemas/artifact/model-verification-result-v1.schema.json`

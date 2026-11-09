@@ -22,10 +22,7 @@
       "const": "open-trestle/verified-finding-set"
     },
     "schema_version": {
-      "enum": [
-        1,
-        2
-      ]
+      "const": 1
     },
     "identity": {
       "type": "string",
@@ -135,26 +132,6 @@
             "minLength": 1,
             "maxLength": 8192
           },
-          "category": {
-            "description": "Advisory candidate category; present exactly in schema version 2.",
-            "enum": [
-              "correctness",
-              "security",
-              "concurrency",
-              "performance",
-              "reliability",
-              "maintainability",
-              "style",
-              "documentation",
-              "testing"
-            ]
-          },
-          "fix": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 1024,
-            "description": "Optional unverified model fix guidance. Never applied; the host enforces 256 characters and 1024 UTF-8 bytes."
-          },
           "severity": {
             "enum": [
               "critical",
@@ -223,60 +200,8 @@
               }
             }
           }
-        },
-        "dependentRequired": {
-          "fix": [
-            "category"
-          ]
         }
       }
     }
-  },
-  "allOf": [
-    {
-      "if": {
-        "properties": {
-          "schema_version": {
-            "const": 2
-          }
-        },
-        "required": [
-          "schema_version"
-        ]
-      },
-      "then": {
-        "properties": {
-          "findings": {
-            "contains": {
-              "required": [
-                "category"
-              ]
-            }
-          }
-        }
-      },
-      "else": {
-        "properties": {
-          "findings": {
-            "items": {
-              "not": {
-                "anyOf": [
-                  {
-                    "required": [
-                      "category"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "fix"
-                    ]
-                  }
-                ]
-              }
-            }
-          }
-        }
-      }
-    }
-  ]
+  }
 }

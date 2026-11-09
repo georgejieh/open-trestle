@@ -150,13 +150,32 @@
       }
     },
     "verification_batch": {
-      "$ref": "urn:open-trestle:schema:artifact:verification-batch:v1"
+      "description": "The admitted verdicts, recorded as verification-batch v1, or v2 when a verdict or cited binding is on removed base lines.",
+      "oneOf": [
+        {
+          "$ref": "urn:open-trestle:schema:artifact:verification-batch:v1"
+        },
+        {
+          "$ref": "urn:open-trestle:schema:artifact:verification-batch:v2"
+        }
+      ]
     },
     "route_execution": {
       "$ref": "urn:open-trestle:schema:artifact:route-execution-record:v1"
     },
     "verified_finding_set": {
-      "$ref": "urn:open-trestle:schema:artifact:verified-finding-set:v1"
+      "description": "The promoted findings, recorded as verified-finding-set v1, v2 (categorized) or v3 (uncategorized, recording removed base lines).",
+      "oneOf": [
+        {
+          "$ref": "urn:open-trestle:schema:artifact:verified-finding-set:v1"
+        },
+        {
+          "$ref": "urn:open-trestle:schema:artifact:verified-finding-set:v2"
+        },
+        {
+          "$ref": "urn:open-trestle:schema:artifact:verified-finding-set:v3"
+        }
+      ]
     }
   },
   "allOf": [

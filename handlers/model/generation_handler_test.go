@@ -484,14 +484,12 @@ func TestGenerationHandlerDispatchesAuditsAndPersistsAdmittedCandidates(t *testi
 }
 
 func TestGenerationInputSchemaDeclaresSanitizedAuthorityVersion(t *testing.T) {
-	encoded, err := os.ReadFile(filepath.Join("..", "..", "schemas", "artifact", "model-generation-input-v1.schema.json"))
+	encoded, err := os.ReadFile(filepath.Join("..", "..", "schemas", "artifact", "model-generation-input-v3.schema.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, required := range []string{`"schema_version": {
-      "enum": [
-        1,
-        3`, `"sanitized_request_artifact_identity"`, `"sanitized_egress_receipt_artifact_identity"`, `"sanitized_egress_receipt_identity"`} {
+      "const": 3`, `"sanitized_request_artifact_identity"`, `"sanitized_egress_receipt_artifact_identity"`, `"sanitized_egress_receipt_identity"`} {
 		if !bytes.Contains(encoded, []byte(required)) {
 			t.Fatalf("generation input schema missing %s", required)
 		}

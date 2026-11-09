@@ -106,11 +106,20 @@ Artifact schemas:
 - `schemas/artifact/route-attempt-authorization-v1.schema.json`
 - `schemas/artifact/route-execution-record-v1.schema.json`
 - `schemas/artifact/model-generation-input-v1.schema.json`
-- `schemas/artifact/model-generation-result-v1.schema.json`
+- `schemas/artifact/model-generation-input-v3.schema.json` (a sanitized input)
+- `schemas/artifact/model-generation-input-v4.schema.json` (an unsanitized input that records `removed_lines` evidence)
+- `schemas/artifact/model-generation-result-v1.schema.json` (its `candidate_batch` is one of candidate-batch v1, v2 or v3)
 - `schemas/artifact/candidate-batch-v1.schema.json`
+- `schemas/artifact/candidate-batch-v2.schema.json` (categorized candidates, with any base-side location or evidence)
+- `schemas/artifact/candidate-batch-v3.schema.json` (uncategorized candidates that record removed base lines)
 - `schemas/artifact/verification-batch-v1.schema.json`
+- `schemas/artifact/verification-batch-v2.schema.json` (verdicts that record removed base lines)
 - `schemas/artifact/verified-finding-set-v1.schema.json`
-- `schemas/artifact/model-verification-result-v1.schema.json`
+- `schemas/artifact/verified-finding-set-v2.schema.json` (categorized findings, with any base-side location or evidence)
+- `schemas/artifact/verified-finding-set-v3.schema.json` (uncategorized findings that record removed base lines)
+- `schemas/artifact/model-verification-result-v1.schema.json` (its `verification_batch` is one of verification-batch v1 or v2, and its `verified_finding_set` one of verified-finding-set v1, v2 or v3)
+
+Each of these versioned artifact schemas describes exactly one version, and later versions are separate files. The version 1 files of the candidate batch and verified finding set are as first published; the generation input v1 file differs only in also admitting the identity of the v2 candidate schema that a version 7 or later context requests.
 
 Evaluation schemas:
 
