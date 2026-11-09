@@ -99,7 +99,9 @@ func (e *investigationEndpoint) serve(t *testing.T, w http.ResponseWriter, r *ht
 	e.captures = append(e.captures, investigationCapture{p, request.Identity()})
 	e.mu.Unlock()
 	var output any
-	if p.Task == "candidate_verification" {
+	if e.mode == "removed file" {
+		output = investigationRemovedFileResult(t, wire.Model, p)
+	} else if p.Task == "candidate_verification" {
 		if wire.Model != "model-b" || p.Version != 7 || len(p.Candidates) != 1 || p.GenerationContext == "" {
 			t.Error("independent verifier lost candidate lineage")
 		}
@@ -266,6 +268,66 @@ func (e *investigationEndpoint) serve(t *testing.T, w http.ResponseWriter, r *ht
 	}
 }
 
+// investigationRemovedFileResult answers an investigation of a change that
+// only removes gone.go. The first turn holds that file's removed text alone
+// and lists the head snapshot, the second reads notes.txt from it, and the
+// third reports the removed helper on its base line; the verifier verifies it
+// from that removed_lines source.
+func investigationRemovedFileResult(t *testing.T, model string, p investigationPacket) any {
+	t.Helper()
+	var gone, notes localModelSource
+	for _, s := range p.Sources {
+		if s.Path == "gone.go" && s.Stage == "removed_lines" {
+			gone = s
+		}
+		if s.Path == "notes.txt" {
+			notes = s
+		}
+	}
+	if gone.ID == "" || gone.Content != removedOnlyGone || gone.Start != 1 || gone.End != 3 {
+		t.Error("removed file text did not reach the investigation as removed_lines evidence")
+		return map[string]any{}
+	}
+	if p.Task == "candidate_verification" {
+		if model != "model-b" || p.Version != 7 || len(p.Candidates) != 1 {
+			t.Error("independent verifier lost the removed-file candidate")
+		}
+		return map[string]any{"schema_version": 1, "verdicts": []any{map[string]any{"candidate_id": p.Candidates[0].ID, "outcome": "verified", "severity": "high", "rationale": "The removed lines define Helper.", "evidence_ids": []string{gone.ID}}}}
+	}
+	state := p.Investigation
+	if model != "model-a" || p.Version != 6 {
+		t.Error("removed-file investigation lost its authority")
+	}
+	var ref string
+	for _, result := range state.Results {
+		for _, file := range result.Files {
+			if result.Tool == "snapshot.list" && file.Path == "notes.txt" {
+				ref = file.Ref
+			}
+		}
+	}
+	switch state.Turn {
+	case 1:
+		if len(p.Sources) != 1 {
+			t.Error("removed-file investigation did not start from the removed text alone")
+		}
+		return map[string]any{"schema_version": 1, "tool_calls": []any{map[string]any{"call_id": "list-1", "tool": "snapshot.list", "snapshot_ref": state.SnapshotRef}}}
+	case 2:
+		if ref == "" {
+			t.Error("removed-file investigation could not list the head snapshot")
+			return map[string]any{}
+		}
+		return map[string]any{"schema_version": 1, "tool_calls": []any{map[string]any{"call_id": "read-1", "tool": "snapshot.read", "snapshot_ref": state.SnapshotRef, "file_ref": ref, "start_line": 2, "end_line": 2}}}
+	case 3:
+		if notes.Content != investigationLine || notes.Stage != "repository_context" || len(p.Sources) != 2 {
+			t.Error("removed-file investigation could not read the head snapshot")
+		}
+	default:
+		t.Error("unexpected removed-file investigation turn")
+	}
+	return map[string]any{"schema_version": 1, "candidates": []any{map[string]any{"title": "Removed helper", "claim": "Helper is removed while callers elsewhere may still use it.", "severity_hint": "high", "source_range": map[string]any{"source_id": gone.ID, "start_line": 3, "end_line": 3}, "evidence_ids": []string{gone.ID}}}}
+}
+
 func newInvestigationFixture(t *testing.T, mode string, cancel context.CancelFunc) (*localModelFixture, *investigationEndpoint, map[string]any, string) {
 	t.Helper()
 	f := newLocalModelFixture(t, localModelFixtureOptions{})
@@ -273,6 +335,11 @@ func newInvestigationFixture(t *testing.T, mode string, cancel context.CancelFun
 	// advice and stays at investigation schema version 2.
 	base := map[string][]byte{"a.go": []byte("package p\nfunc Changed(x int) int { if x == 0 { return 0 }; return 10 / x }\n"), "notes.txt": []byte(investigationNotes), "go.mod": []byte("module example.test/p\n")}
 	head := map[string][]byte{"a.go": []byte("package p\nfunc Changed(x int) int { return 10 / x }\n"), "notes.txt": base["notes.txt"], "go.mod": base["go.mod"]}
+	if mode == "removed file" {
+		// The change only removes gone.go; a.go is unchanged.
+		head["a.go"] = base["a.go"]
+		base["gone.go"] = []byte(removedOnlyGone)
+	}
 	f.objects, f.base, f.head = writeLocalGitChangeFixture(t, evidence.RevisionAlgorithmSHA1, base, head)
 	e := &investigationEndpoint{mode: mode, cancel: cancel}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { e.serve(t, w, r) }))
@@ -436,6 +503,33 @@ func TestLocalGitInvestigationReadsUnselectedSnapshotAndVerifies(t *testing.T) {
 	}
 	if strings.Contains(stdout.String()+stderr.String(), investigationLine) || stdout.Len() > 256<<10 {
 		t.Fatal("terminal result leaked tool bytes or exceeded output limit")
+	}
+}
+
+// A change that only removes a file has no head range for an investigation to
+// start from. It is investigated from the file's removed text, like a direct
+// review, and the verified finding is on its removed base lines.
+func TestLocalGitInvestigationReviewsAChangeThatOnlyRemovesAFile(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	f, endpoint, policy, path := newInvestigationFixture(t, "removed file", cancel)
+	writeInvestigationPolicy(t, path, policy)
+	f.args = replaceLocalGitChangeValue(f.args, "--timeout", "30s")
+	var stdout, stderr bytes.Buffer
+	code := runWithContext(ctx, f.args, &stdout, &stderr)
+	var receipt localModelReceipt
+	if json.Unmarshal(stdout.Bytes(), &receipt) != nil || code != 4 || receipt.Status != "findings" || receipt.RunStatus != "succeeded" || stderr.Len() != 0 {
+		t.Fatalf("removed-only investigation code=%d status=%s run=%s stderr=%q", code, receipt.Status, receipt.RunStatus, stderr.String())
+	}
+	captures := endpoint.snapshot()
+	if len(captures) != 4 || captures[2].packet.Task != "candidate_generation" || captures[3].packet.Task != "candidate_verification" {
+		t.Fatalf("removed-only investigation made %d model calls", len(captures))
+	}
+	if len(receipt.Diagnostics.Findings) != 1 {
+		t.Fatalf("removed-only investigation findings=%d", len(receipt.Diagnostics.Findings))
+	}
+	if finding := receipt.Diagnostics.Findings[0]; finding.Path != "gone.go" || finding.Side != "base" || finding.Start != 3 || finding.End != 3 || finding.HeadLine != 0 {
+		t.Fatalf("removed-file finding=%+v", finding)
 	}
 }
 

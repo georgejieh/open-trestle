@@ -89,9 +89,11 @@ func NewInvestigationContextBinding(o InvestigationContextBindingOptions) (Inves
 	if !investigationPacketMatches(o.InitialContext, o.InitialSnapshot, o.Scope.Identity(), o.HeadManifestIdentity) {
 		return InvestigationContextBinding{}, ErrInvestigationContext
 	}
+	// An investigation starts from changed code: a changed hunk, or the
+	// removed text of a change that only removes files.
 	foundChanged := false
 	for _, source := range o.InitialContext.sources {
-		if source.Stage() == ContextStageChangedHunk {
+		if source.Stage() == ContextStageChangedHunk || source.Stage() == ContextStageRemovedLines {
 			foundChanged = true
 		}
 	}
@@ -197,7 +199,10 @@ func investigationPacketMatches(p ContextPacket, s ReviewSnapshot, scope, manife
 	if sourceBytes > uint64(p.limits.MaxSourceBytes()) {
 		return false
 	}
-	if len(s.ranges) == 0 || len(s.ranges) > maxSelectedContextSources || len(p.sources) == 0 || len(p.sources) > maxSelectedContextSources || s.Validate() != nil || p.Validate() != nil || p.ReviewScopeIdentity() != scope || p.SnapshotIdentity() != s.Identity() || p.Task() != ContextTaskCandidateGeneration || p.MemoryItemCount() != 0 || p.limits.MaxMemoryItems() != 0 {
+	// A snapshot may hold no head range only for a change that only removes
+	// files: every source is then removed text, which the loop below admits
+	// only when it names no head line.
+	if len(s.ranges) > maxSelectedContextSources || len(p.sources) == 0 || len(p.sources) > maxSelectedContextSources || s.Validate() != nil || p.Validate() != nil || p.ReviewScopeIdentity() != scope || p.SnapshotIdentity() != s.Identity() || p.Task() != ContextTaskCandidateGeneration || p.MemoryItemCount() != 0 || p.limits.MaxMemoryItems() != 0 {
 		return false
 	}
 	type rangeWire struct {

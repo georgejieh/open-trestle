@@ -132,7 +132,10 @@ func (i InvestigationGenerationInput) Validate() error {
 			return ErrInvestigationArtifacts
 		}
 	}
-	if len(i.snapshot.Ranges()) == 0 || len(i.snapshot.Ranges()) > investigationArtifactSources || len(i.snapshot.Workspace()) == 0 || len(i.snapshot.Workspace()) > 1024 || i.snapshot.Validate() != nil || len(i.evidence) == 0 || len(i.evidence) > investigationArtifactSources || i.authorization.Validate() != nil || i.authorization.ReviewScopeIdentity() != i.scope || i.authorization.Kind() != gateway.RouteAttemptInitial || i.authorization.PreviousOutcomeIdentity() != "" || i.schemaIdentity != artifactPayloadHash(review.InvestigationOutputSchema()) {
+	// A snapshot with no head range belongs to a change that only removes
+	// files, so the input must record removed_lines evidence (version 5); the
+	// loop below then admits no head evidence at all.
+	if len(i.snapshot.Ranges()) == 0 && len(i.baseEvidence) == 0 || len(i.snapshot.Ranges()) > investigationArtifactSources || len(i.snapshot.Workspace()) == 0 || len(i.snapshot.Workspace()) > 1024 || i.snapshot.Validate() != nil || len(i.evidence) == 0 || len(i.evidence) > investigationArtifactSources || i.authorization.Validate() != nil || i.authorization.ReviewScopeIdentity() != i.scope || i.authorization.Kind() != gateway.RouteAttemptInitial || i.authorization.PreviousOutcomeIdentity() != "" || i.schemaIdentity != artifactPayloadHash(review.InvestigationOutputSchema()) {
 		return ErrInvestigationArtifacts
 	}
 	seen := map[string]bool{}
@@ -184,7 +187,7 @@ func ParseInvestigationGenerationInput(encoded []byte) (InvestigationGenerationI
 		return InvestigationGenerationInput{}, ErrInvestigationArtifacts
 	}
 	var wire investigationInputWire
-	if decodeInvestigationJSON(encoded, &wire) != nil || wire.Contract != "open-trestle/model-generation-input" || wire.Version != investigationInputVersion && wire.Version != investigationInputBaseVersion || len(wire.Ranges) == 0 || len(wire.Ranges) > investigationArtifactSources || len(wire.Evidence) == 0 || len(wire.Evidence) > investigationArtifactSources || len(wire.Workspace) == 0 || len(wire.Workspace) > 1024 || wire.Tools == nil || len(wire.Tools) != 0 {
+	if decodeInvestigationJSON(encoded, &wire) != nil || wire.Contract != "open-trestle/model-generation-input" || wire.Version != investigationInputVersion && wire.Version != investigationInputBaseVersion || len(wire.Ranges) > investigationArtifactSources || len(wire.Evidence) == 0 || len(wire.Evidence) > investigationArtifactSources || len(wire.Workspace) == 0 || len(wire.Workspace) > 1024 || wire.Tools == nil || len(wire.Tools) != 0 {
 		return InvestigationGenerationInput{}, ErrInvestigationArtifacts
 	}
 	ranges := make([]evidence.SourceRange, len(wire.Ranges))

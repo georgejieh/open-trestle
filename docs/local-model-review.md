@@ -951,9 +951,10 @@ whole-entry `no_changed_head_lines` gap also remains, without removed text, when
 a file that still has head lines cannot get deletion-point context: the diff is
 unsupported or over its limits, or the evidence limits are reached.
 
-An investigation turn needs head files to read, so investigation mode still
-requires at least one head range: a change that only removes files is reviewed
-by the direct mode.
+Investigation mode reviews such a change the same way: its first turn holds the
+removed text alone, with no head range, and its snapshot tools can still list
+and read the head snapshot. Its generation input then records only `removed_lines` evidence, as
+model-generation-input version 5.
 
 ## Results and limits
 

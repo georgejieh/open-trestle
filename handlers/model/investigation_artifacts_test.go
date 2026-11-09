@@ -654,6 +654,43 @@ func TestInvestigationInputRecordsBaseEvidenceAsVersionFive(t *testing.T) {
 		}
 	}
 }
+
+// An investigation of a change that only removes files has no head range: its
+// input holds removed_lines evidence alone, so it is always version 5, and a
+// head item outside every snapshot range is still refused.
+func TestInvestigationInputWithoutHeadRangeHoldsOnlyBaseEvidence(t *testing.T) {
+	f := newArtifactsFixture(t)
+	request, err := f.context.Context.ProviderRequest()
+	artifactsCheck(t, err)
+	input, err := NewInvestigationGenerationInputArtifact(f.context, f.predicted(t, request), f.expected, f.clock.Now())
+	artifactsCheck(t, err)
+	claims, err := ParseInvestigationGenerationInput(input.Payload())
+	artifactsCheck(t, err)
+	claims.snapshot, err = review.NewReviewSnapshot(claims.snapshot.Workspace(), claims.snapshot.Revision(), nil)
+	artifactsCheck(t, err)
+	rehash := func() {
+		values, err := claims.values()
+		artifactsCheck(t, err)
+		delete(values, "identity")
+		claims.identity = artifactsHash(artifactsJSON(t, values))
+	}
+	rehash()
+	if _, err := EncodeInvestigationGenerationInput(claims); err == nil {
+		t.Fatal("an input with no head range admitted head evidence")
+	}
+	claims.baseEvidence = map[string]struct{}{}
+	for _, item := range claims.evidence {
+		claims.baseEvidence[item.ID()] = struct{}{}
+	}
+	rehash()
+	encoded, err := EncodeInvestigationGenerationInput(claims)
+	if err != nil || !bytes.Contains(encoded, []byte(`"schema_version":5`)) || !bytes.Contains(encoded, []byte(`"snapshot_ranges":[]`)) {
+		t.Fatalf("removed-only input: %s, %v", encoded, err)
+	}
+	if parsed, err := ParseInvestigationGenerationInput(encoded); err != nil || parsed.Identity() != claims.Identity() || len(parsed.Snapshot().Ranges()) != 0 {
+		t.Fatalf("removed-only input does not read back: %v", err)
+	}
+}
 func TestInvestigationArtifactsKeepExistingV1AndV3CodecControlsExact(t *testing.T) {
 	f := newArtifactsFixture(t)
 	request, err := f.packet.ProviderRequest()

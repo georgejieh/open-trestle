@@ -681,7 +681,13 @@ func (c *Investigation) tool(ctx context.Context, turn gateway.InvestigationTurn
 	}
 	sort.Slice(selected, func(i, j int) bool { return selected[i].Ref() < selected[j].Ref() })
 	required := map[string]bool{}
+	removed := c.current.RemovedLinesEvidence()
 	for _, item := range c.current.EvidenceItems() {
+		// Removed base lines have no head file to hold; a removed file is not
+		// in the head snapshot at all.
+		if _, base := removed[item.ID()]; base {
+			continue
+		}
 		ref, ok := c.byPath[item.SourceRange().Path()]
 		if !ok {
 			return artifact.Artifact{}, ErrInvestigation

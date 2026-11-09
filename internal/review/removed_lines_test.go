@@ -342,6 +342,57 @@ func TestInvestigationRequestCarriesRemovedLines(t *testing.T) {
 	}
 }
 
+// A change that only removes files gives an investigation no head range. Its
+// first turn holds the removed text alone and an empty snapshot; removed text
+// at a deletion point still needs a head source beside it.
+func TestInvestigationStartsFromRemovedFileTextAlone(t *testing.T) {
+	f, _ := removedLinesInvestigationFixture(t, "\tif x == 0 { return 0 }\n")
+	empty, err := NewAcquiredReviewPipelineSnapshot(f.binding.Scope.ReviewRunID(), f.manifest, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	whole := boundSource(t, ContextStageRemovedLines, "gone.go", "gone\n", 1, 1)
+	orphan, err := NewRemovedLinesContextSource(whole.EvidenceItem(), whole.Content(), whole.SliceBinding(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limits, _ := NewContextLimits(65536, 0)
+	for name, source := range map[string]ContextSource{"deletion point": orphan, "removed file": whole} {
+		alone, err := NewContextPacketWithAccounting(f.binding.Scope, f.memoryScope, empty, ContextTaskCandidateGeneration, []ContextSource{source}, []memory.LexicalRetrieval{f.retrieval}, nil, limits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		options := f.binding
+		options.InitialContext, options.InitialSnapshot = alone, empty
+		binding, err := NewInvestigationContextBinding(options)
+		if (err == nil) != (name == "removed file") {
+			t.Fatalf("%s: investigation binding err=%v", name, err)
+		}
+		if err != nil {
+			continue
+		}
+		initial, err := NewInvestigationGenerationContext(binding, alone, empty, InvestigationContextState{Turn: 1})
+		if err != nil {
+			t.Fatalf("removed-file investigation context: %v", err)
+		}
+		if len(initial.Snapshot().Ranges()) != 0 || len(initial.EvidenceItems()) != 1 {
+			t.Fatal("removed-file investigation gained a head range or lost its removed text")
+		}
+		// A later turn after a tool result that supplied no source keeps the
+		// removed text alone.
+		state, _ := v4ResultState(t, f)
+		state.ScannedBytes = 0
+		if _, err := NewInvestigationGenerationContext(binding, alone, empty, state); err != nil {
+			t.Fatalf("removed-file investigation second turn: %v", err)
+		}
+		anchored := `{"schema_version":1,"candidates":[{"title":"Removed helper","claim":"Callers may still use it.","severity_hint":"high","source_range":{"source_id":"` + whole.ReferenceID() + `","start_line":1,"end_line":1},"evidence_ids":["` + whole.ReferenceID() + `"]}]}`
+		batch, err := ParseInvestigationCandidateBatch(v7Response(t, anchored), initial)
+		if err != nil || len(batch.Findings()) != 1 || batch.Findings()[0].Side() != LineSideBase || batch.Findings()[0].HeadLine() != 0 {
+			t.Fatalf("removed-file investigation candidate refused: %v", err)
+		}
+	}
+}
+
 // Removed base text that carries an injection is flagged in the investigation
 // request, stays inside JSON string values, and leaves the system channel
 // byte-identical.
