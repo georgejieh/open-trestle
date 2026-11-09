@@ -248,9 +248,12 @@ directory durability unconfirmed`. Inspect the actual current digest before
 retrying. Do not assume a nonzero exit in that case proves rollback. Filesystem
 power-loss guarantees depend on the host filesystem.
 
-Limits are 32 sources, 10,000 models per source, 1 MiB per HTTP body, 16 KiB response
+Limits are 32 sources, 10,000 models per source, 4 MiB per HTTP body, 16 KiB response
 headers, 8 MiB per protected file, 5 seconds per source, and a 60-second aggregate
-network budget. HTTP is sequential and retries are not performed. Duplicate JSON
+network budget. The body limit admits a fetch only; it is not part of any stored
+catalog, digest or identity. Proposals and catalogs are written indented, so a
+source near the body limit can still produce a file over 8 MiB, which fails
+closed before anything is written. HTTP is sequential and retries are not performed. Duplicate JSON
 keys, duplicate selectors, invalid selectors, malformed documents, and unexpected
 shapes fail the affected source. No scheduler, route approval or activation hook
 is installed.

@@ -6,9 +6,60 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 )
+
+// responseBodyOfSize returns a valid one-model openai_models body of exactly size bytes.
+func responseBodyOfSize(t *testing.T, size int) []byte {
+	t.Helper()
+	prefix, suffix := `{"data":[{"id":"exact","padding":"`, `"}]}`
+	padding := size - len(prefix) - len(suffix)
+	if padding < 0 {
+		t.Fatal("fixture size is below the body overhead")
+	}
+	return []byte(prefix + strings.Repeat("x", padding) + suffix)
+}
+
+func TestResponseBoundAdmitsFourMiBBodiesAndRefusesOneByteMore(t *testing.T) {
+	if MaxResponseBytes != 4<<20 {
+		t.Fatalf("MaxResponseBytes = %d, want 4 MiB", MaxResponseBytes)
+	}
+	for _, test := range []struct {
+		name   string
+		size   int
+		reject bool
+	}{
+		// The size OpenRouter's public list measured on 2026-11-08; the body is synthetic.
+		{name: "measured_openrouter_size", size: 829400},
+		{name: "former_1_mib_bound_plus_one", size: 1<<20 + 1},
+		{name: "exact_bound", size: MaxResponseBytes},
+		{name: "bound_plus_one", size: MaxResponseBytes + 1, reject: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body := responseBodyOfSize(t, test.size)
+			models, err := parseModels("openai_models", body)
+			if test.reject != (err != nil) || !test.reject && (len(models) != 1 || models[0].Selector != "exact") {
+				t.Fatalf("parse = (%d models, %v), want reject %t", len(models), err, test.reject)
+			}
+			// A declared Content-Length is refused before the read; a chunked body by the bounded read.
+			for _, declared := range []bool{true, false} {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if declared {
+						w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+					}
+					_, _ = w.Write(body)
+				}))
+				models, err := List(context.Background(), Source{ID: "s", Kind: "openai_models", URL: server.URL + "/models"}, false, nil)
+				server.Close()
+				if test.reject != (err != nil) || !test.reject && (len(models) != 1 || models[0].Selector != "exact") {
+					t.Fatalf("declared length %t: list = (%d models, %v), want reject %t", declared, len(models), err, test.reject)
+				}
+			}
+		})
+	}
+}
 
 func TestSelectorsRejectUnpairedSurrogatesAndPreserveUnicode(t *testing.T) {
 	for _, kind := range []string{"openai_models", "ollama_tags"} {

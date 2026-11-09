@@ -82,7 +82,9 @@ when you agree to run a review.
    (such as `OPEN_TRESTLE_PROVIDER_OPENROUTER`) is already set, it offers to read
    `https://openrouter.ai/api/v1/models` with it; the key is sent only there and
    never shown. A successful read shows the list is reachable, not that the key
-   may run models. Otherwise type the IDs exactly, for example `vendor/model-name`.
+   may run models. Each list read accepts a response of at most 4 MiB; a larger
+   or unreadable list falls back to typing the IDs. Otherwise type the IDs
+   exactly, for example `vendor/model-name`.
    A list longer than 40 entries asks for part of a name first. The checker must
    differ from the finder; choosing the same model asks again. Models that look like 7B parameters or fewer are
    flagged: they give weak reviews. You also state each model's context window
