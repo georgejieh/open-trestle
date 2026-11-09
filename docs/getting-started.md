@@ -95,6 +95,9 @@ when you agree to run a review.
    differ from the finder; choosing the same model asks again. Models that look like 7B parameters or fewer are
    flagged: they give weak reviews. You also state each model's context window
    and output limit, and for remote providers the prices and a per-review cost cap.
+   For Ollama Cloud, OpenCode Go and the Ollama Cloud sign-in option it first
+   asks whether your plan charges per token; if not, it records zero prices and a
+   zero cost cap.
    No model, capacity or price is filled in unless it came from the model list
    you just read, except that a local server is proposed a 32768-token context
    (or the smaller listed value): start both servers with that context length, as
@@ -117,7 +120,8 @@ when you agree to run a review.
    are not signed in, the wizard offers to run `ollama signin` in this terminal
    (only on `y`) and then sends the same message once more.
 5. **API key.** (Not asked for the Ollama Cloud sign-in option, which sends no
-   key.) You choose the name of an environment variable, such as
+   key. For a local server it first asks whether the server needs a key at all;
+   the default is no.) You choose the name of an environment variable, such as
    `OPEN_TRESTLE_PROVIDER_OPENROUTER`. The key is never asked for, stored or
    printed. If the variable is not set, the wizard shows how to set it without
    echoing the key (`read -rs NAME && export NAME`). A running program cannot see
@@ -176,7 +180,9 @@ With `TERM=dumb` the marks are `[ok]`, `[..]`, `[x]` and `[--]`.
 
 Remote checks: the review window is current (OpenRouter, OpenCode Go), the saved
 configuration loads, the API key variable is set, and the secret scanner is
-installed. A review is offered only when all of them pass.
+installed. For the Ollama Cloud sign-in option, the key check is replaced by a
+check that your local Ollama lists both models as Ollama Cloud models. A review
+is offered only when all of them pass.
 
 Local checks run in the bootstrap's direct-review scope
 (`trestle setup bootstrap check --scope direct-review`): the setup folder is
