@@ -44,7 +44,11 @@ your explicit answer.
   source. The wizard detects such a development build before you choose a
   provider, explains why, and shows the packaging and install commands from
   [operations](operations.md#build-and-inspect-the-unsigned-linux-amd64-candidate),
-  including the passive vulnerability gate, in the order they run. A local model server still works with a development build. See
+  including the passive vulnerability gate, in the order they run. A local model
+  server still works with a development build. If you set up a remote provider
+  with it anyway, the setup is saved, its scanner check fails, and the wizard
+  shows those commands and the `/usr/local/bin/trestle init` command that
+  continues the same setup. See
   [prerequisite 1](remote-model-review.md#prerequisite-1-a-scanner-bound-binary-and-installed-scanner).
 - **An ordinary clone is fine.** Every mode, local included, uses the direct
   checkout review, which reads loose objects and ordinary pack files and verifies
@@ -282,7 +286,7 @@ The values above are placeholders, not recommendations.
 | --- | --- |
 | `0` | Done: setup is ready (review declined), or the first review finished with `findings` or `no_candidates`. |
 | `3` | Pending: something must be fixed before a review can run, or the review was incomplete or canceled. |
-| `4` | Refused: a declaration was declined, setup was refused, or the review was refused. |
+| `4` | Refused: a declaration was declined, setup was refused, a setup check refused (such as the scanner check of a development build set up for a remote provider; the setup is kept), or the review was refused. |
 | `2` | Usage: a missing or invalid answer, end of input (Ctrl-D), or three unusable answers in a row. |
 | `1` | Internal error, or the first review failed. |
 

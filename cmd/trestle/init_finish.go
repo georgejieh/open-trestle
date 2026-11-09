@@ -245,7 +245,7 @@ func (w *initWizard) stepWrite() (int, error) {
 	}
 	var out, errOut bytes.Buffer
 	code := runSetupBootstrapWithContext(w.ctx, w.bootstrapArgs(), &out, &errOut, w.clock)
-	if code == initExitRefused || code == initExitUsage || code == initExitFailed {
+	if (code == initExitRefused || code == initExitUsage || code == initExitFailed) && !w.setupWritten() {
 		reason := w.refusalReason(out.Bytes(), errOut.String())
 		cleanup := ""
 		if created {
@@ -271,6 +271,39 @@ func (w *initWizard) stepWrite() (int, error) {
 		return 0, err
 	}
 	return w.finish(setup, outcome)
+}
+
+// setupWritten reports whether the bootstrap saved a setup in the chosen folder.
+// The bootstrap writes bootstrap.json last, and a re-run resumes any folder that
+// holds it, so the setup is saved even when the bootstrap's own check then
+// refused, for example the scanner check of a development build.
+func (w *initWizard) setupWritten() bool {
+	_, err := os.Lstat(filepath.Join(w.a.directory, "bootstrap.json"))
+	return err == nil
+}
+
+// rerunCommand is the `trestle init` command that finds this setup again.
+func (w *initWizard) rerunCommand(program string) string {
+	command := program + " init"
+	if w.a.directory != w.defaultDirectory() {
+		command += " --directory " + initShellQuote(w.a.directory)
+	}
+	return command
+}
+
+// explainSavedWithoutScanner says what a saved remote setup still needs when
+// this trestle cannot send source at all, and how a re-run continues it.
+func (w *initWizard) explainSavedWithoutScanner(setup initSetup, block string) {
+	if block == "platform" {
+		w.say("  Your setup is saved, but this machine cannot send source to %s: the sandboxed", setup.provider.short)
+		w.say("  secret scanner that checks every request runs only on Linux.")
+		return
+	}
+	w.say("  Your setup is saved, but this development build cannot send source to %s.", setup.provider.short)
+	w.say("  Build and install the packaged trestle from a clean checkout (docs/operations.md):")
+	w.sayPackagingSteps()
+	w.say("  Then run this in the repository; it finds this setup and re-checks it:")
+	w.say("    %s", w.rerunCommand("/usr/local/bin/trestle"))
 }
 
 func (w *initWizard) refusalReason(out []byte, errText string) string {
@@ -515,6 +548,10 @@ func (w *initWizard) finish(setup initSetup, outcome initOutcome) (int, error) {
 	w.writeNextSteps(setup, outcome)
 	if !outcome.ready {
 		w.say("\n  Setup checks: %s.", outcome.summary)
+		if block := initScannerBlock(); setup.remote && block != "" {
+			w.explainSavedWithoutScanner(setup, block)
+			return outcome.code, nil
+		}
 		w.say("  Not ready for a review yet. Fix the items marked %s or %s above, then run", w.wait, w.bad)
 		w.say("  `trestle init` again in this repository: it finds this setup and re-checks it.")
 		return outcome.code, nil
