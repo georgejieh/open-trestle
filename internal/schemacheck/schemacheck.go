@@ -54,16 +54,28 @@ func Load(dir string) (*Registry, error) {
 }
 
 // Validate checks one encoded instance against the schema with the given $id.
+// The id may carry a JSON Pointer fragment, such as
+// "urn:...:v1#/properties/candidates", to check against a subschema.
 func (r *Registry) Validate(id string, instance []byte) error {
-	root, ok := r.byID[id]
-	if !ok {
+	base, _, _ := strings.Cut(id, "#")
+	if _, ok := r.byID[base]; !ok {
 		return fmt.Errorf("unknown schema %s", id)
+	}
+	schema, root, err := r.resolve(id, nil)
+	if err != nil {
+		return err
 	}
 	value, err := decode(instance)
 	if err != nil {
 		return err
 	}
-	return r.check(root, root, value, "$")
+	return r.check(schema, root, value, "$")
+}
+
+// Has reports whether a schema with the given $id is loaded.
+func (r *Registry) Has(id string) bool {
+	_, ok := r.byID[id]
+	return ok
 }
 
 func decode(raw []byte) (any, error) {

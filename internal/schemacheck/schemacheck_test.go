@@ -46,3 +46,30 @@ func TestValidatorEnforcesKeywords(t *testing.T) {
 		t.Fatal("unsupported keyword silently ignored")
 	}
 }
+
+// A JSON Pointer fragment selects a subschema, and Has reports loaded ids.
+func TestValidatorChecksSubschemaByPointer(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "record.schema.json"), []byte(fixture), 0600); err != nil {
+		t.Fatal(err)
+	}
+	registry, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !registry.Has("urn:test:record") || registry.Has("urn:test:missing") {
+		t.Fatal("Has misreports loaded schemas")
+	}
+	if err := registry.Validate("urn:test:record#/properties/count", []byte(`2`)); err != nil {
+		t.Fatalf("subschema refused a valid value: %v", err)
+	}
+	if err := registry.Validate("urn:test:record#/properties/count", []byte(`4`)); err == nil {
+		t.Fatal("subschema accepted a value over its maximum")
+	}
+	if err := registry.Validate("urn:test:record#/properties/absent", []byte(`1`)); err == nil {
+		t.Fatal("an unresolved pointer was accepted")
+	}
+	if err := registry.Validate("urn:test:missing#/properties/count", []byte(`1`)); err == nil {
+		t.Fatal("an unknown schema id was accepted")
+	}
+}

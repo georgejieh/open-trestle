@@ -1,12 +1,13 @@
 package review
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/provider"
-	"github.com/georgejieh/open-trestle/internal/testsupport/schemacheck"
+	"github.com/georgejieh/open-trestle/internal/schemacheck"
 )
 
 // recordedSchemaCase is one durable encoding with the version it must record.
@@ -21,38 +22,36 @@ type recordedSchemaCase struct {
 // published result, so an encoder can never record what its schema refuses.
 func requireRecordedSchemas(t *testing.T, contract string, embedding [2]string, cases []recordedSchemaCase) {
 	t.Helper()
-	schemas, err := schemacheck.Load("../../schemas/artifact")
+	schemas, err := schemacheck.Load("../../schemas")
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, ok := schemas[embedding[0]]
-	if !ok {
+	if !schemas.Has(embedding[0]) {
 		t.Fatalf("result schema %s is not published", embedding[0])
 	}
-	embedded, ok := result["properties"].(map[string]any)[embedding[1]].(map[string]any)
-	if !ok {
-		t.Fatalf("result schema %s has no %s", embedding[0], embedding[1])
-	}
+	embedded := embedding[0] + "#/properties/" + embedding[1]
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			document, err := schemacheck.Decode(tc.encoded)
-			if err != nil {
+			var document struct {
+				SchemaVersion int `json:"schema_version"`
+			}
+			if err := json.Unmarshal(tc.encoded, &document); err != nil {
 				t.Fatal(err)
 			}
-			if version := document.(map[string]any)["schema_version"]; version != float64(tc.version) {
+			if version := document.SchemaVersion; version != tc.version {
 				t.Fatalf("encoded schema_version %v, want %d", version, tc.version)
 			}
-			if err := schemas.ValidateID(fmt.Sprintf("urn:open-trestle:schema:artifact:%s:v%d", contract, tc.version), document); err != nil {
+			if err := schemas.Validate(fmt.Sprintf("urn:open-trestle:schema:artifact:%s:v%d", contract, tc.version), tc.encoded); err != nil {
 				t.Fatalf("%s v%d schema refuses its encoding: %v", contract, tc.version, err)
 			}
-			if err := schemas.Validate(embedded, document, embedding[1]); err != nil {
+			if err := schemas.Validate(embedded, tc.encoded); err != nil {
 				t.Fatalf("%s refuses an embedded %s v%d: %v", embedding[0], contract, tc.version, err)
 			}
 			// No other version's schema admits it: a version 1 schema never
 			// admits a side.
 			for version := 1; version <= 3; version++ {
 				id := fmt.Sprintf("urn:open-trestle:schema:artifact:%s:v%d", contract, version)
-				if _, published := schemas[id]; published && version != tc.version && schemas.ValidateID(id, document) == nil {
+				if schemas.Has(id) && version != tc.version && schemas.Validate(id, tc.encoded) == nil {
 					t.Fatalf("%s v%d schema admits a v%d encoding", contract, version, tc.version)
 				}
 			}
