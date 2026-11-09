@@ -454,6 +454,21 @@ func validContextSourceOmissionReason(value string) bool {
 	return err == nil
 }
 
+// repositoryInstructionPaths is the fixed, root-only list of repository review
+// instruction files, in supply order. Subdirectory copies are never read.
+var repositoryInstructionPaths = []string{"AGENTS.md", "CLAUDE.md", ".github/copilot-instructions.md", ".trestle/review-instructions.md"}
+
+// RepositoryInstructionPaths returns the fixed, root-only repository review
+// instruction file paths that context assembly may supply from the base tree
+// as repository_context, in supply order.
+func RepositoryInstructionPaths() []string { return slices.Clone(repositoryInstructionPaths) }
+
+// RepositoryInstructionPath reports whether path is one of the fixed
+// repository review instruction file paths.
+func RepositoryInstructionPath(path string) bool {
+	return slices.Contains(repositoryInstructionPaths, path)
+}
+
 // RepositoryInstructionOmissionReason reports whether reason records a
 // repository instruction file that was not supplied as repository_context.
 // Instruction files are advisory context, not changed source: these omissions

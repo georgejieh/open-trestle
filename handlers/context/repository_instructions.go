@@ -17,10 +17,6 @@ const (
 	maximumInstructionTotalBytes = 16 << 10
 )
 
-// repositoryInstructionPaths is the fixed, root-only list of repository review
-// instruction files. Subdirectory copies are never read.
-var repositoryInstructionPaths = []string{"AGENTS.md", "CLAUDE.md", ".github/copilot-instructions.md", ".trestle/review-instructions.md"}
-
 // repositoryInstructionReason prefixes every instruction-file omission reason.
 // Review accounting keys on the prefix to keep instruction context out of
 // changed-source coverage.
@@ -47,12 +43,13 @@ func appendRepositoryInstructionCandidates(base []sourceoutput.FileReference, co
 		omissions = append(omissions, omission)
 		return 0
 	}
-	baseFiles := make(map[string]sourceoutput.FileReference, len(repositoryInstructionPaths))
+	instructionPaths := review.RepositoryInstructionPaths()
+	baseFiles := make(map[string]sourceoutput.FileReference, len(instructionPaths))
 	for _, reference := range base {
 		baseFiles[reference.Path()] = reference
 	}
 	used := 0
-	for _, filePath := range repositoryInstructionPaths {
+	for _, filePath := range instructionPaths {
 		baseFile, inBase := baseFiles[filePath]
 		if !inBase || baseFile.SizeBytes() == 0 {
 			continue

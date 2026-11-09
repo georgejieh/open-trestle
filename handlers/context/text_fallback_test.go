@@ -250,7 +250,7 @@ func TestRepositoryInstructionFilesAreBoundedRepositoryContext(t *testing.T) {
 	if result.failure != 0 {
 		t.Fatalf("failure=%s", result.failure)
 	}
-	for _, name := range repositoryInstructionPaths {
+	for _, name := range review.RepositoryInstructionPaths() {
 		source, ok := result.sources[name+"|repository_context"]
 		if !ok {
 			t.Fatalf("%s missing from packet", name)
