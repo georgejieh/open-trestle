@@ -31,6 +31,7 @@ Publication readiness validates the same analysis result and change before mappi
 - Each source slice is limited to 1 MiB.
 - Every changed range is represented exactly once by evidence or a typed gap.
 - Removed, binary or unsupported, empty-added, source-limit, slice-limit, and aggregate evidence-limit cases remain explicit.
+- A file the change model could not diff because of its size (over 1 MiB) is one whole-entry `resource_limit` gap, for a removed file from version 4. A removed or emptied one is never read: its removed text is one whole-entry `removed_lines_limit` gap.
 
 If the number of required coverage records exceeds the limit, one `evidence_limit` gap covers each changed entry. The output never silently truncates ranges.
 

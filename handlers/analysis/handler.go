@@ -103,6 +103,19 @@ func wholeEntryGap(entry changehandler.Entry, evidenceLimit bool) (Gap, bool) {
 	return Gap{}, false
 }
 
+// sizeLimitedRemoval reports a removed file, or a file whose head is now empty,
+// that the change model could not diff because of its size.
+func sizeLimitedRemoval(entry changehandler.Entry, gap Gap, head map[string]source.FileReference) bool {
+	if gap.Reason() != "resource_limit" || entry.Reason() != "resource_limit" || len(entry.Ranges()) != 0 {
+		return false
+	}
+	if entry.Kind() == "removed" {
+		return true
+	}
+	reference, ok := head[entry.Path()]
+	return entry.Kind() == "modified" && entry.HeadSizeBytes() == 0 && ok && reference.SizeBytes() == 0 && reference.Digest() == entry.HeadDigest()
+}
+
 func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutionRequest) controlplane.TaskCompletion {
 	if nilInterface(ctx) || h.Validate() != nil || request.Validate() != nil || request.Task().Kind() != controlplane.TaskInspectDeterministic || request.Task().HandlerIdentity() != h.identity || !equalStrings(request.Task().Dependencies(), []string{"change"}) {
 		return failure(controlplane.RunFailureInvalidInput)
@@ -200,6 +213,10 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 			emptied := gap.Reason() == "no_changed_head_lines" && references[entry.Path()].SizeBytes() == 0 && references[entry.Path()].Digest() == entry.HeadDigest()
 			if emptied || gap.Reason() == "removed_file" {
 				wholeFileRemoved = append(wholeFileRemoved, entry)
+			} else if sizeLimitedRemoval(entry, gap, references) && len(gaps) < maximumEvidenceItems {
+				// A removed or emptied file past the change model's size bound
+				// is not read: its removed text is one whole-entry limit gap.
+				gaps = append(gaps, analysiscodec.NewGap(entry, 0, 0, analysiscodec.RemovedLinesLimitReason))
 			}
 			continue
 		}

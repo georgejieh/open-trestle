@@ -132,6 +132,12 @@ func removedFileEntry(entry changecodec.Entry) bool {
 	return entry.Kind() == "removed" && entry.Reason() == "removed_file" && len(entry.Ranges()) == 0
 }
 
+// sizeLimitedWholeFileEntry reports a removed file, or a file whose head is
+// now empty, that the change model could not diff because of its size.
+func sizeLimitedWholeFileEntry(entry changecodec.Entry) bool {
+	return entry.Reason() == "resource_limit" && len(entry.Ranges()) == 0 && (entry.Kind() == "removed" || entry.Kind() == "modified" && entry.HeadSizeBytes() == 0)
+}
+
 func deletionOnlyEntry(entry changecodec.Entry) bool {
 	return entry.Reason() == "no_changed_head_lines" && entry.Kind() == "modified" && entry.Status() == "unsupported" && len(entry.Ranges()) == 0
 }
@@ -676,9 +682,10 @@ func validGap(gap Gap, entries map[string]changecodec.Entry, schemaVersion, chan
 	}
 	if gap.reason == RemovedLinesLimitReason {
 		// The unbound tail of a removed file's base text, at its base lines,
-		// or the whole of it when it was not read.
+		// or the whole of it when it was not read. A file past the change
+		// model's size bound is never read.
 		_, err := evidence.NewSourceRange(gap.path, gap.startLine, gap.endLine)
-		return schemaVersion == 7 && removedFileEntry(entry) && (err == nil || wholeRemovedTextGap(gap))
+		return schemaVersion == 7 && (removedFileEntry(entry) && (err == nil || wholeRemovedTextGap(gap)) || sizeLimitedWholeFileEntry(entry) && wholeRemovedTextGap(gap))
 	}
 	if gap.startLine == 0 && gap.endLine == 0 {
 		if gap.reason == "evidence_limit" {
@@ -687,7 +694,11 @@ func validGap(gap Gap, entries map[string]changecodec.Entry, schemaVersion, chan
 		if len(entry.Ranges()) != 0 {
 			return false
 		}
-		return entry.Kind() == "removed" && gap.reason == "removed_file" || entry.Kind() == "added" && gap.reason == "empty_added_file" || entry.Kind() == "modified" && gap.reason == entry.Reason() && (gap.reason == "unsupported_content" || gap.reason == "resource_limit")
+		// A size limit is a size limit whatever the entry kind: from version 4
+		// a removed entry past the change model's size bound is a
+		// resource_limit gap.
+		sizeLimited := schemaVersion >= 4 && entry.Kind() == "removed" && gap.reason == "resource_limit" && entry.Reason() == "resource_limit"
+		return sizeLimited || entry.Kind() == "removed" && gap.reason == "removed_file" || entry.Kind() == "added" && gap.reason == "empty_added_file" || entry.Kind() == "modified" && gap.reason == entry.Reason() && (gap.reason == "unsupported_content" || gap.reason == "resource_limit")
 	}
 	if gap.reason != "slice_resource_limit" && gap.reason != "resource_limit" {
 		return false

@@ -46,6 +46,31 @@ func TestLocalModelReviewReviewsDeletionOnlyChange(t *testing.T) {
 	}
 }
 
+// Removing a file over the 1 MiB change-model size bound failed the analysis
+// task with an internal error, so the whole review failed. It is now a
+// resource_limit omission, and the small Go change beside it is reviewed.
+func TestLocalModelReviewRecordsALargeFileAsAResourceLimit(t *testing.T) {
+	large := map[string][]byte{"large.bin": bytes.Repeat([]byte("large file line\n"), 128<<10)}
+	for _, tc := range []struct {
+		name    string
+		options localModelFixtureOptions
+	}{
+		{"removed", localModelFixtureOptions{chatCompletions: true, extraBase: large}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLocalModelFixture(t, tc.options)
+			result, _ := localModelExecute(t, f, f.args, 4)
+			if result.Status != "findings" || result.RunStatus != "succeeded" || len(result.Diagnostics.Findings) != 1 || result.Diagnostics.Findings[0].Path != "a.go" {
+				t.Fatalf("review beside a large %s file: status=%s run=%s findings=%d", tc.name, result.Status, result.RunStatus, len(result.Diagnostics.Findings))
+			}
+			text := runLocalModelText(t, newLocalModelFixture(t, tc.options), 4)
+			if !strings.Contains(text, "status: findings\n") || !strings.Contains(text, "resource_limit=") {
+				t.Fatalf("large %s file text=%q", tc.name, text)
+			}
+		})
+	}
+}
+
 // A change that only removes a file used to be refused at the context task
 // (all_sources_omitted). It is now reviewed from the file's removed text, and
 // the verified finding is on its removed base lines.
