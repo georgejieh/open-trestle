@@ -204,6 +204,13 @@ func (a *PolicyVerificationAuthorizer) Authorize(ctx context.Context, scope audi
 	if err != nil {
 		return VerificationAuthority{}, ErrInvalidVerificationAuthority
 	}
+	// A context shortfall is reported with its counts; it is still a refusal.
+	if refusal := gateway.RouteEligibilityRefusal(eligibility, independent); refusal != nil {
+		if _, ok := gateway.RouteContextShortfallOf(refusal); ok {
+			return VerificationAuthority{}, fmt.Errorf("%w: %w", ErrInvalidVerificationAuthority, refusal)
+		}
+		return VerificationAuthority{}, ErrInvalidVerificationAuthority
+	}
 	eligibleIDs := make(map[string]struct{})
 	for _, route := range eligibility.EligibleRoutes() {
 		eligibleIDs[verificationRouteRecordIdentity(route)] = struct{}{}

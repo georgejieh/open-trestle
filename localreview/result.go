@@ -46,7 +46,8 @@ type resultWire struct {
 	CI                     string                   `json:"ci_disposition"`
 	RunStatus              string                   `json:"run_status"`
 	Failure                string                   `json:"failure"`
-	FailureDetail          string                   `json:"failure_detail,omitempty"` // observed refinement of Failure; see failure_summary.go
+	FailureDetail          string                   `json:"failure_detail,omitempty"`    // observed refinement of Failure; see failure_summary.go
+	ContextShortfall       *contextShortfallWire    `json:"context_shortfall,omitempty"` // only with FailureDetailRouteContextInsufficient
 	Run                    string                   `json:"review_run_id"`
 	Scope                  string                   `json:"scope_identity"`
 	Request                string                   `json:"request_identity"`
@@ -360,6 +361,12 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 	}
 	if state.Status() == controlplane.ReviewRunFailed && s.routeFailures != nil && s.routeFailures.saw(gateway.RouteFailureOutputExhausted) {
 		w.FailureDetail = FailureDetailModelOutputExhausted
+	}
+	if state.Status() == controlplane.ReviewRunFailed && s.routeFailures != nil && w.FailureDetail == "" {
+		if shortfall, ok := s.routeFailures.contextShortfall(); ok {
+			w.FailureDetail = FailureDetailRouteContextInsufficient
+			w.ContextShortfall = &contextShortfallWire{RequiredTokens: shortfall.RequiredTokens, EstimatedInputTokens: shortfall.EstimatedInputTokens, MaxOutputTokens: shortfall.MaxOutputTokens, DeclaredContextTokens: shortfall.DeclaredContextTokens}
+		}
 	}
 	if state.Status() == controlplane.ReviewRunCanceled {
 		w.Status = "canceled"

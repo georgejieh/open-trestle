@@ -65,6 +65,10 @@ type InvestigationOptions struct {
 	HeadSnapshotArtifactIdentity string
 	InitialContext               review.ContextPacket
 	InitialSnapshot              review.ReviewSnapshot
+	// PlanningRefusals, when set, receives each turn planning refusal, such as
+	// a gateway.RouteContextShortfall. It observes only; it never changes the
+	// refusal or the investigation.
+	PlanningRefusals func(error)
 }
 type Investigation struct {
 	mu                                              sync.Mutex
@@ -331,7 +335,7 @@ func NewInvestigation(ctx context.Context, o InvestigationOptions) (*Investigati
 	if err != nil {
 		return nil, ErrInvestigation
 	}
-	c.owner, err = gateway.NewInvestigationRouteOwner(gateway.InvestigationRouteOwnerOptions{Scope: o.Scope, SessionIdentity: c.binding.Identity(), PolicyIdentity: p.Identity(), Deadline: o.Deadline, MaxTurns: uint8(p.MaxModelTurns()), Budget: r.Budget, Requirements: r.Requirements, Constraints: r.Constraints, Generation: generationPlan, Verification: verificationPlan, Catalog: o.Catalog, Ledger: o.Ledger, Clock: o.Clock, SystemChannelBytes: review.ModelRequestSystemChannelBytes, GenerationResponseFormatBytes: responseFormatBytes(r.GenerationTransport), VerificationResponseFormatBytes: responseFormatBytes(r.VerificationTransport)})
+	c.owner, err = gateway.NewInvestigationRouteOwner(gateway.InvestigationRouteOwnerOptions{Scope: o.Scope, SessionIdentity: c.binding.Identity(), PolicyIdentity: p.Identity(), Deadline: o.Deadline, MaxTurns: uint8(p.MaxModelTurns()), Budget: r.Budget, Requirements: r.Requirements, Constraints: r.Constraints, Generation: generationPlan, Verification: verificationPlan, Catalog: o.Catalog, Ledger: o.Ledger, Clock: o.Clock, SystemChannelBytes: review.ModelRequestSystemChannelBytes, GenerationResponseFormatBytes: responseFormatBytes(r.GenerationTransport), VerificationResponseFormatBytes: responseFormatBytes(r.VerificationTransport), PlanningRefusals: o.PlanningRefusals})
 	if err != nil {
 		return nil, ErrInvestigation
 	}
@@ -383,6 +387,12 @@ func (c *Investigation) plan(role gateway.InvestigationTurnRole, request provide
 	eligible, err := gateway.FilterEligibleRoutes(input, budget, r.RegistryRevision, routes)
 	if err != nil {
 		return gateway.RouteAttemptAuthorization{}, err
+	}
+	if refusal := gateway.RouteEligibilityRefusal(eligible, routes); refusal != nil {
+		if c.options.PlanningRefusals != nil {
+			c.options.PlanningRefusals(refusal)
+		}
+		return gateway.RouteAttemptAuthorization{}, refusal
 	}
 	ranking, err := gateway.RankEligibleRoutes(eligible, rankingPolicy, r.PerformanceRevision, c.observations(eligible.EligibleRoutes()))
 	if err != nil {

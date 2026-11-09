@@ -45,7 +45,10 @@ never covers less than one byte) plus the output allowance, and refuses a route
 whose declared context is smaller, rather than risk a server silently
 truncating an over-long prompt, which could drop the trusted system message.
 Even the fixed setup probe reserves about 9,700 tokens, and a review request is
-larger, so an 8192-token context cannot run any review.
+larger, so an 8192-token context cannot run any review. When a route is too
+small, the refusal names the tokens the review needs, the context the route
+declares and what to raise (see
+[Local model review](local-model-review.md#route-context-too-small)).
 
 ### llama.cpp
 

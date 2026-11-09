@@ -51,6 +51,9 @@ func (r Result) failureSummary() (class, task, detail, hint string) {
 	if value, ok := failureDetailHints[detail]; ok {
 		hint = value
 	}
+	if detail == FailureDetailRouteContextInsufficient && r.wire.ContextShortfall != nil {
+		hint = contextShortfallHint(*r.wire.ContextShortfall)
+	}
 	return class, task, detail, hint
 }
 

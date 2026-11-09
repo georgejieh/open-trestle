@@ -264,18 +264,20 @@ func newSession(o SessionOptions, investigationPolicy *review.InvestigationPolic
 	}
 	var catalog runtimecatalog.PipelineCatalog
 	if investigationPolicy == nil {
-		generationAuthority, err := runtimecatalog.NewGenerationPolicyAuthorizerFromRuntimePolicy(o.Policy, o.Inventory, ledger)
+		policyGenerationAuthority, err := runtimecatalog.NewGenerationPolicyAuthorizerFromRuntimePolicy(o.Policy, o.Inventory, ledger)
 		if err != nil {
 			return nil, ErrInvalidSession
 		}
+		generationAuthority := observedGenerationAuthorizer{policyGenerationAuthority, routeFailures}
 		verificationInventory, err := runtimecatalog.NewStaticVerificationRouteInventory(o.Inventory)
 		if err != nil {
 			return nil, ErrInvalidSession
 		}
-		verificationAuthority, err := runtimecatalog.NewVerificationPolicyAuthorizerFromRuntimePolicy(o.Policy, verificationInventory, ledger, o.Clock)
+		policyVerificationAuthority, err := runtimecatalog.NewVerificationPolicyAuthorizerFromRuntimePolicy(o.Policy, verificationInventory, ledger, o.Clock)
 		if err != nil {
 			return nil, ErrInvalidSession
 		}
+		verificationAuthority := observedVerificationAuthorizer{policyVerificationAuthority, routeFailures}
 		sourceHandler, err := sourcehandler.NewHandler(store, source, o.Clock)
 		if err != nil {
 			return nil, ErrInvalidSession
@@ -357,7 +359,7 @@ func newSession(o SessionOptions, investigationPolicy *review.InvestigationPolic
 		if err != nil {
 			return nil, ErrInvalidSession
 		}
-		configuration := runtimecatalog.InvestigationCatalogOptions{Store: store, Diagnostics: diagnosticStore, Ledger: ledger, Journal: journal, Clock: o.Clock, Dispatchers: dispatchers, Source: source, PublicationScanner: publicationScanner}
+		configuration := runtimecatalog.InvestigationCatalogOptions{Store: store, Diagnostics: diagnosticStore, Ledger: ledger, Journal: journal, Clock: o.Clock, Dispatchers: dispatchers, Source: source, PublicationScanner: publicationScanner, PlanningRefusals: routeFailures.refused}
 		catalog, prototype, err := runtimecatalog.NewInvestigationPipelineCatalog(profile, configuration)
 		if err != nil {
 			return nil, ErrInvalidSession

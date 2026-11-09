@@ -930,6 +930,29 @@ one was observed, a detail. `hint:` is a fixed one-line explanation per class
 what the class usually means; it is not a diagnosis. A succeeded run prints
 neither line.
 
+### Route context too small
+
+Every request reserves a byte-based upper bound on its input tokens (payload,
+trusted system channel and 256 framing bytes, plus the serialized
+`response_format` on a structured-output connection) plus the output allowance.
+A route whose declared `max_context_tokens` is smaller is not eligible, so a
+small model server cannot silently truncate the prompt. When that leaves no
+eligible route for the generation, verification or an investigation turn, the
+run is refused with failure `policy` and the JSON result adds
+`"failure_detail": "route_context_insufficient"` and a `context_shortfall`
+object with `required_tokens`, `estimated_input_tokens`, `max_output_tokens`
+and `declared_context_tokens` (the largest declared context among the routes
+too small). Both are absent otherwise. Text output reads, with the counts in
+place of N, I, O and D:
+
+```text
+failure: policy (task context): route_context_insufficient
+hint: the review needs up to N tokens (a byte-based upper bound: I input plus O output) but the route declares max_context_tokens D; raise max_context_tokens on the route and the model server's context length to at least N (docs/named-local-runtimes.md#context-length)
+```
+
+Raise the route's declared context and the server's context length together;
+see [named local runtimes](named-local-runtimes.md#context-length).
+
 ### Exhausted model output
 
 A model response that stops at the output token limit (`finish_reason: length`,

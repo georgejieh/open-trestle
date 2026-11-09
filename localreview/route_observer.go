@@ -15,6 +15,9 @@ import (
 type routeFailureObserver struct {
 	mu       sync.Mutex
 	failures map[gateway.RouteFailureClass]bool
+	// shortfall is the first planning refusal of the run that named a route
+	// context shortfall.
+	shortfall *gateway.RouteContextShortfall
 }
 
 func (o *routeFailureObserver) record(result gateway.RouteDispatchResult) {
@@ -33,6 +36,7 @@ func (o *routeFailureObserver) reset() {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.failures = nil
+	o.shortfall = nil
 }
 
 func (o *routeFailureObserver) saw(failure gateway.RouteFailureClass) bool {

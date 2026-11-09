@@ -158,6 +158,9 @@ type InvestigationPipelineOptions struct {
 	Catalog gateway.RouteDispatcherCatalog
 	Source  scm.SourceAdapter
 	Support InvestigationSupportBindings
+	// PlanningRefusals, when set, observes each investigation's turn planning
+	// refusals (see InvestigationOptions.PlanningRefusals).
+	PlanningRefusals func(error)
 }
 type InvestigationAssembly = contextpacket.Assembly
 type pipelineOperationKey struct{}
@@ -1004,7 +1007,7 @@ func (p *InvestigationPipeline) generate(ctx context.Context, r controlplane.Tas
 	constructorCtx := context.WithValue(p.root, pipelineOperationKey{}, op)
 	stop := context.AfterFunc(ctx, p.fail)
 	defer stop()
-	c, err := NewInvestigation(constructorCtx, InvestigationOptions{Scope: p.plan.Scope(), MemoryScope: p.assembly.MemoryScope, SessionIdentity: host, Policy: p.options.Profile.Policy(), Routing: p.options.Profile.Routing(), Catalog: p.options.Catalog, Ledger: p.options.Ledger, Clock: p.options.Clock, Deadline: p.deadline, Store: p.capture, Acquisition: p.headHandle, HeadSnapshotArtifactIdentity: p.assembly.HeadSnapshotArtifact.Identity(), InitialContext: p.assembly.Packet, InitialSnapshot: p.assembly.Snapshot})
+	c, err := NewInvestigation(constructorCtx, InvestigationOptions{Scope: p.plan.Scope(), MemoryScope: p.assembly.MemoryScope, SessionIdentity: host, Policy: p.options.Profile.Policy(), Routing: p.options.Profile.Routing(), Catalog: p.options.Catalog, Ledger: p.options.Ledger, Clock: p.options.Clock, Deadline: p.deadline, Store: p.capture, Acquisition: p.headHandle, HeadSnapshotArtifactIdentity: p.assembly.HeadSnapshotArtifact.Identity(), InitialContext: p.assembly.Packet, InitialSnapshot: p.assembly.Snapshot, PlanningRefusals: p.options.PlanningRefusals})
 	if err != nil {
 		return artifact.Artifact{}, err
 	}

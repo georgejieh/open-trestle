@@ -73,6 +73,8 @@ type InvestigationCatalogOptions struct {
 	Dispatchers        gateway.RouteDispatcherCatalog
 	Source             scm.SourceAdapter
 	PublicationScanner review.PublicationContentScanner
+	// PlanningRefusals, when set, observes investigation turn planning refusals.
+	PlanningRefusals func(error)
 }
 
 // NewInvestigationPipelineCatalog creates actual inert handlers, not a parallel engine.
@@ -98,7 +100,7 @@ func NewInvestigationPipelineCatalog(profile model.InvestigationPipelineProfile,
 	if publicationScanner == nil {
 		publicationScanner = review.NewFixedPublicationContentScanner()
 	}
-	bridge, err := model.NewInvestigationPipeline(model.InvestigationPipelineOptions{Profile: profile, Store: o.Store, Ledger: o.Ledger, Journal: o.Journal, Clock: o.Clock, Catalog: o.Dispatchers, Source: o.Source, Support: model.InvestigationSupportBindings{Change: changes.HandlerIdentity(), Analysis: analyses.HandlerIdentity(), Memory: memories.HandlerIdentity(), PublicationScanner: publicationScanner.Identity()}})
+	bridge, err := model.NewInvestigationPipeline(model.InvestigationPipelineOptions{Profile: profile, Store: o.Store, Ledger: o.Ledger, Journal: o.Journal, Clock: o.Clock, Catalog: o.Dispatchers, Source: o.Source, Support: model.InvestigationSupportBindings{Change: changes.HandlerIdentity(), Analysis: analyses.HandlerIdentity(), Memory: memories.HandlerIdentity(), PublicationScanner: publicationScanner.Identity()}, PlanningRefusals: o.PlanningRefusals})
 	if err != nil {
 		return PipelineCatalog{}, nil, err
 	}

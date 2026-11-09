@@ -103,6 +103,10 @@ func (a *PolicyAuthorizer) Authorize(ctx context.Context, scope audit.ReviewScop
 	if err != nil {
 		return gateway.RouteAttemptAuthorization{}, err
 	}
+	// A refusal names any context shortfall before ranking reports no route.
+	if refusal := gateway.RouteEligibilityRefusal(eligibility, a.routes); refusal != nil {
+		return gateway.RouteAttemptAuthorization{}, refusal
+	}
 	eligibleRecords := make(map[string]bool, len(eligibility.EligibleRoutes()))
 	for _, candidate := range eligibility.EligibleRoutes() {
 		eligibleRecords[candidate.ResolvedRecord().RouteRegistryRecord().Identity()] = true

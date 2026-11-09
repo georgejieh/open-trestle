@@ -167,6 +167,10 @@ type InvestigationRouteOwnerOptions struct {
 	// review.ModelRequestResponseFormatBytes. Nil selects the standard
 	// transport. Each structured turn records the value it reserved.
 	GenerationResponseFormatBytes, VerificationResponseFormatBytes func(provider.Request) uint32
+	// PlanningRefusals, when set, receives each turn's eligibility refusal,
+	// such as a *RouteContextShortfall. It observes only and is not bound into
+	// the owner identity, since it never changes a decision.
+	PlanningRefusals func(error)
 }
 
 // investigationTurnTransport is what one turn reserved beyond its payload.
@@ -296,6 +300,12 @@ func (o *InvestigationRouteOwner) planning(request provider.Request, role Invest
 	eligible, err := FilterEligibleRoutes(input, budget, plan.registryRevision, plan.routes)
 	if err != nil {
 		return RouteSelectionReceipt{}, RouteRankingResult{}, RouteAttemptAuthorization{}, investigationTurnTransport{}, err
+	}
+	if refusal := RouteEligibilityRefusal(eligible, plan.routes); refusal != nil {
+		if o.options.PlanningRefusals != nil {
+			o.options.PlanningRefusals(refusal)
+		}
+		return RouteSelectionReceipt{}, RouteRankingResult{}, RouteAttemptAuthorization{}, investigationTurnTransport{}, refusal
 	}
 	observations := make([]provider.RoutePerformanceObservation, 0, len(plan.observations))
 	for _, route := range eligible.EligibleRoutes() {
