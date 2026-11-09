@@ -226,7 +226,7 @@ func (s *FileStore) RecordRetry(ctx context.Context, record RetryRecord) error {
 	}
 	path := s.retryPath(record.scope, record.source, record.deduplicationKey)
 	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
-		if counts, countErr := s.rootCounts(""); countErr != nil {
+		if counts, countErr := s.rootCounts(); countErr != nil {
 			return countErr
 		} else if counts.retries >= maxInboxStoreFiles {
 			return ErrInboxStoreCapacity

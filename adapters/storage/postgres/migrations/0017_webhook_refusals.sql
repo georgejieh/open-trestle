@@ -8,7 +8,7 @@ CREATE TABLE open_trestle_webhook_refusals (
     record_identity text NOT NULL CHECK (record_identity ~ '^[0-9a-f]{64}$'),
     reason text NOT NULL CHECK (reason ~ '^[a-z][a-z0-9_]{0,63}$'),
     refused_at_milliseconds bigint NOT NULL CHECK (refused_at_milliseconds > 0),
-    PRIMARY KEY (tenant_id, repository_id, source, deduplication_key, planner_identity),
+    PRIMARY KEY (tenant_id, repository_id, source, deduplication_key),
     FOREIGN KEY (tenant_id, repository_id, source, deduplication_key)
         REFERENCES open_trestle_webhook_deliveries (tenant_id, repository_id, source, deduplication_key) ON DELETE CASCADE
 );

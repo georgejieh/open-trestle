@@ -89,9 +89,9 @@ WHERE tenant_id = $1 AND repository_id = $2 AND source = $3 AND deduplication_ke
 // daemonBudgetedWebhookRefusalReadSQL is the inbox refusal read the
 // supervisor makes before processing a delivery; this fixture records no
 // refusals, so it never has a row.
-const daemonBudgetedWebhookRefusalReadSQL = `SELECT delivery_identity, record_identity, reason, refused_at_milliseconds
+const daemonBudgetedWebhookRefusalReadSQL = `SELECT planner_identity, delivery_identity, record_identity, reason, refused_at_milliseconds
 FROM open_trestle_webhook_refusals
-WHERE tenant_id = $1 AND repository_id = $2 AND source = $3 AND deduplication_key = $4 AND planner_identity = $5`
+WHERE tenant_id = $1 AND repository_id = $2 AND source = $3 AND deduplication_key = $4`
 const daemonBudgetedWebhookMappingCountSQL = `SELECT count(*)
 FROM open_trestle_webhook_deliveries
 WHERE tenant_id = $1 AND repository_id = $2 AND source = $3 AND expires_at > $4`
@@ -822,7 +822,7 @@ func (tx *daemonBudgetedTx) statement(_ context.Context, id string, a []driver.V
 		}
 		return nil, 0, nil
 	case "webhook_refusal_read":
-		if len(a) != 5 {
+		if len(a) != 4 {
 			return nil, 0, tx.conn.service.fail("webhook_refusal_read args")
 		}
 		return nil, 0, nil
@@ -1178,7 +1178,7 @@ func daemonBudgetedColumnCounts() map[string]int {
 		"webhook_read":                   8,
 		"webhook_replay_owner":           1,
 		"webhook_retry_read":             4,
-		"webhook_refusal_read":           4,
+		"webhook_refusal_read":           5,
 	}
 }
 func daemonBudgetedNormalizeSQL(q string) string { return strings.Join(strings.Fields(q), " ") }
@@ -1323,7 +1323,7 @@ var daemonBudgetedMigrationHashes = []string{
 	"16c33dbe3ef412bbac986e324f8507210fa71a2f6894b605379663fd53f3ebc2",
 	"97e4b0dc7c3aed97acdcc7c740f11619e0c25ee463813f3fff841be5ca126aee",
 	"4be4e7f9c27aa85141d5d0cb2a4a8f9d761133fa1f936aa71980fc5cec57ac68",
-	"0d46b670ee395572fa16dd7f4d9006350ef1092dc3feadecaf8b52b1ad366db1",
+	"c7c0e2d41b8cbcf752ccb7aab5c948ad1b0358d158cbd4a05fd2ce3a2da6e007",
 	"2d286581693f4d2ae061ac865924141532f96935b75b01cf83783f92cefd5256",
 }
 

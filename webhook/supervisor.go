@@ -206,10 +206,14 @@ func (s *Supervisor) handle(ctx context.Context, stored StoredDelivery) error {
 	at := s.options.Clock.Now().UTC()
 	delivery := stored.Delivery()
 	planner := s.processor.PlannerIdentity()
-	_, refused, err := s.refusals.Refusal(ctx, delivery.Scope(), delivery.Source(), delivery.DeduplicationKey(), planner)
+	refusal, refusalRecorded, err := s.refusals.RecordedRefusal(ctx, delivery.Scope(), delivery.Source(), delivery.DeduplicationKey())
 	if err != nil {
 		return err
 	}
+	// A refusal a superseded planner identity recorded is kept until this
+	// planner has its own outcome: it is pruned once the delivery is admitted,
+	// and a refusal under this planner replaces it.
+	refused := refusalRecorded && refusal.PlannerIdentity() == planner
 	retry, recorded, err := s.retries.Retry(ctx, delivery.Scope(), delivery.Source(), delivery.DeduplicationKey())
 	if err != nil {
 		return err
@@ -235,6 +239,11 @@ func (s *Supervisor) handle(ctx context.Context, stored StoredDelivery) error {
 		return nil
 	}
 	_, _, err = s.processor.Process(ctx, stored, at)
+	if err == nil && refusalRecorded {
+		if err := s.refusals.ClearRefusal(ctx, delivery.Scope(), delivery.Source(), delivery.DeduplicationKey(), refusal.PlannerIdentity()); err != nil {
+			return err
+		}
+	}
 	if err == nil || errors.Is(err, ErrPreparedInputsExpired) {
 		return clear()
 	}

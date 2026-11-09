@@ -8,15 +8,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/georgejieh/open-trestle/controlplane"
+	"time"
 )
 
-// Refusal records are audit records and are kept, so each planner identity's
-// records are counted on their own, at most one per delivery: records that
-// superseded planner identities left never keep the current planner from
-// recording its refusal, and never make the inbox unreadable.
-func TestFileInboxCountsRefusalRecordsPerPlanner(t *testing.T) {
+// A file inbox holds at most one refusal record per delivery, so refusal
+// records are bounded in total like deliveries: a root already holding that
+// many refusal files the store did not write refuses another refusal, and
+// listing still reads it.
+func TestFileInboxBoundsRefusalRecordsInTotal(t *testing.T) {
 	ctx := context.Background()
 	root := filepath.Join(t.TempDir(), "inbox")
 	store, err := NewFileStore(root)
@@ -24,28 +23,29 @@ func TestFileInboxCountsRefusalRecordsPerPlanner(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	f := newRefusalFixture(t, store, refusingPlanner{}, controlplane.NewMemoryRunJournal())
-	f.supervisor.processor.planner = refusingPlanner{refused: f.deliveries[0].DeduplicationKey(), err: errors.New("invalid payload")}
-	scope := f.deliveries[0].Scope()
-	// Three generations of superseded planners each refused every delivery
-	// of a full inbox.
-	for generation := 0; generation < 3; generation++ {
-		planner := strings.Repeat(fmt.Sprint(generation+6), 64)
-		for index := 0; index < maxInboxStoreFiles; index++ {
-			name := fmt.Sprintf("%s-%s-%064x-%s%s", scope.Identity(), SourceGitHub, index, planner, refusalFileSuffix)
-			if err := os.WriteFile(filepath.Join(root, name), []byte("{}"), 0o600); err != nil {
-				t.Fatal(err)
-			}
+	scope, _ := NewRepositoryScope("tenant-a", "repo-a")
+	delivery, err := NewVerifiedDelivery(scope, SourceGitHub, "delivery-1", "pull_request", "opened", strings.Repeat("a", 64), []byte(`{"id":"delivery-1"}`), time.UnixMilli(1000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, _, err := store.Put(ctx, delivery, time.UnixMilli(1000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < maxInboxStoreFiles; index++ {
+		name := fmt.Sprintf("%s-%s-%064x%s", scope.Identity(), SourceGitHub, index, refusalFileSuffix)
+		if err := os.WriteFile(filepath.Join(root, name), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
 		}
 	}
-	if err := f.supervisor.reconcile(ctx); err != nil {
-		t.Fatalf("superseded refusal records stopped intake: %v", err)
+	record, err := NewRefusalRecord(stored, strings.Repeat("d", 64), RefusalReasonPlanningRefused, time.UnixMilli(2000))
+	if err != nil {
+		t.Fatal(err)
 	}
-	record, refused, err := store.Refusal(ctx, scope, SourceGitHub, f.deliveries[0].DeduplicationKey(), strings.Repeat("d", 64))
-	if err != nil || !refused || record.Reason() != RefusalReasonPlanningRefused {
-		t.Fatalf("superseded refusal records kept the current refusal out: refused=%t err=%v", refused, err)
+	if _, _, err := store.RecordRefusal(ctx, record); !errors.Is(err, ErrInboxStoreCapacity) {
+		t.Fatalf("a refusal was recorded past the refusal bound: %v", err)
 	}
-	if !f.admitted(t, f.deliveries[1]) {
-		t.Fatal("superseded refusal records blocked the other delivery")
+	if listed, err := store.List(ctx, scope, SourceGitHub, "", 100); err != nil || len(listed) != 1 {
+		t.Fatalf("refusal files made the inbox unreadable: %d %v", len(listed), err)
 	}
 }

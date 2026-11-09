@@ -14,10 +14,11 @@ type recordingInbox interface {
 	RefusalStore
 }
 
-// Both local inboxes record one refusal per delivery and planner, keep the
-// first record on repetition, refuse a different reason, and never list or
-// replay-index refusal records as deliveries.
-func TestInboxStoresRecordRefusalsOncePerDeliveryAndPlanner(t *testing.T) {
+// Both local inboxes keep one refusal per delivery, naming its planner: they
+// keep the first record on repetition, refuse a different reason from the same
+// planner, replace a superseded planner's record, clear it only for its
+// planner, and never list or replay-index refusal records as deliveries.
+func TestInboxStoresKeepOneRefusalPerDelivery(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "inbox")
 	fileStore, err := NewFileStore(root)
 	if err != nil {
@@ -51,13 +52,37 @@ func TestInboxStoresRecordRefusalsOncePerDeliveryAndPlanner(t *testing.T) {
 			if _, _, err := store.RecordRefusal(ctx, different); !errors.Is(err, ErrRefusalConflict) {
 				t.Fatalf("conflict err=%v", err)
 			}
-			otherPlanner, _ := NewRefusalRecord(stored, strings.Repeat("e", 64), RefusalReasonPlanningRefused, time.UnixMilli(3000))
-			if _, created, err := store.RecordRefusal(ctx, otherPlanner); err != nil || !created {
-				t.Fatalf("another planner's refusal=(%t,%v)", created, err)
-			}
 			loaded, found, err := store.Refusal(ctx, scope, SourceGitHub, delivery.DeduplicationKey(), planner)
 			if err != nil || !found || loaded.Identity() != record.Identity() || loaded.Reason() != "invalid_payload" {
 				t.Fatalf("refusal=(%t,%v)", found, err)
+			}
+			// A refusal by the planner identity that superseded this one replaces
+			// the record; the delivery never holds two.
+			successor := strings.Repeat("e", 64)
+			otherPlanner, _ := NewRefusalRecord(stored, successor, RefusalReasonPlanningRefused, time.UnixMilli(3000))
+			if _, created, err := store.RecordRefusal(ctx, otherPlanner); err != nil || !created {
+				t.Fatalf("another planner's refusal=(%t,%v)", created, err)
+			}
+			if _, found, err := store.Refusal(ctx, scope, SourceGitHub, delivery.DeduplicationKey(), planner); err != nil || found {
+				t.Fatalf("the superseded refusal was kept beside its successor: found=%t err=%v", found, err)
+			}
+			if current, found, err := store.RecordedRefusal(ctx, scope, SourceGitHub, delivery.DeduplicationKey()); err != nil || !found || current.Identity() != otherPlanner.Identity() {
+				t.Fatalf("recorded refusal=(%t,%v)", found, err)
+			}
+			if err := store.ClearRefusal(ctx, scope, SourceGitHub, delivery.DeduplicationKey(), planner); err != nil {
+				t.Fatal(err)
+			}
+			if _, found, _ := store.Refusal(ctx, scope, SourceGitHub, delivery.DeduplicationKey(), successor); !found {
+				t.Fatal("clearing for another planner removed the record")
+			}
+			if err := store.ClearRefusal(ctx, scope, SourceGitHub, delivery.DeduplicationKey(), successor); err != nil {
+				t.Fatal(err)
+			}
+			if _, found, _ := store.RecordedRefusal(ctx, scope, SourceGitHub, delivery.DeduplicationKey()); found {
+				t.Fatal("the cleared refusal remained")
+			}
+			if _, created, err := store.RecordRefusal(ctx, record); err != nil || !created {
+				t.Fatalf("re-record=(%t,%v)", created, err)
 			}
 			listed, err := store.List(ctx, scope, SourceGitHub, "", 100)
 			if err != nil || len(listed) != 1 {

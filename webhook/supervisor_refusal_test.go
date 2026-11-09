@@ -157,7 +157,7 @@ func TestSupervisorRetriesTransientFailuresWithoutRefusing(t *testing.T) {
 // as when another writer records one after the supervisor looked.
 type concurrentRefusalStore struct{ *MemoryStore }
 
-func (concurrentRefusalStore) Refusal(context.Context, RepositoryScope, Source, string, string) (RefusalRecord, bool, error) {
+func (concurrentRefusalStore) RecordedRefusal(context.Context, RepositoryScope, Source, string) (RefusalRecord, bool, error) {
 	return RefusalRecord{}, false, nil
 }
 

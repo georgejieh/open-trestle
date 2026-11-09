@@ -253,11 +253,17 @@ func ParseRefusalRecord(encoded []byte) (RefusalRecord, error) {
 	return record, nil
 }
 
-// RefusalStore durably records refusals beside the deliveries it stores.
+// RefusalStore durably records refusals beside the deliveries it stores, at
+// most one per delivery, naming the planner identity that recorded it.
 // RecordRefusal creates a record for a stored delivery once; recording the
-// same refusal again returns the first record unchanged, and a different
-// reason for the same delivery and planner is ErrRefusalConflict.
+// same refusal again returns the first record unchanged, a different reason
+// for the same delivery and planner is ErrRefusalConflict, and a refusal by
+// another planner identity replaces the superseded record. Refusal returns
+// the record only for the planner that recorded it; RecordedRefusal returns it
+// whichever planner did, and ClearRefusal removes it only for its planner.
 type RefusalStore interface {
 	RecordRefusal(context.Context, RefusalRecord) (RefusalRecord, bool, error)
 	Refusal(ctx context.Context, scope RepositoryScope, source Source, deduplicationKey, plannerIdentity string) (RefusalRecord, bool, error)
+	RecordedRefusal(ctx context.Context, scope RepositoryScope, source Source, deduplicationKey string) (RefusalRecord, bool, error)
+	ClearRefusal(ctx context.Context, scope RepositoryScope, source Source, deduplicationKey, plannerIdentity string) error
 }
