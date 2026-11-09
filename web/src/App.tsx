@@ -27,6 +27,7 @@ import type {
   DiagnosticDeterministicCheck,
   DiagnosticSet,
   DeterministicObservation,
+  FailureReason,
   RunReceipt,
   RunProgress,
   RunTask,
@@ -36,6 +37,14 @@ import type {
 import "./styles.css";
 
 type View = "overview" | "tasks" | "findings" | "runtime";
+const failureReasonLabels: Record<FailureReason, string> = {
+  no_merge_base:
+    "No merge base: the requested base and the head share no history",
+  nothing_to_review:
+    "Nothing to review: the head is the requested base or is already contained in it",
+  merge_base_unavailable:
+    "Merge base unavailable: the forge did not report a merge base",
+};
 const emptyScope: Scope = { tenant: "", repository: "", run: "" };
 function rememberedScope(): Scope {
   try {
@@ -250,6 +259,12 @@ function TaskInspector({ task }: { task: RunTask | undefined }) {
           <dt>Failure</dt>
           <dd>{task.failure || "None"}</dd>
         </div>
+        {task.failure_reason && (
+          <div>
+            <dt>Reason</dt>
+            <dd>{failureReasonLabels[task.failure_reason]}</dd>
+          </div>
+        )}
         <Identity label="Task identity" value={task.task_identity} />
         <Identity label="Handler identity" value={task.handler_identity} />
         <Identity label="Input identity" value={task.input_identity} />
@@ -1328,6 +1343,21 @@ function ReviewConsole() {
                   <dt>Failure</dt>
                   <dd>{receipt.failure || "None"}</dd>
                 </div>
+                {receipt.tasks
+                  .filter((task) => task.failure_reason)
+                  .map((task) => (
+                    <div key={`reason-${task.key}`}>
+                      <dt>Reason</dt>
+                      <dd>
+                        {task.key}:{" "}
+                        {
+                          failureReasonLabels[
+                            task.failure_reason as FailureReason
+                          ]
+                        }
+                      </dd>
+                    </div>
+                  ))}
                 <div>
                   <dt>Required tasks</dt>
                   <dd>

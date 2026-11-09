@@ -2,6 +2,8 @@ export type Scope = { tenant: string; repository: string; run: string };
 export type RunStatus = "active" | "succeeded" | "failed" | "canceled";
 export type TaskStatus =
   "pending" | "available" | "leased" | "succeeded" | "failed" | "skipped";
+export type FailureReason =
+  "no_merge_base" | "nothing_to_review" | "merge_base_unavailable";
 export type Failure =
   | ""
   | "transient"
@@ -33,12 +35,14 @@ export interface RunTask {
   max_attempts: number;
   lease_expires_at_milliseconds: number;
   output_identity: string;
+  output_kind?: "context_abstention";
   failure: Failure;
+  failure_reason?: FailureReason;
   retry_at_milliseconds: number;
 }
 export interface RunReceipt {
   contract: "open-trestle/review-run-receipt";
-  schema_version: 1;
+  schema_version: 1 | 2 | 3;
   identity: string;
   plan_identity: string;
   tenant_id: string;

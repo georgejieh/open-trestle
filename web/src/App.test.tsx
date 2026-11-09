@@ -572,6 +572,45 @@ describe("console", () => {
     expect(sessionStorage.getItem("open-trestle-token")).toBeNull();
   });
 
+  it("names a recorded source refusal reason beside the failure", async () => {
+    vi.mocked(fetchRun).mockResolvedValue({
+      ...receipt,
+      schema_version: 3,
+      status: "failed",
+      failure: "policy",
+      tasks: receipt.tasks.map((task) => ({
+        ...task,
+        status: "failed" as const,
+        output_identity: "",
+        failure: "policy" as const,
+        failure_reason: "no_merge_base" as const,
+      })),
+    });
+    vi.mocked(fetchDiagnostics).mockRejectedValue(new Error("not ready"));
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("Tenant"), {
+      target: { value: "tenant-a" },
+    });
+    fireEvent.change(screen.getByLabelText("Repository"), {
+      target: { value: "repo-a" },
+    });
+    fireEvent.change(screen.getByLabelText("Run"), {
+      target: { value: "run-a" },
+    });
+    fireEvent.change(screen.getByLabelText("Access token"), {
+      target: { value: "x".repeat(32) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
+    await waitFor(() =>
+      expect(
+        screen.getAllByText(
+          /No merge base: the requested base and the head share no history/,
+        ).length,
+      ).toBeGreaterThan(0),
+    );
+    expect(screen.getAllByText("policy").length).toBeGreaterThan(0);
+  });
+
   it("discloses exact verified finding evidence lineage", async () => {
     const findingIdentity = "d".repeat(64);
     const sourceIdentity = "e".repeat(64);

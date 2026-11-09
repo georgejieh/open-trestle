@@ -156,6 +156,69 @@ describe("API client", () => {
       ),
     ).toThrow(ApiError);
   });
+  it("accepts recorded failure reasons and context abstentions by receipt version", () => {
+    const envelope = (value: unknown) => ({
+      contract: "open-trestle/api-response",
+      schema_version: 1,
+      request_id: "request-a",
+      run: value,
+    });
+    const failedSource = {
+      ...run.tasks[0],
+      status: "failed",
+      attempts: 1,
+      failure: "policy",
+      failure_reason: "no_merge_base",
+    };
+    const reasoned = {
+      ...run,
+      schema_version: 3,
+      status: "failed",
+      failure: "policy",
+      tasks: [failedSource],
+    };
+    expect(parseRunEnvelope(envelope(reasoned)).tasks[0]?.failure_reason).toBe(
+      "no_merge_base",
+    );
+    const abstained = {
+      ...run,
+      schema_version: 2,
+      status: "failed",
+      failure: "policy",
+      tasks: [
+        {
+          ...run.tasks[0],
+          kind: "assemble_context",
+          status: "failed",
+          attempts: 1,
+          output_identity: digest,
+          output_kind: "context_abstention",
+          failure: "policy",
+        },
+      ],
+    };
+    expect(parseRunEnvelope(envelope(abstained)).tasks[0]?.output_kind).toBe(
+      "context_abstention",
+    );
+    for (const forged of [
+      { ...reasoned, schema_version: 1 },
+      { ...reasoned, schema_version: 2 },
+      { ...abstained, schema_version: 3 },
+      { ...reasoned, tasks: [{ ...failedSource, failure_reason: "other" }] },
+      { ...reasoned, tasks: [{ ...failedSource, kind: "build_change" }] },
+      { ...reasoned, tasks: [{ ...failedSource, status: "succeeded" }] },
+      {
+        ...reasoned,
+        tasks: [{ ...failedSource, output_identity: digest }],
+      },
+      {
+        ...abstained,
+        tasks: [{ ...abstained.tasks[0], kind: "acquire_source" }],
+      },
+    ]) {
+      expect(() => parseRunEnvelope(envelope(forged))).toThrow(ApiError);
+    }
+  });
   it("rejects duplicate durable task identities", () => {
     expect(() =>
       parseRunEnvelope({

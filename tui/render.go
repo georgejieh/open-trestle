@@ -5,6 +5,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/diagnostics"
 )
 
@@ -25,6 +26,11 @@ func (i *Interface) render(view interfaceView) error {
 	fmt.Fprintf(&builder, "Refreshed   %s\n", view.refreshedAt.Format("2006-01-02 15:04:05 UTC"))
 	if failure := view.receipt.Failure().String(); failure != "" {
 		fmt.Fprintf(&builder, "Disposition %s\n", failure)
+	}
+	for _, task := range view.receipt.Tasks() {
+		if reason := task.FailureReason(); reason != 0 {
+			fmt.Fprintf(&builder, "Reason      %s\n", truncateTerminalText(task.Key()+": "+reason.String()+" ("+failureReasonText(reason)+")", width-12))
+		}
 	}
 	builder.WriteString("\nTasks\n")
 	keyWidth := (width - 23) / 2
@@ -157,5 +163,19 @@ func writeVerifiedDiagnostics(builder *strings.Builder, set diagnostics.Set, wid
 			available = 1
 		}
 		fmt.Fprintf(builder, "%-11s %s  %s\n", finding.Severity().String(), location, truncateTerminalText(finding.Title(), available))
+	}
+}
+
+// failureReasonText explains a recorded task failure reason in fixed host words.
+func failureReasonText(reason controlplane.TaskFailureReason) string {
+	switch reason {
+	case controlplane.TaskFailureReasonNoMergeBase:
+		return "the requested base and the head share no history"
+	case controlplane.TaskFailureReasonNothingToReview:
+		return "the head is the requested base or is already contained in it"
+	case controlplane.TaskFailureReasonMergeBaseUnavailable:
+		return "the forge did not report a merge base"
+	default:
+		return "unknown reason"
 	}
 }

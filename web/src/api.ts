@@ -3,6 +3,7 @@ import type {
   DiagnosticSet,
   DeterministicObservation,
   Failure,
+  FailureReason,
   RunReceipt,
   RunProgress,
   RunTask,
@@ -31,6 +32,11 @@ const failures = new Set<Failure>([
   "canceled",
   "dependency",
   "internal",
+]);
+const failureReasons = new Set<FailureReason>([
+  "no_merge_base",
+  "nothing_to_review",
+  "merge_base_unavailable",
 ]);
 const taskStatuses = new Set<TaskStatus>([
   "pending",
@@ -174,10 +180,13 @@ function parseTask(value: unknown): RunTask {
     "output_identity",
     "failure",
     "retry_at_milliseconds",
-  ] as const;
+  ];
+  const optional = record(value)
+    ? ["output_kind", "failure_reason"].filter((key) => key in value)
+    : [];
   if (
     !record(value) ||
-    !exact(value, keys) ||
+    !exact(value, [...keys, ...optional]) ||
     !string(value.key, 64) ||
     !taskKey.test(value.key) ||
     !validDigest(value.task_identity) ||
@@ -195,6 +204,24 @@ function parseTask(value: unknown): RunTask {
     typeof value.failure !== "string" ||
     !failures.has(value.failure as Failure) ||
     !integer(value.retry_at_milliseconds, 0, 253402300799999)
+  ) {
+    invalidResponse();
+  }
+  // A failed task carries an output only as a context abstention, and a
+  // content-free reason only on a failed source acquisition without output.
+  const linkedOutput =
+    value.status === "failed" && value.output_identity !== "";
+  if (
+    "output_kind" in value !== linkedOutput ||
+    (linkedOutput &&
+      (value.output_kind !== "context_abstention" ||
+        value.kind !== "assemble_context")) ||
+    ("failure_reason" in value &&
+      (typeof value.failure_reason !== "string" ||
+        !failureReasons.has(value.failure_reason as FailureReason) ||
+        value.status !== "failed" ||
+        value.kind !== "acquire_source" ||
+        value.output_identity !== ""))
   ) {
     invalidResponse();
   }
@@ -221,7 +248,7 @@ function parseRun(value: unknown): RunReceipt {
     !record(value) ||
     !exact(value, keys) ||
     value.contract !== "open-trestle/review-run-receipt" ||
-    value.schema_version !== 1 ||
+    ![1, 2, 3].includes(value.schema_version as number) ||
     !validDigest(value.identity) ||
     !validDigest(value.plan_identity) ||
     !string(value.tenant_id, 128) ||
@@ -247,7 +274,13 @@ function parseRun(value: unknown): RunReceipt {
     invalidResponse();
   }
   const tasks = value.tasks.map(parseTask);
+  const version = tasks.some((task) => task.failure_reason)
+    ? 3
+    : tasks.some((task) => task.output_kind)
+      ? 2
+      : 1;
   if (
+    value.schema_version !== version ||
     new Set(tasks.map((task) => task.key)).size !== tasks.length ||
     new Set(tasks.map((task) => task.task_identity)).size !== tasks.length
   ) {
