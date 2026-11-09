@@ -212,7 +212,7 @@ func executeSetupDryRun(ctx context.Context, plan Plan, inventory runtimeconfig.
 func authorizeSetupDryRun(scope audit.ReviewScope, request provider.Request, inventory runtimeconfig.RouteInventory, policy runtimeconfig.RuntimePolicy, candidates []gateway.ObservedRouteCandidate) (gateway.RouteAttemptAuthorization, error) {
 	return authorizeSetupRoute(scope, request, inventory, policy, policy.Ranking(), candidates, policy.Requirements(), policy.Budget())
 }
-func authorizeSetupVerification(scope audit.ReviewScope, request provider.Request, inventory runtimeconfig.RouteInventory, policy runtimeconfig.RuntimePolicy, generation gateway.RouteAttemptAuthorization, requirements provider.ModelRequirements, budget provider.ModelCostBudget) (gateway.RouteAttemptAuthorization, error) {
+func authorizeSetupVerification(scope audit.ReviewScope, request provider.Request, inventory runtimeconfig.RouteInventory, policy runtimeconfig.RuntimePolicy, generation gateway.RouteAttemptAuthorization, requirements provider.ModelRequirements, declared provider.ModelCostBudget) (gateway.RouteAttemptAuthorization, error) {
 	independent := make([]gateway.ObservedRouteCandidate, 0)
 	verificationID := policy.VerificationRouteRecordIdentity()
 	for _, candidate := range inventory.Candidates() {
@@ -227,9 +227,17 @@ func authorizeSetupVerification(scope audit.ReviewScope, request provider.Reques
 	if err != nil {
 		return gateway.RouteAttemptAuthorization{}, err
 	}
-	return authorizeSetupRoute(scope, request, inventory, policy, ranking, independent, requirements, budget)
+	return authorizeSetupRoute(scope, request, inventory, policy, ranking, independent, requirements, declared)
 }
-func authorizeSetupRoute(scope audit.ReviewScope, request provider.Request, inventory runtimeconfig.RouteInventory, policy runtimeconfig.RuntimePolicy, rankingPolicy gateway.RouteRankingPolicy, candidates []gateway.ObservedRouteCandidate, requirements provider.ModelRequirements, budget provider.ModelCostBudget) (gateway.RouteAttemptAuthorization, error) {
+
+// authorizeSetupRoute plans one setup request over candidates. Like review
+// planning, it reserves the request's own estimate for the wire the candidates'
+// adapters send, with the declared estimate as its floor.
+func authorizeSetupRoute(scope audit.ReviewScope, request provider.Request, inventory runtimeconfig.RouteInventory, policy runtimeconfig.RuntimePolicy, rankingPolicy gateway.RouteRankingPolicy, candidates []gateway.ObservedRouteCandidate, requirements provider.ModelRequirements, declared provider.ModelCostBudget) (gateway.RouteAttemptAuthorization, error) {
+	budget, err := reviewcore.ModelRequestBudgetForTransport(request, declared, policy.ModelRequestTransport(candidates))
+	if err != nil {
+		return gateway.RouteAttemptAuthorization{}, err
+	}
 	routing, err := gateway.NewReviewRoutingInput(scope, request, requirements, policy.Constraints())
 	if err != nil {
 		return gateway.RouteAttemptAuthorization{}, err

@@ -18,9 +18,11 @@ import (
 )
 
 const (
-	setupLocalInferenceTimeout              = 90 * time.Second
+	setupLocalInferenceTimeout = 90 * time.Second
+	// setupLocalInferenceEstimatedInputTokens is the declared floor of each
+	// probe reservation; the reservation is the probe request's own estimate.
 	setupLocalInferenceEstimatedInputTokens = 512
-	setupLocalInferenceMaximumInputTokens   = 1024
+	setupLocalInferenceMinimumContextTokens = 1024
 	setupLocalInferenceMaximumOutputTokens  = 256
 )
 
@@ -141,7 +143,7 @@ func executeSetupLocalInference(ctx context.Context, plan Plan, inventory runtim
 	if err != nil {
 		return "", err
 	}
-	probeRequirements, err := provider.NewModelRequirements(setupLocalInferenceMaximumInputTokens, setupLocalInferenceMaximumOutputTokens, []provider.ModelFeature{provider.ModelFeatureStructuredOutput})
+	probeRequirements, err := provider.NewModelRequirements(setupLocalInferenceMinimumContextTokens, setupLocalInferenceMaximumOutputTokens, []provider.ModelFeature{provider.ModelFeatureStructuredOutput})
 	if err != nil {
 		return "", err
 	}
@@ -270,8 +272,10 @@ func executeSetupLocalInferenceRoute(ctx context.Context, catalog gateway.RouteD
 			return gateway.RouteExecutionRecord{}, ErrInvalidCheckerRuntime
 		}
 	}
+	// Reported input may not exceed the probe's reservation, a byte-based upper
+	// bound on the tokens it sends.
 	usage := result.Usage()
-	if !usage.IsKnown() || usage.InputTokens() > setupLocalInferenceMaximumInputTokens || usage.OutputTokens() > authorization.MaxOutputTokens() {
+	if !usage.IsKnown() || usage.InputTokens() > authorization.CostBudget().EstimatedInputTokens() || usage.OutputTokens() > authorization.MaxOutputTokens() {
 		return gateway.RouteExecutionRecord{}, ErrInvalidCheckerRuntime
 	}
 	reconciliation, err := gateway.ReconcileAuthorizedRouteAttemptCost(authorization, outcome)

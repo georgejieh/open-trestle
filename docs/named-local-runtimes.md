@@ -164,7 +164,8 @@ approval, run `setup check policy`, and only with explicit probe consent run
 from these exact connections. The probe uses a fixed tiny synthetic source
 function through the existing candidate and verification request builders, not
 repository/private source. It permits two requests at most, 256 output tokens
-per request, 1,024 reported input tokens, one 90-second deadline and no fallback.
+per request, reported input up to each request's own byte-based reservation,
+one 90-second deadline and no fallback.
 No server startup, model download or credential discovery is implicit.
 
 These files also feed the existing local model-review and opt-in full-review

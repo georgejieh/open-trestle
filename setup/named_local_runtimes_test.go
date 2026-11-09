@@ -45,8 +45,22 @@ func namedLocalDocument(t *testing.T, name, file string) []byte {
 
 func namedLocalConfiguration(t *testing.T, name, endpoint string, qualified bool) (runtimeconfig.RouteInventory, runtimeconfig.RuntimePolicy) {
 	t.Helper()
+	return namedLocalConfigurationWith(t, name, endpoint, qualified, nil)
+}
+
+// namedLocalConfigurationWith binds the named template after change edits it.
+func namedLocalConfigurationWith(t *testing.T, name, endpoint string, qualified bool, change func(map[string]any)) (runtimeconfig.RouteInventory, runtimeconfig.RuntimePolicy) {
+	t.Helper()
 	inventoryDocument := namedLocalDocument(t, name, "routes.json")
 	template := namedLocalDocument(t, name, "runtime-policy.template.json")
+	if change != nil {
+		var wire map[string]any
+		if err := json.Unmarshal(template, &wire); err != nil {
+			t.Fatal(err)
+		}
+		change(wire)
+		template, _ = json.Marshal(wire)
+	}
 	if qualified {
 		var wire map[string]any
 		if err := json.Unmarshal(inventoryDocument, &wire); err != nil {

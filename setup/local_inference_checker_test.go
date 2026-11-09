@@ -18,6 +18,8 @@ type localInferenceFixtureFactory struct {
 	calls, dispatches         int
 	maxOutput                 []uint32
 	records                   []string
+	requests                  []provider.Request
+	budgets                   []provider.ModelCostBudget
 	inputTokens, outputTokens uint64
 	err                       error
 	failure                   gateway.RouteFailureClass
@@ -59,6 +61,8 @@ func (d countingLocalInferenceDispatcher) DispatchRoute(ctx context.Context, req
 	d.factory.dispatches++
 	d.factory.records = append(d.factory.records, request.Authorization().RouteRecordIdentity())
 	d.factory.maxOutput = append(d.factory.maxOutput, request.Authorization().MaxOutputTokens())
+	d.factory.requests = append(d.factory.requests, request.Request())
+	d.factory.budgets = append(d.factory.budgets, request.Authorization().CostBudget())
 	document := `{"schema_version":1,"verdicts":[]}`
 	if _, err := review.SanitizedCandidatePayload(request.Request(), request.Authorization().ReviewScopeIdentity()); err == nil || strings.Contains(string(request.Request().Payload()), "candidate_generation") {
 		document = `{"schema_version":2,"candidates":[]}`
@@ -277,7 +281,9 @@ func TestLocalInferenceCheckerRejectsReportedUsageBeyondAuthorization(t *testing
 	plan, _ := NewPlan(ProfileLocalSingleNode, "tenant-a", "repo-a", "owner", setupTime(1))
 	policyChecker, _ := NewRuntimePolicyChecker(inventory, policy, setupRuntimeApproval(t, plan, inventory, policy))
 	plan = policyCheckedPlan(t, plan, policyChecker)
-	for _, factory := range []*localInferenceFixtureFactory{{outputTokens: 257}, {inputTokens: 1025}} {
+	// Reported input above every probe's reservation is refused; the exact
+	// reservation boundary is covered by the reservation tests.
+	for _, factory := range []*localInferenceFixtureFactory{{outputTokens: 257}, {inputTokens: 1 << 20}} {
 		checker, _ := NewLocalInferenceChecker(policyChecker, factory)
 		if result := checker.Check(context.Background(), plan); result.State() != CheckBlocked {
 			t.Fatalf("result=%s", result.State())
