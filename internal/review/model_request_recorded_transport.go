@@ -42,6 +42,16 @@ func RecordedInvestigationTurnTransportBytes(request provider.Request) (uint32, 
 	return uint32(min(uint64(len(instructions)), math.MaxUint32)), localStructuredOutputFramingBytes(schema), nil
 }
 
+// recordedInvestigationInstructions is the system channel of every investigation
+// context version an estimate version 2 turn can carry: each version executable
+// since turn records first stored transport counts. Version 4 predates them. A
+// new executable version needs its entry before release, and an entry stays
+// after its version is superseded, or that version's turns stop reading back.
+var recordedInvestigationInstructions = map[int]string{
+	investigationContextVersionV5: investigationInstructionsV5,
+	6:                             investigationInstructionsV6,
+}
+
 func recordedInvestigationTurnContract(payload []byte) (string, json.RawMessage, error) {
 	var header struct {
 		Contract            string `json:"contract"`
@@ -56,11 +66,8 @@ func recordedInvestigationTurnContract(payload []byte) (string, json.RawMessage,
 		if ValidateRecordedInvestigationContext(payload) != nil {
 			return "", nil, ErrInvalidModelRequestContract
 		}
-		switch header.SchemaVersion {
-		case investigationContextVersionV5:
-			return investigationInstructionsV5, InvestigationOutputSchema(), nil
-		case investigationContextVersion:
-			return investigationInstructionsV6, InvestigationOutputSchema(), nil
+		if instructions, ok := recordedInvestigationInstructions[header.SchemaVersion]; ok {
+			return instructions, InvestigationOutputSchema(), nil
 		}
 	case "open-trestle/local-verification-envelope":
 		inner, err := recordedLocalVerificationPayload(payload, header.ReviewScopeIdentity)

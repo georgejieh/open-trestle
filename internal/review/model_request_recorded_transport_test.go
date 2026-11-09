@@ -99,3 +99,53 @@ func TestRecordedInvestigationTurnTransportBytesMeasureTheRecordedContract(t *te
 		})
 	}
 }
+
+// Every investigation context version from the first whose turns record
+// transport counts through the executable one needs its contract in the
+// recorded measurement table, so a new version cannot ship without one and a
+// superseded version keeps reading back.
+func TestRecordedInvestigationInstructionsCoverEveryCountedVersion(t *testing.T) {
+	f := newV4FixtureAt(t, "func Changed(x int) int { return 10 / x }\n", "zero requests enabled\n", "AGENTS.md")
+	state, _ := v4ResultStateWith(t, f, "quoted tool result")
+	binding, err := NewInvestigationContextBinding(f.binding)
+	v4Check(t, err)
+	context, err := NewInvestigationGenerationContext(binding, f.expanded, f.expandedSnapshot, state)
+	v4Check(t, err)
+	executable, err := context.ProviderRequest()
+	v4Check(t, err)
+	current, err := TrustedModelRequestInstructions(executable.Payload())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recordedInvestigationInstructions[investigationContextVersion] != current {
+		t.Fatalf("executable investigation context version %d has no matching recorded transport-measurement entry", investigationContextVersion)
+	}
+	for version := investigationContextVersionV5; version <= investigationContextVersion; version++ {
+		instructions, ok := recordedInvestigationInstructions[version]
+		if !ok {
+			t.Fatalf("investigation context version %d has no recorded transport-measurement entry", version)
+		}
+		var wire map[string]json.RawMessage
+		if err := json.Unmarshal(executable.Payload(), &wire); err != nil {
+			t.Fatal(err)
+		}
+		wire["schema_version"] = mustJSON(version)
+		wire["instructions_identity"] = mustJSON(modelInstructionsIdentity(instructions))
+		recorded, err := json.Marshal(wire)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The entry is the contract that version's readback binds.
+		if ValidateRecordedInvestigationContext(recorded) != nil {
+			t.Fatalf("recorded entry for investigation context version %d is not the contract it binds", version)
+		}
+		if system, _, err := RecordedInvestigationTurnTransportBytes(recordedTransportRequest(t, recorded)); err != nil || system != uint32(len(instructions)) {
+			t.Fatalf("version %d measured (%d, %v)", version, system, err)
+		}
+	}
+	for version := range recordedInvestigationInstructions {
+		if version < investigationContextVersionV5 || version > investigationContextVersion {
+			t.Fatalf("recorded entry for investigation context version %d that no turn can record", version)
+		}
+	}
+}
