@@ -52,4 +52,13 @@ func TestGetDeliveryRefusalReadsTheRecordedReason(t *testing.T) {
 	if _, err := c.GetDeliveryRefusal(context.Background(), other); !errors.As(err, &apiErr) || apiErr.Code() != "not_found" {
 		t.Fatalf("missing refusal err=%v", err)
 	}
+	// A run that was never opened reads as not found, which callers can tell
+	// apart from any other failure to read it.
+	if _, err := c.GetRun(context.Background(), scope); !errors.Is(err, controlplane.ErrRunNotOpened) || !errors.As(err, &apiErr) || apiErr.Code() != "not_found" {
+		t.Fatalf("unopened run err=%v", err)
+	}
+	forbidden, _ := audit.NewReviewScope("tenant-a", "repo-b", "webhook-"+delivery.DeduplicationKey())
+	if _, err := c.GetRun(context.Background(), forbidden); err == nil || errors.Is(err, controlplane.ErrRunNotOpened) {
+		t.Fatalf("a refused read was reported as an unopened run: %v", err)
+	}
 }

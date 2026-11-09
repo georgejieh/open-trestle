@@ -85,8 +85,12 @@ func (i *Interface) Run(ctx context.Context) error {
 	}
 	view := interfaceView{}
 	if err := i.refresh(ctx, &view); err != nil {
-		if record, refused := i.refusal(ctx); refused {
-			return i.renderRefusal(record)
+		// Only a run that was never opened can stand for a refused delivery;
+		// any other failure to read it stays an error.
+		if errors.Is(err, controlplane.ErrRunNotOpened) {
+			if record, refused := i.refusal(ctx); refused {
+				return i.renderRefusal(record)
+			}
 		}
 		return err
 	}

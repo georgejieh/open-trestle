@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/georgejieh/open-trestle/audit"
+	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/webhook"
 )
 
@@ -26,7 +28,8 @@ func (s *refusalService) GetDeliveryRefusal(context.Context, audit.ReviewScope) 
 }
 
 // A delivery that intake refused has no run to watch: the terminal shows the
-// recorded refusal and its reason instead of failing to load a run.
+// recorded refusal and its reason instead of failing to load a run, but only
+// when the run is not found; any other read failure stays an error.
 func TestRunShowsADeliveryRefusalWhenNoRunExists(t *testing.T) {
 	repositoryScope, _ := webhook.NewRepositoryScope("tenant-a", "repo-a")
 	delivery, _ := webhook.NewVerifiedDelivery(repositoryScope, webhook.SourceGitHub, "delivery-1", "pull_request", "opened", strings.Repeat("a", 64), []byte(`{"secret":"payload"}`), time.UnixMilli(1000))
@@ -36,7 +39,7 @@ func TestRunShowsADeliveryRefusalWhenNoRunExists(t *testing.T) {
 		t.Fatal(err)
 	}
 	scope, _ := audit.NewReviewScope("tenant-a", "repo-a", webhook.ReviewRunIDForDelivery(delivery))
-	service := &refusalService{fakeService: fakeService{runErr: errors.New("run not found")}, record: record, found: true}
+	service := &refusalService{fakeService: fakeService{runErr: fmt.Errorf("read run: %w", controlplane.ErrRunNotOpened)}, record: record, found: true}
 	var output bytes.Buffer
 	view, err := New(service, strings.NewReader("q\n"), &output, Options{Scope: scope, RefreshInterval: time.Second, Width: 100, Plain: true})
 	if err != nil {
@@ -54,6 +57,13 @@ func TestRunShowsADeliveryRefusalWhenNoRunExists(t *testing.T) {
 	if strings.Contains(rendered, "secret") {
 		t.Fatal("refusal view rendered delivery content")
 	}
+	service.runErr = errors.New("daemon unavailable")
+	output.Reset()
+	view, _ = New(service, strings.NewReader("q\n"), &output, Options{Scope: scope, RefreshInterval: time.Second, Width: 100, Plain: true})
+	if err := view.Run(context.Background()); err == nil || strings.Contains(output.String(), "Refusal") {
+		t.Fatalf("a transient read failure was shown as a refusal: %v\n%s", err, output.String())
+	}
+	service.runErr = controlplane.ErrRunNotOpened
 	service.found = false
 	output.Reset()
 	view, _ = New(service, strings.NewReader("q\n"), &output, Options{Scope: scope, RefreshInterval: time.Second, Width: 100, Plain: true})

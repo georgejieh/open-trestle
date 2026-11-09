@@ -120,12 +120,27 @@ func (c *Client) SubmitRun(ctx context.Context, plan controlplane.ReviewRunPlan)
 	}
 	return receipt, nil
 }
+
+// GetRun reads one authorized run. When the daemon answers not_found, the
+// error is both its *APIError and controlplane.ErrRunNotOpened, so callers can
+// tell a run that was never opened from any other failure to read it.
 func (c *Client) GetRun(ctx context.Context, scope audit.ReviewScope) (controlplane.ReviewRunReceipt, error) {
 	if err := scope.Validate(); err != nil {
 		return controlplane.ReviewRunReceipt{}, err
 	}
-	return c.doReceipt(ctx, http.MethodGet, runPath(scope), nil, http.StatusOK, scope)
+	receipt, err := c.doReceipt(ctx, http.MethodGet, runPath(scope), nil, http.StatusOK, scope)
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.Code() == "not_found" {
+		return controlplane.ReviewRunReceipt{}, runNotOpenedError{apiErr}
+	}
+	return receipt, err
 }
+
+// runNotOpenedError is a run read the daemon answered with not_found.
+type runNotOpenedError struct{ apiError *APIError }
+
+func (e runNotOpenedError) Error() string   { return e.apiError.Error() }
+func (e runNotOpenedError) Unwrap() []error { return []error{e.apiError, controlplane.ErrRunNotOpened} }
 
 // GetRunPlan reads the exact immutable plan for one authorized run.
 func (c *Client) GetRunPlan(ctx context.Context, scope audit.ReviewScope) (controlplane.ReviewRunPlan, error) {

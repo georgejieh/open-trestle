@@ -134,8 +134,11 @@ func (s *Server) callTool(ctx context.Context, request mcpRequest) any {
 	}
 	receipt, err := s.service.GetRun(ctx, scope)
 	if err != nil || receipt.Scope().Identity() != scope.Identity() {
-		if text, refused := refusalText(ctx, s.service, scope); refused {
-			return toolErrorResponse(request.ID, text)
+		// Only a run that was never opened can stand for a refused delivery.
+		if errors.Is(err, controlplane.ErrRunNotOpened) {
+			if text, refused := refusalText(ctx, s.service, scope); refused {
+				return toolErrorResponse(request.ID, text)
+			}
 		}
 		return toolErrorResponse(request.ID, "The review run could not be read.")
 	}
