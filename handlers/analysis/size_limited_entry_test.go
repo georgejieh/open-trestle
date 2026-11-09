@@ -70,3 +70,47 @@ func TestSizeLimitedEntriesAreResourceLimitGapsWhateverTheirKind(t *testing.T) {
 		})
 	}
 }
+
+// An added file with no reviewable range is labelled by why it has none: a
+// file with zero bytes is an empty added file, a small binary file is
+// unsupported content, and a file past the change model's 1 MiB bound is a
+// resource limit. Each is one whole-entry gap beside the reviewed Go change.
+func TestAddedFilesWithoutARangeAreLabelledByWhy(t *testing.T) {
+	goBase := []byte("package calc\n\nfunc Div(a, b int) int { if b == 0 { return 0 }; return a / b }\n")
+	goHead := []byte("package calc\n\nfunc Div(a, b int) int { return a / b }\n")
+	for _, tc := range []struct {
+		name, reason string
+		content      []byte
+	}{
+		{"empty", "empty_added_file", []byte{}},
+		{"small binary", "unsupported_content", []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff\xfe")},
+		{"over the size limit", "resource_limit", bytes.Repeat([]byte{0, 1, 2, 3}, 512<<10)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			output, change, base, head := deletionAnalysisFixture(t, map[string][]byte{"calc.go": goBase}, map[string][]byte{"calc.go": goHead, "added.bin": tc.content})
+			result, err := ParseResultArtifact(output, change, base, head)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var reasons []string
+			for _, gap := range result.Gaps() {
+				if gap.Path() == "added.bin" {
+					if gap.StartLine() != 0 || gap.EndLine() != 0 {
+						t.Fatalf("added.bin gap %s at %d-%d, want whole-entry", gap.Reason(), gap.StartLine(), gap.EndLine())
+					}
+					reasons = append(reasons, gap.Reason())
+				}
+			}
+			if len(reasons) != 1 || reasons[0] != tc.reason {
+				t.Fatalf("added.bin gaps %v, want [%s]", reasons, tc.reason)
+			}
+			bound := false
+			for _, item := range result.Items() {
+				bound = bound || item.Path() == "calc.go"
+			}
+			if !bound {
+				t.Fatal("the small Go change was not bound")
+			}
+		})
+	}
+}
