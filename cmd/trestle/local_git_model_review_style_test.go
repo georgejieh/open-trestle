@@ -2,8 +2,13 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/georgejieh/open-trestle/internal/evidence"
 )
 
 // TestRunLocalGitModelReviewSetCarriesGeneralStyleAdviceOnce checks that a
@@ -37,6 +42,50 @@ func TestRunLocalGitModelReviewSetCarriesGeneralStyleAdviceOnce(t *testing.T) {
 			_, text := runLocalModelSet(t, f, []string{"--specialists", "bug_hunter,backend", "--format", "text"}, 4)
 			if strings.Contains(text, textAdvice) != test.advising || strings.Count(text, "style: ") != map[bool]int{true: 1, false: 0}[test.advising] {
 				t.Fatalf("set text style advice mismatch:\n%s", text)
+			}
+		})
+	}
+}
+
+// TestLocalGitInvestigationResultCarriesStyleAdvice checks that an
+// investigation result reports style advice under schema version 5 with its
+// investigation block, and stays version 2 when the base declares the style.
+func TestLocalGitInvestigationResultCarriesStyleAdvice(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		goModule bool
+		version  int
+	}{
+		{"no go.mod", false, 5},
+		{"go.mod in base", true, 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			f, _, policy, path := newInvestigationFixture(t, "", cancel)
+			writeInvestigationPolicy(t, path, policy)
+			base := map[string][]byte{"a.go": []byte("package p\nfunc Changed(x int) int { if x == 0 { return 0 }; return 10 / x }\n"), "notes.txt": []byte(investigationNotes)}
+			head := map[string][]byte{"a.go": []byte("package p\nfunc Changed(x int) int { return 10 / x }\n"), "notes.txt": base["notes.txt"]}
+			if test.goModule {
+				base["go.mod"], head["go.mod"] = []byte("module example.test/p\n"), []byte("module example.test/p\n")
+			}
+			f.objects, f.base, f.head = writeLocalGitChangeFixture(t, evidence.RevisionAlgorithmSHA1, base, head)
+			args := rmiReplaceFlag(f.args, "--objects-root", f.objects)
+			args = rmiReplaceFlag(args, "--base-revision-digest", f.base)
+			args = rmiReplaceFlag(replaceLocalGitChangeValue(rmiReplaceFlag(args, "--head-revision-digest", f.head), "--timeout", "30s"), "--format", "json")
+			var stdout, stderr bytes.Buffer
+			code := runWithContext(ctx, args, &stdout, &stderr)
+			var receipt struct {
+				Version       int             `json:"schema_version"`
+				Status        string          `json:"status"`
+				Investigation json.RawMessage `json:"investigation"`
+			}
+			if code != 4 || json.Unmarshal(stdout.Bytes(), &receipt) != nil || receipt.Version != test.version || receipt.Status != "findings" || len(receipt.Investigation) == 0 || string(receipt.Investigation) == "null" {
+				t.Fatalf("investigation exit=%d stderr=%q result=%s", code, stderr.String(), stdout.String())
+			}
+			const advice = `,"style_recommendations":[{"language":"go","changed_files":1,"recommendation":"gofmt and Effective Go"}]}` + "\n"
+			if strings.HasSuffix(stdout.String(), advice) != !test.goModule || strings.Contains(stdout.String(), `"style_`) == test.goModule {
+				t.Fatalf("investigation style advice mismatch: %s", stdout.String())
 			}
 		})
 	}

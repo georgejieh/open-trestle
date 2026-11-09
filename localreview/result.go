@@ -418,6 +418,17 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 			sourceFailed = true
 		}
 	}
+	// A run that failed before it recorded its change model reviewed nothing and
+	// carries no style advice, as it carries no findings. An investigation result
+	// takes the advice now, so every retained diagnostic carries it; a direct
+	// result takes it last, after finding guidance chose version 4.
+	var style StyleAdvice
+	if task, ok := state.Task("change"); ok && task.Status() == controlplane.TaskRuntimeSucceeded {
+		style = s.styleAdvice(ctx, p.Plan().Scope(), task.OutputIdentity())
+	}
+	if s.investigation != nil {
+		result = withStyleAdvice(result, style)
+	}
 	if state.Status() == controlplane.ReviewRunFailed && s.routeFailures != nil && s.routeFailures.saw(gateway.RouteFailureOutputExhausted) {
 		w.FailureDetail = FailureDetailModelOutputExhausted
 	}
@@ -714,11 +725,7 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 		return Result{}, ErrInvalidResult
 	}
 	if s.investigation == nil {
-		// A run that failed before it recorded its change model reviewed
-		// nothing and carries no style advice, as it carries no findings.
-		if task, ok := state.Task("change"); ok && task.Status() == controlplane.TaskRuntimeSucceeded {
-			result = withStyleAdvice(result, s.styleAdvice(ctx, p.Plan().Scope(), task.OutputIdentity()))
-		}
+		result = withStyleAdvice(result, style)
 	}
 	if s.investigation != nil {
 		result = fitInvestigationDiagnostics(result)

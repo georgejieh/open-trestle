@@ -269,8 +269,10 @@ func (e *investigationEndpoint) serve(t *testing.T, w http.ResponseWriter, r *ht
 func newInvestigationFixture(t *testing.T, mode string, cancel context.CancelFunc) (*localModelFixture, *investigationEndpoint, map[string]any, string) {
 	t.Helper()
 	f := newLocalModelFixture(t, localModelFixtureOptions{})
-	base := map[string][]byte{"a.go": []byte("package p\nfunc Changed(x int) int { if x == 0 { return 0 }; return 10 / x }\n"), "notes.txt": []byte(investigationNotes)}
-	head := map[string][]byte{"a.go": []byte("package p\nfunc Changed(x int) int { return 10 / x }\n"), "notes.txt": base["notes.txt"]}
+	// The unchanged go.mod declares the Go style, so the result carries no style
+	// advice and stays at investigation schema version 2.
+	base := map[string][]byte{"a.go": []byte("package p\nfunc Changed(x int) int { if x == 0 { return 0 }; return 10 / x }\n"), "notes.txt": []byte(investigationNotes), "go.mod": []byte("module example.test/p\n")}
+	head := map[string][]byte{"a.go": []byte("package p\nfunc Changed(x int) int { return 10 / x }\n"), "notes.txt": base["notes.txt"], "go.mod": base["go.mod"]}
 	f.objects, f.base, f.head = writeLocalGitChangeFixture(t, evidence.RevisionAlgorithmSHA1, base, head)
 	e := &investigationEndpoint{mode: mode, cancel: cancel}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { e.serve(t, w, r) }))

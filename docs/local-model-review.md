@@ -785,7 +785,8 @@ channel bytes it reserved for under estimate version 2. Turn records written
 under estimate version 1 counted the payload alone; they read back with that
 formula and are never re-estimated.
 
-Opted-in results use schema version 2. They include all retained turns and their
+Opted-in results use schema version 2, or version 5 when they carry
+[style advice](#style-recommendations). They include all retained turns and their
 request, route, audit, and tool-result identities, rather than only the final two
 model calls. Known observed cost remains visible when total usage is unknown.
 On terminal failure, an actual scoped diagnostic set may remain as historical data
@@ -1009,8 +1010,9 @@ A result without any of these fields keeps its earlier version.
 A recommendation is advice only. It is not a finding, never blocks, and never
 changes `status`, `ci_disposition`, the exit code under any
 [exit-code policy](#exit-code-policy), source coverage or
-`comprehensive_clearance`. SARIF output and `--investigation-policy` results do
-not carry it. A `--specialists` review set reports the general review's advice
+`comprehensive_clearance`. An `--investigation-policy` result with advice is
+also version 5 and keeps its `investigation` object; without advice it stays
+version 2. A `--specialists` review set reports the general review's advice
 once (see [Specialist review set](#specialist-review-set-opt-in)). A run that
 failed before it recorded its change model reviewed nothing and carries no
 style advice, as it carries no findings. When the recorded change model, its
