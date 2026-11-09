@@ -12,7 +12,7 @@ The process reads newline-delimited UTF-8 JSON-RPC messages from standard input 
 
 The server implements the stateless MCP `2026-07-28` request model. Each request must declare `io.modelcontextprotocol/protocolVersion` and `io.modelcontextprotocol/clientCapabilities` in `_meta`. `server/discover` reports the exact supported version and tool capability. Unsupported versions return the standard `-32022` error with the supported version list.
 
-Current tools are deterministic and JSON-Schema described:
+Current tools are deterministic and JSON-Schema described. Both return the canonical run receipt as structured content, and their output schemas admit receipt versions 1, 2, and 3:
 
 - `open_trestle.run_status` reads one secret-free run receipt. It is read-only, idempotent, and closed-world. When the daemon answers that the run was not found because intake refused the scope's webhook delivery, the tool returns an error result that names the fixed reason and its explanation and includes the content-free `open-trestle/webhook-delivery-refusal` record, rather than a bare read failure. Any other read failure stays `The review run could not be read.`
 - `open_trestle.submit_run` submits canonical plan JSON that an authorized planner already produced. Repeating the exact plan is idempotent. Submission cannot weaken policy or directly authorize publication.

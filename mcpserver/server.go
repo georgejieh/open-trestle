@@ -286,7 +286,7 @@ func receiptOutputSchema() map[string]any {
 		"required": []string{"contract", "schema_version", "identity", "status"},
 		"properties": map[string]any{
 			"contract":       map[string]any{"const": "open-trestle/review-run-receipt"},
-			"schema_version": map[string]any{"const": 1},
+			"schema_version": map[string]any{"enum": []int{1, 2, 3}},
 			"identity":       map[string]any{"type": "string", "pattern": "^[0-9a-f]{64}$"},
 			"status":         map[string]any{"enum": []string{"active", "succeeded", "failed", "canceled"}},
 		},
