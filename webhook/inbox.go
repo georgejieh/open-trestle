@@ -247,6 +247,7 @@ type MemoryStore struct {
 	entries  map[string]StoredDelivery
 	replays  map[string]string
 	refusals map[string]RefusalRecord
+	retries  map[string]RetryRecord
 }
 
 func NewMemoryStore() *MemoryStore {

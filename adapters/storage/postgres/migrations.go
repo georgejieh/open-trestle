@@ -44,6 +44,7 @@ var orderedMigrations = []string{
 	"migrations/0015_generation_rejection_artifact_kind.sql",
 	"migrations/0016_webhook_replay_key.sql",
 	"migrations/0017_webhook_refusals.sql",
+	"migrations/0018_webhook_retries.sql",
 }
 
 // VerifyMigrations confirms that every embedded migration was applied unchanged.

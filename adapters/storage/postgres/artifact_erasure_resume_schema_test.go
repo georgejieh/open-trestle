@@ -384,7 +384,7 @@ func TestResumeVerifierRejectsEveryDescriptorMutation(t *testing.T) {
 	}
 }
 func TestResumeNormalMigrationRegistry(t *testing.T) {
-	if len(orderedMigrations) != 17 || orderedMigrations[14] != "migrations/0015_generation_rejection_artifact_kind.sql" || orderedMigrations[15] != "migrations/0016_webhook_replay_key.sql" || orderedMigrations[16] != "migrations/0017_webhook_refusals.sql" {
+	if len(orderedMigrations) != 18 || orderedMigrations[14] != "migrations/0015_generation_rejection_artifact_kind.sql" || orderedMigrations[15] != "migrations/0016_webhook_replay_key.sql" || orderedMigrations[16] != "migrations/0017_webhook_refusals.sql" || orderedMigrations[17] != "migrations/0018_webhook_retries.sql" {
 		t.Fatal("normal migration registry")
 	}
 	for i, pin := range erasureOldMigrations {

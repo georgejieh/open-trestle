@@ -3,6 +3,7 @@ package webhook
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -77,7 +78,7 @@ func TestSupervisorGivesEachDeliveryItsOwnBoundedRetries(t *testing.T) {
 	if err := f.supervisor.reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if retry := f.supervisor.retries[f.deliveries[0].DeduplicationKey()]; retry == nil || retry.failures != 1 {
+	if retry, found, _ := f.supervisor.retries.Retry(ctx, f.deliveries[0].Scope(), SourceGitHub, f.deliveries[0].DeduplicationKey(), strings.Repeat("d", 64)); !found || retry.Failures() != 1 {
 		t.Fatal("a delivery inside its backoff was retried early")
 	}
 	for attempt := 2; attempt <= int(f.supervisor.options.MaximumRetries); attempt++ {
@@ -87,7 +88,8 @@ func TestSupervisorGivesEachDeliveryItsOwnBoundedRetries(t *testing.T) {
 		}
 	}
 	record, found := refusal()
-	if !found || record.Reason() != RefusalReasonRetriesExhausted || f.supervisor.retries[f.deliveries[0].DeduplicationKey()] != nil {
+	_, retrying, _ := f.supervisor.retries.Retry(ctx, f.deliveries[0].Scope(), SourceGitHub, f.deliveries[0].DeduplicationKey(), strings.Repeat("d", 64))
+	if !found || record.Reason() != RefusalReasonRetriesExhausted || retrying {
 		t.Fatalf("exhausted delivery recorded=%t reason=%s", found, record.Reason())
 	}
 }
@@ -105,12 +107,80 @@ func TestSupervisorTreatsAJournalOutageAsGlobal(t *testing.T) {
 		clock.at = clock.at.Add(maximumSupervisorDelay)
 	}
 	for _, delivery := range f.deliveries {
-		if _, found, _ := f.store.Refusal(ctx, delivery.Scope(), SourceGitHub, delivery.DeduplicationKey(), strings.Repeat("d", 64)); found || f.supervisor.retries[delivery.DeduplicationKey()] != nil {
+		_, retrying, _ := f.supervisor.retries.Retry(ctx, delivery.Scope(), SourceGitHub, delivery.DeduplicationKey(), strings.Repeat("d", 64))
+		if _, found, _ := f.store.Refusal(ctx, delivery.Scope(), SourceGitHub, delivery.DeduplicationKey(), strings.Repeat("d", 64)); found || retrying {
 			t.Fatal("an outage was counted against a delivery")
 		}
 	}
 	journal.down = false
 	if err := f.supervisor.reconcile(ctx); err != nil || !f.admitted(t, f.deliveries[0]) || !f.admitted(t, f.deliveries[1]) {
 		t.Fatalf("deliveries not admitted after recovery: %v", err)
+	}
+}
+
+// A delivery's own retry count and next-attempt time live in the inbox, so a
+// restart neither resets the bound nor retries the delivery early or forever.
+func TestSupervisorRetryStateSurvivesARestart(t *testing.T) {
+	ctx := context.Background()
+	root := filepath.Join(t.TempDir(), "inbox")
+	store, err := NewFileStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal := failingJournal{MemoryRunJournal: controlplane.NewMemoryRunJournal()}
+	f := newRefusalFixture(t, store, supervisorPlanner{identity: strings.Repeat("d", 64)}, &journal)
+	clock := &steppingClock{at: time.UnixMilli(1001)}
+	f.supervisor.options.Clock = clock
+	journal.run = ReviewRunIDForDelivery(f.deliveries[0])
+	planner, key := strings.Repeat("d", 64), f.deliveries[0].DeduplicationKey()
+	if err := f.supervisor.reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := NewFileStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	retry, found, err := reopened.Retry(ctx, f.deliveries[0].Scope(), SourceGitHub, key, planner)
+	if err != nil || !found || retry.Failures() != 1 || !retry.NotBefore().After(clock.at) {
+		t.Fatalf("retry state did not survive the restart: found=%t failures=%d err=%v", found, retry.Failures(), err)
+	}
+	encoded, err := EncodeRetryRecord(retry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed, err := ParseRetryRecord(encoded); err != nil || parsed != retry {
+		t.Fatalf("retry readback: %v", err)
+	}
+	for _, forged := range []string{strings.Replace(string(encoded), `"schema_version":1`, `"schema_version":2`, 1), strings.Replace(string(encoded), `"failures":1`, `"failures":0`, 1)} {
+		if _, err := ParseRetryRecord([]byte(forged)); err == nil {
+			t.Fatal("retry record accepted a forged version or count")
+		}
+	}
+	restarted, err := NewSupervisor(reopened, f.supervisor.processor, f.deliveries[0].Scope(), SourceGitHub, SupervisorOptions{QueueCapacity: 4, MaximumRetries: f.supervisor.options.MaximumRetries, RetryDelay: f.supervisor.options.RetryDelay, Clock: clock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if again, _, _ := reopened.Retry(ctx, f.deliveries[0].Scope(), SourceGitHub, key, planner); again.Failures() != 1 {
+		t.Fatal("the restarted supervisor retried inside the recorded backoff")
+	}
+	for attempt := 2; attempt <= int(restarted.options.MaximumRetries); attempt++ {
+		clock.at = clock.at.Add(maximumSupervisorDelay)
+		if err := restarted.reconcile(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	record, refused, err := reopened.Refusal(ctx, f.deliveries[0].Scope(), SourceGitHub, key, planner)
+	if err != nil || !refused || record.Reason() != RefusalReasonRetriesExhausted {
+		t.Fatalf("bound did not hold across the restart: refused=%t err=%v", refused, err)
+	}
+	if _, found, _ := reopened.Retry(ctx, f.deliveries[0].Scope(), SourceGitHub, key, planner); found {
+		t.Fatal("retry state outlived the refusal")
 	}
 }

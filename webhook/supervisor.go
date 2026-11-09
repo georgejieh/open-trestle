@@ -59,9 +59,8 @@ type SupervisorOptions struct {
 type Supervisor struct {
 	store    Store
 	refusals RefusalStore
-	// retries holds each delivery's own bounded backoff. Only the Run
-	// goroutine reads or writes it.
-	retries    map[string]*deliveryRetry
+	// retries durably holds each delivery's own bounded backoff in the inbox.
+	retries    RetryStore
 	retryTimer *time.Timer
 	retryAt    time.Time
 	processor  *Processor
@@ -83,11 +82,12 @@ func NewSupervisor(store Store, processor *Processor, scope RepositoryScope, sou
 	validRetries := options.MaximumRetries > 0 && options.MaximumRetries <= maxSupervisorRetries
 	validDelay := options.RetryDelay >= minimumSupervisorDelay && options.RetryDelay <= maximumSupervisorDelay
 	refusals, recordsRefusals := store.(RefusalStore)
-	if isNilStore(store) || !recordsRefusals || processor == nil || scope.Validate() != nil || source.Validate() != nil || !validQueue || !validRetries || !validDelay || nilSupervisorClock(options.Clock) {
+	retries, recordsRetries := store.(RetryStore)
+	if isNilStore(store) || !recordsRefusals || !recordsRetries || processor == nil || scope.Validate() != nil || source.Validate() != nil || !validQueue || !validRetries || !validDelay || nilSupervisorClock(options.Clock) {
 		return nil, ErrInvalidSupervisor
 	}
 	return &Supervisor{
-		store: store, refusals: refusals, retries: make(map[string]*deliveryRetry), processor: processor, scope: scope, source: source, options: options,
+		store: store, refusals: refusals, retries: retries, processor: processor, scope: scope, source: source, options: options,
 		notices: make(chan DeliveryNotice, options.QueueCapacity), wake: make(chan struct{}, 1), ready: make(chan struct{}),
 	}, nil
 }
@@ -191,12 +191,6 @@ func (s *Supervisor) reconcile(ctx context.Context) error {
 	}
 }
 
-// deliveryRetry is one delivery's own retry state.
-type deliveryRetry struct {
-	failures  uint8
-	notBefore time.Time
-}
-
 // handle admits one stored delivery. A deterministic refusal is recorded once
 // with its reason and is not an error; expired prepared inputs are skipped as
 // before. Any other failure is global when the run journal or artifact store
@@ -207,39 +201,54 @@ type deliveryRetry struct {
 // retries_exhausted, so it is visible and not retried forever.
 func (s *Supervisor) handle(ctx context.Context, stored StoredDelivery) error {
 	at := s.options.Clock.Now().UTC()
-	key := stored.Delivery().DeduplicationKey()
-	if retry := s.retries[key]; retry != nil && at.Before(retry.notBefore) {
-		s.scheduleRetry(retry.notBefore, at)
+	delivery := stored.Delivery()
+	planner := s.processor.PlannerIdentity()
+	retry, retrying, err := s.retries.Retry(ctx, delivery.Scope(), delivery.Source(), delivery.DeduplicationKey(), planner)
+	if err != nil {
+		return err
+	}
+	if retrying && at.Before(retry.NotBefore()) {
+		s.scheduleRetry(retry.NotBefore(), at)
 		return nil
 	}
-	_, _, err := s.processor.Process(ctx, stored, at)
+	clear := func() error {
+		if !retrying {
+			return nil
+		}
+		return s.retries.ClearRetry(ctx, delivery.Scope(), delivery.Source(), delivery.DeduplicationKey(), planner)
+	}
+	_, _, err = s.processor.Process(ctx, stored, at)
 	if err == nil || errors.Is(err, ErrPreparedInputsExpired) {
-		delete(s.retries, key)
-		return nil
+		return clear()
 	}
 	if reason, refused := DeliveryRefusalReason(err); refused {
-		delete(s.retries, key)
-		return s.recordRefusal(ctx, stored, reason, at)
+		if err := s.recordRefusal(ctx, stored, reason, at); err != nil {
+			return err
+		}
+		return clear()
 	}
 	if ctx.Err() != nil || s.processor.Probe(ctx, stored, at) != nil {
 		return err
 	}
-	retry := s.retries[key]
-	if retry == nil {
-		retry = &deliveryRetry{}
-		s.retries[key] = retry
+	failures := retry.Failures() + 1
+	if failures >= s.options.MaximumRetries {
+		if err := s.recordRefusal(ctx, stored, RefusalReasonRetriesExhausted, at); err != nil {
+			return err
+		}
+		return clear()
 	}
-	retry.failures++
-	if retry.failures >= s.options.MaximumRetries {
-		delete(s.retries, key)
-		return s.recordRefusal(ctx, stored, RefusalReasonRetriesExhausted, at)
-	}
-	delay := s.options.RetryDelay << (retry.failures - 1)
+	delay := s.options.RetryDelay << (failures - 1)
 	if delay > maximumSupervisorDelay || delay <= 0 {
 		delay = maximumSupervisorDelay
 	}
-	retry.notBefore = at.Add(delay)
-	s.scheduleRetry(retry.notBefore, at)
+	next, err := NewRetryRecord(stored, planner, failures, at.Add(delay))
+	if err != nil {
+		return err
+	}
+	if err := s.retries.RecordRetry(ctx, next); err != nil {
+		return err
+	}
+	s.scheduleRetry(next.NotBefore(), at)
 	return nil
 }
 
