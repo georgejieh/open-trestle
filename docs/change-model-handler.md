@@ -10,7 +10,7 @@ The handler requires exactly two successful source dependencies. For each depend
 - the protected source snapshot index
 - every source file named by that index
 
-It rechecks scope, classification, protection, repository identity, full revision identity, source adapter identity, acquisition lineage, file size, file digest, and reconstructed manifest identity. Base and head must refer to the same repository and adapter. Aggregate loaded source is limited to 256 MiB and cleared after execution.
+It rechecks scope, classification, protection, repository identity, full revision identity, source adapter identity, acquisition lineage, file size, file digest, and reconstructed manifest identity. Base and head must refer to the same repository and adapter. A `source-base` merge-base input (source input v3) must have a version 2 snapshot whose recorded derivation names that input's requested base and head and whose revision is the recorded merge base, and the head it was resolved for must be the revision the `source-head` task acquired; the change then runs from that merge base, so the result's base revision is the merge base, not the requested base. A plain input must have a plain snapshot of exactly its revision, and the head input cannot be a merge-base input. Aggregate loaded source is limited to 256 MiB and cleared after execution.
 
 ## Deterministic delta
 
