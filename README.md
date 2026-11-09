@@ -29,8 +29,8 @@
 
 **What is real today:** The Go packages have a full test suite, deterministic JSON and
 SARIF review output, loose and packed Git inspection, a protected setup planner, a
-durable run journal, an embedded read-only web console, and read-only MCP, ACP, and LSP
-surfaces. The unsigned candidate can now execute one provider-free loose-object review
+durable run journal, an embedded read-only web console, a scoped MCP server, and read-only
+ACP and LSP surfaces. The unsigned candidate can now execute one provider-free loose-object review
 through durable daemon state and show the same run in the CLI and TUI plus two
 phase-tagged daemon-served browser passes before and after restart. Both browser passes
 bind the exact run, diagnostic set, deterministic check state, and observation identities.
