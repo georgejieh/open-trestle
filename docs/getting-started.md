@@ -212,12 +212,17 @@ resume; it can take several minutes.
 ### Reading the result
 
 - `findings`: each listed finding was proposed by the finder and confirmed by
-  the checker. Read them like a colleague's review comments.
+  the checker. Read them like a colleague's review comments. A finding about
+  code the change removed is located on the removed lines of the base commit
+  (`path removed base lines a-b`), not on head lines.
 - `no_candidates`: nothing was found and confirmed. That is not proof the change
   is correct.
 - `incomplete`: part of the change was not covered; see the coverage and
   omission lines.
 - `refused`, `failed` or `canceled`: no usable result; the wizard says what to try.
+- `style:` lines: when the base commit declares no style for a changed language
+  that has a style detector, the result suggests a standard one. It is advice,
+  not a finding, and never changes the result. See [style recommendations](local-model-review.md#style-recommendations).
 
 Every result says `comprehensive clearance: false`. A review is not an audit.
 See [local model review](local-model-review.md) for the full result format.
