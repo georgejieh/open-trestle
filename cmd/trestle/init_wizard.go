@@ -126,6 +126,7 @@ type initWizard struct {
 	lastFetch               time.Time // the latest evidence fetch, if any
 	modelEndpoint           string    // the local server whose model is being chosen
 	ollamaBinary            bool      // the ollama command was found on PATH
+	pendingHeader           string    // a --no-input step header not yet printed
 }
 
 func runInit(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -275,11 +276,24 @@ func (w *initWizard) parseFlags(args []string) (int, bool) {
 	return 0, false
 }
 
-func (w *initWizard) say(format string, args ...any) { fmt.Fprintf(w.out, format+"\n", args...) }
+func (w *initWizard) say(format string, args ...any) {
+	if w.pendingHeader != "" {
+		fmt.Fprint(w.out, w.pendingHeader)
+		w.pendingHeader = ""
+	}
+	fmt.Fprintf(w.out, format+"\n", args...)
+}
 
+// header starts a step. Interactively a question always follows, so it is
+// printed at once. With --no-input a step may have nothing to show, so its
+// header waits for the step's first line and is dropped when none comes.
 func (w *initWizard) header(step int, title string) {
-	w.say("\nStep %d of 8 · %s", step, title)
-	w.say("%s", strings.Repeat("─", min(len(title)+14, 60)))
+	text := fmt.Sprintf("\nStep %d of 8 · %s\n%s\n", step, title, strings.Repeat("─", min(len(title)+14, 60)))
+	if w.prompt != nil {
+		fmt.Fprint(w.out, text)
+		return
+	}
+	w.pendingHeader = text
 }
 
 type initQuestion struct {
@@ -365,8 +379,12 @@ func (w *initWizard) run() (int, error) {
 	}
 	w.checkout = filepath.Clean(top)
 	w.repoName = initLabel(filepath.Base(w.checkout), "repository")
-	w.say("Open Trestle setup: answer a few questions to configure and run a first review.")
-	w.say("Press Enter to accept a value in [brackets]; Ctrl-D stops without saving.")
+	if w.prompt != nil {
+		w.say("Open Trestle setup: answer a few questions to configure and run a first review.")
+		w.say("Press Enter to accept a value in [brackets]; Ctrl-D stops without saving.")
+	} else {
+		w.say("Open Trestle setup (--no-input): every answer comes from a flag.")
+	}
 
 	w.a.directory = w.defaultDirectory()
 	if raw, ok := w.flags["directory"]; ok {
