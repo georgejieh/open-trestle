@@ -330,8 +330,10 @@ type VerifiedFinding struct {
 	// checks only the claim; category stays advisory and fix stays unverified.
 	category CandidateCategory
 	fix      string
-	// side is the coordinate space of sourceRange, copied from the candidate.
-	side LineSide
+	// side is the coordinate space of sourceRange, and headLine the head line of
+	// a base-side location's deletion point; both are copied from the candidate.
+	side     LineSide
+	headLine int
 }
 
 func (f VerifiedFinding) Identity() string                  { return f.identity }
@@ -346,6 +348,10 @@ func (f VerifiedFinding) SourceRange() evidence.SourceRange { return f.sourceRan
 // Side returns the coordinate space of SourceRange: head lines of the reviewed
 // snapshot, or base lines of a removed_lines source.
 func (f VerifiedFinding) Side() LineSide { return f.side }
+
+// HeadLine returns, for a base-side finding at a deletion point, the head line
+// beside which its base lines were removed; 0 otherwise.
+func (f VerifiedFinding) HeadLine() int { return f.headLine }
 
 // Category returns the advisory candidate category; the zero value means a v1 candidate.
 func (f VerifiedFinding) Category() CandidateCategory { return f.category }
@@ -377,7 +383,8 @@ func (f VerifiedFinding) Validate() error {
 		}
 	}
 	if !validCandidateTitle(f.title) || !validCandidateClaim(f.claim) || !isKnownSeverity(f.severity) || !validCandidateSourceRange(f.sourceRange) || len(f.evidenceBindings) == 0 || len(f.evidenceBindings) > maxCandidateEvidence ||
-		validateCandidateGuidance(f.category, f.fix) != nil || !validLineSide(f.side) || f.category == "" && (f.side != LineSideHead || hasBaseSide(f.evidenceBindings)) {
+		validateCandidateGuidance(f.category, f.fix) != nil || !validLineSide(f.side) || f.category == "" && (f.side != LineSideHead || hasBaseSide(f.evidenceBindings)) ||
+		f.headLine < 0 || f.headLine > maxCandidateSourceLine || f.headLine != 0 && f.side != LineSideBase {
 		return ErrVerifiedFindingBindingMismatch
 	}
 	previous := ""
@@ -444,7 +451,7 @@ func PromoteVerifiedCandidates(receipt IndependentVerificationReceipt, candidate
 			candidateIdentity: candidate.Identity(), verificationIdentity: result.Identity(),
 			title: candidate.Title(), claim: candidate.Claim(), severity: result.FinalSeverity(),
 			sourceRange: candidate.SourceRange(), evidenceBindings: append([]candidateEvidenceBinding(nil), result.evidenceBindings...),
-			category: candidate.Category(), fix: candidate.Fix(), side: candidate.side,
+			category: candidate.Category(), fix: candidate.Fix(), side: candidate.side, headLine: candidate.headLine,
 		}
 		finding.fingerprint = deriveVerifiedFindingFingerprint(finding)
 		finding.identity = deriveVerifiedFindingIdentity(finding)
@@ -596,7 +603,9 @@ func deriveVerifiedFindingIdentity(finding VerifiedFinding) string {
 			findingRecord
 			Category string `json:"category"`
 			Fix      string `json:"fix"`
-		}{preimage, string(finding.category), finding.fix})
+			// HeadLine is present only for a base-side finding at a deletion point.
+			HeadLine int `json:"head_line,omitempty"`
+		}{preimage, string(finding.category), finding.fix, finding.headLine})
 	}
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])

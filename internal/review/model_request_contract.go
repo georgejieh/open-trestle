@@ -63,8 +63,8 @@ const (
 	// removedLinesGenerationSentence, removedLinesVerificationSentence and
 	// removedLinesInvestigationSentence explain removed_lines sources in
 	// generation version 8, verification version 7 and investigation version 6.
-	removedLinesGenerationSentence    = "Sources with stage removed_lines are base-branch lines that this change deletes, labelled with their base line numbers: evidence of what was removed, not code that remains, so never set source_range.source_id to a removed_lines source and locate an issue about a removal on the changed_hunk lines around the deletion point."
-	removedLinesVerificationSentence  = "Sources with stage removed_lines are base-branch lines that this change deletes, labelled with their base line numbers: evidence of what was removed, not code that remains in the reviewed head."
+	removedLinesGenerationSentence    = "Sources with stage removed_lines are base-branch lines that this change deletes, labelled with their base line numbers; when head_line is present, the lines were removed beside that head line. To report an issue in the removed code itself, set source_range.source_id to the removed_lines source and keep start_line and end_line within its base line numbers; locate an issue in code that remains on a head source such as changed_hunk."
+	removedLinesVerificationSentence  = "Sources with stage removed_lines are base-branch lines that this change deletes, labelled with their base line numbers: evidence of what was removed, not code that remains in the reviewed head. A candidate whose source_reference is a removed_lines source is located on those base lines."
 	removedLinesInvestigationSentence = "Sources with stage removed_lines are base-branch lines that this change deletes, labelled with their base line numbers: evidence of what was removed, not code that remains or that snapshot tools can read, so never set source_range.source_id to a removed_lines source."
 	// verificationEvidenceSentence is the version 6 verification sentence that
 	// version 7 follows with the removed_lines sentence.

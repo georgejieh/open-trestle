@@ -522,6 +522,7 @@ describe("API client", () => {
       start_line: 4,
       end_line: 6,
       side: "base",
+      head_line: 3,
       evidence_ids: ["d".repeat(64)],
     };
     const diagnostics = {
@@ -575,12 +576,14 @@ describe("API client", () => {
     expect(parsed.schema_version).toBe(8);
     if (parsed.schema_version !== 8) throw new Error("expected v8");
     expect(parsed.findings[0]?.side).toBe("base");
+    expect(parsed.findings[0]?.head_line).toBe(3);
     const head = { ...finding } as Partial<typeof finding>;
     delete head.side;
     for (const forged of [
       { ...diagnostics, schema_version: 5 },
       { ...diagnostics, findings: [head] },
       { ...diagnostics, findings: [{ ...finding, side: "head" }] },
+      { ...diagnostics, findings: [{ ...finding, head_line: 0 }] },
     ]) {
       expect(() =>
         parseDiagnosticEnvelope({ ...envelope, diagnostics: forged }, scope),

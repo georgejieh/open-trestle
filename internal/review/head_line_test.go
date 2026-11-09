@@ -73,3 +73,54 @@ func TestRemovedLinesHeadLineIsBoundToItsDeletionPoint(t *testing.T) {
 		t.Fatalf("negative head line accepted: %v", err)
 	}
 }
+
+// A base-side finding carries its deletion point's head line from admission
+// through verification and its recorded forms.
+func TestBaseSideFindingCarriesItsHeadLine(t *testing.T) {
+	packet, snapshot, payload := headLinePacket(t, 3)
+	var removedID, windowID string
+	for _, source := range packet.Sources() {
+		if source.Stage() == ContextStageRemovedLines {
+			removedID = source.ReferenceID()
+		} else {
+			windowID = source.ReferenceID()
+		}
+	}
+	document := `{"schema_version":2,"candidates":[{"title":"Removed zero guard","claim":"The removed check guarded the division by b.","category":"correctness","severity_hint":"high","source_range":{"source_id":"` + removedID + `","start_line":4,"end_line":6},"evidence_ids":["` + removedID + `","` + windowID + `"]}]}`
+	candidates, err := ParseContextCandidateBatch(v7Response(t, document), payload, snapshot, packet.EvidenceItems())
+	if err != nil || len(candidates.Findings()) != 1 {
+		t.Fatalf("base-side candidate refused: %v", err)
+	}
+	candidate := candidates.Findings()[0]
+	if candidate.Side() != LineSideBase || candidate.HeadLine() != 3 {
+		t.Fatalf("candidate side=%s head line=%d", candidate.Side(), candidate.HeadLine())
+	}
+	encoded, err := EncodeCandidateBatch(candidates)
+	if err != nil || !bytes.Contains(encoded, []byte(`"side":"base","head_line":3`)) {
+		t.Fatalf("encoded candidate: %s, %v", encoded, err)
+	}
+	if parsed, err := ParseEncodedCandidateBatch(encoded); err != nil || parsed.Identity() != candidates.Identity() || !CandidateBatchMatchesContext(payload, parsed) {
+		t.Fatalf("base-side candidate does not read back: %v", err)
+	}
+	if _, err := ParseEncodedCandidateBatch(bytes.Replace(encoded, []byte(`"head_line":3`), []byte(`"head_line":4`), 1)); err == nil {
+		t.Fatal("candidate with another head line read back")
+	}
+	request, err := NewVerificationRequestContext(payload, packet.Identity(), packet.ReviewScopeIdentity(), packet.MemoryScopeIdentity(), packet.MemoryIdentity(), snapshot, packet.EvidenceItems(), candidates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verdict := func(cited string) string {
+		return `{"schema_version":1,"verdicts":[{"candidate_id":"` + candidate.Identity() + `","outcome":"verified","severity":"high","rationale":"The removed lines returned early when b was zero.","evidence_ids":` + cited + `}]}`
+	}
+	// Only removed_lines evidence covers a base-side location.
+	if _, err := ParseContextVerificationBatch(v7Response(t, verdict(`["`+windowID+`"]`)), candidates, request); !errors.Is(err, ErrVerificationEvidenceRangeMismatch) {
+		t.Fatalf("head evidence verified a base-side candidate: %v", err)
+	}
+	batch, err := ParseContextVerificationBatch(v7Response(t, verdict(`["`+removedID+`"]`)), candidates, request)
+	if err != nil || batch.Results()[0].Side() != LineSideBase || !VerificationBatchMatchesContext(request, candidates, batch) {
+		t.Fatalf("base-side verdict: %v", err)
+	}
+	if encoded, err := EncodeVerificationBatch(batch); err != nil || !bytes.Contains(encoded, []byte(`"schema_version":2`)) {
+		t.Fatalf("base-side verdict is not a version 2 batch: %s", encoded)
+	}
+}

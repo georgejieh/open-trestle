@@ -131,8 +131,8 @@ func TestBaseBindingNeverCoversHeadLinesOnReadback(t *testing.T) {
 	if CandidateBatchMatchesContext(payload, anchored) {
 		t.Fatal("readback accepted a head finding anchored on a removed_lines source")
 	}
-	// Admission drops every removed_lines anchor, so a recorded base-side
-	// finding is refused even on the source it names.
+	// A recorded base-side finding reads back on the removed_lines source it
+	// names, only with that source's head line.
 	baseAnchored := rederiveCandidate(candidates, func(finding *CandidateFinding) {
 		finding.sourceReferenceID, finding.side = removed.ReferenceID(), LineSideBase
 		for _, binding := range finding.evidenceBindings {
@@ -141,8 +141,12 @@ func TestBaseBindingNeverCoversHeadLinesOnReadback(t *testing.T) {
 			}
 		}
 	})
-	if baseAnchored.Validate() != nil || CandidateBatchMatchesContext(payload, baseAnchored) {
-		t.Fatal("readback accepted a recorded base-side anchor")
+	if baseAnchored.Validate() != nil || !CandidateBatchMatchesContext(payload, baseAnchored) {
+		t.Fatal("readback refused a recorded base-side anchor")
+	}
+	wrongHeadLine := rederiveCandidate(baseAnchored, func(finding *CandidateFinding) { finding.headLine = 2 })
+	if wrongHeadLine.Validate() != nil || CandidateBatchMatchesContext(payload, wrongHeadLine) {
+		t.Fatal("readback accepted a base-side anchor with another head line")
 	}
 	unknown := rederiveCandidate(candidates, func(finding *CandidateFinding) {
 		finding.sourceReferenceID = "unknown-source"

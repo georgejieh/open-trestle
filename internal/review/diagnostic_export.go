@@ -208,13 +208,12 @@ func exportDiagnosticFindings(scope audit.ReviewScope, receipt IndependentVerifi
 	findings := make([]diagnostics.Finding, 0, set.VerifiedCount())
 	for _, finding := range set.Findings() {
 		sourceRange := finding.SourceRange()
-		side := diagnostics.LineSideHead
-		if finding.Side() == LineSideBase {
-			side = diagnostics.LineSideBase
-		}
 		// Only a set version that records sides accepts a base-side finding;
 		// the earlier versions refuse it rather than relabel base lines as head.
-		value, err := diagnostics.NewFindingOnSide(finding.Identity(), finding.Fingerprint(), finding.Title(), finding.Claim(), diagnosticSeverity(finding.Severity()), sourceRange.Path(), side, uint32(sourceRange.StartLine()), uint32(sourceRange.EndLine()), finding.EvidenceIDs())
+		value, err := diagnostics.NewFinding(finding.Identity(), finding.Fingerprint(), finding.Title(), finding.Claim(), diagnosticSeverity(finding.Severity()), sourceRange.Path(), uint32(sourceRange.StartLine()), uint32(sourceRange.EndLine()), finding.EvidenceIDs())
+		if finding.Side() == LineSideBase {
+			value, err = diagnostics.NewBaseSideFinding(finding.Identity(), finding.Fingerprint(), finding.Title(), finding.Claim(), diagnosticSeverity(finding.Severity()), sourceRange.Path(), uint32(sourceRange.StartLine()), uint32(sourceRange.EndLine()), uint32(finding.HeadLine()), finding.EvidenceIDs())
+		}
 		if err != nil {
 			return nil, err
 		}

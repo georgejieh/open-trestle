@@ -109,6 +109,36 @@ func TestFinalSetCarriesVersion8Verification(t *testing.T) {
 	}
 }
 
+func TestBaseSideFindingRecordsItsHeadLine(t *testing.T) {
+	finding, err := NewBaseSideFinding(strings.Repeat("a", 64), strings.Repeat("b", 64), "Removed guard", "The zero check was removed.", SeverityError, "calc.go", 4, 6, 3, []string{strings.Repeat("c", 64)})
+	if err != nil || finding.Side() != LineSideBase || finding.HeadLine() != 3 {
+		t.Fatalf("finding=%v", err)
+	}
+	without, err := NewBaseSideFinding(strings.Repeat("a", 64), strings.Repeat("b", 64), "Removed guard", "The zero check was removed.", SeverityError, "calc.go", 4, 6, 0, []string{strings.Repeat("c", 64)})
+	if err != nil || without.Identity() == finding.Identity() {
+		t.Fatalf("head line is not bound into the identity: %v", err)
+	}
+	set, err := verifiedSetWith(t, finding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded := mustEncodeSet(t, set)
+	if !bytes.Contains(encoded, []byte(`"side":"base","head_line":3`)) {
+		t.Fatalf("encoded=%s", encoded)
+	}
+	if parsed, err := ParseSet(encoded); err != nil || parsed.Findings()[0].HeadLine() != 3 {
+		t.Fatalf("head line does not read back: %v", err)
+	}
+	for name, tampered := range map[string][]byte{
+		"another head line":           bytes.Replace(encoded, []byte(`"head_line":3`), []byte(`"head_line":4`), 1),
+		"head line on a head finding": bytes.Replace(bytes.Replace(encoded, []byte(`"side":"base",`), nil, 1), []byte(`"schema_version":8`), []byte(`"schema_version":5`), 1),
+	} {
+		if _, err := ParseSet(tampered); err == nil {
+			t.Fatalf("%s read back", name)
+		}
+	}
+}
+
 // mustEncodeSetVersion relabels a canonical encoding with another schema
 // version, to show that readback refuses it.
 func mustEncodeSetVersion(t *testing.T, set Set, version int) []byte {

@@ -1,8 +1,8 @@
 {
-  "artifact_identity": "fd2d7392c107155c80c86d9a1c504ade7d4f7dd0a88ba5e9118e7afb290bd495",
+  "artifact_identity": "ebd5ba3eeb062f1aa48c4186ee9cc3cbb6691d06a9c291e43344b347d13f9848",
   "lease_identity": "d9687652f7382abe004029d9cebf929a2ada96a8ecc3990e5dc4a46b9422e36f",
   "lease_event_identity": "97f41d6dc2a4e07a47d0ee72265b28e8426f8202fd5d5862064042fe49b3e6ba",
-  "payload_digest": "3b84677c5e9156b6583db43c11096be09a7f53528910683e538dde1497d9f1ad",
+  "payload_digest": "19f9aeda6845a0e7308e3f45c8dcd85b88b91c192945cf2c72a01737b22d8864",
   "classification": "confidential",
   "protection": "process_private",
   "provenance": [

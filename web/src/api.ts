@@ -487,12 +487,17 @@ function parseDiagnostic(
     "start_line",
     "end_line",
     ...(sided && record(value) && Object.hasOwn(value, "side") ? ["side"] : []),
+    ...(sided && record(value) && Object.hasOwn(value, "head_line")
+      ? ["head_line"]
+      : []),
     "evidence_ids",
   ] as const;
   if (
     !record(value) ||
     !exact(value, keys) ||
     (Object.hasOwn(value, "side") && value.side !== "base") ||
+    (Object.hasOwn(value, "head_line") &&
+      (value.side !== "base" || !integer(value.head_line, 1, 10000000))) ||
     !validDigest(value.identity) ||
     !validDigest(value.source_identity) ||
     !validDigest(value.fingerprint) ||

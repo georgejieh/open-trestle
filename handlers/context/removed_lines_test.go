@@ -78,16 +78,20 @@ func TestDeletionOnlyChangeSuppliesTheRemovedBaseLines(t *testing.T) {
 		t.Fatalf("assembled removed_lines context rejected: %v", err)
 	}
 
-	// A candidate on the head lines that cites the removed guard is admitted;
-	// one located in the removed lines is dropped and counted.
+	// A candidate on the head lines that cites the removed guard is admitted,
+	// and so is one located in the removed lines, as a base-side finding that
+	// names the deletion point's head line.
 	document := `{"schema_version":2,"candidates":[` +
 		`{"title":"Missing zero guard","claim":"Div no longer checks b before dividing.","category":"correctness","severity_hint":"high","source_range":{"source_id":"` + window.ReferenceID() + `","start_line":3,"end_line":4},"evidence_ids":["` + window.ReferenceID() + `","` + removed.ReferenceID() + `"]},` +
 		`{"title":"Removed guard","claim":"The zero check is gone.","category":"correctness","severity_hint":"high","source_range":{"source_id":"` + removed.ReferenceID() + `","start_line":4,"end_line":4},"evidence_ids":["` + removed.ReferenceID() + `"]}]}`
 	part, _ := provider.NewResponsePart(provider.ResponsePartStructuredData, "application/json", []byte(document))
 	response, _ := provider.NewResponse(provider.CapabilityReviewV1, provider.ResponseFinishStop, []provider.ResponsePart{part}, provider.NewUnknownRouteTokenUsage())
 	candidates, err := review.ParseContextCandidateBatch(response, payload, result.assembly.Snapshot, packet.EvidenceItems())
-	if err != nil || len(candidates.Findings()) != 1 || candidates.RepositoryContextAnchorOmittedCount() != 1 {
+	if err != nil || len(candidates.Findings()) != 2 || candidates.RepositoryContextAnchorOmittedCount() != 0 {
 		t.Fatalf("candidate admission: findings=%d omitted=%d err=%v", len(candidates.Findings()), candidates.RepositoryContextAnchorOmittedCount(), err)
+	}
+	if base := candidates.Findings()[1]; base.Side() != review.LineSideBase || base.HeadLine() != 3 || base.SourceRange().StartLine() != 4 {
+		t.Fatalf("base-side finding side=%s head line=%d", base.Side(), base.HeadLine())
 	}
 	verification, err := review.NewVerificationRequestContext(payload, packet.Identity(), packet.ReviewScopeIdentity(), packet.MemoryScopeIdentity(), packet.MemoryIdentity(), result.assembly.Snapshot, packet.EvidenceItems(), candidates)
 	if err != nil {

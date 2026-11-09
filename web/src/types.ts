@@ -98,6 +98,8 @@ export interface Diagnostic {
   end_line: number;
   /** Present only in verified set v8, for removed lines of the base revision. */
   side?: "base";
+  /** With side, the head line beside which the base lines were removed. */
+  head_line?: number;
   evidence_ids: string[];
 }
 export interface DeterministicObservation extends Diagnostic {

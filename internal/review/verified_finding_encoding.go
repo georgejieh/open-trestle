@@ -45,6 +45,7 @@ type encodedVerifiedFindingWire struct {
 	// Side is "base" for a location on removed base lines. It and any evidence
 	// side appear only in schema version 2, whose findings are categorized.
 	Side     string                         `json:"side,omitempty"`
+	HeadLine int                            `json:"head_line,omitempty"`
 	Evidence []encodedCandidateEvidenceWire `json:"evidence"`
 }
 
@@ -130,7 +131,7 @@ func parseEncodedVerifiedFinding(
 		snapshotIdentity:           set.SnapshotIdentity, candidateIdentity: wire.CandidateIdentity,
 		verificationIdentity: wire.VerificationIdentity, title: wire.Title, claim: wire.Claim,
 		severity: Severity(wire.Severity), sourceRange: sourceRange, evidenceBindings: bindings,
-		category: CandidateCategory(wire.Category), fix: wire.Fix, side: side,
+		category: CandidateCategory(wire.Category), fix: wire.Fix, side: side, headLine: wire.HeadLine,
 	}
 	if err := finding.Validate(); err != nil {
 		return VerifiedFinding{}, err
@@ -147,7 +148,7 @@ func encodedVerifiedFindingSetWireValue(set VerifiedFindingSet) encodedVerifiedF
 			Title: finding.Title(), Claim: finding.Claim(), Category: string(finding.Category()), Fix: finding.Fix(),
 			Severity: string(finding.Severity()),
 			Path:     finding.SourceRange().Path(), StartLine: finding.SourceRange().StartLine(),
-			EndLine: finding.SourceRange().EndLine(), Side: recordedLineSide(finding.side),
+			EndLine: finding.SourceRange().EndLine(), Side: recordedLineSide(finding.side), HeadLine: finding.headLine,
 			Evidence: encodedEvidenceBindings(finding.evidenceBindings),
 		}
 	}

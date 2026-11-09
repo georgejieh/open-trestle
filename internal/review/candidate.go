@@ -129,6 +129,9 @@ type CandidateFinding struct {
 	// side is the coordinate space of sourceRange. Only a categorized (v2)
 	// candidate records a side.
 	side LineSide
+	// headLine is, for a base-side candidate at a deletion point, the head
+	// line beside which the anchored base lines were removed; 0 otherwise.
+	headLine int
 }
 
 func (f CandidateFinding) Identity() string                  { return f.identity }
@@ -142,6 +145,10 @@ func (f CandidateFinding) SourceRange() evidence.SourceRange { return f.sourceRa
 // Side returns the coordinate space of SourceRange: head lines, or base lines
 // of a removed_lines source.
 func (f CandidateFinding) Side() LineSide { return f.side }
+
+// HeadLine returns, for a base-side candidate at a deletion point, the head
+// line beside which its base lines were removed; 0 otherwise.
+func (f CandidateFinding) HeadLine() int { return f.headLine }
 
 // Category returns the advisory v2 category, or the zero value for a v1 candidate.
 func (f CandidateFinding) Category() CandidateCategory { return f.category }
@@ -185,7 +192,8 @@ func (f CandidateFinding) Validate() error {
 	if !validCandidateReference(f.sourceReferenceID) {
 		return ErrInvalidCandidateReference
 	}
-	if !validCandidateSourceRange(f.sourceRange) || !validLineSide(f.side) || f.category == "" && f.side != LineSideHead {
+	if !validCandidateSourceRange(f.sourceRange) || !validLineSide(f.side) || f.category == "" && f.side != LineSideHead ||
+		f.headLine < 0 || f.headLine > maxCandidateSourceLine || f.headLine != 0 && f.side != LineSideBase {
 		return ErrCandidateRangeNotSupported
 	}
 	if len(f.evidenceBindings) == 0 || len(f.evidenceBindings) > maxCandidateEvidence {
@@ -224,16 +232,16 @@ type CandidateBatch struct {
 	// categorized marks a model-candidate-batch-v2 batch: every finding carries a category.
 	categorized bool
 	// repositoryContextOmitted counts v2 proposals dropped at admission because
-	// their source_range named a source that cannot anchor a finding: a
-	// repository_context source and, from generation context version 8, a
-	// removed_lines source. It is derived only from the exact response and
-	// context bytes and is bound into the identity.
+	// their source_range named a repository_context source, which cannot
+	// anchor a finding. It is derived only from the exact response and context
+	// bytes and is bound into the identity.
 	repositoryContextOmitted uint8
 }
 
 // RepositoryContextAnchorOmittedCount reports proposals dropped because they
-// were located in a repository_context source or, from generation context
-// version 8, a removed_lines source rather than in reviewed head code.
+// were located in a repository_context source rather than in reviewed code. A
+// proposal located in a removed_lines source is a base-side finding, not a
+// drop.
 func (b CandidateBatch) RepositoryContextAnchorOmittedCount() int {
 	return int(b.repositoryContextOmitted)
 }
@@ -451,12 +459,13 @@ func candidateBatchMatchesContextVersion(version int, batch CandidateBatch) bool
 // CandidateBatchMatchesContext reports whether a batch is exactly the candidate
 // schema the recorded generation context requested: v2 for a version 7 or 8
 // context and v1 for every earlier generation context. For a v2 batch it also
-// checks every recorded location and side against the stage of the context
-// source it names: admission drops a proposal located in a repository_context
-// or removed_lines source, so a recorded finding is on head lines of another
-// source; an evidence binding records base lines exactly when it names a
-// removed_lines source; and every named source is a source of that context.
-// Readback therefore cannot turn base lines into head lines, or the reverse.
+// checks every recorded location and side against the context source it
+// names: admission drops a proposal located in a repository_context source; a
+// finding is on base lines, with that source's head line, exactly when it is
+// located in a removed_lines source; an evidence binding records base lines
+// exactly when it names a removed_lines source; and every named source is a
+// source of that context. Readback therefore cannot turn base lines into head
+// lines, or the reverse.
 func CandidateBatchMatchesContext(contextPayload []byte, batch CandidateBatch) bool {
 	var header struct {
 		Contract      string `json:"contract"`
@@ -476,8 +485,10 @@ func CandidateBatchMatchesContext(contextPayload []byte, batch CandidateBatch) b
 		return false
 	}
 	stages := make(map[string]string, len(wire.Sources))
+	headLines := make(map[string]int, len(wire.Sources))
 	for _, source := range wire.Sources {
 		stages[source.SourceID] = source.Stage
+		headLines[source.SourceID] = source.HeadLine
 	}
 	sideOf := func(identity string) (LineSide, bool) {
 		stage, exists := stages[identity]
@@ -490,8 +501,8 @@ func CandidateBatchMatchesContext(contextPayload []byte, batch CandidateBatch) b
 		return LineSideHead, true
 	}
 	for _, finding := range batch.findings {
-		stage, exists := stages[finding.sourceReferenceID]
-		if !exists || finding.side != LineSideHead || stage == ContextStageRepositoryContext.String() || stage == ContextStageRemovedLines.String() {
+		side, exists := sideOf(finding.sourceReferenceID)
+		if !exists || side != finding.side || finding.headLine != headLines[finding.sourceReferenceID] || stages[finding.sourceReferenceID] == ContextStageRepositoryContext.String() {
 			return false
 		}
 		for _, binding := range finding.evidenceBindings {
@@ -513,14 +524,13 @@ func ParseCandidateBatch(response provider.Response, snapshot ReviewSnapshot, ev
 // ParseContextCandidateBatch strictly decodes one response against the output
 // contract of the exact generation context bytes it answers. A version 7 or 8
 // context requires model-candidate-batch-v2 and drops, and counts, each
-// candidate whose source_range names a source that cannot anchor a finding: a
-// repository_context source (repository instruction files are advisory
-// preferences, not reviewed code, and changed instruction lines are a separate
-// changed_hunk source) and, from version 8, a removed_lines source (removed
-// base lines are not head code; a finding about a removal anchors on the
-// changed_hunk lines around the deletion point). From version 8 a removed_lines
-// source may be cited as evidence but never establishes that the cited
-// evidence covers the anchored head lines. Earlier versions require v1.
+// candidate whose source_range names a repository_context source: repository
+// instruction files are advisory preferences, not reviewed code, and changed
+// instruction lines are a separate changed_hunk source. From version 8 a
+// candidate located in a removed_lines source is a base-side finding: its
+// lines are base lines inside that source, it records the source's head line,
+// and only cited removed_lines evidence can cover it. Base and head lines
+// never cover each other. Earlier versions require v1.
 func ParseContextCandidateBatch(response provider.Response, contextPayload []byte, snapshot ReviewSnapshot, evidenceItems []evidence.EvidenceItem) (CandidateBatch, error) {
 	if len(contextPayload) == 0 || len(contextPayload) > maxProviderContextPacketBytes {
 		return CandidateBatch{}, ErrInvalidContextPacketRequest
@@ -535,7 +545,7 @@ func ParseContextCandidateBatch(response provider.Response, contextPayload []byt
 	if len(wire.Sources) != len(evidenceItems) {
 		return CandidateBatch{}, ErrInvalidCandidateEvidenceSet
 	}
-	rules := candidateAnchorRules{dropped: make(map[string]struct{}), baseLines: make(map[string]struct{})}
+	rules := candidateAnchorRules{dropped: make(map[string]struct{}), baseLines: make(map[string]struct{}), baseAnchors: make(map[string]int)}
 	for index, source := range wire.Sources {
 		if source.SourceID != evidenceItems[index].ID() {
 			return CandidateBatch{}, ErrInvalidCandidateEvidenceSet
@@ -544,8 +554,8 @@ func ParseContextCandidateBatch(response provider.Response, contextPayload []byt
 		case ContextStageRepositoryContext.String():
 			rules.dropped[source.SourceID] = struct{}{}
 		case ContextStageRemovedLines.String():
-			rules.dropped[source.SourceID] = struct{}{}
 			rules.baseLines[source.SourceID] = struct{}{}
+			rules.baseAnchors[source.SourceID] = source.HeadLine
 		}
 	}
 	return parseCandidateBatch(response, snapshot, evidenceItems, 2, rules)
@@ -555,12 +565,14 @@ func ParseContextCandidateBatch(response provider.Response, contextPayload []byt
 // located in. A candidate located in a dropped source is dropped and counted;
 // one located in a refused source refuses the whole batch, for an
 // uncategorized batch that cannot record a drop. A baseLines source carries
-// base line numbers: it may be cited as evidence, but never establishes that
-// cited evidence covers the anchored head lines, because base and head line
-// numbers are different coordinates. All rules apply to the one strictly
-// parsed document, never to a second, lenient reading of the response.
+// base line numbers: it covers only a base-side location, never head lines,
+// because base and head line numbers are different coordinates. A candidate
+// located in a baseAnchors source is a base-side finding with that source's
+// head line. All rules apply to the one strictly parsed document, never to a
+// second, lenient reading of the response.
 type candidateAnchorRules struct {
 	dropped, refused, baseLines map[string]struct{}
+	baseAnchors                 map[string]int
 }
 
 // removedLinesAnchorRules refuses a candidate located in a removed_lines
@@ -608,14 +620,14 @@ func parseCandidateBatch(response provider.Response, snapshot ReviewSnapshot, ev
 			return CandidateBatch{}, ErrCandidateRangeNotSupported
 		}
 		if _, anchored := rules.dropped[candidate.SourceRange.SourceID]; anchored {
-			// A proposal located in repository instruction context or in
-			// removed base lines is not located in reviewed head code. Drop only
-			// that proposal, deterministically, and keep the rest; kept
-			// proposals take contiguous ordinals.
+			// A proposal located in repository instruction context is not
+			// located in reviewed code. Drop only that proposal,
+			// deterministically, and keep the rest; kept proposals take
+			// contiguous ordinals.
 			omitted++
 			continue
 		}
-		finding, err := newCandidateFinding(response.Identity(), snapshot, uint8(len(findings)+1), candidate, allowedEvidence, rules.baseLines, version == 2)
+		finding, err := newCandidateFinding(response.Identity(), snapshot, uint8(len(findings)+1), candidate, allowedEvidence, rules, version == 2)
 		if err != nil {
 			return CandidateBatch{}, err
 		}
@@ -637,16 +649,24 @@ func parseCandidateBatch(response provider.Response, snapshot ReviewSnapshot, ev
 	return batch, nil
 }
 
-// newCandidateFinding admits one proposal. removedLines names the removed_lines
-// sources, whose base lines never cover the anchored head lines; a v2
-// candidate (recordSides) also records each such citation as a base binding.
-func newCandidateFinding(responseIdentity string, snapshot ReviewSnapshot, ordinal uint8, document candidateFindingDocument, allowed map[string]evidence.EvidenceItem, removedLines map[string]struct{}, recordSides bool) (CandidateFinding, error) {
+// newCandidateFinding admits one proposal. rules.baseLines names the
+// removed_lines sources: a v2 candidate (recordSides) records each such
+// citation as a base binding, and base lines cover only a base-side location.
+// A proposal located in a rules.baseAnchors source is a base-side finding,
+// inside that source's base lines; any other location must be head lines of
+// the review snapshot.
+func newCandidateFinding(responseIdentity string, snapshot ReviewSnapshot, ordinal uint8, document candidateFindingDocument, allowed map[string]evidence.EvidenceItem, rules candidateAnchorRules, recordSides bool) (CandidateFinding, error) {
 	sourceItem, exists := allowed[document.SourceRange.SourceID]
 	if !exists {
 		return CandidateFinding{}, ErrCandidateEvidenceNotAllowed
 	}
+	headLine, baseAnchor := rules.baseAnchors[document.SourceRange.SourceID]
+	side := LineSideHead
+	if baseAnchor {
+		side = LineSideBase
+	}
 	sourceRange, err := evidence.NewSourceRange(sourceItem.SourceRange().Path(), document.SourceRange.StartLine, document.SourceRange.EndLine)
-	if err != nil || !validCandidateSourceRange(sourceRange) || !rangeContains(sourceItem.SourceRange(), sourceRange) || !rangeSupportedBySnapshot(sourceRange, snapshot) {
+	if err != nil || !validCandidateSourceRange(sourceRange) || !rangeContains(sourceItem.SourceRange(), sourceRange) || !baseAnchor && !rangeSupportedBySnapshot(sourceRange, snapshot) || baseAnchor && !recordSides {
 		return CandidateFinding{}, ErrCandidateRangeNotSupported
 	}
 	bindings := make([]candidateEvidenceBinding, 0, len(document.EvidenceIDs))
@@ -657,12 +677,12 @@ func newCandidateFinding(responseIdentity string, snapshot ReviewSnapshot, ordin
 			return CandidateFinding{}, ErrCandidateEvidenceNotAllowed
 		}
 		binding := candidateEvidenceBinding{identity: item.ID(), digest: item.Digest(), sourceRange: item.SourceRange()}
-		_, baseLines := removedLines[identity]
+		_, baseLines := rules.baseLines[identity]
 		if baseLines && recordSides {
 			binding.side = LineSideBase
 		}
 		bindings = append(bindings, binding)
-		if !baseLines {
+		if baseLines == baseAnchor {
 			citedRange = citedRange || rangeContains(item.SourceRange(), sourceRange)
 		}
 	}
@@ -674,7 +694,7 @@ func newCandidateFinding(responseIdentity string, snapshot ReviewSnapshot, ordin
 		responseIdentity: responseIdentity, snapshotIdentity: snapshot.Identity(), ordinal: ordinal,
 		title: document.Title, claim: document.Claim, severityHint: Severity(document.SeverityHint),
 		sourceReferenceID: document.SourceRange.SourceID, sourceRange: sourceRange, evidenceBindings: bindings,
-		category: CandidateCategory(document.Category), fix: document.Fix,
+		category: CandidateCategory(document.Category), fix: document.Fix, side: side, headLine: headLine,
 	}
 	finding.identity = deriveCandidateFindingIdentity(finding)
 	return finding, nil
@@ -906,9 +926,10 @@ func deriveCandidateFindingIdentity(finding CandidateFinding) string {
 			findingRecord
 			Category string `json:"category"`
 			Fix      string `json:"fix"`
-			// Side is present only for a base-line location.
-			Side string `json:"side,omitempty"`
-		}{preimage, string(finding.category), finding.fix, recordedLineSide(finding.side)})
+			// Side and HeadLine are present only for a base-line location.
+			Side     string `json:"side,omitempty"`
+			HeadLine int    `json:"head_line,omitempty"`
+		}{preimage, string(finding.category), finding.fix, recordedLineSide(finding.side), finding.headLine})
 	}
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])

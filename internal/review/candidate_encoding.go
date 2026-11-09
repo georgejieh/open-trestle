@@ -24,8 +24,7 @@ type encodedCandidateBatchWire struct {
 	SnapshotIdentity string                        `json:"snapshot_identity"`
 	Findings         []encodedCandidateFindingWire `json:"findings"`
 	// RepositoryContextOmitted counts v2 proposals dropped for naming a
-	// repository_context source or, from generation context version 8, a
-	// removed_lines source; omitted when zero.
+	// repository_context source; omitted when zero.
 	RepositoryContextOmitted uint8 `json:"repository_context_anchor_omitted,omitempty"`
 }
 
@@ -42,8 +41,10 @@ type encodedCandidateFindingWire struct {
 	StartLine         int    `json:"start_line"`
 	EndLine           int    `json:"end_line"`
 	// Side is "base" for a location on removed base lines; it is absent for
-	// head lines and never present in a version 1 batch.
+	// head lines and never present in a version 1 batch. HeadLine is the head
+	// line of a base-side location's deletion point.
 	Side     string                         `json:"side,omitempty"`
+	HeadLine int                            `json:"head_line,omitempty"`
 	Evidence []encodedCandidateEvidenceWire `json:"evidence"`
 }
 
@@ -174,7 +175,7 @@ func parseEncodedCandidateFinding(
 		snapshotIdentity: snapshotIdentity, ordinal: wire.Ordinal,
 		title: wire.Title, claim: wire.Claim, severityHint: Severity(wire.SeverityHint),
 		sourceReferenceID: wire.SourceReferenceID, sourceRange: sourceRange,
-		evidenceBindings: bindings, category: CandidateCategory(wire.Category), fix: wire.Fix, side: side,
+		evidenceBindings: bindings, category: CandidateCategory(wire.Category), fix: wire.Fix, side: side, headLine: wire.HeadLine,
 	}
 	if err := finding.Validate(); err != nil {
 		return CandidateFinding{}, err
@@ -191,7 +192,7 @@ func encodedCandidateBatchWireValue(batch CandidateBatch) encodedCandidateBatchW
 			SeverityHint:      string(finding.SeverityHint()),
 			SourceReferenceID: finding.SourceReferenceID(), Path: finding.SourceRange().Path(),
 			StartLine: finding.SourceRange().StartLine(), EndLine: finding.SourceRange().EndLine(),
-			Side: recordedLineSide(finding.side), Evidence: encodedEvidenceBindings(finding.evidenceBindings),
+			Side: recordedLineSide(finding.side), HeadLine: finding.headLine, Evidence: encodedEvidenceBindings(finding.evidenceBindings),
 		}
 	}
 	return encodedCandidateBatchWire{

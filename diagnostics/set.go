@@ -123,6 +123,9 @@ type Finding struct {
 	startLine, endLine                                          uint32
 	evidenceIDs                                                 []string
 	side                                                        LineSide
+	// headLine is, for a base-side finding at a deletion point, the head line
+	// beside which its base lines were removed; 0 otherwise.
+	headLine uint32
 }
 
 // NewFinding creates a verified diagnostic on head lines.
@@ -134,11 +137,23 @@ func NewFinding(sourceIdentity, fingerprint, title, message string, severity Sev
 // side. A base-side diagnostic's path and lines name removed base lines; only
 // set version 8, and a final set that carries it, can record one.
 func NewFindingOnSide(sourceIdentity, fingerprint, title, message string, severity Severity, sourcePath string, side LineSide, startLine, endLine uint32, evidenceIDs []string) (Finding, error) {
+	return newFinding(sourceIdentity, fingerprint, title, message, severity, sourcePath, side, startLine, endLine, 0, evidenceIDs)
+}
+
+// NewBaseSideFinding creates a verified diagnostic on removed base lines.
+// headLine is the head line beside which they were removed, or 0 when no head
+// line remains beside them, such as for a removed file.
+func NewBaseSideFinding(sourceIdentity, fingerprint, title, message string, severity Severity, sourcePath string, startLine, endLine, headLine uint32, evidenceIDs []string) (Finding, error) {
+	return newFinding(sourceIdentity, fingerprint, title, message, severity, sourcePath, LineSideBase, startLine, endLine, headLine, evidenceIDs)
+}
+
+func newFinding(sourceIdentity, fingerprint, title, message string, severity Severity, sourcePath string, side LineSide, startLine, endLine, headLine uint32, evidenceIDs []string) (Finding, error) {
 	evidence := append([]string(nil), evidenceIDs...)
 	sort.Strings(evidence)
 	validIdentity := validDigest(sourceIdentity) && validDigest(fingerprint)
 	validContent := validText(title, 256) && validText(message, maxDiagnosticTextBytes)
-	validLocation := severity.String() != "" && side.String() != "" && validPath(sourcePath) && startLine > 0 && endLine >= startLine && endLine <= maxDiagnosticLine
+	validLocation := severity.String() != "" && side.String() != "" && validPath(sourcePath) && startLine > 0 && endLine >= startLine && endLine <= maxDiagnosticLine &&
+		headLine <= maxDiagnosticLine && (headLine == 0 || side == LineSideBase)
 	validEvidence := len(evidence) > 0 && len(evidence) <= 16
 	if !validIdentity || !validContent || !validLocation || !validEvidence {
 		return Finding{}, ErrInvalidFinding
@@ -151,7 +166,7 @@ func NewFindingOnSide(sourceIdentity, fingerprint, title, message string, severi
 	finding := Finding{
 		sourceIdentity: sourceIdentity, fingerprint: fingerprint,
 		title: strings.Clone(title), message: strings.Clone(message), severity: severity,
-		path: strings.Clone(sourcePath), startLine: startLine, endLine: endLine, evidenceIDs: evidence, side: side,
+		path: strings.Clone(sourcePath), startLine: startLine, endLine: endLine, evidenceIDs: evidence, side: side, headLine: headLine,
 	}
 	finding.identity = hashValue(struct {
 		SourceIdentity string   `json:"source_identity"`
@@ -163,10 +178,11 @@ func NewFindingOnSide(sourceIdentity, fingerprint, title, message string, severi
 		StartLine      uint32   `json:"start_line"`
 		EndLine        uint32   `json:"end_line"`
 		Evidence       []string `json:"evidence"`
-		// Side is present only for base lines, so head diagnostics keep their
-		// historical identities.
-		Side string `json:"side,omitempty"`
-	}{sourceIdentity, fingerprint, title, message, severity.String(), sourcePath, startLine, endLine, evidence, recordedSide(side)})
+		// Side and HeadLine are present only for base lines, so head
+		// diagnostics keep their historical identities.
+		Side     string `json:"side,omitempty"`
+		HeadLine uint32 `json:"head_line,omitempty"`
+	}{sourceIdentity, fingerprint, title, message, severity.String(), sourcePath, startLine, endLine, evidence, recordedSide(side), headLine})
 	return finding, nil
 }
 func (f Finding) Identity() string       { return f.identity }
@@ -181,10 +197,14 @@ func (f Finding) EndLine() uint32        { return f.endLine }
 
 // Side reports whether Path, StartLine and EndLine name head lines or removed
 // base lines.
-func (f Finding) Side() LineSide        { return f.side }
+func (f Finding) Side() LineSide { return f.side }
+
+// HeadLine returns, for a base-side finding at a deletion point, the head line
+// beside which its base lines were removed; 0 otherwise.
+func (f Finding) HeadLine() uint32      { return f.headLine }
 func (f Finding) EvidenceIDs() []string { return append([]string(nil), f.evidenceIDs...) }
 func (f Finding) Validate() error {
-	rebuilt, err := NewFindingOnSide(f.sourceIdentity, f.fingerprint, f.title, f.message, f.severity, f.path, f.side, f.startLine, f.endLine, f.evidenceIDs)
+	rebuilt, err := newFinding(f.sourceIdentity, f.fingerprint, f.title, f.message, f.severity, f.path, f.side, f.startLine, f.endLine, f.headLine, f.evidenceIDs)
 	if err != nil {
 		return err
 	}
@@ -483,8 +503,10 @@ type findingRecord struct {
 	Path           string `json:"path"`
 	StartLine      uint32 `json:"start_line"`
 	EndLine        uint32 `json:"end_line"`
-	// Side is "base" only in version 8, for a finding on removed base lines.
+	// Side is "base" only in version 8, for a finding on removed base lines,
+	// and HeadLine is then the head line of its deletion point, if any.
 	Side        string   `json:"side,omitempty"`
+	HeadLine    uint32   `json:"head_line,omitempty"`
 	EvidenceIDs []string `json:"evidence_ids"`
 }
 type setRecord struct {
@@ -865,7 +887,7 @@ func parseSetContents(tenantID, repositoryID, reviewRunID string, records []find
 		if sideErr != nil {
 			return audit.ReviewScope{}, nil, sideErr
 		}
-		finding, createErr := NewFindingOnSide(value.SourceIdentity, value.Fingerprint, value.Title, value.Message, severity, value.Path, side, value.StartLine, value.EndLine, value.EvidenceIDs)
+		finding, createErr := newFinding(value.SourceIdentity, value.Fingerprint, value.Title, value.Message, severity, value.Path, side, value.StartLine, value.EndLine, value.HeadLine, value.EvidenceIDs)
 		if createErr != nil {
 			return audit.ReviewScope{}, nil, createErr
 		}
@@ -887,7 +909,7 @@ func setToFindingRecords(set Set) []findingRecord {
 		findings[index] = findingRecord{
 			Identity: value.identity, SourceIdentity: value.sourceIdentity, Fingerprint: value.fingerprint,
 			Title: value.title, Message: value.message, Severity: value.severity.String(), Path: value.path,
-			StartLine: value.startLine, EndLine: value.endLine, Side: recordedSide(value.side), EvidenceIDs: value.EvidenceIDs(),
+			StartLine: value.startLine, EndLine: value.endLine, Side: recordedSide(value.side), HeadLine: value.headLine, EvidenceIDs: value.EvidenceIDs(),
 		}
 	}
 	return findings

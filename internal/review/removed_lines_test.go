@@ -154,7 +154,7 @@ func TestRemovedLinesReachTheGenerationRequestAsBaseEvidence(t *testing.T) {
 	}
 }
 
-func TestCandidateAnchoredOnRemovedLinesIsDropped(t *testing.T) {
+func TestCandidateAnchoredOnRemovedLinesIsABaseSideFinding(t *testing.T) {
 	packet, snapshot, payload, window, removed := removedGuardPacket(t, removedGuardText)
 	candidate := func(source string, start, end int, cited string) string {
 		return `{"title":"Missing zero guard","claim":"Div no longer checks b before dividing.","category":"correctness","severity_hint":"high","source_range":{"source_id":"` + source + `","start_line":` + itoa(start) + `,"end_line":` + itoa(end) + `},"evidence_ids":` + cited + `}`
@@ -166,17 +166,29 @@ func TestCandidateAnchoredOnRemovedLinesIsDropped(t *testing.T) {
 	anchoredOnRemoved := candidate(removedID, 4, 5, `["`+removedID+`"]`)
 	onHead := candidate(windowID, 3, 4, `["`+removedID+`","`+windowID+`"]`)
 	batch, err := parse(anchoredOnRemoved, onHead)
-	if err != nil || len(batch.Findings()) != 1 || batch.RepositoryContextAnchorOmittedCount() != 1 || batch.Findings()[0].SourceReferenceID() != windowID {
-		t.Fatalf("removed_lines anchor not dropped: findings=%d omitted=%d err=%v", len(batch.Findings()), batch.RepositoryContextAnchorOmittedCount(), err)
+	if err != nil || len(batch.Findings()) != 2 || batch.RepositoryContextAnchorOmittedCount() != 0 {
+		t.Fatalf("removed_lines anchor not admitted: findings=%d omitted=%d err=%v", len(batch.Findings()), batch.RepositoryContextAnchorOmittedCount(), err)
 	}
-	if !slices.Contains(batch.Findings()[0].EvidenceIDs(), removedID) {
-		t.Fatal("removed_lines source cannot be cited as supporting evidence")
+	base, head := batch.Findings()[0], batch.Findings()[1]
+	if base.SourceReferenceID() != removedID || base.Side() != LineSideBase || base.SourceRange().StartLine() != 4 || base.SourceRange().EndLine() != 5 {
+		t.Fatalf("base-side finding: source=%s side=%s", base.SourceReferenceID(), base.Side())
 	}
-	if batch, err := parse(anchoredOnRemoved); err != nil || len(batch.Findings()) != 0 || batch.RepositoryContextAnchorOmittedCount() != 1 {
-		t.Fatalf("lone removed_lines anchor: findings=%d err=%v", len(batch.Findings()), err)
+	if head.SourceReferenceID() != windowID || head.Side() != LineSideHead || !slices.Contains(head.EvidenceIDs(), removedID) {
+		t.Fatal("head finding lost its side or its removed_lines citation")
 	}
-	// Base line numbers never show that cited evidence covers head lines, even
-	// when the base range numerically contains the anchored head range.
+	if !CandidateBatchMatchesContext(payload, batch) {
+		t.Fatal("admitted base-side finding does not read back against its context")
+	}
+	// A base-side location stays inside the removed lines: base line 7 is not
+	// a removed line, even though head line 3 or 4 exists.
+	if _, err := parse(candidate(removedID, 6, 7, `["`+removedID+`"]`)); !errors.Is(err, ErrCandidateRangeNotSupported) {
+		t.Fatalf("base-side location outside the removed lines: %v", err)
+	}
+	// Head evidence never covers base lines, and base evidence never covers
+	// head lines, even when the numbers contain each other.
+	if _, err := parse(candidate(removedID, 4, 5, `["`+windowID+`"]`)); !errors.Is(err, ErrCandidateEvidenceRangeMismatch) {
+		t.Fatalf("head evidence satisfied a base-side citation: %v", err)
+	}
 	if _, err := parse(candidate(windowID, 4, 5, `["`+removedID+`"]`)); !errors.Is(err, ErrCandidateEvidenceRangeMismatch) {
 		t.Fatalf("removed_lines evidence satisfied the head citation: %v", err)
 	}
