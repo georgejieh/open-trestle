@@ -30,6 +30,15 @@ import (
 const bridgeNotes = "deployment notes\r\nConsume is enabled for zero-valued requests.\r\nnot selected by symbol analysis\n"
 const bridgeLine = "Consume is enabled for zero-valued requests.\r\n"
 
+// The removed-lines modes review a change that only removes the zero guard
+// of a.go: its deletion point has head context and removed base lines.
+const (
+	bridgeDeletionBase = "package p\nfunc Changed(x int) int {\n\tif x == 0 {\n\t\treturn 0\n\t}\n\treturn 10 / x\n}\n"
+	bridgeDeletionHead = "package p\nfunc Changed(x int) int {\n\treturn 10 / x\n}\n"
+)
+
+func bridgeDeletionMode(mode string) bool { return strings.HasPrefix(mode, "removed-lines") }
+
 var errBridgeInjected = errors.New("injected operation failure")
 
 type bridgeClock struct{}
@@ -94,6 +103,8 @@ func (tr *bridgeTrace) eventsCopy() []string {
 type bridgeObservedHandler struct {
 	controlplane.TaskHandler
 	trace *bridgeTrace
+	// replace, when set for a task key, runs instead of the actual handler.
+	replace map[string]func(context.Context, controlplane.TaskExecutionRequest) controlplane.TaskCompletion
 }
 
 func (h *bridgeObservedHandler) Execute(ctx context.Context, request controlplane.TaskExecutionRequest) controlplane.TaskCompletion {
@@ -106,7 +117,12 @@ func (h *bridgeObservedHandler) Execute(ctx context.Context, request controlplan
 	h.trace.contexts[key], h.trace.requests[key] = ctx, request
 	h.trace.eventLocked("execute:" + key)
 	h.trace.mu.Unlock()
-	completion := h.TaskHandler.Execute(ctx, request)
+	var completion controlplane.TaskCompletion
+	if replacement := h.replace[key]; replacement != nil {
+		completion = replacement(ctx, request)
+	} else {
+		completion = h.TaskHandler.Execute(ctx, request)
+	}
 	h.trace.mu.Lock()
 	h.trace.completions[key] = completion
 	h.trace.eventLocked("returned:" + key)
@@ -399,28 +415,44 @@ func (d *bridgeDispatcher) document(p bridgePacket) (map[string]any, error) {
 	fail := func() (map[string]any, error) {
 		return nil, fmt.Errorf("actual investigation request lost source or turn lineage")
 	}
-	var changed requiredRequestSource
+	// In the removed-lines modes a.go also has a removed_lines source: the
+	// zero guard the change removed, at its base lines.
+	deletion := bridgeDeletionMode(d.models.mode)
+	var changed, removed, notes requiredRequestSource
 	ids := []string{}
 	for _, s := range p.Sources {
-		if s.Path == "a.go" {
+		if s.Path == "a.go" && s.Stage == "removed_lines" {
+			removed = s
+		} else if s.Path == "a.go" {
 			changed = s
+		}
+		if s.Path == "a.go" {
 			ids = append(ids, s.ID)
 		}
 		if s.Path == "notes.txt" {
 			if s.Content != bridgeLine || s.StartLine != 2 || s.EndLine != 2 {
 				return fail()
 			}
+			notes = s
 			ids = append(ids, s.ID)
 		}
 	}
-	if changed.ID == "" || !strings.Contains(changed.Content, "return 10 / x") {
+	extra := 0
+	if deletion {
+		extra = 1
+	}
+	if changed.ID == "" || !strings.Contains(changed.Content, "return 10 / x") || deletion != (removed.ID != "") || deletion && removed.Content != "\tif x == 0 {\n\t\treturn 0\n\t}\n" {
 		return fail()
 	}
 	if p.Task == "candidate_verification" {
-		if d.adapter != "adapter-b" || p.Version != 7 || p.GenerationContext == "" || p.CandidateBatch == "" || len(ids) != 2 || len(p.Candidates) != 1 {
+		if d.adapter != "adapter-b" || p.Version != 7 || p.GenerationContext == "" || p.CandidateBatch == "" || len(ids) != 2+extra || len(p.Candidates) != 1 {
 			return fail()
 		}
-		return map[string]any{"schema_version": 1, "verdicts": []any{map[string]any{"candidate_id": p.Candidates[0].ID, "outcome": "verified", "severity": "high", "rationale": "The division guard is absent and the cited deployment text enables zero requests.", "evidence_ids": ids}}}, nil
+		cited := ids
+		if deletion {
+			cited = []string{removed.ID, notes.ID}
+		}
+		return map[string]any{"schema_version": 1, "verdicts": []any{map[string]any{"candidate_id": p.Candidates[0].ID, "outcome": "verified", "severity": "high", "rationale": "The division guard is absent and the cited deployment text enables zero requests.", "evidence_ids": cited}}}, nil
 	}
 	s := p.Investigation
 	if d.adapter != "adapter-a" || p.Task != "candidate_generation" || p.Version != 6 || s.MemoryState != "empty_not_ingested" || s.Session == "" || s.Policy == "" {
@@ -451,7 +483,7 @@ func (d *bridgeDispatcher) document(p bridgePacket) (map[string]any, error) {
 	call := map[string]any{"call_id": "list-1", "tool": "snapshot.list", "snapshot_ref": s.SnapshotRef}
 	switch s.Turn {
 	case 1:
-		if len(ids) != 1 || len(s.Results) != 0 || s.PreviousRequest != "" || s.PreviousOutcome != "" {
+		if len(ids) != 1+extra || len(s.Results) != 0 || s.PreviousRequest != "" || s.PreviousOutcome != "" {
 			return fail()
 		}
 	case 2:
@@ -465,8 +497,12 @@ func (d *bridgeDispatcher) document(p bridgePacket) (map[string]any, error) {
 		}
 		call = map[string]any{"call_id": "search-1", "tool": "snapshot.search", "snapshot_ref": s.SnapshotRef, "file_refs": []string{ref}, "literal": "zero-valued"}
 	case 4:
-		if !searched || len(ids) != 2 {
+		if !searched || len(ids) != 2+extra {
 			return fail()
+		}
+		if deletion {
+			// The finding is on the removed guard: a base-side finding.
+			return map[string]any{"schema_version": 1, "candidates": []any{map[string]any{"title": "Removed zero guard", "claim": "Deployment enables zero requests and the change removed the guard before the division.", "severity_hint": "high", "source_range": map[string]any{"source_id": removed.ID, "start_line": removed.StartLine, "end_line": removed.EndLine}, "evidence_ids": []string{removed.ID, notes.ID}}}}, nil
 		}
 		return map[string]any{"schema_version": 1, "candidates": []any{map[string]any{"title": "Enabled zero requests panic", "claim": "Deployment enables zero requests while Changed divides without a guard.", "severity_hint": "high", "source_range": map[string]any{"source_id": changed.ID, "start_line": 2, "end_line": 2}, "evidence_ids": ids}}}, nil
 	default:
@@ -534,6 +570,7 @@ type bridgeFixture struct {
 	control       *bridgeControl
 	runner        *worker.Runner
 	models        *bridgeModels
+	observed      []*bridgeObservedHandler
 }
 
 func newBridgeFixture(t *testing.T, mode string) *bridgeFixture {
@@ -588,7 +625,11 @@ func newBridgeFixtureWithScanner(t *testing.T, mode string, scanner review.Publi
 		requiredCheck(t, err)
 		return scm.SourceAdapterResult{Outcome: evidence.AcquisitionOutcomeAcquired, Reason: evidence.AcquisitionReasonNone, Manifest: manifest, Contents: contents}
 	}
-	source := &bridgeSource{identity: identity, trace: f.trace, gate: f.gate, mode: mode, keys: map[string]string{base.Identity(): "source-base", head.Identity(): "source-head"}, results: map[string]scm.SourceAdapterResult{base.Identity(): acquired("package p\nfunc Changed(x int) int { if x == 0 { return 0 }; return 10 / x }\n"), head.Identity(): acquired("package p\nfunc Changed(x int) int { return 10 / x }\n")}}
+	baseBody, headBody := "package p\nfunc Changed(x int) int { if x == 0 { return 0 }; return 10 / x }\n", "package p\nfunc Changed(x int) int { return 10 / x }\n"
+	if bridgeDeletionMode(mode) {
+		baseBody, headBody = bridgeDeletionBase, bridgeDeletionHead
+	}
+	source := &bridgeSource{identity: identity, trace: f.trace, gate: f.gate, mode: mode, keys: map[string]string{base.Identity(): "source-base", head.Identity(): "source-head"}, results: map[string]scm.SourceAdapterResult{base.Identity(): acquired(baseBody), head.Identity(): acquired(headBody)}}
 	f.models = &bridgeModels{t: t, gate: f.gate, mode: mode}
 	dispatchers, err := gateway.NewRouteDispatcherCatalog([]gateway.RouteDispatcher{&bridgeDispatcher{f.models, "adapter-a"}, &bridgeDispatcher{f.models, "adapter-b"}})
 	requiredCheck(t, err)
@@ -634,7 +675,9 @@ func newBridgeFixtureWithScanner(t *testing.T, mode string, scanner review.Publi
 		if !ok {
 			t.Fatal("actual catalog handler unavailable")
 		}
-		handlers = append(handlers, &bridgeObservedHandler{handler, f.trace})
+		observedHandler := &bridgeObservedHandler{TaskHandler: handler, trace: f.trace, replace: map[string]func(context.Context, controlplane.TaskExecutionRequest) controlplane.TaskCompletion{}}
+		f.observed = append(f.observed, observedHandler)
+		handlers = append(handlers, observedHandler)
 	}
 	observed, err := controlplane.NewTaskHandlerCatalog(handlers)
 	requiredCheck(t, err)
