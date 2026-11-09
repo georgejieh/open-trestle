@@ -59,12 +59,12 @@ func TestStyleAdviceRecommendsAStandardOnlyForUndeclaredLanguages(t *testing.T) 
 	for _, test := range []struct {
 		name    string
 		options rmModelFixtureOptions
-		want    []styleRecommendationWire
+		want    []StyleRecommendation
 	}{
-		{"python without declared style", styleTrees(python("x = 1\n"), python("x = 2\n")), []styleRecommendationWire{{"python", 1, "PEP 8, enforced with Ruff or Black"}}},
-		{"editorconfig alone", styleTrees(with(python("x = 1\n"), ".editorconfig", "root = true\n"), with(python("x = 2\n"), ".editorconfig", "root = true\n")), []styleRecommendationWire{{"python", 1, "PEP 8, enforced with Ruff or Black"}}},
-		{"ruff.toml only in head", styleTrees(python("x = 1\n"), with(python("x = 2\n"), "ruff.toml", ruff)), []styleRecommendationWire{{"python", 1, "PEP 8, enforced with Ruff or Black"}}},
-		{"go without go.mod", styleTrees(map[string][]byte{"go.mod": nil}, map[string][]byte{"go.mod": nil}), []styleRecommendationWire{{"go", 1, "gofmt and Effective Go"}}},
+		{"python without declared style", styleTrees(python("x = 1\n"), python("x = 2\n")), []StyleRecommendation{{"python", 1, "PEP 8, enforced with Ruff or Black"}}},
+		{"editorconfig alone", styleTrees(with(python("x = 1\n"), ".editorconfig", "root = true\n"), with(python("x = 2\n"), ".editorconfig", "root = true\n")), []StyleRecommendation{{"python", 1, "PEP 8, enforced with Ruff or Black"}}},
+		{"ruff.toml only in head", styleTrees(python("x = 1\n"), with(python("x = 2\n"), "ruff.toml", ruff)), []StyleRecommendation{{"python", 1, "PEP 8, enforced with Ruff or Black"}}},
+		{"go without go.mod", styleTrees(map[string][]byte{"go.mod": nil}, map[string][]byte{"go.mod": nil}), []StyleRecommendation{{"go", 1, "gofmt and Effective Go"}}},
 		{"java change", styleTrees(map[string][]byte{"Main.java": []byte("class Main {}\n")}, map[string][]byte{"Main.java": []byte("final class Main {}\n")}), nil},
 		{"removed python file", styleTrees(python("x = 1\n"), nil), nil},
 		{"package-lock.json change", styleTrees(map[string][]byte{"package-lock.json": []byte("{\"lockfileVersion\": 3}\n")}, map[string][]byte{"package-lock.json": []byte("{\"lockfileVersion\": 3, \"name\": \"p\"}\n")}), nil},

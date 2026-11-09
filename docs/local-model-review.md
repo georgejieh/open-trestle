@@ -668,6 +668,13 @@ not the single-review result:
   Only members whose run succeeded contribute. The rule is a heuristic
   (`deduplication_is_heuristic`).
 - `summary`, `bounds`, `limitations` and `comprehensive_clearance: false`.
+- `style_recommendations` or `style_configuration_unread`: the general review's
+  [style recommendations](#style-recommendations), once for the set and never
+  per member, because every member reviews the same change against the same
+  base tree. Both fields are absent when the general review has no advice, so
+  such a set keeps its earlier bytes. Text output adds the same `style:` lines
+  before `limitations:`. The advice never changes the set's status, CI
+  disposition or exit code, and set SARIF does not carry it.
 
 Set status and CI disposition:
 
@@ -995,7 +1002,8 @@ A recommendation is advice only. It is not a finding, never blocks, and never
 changes `status`, `ci_disposition`, the exit code under any
 [exit-code policy](#exit-code-policy), source coverage or
 `comprehensive_clearance`. SARIF output and `--investigation-policy` results do
-not carry it, and neither does the `--specialists` review-set output. It appears
+not carry it. A `--specialists` review set reports the general review's advice
+once (see [Specialist review set](#specialist-review-set-opt-in)). It appears
 only when the run recorded its change model. The model-result evaluation import
 and the retained-memory feedback review accept version 5 and ignore the advice.
 

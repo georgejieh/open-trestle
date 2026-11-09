@@ -96,9 +96,9 @@ type resultWire struct {
 	AgentConfigurationSources int `json:"agent_configuration_sources,omitempty"`
 	InstructionLikeSources    int `json:"instruction_like_sources,omitempty"`
 	// StyleRecommendations and StyleConfigurationUnread are the style advice of
-	// schema version 5; see styleRecommendationWire.
-	StyleRecommendations     []styleRecommendationWire `json:"style_recommendations,omitempty"`
-	StyleConfigurationUnread int                       `json:"style_configuration_unread,omitempty"`
+	// schema version 5; see StyleRecommendation.
+	StyleRecommendations     []StyleRecommendation `json:"style_recommendations,omitempty"`
+	StyleConfigurationUnread int                   `json:"style_configuration_unread,omitempty"`
 }
 
 // Limitations naming advisory-context accounting that does not affect status.
@@ -156,7 +156,7 @@ func withFindingGuidance(result Result, findings review.VerifiedFindingSet) (Res
 	return result, nil
 }
 
-// styleRecommendationWire suggests a standard style for one changed language
+// StyleRecommendation suggests a standard style for one changed language
 // that has a style detector but no style declared by the base tree. The text is
 // Open Trestle's fixed table (agentprofile.RecommendedStyle), not model output.
 // Style advice never blocks: it is not a finding and never changes status, CI
@@ -166,7 +166,7 @@ func withFindingGuidance(result Result, findings review.VerifiedFindingSet) (Res
 // is made, because the declared style is unknown. Style advice appears only in
 // schema version 5 results, which keep a specialist block and finding
 // guidance.
-type styleRecommendationWire struct {
+type StyleRecommendation struct {
 	Language       string `json:"language"`
 	ChangedFiles   int    `json:"changed_files"`
 	Recommendation string `json:"recommendation"`
@@ -185,29 +185,41 @@ func withStyleAdvice(result Result, recommendations []agentprofile.StyleRecommen
 	result.wire.StyleRecommendations = nil
 	for _, value := range recommendations {
 		_, standard, _ := agentprofile.RecommendedStyle(value.Language)
-		result.wire.StyleRecommendations = append(result.wire.StyleRecommendations, styleRecommendationWire{Language: string(value.Language), ChangedFiles: value.ChangedFiles, Recommendation: standard})
+		result.wire.StyleRecommendations = append(result.wire.StyleRecommendations, StyleRecommendation{Language: string(value.Language), ChangedFiles: value.ChangedFiles, Recommendation: standard})
 	}
 	return result
 }
 
-// renderStyleAdvice writes one text line per recommendation, or the reason none
-// was made.
-func renderStyleAdvice(buffer *bytes.Buffer, w resultWire) {
-	for _, value := range w.StyleRecommendations {
+// StyleAdvice returns the style recommendations the result carries and the
+// count of unread base style configuration files. Both are empty unless the
+// result is schema version 5.
+func (r Result) StyleAdvice() ([]StyleRecommendation, int) {
+	if !r.valid {
+		return nil, 0
+	}
+	return append([]StyleRecommendation(nil), r.wire.StyleRecommendations...), r.wire.StyleConfigurationUnread
+}
+
+// StyleAdviceLines returns the text lines, each newline-terminated, that
+// describe style advice: one per recommendation, or the reason none was made.
+func StyleAdviceLines(recommendations []StyleRecommendation, unread int) []string {
+	var lines []string
+	for _, value := range recommendations {
 		name, _, _ := agentprofile.RecommendedStyle(agentprofile.Language(value.Language))
 		files := "files"
 		if value.ChangedFiles == 1 {
 			files = "file"
 		}
-		fmt.Fprintf(buffer, "style: no declared %s style for %d changed %s; consider %s, and commit its configuration\n", name, value.ChangedFiles, files, value.Recommendation)
+		lines = append(lines, fmt.Sprintf("style: no declared %s style for %d changed %s; consider %s, and commit its configuration\n", name, value.ChangedFiles, files, value.Recommendation))
 	}
-	if w.StyleConfigurationUnread > 0 {
+	if unread > 0 {
 		subject := "file was"
-		if w.StyleConfigurationUnread != 1 {
+		if unread != 1 {
 			subject = "files were"
 		}
-		fmt.Fprintf(buffer, "style: no recommendation; %d base style configuration %s not read (over 64 KiB, not valid UTF-8, or beyond 256 files)\n", w.StyleConfigurationUnread, subject)
+		lines = append(lines, fmt.Sprintf("style: no recommendation; %d base style configuration %s not read (over 64 KiB, not valid UTF-8, or beyond 256 files)\n", unread, subject))
 	}
+	return lines
 }
 
 // specialistResultWire identifies the packaged profile bound into generation.
@@ -808,7 +820,9 @@ func RenderResult(writer io.Writer, r Result) error {
 		// Reviewed AI material is untrusted data and is reviewed as code.
 		fmt.Fprintf(&buffer, "ai material in review context: agent_configuration=%d instruction_like=%d (reviewed as code, never followed)\n", r.wire.AgentConfigurationSources, r.wire.InstructionLikeSources)
 	}
-	renderStyleAdvice(&buffer, r.wire)
+	for _, line := range StyleAdviceLines(r.wire.StyleRecommendations, r.wire.StyleConfigurationUnread) {
+		buffer.WriteString(line)
+	}
 	fmt.Fprintf(&buffer, "limitations: %s\ncomprehensive clearance: false\n", strings.Join(r.wire.Limitations, ", "))
 	if buffer.Len() > MaxResultTextBytes {
 		return ErrInvalidResult
