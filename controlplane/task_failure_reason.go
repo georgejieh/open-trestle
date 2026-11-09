@@ -7,7 +7,7 @@ var ErrInvalidTaskFailureReason = errors.New("invalid task failure reason")
 
 // TaskFailureReason is a closed, content-free refinement of one failed task
 // attempt. It names why a task refused and never carries forge, provider, or
-// repository text. Only source acquisition records a reason.
+// repository text. Source acquisition and context assembly record reasons.
 type TaskFailureReason uint8
 
 const (
