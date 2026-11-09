@@ -43,7 +43,7 @@ The extension strips initialization capabilities down to pull diagnostics and ap
 The extension:
 
 - requests standard pull diagnostics for eligible visible file documents under the exact initialized workspace;
-- displays only independently verified diagnostic sets returned by the daemon;
+- displays only independently verified diagnostic sets returned by the daemon, so it does not show run failures, failure reasons such as a context route refusal, or their hints (use `trestle runs status`, the TUI, or the web console for those);
 - has no document synchronization, code action, edit, terminal, repository command, model, worker, policy, or publication capability;
 - refuses to start without workspace trust, a workspace folder, safe machine-scoped configuration, and a SecretStorage token; and
 - invalidates diagnostics before changing credentials and blocks replacement until owned-child closure is observed.
