@@ -103,8 +103,9 @@ func localModelExecute(t *testing.T, f *localModelFixture, args []string, wantCo
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	// Version 4 adds finding_guidance when a verified finding carries a category.
-	if result.Contract != "open-trestle/local-git-model-review-result" || result.Version != 1 && result.Version != 4 || result.ComprehensiveClearance {
+	// Version 4 adds finding_guidance when a verified finding carries a category,
+	// and version 5 adds style advice when a changed language declares no style.
+	if result.Contract != "open-trestle/local-git-model-review-result" || result.Version != 1 && result.Version != 4 && result.Version != 5 || result.ComprehensiveClearance {
 		t.Fatal("missing versioned local model receipt or false comprehensive-clearance claim")
 	}
 	for _, forbidden := range []string{f.objects, f.inventoryPath, f.policyPath, localModelSecret, localModelKey, "return 10 / x", "OPEN_TRESTLE_PROVIDER_LOCAL_TEST", "Bearer "} {

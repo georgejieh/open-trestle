@@ -14,6 +14,7 @@ import (
 	analysishandler "github.com/georgejieh/open-trestle/handlers/analysis"
 	changehandler "github.com/georgejieh/open-trestle/handlers/change"
 	sourcehandler "github.com/georgejieh/open-trestle/handlers/source"
+	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/runtimecatalog"
 )
 
@@ -60,31 +61,16 @@ func (s *Session) ChangeFeatures(ctx context.Context, prepared runtimecatalog.Pr
 	if !hasChange || !hasAnalysis {
 		return agentprofile.ChangeFeatures{}, ErrChangeFeaturesUnavailable
 	}
-	changeArtifact, err := s.store.Get(ctx, scope, changeID, now)
+	recorded, err := s.readRecordedChange(ctx, scope, changeID, now)
 	if err != nil {
 		return agentprofile.ChangeFeatures{}, ErrChangeFeaturesUnavailable
 	}
-	baseID, headID, err := changehandler.ResultArtifactReferences(changeArtifact)
-	if err != nil {
-		return agentprofile.ChangeFeatures{}, ErrChangeFeaturesUnavailable
-	}
-	baseArtifact, err := s.store.Get(ctx, scope, baseID, now)
-	if err != nil {
-		return agentprofile.ChangeFeatures{}, ErrChangeFeaturesUnavailable
-	}
-	headArtifact, err := s.store.Get(ctx, scope, headID, now)
-	if err != nil {
-		return agentprofile.ChangeFeatures{}, ErrChangeFeaturesUnavailable
-	}
-	change, err := changehandler.ParseResultArtifact(changeArtifact, baseArtifact, headArtifact)
-	if err != nil {
-		return agentprofile.ChangeFeatures{}, ErrChangeFeaturesUnavailable
-	}
+	change, baseArtifact := recorded.change, recorded.base
 	analysisArtifact, err := s.store.Get(ctx, scope, analysisID, now)
 	if err != nil {
 		return agentprofile.ChangeFeatures{}, ErrChangeFeaturesUnavailable
 	}
-	analysis, err := analysishandler.ParseResultArtifact(analysisArtifact, changeArtifact, baseArtifact, headArtifact)
+	analysis, err := analysishandler.ParseResultArtifact(analysisArtifact, recorded.artifact, recorded.base, recorded.head)
 	if err != nil || analysis.ChangeIdentity() != change.Identity() {
 		return agentprofile.ChangeFeatures{}, ErrChangeFeaturesUnavailable
 	}
@@ -114,6 +100,74 @@ func (s *Session) ChangeFeatures(ctx context.Context, prepared runtimecatalog.Pr
 		return agentprofile.ChangeFeatures{}, ErrChangeFeaturesUnavailable
 	}
 	return features, nil
+}
+
+// recordedChange is a change model this session recorded, with the base and
+// head snapshot artifacts it binds.
+type recordedChange struct {
+	change               changehandler.Result
+	artifact, base, head artifact.Artifact
+}
+
+func (s *Session) readRecordedChange(ctx context.Context, scope audit.ReviewScope, changeID string, at time.Time) (recordedChange, error) {
+	changeArtifact, err := s.store.Get(ctx, scope, changeID, at)
+	if err != nil {
+		return recordedChange{}, err
+	}
+	baseID, headID, err := changehandler.ResultArtifactReferences(changeArtifact)
+	if err != nil {
+		return recordedChange{}, err
+	}
+	baseArtifact, err := s.store.Get(ctx, scope, baseID, at)
+	if err != nil {
+		return recordedChange{}, err
+	}
+	headArtifact, err := s.store.Get(ctx, scope, headID, at)
+	if err != nil {
+		return recordedChange{}, err
+	}
+	change, err := changehandler.ParseResultArtifact(changeArtifact, baseArtifact, headArtifact)
+	if err != nil {
+		return recordedChange{}, err
+	}
+	return recordedChange{change: change, artifact: changeArtifact, base: baseArtifact, head: headArtifact}, nil
+}
+
+// styleAdvice derives a direct review's style recommendations from its
+// recorded change model and the style its base tree declares (see
+// baseStyleConfigFiles). Removed files are not counted. While any base style
+// configuration file is unread, the declared style is unknown, so it returns no
+// recommendation and only the unread count. ok is false when the change model
+// was not recorded or could not be read back; the result then carries no style
+// advice. It never affects the review's status.
+func (s *Session) styleAdvice(ctx context.Context, scope audit.ReviewScope, state controlplane.ReviewRunState) (recommendations []agentprofile.StyleRecommendation, unread int, ok bool) {
+	task, exists := state.Task("change")
+	if !exists || task.Status() != controlplane.TaskRuntimeSucceeded {
+		return nil, 0, false
+	}
+	now := s.options.Clock.Now()
+	recorded, err := s.readRecordedChange(ctx, scope, task.OutputIdentity(), now)
+	if err != nil {
+		return nil, 0, false
+	}
+	configFiles, unread, err := s.baseStyleConfigFiles(ctx, scope, recorded.base, now)
+	if err != nil {
+		return nil, 0, false
+	}
+	if unread > 0 {
+		return nil, unread, true
+	}
+	paths := make([]string, 0, len(recorded.change.Entries()))
+	for _, entry := range recorded.change.Entries() {
+		if entry.Kind() != string(evidence.RepositoryFileDeltaRemoved) {
+			paths = append(paths, entry.Path())
+		}
+	}
+	recommendations, err = agentprofile.RecommendStyles(paths, configFiles)
+	if err != nil {
+		return nil, 0, false
+	}
+	return recommendations, 0, true
 }
 
 // baseStyleConfigFiles reads the style configuration files that declare the

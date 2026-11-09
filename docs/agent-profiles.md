@@ -201,6 +201,10 @@ as it is in the base, including one the head deletes.
   truncated; so is every readable file after the first 256 in path order. A
   skipped file declares nothing.
 
+The same declared style decides the review result's
+[style recommendations](local-model-review.md#style-recommendations)
+(`agentprofile.RecommendStyles`).
+
 ## Assignments document
 
 Schema `open-trestle/agent-profile-assignments`, version 1. Decoding is strict:

@@ -32,11 +32,18 @@ func LoadProtectedFeedbackReview(ctx context.Context, path, tenant, repositoryID
 		return fail()
 	}
 	keys := strings.Fields("contract schema_version status ci_disposition run_status failure review_run_id scope_identity request_identity plan_identity output_identity repository_identity base_revision_identity head_revision_identity inventory_identity runtime_policy_identity context_identity generation_request_identity verification_request_identity verification_context_identity candidate_batch_identity candidate_ids readiness_identity generation_route_record_identity verification_route_record_identity independence limitations comprehensive_clearance usage_known actual_cost_micro_usd lease_renewals tasks audit diagnostics")
-	// A version 4 result differs from version 1 only by finding_guidance; the
-	// feedback review reads neither its categories nor its fix text.
+	// A version 4 result differs from version 1 only by finding_guidance, and a
+	// version 5 result adds style advice to either; the feedback review reads
+	// neither the guidance nor the advice.
 	_, guided := fields["finding_guidance"]
 	if guided {
 		keys = append(keys, "finding_guidance")
+	}
+	styled := false
+	for _, key := range []string{"style_recommendations", "style_configuration_unread"} {
+		if _, ok := fields[key]; ok {
+			keys, styled = append(keys, key), true
+		}
 	}
 	if len(fields) != len(keys) {
 		return fail()
@@ -60,7 +67,7 @@ func LoadProtectedFeedbackReview(ctx context.Context, path, tenant, repositoryID
 		Comprehensive       bool            `json:"comprehensive_clearance"`
 		Diagnostics         json.RawMessage `json:"diagnostics"`
 	}
-	if json.Unmarshal(encoded, &wire) != nil || wire.Contract != "open-trestle/local-git-model-review-result" || (wire.Version != 1 || guided) && (wire.Version != 4 || !guided) || wire.RunStatus != "succeeded" || wire.Comprehensive || wire.Repository != repository.Identity() || wire.Policy != policy.Identity() {
+	if json.Unmarshal(encoded, &wire) != nil || wire.Contract != "open-trestle/local-git-model-review-result" || !feedbackReviewVersion(wire.Version, guided, styled) || wire.RunStatus != "succeeded" || wire.Comprehensive || wire.Repository != repository.Identity() || wire.Policy != policy.Identity() {
 		return fail()
 	}
 	if wire.Status != "findings" && wire.Status != "incomplete" && wire.Status != "no_candidates" {
@@ -83,6 +90,21 @@ func LoadProtectedFeedbackReview(ctx context.Context, path, tenant, repositoryID
 		return fail()
 	}
 	return set, head, nil
+}
+
+// feedbackReviewVersion accepts version 1 without guidance or style advice,
+// version 4 with guidance only, and version 5 with style advice and optional
+// guidance.
+func feedbackReviewVersion(version int, guided, styled bool) bool {
+	switch version {
+	case 1:
+		return !guided && !styled
+	case 4:
+		return guided && !styled
+	case 5:
+		return styled
+	}
+	return false
 }
 
 // LoadProtectedFindingFeedback selects advisory decisions from actual findings.

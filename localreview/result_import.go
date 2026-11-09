@@ -7,13 +7,15 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/georgejieh/open-trestle/agentprofile"
 	"github.com/georgejieh/open-trestle/diagnostics"
+	"github.com/georgejieh/open-trestle/internal/changecodec"
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/review"
 )
 
-// CompletedResultMetadata contains only identities and observations in a completed v1 or v4 result.
+// CompletedResultMetadata contains only identities and observations in a completed v1, v4 or v5 result.
 type CompletedResultMetadata struct {
 	RepositoryIdentity   string
 	BaseRevisionIdentity string
@@ -24,8 +26,9 @@ type CompletedResultMetadata struct {
 	Diagnostics          diagnostics.Set
 }
 
-// ParseCompletedResult reads the canonical emitted v1 result, or a v4 result that
-// differs only by finding_guidance, not candidate or diagnostic JSON.
+// ParseCompletedResult reads the canonical emitted v1 result, a v4 result that
+// differs only by finding_guidance, or a v5 result that adds style advice (and
+// may carry finding_guidance), not candidate or diagnostic JSON.
 // Structural consistency and a capture hash do not authenticate its producer.
 func ParseCompletedResult(encoded []byte) (Result, error) {
 	if len(encoded) == 0 || len(encoded) > MaxResultJSONBytes || encoded[len(encoded)-1] != '\n' {
@@ -119,9 +122,33 @@ func (r Result) CompletedMetadata() (CompletedResultMetadata, error) {
 	return CompletedResultMetadata{r.wire.Repository, r.wire.Base, r.wire.Head, append([]string{}, r.wire.CandidateIDs...), r.wire.UsageKnown, r.wire.ActualCostMicroUSD, r.diagnostics}, nil
 }
 
-// importableResultVersion accepts v1 without guidance and v4 with guidance.
+// importableResultVersion accepts v1 without guidance or style advice, v4 with
+// guidance and no style advice, and v5 with valid style advice and optional
+// guidance. Style advice is checked only for shape; it is never imported as a
+// finding.
 func importableResultVersion(wire resultWire) bool {
-	return wire.Version == 1 && wire.Guidance == nil || wire.Version == guidanceResultVersion && len(wire.Guidance) > 0
+	styled := len(wire.StyleRecommendations) > 0 || wire.StyleConfigurationUnread != 0
+	return wire.Version == 1 && wire.Guidance == nil && !styled ||
+		wire.Version == guidanceResultVersion && len(wire.Guidance) > 0 && !styled ||
+		wire.Version == styleResultVersion && styled && validImportedStyleAdvice(wire)
+}
+
+// validImportedStyleAdvice requires recommendations in strict language order,
+// each the fixed table text for a language with a style detector, or only a
+// positive unread count.
+func validImportedStyleAdvice(wire resultWire) bool {
+	if wire.StyleConfigurationUnread < 0 || wire.StyleConfigurationUnread > 0 && len(wire.StyleRecommendations) > 0 {
+		return false
+	}
+	previous := ""
+	for _, value := range wire.StyleRecommendations {
+		_, standard, ok := agentprofile.RecommendedStyle(agentprofile.Language(value.Language))
+		if !ok || value.Recommendation != standard || value.ChangedFiles < 1 || value.ChangedFiles > changecodec.MaxChangedEntries || value.Language <= previous {
+			return false
+		}
+		previous = value.Language
+	}
+	return true
 }
 
 // validImportedGuidance requires guidance for distinct diagnostic findings, in

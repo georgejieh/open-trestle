@@ -285,7 +285,8 @@ type rmModelFixture struct {
 type rmModelFixtureOptions struct {
 	generationMode, verificationMode                      string
 	verifierPending, remote, expensive, capacity, partial bool
-	// extraBase and extraHead add root-level files to the base and head trees.
+	// extraBase and extraHead add root-level files to the base and head trees;
+	// a nil content removes the fixture's file of that name.
 	extraBase, extraHead map[string][]byte
 }
 
@@ -305,23 +306,32 @@ func newRmModelFixture(t *testing.T, options rmModelFixtureOptions) *rmModelFixt
 			f.verification = endpoint
 		}
 	}
+	// The unchanged go.mod declares the Go style, as a real module does, so a
+	// review of the Go change carries no style recommendation.
 	base := map[string][]byte{
 		"a.go":      []byte("package p\nfunc Changed(x int) int { if x == 0 { return 0 }; return 10 / x }\n// " + rmModelSecret + "\n"),
 		"caller.go": []byte("package p\nfunc Consume() int { return Changed(0) }\n"),
+		"go.mod":    []byte("module example.test/p\n"),
 	}
 	head := map[string][]byte{
 		"a.go":      []byte("package p\nfunc Changed(x int) int { return 10 / x }\n// " + rmModelSecret + "\n"),
 		"caller.go": base["caller.go"],
+		"go.mod":    base["go.mod"],
 	}
 	if options.partial {
 		base["removed.go"] = []byte("package p\n")
 	}
-	for path, content := range options.extraBase {
-		base[path] = content
+	apply := func(tree, extra map[string][]byte) {
+		for path, content := range extra {
+			if content == nil {
+				delete(tree, path)
+			} else {
+				tree[path] = content
+			}
+		}
 	}
-	for path, content := range options.extraHead {
-		head[path] = content
-	}
+	apply(base, options.extraBase)
+	apply(head, options.extraHead)
 	f.objects, f.base, f.head = rmWriteGit(t, evidence.RevisionAlgorithmSHA1, base, head)
 	zone := provider.ProviderZoneLocal
 	if options.remote {

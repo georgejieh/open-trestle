@@ -81,7 +81,10 @@ func TestRunLocalGitModelReviewRefusesInvalidProfileBeforeModelRequest(t *testin
 }
 
 func TestRunLocalGitModelReviewProfilePlacesSpecialistOnlyInGeneration(t *testing.T) {
-	f := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, specialist: true})
+	// go.mod declares the Go style, so the result carries no style advice and
+	// stays at version 4.
+	goModule := map[string][]byte{"go.mod": []byte("module example.test/p\n")}
+	f := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, specialist: true, extraBase: goModule, extraHead: goModule})
 	specialist, err := review.NewContextSpecialist("bug_hunter")
 	if err != nil {
 		t.Fatal(err)

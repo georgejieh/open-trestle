@@ -117,7 +117,8 @@ through their existing policy and credential boundaries. This example uses
 
 Capture stdout as one terminal JSON receipt and retain the process exit status.
 The receipt uses `open-trestle/local-git-model-review-result`, schema version 1,
-or version 4 when a verified finding carries a category (see
+version 4 when a verified finding carries a category, or version 5 when it also
+or instead carries a [style recommendation](#style-recommendations) (see
 [Results and limits](#results-and-limits)); inspect `status`, `ci_disposition`,
 `run_status`, `limitations` and `diagnostics` together. A succeeded run means the pipeline finished, not that the repository
 is clear. Verified findings use `ci_disposition: blocked`; no candidates,
@@ -568,13 +569,14 @@ not used by this command.
 
 Without `--profile`, the version 7 request has no `specialist` block and the result
 does not report a profile. With it, the result uses schema version 3 (version 4
-when it also reports finding guidance) and adds
+when it also reports finding guidance, version 5 with a
+[style recommendation](#style-recommendations)) and adds
 `specialist` with `profile_id`, `profile_identity` and `catalog_identity`, both on
 completed and on refused or failed runs. The reported profile must match the one
 recorded in the generation context. Text output adds a `specialist profile:` line.
 The instruction text itself is not written to the result. The retained-memory
 feedback review and the [model-result evaluation](model-result-evaluation.md)
-import read only version 1 results, so they refuse version 3 results.
+import refuse every result that carries a `specialist` object, at any version.
 
 ## Specialist review set (opt-in)
 
@@ -925,7 +927,8 @@ same allowance and must fit `--max-cost-micro-usd`. Without the flag, the policy
 bytes are unchanged.
 
 By default, JSON uses `open-trestle/local-git-model-review-result`, schema version 1
-(version 2 with `--investigation-policy`, version 3 with `--profile`). When at least
+(version 2 with `--investigation-policy`, version 3 with `--profile`, version 5
+with [style recommendations](#style-recommendations)). When at least
 one verified finding carries a category, the result is version 4 and adds
 `finding_guidance`: one entry per categorized finding, in diagnostic order, with
 `finding_identity` (the diagnostic finding's `source_identity`), `category`, and,
@@ -937,6 +940,61 @@ category is the generator's advisory label, and the fix is untrusted model text
 that is printed, never applied, and is not part of the diagnostic set. SARIF carries it only as a labeled result property.
 The model-result evaluation import and the retained-memory feedback review accept
 version 4 without a specialist and ignore the guidance.
+
+### Style recommendations
+
+When a changed language has a style detector but the review's base tree declares
+no style that governs it, the result recommends a standard style. The base tree
+is read as for [`--specialists auto`](agent-profiles.md#declared-style-in-local-reviews):
+root-level style configuration files only, never the head, so a style
+configuration that a change adds does not silence the recommendation for that
+change. EditorConfig alone does not count, because it covers only whitespace
+basics. The recommendations come from a fixed table, not from a model:
+
+| Changed language | Recommendation |
+| --- | --- |
+| Go | gofmt and Effective Go (in practice `go.mod` always declares it) |
+| Python | PEP 8, enforced with Ruff or Black |
+| JavaScript, TypeScript, Vue, Svelte | Prettier with ESLint |
+| CSS, HTML, JSON, YAML, Markdown | Prettier |
+| C, C++ | Google C++ Style through clang-format (`BasedOnStyle: Google`) |
+| Rust | rustfmt |
+| Ruby | RuboCop and the community Ruby Style Guide |
+
+Java, Kotlin, C#, PHP, Scala, Swift, shell, SQL and TOML get no recommendation:
+Open Trestle has no style detector for them, so it cannot tell whether such a
+repository declares a style. Changed files are counted per language. Vendored
+and generated files are not counted, as in specialist routing, and neither are
+removed files. Text output adds one line per language before `limitations:`,
+for example:
+
+```text
+style: no declared Python style for 3 changed files; consider PEP 8, enforced with Ruff or Black, and commit its configuration
+```
+
+JSON uses schema version 5, which keeps every version 4 field (including
+`finding_guidance` and a `--profile` run's `specialist` object) and adds
+`style_recommendations`: one entry per language, in language-token order, with
+`language` (the routing token, such as `python` or `cpp`), `changed_files`, and
+`recommendation` (the table text). If a recognized base style configuration file
+could not be read (over 64 KiB, not valid UTF-8, or beyond the first 256), the
+declared style is unknown, so no recommendation is made; the result instead
+reports `style_configuration_unread` with the count, and text reads, for one
+file:
+
+```text
+style: no recommendation; 1 base style configuration file was not read (over 64 KiB, not valid UTF-8, or beyond 256 files)
+```
+
+A result without either field keeps its earlier version.
+
+A recommendation is advice only. It is not a finding, never blocks, and never
+changes `status`, `ci_disposition`, the exit code under any
+[exit-code policy](#exit-code-policy), source coverage or
+`comprehensive_clearance`. SARIF output and `--investigation-policy` results do
+not carry it, and neither does the `--specialists` review-set output. It appears
+only when the run recorded its change model. The model-result evaluation import
+and the retained-memory feedback review accept version 5 and ignore the advice.
 
 Two optional counts report advisory repository-context accounting without changing
 `status`, `ci_disposition` or source coverage. `instruction_context_omitted` (with

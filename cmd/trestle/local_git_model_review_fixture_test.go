@@ -378,7 +378,8 @@ type localModelFixtureOptions struct {
 	// deletionOnly makes the reviewed change remove the zero guard line from
 	// a.go without changing any head line.
 	deletionOnly bool
-	// extraBase and extraHead add root-level files to the base and head trees.
+	// extraBase and extraHead add root-level files to the base and head trees;
+	// a nil content removes the fixture's file of that name.
 	extraBase, extraHead map[string][]byte
 }
 
@@ -402,6 +403,8 @@ func newLocalModelFixture(t *testing.T, options localModelFixtureOptions) *local
 		t.Setenv("OPEN_TRESTLE_PROVIDER_LOCAL_TEST_A", localModelKey)
 		t.Setenv("OPEN_TRESTLE_PROVIDER_LOCAL_TEST_B", localModelKey)
 	}
+	// The trees have no go.mod, so a review of the Go change carries the Go
+	// style recommendation (result schema version 5).
 	base := map[string][]byte{
 		"a.go":      []byte("package p\nfunc Changed(x int) int { if x == 0 { return 0 }; return 10 / x }\n// " + localModelSecret + "\n"),
 		"caller.go": []byte("package p\nfunc Consume() int { return Changed(0) }\n"),
@@ -430,12 +433,17 @@ func newLocalModelFixture(t *testing.T, options localModelFixtureOptions) *local
 		base["AGENTS.md"] = []byte(strings.Repeat(strings.Repeat("p", 99)+"\n", 100))
 		head["AGENTS.md"] = base["AGENTS.md"]
 	}
-	for path, content := range options.extraBase {
-		base[path] = content
+	apply := func(tree, extra map[string][]byte) {
+		for path, content := range extra {
+			if content == nil {
+				delete(tree, path)
+			} else {
+				tree[path] = content
+			}
+		}
 	}
-	for path, content := range options.extraHead {
-		head[path] = content
-	}
+	apply(base, options.extraBase)
+	apply(head, options.extraHead)
 	f.objects, f.base, f.head = writeLocalGitChangeFixture(t, evidence.RevisionAlgorithmSHA1, base, head)
 	zone := provider.ProviderZoneLocal
 	if options.remote {

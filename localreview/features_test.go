@@ -34,6 +34,8 @@ func styleFeaturesRun(t *testing.T, name string, base, head map[string][]byte) (
 	return s, p, features
 }
 
+// TestChangeFeaturesDetectStyleFromTheBaseTree runs over the fixture's
+// unchanged go.mod, so every case also detects gofmt_effective_go.
 func TestChangeFeaturesDetectStyleFromTheBaseTree(t *testing.T) {
 	ruff := []byte("line-length = 100\n")
 	for _, test := range []struct {
@@ -47,27 +49,28 @@ func TestChangeFeaturesDetectStyleFromTheBaseTree(t *testing.T) {
 			name:      "ruff.toml in base",
 			base:      map[string][]byte{"ruff.toml": ruff, "tool.py": []byte("x = 1\n")},
 			head:      map[string][]byte{"ruff.toml": ruff, "tool.py": []byte("x = 2\n")},
-			want:      []agentprofile.StyleIntent{agentprofile.StylePEP8},
+			want:      []agentprofile.StyleIntent{agentprofile.StyleGofmt, agentprofile.StylePEP8},
 			languages: []string{"go", "python"},
 		},
 		{
 			name:      "ruff.toml only in head",
 			base:      map[string][]byte{"tool.py": []byte("x = 1\n")},
 			head:      map[string][]byte{"ruff.toml": ruff, "tool.py": []byte("x = 2\n")},
+			want:      []agentprofile.StyleIntent{agentprofile.StyleGofmt},
 			languages: []string{"go", "python", "toml"},
 		},
 		{
 			name:      "pyproject.toml differs between base and head",
 			base:      map[string][]byte{"pyproject.toml": []byte("[tool.black]\n"), "tool.py": []byte("x = 1\n")},
 			head:      map[string][]byte{"pyproject.toml": []byte("[tool.ruff]\n"), "tool.py": []byte("x = 2\n")},
-			want:      []agentprofile.StyleIntent{agentprofile.StyleBlack},
+			want:      []agentprofile.StyleIntent{agentprofile.StyleBlack, agentprofile.StyleGofmt},
 			languages: []string{"go", "python", "toml"},
 		},
 		{
 			name:      "ruff.toml deleted in head",
 			base:      map[string][]byte{"ruff.toml": ruff, "tool.py": []byte("x = 1\n")},
 			head:      map[string][]byte{"tool.py": []byte("x = 2\n")},
-			want:      []agentprofile.StyleIntent{agentprofile.StylePEP8},
+			want:      []agentprofile.StyleIntent{agentprofile.StyleGofmt, agentprofile.StylePEP8},
 			languages: []string{"go", "python", "toml"},
 		},
 	} {
@@ -103,7 +106,8 @@ func TestBaseStyleConfigFilesSkipOverBoundFilesWhole(t *testing.T) {
 }
 
 func TestBaseStyleConfigFilesStopAtTheFileCountBound(t *testing.T) {
-	files := map[string][]byte{}
+	// Without the fixture's go.mod, every candidate is a Prettier file.
+	files := map[string][]byte{"go.mod": nil}
 	for index := 0; index <= agentprofile.MaxConfigFiles; index++ {
 		files[fmt.Sprintf(".prettierrc.%03d", index)] = []byte("{}\n")
 	}
