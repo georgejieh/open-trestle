@@ -21,27 +21,35 @@ func ModelRequestSystemChannelBytes(request provider.Request) uint32 {
 }
 
 // modelRequestEstimateParts returns the payload ModelRequestBudget measures and
-// the system channel bytes sent with it. Only a sanitized verification request
-// is measured by its smaller inner payload; every other request is measured by
-// its complete payload.
+// the system channel bytes sent with it.
 func modelRequestEstimateParts(request provider.Request) ([]byte, uint32) {
-	payload := request.Payload()
-	instructionsPayload := payload
-	if sanitized, err := ParseSanitizedModelRequest(payload); err == nil {
-		instructionsPayload = sanitized.request.Payload()
-		if ValidateVerificationModelRequest(sanitized.request, sanitized.ReviewScopeIdentity()) == nil {
-			payload = instructionsPayload
-		}
-	} else if scope, err := ModelRequestReviewScopeIdentity(request); err == nil {
-		if inner, err := LocalVerificationPayload(request, scope, provider.ProviderZoneLocal); err == nil {
-			instructionsPayload = inner
-		}
-	}
-	instructions, err := TrustedModelRequestInstructions(instructionsPayload)
+	payload, contract := modelRequestMeasuredPayloads(request)
+	instructions, err := TrustedModelRequestInstructions(contract)
 	if err != nil {
 		return payload, 0
 	}
 	// The system channel is bounded by the pinned contracts and the embedded
 	// catalog; saturating keeps an impossible overflow from shrinking it.
 	return payload, uint32(min(uint64(len(instructions)), math.MaxUint32))
+}
+
+// modelRequestMeasuredPayloads returns the payload ModelRequestBudget measures
+// and the payload whose trusted contract the adapter sends. Only a sanitized
+// verification request is measured by its smaller inner payload; every other
+// request is measured by its complete payload. A sanitized request and a valid
+// local verification envelope carry their contract in the inner request.
+func modelRequestMeasuredPayloads(request provider.Request) ([]byte, []byte) {
+	payload := request.Payload()
+	contract := payload
+	if sanitized, err := ParseSanitizedModelRequest(payload); err == nil {
+		contract = sanitized.request.Payload()
+		if ValidateVerificationModelRequest(sanitized.request, sanitized.ReviewScopeIdentity()) == nil {
+			payload = contract
+		}
+	} else if scope, err := ModelRequestReviewScopeIdentity(request); err == nil {
+		if inner, err := LocalVerificationPayload(request, scope, provider.ProviderZoneLocal); err == nil {
+			contract = inner
+		}
+	}
+	return payload, contract
 }
