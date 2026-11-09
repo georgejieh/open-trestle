@@ -7,7 +7,7 @@ CREATE TABLE open_trestle_webhook_retries (
     delivery_identity text NOT NULL CHECK (delivery_identity ~ '^[0-9a-f]{64}$'),
     failures smallint NOT NULL CHECK (failures BETWEEN 1 AND 10),
     not_before_milliseconds bigint NOT NULL CHECK (not_before_milliseconds > 0),
-    PRIMARY KEY (tenant_id, repository_id, source, deduplication_key, planner_identity),
+    PRIMARY KEY (tenant_id, repository_id, source, deduplication_key),
     FOREIGN KEY (tenant_id, repository_id, source, deduplication_key)
         REFERENCES open_trestle_webhook_deliveries (tenant_id, repository_id, source, deduplication_key) ON DELETE CASCADE
 );

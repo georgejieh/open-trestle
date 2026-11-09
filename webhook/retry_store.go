@@ -17,9 +17,9 @@ var ErrInvalidRetryRecord = errors.New("invalid webhook delivery retry record")
 
 const retryFileSuffix = ".retry.json"
 
-// RetryRecord is one delivery's durable retry state for one planner identity:
-// how many of its own failures it has had and when it may next be attempted.
-// It carries identities and counts only.
+// RetryRecord is one delivery's durable retry state, recorded by one planner
+// identity: how many of its own failures it has had under that planner and
+// when it may next be attempted. It carries identities and counts only.
 type RetryRecord struct {
 	deliveryIdentity, deduplicationKey, plannerIdentity string
 	scope                                               RepositoryScope
@@ -121,12 +121,29 @@ func ParseRetryRecord(encoded []byte) (RetryRecord, error) {
 }
 
 // RetryStore durably keeps each delivery's own retry state beside the
-// delivery, so a restart neither resets the bound nor retries forever.
-// RecordRetry replaces the state of a stored delivery; ClearRetry removes it.
+// delivery, so a restart neither resets the bound nor retries forever. A
+// delivery has at most one retry state, recorded by the planner identity that
+// last failed it: RecordRetry replaces it, whichever planner recorded it, and
+// Retry returns it with that planner identity, so state a superseded planner
+// left is visible and never accumulates. ClearRetry removes it.
 type RetryStore interface {
 	RecordRetry(context.Context, RetryRecord) error
-	Retry(ctx context.Context, scope RepositoryScope, source Source, deduplicationKey, plannerIdentity string) (RetryRecord, bool, error)
-	ClearRetry(ctx context.Context, scope RepositoryScope, source Source, deduplicationKey, plannerIdentity string) error
+	Retry(ctx context.Context, scope RepositoryScope, source Source, deduplicationKey string) (RetryRecord, bool, error)
+	ClearRetry(ctx context.Context, scope RepositoryScope, source Source, deduplicationKey string) error
+}
+
+func retryKey(scope RepositoryScope, source Source, key string) string {
+	return scope.Identity() + "|" + source.String() + "|" + key
+}
+
+func validateRetryRead(ctx context.Context, scope RepositoryScope, source Source, key string) error {
+	if err := validateInboxRead(ctx, scope, source, key, 1); err != nil {
+		return err
+	}
+	if !validWebhookDigest(key) {
+		return ErrInvalidRetryRecord
+	}
+	return nil
 }
 
 // RecordRetry keeps the retry state of a delivery this store holds.
@@ -149,13 +166,13 @@ func (s *MemoryStore) RecordRetry(ctx context.Context, record RetryRecord) error
 	if s.retries == nil {
 		s.retries = make(map[string]RetryRecord)
 	}
-	s.retries[refusalKey(record.scope, record.source, record.deduplicationKey, record.plannerIdentity)] = record
+	s.retries[retryKey(record.scope, record.source, record.deduplicationKey)] = record
 	return nil
 }
 
-// Retry returns the retry state of a delivery for a planner identity.
-func (s *MemoryStore) Retry(ctx context.Context, scope RepositoryScope, source Source, key, planner string) (RetryRecord, bool, error) {
-	if err := validateRefusalRead(ctx, scope, source, key, planner); err != nil {
+// Retry returns the retry state of a delivery and the planner that recorded it.
+func (s *MemoryStore) Retry(ctx context.Context, scope RepositoryScope, source Source, key string) (RetryRecord, bool, error) {
+	if err := validateRetryRead(ctx, scope, source, key); err != nil {
 		return RetryRecord{}, false, err
 	}
 	if s == nil {
@@ -163,13 +180,13 @@ func (s *MemoryStore) Retry(ctx context.Context, scope RepositoryScope, source S
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	record, found := s.retries[refusalKey(scope, source, key, planner)]
+	record, found := s.retries[retryKey(scope, source, key)]
 	return record, found, nil
 }
 
-// ClearRetry removes the retry state of a delivery for a planner identity.
-func (s *MemoryStore) ClearRetry(ctx context.Context, scope RepositoryScope, source Source, key, planner string) error {
-	if err := validateRefusalRead(ctx, scope, source, key, planner); err != nil {
+// ClearRetry removes the retry state of a delivery.
+func (s *MemoryStore) ClearRetry(ctx context.Context, scope RepositoryScope, source Source, key string) error {
+	if err := validateRetryRead(ctx, scope, source, key); err != nil {
 		return err
 	}
 	if s == nil {
@@ -177,12 +194,12 @@ func (s *MemoryStore) ClearRetry(ctx context.Context, scope RepositoryScope, sou
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.retries, refusalKey(scope, source, key, planner))
+	delete(s.retries, retryKey(scope, source, key))
 	return nil
 }
 
-func (s *FileStore) retryPath(scope RepositoryScope, source Source, key, planner string) string {
-	return filepath.Join(s.root, scope.Identity()+"-"+source.String()+"-"+key+"-"+planner+retryFileSuffix)
+func (s *FileStore) retryPath(scope RepositoryScope, source Source, key string) string {
+	return filepath.Join(s.root, scope.Identity()+"-"+source.String()+"-"+key+retryFileSuffix)
 }
 
 // RecordRetry atomically replaces the retry file beside a stored delivery.
@@ -206,7 +223,7 @@ func (s *FileStore) RecordRetry(ctx context.Context, record RetryRecord) error {
 	if !found || stored.Delivery().Identity() != record.deliveryIdentity {
 		return ErrInvalidRetryRecord
 	}
-	path := s.retryPath(record.scope, record.source, record.deduplicationKey, record.plannerIdentity)
+	path := s.retryPath(record.scope, record.source, record.deduplicationKey)
 	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
 		if _, sidecars, countErr := s.rootFiles(); countErr != nil {
 			return countErr
@@ -221,9 +238,9 @@ func (s *FileStore) RecordRetry(ctx context.Context, record RetryRecord) error {
 	return s.persist(path, encoded)
 }
 
-// Retry reads the retry file of a delivery for a planner identity.
-func (s *FileStore) Retry(ctx context.Context, scope RepositoryScope, source Source, key, planner string) (RetryRecord, bool, error) {
-	if err := validateRefusalRead(ctx, scope, source, key, planner); err != nil {
+// Retry reads the retry file of a delivery, with the planner that recorded it.
+func (s *FileStore) Retry(ctx context.Context, scope RepositoryScope, source Source, key string) (RetryRecord, bool, error) {
+	if err := validateRetryRead(ctx, scope, source, key); err != nil {
 		return RetryRecord{}, false, err
 	}
 	s.mu.Lock()
@@ -231,7 +248,7 @@ func (s *FileStore) Retry(ctx context.Context, scope RepositoryScope, source Sou
 	if err := s.ensureOpen(); err != nil {
 		return RetryRecord{}, false, err
 	}
-	path := s.retryPath(scope, source, key, planner)
+	path := s.retryPath(scope, source, key)
 	information, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return RetryRecord{}, false, nil
@@ -250,15 +267,15 @@ func (s *FileStore) Retry(ctx context.Context, scope RepositoryScope, source Sou
 	if err != nil {
 		return RetryRecord{}, false, err
 	}
-	if record.scope.Identity() != scope.Identity() || record.source != source || record.deduplicationKey != key || record.plannerIdentity != planner {
+	if record.scope.Identity() != scope.Identity() || record.source != source || record.deduplicationKey != key {
 		return RetryRecord{}, false, ErrInvalidRetryRecord
 	}
 	return record, true, nil
 }
 
-// ClearRetry removes the retry file of a delivery for a planner identity.
-func (s *FileStore) ClearRetry(ctx context.Context, scope RepositoryScope, source Source, key, planner string) error {
-	if err := validateRefusalRead(ctx, scope, source, key, planner); err != nil {
+// ClearRetry removes the retry file of a delivery.
+func (s *FileStore) ClearRetry(ctx context.Context, scope RepositoryScope, source Source, key string) error {
+	if err := validateRetryRead(ctx, scope, source, key); err != nil {
 		return err
 	}
 	s.mu.Lock()
@@ -266,7 +283,7 @@ func (s *FileStore) ClearRetry(ctx context.Context, scope RepositoryScope, sourc
 	if err := s.ensureOpen(); err != nil {
 		return err
 	}
-	if err := os.Remove(s.retryPath(scope, source, key, planner)); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := os.Remove(s.retryPath(scope, source, key)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("%w: remove retry", ErrInboxStorePersistence)
 	}
 	return s.syncRoot()

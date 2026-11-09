@@ -73,7 +73,7 @@ func TestFileInboxSidecarsNeverStopIntake(t *testing.T) {
 	if err := f.supervisor.handle(ctx, stored); err != nil {
 		t.Fatalf("a full inbox stopped intake on a retry: %v", err)
 	}
-	if retry, retrying, err := store.Retry(ctx, scope, SourceGitHub, key, planner); err != nil || !retrying || retry.Failures() != 1 {
+	if retry, retrying, err := store.Retry(ctx, scope, SourceGitHub, key); err != nil || !retrying || retry.Failures() != 1 {
 		t.Fatalf("a full inbox did not record the retry: retrying=%t err=%v", retrying, err)
 	}
 	clock.at = clock.at.Add(maximumSupervisorDelay)
@@ -104,7 +104,7 @@ func TestFileInboxSidecarsNeverStopIntake(t *testing.T) {
 	if err := f.supervisor.handle(ctx, other); err != nil {
 		t.Fatalf("a full sidecar bound stopped intake: %v", err)
 	}
-	if _, retrying, err := store.Retry(ctx, scope, SourceGitHub, f.deliveries[1].DeduplicationKey(), planner); err != nil || retrying {
+	if _, retrying, err := store.Retry(ctx, scope, SourceGitHub, f.deliveries[1].DeduplicationKey()); err != nil || retrying {
 		t.Fatalf("a retry file was written past the sidecar bound: retrying=%t err=%v", retrying, err)
 	}
 	if _, err := store.List(ctx, scope, SourceGitHub, "", 100); err != nil {

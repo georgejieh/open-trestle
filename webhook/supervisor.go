@@ -209,18 +209,24 @@ func (s *Supervisor) handle(ctx context.Context, stored StoredDelivery) error {
 	if err != nil {
 		return err
 	}
-	retry, retrying, err := s.retries.Retry(ctx, delivery.Scope(), delivery.Source(), delivery.DeduplicationKey(), planner)
+	retry, recorded, err := s.retries.Retry(ctx, delivery.Scope(), delivery.Source(), delivery.DeduplicationKey())
 	if err != nil {
 		return err
 	}
+	// Retry state a superseded planner identity recorded neither holds the
+	// delivery back nor counts against it under this planner.
+	retrying := recorded && retry.PlannerIdentity() == planner
+	// clear prunes the delivery's retry state, whichever planner recorded it,
+	// once the delivery is admitted or refused under this planner.
 	clear := func() error {
-		if !retrying {
+		if !recorded {
 			return nil
 		}
-		return s.retries.ClearRetry(ctx, delivery.Scope(), delivery.Source(), delivery.DeduplicationKey(), planner)
+		return s.retries.ClearRetry(ctx, delivery.Scope(), delivery.Source(), delivery.DeduplicationKey())
 	}
 	if refused {
-		// Retry state beside a refusal is left by an interrupted earlier pass.
+		// Retry state beside a refusal is left by an interrupted earlier pass
+		// or by a superseded planner.
 		return clear()
 	}
 	if retrying && at.Before(retry.NotBefore()) {
@@ -240,7 +246,10 @@ func (s *Supervisor) handle(ctx context.Context, stored StoredDelivery) error {
 	if ctx.Err() != nil || s.processor.Probe(ctx, stored, at) != nil {
 		return err
 	}
-	failures := retry.Failures() + 1
+	failures := uint8(1)
+	if retrying {
+		failures = retry.Failures() + 1
+	}
 	if failures >= s.options.MaximumRetries {
 		if err := s.recordRefusal(ctx, stored, RefusalReasonRetriesExhausted, at); err != nil {
 			return sidecarOutcome(err)

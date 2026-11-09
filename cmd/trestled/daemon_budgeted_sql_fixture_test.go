@@ -82,9 +82,9 @@ WHERE tenant_id = $1 AND repository_id = $2 AND review_run_id = $3`
 
 // daemonBudgetedWebhookRetryReadSQL is the inbox retry-state read; this
 // fixture records no delivery failures, so it never has a row.
-const daemonBudgetedWebhookRetryReadSQL = `SELECT delivery_identity, failures, not_before_milliseconds
+const daemonBudgetedWebhookRetryReadSQL = `SELECT planner_identity, delivery_identity, failures, not_before_milliseconds
 FROM open_trestle_webhook_retries
-WHERE tenant_id = $1 AND repository_id = $2 AND source = $3 AND deduplication_key = $4 AND planner_identity = $5`
+WHERE tenant_id = $1 AND repository_id = $2 AND source = $3 AND deduplication_key = $4`
 
 // daemonBudgetedWebhookRefusalReadSQL is the inbox refusal read the
 // supervisor makes before processing a delivery; this fixture records no
@@ -817,7 +817,7 @@ func (tx *daemonBudgetedTx) statement(_ context.Context, id string, a []driver.V
 		tx.diagnostics[key] = row
 		return nil, 1, nil
 	case "webhook_retry_read":
-		if len(a) != 5 {
+		if len(a) != 4 {
 			return nil, 0, tx.conn.service.fail("webhook_retry_read args")
 		}
 		return nil, 0, nil
@@ -1177,7 +1177,7 @@ func daemonBudgetedColumnCounts() map[string]int {
 		"webhook_list":                   8,
 		"webhook_read":                   8,
 		"webhook_replay_owner":           1,
-		"webhook_retry_read":             3,
+		"webhook_retry_read":             4,
 		"webhook_refusal_read":           4,
 	}
 }
@@ -1324,7 +1324,7 @@ var daemonBudgetedMigrationHashes = []string{
 	"97e4b0dc7c3aed97acdcc7c740f11619e0c25ee463813f3fff841be5ca126aee",
 	"4be4e7f9c27aa85141d5d0cb2a4a8f9d761133fa1f936aa71980fc5cec57ac68",
 	"0d46b670ee395572fa16dd7f4d9006350ef1092dc3feadecaf8b52b1ad366db1",
-	"3f2011527c3fa0f77395b444e906561ea0e4e0eec0a9773cac3153371ee57147",
+	"2d286581693f4d2ae061ac865924141532f96935b75b01cf83783f92cefd5256",
 }
 
 const (
