@@ -10,6 +10,7 @@ import (
 	"github.com/georgejieh/open-trestle/artifact"
 	"github.com/georgejieh/open-trestle/controlplane"
 	sourcehandler "github.com/georgejieh/open-trestle/handlers/source"
+	"github.com/georgejieh/open-trestle/webhook"
 )
 
 // The prepared base task acquires the merge base of pull_request.base.sha and
@@ -54,6 +55,8 @@ func TestPreparedPlannerPlansTheMergeBaseOfBaseAndHead(t *testing.T) {
 	}
 	if _, _, err := planner.Prepare(context.Background(), storedPullRequest(t, payload(base, strings.Repeat("2", 64)))); !errors.Is(err, ErrInvalidPullRequestPayload) {
 		t.Fatalf("mixed object formats err=%v", err)
+	} else if reason, refused := webhook.DeliveryRefusalReason(err); !refused || reason != "invalid_pull_request_payload" {
+		t.Fatalf("payload refusal reason=%q refused=%t", reason, refused)
 	}
 	unprepared, err := NewPullRequestPlanner("owner/repository", strings.Repeat("e", 64), controlplane.ReviewRunAdvisory, plannerBindings()[:8])
 	if err != nil {

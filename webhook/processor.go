@@ -26,6 +26,8 @@ var (
 )
 
 // RunPlanner deterministically converts one accepted delivery into an immutable review plan.
+// Planning performs no I/O, so a planning error other than cancellation refuses
+// the delivery: processing it again would fail the same way.
 type RunPlanner interface {
 	Identity() string
 	Plan(context.Context, StoredDelivery) (controlplane.ReviewRunPlan, error)
@@ -98,7 +100,14 @@ func (p *Processor) Process(ctx context.Context, stored StoredDelivery, at time.
 		plan, err = p.planner.Plan(ctx, stored)
 	}
 	if err != nil {
-		return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, err
+		if ctx.Err() != nil {
+			return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, err
+		}
+		reason, named := DeliveryRefusalReason(err)
+		if !named {
+			reason = RefusalReasonPlanningRefused
+		}
+		return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, refuseDelivery(reason, err)
 	}
 	delivery := stored.Delivery()
 	scope := plan.Scope()
@@ -106,13 +115,13 @@ func (p *Processor) Process(ctx context.Context, stored StoredDelivery, at time.
 	matchingRepository := scope.TenantID() == delivery.Scope().TenantID() && scope.RepositoryID() == delivery.Scope().RepositoryID()
 	bound := validPlan && matchingRepository && scope.ReviewRunID() == ReviewRunIDForDelivery(delivery)
 	if !bound {
-		return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, ErrRunPlanNotBound
+		return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, refuseDelivery(RefusalReasonRunPlanNotBound, ErrRunPlanNotBound)
 	}
 	if prepared {
 		existingPlan, existingState, resumeErr := p.coordinator.Resume(ctx, scope)
 		if resumeErr == nil {
 			if existingPlan.Identity() != plan.Identity() {
-				return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, controlplane.ErrRunPlanConflict
+				return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, refuseDelivery(RefusalReasonRunPlanConflict, controlplane.ErrRunPlanConflict)
 			}
 			existingState, resumeErr = p.coordinator.Advance(ctx, existingPlan, at)
 			if resumeErr != nil {
@@ -127,7 +136,9 @@ func (p *Processor) Process(ctx context.Context, stored StoredDelivery, at time.
 		if !errors.Is(resumeErr, controlplane.ErrRunNotOpened) {
 			return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, resumeErr
 		}
-		if err := persistPreparedInputs(ctx, p.artifactStore, stored, plan, inputs, at); err != nil {
+		if err := persistPreparedInputs(ctx, p.artifactStore, stored, plan, inputs, at); errors.Is(err, ErrRunPlanNotBound) {
+			return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, refuseDelivery(RefusalReasonRunPlanNotBound, err)
+		} else if err != nil {
 			return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, err
 		}
 	}
@@ -187,6 +198,14 @@ func persistPreparedInputs(ctx context.Context, store artifact.Store, stored Sto
 		}
 	}
 	return nil
+}
+
+// PlannerIdentity returns the identity of the planner this processor admits deliveries with.
+func (p *Processor) PlannerIdentity() string {
+	if p == nil {
+		return ""
+	}
+	return p.plannerIdentity
 }
 
 func (p *Processor) String() string   { return "webhook run processor" }

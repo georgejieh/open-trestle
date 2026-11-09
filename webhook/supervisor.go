@@ -58,6 +58,7 @@ type SupervisorOptions struct {
 // Supervisor reconciles a durable repository inbox into idempotent review runs.
 type Supervisor struct {
 	store     Store
+	refusals  RefusalStore
 	processor *Processor
 	scope     RepositoryScope
 	source    Source
@@ -70,16 +71,18 @@ type Supervisor struct {
 	readyOnce sync.Once
 }
 
-// NewSupervisor fixes one bounded processor to one repository and webhook protocol.
+// NewSupervisor fixes one bounded processor to one repository and webhook
+// protocol. The store must also record refusals.
 func NewSupervisor(store Store, processor *Processor, scope RepositoryScope, source Source, options SupervisorOptions) (*Supervisor, error) {
 	validQueue := options.QueueCapacity > 0 && options.QueueCapacity <= maxSupervisorQueue
 	validRetries := options.MaximumRetries > 0 && options.MaximumRetries <= maxSupervisorRetries
 	validDelay := options.RetryDelay >= minimumSupervisorDelay && options.RetryDelay <= maximumSupervisorDelay
-	if isNilStore(store) || processor == nil || scope.Validate() != nil || source.Validate() != nil || !validQueue || !validRetries || !validDelay || nilSupervisorClock(options.Clock) {
+	refusals, recordsRefusals := store.(RefusalStore)
+	if isNilStore(store) || !recordsRefusals || processor == nil || scope.Validate() != nil || source.Validate() != nil || !validQueue || !validRetries || !validDelay || nilSupervisorClock(options.Clock) {
 		return nil, ErrInvalidSupervisor
 	}
 	return &Supervisor{
-		store: store, processor: processor, scope: scope, source: source, options: options,
+		store: store, refusals: refusals, processor: processor, scope: scope, source: source, options: options,
 		notices: make(chan DeliveryNotice, options.QueueCapacity), wake: make(chan struct{}, 1), ready: make(chan struct{}),
 	}, nil
 }
@@ -148,6 +151,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 func (s *Supervisor) reconcile(ctx context.Context) error {
 	cursor := ""
 	total := 0
+	var failed error
 	for {
 		page, err := s.store.List(ctx, s.scope, s.source, cursor, 100)
 		if err != nil {
@@ -160,8 +164,10 @@ func (s *Supervisor) reconcile(ctx context.Context) error {
 			if stored.Validate() != nil {
 				return ErrInvalidSupervisor
 			}
-			if _, _, err := s.processor.Process(ctx, stored, s.options.Clock.Now().UTC()); err != nil && !errors.Is(err, ErrPreparedInputsExpired) {
-				return err
+			// One delivery's failure never blocks the others in this pass; the
+			// pass is retried for transient failures after every delivery ran.
+			if err := s.handle(ctx, stored); err != nil && failed == nil {
+				failed = err
 			}
 			total++
 			if total > maxSupervisorDeliveries {
@@ -169,10 +175,31 @@ func (s *Supervisor) reconcile(ctx context.Context) error {
 			}
 		}
 		if len(page) < 100 {
-			return nil
+			return failed
 		}
 		cursor = page[len(page)-1].Delivery().DeduplicationKey()
 	}
+}
+
+// handle admits one stored delivery. A deterministic refusal is recorded once
+// with its reason and is not an error; expired prepared inputs are skipped as
+// before; any other failure is returned for retry.
+func (s *Supervisor) handle(ctx context.Context, stored StoredDelivery) error {
+	at := s.options.Clock.Now().UTC()
+	_, _, err := s.processor.Process(ctx, stored, at)
+	if err == nil || errors.Is(err, ErrPreparedInputsExpired) {
+		return nil
+	}
+	reason, refused := DeliveryRefusalReason(err)
+	if !refused {
+		return err
+	}
+	record, err := NewRefusalRecord(stored, s.processor.PlannerIdentity(), reason, at)
+	if err != nil {
+		return err
+	}
+	_, _, err = s.refusals.RecordRefusal(ctx, record)
+	return err
 }
 func (s *Supervisor) processNotice(ctx context.Context, notice DeliveryNotice) error {
 	stored, found, err := s.store.Get(ctx, s.scope, s.source, notice.DeduplicationKey)
@@ -185,11 +212,7 @@ func (s *Supervisor) processNotice(ctx context.Context, notice DeliveryNotice) e
 	if stored.Validate() != nil {
 		return ErrInvalidSupervisor
 	}
-	_, _, err = s.processor.Process(ctx, stored, s.options.Clock.Now().UTC())
-	if errors.Is(err, ErrPreparedInputsExpired) {
-		return nil
-	}
-	return err
+	return s.handle(ctx, stored)
 }
 func (s *Supervisor) retry(ctx context.Context, operation func(context.Context) error) error {
 	for attempt := uint8(0); attempt < s.options.MaximumRetries; attempt++ {

@@ -18,8 +18,10 @@ import (
 var (
 	// ErrInvalidPullRequestPlanner identifies missing repository, policy, mode, or handler bindings.
 	ErrInvalidPullRequestPlanner = errors.New("invalid GitHub pull request planner")
-	// ErrInvalidPullRequestPayload identifies ambiguous, incomplete, or cross-repository data.
-	ErrInvalidPullRequestPayload = errors.New("invalid GitHub pull request payload")
+	// ErrInvalidPullRequestPayload identifies ambiguous, incomplete, or
+	// cross-repository data. It is a deterministic delivery refusal, recorded
+	// by intake as invalid_pull_request_payload.
+	ErrInvalidPullRequestPayload error = webhook.NewDeliveryRefusal("invalid_pull_request_payload", "invalid GitHub pull request payload")
 )
 
 // TaskHandlerBinding selects one exact implementation for a review task kind.

@@ -11,7 +11,7 @@ import (
 )
 
 type retiredNoticeStore struct {
-	Store
+	*MemoryStore
 	err error
 }
 
@@ -25,7 +25,7 @@ func TestSupervisorSkipsOnlyExplicitlyExpiredNotices(t *testing.T) {
 	processor, _ := NewProcessor(coordinator, supervisorPlanner{identity: strings.Repeat("d", 64)})
 	unavailable := errors.New("storage unavailable")
 	for _, failure := range []error{ErrDeliveryExpired, unavailable} {
-		store := retiredNoticeStore{Store: NewMemoryStore(), err: failure}
+		store := retiredNoticeStore{MemoryStore: NewMemoryStore(), err: failure}
 		supervisor, err := NewSupervisor(store, processor, scope, SourceGitHub, SupervisorOptions{QueueCapacity: 1, MaximumRetries: 1, RetryDelay: 10 * time.Millisecond, Clock: supervisorClock{at: time.UnixMilli(1000)}})
 		if err != nil {
 			t.Fatal(err)
