@@ -55,7 +55,7 @@ synchronous proof or terminal cleanup, not perform new expired work.
 | Marker-free legacy v5 | Live state remains refused. Expired complete state requires the same full physical and audit proof before terminal recovery. |
 | Expiry before v6 append | No late success. Preserve the intent for complete-v5 terminal proof. |
 | v6 committed, verification or cleanup interrupted | Restart rechecks exact committed settlement, artifacts, and audit before marker reconciliation; no repeated dispatch. |
-| Missing, mismatched, unknown partial, or retention-expired evidence | Preserve quarantine. Generic terminal events do not attest stored bytes or authorize marker removal. |
+| Missing, mismatched, unknown partial, or retention-expired evidence, except a journal-settled v4 past retention (below) | Preserve quarantine. Generic terminal events do not attest stored bytes or authorize marker removal. |
 
 A successful task receipt alone is not owner proof. Marker-free v5 terminal
 restart still requires complete matching physical envelopes and route-audit
@@ -78,6 +78,21 @@ A v4 its lease holder already settled as a recorded route refusal, with or
 without part of the same cleanup suffix, needs no lease expiry because it holds
 no lease; every other condition below applies unchanged, and startup appends
 nothing to it.
+
+Packet retention is 24 hours. A v4 the journal already settled, by a recorded
+route refusal or a lease-expiry termination and with any part of the closed
+cleanup suffix, is proved terminal from the journal and audit alone once its
+packet retention lapses: its no-output policy failure admits no retry, input
+preparation or settlement, so no later owner effect can read its artifacts.
+Startup then still requires the exact recipe, current pipeline enrollment and
+review policy, no linked input, no route effect in the scope's audit, and no
+scope marker, but it neither reads nor deletes the expired bytes and appends
+nothing, so every later boot reaches the same result. Removing an expired
+artifact file does not change that result. A refused run finalized after its
+retention lapsed gets its failed result with the recorded refusal and reports
+the expired deterministic evidence as unavailable. A v4 the journal has not
+settled still requires live packet retention: its startup termination is
+authorized only by the byte proof, so boot refuses it once retention lapses.
 Each recorded envelope must expire no earlier than the packet. Before store
 activation, startup checks canonical bytes and exact same-scope names against the
 configured source root/repository/adapter. After current pipeline construction,

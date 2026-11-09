@@ -35,6 +35,26 @@ func policyTerminatedV4Tail(tail controlplane.ContextPacketExpiryTail) bool {
 	return tail == controlplane.ContextPacketExpiryTailExpiredV4PolicyTerminated || tail == controlplane.ContextPacketExpiryTailRefusedV4PolicyTerminated
 }
 
+// retiredTerminalV4 reports a packet-only preparation that its journal already
+// settled (an in-lease route refusal or a lease-expiry termination, with any
+// part of the closed cleanup suffix) and whose packet retention has lapsed.
+// The journal alone proves it terminal: a no-output policy failure admits no
+// retry, input preparation or settlement, so no later owner effect can read its
+// artifacts. Startup then neither reads the expired bytes nor appends; it still
+// requires the exact recipe, current enrollment and no route effect.
+func retiredTerminalV4(f controlplane.HistoricalContextPacketFact, now time.Time) bool {
+	_, linked := f.LinkedInputEvent()
+	return !linked && policyTerminatedV4Tail(f.ExpiryTail()) && recordedV4PlanShape(f.Plan()) && now.UnixMilli() >= f.PreparedEvent().PacketDescriptor().ExpiresAtMilliseconds
+}
+
+// sortExpiredPacketCheckpoints orders checkpoints as the startup reproof
+// observes their facts: by scope, keeping the order within one scope.
+func sortExpiredPacketCheckpoints(checkpoints []historicalExpiredPacketCheckpoint) {
+	sort.SliceStable(checkpoints, func(i, j int) bool {
+		return checkpoints[i].scope.Identity() < checkpoints[j].scope.Identity()
+	})
+}
+
 // expiredPacketCheckpointValid admits an exact or expiry-terminated v4 only
 // after its original lease expired, and a refused v4 at any time, since its
 // lease holder already settled it. Packet retention must remain live for all.
@@ -206,14 +226,19 @@ func observeOwnerExpiredPackets(ctx context.Context, owner *localPacketOwner, le
 				if plan.Scope().TenantID() != record.TenantID || plan.Scope().RepositoryID() != record.RepositoryID {
 					return ErrLocalSourceOwnerMismatch
 				}
-				if err := expiredPacketCheckpointValid(fact, owner.clock.Now().UTC()); err != nil {
-					return err
+				retired := retiredTerminalV4(fact, owner.clock.Now().UTC())
+				if !retired {
+					if err := expiredPacketCheckpointValid(fact, owner.clock.Now().UTC()); err != nil {
+						return err
+					}
 				}
 				if plan.PolicyIdentity() != policy || validateEnrolledCatalog(plan, catalog) != nil {
 					return errHistoricalPacketExpiryStartup
 				}
-				if err := observeBorrowedHistoricalRecordedV4Names(ctx, snapshot.ArtifactRoot, fact, owner.sourceBinding); err != nil {
-					return err
+				if !retired {
+					if err := observeBorrowedHistoricalRecordedV4Names(ctx, snapshot.ArtifactRoot, fact, owner.sourceBinding); err != nil {
+						return err
+					}
 				}
 				head, err := observeHistoricalPacketRouteAbsence(ctx, ledger, plan.Scope())
 				if err != nil {

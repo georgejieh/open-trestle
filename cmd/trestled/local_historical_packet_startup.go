@@ -104,6 +104,26 @@ func inspectRecordedHistoricalPackets(ctx context.Context, journal *controlplane
 				if len(facts) > physicalPacketExpectationLimit {
 					return errPhysicalPacketObservationUncertain
 				}
+				// A terminal v4 past its packet retention is proved from the
+				// journal; its expired bytes are not read. The post-activation
+				// proof still checks its enrollment and route absence.
+				var retired []historicalExpiredPacketCheckpoint
+				live := make([]controlplane.HistoricalContextPacketFact, 0, len(facts))
+				for _, fact := range facts {
+					if !retiredTerminalV4(fact, now) {
+						live = append(live, fact)
+						continue
+					}
+					if err := reconcileRecordedHistoricalFact(fact, tenant, repositoryID, sourceDigest); err != nil {
+						return err
+					}
+					retired = append(retired, expiredPacketCheckpoint(fact))
+				}
+				facts = live
+				withRetired := func() {
+					*pendingV4 = append(*pendingV4, retired...)
+					sortExpiredPacketCheckpoints(*pendingV4)
+				}
 				expectedPackets := make([]physicalPacketExpectation, 0, len(facts)*4)
 				for _, fact := range facts {
 					if err := reconcileRecordedHistoricalFact(fact, tenant, repositoryID, sourceDigest); err != nil {
@@ -124,6 +144,7 @@ func inspectRecordedHistoricalPackets(ctx context.Context, journal *controlplane
 				}
 				if len(expectedPackets) == 0 {
 					*classification = historicalPacketNone
+					withRetired()
 					return nil
 				}
 				after := func(observations []physicalPacketObservation) error {
@@ -294,6 +315,7 @@ func inspectRecordedHistoricalPackets(ctx context.Context, journal *controlplane
 							selected = historicalPacketExpiredV4Candidate
 						}
 					}
+					withRetired()
 					*classification = selected // Provisional until all postchecks and borrowed roots close.
 					if probe != nil && probe.afterClassified != nil {
 						return probe.afterClassified(selected)

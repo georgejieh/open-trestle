@@ -227,10 +227,11 @@ func TestDaemonLocalModelWorkersContextRouteRefusalSettles(t *testing.T) {
 	}
 }
 
-// A restart after a settled refusal recovers it without an append, both while
-// the original lease is still live and after it expires, and serves later runs.
+// A restart after a settled refusal recovers it without an append while the
+// original lease is still live, after it expires, and after the packet's 24-hour
+// retention lapses, and serves later runs.
 func TestDaemonLocalModelWorkersContextRouteRefusalSurvivesRestart(t *testing.T) {
-	for _, mode := range []string{"live-lease", "expired-lease"} {
+	for _, mode := range []string{"live-lease", "expired-lease", "retention-lapsed"} {
 		t.Run(mode, func(t *testing.T) {
 			args, getenv, fake, repository, base, head, policy, inventory := contextRefusalModelWorkerFixture(t)
 			args = append(args, "--local-model-workers")
@@ -243,13 +244,17 @@ func TestDaemonLocalModelWorkersContextRouteRefusalSurvivesRestart(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
+			refusedAt := clock.Now()
 			server.Close()
 			if err := d.Close(); err != nil {
 				t.Fatal(err)
 			}
-			if mode == "expired-lease" {
+			if mode != "live-lease" {
 				clock.mu.Lock()
 				clock.at = clock.at.Add(time.Minute)
+				if mode == "retention-lapsed" {
+					clock.at = clock.at.Add(25 * time.Hour)
+				}
 				clock.mu.Unlock()
 			}
 			journalBefore := ownerStartupJournalBytes(t, statePath)
@@ -261,7 +266,9 @@ func TestDaemonLocalModelWorkersContextRouteRefusalSurvivesRestart(t *testing.T)
 			if err != nil || after.HeadIdentity() != before.HeadIdentity() {
 				t.Fatalf("restart changed the refused run: %v", err)
 			}
-			assertContextRouteRefusal(t, d, api, fake, scope, statePath, clock.Now(), refusalRouteContextTokens, 0)
+			// The packet bytes stay on disk; after retention the store refuses to
+			// serve them, so they are checked as of the refusal.
+			assertContextRouteRefusal(t, d, api, fake, scope, statePath, refusedAt, refusalRouteContextTokens, 0)
 			later := runLocalFullReviewOnSupervisors(t, d, api, "run-route-refusal-later", repository, base, head, policy, inventory, clock.Now())
 			assertContextRouteRefusal(t, d, api, fake, later, statePath, clock.Now(), refusalRouteContextTokens, 0)
 		})
