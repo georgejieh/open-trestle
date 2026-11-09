@@ -23,6 +23,8 @@ import (
 const DefaultGitHubPublisherID = "github-review"
 
 // PreparedPullRequestPlanner creates a two-revision executable source boundary.
+// The base task acquires the merge base of pull_request.base.sha and
+// pull_request.head.sha, which is how GitHub presents a pull request diff.
 type PreparedPullRequestPlanner struct {
 	identity, repositoryAuthority, publisherID string
 	base                                       *PullRequestPlanner
@@ -62,7 +64,7 @@ func (p *PreparedPullRequestPlanner) Prepare(ctx context.Context, stored webhook
 	if p == nil || p.base == nil || p.identity != derivePreparedPlannerIdentity(p) {
 		return controlplane.ReviewRunPlan{}, nil, ErrInvalidPullRequestPlanner
 	}
-	scope, payload, err := p.base.parseDelivery(ctx, stored)
+	scope, payload, err := p.base.parseDelivery(ctx, stored, true)
 	if err != nil {
 		return controlplane.ReviewRunPlan{}, nil, err
 	}
@@ -81,8 +83,14 @@ func (p *PreparedPullRequestPlanner) Prepare(ctx context.Context, stored webhook
 	}
 	created := stored.Receipt().AcceptedAt()
 	expires := created.Add(p.retention)
-	baseInput, _ := sourcehandler.NewInput(repository, baseRevision, p.sourceAdapter)
-	headInput, _ := sourcehandler.NewInput(repository, headRevision, p.sourceAdapter)
+	baseInput, err := sourcehandler.NewMergeBaseInput(repository, baseRevision, headRevision, p.sourceAdapter)
+	if err != nil {
+		return controlplane.ReviewRunPlan{}, nil, ErrInvalidPullRequestPayload
+	}
+	headInput, err := sourcehandler.NewInput(repository, headRevision, p.sourceAdapter)
+	if err != nil {
+		return controlplane.ReviewRunPlan{}, nil, ErrInvalidPullRequestPayload
+	}
 	baseArtifact, err := sourcehandler.NewInputArtifact(scope, baseInput, p.classification, p.protection, []string{stored.Delivery().Identity()}, created, expires)
 	if err != nil {
 		return controlplane.ReviewRunPlan{}, nil, err
@@ -183,7 +191,7 @@ func derivePreparedPlannerIdentity(p *PreparedPullRequestPlanner) string {
 		Classification string `json:"classification"`
 		Protection     string `json:"protection"`
 		Retention      int64  `json:"retention"`
-	}{"open-trestle/prepared-github-pull-request-planner", 1, p.base.Identity(), p.repositoryAuthority, p.publisherID, p.sourceAdapter.Identity(), p.classification.String(), p.protection.String(), p.retention.Milliseconds()})
+	}{"open-trestle/prepared-github-pull-request-planner", 2, p.base.Identity(), p.repositoryAuthority, p.publisherID, p.sourceAdapter.Identity(), p.classification.String(), p.protection.String(), p.retention.Milliseconds()})
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }

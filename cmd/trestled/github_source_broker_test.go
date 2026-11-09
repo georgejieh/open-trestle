@@ -242,6 +242,11 @@ func (f *daemonBrokerFixture) serveAPI(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"sha": f.tree, "truncated": false, "tree": []any{map[string]any{"path": "main.go", "mode": "100644", "type": "blob", "sha": f.blob, "size": len(daemonFixtureContent)}}})
 		return
 	}
+	// The pull request base commit is the head's branch point.
+	if r.URL.Path == prefix+"compare/"+strings.Repeat("a", 40)+"..."+strings.Repeat("b", 40) && r.URL.RawQuery == "per_page=1" {
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ahead", "merge_base_commit": map[string]any{"sha": strings.Repeat("a", 40)}})
+		return
+	}
 	f.reject(w, "unexpected source route")
 }
 

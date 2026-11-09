@@ -260,6 +260,11 @@ func (f *daemonBudgetedGitHubFixture) serveAPI(w http.ResponseWriter, r *http.Re
 			return
 		}
 	}
+	// The pull request base commit is the head's branch point.
+	if r.URL.Path == prefix+"compare/"+daemonBudgetedGitHubBaseCommit+"..."+daemonBudgetedGitHubHeadCommit && r.URL.RawQuery == "per_page=1" {
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ahead", "merge_base_commit": map[string]any{"sha": daemonBudgetedGitHubBaseCommit}})
+		return
+	}
 	f.reject(w, "unexpected source route")
 }
 

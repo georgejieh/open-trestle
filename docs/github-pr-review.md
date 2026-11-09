@@ -18,6 +18,17 @@ idempotent publication. See [GitHub publication](github-publication.md),
 [webhook ingress](webhook-ingress.md), [source acquisition](github-source-acquisition.md)
 and [integration permissions](github-integration-permissions.md) for that path.
 
+Both paths review a pull request the way GitHub presents it: from the merge base
+of `pull_request.base.sha` and `pull_request.head.sha` to the head. The Actions
+path computes it with `git merge-base` in the checkout. The daemon path plans a
+`source-base` task that reads GitHub's merge base with one compare request and
+acquires that commit, so commits merged into the base branch after the branch
+point are never reported as reverse changes. When the two commits share no
+history, or the head equals the base or is already contained in it, the daemon
+run fails with policy and the recorded reason `no_merge_base` or
+`nothing_to_review`; when GitHub does not report a merge base it fails with
+`merge_base_unavailable`. It never falls back to reviewing `base.sha` directly.
+
 ## How the Actions path fits together
 
 1. `actions/checkout` with `fetch-depth: 0` so the head, the base branch tip and

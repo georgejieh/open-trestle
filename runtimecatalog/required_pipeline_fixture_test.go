@@ -76,6 +76,15 @@ func (s *requiredSource) Acquire(ctx context.Context, request evidence.Repositor
 	return result
 }
 
+// ResolveMergeBase answers as the forge compare read would: the fixture base
+// commit is the head's branch point.
+func (s *requiredSource) ResolveMergeBase(ctx context.Context, request scm.MergeBaseRequest) scm.MergeBaseResult {
+	if ctx.Err() != nil {
+		s.t.Fatal("merge base resolved after cancellation")
+	}
+	return scm.MergeBaseResult{Outcome: scm.MergeBaseResolved, MergeBase: request.Base(), Reason: evidence.AcquisitionReasonNone}
+}
+
 type requiredRequestSource struct {
 	ID        string `json:"source_id"`
 	Stage     string `json:"stage"`

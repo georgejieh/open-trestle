@@ -72,7 +72,7 @@ func (p *PullRequestPlanner) Identity() string {
 	return p.identity
 }
 func (p *PullRequestPlanner) Plan(ctx context.Context, stored webhook.StoredDelivery) (controlplane.ReviewRunPlan, error) {
-	scope, payload, err := p.parseDelivery(ctx, stored)
+	scope, payload, err := p.parseDelivery(ctx, stored, false)
 	if err != nil {
 		return controlplane.ReviewRunPlan{}, err
 	}
@@ -82,7 +82,11 @@ func (p *PullRequestPlanner) Plan(ctx context.Context, stored webhook.StoredDeli
 	}
 	return controlplane.NewReviewRunPlan(scope, stored.Delivery().Identity(), p.policyIdentity, p.mode, tasks)
 }
-func (p *PullRequestPlanner) parseDelivery(ctx context.Context, stored webhook.StoredDelivery) (audit.ReviewScope, pullRequestPayload, error) {
+
+// parseDelivery admits one same-repository pull request payload. Equal base
+// and head commits are admitted only when allowSameRevision is set, for a
+// plan whose source task records the refusal with its reason.
+func (p *PullRequestPlanner) parseDelivery(ctx context.Context, stored webhook.StoredDelivery, allowSameRevision bool) (audit.ReviewScope, pullRequestPayload, error) {
 	if p == nil || ctx == nil || ctx.Err() != nil || stored.Validate() != nil {
 		return audit.ReviewScope{}, pullRequestPayload{}, ErrInvalidPullRequestPayload
 	}
@@ -98,7 +102,7 @@ func (p *PullRequestPlanner) parseDelivery(ctx context.Context, stored webhook.S
 	matchingEvent := payload.Action == delivery.Action() && payload.Number > 0
 	matchingRepository := strings.ToLower(payload.Repository.FullName) == p.repositoryFullName
 	exactSourceRepositories := strings.ToLower(payload.PullRequest.Base.Repository.FullName) == p.repositoryFullName && strings.ToLower(payload.PullRequest.Head.Repository.FullName) == p.repositoryFullName
-	if !matchingEvent || !matchingRepository || !exactSourceRepositories || !validGitObjectID(base) || !validGitObjectID(head) || base == head {
+	if !matchingEvent || !matchingRepository || !exactSourceRepositories || !validGitObjectID(base) || !validGitObjectID(head) || len(base) != len(head) || base == head && !allowSameRevision {
 		return audit.ReviewScope{}, pullRequestPayload{}, ErrInvalidPullRequestPayload
 	}
 	scope, err := audit.NewReviewScope(delivery.Scope().TenantID(), delivery.Scope().RepositoryID(), webhook.ReviewRunIDForDelivery(delivery))
