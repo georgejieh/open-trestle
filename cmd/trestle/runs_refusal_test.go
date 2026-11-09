@@ -9,10 +9,15 @@ import (
 	"time"
 
 	"github.com/georgejieh/open-trestle/audit"
+	"github.com/georgejieh/open-trestle/client"
 	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/controlplane/httpapi"
+	"github.com/georgejieh/open-trestle/tui"
 	"github.com/georgejieh/open-trestle/webhook"
 )
+
+// trestle tui reads refusals through the same API client.
+var _ tui.RefusalService = (*client.Client)(nil)
 
 type cliRefusals struct{ record webhook.RefusalRecord }
 

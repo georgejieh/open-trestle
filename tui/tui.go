@@ -85,6 +85,9 @@ func (i *Interface) Run(ctx context.Context) error {
 	}
 	view := interfaceView{}
 	if err := i.refresh(ctx, &view); err != nil {
+		if record, refused := i.refusal(ctx); refused {
+			return i.renderRefusal(record)
+		}
 		return err
 	}
 	if err := i.render(view); err != nil || i.options.Once {
