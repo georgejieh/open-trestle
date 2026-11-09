@@ -171,7 +171,13 @@ Declared style intents come from configuration files only
 `.editorconfig` gives `editorconfig`. Prettier and ESLint configs give
 `prettier` and `eslint`. `.flake8`, `ruff.toml`, and the matching `setup.cfg`,
 `tox.ini`, or `pyproject.toml` sections give `pep8`. A `[tool.black]` section
-gives `black`. A yapf config `based_on_style = google` gives `google_python`.
+gives `black`. A yapf configuration is read from its own section only:
+`[style]` in `.style.yapf`, `[yapf]` in `setup.cfg`, and `[tool.yapf]` in
+`pyproject.toml`. Its `based_on_style` gives `google_python` when it is `google`
+or `yapf` (a style yapf derives from Google's), and `pep8` for any other base or
+none, since yapf's default base is PEP 8. A `.style.yapf` without a `[style]`
+section also gives `pep8`. `based_on_style` outside those sections, and in
+`tox.ini`, which yapf does not read, declares nothing.
 `.clang-format` gives `clang_format`, and `BasedOnStyle: Google` in it also gives
 `google_cpp`. `rustfmt.toml` and `.rubocop.yml` give `rustfmt` and `rubocop`.
 Detection never infers a style from source code.

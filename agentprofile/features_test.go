@@ -330,6 +330,43 @@ func TestProfileFitConfigFilesSkipsWholeFilesThatDoNotFit(t *testing.T) {
 	}
 }
 
+// TestProfileStyleIntentDetectionReadsTheYapfSectionOnly requires a yapf
+// configuration to declare google_python only when based_on_style in its own
+// section names a Google-based style, and pep8 otherwise.
+func TestProfileStyleIntentDetectionReadsTheYapfSectionOnly(t *testing.T) {
+	google := []StyleIntent{StyleGooglePython}
+	pep8 := []StyleIntent{StylePEP8}
+	for _, test := range []struct {
+		name string
+		file ConfigFile
+		want []StyleIntent
+	}{
+		{"pyproject google base", ConfigFile{Path: "pyproject.toml", Content: "[tool.yapf]\nbased_on_style = \"google\"\n"}, google},
+		{"pyproject yapf base derives from google", ConfigFile{Path: "pyproject.toml", Content: "[tool.yapf]\nbased_on_style = 'yapf'\n"}, google},
+		{"pyproject pep8 base", ConfigFile{Path: "pyproject.toml", Content: "[tool.yapf]\nbased_on_style = \"pep8\"\n"}, pep8},
+		{"pyproject facebook base beside a google dependency", ConfigFile{Path: "pyproject.toml", Content: "[project]\ndependencies = [\"google-auth\"]\n\n[tool.yapf]\nbased_on_style = \"facebook\"\n"}, pep8},
+		{"pyproject yapf without a base", ConfigFile{Path: "pyproject.toml", Content: "[tool.yapf]\ncolumn_limit = 100\n"}, pep8},
+		{"pyproject google base outside the yapf section", ConfigFile{Path: "pyproject.toml", Content: "[tool.yapf]\ncolumn_limit = 100\n[tool.other]\nbased_on_style = \"google\"\n"}, pep8},
+		{"pyproject yapfignore is not yapf style", ConfigFile{Path: "pyproject.toml", Content: "[tool.yapfignore]\nignore_patterns = [\"google/*\"]\n"}, nil},
+		{"style.yapf google base", ConfigFile{Path: ".style.yapf", Content: "[style]\nbased_on_style = google\n"}, google},
+		{"style.yapf facebook base with a google comment", ConfigFile{Path: ".style.yapf", Content: "# not google\n[style]\nbased_on_style = facebook\n"}, pep8},
+		{"style.yapf without a base", ConfigFile{Path: ".style.yapf", Content: "[style]\ncolumn_limit = 100\n"}, pep8},
+		{"setup.cfg yapf google base", ConfigFile{Path: "setup.cfg", Content: "[yapf]\nbased_on_style : google\n"}, google},
+		{"setup.cfg yapf without a google base", ConfigFile{Path: "setup.cfg", Content: "[metadata]\nname = google-thing\n[yapf]\ncolumn_limit = 100\n"}, pep8},
+		{"setup.cfg google base outside yapf", ConfigFile{Path: "setup.cfg", Content: "[tool:pytest]\nbased_on_style = google\n"}, nil},
+		{"tox.ini is not a yapf configuration", ConfigFile{Path: "tox.ini", Content: "[yapf]\nbased_on_style = google\n"}, nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := detectStyleIntents([]ConfigFile{test.file}); !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("detectStyleIntents() = %v, want %v", got, test.want)
+			}
+		})
+	}
+	if got := styleConfigIntents("tox.ini"); !reflect.DeepEqual(got, pep8) {
+		t.Fatalf("tox.ini can declare %v, want only pep8", got)
+	}
+}
+
 const validFeaturesJSON = `{"schema":"open-trestle/agent-profile-change-features","version":1,` +
 	`"files":[{"path":"web/src/App.tsx","added_lines":40,"deleted_lines":3},{"path":"internal/auth/session.go","added_lines":12,"deleted_lines":0,"signals":["concurrency"]}],` +
 	`"public_api_changes":1,"reference_fan_out":9,"coverage":{"uncovered_changed_lines":30},` +

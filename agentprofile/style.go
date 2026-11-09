@@ -66,28 +66,71 @@ var styleConfigRules = []styleConfigRule{
 	}},
 	{names: []string{".eslintrc"}, prefixes: []string{".eslintrc.", "eslint.config."}, intents: []StyleIntent{StyleESLint}},
 	{names: []string{".flake8", ".pycodestyle", "ruff.toml", ".ruff.toml"}, intents: []StyleIntent{StylePEP8}},
-	{names: []string{"setup.cfg", "tox.ini"}, intents: []StyleIntent{StyleGooglePython, StylePEP8}, declares: func(content string) []StyleIntent {
-		return append(markedIntents(content, StyleGooglePython, "based_on_style = google", "based_on_style=google"),
-			markedIntents(content, StylePEP8, "[flake8]", "[pycodestyle]")...)
+	{names: []string{"setup.cfg"}, intents: []StyleIntent{StyleGooglePython, StylePEP8}, declares: func(content string) []StyleIntent {
+		return append(markedIntents(content, StylePEP8, "[flake8]", "[pycodestyle]"), yapfIntents(content, "yapf", false)...)
+	}},
+	{names: []string{"tox.ini"}, intents: []StyleIntent{StylePEP8}, declares: func(content string) []StyleIntent {
+		return markedIntents(content, StylePEP8, "[flake8]", "[pycodestyle]")
 	}},
 	{names: []string{"pyproject.toml"}, intents: []StyleIntent{StyleBlack, StyleGooglePython, StylePEP8}, declares: func(content string) []StyleIntent {
 		intents := append(markedIntents(content, StyleBlack, "[tool.black"), markedIntents(content, StylePEP8, "[tool.ruff", "[tool.flake8", "[tool.pycodestyle")...)
-		if strings.Contains(content, "[tool.yapf") && strings.Contains(content, "google") {
-			intents = append(intents, StyleGooglePython)
-		}
-		return intents
+		return append(intents, yapfIntents(content, "tool.yapf", false)...)
 	}},
 	{names: []string{".style.yapf"}, intents: []StyleIntent{StyleGooglePython, StylePEP8}, declares: func(content string) []StyleIntent {
-		if strings.Contains(content, "google") {
-			return []StyleIntent{StyleGooglePython}
-		}
-		return []StyleIntent{StylePEP8}
+		return yapfIntents(content, "style", true)
 	}},
 	{names: []string{".clang-format", "_clang-format"}, intents: []StyleIntent{StyleClangFormat, StyleGoogleCPP}, declares: func(content string) []StyleIntent {
 		return append([]StyleIntent{StyleClangFormat}, markedIntents(content, StyleGoogleCPP, "basedonstyle: google")...)
 	}},
 	{names: []string{"rustfmt.toml", ".rustfmt.toml"}, intents: []StyleIntent{StyleRustfmt}},
 	{names: []string{".rubocop.yml"}, intents: []StyleIntent{StyleRubocop}},
+}
+
+// yapfIntents returns the intent a yapf configuration declares. yapf reads
+// based_on_style only inside its own section ([style] in .style.yapf, [yapf] in
+// setup.cfg, [tool.yapf] in pyproject.toml); a "google" base, or the "yapf"
+// base that yapf derives from it, declares google_python, and every other
+// base, including yapf's default when none is set, declares pep8. A missing
+// section declares nothing unless whole is set, because the file exists only
+// to configure yapf.
+func yapfIntents(content, section string, whole bool) []StyleIntent {
+	base, found := sectionValue(content, section, "based_on_style")
+	switch {
+	case !found && !whole:
+		return nil
+	case base == "google" || base == "yapf":
+		return []StyleIntent{StyleGooglePython}
+	}
+	return []StyleIntent{StylePEP8}
+}
+
+// sectionValue returns, from lowercase INI or TOML content, the unquoted value
+// of key in the section named exactly section, and whether that section exists.
+// Values end at an inline comment; '=' and ':' both separate keys from values.
+func sectionValue(content, section, key string) (string, bool) {
+	inSection, found, value := false, false, ""
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "[") {
+			inSection = line == "["+section+"]"
+			found = found || inSection
+			continue
+		}
+		separator := strings.IndexAny(line, "=:")
+		if !inSection || separator < 0 || strings.TrimSpace(line[:separator]) != key {
+			continue
+		}
+		raw := strings.TrimSpace(line[separator+1:])
+		if quoted := len(raw) > 0 && (raw[0] == '"' || raw[0] == '\''); quoted {
+			if end := strings.IndexByte(raw[1:], raw[0]); end >= 0 {
+				raw = raw[1 : end+1]
+			}
+		} else if comment := strings.IndexAny(raw, "#;"); comment >= 0 {
+			raw = strings.TrimSpace(raw[:comment])
+		}
+		value = raw
+	}
+	return value, found
 }
 
 // markedIntents returns intent when lowercase content holds any marker.
