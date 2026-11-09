@@ -119,6 +119,36 @@ func TestProfileStyleIntentDetection(t *testing.T) {
 	}
 }
 
+// TestProfileStyleConfigFileMatchesDetection keeps the recognizer and the
+// detector in step: given content carrying every documented marker, a file
+// yields an intent exactly when IsStyleConfigFile recognizes its name.
+func TestProfileStyleConfigFileMatchesDetection(t *testing.T) {
+	const everyMarker = "\"prettier\"\n[flake8]\n[pycodestyle]\nbased_on_style = google\n[tool.ruff]\n[tool.black]\n[tool.yapf]\nBasedOnStyle: Google\n"
+	recognized := []string{
+		"go.mod", ".editorconfig", ".prettierrc", ".prettierrc.json", "prettier.config.js", "package.json",
+		".eslintrc", ".eslintrc.cjs", "eslint.config.mjs", ".flake8", ".pycodestyle", "ruff.toml", ".ruff.toml",
+		"setup.cfg", "tox.ini", "pyproject.toml", ".style.yapf", ".clang-format", "_clang-format",
+		"rustfmt.toml", ".rustfmt.toml", ".rubocop.yml", "PyProject.TOML", "web/.prettierrc.yaml",
+	}
+	ignored := []string{"go.sum", "prettierrc", ".prettierrcx", "eslint.config", "setup.py", "Makefile", "README.md", "ruff.toml.bak", ".rubocop.yaml"}
+	for _, name := range append(append([]string(nil), recognized...), ignored...) {
+		detected := len(detectStyleIntents([]ConfigFile{{Path: name, Content: everyMarker}})) > 0
+		if IsStyleConfigFile(name) != detected {
+			t.Errorf("IsStyleConfigFile(%q) = %t, detection = %t", name, IsStyleConfigFile(name), detected)
+		}
+	}
+	for _, name := range recognized {
+		if !IsStyleConfigFile(name) {
+			t.Errorf("IsStyleConfigFile(%q) = false", name)
+		}
+	}
+	for _, name := range ignored {
+		if IsStyleConfigFile(name) {
+			t.Errorf("IsStyleConfigFile(%q) = true", name)
+		}
+	}
+}
+
 const validFeaturesJSON = `{"schema":"open-trestle/agent-profile-change-features","version":1,` +
 	`"files":[{"path":"web/src/App.tsx","added_lines":40,"deleted_lines":3},{"path":"internal/auth/session.go","added_lines":12,"deleted_lines":0,"signals":["concurrency"]}],` +
 	`"public_api_changes":1,"reference_fan_out":9,"coverage":{"uncovered_changed_lines":30},` +
@@ -187,7 +217,7 @@ func TestProfileParseChangeFeaturesRejectsInvalidDocuments(t *testing.T) {
 		{"negative lines", replace(`"added_lines":40`, `"added_lines":-1`), ErrInvalidChangeFeatures},
 		{"gap path not changed", replace(`"public_api_changes":1,`, `"semantic_gap_paths":["other.py"],"public_api_changes":1,`), ErrInvalidChangeFeatures},
 		{"bad provenance digest", replace(`"public_api_changes":1,`, `"change_identity":"ABC","public_api_changes":1,`), ErrInvalidChangeFeatures},
-		{"config too large", replace(`"content":"root = true\n"`, `"content":"`+strings.Repeat("a", maxConfigContentBytes+1)+`"`), ErrInvalidChangeFeatures},
+		{"config too large", replace(`"content":"root = true\n"`, `"content":"`+strings.Repeat("a", MaxConfigFileBytes+1)+`"`), ErrInvalidChangeFeatures},
 		{"duplicate config", replace(`{"path":"go.mod"}`, `{"path":".editorconfig"}`), ErrInvalidChangeFeatures},
 	} {
 		t.Run(test.name, func(t *testing.T) {

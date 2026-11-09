@@ -22,6 +22,11 @@ const (
 	// MaxChangeFeaturesBytes bounds one encoded change-features document.
 	MaxChangeFeaturesBytes = 1 << 20
 
+	// MaxConfigFiles bounds the configuration files one document carries for
+	// declared-style detection, and MaxConfigFileBytes bounds each file's content.
+	MaxConfigFiles     = 256
+	MaxConfigFileBytes = 64 << 10
+
 	maxFeatureFiles          = 4096
 	maxFileSignals           = 16
 	maxChangedLinesPerFile   = 1 << 24
@@ -29,8 +34,6 @@ const (
 	maxReferenceFanOut       = 1 << 24
 	maxUncoveredChangedLines = 1 << 28
 	maxLinkedDocPaths        = 64
-	maxConfigFiles           = 256
-	maxConfigContentBytes    = 64 << 10
 	maxSemanticGapPaths      = 4096
 )
 
@@ -81,7 +84,8 @@ type ChangeFeaturesSpec struct {
 	// Coverage is nil when coverage was not measured; the router then records coverage as unknown.
 	Coverage *CoverageSpec
 	Intent   IntentSpec
-	// ConfigFiles lists repository configuration files present at head.
+	// ConfigFiles lists the repository configuration files that declare the
+	// change's style. Local review supplies the base tree's root-level files.
 	ConfigFiles []ConfigFile
 	// SemanticGapPaths lists changed paths the deterministic analyzers could not cover.
 	SemanticGapPaths []string
@@ -193,7 +197,7 @@ func NewChangeFeatures(spec ChangeFeaturesSpec) (ChangeFeatures, error) {
 			return invalid("semantic gap path is not a changed file")
 		}
 	}
-	if len(spec.ConfigFiles) > maxConfigFiles {
+	if len(spec.ConfigFiles) > MaxConfigFiles {
 		return invalid("too many config files")
 	}
 	configSeen := make(map[string]struct{}, len(spec.ConfigFiles))
@@ -205,7 +209,7 @@ func NewChangeFeatures(spec ChangeFeaturesSpec) (ChangeFeatures, error) {
 			return invalid("duplicate config path")
 		}
 		configSeen[config.Path] = struct{}{}
-		if len(config.Content) > maxConfigContentBytes || !utf8.ValidString(config.Content) {
+		if len(config.Content) > MaxConfigFileBytes || !utf8.ValidString(config.Content) {
 			return invalid("config content must be valid UTF-8 within 64 KiB")
 		}
 		features.configFiles = append(features.configFiles, ConfigFile{Path: strings.Clone(config.Path), Content: strings.Clone(config.Content)})
@@ -413,7 +417,7 @@ func ParseChangeFeatures(encoded []byte) (ChangeFeatures, error) {
 	if wire.Coverage != nil {
 		spec.Coverage = &CoverageSpec{UncoveredChangedLines: wire.Coverage.UncoveredChangedLines}
 	}
-	if len(wire.Files) > maxFeatureFiles || len(wire.ConfigFiles) > maxConfigFiles {
+	if len(wire.Files) > maxFeatureFiles || len(wire.ConfigFiles) > MaxConfigFiles {
 		return ChangeFeatures{}, fmt.Errorf("%w: too many entries", ErrInvalidChangeFeatures)
 	}
 	for _, file := range wire.Files {

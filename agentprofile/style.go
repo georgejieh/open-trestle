@@ -43,6 +43,26 @@ var styleIntentLanguages = map[StyleIntent][]Language{
 	StyleRustfmt: {LanguageRust},
 }
 
+// IsStyleConfigFile reports whether declared-style detection reads a file with
+// this path's base name. Matching is exact and case-insensitive, as in
+// detection. A recognized file declares a style only when detection finds its
+// documented marker.
+func IsStyleConfigFile(filePath string) bool {
+	base := strings.ToLower(path.Base(filePath))
+	switch base {
+	case "go.mod", ".editorconfig", ".prettierrc", "package.json", ".eslintrc",
+		".flake8", ".pycodestyle", "ruff.toml", ".ruff.toml", "setup.cfg", "tox.ini", "pyproject.toml", ".style.yapf",
+		".clang-format", "_clang-format", "rustfmt.toml", ".rustfmt.toml", ".rubocop.yml":
+		return true
+	}
+	for _, prefix := range []string{".prettierrc.", "prettier.config.", ".eslintrc.", "eslint.config."} {
+		if strings.HasPrefix(base, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // detectStyleIntents derives declared style intents from configuration file
 // paths and, where supplied, their bounded contents. Detection is exact and
 // case-insensitive; it never infers a style from source code.
