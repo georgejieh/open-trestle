@@ -182,6 +182,7 @@ type investigationTurnWire struct {
 	RemainingMicroUSD       uint64                         `json:"remaining_micro_usd"`
 	Request                 investigationTurnRequestWire   `json:"request"`
 	ReservedMicroUSD        uint64                         `json:"reserved_micro_usd"`
+	ResponseFormatBytes     *uint32                        `json:"response_format_bytes,omitempty"`
 	Role                    string                         `json:"role"`
 	SchemaVersion           int                            `json:"schema_version"`
 	ScopeIdentity           string                         `json:"scope_identity"`
@@ -213,7 +214,8 @@ type investigationTurnField struct {
 var investigationTurnEncodingShape = newInvestigationTurnShape(reflect.TypeOf(investigationTurnWire{}), "", "")
 
 // investigationTurnOptionalType names the only pointer types an omitempty wire
-// member may use: the reported debit object and the system channel count.
+// member may use: the reported debit object and the system channel and
+// response_format counts.
 func investigationTurnOptionalType(value reflect.Type) bool {
 	return value == reflect.TypeOf((*reportedDebitUpperBoundWire)(nil)) || value == reflect.TypeOf((*uint32)(nil))
 }
@@ -621,6 +623,13 @@ func investigationTurnWireValue(record InvestigationTurnRecord) investigationTur
 		value := record.systemBytes
 		systemBytes = &value
 	}
+	// The response_format count is present exactly for an estimate version 2
+	// structured-output turn; other bytes omit it and keep their encoding.
+	var responseFormatBytes *uint32
+	if record.structuredOutput {
+		value := record.responseFormatBytes
+		responseFormatBytes = &value
+	}
 	return investigationTurnWire{
 		ActualCostMicroUSD: actual.TotalCostMicroUSD(), Authorization: routeAuthorizationWireValue(record.authorization),
 		Contract: "open-trestle/investigation-turn", DeadlineMilliseconds: record.deadlineMillis, DeclaredInputTokens: record.declaredInput,
@@ -646,7 +655,7 @@ func investigationTurnWireValue(record InvestigationTurnRecord) investigationTur
 		},
 		RemainingBeforeMicroUSD: record.authorization.RemainingCostBeforeMicroUSD(), RemainingMicroUSD: cost.RemainingCostMicroUSD(),
 		Request:          investigationTurnRequestWire{Capability: record.request.Capability().String(), Identity: record.request.Identity(), MediaType: record.request.MediaType(), PayloadBase64: base64.StdEncoding.EncodeToString(record.request.Payload())},
-		ReservedMicroUSD: record.authorization.ReservedCostMicroUSD(), Role: record.role.String(), SchemaVersion: 1, ScopeIdentity: record.scopeIdentity,
+		ReservedMicroUSD: record.authorization.ReservedCostMicroUSD(), ResponseFormatBytes: responseFormatBytes, Role: record.role.String(), SchemaVersion: 1, ScopeIdentity: record.scopeIdentity,
 		Selection: investigationTurnSelectionValue(record.selection), SessionIdentity: record.sessionIdentity, StartedMilliseconds: record.startedMillis,
 		SystemChannelBytes: systemBytes,
 	}
@@ -983,15 +992,25 @@ func parseInvestigationTurnWire(wire investigationTurnWire) (InvestigationTurnRe
 	default:
 		return InvestigationTurnRecord{}, errInvestigationTurnEncoding
 	}
+	// Only a version 2 structured-output turn carries a response_format count.
+	var responseFormatBytes uint32
+	structured := wire.ResponseFormatBytes != nil
+	if structured {
+		if wire.EstimateVersion != InvestigationBudgetEstimateVersion {
+			return InvestigationTurnRecord{}, errInvestigationTurnEncoding
+		}
+		responseFormatBytes = *wire.ResponseFormatBytes
+	}
 	record := InvestigationTurnRecord{
 		identity: wire.Identity, ownerIdentity: wire.OwnerIdentity, sessionIdentity: wire.SessionIdentity, policyIdentity: wire.PolicyIdentity, scopeIdentity: wire.ScopeIdentity,
 		ordinal: wire.Ordinal, role: role, previous: wire.PreviousTurnIdentity,
 		deadlineMillis: wire.DeadlineMilliseconds, startedMillis: wire.StartedMilliseconds, finishedMillis: wire.FinishedMilliseconds,
-		estimateVersion: wire.EstimateVersion, declaredInput: wire.DeclaredInputTokens, maxOutput: wire.MaxOutputTokens, originalCap: wire.OriginalCapMicroUSD, systemBytes: systemBytes,
+		estimateVersion: wire.EstimateVersion, declaredInput: wire.DeclaredInputTokens, maxOutput: wire.MaxOutputTokens, originalCap: wire.OriginalCapMicroUSD, systemBytes: systemBytes, responseFormatBytes: responseFormatBytes, structuredOutput: structured,
 		request: request, selection: selection, ranking: ranking, authorization: authorization, dispatch: dispatch, outcome: outcome, reconciliation: cost,
 	}
 	// Existing validation recomputes initial authority, dispatch outcome, cost,
-	// the recorded estimate and the 26-element (version 1) or 27-element hash.
+	// the recorded estimate and the 26-element (version 1), 27-element or
+	// structured-output 28-element hash.
 	if record.Validate() != nil {
 		return InvestigationTurnRecord{}, errInvestigationTurnEncoding
 	}

@@ -147,6 +147,10 @@ func turnEncodingDocument(t *testing.T, r InvestigationTurnRecord) map[string]an
 	if r.estimateVersion != 1 {
 		document["system_channel_bytes"] = r.systemBytes
 	}
+	// A structured-output turn adds its reserved response_format count.
+	if r.structuredOutput {
+		document["response_format_bytes"] = r.responseFormatBytes
+	}
 	return document
 }
 
@@ -161,6 +165,9 @@ func turnEncodingPreimage(r InvestigationTurnRecord) []any {
 	if r.estimateVersion != 1 {
 		preimage = append(preimage, r.systemBytes)
 	}
+	if r.structuredOutput {
+		preimage = append(preimage, r.responseFormatBytes)
+	}
 	return preimage
 }
 
@@ -170,7 +177,11 @@ func turnEncodingAssertRoundTrip(t *testing.T, r InvestigationTurnRecord) Invest
 		t.Fatal("fixture is not a valid complete readback record")
 	}
 	preimage := turnEncodingPreimage(r)
-	if want := map[uint8]int{1: 26, 2: 27}[r.estimateVersion]; len(preimage) != want {
+	want := map[uint8]int{1: 26, 2: 27}[r.estimateVersion]
+	if r.structuredOutput {
+		want++
+	}
+	if len(preimage) != want {
 		t.Fatal("turn identity recipe changed")
 	}
 	digest := sha256.Sum256(turnEncodingJSON(t, preimage))

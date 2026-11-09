@@ -365,7 +365,7 @@ func (f *persistFixtureData) rebuild() {
 
 func (f *persistFixtureData) preflight() {
 	t, o := f.t, f.options
-	budget, err := gateway.InvestigationTurnCostBudget(o.Routing.Budget, f.request, review.ModelRequestSystemChannelBytes(f.request), o.Routing.Budget.MaxCostMicroUSD())
+	budget, err := gateway.InvestigationTurnCostBudget(o.Routing.Budget, f.request, review.ModelRequestSystemChannelBytes(f.request), 0, o.Routing.Budget.MaxCostMicroUSD())
 	upperCheck(t, err)
 	input, err := gateway.NewReviewRoutingInput(o.Scope, f.request, o.Routing.Requirements, o.Routing.Constraints)
 	upperCheck(t, err)

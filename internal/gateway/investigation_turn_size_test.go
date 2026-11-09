@@ -25,7 +25,7 @@ const (
 	turnSizePartLimit             = 2 << 20
 	turnSizePartCount             = 64
 	turnSizeArtifactPayloadLimit  = 16 << 20
-	turnSizeMetadataCeiling       = 941524
+	turnSizeMetadataCeiling       = 941559
 	turnSizeResponseBase64Ceiling = 11185064
 )
 
@@ -46,7 +46,7 @@ func turnSizeMetadataOracle(t *testing.T, value reflect.Type, name string, tag r
 			field := value.Field(i)
 			key, options, hasOptions := strings.Cut(field.Tag.Get("json"), ",")
 			debit := key == "reported_debit_upper_bound" && field.Type == reflect.TypeOf((*reportedDebitUpperBoundWire)(nil))
-			system := key == "system_channel_bytes" && field.Type == reflect.TypeOf((*uint32)(nil))
+			system := (key == "system_channel_bytes" || key == "response_format_bytes") && field.Type == reflect.TypeOf((*uint32)(nil))
 			if key == "" || hasOptions && (options != "omitempty" || !debit && !system) {
 				t.Fatal("wire field lacks an exact supported JSON key/options")
 			}
@@ -57,7 +57,7 @@ func turnSizeMetadataOracle(t *testing.T, value reflect.Type, name string, tag r
 		}
 		return size
 	case reflect.Pointer:
-		if value == reflect.TypeOf((*uint32)(nil)) && name == "system_channel_bytes" && tag.Get("json") == "system_channel_bytes,omitempty" {
+		if value == reflect.TypeOf((*uint32)(nil)) && (name == "system_channel_bytes" || name == "response_format_bytes") && tag.Get("json") == name+",omitempty" {
 			return turnSizeMetadataOracle(t, value.Elem(), "", "")
 		}
 		if value != reflect.TypeOf((*reportedDebitUpperBoundWire)(nil)) || name != "reported_debit_upper_bound" || tag.Get("json") != "reported_debit_upper_bound,omitempty" {
@@ -159,7 +159,7 @@ func TestInvestigationTurnSizeUsefulAdmissionMonotonicityAndOverflow(t *testing.
 		}
 	}
 	oversized, err := EstimateInvestigationTurnPayloadBytes(turnSizeRequestLimit)
-	if err != nil || oversized != 23311400 || oversized <= turnSizeArtifactPayloadLimit {
+	if err != nil || oversized != 23311435 || oversized <= turnSizeArtifactPayloadLimit {
 		t.Fatalf("valid maximum request must return an inadmissible bound, not an error: (%d, %v)", oversized, err)
 	}
 	base := uint64(turnSizeMetadataCeiling + turnSizeResponseBase64Ceiling)
@@ -273,6 +273,16 @@ func TestInvestigationTurnSizeShapeFailsClosed(t *testing.T) {
 		{"required system channel pointer", func(s *investigationTurnShape) {
 			for i := range s.fields {
 				if s.fields[i].prefix == `"system_channel_bytes":` {
+					s.fields[i].optional = false
+				}
+			}
+		}},
+		{"response format element kind", func(s *investigationTurnShape) {
+			turnSizeField(t, s, "response_format_bytes").element.kind = reflect.Uint64
+		}},
+		{"required response format pointer", func(s *investigationTurnShape) {
+			for i := range s.fields {
+				if s.fields[i].prefix == `"response_format_bytes":` {
 					s.fields[i].optional = false
 				}
 			}

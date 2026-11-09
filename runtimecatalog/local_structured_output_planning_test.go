@@ -2,7 +2,9 @@ package runtimecatalog
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -226,4 +228,72 @@ func verifierSnapshot(t *testing.T, inventory runtimeconfig.RouteInventory, poli
 	}
 	t.Fatal("policy verifier is not in the inventory")
 	return nil
+}
+
+// An investigation profile reserves each role's turns for the request wire its
+// own routes send, and binds that choice into the profile identity.
+func TestLocalStructuredOutputInvestigationProfileSelectsEachRolesTransport(t *testing.T) {
+	ctx := context.Background()
+	inventory, err := runtimeconfig.NewRouteInventory(ctx, localPairDefinitions(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	policyBytes, err := json.Marshal(map[string]any{"contract": "open-trestle/investigation-policy", "schema_version": 1, "profile": "snapshot-read-v1", "max_model_turns": 5, "max_tool_calls": 3, "max_returned_bytes": 32768, "max_scanned_bytes": 65536, "max_files": 16, "max_lines_per_read": 20, "max_matches": 8, "max_result_bytes": 8192, "max_cost_micro_usd": 1000000, "timeout_milliseconds": 10000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	investigation, err := review.ParseInvestigationPolicy(policyBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := func(enabled ...string) (modelhandler.InvestigationPipelineProfile, runtimeconfig.RuntimePolicy) {
+		t.Helper()
+		policy := localPairPolicy(t, inventory, true, []string{"adapter-b"}, "distinct_provider", func(doc map[string]any) {
+			doc["schema_version"] = 6
+			var connections []map[string]any
+			for _, old := range doc["connections"].([]map[string]string) {
+				c := map[string]any{}
+				for k, v := range old {
+					c[k] = v
+				}
+				c["implementation"] = "openai_chat_completions"
+				c["local_structured_output"] = slices.Contains(enabled, old["adapter_id"])
+				connections = append(connections, c)
+			}
+			doc["connections"] = connections
+		})
+		value, err := NewInvestigationProfileFromRuntimePolicy(policy, inventory, investigation, strings.Repeat("d", 64))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return value, policy
+	}
+	structured, standard := review.ModelRequestTransportLocalStructuredOutput, review.ModelRequestTransportStandard
+	identities := map[string]bool{}
+	for _, tc := range []struct {
+		enabled                  []string
+		generation, verification review.ModelRequestTransport
+	}{
+		{nil, standard, standard},
+		{[]string{"adapter-a"}, structured, standard},
+		{[]string{"adapter-b"}, standard, structured},
+		{[]string{"adapter-a", "adapter-b"}, structured, structured},
+	} {
+		value, policy := profile(tc.enabled...)
+		routing := value.Routing()
+		if routing.GenerationTransport != tc.generation || routing.VerificationTransport != tc.verification {
+			t.Fatalf("structured %v: transports (%s, %s), want (%s, %s)", tc.enabled, routing.GenerationTransport, routing.VerificationTransport, tc.generation, tc.verification)
+		}
+		// The same routing with standard transports is the version 1 profile.
+		baseline := routing
+		baseline.GenerationTransport, baseline.VerificationTransport = standard, standard
+		legacy, err := modelhandler.NewInvestigationPipelineProfile(modelhandler.InvestigationPipelineProfileOptions{RuntimePolicyIdentity: policy.Identity(), InventoryIdentity: inventory.Identity(), ReviewPolicyIdentity: policy.ReviewPolicyIdentity(), PublicationPolicyIdentity: policy.Publication().Identity(), PublicationPolicy: policy.Publication(), DispatcherCatalogIdentity: strings.Repeat("d", 64), Policy: investigation, Routing: baseline})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (legacy.Identity() == value.Identity()) != (len(tc.enabled) == 0) || identities[value.Identity()] {
+			t.Fatalf("structured %v: profile identity does not bind exactly the role transports", tc.enabled)
+		}
+		identities[value.Identity()] = true
+	}
 }

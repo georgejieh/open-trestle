@@ -318,7 +318,7 @@ func newArtifactsFixture(t *testing.T, runLabels ...string) artifactsFixture {
 }
 func (f artifactsFixture) predicted(t *testing.T, request provider.Request) gateway.RouteAttemptAuthorization {
 	t.Helper()
-	budget, err := gateway.InvestigationTurnCostBudget(f.options.Budget, request, review.ModelRequestSystemChannelBytes(request), f.options.Budget.MaxCostMicroUSD())
+	budget, err := gateway.InvestigationTurnCostBudget(f.options.Budget, request, review.ModelRequestSystemChannelBytes(request), 0, f.options.Budget.MaxCostMicroUSD())
 	artifactsCheck(t, err)
 	input, err := gateway.NewReviewRoutingInput(f.options.Scope, request, f.options.Requirements, f.options.Constraints)
 	artifactsCheck(t, err)

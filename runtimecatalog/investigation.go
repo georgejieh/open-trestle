@@ -59,7 +59,8 @@ func NewInvestigationProfileFromRuntimePolicy(configuration runtimeconfig.Runtim
 	if err != nil {
 		return model.InvestigationPipelineProfile{}, ErrInvalidInvestigationCatalog
 	}
-	routing := model.InvestigationRoutingOptions{RegistryRevision: inventory.RegistryRevision(), PerformanceRevision: inventory.PerformanceRevision(), Generation: generation, Verification: verification, Observations: inventory.PerformanceObservations(), VerificationRanking: ranking, Requirements: configuration.Requirements(), Constraints: configuration.Constraints(), Budget: budget, Independence: configuration.Independence()}
+	// Each role reserves for the request wire its own routes send.
+	routing := model.InvestigationRoutingOptions{RegistryRevision: inventory.RegistryRevision(), PerformanceRevision: inventory.PerformanceRevision(), Generation: generation, Verification: verification, Observations: inventory.PerformanceObservations(), VerificationRanking: ranking, Requirements: configuration.Requirements(), Constraints: configuration.Constraints(), Budget: budget, Independence: configuration.Independence(), GenerationTransport: configuration.ModelRequestTransport([]gateway.ObservedRouteCandidate{generation}), VerificationTransport: configuration.ModelRequestTransport(verification)}
 	return model.NewInvestigationPipelineProfile(model.InvestigationPipelineProfileOptions{RuntimePolicyIdentity: configuration.Identity(), InventoryIdentity: inventory.Identity(), ReviewPolicyIdentity: configuration.ReviewPolicyIdentity(), PublicationPolicyIdentity: configuration.Publication().Identity(), PublicationPolicy: configuration.Publication(), DispatcherCatalogIdentity: catalogIdentity, Policy: policy, Routing: routing})
 }
 

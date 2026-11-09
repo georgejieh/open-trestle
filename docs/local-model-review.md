@@ -326,15 +326,17 @@ payload bytes plus the trusted system channel bytes plus the serialized
 Route planning counts the same `response_format` bytes, which are
 deterministic from the pinned schema, whenever a planning step's candidate
 routes include a connection with this option: the generation and verification
-route authorizers and the local generation route plan reserve the payload, the
-system channel and the schema framing, so `estimated_input_tokens` need not
-carry that margin. A step reserves once for all of its candidate routes, so a
-route without the option planned in the same step is reserved the same way.
-Such an authorizer binds `input_transport: local_structured_output` into its
-identity (the verification authorizer moves to identity version 3 for it);
-without the option the estimate and identity are unchanged. Investigation
-planning does not count `response_format` yet, so for it `estimated_input_tokens`
-must still supply that margin. This estimate is conservative byte accounting,
+route authorizers, the local generation route plan and each investigation turn
+reserve the payload, the system channel and the schema framing, so
+`estimated_input_tokens` need not carry that margin. A step reserves once for
+all of its candidate routes, so a route without the option planned in the same
+step is reserved the same way; an investigation decides per role, from the
+pinned generation route and from the verification routes. Such an authorizer
+binds `input_transport: local_structured_output` into its identity (the
+verification authorizer moves to identity version 3 for it), and such an
+investigation binds its role transports into the route owner and pipeline
+profile identities (version 2 of each); without the option every estimate and
+identity is unchanged. This estimate is conservative byte accounting,
 not exact tokenization. Set a justified reservation that fits the route's
 approved context capacity; no budget is increased after authorization.
 
@@ -791,8 +793,12 @@ unchanged.
 
 Each model turn reserves the larger of `estimated_input_tokens` and the request
 payload bytes plus the trusted system channel bytes plus 256 framing bytes, the
-same estimate as single-generation review. The turn record stores the system
-channel bytes it reserved for under estimate version 2. Turn records written
+same estimate as single-generation review. A turn whose routes use
+[`local_structured_output`](#chat-completions-transport) also reserves the
+serialized `response_format` bytes. The turn record stores the system channel
+bytes it reserved for under estimate version 2, and a structured-output turn
+also stores its `response_format_bytes`; a standard turn omits that member and
+keeps its encoding and identity. Turn records written
 under estimate version 1 counted the payload alone; they read back with that
 formula and are never re-estimated.
 

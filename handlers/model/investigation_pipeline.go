@@ -68,7 +68,7 @@ func NewInvestigationPipelineProfile(o InvestigationPipelineProfileOptions) (Inv
 	if o.PublicationPolicy.Validate() != nil || o.PublicationPolicy.Identity() != o.PublicationPolicyIdentity {
 		return InvestigationPipelineProfile{}, ErrInvestigationPipeline
 	}
-	if o.Policy.ValidateRuntimeBudget(r.Budget) != nil || r.Budget.MaxCostMicroUSD() != o.Policy.MaxCostMicroUSD() || r.Generation.Validate() != nil || r.Requirements.Validate() != nil || r.Constraints.Validate() != nil || r.Independence.Validate() != nil || r.VerificationRanking.Validate() != nil || len(r.Verification) == 0 || len(r.Verification) > 64 {
+	if o.Policy.ValidateRuntimeBudget(r.Budget) != nil || r.Budget.MaxCostMicroUSD() != o.Policy.MaxCostMicroUSD() || r.GenerationTransport.Validate() != nil || r.VerificationTransport.Validate() != nil || r.Generation.Validate() != nil || r.Requirements.Validate() != nil || r.Constraints.Validate() != nil || r.Independence.Validate() != nil || r.VerificationRanking.Validate() != nil || len(r.Verification) == 0 || len(r.Verification) > 64 {
 		return InvestigationPipelineProfile{}, ErrInvestigationPipeline
 	}
 	pin, err := gateway.NewPinnedRouteRankingPolicy(r.Generation.ResolvedRecord().RouteRegistryRecord().RouteCandidateDeclaration().RouteCapabilityDeclaration().RouteReference(), nil)
@@ -112,7 +112,14 @@ func NewInvestigationPipelineProfile(o InvestigationPipelineProfileOptions) (Inv
 			zones = append(zones, z.String())
 		}
 	}
-	id := toolRecordIdentity([]any{"open-trestle/investigation-pipeline-profile", 1, o.RuntimePolicyIdentity, o.InventoryIdentity, o.ReviewPolicyIdentity, o.PublicationPolicyIdentity, o.Policy.Identity(), o.DispatcherCatalogIdentity, gp.Identity(), vp.Identity(), []any{r.Requirements.MinContextTokens(), r.Requirements.MinOutputTokens(), features}, []any{string(r.Constraints.Classification()), zones, r.Constraints.ContentLoggingAllowed()}, []any{r.Budget.EstimatedInputTokens(), r.Budget.MaxOutputTokens(), r.Budget.MaxCostMicroUSD()}, r.Independence.Identity(), "fixed_generation_route_v1", "foreground_single_runner_v1", "initial_selected_only_v1", "full_then_half_raw_overflow_v1", "live_journal_custody_v1"})
+	preimage := []any{"open-trestle/investigation-pipeline-profile", 1, o.RuntimePolicyIdentity, o.InventoryIdentity, o.ReviewPolicyIdentity, o.PublicationPolicyIdentity, o.Policy.Identity(), o.DispatcherCatalogIdentity, gp.Identity(), vp.Identity(), []any{r.Requirements.MinContextTokens(), r.Requirements.MinOutputTokens(), features}, []any{string(r.Constraints.Classification()), zones, r.Constraints.ContentLoggingAllowed()}, []any{r.Budget.EstimatedInputTokens(), r.Budget.MaxOutputTokens(), r.Budget.MaxCostMicroUSD()}, r.Independence.Identity(), "fixed_generation_route_v1", "foreground_single_runner_v1", "initial_selected_only_v1", "full_then_half_raw_overflow_v1", "live_journal_custody_v1"}
+	// A profile whose roles reserve structured-output framing binds both role
+	// transports under version 2; version 1 identities are unchanged.
+	if r.GenerationTransport != review.ModelRequestTransportStandard || r.VerificationTransport != review.ModelRequestTransportStandard {
+		preimage[1] = 2
+		preimage = append(preimage, []string{r.GenerationTransport.String(), r.VerificationTransport.String()})
+	}
+	id := toolRecordIdentity(preimage)
 	o.Routing = pipelineRoutingCopy(r)
 	return InvestigationPipelineProfile{id, o}, nil
 }
