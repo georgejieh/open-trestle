@@ -14,6 +14,7 @@ import (
 	"github.com/georgejieh/open-trestle/client"
 	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/diagnostics"
+	"github.com/georgejieh/open-trestle/webhook"
 )
 
 const (
@@ -34,6 +35,8 @@ func runRemote(args []string, stdout, stderr io.Writer) int {
 		return runRemoteScopeOperation("status", args[1:], stdout, stderr)
 	case "cancel":
 		return runRemoteScopeOperation("cancel", args[1:], stdout, stderr)
+	case "refusal":
+		return runRemoteScopeOperation("refusal", args[1:], stdout, stderr)
 	default:
 		writeRunsUsage(stderr)
 		return 2
@@ -94,7 +97,7 @@ func runRemoteScopeOperation(operation string, args []string, stdout, stderr io.
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
-	if flags.NArg() != 0 || *tenantID == "" || *repositoryID == "" || *runID == "" || (*format != "run" && (*format != "progress" && *format != "json" && *format != "sarif" || operation != "status")) {
+	if flags.NArg() != 0 || *tenantID == "" || *repositoryID == "" || *runID == "" || (*format != "run" && (*format != "progress" && *format != "json" && *format != "sarif" || operation != "status")) || (operation == "refusal" && *format != "run") {
 		writeRunsScopeUsage(stderr, operation)
 		return 2
 	}
@@ -115,6 +118,23 @@ func runRemoteScopeOperation(operation string, args []string, stdout, stderr io.
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), remoteCommandTimeout)
 	defer cancel()
+	if operation == "refusal" {
+		refusal, refusalErr := apiClient.GetDeliveryRefusal(ctx, scope)
+		if refusalErr != nil {
+			fmt.Fprintf(stderr, "runs refusal: %v\n", refusalErr)
+			return 1
+		}
+		encoded, encodeErr := webhook.EncodeRefusalRecord(refusal)
+		if encodeErr != nil {
+			fmt.Fprintln(stderr, "runs refusal: encode refusal failed")
+			return 1
+		}
+		if _, writeErr := stdout.Write(append(encoded, '\n')); writeErr != nil {
+			fmt.Fprintln(stderr, "runs refusal: write refusal failed")
+			return 1
+		}
+		return 0
+	}
 	if operation == "status" && *format == "progress" {
 		progress, progressErr := apiClient.GetRunProgress(ctx, scope)
 		if progressErr != nil {
@@ -131,6 +151,12 @@ func runRemoteScopeOperation(operation string, args []string, stdout, stderr io.
 	}
 	if err != nil {
 		fmt.Fprintf(stderr, "runs %s: %v\n", operation, err)
+		var apiErr *client.APIError
+		if operation == "status" && errors.As(err, &apiErr) && apiErr.Code() == "not_found" {
+			if refusal, refusalErr := apiClient.GetDeliveryRefusal(ctx, scope); refusalErr == nil {
+				fmt.Fprintf(stderr, "runs status: no run was opened; intake refused the delivery: %s (see trestle runs refusal)\n", refusal.Reason())
+			}
+		}
 		return 1
 	}
 	if operation == "status" && *format != "run" {
@@ -240,6 +266,7 @@ func writeRunsUsage(stderr io.Writer) {
 	writeRunsSubmitUsage(stderr)
 	writeRunsScopeUsage(stderr, "status")
 	writeRunsScopeUsage(stderr, "cancel")
+	fmt.Fprintln(stderr, "usage: trestle runs refusal --tenant ID --repository ID --run ID [--server URL]")
 }
 func writeRunsSubmitUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "usage: trestle runs submit --plan PATH [--server URL]")

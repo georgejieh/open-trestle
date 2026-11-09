@@ -682,6 +682,7 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	resources.supervisors = append(resources.supervisors, taskSupervisor)
 	resources.supervisorNames = append(resources.supervisorNames, "task_notifications")
 	var inboxStore webhook.Store
+	var refusalReader httpapi.DeliveryRefusalReader
 	var githubHTTPHandler http.Handler
 	var statusHandlers []runtimeadmin.HandlerBinding
 	var statusInventoryIdentity, statusPolicyIdentity string
@@ -955,6 +956,9 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 				return nil, ErrInvalidDaemonConfiguration
 			}
 			processor, processorErr := webhook.NewPreparedProcessor(journal, planner, artifactStore)
+			if refusals, recordsRefusals := inboxStore.(webhook.RefusalStore); recordsRefusals {
+				refusalReader = daemonDeliveryRefusals{store: refusals, source: webhook.SourceGitHub, plannerIdentity: planner.Identity()}
+			}
 			if processorErr != nil {
 				return nil, processorErr
 			}
@@ -1057,6 +1061,11 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	apiHandler, err = apiHandler.WithProgressArtifacts(artifactStore)
 	if err != nil {
 		return nil, err
+	}
+	if refusalReader != nil {
+		if apiHandler, err = apiHandler.WithDeliveryRefusals(refusalReader); err != nil {
+			return nil, err
+		}
 	}
 	var handler http.Handler = apiHandler
 	if githubHTTPHandler != nil {

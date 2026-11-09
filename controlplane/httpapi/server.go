@@ -74,6 +74,7 @@ type Server struct {
 	runtimeStatus         RuntimeStatusReader
 	localReviewAdmitter   LocalDeterministicReviewAdmitter
 	localFullAdmitter     LocalFullReviewAdmitter
+	refusalReader         DeliveryRefusalReader
 }
 
 func NewServer(coordinator *controlplane.Coordinator, authenticator Authenticator, clock Clock) (*Server, error) {
@@ -314,6 +315,10 @@ func (s *Server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			return
 		}
 		s.submitRun(ctx, writer, request, requestID, principal, at)
+		return
+	}
+	if scope, matched := parseRunActionPath(path, "refusal"); matched {
+		s.handleRunRefusal(ctx, writer, request, requestID, principal, scope)
 		return
 	}
 	if scope, matched := parseRunActionPath(path, "progress"); matched {
