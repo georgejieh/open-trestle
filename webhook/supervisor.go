@@ -257,7 +257,12 @@ func (s *Supervisor) recordRefusal(ctx context.Context, stored StoredDelivery, r
 	if err != nil {
 		return err
 	}
-	_, _, err = s.refusals.RecordRefusal(ctx, record)
+	// A refusal is terminal for its delivery and planner: when another one is
+	// already recorded, for example by a concurrent writer, the first record
+	// stands and the delivery stays refused.
+	if _, _, err = s.refusals.RecordRefusal(ctx, record); errors.Is(err, ErrRefusalConflict) {
+		return nil
+	}
 	return err
 }
 

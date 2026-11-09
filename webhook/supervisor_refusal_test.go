@@ -152,3 +152,45 @@ func TestSupervisorRetriesTransientFailuresWithoutRefusing(t *testing.T) {
 		t.Fatalf("retry did not admit the delivery: %v", err)
 	}
 }
+
+// concurrentRefusalStore hides recorded refusals from the supervisor's reads,
+// as when another writer records one after the supervisor looked.
+type concurrentRefusalStore struct{ *MemoryStore }
+
+func (concurrentRefusalStore) Refusal(context.Context, RepositoryScope, Source, string, string) (RefusalRecord, bool, error) {
+	return RefusalRecord{}, false, nil
+}
+
+// A delivery already refused for this planner with another reason stays
+// refused under its first record: the conflicting refusal neither fails the
+// pass nor stops intake.
+func TestSupervisorKeepsTheFirstRefusalOfADelivery(t *testing.T) {
+	ctx := context.Background()
+	memory := NewMemoryStore()
+	f := newRefusalFixture(t, concurrentRefusalStore{memory}, refusingPlanner{}, controlplane.NewMemoryRunJournal())
+	f.supervisor.processor.planner = refusingPlanner{refused: f.deliveries[0].DeduplicationKey(), err: errors.New("invalid payload")}
+	planner, key := strings.Repeat("d", 64), f.deliveries[0].DeduplicationKey()
+	stored, _, err := memory.Get(ctx, f.deliveries[0].Scope(), SourceGitHub, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := NewRefusalRecord(stored, planner, RefusalReasonRetriesExhausted, time.UnixMilli(1001))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := memory.RecordRefusal(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	for pass := 0; pass <= int(f.supervisor.options.MaximumRetries); pass++ {
+		if err := f.supervisor.reconcile(ctx); err != nil {
+			t.Fatalf("a conflicting refusal failed pass %d: %v", pass, err)
+		}
+	}
+	if !f.admitted(t, f.deliveries[1]) || f.admitted(t, f.deliveries[0]) {
+		t.Fatal("a conflicting refusal blocked the other delivery or admitted the refused one")
+	}
+	record, found, err := memory.Refusal(ctx, f.deliveries[0].Scope(), SourceGitHub, key, planner)
+	if err != nil || !found || record.Identity() != first.Identity() {
+		t.Fatalf("the first refusal was not kept: found=%t reason=%s err=%v", found, record.Reason(), err)
+	}
+}
