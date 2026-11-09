@@ -150,6 +150,7 @@ type RunEvent struct {
 	outputIdentity       string
 	failure              RunFailure
 	failureReason        TaskFailureReason
+	shortfall            TaskFailureContextShortfall
 	retryAtMillis        int64
 	occurredAtMillis     int64
 	preparedArtifact     []byte
@@ -241,12 +242,18 @@ func (e RunEvent) Failure() RunFailure        { return e.failure }
 // FailureReason returns the content-free reason of a failed source task, or zero.
 func (e RunEvent) FailureReason() TaskFailureReason { return e.failureReason }
 
-// withFailureReason returns the task-failed event with its source failure reason bound.
-func (e RunEvent) withFailureReason(task TaskDefinition, reason TaskFailureReason) (RunEvent, error) {
-	if e.kind != RunEventTaskFailed || e.outputIdentity != "" || reason.Validate() != nil || !taskFailureReasonAllowed(task.Kind()) || task.Identity() != e.taskIdentity {
+// ContextShortfall returns the counts of a route_context_insufficient refusal.
+func (e RunEvent) ContextShortfall() (TaskFailureContextShortfall, bool) {
+	return e.shortfall, e.shortfall.Present()
+}
+
+// withFailureReason returns the task-failed event with its failure reason, and
+// any route context counts, bound.
+func (e RunEvent) withFailureReason(task TaskDefinition, reason TaskFailureReason, shortfall TaskFailureContextShortfall) (RunEvent, error) {
+	if e.kind != RunEventTaskFailed || e.outputIdentity != "" || reason.Validate() != nil || !taskFailureReasonAllowed(task.Kind(), reason, shortfall) || task.Identity() != e.taskIdentity {
 		return RunEvent{}, ErrInvalidTaskFailureReason
 	}
-	e.failureReason = reason
+	e.failureReason, e.shortfall = reason, shortfall
 	e.identity = deriveRunEventIdentity(e)
 	if err := e.Validate(); err != nil {
 		return RunEvent{}, err
@@ -311,7 +318,7 @@ func (e RunEvent) validateFields() error {
 	if hasTask && (!validReviewTaskKey(e.taskKey) || !validControlPlaneDigest(e.taskIdentity)) {
 		return ErrInvalidRunEventTask
 	}
-	if e.failureReason != 0 && (e.kind != RunEventTaskFailed || e.outputIdentity != "" || e.failureReason.Validate() != nil) {
+	if e.failureReason != 0 && (e.kind != RunEventTaskFailed || e.outputIdentity != "" || e.failureReason.Validate() != nil) || e.shortfall.Present() != (e.failureReason == TaskFailureReasonRouteContextInsufficient) || e.shortfall.Present() && !e.shortfall.valid() {
 		return ErrInvalidTaskFailureReason
 	}
 	switch e.kind {
@@ -424,28 +431,29 @@ func deriveRunEventIdentity(event RunEvent) string {
 		version = 2
 	}
 	preimage := struct {
-		Contract         string                   `json:"contract"`
-		Version          int                      `json:"version"`
-		Plan             string                   `json:"plan"`
-		Scope            string                   `json:"scope"`
-		Sequence         uint64                   `json:"sequence"`
-		Previous         string                   `json:"previous"`
-		Kind             string                   `json:"kind"`
-		TaskKey          string                   `json:"task_key"`
-		Task             string                   `json:"task"`
-		Attempt          uint8                    `json:"attempt"`
-		LeaseToken       string                   `json:"lease_token"`
-		Worker           string                   `json:"worker"`
-		LeaseExpires     int64                    `json:"lease_expires"`
-		Output           string                   `json:"output"`
-		OutputKind       string                   `json:"output_kind,omitempty"`
-		Failure          string                   `json:"failure"`
-		FailureReason    string                   `json:"failure_reason,omitempty"`
-		RetryAt          int64                    `json:"retry_at"`
-		OccurredAt       int64                    `json:"occurred_at"`
-		PreparedArtifact []byte                   `json:"prepared_artifact,omitempty"`
-		PacketDescriptor *ContextPacketDescriptor `json:"packet_descriptor,omitempty"`
-		InputDescriptor  *ContextInputDescriptor  `json:"input_descriptor,omitempty"`
+		Contract         string                      `json:"contract"`
+		Version          int                         `json:"version"`
+		Plan             string                      `json:"plan"`
+		Scope            string                      `json:"scope"`
+		Sequence         uint64                      `json:"sequence"`
+		Previous         string                      `json:"previous"`
+		Kind             string                      `json:"kind"`
+		TaskKey          string                      `json:"task_key"`
+		Task             string                      `json:"task"`
+		Attempt          uint8                       `json:"attempt"`
+		LeaseToken       string                      `json:"lease_token"`
+		Worker           string                      `json:"worker"`
+		LeaseExpires     int64                       `json:"lease_expires"`
+		Output           string                      `json:"output"`
+		OutputKind       string                      `json:"output_kind,omitempty"`
+		Failure          string                      `json:"failure"`
+		FailureReason    string                      `json:"failure_reason,omitempty"`
+		ContextShortfall *taskFailureShortfallRecord `json:"context_shortfall,omitempty"`
+		RetryAt          int64                       `json:"retry_at"`
+		OccurredAt       int64                       `json:"occurred_at"`
+		PreparedArtifact []byte                      `json:"prepared_artifact,omitempty"`
+		PacketDescriptor *ContextPacketDescriptor    `json:"packet_descriptor,omitempty"`
+		InputDescriptor  *ContextInputDescriptor     `json:"input_descriptor,omitempty"`
 	}{
 		Contract: "open-trestle/review-run-event", Version: version,
 		Plan: event.planIdentity, Scope: event.scope.Identity(), Sequence: event.sequence,
@@ -453,7 +461,7 @@ func deriveRunEventIdentity(event RunEvent) string {
 		TaskKey: event.taskKey, Task: event.taskIdentity, Attempt: event.attempt,
 		LeaseToken: event.leaseTokenIdentity, Worker: event.workerIdentity,
 		LeaseExpires: event.leaseExpiresAtMillis, Output: event.outputIdentity, OutputKind: contextFailureOutputKind((event.kind == RunEventTaskFailed && event.outputIdentity != "") || event.kind == RunEventContextAbstentionPrepared),
-		Failure: event.failure.String(), FailureReason: event.failureReason.String(), RetryAt: event.retryAtMillis, OccurredAt: event.occurredAtMillis, PreparedArtifact: event.preparedArtifact,
+		Failure: event.failure.String(), FailureReason: event.failureReason.String(), ContextShortfall: taskFailureShortfallToRecord(event.shortfall), RetryAt: event.retryAtMillis, OccurredAt: event.occurredAtMillis, PreparedArtifact: event.preparedArtifact,
 	}
 	if event.kind == RunEventContextInputPrepared {
 		d := cloneContextInputDescriptor(event.inputDescriptor)

@@ -137,6 +137,7 @@ type TaskCompletion struct {
 	outputIdentity string
 	failure        RunFailure
 	reason         TaskFailureReason
+	shortfall      TaskFailureContextShortfall
 }
 
 func NewTaskSuccess(outputIdentity string) (TaskCompletion, error) {
@@ -177,17 +178,22 @@ func (c TaskCompletion) Failure() RunFailure          { return c.failure }
 
 // FailureReason returns the content-free reason of a failed source task, or zero.
 func (c TaskCompletion) FailureReason() TaskFailureReason { return c.reason }
+
+// ContextShortfall returns the counts of a route_context_insufficient refusal.
+func (c TaskCompletion) ContextShortfall() (TaskFailureContextShortfall, bool) {
+	return c.shortfall, c.shortfall.Present()
+}
 func (c TaskCompletion) Validate() error {
 	if c.status == TaskCompletionSucceeded {
-		if !validControlPlaneDigest(c.outputIdentity) || c.failure != 0 || c.reason != 0 || c.planIdentity != "" || c.taskIdentity != "" {
+		if !validControlPlaneDigest(c.outputIdentity) || c.failure != 0 || c.reason != 0 || c.shortfall.Present() || c.planIdentity != "" || c.taskIdentity != "" {
 			return ErrInvalidTaskCompletion
 		}
 	} else if c.status == TaskCompletionFailed && c.reason != 0 {
-		if c.failure.String() == "" || c.reason.Validate() != nil || c.outputIdentity != "" || !validControlPlaneDigest(c.planIdentity) || !validControlPlaneDigest(c.taskIdentity) {
+		if c.failure.String() == "" || c.reason.Validate() != nil || c.shortfall.Present() != (c.reason == TaskFailureReasonRouteContextInsufficient) || c.shortfall.Present() && !c.shortfall.valid() || c.outputIdentity != "" || !validControlPlaneDigest(c.planIdentity) || !validControlPlaneDigest(c.taskIdentity) {
 			return ErrInvalidTaskCompletion
 		}
 	} else if c.status == TaskCompletionFailed {
-		if c.failure.String() == "" || (c.outputIdentity == "" && (c.planIdentity != "" || c.taskIdentity != "")) || (c.outputIdentity != "" && (!validControlPlaneDigest(c.outputIdentity) || !validControlPlaneDigest(c.planIdentity) || !validControlPlaneDigest(c.taskIdentity))) {
+		if c.failure.String() == "" || c.shortfall.Present() || (c.outputIdentity == "" && (c.planIdentity != "" || c.taskIdentity != "")) || (c.outputIdentity != "" && (!validControlPlaneDigest(c.outputIdentity) || !validControlPlaneDigest(c.planIdentity) || !validControlPlaneDigest(c.taskIdentity))) {
 			return ErrInvalidTaskCompletion
 		}
 	} else {
@@ -514,7 +520,7 @@ func (c *Coordinator) CompleteTask(ctx context.Context, plan ReviewRunPlan, leas
 		if completion.outputIdentity != "" && completion.Status() == TaskCompletionFailed && (runtime.Definition().Kind() != TaskAssembleContext || completion.planIdentity != plan.Identity() || completion.taskIdentity != runtime.Definition().Identity()) {
 			return ReviewRunState{}, ErrInvalidTaskCompletion
 		}
-		if completion.reason != 0 && (!taskFailureReasonAllowed(runtime.Definition().Kind()) || completion.planIdentity != plan.Identity() || completion.taskIdentity != runtime.Definition().Identity()) {
+		if completion.reason != 0 && (!taskFailureReasonAllowed(runtime.Definition().Kind(), completion.reason, completion.shortfall) || completion.planIdentity != plan.Identity() || completion.taskIdentity != runtime.Definition().Identity()) {
 			return ReviewRunState{}, ErrInvalidTaskCompletion
 		}
 		if runtime.Status() == TaskRuntimeSucceeded || runtime.Status() == TaskRuntimeFailed {
@@ -557,7 +563,7 @@ func (c *Coordinator) CompleteTask(ctx context.Context, plan ReviewRunPlan, leas
 		}
 		event, err := NewRunEvent(plan, state.Revision()+1, state.HeadIdentity(), kind, runtime.Definition(), runtime.Attempts(), runtime.leaseTokenIdentity, "", time.Time{}, output, failure, retryAt, at)
 		if err == nil && completion.reason != 0 {
-			event, err = event.withFailureReason(runtime.Definition(), completion.reason)
+			event, err = event.withFailureReason(runtime.Definition(), completion.reason, completion.shortfall)
 		}
 		if err != nil {
 			return ReviewRunState{}, err
@@ -802,7 +808,7 @@ func completedTaskMatches(runtime TaskRuntimeState, lease TaskLease, completion 
 	if runtime.Status() == TaskRuntimeSucceeded {
 		return completion.Status() == TaskCompletionSucceeded && runtime.OutputIdentity() == completion.OutputIdentity()
 	}
-	return completion.Status() == TaskCompletionFailed && runtime.Failure() == completion.Failure() && runtime.FailureReason() == completion.FailureReason() && runtime.OutputIdentity() == completion.OutputIdentity()
+	return completion.Status() == TaskCompletionFailed && runtime.Failure() == completion.Failure() && runtime.FailureReason() == completion.FailureReason() && runtime.shortfall == completion.shortfall && runtime.OutputIdentity() == completion.OutputIdentity()
 }
 func validLeaseToken(token string) bool {
 	if len(token) != 64 || token != strings.ToLower(token) || strings.Trim(token, "0") == "" {
@@ -844,14 +850,15 @@ func deriveTaskCompletionIdentity(completion TaskCompletion) string {
 	}
 	if completion.reason != 0 && completion.status == TaskCompletionFailed {
 		return hashControlPlaneValue(struct {
-			Contract string `json:"contract"`
-			Version  int    `json:"version"`
-			Status   string `json:"status"`
-			Failure  string `json:"failure"`
-			Reason   string `json:"reason"`
-			Plan     string `json:"plan"`
-			Task     string `json:"task"`
-		}{"open-trestle/task-completion", 3, status, completion.failure.String(), completion.reason.String(), completion.planIdentity, completion.taskIdentity})
+			Contract  string                      `json:"contract"`
+			Version   int                         `json:"version"`
+			Status    string                      `json:"status"`
+			Failure   string                      `json:"failure"`
+			Reason    string                      `json:"reason"`
+			Shortfall *taskFailureShortfallRecord `json:"context_shortfall,omitempty"`
+			Plan      string                      `json:"plan"`
+			Task      string                      `json:"task"`
+		}{"open-trestle/task-completion", 3, status, completion.failure.String(), completion.reason.String(), taskFailureShortfallToRecord(completion.shortfall), completion.planIdentity, completion.taskIdentity})
 	}
 	if completion.outputIdentity != "" && completion.status == TaskCompletionFailed {
 		return hashControlPlaneValue(struct {

@@ -230,7 +230,9 @@
             "enum": [
               "no_merge_base",
               "nothing_to_review",
-              "merge_base_unavailable"
+              "merge_base_unavailable",
+              "route_context_insufficient",
+              "no_eligible_route"
             ]
           },
           "retry_at_milliseconds": {
@@ -240,6 +242,38 @@
           },
           "output_kind": {
             "const": "context_abstention"
+          },
+          "context_shortfall": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "required_tokens",
+              "estimated_input_tokens",
+              "max_output_tokens",
+              "declared_context_tokens"
+            ],
+            "properties": {
+              "required_tokens": {
+                "type": "integer",
+                "minimum": 2,
+                "maximum": 8589934590
+              },
+              "estimated_input_tokens": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 4294967295
+              },
+              "max_output_tokens": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 4294967295
+              },
+              "declared_context_tokens": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 4294967295
+              }
+            }
           }
         },
         "allOf": [
@@ -292,11 +326,67 @@
                   "const": "failed"
                 },
                 "kind": {
-                  "const": "acquire_source"
+                  "enum": [
+                    "acquire_source",
+                    "assemble_context"
+                  ]
                 },
                 "output_identity": {
                   "const": ""
                 }
+              },
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "failure_reason": {
+                        "enum": [
+                          "no_merge_base",
+                          "nothing_to_review",
+                          "merge_base_unavailable"
+                        ]
+                      }
+                    }
+                  },
+                  "then": {
+                    "properties": {
+                      "kind": {
+                        "const": "acquire_source"
+                      }
+                    }
+                  },
+                  "else": {
+                    "properties": {
+                      "kind": {
+                        "const": "assemble_context"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "failure_reason"
+              ],
+              "properties": {
+                "failure_reason": {
+                  "const": "route_context_insufficient"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "context_shortfall"
+              ]
+            },
+            "else": {
+              "not": {
+                "required": [
+                  "context_shortfall"
+                ]
               }
             }
           }
@@ -308,7 +398,10 @@
             "const": "failed"
           },
           "kind": {
-            "const": "acquire_source"
+            "enum": [
+              "acquire_source",
+              "assemble_context"
+            ]
           },
           "output_identity": {
             "const": ""
@@ -317,7 +410,9 @@
             "enum": [
               "no_merge_base",
               "nothing_to_review",
-              "merge_base_unavailable"
+              "merge_base_unavailable",
+              "route_context_insufficient",
+              "no_eligible_route"
             ]
           }
         },

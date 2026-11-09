@@ -19,31 +19,32 @@ const (
 var ErrInvalidRunEventEncoding = errors.New("invalid run event encoding")
 
 type runEventRecord struct {
-	Contract                   string                   `json:"contract"`
-	SchemaVersion              int                      `json:"schema_version"`
-	Identity                   string                   `json:"identity"`
-	PlanIdentity               string                   `json:"plan_identity"`
-	TenantID                   string                   `json:"tenant_id"`
-	RepositoryID               string                   `json:"repository_id"`
-	ReviewRunID                string                   `json:"review_run_id"`
-	Sequence                   uint64                   `json:"sequence"`
-	PreviousIdentity           string                   `json:"previous_identity"`
-	Kind                       string                   `json:"kind"`
-	TaskKey                    string                   `json:"task_key"`
-	TaskIdentity               string                   `json:"task_identity"`
-	Attempt                    uint8                    `json:"attempt"`
-	LeaseTokenIdentity         string                   `json:"lease_token_identity"`
-	WorkerIdentity             string                   `json:"worker_identity"`
-	LeaseExpiresAtMilliseconds int64                    `json:"lease_expires_at_milliseconds"`
-	OutputIdentity             string                   `json:"output_identity"`
-	OutputKind                 string                   `json:"output_kind,omitempty"`
-	Failure                    string                   `json:"failure"`
-	FailureReason              string                   `json:"failure_reason,omitempty"`
-	RetryAtMilliseconds        int64                    `json:"retry_at_milliseconds"`
-	OccurredAtMilliseconds     int64                    `json:"occurred_at_milliseconds"`
-	PreparedArtifact           []byte                   `json:"prepared_artifact,omitempty"`
-	PacketDescriptor           *ContextPacketDescriptor `json:"packet_descriptor,omitempty"`
-	InputDescriptor            *ContextInputDescriptor  `json:"input_descriptor,omitempty"`
+	Contract                   string                      `json:"contract"`
+	SchemaVersion              int                         `json:"schema_version"`
+	Identity                   string                      `json:"identity"`
+	PlanIdentity               string                      `json:"plan_identity"`
+	TenantID                   string                      `json:"tenant_id"`
+	RepositoryID               string                      `json:"repository_id"`
+	ReviewRunID                string                      `json:"review_run_id"`
+	Sequence                   uint64                      `json:"sequence"`
+	PreviousIdentity           string                      `json:"previous_identity"`
+	Kind                       string                      `json:"kind"`
+	TaskKey                    string                      `json:"task_key"`
+	TaskIdentity               string                      `json:"task_identity"`
+	Attempt                    uint8                       `json:"attempt"`
+	LeaseTokenIdentity         string                      `json:"lease_token_identity"`
+	WorkerIdentity             string                      `json:"worker_identity"`
+	LeaseExpiresAtMilliseconds int64                       `json:"lease_expires_at_milliseconds"`
+	OutputIdentity             string                      `json:"output_identity"`
+	OutputKind                 string                      `json:"output_kind,omitempty"`
+	Failure                    string                      `json:"failure"`
+	FailureReason              string                      `json:"failure_reason,omitempty"`
+	ContextShortfall           *taskFailureShortfallRecord `json:"context_shortfall,omitempty"`
+	RetryAtMilliseconds        int64                       `json:"retry_at_milliseconds"`
+	OccurredAtMilliseconds     int64                       `json:"occurred_at_milliseconds"`
+	PreparedArtifact           []byte                      `json:"prepared_artifact,omitempty"`
+	PacketDescriptor           *ContextPacketDescriptor    `json:"packet_descriptor,omitempty"`
+	InputDescriptor            *ContextInputDescriptor     `json:"input_descriptor,omitempty"`
 }
 
 // EncodeRunEvent emits bounded canonical JSON without lease secrets or raw errors.
@@ -102,7 +103,7 @@ func ParseRunEvent(encoded []byte) (RunEvent, error) {
 		taskKey: record.TaskKey, taskIdentity: record.TaskIdentity, attempt: record.Attempt,
 		leaseTokenIdentity: record.LeaseTokenIdentity, workerIdentity: record.WorkerIdentity,
 		leaseExpiresAtMillis: record.LeaseExpiresAtMilliseconds, outputIdentity: record.OutputIdentity,
-		failure: failure, failureReason: reason, retryAtMillis: record.RetryAtMilliseconds,
+		failure: failure, failureReason: reason, shortfall: taskFailureShortfallFromRecord(record.ContextShortfall), retryAtMillis: record.RetryAtMilliseconds,
 		occurredAtMillis: record.OccurredAtMilliseconds, preparedArtifact: append([]byte(nil), record.PreparedArtifact...),
 	}
 	if record.PacketDescriptor != nil {
@@ -132,7 +133,7 @@ func runEventToRecord(event RunEvent) runEventRecord {
 		TaskKey: event.TaskKey(), TaskIdentity: event.TaskIdentity(), Attempt: event.Attempt(),
 		LeaseTokenIdentity: event.LeaseTokenIdentity(), WorkerIdentity: event.WorkerIdentity(),
 		LeaseExpiresAtMilliseconds: event.leaseExpiresAtMillis, OutputIdentity: event.OutputIdentity(), OutputKind: eventContextFailureOutputKind(event),
-		Failure: event.Failure().String(), FailureReason: event.failureReason.String(), RetryAtMilliseconds: event.retryAtMillis,
+		Failure: event.Failure().String(), FailureReason: event.failureReason.String(), ContextShortfall: taskFailureShortfallToRecord(event.shortfall), RetryAtMilliseconds: event.retryAtMillis,
 		OccurredAtMilliseconds: event.occurredAtMillis, PreparedArtifact: event.PreparedArtifact(),
 	}
 	if event.kind == RunEventContextInputPrepared {

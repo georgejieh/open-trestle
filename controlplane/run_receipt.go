@@ -34,6 +34,7 @@ type ReviewTaskReceipt struct {
 	outputIdentity                                    string
 	failure                                           RunFailure
 	failureReason                                     TaskFailureReason
+	shortfall                                         TaskFailureContextShortfall
 	retryAtMillis                                     int64
 }
 
@@ -52,7 +53,12 @@ func (r ReviewTaskReceipt) Failure() RunFailure       { return r.failure }
 
 // FailureReason returns the content-free reason of a failed source task, or zero.
 func (r ReviewTaskReceipt) FailureReason() TaskFailureReason { return r.failureReason }
-func (r ReviewTaskReceipt) RetryAt() time.Time               { return runMillisToTime(r.retryAtMillis) }
+
+// ContextShortfall returns the counts of a route_context_insufficient refusal.
+func (r ReviewTaskReceipt) ContextShortfall() (TaskFailureContextShortfall, bool) {
+	return r.shortfall, r.shortfall.Present()
+}
+func (r ReviewTaskReceipt) RetryAt() time.Time { return runMillisToTime(r.retryAtMillis) }
 func (r ReviewTaskReceipt) Validate() error {
 	validKey := validReviewTaskKey(r.key)
 	validIdentities := validControlPlaneDigest(r.taskIdentity) && validControlPlaneDigest(r.inputIdentity) && validControlPlaneDigest(r.handlerIdentity)
@@ -61,7 +67,7 @@ func (r ReviewTaskReceipt) Validate() error {
 	if !validKey || !validIdentities || !validKinds || !validAttempts {
 		return ErrInvalidReviewRunReceipt
 	}
-	if r.failureReason != 0 && (r.status != TaskRuntimeFailed || r.outputIdentity != "" || r.failureReason.Validate() != nil || !taskFailureReasonAllowed(r.kind)) {
+	if r.failureReason != 0 && (r.status != TaskRuntimeFailed || r.outputIdentity != "" || r.failureReason.Validate() != nil || !taskFailureReasonAllowed(r.kind, r.failureReason, r.shortfall)) || r.failureReason == 0 && r.shortfall.Present() {
 		return ErrInvalidReviewRunReceipt
 	}
 	switch r.status {
@@ -132,7 +138,7 @@ func NewReviewRunReceipt(state ReviewRunState) (ReviewRunReceipt, error) {
 			kind: definition.Kind(), required: definition.Required(), status: runtime.Status(),
 			attempts: runtime.Attempts(), maxAttempts: definition.MaxAttempts(),
 			leaseExpiresAtMillis: runtime.leaseExpiresAtMillis, outputIdentity: runtime.OutputIdentity(),
-			failure: runtime.Failure(), failureReason: runtime.FailureReason(), retryAtMillis: runtime.retryAtMillis,
+			failure: runtime.Failure(), failureReason: runtime.FailureReason(), shortfall: runtime.shortfall, retryAtMillis: runtime.retryAtMillis,
 		})
 	}
 	receipt := ReviewRunReceipt{
@@ -211,21 +217,22 @@ func (r ReviewRunReceipt) Format(state fmt.State, verb rune) {
 }
 
 type reviewTaskReceiptRecord struct {
-	Key                        string `json:"key"`
-	TaskIdentity               string `json:"task_identity"`
-	InputIdentity              string `json:"input_identity"`
-	HandlerIdentity            string `json:"handler_identity"`
-	Kind                       string `json:"kind"`
-	Required                   bool   `json:"required"`
-	Status                     string `json:"status"`
-	Attempts                   uint8  `json:"attempts"`
-	MaxAttempts                uint8  `json:"max_attempts"`
-	LeaseExpiresAtMilliseconds int64  `json:"lease_expires_at_milliseconds"`
-	OutputIdentity             string `json:"output_identity"`
-	OutputKind                 string `json:"output_kind,omitempty"`
-	Failure                    string `json:"failure"`
-	FailureReason              string `json:"failure_reason,omitempty"`
-	RetryAtMilliseconds        int64  `json:"retry_at_milliseconds"`
+	Key                        string                      `json:"key"`
+	TaskIdentity               string                      `json:"task_identity"`
+	InputIdentity              string                      `json:"input_identity"`
+	HandlerIdentity            string                      `json:"handler_identity"`
+	Kind                       string                      `json:"kind"`
+	Required                   bool                        `json:"required"`
+	Status                     string                      `json:"status"`
+	Attempts                   uint8                       `json:"attempts"`
+	MaxAttempts                uint8                       `json:"max_attempts"`
+	LeaseExpiresAtMilliseconds int64                       `json:"lease_expires_at_milliseconds"`
+	OutputIdentity             string                      `json:"output_identity"`
+	OutputKind                 string                      `json:"output_kind,omitempty"`
+	Failure                    string                      `json:"failure"`
+	FailureReason              string                      `json:"failure_reason,omitempty"`
+	ContextShortfall           *taskFailureShortfallRecord `json:"context_shortfall,omitempty"`
+	RetryAtMilliseconds        int64                       `json:"retry_at_milliseconds"`
 }
 type reviewRunReceiptRecord struct {
 	Contract                   string                    `json:"contract"`
@@ -307,7 +314,7 @@ func ParseReviewRunReceipt(encoded []byte) (ReviewRunReceipt, error) {
 			kind: kind, required: taskRecord.Required, status: taskStatus,
 			attempts: taskRecord.Attempts, maxAttempts: taskRecord.MaxAttempts,
 			leaseExpiresAtMillis: taskRecord.LeaseExpiresAtMilliseconds,
-			outputIdentity:       taskRecord.OutputIdentity, failure: taskFailure, failureReason: taskReason,
+			outputIdentity:       taskRecord.OutputIdentity, failure: taskFailure, failureReason: taskReason, shortfall: taskFailureShortfallFromRecord(taskRecord.ContextShortfall),
 			retryAtMillis: taskRecord.RetryAtMilliseconds,
 		}
 	}
@@ -340,7 +347,7 @@ func reviewRunReceiptToRecord(receipt ReviewRunReceipt) reviewRunReceiptRecord {
 			Status: task.status.String(), Attempts: task.attempts, MaxAttempts: task.maxAttempts,
 			LeaseExpiresAtMilliseconds: task.leaseExpiresAtMillis,
 			OutputIdentity:             task.outputIdentity, OutputKind: contextFailureOutputKind(task.status == TaskRuntimeFailed && task.outputIdentity != ""), Failure: task.failure.String(),
-			FailureReason: task.failureReason.String(), RetryAtMilliseconds: task.retryAtMillis,
+			FailureReason: task.failureReason.String(), ContextShortfall: taskFailureShortfallToRecord(task.shortfall), RetryAtMilliseconds: task.retryAtMillis,
 		}
 	}
 	return reviewRunReceiptRecord{

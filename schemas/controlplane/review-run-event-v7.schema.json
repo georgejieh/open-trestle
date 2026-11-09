@@ -129,7 +129,9 @@
       "enum": [
         "no_merge_base",
         "nothing_to_review",
-        "merge_base_unavailable"
+        "merge_base_unavailable",
+        "route_context_insufficient",
+        "no_eligible_route"
       ]
     },
     "retry_at_milliseconds": {
@@ -141,6 +143,64 @@
       "type": "integer",
       "minimum": 1,
       "maximum": 253402300799999
+    },
+    "context_shortfall": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required_tokens",
+        "estimated_input_tokens",
+        "max_output_tokens",
+        "declared_context_tokens"
+      ],
+      "properties": {
+        "required_tokens": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 8589934590
+        },
+        "estimated_input_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "max_output_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "declared_context_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        }
+      }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "failure_reason"
+        ],
+        "properties": {
+          "failure_reason": {
+            "const": "route_context_insufficient"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "context_shortfall"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "context_shortfall"
+          ]
+        }
+      }
+    }
+  ]
 }

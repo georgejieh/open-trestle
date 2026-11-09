@@ -96,6 +96,8 @@ type taskCompletionRecord struct {
 	OutputKind     string `json:"output_kind,omitempty"`
 	Failure        string `json:"failure"`
 	FailureReason  string `json:"failure_reason,omitempty"`
+	// ContextShortfall is present exactly with route_context_insufficient.
+	ContextShortfall *taskFailureShortfallRecord `json:"context_shortfall,omitempty"`
 }
 
 func EncodeTaskCompletion(completion TaskCompletion) ([]byte, error) {
@@ -140,7 +142,10 @@ func ParseTaskCompletion(encoded []byte) (TaskCompletion, error) {
 	if record.SchemaVersion != taskCompletionVersion(TaskCompletion{status: status, outputIdentity: record.OutputIdentity, reason: reason}) || (record.SchemaVersion == 2 && record.OutputKind != "context_abstention") || (record.SchemaVersion == 3 && record.OutputKind != "") || (record.SchemaVersion == 1 && (record.PlanIdentity != "" || record.TaskIdentity != "" || record.OutputKind != "")) {
 		return TaskCompletion{}, ErrInvalidTaskCompletionEncoding
 	}
-	completion := TaskCompletion{identity: record.Identity, status: status, outputIdentity: record.OutputIdentity, failure: failure, reason: reason, planIdentity: record.PlanIdentity, taskIdentity: record.TaskIdentity}
+	completion := TaskCompletion{identity: record.Identity, status: status, outputIdentity: record.OutputIdentity, failure: failure, reason: reason, shortfall: taskFailureShortfallFromRecord(record.ContextShortfall), planIdentity: record.PlanIdentity, taskIdentity: record.TaskIdentity}
+	if record.ContextShortfall != nil && reason != TaskFailureReasonRouteContextInsufficient {
+		return TaskCompletion{}, ErrInvalidTaskCompletionEncoding
+	}
 	if err := completion.Validate(); err != nil {
 		return TaskCompletion{}, err
 	}
@@ -161,6 +166,7 @@ func taskCompletionToRecord(completion TaskCompletion) taskCompletionRecord {
 		record.PlanIdentity = completion.planIdentity
 		record.TaskIdentity = completion.taskIdentity
 		record.FailureReason = completion.reason.String()
+		record.ContextShortfall = taskFailureShortfallToRecord(completion.shortfall)
 	}
 	return record
 }

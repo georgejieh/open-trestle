@@ -94,6 +94,7 @@ type TaskRuntimeState struct {
 	outputIdentity        string
 	failure               RunFailure
 	failureReason         TaskFailureReason
+	shortfall             TaskFailureContextShortfall
 	retryAtMillis         int64
 	lastEventRevision     uint64
 	lastEventIdentity     string
@@ -133,10 +134,15 @@ func (s TaskRuntimeState) Failure() RunFailure        { return s.failure }
 
 // FailureReason returns the content-free reason recorded by the last failed source attempt, or zero.
 func (s TaskRuntimeState) FailureReason() TaskFailureReason { return s.failureReason }
-func (s TaskRuntimeState) RetryAt() time.Time               { return runMillisToTime(s.retryAtMillis) }
-func (s TaskRuntimeState) LastEventRevision() uint64        { return s.lastEventRevision }
-func (s TaskRuntimeState) LastEventIdentity() string        { return s.lastEventIdentity }
-func (s TaskRuntimeState) LastEventAt() time.Time           { return runMillisToTime(s.lastEventAtMillis) }
+
+// ContextShortfall returns the counts of a route_context_insufficient refusal.
+func (s TaskRuntimeState) ContextShortfall() (TaskFailureContextShortfall, bool) {
+	return s.shortfall, s.shortfall.Present()
+}
+func (s TaskRuntimeState) RetryAt() time.Time        { return runMillisToTime(s.retryAtMillis) }
+func (s TaskRuntimeState) LastEventRevision() uint64 { return s.lastEventRevision }
+func (s TaskRuntimeState) LastEventIdentity() string { return s.lastEventIdentity }
+func (s TaskRuntimeState) LastEventAt() time.Time    { return runMillisToTime(s.lastEventAtMillis) }
 func (s TaskRuntimeState) RetryableAt(at time.Time) bool {
 	return s.status == TaskRuntimeFailed && s.failure.Retryable() && s.attempts < s.definition.MaxAttempts() && s.retryAtMillis != 0 && at.UnixMilli() >= s.retryAtMillis
 }
@@ -266,6 +272,7 @@ func (s *ReviewRunState) applyTaskEvent(event RunEvent, runtime *TaskRuntimeStat
 		runtime.retryAtMillis = 0
 		runtime.failure = 0
 		runtime.failureReason = 0
+		runtime.shortfall = TaskFailureContextShortfall{}
 		runtime.outputIdentity = ""
 	case RunEventTaskLeased:
 		available := runtime.status == TaskRuntimeAvailable
@@ -381,7 +388,7 @@ func (s *ReviewRunState) applyTaskEvent(event RunEvent, runtime *TaskRuntimeStat
 		if event.OutputIdentity() != "" && runtime.definition.Kind() != TaskAssembleContext {
 			return ErrInvalidRunEventOutput
 		}
-		if event.FailureReason() != 0 && !taskFailureReasonAllowed(runtime.definition.Kind()) {
+		if event.FailureReason() != 0 && !taskFailureReasonAllowed(runtime.definition.Kind(), event.FailureReason(), event.shortfall) {
 			return ErrInvalidTaskFailureReason
 		}
 		canRetry := event.Failure().Retryable() && runtime.attempts < runtime.definition.MaxAttempts()
@@ -393,6 +400,7 @@ func (s *ReviewRunState) applyTaskEvent(event RunEvent, runtime *TaskRuntimeStat
 		runtime.preparedEvent = RunEvent{}
 		runtime.failure = event.Failure()
 		runtime.failureReason = event.FailureReason()
+		runtime.shortfall = event.shortfall
 		runtime.outputIdentity = event.OutputIdentity()
 		runtime.retryAtMillis = event.retryAtMillis
 		runtime.workerIdentity = ""
