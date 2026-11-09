@@ -243,9 +243,10 @@ func validateInboxOperation(ctx context.Context) error {
 
 // MemoryStore is a concurrency-safe bounded-operation in-memory inbox.
 type MemoryStore struct {
-	mu      sync.RWMutex
-	entries map[string]StoredDelivery
-	replays map[string]string
+	mu       sync.RWMutex
+	entries  map[string]StoredDelivery
+	replays  map[string]string
+	refusals map[string]RefusalRecord
 }
 
 func NewMemoryStore() *MemoryStore {
