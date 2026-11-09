@@ -106,8 +106,10 @@ Artifact schemas:
 - `schemas/artifact/route-attempt-authorization-v1.schema.json`
 - `schemas/artifact/route-execution-record-v1.schema.json`
 - `schemas/artifact/model-generation-input-v1.schema.json`
+- `schemas/artifact/model-generation-input-v2.schema.json` (an investigation input)
 - `schemas/artifact/model-generation-input-v3.schema.json` (a sanitized input)
 - `schemas/artifact/model-generation-input-v4.schema.json` (an unsanitized input that records `removed_lines` evidence)
+- `schemas/artifact/model-generation-input-v5.schema.json` (an investigation input that records `removed_lines` evidence, with an empty snapshot for a change that only removes files)
 - `schemas/artifact/model-generation-result-v1.schema.json` (its `candidate_batch` is one of candidate-batch v1, v2 or v3)
 - `schemas/artifact/candidate-batch-v1.schema.json`
 - `schemas/artifact/candidate-batch-v2.schema.json` (categorized candidates, with any base-side location or evidence)
