@@ -74,6 +74,7 @@ func (o *localPacketOwner) prepareInput(ctx context.Context, request controlplan
 	var input artifact.Artifact
 	var expected [4]artifact.Artifact
 	putsCompleted := 0
+	var refusal error
 	preflight := func(inner context.Context) (string, error) {
 		now := o.clock.Now().UTC()
 		if !ownerPacketTimeValid(inner, request, now) || !now.Before(candidate.Packet().Artifact().ExpiresAt()) {
@@ -88,6 +89,9 @@ func (o *localPacketOwner) prepareInput(ctx context.Context, request controlplan
 		}
 		route, err = runtimecatalog.PlanLocalGenerationRoute(inner, scope, modelRequest, policy, inventory, pair)
 		if err != nil {
+			if _, _, ok := localPacketRouteRefusal(err); ok {
+				refusal = err
+			}
 			return "", err
 		}
 		preimage, err := json.Marshal(struct {
@@ -228,6 +232,13 @@ func (o *localPacketOwner) prepareInput(ctx context.Context, request controlplan
 		}
 		return nil
 	})
+	if err != nil && refusal != nil && settle && afterPacket {
+		// No intent marker was written: the refusal came from the preflight.
+		if refuseErr := o.refusePacketRoute(ctx, request, packet, refusal); refuseErr != nil {
+			return fail(errors.Join(err, refuseErr))
+		}
+		return localPreparedContextInput{}, nil
+	}
 	if err != nil {
 		return fail(err)
 	}
