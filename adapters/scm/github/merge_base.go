@@ -10,9 +10,10 @@ import (
 )
 
 // ResolveMergeBase reads the merge base GitHub uses for a pull request diff
-// (merge-base...head) from one compare page. Only merge_base_commit.sha is
-// read; the rest of the bounded response is ignored. A compare that is not
-// found while both commits exist means the commits share no history.
+// (merge-base...head) from one compare page. Only the required
+// merge_base_commit.sha is read; the rest of the bounded response is ignored.
+// A not-found compare is unavailable whatever its body: GitHub's message for
+// unrelated histories is not sourced, so no 404 is read as no shared history.
 func (a *Adapter) ResolveMergeBase(ctx context.Context, request scm.MergeBaseRequest) scm.MergeBaseResult {
 	unavailable := func(reason evidence.RepositoryAcquisitionReason) scm.MergeBaseResult {
 		return scm.MergeBaseResult{Outcome: scm.MergeBaseUnavailable, Reason: reason}
@@ -42,14 +43,6 @@ func (a *Adapter) ResolveMergeBase(ctx context.Context, request scm.MergeBaseReq
 	body, status, headers, failure := a.apiGet(ctx, "/repos/"+owner+"/"+name+"/compare/"+base.Digest()+"..."+head.Digest(), url.Values{"per_page": {"1"}}, maximumMetadataBytes)
 	if failure != nil {
 		return unavailable(failure.reason)
-	}
-	if status == http.StatusNotFound {
-		for _, commit := range []string{base.Digest(), head.Digest()} {
-			if _, missing := a.loadCommit(ctx, namespace[0], repository.Name(), commit); missing != nil {
-				return unavailable(missing.reason)
-			}
-		}
-		return scm.MergeBaseResult{Outcome: scm.MergeBaseNone, Reason: evidence.AcquisitionReasonNone}
 	}
 	if status != http.StatusOK {
 		return unavailable(classifyStatus(status, headers).reason)

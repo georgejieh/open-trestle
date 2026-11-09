@@ -61,8 +61,11 @@ func TestResolveMergeBaseClassifiesMissingHistoryAndFailures(t *testing.T) {
 		outcome       scm.MergeBaseOutcome
 		reason        evidence.RepositoryAcquisitionReason
 	}{
-		{"unrelated histories", "", 0, true, scm.MergeBaseNone, evidence.AcquisitionReasonNone},
-		{"missing head commit", "", 0, false, scm.MergeBaseUnavailable, evidence.AcquisitionReasonAdapterFailure},
+		// No GitHub message for unrelated histories is sourced here, so a
+		// compare 404 never claims there is no merge base, whatever its body.
+		{"404 naming no common ancestor", `{"message":"No common ancestor between main and feature."}`, http.StatusNotFound, true, scm.MergeBaseUnavailable, evidence.AcquisitionReasonAdapterFailure},
+		{"404 not found", `{"message":"Not Found"}`, http.StatusNotFound, true, scm.MergeBaseUnavailable, evidence.AcquisitionReasonAdapterFailure},
+		{"404 without body", "", http.StatusNotFound, false, scm.MergeBaseUnavailable, evidence.AcquisitionReasonAdapterFailure},
 		{"server error", "", http.StatusBadGateway, true, scm.MergeBaseUnavailable, evidence.AcquisitionReasonAdapterUnavailable},
 		{"unauthorized", "", http.StatusForbidden, true, scm.MergeBaseUnavailable, evidence.AcquisitionReasonAuthorizationRequired},
 		{"missing merge base field", `{"status":"ahead"}`, 0, true, scm.MergeBaseUnavailable, evidence.AcquisitionReasonArtifactIncomplete},

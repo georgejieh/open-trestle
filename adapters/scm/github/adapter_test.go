@@ -131,6 +131,7 @@ func (f *githubFixture) serveHTTP(writer http.ResponseWriter, request *http.Requ
 		body, ok := f.compare[strings.TrimPrefix(request.URL.Path, "/repos/owner/repo/compare/")]
 		if f.compareStatus != 0 {
 			writer.WriteHeader(f.compareStatus)
+			_, _ = writer.Write([]byte(body))
 			return
 		}
 		if !ok {

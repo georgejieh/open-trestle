@@ -25,7 +25,7 @@ For such an input the handler asks its adapter, which must implement `scm.MergeB
 | Condition | Run failure | Reason |
 |---|---|---|
 | the requested base equals the head, or the merge base is the head (the head is already contained in the base) | `policy` | `nothing_to_review` |
-| both commits exist and share no history | `policy` | `no_merge_base` |
+| the adapter reports that both commits exist and share no history (the GitHub adapter never does; see [merge base](github-source-acquisition.md#merge-base)) | `policy` | `no_merge_base` |
 | the merge base could not be read | the acquisition mapping below (for example `transient` for a rate limit or server error, `policy` for missing authorization) | `merge_base_unavailable` |
 | the adapter cannot resolve merge bases, or returned a malformed result | `policy`, or `internal` for a malformed result | `merge_base_unavailable` |
 

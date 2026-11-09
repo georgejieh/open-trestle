@@ -23,11 +23,12 @@ of `pull_request.base.sha` and `pull_request.head.sha` to the head. The Actions
 path computes it with `git merge-base` in the checkout. The daemon path plans a
 `source-base` task that reads GitHub's merge base with one compare request and
 acquires that commit, so commits merged into the base branch after the branch
-point are never reported as reverse changes. When the two commits share no
-history, or the head equals the base or is already contained in it, the daemon
-run fails with policy and the recorded reason `no_merge_base` or
-`nothing_to_review`; when GitHub does not report a merge base it fails with
-`merge_base_unavailable`. It never falls back to reviewing `base.sha` directly.
+point are never reported as reverse changes. When the head equals the base or
+is already contained in it, the daemon run fails with policy and the recorded
+reason `nothing_to_review`; when GitHub does not report a merge base, including
+for commits that share no history (GitHub answers the compare with not found),
+it fails with `merge_base_unavailable`. It never falls back to reviewing
+`base.sha` directly.
 
 ## How the Actions path fits together
 
