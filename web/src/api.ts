@@ -435,7 +435,13 @@ export function parseRunProgressEnvelope(
     invalidResponse();
   return { run, progress };
 }
-function parseDiagnostic(value: unknown, observation = false): Diagnostic {
+// sided admits the version 8 "side" field: present only as "base", for
+// removed lines of the base revision; absent means head lines.
+function parseDiagnostic(
+  value: unknown,
+  observation = false,
+  sided = false,
+): Diagnostic {
   const keys = [
     "identity",
     "source_identity",
@@ -447,11 +453,13 @@ function parseDiagnostic(value: unknown, observation = false): Diagnostic {
     "path",
     "start_line",
     "end_line",
+    ...(sided && record(value) && Object.hasOwn(value, "side") ? ["side"] : []),
     "evidence_ids",
   ] as const;
   if (
     !record(value) ||
     !exact(value, keys) ||
+    (Object.hasOwn(value, "side") && value.side !== "base") ||
     !validDigest(value.identity) ||
     !validDigest(value.source_identity) ||
     !validDigest(value.fingerprint) ||
@@ -615,7 +623,7 @@ export function parseDiagnosticEnvelope(
       (Object.hasOwn(d, "verified") && !Object.hasOwn(d, "deterministic"))
     )
       invalidResponse();
-    const parsePart = (part: unknown, version: 5 | 6) => {
+    const parsePart = (part: unknown, ...versions: number[]) => {
       const parsed = parseDiagnosticEnvelope(
         {
           contract: "open-trestle/api-response",
@@ -626,8 +634,9 @@ export function parseDiagnosticEnvelope(
         scope,
       );
       if (
-        parsed.schema_version !== version ||
-        (version === 6 && parsed.snapshot_identity !== d.snapshot_identity) ||
+        !versions.includes(parsed.schema_version) ||
+        (parsed.schema_version === 6 &&
+          parsed.snapshot_identity !== d.snapshot_identity) ||
         parsed.head_revision !== d.head_revision
       )
         invalidResponse();
@@ -640,9 +649,9 @@ export function parseDiagnosticEnvelope(
         >)
       : undefined;
     const verified = Object.hasOwn(d, "verified")
-      ? (parsePart(d.verified, 5) as Extract<
+      ? (parsePart(d.verified, 5, 8) as Extract<
           DiagnosticSet,
-          { schema_version: 5 }
+          { schema_version: 5 | 8 }
         >)
       : undefined;
     if (
@@ -712,7 +721,7 @@ export function parseDiagnosticEnvelope(
       ? [...baseKeys, "findings"]
       : d.schema_version === 2
         ? [...baseKeys, "coverage", "findings"]
-        : d.schema_version === 5
+        : d.schema_version === 5 || d.schema_version === 8
           ? [...baseKeys, "coverage", "source_coverage", "checks", "findings"]
           : [...baseKeys, "coverage", "source_coverage", "findings"];
   if (
@@ -722,7 +731,8 @@ export function parseDiagnosticEnvelope(
       d.schema_version !== 2 &&
       d.schema_version !== 3 &&
       d.schema_version !== 4 &&
-      d.schema_version !== 5) ||
+      d.schema_version !== 5 &&
+      d.schema_version !== 8) ||
     !validDigest(d.identity) ||
     d.tenant_id !== scope.tenant ||
     d.repository_id !== scope.repository ||
@@ -735,10 +745,15 @@ export function parseDiagnosticEnvelope(
     d.findings.length > 100
   )
     invalidResponse();
-  const findings = d.findings.map((finding) => parseDiagnostic(finding));
+  const findings = d.findings.map((finding) =>
+    parseDiagnostic(finding, false, d.schema_version === 8),
+  );
   if (
     new Set(findings.map((finding) => finding.identity)).size !==
-    findings.length
+      findings.length ||
+    // Version 8 is used exactly when a finding is on removed base lines.
+    (d.schema_version === 8) !==
+      findings.some((finding) => finding.side === "base")
   ) {
     invalidResponse();
   }
@@ -772,7 +787,7 @@ export function parseDiagnosticEnvelope(
     !record(d.source_coverage) ||
     !exact(
       d.source_coverage,
-      d.schema_version === 4 || d.schema_version === 5
+      d.schema_version === 4 || d.schema_version === 5 || d.schema_version === 8
         ? [
             "verification_context_identity",
             "analyzed_count",

@@ -25,11 +25,11 @@ func TestRunNeverShowsBaseLinesAsHeadLines(t *testing.T) {
 	for name, set := range map[string]diagnostics.Set{"version 8": verified, "final version 7": final} {
 		service.set = set
 		output := renderFinalService(t, service)
-		if !strings.Contains(output, "src/main.go:7-8") || strings.Contains(output, "src/main.go:1-2") || strings.Contains(output, "Removed guard") {
+		if !strings.Contains(output, "src/main.go:7-8") || strings.Contains(output, "src/main.go:1-2") {
 			t.Fatalf("%s: base-side finding shown as a head location:\n%s", name, output)
 		}
-		if !strings.Contains(output, "1 verified finding(s) on removed base lines are not shown in this view.") {
-			t.Fatalf("%s: base-side finding was not counted:\n%s", name, output)
+		if !strings.Contains(output, "src/main.go (removed base lines 1-2)") || !strings.Contains(output, "Removed guard") {
+			t.Fatalf("%s: base-side finding is not labelled:\n%s", name, output)
 		}
 		if name == "version 8" && !strings.Contains(output, "changed Go range(s)") {
 			t.Fatalf("version 8 lost its deterministic check summary:\n%s", output)

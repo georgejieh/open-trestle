@@ -10,7 +10,7 @@ import (
 	"github.com/georgejieh/open-trestle/diagnostics"
 )
 
-func TestServerNeverPlacesBaseLinesOnAHeadDocument(t *testing.T) {
+func TestServerShowsBaseLinesAsAFileLevelDiagnostic(t *testing.T) {
 	deterministic := lspDeterministicSet(t)
 	// A head finding and a base-side finding at the same path and numbers.
 	head := lspDiagnosticSet(t).Findings()[0]
@@ -46,16 +46,41 @@ func TestServerNeverPlacesBaseLinesOnAHeadDocument(t *testing.T) {
 			t.Fatalf("%s: responses=%d", name, len(bodies))
 		}
 		var response struct {
-			Result json.RawMessage `json:"result"`
-			Error  *struct {
-				Code int `json:"code"`
-			} `json:"error"`
+			Result struct {
+				Items []struct {
+					Range struct {
+						Start struct {
+							Line      uint32 `json:"line"`
+							Character uint32 `json:"character"`
+						} `json:"start"`
+						End struct {
+							Line      uint32 `json:"line"`
+							Character uint32 `json:"character"`
+						} `json:"end"`
+					} `json:"range"`
+					Message string         `json:"message"`
+					Data    map[string]any `json:"data"`
+				} `json:"items"`
+			} `json:"result"`
 		}
 		if err := json.Unmarshal(bodies[1], &response); err != nil {
 			t.Fatal(err)
 		}
-		if response.Error == nil || response.Error.Code != -32603 || response.Result != nil {
-			t.Fatalf("%s: base-side finding was placed on the head document: %s", name, bodies[1])
+		items := response.Result.Items
+		if len(items) != 2 {
+			t.Fatalf("%s: items=%s", name, bodies[1])
+		}
+		placed, fileLevel := items[0], items[1]
+		if placed.Range.Start.Line != head.StartLine()-1 || placed.Range.End.Line != head.EndLine() || placed.Data["side"] != nil {
+			t.Fatalf("%s: head finding moved: %s", name, bodies[1])
+		}
+		// The base-side finding is file-level and names its base lines; it is
+		// never drawn at head lines with the same numbers.
+		if fileLevel.Range.Start.Line != 0 || fileLevel.Range.End.Line != 0 || fileLevel.Range.End.Character != 0 ||
+			!strings.HasPrefix(fileLevel.Message, "Base lines 3-4 (removed code): Removed guard") ||
+			!strings.HasSuffix(fileLevel.Message, "[untrusted review output; verify before editing]") ||
+			fileLevel.Data["side"] != "base" || fileLevel.Data["base_start_line"] != float64(3) || fileLevel.Data["base_end_line"] != float64(4) {
+			t.Fatalf("%s: base-side finding was placed at head lines: %s", name, bodies[1])
 		}
 	}
 }

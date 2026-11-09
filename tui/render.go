@@ -141,17 +141,15 @@ func writeVerifiedDiagnostics(builder *strings.Builder, set diagnostics.Set, wid
 		}
 		builder.WriteString("Coverage does not approve the change or prove correctness.\n")
 	}
-	hidden := 0
 	for _, finding := range findings {
-		// This view lists head locations only. A finding on removed base lines
-		// is counted, never shown with its base lines as head lines.
-		if finding.Side() != diagnostics.LineSideHead {
-			hidden++
-			continue
-		}
 		location := fmt.Sprintf("%s:%d", safeTerminalText(finding.Path()), finding.StartLine())
 		if finding.EndLine() != finding.StartLine() {
 			location += fmt.Sprintf("-%d", finding.EndLine())
+		}
+		// Removed base lines are named as such, so their numbers are never
+		// read as head lines.
+		if finding.Side() != diagnostics.LineSideHead {
+			location = fmt.Sprintf("%s (removed base lines %d-%d)", safeTerminalText(finding.Path()), finding.StartLine(), finding.EndLine())
 		}
 		location = truncateTerminalText(location, width/2)
 		available := width - 14 - utf8.RuneCountInString(location)
@@ -159,8 +157,5 @@ func writeVerifiedDiagnostics(builder *strings.Builder, set diagnostics.Set, wid
 			available = 1
 		}
 		fmt.Fprintf(builder, "%-11s %s  %s\n", finding.Severity().String(), location, truncateTerminalText(finding.Title(), available))
-	}
-	if hidden > 0 {
-		fmt.Fprintf(builder, "%d verified finding(s) on removed base lines are not shown in this view.\n", hidden)
 	}
 }

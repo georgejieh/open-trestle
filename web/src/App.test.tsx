@@ -661,6 +661,80 @@ describe("console", () => {
     });
   });
 
+  it("labels a finding on removed base lines instead of showing head lines", async () => {
+    vi.mocked(fetchRun).mockResolvedValue(receipt);
+    vi.mocked(fetchDiagnostics).mockResolvedValue({
+      contract: "open-trestle/review-diagnostic-set",
+      schema_version: 8,
+      identity: "b".repeat(64),
+      tenant_id: "tenant-a",
+      repository_id: "repo-a",
+      review_run_id: "run-a",
+      snapshot_identity: "1".repeat(64),
+      head_revision: "2".repeat(40),
+      verified_set_identity: "3".repeat(64),
+      coverage: {
+        candidate_count: 1,
+        verified_count: 1,
+        rejected_count: 0,
+        inconclusive_count: 0,
+      },
+      source_coverage: {
+        verification_context_identity: "4".repeat(64),
+        analyzed_count: 1,
+        selected_count: 1,
+        omitted_count: 0,
+        omissions: [],
+      },
+      checks: [
+        {
+          identity: "5".repeat(64),
+          source_check_identity: "6".repeat(64),
+          analysis_result_identity: "7".repeat(64),
+          change_identity: "8".repeat(64),
+          key: "static_debug_output",
+          rule_version: 1,
+          state: "passed",
+          applicable_files: 1,
+          applicable_ranges: 2,
+          checked_files: 1,
+          checked_ranges: 2,
+          matches: 0,
+        },
+      ],
+      findings: [
+        {
+          identity: "d".repeat(64),
+          source_identity: "e".repeat(64),
+          fingerprint: "f".repeat(64),
+          title: "Removed zero guard",
+          message: "Div no longer checks b before dividing.",
+          severity: "error",
+          path: "calc.go",
+          start_line: 4,
+          end_line: 6,
+          side: "base",
+          evidence_ids: ["evidence-removed-4"],
+        },
+      ],
+    });
+    render(<App />);
+    for (const [name, value] of [
+      ["Tenant", "tenant-a"],
+      ["Repository", "repo-a"],
+      ["Run", "run-a"],
+      ["Access token", "x".repeat(32)],
+    ] as const)
+      fireEvent.change(screen.getByLabelText(name), { target: { value } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
+    await screen.findByRole("heading", { name: "Execution in progress" });
+    fireEvent.click(screen.getByRole("button", { name: /Review 1/i }));
+    expect(
+      await screen.findByText("calc.go · removed base lines 4-6"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("calc.go:4-6")).not.toBeInTheDocument();
+  });
+
   it("renders deterministic observations without calling them verified", async () => {
     const analysis = "7".repeat(64),
       checkIdentity = "5".repeat(64),

@@ -92,6 +92,8 @@ export interface Diagnostic {
   path: string;
   start_line: number;
   end_line: number;
+  /** Present only in verified set v8, for removed lines of the base revision. */
+  side?: "base";
   evidence_ids: string[];
 }
 export interface DeterministicObservation extends Diagnostic {
@@ -178,6 +180,13 @@ export type DiagnosticSet =
             source_coverage: DiagnosticSourceCoverageWithOmissions;
             checks: [DiagnosticDeterministicCheck];
           }
+        | {
+            /** Version 5 plus findings on removed base lines (side "base"). */
+            schema_version: 8;
+            coverage: DiagnosticCoverage;
+            source_coverage: DiagnosticSourceCoverageWithOmissions;
+            checks: [DiagnosticDeterministicCheck];
+          }
       ))
   | (DiagnosticSetCommon & {
       schema_version: 6;
@@ -201,7 +210,7 @@ export type DiagnosticSet =
       outcome:
         "completed" | "failed" | "canceled" | "abstained" | "inconclusive";
       deterministic?: Extract<DiagnosticSet, { schema_version: 6 }>;
-      verified?: Extract<DiagnosticSet, { schema_version: 5 }>;
+      verified?: Extract<DiagnosticSet, { schema_version: 5 | 8 }>;
     };
 
 export type RuntimeComponentState = "starting" | "ready";

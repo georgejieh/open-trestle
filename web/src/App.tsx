@@ -322,11 +322,15 @@ function diagnosticsRequireReview(set: DiagnosticSet): boolean {
   if (
     (set.schema_version === 3 ||
       set.schema_version === 4 ||
-      set.schema_version === 5) &&
+      set.schema_version === 5 ||
+      set.schema_version === 8) &&
     set.source_coverage.omitted_count > 0
   )
     return true;
-  return set.schema_version === 5 && set.checks[0].state !== "passed";
+  return (
+    (set.schema_version === 5 || set.schema_version === 8) &&
+    set.checks[0].state !== "passed"
+  );
 }
 
 function primaryRunHeading(
@@ -491,16 +495,20 @@ function CoverageLedger({
   const sourceCoverage =
     set.schema_version === 3 ||
     set.schema_version === 4 ||
-    set.schema_version === 5
+    set.schema_version === 5 ||
+    set.schema_version === 8
       ? set.source_coverage
       : null;
   const omissionText =
-    set.schema_version === 4 || set.schema_version === 5
+    set.schema_version === 4 ||
+    set.schema_version === 5 ||
+    set.schema_version === 8
       ? set.source_coverage.omissions
           .map(({ reason, count }) => `${count} ${reason.replaceAll("_", " ")}`)
           .join(", ")
       : "";
-  const check = set.schema_version === 5 ? set.checks[0] : null;
+  const check =
+    set.schema_version === 5 || set.schema_version === 8 ? set.checks[0] : null;
   const incomplete =
     coverage.inconclusive_count > 0 || (sourceCoverage?.omitted_count ?? 0) > 0;
   return (
@@ -646,16 +654,18 @@ function Findings({
   if (set.findings.length === 0) {
     const hasCandidateCoverage = (set.coverage?.candidate_count ?? 0) > 0;
     const gateRequiresReview =
-      set.schema_version === 5 &&
+      (set.schema_version === 5 || set.schema_version === 8) &&
       (set.checks[0].state === "failed" ||
         set.checks[0].state === "incomplete");
     const gateNotCleared =
-      set.schema_version === 5 && set.checks[0].state !== "passed";
+      (set.schema_version === 5 || set.schema_version === 8) &&
+      set.checks[0].state !== "passed";
     const incomplete =
       (set.coverage?.inconclusive_count ?? 0) > 0 ||
       ((set.schema_version === 3 ||
         set.schema_version === 4 ||
-        set.schema_version === 5) &&
+        set.schema_version === 5 ||
+        set.schema_version === 8) &&
         set.source_coverage.omitted_count > 0) ||
       gateRequiresReview;
     return (
@@ -715,7 +725,9 @@ function Finding({
         <p>{finding.message}</p>
         <div className="finding-meta">
           <span>
-            {finding.path}:{finding.start_line}-{finding.end_line}
+            {finding.side === "base"
+              ? `${finding.path} · removed base lines ${finding.start_line}-${finding.end_line}`
+              : `${finding.path}:${finding.start_line}-${finding.end_line}`}
           </span>
           <span>
             {finding.evidence_ids.length} evidence{" "}

@@ -446,6 +446,85 @@ describe("API client", () => {
     ).toThrow(ApiError);
   });
 
+  it("parses diagnostic v8 base-side findings and refuses a side elsewhere", () => {
+    const scope = { tenant: "tenant-a", repository: "repo-a", run: "run-a" };
+    const finding = {
+      identity: "a".repeat(64),
+      source_identity: "b".repeat(64),
+      fingerprint: "c".repeat(64),
+      title: "Removed guard",
+      message: "The zero check was removed.",
+      severity: "error",
+      path: "calc.go",
+      start_line: 4,
+      end_line: 6,
+      side: "base",
+      evidence_ids: ["d".repeat(64)],
+    };
+    const diagnostics = {
+      contract: "open-trestle/review-diagnostic-set",
+      schema_version: 8,
+      identity: "f".repeat(64),
+      tenant_id: "tenant-a",
+      repository_id: "repo-a",
+      review_run_id: "run-a",
+      snapshot_identity: "1".repeat(64),
+      head_revision: "2".repeat(40),
+      verified_set_identity: "3".repeat(64),
+      coverage: {
+        candidate_count: 1,
+        verified_count: 1,
+        rejected_count: 0,
+        inconclusive_count: 0,
+      },
+      source_coverage: {
+        verification_context_identity: "4".repeat(64),
+        analyzed_count: 1,
+        selected_count: 1,
+        omitted_count: 0,
+        omissions: [],
+      },
+      checks: [
+        {
+          identity: "5".repeat(64),
+          source_check_identity: "6".repeat(64),
+          analysis_result_identity: "7".repeat(64),
+          change_identity: "8".repeat(64),
+          key: "static_debug_output",
+          rule_version: 1,
+          state: "passed",
+          applicable_files: 1,
+          applicable_ranges: 2,
+          checked_files: 1,
+          checked_ranges: 2,
+          matches: 0,
+        },
+      ],
+      findings: [finding],
+    };
+    const envelope = {
+      contract: "open-trestle/api-response",
+      schema_version: 1,
+      request_id: "request-a",
+      diagnostics,
+    };
+    const parsed = parseDiagnosticEnvelope(envelope, scope);
+    expect(parsed.schema_version).toBe(8);
+    if (parsed.schema_version !== 8) throw new Error("expected v8");
+    expect(parsed.findings[0]?.side).toBe("base");
+    const head = { ...finding } as Partial<typeof finding>;
+    delete head.side;
+    for (const forged of [
+      { ...diagnostics, schema_version: 5 },
+      { ...diagnostics, findings: [head] },
+      { ...diagnostics, findings: [{ ...finding, side: "head" }] },
+    ]) {
+      expect(() =>
+        parseDiagnosticEnvelope({ ...envelope, diagnostics: forged }, scope),
+      ).toThrow(ApiError);
+    }
+  });
+
   it("requires dependent setup checks to reset after prerequisite replacement", () => {
     const plan = setupTestPlan();
     const identity = (value: number) => value.toString(16).padStart(64, "0");
