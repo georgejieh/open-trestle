@@ -16,14 +16,15 @@ import (
 )
 
 const (
-	// maxInboxStoreFiles bounds the root's files other than sidecars: the
-	// deliveries and the writer lock.
+	// maxInboxStoreFiles bounds each kind of file in the root on its own: the
+	// files other than sidecars (the deliveries and the writer lock), the
+	// retry files (one per delivery), and each planner identity's refusal
+	// records (one per delivery). A sidecar therefore never takes a delivery's
+	// place, and refusal records superseded planner identities left, which are
+	// kept as audit records, never take the current planner's.
 	maxInboxStoreFiles = 10000
-	// maxInboxStoreSidecars bounds refusal and retry files apart from them,
-	// two per delivery, so a sidecar never takes a delivery's place.
-	maxInboxStoreSidecars = 2 * maxInboxStoreFiles
-	inboxLockFileName     = ".inbox-writer.lock"
-	deliveryFileSuffix    = ".delivery.json"
+	inboxLockFileName  = ".inbox-writer.lock"
+	deliveryFileSuffix = ".delivery.json"
 )
 
 var (
@@ -133,11 +134,11 @@ func (s *FileStore) Put(ctx context.Context, delivery VerifiedDelivery, at time.
 	if _, replayed := s.replays[delivery.ReplayKey()]; replayed {
 		return StoredDelivery{}, false, ErrDeliveryReplayed
 	}
-	files, _, err := s.rootFiles()
+	counts, err := s.rootCounts("")
 	if err != nil {
 		return StoredDelivery{}, false, err
 	}
-	if files >= maxInboxStoreFiles {
+	if counts.files >= maxInboxStoreFiles {
 		return StoredDelivery{}, false, ErrInboxStoreCapacity
 	}
 	stored := StoredDelivery{delivery: delivery, receipt: receipt}
@@ -167,7 +168,7 @@ func (s *FileStore) loadReplayIndex() error {
 	if err != nil {
 		return fmt.Errorf("%w: read root", ErrInboxStorePersistence)
 	}
-	if len(directoryEntries) > maxInboxStoreFiles+maxInboxStoreSidecars+1 {
+	if counts := countRootEntries(directoryEntries, ""); counts.files+counts.retries > 2*maxInboxStoreFiles+1 {
 		return ErrInboxStoreCapacity
 	}
 	replays := make(map[string]string)
@@ -218,7 +219,7 @@ func (s *FileStore) List(ctx context.Context, scope RepositoryScope, source Sour
 	if err != nil {
 		return nil, fmt.Errorf("%w: read root", ErrInboxStorePersistence)
 	}
-	if len(directoryEntries) > maxInboxStoreFiles+maxInboxStoreSidecars+1 {
+	if counts := countRootEntries(directoryEntries, ""); counts.files+counts.retries > 2*maxInboxStoreFiles+1 {
 		return nil, ErrInboxStoreCapacity
 	}
 	prefix := scope.Identity() + "-" + source.String() + "-"
@@ -258,21 +259,37 @@ func (s *FileStore) List(ctx context.Context, scope RepositoryScope, source Sour
 	return stored, nil
 }
 
-// rootFiles counts the root's sidecar files apart from its other files, so
-// each kind is held to its own bound.
-func (s *FileStore) rootFiles() (files, sidecars int, err error) {
-	entries, err := os.ReadDir(s.root)
-	if err != nil {
-		return 0, 0, fmt.Errorf("%w: read root", ErrInboxStorePersistence)
-	}
+// rootCounts are a root's files by kind, each held to its own bound. Only
+// one planner identity's refusal records are counted; listing ignores
+// refusal records altogether.
+type rootCounts struct{ files, retries, refusals int }
+
+func countRootEntries(entries []os.DirEntry, planner string) rootCounts {
+	var counts rootCounts
 	for _, entry := range entries {
-		if name := entry.Name(); strings.HasSuffix(name, refusalFileSuffix) || strings.HasSuffix(name, retryFileSuffix) {
-			sidecars++
-		} else {
-			files++
+		name := entry.Name()
+		switch {
+		case strings.HasSuffix(name, refusalFileSuffix):
+			if planner != "" && strings.HasSuffix(name, "-"+planner+refusalFileSuffix) {
+				counts.refusals++
+			}
+		case strings.HasSuffix(name, retryFileSuffix):
+			counts.retries++
+		default:
+			counts.files++
 		}
 	}
-	return files, sidecars, nil
+	return counts
+}
+
+// rootCounts reads the root and counts its files by kind, with the refusal
+// records of one planner identity.
+func (s *FileStore) rootCounts(planner string) (rootCounts, error) {
+	entries, err := os.ReadDir(s.root)
+	if err != nil {
+		return rootCounts{}, fmt.Errorf("%w: read root", ErrInboxStorePersistence)
+	}
+	return countRootEntries(entries, planner), nil
 }
 func (s *FileStore) deliveryPath(scope RepositoryScope, source Source, key string) string {
 	return filepath.Join(s.root, scope.Identity()+"-"+source.String()+"-"+key+deliveryFileSuffix)

@@ -82,8 +82,8 @@ func (s *FileStore) refusalPath(scope RepositoryScope, source Source, key, plann
 
 // RecordRefusal persists a refusal of a stored delivery beside it, atomically.
 // Refusal files never match the delivery suffix, so listing and replay
-// indexing ignore them; they count toward the sidecar bound, never the
-// delivery bound.
+// indexing ignore them. They are kept as audit records and count only toward
+// their planner identity's own bound, one per delivery.
 func (s *FileStore) RecordRefusal(ctx context.Context, record RefusalRecord) (RefusalRecord, bool, error) {
 	if err := validateInboxOperation(ctx); err != nil {
 		return RefusalRecord{}, false, err
@@ -109,9 +109,9 @@ func (s *FileStore) RecordRefusal(ctx context.Context, record RefusalRecord) (Re
 	} else if recorded {
 		return matchRecordedRefusal(existing, record)
 	}
-	if _, sidecars, err := s.rootFiles(); err != nil {
+	if counts, err := s.rootCounts(record.plannerIdentity); err != nil {
 		return RefusalRecord{}, false, err
-	} else if sidecars >= maxInboxStoreSidecars {
+	} else if counts.refusals >= maxInboxStoreFiles {
 		return RefusalRecord{}, false, ErrInboxStoreCapacity
 	}
 	encoded, err := EncodeRefusalRecord(record)

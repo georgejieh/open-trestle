@@ -203,7 +203,8 @@ func (s *FileStore) retryPath(scope RepositoryScope, source Source, key string) 
 }
 
 // RecordRetry atomically replaces the retry file beside a stored delivery.
-// A new retry file counts toward the sidecar bound, never the delivery bound.
+// A new retry file counts toward the retry bound, one per delivery, never the
+// delivery bound.
 func (s *FileStore) RecordRetry(ctx context.Context, record RetryRecord) error {
 	if err := validateInboxOperation(ctx); err != nil {
 		return err
@@ -225,9 +226,9 @@ func (s *FileStore) RecordRetry(ctx context.Context, record RetryRecord) error {
 	}
 	path := s.retryPath(record.scope, record.source, record.deduplicationKey)
 	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
-		if _, sidecars, countErr := s.rootFiles(); countErr != nil {
+		if counts, countErr := s.rootCounts(""); countErr != nil {
 			return countErr
-		} else if sidecars >= maxInboxStoreSidecars {
+		} else if counts.retries >= maxInboxStoreFiles {
 			return ErrInboxStoreCapacity
 		}
 	}

@@ -43,7 +43,7 @@ func fillFileInbox(t *testing.T, store *FileStore, count int) []string {
 }
 
 // Refusal and retry files never take a delivery's place in a full file inbox,
-// and a full sidecar bound is the delivery's own outcome: the supervisor keeps
+// and a full retry bound is the delivery's own outcome: the supervisor keeps
 // recording outcomes and admitting deliveries instead of stopping intake.
 func TestFileInboxSidecarsNeverStopIntake(t *testing.T) {
 	ctx := context.Background()
@@ -89,8 +89,8 @@ func TestFileInboxSidecarsNeverStopIntake(t *testing.T) {
 	if _, created, err := store.Put(ctx, extra, time.UnixMilli(1000)); err != nil || !created {
 		t.Fatalf("a refusal file took a delivery's place: %v", err)
 	}
-	// Sidecars left by other planner identities fill the sidecar bound.
-	for index := 0; index < maxInboxStoreSidecars; index++ {
+	// Retry files the store did not write fill the retry bound.
+	for index := 0; index < maxInboxStoreFiles; index++ {
 		name := fmt.Sprintf("%s-%s-%064x-%s%s", scope.Identity(), SourceGitHub, index, strings.Repeat("9", 64), retryFileSuffix)
 		if err := os.WriteFile(filepath.Join(root, name), []byte("{}"), 0o600); err != nil {
 			t.Fatal(err)
@@ -102,12 +102,12 @@ func TestFileInboxSidecarsNeverStopIntake(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := f.supervisor.handle(ctx, other); err != nil {
-		t.Fatalf("a full sidecar bound stopped intake: %v", err)
+		t.Fatalf("a full retry bound stopped intake: %v", err)
 	}
 	if _, retrying, err := store.Retry(ctx, scope, SourceGitHub, f.deliveries[1].DeduplicationKey()); err != nil || retrying {
-		t.Fatalf("a retry file was written past the sidecar bound: retrying=%t err=%v", retrying, err)
+		t.Fatalf("a retry file was written past the retry bound: retrying=%t err=%v", retrying, err)
 	}
 	if _, err := store.List(ctx, scope, SourceGitHub, "", 100); err != nil {
-		t.Fatalf("a full sidecar bound failed listing: %v", err)
+		t.Fatalf("a full retry bound failed listing: %v", err)
 	}
 }
