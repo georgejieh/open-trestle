@@ -87,12 +87,26 @@ func languageForPath(filePath string) (Language, bool) {
 	}
 }
 
-var dependencyManifestNames = map[string]struct{}{
-	"go.mod": {}, "go.sum": {}, "package.json": {}, "package-lock.json": {}, "npm-shrinkwrap.json": {},
-	"yarn.lock": {}, "pnpm-lock.yaml": {}, "requirements.txt": {}, "pipfile": {}, "pipfile.lock": {},
-	"poetry.lock": {}, "pyproject.toml": {}, "uv.lock": {}, "cargo.toml": {}, "cargo.lock": {},
-	"gemfile": {}, "gemfile.lock": {}, "pom.xml": {}, "build.gradle": {}, "build.gradle.kts": {},
-	"composer.json": {}, "composer.lock": {},
+// Dependency manifests, by lowercase base name, split into the files people
+// edit and the lock files package managers generate. Both classify as
+// dependency manifests for routing; style recommendations skip lock files.
+var (
+	dependencyManifestNames = map[string]struct{}{
+		"go.mod": {}, "package.json": {}, "requirements.txt": {}, "pipfile": {}, "pyproject.toml": {},
+		"cargo.toml": {}, "gemfile": {}, "pom.xml": {}, "build.gradle": {}, "build.gradle.kts": {},
+		"composer.json": {},
+	}
+	dependencyLockNames = map[string]struct{}{
+		"go.sum": {}, "package-lock.json": {}, "npm-shrinkwrap.json": {}, "yarn.lock": {}, "pnpm-lock.yaml": {},
+		"bun.lock": {}, "pipfile.lock": {}, "poetry.lock": {}, "uv.lock": {}, "cargo.lock": {},
+		"gemfile.lock": {}, "composer.lock": {},
+	}
+)
+
+// isDependencyLockFile reports whether a path names a generated dependency lock file.
+func isDependencyLockFile(filePath string) bool {
+	_, lock := dependencyLockNames[strings.ToLower(path.Base(filePath))]
+	return lock
 }
 
 // classifyPath derives one file class from exact path rules, first match wins.
@@ -114,7 +128,7 @@ func classifyPath(filePath string, language Language, hasLanguage bool) FileClas
 	if strings.HasPrefix(base, "zz_generated") {
 		return FileClassGenerated
 	}
-	if _, ok := dependencyManifestNames[base]; ok || strings.HasPrefix(base, "requirements") && strings.HasSuffix(base, ".txt") {
+	if _, ok := dependencyManifestNames[base]; ok || isDependencyLockFile(base) || strings.HasPrefix(base, "requirements") && strings.HasSuffix(base, ".txt") {
 		return FileClassDependencyManifest
 	}
 	if isCIBuildPath(lower, base) {

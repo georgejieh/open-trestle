@@ -29,6 +29,10 @@ func TestProfilePathClassification(t *testing.T) {
 		{"api/v1/service.pb.go", LanguageGo, FileClassGenerated, []Signal{SignalHTTP}},
 		{"go.mod", "", FileClassDependencyManifest, []Signal{SignalDependencyManifest}},
 		{"web/package.json", LanguageJSON, FileClassDependencyManifest, []Signal{SignalDependencyManifest}},
+		{"web/package-lock.json", LanguageJSON, FileClassDependencyManifest, []Signal{SignalDependencyManifest}},
+		{"pnpm-lock.yaml", LanguageYAML, FileClassDependencyManifest, []Signal{SignalDependencyManifest}},
+		{"bun.lock", "", FileClassDependencyManifest, []Signal{SignalDependencyManifest}},
+		{"Cargo.lock", "", FileClassDependencyManifest, []Signal{SignalDependencyManifest}},
 		{".github/workflows/ci.yml", LanguageYAML, FileClassCIBuild, []Signal{SignalCIConfig}},
 		{"Dockerfile", "", FileClassCIBuild, []Signal{SignalCIConfig}},
 		{"config/app.yaml", LanguageYAML, FileClassConfig, nil},
@@ -189,6 +193,9 @@ func TestProfileRecommendStyles(t *testing.T) {
 		{"eslint governs typescript", []string{"web/app.ts"}, []ConfigFile{{Path: "eslint.config.mjs"}}, nil},
 		{"prettier does not govern go", []string{"main.go", "web/app.ts"}, []ConfigFile{{Path: ".prettierrc"}}, []StyleRecommendation{{LanguageGo, 1}}},
 		{"vendor and generated files are not counted", []string{"vendor/lib/x.py", "api.pb.go", "web/app.min.js"}, nil, nil},
+		{"package-lock.json alone", []string{"package-lock.json"}, nil, nil},
+		{"lock files are not counted", []string{"web/package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "Cargo.lock", "Gemfile.lock", "poetry.lock", "uv.lock", "Pipfile.lock", "composer.lock", "go.sum"}, nil, nil},
+		{"package.json is not a lock file", []string{"package.json", "package-lock.json"}, nil, []StyleRecommendation{{LanguageJSON, 1}}},
 		{"several languages in order", []string{"main.go", "native/x.cc", "native/x.h", "README.md", "tool.py"}, []ConfigFile{{Path: "go.mod"}}, []StyleRecommendation{{LanguageC, 1}, {LanguageCPP, 1}, {LanguageMarkdown, 1}, {LanguagePython, 1}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {

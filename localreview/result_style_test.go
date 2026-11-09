@@ -67,6 +67,7 @@ func TestStyleAdviceRecommendsAStandardOnlyForUndeclaredLanguages(t *testing.T) 
 		{"go without go.mod", styleTrees(map[string][]byte{"go.mod": nil}, map[string][]byte{"go.mod": nil}), []styleRecommendationWire{{"go", 1, "gofmt and Effective Go"}}},
 		{"java change", styleTrees(map[string][]byte{"Main.java": []byte("class Main {}\n")}, map[string][]byte{"Main.java": []byte("final class Main {}\n")}), nil},
 		{"removed python file", styleTrees(python("x = 1\n"), nil), nil},
+		{"package-lock.json change", styleTrees(map[string][]byte{"package-lock.json": []byte("{\"lockfileVersion\": 3}\n")}, map[string][]byte{"package-lock.json": []byte("{\"lockfileVersion\": 3, \"name\": \"p\"}\n")}), nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			result := styleResultRun(t, strings.ReplaceAll(test.name, " ", "-"), test.options, review.ContextSpecialist{})

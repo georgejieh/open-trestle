@@ -192,7 +192,8 @@ type StyleRecommendation struct {
 // language of changedPaths that has a style detector and that no intent
 // declared by configFiles governs. An editorconfig intent alone does not count,
 // because EditorConfig covers only whitespace basics. Vendor and generated
-// files are not counted, as in routing.
+// files are not counted, as in routing, and neither are generated dependency
+// lock files such as package-lock.json.
 func RecommendStyles(changedPaths []string, configFiles []ConfigFile) ([]StyleRecommendation, error) {
 	if len(changedPaths) > maxFeatureFiles || len(configFiles) > MaxConfigFiles {
 		return nil, fmt.Errorf("%w: too many paths or config files", ErrInvalidChangeFeatures)
@@ -209,7 +210,7 @@ func RecommendStyles(changedPaths []string, configFiles []ConfigFile) ([]StyleRe
 			return nil, fmt.Errorf("%w: changed path is not a clean relative repository path", ErrInvalidChangeFeatures)
 		}
 		language, hasLanguage := languageForPath(changedPath)
-		if class := classifyPath(changedPath, language, hasLanguage); !hasLanguage || class == FileClassVendor || class == FileClassGenerated {
+		if class := classifyPath(changedPath, language, hasLanguage); !hasLanguage || class == FileClassVendor || class == FileClassGenerated || isDependencyLockFile(changedPath) {
 			continue
 		}
 		if _, ok := recommendedStyles[language]; ok {

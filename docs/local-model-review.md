@@ -965,8 +965,11 @@ Java, Kotlin, C#, PHP, Scala, Swift, shell, SQL and TOML get no recommendation:
 Open Trestle has no style detector for them, so it cannot tell whether such a
 repository declares a style. Changed files are counted per language. Vendored
 and generated files are not counted, as in specialist routing, and neither are
-removed files. Text output adds one line per language before `limitations:`,
-for example:
+removed files or the dependency lock files package managers generate
+(`package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`,
+`bun.lock`, `Cargo.lock`, `Gemfile.lock`, `poetry.lock`, `uv.lock`,
+`Pipfile.lock`, `composer.lock` and `go.sum`). Text output adds one line per
+language before `limitations:`, for example:
 
 ```text
 style: no declared Python style for 3 changed files; consider PEP 8, enforced with Ruff or Black, and commit its configuration
