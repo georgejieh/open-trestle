@@ -391,16 +391,17 @@ detection, and none of it is released or supported for production. See the
 
 | Area | Reference |
 |---|---|
-| Architecture and roadmap | [architecture](docs/architecture.md) · [roadmap](docs/roadmap.md) |
-| Runtime | [review-run runtime](docs/review-run-runtime.md) · [daemon API](docs/daemon-api.md) · [remote workers](docs/remote-workers.md) · [task notifications](docs/task-notifications.md) |
-| Review pipeline | [source acquisition](docs/source-acquisition-handler.md) · [change model](docs/change-model-handler.md) · [evidence](docs/deterministic-evidence-handler.md) · [context assembly](docs/context-assembly-handler.md) · [candidate generation](docs/model-generation-handler.md) · [verification](docs/model-verification-handler.md) · [OpenAI provider](docs/openai-provider.md) · [publication](docs/publication-handler.md) |
+| Architecture and roadmap | [architecture](docs/architecture.md) · [roadmap](docs/roadmap.md) · [development standards](docs/development.md) |
+| Runtime | [review-run runtime](docs/review-run-runtime.md) · [daemon API](docs/daemon-api.md) · [remote workers](docs/remote-workers.md) · [task notifications](docs/task-notifications.md) · [automatic finalization](docs/automatic-finalization.md) · [handler catalogs](docs/runtime-handler-catalogs.md) |
+| Review pipeline | [source acquisition](docs/source-acquisition-handler.md) · [change model](docs/change-model-handler.md) · [evidence](docs/deterministic-evidence-handler.md) · [semantic impact](docs/semantic-impact.md) · [memory retrieval](docs/memory-retrieval-handler.md) · [context assembly](docs/context-assembly-handler.md) · [candidate generation](docs/model-generation-handler.md) · [verification](docs/model-verification-handler.md) · [OpenAI provider](docs/openai-provider.md) · [publication readiness](docs/publication-readiness-handler.md) · [publication](docs/publication-handler.md) |
+| Provider profiles | [OpenRouter ZDR](docs/openrouter-zdr-profile.md) · [OpenCode Go](docs/opencode-go-profile.md) · [OpenCode Console](docs/opencode-console-profile.md) · [Codex ChatGPT session status](docs/codex-chatgpt-session.md) · [local inference without bearer authentication](docs/local-provider-no-auth.md) |
 | Getting started | [`trestle init`](docs/getting-started.md) · [local-first bootstrap](docs/local-first-bootstrap.md) · [remote model review](docs/remote-model-review.md) · [setup](docs/setup.md) · [named local runtimes](docs/named-local-runtimes.md) · [model catalog](docs/model-catalog.md) |
 | Local Git | [inspect](docs/local-git-inspect.md) · [change evidence](docs/local-git-change.md) · [review](docs/local-git-review.md) · [model review](docs/local-model-review.md) · [feedback](docs/local-feedback.md) |
 | Specialist profiles | [agent profiles](docs/agent-profiles.md) |
 | Security | [prompt-injection boundary](docs/prompt-injection-boundary.md) |
 | Storage | [PostgreSQL ledgers](docs/postgresql-storage.md) · [encrypted object storage](docs/remote-artifact-storage.md) · [runtime artifacts](docs/runtime-artifacts.md) |
 | Transports | [MCP](docs/mcp.md) · [ACP](docs/acp.md) · [LSP](docs/lsp.md) · [TUI](docs/tui.md) · [web console](docs/web-console.md) · [VS Code](docs/vscode.md) · [protocol contracts](docs/protocol-contracts.md) |
-| Operations | [setup](docs/setup.md) · [operations and recovery](docs/operations.md) · [configuration validation](docs/configuration-validation.md) · [quality evaluation](docs/quality-evaluation.md) |
+| Operations | [setup](docs/setup.md) · [operations and recovery](docs/operations.md) · [configuration validation](docs/configuration-validation.md) · [quality evaluation](docs/quality-evaluation.md) · [model result evaluation](docs/model-result-evaluation.md) · [passive vulnerability gate](docs/vulnerability-gate.md) |
 | GitHub | [pull-request review (Actions and App)](docs/github-pr-review.md) · [source acquisition](docs/github-source-acquisition.md) · [integration permissions](docs/github-integration-permissions.md) · [webhook ingress](docs/webhook-ingress.md) · [publication](docs/github-publication.md) |
 
 ## Project scope
