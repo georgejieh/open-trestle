@@ -168,3 +168,46 @@ func TestRunShowsContextRouteRefusalAndHint(t *testing.T) {
 		}
 	}
 }
+
+// A final result recorded after its evidence expired says so.
+func TestRunShowsEvidenceExpiredResult(t *testing.T) {
+	ctx := context.Background()
+	scope, err := audit.NewReviewScope("tenant-a", "repo-a", "run-expired-evidence")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, _ := controlplane.NewTaskDefinition("source", controlplane.TaskAcquireSource, strings.Repeat("a", 64), strings.Repeat("b", 64), nil, 1, 100, 1000, true)
+	plan, err := controlplane.NewReviewRunPlan(scope, strings.Repeat("c", 64), strings.Repeat("d", 64), controlplane.ReviewRunLocal, []controlplane.TaskDefinition{task})
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator, _ := controlplane.NewCoordinator(controlplane.NewMemoryRunJournal())
+	state, err := coordinator.Open(ctx, plan, time.UnixMilli(1000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := controlplane.NewReviewRunReceipt(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bare, err := diagnostics.NewFinalReviewSet(scope, "", "", diagnostics.FinalOutcomeInconclusive, diagnostics.Set{}, diagnostics.Set{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	set, err := bare.WithEvidenceExpired()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	view, err := New(&fakeService{receipt: receipt, set: set}, strings.NewReader("q\n"), &output, Options{Scope: scope, RefreshInterval: time.Second, Width: 80, Plain: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := view.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	joined := regexp.MustCompile(`\n(?: {12,})?`).ReplaceAllString(output.String(), " ")
+	if !strings.Contains(joined, diagnostics.EvidenceExpiredText) {
+		t.Errorf("missing expired-evidence text in:\n%s", output.String())
+	}
+}

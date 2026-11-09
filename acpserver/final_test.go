@@ -140,3 +140,24 @@ func jsonEscaped(t *testing.T, text string) string {
 	}
 	return string(encoded[1 : len(encoded)-1])
 }
+
+// A result recorded after its evidence expired says so.
+func TestServerNamesEvidenceExpiredResult(t *testing.T) {
+	scope, receipt, _ := acpFixture(t)
+	bare, err := diagnostics.NewFinalReviewSet(scope, "", "", diagnostics.FinalOutcomeInconclusive, diagnostics.Set{}, diagnostics.Set{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	set, err := bare.WithEvidenceExpired()
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages := promptMessages(t, &serviceStub{receipt: receipt, set: set}, scope)
+	if !strings.Contains(string(messages[0]), jsonEscaped(t, diagnostics.EvidenceExpiredText)) {
+		t.Fatalf("missing expired-evidence text in %s", messages[0])
+	}
+	plain := promptMessages(t, &serviceStub{receipt: receipt, set: bare}, scope)
+	if bytes.Contains(plain[0], []byte("Evidence expired")) {
+		t.Fatal("unexpired result named expired evidence")
+	}
+}

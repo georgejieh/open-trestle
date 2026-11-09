@@ -336,6 +336,9 @@ func (s *Server) runPrompt(prompt *admittedPrompt) []any {
 				label, omitted = "Final review diagnostics", "Final review diagnostics omitted: ACP message size limit."
 				text += "\n\nFinal review outcome: " + string(set.Outcome()) + ".\nA terminal outcome does not approve the change or prove correctness."
 				text += contextRefusalText(set)
+				if set.EvidenceExpired() {
+					text += "\n" + diagnostics.EvidenceExpiredText
+				}
 				if set.AnalysisResultIdentity() == "" {
 					text += "\nDeterministic observations: unknown (evidence unavailable)."
 				} else {

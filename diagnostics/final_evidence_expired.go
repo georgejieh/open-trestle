@@ -1,5 +1,8 @@
 package diagnostics
 
+// EvidenceExpiredText is the fixed reader text for an evidence-expired result.
+const EvidenceExpiredText = "Evidence expired: this result was recorded after the run's evidence retention lapsed; the outcome comes from the run journal only and no findings or observations are available."
+
 // EvidenceExpired reports a final result recorded after its run's evidence
 // retention lapsed. It carries no deterministic or verified part: its outcome
 // is only what the run journal proves, and absent evidence is unknown, not

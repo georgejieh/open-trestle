@@ -76,6 +76,9 @@ func writeFinalDiagnostics(builder *strings.Builder, set diagnostics.Set, width 
 		}
 		writeSetupWrapped(builder, "Context refusal: ", string(refusal.Reason)+" ("+text+")", width)
 	}
+	if set.EvidenceExpired() {
+		writeSetupWrapped(builder, "", diagnostics.EvidenceExpiredText, width)
+	}
 	builder.WriteString("A terminal outcome does not approve the change or prove correctness.\n")
 	if set.AnalysisResultIdentity() == "" {
 		builder.WriteString("Deterministic observations: unknown (evidence unavailable).\n")
