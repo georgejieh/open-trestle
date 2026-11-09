@@ -127,15 +127,18 @@ func TestSupervisorKeepsIntakeAfterADeterministicRefusal(t *testing.T) {
 	}
 }
 
-// A transient failure is retried, never recorded as a refusal, and does not
-// keep the other delivery from being admitted in the same pass.
+// A transient failure of one delivery is retried after its own backoff, is
+// not recorded as a refusal, and does not keep the other delivery from being
+// admitted in the same pass.
 func TestSupervisorRetriesTransientFailuresWithoutRefusing(t *testing.T) {
 	store := NewMemoryStore()
 	journal := failingJournal{MemoryRunJournal: controlplane.NewMemoryRunJournal()}
 	f := newRefusalFixture(t, store, supervisorPlanner{identity: strings.Repeat("d", 64)}, &journal)
+	clock := &steppingClock{at: time.UnixMilli(1001)}
+	f.supervisor.options.Clock = clock
 	journal.run = ReviewRunIDForDelivery(f.deliveries[0])
-	if err := f.supervisor.reconcile(context.Background()); err == nil || errors.Is(err, ErrDeliveryRefused) {
-		t.Fatalf("transient failure was not returned for retry: %v", err)
+	if err := f.supervisor.reconcile(context.Background()); err != nil {
+		t.Fatalf("one delivery's transient failure failed the pass: %v", err)
 	}
 	if !f.admitted(t, f.deliveries[1]) {
 		t.Fatal("transient failure blocked the other delivery")
@@ -144,6 +147,7 @@ func TestSupervisorRetriesTransientFailuresWithoutRefusing(t *testing.T) {
 		t.Fatal("transient failure was recorded as a refusal")
 	}
 	journal.run = ""
+	clock.at = clock.at.Add(maximumSupervisorDelay)
 	if err := f.supervisor.reconcile(context.Background()); err != nil || !f.admitted(t, f.deliveries[0]) {
 		t.Fatalf("retry did not admit the delivery: %v", err)
 	}

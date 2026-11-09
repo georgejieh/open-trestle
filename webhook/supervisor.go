@@ -57,18 +57,23 @@ type SupervisorOptions struct {
 
 // Supervisor reconciles a durable repository inbox into idempotent review runs.
 type Supervisor struct {
-	store     Store
-	refusals  RefusalStore
-	processor *Processor
-	scope     RepositoryScope
-	source    Source
-	options   SupervisorOptions
-	notices   chan DeliveryNotice
-	wake      chan struct{}
-	overflow  atomic.Bool
-	running   atomic.Bool
-	ready     chan struct{}
-	readyOnce sync.Once
+	store    Store
+	refusals RefusalStore
+	// retries holds each delivery's own bounded backoff. Only the Run
+	// goroutine reads or writes it.
+	retries    map[string]*deliveryRetry
+	retryTimer *time.Timer
+	retryAt    time.Time
+	processor  *Processor
+	scope      RepositoryScope
+	source     Source
+	options    SupervisorOptions
+	notices    chan DeliveryNotice
+	wake       chan struct{}
+	overflow   atomic.Bool
+	running    atomic.Bool
+	ready      chan struct{}
+	readyOnce  sync.Once
 }
 
 // NewSupervisor fixes one bounded processor to one repository and webhook
@@ -82,7 +87,7 @@ func NewSupervisor(store Store, processor *Processor, scope RepositoryScope, sou
 		return nil, ErrInvalidSupervisor
 	}
 	return &Supervisor{
-		store: store, refusals: refusals, processor: processor, scope: scope, source: source, options: options,
+		store: store, refusals: refusals, retries: make(map[string]*deliveryRetry), processor: processor, scope: scope, source: source, options: options,
 		notices: make(chan DeliveryNotice, options.QueueCapacity), wake: make(chan struct{}, 1), ready: make(chan struct{}),
 	}, nil
 }
@@ -122,6 +127,11 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		return ErrSupervisorRunning
 	}
 	defer s.running.Store(false)
+	defer func() {
+		if s.retryTimer != nil {
+			s.retryTimer.Stop()
+		}
+	}()
 	if err := s.retry(ctx, s.reconcile); err != nil {
 		return err
 	}
@@ -181,25 +191,82 @@ func (s *Supervisor) reconcile(ctx context.Context) error {
 	}
 }
 
+// deliveryRetry is one delivery's own retry state.
+type deliveryRetry struct {
+	failures  uint8
+	notBefore time.Time
+}
+
 // handle admits one stored delivery. A deterministic refusal is recorded once
 // with its reason and is not an error; expired prepared inputs are skipped as
-// before; any other failure is returned for retry.
+// before. Any other failure is global when the run journal or artifact store
+// does not answer an unrelated read, and is returned for supervisor retry
+// without counting against the delivery. Otherwise it is the delivery's own:
+// the delivery backs off on its own schedule while the others keep flowing,
+// and once its bounded attempts are spent it is recorded as refused with
+// retries_exhausted, so it is visible and not retried forever.
 func (s *Supervisor) handle(ctx context.Context, stored StoredDelivery) error {
 	at := s.options.Clock.Now().UTC()
-	_, _, err := s.processor.Process(ctx, stored, at)
-	if err == nil || errors.Is(err, ErrPreparedInputsExpired) {
+	key := stored.Delivery().DeduplicationKey()
+	if retry := s.retries[key]; retry != nil && at.Before(retry.notBefore) {
+		s.scheduleRetry(retry.notBefore, at)
 		return nil
 	}
-	reason, refused := DeliveryRefusalReason(err)
-	if !refused {
+	_, _, err := s.processor.Process(ctx, stored, at)
+	if err == nil || errors.Is(err, ErrPreparedInputsExpired) {
+		delete(s.retries, key)
+		return nil
+	}
+	if reason, refused := DeliveryRefusalReason(err); refused {
+		delete(s.retries, key)
+		return s.recordRefusal(ctx, stored, reason, at)
+	}
+	if ctx.Err() != nil || s.processor.Probe(ctx, stored, at) != nil {
 		return err
 	}
+	retry := s.retries[key]
+	if retry == nil {
+		retry = &deliveryRetry{}
+		s.retries[key] = retry
+	}
+	retry.failures++
+	if retry.failures >= s.options.MaximumRetries {
+		delete(s.retries, key)
+		return s.recordRefusal(ctx, stored, RefusalReasonRetriesExhausted, at)
+	}
+	delay := s.options.RetryDelay << (retry.failures - 1)
+	if delay > maximumSupervisorDelay || delay <= 0 {
+		delay = maximumSupervisorDelay
+	}
+	retry.notBefore = at.Add(delay)
+	s.scheduleRetry(retry.notBefore, at)
+	return nil
+}
+
+func (s *Supervisor) recordRefusal(ctx context.Context, stored StoredDelivery, reason string, at time.Time) error {
 	record, err := NewRefusalRecord(stored, s.processor.PlannerIdentity(), reason, at)
 	if err != nil {
 		return err
 	}
 	_, _, err = s.refusals.RecordRefusal(ctx, record)
 	return err
+}
+
+// scheduleRetry wakes reconciliation when the earliest pending delivery retry is due.
+func (s *Supervisor) scheduleRetry(when, now time.Time) {
+	if !s.retryAt.IsZero() && s.retryAt.After(now) && !when.Before(s.retryAt) {
+		return
+	}
+	if s.retryTimer != nil {
+		s.retryTimer.Stop()
+	}
+	s.retryAt = when
+	s.retryTimer = time.AfterFunc(when.Sub(now), func() {
+		select {
+		case s.wake <- struct{}{}:
+		default:
+		}
+	})
 }
 func (s *Supervisor) processNotice(ctx context.Context, notice DeliveryNotice) error {
 	stored, found, err := s.store.Get(ctx, s.scope, s.source, notice.DeduplicationKey)

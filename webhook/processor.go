@@ -2,12 +2,15 @@ package webhook
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"reflect"
 	"sort"
 
 	"github.com/georgejieh/open-trestle/artifact"
+	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
 	"time"
 )
@@ -198,6 +201,34 @@ func persistPreparedInputs(ctx context.Context, store artifact.Store, stored Sto
 	}
 	for _, input := range inputs {
 		if _, err := store.Put(ctx, input, at); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// probeArtifactIdentity names no artifact; reading it only shows the store answers.
+var probeArtifactIdentity = func() string {
+	digest := sha256.Sum256([]byte("open-trestle/webhook-intake-probe"))
+	return hex.EncodeToString(digest[:])
+}()
+
+// Probe reports whether the run journal and, for prepared processing, the
+// artifact store answer a read unrelated to any delivery's run. A failure
+// while both answer is that delivery's own; a failed probe is global.
+func (p *Processor) Probe(ctx context.Context, stored StoredDelivery, at time.Time) error {
+	if p == nil || p.coordinator == nil || stored.Validate() != nil {
+		return ErrInvalidProcessor
+	}
+	scope, err := audit.NewReviewScope(stored.Delivery().Scope().TenantID(), stored.Delivery().Scope().RepositoryID(), "webhook-intake-probe")
+	if err != nil {
+		return err
+	}
+	if _, _, err := p.coordinator.Resume(ctx, scope); err != nil && !errors.Is(err, controlplane.ErrRunNotOpened) {
+		return err
+	}
+	if !isNilArtifactStore(p.artifactStore) {
+		if _, err := p.artifactStore.Get(ctx, scope, probeArtifactIdentity, at); err != nil && !errors.Is(err, artifact.ErrArtifactNotFound) {
 			return err
 		}
 	}

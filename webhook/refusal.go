@@ -28,6 +28,9 @@ const (
 	RefusalReasonPlanningRefused = "planning_refused"
 	RefusalReasonRunPlanNotBound = "run_plan_not_bound"
 	RefusalReasonRunPlanConflict = "run_plan_conflict"
+	// RefusalReasonRetriesExhausted records a delivery whose own failures
+	// outlasted its bounded retries while intake stayed available.
+	RefusalReasonRetriesExhausted = "retries_exhausted"
 )
 
 var refusalReasonPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
