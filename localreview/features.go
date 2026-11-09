@@ -137,22 +137,20 @@ func (s *Session) readRecordedChange(ctx context.Context, scope audit.ReviewScop
 // model and the style its base tree declares (see baseStyleConfigFiles).
 // Removed files are not counted. A language that an unread base style
 // configuration file could govern is withheld, because its declared style is
-// unknown; every other language is still recommended. ok is false when the
-// change model was not recorded or could not be read back; the result then
-// carries no style advice. It never affects the review's status.
-func (s *Session) styleAdvice(ctx context.Context, scope audit.ReviewScope, state controlplane.ReviewRunState) (StyleAdvice, bool) {
-	task, exists := state.Task("change")
-	if !exists || task.Status() != controlplane.TaskRuntimeSucceeded {
-		return StyleAdvice{}, false
-	}
+// unknown; every other language is still recommended. changeID is the change
+// task's recorded output. When that change model, its snapshots or a base style
+// configuration file cannot be read back, the advice is explicitly unavailable,
+// never silently absent. It never affects the review's status.
+func (s *Session) styleAdvice(ctx context.Context, scope audit.ReviewScope, changeID string) StyleAdvice {
+	unavailable := StyleAdvice{Unavailable: true}
 	now := s.options.Clock.Now()
-	recorded, err := s.readRecordedChange(ctx, scope, task.OutputIdentity(), now)
+	recorded, err := s.readRecordedChange(ctx, scope, changeID, now)
 	if err != nil {
-		return StyleAdvice{}, false
+		return unavailable
 	}
 	configFiles, unread, err := s.baseStyleConfigFiles(ctx, scope, recorded.base, now)
 	if err != nil {
-		return StyleAdvice{}, false
+		return unavailable
 	}
 	paths := make([]string, 0, len(recorded.change.Entries()))
 	for _, entry := range recorded.change.Entries() {
@@ -162,9 +160,9 @@ func (s *Session) styleAdvice(ctx context.Context, scope audit.ReviewScope, stat
 	}
 	advice, err := agentprofile.RecommendStyles(paths, configFiles, unread)
 	if err != nil {
-		return StyleAdvice{}, false
+		return unavailable
 	}
-	return newStyleAdvice(advice, len(unread)), true
+	return newStyleAdvice(advice, len(unread))
 }
 
 // baseStyleConfigFiles reads the style configuration files that declare the

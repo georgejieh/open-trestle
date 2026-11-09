@@ -29,7 +29,7 @@ Candidate batch schema v1 keeps its bytes and is the output schema of recorded g
 
 The investigation output schema uses a closed `oneOf`: a candidate batch or one host-defined snapshot tool call. A valid proposal is not permission to execute a tool. Runtime parsing, the retained model response, source bindings, and policy limits still govern admission.
 
-No JSON Schema is published for the `open-trestle/local-git-model-review-result` receipt of `trestle local-git model-review`, at any of its versions 1 through 5. Version 5 adds optional style advice, `style_recommendations`, `style_withheld` and `style_configuration_unread`, to the version 4 fields. The fields, versions, and readback rules are documented in [local model review](local-model-review.md#results-and-limits); the strict native parser (`localreview.ParseCompletedResult`) is the enforcement authority.
+No JSON Schema is published for the `open-trestle/local-git-model-review-result` receipt of `trestle local-git model-review`, at any of its versions 1 through 5. Version 5 adds optional style advice, `style_recommendations`, `style_withheld`, `style_configuration_unread` and `style_advice_unavailable`, to the version 4 fields. The fields, versions, and readback rules are documented in [local model review](local-model-review.md#results-and-limits); the strict native parser (`localreview.ParseCompletedResult`) is the enforcement authority.
 
 Control-plane schemas:
 

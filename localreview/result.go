@@ -163,12 +163,15 @@ func withFindingGuidance(result Result, findings review.VerifiedFindingSet) (Res
 // counts those files. The text is Open Trestle's fixed table
 // (agentprofile.RecommendedStyle), not model output. Style advice never blocks:
 // it is not a finding and never changes status, CI disposition, exit code,
-// coverage or clearance. Version 5 keeps a specialist block and finding
+// coverage or clearance. Unavailable alone marks a recorded change model, its
+// snapshots or a base style configuration file that could not be read back, so
+// no advice could be derived. Version 5 keeps a specialist block and finding
 // guidance. Every field is omitted when empty.
 type StyleAdvice struct {
 	Recommendations     []StyleRecommendation `json:"style_recommendations,omitempty"`
 	Withheld            []StyleWithheld       `json:"style_withheld,omitempty"`
 	ConfigurationUnread int                   `json:"style_configuration_unread,omitempty"`
+	Unavailable         bool                  `json:"style_advice_unavailable,omitempty"`
 }
 
 // StyleRecommendation suggests the standard style for one changed language.
@@ -185,7 +188,7 @@ type StyleWithheld struct {
 }
 
 func (a StyleAdvice) empty() bool {
-	return len(a.Recommendations) == 0 && len(a.Withheld) == 0 && a.ConfigurationUnread == 0
+	return len(a.Recommendations) == 0 && len(a.Withheld) == 0 && a.ConfigurationUnread == 0 && !a.Unavailable
 }
 
 const styleResultVersion = 5
@@ -250,6 +253,9 @@ func (a StyleAdvice) Lines() []string {
 			subject = "files were"
 		}
 		lines = append(lines, fmt.Sprintf("style: %d base style configuration %s not read (over 64 KiB, not valid UTF-8, or beyond 256 files)\n", a.ConfigurationUnread, subject))
+	}
+	if a.Unavailable {
+		lines = append(lines, "style: advice unavailable; the recorded change or base style configuration could not be read back\n")
 	}
 	return lines
 }
@@ -708,8 +714,10 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 		return Result{}, ErrInvalidResult
 	}
 	if s.investigation == nil {
-		if advice, ok := s.styleAdvice(ctx, p.Plan().Scope(), state); ok {
-			result = withStyleAdvice(result, advice)
+		// A run that failed before it recorded its change model reviewed
+		// nothing and carries no style advice, as it carries no findings.
+		if task, ok := state.Task("change"); ok && task.Status() == controlplane.TaskRuntimeSucceeded {
+			result = withStyleAdvice(result, s.styleAdvice(ctx, p.Plan().Scope(), task.OutputIdentity()))
 		}
 	}
 	if s.investigation != nil {

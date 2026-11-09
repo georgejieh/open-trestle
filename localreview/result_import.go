@@ -136,8 +136,12 @@ func importableResultVersion(wire resultWire) bool {
 // validImportedStyleAdvice requires recommendations and withheld languages in
 // strict language order, each a language with a style detector and each
 // recommendation its fixed table text. No language is both recommended and
-// withheld, and a withheld language needs an unread file.
+// withheld, a withheld language needs an unread file, and an unavailable
+// marker stands alone.
 func validImportedStyleAdvice(advice StyleAdvice) bool {
+	if advice.Unavailable {
+		return len(advice.Recommendations) == 0 && len(advice.Withheld) == 0 && advice.ConfigurationUnread == 0
+	}
 	if advice.ConfigurationUnread < 0 || len(advice.Withheld) > 0 && advice.ConfigurationUnread == 0 {
 		return false
 	}

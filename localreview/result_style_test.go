@@ -175,6 +175,51 @@ func TestStyleAdviceJSONAndTextForms(t *testing.T) {
 	})
 }
 
+// TestStyleAdviceIsExplicitlyUnavailableWhenTheChangeCannotBeReadBack requires
+// an unreadable recorded change to yield an explicit unavailable marker, in
+// JSON and text, rather than an absence that reads as "no advice needed".
+func TestStyleAdviceIsExplicitlyUnavailableWhenTheChangeCannotBeReadBack(t *testing.T) {
+	f := newRmModelFixture(t, styleTrees(map[string][]byte{"tool.py": []byte("x = 1\n")}, map[string][]byte{"tool.py": []byte("x = 2\n")}))
+	options := rmOptions(t, f, rmNewClock())
+	options.ArtifactCapacity = 1024
+	s := rmSession(t, options)
+	p := rmPrepare(t, s, f, "style-unavailable")
+	result, err := s.Run(context.Background(), p)
+	if err != nil || len(result.wire.StyleAdvice.Recommendations) != 1 {
+		t.Fatalf("review run: %v advice=%+v", err, result.wire.StyleAdvice)
+	}
+	at := s.options.Clock.Now()
+	change := rmTaskArtifact(t, s, p, "change", at)
+	if got := s.styleAdvice(context.Background(), p.Plan().Scope(), change.Identity()); !reflect.DeepEqual(got, result.wire.StyleAdvice) {
+		t.Fatalf("recorded change advice = %+v, want %+v", got, result.wire.StyleAdvice)
+	}
+	unavailable := s.styleAdvice(context.Background(), p.Plan().Scope(), strings.Repeat("e", 64))
+	if !reflect.DeepEqual(unavailable, StyleAdvice{Unavailable: true}) {
+		t.Fatalf("unreadable change advice = %+v", unavailable)
+	}
+	// The same result, as readback would build it had the change been unreadable.
+	marked := withStyleAdvice(result, unavailable)
+	encoded, err := EncodeResult(marked)
+	if err != nil || !bytes.Contains(encoded, []byte(`"schema_version":5,`)) || !bytes.HasSuffix(encoded, []byte(`,"style_advice_unavailable":true}`+"\n")) || bytes.Contains(encoded, []byte("style_recommendations")) {
+		t.Fatalf("unavailable advice JSON: %v\n%s", err, encoded)
+	}
+	var text bytes.Buffer
+	if err := RenderResult(&text, marked); err != nil || !strings.Contains(text.String(), "style: advice unavailable; the recorded change or base style configuration could not be read back\nlimitations: ") || strings.Count(text.String(), "style: ") != 1 {
+		t.Fatalf("unavailable advice text:\n%s", text.String())
+	}
+	if _, err := ParseCompletedResult(encoded); err != nil {
+		t.Fatalf("unavailable advice does not import: %v", err)
+	}
+	for name, tampered := range map[string][]byte{
+		"unavailable with a recommendation": bytes.Replace(encoded, []byte(`"style_advice_unavailable":true`), []byte(`"style_recommendations":[{"language":"python","changed_files":1,"recommendation":"PEP 8, enforced with Ruff or Black"}],"style_advice_unavailable":true`), 1),
+		"unavailable with unread files":     bytes.Replace(encoded, []byte(`"style_advice_unavailable":true`), []byte(`"style_configuration_unread":1,"style_advice_unavailable":true`), 1),
+	} {
+		if _, err := ParseCompletedResult(tampered); err == nil {
+			t.Fatalf("%s imported", name)
+		}
+	}
+}
+
 func TestStyleAdviceResultsImportAndOlderVersionsReadBack(t *testing.T) {
 	importable := func(t *testing.T, result Result, version int) []byte {
 		t.Helper()

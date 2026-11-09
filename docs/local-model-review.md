@@ -668,8 +668,9 @@ not the single-review result:
   Only members whose run succeeded contribute. The rule is a heuristic
   (`deduplication_is_heuristic`).
 - `summary`, `bounds`, `limitations` and `comprehensive_clearance: false`.
-- `style_recommendations`, `style_withheld` and `style_configuration_unread`:
-  the general review's [style advice](#style-recommendations), once for the set
+- `style_recommendations`, `style_withheld`, `style_configuration_unread` and
+  `style_advice_unavailable`: the general review's
+  [style advice](#style-recommendations), once for the set
   and never per member, because every member reviews the same change against
   the same base tree. The fields are absent when the general review has no
   advice, so such a set keeps its earlier bytes. Text output adds the same `style:` lines
@@ -1009,8 +1010,13 @@ changes `status`, `ci_disposition`, the exit code under any
 [exit-code policy](#exit-code-policy), source coverage or
 `comprehensive_clearance`. SARIF output and `--investigation-policy` results do
 not carry it. A `--specialists` review set reports the general review's advice
-once (see [Specialist review set](#specialist-review-set-opt-in)). It appears
-only when the run recorded its change model. The model-result evaluation import
+once (see [Specialist review set](#specialist-review-set-opt-in)). A run that
+failed before it recorded its change model reviewed nothing and carries no
+style advice, as it carries no findings. When the recorded change model, its
+snapshots or a base style configuration file cannot be read back, the advice is
+reported as unavailable rather than left out: JSON adds
+`style_advice_unavailable: true` (with no other style field) and text reads
+`style: advice unavailable; the recorded change or base style configuration could not be read back`. The model-result evaluation import
 and the retained-memory feedback review accept version 5 and ignore the advice.
 
 Two optional counts report advisory repository-context accounting without changing
