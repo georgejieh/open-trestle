@@ -281,7 +281,7 @@ The values above are placeholders, not recommendations.
 | `3` | Pending: something must be fixed before a review can run, or the review was incomplete or canceled. |
 | `4` | Refused: a declaration was declined, setup was refused, or the review was refused. |
 | `2` | Usage: a missing or invalid answer, end of input (Ctrl-D), or three unusable answers in a row. |
-| `1` | Internal error. |
+| `1` | Internal error, or the first review failed. |
 
 Ending input early, or three unusable answers to one question, stops without
 writing anything if setup was not yet saved.
