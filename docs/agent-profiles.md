@@ -317,13 +317,30 @@ unassigned tiers first, in profile order, then budget drops in drop order.
 ## CLI
 
 ```
-trestle profiles list
+trestle profiles list [--format text|json]
 trestle profiles plan --assignments assignments.json --features features.json
 ```
 
-`list` prints the catalog as one JSON line: profiles, skills, scoring table, and
-authority. `plan` prints the `RoutingPlan` as one JSON line. Both inputs must be
-regular files within their size bounds.
+`list` prints one line per profile by default (`--format text`): its ID, when
+it calls a model (`required`, `gap_only` or `none`), whether
+`local-git model-review` accepts it in `--profile` and `--specialists`
+(`--profile`) or only plans it (`plan only`), and its purpose. Three closing
+lines give the profile count and catalog identity, explain the `REVIEW` column,
+and point to `profiles plan` and the JSON form. The catalog binds no provider, model or zone; an assignments
+document binds those per tier. Abridged:
+
+```
+PROFILE            MODEL     REVIEW     PURPOSE
+backend            required  --profile  Back-end review: API contracts, persistence, concurrency, resource lifetime, and error handling.
+knowledge_graph    gap_only  plan only  Builds and extends the repository symbol and dependency graph from deterministic analysis; ...
+orchestrator       none      plan only  Deterministic router: activates profiles, scores difficulty, selects tiers and exact routes, ...
+9 profiles, catalog version 1, identity c210656e4d23254d84945b6c0f7acf321d7186602c5538c6a86b7d203672df9a
+```
+
+`list --format json` prints the catalog as one JSON line: profiles, skills,
+scoring table, and authority. These bytes are unchanged from the earlier
+JSON-only `list`. `plan` prints the `RoutingPlan` as one JSON line. Both inputs
+must be regular files within their size bounds.
 
 Exit codes:
 

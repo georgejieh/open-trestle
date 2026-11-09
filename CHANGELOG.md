@@ -35,6 +35,7 @@ All notable changes to released versions of Open Trestle will be documented in t
 
 ### Changed
 
+- `trestle profiles list` now prints one readable line per profile by default (ID, when it calls a model, whether `local-git model-review --profile` and `--specialists` accept it, and purpose) instead of about 43 KB of catalog JSON. The previous output, byte for byte, is available with `--format json`; `--format text` selects the new default explicitly.
 - Expanded versioned artifact, diagnostic, readiness, local-Git, setup, and transport contracts with strict offline schema reference and documentation-inventory checks.
 - Advanced diagnostic publication to version 5 while preserving earlier versions, binding the exact source check, analysis, change, verification context, coverage, omissions, and review state.
 - Added diagnostic version 6 for deterministic observations, with analysis-result and changed-range lineage, schema-aware ACP/TUI/CLI/web semantics, and no independent-verification claim.

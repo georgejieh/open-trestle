@@ -3,10 +3,15 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/georgejieh/open-trestle/agentprofile"
+	"github.com/georgejieh/open-trestle/internal/review"
 )
 
 const profilesTestAssignments = `{"schema":"open-trestle/agent-profile-assignments","version":1,"independence":"distinct_provider",` +
@@ -27,10 +32,77 @@ func writeProfilesFixture(t *testing.T, name, content string) string {
 	return path
 }
 
-func TestProfilesListWritesCatalogJSON(t *testing.T) {
-	var stdout, stderr bytes.Buffer
+func TestProfilesListDefaultsToOneTextLinePerProfile(t *testing.T) {
+	catalog, err := agentprofile.DefaultCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout, explicit, stderr bytes.Buffer
 	if code := run([]string{"profiles", "list"}, &stdout, &stderr); code != 0 || stderr.Len() != 0 {
 		t.Fatalf("code=%d stderr=%q", code, stderr.String())
+	}
+	if code := run([]string{"profiles", "list", "--format", "text"}, &explicit, &stderr); code != 0 || stderr.Len() != 0 || !bytes.Equal(explicit.Bytes(), stdout.Bytes()) {
+		t.Fatalf("--format text differs from the default: code=%d stderr=%q", code, stderr.String())
+	}
+	if stdout.Len() > 4096 || bytes.ContainsRune(stdout.Bytes(), '{') {
+		t.Fatalf("text output is not a short listing: %d bytes", stdout.Len())
+	}
+	lines := strings.Split(strings.TrimSuffix(stdout.String(), "\n"), "\n")
+	profiles := catalog.Profiles()
+	if len(lines) != len(profiles)+4 {
+		t.Fatalf("lines=%d, want header, %d profiles and three footer lines", len(lines), len(profiles))
+	}
+	if lines[0] != "PROFILE            MODEL     REVIEW     PURPOSE" {
+		t.Fatalf("header=%q", lines[0])
+	}
+	accepted := map[string]bool{}
+	for _, id := range review.ContextSpecialistProfileIDs() {
+		accepted[id] = true
+	}
+	for i, profile := range profiles {
+		fields := strings.Fields(lines[i+1])
+		use := "plan only"
+		if accepted[string(profile.ID())] {
+			use = "--profile"
+		}
+		if len(fields) < 4 || fields[0] != string(profile.ID()) || fields[1] != string(profile.ModelCall()) || !strings.HasSuffix(lines[i+1], "  "+use+"  "+profile.Purpose()) {
+			t.Fatalf("line %d = %q, want %s %s %s and its purpose", i+1, lines[i+1], profile.ID(), profile.ModelCall(), use)
+		}
+	}
+	if !slices.Contains(lines, "orchestrator       none      plan only  "+mustProfile(t, catalog, "orchestrator").Purpose()) ||
+		!slices.Contains(lines, "security_probe     required  --profile  "+mustProfile(t, catalog, "security_probe").Purpose()) {
+		t.Fatal("columns are not aligned to the widest profile ID")
+	}
+	if want := fmt.Sprintf("%d profiles, catalog version %d, identity %s", len(profiles), catalog.Version(), catalog.Identity()); lines[len(profiles)+1] != want {
+		t.Fatalf("catalog line=%q, want %q", lines[len(profiles)+1], want)
+	}
+	if !strings.Contains(lines[len(lines)-1], "--format json") {
+		t.Fatal("text output does not point to the JSON catalog")
+	}
+}
+
+func mustProfile(t *testing.T, catalog agentprofile.Catalog, id agentprofile.ProfileID) agentprofile.Profile {
+	t.Helper()
+	profile, ok := catalog.Profile(id)
+	if !ok {
+		t.Fatalf("catalog lacks %s", id)
+	}
+	return profile
+}
+
+func TestProfilesListFormatJSONWritesTheExactCatalogJSON(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"profiles", "list", "--format", "json"}, &stdout, &stderr); code != 0 || stderr.Len() != 0 {
+		t.Fatalf("code=%d stderr=%q", code, stderr.String())
+	}
+	catalogValue, err := agentprofile.DefaultCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The JSON form is the catalog encoding the command printed before text became the default.
+	encoded, err := json.Marshal(catalogValue)
+	if err != nil || !bytes.Equal(stdout.Bytes(), append(encoded, '\n')) {
+		t.Fatal("JSON output is not the exact catalog encoding plus one newline")
 	}
 	var catalog struct {
 		Contract string `json:"contract"`
@@ -95,6 +167,10 @@ func TestProfilesCommandErrors(t *testing.T) {
 		{"no subcommand", []string{"profiles"}, 2, "usage: trestle profiles"},
 		{"unknown subcommand", []string{"profiles", "run"}, 2, "usage: trestle profiles"},
 		{"list with argument", []string{"profiles", "list", "extra"}, 2, "usage: trestle profiles"},
+		{"list format missing value", []string{"profiles", "list", "--format"}, 2, "usage: trestle profiles list [--format text|json]"},
+		{"list unknown format", []string{"profiles", "list", "--format", "yaml"}, 2, "usage: trestle profiles"},
+		{"list duplicate format", []string{"profiles", "list", "--format", "json", "--format", "json"}, 2, "usage: trestle profiles"},
+		{"list joined format", []string{"profiles", "list", "--format=json"}, 2, "usage: trestle profiles"},
 		{"plan missing features", []string{"profiles", "plan", "--assignments", assignments}, 2, "usage: trestle profiles"},
 		{"plan missing value", []string{"profiles", "plan", "--assignments"}, 2, "usage: trestle profiles"},
 		{"plan duplicate flag", []string{"profiles", "plan", "--assignments", assignments, "--assignments", assignments, "--features", features}, 2, "usage: trestle profiles"},
