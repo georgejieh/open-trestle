@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -26,9 +27,10 @@ type localModelSetReceipt struct {
 		Mode     string `json:"mode"`
 		Status   string `json:"status"`
 		Features *struct {
-			Identity     string   `json:"identity"`
-			ChangedFiles int      `json:"changed_files"`
-			Languages    []string `json:"languages"`
+			Identity                 string   `json:"identity"`
+			ChangedFiles             int      `json:"changed_files"`
+			Languages                []string `json:"languages"`
+			StyleConfigurationUnread *int     `json:"style_configuration_unread"`
 		} `json:"features"`
 		Plan *struct {
 			Identity         string `json:"identity"`
@@ -414,6 +416,36 @@ func TestRunLocalGitModelReviewAutoSpecialistsUseBaseDeclaredStyle(t *testing.T)
 			}
 			if features := receipt.Selection.Features; features == nil || !strings.Contains(strings.Join(features.Languages, ","), "python") {
 				t.Fatal("selection trace did not record the changed Python file")
+			}
+		})
+	}
+}
+
+// TestRunLocalGitModelReviewAutoSpecialistsCountUnreadStyleConfiguration
+// requires the selection trace to count base style configuration that routing
+// could not use, and to omit the count when every file was used.
+func TestRunLocalGitModelReviewAutoSpecialistsCountUnreadStyleConfiguration(t *testing.T) {
+	files := map[string][]byte{}
+	for index := 0; index < 18; index++ {
+		files[fmt.Sprintf(".prettierrc.%02d", index)] = []byte(strings.Repeat("a", 58<<10))
+	}
+	oversized := map[string][]byte{"pyproject.toml": []byte("[tool.ruff]\n" + strings.Repeat("#", 64<<10))}
+	for _, test := range []struct {
+		name   string
+		files  map[string][]byte
+		unread int
+	}{
+		{"beyond the document bound", files, 1},
+		{"over the file bound", oversized, 1},
+		{"every file used", map[string][]byte{"ruff.toml": []byte("line-length = 100\n")}, 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newLocalModelFixture(t, localModelFixtureOptions{extraBase: test.files, extraHead: test.files})
+			receipt, encoded := runLocalModelSet(t, f, []string{"--specialists", "auto"}, 4)
+			features := receipt.Selection.Features
+			if features == nil || test.unread == 0 && (features.StyleConfigurationUnread != nil || strings.Contains(encoded, `"style_configuration_unread"`)) ||
+				test.unread != 0 && (features.StyleConfigurationUnread == nil || *features.StyleConfigurationUnread != test.unread) {
+				t.Fatalf("selection features = %+v, want unread %d", features, test.unread)
 			}
 		})
 	}

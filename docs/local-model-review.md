@@ -645,8 +645,9 @@ not the single-review result:
 
 - `selection`: mode, status, features summary (identity, changed file count,
   languages, file classes, security signals, semantic gap count, public API
-  changes, reference fan-out), plan identities, selected and dropped profiles
-  with reasons, inactive profiles.
+  changes, reference fan-out, and `style_configuration_unread` when base style
+  configuration files could not be used for routing), plan identities,
+  selected and dropped profiles with reasons, inactive profiles.
 - `members`: one entry per member (`general`, then profile IDs) with status, CI
   disposition, run status, failure, `failure_task` and `failure_detail` (when the
   run did not succeed), run, scope, plan and context identities,

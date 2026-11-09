@@ -324,6 +324,9 @@ type localModelReviewMember struct {
 	features        agentprofile.ChangeFeatures
 	hasFeatures     bool
 	partialCheckout bool
+	// styleConfigUnread counts base style configuration files the features
+	// could not carry.
+	styleConfigUnread int
 }
 
 // runLocalModelReviewMember runs one review session to a terminal result under
@@ -407,8 +410,8 @@ func runLocalModelReviewMember(ctx, execution context.Context, options localMode
 	result, runErr := session.Run(execution, prepared)
 	if wantFeatures && runErr == nil && execution.Err() == nil {
 		// Read-only replay of this run's own recorded artifacts; no model call.
-		if features, err := session.ChangeFeatures(execution, prepared); err == nil {
-			member.features, member.hasFeatures = features, true
+		if features, unread, err := session.ChangeFeatures(execution, prepared); err == nil {
+			member.features, member.hasFeatures, member.styleConfigUnread = features, true, len(unread)
 		}
 	}
 	// Render normal journal/artifact readback only after safe closure. On failure,

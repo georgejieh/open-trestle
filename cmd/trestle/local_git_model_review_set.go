@@ -111,6 +111,10 @@ type specialistFeaturesWire struct {
 	PublicAPIChanges uint32   `json:"public_api_changes"`
 	ReferenceFanOut  uint32   `json:"reference_fan_out"`
 	Source           string   `json:"source"`
+	// StyleConfigurationUnread counts recognized base style configuration
+	// files the features could not carry (over a file bound, not valid UTF-8,
+	// or beyond the 1 MiB document bound); omitted when zero.
+	StyleConfigurationUnread int `json:"style_configuration_unread,omitempty"`
 }
 
 type specialistPlanWire struct {
@@ -446,6 +450,9 @@ func runLocalModelReviewSet(ctx, execution context.Context, options localModelRe
 	default:
 		selection.Status = "features_unavailable"
 		selection.Reason = featuresUnavailableReason(general.result)
+	}
+	if selection.Features != nil {
+		selection.Features.StyleConfigurationUnread = general.styleConfigUnread
 	}
 	members := []localModelReviewMember{general}
 	notLaunched := map[int]string{}

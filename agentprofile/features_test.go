@@ -3,6 +3,7 @@ package agentprofile
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -279,6 +280,53 @@ func TestProfileStyleConfigIntentsBoundDetection(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// largeConfigFiles returns count Prettier configurations of size bytes each.
+func largeConfigFiles(count, size int) []ConfigFile {
+	files := make([]ConfigFile, count)
+	for index := range files {
+		files[index] = ConfigFile{Path: fmt.Sprintf(".prettierrc.%02d", index), Content: strings.Repeat("a", size)}
+	}
+	return files
+}
+
+func TestProfileNewChangeFeaturesEnforcesTheDocumentBound(t *testing.T) {
+	files := []ChangedFileSpec{{Path: "a.go", AddedLines: 1}}
+	if _, err := NewChangeFeatures(ChangeFeaturesSpec{Files: files, ConfigFiles: largeConfigFiles(15, MaxConfigFileBytes)}); err != nil {
+		t.Fatalf("features within the bound: %v", err)
+	}
+	_, err := NewChangeFeatures(ChangeFeaturesSpec{Files: files, ConfigFiles: largeConfigFiles(17, MaxConfigFileBytes)})
+	if !errors.Is(err, ErrChangeFeaturesTooLarge) {
+		t.Fatalf("features over the 1 MiB document bound: err = %v", err)
+	}
+}
+
+func TestProfileFitConfigFilesSkipsWholeFilesThatDoNotFit(t *testing.T) {
+	base, err := NewChangeFeatures(ChangeFeaturesSpec{Files: []ChangedFileSpec{{Path: "a.go", AddedLines: 1}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidates := append(largeConfigFiles(18, 58<<10), ConfigFile{Path: "go.mod", Content: "module example.test/p\n"})
+	fitted, skipped := FitConfigFiles(base, candidates)
+	if len(fitted) != 18 || !reflect.DeepEqual(skipped, []string{".prettierrc.17"}) || fitted[17].Path != "go.mod" {
+		t.Fatalf("fitted %d files, skipped %v", len(fitted), skipped)
+	}
+	for index, file := range fitted[:17] {
+		if file != candidates[index] {
+			t.Fatalf("fitted file %s was altered", file.Path)
+		}
+	}
+	features, err := NewChangeFeatures(ChangeFeaturesSpec{Files: []ChangedFileSpec{{Path: "a.go", AddedLines: 1}}, ConfigFiles: fitted})
+	if err != nil {
+		t.Fatalf("fitted features: %v", err)
+	}
+	if encoded, err := features.MarshalJSON(); err != nil || len(encoded) > MaxChangeFeaturesBytes {
+		t.Fatalf("fitted document is %d bytes: %v", len(encoded), err)
+	}
+	if _, err := NewChangeFeatures(ChangeFeaturesSpec{Files: []ChangedFileSpec{{Path: "a.go", AddedLines: 1}}, ConfigFiles: append(fitted, candidates[17])}); !errors.Is(err, ErrChangeFeaturesTooLarge) {
+		t.Fatalf("the skipped file would have fit: err = %v", err)
 	}
 }
 

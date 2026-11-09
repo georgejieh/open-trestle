@@ -2,6 +2,7 @@ package localreview
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -27,11 +28,48 @@ func styleFeaturesRun(t *testing.T, name string, base, head map[string][]byte) (
 	if err != nil || result.wire.RunStatus != "succeeded" {
 		t.Fatalf("review run: %v status=%s", err, result.wire.RunStatus)
 	}
-	features, err := s.ChangeFeatures(context.Background(), p)
+	features, _, err := s.ChangeFeatures(context.Background(), p)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return s, p, features
+}
+
+// TestChangeFeaturesSkipConfigFilesBeyondTheDocumentBound requires base style
+// configuration that would push the change-features document past 1 MiB to be
+// skipped whole and reported as unread, never truncated.
+func TestChangeFeaturesSkipConfigFilesBeyondTheDocumentBound(t *testing.T) {
+	files := map[string][]byte{}
+	for index := 0; index < 18; index++ {
+		files[fmt.Sprintf(".prettierrc.%02d", index)] = []byte(strings.Repeat("a", 58<<10))
+	}
+	f := newRmModelFixture(t, rmModelFixtureOptions{extraBase: files, extraHead: files})
+	options := rmOptions(t, f, rmNewClock())
+	options.ArtifactCapacity = 1024
+	s := rmSession(t, options)
+	p := rmPrepare(t, s, f, "style-document-bound")
+	if result, err := s.Run(context.Background(), p); err != nil || result.wire.RunStatus != "succeeded" {
+		t.Fatalf("review run: %v", err)
+	}
+	features, unread, err := s.ChangeFeatures(context.Background(), p)
+	if err != nil || !reflect.DeepEqual(unread, []string{".prettierrc.17"}) {
+		t.Fatalf("unread=%v err=%v", unread, err)
+	}
+	encoded, err := features.MarshalJSON()
+	var document struct {
+		ConfigFiles []agentprofile.ConfigFile `json:"config_files"`
+	}
+	if err != nil || len(encoded) > agentprofile.MaxChangeFeaturesBytes || json.Unmarshal(encoded, &document) != nil || len(document.ConfigFiles) != 18 {
+		t.Fatalf("features document is %d bytes with %d config files: %v", len(encoded), len(document.ConfigFiles), err)
+	}
+	for _, file := range document.ConfigFiles {
+		if file.Path == ".prettierrc.17" || file.Path != "go.mod" && len(file.Content) != 58<<10 {
+			t.Fatalf("config file %s was supplied altered or should have been skipped", file.Path)
+		}
+	}
+	if got := features.StyleIntents(); !reflect.DeepEqual(got, []agentprofile.StyleIntent{agentprofile.StyleGofmt, agentprofile.StylePrettier}) {
+		t.Fatalf("style intents = %v", got)
+	}
 }
 
 // TestChangeFeaturesDetectStyleFromTheBaseTree runs over the fixture's

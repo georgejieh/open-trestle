@@ -216,8 +216,48 @@ func NewChangeFeatures(spec ChangeFeaturesSpec) (ChangeFeatures, error) {
 	}
 	sort.Slice(features.configFiles, func(i, j int) bool { return features.configFiles[i].Path < features.configFiles[j].Path })
 	features.styleIntents = detectStyleIntents(features.configFiles)
-	features.identity = deriveIdentity(features.wire())
+	encoded, err := json.Marshal(features.wire())
+	if err != nil {
+		return invalid("features do not encode")
+	}
+	if len(encoded) > MaxChangeFeaturesBytes {
+		return ChangeFeatures{}, ErrChangeFeaturesTooLarge
+	}
+	digest := sha256.Sum256(encoded)
+	features.identity = hex.EncodeToString(digest[:])
 	return features, nil
+}
+
+// FitConfigFiles selects, in the given order, the candidate configuration files
+// that fit beside features in one change-features document of at most
+// MaxChangeFeaturesBytes, and returns the paths of the rest. A file that does
+// not fit is skipped whole, never truncated, and a later smaller file may still
+// fit. features must carry no configuration files. Adding the fitted files to
+// the spec that built features yields a document within the bound.
+func FitConfigFiles(features ChangeFeatures, candidates []ConfigFile) (fitted []ConfigFile, skipped []string) {
+	encoded, err := json.Marshal(features.wire())
+	if err != nil || len(features.configFiles) != 0 {
+		for _, candidate := range candidates {
+			skipped = append(skipped, candidate.Path)
+		}
+		return nil, skipped
+	}
+	// The config_files member costs its key and brackets once, and each entry
+	// its encoding plus a separating comma.
+	used, member := len(encoded), len(`,"config_files":[]`)
+	for _, candidate := range candidates {
+		entry, err := json.Marshal(configFileWire{Path: candidate.Path, Content: candidate.Content})
+		cost := len(entry) + 1
+		if len(fitted) == 0 {
+			cost = len(entry) + member
+		}
+		if err != nil || used+cost > MaxChangeFeaturesBytes {
+			skipped = append(skipped, candidate.Path)
+			continue
+		}
+		fitted, used = append(fitted, candidate), used+cost
+	}
+	return fitted, skipped
 }
 
 func canonicalPaths(values []string, maximum int) ([]string, error) {

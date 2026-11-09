@@ -3,6 +3,7 @@ package localreview
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -32,21 +33,26 @@ var ErrChangeFeaturesUnavailable = errors.New("local review change features unav
 // The change model records changed head-line ranges, not deleted-line counts,
 // so AddedLines is the number of changed head lines and DeletedLines is zero.
 // Declared style comes from the base tree's root-level style configuration
-// files (see baseStyleConfigFiles). No change description is inspected.
-func (s *Session) ChangeFeatures(ctx context.Context, prepared runtimecatalog.PreparedReviewRun) (agentprofile.ChangeFeatures, error) {
+// files (see baseStyleConfigFiles). Files are added in path order while the
+// change-features document stays within agentprofile.MaxChangeFeaturesBytes; a
+// file that does not fit is skipped whole. unreadStyleConfig lists, in path
+// order, every recognized base style configuration file that was not supplied:
+// over a file bound, not valid UTF-8, or beyond the document bound. No change
+// description is inspected.
+func (s *Session) ChangeFeatures(ctx context.Context, prepared runtimecatalog.PreparedReviewRun) (features agentprofile.ChangeFeatures, unreadStyleConfig []string, err error) {
 	if s == nil || ctx == nil || ctx.Err() != nil || prepared.Validate() != nil {
-		return agentprofile.ChangeFeatures{}, ErrChangeFeaturesUnavailable
+		return agentprofile.ChangeFeatures{}, nil, ErrChangeFeaturesUnavailable
 	}
 	s.mu.Lock()
 	unavailable := s.closing || s.closed || s.active || s.investigation != nil || !s.issued[prepared.RequestIdentity()]
 	s.mu.Unlock()
 	if unavailable {
-		return agentprofile.ChangeFeatures{}, ErrChangeFeaturesUnavailable
+		return agentprofile.ChangeFeatures{}, nil, ErrChangeFeaturesUnavailable
 	}
 	scope := prepared.Plan().Scope()
 	plan, state, err := s.coordinator.Resume(ctx, scope)
 	if err != nil || plan.Identity() != prepared.Plan().Identity() {
-		return agentprofile.ChangeFeatures{}, ErrChangeFeaturesUnavailable
+		return agentprofile.ChangeFeatures{}, nil, ErrChangeFeaturesUnavailable
 	}
 	now := s.options.Clock.Now()
 	output := func(key string) (string, bool) {
@@ -59,20 +65,20 @@ func (s *Session) ChangeFeatures(ctx context.Context, prepared runtimecatalog.Pr
 	changeID, hasChange := output("change")
 	analysisID, hasAnalysis := output("analysis")
 	if !hasChange || !hasAnalysis {
-		return agentprofile.ChangeFeatures{}, ErrChangeFeaturesUnavailable
+		return agentprofile.ChangeFeatures{}, nil, ErrChangeFeaturesUnavailable
 	}
 	recorded, err := s.readRecordedChange(ctx, scope, changeID, now)
 	if err != nil {
-		return agentprofile.ChangeFeatures{}, ErrChangeFeaturesUnavailable
+		return agentprofile.ChangeFeatures{}, nil, ErrChangeFeaturesUnavailable
 	}
 	change, baseArtifact := recorded.change, recorded.base
 	analysisArtifact, err := s.store.Get(ctx, scope, analysisID, now)
 	if err != nil {
-		return agentprofile.ChangeFeatures{}, ErrChangeFeaturesUnavailable
+		return agentprofile.ChangeFeatures{}, nil, ErrChangeFeaturesUnavailable
 	}
 	analysis, err := analysishandler.ParseResultArtifact(analysisArtifact, recorded.artifact, recorded.base, recorded.head)
 	if err != nil || analysis.ChangeIdentity() != change.Identity() {
-		return agentprofile.ChangeFeatures{}, ErrChangeFeaturesUnavailable
+		return agentprofile.ChangeFeatures{}, nil, ErrChangeFeaturesUnavailable
 	}
 	files := make([]agentprofile.ChangedFileSpec, 0, len(change.Entries()))
 	for _, entry := range change.Entries() {
@@ -91,15 +97,22 @@ func (s *Session) ChangeFeatures(ctx context.Context, prepared runtimecatalog.Pr
 	if !lowerHexDigest(changeIdentity) {
 		changeIdentity = ""
 	}
-	configFiles, _, err := s.baseStyleConfigFiles(ctx, scope, baseArtifact, now)
+	configFiles, unread, err := s.baseStyleConfigFiles(ctx, scope, baseArtifact, now)
 	if err != nil {
-		return agentprofile.ChangeFeatures{}, ErrChangeFeaturesUnavailable
+		return agentprofile.ChangeFeatures{}, nil, ErrChangeFeaturesUnavailable
 	}
-	features, err := agentprofile.ChangeFeaturesFromFileSpecs(changeIdentity, files, analysis.SemanticImpact(), agentprofile.AnalysisHints{ConfigFiles: configFiles})
+	withoutConfig, err := agentprofile.ChangeFeaturesFromFileSpecs(changeIdentity, files, analysis.SemanticImpact(), agentprofile.AnalysisHints{})
 	if err != nil {
-		return agentprofile.ChangeFeatures{}, ErrChangeFeaturesUnavailable
+		return agentprofile.ChangeFeatures{}, nil, ErrChangeFeaturesUnavailable
 	}
-	return features, nil
+	fitted, skipped := agentprofile.FitConfigFiles(withoutConfig, configFiles)
+	features, err = agentprofile.ChangeFeaturesFromFileSpecs(changeIdentity, files, analysis.SemanticImpact(), agentprofile.AnalysisHints{ConfigFiles: fitted})
+	if err != nil {
+		return agentprofile.ChangeFeatures{}, nil, ErrChangeFeaturesUnavailable
+	}
+	unread = append(unread, skipped...)
+	sort.Strings(unread)
+	return features, unread, nil
 }
 
 // recordedChange is a change model this session recorded, with the base and

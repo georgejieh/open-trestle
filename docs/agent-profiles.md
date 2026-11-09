@@ -198,8 +198,11 @@ as it is in the base, including one the head deletes.
 - Contents come from the base file artifacts that source acquisition already
   recorded for the run. No Git object is read again.
 - A file larger than 64 KiB, or not valid UTF-8, is skipped whole and never
-  truncated; so is every readable file after the first 256 in path order. A
-  skipped file declares nothing.
+  truncated; so is every readable file after the first 256 in path order, and
+  every file that would push the change-features document past its 1 MiB bound
+  (files are added in path order, so a later, smaller file may still fit). A
+  skipped file declares nothing. The review set's selection trace counts the
+  skipped files in `features.style_configuration_unread`.
 
 The same declared style decides the review result's
 [style recommendations](local-model-review.md#style-recommendations)
@@ -259,7 +262,10 @@ may be at most 64 KiB.
 ## Change-features document
 
 Schema `open-trestle/agent-profile-change-features`, version 1. Decoding is
-strict, and the document may be at most 1 MiB.
+strict, and the document may be at most 1 MiB. Construction enforces the same
+bound on the canonical encoding (`ErrChangeFeaturesTooLarge`), so every
+features value can be written and read back; `agentprofile.FitConfigFiles`
+selects the configuration files that fit.
 
 ```json
 {
