@@ -2,7 +2,6 @@ package localreview
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/georgejieh/open-trestle/audit"
@@ -10,6 +9,7 @@ import (
 	modelhandler "github.com/georgejieh/open-trestle/handlers/model"
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/provider"
+	"github.com/georgejieh/open-trestle/internal/routehint"
 )
 
 // FailureDetailRouteContextInsufficient records that a request's reservation, a
@@ -36,7 +36,7 @@ type contextShortfallWire struct {
 }
 
 func contextShortfallHint(s contextShortfallWire) string {
-	return fmt.Sprintf("the review needs up to %d tokens (a byte-based upper bound: %d input plus %d output) but the route declares max_context_tokens %d; raise max_context_tokens on the route and the model server's context length to at least %d (docs/named-local-runtimes.md#context-length)", s.RequiredTokens, s.EstimatedInputTokens, s.MaxOutputTokens, s.DeclaredContextTokens, s.RequiredTokens)
+	return routehint.ContextShortfall(s.RequiredTokens, s.EstimatedInputTokens, s.MaxOutputTokens, s.DeclaredContextTokens)
 }
 
 // refused records the context shortfall a planning refusal carries; it never
