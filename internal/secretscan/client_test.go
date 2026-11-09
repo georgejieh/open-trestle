@@ -50,7 +50,12 @@ func runClientTestHelper() {
 			os.Exit(95)
 		}
 		pidPath := string(bytes.TrimPrefix(content, []byte("helper:descendant:")))
-		if err := os.WriteFile(pidPath, []byte(strconv.Itoa(child.Process.Pid)), 0600); err != nil {
+		// Publish the pid by rename so the polling test never reads the
+		// empty file that os.WriteFile creates before it writes.
+		if err := os.WriteFile(pidPath+".tmp", []byte(strconv.Itoa(child.Process.Pid)), 0600); err != nil {
+			os.Exit(96)
+		}
+		if err := os.Rename(pidPath+".tmp", pidPath); err != nil {
 			os.Exit(96)
 		}
 		for {
