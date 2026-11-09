@@ -34,13 +34,19 @@ your explicit answer.
     needs no API key, but it is a remote provider: the models run on Ollama
     Cloud and your source is sent there when you run a review. See
     [Ollama signed in to Ollama Cloud](remote-model-review.md#ollama-signed-in-to-ollama-cloud).
+- **A `trestle` binary.** Nothing is released yet. In a clone of this repository,
+  `go build -o trestle ./cmd/trestle` builds a development binary; run it by its
+  path or put it on your `PATH`. That build works with a model server on this
+  machine.
 - **For remote providers: the packaged `trestle` binary and its secret scanner.**
   Every request is scanned for secrets in a sandboxed scanner before it leaves
   the machine. A plain `go build` has no scanner fingerprints and refuses to send
   source. The wizard detects such a development build before you choose a
-  provider, explains why, and shows the packaging and install commands from
-  [operations](operations.md#build-and-inspect-the-unsigned-linux-amd64-candidate);
-  a local model server still works with it. See
+  provider, explains why, and shows packaging and install commands; the complete
+  sequence, which also runs the passive vulnerability gate before the candidate
+  builder, is in
+  [operations](operations.md#build-and-inspect-the-unsigned-linux-amd64-candidate).
+  A local model server still works with a development build. See
   [prerequisite 1](remote-model-review.md#prerequisite-1-a-scanner-bound-binary-and-installed-scanner).
 - **An ordinary clone is fine.** Every mode, local included, uses the direct
   checkout review, which reads loose objects and ordinary pack files and verifies
