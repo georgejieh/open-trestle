@@ -145,9 +145,10 @@ trestle init
 ```
 
 `trestle init` asks where the two models run (OpenRouter ZDR routes, Ollama Cloud,
-OpenCode Go, or a model server on this machine), which model finds problems and
-which different model double-checks them, and which environment variable holds
-your API key (the key itself is never asked for or stored). It shows every
+OpenCode Go, a model server on this machine, or Ollama on this machine signed in to
+Ollama Cloud), which model finds problems and which different model double-checks
+them, and, when the provider needs a key, which environment variable holds it (the
+key itself is never asked for or stored). It shows every
 privacy or capability declaration in plain words and requires a typed `yes`,
 writes a protected configuration, runs the setup checks with a one-line fix for
 anything missing, and runs the first review only after you agree to send the
