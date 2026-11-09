@@ -70,7 +70,11 @@ trestle setup bootstrap init \
 
 Replace every path, model and scope label with your choices. The example capacity
 is illustrative, not a recommendation or measurement. Both models must declare
-at least 8192 context and 4096 output tokens. Generated reviews have a 4096 output
+at least 8192 context and 4096 output tokens, and the declared context must not
+exceed the context length each server is started with. Reviews reserve input as
+a byte-based upper bound, so a review request needs well over 8192 tokens; the
+[named local runtimes](named-local-runtimes.md#context-length) declare and start
+32768. Generated reviews have a 4096 output
 token cap and zero monetary budget. The built-in review-policy version derives
 its identity from local-only, distinct-model, no-publication behavior. You never
 compute inventory, route, policy or setup hashes.

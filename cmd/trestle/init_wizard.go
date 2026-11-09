@@ -995,6 +995,26 @@ func (w *initWizard) localModels() error {
 	return nil
 }
 
+// initLocalContextTokens is the context the named local runtime examples declare
+// and start their servers with (docs/named-local-runtimes.md#context-length).
+const initLocalContextTokens = 32768
+
+// initContextProposal returns the proposed context for listed, the smaller
+// context both models' metadata states, or 0 when unstated. A local server is
+// proposed the examples' context and never more than its listed value: a
+// listed model length does not show the server was started with it, and a
+// declaration above the server's setting would let an over-long prompt be
+// truncated.
+func initContextProposal(provider string, listed uint64) uint64 {
+	if provider != "local" {
+		return listed
+	}
+	if listed == 0 {
+		return initLocalContextTokens
+	}
+	return min(listed, initLocalContextTokens)
+}
+
 func (w *initWizard) capacities() error {
 	// Propose the smaller listed value only when both models' metadata states it.
 	contextProposal, outputProposal := uint64(1<<63), uint64(1<<63)
@@ -1012,11 +1032,18 @@ func (w *initWizard) capacities() error {
 	if outputProposal == 1<<63 {
 		outputProposal = 0
 	}
+	listed := contextProposal
+	contextProposal = initContextProposal(w.a.provider.key, listed)
 	if w.prompt != nil {
 		w.say("\n  Model capacity. Check each model's page (or your server's settings) and give the")
 		w.say("  smaller of the two values. A review reads up to the context and writes up to 4096")
 		w.say("  tokens, so models must support at least 8192 and 4096.")
-		if contextProposal > 0 {
+		if w.a.provider.key == "local" {
+			w.say("  Start both servers with the same context length you give here (llama.cpp")
+			w.say("  --ctx-size, Ollama OLLAMA_CONTEXT_LENGTH, vLLM --max-model-len, LM Studio")
+			w.say("  --context-length). Reviews reserve input by bytes, so 32768 is proposed; see")
+			w.say("  docs/named-local-runtimes.md#context-length.")
+		} else if contextProposal > 0 {
 			w.say("  The value in brackets comes from the model list you just read.")
 		}
 	}

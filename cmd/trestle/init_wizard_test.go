@@ -294,7 +294,7 @@ func TestInitLocalServerProbedModelsThroughFirstReview(t *testing.T) {
 			if result.code != initExitDone {
 				t.Fatalf("init exit=%d\nstdout:\n%s\nstderr:\n%s", result.code, result.stdout, result.stderr)
 			}
-			for _, want := range []string{"Found 1 model.", "model-a  (context 128000)", "This server offers one model", "Context window in tokens (how much each model can read) [128000]", "✓ Model configuration approved", "✓ Dry run without models", "– Test requests to both models (optional; not sent)", "– Background-service tokens and backup", "Ready for the first review", "Review finished"} {
+			for _, want := range []string{"Found 1 model.", "model-a  (context 128000)", "This server offers one model", "Context window in tokens (how much each model can read) [32768]", "✓ Model configuration approved", "✓ Dry run without models", "– Test requests to both models (optional; not sent)", "– Background-service tokens and backup", "Ready for the first review", "Review finished"} {
 				if !strings.Contains(result.stdout, want) {
 					t.Fatalf("output lacks %q:\n%s", want, result.stdout)
 				}

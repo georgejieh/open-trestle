@@ -90,7 +90,9 @@ when you agree to run a review.
    flagged: they give weak reviews. You also state each model's context window
    and output limit, and for remote providers the prices and a per-review cost cap.
    No model, capacity or price is filled in unless it came from the model list
-   you just read.
+   you just read, except that a local server is proposed a 32768-token context
+   (or the smaller listed value): start both servers with that context length, as
+   [named local runtimes](named-local-runtimes.md#context-length) describes.
 
    With a local server, a model that the local Ollama relays to Ollama Cloud is
    refused, because it would send your source off this machine: the wizard
