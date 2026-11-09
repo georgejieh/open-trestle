@@ -1296,6 +1296,7 @@ var daemonBudgetedMigrationHashes = []string{
 	"16c33dbe3ef412bbac986e324f8507210fa71a2f6894b605379663fd53f3ebc2",
 	"97e4b0dc7c3aed97acdcc7c740f11619e0c25ee463813f3fff841be5ca126aee",
 	"4be4e7f9c27aa85141d5d0cb2a4a8f9d761133fa1f936aa71980fc5cec57ac68",
+	"0d46b670ee395572fa16dd7f4d9006350ef1092dc3feadecaf8b52b1ad366db1",
 }
 
 const (

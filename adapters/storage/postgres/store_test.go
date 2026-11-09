@@ -316,6 +316,19 @@ func TestMigrationDefinesForcedTenantIsolationAndChecksums(t *testing.T) {
 	mock.ExpectQuery("SELECT checksum FROM open_trestle_schema_migrations").WithArgs(16).WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec(regexp.QuoteMeta(string(sixteenth))).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("INSERT INTO open_trestle_schema_migrations").WithArgs(16, hex.EncodeToString(sixteenthDigest[:])).WillReturnResult(sqlmock.NewResult(1, 1))
+	seventeenth, err := migrationFiles.ReadFile("migrations/0017_webhook_refusals.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"CREATE TABLE open_trestle_webhook_refusals", "ALTER TABLE open_trestle_webhook_refusals ENABLE ROW LEVEL SECURITY", "ALTER TABLE open_trestle_webhook_refusals FORCE ROW LEVEL SECURITY", "CREATE POLICY open_trestle_webhook_refusals_tenant_isolation"} {
+		if !strings.Contains(string(seventeenth), want) {
+			t.Errorf("missing %s", want)
+		}
+	}
+	seventeenthDigest := sha256.Sum256(seventeenth)
+	mock.ExpectQuery("SELECT checksum FROM open_trestle_schema_migrations").WithArgs(17).WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec(regexp.QuoteMeta(string(seventeenth))).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("INSERT INTO open_trestle_schema_migrations").WithArgs(17, hex.EncodeToString(seventeenthDigest[:])).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 	if err := ApplyMigrations(context.Background(), database); err != nil {
 		t.Fatal(err)
