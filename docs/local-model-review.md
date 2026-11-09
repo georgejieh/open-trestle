@@ -319,13 +319,21 @@ request. It does not accept a caller-selected schema or change temperature.
 True changes the policy, adapter and catalog identities; bind the changed
 protected policy and obtain fresh exact approvals where required.
 
-The existing `estimated_input_tokens` policy value must cover the larger of the
-normal host byte-based request estimate and the inner payload bytes plus the
-trusted system channel bytes plus the serialized `response_format` object
-(including its field wrapper) plus 256 framing bytes. Route planning already
-counts the payload and the system channel but not `response_format`, so only
-the declared value can supply that margin. Dispatch refuses an insufficient approved reservation before
-credential retrieval or HTTP. This estimate is conservative byte accounting,
+Dispatch refuses, before credential retrieval or HTTP, an approved reservation
+below the larger of the normal host byte-based request estimate and the inner
+payload bytes plus the trusted system channel bytes plus the serialized
+`response_format` object (including its field wrapper) plus 256 framing bytes.
+Generation route planning counts the same `response_format` bytes, which are
+deterministic from the pinned schema, whenever a planning step's candidate
+routes include a connection with this option: the generation route authorizer
+and the local generation route plan reserve the payload, the system channel and
+the schema framing, so `estimated_input_tokens` need not carry that margin. A
+step reserves once for all of its candidate routes, so a route without the
+option planned in the same step is reserved the same way. Such an authorizer
+binds `input_transport: local_structured_output` into its identity; without the
+option the estimate and identity are unchanged. Verification and investigation
+planning do not count `response_format` yet, so for them `estimated_input_tokens`
+must still supply that margin. This estimate is conservative byte accounting,
 not exact tokenization. Set a justified reservation that fits the route's
 approved context capacity; no budget is increased after authorization.
 

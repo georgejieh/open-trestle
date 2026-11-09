@@ -86,7 +86,11 @@ func TestLocalStructuredOutputFactoriesBindOption(t *testing.T) {
 	}
 }
 
-func TestLocalStructuredOutputDispatchRequiresReservedSchemaBytes(t *testing.T) {
+// The local generation route plan reserves the schema framing itself, so even a
+// declared estimate below what the adapter sends is dispatched with the exact
+// host-pinned schema. The adapter-level refusal of an undersized approval is
+// covered by the adapter package.
+func TestLocalStructuredOutputDispatchReservesSchemaBytes(t *testing.T) {
 	scope, request := readableGenerationRequest(t)
 	inner, err := review.SanitizedCandidatePayload(request, scope.Identity())
 	if err != nil {
@@ -123,7 +127,7 @@ func TestLocalStructuredOutputDispatchRequiresReservedSchemaBytes(t *testing.T) 
 		t.Fatal(err)
 	}
 	for _, noAuth := range []bool{false, true} {
-		for _, input := range []uint64{required - 1, required} {
+		for _, input := range []uint64{1, required - 1, required} {
 			policy := structuredPolicy(t, inventory, true, input, noAuth)
 			pair, err := ResolveLocalGenerationRoutePair(policy, inventory)
 			if err != nil {
@@ -148,29 +152,26 @@ func TestLocalStructuredOutputDispatchRequiresReservedSchemaBytes(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			if input < required {
-				if result.Failure() != gateway.RouteFailurePolicyDenied || result.ReplaySafety() != gateway.RouteReplayNotDispatched || transport.calls != 0 || credentials != 0 {
-					t.Fatal("undersized schema reservation dispatched")
-				}
-			} else {
-				expectedCredentials := 1
-				if noAuth {
-					expectedCredentials = 0
-				}
-				if result.Status() != gateway.RouteDispatchSucceeded || transport.calls != 1 || credentials != expectedCredentials {
-					t.Fatalf("exact reservation refused: %#v calls %d creds %d", result, transport.calls, credentials)
-				}
-				expectedAuthorization := "Bearer test-secret"
-				if noAuth {
-					expectedAuthorization = ""
-				}
-				if transport.authorization != expectedAuthorization {
-					t.Fatal("credential mode changed")
-				}
-				var wire map[string]json.RawMessage
-				if json.Unmarshal(transport.body, &wire) != nil || !bytes.Equal(wire["response_format"], encoded[len(`{"response_format":`):len(encoded)-1]) {
-					t.Fatal("factory wire schema differs")
-				}
+			if uint64(plan.authorization.CostBudget().EstimatedInputTokens()) < required {
+				t.Fatalf("plan reserved %d input below the %d the adapter sends", plan.authorization.CostBudget().EstimatedInputTokens(), required)
+			}
+			expectedCredentials := 1
+			if noAuth {
+				expectedCredentials = 0
+			}
+			if result.Status() != gateway.RouteDispatchSucceeded || transport.calls != 1 || credentials != expectedCredentials {
+				t.Fatalf("planned reservation refused: %#v calls %d creds %d", result, transport.calls, credentials)
+			}
+			expectedAuthorization := "Bearer test-secret"
+			if noAuth {
+				expectedAuthorization = ""
+			}
+			if transport.authorization != expectedAuthorization {
+				t.Fatal("credential mode changed")
+			}
+			var wire map[string]json.RawMessage
+			if json.Unmarshal(transport.body, &wire) != nil || !bytes.Equal(wire["response_format"], encoded[len(`{"response_format":`):len(encoded)-1]) {
+				t.Fatal("factory wire schema differs")
 			}
 		}
 	}

@@ -268,7 +268,8 @@ func PlanLocalGenerationRoute(ctx context.Context, scope audit.ReviewScope, requ
 	if candidateCount != 1 || verifierCount != 1 || observationCount != 1 || observation.ObservationRevision() != pair.PerformanceRevision() || ctx.Err() != nil {
 		return fail()
 	}
-	budget, err := review.ModelRequestBudget(request, configuration.Budget())
+	// The plan reserves for the bound generation route's own request wire.
+	budget, err := review.ModelRequestBudgetForTransport(request, configuration.Budget(), configuration.ModelRequestTransport([]gateway.ObservedRouteCandidate{candidate}))
 	if err != nil {
 		return fail()
 	}

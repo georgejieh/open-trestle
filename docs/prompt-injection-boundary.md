@@ -90,9 +90,9 @@ verification envelope is measured by the verification request it carries. Each
 investigation turn record stores the system channel bytes it reserved for
 (estimate version 2); records written under estimate version 1 estimated the
 payload alone and still read back with that formula. The local structured-output
-check also counts the serialized `response_format`, which route planning does
-not, so set `estimated_input_tokens` with that margin (see
-[local model review](local-model-review.md)).
+check also counts the serialized `response_format`, which generation route
+planning counts for those routes but verification and investigation planning do
+not yet (see [local model review](local-model-review.md)).
 
 ## Instruction hierarchy
 
