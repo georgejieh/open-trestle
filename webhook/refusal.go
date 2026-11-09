@@ -72,7 +72,7 @@ func RefusalExplanation(reason string) string {
 	case RefusalReasonRunPlanNotBound:
 		return "the plan was outside the delivery's lineage"
 	case RefusalReasonRunPlanConflict:
-		return "the run scope holds a plan for another request"
+		return "the run scope holds a plan the planner did not produce for this delivery"
 	case RefusalReasonRetriesExhausted:
 		return "the delivery kept failing on its own until its retries were spent"
 	default:

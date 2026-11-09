@@ -45,7 +45,8 @@ const refusalReasonLabels: Record<string, string> = {
   invalid_pull_request_payload: "the pull request payload cannot be planned",
   planning_refused: "the planner refused the delivery",
   run_plan_not_bound: "the plan was outside the delivery's lineage",
-  run_plan_conflict: "the run scope holds a plan for another request",
+  run_plan_conflict:
+    "the run scope holds a plan the planner did not produce for this delivery",
   retries_exhausted:
     "the delivery kept failing on its own until its retries were spent",
 };

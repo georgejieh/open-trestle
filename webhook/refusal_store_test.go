@@ -114,4 +114,9 @@ func TestDeliveryRefusalCarriesItsReason(t *testing.T) {
 	if NewDeliveryRefusal("Not A Token", "x").Reason() != RefusalReasonPlanningRefused {
 		t.Fatal("an invalid reason token was accepted")
 	}
+	// A conflict is any plan in the scope the planner did not produce for the
+	// delivery, including one that names the delivery's own request.
+	if explanation := RefusalExplanation(RefusalReasonRunPlanConflict); explanation != "the run scope holds a plan the planner did not produce for this delivery" {
+		t.Fatalf("run_plan_conflict explanation=%q", explanation)
+	}
 }
