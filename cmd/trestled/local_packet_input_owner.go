@@ -234,10 +234,24 @@ func (o *localPacketOwner) prepareInput(ctx context.Context, request controlplan
 	})
 	if err != nil && refusal != nil && settle && afterPacket {
 		// No intent marker was written: the refusal came from the preflight.
-		if refuseErr := o.refusePacketRoute(ctx, request, packet, refusal); refuseErr != nil {
-			return fail(errors.Join(err, refuseErr))
+		if o.beforeRouteRefusal != nil {
+			o.beforeRouteRefusal()
 		}
-		return localPreparedContextInput{}, nil
+		refuseErr := o.refusePacketRoute(ctx, request, packet, refusal)
+		if refuseErr == nil {
+			return localPreparedContextInput{}, nil
+		}
+		// The lease can expire between the two gates. The exact v4 then
+		// settles as the lease-expiry termination, which rechecks the head.
+		if expiredAt := o.clock.Now().UTC(); ctx.Err() == nil && !expiredAt.Before(request.Lease().ExpiresAt()) {
+			expiry := localPacketRecheckExpiry{packet: candidate.Packet(), sampledAt: expiredAt}
+			if terminateErr := o.terminatePacketRecheckExpiry(ctx, request, packet, expiry); terminateErr == nil {
+				return localPreparedContextInput{}, nil
+			} else {
+				refuseErr = errors.Join(refuseErr, terminateErr)
+			}
+		}
+		return fail(errors.Join(err, refuseErr))
 	}
 	if err != nil {
 		return fail(err)

@@ -31,6 +31,7 @@ type localPacketOwner struct {
 	sourceBinding           historicalRecordedSourceBinding
 	beforeRawPut            func() // test-only, installed before concurrent use
 	beforeInputPut          func() // test-only, installed before concurrent use
+	beforeRouteRefusal      func() // test-only, installed before concurrent use
 }
 
 func (o *localPacketOwner) PreparePacket(ctx context.Context, request controlplane.TaskExecutionRequest) (controlplane.PreparedContextPacket, error) {

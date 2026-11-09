@@ -238,7 +238,18 @@ func localGenerationInventoryAndPolicyForTest(ctx context.Context, t *testing.T)
 
 func localGenerationInventoryAndPolicyWithReviewPolicyForTest(ctx context.Context, t *testing.T, reviewPolicyIdentity string) (runtimeconfig.RouteInventory, runtimeconfig.RuntimePolicy, error) {
 	t.Helper()
-	capabilities, err := provider.NewModelCapabilities(128000, 8192, []provider.ModelFeature{provider.ModelFeatureStructuredOutput})
+	return localGenerationInventoryAndPolicyWithCapacityForTest(ctx, t, reviewPolicyIdentity, localGenerationTestCapacity{context: 128000, output: 8192, minContext: 32000, estimatedInput: 1000})
+}
+
+// localGenerationTestCapacity sets both routes' declared context and output and
+// the policy's context floor and declared input estimate.
+type localGenerationTestCapacity struct {
+	context, output, minContext, estimatedInput uint32
+}
+
+func localGenerationInventoryAndPolicyWithCapacityForTest(ctx context.Context, t *testing.T, reviewPolicyIdentity string, capacity localGenerationTestCapacity) (runtimeconfig.RouteInventory, runtimeconfig.RuntimePolicy, error) {
+	t.Helper()
+	capabilities, err := provider.NewModelCapabilities(uint64(capacity.context), uint64(capacity.output), []provider.ModelFeature{provider.ModelFeatureStructuredOutput})
 	if err != nil {
 		return runtimeconfig.RouteInventory{}, runtimeconfig.RuntimePolicy{}, err
 	}
@@ -291,13 +302,13 @@ func localGenerationInventoryAndPolicyWithReviewPolicyForTest(ctx context.Contex
 		"verification_route_record_identity": records["adapter-b"],
 		"inventory_identity":                 inventory.Identity(),
 		"review_policy_identity":             reviewPolicyIdentity,
-		"min_context_tokens":                 32000,
+		"min_context_tokens":                 capacity.minContext,
 		"min_output_tokens":                  4096,
 		"required_features":                  []string{"structured_output"},
 		"classification":                     "confidential",
 		"allowed_zones":                      []string{"local"},
 		"content_logging_allowed":            false,
-		"estimated_input_tokens":             1000,
+		"estimated_input_tokens":             capacity.estimatedInput,
 		"max_output_tokens":                  4096,
 		"max_cost_micro_usd":                 1000000,
 		"pinned_route_record_identity":       records["adapter-a"],
