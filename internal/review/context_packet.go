@@ -132,6 +132,9 @@ type ContextSource struct {
 	risks           ContextRisk
 	hasSliceBinding bool
 	sliceBinding    evidence.SourceSliceBinding
+	// headLine is set only on the removed_lines source of a deletion point:
+	// the head line beside which its base lines were removed.
+	headLine int
 }
 
 // NewContextSource verifies exact content against one host-issued evidence item.
@@ -179,8 +182,28 @@ func (s ContextSource) HasRisk(risk ContextRisk) bool             { return s.ris
 func (s ContextSource) HasSliceBinding() bool                     { return s.hasSliceBinding }
 func (s ContextSource) SliceBinding() evidence.SourceSliceBinding { return s.sliceBinding }
 func (s ContextSource) SliceBindingIdentity() string              { return s.sliceBinding.Identity() }
-func (s ContextSource) String() string                            { return "review context source" }
-func (s ContextSource) GoString() string                          { return "review.ContextSource{<redacted>}" }
+
+// HeadLine returns, for the removed_lines source of a deletion point, the head
+// line beside which its base lines were removed; 0 otherwise.
+func (s ContextSource) HeadLine() int { return s.headLine }
+
+// NewRemovedLinesContextSource binds removed base lines as a removed_lines
+// source. headLine is the head line beside which they were removed, as the
+// analysis record names it, or 0 when no head line remains beside them.
+func NewRemovedLinesContextSource(item evidence.EvidenceItem, content []byte, binding evidence.SourceSliceBinding, headLine int) (ContextSource, error) {
+	source, err := NewBoundContextSource(ContextStageRemovedLines, memory.TaintRepositoryControlled, item, content, binding)
+	if err != nil {
+		return ContextSource{}, err
+	}
+	source.headLine = headLine
+	source.identity = deriveContextSourceIdentity(source)
+	if err := source.Validate(); err != nil {
+		return ContextSource{}, err
+	}
+	return source, nil
+}
+func (s ContextSource) String() string   { return "review context source" }
+func (s ContextSource) GoString() string { return "review.ContextSource{<redacted>}" }
 func (s ContextSource) Format(state fmt.State, verb rune) {
 	writeRedactedReviewFormat(state, verb, "review context source", "review.ContextSource{<redacted>}")
 }
@@ -204,6 +227,9 @@ func (s ContextSource) validateFields() error {
 		return err
 	}
 	if s.stage == ContextStageRemovedLines && s.taint != memory.TaintRepositoryControlled {
+		return ErrInvalidContextSource
+	}
+	if s.headLine < 0 || s.headLine > maxCandidateSourceLine || s.headLine != 0 && s.stage != ContextStageRemovedLines {
 		return ErrInvalidContextSource
 	}
 	if !validCandidateReference(s.evidenceItem.ID()) || !validCandidateDigest(s.evidenceItem.Digest()) {
@@ -359,6 +385,8 @@ func deriveContextSourceIdentity(source ContextSource) string {
 		Risks          uint8  `json:"risks"`
 		SliceBound     bool   `json:"slice_bound"`
 		SliceBinding   string `json:"slice_binding"`
+		// HeadLine is present only on a deletion point's removed_lines source.
+		HeadLine int `json:"head_line,omitempty"`
 	}{
 		Contract: "open-trestle/review-context-source", Version: 1,
 		Stage: source.stage.String(), Taint: source.taint.String(), Reference: source.evidenceItem.ID(),
@@ -366,6 +394,7 @@ func deriveContextSourceIdentity(source ContextSource) string {
 		Start: rangeValue.StartLine(), End: rangeValue.EndLine(),
 		ContentDigest: hex.EncodeToString(contentDigest[:]), ContentBytes: len(source.content), Risks: uint8(source.risks),
 		SliceBound: source.hasSliceBinding, SliceBinding: source.sliceBinding.Identity(),
+		HeadLine: source.headLine,
 	}
 	encoded, _ := json.Marshal(preimage)
 	digest := sha256.Sum256(encoded)
@@ -824,15 +853,18 @@ type contextLimitsWire struct {
 }
 
 type contextSourceWire struct {
-	SourceID       string   `json:"source_id"`
-	Stage          string   `json:"stage"`
-	Taint          string   `json:"taint"`
-	EvidenceDigest string   `json:"evidence_digest"`
-	Path           string   `json:"path"`
-	StartLine      int      `json:"start_line"`
-	EndLine        int      `json:"end_line"`
-	RiskFlags      []string `json:"risk_flags"`
-	Content        string   `json:"content"`
+	SourceID       string `json:"source_id"`
+	Stage          string `json:"stage"`
+	Taint          string `json:"taint"`
+	EvidenceDigest string `json:"evidence_digest"`
+	Path           string `json:"path"`
+	StartLine      int    `json:"start_line"`
+	EndLine        int    `json:"end_line"`
+	// HeadLine appears only on the removed_lines source of a deletion point:
+	// the head line beside which its base lines were removed.
+	HeadLine  int      `json:"head_line,omitempty"`
+	RiskFlags []string `json:"risk_flags"`
+	Content   string   `json:"content"`
 }
 
 type contextSourceOmissionWire struct {
@@ -983,6 +1015,9 @@ func ValidateRecordedContextPacketRequest(
 		}
 		previousOmission = omission
 	}
+	if !validSourceHeadLines(wire.Sources) {
+		return ErrInvalidContextPacketRequest
+	}
 	var sourceBytes uint32
 	seenEvidence := make(map[string]struct{}, len(evidenceItems))
 	for index, source := range wire.Sources {
@@ -1017,6 +1052,31 @@ func ValidateRecordedContextPacketRequest(
 }
 
 const maxProviderContextPacketBytes = 8 << 20
+
+// validSourceHeadLines checks the head lines recorded on removed_lines
+// sources: only a removed_lines source carries one, and it lies inside a
+// changed_hunk source of the same file, the deletion-point context around it.
+func validSourceHeadLines(sources []contextSourceWire) bool {
+	for _, source := range sources {
+		if source.HeadLine == 0 {
+			continue
+		}
+		if source.Stage != ContextStageRemovedLines.String() || source.HeadLine < 0 || source.HeadLine > maxCandidateSourceLine {
+			return false
+		}
+		placed := false
+		for _, head := range sources {
+			if head.Stage == ContextStageChangedHunk.String() && head.Path == source.Path && head.StartLine <= source.HeadLine && source.HeadLine <= head.EndLine {
+				placed = true
+				break
+			}
+		}
+		if !placed {
+			return false
+		}
+	}
+	return true
+}
 
 // validContextStageToken admits removed_lines only for the contract versions
 // that define it; every earlier version keeps its original stage set.

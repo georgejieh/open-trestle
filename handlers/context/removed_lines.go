@@ -98,7 +98,7 @@ func (h *Handler) appendRemovedLinesCandidates(ctx context.Context, scope audit.
 		if err != nil {
 			return nil, nil, controlplane.RunFailureInvalidInput
 		}
-		source, err := review.NewBoundContextSource(review.ContextStageRemovedLines, memorycore.TaintRepositoryControlled, evidenceItem, slice, binding)
+		source, err := review.NewRemovedLinesContextSource(evidenceItem, slice, binding, item.HeadLine())
 		if err != nil {
 			return nil, nil, controlplane.RunFailureInvalidInput
 		}
@@ -108,11 +108,12 @@ func (h *Handler) appendRemovedLinesCandidates(ctx context.Context, scope audit.
 }
 
 // fitRemovedLinesCandidates keeps a selected removed_lines source only beside a
-// selected head source of the same file. Removed text cannot anchor a finding,
-// and every later readback treats removed text without that head context as
-// unbound. A dropped source is recorded as a packet_budget omission at its base
-// lines. Removed text sorts after changed hunks, so dropping it never changes
-// which changed hunks are selected.
+// selected head source of the same file, and a deletion point's removed text
+// only when a selected changed hunk of that file contains its head line. Every
+// later readback treats removed text without that head context as unbound. A
+// dropped source is recorded as a packet_budget omission at its base lines.
+// Removed text sorts after changed hunks, so dropping it never changes which
+// changed hunks are selected.
 func fitRemovedLinesCandidates(candidates []review.ContextSource, limits review.ContextLimits, omissions []review.ContextSourceOmission) ([]review.ContextSource, review.ContextSourceSelection, []review.ContextSourceOmission, controlplane.RunFailure) {
 	for {
 		selection, err := review.SelectContextSources(candidates, limits)
@@ -120,14 +121,22 @@ func fitRemovedLinesCandidates(candidates []review.ContextSource, limits review.
 			return nil, review.ContextSourceSelection{}, nil, controlplane.RunFailureResourceLimit
 		}
 		headPaths := make(map[string]bool)
+		var hunks []evidence.SourceRange
 		for _, source := range selection.SelectedSources() {
 			if source.Stage() != review.ContextStageRemovedLines {
 				headPaths[source.EvidenceItem().SourceRange().Path()] = true
 			}
+			if source.Stage() == review.ContextStageChangedHunk {
+				hunks = append(hunks, source.EvidenceItem().SourceRange())
+			}
 		}
 		unanchored := make(map[string]bool)
 		for _, source := range selection.SelectedSources() {
-			if source.Stage() == review.ContextStageRemovedLines && !headPaths[source.EvidenceItem().SourceRange().Path()] {
+			if source.Stage() != review.ContextStageRemovedLines {
+				continue
+			}
+			path := source.EvidenceItem().SourceRange().Path()
+			if !headPaths[path] || source.HeadLine() != 0 && !headLineSelected(hunks, path, source.HeadLine()) {
 				unanchored[source.ReferenceID()] = true
 			}
 		}
@@ -149,4 +158,14 @@ func fitRemovedLinesCandidates(candidates []review.ContextSource, limits review.
 		}
 		candidates = kept
 	}
+}
+
+// headLineSelected reports whether a selected changed hunk of path contains line.
+func headLineSelected(hunks []evidence.SourceRange, path string, line int) bool {
+	for _, hunk := range hunks {
+		if hunk.Path() == path && hunk.StartLine() <= line && line <= hunk.EndLine() {
+			return true
+		}
+	}
+	return false
 }

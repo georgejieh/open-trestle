@@ -26,6 +26,7 @@ type removedLinesWire struct {
 		Path      string   `json:"path"`
 		StartLine int      `json:"start_line"`
 		EndLine   int      `json:"end_line"`
+		HeadLine  int      `json:"head_line"`
 		RiskFlags []string `json:"risk_flags"`
 		Content   string   `json:"content"`
 	} `json:"sources"`
@@ -65,7 +66,8 @@ func TestDeletionOnlyChangeSuppliesTheRemovedBaseLines(t *testing.T) {
 	found := false
 	for _, source := range wire.Sources {
 		if source.Stage == "removed_lines" {
-			found = source.SourceID == removed.ReferenceID() && source.Taint == "repository_controlled" && source.Path == "calc.go" && source.StartLine == 4 && source.EndLine == 6 && len(source.RiskFlags) == 0
+			// The deletion point lies between head lines 3 and 4.
+			found = source.SourceID == removed.ReferenceID() && source.Taint == "repository_controlled" && source.Path == "calc.go" && source.StartLine == 4 && source.EndLine == 6 && source.HeadLine == 3 && len(source.RiskFlags) == 0
 		}
 	}
 	if wire.SchemaVersion != 8 || !found {
@@ -154,4 +156,21 @@ func TestRemovedLinesNeedASelectedHeadSourceOfTheSameFile(t *testing.T) {
 			t.Fatal("removed text without head context was kept")
 		}
 	}
+	// A deletion point's removed text also needs the changed hunk that holds
+	// its head line.
+	placed := withHeadLine(t, anchored, 1)
+	misplaced := withHeadLine(t, boundRemovedSource(t, review.ContextStageRemovedLines, "a.go", "gone again\n"), 2)
+	kept, _, omissions, failure = fitRemovedLinesCandidates([]review.ContextSource{head, placed, misplaced}, limits, nil)
+	if failure != 0 || len(kept) != 2 || len(omissions) != 1 || omissions[0].Path() != "a.go" || kept[1].ReferenceID() != placed.ReferenceID() {
+		t.Fatalf("head-line fit kept=%d omissions=%d failure=%s", len(kept), len(omissions), failure)
+	}
+}
+
+func withHeadLine(t *testing.T, source review.ContextSource, headLine int) review.ContextSource {
+	t.Helper()
+	value, err := review.NewRemovedLinesContextSource(source.EvidenceItem(), source.Content(), source.SliceBinding(), headLine)
+	if err != nil || value.HeadLine() != headLine {
+		t.Fatalf("head line %d: %v", headLine, err)
+	}
+	return value
 }

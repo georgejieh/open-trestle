@@ -334,6 +334,9 @@ func verificationSourcesMatch(wire verificationContextWire, items []evidence.Evi
 		}
 		previousOmission = omission
 	}
+	if !validSourceHeadLines(wire.Sources) {
+		return false
+	}
 	var sourceBytes uint32
 	seen := make(map[string]struct{}, len(items))
 	for index, source := range wire.Sources {

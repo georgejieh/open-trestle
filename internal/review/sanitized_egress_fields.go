@@ -13,9 +13,12 @@ import (
 	"github.com/georgejieh/open-trestle/internal/secretscan"
 )
 
+// The sanitizable wire shapes are frozen: a field added to either context wire
+// must be classified for scanning first. A removed_lines source's head_line is
+// a number, not text, so it carries nothing to scan.
 const (
-	generationSanitizableWireShapeIdentity   = "fb3556fc43869aa45764b5fcca91368f255b6d72924c04ae407007cb6ab5858d"
-	verificationSanitizableWireShapeIdentity = "ec5ef5853e5f246347d3bfbb021e5bc59436d8ee4bcd9d1257f708d5ebc306ec"
+	generationSanitizableWireShapeIdentity   = "15244791f3a861aa4c4a4cc79c085d0547c35bf650c53c7c6c87087e613d3f58"
+	verificationSanitizableWireShapeIdentity = "728216c25480db666223b965ca7734f7ec82ddb70fa42f6de5875dbd1fd1f467"
 )
 
 func wireShapeIdentity(root reflect.Type) string {

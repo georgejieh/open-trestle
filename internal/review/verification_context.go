@@ -203,7 +203,7 @@ func contextSourceWireValues(sources []ContextSource) []contextSourceWire {
 		values[index] = contextSourceWire{
 			SourceID: source.ReferenceID(), Stage: source.Stage().String(), Taint: source.Taint().String(),
 			EvidenceDigest: source.EvidenceItem().Digest(), Path: rangeValue.Path(),
-			StartLine: rangeValue.StartLine(), EndLine: rangeValue.EndLine(),
+			StartLine: rangeValue.StartLine(), EndLine: rangeValue.EndLine(), HeadLine: source.headLine,
 			RiskFlags: contextRiskTokens(source.risks), Content: source.content,
 		}
 	}
