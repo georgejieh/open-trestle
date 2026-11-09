@@ -749,9 +749,6 @@ func RenderResult(writer io.Writer, r Result) error {
 	if nilValue(writer) || !r.valid {
 		return ErrInvalidResult
 	}
-	if hasBaseSideFinding(r.diagnostics) {
-		return ErrBaseSideFindingUnsupported
-	}
 	if r.sealedText != nil {
 		n, err := writer.Write(append([]byte(nil), r.sealedText...))
 		if err == nil && n != len(r.sealedText) {
@@ -775,7 +772,7 @@ func RenderResult(writer io.Writer, r Result) error {
 		guidance[value.FindingIdentity] = value
 	}
 	for _, finding := range r.diagnostics.Findings() {
-		fmt.Fprintf(&buffer, "finding: %s %s\nsource: %s:%d-%d\nmessage: %s\nevidence: %s\n", finding.Severity().String(), finding.Title(), finding.Path(), finding.StartLine(), finding.EndLine(), finding.Message(), strings.Join(finding.EvidenceIDs(), ", "))
+		fmt.Fprintf(&buffer, "finding: %s %s\nsource: %s\nmessage: %s\nevidence: %s\n", finding.Severity().String(), finding.Title(), SourceText(finding.Path(), finding.Side(), finding.StartLine(), finding.EndLine(), finding.HeadLine()), finding.Message(), strings.Join(finding.EvidenceIDs(), ", "))
 		if value, ok := guidance[finding.SourceIdentity()]; ok {
 			fmt.Fprintf(&buffer, "category: %s\n", value.Category)
 			if value.Fix != "" {

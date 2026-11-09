@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/georgejieh/open-trestle/diagnostics"
 	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/localreview"
 )
@@ -36,6 +37,7 @@ func buildModelReviewSARIF(report localreview.Report) (sarifLog, error) {
 func buildModelReviewSARIFWithContributors(report localreview.Report, contributors map[string][]string) (sarifLog, error) {
 	rules := map[string]sarifRule{}
 	results := make([]sarifResult, 0, len(report.Findings))
+	var unplaced []sarifNotification
 	for _, finding := range report.Findings {
 		level, err := diagnosticSARIFLevel(finding.Severity)
 		if err != nil {
@@ -47,7 +49,6 @@ func buildModelReviewSARIFWithContributors(report localreview.Report, contributo
 			ruleID = modelReviewRulePrefix + finding.Category
 			description = "Independently verified " + finding.Category + " finding"
 		}
-		rules[ruleID] = sarifRule{ID: ruleID, ShortDescription: sarifMessage{Text: description}, DefaultConfiguration: sarifConfiguration{Level: "warning"}}
 		properties := sarifResultProperties{
 			EvidenceIDs: finding.EvidenceIDs, Category: finding.Category, Severity: finding.Severity.String(),
 			VerifierIndependence: report.Independence,
@@ -58,13 +59,8 @@ func buildModelReviewSARIFWithContributors(report localreview.Report, contributo
 		if labels := contributors[finding.Identity]; len(labels) > 0 {
 			properties.Contributors = append([]string(nil), labels...)
 		}
-		results = append(results, sarifResult{
+		result, notification := placeVerifiedFinding(finding.Path, finding.Side, finding.StartLine, finding.EndLine, finding.HeadLine, finding.Title+": "+finding.Claim, sarifResult{
 			RuleID: ruleID, Level: level,
-			Message: sarifMessage{Text: finding.Title + ": " + finding.Claim},
-			Locations: []sarifLocation{{PhysicalLocation: sarifPhysicalLocation{
-				ArtifactLocation: sarifArtifactLocation{URI: sarifArtifactURI(finding.Path)},
-				Region:           sarifRegion{StartLine: int(finding.StartLine), EndLine: int(finding.EndLine)},
-			}}},
 			Fingerprints: map[string]string{"openTrestleVerifiedFindingId/v1": finding.Identity},
 			PartialFingerprints: map[string]string{
 				// Bound to the reviewed snapshot: identifies this finding in this run.
@@ -76,6 +72,12 @@ func buildModelReviewSARIFWithContributors(report localreview.Report, contributo
 			},
 			Properties: properties,
 		})
+		if notification != nil {
+			unplaced = append(unplaced, *notification)
+			continue
+		}
+		rules[ruleID] = sarifRule{ID: ruleID, ShortDescription: sarifMessage{Text: description}, DefaultConfiguration: sarifConfiguration{Level: "warning"}}
+		results = append(results, *result)
 	}
 	sort.SliceStable(results, func(i, j int) bool {
 		a, b := results[i], results[j]
@@ -138,14 +140,27 @@ func buildModelReviewSARIFWithContributors(report localreview.Report, contributo
 	properties.StyleAdvice = modelReviewStyleAdvice(report.StyleAdvice)
 	log := sarifLog{Schema: sarifSchemaURI, Version: "2.1.0", Runs: []sarifRun{{
 		Tool:        sarifTool{Driver: sarifDriver{Name: "Open Trestle", Rules: ruleList}},
-		Invocations: []sarifInvocation{modelReviewInvocation(report, len(results))},
+		Invocations: []sarifInvocation{withUnplacedFindings(modelReviewInvocation(report, len(results)), unplaced)},
 		Results:     results, Properties: properties,
 	}}}
 	return log, nil
 }
 
+// withUnplacedFindings adds the notifications of verified findings that have no
+// head region, so a finding is never silently missing from the log.
+func withUnplacedFindings(invocation sarifInvocation, unplaced []sarifNotification) sarifInvocation {
+	invocation.ToolExecutionNotifications = append(invocation.ToolExecutionNotifications, unplaced...)
+	return invocation
+}
+
 func modelReviewContentHash(finding localreview.ReportFinding) string {
-	encoded, _ := json.Marshal([]string{"open-trestle/model-review-content/v1", finding.Path, finding.Category, finding.Title, finding.Claim})
+	values := []string{"open-trestle/model-review-content/v1", finding.Path, finding.Category, finding.Title, finding.Claim}
+	if finding.Side != diagnostics.LineSideHead {
+		// Removed base lines and head lines with the same text are different
+		// findings; head findings keep their historical hash.
+		values = append(values, "side=base")
+	}
+	encoded, _ := json.Marshal(values)
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }

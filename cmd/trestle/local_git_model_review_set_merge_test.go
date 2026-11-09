@@ -67,3 +67,28 @@ func TestMergeStillCollapsesGenuineDuplicates(t *testing.T) {
 		t.Fatalf("a genuine duplicate was not merged: merged=%d duplicates=%d", len(merged), duplicates)
 	}
 }
+
+// Base and head line numbers are different coordinates: a finding on removed
+// base lines never merges with a head finding of the same text and numbers.
+func TestMergeKeepsBaseAndHeadFindingsApart(t *testing.T) {
+	head := localreview.ReportFinding{
+		Identity: "a", Title: "Missing zero guard", Claim: "The division by b is no longer guarded.",
+		Severity: diagnostics.SeverityError, Path: "calc.go", StartLine: 4, EndLine: 6,
+		Category: "correctness", EvidenceIDs: []string{"window"},
+	}
+	base := head
+	base.Identity, base.Side, base.HeadLine, base.EvidenceIDs = "b", diagnostics.LineSideBase, 3, []string{"removed"}
+	merged, duplicates := mergeVerifiedFindings([]string{"m0", "m1"}, [][]localreview.ReportFinding{{head}, {base}})
+	if len(merged) != 2 || duplicates != 0 {
+		t.Fatalf("base and head findings merged: merged=%d duplicates=%d", len(merged), duplicates)
+	}
+	if merged[0].Side != "" || merged[1].Side != "base" || merged[1].HeadLine != 3 || merged[1].Contributors[0].Side != "base" {
+		t.Fatalf("merged sides: %+v", merged)
+	}
+	// Two base-side duplicates still merge.
+	again := base
+	again.Identity = "c"
+	if merged, duplicates := mergeVerifiedFindings([]string{"m0", "m1"}, [][]localreview.ReportFinding{{base}, {again}}); len(merged) != 1 || duplicates != 1 {
+		t.Fatalf("base-side duplicates did not merge: merged=%d duplicates=%d", len(merged), duplicates)
+	}
+}

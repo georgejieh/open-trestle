@@ -333,26 +333,32 @@ type setContributorWire struct {
 	Severity        string `json:"severity"`
 	StartLine       uint32 `json:"start_line"`
 	EndLine         uint32 `json:"end_line"`
+	// Side is "base" when the lines are removed lines of the base revision.
+	Side string `json:"side,omitempty"`
 }
 
 type setFindingWire struct {
-	FindingIdentity string               `json:"finding_identity"`
-	Title           string               `json:"title"`
-	Claim           string               `json:"claim"`
-	Severity        string               `json:"severity"`
-	Path            string               `json:"path"`
-	StartLine       uint32               `json:"start_line"`
-	EndLine         uint32               `json:"end_line"`
-	Category        string               `json:"category,omitempty"`
-	Fix             string               `json:"fix,omitempty"`
-	FixAuthority    string               `json:"fix_authority,omitempty"`
-	EvidenceIDs     []string             `json:"evidence_ids"`
-	Contributors    []setContributorWire `json:"contributors"`
-	report          localreview.ReportFinding
-	coveredStart    uint32
-	coveredEnd      uint32
-	narrowStart     uint32
-	narrowEnd       uint32
+	FindingIdentity string `json:"finding_identity"`
+	Title           string `json:"title"`
+	Claim           string `json:"claim"`
+	Severity        string `json:"severity"`
+	Path            string `json:"path"`
+	StartLine       uint32 `json:"start_line"`
+	EndLine         uint32 `json:"end_line"`
+	// Side is "base" when the lines are removed lines of the base revision,
+	// and HeadLine is then the head line beside them, if one remains.
+	Side         string               `json:"side,omitempty"`
+	HeadLine     uint32               `json:"head_line,omitempty"`
+	Category     string               `json:"category,omitempty"`
+	Fix          string               `json:"fix,omitempty"`
+	FixAuthority string               `json:"fix_authority,omitempty"`
+	EvidenceIDs  []string             `json:"evidence_ids"`
+	Contributors []setContributorWire `json:"contributors"`
+	report       localreview.ReportFinding
+	coveredStart uint32
+	coveredEnd   uint32
+	narrowStart  uint32
+	narrowEnd    uint32
 	// representativeMember and representativeTokens identify the one finding
 	// whose claims decide whether a later finding is the same issue. They are
 	// the group's first finding, replaced when a more severe member becomes
@@ -793,6 +799,9 @@ func mergeVerifiedFindings(labels []string, findings [][]localreview.ReportFindi
 			if a.Path != b.Path {
 				return a.Path < b.Path
 			}
+			if a.Side != b.Side {
+				return a.Side < b.Side
+			}
 			if a.StartLine != b.StartLine {
 				return a.StartLine < b.StartLine
 			}
@@ -803,10 +812,12 @@ func mergeVerifiedFindings(labels []string, findings [][]localreview.ReportFindi
 		})
 		for _, finding := range ordered {
 			tokens := findingTokens(finding.Title, finding.Claim)
-			contributor := setContributorWire{Member: labels[index], FindingIdentity: finding.Identity, Severity: finding.Severity.String(), StartLine: finding.StartLine, EndLine: finding.EndLine}
+			contributor := setContributorWire{Member: labels[index], FindingIdentity: finding.Identity, Severity: finding.Severity.String(), StartLine: finding.StartLine, EndLine: finding.EndLine, Side: recordedSetSide(finding.Side)}
 			var group *setFindingWire
 			for _, candidate := range groups {
-				if candidate.Path == finding.Path && candidate.Category == finding.Category &&
+				// Base and head line numbers are different coordinates: findings
+				// on different sides never merge, even with overlapping numbers.
+				if candidate.Path == finding.Path && candidate.report.Side == finding.Side && candidate.Category == finding.Category &&
 					finding.StartLine <= candidate.coveredEnd && candidate.coveredStart <= finding.EndLine &&
 					candidate.related(index, tokens) {
 					group = candidate
@@ -850,6 +861,8 @@ func mergeVerifiedFindings(labels []string, findings [][]localreview.ReportFindi
 		switch {
 		case a.Path != b.Path:
 			return a.Path < b.Path
+		case a.report.Side != b.report.Side:
+			return a.report.Side < b.report.Side
 		case a.StartLine != b.StartLine:
 			return a.StartLine < b.StartLine
 		case a.EndLine != b.EndLine:
@@ -862,10 +875,19 @@ func mergeVerifiedFindings(labels []string, findings [][]localreview.ReportFindi
 	return out, duplicates
 }
 
+// recordedSetSide is the omitempty set token of a side: head is absent.
+func recordedSetSide(side diagnostics.LineSide) string {
+	if side == diagnostics.LineSideBase {
+		return "base"
+	}
+	return ""
+}
+
 func setFindingFromReport(finding localreview.ReportFinding) setFindingWire {
 	value := setFindingWire{
 		FindingIdentity: finding.Identity, Title: finding.Title, Claim: finding.Claim, Severity: finding.Severity.String(), Path: finding.Path,
-		StartLine: finding.StartLine, EndLine: finding.EndLine, Category: finding.Category, Fix: finding.Fix,
+		StartLine: finding.StartLine, EndLine: finding.EndLine, Side: recordedSetSide(finding.Side), HeadLine: finding.HeadLine,
+		Category: finding.Category, Fix: finding.Fix,
 		EvidenceIDs: append([]string{}, finding.EvidenceIDs...), report: finding,
 		coveredStart: finding.StartLine, coveredEnd: finding.EndLine,
 	}
@@ -1007,7 +1029,7 @@ func renderModelReviewSetText(set modelReviewSetWire) ([]byte, error) {
 		fmt.Fprintf(&buffer, "files covered: analyzed=%d selected=%d omitted=%d\n", coverage.Analyzed, coverage.Selected, coverage.Omitted)
 	}
 	for _, finding := range set.Findings {
-		fmt.Fprintf(&buffer, "finding: %s %s\nsource: %s:%d-%d\nmessage: %s\nevidence: %s\n", finding.Severity, finding.Title, finding.Path, finding.StartLine, finding.EndLine, finding.Claim, strings.Join(finding.EvidenceIDs, ", "))
+		fmt.Fprintf(&buffer, "finding: %s %s\nsource: %s\nmessage: %s\nevidence: %s\n", finding.Severity, finding.Title, localreview.SourceText(finding.Path, finding.report.Side, finding.StartLine, finding.EndLine, finding.HeadLine), finding.Claim, strings.Join(finding.EvidenceIDs, ", "))
 		if finding.Category != "" {
 			fmt.Fprintf(&buffer, "category: %s\n", finding.Category)
 		}

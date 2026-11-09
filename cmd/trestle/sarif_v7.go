@@ -15,6 +15,7 @@ func buildFinalDiagnosticSetSARIF(set diagnostics.Set) (sarifLog, error) {
 	findings := set.Findings()
 	checks := set.DeterministicChecks()
 	results := make([]sarifResult, 0, len(observations)+len(findings))
+	var notifications []sarifNotification
 	rules := make([]sarifRule, 0, 2)
 	properties := sarifRunProperties{
 		Status: review.OutcomeInconclusive, FinalOutcome: set.Outcome(),
@@ -91,27 +92,17 @@ func buildFinalDiagnosticSetSARIF(set diagnostics.Set) (sarifLog, error) {
 		if len(findings) != 0 {
 			rules = append(rules, sarifRule{ID: verifiedFindingSARIFRule, ShortDescription: sarifMessage{Text: "Independently verified finding"}, DefaultConfiguration: sarifConfiguration{Level: "warning"}})
 		}
-		for _, finding := range findings {
-			level, err := diagnosticSARIFLevel(finding.Severity())
-			if err != nil {
-				return sarifLog{}, err
-			}
-			results = append(results, sarifResult{
-				RuleID: verifiedFindingSARIFRule, Level: level,
-				Message: sarifMessage{Text: finding.Title() + ": " + finding.Message()},
-				Locations: []sarifLocation{{PhysicalLocation: sarifPhysicalLocation{
-					ArtifactLocation: sarifArtifactLocation{URI: sarifArtifactURI(finding.Path())},
-					Region:           sarifRegion{StartLine: int(finding.StartLine()), EndLine: int(finding.EndLine())},
-				}}},
-				Fingerprints: map[string]string{"openTrestleVerifiedFindingId/v1": finding.Identity(), "openTrestleFindingFingerprint/v1": finding.Fingerprint()},
-				Properties:   sarifResultProperties{EvidenceIDs: finding.EvidenceIDs()},
-			})
+		verified, unplaced, err := verifiedDiagnosticSARIFResults(findings)
+		if err != nil {
+			return sarifLog{}, err
 		}
+		results = append(results, verified...)
+		notifications = unplaced
 	} else {
 		properties.Reason += "; independent verification not recorded"
 	}
 	log := sarifLog{Schema: sarifSchemaURI, Version: "2.1.0", Runs: []sarifRun{{
-		Tool: sarifTool{Driver: sarifDriver{Name: "Open Trestle", Rules: rules}}, Results: results, Properties: properties,
+		Tool: sarifTool{Driver: sarifDriver{Name: "Open Trestle", Rules: rules}}, Invocations: unplacedFindingInvocations(notifications), Results: results, Properties: properties,
 	}}}
 	encoded, err := json.Marshal(log)
 	if err != nil {

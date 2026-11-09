@@ -1,7 +1,6 @@
 package localreview
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/georgejieh/open-trestle/diagnostics"
@@ -95,20 +94,26 @@ type ReportFinding struct {
 	EvidenceIDs    []string
 	Category       string
 	Fix            string
+	// Side tells whether Path, StartLine and EndLine are head lines or removed
+	// lines of the base revision. HeadLine is, for a base-side finding at a
+	// deletion point, the head line beside which the lines were removed; 0
+	// when none remains, such as for a removed file.
+	Side     diagnostics.LineSide
+	HeadLine uint32
 }
 
-// ErrBaseSideFindingUnsupported identifies a result whose verified findings
-// include removed base lines, which the text and report projections cannot
-// place without presenting base line numbers as head lines.
-var ErrBaseSideFindingUnsupported = errors.New("local review result has a finding on removed base lines")
-
-func hasBaseSideFinding(set diagnostics.Set) bool {
-	for _, finding := range set.Findings() {
-		if finding.Side() != diagnostics.LineSideHead {
-			return true
-		}
+// SourceText renders a finding location for text output. Removed base lines
+// are named as such, with the head line beside them when one remains, so their
+// numbers are never read as head lines.
+func SourceText(path string, side diagnostics.LineSide, startLine, endLine, headLine uint32) string {
+	if side == diagnostics.LineSideHead {
+		return fmt.Sprintf("%s:%d-%d", path, startLine, endLine)
 	}
-	return false
+	text := fmt.Sprintf("%s removed base lines %d-%d", path, startLine, endLine)
+	if headLine != 0 {
+		text += fmt.Sprintf(" (beside head line %d)", headLine)
+	}
+	return text
 }
 
 // ReportOmission counts bounded source omissions by reason.
@@ -167,9 +172,6 @@ func (r Result) Report() (Report, error) {
 	if !r.valid || r.wire.ComprehensiveClearance {
 		return Report{}, ErrInvalidResult
 	}
-	if hasBaseSideFinding(r.diagnostics) {
-		return Report{}, ErrBaseSideFindingUnsupported
-	}
 	report := Report{
 		Status: r.wire.Status, CIDisposition: r.wire.CI, RunStatus: r.wire.RunStatus, Failure: r.wire.Failure,
 		Independence: r.wire.Independence, Limitations: append([]string{}, r.wire.Limitations...),
@@ -200,6 +202,7 @@ func (r Result) Report() (Report, error) {
 			Identity: finding.Identity(), SourceIdentity: finding.SourceIdentity(), Fingerprint: finding.Fingerprint(),
 			Title: finding.Title(), Claim: finding.Message(), Severity: finding.Severity(), Path: finding.Path(),
 			StartLine: finding.StartLine(), EndLine: finding.EndLine(), EvidenceIDs: finding.EvidenceIDs(),
+			Side: finding.Side(), HeadLine: finding.HeadLine(),
 		}
 		if value, ok := guidance[finding.SourceIdentity()]; ok {
 			item.Category = value.Category

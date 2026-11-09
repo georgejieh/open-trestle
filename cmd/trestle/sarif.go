@@ -184,6 +184,75 @@ type sarifResultProperties struct {
 	// Contributors names the review set members (general, or a specialist
 	// profile ID) whose verified findings were merged into this result.
 	Contributors []string `json:"trestleContributors,omitempty"`
+	// Side is "base" for a finding on removed base lines. Its region is then
+	// the head line beside the deletion, and BaseStartLine and BaseEndLine
+	// name the removed base lines.
+	Side          string  `json:"trestleSide,omitempty"`
+	BaseStartLine *uint32 `json:"trestleBaseStartLine,omitempty"`
+	BaseEndLine   *uint32 `json:"trestleBaseEndLine,omitempty"`
+}
+
+// placeVerifiedFinding places one verified finding for SARIF, whose regions
+// are head-revision regions. A head finding keeps its region. A finding on
+// removed base lines is placed at the head line beside its deletion point, and
+// its message and properties name the removed base lines. One with no head
+// line beside it, such as a finding in a removed file, cannot be a result: it
+// returns a run-level notification instead, so it is never silently lost.
+func placeVerifiedFinding(path string, side diagnostics.LineSide, startLine, endLine, headLine uint32, message string, result sarifResult) (*sarifResult, *sarifNotification) {
+	region := sarifRegion{StartLine: int(startLine), EndLine: int(endLine)}
+	if side != diagnostics.LineSideHead {
+		base := fmt.Sprintf("removed base lines %d-%d", startLine, endLine)
+		if headLine == 0 {
+			return nil, &sarifNotification{Level: "warning", Message: sarifMessage{Text: "Verified finding on " + base + " of " + path + " is not a SARIF result because no head line remains beside it, for example in a removed file: " + message}}
+		}
+		region = sarifRegion{StartLine: int(headLine), EndLine: int(headLine)}
+		message += " (" + base + ")"
+		result.Properties.Side = "base"
+		result.Properties.BaseStartLine, result.Properties.BaseEndLine = sarifPointer(startLine), sarifPointer(endLine)
+	}
+	result.Message = sarifMessage{Text: message}
+	result.Locations = []sarifLocation{{PhysicalLocation: sarifPhysicalLocation{
+		ArtifactLocation: sarifArtifactLocation{URI: sarifArtifactURI(path)},
+		Region:           region,
+	}}}
+	return &result, nil
+}
+
+// verifiedDiagnosticSARIFResults places the verified findings of a diagnostic
+// set, returning their results and the notifications for findings that cannot
+// be placed.
+func verifiedDiagnosticSARIFResults(findings []diagnostics.Finding) ([]sarifResult, []sarifNotification, error) {
+	results := make([]sarifResult, 0, len(findings))
+	var notifications []sarifNotification
+	for _, finding := range findings {
+		level, err := diagnosticSARIFLevel(finding.Severity())
+		if err != nil {
+			return nil, nil, err
+		}
+		result, notification := placeVerifiedFinding(finding.Path(), finding.Side(), finding.StartLine(), finding.EndLine(), finding.HeadLine(), finding.Title()+": "+finding.Message(), sarifResult{
+			RuleID: verifiedFindingSARIFRule, Level: level,
+			Fingerprints: map[string]string{
+				"openTrestleVerifiedFindingId/v1":  finding.Identity(),
+				"openTrestleFindingFingerprint/v1": finding.Fingerprint(),
+			},
+			Properties: sarifResultProperties{EvidenceIDs: finding.EvidenceIDs()},
+		})
+		if notification != nil {
+			notifications = append(notifications, *notification)
+			continue
+		}
+		results = append(results, *result)
+	}
+	return results, notifications, nil
+}
+
+// unplacedFindingInvocations reports findings that could not be placed. A log
+// whose findings all have a region keeps its historical bytes.
+func unplacedFindingInvocations(notifications []sarifNotification) []sarifInvocation {
+	if len(notifications) == 0 {
+		return nil
+	}
+	return []sarifInvocation{{ExecutionSuccessful: true, ToolExecutionNotifications: notifications}}
 }
 
 func runSARIF(fixturePath string, stdout, stderr io.Writer) int {
@@ -262,18 +331,11 @@ func buildSARIFLog(evaluation ciEvaluation) (sarifLog, error) {
 
 func buildDiagnosticSetSARIF(set diagnostics.Set) (sarifLog, error) {
 	version := set.SchemaVersion()
-	if version != 1 && version != 2 && version != 3 && version != 4 && version != 5 && version != 6 && version != 7 {
+	if version < 1 || version > 8 {
 		return sarifLog{}, fmt.Errorf("unsupported diagnostic SARIF schema version %d", version)
 	}
 	if err := set.Validate(); err != nil {
 		return sarifLog{}, fmt.Errorf("diagnostic set is invalid: %w", err)
-	}
-	// SARIF regions are head-revision regions. Refuse a finding on removed
-	// base lines rather than emit its base line numbers as a head region.
-	for _, finding := range set.Findings() {
-		if finding.Side() != diagnostics.LineSideHead {
-			return sarifLog{}, fmt.Errorf("diagnostic set has a finding on removed base lines, which SARIF output cannot place")
-		}
 	}
 	if version == 1 {
 		return buildHistoricalV1DiagnosticSetSARIF(set)
@@ -287,7 +349,7 @@ func buildDiagnosticSetSARIF(set diagnostics.Set) (sarifLog, error) {
 	if version == 4 {
 		return buildHistoricalV4DiagnosticSetSARIF(set)
 	}
-	if version == 5 {
+	if version == 5 || version == 8 {
 		return buildVerifiedDiagnosticSetSARIF(set)
 	}
 	if version == 7 {
@@ -576,29 +638,13 @@ func buildHistoricalV4DiagnosticSetSARIF(set diagnostics.Set) (sarifLog, error) 
 func buildVerifiedDiagnosticSetSARIF(set diagnostics.Set) (sarifLog, error) {
 	checks := set.DeterministicChecks()
 	if len(checks) != 1 {
-		return sarifLog{}, fmt.Errorf("version 5 diagnostic check is invalid")
+		return sarifLog{}, fmt.Errorf("version %d diagnostic check is invalid", set.SchemaVersion())
 	}
 	check := checks[0]
 	findings := set.Findings()
-	results := make([]sarifResult, len(findings))
-	for i, finding := range findings {
-		level, err := diagnosticSARIFLevel(finding.Severity())
-		if err != nil {
-			return sarifLog{}, err
-		}
-		results[i] = sarifResult{
-			RuleID: verifiedFindingSARIFRule, Level: level,
-			Message: sarifMessage{Text: finding.Title() + ": " + finding.Message()},
-			Locations: []sarifLocation{{PhysicalLocation: sarifPhysicalLocation{
-				ArtifactLocation: sarifArtifactLocation{URI: sarifArtifactURI(finding.Path())},
-				Region:           sarifRegion{StartLine: int(finding.StartLine()), EndLine: int(finding.EndLine())},
-			}}},
-			Fingerprints: map[string]string{
-				"openTrestleVerifiedFindingId/v1":  finding.Identity(),
-				"openTrestleFindingFingerprint/v1": finding.Fingerprint(),
-			},
-			Properties: sarifResultProperties{EvidenceIDs: finding.EvidenceIDs()},
-		}
+	results, notifications, err := verifiedDiagnosticSARIFResults(findings)
+	if err != nil {
+		return sarifLog{}, err
 	}
 	omissions := make([]sarifOmission, 0, len(set.OmissionSummaries()))
 	for _, summary := range set.OmissionSummaries() {
@@ -646,17 +692,18 @@ func buildVerifiedDiagnosticSetSARIF(set diagnostics.Set) (sarifLog, error) {
 		})
 	}
 	log := sarifLog{Schema: sarifSchemaURI, Version: "2.1.0", Runs: []sarifRun{{
-		Tool:    sarifTool{Driver: sarifDriver{Name: "Open Trestle", Rules: rules}},
-		Results: results, Properties: properties,
+		Tool:        sarifTool{Driver: sarifDriver{Name: "Open Trestle", Rules: rules}},
+		Invocations: unplacedFindingInvocations(notifications),
+		Results:     results, Properties: properties,
 	}}}
 	// writeJSONResult marshals this unchanged log and appends one newline.
 	// Do not truncate results: failure is safer than a partial finding set.
 	encoded, err := json.Marshal(log)
 	if err != nil {
-		return sarifLog{}, fmt.Errorf("encode version 5 SARIF: %w", err)
+		return sarifLog{}, fmt.Errorf("encode version %d SARIF: %w", set.SchemaVersion(), err)
 	}
 	if len(encoded)+1 > maxDiagnosticSARIFBytes {
-		return sarifLog{}, fmt.Errorf("version 5 SARIF exceeds %d-byte limit", maxDiagnosticSARIFBytes)
+		return sarifLog{}, fmt.Errorf("version %d SARIF exceeds %d-byte limit", set.SchemaVersion(), maxDiagnosticSARIFBytes)
 	}
 	return log, nil
 }
