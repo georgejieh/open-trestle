@@ -548,15 +548,33 @@ func (w *initWizard) explainScannerBlock(block string) {
 	w.say("  Note: remote models need the packaged build. Your source is secret-scanned before it")
 	w.say("  leaves this machine, and this development build lacks the scanner fingerprints, so it refuses.")
 	w.say("  To build and install it from a clean checkout (docs/operations.md):")
-	w.say("    python3 tools/package_secret_scanner.py --output .container")
-	w.say("    python3 tools/package_secret_scanner.py --verify .container")
-	w.say("    python3 tools/linux_distribution.py --staging .container --version 0.1.0-dev \\")
-	w.say("      --revision \"$(git rev-parse HEAD)\" \\")
-	w.say("      --created \"$(date -u -d \"$(git show -s --format=%%cI HEAD)\" +%%Y-%%m-%%dT%%H:%%M:%%SZ)\" \\")
-	w.say("      --output open-trestle-linux-amd64.pyz")
-	w.say("    sha256sum -c open-trestle-linux-amd64.pyz.sha256")
-	w.say("    sudo ./open-trestle-linux-amd64.pyz install")
+	w.sayPackagingSteps()
 	w.say("  Then run /usr/local/bin/trestle init. A model server on this machine works with this build.")
+}
+
+// initPackagingSteps is the packaged-build sequence of docs/operations.md, each
+// command exactly as the guide writes it: scanner staging, the passive
+// vulnerability gate (the candidate builder refuses a staging tree without its
+// release/vulnerability-scan.json), the candidate build and checks, and the
+// production install. A test keeps it identical to the guide.
+var initPackagingSteps = [][]string{
+	{"python3 tools/package_secret_scanner.py --output .container"},
+	{"python3 tools/package_secret_scanner.py --verify .container"},
+	{"python3 tools/vulnerability_gate.py --staging .container"},
+	{`REVISION="$(git rev-parse HEAD)"`},
+	{`CREATED="$(date -u -d "$(git show -s --format=%cI "$REVISION")" +%Y-%m-%dT%H:%M:%SZ)"`},
+	{`python3 tools/linux_distribution.py \`, `  --staging .container \`, `  --version 0.1.0-dev \`, `  --revision "$REVISION" \`, `  --created "$CREATED" \`, "  --output open-trestle-linux-amd64.pyz"},
+	{"sha256sum -c open-trestle-linux-amd64.pyz.sha256"},
+	{"./open-trestle-linux-amd64.pyz verify-archive"},
+	{"sudo ./open-trestle-linux-amd64.pyz install"},
+}
+
+func (w *initWizard) sayPackagingSteps() {
+	for _, step := range initPackagingSteps {
+		for _, line := range step {
+			w.say("    %s", line)
+		}
+	}
 }
 
 func (w *initWizard) stepProvider() error {

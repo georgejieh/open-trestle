@@ -71,9 +71,12 @@ The included `Dockerfile` copies that staging tree into a scratch image with no 
 ## Build and inspect the unsigned Linux amd64 candidate
 
 Run the Linux candidate builder only after `package_secret_scanner.py --verify` and the
-passive vulnerability gate have produced the fixed `.container` inventory:
+[passive vulnerability gate](vulnerability-gate.md) have produced the fixed `.container`
+inventory. The builder refuses a staging tree without the gate's
+`release/vulnerability-scan.json`:
 
 ```sh
+python3 tools/vulnerability_gate.py --staging .container
 REVISION="$(git rev-parse HEAD)"
 CREATED="$(date -u -d "$(git show -s --format=%cI "$REVISION")" +%Y-%m-%dT%H:%M:%SZ)"
 python3 tools/linux_distribution.py \

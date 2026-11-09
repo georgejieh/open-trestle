@@ -42,11 +42,9 @@ your explicit answer.
   Every request is scanned for secrets in a sandboxed scanner before it leaves
   the machine. A plain `go build` has no scanner fingerprints and refuses to send
   source. The wizard detects such a development build before you choose a
-  provider, explains why, and shows packaging and install commands; the complete
-  sequence, which also runs the passive vulnerability gate before the candidate
-  builder, is in
-  [operations](operations.md#build-and-inspect-the-unsigned-linux-amd64-candidate).
-  A local model server still works with a development build. See
+  provider, explains why, and shows the packaging and install commands from
+  [operations](operations.md#build-and-inspect-the-unsigned-linux-amd64-candidate),
+  including the passive vulnerability gate, in the order they run. A local model server still works with a development build. See
   [prerequisite 1](remote-model-review.md#prerequisite-1-a-scanner-bound-binary-and-installed-scanner).
 - **An ordinary clone is fine.** Every mode, local included, uses the direct
   checkout review, which reads loose objects and ordinary pack files and verifies
