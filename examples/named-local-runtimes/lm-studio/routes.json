@@ -8,7 +8,7 @@
       "connection_id": "lm-studio/generation",
       "model_id": "trestle-generation",
       "model_version": "",
-      "max_context_tokens": 8192,
+      "max_context_tokens": 32768,
       "max_output_tokens": 1024,
       "features": [
         "structured_output"
@@ -36,7 +36,7 @@
       "connection_id": "lm-studio/verification",
       "model_id": "trestle-verification",
       "model_version": "",
-      "max_context_tokens": 8192,
+      "max_context_tokens": 32768,
       "max_output_tokens": 1024,
       "features": [
         "structured_output"

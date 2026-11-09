@@ -8,7 +8,7 @@
       "connection_id": "ollama-local/generation",
       "model_id": "qwen3:8b",
       "model_version": "",
-      "max_context_tokens": 8192,
+      "max_context_tokens": 32768,
       "max_output_tokens": 1024,
       "features": [
         "structured_output"
@@ -36,7 +36,7 @@
       "connection_id": "ollama-local/verification",
       "model_id": "gemma3:4b",
       "model_version": "",
-      "max_context_tokens": 8192,
+      "max_context_tokens": 32768,
       "max_output_tokens": 1024,
       "features": [
         "structured_output"

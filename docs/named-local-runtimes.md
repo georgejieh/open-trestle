@@ -33,13 +33,27 @@ capacity and logging posture in your route evidence before approval. Load chat
 models whose ordinary assistant output follows the required review JSON schema.
 No tool calling, remote URLs, MCP, or model download is part of this path.
 
+### Context length
+
+Each template route declares `max_context_tokens: 32768`, and each recipe below
+starts its server with the same context length: llama.cpp `--ctx-size`, Ollama
+`OLLAMA_CONTEXT_LENGTH`, vLLM `--max-model-len` and LM Studio
+`lms load --context-length`. Keep the declaration and the server setting equal;
+lower both together only for a model that cannot hold 32768 tokens. Open Trestle
+reserves every request as a byte-based upper bound on its input tokens (a token
+never covers less than one byte) plus the output allowance, and refuses a route
+whose declared context is smaller, rather than risk a server silently
+truncating an over-long prompt, which could drop the trusted system message.
+Even the fixed setup probe reserves about 9,700 tokens, and a review request is
+larger, so an 8192-token context cannot run any review.
+
 ### llama.cpp
 
 Run two foreground servers in separate terminals with distinct GGUF files:
 
 ```sh
-llama-server -m /APPROVED/GENERATION.gguf --alias trestle-generation --host 127.0.0.1 --port 8080 --ctx-size 8192
-llama-server -m /APPROVED/VERIFICATION.gguf --alias trestle-verification --host 127.0.0.1 --port 8081 --ctx-size 8192
+llama-server -m /APPROVED/GENERATION.gguf --alias trestle-generation --host 127.0.0.1 --port 8080 --ctx-size 32768
+llama-server -m /APPROVED/VERIFICATION.gguf --alias trestle-verification --host 127.0.0.1 --port 8081 --ctx-size 32768
 ```
 
 The alias is the API selector. Keep the route `model_version` empty, since a
@@ -56,7 +70,7 @@ prove local inference. Start the server with cloud features disabled and inspect
 the documented `Ollama cloud disabled: true` log after restart:
 
 ```sh
-OLLAMA_NO_CLOUD=1 OLLAMA_HOST=127.0.0.1:11434 OLLAMA_CONTEXT_LENGTH=8192 ollama serve
+OLLAMA_NO_CLOUD=1 OLLAMA_HOST=127.0.0.1:11434 OLLAMA_CONTEXT_LENGTH=32768 ollama serve
 ```
 
 Use only locally present `qwen3:8b` and `gemma3:4b` artifacts, or replace both
@@ -88,8 +102,8 @@ Run two servers on the same host with distinct already-present local model
 folders. Select the intended device/resources separately for each process:
 
 ```sh
-HF_HUB_OFFLINE=1 VLLM_NO_USAGE_STATS=1 vllm serve /APPROVED/GENERATION --host 127.0.0.1 --port 8000 --served-model-name trestle-generation --max-model-len 8192
-HF_HUB_OFFLINE=1 VLLM_NO_USAGE_STATS=1 vllm serve /APPROVED/VERIFICATION --host 127.0.0.1 --port 8001 --served-model-name trestle-verification --max-model-len 8192
+HF_HUB_OFFLINE=1 VLLM_NO_USAGE_STATS=1 vllm serve /APPROVED/GENERATION --host 127.0.0.1 --port 8000 --served-model-name trestle-generation --max-model-len 32768
+HF_HUB_OFFLINE=1 VLLM_NO_USAGE_STATS=1 vllm serve /APPROVED/VERIFICATION --host 127.0.0.1 --port 8001 --served-model-name trestle-verification --max-model-len 32768
 ```
 
 Use one served name per process. vLLM documents that the response uses the first
@@ -106,8 +120,8 @@ Use two different already-downloaded local models from `lms ls`, not LM Link
 remote devices. In an explicitly authorized running local LM Studio instance:
 
 ```sh
-lms load GENERATION_MODEL_KEY --identifier trestle-generation --context-length 8192
-lms load VERIFICATION_MODEL_KEY --identifier trestle-verification --context-length 8192
+lms load GENERATION_MODEL_KEY --identifier trestle-generation --context-length 32768
+lms load VERIFICATION_MODEL_KEY --identifier trestle-verification --context-length 32768
 lms server start --bind 127.0.0.1 --port 1234
 ```
 
