@@ -155,61 +155,21 @@ func withFindingGuidance(result Result, findings review.VerifiedFindingSet) (Res
 	return result, nil
 }
 
-// StyleAdvice is the style advice of a result (schema version 5) or review set:
-// a fixed recommendation for each changed language that has a style detector
-// but no style declared by the base tree, and the languages withheld because a
-// base style configuration file that could declare their style was not read
-// (over 64 KiB, not valid UTF-8, or beyond 256 files). ConfigurationUnread
-// counts those files. The text is Open Trestle's fixed table
-// (agentprofile.RecommendedStyle), not model output. Style advice never blocks:
-// it is not a finding and never changes status, CI disposition, exit code,
-// coverage or clearance. Unavailable alone marks a recorded change model, its
-// snapshots or a base style configuration file that could not be read back, so
-// no advice could be derived. Version 5 keeps a specialist block and finding
-// guidance. Every field is omitted when empty.
-type StyleAdvice struct {
-	Recommendations     []StyleRecommendation `json:"style_recommendations,omitempty"`
-	Withheld            []StyleWithheld       `json:"style_withheld,omitempty"`
-	ConfigurationUnread int                   `json:"style_configuration_unread,omitempty"`
-	Unavailable         bool                  `json:"style_advice_unavailable,omitempty"`
-}
-
-// StyleRecommendation suggests the standard style for one changed language.
-type StyleRecommendation struct {
-	Language       string `json:"language"`
-	ChangedFiles   int    `json:"changed_files"`
-	Recommendation string `json:"recommendation"`
-}
-
-// StyleWithheld is a changed language whose declared style is unknown.
-type StyleWithheld struct {
-	Language     string `json:"language"`
-	ChangedFiles int    `json:"changed_files"`
-}
-
-func (a StyleAdvice) empty() bool {
-	return len(a.Recommendations) == 0 && len(a.Withheld) == 0 && a.ConfigurationUnread == 0 && !a.Unavailable
-}
+// StyleAdvice is the style advice of a result (schema version 5) or review set,
+// in the recorded form agentprofile defines and validates. Version 5 keeps a
+// specialist block and finding guidance.
+type (
+	StyleAdvice         = agentprofile.RecordedStyleAdvice
+	StyleRecommendation = agentprofile.RecordedStyleRecommendation
+	StyleWithheld       = agentprofile.RecordedStyleWithheld
+)
 
 const styleResultVersion = 5
-
-// newStyleAdvice projects agentprofile advice with the unread file count.
-func newStyleAdvice(advice agentprofile.StyleAdvice, unread int) StyleAdvice {
-	value := StyleAdvice{ConfigurationUnread: unread}
-	for _, recommendation := range advice.Recommendations {
-		_, standard, _ := agentprofile.RecommendedStyle(recommendation.Language)
-		value.Recommendations = append(value.Recommendations, StyleRecommendation{Language: string(recommendation.Language), ChangedFiles: recommendation.ChangedFiles, Recommendation: standard})
-	}
-	for _, withheld := range advice.Withheld {
-		value.Withheld = append(value.Withheld, StyleWithheld{Language: string(withheld.Language), ChangedFiles: withheld.ChangedFiles})
-	}
-	return value
-}
 
 // withStyleAdvice adds style advice to a direct review result. A result with
 // advice is schema version 5; one without keeps its version.
 func withStyleAdvice(result Result, advice StyleAdvice) Result {
-	if advice.empty() {
+	if advice.Empty() {
 		return result
 	}
 	result.wire.Version = styleResultVersion
@@ -227,37 +187,6 @@ func (r Result) StyleAdvice() StyleAdvice {
 	advice.Recommendations = append([]StyleRecommendation(nil), advice.Recommendations...)
 	advice.Withheld = append([]StyleWithheld(nil), advice.Withheld...)
 	return advice
-}
-
-// Lines returns the newline-terminated text lines that describe the advice:
-// one per recommendation, one per withheld language, and one for unread files.
-func (a StyleAdvice) Lines() []string {
-	var lines []string
-	files := func(count int) string {
-		if count == 1 {
-			return "1 changed file"
-		}
-		return fmt.Sprintf("%d changed files", count)
-	}
-	for _, value := range a.Recommendations {
-		name, _, _ := agentprofile.RecommendedStyle(agentprofile.Language(value.Language))
-		lines = append(lines, fmt.Sprintf("style: no declared %s style for %s; consider %s, and commit its configuration\n", name, files(value.ChangedFiles), value.Recommendation))
-	}
-	for _, value := range a.Withheld {
-		name, _, _ := agentprofile.RecommendedStyle(agentprofile.Language(value.Language))
-		lines = append(lines, fmt.Sprintf("style: declared %s style unknown for %s; a base style configuration file that may declare it was not read, so no recommendation is made\n", name, files(value.ChangedFiles)))
-	}
-	if a.ConfigurationUnread > 0 {
-		subject := "file was"
-		if a.ConfigurationUnread != 1 {
-			subject = "files were"
-		}
-		lines = append(lines, fmt.Sprintf("style: %d base style configuration %s not read (over 64 KiB, not valid UTF-8, or beyond 256 files)\n", a.ConfigurationUnread, subject))
-	}
-	if a.Unavailable {
-		lines = append(lines, "style: advice unavailable; the recorded change or base style configuration could not be read back\n")
-	}
-	return lines
 }
 
 // specialistResultWire identifies the packaged profile bound into generation.

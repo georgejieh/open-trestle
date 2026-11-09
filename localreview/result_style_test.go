@@ -13,6 +13,8 @@ import (
 
 const pythonStyleLine = "style: no declared Python style for 1 changed file; consider PEP 8, enforced with Ruff or Black, and commit its configuration\n"
 
+var pep8Recommendation = StyleRecommendation{Language: "python", ChangedFiles: 1, Recommendation: "PEP 8, enforced with Ruff or Black"}
+
 // styleResultRun runs the real nine-task review over the fixture change, whose
 // unchanged go.mod declares the Go style, plus the given root-level files.
 func styleResultRun(t *testing.T, name string, options rmModelFixtureOptions, specialist review.ContextSpecialist) Result {
@@ -61,10 +63,10 @@ func TestStyleAdviceRecommendsAStandardOnlyForUndeclaredLanguages(t *testing.T) 
 		options rmModelFixtureOptions
 		want    []StyleRecommendation
 	}{
-		{"python without declared style", styleTrees(python("x = 1\n"), python("x = 2\n")), []StyleRecommendation{{"python", 1, "PEP 8, enforced with Ruff or Black"}}},
-		{"editorconfig alone", styleTrees(with(python("x = 1\n"), ".editorconfig", "root = true\n"), with(python("x = 2\n"), ".editorconfig", "root = true\n")), []StyleRecommendation{{"python", 1, "PEP 8, enforced with Ruff or Black"}}},
-		{"ruff.toml only in head", styleTrees(python("x = 1\n"), with(python("x = 2\n"), "ruff.toml", ruff)), []StyleRecommendation{{"python", 1, "PEP 8, enforced with Ruff or Black"}}},
-		{"go without go.mod", styleTrees(map[string][]byte{"go.mod": nil}, map[string][]byte{"go.mod": nil}), []StyleRecommendation{{"go", 1, "gofmt and Effective Go"}}},
+		{"python without declared style", styleTrees(python("x = 1\n"), python("x = 2\n")), []StyleRecommendation{pep8Recommendation}},
+		{"editorconfig alone", styleTrees(with(python("x = 1\n"), ".editorconfig", "root = true\n"), with(python("x = 2\n"), ".editorconfig", "root = true\n")), []StyleRecommendation{pep8Recommendation}},
+		{"ruff.toml only in head", styleTrees(python("x = 1\n"), with(python("x = 2\n"), "ruff.toml", ruff)), []StyleRecommendation{pep8Recommendation}},
+		{"go without go.mod", styleTrees(map[string][]byte{"go.mod": nil}, map[string][]byte{"go.mod": nil}), []StyleRecommendation{{Language: "go", ChangedFiles: 1, Recommendation: "gofmt and Effective Go"}}},
 		{"java change", styleTrees(map[string][]byte{"Main.java": []byte("class Main {}\n")}, map[string][]byte{"Main.java": []byte("final class Main {}\n")}), nil},
 		{"removed python file", styleTrees(python("x = 1\n"), nil), nil},
 		{"package-lock.json change", styleTrees(map[string][]byte{"package-lock.json": []byte("{\"lockfileVersion\": 3}\n")}, map[string][]byte{"package-lock.json": []byte("{\"lockfileVersion\": 3, \"name\": \"p\"}\n")}), nil},

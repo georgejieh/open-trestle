@@ -156,6 +156,31 @@ func TestLocalGitFeedbackReviewAcceptsVersion5StyleAdviceShapes(t *testing.T) {
 	}
 }
 
+// TestLocalGitFeedbackReviewRefusesStyleAdviceNoReviewEmits requires the
+// feedback review to refuse a version 5 result whose style advice a review
+// could not have recorded.
+func TestLocalGitFeedbackReviewRefusesStyleAdviceNoReviewEmits(t *testing.T) {
+	f := newLocalModelFixture(t, localModelFixtureOptions{})
+	_, reviewOut := localModelExecute(t, f, f.args, 4)
+	const recommended = `"style_recommendations":[{"language":"go","changed_files":1,"recommendation":"gofmt and Effective Go"}]`
+	if !strings.Contains(reviewOut, recommended) {
+		t.Fatalf("review result lacks the Go recommendation: %s", reviewOut)
+	}
+	feedback := rmiFeedbackFile(t, map[string]string{"a.go": "preference"})
+	for name, tampered := range map[string]string{
+		"unknown language":                       strings.Replace(reviewOut, `"language":"go"`, `"language":"cobol"`, 1),
+		"recommendation text not from the table": strings.Replace(reviewOut, `"recommendation":"gofmt and Effective Go"`, `"recommendation":"gofmt"`, 1),
+		"withheld without unread count":          strings.Replace(reviewOut, recommended, `"style_withheld":[{"language":"go","changed_files":1}]`, 1),
+	} {
+		if tampered == reviewOut {
+			t.Fatalf("%s fixture did not change the result", name)
+		}
+		reviewPath := feedbackJourneyProtectedFile(t, "review.json", []byte(tampered))
+		feedbackJourneyRun(t, feedbackJourneyArgs(f, reviewPath, feedback, rmiOutputPath(t)), 4)
+	}
+	feedbackJourneyCalls(t, f, 1)
+}
+
 func TestLocalGitFeedbackRejectsAmbiguousCanonicalFindingSelection(t *testing.T) {
 	f := newLocalModelFixture(t, localModelFixtureOptions{})
 	_, reviewOut := localModelExecute(t, f, f.args, 4)

@@ -7,9 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/georgejieh/open-trestle/agentprofile"
 	"github.com/georgejieh/open-trestle/diagnostics"
-	"github.com/georgejieh/open-trestle/internal/changecodec"
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/review"
@@ -123,49 +121,14 @@ func (r Result) CompletedMetadata() (CompletedResultMetadata, error) {
 }
 
 // importableResultVersion accepts v1 without guidance or style advice, v4 with
-// guidance and no style advice, and v5 with valid style advice and optional
-// guidance. Style advice is checked only for shape; it is never imported as a
-// finding.
+// guidance and no style advice, and v5 with style advice that a review could
+// have recorded (agentprofile.RecordedStyleAdvice.Validate) and optional
+// guidance. Style advice is never imported as a finding.
 func importableResultVersion(wire resultWire) bool {
-	styled := !wire.StyleAdvice.empty()
+	styled := !wire.StyleAdvice.Empty()
 	return wire.Version == 1 && wire.Guidance == nil && !styled ||
 		wire.Version == guidanceResultVersion && len(wire.Guidance) > 0 && !styled ||
-		wire.Version == styleResultVersion && styled && validImportedStyleAdvice(wire.StyleAdvice)
-}
-
-// validImportedStyleAdvice requires recommendations and withheld languages in
-// strict language order, each a language with a style detector and each
-// recommendation its fixed table text. No language is both recommended and
-// withheld, a withheld language needs an unread file, and an unavailable
-// marker stands alone.
-func validImportedStyleAdvice(advice StyleAdvice) bool {
-	if advice.Unavailable {
-		return len(advice.Recommendations) == 0 && len(advice.Withheld) == 0 && advice.ConfigurationUnread == 0
-	}
-	if advice.ConfigurationUnread < 0 || len(advice.Withheld) > 0 && advice.ConfigurationUnread == 0 {
-		return false
-	}
-	seen := map[string]bool{}
-	valid := func(language string, changedFiles int, previous string) bool {
-		_, _, ok := agentprofile.RecommendedStyle(agentprofile.Language(language))
-		return ok && !seen[language] && changedFiles >= 1 && changedFiles <= changecodec.MaxChangedEntries && language > previous
-	}
-	previous := ""
-	for _, value := range advice.Recommendations {
-		_, standard, _ := agentprofile.RecommendedStyle(agentprofile.Language(value.Language))
-		if !valid(value.Language, value.ChangedFiles, previous) || value.Recommendation != standard {
-			return false
-		}
-		seen[value.Language], previous = true, value.Language
-	}
-	previous = ""
-	for _, value := range advice.Withheld {
-		if !valid(value.Language, value.ChangedFiles, previous) {
-			return false
-		}
-		seen[value.Language], previous = true, value.Language
-	}
-	return true
+		wire.Version == styleResultVersion && styled && wire.StyleAdvice.Validate() == nil
 }
 
 // validImportedGuidance requires guidance for distinct diagnostic findings, in

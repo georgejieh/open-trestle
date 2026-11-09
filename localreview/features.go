@@ -175,7 +175,7 @@ func (s *Session) styleAdvice(ctx context.Context, scope audit.ReviewScope, chan
 	if err != nil {
 		return unavailable
 	}
-	return newStyleAdvice(advice, len(unread))
+	return advice.Record(len(unread))
 }
 
 // baseStyleConfigFiles reads the style configuration files that declare the

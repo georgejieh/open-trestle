@@ -1025,7 +1025,12 @@ snapshots or a base style configuration file cannot be read back, the advice is
 reported as unavailable rather than left out: JSON adds
 `style_advice_unavailable: true` (with no other style field) and text reads
 `style: advice unavailable; the recorded change or base style configuration could not be read back`. The model-result evaluation import
-and the retained-memory feedback review accept version 5 and ignore the advice.
+and the retained-memory feedback review accept version 5 and otherwise ignore
+the advice, but both refuse advice that no review records (one validator,
+`agentprofile.RecordedStyleAdvice.Validate`): a language without a style
+detector, a recommendation other than its table text, languages out of order,
+repeated or both recommended and withheld, a withheld language without an
+unread count, or an unavailable marker beside other advice.
 
 Two optional counts report advisory repository-context accounting without changing
 `status`, `ci_disposition` or source coverage. `instruction_context_omitted` (with
