@@ -61,6 +61,11 @@ func NewFinalReviewSet(scope audit.ReviewScope, snapshotIdentity, headRevision s
 		set.omissionSummaries = verified.OmissionSummaries()
 		set.findings = verified.Findings()
 	}
+	return finalizeFinalSet(set)
+}
+
+// finalizeFinalSet derives a v7 identity and enforces the encoded budget.
+func finalizeFinalSet(set Set) (Set, error) {
 	set.identity = deriveSetIdentity(set)
 	encoded, err := json.Marshal(setToRecordV7(set))
 	if err != nil || len(encoded) > MaxEncodedSetBytes {
@@ -92,6 +97,8 @@ type setRecordV7 struct {
 	Outcome          FinalOutcome `json:"outcome"`
 	Deterministic    *setRecordV6 `json:"deterministic,omitempty"`
 	Verified         *setRecordV5 `json:"verified,omitempty"`
+
+	ContextRefusal *contextRefusalRecord `json:"context_refusal,omitempty"`
 }
 
 func setToRecordV7(s Set) setRecordV7 {
@@ -105,6 +112,7 @@ func setToRecordV7(s Set) setRecordV7 {
 		value := setToRecordV5(verified)
 		r.Verified = &value
 	}
+	r.ContextRefusal = contextRefusalToRecord(s.contextRefusal)
 	return r
 }
 func parseSetV7(encoded []byte) (Set, error) {
@@ -138,6 +146,13 @@ func parseSetV7(encoded []byte) (Set, error) {
 		}
 	}
 	result, err := NewFinalReviewSet(scope, r.SnapshotIdentity, r.HeadRevision, r.Outcome, deterministic, verified)
+	if err == nil && r.ContextRefusal != nil {
+		refusal, ok := contextRefusalFromRecord(r.ContextRefusal)
+		if !ok {
+			return Set{}, ErrInvalidSetEncoding
+		}
+		result, err = result.WithContextRefusal(refusal)
+	}
 	if err != nil || result.identity != r.Identity {
 		return Set{}, ErrInvalidSetIdentity
 	}

@@ -152,6 +152,11 @@ func (p *LocalFinalDiagnosticProjector) Project(ctx context.Context, state contr
 	if err != nil {
 		return err
 	}
+	if refusal, refused := finalContextRefusal(state); refused && outcome == diagnostics.FinalOutcomeFailed {
+		if result, err = result.WithContextRefusal(refusal); err != nil {
+			return err
+		}
+	}
 	_, err = p.destination.PutDiagnosticSet(ctx, result)
 	return err
 }
@@ -301,4 +306,21 @@ func localFinalOutcomeMatchesState(outcome diagnostics.FinalOutcome, state contr
 		return outcome == diagnostics.FinalOutcomeFailed
 	}
 	return false
+}
+
+// finalContextRefusal copies the context task's recorded route refusal, if any.
+func finalContextRefusal(state controlplane.ReviewRunState) (diagnostics.ContextRefusal, bool) {
+	task, found := state.Task("context")
+	if !found || task.Status() != controlplane.TaskRuntimeFailed || task.OutputIdentity() != "" {
+		return diagnostics.ContextRefusal{}, false
+	}
+	switch task.FailureReason() {
+	case controlplane.TaskFailureReasonRouteContextInsufficient:
+		shortfall, _ := task.ContextShortfall()
+		return diagnostics.ContextRefusal{Reason: diagnostics.ContextRefusalRouteContextInsufficient, RequiredTokens: shortfall.RequiredTokens, EstimatedInputTokens: shortfall.EstimatedInputTokens, MaxOutputTokens: shortfall.MaxOutputTokens, DeclaredContextTokens: shortfall.DeclaredContextTokens}, true
+	case controlplane.TaskFailureReasonNoEligibleRoute:
+		return diagnostics.ContextRefusal{Reason: diagnostics.ContextRefusalNoEligibleRoute}, true
+	default:
+		return diagnostics.ContextRefusal{}, false
+	}
 }

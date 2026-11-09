@@ -170,6 +170,10 @@ func assertContextRouteRefusal(t *testing.T, d *daemon, api *client.Client, fake
 	if err != nil || diagnostic.Outcome() != diagnostics.FinalOutcomeFailed || len(diagnostic.Findings()) != 0 {
 		t.Fatalf("refusal diagnostic=%s err=%v", diagnostic.Outcome(), err)
 	}
+	refusal, refused := diagnostic.ContextRefusal()
+	if want := (diagnostics.ContextRefusal{Reason: diagnostics.ContextRefusalRouteContextInsufficient, RequiredTokens: shortfall.RequiredTokens, EstimatedInputTokens: shortfall.EstimatedInputTokens, MaxOutputTokens: shortfall.MaxOutputTokens, DeclaredContextTokens: shortfall.DeclaredContextTokens}); !refused || refusal != want {
+		t.Fatalf("final set refusal = %+v, %v; want %+v", refusal, refused, want)
+	}
 }
 
 func startContextRefusalDaemon(t *testing.T, args []string, getenv func(string) string, clock *daemonBudgetedHandlerClock) (*daemon, *client.Client, *httptest.Server) {

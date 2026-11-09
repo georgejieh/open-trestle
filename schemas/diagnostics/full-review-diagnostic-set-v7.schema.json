@@ -70,6 +70,73 @@
           "$ref": "urn:open-trestle:schema:diagnostics:set:v8"
         }
       ]
+    },
+    "context_refusal": {
+      "description": "The refused context task's recorded route reason; present only on a failed outcome without verified evidence.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason"
+      ],
+      "properties": {
+        "reason": {
+          "enum": [
+            "route_context_insufficient",
+            "no_eligible_route"
+          ]
+        },
+        "context_shortfall": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "required_tokens",
+            "estimated_input_tokens",
+            "max_output_tokens",
+            "declared_context_tokens"
+          ],
+          "properties": {
+            "required_tokens": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 8589934590
+            },
+            "estimated_input_tokens": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4294967295
+            },
+            "max_output_tokens": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4294967295
+            },
+            "declared_context_tokens": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4294967295
+            }
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "reason": {
+            "const": "route_context_insufficient"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "context_shortfall"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "context_shortfall"
+          ]
+        }
+      }
     }
   },
   "allOf": [
@@ -131,7 +198,26 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "required": [
+          "context_refusal"
+        ]
+      },
+      "then": {
+        "properties": {
+          "outcome": {
+            "const": "failed"
+          }
+        },
+        "not": {
+          "required": [
+            "verified"
+          ]
+        }
+      }
     }
   ],
-  "description": "The runtime derives identity from exact bytes, validates embedded V5 or V8 and V6 identities, binds their common scope/head/check, and enforces the shared one MiB budget. The top-level and V6 snapshot is the physical source snapshot; the V5 or V8 snapshot is the selected review snapshot and need not equal it. Absent evidence means not run, not clean or verified."
+  "description": "The runtime derives identity from exact bytes, validates embedded V5 or V8 and V6 identities, binds their common scope/head/check, and enforces the shared one MiB budget. The top-level and V6 snapshot is the physical source snapshot; the V5 or V8 snapshot is the selected review snapshot and need not equal it. Absent evidence means not run, not clean or verified. A context refusal copies the failed run's refused context task; its required tokens equal input plus output and exceed the declared context."
 }
