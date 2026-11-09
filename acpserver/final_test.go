@@ -2,6 +2,7 @@ package acpserver
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -101,4 +102,41 @@ func TestServerDistinguishesObservedZeroFromMissingFinalEvidence(t *testing.T) {
 	if bytes.Contains(messages[0], []byte("unknown (evidence unavailable)")) {
 		t.Fatalf("present evidence reported unknown: %s", messages[0])
 	}
+}
+
+// A failed final result names its recorded context route refusal and hint.
+func TestServerNamesFinalContextRefusal(t *testing.T) {
+	scope, receipt, _ := acpFixture(t)
+	failed, err := diagnostics.NewFinalReviewSet(scope, "", "", diagnostics.FinalOutcomeFailed, diagnostics.Set{}, diagnostics.Set{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for refusal, want := range map[diagnostics.ContextRefusal]string{
+		{Reason: diagnostics.ContextRefusalRouteContextInsufficient, RequiredTokens: 14282, EstimatedInputTokens: 10186, MaxOutputTokens: 4096, DeclaredContextTokens: 4097}: "Context refusal: route_context_insufficient (the review request needs more context than the route declares).\nHint: the review needs up to 14282 tokens (a byte-based upper bound: 10186 input plus 4096 output) but the route declares max_context_tokens 4097; raise max_context_tokens on the route and the model server's context length to at least 14282 (docs/named-local-runtimes.md#context-length)",
+		{Reason: diagnostics.ContextRefusalNoEligibleRoute}: "Context refusal: no_eligible_route (no configured route met the runtime policy for this request).",
+	} {
+		set, err := failed.WithContextRefusal(refusal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		messages := promptMessages(t, &serviceStub{receipt: receipt, set: set}, scope)
+		text := string(messages[0])
+		if !strings.Contains(text, jsonEscaped(t, want)) {
+			t.Errorf("missing %q in %s", want, messages[0])
+		}
+	}
+	messages := promptMessages(t, &serviceStub{receipt: receipt, set: failed}, scope)
+	if bytes.Contains(messages[0], []byte("Context refusal")) {
+		t.Fatalf("refusal-free result named a refusal: %s", messages[0])
+	}
+}
+
+// jsonEscaped renders text as it appears inside a JSON string.
+func jsonEscaped(t *testing.T, text string) string {
+	t.Helper()
+	encoded, err := json.Marshal(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded[1 : len(encoded)-1])
 }

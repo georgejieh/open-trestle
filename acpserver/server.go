@@ -13,6 +13,7 @@ import (
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/diagnostics"
+	"github.com/georgejieh/open-trestle/internal/routehint"
 	"io"
 	"math"
 	"path/filepath"
@@ -331,6 +332,7 @@ func (s *Server) runPrompt(prompt *admittedPrompt) []any {
 			case 7:
 				label, omitted = "Final review diagnostics", "Final review diagnostics omitted: ACP message size limit."
 				text += "\n\nFinal review outcome: " + string(set.Outcome()) + ".\nA terminal outcome does not approve the change or prove correctness."
+				text += contextRefusalText(set)
 				if set.AnalysisResultIdentity() == "" {
 					text += "\nDeterministic observations: unknown (evidence unavailable)."
 				} else {
@@ -547,4 +549,17 @@ func baseSideFindingCount(set diagnostics.Set) int {
 		}
 	}
 	return count
+}
+
+// contextRefusalText names the context route refusal a final set records,
+// with the local review's hint for route_context_insufficient.
+func contextRefusalText(set diagnostics.Set) string {
+	refusal, refused := set.ContextRefusal()
+	if !refused {
+		return ""
+	}
+	if refusal.Reason == diagnostics.ContextRefusalRouteContextInsufficient {
+		return "\nContext refusal: " + string(refusal.Reason) + " (" + routehint.RouteContextInsufficient + ").\nHint: " + routehint.ContextShortfall(refusal.RequiredTokens, refusal.EstimatedInputTokens, refusal.MaxOutputTokens, refusal.DeclaredContextTokens)
+	}
+	return "\nContext refusal: " + string(refusal.Reason) + " (" + routehint.NoEligibleRoute + ")."
 }
