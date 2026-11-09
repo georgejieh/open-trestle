@@ -87,3 +87,24 @@ func TestRemovedFilesNeverTakeChangedFilesEvidenceBudget(t *testing.T) {
 		t.Fatalf("a64.txt past the read bound: %d chunks, limit gaps %v", len(chunks["a64.txt"]), skipped)
 	}
 }
+
+// A removed binary file binds no removed text and is charged nothing; it keeps
+// only its whole-entry removed_file gap, as before removed text was bound.
+func TestRemovedBinaryFileBindsNoRemovedText(t *testing.T) {
+	output, change, base, head := deletionAnalysisFixture(t, map[string][]byte{"keep.txt": []byte("keep\n"), "image.bin": []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\n")}, map[string][]byte{"keep.txt": []byte("keep\n")})
+	result, err := ParseResultArtifact(output, change, base, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunks, limits := removedTextByPath(result)
+	if len(chunks["image.bin"]) != 0 || len(limits["image.bin"]) != 0 || result.SchemaVersion() == 7 {
+		t.Fatalf("binary removed file bound %d chunks, %d limit gaps, version %d", len(chunks["image.bin"]), len(limits["image.bin"]), result.SchemaVersion())
+	}
+	whole := false
+	for _, gap := range result.Gaps() {
+		whole = whole || gap.Path() == "image.bin" && gap.Reason() == "removed_file"
+	}
+	if !whole {
+		t.Fatal("binary removed file lost its whole-entry gap")
+	}
+}

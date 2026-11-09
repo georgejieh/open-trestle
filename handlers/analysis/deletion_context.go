@@ -1,8 +1,10 @@
 package analysis
 
 import (
+	"bytes"
 	"context"
 	"time"
+	"unicode/utf8"
 
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
@@ -184,9 +186,10 @@ func (h *Handler) buildDeletionContext(ctx context.Context, scope audit.ReviewSc
 // at its base lines; text is never truncated inside a line. A file is read
 // from the separate removedFileReadBytes bound counted by read; one that would
 // pass that bound, or that finds no evidence budget left, is not read and is
-// one whole-entry removed_lines_limit gap. An empty base file and a file past
-// the evidence item limits bind nothing and are charged nothing, leaving only
-// the entry's whole-entry gap.
+// one whole-entry removed_lines_limit gap. An empty base file, a file whose
+// base content is not text (not UTF-8, or holding a NUL byte), and a file
+// past the evidence item limits bind nothing and are charged nothing, leaving
+// only the entry's whole-entry gap.
 func (h *Handler) buildWholeFileRemovedText(ctx context.Context, scope audit.ReviewScope, at time.Time, base source.Snapshot, entry changehandler.Entry, loaded, read *int, expires *time.Time, removedCount, gapCount int) ([]Item, []Gap, controlplane.RunFailure) {
 	var reference source.FileReference
 	found := false
@@ -215,6 +218,9 @@ func (h *Handler) buildWholeFileRemovedText(ctx context.Context, scope audit.Rev
 	baseFile, err := evidence.NewRepositoryFile(entry.Path(), content)
 	if err != nil || baseFile.Digest() != entry.BaseDigest() || baseFile.SizeBytes() != reference.SizeBytes() {
 		return nil, nil, controlplane.RunFailureInvalidInput
+	}
+	if !utf8.Valid(content) || bytes.IndexByte(content, 0) >= 0 {
+		return nil, nil, 0
 	}
 	var lines []int
 	for offset, value := range content {

@@ -950,8 +950,8 @@ file past it is not read, and its whole removed text is one
 `analysis_removed_lines_limit` omission with no lines.
 This text needs no head neighbor, so a change that only removes files is reviewed
 from it: its review snapshot has no head range and its packet holds only removed
-text. A removed file whose text cannot be supplied (for example binary content)
-leaves nothing to review, and such a change still refuses with
+text. A removed file whose text cannot be supplied (for example binary content,
+which is not bound) leaves nothing to review, and such a change still refuses with
 `all_sources_omitted`, which is not a completed model review or clearance. The
 whole-entry `no_changed_head_lines` gap also remains, without removed text, when
 a file that still has head lines cannot get deletion-point context: the diff is
