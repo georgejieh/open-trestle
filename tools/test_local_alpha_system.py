@@ -630,6 +630,11 @@ class LocalAlphaSystemTest(unittest.TestCase):
         subprocess.run(["git", "init", "-q", root], check=True)
         subprocess.run(["git", "config", "user.name", "test"], cwd=root, check=True)
         subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=root, check=True)
+        # A commit can start detached automatic maintenance, which briefly
+        # creates .git/objects/maintenance.lock and races the object-store
+        # snapshots these tests compare.
+        subprocess.run(["git", "config", "maintenance.auto", "false"], cwd=root, check=True)
+        subprocess.run(["git", "config", "gc.auto", "0"], cwd=root, check=True)
         (root / ".gitignore").write_text("ignored.bin\nweb/node_modules/\n")
         (root / "build.txt").write_bytes(b"build-before")
         browser = root / "web/scripts/daemon-visual-check.mjs"; browser.parent.mkdir(parents=True); browser.write_bytes(b"browser-before")
