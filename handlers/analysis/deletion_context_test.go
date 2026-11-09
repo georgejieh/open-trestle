@@ -81,6 +81,10 @@ func TestHandlerDeletionContextWindowsAndFileEnd(t *testing.T) {
 	if removed[0].StartLine() != 5 || removed[0].EndLine() != 5 || removed[0].Digest() != sliceDigest(lines[4]+"\n") || removed[1].StartLine() != 40 || removed[1].EndLine() != 40 || removed[1].Digest() != sliceDigest(lines[39]+"\n") {
 		t.Fatalf("removed base ranges %d-%d and %d-%d", removed[0].StartLine(), removed[0].EndLine(), removed[1].StartLine(), removed[1].EndLine())
 	}
+	// Each removed range names the head line of its deletion point.
+	if removed[0].HeadLine() != 4 || removed[1].HeadLine() != 38 {
+		t.Fatalf("removed head lines %d and %d", removed[0].HeadLine(), removed[1].HeadLine())
+	}
 }
 
 // Deletions before and after the only line of a one-line head file share one
@@ -98,7 +102,7 @@ func TestHandlerDeletionPointsSharingAMarker(t *testing.T) {
 	if gap := result.Gaps()[0]; gap.Reason() != analysiscodec.DeletionContextReason || gap.StartLine() != 1 || gap.EndLine() != 1 {
 		t.Fatalf("shared deletion point %s %d-%d", gap.Reason(), gap.StartLine(), gap.EndLine())
 	}
-	if removed := result.RemovedLines(); removed[0].StartLine() != 1 || removed[0].EndLine() != 1 || removed[1].StartLine() != 3 || removed[1].EndLine() != 3 {
+	if removed := result.RemovedLines(); removed[0].StartLine() != 1 || removed[0].EndLine() != 1 || removed[1].StartLine() != 3 || removed[1].EndLine() != 3 || removed[0].HeadLine() != 1 || removed[1].HeadLine() != 1 {
 		t.Fatalf("removed base ranges %d-%d and %d-%d", removed[0].StartLine(), removed[0].EndLine(), removed[1].StartLine(), removed[1].EndLine())
 	}
 }

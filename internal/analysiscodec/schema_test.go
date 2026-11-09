@@ -270,7 +270,19 @@ func TestDeterministicEvidenceV7SchemaDescribesRemovedLines(t *testing.T) {
 	v6, v7 := deterministicEvidenceSchema(t, schemas, 6), deterministicEvidenceSchema(t, schemas, 7)
 	properties := v7["properties"].(map[string]any)
 	removed := properties["removed_lines"].(map[string]any)
-	if removed["description"] == nil || !reflect.DeepEqual(schemaWithoutDescription(removed), properties["items"]) {
+	// A removed-lines record is an item record plus an optional head_line.
+	encodedRemoved, _ := json.Marshal(schemaWithoutDescription(removed))
+	var shared map[string]any
+	if err := json.Unmarshal(encodedRemoved, &shared); err != nil {
+		t.Fatal(err)
+	}
+	record := shared["items"].(map[string]any)["properties"].(map[string]any)
+	headLine, ok := record["head_line"].(map[string]any)
+	if !ok || headLine["minimum"] != float64(1) || containsSchemaName(schemaStrings(shared["items"].(map[string]any)["required"]), "head_line") {
+		t.Fatal("v7 removed_lines records do not declare an optional head_line")
+	}
+	delete(record, "head_line")
+	if removed["description"] == nil || !reflect.DeepEqual(shared, properties["items"]) {
 		t.Fatal("v7 removed_lines records do not share the item record shape")
 	}
 	required := schemaStrings(v7["required"])
@@ -319,4 +331,13 @@ func schemaWithoutDescription(schema map[string]any) map[string]any {
 		}
 	}
 	return copied
+}
+
+func containsSchemaName(values []string, name string) bool {
+	for _, value := range values {
+		if value == name {
+			return true
+		}
+	}
+	return false
 }

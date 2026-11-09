@@ -60,7 +60,7 @@ func removedLinesAnalysis(t *testing.T, limit bool) (artifact.Artifact, artifact
 	if limit {
 		gaps = append(gaps, NewGap(entry, 1, 1, RemovedLinesLimitReason))
 	} else {
-		value, err := NewRemovedLinesItem(entry, baseBinding)
+		value, err := NewRemovedLinesItem(entry, baseBinding, 1)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -144,6 +144,9 @@ func TestRemovedLinesRejectTampering(t *testing.T) {
 		{"removed text overlapping a limit gap", func(r *Result) { r.gaps = append(r.gaps, NewGap(entry, 1, 1, RemovedLinesLimitReason)) }},
 		{"duplicate removed text", func(r *Result) { r.removed = append(r.removed, r.removed[0]) }},
 		{"removed text beside whole-entry gap", func(r *Result) { r.gaps = append(r.gaps, NewGap(entry, 0, 0, "no_changed_head_lines")) }},
+		{"removed text without a head line", func(r *Result) { r.removed[0].headLine = 0 }},
+		{"removed text naming another deletion point", func(r *Result) { r.removed[0].headLine = 2 }},
+		{"head line on deletion-point context", func(r *Result) { r.items[0].headLine = 1 }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rejectResult(t, output, changeArtifact, base, head, canonicalMutation(t, result, tc.mutate))
@@ -169,7 +172,7 @@ func TestRemovedLinesRejectTampering(t *testing.T) {
 		sourceRange, _ := evidence.NewSourceRange("a.txt", 1, 1)
 		binding, _ := evidence.BindSourceSlice(file, content, sourceRange, content)
 		return binding
-	}()); err == nil {
+	}(), 1); err == nil {
 		t.Fatal("removed-lines item bound to the head file")
 	}
 	// Version 6 bytes stay readable and never gain removed_lines.

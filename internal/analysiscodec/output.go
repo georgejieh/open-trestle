@@ -30,7 +30,16 @@ var (
 type Item struct {
 	evidenceID, bindingIdentity, changeEntryIdentity, changeExecutionIdentity, path, digest, fileIdentity, fileDigest string
 	startLine, endLine, sliceBytes                                                                                    int
+	// headLine is set only on the removed-lines record of a deletion point:
+	// the head line beside which its base lines were removed, which is the
+	// start line of that point's deleted_lines gap. It is 0 on every other
+	// record.
+	headLine int
 }
+
+// HeadLine returns, for the removed-lines record of a deletion point, the head
+// line beside which its base lines were removed; 0 otherwise.
+func (i Item) HeadLine() int { return i.headLine }
 
 func (i Item) EvidenceID() string          { return i.evidenceID }
 func (i Item) BindingIdentity() string     { return i.bindingIdentity }
@@ -90,15 +99,20 @@ func NewDeletionContextItem(entry changecodec.Entry, binding evidence.SourceSlic
 
 // NewRemovedLinesItem binds the exact base lines removed at one deletion point
 // of a deletion-only entry. Its range and file are the base range and base file,
-// not head lines, so it is never a changed range or an anchor. It is valid only
-// in a version 7 result together with deletion-point context for the entry.
-func NewRemovedLinesItem(entry changecodec.Entry, binding evidence.SourceSliceBinding) (Item, error) {
+// not head lines, so it is never a changed range. headLine is the head line
+// beside which the lines were removed: the start line of the point's
+// deleted_lines gap. It is valid only in a version 7 result together with
+// deletion-point context for the entry.
+func NewRemovedLinesItem(entry changecodec.Entry, binding evidence.SourceSliceBinding, headLine int) (Item, error) {
 	rangeValue := binding.SourceRange()
-	if binding.Validate() != nil || !deletionOnlyEntry(entry) || rangeValue.Path() != entry.Path() || binding.RepositoryFileDigest() != entry.BaseDigest() {
+	if binding.Validate() != nil || !deletionOnlyEntry(entry) || rangeValue.Path() != entry.Path() || binding.RepositoryFileDigest() != entry.BaseDigest() || headLine < 1 || headLine > MaxLine {
 		return Item{}, ErrInvalidResult
 	}
-	return Item{evidenceID: binding.Identity(), bindingIdentity: binding.Identity(), changeEntryIdentity: entry.Identity(), changeExecutionIdentity: entry.ExecutionIdentity(), path: entry.Path(), startLine: rangeValue.StartLine(), endLine: rangeValue.EndLine(), digest: binding.SliceDigest(), fileIdentity: binding.RepositoryFileIdentity(), fileDigest: binding.RepositoryFileDigest(), sliceBytes: binding.SliceBytes()}, nil
+	return Item{evidenceID: binding.Identity(), bindingIdentity: binding.Identity(), changeEntryIdentity: entry.Identity(), changeExecutionIdentity: entry.ExecutionIdentity(), path: entry.Path(), startLine: rangeValue.StartLine(), endLine: rangeValue.EndLine(), digest: binding.SliceDigest(), fileIdentity: binding.RepositoryFileIdentity(), fileDigest: binding.RepositoryFileDigest(), sliceBytes: binding.SliceBytes(), headLine: headLine}, nil
 }
+
+// MaxLine bounds every recorded line number.
+const MaxLine = 1_000_000
 
 func deletionOnlyEntry(entry changecodec.Entry) bool {
 	return entry.Reason() == "no_changed_head_lines" && entry.Kind() == "modified" && entry.Status() == "unsupported" && len(entry.Ranges()) == 0
@@ -217,6 +231,8 @@ type itemWire struct {
 	FileIdentity            string `json:"file_identity"`
 	FileDigest              string `json:"file_digest"`
 	SliceBytes              int    `json:"slice_bytes"`
+	// HeadLine appears only on the removed-lines record of a deletion point.
+	HeadLine int `json:"head_line,omitempty"`
 }
 type gapWire struct {
 	ChangeEntryIdentity     string `json:"change_entry_identity"`
@@ -427,6 +443,7 @@ func (r Result) validate(requireArtifact bool, change changecodec.Result) error 
 	covered := make(map[string]int, len(r.items)+len(r.gaps))
 	wholeEntryGap := make(map[string]bool)
 	deletionItems, deletionGaps := make(map[string]int), make(map[string]int)
+	deletionPoints := make(map[string]bool)
 	for _, item := range r.items {
 		key := itemKey(item)
 		if key <= previous || !validItem(item, entryByIdentity, r.schemaVersion) {
@@ -471,6 +488,7 @@ func (r Result) validate(requireArtifact bool, change changecodec.Result) error 
 		}
 		if gap.reason == DeletionContextReason {
 			deletionGaps[gap.changeEntryIdentity]++
+			deletionPoints[coverageKey(gap.changeEntryIdentity, gap.startLine, 0)] = true
 		}
 		if gap.startLine == 0 {
 			wholeEntryGap[gap.changeEntryIdentity] = true
@@ -486,6 +504,13 @@ func (r Result) validate(requireArtifact bool, change changecodec.Result) error 
 	}
 	for identity, ranges := range removedText {
 		if deletionItems[identity] == 0 || deletionGaps[identity] == 0 || !disjointBaseRanges(ranges) {
+			return ErrInvalidResult
+		}
+	}
+	// The removed text of a deletion point names the head line of that
+	// point's deleted_lines gap.
+	for _, item := range r.removed {
+		if !deletionPoints[coverageKey(item.changeEntryIdentity, item.headLine, 0)] {
 			return ErrInvalidResult
 		}
 	}
@@ -526,7 +551,7 @@ func (r Result) validate(requireArtifact bool, change changecodec.Result) error 
 }
 func validItem(item Item, entries map[string]changecodec.Entry, schemaVersion int) bool {
 	entry, ok := entries[item.changeEntryIdentity]
-	if !ok || entry.ExecutionIdentity() != item.changeExecutionIdentity || entry.Path() != item.path || entry.HeadIdentity() != item.fileIdentity || entry.HeadDigest() != item.fileDigest || item.evidenceID != item.bindingIdentity || !validDigest(item.evidenceID) || !validDigest(item.digest) || item.sliceBytes <= 0 || item.sliceBytes > 1<<20 {
+	if !ok || entry.ExecutionIdentity() != item.changeExecutionIdentity || entry.Path() != item.path || entry.HeadIdentity() != item.fileIdentity || entry.HeadDigest() != item.fileDigest || item.evidenceID != item.bindingIdentity || !validDigest(item.evidenceID) || !validDigest(item.digest) || item.sliceBytes <= 0 || item.sliceBytes > 1<<20 || item.headLine != 0 {
 		return false
 	}
 	sourceRange, err := evidence.NewSourceRange(item.path, item.startLine, item.endLine)
@@ -545,7 +570,7 @@ func validItem(item Item, entries map[string]changecodec.Entry, schemaVersion in
 // its deletion-only entry. The record carries base lines of the base file.
 func validRemovedItem(item Item, entries map[string]changecodec.Entry) bool {
 	entry, ok := entries[item.changeEntryIdentity]
-	if !ok || !deletionOnlyEntry(entry) || entry.ExecutionIdentity() != item.changeExecutionIdentity || entry.Path() != item.path || entry.BaseDigest() != item.fileDigest || item.evidenceID != item.bindingIdentity || !validDigest(item.evidenceID) || !validDigest(item.digest) || !validDigest(item.fileIdentity) || item.sliceBytes <= 0 || item.sliceBytes > 1<<20 {
+	if !ok || !deletionOnlyEntry(entry) || entry.ExecutionIdentity() != item.changeExecutionIdentity || entry.Path() != item.path || entry.BaseDigest() != item.fileDigest || item.evidenceID != item.bindingIdentity || !validDigest(item.evidenceID) || !validDigest(item.digest) || !validDigest(item.fileIdentity) || item.sliceBytes <= 0 || item.sliceBytes > 1<<20 || item.headLine < 1 || item.headLine > MaxLine {
 		return false
 	}
 	sourceRange, err := evidence.NewSourceRange(item.path, item.startLine, item.endLine)
@@ -712,14 +737,14 @@ func ParseResultArtifactWithChange(value, changeArtifact artifact.Artifact, chan
 func itemWireValues(values []Item) []itemWire {
 	items := make([]itemWire, len(values))
 	for i, v := range values {
-		items[i] = itemWire{EvidenceID: v.evidenceID, BindingIdentity: v.bindingIdentity, ChangeEntryIdentity: v.changeEntryIdentity, ChangeExecutionIdentity: v.changeExecutionIdentity, Path: v.path, StartLine: v.startLine, EndLine: v.endLine, Digest: v.digest, FileIdentity: v.fileIdentity, FileDigest: v.fileDigest, SliceBytes: v.sliceBytes}
+		items[i] = itemWire{EvidenceID: v.evidenceID, BindingIdentity: v.bindingIdentity, ChangeEntryIdentity: v.changeEntryIdentity, ChangeExecutionIdentity: v.changeExecutionIdentity, Path: v.path, StartLine: v.startLine, EndLine: v.endLine, Digest: v.digest, FileIdentity: v.fileIdentity, FileDigest: v.fileDigest, SliceBytes: v.sliceBytes, HeadLine: v.headLine}
 	}
 	return items
 }
 func itemValues(values []itemWire) []Item {
 	items := make([]Item, len(values))
 	for i, v := range values {
-		items[i] = Item{evidenceID: v.EvidenceID, bindingIdentity: v.BindingIdentity, changeEntryIdentity: v.ChangeEntryIdentity, changeExecutionIdentity: v.ChangeExecutionIdentity, path: v.Path, startLine: v.StartLine, endLine: v.EndLine, digest: v.Digest, fileIdentity: v.FileIdentity, fileDigest: v.FileDigest, sliceBytes: v.SliceBytes}
+		items[i] = Item{evidenceID: v.EvidenceID, bindingIdentity: v.BindingIdentity, changeEntryIdentity: v.ChangeEntryIdentity, changeExecutionIdentity: v.ChangeExecutionIdentity, path: v.Path, startLine: v.StartLine, endLine: v.EndLine, digest: v.Digest, fileIdentity: v.FileIdentity, fileDigest: v.FileDigest, sliceBytes: v.SliceBytes, headLine: v.HeadLine}
 	}
 	return items
 }

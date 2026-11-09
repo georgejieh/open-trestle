@@ -78,14 +78,15 @@ func (h *Handler) buildDeletionContext(ctx context.Context, scope audit.ReviewSc
 	}
 	headLines := lineMap.HeadLineCount()
 	type window struct{ start, end int }
-	var windows, markers, removedRanges []window
+	type removal struct{ start, end, headLine int }
+	var windows, markers []window
+	var removedRanges []removal
 	for _, hunk := range lineMap.Hunks() {
 		if hunk.Kind() != evidence.HunkKindDeletion || hunk.BaseLineCount() < 1 {
 			// A deletion-only entry has no changed head lines, so any other
 			// hunk means the diff disagrees with the change model.
 			return deletionContext{}, false, controlplane.RunFailureInvalidInput
 		}
-		removedRanges = append(removedRanges, window{hunk.BaseStartLine(), hunk.BaseStartLine() + hunk.BaseLineCount() - 1})
 		// The cursor is the head line that follows the removed base lines; it
 		// is headLines+1 for a deletion at the end of the file.
 		cursor := hunk.HeadStartLine()
@@ -93,6 +94,9 @@ func (h *Handler) buildDeletionContext(ctx context.Context, scope audit.ReviewSc
 		if before < 1 {
 			before = after
 		}
+		// The removed text names its deletion point by the marker's first
+		// head line.
+		removedRanges = append(removedRanges, removal{hunk.BaseStartLine(), hunk.BaseStartLine() + hunk.BaseLineCount() - 1, before})
 		if after > headLines {
 			after = before
 		}
@@ -155,7 +159,7 @@ func (h *Handler) buildDeletionContext(ctx context.Context, scope audit.ReviewSc
 		if err != nil {
 			return deletionContext{}, false, controlplane.RunFailureInvalidInput
 		}
-		item, err := analysiscodec.NewRemovedLinesItem(entry, binding)
+		item, err := analysiscodec.NewRemovedLinesItem(entry, binding, value.headLine)
 		if err != nil {
 			return deletionContext{}, false, controlplane.RunFailureInternal
 		}

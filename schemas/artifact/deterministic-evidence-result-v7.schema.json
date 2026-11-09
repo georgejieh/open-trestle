@@ -289,10 +289,16 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 1048576
+          },
+          "head_line": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000,
+            "description": "The head line beside which the base lines of a deletion point were removed: the start line of that point's deleted_lines gap. It is head-line evidence for placing a finding about the removal; start_line and end_line stay base lines."
           }
         }
       },
-      "description": "Removed base lines of deletion points, bound to the exact base file. start_line and end_line are base lines, file_identity and file_digest name the base file, and a record is never a changed head range or a finding anchor."
+      "description": "Removed base lines of deletion points, bound to the exact base file. start_line and end_line are base lines, file_identity and file_digest name the base file, and a record is never a changed head range. head_line names the deletion point's head line."
     },
     "gaps": {
       "type": "array",
