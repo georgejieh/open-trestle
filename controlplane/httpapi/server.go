@@ -23,6 +23,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/apilimit"
 	"github.com/georgejieh/open-trestle/runtimeadmin"
 	"github.com/georgejieh/open-trestle/runtimecatalog"
+	"github.com/georgejieh/open-trestle/webhook"
 )
 
 const (
@@ -514,6 +515,10 @@ func (s *Server) submitRun(ctx context.Context, writer http.ResponseWriter, requ
 				writeForbidden(writer, requestID)
 				return
 			}
+			if reservedRunID(fullIntent.Scope()) {
+				writeReservedRunID(writer, requestID)
+				return
+			}
 			state, operationErr := s.localFullAdmitter.Admit(ctx, fullIntent, at)
 			if operationErr != nil {
 				s.writeLocalFullReviewAdmissionError(writer, requestID, operationErr)
@@ -534,6 +539,10 @@ func (s *Server) submitRun(ctx context.Context, writer http.ResponseWriter, requ
 		}
 		if !principalAllowsScope(principal, intent.Scope()) {
 			writeForbidden(writer, requestID)
+			return
+		}
+		if reservedRunID(intent.Scope()) {
+			writeReservedRunID(writer, requestID)
 			return
 		}
 		state, operationErr := s.localReviewAdmitter.Admit(ctx, intent, at)
@@ -557,6 +566,10 @@ func (s *Server) submitRun(ctx context.Context, writer http.ResponseWriter, requ
 		writeForbidden(writer, requestID)
 		return
 	}
+	if reservedRunID(plan.Scope()) {
+		writeReservedRunID(writer, requestID)
+		return
+	}
 	state, operationErr := s.coordinator.Open(ctx, plan, at)
 	if operationErr == nil && s.notificationScheduler != nil {
 		state, _, operationErr = s.notificationScheduler.ReconcileRun(ctx, plan.Scope(), at)
@@ -573,6 +586,16 @@ func (s *Server) submitRun(ctx context.Context, writer http.ResponseWriter, requ
 		return
 	}
 	writeAPIReceipt(writer, http.StatusAccepted, requestID, receipt)
+}
+
+// reservedRunID reports a run ID in the webhook delivery namespace. Only
+// webhook intake opens those runs, so a caller cannot occupy a delivery's run
+// scope before intake opens it.
+func reservedRunID(scope audit.ReviewScope) bool {
+	return strings.HasPrefix(scope.ReviewRunID(), webhook.DeliveryRunIDPrefix)
+}
+func writeReservedRunID(writer http.ResponseWriter, requestID string) {
+	writeAPIError(writer, http.StatusBadRequest, requestID, "invalid_request", "Run IDs that begin with webhook- are reserved for webhook intake.")
 }
 func (s *Server) writeLocalReviewAdmissionError(writer http.ResponseWriter, requestID string, err error) {
 	switch {

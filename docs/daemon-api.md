@@ -91,7 +91,7 @@ Budgeted artifact erasure adds no administration or operator erasure route. The 
 
 Run endpoints:
 
-- `POST /api/v1/runs` accepts a canonical `ReviewRunPlan`.
+- `POST /api/v1/runs` accepts a canonical `ReviewRunPlan`. Run IDs that begin with `webhook-` are reserved for webhook intake: a plan or local review intent naming one is `400 invalid_request` after the scope is authorized, so a caller cannot open a delivery's run scope before intake does.
 - `GET /api/v1/tenants/{tenant}/repositories/{repository}/runs/{run}` returns a `ReviewRunReceipt`.
 - `GET .../runs/{run}/progress` requires `run_read` and returns read-only evidence counts bound to an unchanged canonical receipt.
 - `GET .../runs/{run}/refusal` requires `run_read` and returns the content-free refusal intake recorded for the webhook delivery that owns the run scope (`webhook-{deduplication key}`) instead of opening its run, as `open-trestle/delivery-refusal-response` v1 with the `open-trestle/webhook-delivery-refusal` record and its reason token. It is `404 not_found` when no refusal is recorded or the daemon has no webhook planner, and `503 unavailable` when the inbox cannot be read. The daemon answers it from its inbox for the planner identity it admits deliveries with. `trestle runs refusal` prints the record, and `trestle runs status` names the reason when no run exists.

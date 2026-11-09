@@ -277,12 +277,16 @@ func isNilArtifactStore(store artifact.Store) bool {
 	return value.Kind() == reflect.Ptr && value.IsNil()
 }
 
+// DeliveryRunIDPrefix starts every run ID webhook intake opens. Run IDs in
+// this namespace are reserved for intake; callers cannot submit them.
+const DeliveryRunIDPrefix = "webhook-"
+
 // ReviewRunIDForDelivery returns the sole run ID permitted for one forge delivery.
 func ReviewRunIDForDelivery(delivery VerifiedDelivery) string {
 	if delivery.Validate() != nil {
 		return ""
 	}
-	return "webhook-" + delivery.DeduplicationKey()
+	return DeliveryRunIDPrefix + delivery.DeduplicationKey()
 }
 
 // RunAdmissionReceipt binds durable webhook acceptance to its deterministic run plan.
