@@ -178,11 +178,56 @@ func (w *initWizard) writtenNote() string {
 	return "Nothing was written. Run `trestle init` again to start over."
 }
 
+// initFlagValues names the value of each string flag in the help; any other
+// string flag takes VALUE.
+var initFlagValues = map[string]string{
+	"directory": "PATH", "base": "REF", "head": "REF",
+	"provider": "openrouter-zdr|ollama-cloud|opencode-go|local|ollama-signin",
+	"endpoint": "URL", "verification-endpoint": "URL",
+	"transport":        "openai_chat_completions|openai_responses",
+	"generation-model": "ID", "verification-model": "ID",
+	"credential-env": "OPEN_TRESTLE_PROVIDER_NAME",
+	"owner":          "LABEL", "tenant": "LABEL", "repository": "LABEL",
+	"repository-authority": "LABEL", "repository-namespace": "LABEL", "repository-name": "LABEL",
+	"context-tokens": "N", "output-tokens": "N", "max-output-tokens": "N",
+	"input-micro-usd-per-million-tokens": "N", "output-micro-usd-per-million-tokens": "N", "max-cost-micro-usd": "N",
+	"generation-provider-slug": "SLUG", "verification-provider-slug": "SLUG",
+	"evidence-retrieved-at": "UTC_TIME", "reviewed-at": "UTC_TIME", "valid-from": "UTC_TIME", "valid-until": "UTC_TIME",
+}
+
+// writeInitUsage lists every flag the wizard accepts, from the same tables the
+// flag parser reads.
 func writeInitUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: trestle init [--provider openrouter-zdr|ollama-cloud|opencode-go|local|ollama-signin] [--base REF] [--head REF] [--directory PATH]")
-	fmt.Fprintln(w, "                    [--generation-model ID] [--verification-model ID] [--credential-env OPEN_TRESTLE_PROVIDER_NAME]")
-	fmt.Fprintln(w, "                    [--no-input] [--run-review] [per-answer flags, see docs/getting-started.md]")
+	fmt.Fprintln(w, "usage: trestle init [flags]")
 	fmt.Fprintln(w, "       guided first setup and first review for the Git repository in the current directory")
+	fmt.Fprintln(w, "flags (each at most once; docs/getting-started.md#non-interactive-use explains them):")
+	items := []string{}
+	for _, name := range initStringFlags {
+		value, ok := initFlagValues[name]
+		if !ok {
+			value = "VALUE"
+			if strings.HasSuffix(name, "-evidence") {
+				value = "HTTPS_URL,SHA256"
+			}
+		}
+		items = append(items, "--"+name+" "+value)
+	}
+	for _, name := range initBoolFlags {
+		items = append(items, "--"+name)
+	}
+	const indent, width = "  ", 100
+	line := indent
+	for _, item := range items {
+		if line != indent && len(line)+2+len(item) > width {
+			fmt.Fprintln(w, line)
+			line = indent
+		}
+		if line != indent {
+			line += "  "
+		}
+		line += item
+	}
+	fmt.Fprintln(w, line)
 }
 
 func (w *initWizard) parseFlags(args []string) (int, bool) {
