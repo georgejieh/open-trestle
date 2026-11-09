@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/url"
 	"reflect"
@@ -80,6 +81,36 @@ type Model struct {
 	Selector string          `json:"selector"`
 	Metadata json.RawMessage `json:"metadata"`
 }
+
+// MarshalJSON escapes only quotation marks, reverse solidi and control
+// characters in the selector, so a stored selector is never longer than its
+// encoding in the model list it came from. Metadata is compacted unchanged.
+func (m Model) MarshalJSON() ([]byte, error) {
+	if !utf8.ValidString(m.Selector) {
+		return nil, ErrInvalid
+	}
+	encoded := append(make([]byte, 0, len(m.Selector)+len(m.Metadata)+32), `{"selector":"`...)
+	for i := 0; i < len(m.Selector); i++ {
+		switch c := m.Selector[i]; {
+		case c == '"' || c == '\\':
+			encoded = append(encoded, '\\', c)
+		case c < 0x20:
+			encoded = append(encoded, fmt.Sprintf(`\u%04x`, c)...)
+		default:
+			encoded = append(encoded, c)
+		}
+	}
+	encoded = append(encoded, `","metadata":`...)
+	if m.Metadata == nil {
+		return append(encoded, `null}`...), nil
+	}
+	var metadata bytes.Buffer
+	if json.Compact(&metadata, m.Metadata) != nil {
+		return nil, ErrInvalid
+	}
+	return append(append(encoded, metadata.Bytes()...), '}'), nil
+}
+
 type Snapshot struct {
 	Source         Source  `json:"source"`
 	RetrievedAt    string  `json:"retrieved_at,omitempty"`
@@ -289,19 +320,20 @@ func parseModels(kind string, data []byte) ([]Model, error) {
 	if !ok || len(raw) == 0 || raw[0] != '[' {
 		return nil, ErrInvalid
 	}
-	var rows []map[string]json.RawMessage
+	var rows []json.RawMessage
 	if json.Unmarshal(raw, &rows) != nil || len(rows) > maxModels {
 		return nil, ErrInvalid
 	}
 	models := make([]Model, 0, len(rows))
 	seen := map[string]bool{}
 	for _, row := range rows {
+		var fields map[string]json.RawMessage
 		var name string
-		if json.Unmarshal(row[selector], &name) != nil || !selectorValid(name) || seen[name] {
+		if json.Unmarshal(row, &fields) != nil || fields == nil || json.Unmarshal(fields[selector], &name) != nil || !selectorValid(name) || seen[name] {
 			return nil, ErrInvalid
 		}
 		seen[name] = true
-		metadata, err := json.Marshal(row)
+		metadata, err := modelMetadata(row, selector)
 		if err != nil {
 			return nil, ErrInvalid
 		}
@@ -310,6 +342,63 @@ func parseModels(kind string, data []byte) ([]Model, error) {
 	sort.Slice(models, func(i, j int) bool { return models[i].Selector < models[j].Selector })
 	return models, nil
 }
+
+// modelMetadata returns the rest of one model object: its exact members in
+// list order, compacted, without the selector member that Model already
+// stores. It never re-encodes a key or value, so it is never longer than the
+// object in the list.
+func modelMetadata(row json.RawMessage, selector string) (json.RawMessage, error) {
+	var compact bytes.Buffer
+	if json.Compact(&compact, row) != nil {
+		return nil, ErrInvalid
+	}
+	data := compact.Bytes()
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
+		return nil, ErrInvalid
+	}
+	metadata := []byte{'{'}
+	for decoder.More() {
+		start := decoder.InputOffset()
+		if data[start] == ',' {
+			start++
+		}
+		key, err := decoder.Token()
+		name, ok := key.(string)
+		var value json.RawMessage
+		if err != nil || !ok || decoder.Decode(&value) != nil {
+			return nil, ErrInvalid
+		}
+		if name == selector {
+			continue
+		}
+		if len(metadata) > 1 {
+			metadata = append(metadata, ',')
+		}
+		metadata = append(metadata, data[start:decoder.InputOffset()]...)
+	}
+	if token, err := decoder.Token(); err != nil || token != json.Delim('}') {
+		return nil, ErrInvalid
+	}
+	return append(metadata, '}'), nil
+}
+
+// encodeDocument writes a catalog or proposal as compact JSON without HTML
+// escaping, plus a trailing newline. With modelMetadata and Model.MarshalJSON
+// each stored model is at most 20 bytes longer than its object in the model
+// list, so one list within MaxResponseBytes, at most maxModels models, always
+// fits maxFileBytes. Earlier catalogs and proposals were indented; they still
+// decode.
+func encodeDocument(value any) ([]byte, error) {
+	var encoded bytes.Buffer
+	encoder := json.NewEncoder(&encoded)
+	encoder.SetEscapeHTML(false)
+	if encoder.Encode(value) != nil {
+		return nil, ErrInvalid
+	}
+	return encoded.Bytes(), nil
+}
+
 func validateManifest(manifest Manifest, allowRemote bool) error {
 	if (manifest.SchemaVersion != 1 && manifest.SchemaVersion != 2) || manifest.Sources == nil || len(manifest.Sources) == 0 || len(manifest.Sources) > maxSources {
 		return ErrInvalid
@@ -362,9 +451,15 @@ func validateCatalog(catalog Catalog) error {
 			if snapshot.Source.Kind == "ollama_tags" {
 				selector = "name"
 			}
+			// Metadata stores the rest of the model object. Catalogs written
+			// before that stored the whole object, so a selector member must
+			// still name the model.
 			var row map[string]json.RawMessage
 			var name string
-			if decode(model.Metadata, &row, false) != nil || json.Unmarshal(row[selector], &name) != nil || name != model.Selector {
+			if decode(model.Metadata, &row, false) != nil || row == nil {
+				return ErrInvalid
+			}
+			if value, present := row[selector]; present && (json.Unmarshal(value, &name) != nil || name != model.Selector) {
 				return ErrInvalid
 			}
 		}
@@ -404,10 +499,34 @@ func snapshotEqual(a, b Snapshot) bool {
 	return true
 }
 
+// modelMetadataEqual compares stored metadata without the selector member, which
+// catalogs written before modelMetadata kept inside it.
+func modelMetadataEqual(kind string, a, b json.RawMessage) bool {
+	selector := "id"
+	if kind == "ollama_tags" {
+		selector = "name"
+	}
+	rest := func(metadata json.RawMessage) (map[string]any, bool) {
+		var fields map[string]any
+		decoder := json.NewDecoder(bytes.NewReader(metadata))
+		decoder.UseNumber()
+		if decoder.Decode(&fields) != nil {
+			return nil, false
+		}
+		delete(fields, selector)
+		return fields, true
+	}
+	left, leftOK := rest(a)
+	right, rightOK := rest(b)
+	return leftOK && rightOK && reflect.DeepEqual(left, right)
+}
+
 func catalogDiff(before, after Catalog) Diff {
+	kinds := map[string]string{}
 	flatten := func(c Catalog) map[string]Entry {
 		entries := map[string]Entry{}
 		for _, s := range c.Sources {
+			kinds[s.Source.ID] = s.Source.Kind
 			for _, m := range s.Models {
 				entries[s.Source.ID+"\x00"+m.Selector] = Entry{s.Source.ID, m.Selector, m.Metadata}
 			}
@@ -437,7 +556,7 @@ func catalogDiff(before, after Catalog) Diff {
 		case !bok:
 			diff.Removed = append(diff.Removed, a)
 		default:
-			if !metadataEqual(a.Metadata, b.Metadata) {
+			if !modelMetadataEqual(kinds[a.SourceID], a.Metadata, b.Metadata) {
 				diff.Changed = append(diff.Changed, Change{a, b})
 			}
 		}
@@ -511,11 +630,10 @@ func RefreshWithCredentials(ctx context.Context, sourcesPath, currentPath, propo
 		return Review{}, ErrConflict
 	}
 	proposal := Proposal{1, Digest(authority), currentDigest, next}
-	encoded, err := json.MarshalIndent(proposal, "", "  ")
+	encoded, err := encodeDocument(proposal)
 	if err != nil {
 		return Review{}, ErrInvalid
 	}
-	encoded = append(encoded, '\n')
 	var serialized Proposal
 	if decode(encoded, &serialized, true) != nil || validateCatalog(serialized.Catalog) != nil {
 		return Review{}, ErrInvalid
@@ -594,11 +712,10 @@ func Apply(ctx context.Context, sourcesPath, currentPath, proposalPath, expected
 			}
 		}
 	}
-	encoded, err := json.MarshalIndent(proposal.Catalog, "", "  ")
+	encoded, err := encodeDocument(proposal.Catalog)
 	if err != nil {
 		return ErrInvalid
 	}
-	encoded = append(encoded, '\n')
 	var serialized Catalog
 	if decode(encoded, &serialized, true) != nil || validateCatalog(serialized) != nil {
 		return ErrInvalid

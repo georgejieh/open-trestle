@@ -92,12 +92,18 @@ func TestSelectorsRejectUnpairedSurrogatesAndPreserveUnicode(t *testing.T) {
 					if len(models) != 1 || models[0].Selector != test.want {
 						t.Fatalf("selector changed: %+v", models)
 					}
+					// The selector is stored once, as the model's selector,
+					// and the stored encoding keeps it unescaped.
 					var metadata map[string]string
 					if err := json.Unmarshal(models[0].Metadata, &metadata); err != nil {
 						t.Fatal(err)
 					}
-					if metadata[selector] != test.want {
-						t.Fatalf("metadata selector changed: %q", metadata[selector])
+					if _, present := metadata[selector]; present || len(metadata) != 0 {
+						t.Fatalf("metadata kept the selector: %s", models[0].Metadata)
+					}
+					stored, err := encodeDocument(models[0])
+					if err != nil || !strings.Contains(string(stored), `"selector":"`+test.want+`"`) {
+						t.Fatalf("stored selector changed: %s", stored)
 					}
 				})
 			}
@@ -178,11 +184,11 @@ func TestRefreshCompleteProposalExactByteBoundary(t *testing.T) {
 				failedCatalog.Failures = append(failedCatalog.Failures, Failure{SourceID: source.ID, Code: "metadata_unavailable"})
 			}
 			candidate := Proposal{SchemaVersion: 1, ManifestDigest: Digest(mustRead(t, sources)), CurrentDigest: strings.Repeat("a", 64), Catalog: failedCatalog}
-			encoded, err := json.MarshalIndent(candidate, "", "  ")
+			encoded, err := encodeDocument(candidate)
 			if err != nil {
 				t.Fatal(err)
 			}
-			paddingBytes := test.finalBytes - 1 - len(encoded)
+			paddingBytes := test.finalBytes - len(encoded)
 			if paddingBytes < 0 {
 				t.Fatal("fixture overhead exceeds target")
 			}
@@ -194,11 +200,10 @@ func TestRefreshCompleteProposalExactByteBoundary(t *testing.T) {
 				t.Fatal("fixture metadata exceeds per-provider response bound")
 			}
 			catalog.Sources[8].Models[0].Metadata = metadata
-			currentBytes, err := json.MarshalIndent(catalog, "", "  ")
+			currentBytes, err := encodeDocument(catalog)
 			if err != nil {
 				t.Fatal(err)
 			}
-			currentBytes = append(currentBytes, '\n')
 			if len(currentBytes) > maxFileBytes {
 				t.Fatal("fixture current catalog exceeds read bound")
 			}
@@ -206,12 +211,12 @@ func TestRefreshCompleteProposalExactByteBoundary(t *testing.T) {
 				t.Fatal(err)
 			}
 			candidate.CurrentDigest = Digest(currentBytes)
-			encoded, err = json.MarshalIndent(candidate, "", "  ")
+			encoded, err = encodeDocument(candidate)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(encoded)+1 != test.finalBytes {
-				t.Fatalf("fixture boundary drift: got %d want %d", len(encoded)+1, test.finalBytes)
+			if len(encoded) != test.finalBytes {
+				t.Fatalf("fixture boundary drift: got %d want %d", len(encoded), test.finalBytes)
 			}
 			review, err := Refresh(context.Background(), sources, current, proposal, false)
 			if test.reject {

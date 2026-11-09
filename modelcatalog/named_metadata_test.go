@@ -48,15 +48,24 @@ func TestNamedMetadataRefreshApplyAndLastKnownGood(t *testing.T) {
 			if err := json.Unmarshal(envelope[test.envelope], &rows); err != nil || len(rows) != 1 {
 				t.Fatalf("fixture must have one representative row: %v", err)
 			}
-			originalMetadata, err := json.Marshal(rows[0])
-			if err != nil {
-				t.Fatal(err)
+			// Stored metadata is the rest of the model object; the selector is
+			// stored once, beside it.
+			rest := func(row map[string]json.RawMessage) json.RawMessage {
+				t.Helper()
+				fields := map[string]json.RawMessage{}
+				for key, value := range row {
+					fields[key] = value
+				}
+				delete(fields, map[string]string{"openai_models": "id", "ollama_tags": "name"}[test.kind])
+				encoded, err := json.Marshal(fields)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return encoded
 			}
+			originalMetadata := rest(rows[0])
 			rows[0]["fixture_revision"] = json.RawMessage(`2`)
-			changedMetadata, err := json.Marshal(rows[0])
-			if err != nil {
-				t.Fatal(err)
-			}
+			changedMetadata := rest(rows[0])
 			changedRows, err := json.Marshal(rows)
 			if err != nil {
 				t.Fatal(err)

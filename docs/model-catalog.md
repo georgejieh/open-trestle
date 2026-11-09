@@ -35,7 +35,8 @@ Supported kinds:
   Reads `data[].id` without changing case, separators, or tags.
 - `ollama_tags`: an explicit `/api/tags` URL. Reads `models[].name` exactly.
 
-The rest of each model object is preserved as metadata. `digest`, capabilities,
+The rest of each model object is preserved as metadata, with its members and
+their encoding unchanged; the selector is stored once, beside it. `digest`, capabilities,
 costs, and other returned fields are observations, not verified commitments,
 privacy evidence, readiness, entitlement, or approval. A moving alias remains a
 moving alias; refresh does not resolve it to immutable weights or rebind any
@@ -251,9 +252,14 @@ power-loss guarantees depend on the host filesystem.
 Limits are 32 sources, 10,000 models per source, 4 MiB per HTTP body, 16 KiB response
 headers, 8 MiB per protected file, 5 seconds per source, and a 60-second aggregate
 network budget. The body limit admits a fetch only; it is not part of any stored
-catalog, digest or identity. Proposals and catalogs are written indented, so a
-source near the body limit can still produce a file over 8 MiB, which fails
-closed before anything is written. HTTP is sequential and retries are not performed. Duplicate JSON
+catalog, digest or identity. Proposals and catalogs are written as compact JSON
+with a trailing newline and without HTML escaping, so each stored model is at
+most 20 bytes longer than its object in the list: any one list the fetch accepts
+fits the 8 MiB file limit. Several large sources together can still exceed it,
+which fails closed before anything is written. Catalogs and proposals written
+earlier, indented and with the selector also inside each model's metadata, still
+read back and apply, and diff against new metadata without reporting unchanged
+models. HTTP is sequential and retries are not performed. Duplicate JSON
 keys, duplicate selectors, invalid selectors, malformed documents, and unexpected
 shapes fail the affected source. No scheduler, route approval or activation hook
 is installed.
