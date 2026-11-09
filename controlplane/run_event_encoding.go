@@ -97,6 +97,11 @@ func ParseRunEvent(encoded []byte) (RunEvent, error) {
 	if err != nil {
 		return RunEvent{}, err
 	}
+	// An all-zero shortfall object is absent counts in a non-canonical form;
+	// it would re-encode without the object under the same identity.
+	if record.ContextShortfall != nil && !taskFailureShortfallFromRecord(record.ContextShortfall).Present() {
+		return RunEvent{}, ErrInvalidRunEventEncoding
+	}
 	event := RunEvent{
 		identity: record.Identity, planIdentity: record.PlanIdentity, scope: scope,
 		sequence: record.Sequence, previousIdentity: record.PreviousIdentity, kind: kind,
