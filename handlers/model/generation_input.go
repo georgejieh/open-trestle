@@ -180,7 +180,7 @@ func (i GenerationInput) Validate() error {
 	for _, item := range i.evidenceItems {
 		rangeValue := item.SourceRange()
 		canonical, err := evidence.NewEvidenceItem(item.ID(), item.Kind(), item.Digest(), rangeValue)
-		if err != nil || canonical.ID() != item.ID() || !rangeSupported(rangeValue, i.snapshot) {
+		if err != nil || canonical.ID() != item.ID() || !evidenceSupported(rangeValue, i.snapshot) {
 			return ErrInvalidGenerationInput
 		}
 		if _, exists := seen[item.ID()]; exists {
@@ -201,6 +201,24 @@ func contextOutputSchemaMatches(input GenerationInput, contextPayload []byte) bo
 		OutputSchemaIdentity string `json:"output_schema_identity"`
 	}
 	return json.Unmarshal(contextPayload, &header) == nil && header.OutputSchemaIdentity == input.outputSchemaIdentity
+}
+
+// evidenceSupported admits an evidence item inside a snapshot range, or on a
+// snapshot path: removed_lines evidence carries base line numbers, so it is
+// never inside a head snapshot range, and the context handler supplies it only
+// beside a selected head source of the same file. The stage-aware context
+// validators, which every execution and readback path also runs, check that
+// such an item is a removed_lines source.
+func evidenceSupported(candidate evidence.SourceRange, snapshot review.ReviewSnapshot) bool {
+	if rangeSupported(candidate, snapshot) {
+		return true
+	}
+	for _, allowed := range snapshot.Ranges() {
+		if allowed.Path() == candidate.Path() {
+			return true
+		}
+	}
+	return false
 }
 
 func rangeSupported(candidate evidence.SourceRange, snapshot review.ReviewSnapshot) bool {

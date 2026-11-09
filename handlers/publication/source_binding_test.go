@@ -114,6 +114,13 @@ type sourceBindingFixture struct {
 
 func newSourceBindingFixture(t *testing.T, withReference bool) sourceBindingFixture {
 	t.Helper()
+	return newSourceBindingFixtureFor(t, withReference, "package p\nfunc Changed() int{return 1}\n", "package p\nfunc Changed() int{return 2}\n")
+}
+
+// newSourceBindingFixtureFor runs the real handlers over caller-chosen base and
+// head contents of a.go.
+func newSourceBindingFixtureFor(t *testing.T, withReference bool, baseChanged, headChanged string) sourceBindingFixture {
+	t.Helper()
 	ctx := context.Background()
 	check := func(err error) {
 		t.Helper()
@@ -146,8 +153,8 @@ func newSourceBindingFixture(t *testing.T, withReference bool) sourceBindingFixt
 		return scm.SourceAdapterResult{Outcome: evidence.AcquisitionOutcomeAcquired, Reason: evidence.AcquisitionReasonNone, Manifest: manifest, Contents: contents}
 	}
 	adapter := bindingSourceAdapter{identity: adapterIdentity, results: map[string]scm.SourceAdapterResult{
-		baseRevision.Identity(): result("package p\nfunc Changed() int{return 1}\n"),
-		headRevision.Identity(): result("package p\nfunc Changed() int{return 2}\n"),
+		baseRevision.Identity(): result(baseChanged),
+		headRevision.Identity(): result(headChanged),
 	}}
 	store, err := artifact.NewMemoryStore(artifact.ProtectionProcessPrivate, 100)
 	check(err)

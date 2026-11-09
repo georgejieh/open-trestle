@@ -336,12 +336,29 @@ func (h *Handler) buildSourceBinding(ctx context.Context, scope audit.ReviewScop
 	for _, reference := range head.Files() {
 		files[reference.Path()] = reference
 	}
+	removedByEvidence := make(map[string]analysishandler.Item, len(analysis.RemovedLines()))
+	for _, item := range analysis.RemovedLines() {
+		removedByEvidence[item.EvidenceID()] = item
+	}
 	items := input.EvidenceItems()
 	bindings := make([]string, len(items))
 	for index, item := range items {
 		sourceRange := item.SourceRange()
 		if item.Kind() != evidence.EvidenceKindSource {
 			return review.ProtectedSourceBinding{}, ErrInvalidPublicationInput
+		}
+		// Removed base lines rebind to the exact base file their analysis
+		// record names; they are evidence, never a published location.
+		if removedItem, removed := removedByEvidence[item.ID()]; removed {
+			binding, err := h.bindBaseRemovedLines(ctx, scope, baseArtifact, removedItem, at)
+			if err != nil {
+				return review.ProtectedSourceBinding{}, err
+			}
+			if removedItem.Path() != sourceRange.Path() || removedItem.StartLine() != sourceRange.StartLine() || removedItem.EndLine() != sourceRange.EndLine() || removedItem.Digest() != item.Digest() || binding.Identity() != item.ID() {
+				return review.ProtectedSourceBinding{}, ErrInvalidPublicationInput
+			}
+			bindings[index] = binding.Identity()
+			continue
 		}
 		sourceItem, changed := byEvidence[item.ID()]
 		if changed {
@@ -373,6 +390,38 @@ func (h *Handler) buildSourceBinding(ctx context.Context, scope audit.ReviewScop
 	}
 	return review.NewProtectedSourceBinding(scope, change.Repository(), change.HeadRevision(), headArtifact.Identity(), head.Identity(), head.ManifestIdentity(), changeArtifact.Identity(), change.Identity(), analysisArtifact.Identity(), contextArtifact.Identity(), input.ContextIdentity(), input.Snapshot().Identity(), bindings)
 }
+
+// bindBaseRemovedLines rebinds one removed-lines analysis record to the exact
+// base snapshot file: the reference digest, the rebuilt file identity and the
+// slice binding must all match the record.
+func (h *Handler) bindBaseRemovedLines(ctx context.Context, scope audit.ReviewScope, baseArtifact artifact.Artifact, item analysishandler.Item, at time.Time) (evidence.SourceSliceBinding, error) {
+	base, err := sourcehandler.ParseSnapshotArtifact(baseArtifact)
+	if err != nil {
+		return evidence.SourceSliceBinding{}, err
+	}
+	for _, reference := range base.Files() {
+		if reference.Path() != item.Path() {
+			continue
+		}
+		if reference.Digest() != item.FileDigest() {
+			return evidence.SourceSliceBinding{}, ErrInvalidPublicationInput
+		}
+		sourceRange, err := evidence.NewSourceRange(item.Path(), item.StartLine(), item.EndLine())
+		if err != nil {
+			return evidence.SourceSliceBinding{}, ErrInvalidPublicationInput
+		}
+		binding, err := h.bindHeadSourceRange(ctx, scope, base, reference, sourceRange, at)
+		if err != nil {
+			return evidence.SourceSliceBinding{}, err
+		}
+		if binding.Identity() != item.BindingIdentity() || binding.RepositoryFileIdentity() != item.FileIdentity() || binding.RepositoryFileDigest() != item.FileDigest() || binding.SliceBytes() != item.SliceBytes() || binding.SliceDigest() != item.Digest() {
+			return evidence.SourceSliceBinding{}, ErrInvalidPublicationInput
+		}
+		return binding, nil
+	}
+	return evidence.SourceSliceBinding{}, ErrInvalidPublicationInput
+}
+
 func (h *Handler) bindHeadSourceRange(ctx context.Context, scope audit.ReviewScope, head sourcehandler.Snapshot, reference sourcehandler.FileReference, sourceRange evidence.SourceRange, at time.Time) (evidence.SourceSliceBinding, error) {
 	value, err := h.store.Get(ctx, scope, reference.ArtifactIdentity(), at)
 	if err != nil {

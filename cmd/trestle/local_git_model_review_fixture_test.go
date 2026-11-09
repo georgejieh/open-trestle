@@ -242,10 +242,13 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 		return
 	}
 
-	var changed, caller localModelSource
+	var changed, caller, removed localModelSource
 	for _, source := range packet.Sources {
-		if source.Path == "a.go" {
+		if source.Path == "a.go" && source.Stage == "changed_hunk" {
 			changed = source
+		}
+		if source.Path == "a.go" && source.Stage == "removed_lines" {
+			removed = source
 		}
 		if source.Path == "caller.go" {
 			caller = source
@@ -262,6 +265,11 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 	}
 	if m.deletionOnly && strings.Contains(changed.Content, "x == 0") {
 		t.Error("removed base text entered the head source")
+	}
+	// The removed guard itself reaches both the generation and the
+	// verification request as removed_lines evidence.
+	if m.deletionOnly && !strings.Contains(removed.Content, "x == 0") {
+		t.Error("removed base text did not reach the model as removed_lines evidence")
 	}
 	evidenceIDs := []string{changed.ID, caller.ID}
 	if callerMissing {

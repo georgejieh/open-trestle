@@ -864,6 +864,20 @@ func (p *InvestigationPipeline) validateAssembly(ctx context.Context, s controlp
 				return nil, ErrInvestigationPipeline
 			}
 		}
+		// Removed base lines are not in the head snapshot, so their custody is
+		// the analysis record that bound them to the exact base file.
+		if src.Stage() == review.ContextStageRemovedLines {
+			found := false
+			for _, item := range analyzed.RemovedLines() {
+				if src.ReferenceID() == item.EvidenceID() && src.SliceBindingIdentity() == item.BindingIdentity() && src.SliceBinding().RepositoryFileIdentity() == item.FileIdentity() {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return nil, ErrInvestigationPipeline
+			}
+		}
 	}
 	return handle, nil
 }

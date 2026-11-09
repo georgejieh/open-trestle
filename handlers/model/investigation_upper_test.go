@@ -394,7 +394,24 @@ func upperFixture(t *testing.T, mode string, generationCapacity ...uint64) (mode
 	upperCheck(t, err)
 	limits, err := review.NewContextLimits(65536, 0)
 	upperCheck(t, err)
-	packet, err := review.NewContextPacket(scope, memoryScope, snapshot, review.ContextTaskCandidateGeneration, []review.ContextSource{bound}, retrieval, limits)
+	sources := []review.ContextSource{bound}
+	if mode == "removed" {
+		// Removed base text is bound to a base file that the head snapshot
+		// does not hold; it is evidence beside the head source of a.go.
+		base := []byte("package p\nfunc Changed(x int) int { if x == 0 { return 0 }; return 10 / x }\n")
+		baseFile, err := evidence.NewRepositoryFile("a.go", base)
+		upperCheck(t, err)
+		baseRange, err := evidence.NewSourceRange("a.go", 2, 2)
+		upperCheck(t, err)
+		baseBinding, err := evidence.BindSourceRange(baseFile, base, baseRange)
+		upperCheck(t, err)
+		baseItem, err := evidence.NewEvidenceItem(baseBinding.Identity(), evidence.EvidenceKindSource, baseBinding.SliceDigest(), baseRange)
+		upperCheck(t, err)
+		removed, err := review.NewBoundContextSource(review.ContextStageRemovedLines, memory.TaintRepositoryControlled, baseItem, []byte("func Changed(x int) int { if x == 0 { return 0 }; return 10 / x }\n"), baseBinding)
+		upperCheck(t, err)
+		sources = append(sources, removed)
+	}
+	packet, err := review.NewContextPacket(scope, memoryScope, snapshot, review.ContextTaskCandidateGeneration, sources, retrieval, limits)
 	upperCheck(t, err)
 	policyBytes, err := os.ReadFile("../../internal/review/testdata/investigation-policy-v1.json")
 	upperCheck(t, err)
@@ -787,5 +804,31 @@ func TestInvestigationUpperForgedOpaqueReferenceRefusesBeforeFileGet(t *testing.
 	}
 	if _, err := controller.Generate(context.Background()); err == nil || a.count() != 2 {
 		t.Fatal("failed proposal was relabeled into new model work")
+	}
+}
+
+// Removed base lines in the initial context are held without a head read: the
+// first investigation request carries them as a removed_lines source at their
+// base lines, and the scan budget charges only the head file.
+func TestInvestigationUpperCarriesRemovedLinesWithoutAHeadRead(t *testing.T) {
+	options, _, a, _, _, _ := upperFixture(t, "removed")
+	controller, err := model.NewInvestigation(context.Background(), options)
+	upperCheck(t, err)
+	first, err := controller.Step(context.Background())
+	upperCheck(t, err)
+	if first.ScannedBytes() != uint64(len(upperInitial)) {
+		t.Fatalf("scan charged %d bytes, want only the head file", first.ScannedBytes())
+	}
+	if len(a.packets) == 0 || a.packets[0].Schema != 6 {
+		t.Fatal("investigation did not send a version 6 request")
+	}
+	found := false
+	for _, source := range a.packets[0].Sources {
+		if source.Stage == "removed_lines" {
+			found = source.Path == "a.go" && source.Start == 2 && source.End == 2 && strings.Contains(source.Content, "if x == 0")
+		}
+	}
+	if !found {
+		t.Fatal("investigation request lacks the removed_lines source")
 	}
 }

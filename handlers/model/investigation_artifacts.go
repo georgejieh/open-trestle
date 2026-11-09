@@ -119,7 +119,7 @@ func (i InvestigationGenerationInput) Validate() error {
 	for _, item := range i.evidence {
 		r := item.SourceRange()
 		rebuilt, err := evidence.NewEvidenceItem(item.ID(), item.Kind(), item.Digest(), r)
-		if err != nil || rebuilt.ID() != item.ID() || item.Kind() != evidence.EvidenceKindSource || seen[item.ID()] || !rangeSupported(r, i.snapshot) {
+		if err != nil || rebuilt.ID() != item.ID() || item.Kind() != evidence.EvidenceKindSource || seen[item.ID()] || !evidenceSupported(r, i.snapshot) {
 			return ErrInvestigationArtifacts
 		}
 		seen[item.ID()] = true
@@ -247,6 +247,7 @@ type investigationContextReadback struct {
 	Snapshot    string `json:"snapshot_identity"`
 	Sources     []struct {
 		ID      string `json:"source_id"`
+		Stage   string `json:"stage"`
 		Path    string `json:"path"`
 		Start   int    `json:"start_line"`
 		End     int    `json:"end_line"`
@@ -408,7 +409,9 @@ func bindInvestigationArtifactFile(path string, content []byte, wire investigati
 	}
 	identities[path] = file.Identity()
 	for _, entry := range wire.Sources {
-		if entry.Path != path {
+		// Removed base lines are bound to the base file, not to this head
+		// file; the pipeline matched them to their analysis record.
+		if entry.Path != path || entry.Stage == "removed_lines" {
 			continue
 		}
 		item, ok := items[entry.ID]

@@ -557,6 +557,20 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 		abstention, failureCode := makeAbstention("packet_budget_zero_selection", controlplane.RunFailureResourceLimit, omissions)
 		return contextAssembly{}, provider.Request{}, abstention, failureCode
 	}
+	// The removed base lines of deletion points are added after the abstention
+	// decisions too: removed text cannot anchor a finding, so it never turns an
+	// all-omitted change into a reviewable packet.
+	if removed := analysis.RemovedLines(); len(removed) > 0 {
+		var removedFailure controlplane.RunFailure
+		candidates, omissions, removedFailure = h.appendRemovedLinesCandidates(ctx, request.Plan().Scope(), readAt, base, removed, memoryScope, candidates, omissions, &expires)
+		if removedFailure != 0 {
+			return contextAssembly{}, provider.Request{}, nil, removedFailure
+		}
+		candidates, selection, omissions, removedFailure = fitRemovedLinesCandidates(candidates, limits, omissions)
+		if removedFailure != 0 {
+			return contextAssembly{}, provider.Request{}, nil, removedFailure
+		}
+	}
 	// Instruction files are added only after the abstention decisions so they can
 	// never turn an all-omitted or zero-selection change into a reviewable
 	// packet. They come from the base tree and are kept only when they fit after
@@ -577,9 +591,13 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 			return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureResourceLimit
 		}
 	}
-	ranges := make([]evidence.SourceRange, selection.SelectedCount())
-	for index, source := range selection.SelectedSources() {
-		ranges[index] = source.EvidenceItem().SourceRange()
+	// The review snapshot holds head ranges only. Removed base lines carry base
+	// line numbers and are evidence, never snapshot ranges or anchors.
+	ranges := make([]evidence.SourceRange, 0, selection.SelectedCount())
+	for _, source := range selection.SelectedSources() {
+		if source.Stage() != review.ContextStageRemovedLines {
+			ranges = append(ranges, source.EvidenceItem().SourceRange())
+		}
 	}
 	snapshot, err := review.NewAcquiredReviewPipelineSnapshot(request.Plan().Scope().ReviewRunID(), manifest, ranges)
 	if err != nil {
