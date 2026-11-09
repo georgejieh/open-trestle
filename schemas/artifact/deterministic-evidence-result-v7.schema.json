@@ -356,7 +356,7 @@
               "deleted_lines",
               "removed_lines_limit"
             ],
-            "description": "A no_changed_head_lines gap covers one whole deletion-only entry with start_line and end_line 0. A deleted_lines gap marks one deletion point by the head lines on either side of the removed base lines. A removed_lines_limit gap records removed base lines that exceed the removed-text bound; unlike every other ranged gap, its start_line and end_line are base lines. With start_line and end_line 0 it records that the whole removed text of an emptied or removed file was not read, because the analysis budget for removed text was spent or the file is past the change model's size bound. A resource_limit gap with start_line and end_line 0 covers one whole modified or removed entry that the change model could not diff because of its size."
+            "description": "A no_changed_head_lines gap covers one whole deletion-only entry with start_line and end_line 0. A deleted_lines gap marks one deletion point by the head lines on either side of the removed base lines. A removed_lines_limit gap records removed base lines that exceed the removed-text bound; unlike every other ranged gap, its start_line and end_line are base lines. With start_line and end_line 0 it records that the whole removed text of an emptied or removed file was not read, because the analysis budget for removed text was spent or the file is past the change model's size bound. A resource_limit gap with start_line and end_line 0 covers one whole entry of any kind that the change model could not diff because of its size."
           }
         }
       }

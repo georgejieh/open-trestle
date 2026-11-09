@@ -95,7 +95,9 @@ func wholeEntryGap(entry changehandler.Entry, evidenceLimit bool) (Gap, bool) {
 	}
 	if len(entry.Ranges()) == 0 {
 		reason := entry.Reason()
-		if entry.Kind() == "added" {
+		// A size limit is recorded as one whatever the entry kind; any other
+		// added file without a range is an empty added file.
+		if entry.Kind() == "added" && reason != "resource_limit" {
 			reason = "empty_added_file"
 		}
 		return analysiscodec.NewGap(entry, 0, 0, reason), true

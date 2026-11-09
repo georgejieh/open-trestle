@@ -47,15 +47,18 @@ func TestLocalModelReviewReviewsDeletionOnlyChange(t *testing.T) {
 }
 
 // Removing a file over the 1 MiB change-model size bound failed the analysis
-// task with an internal error, so the whole review failed. It is now a
+// task with an internal error, so the whole review failed; adding one that
+// gets no whole-text range was recorded as an empty added file. Each is now a
 // resource_limit omission, and the small Go change beside it is reviewed.
 func TestLocalModelReviewRecordsALargeFileAsAResourceLimit(t *testing.T) {
 	large := map[string][]byte{"large.bin": bytes.Repeat([]byte("large file line\n"), 128<<10)}
+	binary := map[string][]byte{"large.bin": bytes.Repeat([]byte{0, 1, 2, 3}, 512<<10)}
 	for _, tc := range []struct {
 		name    string
 		options localModelFixtureOptions
 	}{
 		{"removed", localModelFixtureOptions{chatCompletions: true, extraBase: large}},
+		{"added", localModelFixtureOptions{chatCompletions: true, extraHead: binary}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newLocalModelFixture(t, tc.options)

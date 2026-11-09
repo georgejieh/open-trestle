@@ -956,9 +956,10 @@ which is not bound) leaves nothing to review, and such a change still refuses wi
 whole-entry `no_changed_head_lines` gap also remains, without removed text, when
 a file that still has head lines cannot get deletion-point context: the diff is
 unsupported or over its limits, or the evidence limits are reached. A file over
-the 1 MiB diff bound that is removed or emptied is an `analysis_resource_limit`
-omission instead, with an `analysis_removed_lines_limit` omission with no lines:
-its text is not read. The rest of the change is still reviewed, and the review is not full
+the 1 MiB diff bound that is removed, emptied, or added without a reviewable
+range is an `analysis_resource_limit` omission instead, and a removed or emptied
+one adds an `analysis_removed_lines_limit` omission with no lines: its text is
+not read. The rest of the change is still reviewed, and the review is not full
 clearance.
 
 Investigation mode reviews such a change the same way: its first turn holds the

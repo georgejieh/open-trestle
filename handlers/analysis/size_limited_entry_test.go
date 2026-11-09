@@ -1,18 +1,21 @@
 package analysis
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/georgejieh/open-trestle/internal/analysiscodec"
 )
 
 // A file over the 1 MiB change-model diff bound is a resource_limit entry
-// whatever its kind. A change that removes or empties such a file beside a
-// small Go change completes analysis: the Go change is bound, the large file
-// is one whole-entry resource_limit gap, and its removed text is one
-// whole-entry removed_lines_limit gap, unread.
+// whatever its kind. A change that removes or empties such a file, or adds
+// one that gets no whole-text range (here binary), beside a small Go change
+// completes analysis: the Go change is bound, the large file is one
+// whole-entry resource_limit gap, and the removed text of a removed or emptied
+// one is one whole-entry removed_lines_limit gap, unread.
 func TestSizeLimitedEntriesAreResourceLimitGapsWhateverTheirKind(t *testing.T) {
 	large := budgetLines(2048)
+	binary := bytes.Repeat([]byte{0, 1, 2, 3}, 512<<10)
 	goBase := []byte("package calc\n\nfunc Div(a, b int) int { if b == 0 { return 0 }; return a / b }\n")
 	goHead := []byte("package calc\n\nfunc Div(a, b int) int { return a / b }\n")
 	for _, tc := range []struct {
@@ -21,6 +24,7 @@ func TestSizeLimitedEntriesAreResourceLimitGapsWhateverTheirKind(t *testing.T) {
 		removedLimit bool
 	}{
 		{"removed", map[string][]byte{"calc.go": goBase, "large.txt": large}, map[string][]byte{"calc.go": goHead}, true},
+		{"added", map[string][]byte{"calc.go": goBase}, map[string][]byte{"calc.go": goHead, "large.txt": binary}, false},
 		{"emptied", map[string][]byte{"calc.go": goBase, "large.txt": large}, map[string][]byte{"calc.go": goHead, "large.txt": {}}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

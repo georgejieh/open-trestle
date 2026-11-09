@@ -695,9 +695,9 @@ func validGap(gap Gap, entries map[string]changecodec.Entry, schemaVersion, chan
 			return false
 		}
 		// A size limit is a size limit whatever the entry kind: from version 4
-		// a removed entry past the change model's size bound is a
-		// resource_limit gap.
-		sizeLimited := schemaVersion >= 4 && entry.Kind() == "removed" && gap.reason == "resource_limit" && entry.Reason() == "resource_limit"
+		// a removed or added entry past the change model's size bound is a
+		// resource_limit gap. Recorded added entries keep empty_added_file.
+		sizeLimited := schemaVersion >= 4 && (entry.Kind() == "removed" || entry.Kind() == "added") && gap.reason == "resource_limit" && entry.Reason() == "resource_limit"
 		return sizeLimited || entry.Kind() == "removed" && gap.reason == "removed_file" || entry.Kind() == "added" && gap.reason == "empty_added_file" || entry.Kind() == "modified" && gap.reason == entry.Reason() && (gap.reason == "unsupported_content" || gap.reason == "resource_limit")
 	}
 	if gap.reason != "slice_resource_limit" && gap.reason != "resource_limit" {
