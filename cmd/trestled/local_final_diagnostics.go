@@ -91,7 +91,13 @@ func (p *LocalFinalDiagnosticProjector) Project(ctx context.Context, state contr
 	at := time.Now().UTC()
 	deterministic, verified, err := publication.BuildFinalDiagnosticParts(ctx, p.artifacts, scope, analysisID, changeID, verificationID, at)
 	if err != nil {
-		return err
+		// A run refused for its route may be finalized after its evidence
+		// retention lapsed. The refusal is in the journal, so it still gets
+		// its failed result; the expired parts are reported unavailable.
+		if _, refused := finalContextRefusal(state); !refused || state.Status() != controlplane.ReviewRunFailed || verificationID != "" || !errors.Is(err, artifact.ErrArtifactExpired) {
+			return err
+		}
+		deterministic, verified = diagnostics.Set{}, diagnostics.Set{}
 	}
 	outcome := diagnostics.FinalOutcomeFailed
 	switch state.Status() {
