@@ -28,7 +28,8 @@
     "schema_version": {
       "enum": [
         1,
-        3
+        3,
+        4
       ]
     },
     "identity": {
@@ -158,6 +159,10 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 1000000
+          },
+          "side": {
+            "const": "base",
+            "description": "Present only for a removed_lines source, whose start_line and end_line are base lines outside the head snapshot. It appears only in schema versions 3 and 4; version 4 is an unsanitized input that records removed_lines evidence."
           }
         }
       }

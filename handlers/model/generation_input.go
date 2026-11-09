@@ -49,7 +49,10 @@ type GenerationInput struct {
 	outputSchemaIdentity string
 	snapshot             review.ReviewSnapshot
 	evidenceItems        []evidence.EvidenceItem
-	authorization        gateway.RouteAttemptAuthorization
+	// baseEvidence names the evidence items that are removed_lines sources:
+	// base lines, never inside a head snapshot range.
+	baseEvidence  map[string]struct{}
+	authorization gateway.RouteAttemptAuthorization
 }
 
 // NewGenerationInput creates one durable candidate-generation authority.
@@ -96,6 +99,12 @@ func newGenerationInput(
 		return GenerationInput{}, ErrInvalidGenerationInput
 	}
 	items := packet.EvidenceItems()
+	baseEvidence := map[string]struct{}{}
+	for _, source := range packet.Sources() {
+		if source.Stage() == review.ContextStageRemovedLines {
+			baseEvidence[source.ReferenceID()] = struct{}{}
+		}
+	}
 	if err := review.ValidateContextPacketRequest(
 		request.Payload(), packet.Identity(), contextArtifact.Scope().Identity(), packet.MemoryScopeIdentity(), packet.MemoryIdentity(), snapshot, items,
 	); err != nil {
@@ -123,7 +132,7 @@ func newGenerationInput(
 		sanitizedRequestArtifactIdentity: requestArtifactIdentity, sanitizedEgressReceiptArtifactIdentity: sanitizedEgressReceiptArtifactIdentity, sanitizedEgressReceiptIdentity: sanitizedEgressReceiptIdentity,
 		outputSchemaIdentity: packet.OutputSchemaIdentity(),
 		snapshot:             snapshot, evidenceItems: append([]evidence.EvidenceItem(nil), items...),
-		authorization: authorization,
+		baseEvidence: baseEvidence, authorization: authorization,
 	}
 	input.identity = deriveGenerationInputIdentity(input)
 	if err := input.Validate(); err != nil {
@@ -180,13 +189,24 @@ func (i GenerationInput) Validate() error {
 	for _, item := range i.evidenceItems {
 		rangeValue := item.SourceRange()
 		canonical, err := evidence.NewEvidenceItem(item.ID(), item.Kind(), item.Digest(), rangeValue)
-		if err != nil || canonical.ID() != item.ID() || !evidenceSupported(rangeValue, i.snapshot) {
+		if err != nil || canonical.ID() != item.ID() {
+			return ErrInvalidGenerationInput
+		}
+		// Head evidence lies inside a snapshot range. Removed base lines carry
+		// base line numbers and are never inside one; only an item recorded
+		// as a removed_lines source may lie outside the snapshot.
+		if _, base := i.baseEvidence[item.ID()]; !base && !rangeSupported(rangeValue, i.snapshot) {
 			return ErrInvalidGenerationInput
 		}
 		if _, exists := seen[item.ID()]; exists {
 			return ErrInvalidGenerationInput
 		}
 		seen[item.ID()] = struct{}{}
+	}
+	for id := range i.baseEvidence {
+		if _, exists := seen[id]; !exists {
+			return ErrInvalidGenerationInput
+		}
 	}
 	if i.identity != deriveGenerationInputIdentity(i) {
 		return ErrInvalidGenerationInput
@@ -201,24 +221,6 @@ func contextOutputSchemaMatches(input GenerationInput, contextPayload []byte) bo
 		OutputSchemaIdentity string `json:"output_schema_identity"`
 	}
 	return json.Unmarshal(contextPayload, &header) == nil && header.OutputSchemaIdentity == input.outputSchemaIdentity
-}
-
-// evidenceSupported admits an evidence item inside a snapshot range, or on a
-// snapshot path: removed_lines evidence carries base line numbers, so it is
-// never inside a head snapshot range, and the context handler supplies it only
-// beside a selected head source of the same file. The stage-aware context
-// validators, which every execution and readback path also runs, check that
-// such an item is a removed_lines source.
-func evidenceSupported(candidate evidence.SourceRange, snapshot review.ReviewSnapshot) bool {
-	if rangeSupported(candidate, snapshot) {
-		return true
-	}
-	for _, allowed := range snapshot.Ranges() {
-		if allowed.Path() == candidate.Path() {
-			return true
-		}
-	}
-	return false
 }
 
 func rangeSupported(candidate evidence.SourceRange, snapshot review.ReviewSnapshot) bool {
@@ -242,6 +244,9 @@ type generationEvidenceWire struct {
 	Path      string `json:"path"`
 	StartLine int    `json:"start_line"`
 	EndLine   int    `json:"end_line"`
+	// Side is "base" for a removed_lines source, whose lines are base lines
+	// outside the head snapshot; it appears only in schema versions 3 and 4.
+	Side string `json:"side,omitempty"`
 }
 type generationInputWire struct {
 	Contract                               string                   `json:"contract"`
@@ -296,7 +301,7 @@ func ParseGenerationInput(encoded []byte) (GenerationInput, error) {
 	}
 	canonical, err := json.Marshal(wire)
 	if err != nil || !bytes.Equal(canonical, encoded) || wire.Contract != "open-trestle/model-generation-input" ||
-		(wire.SchemaVersion != 1 && wire.SchemaVersion != 3) ||
+		(wire.SchemaVersion != 1 && wire.SchemaVersion != 3 && wire.SchemaVersion != 4) ||
 		wire.OutputSchemaIdentity != review.ModelCandidateBatchSchemaIdentity && wire.OutputSchemaIdentity != review.ModelCandidateBatchV1SchemaIdentity {
 		return GenerationInput{}, ErrInvalidGenerationInput
 	}
@@ -312,10 +317,14 @@ func ParseGenerationInput(encoded []byte) (GenerationInput, error) {
 		return GenerationInput{}, ErrInvalidGenerationInput
 	}
 	items := make([]evidence.EvidenceItem, len(wire.Evidence))
+	baseEvidence := map[string]struct{}{}
 	for index, value := range wire.Evidence {
 		rangeValue, rangeErr := evidence.NewSourceRange(value.Path, value.StartLine, value.EndLine)
-		if rangeErr != nil {
+		if rangeErr != nil || value.Side != "" && value.Side != "base" {
 			return GenerationInput{}, ErrInvalidGenerationInput
+		}
+		if value.Side == "base" {
+			baseEvidence[value.ID] = struct{}{}
 		}
 		items[index], err = evidence.NewEvidenceItem(value.ID, evidence.EvidenceKind(value.Kind), value.Digest, rangeValue)
 		if err != nil {
@@ -331,7 +340,7 @@ func ParseGenerationInput(encoded []byte) (GenerationInput, error) {
 		contextArtifactIdentity: wire.ContextArtifactIdentity, contextIdentity: wire.ContextIdentity, memoryScopeIdentity: wire.MemoryScopeIdentity, memoryIdentity: wire.MemoryIdentity,
 		sanitizedRequestArtifactIdentity: wire.SanitizedRequestArtifactIdentity, sanitizedEgressReceiptArtifactIdentity: wire.SanitizedEgressReceiptArtifactIdentity, sanitizedEgressReceiptIdentity: wire.SanitizedEgressReceiptIdentity,
 		outputSchemaIdentity: wire.OutputSchemaIdentity,
-		snapshot:             snapshot, evidenceItems: items, authorization: authorization,
+		snapshot:             snapshot, evidenceItems: items, baseEvidence: baseEvidence, authorization: authorization,
 	}
 	if err := input.Validate(); err != nil {
 		return GenerationInput{}, ErrInvalidGenerationInput
@@ -360,10 +369,18 @@ func generationInputWireValue(input GenerationInput) (generationInputWire, error
 			ID: value.ID(), Kind: string(value.Kind()), Digest: value.Digest(),
 			Path: rangeValue.Path(), StartLine: rangeValue.StartLine(), EndLine: rangeValue.EndLine(),
 		}
+		if _, base := input.baseEvidence[value.ID()]; base {
+			items[index].Side = "base"
+		}
 	}
+	// Version 3 is a sanitized input; version 4 is an unsanitized input that
+	// records removed_lines evidence, so every other unsanitized input keeps
+	// its version 1 bytes.
 	version := 1
 	if input.IsSanitized() {
 		version = 3
+	} else if len(input.baseEvidence) > 0 {
+		version = 4
 	}
 	return generationInputWire{
 		Contract: "open-trestle/model-generation-input", SchemaVersion: version, Identity: input.Identity(),

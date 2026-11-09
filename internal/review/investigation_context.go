@@ -236,9 +236,11 @@ func investigationPacketMatches(p ContextPacket, s ReviewSnapshot, scope, manife
 	if len(s.ranges) != headSources {
 		return false
 	}
-	// Removed text is supplied only beside a head source of the same file.
+	// A deletion point's removed text is supplied only beside a head source of
+	// the same file; the removed text of an emptied or removed file has no
+	// head line and needs none.
 	for _, source := range p.sources {
-		if source.Stage() == ContextStageRemovedLines && byPath[source.EvidenceItem().SourceRange().Path()] == "" {
+		if source.Stage() == ContextStageRemovedLines && source.HeadLine() != 0 && byPath[source.EvidenceItem().SourceRange().Path()] == "" {
 			return false
 		}
 	}
@@ -555,6 +557,16 @@ func (c InvestigationGenerationContext) Snapshot() ReviewSnapshot {
 }
 func (c InvestigationGenerationContext) EvidenceItems() []evidence.EvidenceItem {
 	return c.selected.EvidenceItems()
+}
+
+// RemovedLinesEvidence returns the IDs of the selected removed_lines sources,
+// whose evidence lines are base lines outside the head snapshot.
+func (c InvestigationGenerationContext) RemovedLinesEvidence() map[string]struct{} {
+	ids := map[string]struct{}{}
+	for id := range c.removedLinesSources() {
+		ids[id] = struct{}{}
+	}
+	return ids
 }
 
 // removedLinesSources returns the selected removed_lines sources by ID, with

@@ -102,7 +102,8 @@ type toolRecordContextHeader struct {
 	Task    string `json:"task"`
 	Tools   string `json:"tool_calls"`
 	Sources []struct {
-		Path string `json:"path"`
+		Path  string `json:"path"`
+		Stage string `json:"stage"`
 	} `json:"sources"`
 	Investigation struct {
 		Session      string `json:"session_identity"`
@@ -390,6 +391,11 @@ func NewInvestigationToolOperation(b InvestigationToolEvidence, e InvestigationT
 		}
 	}
 	for _, item := range contextHeader.Sources {
+		// Removed base lines are not head files: their custody is the analysis
+		// record, and a removed file has no head file to supply.
+		if item.Stage == review.ContextStageRemovedLines.String() {
+			continue
+		}
 		if !seen[byPath[item.Path]] {
 			return InvestigationToolOperation{}, errToolRecord
 		}

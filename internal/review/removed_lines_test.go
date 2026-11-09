@@ -279,17 +279,25 @@ func TestInvestigationRequestCarriesRemovedLines(t *testing.T) {
 	if len(f.initialSnapshot.Ranges()) != 1 {
 		t.Fatal("removed_lines range entered the investigation snapshot")
 	}
-	// A removed_lines source must sit beside a head source of the same file.
-	orphan := boundSource(t, ContextStageRemovedLines, "gone.go", "gone\n", 1, 1)
-	limits, _ := NewContextLimits(65536, 0)
-	alone, err := NewContextPacketWithAccounting(f.binding.Scope, f.memoryScope, f.initialSnapshot, ContextTaskCandidateGeneration, []ContextSource{f.changed, orphan}, []memory.LexicalRetrieval{f.retrieval}, f.initial.SourceOmissions(), limits)
+	// A deletion point's removed text must sit beside a head source of the
+	// same file; the removed text of a removed file, which names no head line,
+	// needs none.
+	whole := boundSource(t, ContextStageRemovedLines, "gone.go", "gone\n", 1, 1)
+	orphan, err := NewRemovedLinesContextSource(whole.EvidenceItem(), whole.Content(), whole.SliceBinding(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	options := f.binding
-	options.InitialContext = alone
-	if _, err := NewInvestigationContextBinding(options); err == nil {
-		t.Fatal("investigation admitted removed text without a head source of its file")
+	limits, _ := NewContextLimits(65536, 0)
+	for name, source := range map[string]ContextSource{"deletion point": orphan, "removed file": whole} {
+		alone, err := NewContextPacketWithAccounting(f.binding.Scope, f.memoryScope, f.initialSnapshot, ContextTaskCandidateGeneration, []ContextSource{f.changed, source}, []memory.LexicalRetrieval{f.retrieval}, f.initial.SourceOmissions(), limits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		options := f.binding
+		options.InitialContext = alone
+		if _, err := NewInvestigationContextBinding(options); (err == nil) != (name == "removed file") {
+			t.Fatalf("%s: investigation binding err=%v", name, err)
+		}
 	}
 	// An investigation candidate located in removed lines is a base-side
 	// finding; its uncategorized batch then records sides (encoding version

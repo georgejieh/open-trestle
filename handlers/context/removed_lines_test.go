@@ -141,15 +141,18 @@ func boundRemovedSource(t *testing.T, stage review.ContextStage, path, content s
 	return source
 }
 
-// Removed text is kept only beside a selected head source of the same file;
-// otherwise it is a packet_budget omission at its base lines.
+// A deletion point's removed text is kept only beside a selected changed hunk
+// of its file that holds its head line; otherwise it is a packet_budget
+// omission at its base lines. The removed text of an emptied or removed file
+// has no head line and is kept on its own.
 func TestRemovedLinesNeedASelectedHeadSourceOfTheSameFile(t *testing.T) {
 	head := boundRemovedSource(t, review.ContextStageChangedHunk, "a.go", "keep\n")
-	anchored := boundRemovedSource(t, review.ContextStageRemovedLines, "a.go", "gone\n")
-	orphan := boundRemovedSource(t, review.ContextStageRemovedLines, "b.go", "gone too\n")
+	anchored := withHeadLine(t, boundRemovedSource(t, review.ContextStageRemovedLines, "a.go", "gone\n"), 1)
+	orphan := withHeadLine(t, boundRemovedSource(t, review.ContextStageRemovedLines, "b.go", "gone too\n"), 1)
+	removedFile := boundRemovedSource(t, review.ContextStageRemovedLines, "c.go", "whole file\n")
 	limits, _ := review.NewContextLimits(1<<16, 0)
-	kept, selection, omissions, failure := fitRemovedLinesCandidates([]review.ContextSource{head, anchored, orphan}, limits, nil)
-	if failure != 0 || len(kept) != 2 || selection.SelectedCount() != 2 || len(omissions) != 1 {
+	kept, selection, omissions, failure := fitRemovedLinesCandidates([]review.ContextSource{head, anchored, orphan, removedFile}, limits, nil)
+	if failure != 0 || len(kept) != 3 || selection.SelectedCount() != 3 || len(omissions) != 1 {
 		t.Fatalf("kept=%d selected=%d omissions=%d failure=%s", len(kept), selection.SelectedCount(), len(omissions), failure)
 	}
 	if omission := omissions[0]; omission.Path() != "b.go" || omission.Reason() != "packet_budget" || omission.StartLine() != 1 {
@@ -160,9 +163,16 @@ func TestRemovedLinesNeedASelectedHeadSourceOfTheSameFile(t *testing.T) {
 			t.Fatal("removed text without head context was kept")
 		}
 	}
+	keptRemovedFile := false
+	for _, source := range kept {
+		keptRemovedFile = keptRemovedFile || source.ReferenceID() == removedFile.ReferenceID()
+	}
+	if !keptRemovedFile {
+		t.Fatal("removed text of a removed file was dropped")
+	}
 	// A deletion point's removed text also needs the changed hunk that holds
 	// its head line.
-	placed := withHeadLine(t, anchored, 1)
+	placed := anchored
 	misplaced := withHeadLine(t, boundRemovedSource(t, review.ContextStageRemovedLines, "a.go", "gone again\n"), 2)
 	kept, _, omissions, failure = fitRemovedLinesCandidates([]review.ContextSource{head, placed, misplaced}, limits, nil)
 	if failure != 0 || len(kept) != 2 || len(omissions) != 1 || omissions[0].Path() != "a.go" || kept[1].ReferenceID() != placed.ReferenceID() {

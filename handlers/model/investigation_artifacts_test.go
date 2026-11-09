@@ -616,6 +616,44 @@ func TestInvestigationArtifactInputClaimsRejectMalformedCanonicalPayload(t *test
 		})
 	}
 }
+
+// An investigation input that records removed_lines evidence is version 5;
+// a head-only input keeps its version 2 bytes, and neither version reads back
+// with the other's content.
+func TestInvestigationInputRecordsBaseEvidenceAsVersionFive(t *testing.T) {
+	f := newArtifactsFixture(t)
+	request, err := f.context.Context.ProviderRequest()
+	artifactsCheck(t, err)
+	input, err := NewInvestigationGenerationInputArtifact(f.context, f.predicted(t, request), f.expected, f.clock.Now())
+	artifactsCheck(t, err)
+	if !bytes.Contains(input.Payload(), []byte(`"schema_version":2`)) || bytes.Contains(input.Payload(), []byte(`"side"`)) {
+		t.Fatalf("head-only investigation input changed version: %s", input.Payload())
+	}
+	claims, err := ParseInvestigationGenerationInput(input.Payload())
+	artifactsCheck(t, err)
+	claims.baseEvidence = map[string]struct{}{claims.evidence[0].ID(): {}}
+	values, err := claims.values()
+	artifactsCheck(t, err)
+	delete(values, "identity")
+	claims.identity = artifactsHash(artifactsJSON(t, values))
+	encoded, err := EncodeInvestigationGenerationInput(claims)
+	artifactsCheck(t, err)
+	if !bytes.Contains(encoded, []byte(`"schema_version":5`)) || bytes.Count(encoded, []byte(`"side":"base"`)) != 1 {
+		t.Fatalf("base evidence was not recorded as version 5: %s", encoded)
+	}
+	parsed, err := ParseInvestigationGenerationInput(encoded)
+	if err != nil || parsed.Identity() != claims.Identity() {
+		t.Fatalf("version 5 input does not read back: %v", err)
+	}
+	for name, forged := range map[string][]byte{
+		"version 2 with a side":    bytes.Replace(encoded, []byte(`"schema_version":5`), []byte(`"schema_version":2`), 1),
+		"version 5 without a side": bytes.Replace(input.Payload(), []byte(`"schema_version":2`), []byte(`"schema_version":5`), 1),
+	} {
+		if _, err := ParseInvestigationGenerationInput(forged); err == nil {
+			t.Fatalf("%s read back", name)
+		}
+	}
+}
 func TestInvestigationArtifactsKeepExistingV1AndV3CodecControlsExact(t *testing.T) {
 	f := newArtifactsFixture(t)
 	request, err := f.packet.ProviderRequest()

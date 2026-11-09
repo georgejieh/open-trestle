@@ -862,34 +862,59 @@ func (p *InvestigationPipeline) validateAssembly(ctx context.Context, s controlp
 		if !src.HasSliceBinding() || !scope.AllowsPath(src.EvidenceItem().SourceRange().Path()) {
 			return nil, ErrInvestigationPipeline
 		}
-		if src.Stage() == review.ContextStageChangedHunk {
-			found := false
-			for _, item := range analyzed.Items() {
-				if src.ReferenceID() == item.EvidenceID() && src.SliceBindingIdentity() == item.BindingIdentity() {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return nil, ErrInvestigationPipeline
-			}
-		}
-		// Removed base lines are not in the head snapshot, so their custody is
-		// the analysis record that bound them to the exact base file.
-		if src.Stage() == review.ContextStageRemovedLines {
-			found := false
-			for _, item := range analyzed.RemovedLines() {
-				if src.ReferenceID() == item.EvidenceID() && src.SliceBindingIdentity() == item.BindingIdentity() && src.SliceBinding().RepositoryFileIdentity() == item.FileIdentity() {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return nil, ErrInvestigationPipeline
-			}
-		}
+	}
+	items := make([]analysisRecord, 0, len(analyzed.Items()))
+	for _, item := range analyzed.Items() {
+		items = append(items, item)
+	}
+	removed := make([]analysisRecord, 0, len(analyzed.RemovedLines()))
+	for _, item := range analyzed.RemovedLines() {
+		removed = append(removed, item)
+	}
+	if !sourcesMatchAnalysis(a.Packet.Sources(), items, removed) {
+		return nil, ErrInvestigationPipeline
 	}
 	return handle, nil
+}
+
+// analysisRecord is the part of a deterministic evidence record that binds a
+// context source.
+type analysisRecord interface {
+	EvidenceID() string
+	BindingIdentity() string
+	FileIdentity() string
+	HeadLine() int
+}
+
+// sourcesMatchAnalysis reports whether every changed_hunk source is an
+// evidence item of the analysis record, and every removed_lines source is a
+// removed-lines record bound to the same base file with the same head line.
+// Removed base lines are not in the head snapshot, so that record is their
+// only custody.
+func sourcesMatchAnalysis(sources []review.ContextSource, items, removed []analysisRecord) bool {
+	for _, src := range sources {
+		var records []analysisRecord
+		switch src.Stage() {
+		case review.ContextStageChangedHunk:
+			records = items
+		case review.ContextStageRemovedLines:
+			records = removed
+		default:
+			continue
+		}
+		found := false
+		for _, record := range records {
+			if src.ReferenceID() == record.EvidenceID() && src.SliceBindingIdentity() == record.BindingIdentity() &&
+				(src.Stage() != review.ContextStageRemovedLines || src.SliceBinding().RepositoryFileIdentity() == record.FileIdentity() && src.HeadLine() == record.HeadLine()) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 func (p *InvestigationPipeline) intentPayload(a InvestigationAssembly) ([]byte, error) {
 	task := func(key string) string { v, _ := p.plan.Task(key); return v.Identity() }
