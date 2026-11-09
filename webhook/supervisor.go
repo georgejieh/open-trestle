@@ -200,7 +200,8 @@ func (s *Supervisor) reconcile(ctx context.Context) error {
 // Otherwise it is the delivery's own: the delivery backs off on its own
 // schedule while the others keep flowing, and once its bounded attempts are
 // spent it is recorded as refused with retries_exhausted, so it is visible and
-// not retried forever.
+// not retried forever; when its retry state cannot be recorded at all, it is
+// refused with retry_capacity_exhausted.
 func (s *Supervisor) handle(ctx context.Context, stored StoredDelivery) error {
 	at := s.options.Clock.Now().UTC()
 	delivery := stored.Delivery()
@@ -239,7 +240,7 @@ func (s *Supervisor) handle(ctx context.Context, stored StoredDelivery) error {
 	}
 	if reason, refused := DeliveryRefusalReason(err); refused {
 		if err := s.recordRefusal(ctx, stored, reason, at); err != nil {
-			return sidecarOutcome(err)
+			return err
 		}
 		return clear()
 	}
@@ -252,7 +253,7 @@ func (s *Supervisor) handle(ctx context.Context, stored StoredDelivery) error {
 	}
 	if failures >= s.options.MaximumRetries {
 		if err := s.recordRefusal(ctx, stored, RefusalReasonRetriesExhausted, at); err != nil {
-			return sidecarOutcome(err)
+			return err
 		}
 		return clear()
 	}
@@ -264,22 +265,20 @@ func (s *Supervisor) handle(ctx context.Context, stored StoredDelivery) error {
 	if err != nil {
 		return err
 	}
-	if err := s.retries.RecordRetry(ctx, next); err != nil {
-		return sidecarOutcome(err)
+	if err := s.retries.RecordRetry(ctx, next); errors.Is(err, ErrInboxStoreCapacity) {
+		// Without room for its retry state the delivery cannot be held to its
+		// bound, so it is refused, which is visible and terminal, rather than
+		// retried on every later pass. Refusal records have their own bound,
+		// one per delivery for each planner identity, so this one fits.
+		if err := s.recordRefusal(ctx, stored, RefusalReasonRetryCapacityExhausted, at); err != nil {
+			return err
+		}
+		return clear()
+	} else if err != nil {
+		return err
 	}
 	s.scheduleRetry(next.NotBefore(), at)
 	return nil
-}
-
-// sidecarOutcome makes a full sidecar bound (the file inbox's refusal and
-// retry files) the delivery's own outcome: the delivery is skipped in this
-// pass and handled again in a later one while the others keep flowing. Any
-// other inbox failure stays global.
-func sidecarOutcome(err error) error {
-	if errors.Is(err, ErrInboxStoreCapacity) {
-		return nil
-	}
-	return err
 }
 
 func (s *Supervisor) recordRefusal(ctx context.Context, stored StoredDelivery, reason string, at time.Time) error {

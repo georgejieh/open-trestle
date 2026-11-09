@@ -31,6 +31,10 @@ const (
 	// RefusalReasonRetriesExhausted records a delivery whose own failures
 	// outlasted its bounded retries while intake stayed available.
 	RefusalReasonRetriesExhausted = "retries_exhausted"
+	// RefusalReasonRetryCapacityExhausted records a delivery whose own failure
+	// could not be counted because the inbox had no room for its retry state,
+	// so it could not be held to its bound.
+	RefusalReasonRetryCapacityExhausted = "retry_capacity_exhausted"
 )
 
 var refusalReasonPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
@@ -75,6 +79,8 @@ func RefusalExplanation(reason string) string {
 		return "the run scope holds a plan the planner did not produce for this delivery"
 	case RefusalReasonRetriesExhausted:
 		return "the delivery kept failing on its own until its retries were spent"
+	case RefusalReasonRetryCapacityExhausted:
+		return "the delivery failed and the inbox had no room to record its retry state"
 	default:
 		return "recorded by the planner"
 	}

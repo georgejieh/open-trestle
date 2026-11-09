@@ -43,8 +43,9 @@ func fillFileInbox(t *testing.T, store *FileStore, count int) []string {
 }
 
 // Refusal and retry files never take a delivery's place in a full file inbox,
-// and a full retry bound is the delivery's own outcome: the supervisor keeps
-// recording outcomes and admitting deliveries instead of stopping intake.
+// and a full retry bound is the delivery's own outcome: a delivery whose retry
+// state cannot be recorded is refused with retry_capacity_exhausted, which is
+// visible and terminal, instead of stopping intake or being retried forever.
 func TestFileInboxSidecarsNeverStopIntake(t *testing.T) {
 	ctx := context.Background()
 	root := filepath.Join(t.TempDir(), "inbox")
@@ -106,6 +107,15 @@ func TestFileInboxSidecarsNeverStopIntake(t *testing.T) {
 	}
 	if _, retrying, err := store.Retry(ctx, scope, SourceGitHub, f.deliveries[1].DeduplicationKey()); err != nil || retrying {
 		t.Fatalf("a retry file was written past the retry bound: retrying=%t err=%v", retrying, err)
+	}
+	capacity, refused, err := store.Refusal(ctx, scope, SourceGitHub, f.deliveries[1].DeduplicationKey(), planner)
+	if err != nil || !refused || capacity.Reason() != RefusalReasonRetryCapacityExhausted {
+		t.Fatalf("a delivery without room for its retry state was not refused: refused=%t reason=%s err=%v", refused, capacity.Reason(), err)
+	}
+	journal.run = ""
+	clock.at = clock.at.Add(maximumSupervisorDelay)
+	if err := f.supervisor.handle(ctx, other); err != nil || f.admitted(t, f.deliveries[1]) {
+		t.Fatalf("the capacity refusal was not terminal: %v", err)
 	}
 	if _, err := store.List(ctx, scope, SourceGitHub, "", 100); err != nil {
 		t.Fatalf("a full retry bound failed listing: %v", err)

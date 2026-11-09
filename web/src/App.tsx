@@ -49,6 +49,8 @@ const refusalReasonLabels: Record<string, string> = {
     "the run scope holds a plan the planner did not produce for this delivery",
   retries_exhausted:
     "the delivery kept failing on its own until its retries were spent",
+  retry_capacity_exhausted:
+    "the delivery failed and the inbox had no room to record its retry state",
 };
 function refusalMessage(refusal: DeliveryRefusal): string {
   const label =

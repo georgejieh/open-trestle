@@ -119,4 +119,7 @@ func TestDeliveryRefusalCarriesItsReason(t *testing.T) {
 	if explanation := RefusalExplanation(RefusalReasonRunPlanConflict); explanation != "the run scope holds a plan the planner did not produce for this delivery" {
 		t.Fatalf("run_plan_conflict explanation=%q", explanation)
 	}
+	if explanation := RefusalExplanation(RefusalReasonRetryCapacityExhausted); explanation != "the delivery failed and the inbox had no room to record its retry state" {
+		t.Fatalf("retry_capacity_exhausted explanation=%q", explanation)
+	}
 }
