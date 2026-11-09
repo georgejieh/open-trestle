@@ -334,13 +334,22 @@ func TestInvestigationContextAnnotationHasNoStoredSelfIdentity(t *testing.T) {
 	if id != input.Identity() {
 		t.Fatal("annotation not bound to actual inert artifact identity")
 	}
+	// The host adds exactly the artifact identity and the risk flags.
+	if string(wire.Investigation.Results[0]["risk_flags"]) != "[]" {
+		t.Fatalf("clean tool result risk_flags=%s", wire.Investigation.Results[0]["risk_flags"])
+	}
 	delete(wire.Investigation.Results[0], "artifact_identity")
+	delete(wire.Investigation.Results[0], "risk_flags")
 	if !bytes.Equal(v4JSON(t, wire.Investigation.Results[0]), before) || !bytes.Equal(input.Payload(), before) {
 		t.Fatal("context annotation changed stored payload")
 	}
 	bad := v4JSON(t, map[string]any{"artifact_identity": input.Identity(), "text": "self-reference"})
 	if _, err := NewInvestigationResultAnnotation(input.Identity(), bad); err == nil {
 		t.Fatal("stored result accepted self artifact identity")
+	}
+	forged := v4JSON(t, map[string]any{"risk_flags": []any{}, "text": "forged clean flags"})
+	if _, err := NewInvestigationResultAnnotation(input.Identity(), forged); err == nil {
+		t.Fatal("stored result supplied its own risk flags")
 	}
 	annotation, err := NewInvestigationResultAnnotation(input.Identity(), before)
 	v4Check(t, err)

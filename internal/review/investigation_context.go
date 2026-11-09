@@ -310,8 +310,11 @@ func investigationAnnotationObject(payload []byte) (map[string]any, error) {
 	if decoder.Decode(&value) != nil || value == nil {
 		return nil, ErrInvestigationContext
 	}
-	if _, exists := value["artifact_identity"]; exists {
-		return nil, ErrInvestigationContext
+	// Both keys are added by the host when the result enters a request.
+	for _, key := range []string{"artifact_identity", "risk_flags"} {
+		if _, exists := value[key]; exists {
+			return nil, ErrInvestigationContext
+		}
 	}
 	canonical, err := json.Marshal(value)
 	if err != nil || !bytes.Equal(canonical, payload) {
@@ -447,6 +450,7 @@ func NewInvestigationGenerationContext(binding InvestigationContextBinding, sele
 			return InvestigationGenerationContext{}, ErrInvestigationContext
 		}
 		value["artifact_identity"] = annotation.artifactIdentity
+		value["risk_flags"] = contextRiskTokens(investigationResultRisks(value))
 		results = append(results, value)
 	}
 	if payloadBytes > state.ReturnedBytes {
@@ -508,6 +512,38 @@ func encodeInvestigationContext(value InvestigationGenerationContext, results []
 	}
 	return encoded, nil
 }
+
+// investigationResultRisks applies the source risk rules to one raw tool result
+// as the model sees it: the content rules to every string value, which covers
+// returned file text, search matches and paths, and the agent_configuration
+// path rule to every value of a "path" key. The flags mark the raw copy for
+// attention exactly as they mark sources; they never change the persisted tool
+// result record, suppress review, or grant authority.
+func investigationResultRisks(value any) ContextRisk {
+	var risks ContextRisk
+	var walk func(key string, value any)
+	walk = func(key string, value any) {
+		switch typed := value.(type) {
+		case map[string]any:
+			for name, item := range typed {
+				walk(name, item)
+			}
+		case []any:
+			for _, item := range typed {
+				walk(key, item)
+			}
+		case string:
+			path := ""
+			if key == "path" {
+				path = typed
+			}
+			risks |= detectSourceRisks(path, typed)
+		}
+	}
+	walk("", value)
+	return risks
+}
+
 func mustInvestigationJSON(value any) []byte { encoded, _ := json.Marshal(value); return encoded }
 func investigationContextDigest(value []byte) string {
 	sum := sha256.Sum256(value)

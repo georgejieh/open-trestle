@@ -68,9 +68,13 @@ investigation rules. It travels only in the trusted system channel;
 the payload binds it with `instructions_identity` and carries no `instructions`.
 Files a snapshot tool returns also enter `sources[]` as `repository_context`
 sources, so they get the same `agent_configuration` and `instruction_like_text`
-flags as any other source. The raw `tool_results` records are the exact tool
-output and carry no flags of their own; adding one would change a persisted
-record format.
+flags as any other source. From version 6, each raw tool result in
+`investigation.tool_results` also carries a host-added `risk_flags` array: the
+content rules applied to every string in the result (returned file text,
+search matches, paths) and the `agent_configuration` rule applied to every
+`path` value. The flags exist only in the request; the persisted tool result
+record is unchanged, and a stored result that supplies its own `risk_flags` is
+refused.
 Investigation version 4 (pinned `instructions` copy in the payload, no
 hierarchy paragraph) and investigation version 5 (the version 6 contract
 without the `removed_lines` sentence) are recorded readback only:

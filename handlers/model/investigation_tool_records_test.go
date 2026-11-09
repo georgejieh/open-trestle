@@ -824,7 +824,12 @@ func TestInvestigationToolRecordsListThenReadAddsPhysicalSourceToV4(t *testing.T
 	for i, stored := range []artifact.Artifact{listArtifact, readArtifact} {
 		var id string
 		toolRecordCheck(t, json.Unmarshal(wire.Investigation.Results[i]["artifact_identity"], &id))
+		// The request adds host-computed risk flags; the stored record has none.
+		if string(wire.Investigation.Results[i]["risk_flags"]) != "[]" {
+			t.Fatalf("clean tool result risk_flags=%s", wire.Investigation.Results[i]["risk_flags"])
+		}
 		delete(wire.Investigation.Results[i], "artifact_identity")
+		delete(wire.Investigation.Results[i], "risk_flags")
 		if id != stored.Identity() || !bytes.Equal(toolRecordJSON(t, wire.Investigation.Results[i]), stored.Payload()) {
 			t.Fatal("context-only annotation changed stored payload or made self-reference")
 		}

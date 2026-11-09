@@ -732,7 +732,8 @@ format, severity or evidence requirements), then the sentence that explains
 `removed_lines` sources, followed by the unchanged version 4 tool and output
 rules. The payload binds that text with `instructions_identity`.
 Files a tool returns are flagged with `agent_configuration` and
-`instruction_like_text` like other sources. Recorded version 5 investigation
+`instruction_like_text` like other sources, and each raw tool result the model
+sees carries `risk_flags` computed by the same rules. Recorded version 5 investigation
 requests (the same contract without the `removed_lines` sentence) and recorded
 version 4 requests, which carried their rules in the payload and no hierarchy
 paragraph, read back but are never sent again. See
