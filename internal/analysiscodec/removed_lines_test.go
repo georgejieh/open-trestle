@@ -243,6 +243,12 @@ func TestWholeFileRemovedTextTilesItsBaseLines(t *testing.T) {
 	if parsed, err := ParseResultArtifact(output, changeArtifact, base, head); err != nil || len(parsed.RemovedLines()) != 1 || parsed.RemovedLines()[0].HeadLine() != 0 {
 		t.Fatalf("whole-file removed text does not read back: %v", err)
 	}
+	// Removed text skipped whole for the analysis budget is one limit gap
+	// that names no lines, beside the whole-entry gap.
+	skipped, err := NewResultWithRemovedLines(changeArtifact, change, head, headSnapshot, nil, nil, []Gap{whole, NewGap(entry, 0, 0, RemovedLinesLimitReason)}, []DeterministicCheck{check}, nil, profile)
+	if err != nil || skipped.SchemaVersion() != 7 {
+		t.Fatalf("removed text skipped whole refused: %v", err)
+	}
 	for _, tc := range []struct {
 		name   string
 		mutate func(*Result)
@@ -261,6 +267,9 @@ func TestWholeFileRemovedTextTilesItsBaseLines(t *testing.T) {
 		}},
 		{"chunk naming a head line", func(r *Result) { r.removed[0].headLine = 1 }},
 		{"chunk without the whole-entry gap", func(r *Result) { r.gaps = []Gap{NewGap(entry, 3, 3, RemovedLinesLimitReason)} }},
+		{"text skipped whole beside a chunk", func(r *Result) {
+			r.gaps = []Gap{whole, NewGap(entry, 0, 0, RemovedLinesLimitReason)}
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rejectResult(t, output, changeArtifact, base, head, canonicalMutation(t, result, tc.mutate))

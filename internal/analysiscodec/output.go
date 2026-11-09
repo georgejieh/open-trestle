@@ -613,10 +613,21 @@ func validRemovedItem(item Item, entries map[string]changecodec.Entry) bool {
 	return deriveBindingIdentity(item) == item.bindingIdentity
 }
 
+// wholeRemovedTextGap reports whether a removed_lines_limit gap names no base
+// lines: the whole removed text of an emptied or removed file was skipped,
+// unread, for the analysis budget.
+func wholeRemovedTextGap(gap Gap) bool {
+	return gap.reason == RemovedLinesLimitReason && gap.startLine == 0 && gap.endLine == 0
+}
+
 // wholeFileBaseRanges reports whether the removed base ranges of a whole file,
 // chunks and limit gaps together, tile its base lines from line 1 with at
-// most one limit gap, which comes last.
+// most one limit gap, which comes last. A whole-entry limit gap, at line 0,
+// stands alone.
 func wholeFileBaseRanges(ranges []Item) bool {
+	if len(ranges) == 1 && ranges[0].startLine == 0 {
+		return ranges[0].headLine < 0
+	}
 	ordered := append([]Item(nil), ranges...)
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].startLine < ordered[j].startLine })
 	next := 1
@@ -657,15 +668,17 @@ func validGap(gap Gap, entries map[string]changecodec.Entry, schemaVersion, chan
 			return (schemaVersion == 6 || schemaVersion == 7) && err == nil
 		}
 		if gap.reason == RemovedLinesLimitReason {
+			// Only an emptied file's whole removed text can be skipped whole.
 			_, err := evidence.NewSourceRange(gap.path, gap.startLine, gap.endLine)
-			return schemaVersion == 7 && err == nil
+			return schemaVersion == 7 && (err == nil || wholeRemovedTextGap(gap) && entry.HeadSizeBytes() == 0)
 		}
 		return (schemaVersion == 5 || schemaVersion == 6 || schemaVersion == 7) && gap.startLine == 0 && gap.endLine == 0 && gap.reason == entry.Reason()
 	}
 	if gap.reason == RemovedLinesLimitReason {
-		// The unbound tail of a removed file's base text, at its base lines.
+		// The unbound tail of a removed file's base text, at its base lines,
+		// or the whole of it when it was not read.
 		_, err := evidence.NewSourceRange(gap.path, gap.startLine, gap.endLine)
-		return schemaVersion == 7 && removedFileEntry(entry) && err == nil
+		return schemaVersion == 7 && removedFileEntry(entry) && (err == nil || wholeRemovedTextGap(gap))
 	}
 	if gap.startLine == 0 && gap.endLine == 0 {
 		if gap.reason == "evidence_limit" {
