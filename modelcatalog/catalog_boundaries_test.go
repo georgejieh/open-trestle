@@ -111,42 +111,56 @@ func TestSelectorsRejectUnpairedSurrogatesAndPreserveUnicode(t *testing.T) {
 	}
 }
 
-func TestRefreshValidatesCompleteProposalDepthBeforeWriting(t *testing.T) {
+// A stored proposal nests each model object four levels deeper than its list,
+// so the fetch admits only model objects that still fit the complete-document
+// depth bound once stored. A deeper list is that source's failure: the other
+// sources still refresh, and the proposal applies.
+func TestRefreshDepthBoundIsPerSource(t *testing.T) {
+	deep := func(depth int) []byte {
+		return []byte(`{"data":[{"id":"exact","details":` + strings.Repeat("[", depth) + `0` + strings.Repeat("]", depth) + `}]}`)
+	}
+	healthy := []byte(`{"data":[{"id":"healthy"}]}`)
 	for _, test := range []struct {
 		name   string
 		depth  int
 		reject bool
 	}{
 		{name: "within_bound", depth: 16},
-		{name: "wrapped_proposal_exceeds_bound", depth: 59, reject: true},
+		{name: "deepest_stored", depth: 57},
+		{name: "one_level_deeper", depth: 58, reject: true},
+		{name: "list_bound", depth: 61, reject: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			body := []byte(`{"data":[{"id":"exact","details":` + strings.Repeat("[", test.depth) + `0` + strings.Repeat("]", test.depth) + `}]}`)
-			if _, err := parseModels("openai_models", body); err != nil {
-				t.Fatalf("fixture must pass provider document bounds: %v", err)
+			body := deep(test.depth)
+			if _, err := parseModels("openai_models", body); (err != nil) != test.reject {
+				t.Fatalf("parseModels depth %d err=%v, want reject=%v", test.depth, err, test.reject)
 			}
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(body) }))
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/healthy/models" {
+					_, _ = w.Write(healthy)
+					return
+				}
+				_, _ = w.Write(body)
+			}))
 			defer server.Close()
 			sources, current, proposal := paths(t)
-			manifest(t, sources, Source{ID: "s", Kind: "openai_models", URL: server.URL + "/models"})
+			manifest(t, sources, Source{ID: "deep", Kind: "openai_models", URL: server.URL + "/models"}, Source{ID: "healthy", Kind: "openai_models", URL: server.URL + "/healthy/models"})
 			review, err := Refresh(context.Background(), sources, current, proposal, false)
-			if test.reject {
-				if err == nil {
-					t.Error("Refresh accepted a proposal beyond complete-document depth bound")
-				}
-				if _, statErr := os.Lstat(proposal); !os.IsNotExist(statErr) {
-					t.Errorf("proposal persisted before refusal: %v", statErr)
-				}
-				return
-			}
 			if err != nil {
-				t.Fatal(err)
+				t.Fatalf("one source blocked the refresh: %v", err)
 			}
-			if len(review.Failures) != 0 || len(review.Diff.Added) != 1 {
-				t.Fatalf("within-bound metadata not fetched: %+v", review)
+			wantFailures, wantAdded := 0, 2
+			if test.reject {
+				wantFailures, wantAdded = 1, 1
+				if review.Failures[0].SourceID != "deep" {
+					t.Fatalf("failure recorded for %+v", review.Failures)
+				}
+			}
+			if len(review.Failures) != wantFailures || len(review.Diff.Added) != wantAdded {
+				t.Fatalf("failures=%+v added=%d", review.Failures, len(review.Diff.Added))
 			}
 			if err := Apply(context.Background(), sources, current, proposal, review.ProposalDigest, "absent"); err != nil {
-				t.Fatalf("successful refresh must produce applicable proposal: %v", err)
+				t.Fatalf("refreshed proposal did not apply: %v", err)
 			}
 		})
 	}

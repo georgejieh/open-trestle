@@ -255,7 +255,11 @@ network budget. The body limit admits a fetch only; it is not part of any stored
 catalog, digest or identity. Proposals and catalogs are written as compact JSON
 with a trailing newline and without HTML escaping, so each stored model is at
 most 20 bytes longer than its object in the list: any one list the fetch accepts
-fits the 8 MiB file limit. Several large sources together can still exceed it,
+fits the 8 MiB file limit. A stored proposal nests each model object four levels deeper
+than its list, so the fetch refuses a model object nested more than 58 levels,
+counting its own members as level 1; that source is then recorded as
+`metadata_unavailable` and the other sources still refresh. Every list the fetch
+accepts therefore also fits the 64-level document depth bound once stored. Several large sources together can still exceed it,
 which fails closed before anything is written. Catalogs and proposals written
 earlier, indented and with the selector also inside each model's metadata, still
 read back and apply, and diff against new metadata without reporting unchanged

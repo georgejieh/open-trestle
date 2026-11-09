@@ -249,12 +249,27 @@ func validJSONUnicodeEscapes(data []byte) error {
 	return nil
 }
 
+// maxDocumentDepth bounds the nesting of every decoded document.
+const maxDocumentDepth = 64
+
+// storedModelDepth is the depth of a model's metadata object in a stored
+// proposal, the deepest document that holds it: proposal, catalog, sources,
+// snapshot, models, model, metadata. In a model list the model object is at
+// depth 2, so a stored model is four levels deeper than its list.
+const storedModelDepth = 6
+
 func uniqueJSON(data []byte) error {
+	return uniqueJSONWithin(data, maxDocumentDepth)
+}
+
+// uniqueJSONWithin refuses duplicate object keys and any value nested deeper
+// than limit, counting the top-level value as depth 0.
+func uniqueJSONWithin(data []byte, limit int) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
 	var walk func(int) error
 	walk = func(depth int) error {
-		if depth > 64 {
+		if depth > limit {
 			return ErrInvalid
 		}
 		token, err := decoder.Token()
@@ -329,7 +344,8 @@ func parseModels(kind string, data []byte) ([]Model, error) {
 	for _, row := range rows {
 		var fields map[string]json.RawMessage
 		var name string
-		if json.Unmarshal(row, &fields) != nil || fields == nil || json.Unmarshal(fields[selector], &name) != nil || !selectorValid(name) || seen[name] {
+		// A list the fetch accepts must still fit the depth bound once stored.
+		if uniqueJSONWithin(row, maxDocumentDepth-storedModelDepth) != nil || json.Unmarshal(row, &fields) != nil || fields == nil || json.Unmarshal(fields[selector], &name) != nil || !selectorValid(name) || seen[name] {
 			return nil, ErrInvalid
 		}
 		seen[name] = true
