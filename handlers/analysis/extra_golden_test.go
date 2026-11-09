@@ -111,7 +111,6 @@ func TestOldCodeHandlerProducedBranchGoldens(t *testing.T) {
 		name       string
 		base, head map[string][]byte
 	}{
-		{"produced-v4-removed-file-gap", map[string][]byte{"removed.txt": []byte("gone\n")}, map[string][]byte{}},
 		{"produced-v4-go-affected-test", map[string][]byte{"lib/api.go": []byte("package lib\nfunc Exported() int { return 1 }\n"), "lib/api_test.go": []byte("package lib\nfunc TestExported(){ _ = Exported() }\n")}, map[string][]byte{"lib/api.go": []byte("package lib\nfunc Exported() int { return 2 }\n"), "lib/api_test.go": []byte("package lib\nfunc TestExported(){ _ = Exported() }\n")}},
 	}
 	for _, s := range scenarios {
@@ -130,14 +129,6 @@ func TestOldCodeHandlerProducedBranchGoldens(t *testing.T) {
 				t.Fatalf("entries=%d checks=%d observations=%d schema=%d", len(entries), len(checks), len(result.Observations()), result.SchemaVersion())
 			}
 			switch s.name {
-			case "produced-v4-removed-file-gap":
-				gaps := result.Gaps()
-				if entries[0].Path() != "removed.txt" || entries[0].Kind() != "removed" || entries[0].Reason() != "removed_file" || len(entries[0].Ranges()) != 0 || len(result.Items()) != 0 || len(gaps) != 1 || gaps[0].Path() != "removed.txt" || gaps[0].StartLine() != 0 || gaps[0].EndLine() != 0 || gaps[0].Reason() != "removed_file" {
-					t.Fatalf("removed branch mismatch: entry=%#v gaps=%#v items=%d", entries[0], gaps, len(result.Items()))
-				}
-				if checks[0].State() != CheckNotApplicable || checks[0].ApplicableFiles() != 0 || checks[0].ApplicableRanges() != 0 || checks[0].CheckedFiles() != 0 || checks[0].CheckedRanges() != 0 || checks[0].MatchCount() != 0 || len(profile.Gaps()) != 1 || profile.Gaps()[0].Reason() != semanticimpact.GapUnsupportedLanguage || len(profile.Declarations()) != 0 || len(profile.References()) != 0 {
-					t.Fatal("removed check or semantic branch mismatch")
-				}
 			case "produced-v4-go-affected-test":
 				ranges := entries[0].Ranges()
 				if entries[0].Path() != "lib/api.go" || entries[0].Kind() != "modified" || len(ranges) != 1 || ranges[0].StartLine() != 2 || ranges[0].EndLine() != 2 || len(result.Items()) != 1 || result.Items()[0].Path() != "lib/api.go" || result.Items()[0].StartLine() != 2 || result.Items()[0].EndLine() != 2 || len(result.Gaps()) != 0 {
@@ -165,5 +156,27 @@ func TestOldCodeHandlerProducedBranchGoldens(t *testing.T) {
 			}
 			verifyOldCodeGolden(t, frozen)
 		})
+	}
+}
+
+// A removed file was once analysed as a lone removed_file gap (version 4).
+// Those recorded bytes still read back; the live handler now also binds the
+// removed base text beside the gap.
+func TestOldCodeRemovedFileGapGoldenStillReadsBack(t *testing.T) {
+	verifyOldCodeGolden(t, readOldCodeGolden(t, "produced-v4-removed-file-gap"))
+	base, head, change, output := executeOldCodeScenario(t, "produced-v4-removed-file-gap", map[string][]byte{"removed.txt": []byte("gone\n")}, map[string][]byte{})
+	result, err := ParseResultArtifact(output, change, base, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gaps, removed := result.Gaps(), result.RemovedLines()
+	if result.SchemaVersion() != 7 || len(result.Items()) != 0 || len(gaps) != 1 || gaps[0].Reason() != "removed_file" || gaps[0].StartLine() != 0 {
+		t.Fatalf("removed file: version=%d gaps=%#v", result.SchemaVersion(), gaps)
+	}
+	if len(removed) != 1 || removed[0].Path() != "removed.txt" || removed[0].StartLine() != 1 || removed[0].EndLine() != 1 || removed[0].HeadLine() != 0 || removed[0].Digest() != sliceDigest("gone\n") {
+		t.Fatalf("removed file text: %#v", removed)
+	}
+	if check := result.Checks()[0]; check.State() != CheckNotApplicable || check.CheckedRanges() != 0 || len(result.SemanticImpact().Gaps()) != 1 || result.SemanticImpact().Gaps()[0].Reason() != semanticimpact.GapUnsupportedLanguage {
+		t.Fatal("removed check or semantic branch mismatch")
 	}
 }

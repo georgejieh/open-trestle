@@ -238,8 +238,9 @@ func TestDiagnosticWriteFailureClassifiesDiagnosticStoreCapacity(t *testing.T) {
 	}
 }
 
-// An emptied head file leaves no head line to anchor a deletion, so the entry
-// keeps the version 5 whole-entry gap.
+// An emptied head file leaves no head line beside the deletion, so the entry
+// keeps its whole-entry gap, and its removed base text is bound beside it as
+// whole-file removed text (version 7).
 func TestHandlerKeepsNoChangedHeadLinesGap(t *testing.T) {
 	for _, after := range []string{""} {
 		t.Run(after, func(t *testing.T) {
@@ -248,8 +249,11 @@ func TestHandlerKeepsNoChangedHeadLinesGap(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if result.SchemaVersion() != 5 || len(result.Items()) != 0 || len(result.Observations()) != 0 || len(result.Gaps()) != 1 {
+			if result.SchemaVersion() != 7 || len(result.Items()) != 0 || len(result.Observations()) != 0 || len(result.Gaps()) != 1 {
 				t.Fatalf("invalid deletion analysis: %#v", result)
+			}
+			if removed := result.RemovedLines(); len(removed) != 1 || removed[0].StartLine() != 1 || removed[0].EndLine() != 2 || removed[0].HeadLine() != 0 || removed[0].Digest() != sliceDigest("guard\nkeep\n") {
+				t.Fatalf("emptied file text: %#v", removed)
 			}
 			gap := result.Gaps()[0]
 			if gap.Path() != "a.txt" || gap.Reason() != "no_changed_head_lines" || gap.StartLine() != 0 || gap.EndLine() != 0 {
@@ -266,12 +270,12 @@ func TestHandlerKeepsNoChangedHeadLinesGap(t *testing.T) {
 	}
 }
 
-func TestHandlerKeepsV5MixedObservations(t *testing.T) {
+func TestHandlerKeepsMixedObservationsBesideRemovedText(t *testing.T) {
 	output, change, base, head := deletionAnalysisFixture(t,
 		map[string][]byte{"a.txt": []byte("guard\nkeep\n")},
 		map[string][]byte{"a.txt": []byte(""), "gate.go": []byte("package gate\nimport \"fmt\"\nfunc run() { fmt.Println(\"debug\") }\n")})
 	result, err := ParseResultArtifact(output, change, base, head)
-	if err != nil || result.SchemaVersion() != 5 || len(result.Gaps()) != 1 || len(result.Observations()) != 1 || result.Observations()[0].Path() != "gate.go" || len(result.Items()) != 1 {
+	if err != nil || result.SchemaVersion() != 7 || len(result.Gaps()) != 1 || len(result.Observations()) != 1 || result.Observations()[0].Path() != "gate.go" || len(result.Items()) != 1 || len(result.RemovedLines()) != 1 {
 		t.Fatalf("mixed v5 result=%#v err=%v", result, err)
 	}
 }

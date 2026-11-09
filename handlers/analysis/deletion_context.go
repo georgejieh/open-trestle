@@ -169,6 +169,86 @@ func (h *Handler) buildDeletionContext(ctx context.Context, scope audit.ReviewSc
 	return result, true, 0
 }
 
+// buildWholeFileRemovedText binds the removed base text of an entry that has
+// no head line left: a deletion-only entry whose head file is empty, or a
+// removed file. Its base content is bound as consecutive line-aligned chunks
+// of at most removedLinesPerPoint lines and removedBytesPerPoint bytes, up to
+// removedBytesPerEntry for the entry. The rest of the file, from the first
+// line that does not fit, is one removed_lines_limit gap at its base lines;
+// text is never truncated inside a line. An empty base file binds nothing, and
+// a file past the source budget or the evidence limits binds nothing, leaving
+// only the entry's whole-entry gap.
+func (h *Handler) buildWholeFileRemovedText(ctx context.Context, scope audit.ReviewScope, at time.Time, base source.Snapshot, entry changehandler.Entry, loaded *int, expires *time.Time, removedCount, gapCount int) ([]Item, []Gap, controlplane.RunFailure) {
+	var reference source.FileReference
+	found := false
+	for _, value := range base.Files() {
+		if value.Path() == entry.Path() {
+			reference, found = value, true
+			break
+		}
+	}
+	if !found || reference.Digest() != entry.BaseDigest() {
+		return nil, nil, controlplane.RunFailureInvalidInput
+	}
+	if reference.SizeBytes() == 0 || *loaded+reference.SizeBytes() > maximumEvidenceSourceBytes || gapCount >= maximumEvidenceItems {
+		return nil, nil, 0
+	}
+	content, failureCode := h.loadSourceFile(ctx, scope, at, base, reference, expires)
+	if failureCode != 0 {
+		return nil, nil, failureCode
+	}
+	defer clear(content)
+	*loaded += len(content)
+	baseFile, err := evidence.NewRepositoryFile(entry.Path(), content)
+	if err != nil || baseFile.Digest() != entry.BaseDigest() || baseFile.SizeBytes() != reference.SizeBytes() {
+		return nil, nil, controlplane.RunFailureInvalidInput
+	}
+	var lines []int
+	for offset, value := range content {
+		if value == '\n' {
+			lines = append(lines, offset+1)
+		}
+	}
+	if len(lines) == 0 || lines[len(lines)-1] != len(content) {
+		lines = append(lines, len(content))
+	}
+	var items []Item
+	next, offset, total := 1, 0, 0
+	for next <= len(lines) {
+		end, size := next-1, 0
+		for end < len(lines) && end-next+1 < removedLinesPerPoint {
+			lineBytes := lines[end] - offset - size
+			if size+lineBytes > removedBytesPerPoint || total+size+lineBytes > removedBytesPerEntry {
+				break
+			}
+			size += lineBytes
+			end++
+		}
+		if end < next || removedCount+len(items) >= maximumEvidenceItems {
+			break
+		}
+		sourceRange, err := evidence.NewSourceRange(entry.Path(), next, end)
+		if err != nil {
+			return nil, nil, controlplane.RunFailureInvalidInput
+		}
+		binding, err := evidence.BindSourceSlice(baseFile, content, sourceRange, content[offset:offset+size])
+		if err != nil {
+			return nil, nil, controlplane.RunFailureInvalidInput
+		}
+		item, err := analysiscodec.NewWholeFileRemovedLinesItem(entry, binding)
+		if err != nil {
+			return nil, nil, controlplane.RunFailureInternal
+		}
+		items = append(items, item)
+		offset, total, next = offset+size, total+size, end+1
+	}
+	var gaps []Gap
+	if next <= len(lines) {
+		gaps = append(gaps, analysiscodec.NewGap(entry, next, len(lines), analysiscodec.RemovedLinesLimitReason))
+	}
+	return items, gaps, 0
+}
+
 func deletionReferences(base, head source.Snapshot, entry changehandler.Entry) (source.FileReference, source.FileReference, bool) {
 	var headReference, baseReference source.FileReference
 	foundHead, foundBase := false, false

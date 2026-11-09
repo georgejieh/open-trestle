@@ -184,3 +184,86 @@ func TestRemovedLinesRejectTampering(t *testing.T) {
 	withRemoved := wireMutation(t, v6Output.Payload(), func(w *resultWire) { w.RemovedLines = itemWireValues(result.removed) }, true)
 	rejectResult(t, v6Output, v6Change, v6Base, v6Head, withRemoved)
 }
+
+// An emptied file keeps its whole-entry gap; its removed text tiles its base
+// lines from line 1 in chunks that name no head line, with at most one
+// trailing removed_lines_limit gap.
+func TestWholeFileRemovedTextTilesItsBaseLines(t *testing.T) {
+	baseText := "one\ntwo\nthree\n"
+	change, base, head := deletionChange(t, baseText, "")
+	payload, err := changecodec.EncodeResult(change)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changeArtifact, err := artifact.New(base.Scope(), artifact.KindChangeModel, "application/json", base.Classification(), artifact.OriginDeterministicTool, base.Protection(), []string{base.Identity(), head.Identity()}, payload, time.UnixMilli(200), base.ExpiresAt())
+	if err != nil {
+		t.Fatal(err)
+	}
+	change, err = changecodec.ParseResultArtifact(changeArtifact, base, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headSnapshot, err := sourceoutput.ParseSnapshotArtifact(head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := change.Entries()[0]
+	baseFile, _ := evidence.NewRepositoryFile("a.txt", []byte(baseText))
+	chunk := func(start, end int, text string) Item {
+		sourceRange, _ := evidence.NewSourceRange("a.txt", start, end)
+		binding, err := evidence.BindSourceSlice(baseFile, []byte(baseText), sourceRange, []byte(text))
+		if err != nil {
+			t.Fatal(err)
+		}
+		item, err := NewWholeFileRemovedLinesItem(entry, binding)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return item
+	}
+	input, _ := semanticimpact.NewInput(change.BaseSnapshotIdentity(), change.HeadSnapshotIdentity(), change.Identity(), nil, nil, nil)
+	profile, err := semanticimpact.AnalyzeGo(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check, _ := NewDeterministicCheck(change.Identity(), CheckNotApplicable, 0, 0, 0, 0, 0)
+	whole := NewGap(entry, 0, 0, "no_changed_head_lines")
+	result, err := NewResultWithRemovedLines(changeArtifact, change, head, headSnapshot, nil, []Item{chunk(1, 2, "one\ntwo\n")}, []Gap{whole, NewGap(entry, 3, 3, RemovedLinesLimitReason)}, []DeterministicCheck{check}, nil, profile)
+	if err != nil || result.SchemaVersion() != 7 {
+		t.Fatalf("whole-file removed text refused: %v", err)
+	}
+	encoded, err := EncodeResult(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := artifact.New(base.Scope(), artifact.KindDeterministicEvidence, "application/json", base.Classification(), artifact.OriginDeterministicTool, base.Protection(), []string{changeArtifact.Identity(), change.Identity(), head.Identity(), change.HeadSnapshotIdentity()}, encoded, time.UnixMilli(300), base.ExpiresAt())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed, err := ParseResultArtifact(output, changeArtifact, base, head); err != nil || len(parsed.RemovedLines()) != 1 || parsed.RemovedLines()[0].HeadLine() != 0 {
+		t.Fatalf("whole-file removed text does not read back: %v", err)
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*Result)
+	}{
+		{"chunk not starting at line 1", func(r *Result) {
+			r.removed = []Item{chunk(2, 3, "two\nthree\n")}
+			r.gaps = []Gap{whole, NewGap(entry, 1, 1, RemovedLinesLimitReason)}
+		}},
+		{"hole between chunks", func(r *Result) {
+			r.removed = []Item{chunk(1, 1, "one\n"), chunk(3, 3, "three\n")}
+			r.gaps = []Gap{whole}
+		}},
+		{"limit gap before a chunk", func(r *Result) {
+			r.removed = []Item{chunk(1, 1, "one\n"), chunk(3, 3, "three\n")}
+			r.gaps = []Gap{whole, NewGap(entry, 2, 2, RemovedLinesLimitReason)}
+		}},
+		{"chunk naming a head line", func(r *Result) { r.removed[0].headLine = 1 }},
+		{"chunk without the whole-entry gap", func(r *Result) { r.gaps = []Gap{NewGap(entry, 3, 3, RemovedLinesLimitReason)} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rejectResult(t, output, changeArtifact, base, head, canonicalMutation(t, result, tc.mutate))
+		})
+	}
+}

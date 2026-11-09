@@ -114,6 +114,24 @@ func NewRemovedLinesItem(entry changecodec.Entry, binding evidence.SourceSliceBi
 // MaxLine bounds every recorded line number.
 const MaxLine = 1_000_000
 
+// NewWholeFileRemovedLinesItem binds one chunk of the removed base text of an
+// entry with no head line left: a deletion-only entry whose head file is
+// empty, or a removed file. The entry keeps its whole-entry gap; the chunks
+// and at most one trailing removed_lines_limit gap cover its base lines from
+// line 1. A chunk names no head line.
+func NewWholeFileRemovedLinesItem(entry changecodec.Entry, binding evidence.SourceSliceBinding) (Item, error) {
+	rangeValue := binding.SourceRange()
+	if binding.Validate() != nil || !deletionOnlyEntry(entry) && !removedFileEntry(entry) || rangeValue.Path() != entry.Path() || binding.RepositoryFileDigest() != entry.BaseDigest() {
+		return Item{}, ErrInvalidResult
+	}
+	return Item{evidenceID: binding.Identity(), bindingIdentity: binding.Identity(), changeEntryIdentity: entry.Identity(), changeExecutionIdentity: entry.ExecutionIdentity(), path: entry.Path(), startLine: rangeValue.StartLine(), endLine: rangeValue.EndLine(), digest: binding.SliceDigest(), fileIdentity: binding.RepositoryFileIdentity(), fileDigest: binding.RepositoryFileDigest(), sliceBytes: binding.SliceBytes()}, nil
+}
+
+// removedFileEntry reports a removed file: it has base content and no head.
+func removedFileEntry(entry changecodec.Entry) bool {
+	return entry.Kind() == "removed" && entry.Reason() == "removed_file" && len(entry.Ranges()) == 0
+}
+
 func deletionOnlyEntry(entry changecodec.Entry) bool {
 	return entry.Reason() == "no_changed_head_lines" && entry.Kind() == "modified" && entry.Status() == "unsupported" && len(entry.Ranges()) == 0
 }
@@ -483,7 +501,9 @@ func (r Result) validate(requireArtifact bool, change changecodec.Result) error 
 		}
 		previous = key
 		if gap.reason == RemovedLinesLimitReason {
-			removedText[gap.changeEntryIdentity] = append(removedText[gap.changeEntryIdentity], Item{startLine: gap.startLine, endLine: gap.endLine})
+			// A limit gap is marked by a negative head line so that whole-file
+			// accounting can tell it from a bound chunk.
+			removedText[gap.changeEntryIdentity] = append(removedText[gap.changeEntryIdentity], Item{startLine: gap.startLine, endLine: gap.endLine, headLine: -1})
 			continue
 		}
 		if gap.reason == DeletionContextReason {
@@ -496,21 +516,30 @@ func (r Result) validate(requireArtifact bool, change changecodec.Result) error 
 			covered[coverageKey(gap.changeEntryIdentity, gap.startLine, gap.endLine)]++
 		}
 	}
-	// Versions 6 and 7 exist only to carry deletion-point context. Removed text
-	// never appears without that context, and version 7 accounts for removed
-	// text on every entry that carries it.
-	if (r.schemaVersion == 6 || r.schemaVersion == 7) && len(deletionItems) == 0 {
+	// Version 6 exists only to carry deletion-point context, and version 7 to
+	// carry removed text: of deletion points, which never appears without that
+	// context, or of a whole file with no head line left. Version 7 accounts
+	// for removed text on every entry that carries it.
+	if r.schemaVersion == 6 && len(deletionItems) == 0 || r.schemaVersion == 7 && len(deletionItems) == 0 && len(removedText) == 0 {
 		return ErrInvalidResult
 	}
 	for identity, ranges := range removedText {
+		if wholeEntryGap[identity] {
+			// A whole file with no head line left: chunks cover its base lines
+			// from line 1, with at most one trailing removed_lines_limit gap.
+			if !wholeFileBaseRanges(ranges) {
+				return ErrInvalidResult
+			}
+			continue
+		}
 		if deletionItems[identity] == 0 || deletionGaps[identity] == 0 || !disjointBaseRanges(ranges) {
 			return ErrInvalidResult
 		}
 	}
 	// The removed text of a deletion point names the head line of that
-	// point's deleted_lines gap.
+	// point's deleted_lines gap; whole-file removed text names none.
 	for _, item := range r.removed {
-		if !deletionPoints[coverageKey(item.changeEntryIdentity, item.headLine, 0)] {
+		if wholeEntryGap[item.changeEntryIdentity] != (item.headLine == 0) || item.headLine != 0 && !deletionPoints[coverageKey(item.changeEntryIdentity, item.headLine, 0)] {
 			return ErrInvalidResult
 		}
 	}
@@ -570,7 +599,7 @@ func validItem(item Item, entries map[string]changecodec.Entry, schemaVersion in
 // its deletion-only entry. The record carries base lines of the base file.
 func validRemovedItem(item Item, entries map[string]changecodec.Entry) bool {
 	entry, ok := entries[item.changeEntryIdentity]
-	if !ok || !deletionOnlyEntry(entry) || entry.ExecutionIdentity() != item.changeExecutionIdentity || entry.Path() != item.path || entry.BaseDigest() != item.fileDigest || item.evidenceID != item.bindingIdentity || !validDigest(item.evidenceID) || !validDigest(item.digest) || !validDigest(item.fileIdentity) || item.sliceBytes <= 0 || item.sliceBytes > 1<<20 || item.headLine < 1 || item.headLine > MaxLine {
+	if !ok || !deletionOnlyEntry(entry) && !(removedFileEntry(entry) && item.headLine == 0) || entry.ExecutionIdentity() != item.changeExecutionIdentity || entry.Path() != item.path || entry.BaseDigest() != item.fileDigest || item.evidenceID != item.bindingIdentity || !validDigest(item.evidenceID) || !validDigest(item.digest) || !validDigest(item.fileIdentity) || item.sliceBytes <= 0 || item.sliceBytes > 1<<20 || item.headLine < 0 || item.headLine > MaxLine {
 		return false
 	}
 	sourceRange, err := evidence.NewSourceRange(item.path, item.startLine, item.endLine)
@@ -582,6 +611,23 @@ func validRemovedItem(item Item, entries map[string]changecodec.Entry) bool {
 		return false
 	}
 	return deriveBindingIdentity(item) == item.bindingIdentity
+}
+
+// wholeFileBaseRanges reports whether the removed base ranges of a whole file,
+// chunks and limit gaps together, tile its base lines from line 1 with at
+// most one limit gap, which comes last.
+func wholeFileBaseRanges(ranges []Item) bool {
+	ordered := append([]Item(nil), ranges...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].startLine < ordered[j].startLine })
+	next := 1
+	for index, value := range ordered {
+		limit := value.headLine < 0
+		if value.startLine != next || limit && index != len(ordered)-1 {
+			return false
+		}
+		next = value.endLine + 1
+	}
+	return true
 }
 
 // disjointBaseRanges reports whether the removed base ranges of one entry,
@@ -615,6 +661,11 @@ func validGap(gap Gap, entries map[string]changecodec.Entry, schemaVersion, chan
 			return schemaVersion == 7 && err == nil
 		}
 		return (schemaVersion == 5 || schemaVersion == 6 || schemaVersion == 7) && gap.startLine == 0 && gap.endLine == 0 && gap.reason == entry.Reason()
+	}
+	if gap.reason == RemovedLinesLimitReason {
+		// The unbound tail of a removed file's base text, at its base lines.
+		_, err := evidence.NewSourceRange(gap.path, gap.startLine, gap.endLine)
+		return schemaVersion == 7 && removedFileEntry(entry) && err == nil
 	}
 	if gap.startLine == 0 && gap.endLine == 0 {
 		if gap.reason == "evidence_limit" {

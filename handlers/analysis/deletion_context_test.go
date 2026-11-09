@@ -170,3 +170,65 @@ func TestHandlerRemovedLinesPastBoundsAreExplicitGaps(t *testing.T) {
 		}
 	}
 }
+
+// The removed text of a removed file is bound whole, in line-aligned chunks
+// of at most 64 lines and 8 KiB, up to 32 KiB; the rest is one explicit
+// removed_lines_limit gap at its base lines, never a truncated line.
+func TestHandlerChunksTheRemovedTextOfARemovedFile(t *testing.T) {
+	short := strings.Repeat("short line\n", 150)
+	wideLine := strings.Repeat("w", 100) + "\n"
+	wide := strings.Repeat(wideLine, 400) // 40,400 bytes in 400 lines
+	huge := strings.Repeat("h", removedBytesPerPoint+1) + "\nafter\n"
+	for _, tc := range []struct {
+		name   string
+		base   string
+		chunks [][2]int
+		limit  [2]int
+	}{
+		{"short", short, [][2]int{{1, 64}, {65, 128}, {129, 150}}, [2]int{}},
+		// Each chunk holds 64 lines (6,464 bytes); five fill 32,320 bytes,
+		// four more lines fit the 32 KiB entry bound, and line 325 would
+		// pass it.
+		{"wide", wide, [][2]int{{1, 64}, {65, 128}, {129, 192}, {193, 256}, {257, 320}, {321, 324}}, [2]int{325, 400}},
+		// A first line past 8 KiB cannot be bound without truncation.
+		{"huge line", huge, nil, [2]int{1, 2}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			output, change, base, head := deletionAnalysisFixture(t, map[string][]byte{"keep.txt": []byte("keep\n"), "gone.txt": []byte(tc.base)}, map[string][]byte{"keep.txt": []byte("keep\n")})
+			result, err := ParseResultArtifact(output, change, base, head)
+			if err != nil || result.SchemaVersion() != 7 {
+				t.Fatalf("version=%d err=%v", result.SchemaVersion(), err)
+			}
+			removed := result.RemovedLines()
+			if len(removed) != len(tc.chunks) {
+				t.Fatalf("chunks=%d want %d", len(removed), len(tc.chunks))
+			}
+			for index, want := range tc.chunks {
+				if removed[index].Path() != "gone.txt" || removed[index].StartLine() != want[0] || removed[index].EndLine() != want[1] || removed[index].HeadLine() != 0 || removed[index].SliceBytes() > removedBytesPerPoint {
+					t.Fatalf("chunk %d at %d-%d, want %d-%d", index, removed[index].StartLine(), removed[index].EndLine(), want[0], want[1])
+				}
+			}
+			var whole, limits []Gap
+			for _, gap := range result.Gaps() {
+				switch gap.Reason() {
+				case "removed_file":
+					whole = append(whole, gap)
+				case analysiscodec.RemovedLinesLimitReason:
+					limits = append(limits, gap)
+				}
+			}
+			if len(whole) != 1 {
+				t.Fatal("removed file lost its whole-entry gap")
+			}
+			if tc.limit == ([2]int{}) {
+				if len(limits) != 0 {
+					t.Fatalf("unexpected limit gap %d-%d", limits[0].StartLine(), limits[0].EndLine())
+				}
+				return
+			}
+			if len(limits) != 1 || limits[0].StartLine() != tc.limit[0] || limits[0].EndLine() != tc.limit[1] {
+				t.Fatalf("limit gaps=%#v, want %v", limits, tc.limit)
+			}
+		})
+	}
+}

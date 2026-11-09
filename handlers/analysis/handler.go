@@ -190,6 +190,19 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 		}
 		if gap, ok := wholeEntryGap(entry, evidenceLimit); ok {
 			gaps = append(gaps, gap)
+			// An emptied or removed file keeps its whole-entry gap, and its
+			// removed base text is bound beside it for review. A deletion-only
+			// file that still has head lines is not emptied: its base text was
+			// not all removed.
+			emptied := gap.Reason() == "no_changed_head_lines" && references[entry.Path()].SizeBytes() == 0 && references[entry.Path()].Digest() == entry.HeadDigest()
+			if emptied || gap.Reason() == "removed_file" {
+				chunks, limitGaps, failureCode := h.buildWholeFileRemovedText(ctx, request.Plan().Scope(), at, base, entry, &loaded, &expires, len(removed), len(gaps))
+				if failureCode != 0 {
+					return failure(failureCode)
+				}
+				removed = append(removed, chunks...)
+				gaps = append(gaps, limitGaps...)
+			}
 			continue
 		}
 		reference, ok := references[entry.Path()]

@@ -294,11 +294,11 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 1000000,
-            "description": "The head line beside which the base lines of a deletion point were removed: the start line of that point's deleted_lines gap. It is head-line evidence for placing a finding about the removal; start_line and end_line stay base lines."
+            "description": "The head line beside which the base lines of a deletion point were removed: the start line of that point's deleted_lines gap. It is absent on the chunks of an emptied or removed file, which keep no head line. start_line and end_line stay base lines."
           }
         }
       },
-      "description": "Removed base lines of deletion points, bound to the exact base file. start_line and end_line are base lines, file_identity and file_digest name the base file, and a record is never a changed head range. head_line names the deletion point's head line."
+      "description": "Removed base lines bound to the exact base file. start_line and end_line are base lines, file_identity and file_digest name the base file, and a record is never a changed head range. A deletion point's record names its head_line. The records of an emptied or removed file name no head line: they are line-aligned chunks of at most 64 lines and 8 KiB, up to 32 KiB per file, that cover its base lines from line 1 beside its whole-entry gap. A removed_lines_limit gap then records the base lines from the first line that did not fit to the end of the file."
     },
     "gaps": {
       "type": "array",
