@@ -157,6 +157,8 @@ type Report struct {
 	// sources flagged as repository AI material or instruction-like text. They
 	// are attention signals; flagged sources are reviewed as code.
 	AgentConfigurationSources, InstructionLikeSources int
+	// StyleAdvice is the result's style advice; it is never a finding.
+	StyleAdvice StyleAdvice
 }
 
 // Report projects the result for an exporter such as SARIF. It fails for an
@@ -177,6 +179,7 @@ func (r Result) Report() (Report, error) {
 		UsageKnown: r.wire.UsageKnown, ActualCostMicroUSD: r.wire.ActualCostMicroUSD,
 		InstructionContextOmitted: r.wire.InstructionContextOmitted,
 		AgentConfigurationSources: r.wire.AgentConfigurationSources, InstructionLikeSources: r.wire.InstructionLikeSources,
+		StyleAdvice: r.StyleAdvice(),
 	}
 	if class, task, detail, hint := r.failureSummary(); class != "" {
 		report.FailureTask, report.FailureDetail, report.FailureHint = task, detail, hint

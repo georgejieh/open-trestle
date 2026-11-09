@@ -135,6 +135,7 @@ func buildModelReviewSARIFWithContributors(report localreview.Report, contributo
 	if report.InstructionLikeSources > 0 {
 		properties.InstructionLikeSourceCount = sarifPointer(report.InstructionLikeSources)
 	}
+	properties.StyleAdvice = modelReviewStyleAdvice(report.StyleAdvice)
 	log := sarifLog{Schema: sarifSchemaURI, Version: "2.1.0", Runs: []sarifRun{{
 		Tool:        sarifTool{Driver: sarifDriver{Name: "Open Trestle", Rules: ruleList}},
 		Invocations: []sarifInvocation{modelReviewInvocation(report, len(results))},
@@ -162,7 +163,27 @@ func modelReviewInvocation(report localreview.Report, findings int) sarifInvocat
 	case findings != 0:
 		invocation.ToolExecutionNotifications = []sarifNotification{{Level: "note", Message: sarifMessage{Text: "The review completed. The listed findings were independently verified; the review is still bounded and is not a clearance of the rest of the change."}}}
 	}
+	// Style advice has no source location, so it is a note, never a result.
+	for _, line := range report.StyleAdvice.Lines() {
+		invocation.ToolExecutionNotifications = append(invocation.ToolExecutionNotifications, sarifNotification{Level: "note", Message: sarifMessage{Text: strings.TrimSuffix(line, "\n")}})
+	}
 	return invocation
+}
+
+// modelReviewStyleAdvice projects style advice into the run property, or nil
+// when there is none.
+func modelReviewStyleAdvice(advice localreview.StyleAdvice) *sarifStyleAdvice {
+	if len(advice.Recommendations) == 0 && len(advice.Withheld) == 0 && advice.ConfigurationUnread == 0 && !advice.Unavailable {
+		return nil
+	}
+	value := &sarifStyleAdvice{ConfigurationUnread: advice.ConfigurationUnread, Unavailable: advice.Unavailable}
+	for _, recommendation := range advice.Recommendations {
+		value.Recommendations = append(value.Recommendations, sarifStyleLanguage{Language: recommendation.Language, ChangedFiles: recommendation.ChangedFiles, Recommendation: recommendation.Recommendation})
+	}
+	for _, withheld := range advice.Withheld {
+		value.Withheld = append(value.Withheld, sarifStyleLanguage{Language: withheld.Language, ChangedFiles: withheld.ChangedFiles})
+	}
+	return value
 }
 
 func modelReviewNotRunMessage(report localreview.Report) string {

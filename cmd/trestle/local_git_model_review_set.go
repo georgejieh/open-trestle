@@ -1049,6 +1049,7 @@ func encodeModelReviewSetSARIF(set modelReviewSetWire) ([]byte, error) {
 	report := localreview.Report{
 		Status: set.Status, CIDisposition: set.CI, RunStatus: set.runStatus, Failure: set.failure, Independence: set.independence,
 		Limitations: append([]string{}, set.Limitations...), HeadRevision: set.headRevision, Findings: []localreview.ReportFinding{}, Omissions: []localreview.ReportOmission{},
+		StyleAdvice: set.StyleAdvice,
 	}
 	if set.report != nil && set.report.HasSourceCoverage {
 		report.HasSourceCoverage = true

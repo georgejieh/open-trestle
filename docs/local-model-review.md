@@ -154,6 +154,7 @@ other Open Trestle exports. It carries only independently verified findings:
 | `properties` | `trestleCategory`, `trestleSeverity` (`error`, `warning` or `information`; the diagnostic severity, so high and critical are not distinguished), `trestleVerificationIndependence`, evidence IDs |
 | `properties.trestleFixGuidance` | the generator's fix text, with `trestleFixAuthority: unverified_model_guidance` |
 | run `properties` | `trestleModelReviewStatus`, `trestleCiDisposition`, `trestleRunStatus`, `trestleFailure`, sorted `trestleLimitations`, candidate/verified/rejected/inconclusive counts, source coverage and omissions, and `trestleComprehensiveClearance: false` |
+| run `properties.trestleStyleAdvice` | the [style advice](#style-recommendations): `recommendations` (`language`, `changedFiles`, `recommendation`), `withheld`, `configurationUnread` and `unavailable`, absent when there is none; each advice line is also a `note` in `invocations[0].toolExecutionNotifications`, never a result |
 
 Fix guidance is a result property, not a SARIF `fixes[]` entry, because the SARIF
 schema requires every fix to contain machine-applicable `artifactChanges` and this
@@ -675,8 +676,9 @@ not the single-review result:
   and never per member, because every member reviews the same change against
   the same base tree. The fields are absent when the general review has no
   advice, so such a set keeps its earlier bytes. Text output adds the same `style:` lines
-  before `limitations:`. The advice never changes the set's status, CI
-  disposition or exit code, and set SARIF does not carry it.
+  before `limitations:`, and set SARIF the same run property and notes as a
+  single review. The advice never changes the set's status, CI disposition or
+  exit code.
 
 Set status and CI disposition:
 
@@ -1010,7 +1012,10 @@ A result without any of these fields keeps its earlier version.
 A recommendation is advice only. It is not a finding, never blocks, and never
 changes `status`, `ci_disposition`, the exit code under any
 [exit-code policy](#exit-code-policy), source coverage or
-`comprehensive_clearance`. An `--investigation-policy` result with advice is
+`comprehensive_clearance`. SARIF carries it at run level only, as the
+`trestleStyleAdvice` property and `note` notifications (see
+[SARIF output](#sarif-output)), never as a result with a location. An
+`--investigation-policy` result with advice is
 also version 5 and keeps its `investigation` object; without advice it stays
 version 2. A `--specialists` review set reports the general review's advice
 once (see [Specialist review set](#specialist-review-set-opt-in)). A run that

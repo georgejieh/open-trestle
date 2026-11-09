@@ -146,6 +146,21 @@ type sarifRunProperties struct {
 	VerifierIndependence          string   `json:"trestleVerificationIndependence,omitempty"`
 	Limitations                   []string `json:"trestleLimitations,omitempty"`
 	ComprehensiveClearance        *bool    `json:"trestleComprehensiveClearance,omitempty"`
+	// StyleAdvice is the model review's fixed style advice; it is never a result.
+	StyleAdvice *sarifStyleAdvice `json:"trestleStyleAdvice,omitempty"`
+}
+
+type sarifStyleAdvice struct {
+	Recommendations     []sarifStyleLanguage `json:"recommendations,omitempty"`
+	Withheld            []sarifStyleLanguage `json:"withheld,omitempty"`
+	ConfigurationUnread int                  `json:"configurationUnread,omitempty"`
+	Unavailable         bool                 `json:"unavailable,omitempty"`
+}
+
+type sarifStyleLanguage struct {
+	Language       string `json:"language"`
+	ChangedFiles   int    `json:"changedFiles"`
+	Recommendation string `json:"recommendation,omitempty"`
 }
 
 type sarifOmission struct {

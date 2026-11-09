@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -88,6 +89,81 @@ func TestLocalGitInvestigationResultCarriesStyleAdvice(t *testing.T) {
 				t.Fatalf("investigation style advice mismatch: %s", stdout.String())
 			}
 		})
+	}
+}
+
+// TestModelReviewSARIFCarriesStyleAdviceAtRunLevel requires SARIF to carry the
+// style advice as a run property and a note notification, never as a result:
+// results stay exactly the verified findings.
+func TestModelReviewSARIFCarriesStyleAdviceAtRunLevel(t *testing.T) {
+	goModule := map[string][]byte{"go.mod": []byte("module example.test/p\n")}
+	const note = "style: no declared Go style for 1 changed file; consider gofmt and Effective Go, and commit its configuration"
+	for _, test := range []struct {
+		name     string
+		options  localModelFixtureOptions
+		advising bool
+	}{
+		{"no go.mod", localModelFixtureOptions{}, true},
+		{"go.mod in base", localModelFixtureOptions{extraBase: goModule, extraHead: goModule}, false},
+	} {
+		for _, set := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s set=%t", test.name, set), func(t *testing.T) {
+				f := newLocalModelFixture(t, test.options)
+				var text string
+				if set {
+					_, text = runLocalModelSet(t, f, []string{"--specialists", "bug_hunter", "--format", "sarif"}, 4)
+				} else {
+					var stdout, stderr bytes.Buffer
+					if code := run(replaceLocalGitChangeValue(f.args, "--format", "sarif"), &stdout, &stderr); code != 4 || stderr.Len() != 0 {
+						t.Fatalf("sarif exit=%d stderr=%q", code, stderr.String())
+					}
+					text = stdout.String()
+				}
+				var log struct {
+					Runs []struct {
+						Results     []json.RawMessage `json:"results"`
+						Invocations []struct {
+							Notifications []struct {
+								Level   string `json:"level"`
+								Message struct {
+									Text string `json:"text"`
+								} `json:"message"`
+							} `json:"toolExecutionNotifications"`
+						} `json:"invocations"`
+						Properties struct {
+							StyleAdvice *struct {
+								Recommendations []struct {
+									Language       string `json:"language"`
+									ChangedFiles   int    `json:"changedFiles"`
+									Recommendation string `json:"recommendation"`
+								} `json:"recommendations"`
+							} `json:"trestleStyleAdvice"`
+						} `json:"properties"`
+					} `json:"runs"`
+				}
+				if err := json.Unmarshal([]byte(text), &log); err != nil || len(log.Runs) != 1 || len(log.Runs[0].Results) != 1 || len(log.Runs[0].Invocations) != 1 {
+					t.Fatalf("SARIF is not one run with the one verified finding: %v\n%s", err, text)
+				}
+				reviewRun := log.Runs[0]
+				notes := 0
+				for _, notification := range reviewRun.Invocations[0].Notifications {
+					if strings.HasPrefix(notification.Message.Text, "style: ") {
+						notes++
+						if notification.Level != "note" || notification.Message.Text != note {
+							t.Fatalf("style notification = %+v", notification)
+						}
+					}
+				}
+				advice := reviewRun.Properties.StyleAdvice
+				if test.advising {
+					if notes != 1 || advice == nil || len(advice.Recommendations) != 1 || advice.Recommendations[0].Language != "go" || advice.Recommendations[0].ChangedFiles != 1 || advice.Recommendations[0].Recommendation != "gofmt and Effective Go" {
+						t.Fatalf("SARIF style advice = %+v notes=%d", advice, notes)
+					}
+				} else if notes != 0 || advice != nil || strings.Contains(text, "trestleStyleAdvice") {
+					t.Fatalf("SARIF without advice carries style: %s", text)
+				}
+			})
+		}
 	}
 }
 

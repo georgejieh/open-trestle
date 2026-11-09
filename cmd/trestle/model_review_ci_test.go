@@ -168,6 +168,10 @@ func TestModelReviewSARIFForUnsuccessfulAndInconclusiveRuns(t *testing.T) {
 		{"verifier abstains", localModelFixtureOptions{verificationMode: "inconclusive"}, false, 3, "incomplete", true, "warning", "coverage gaps"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			// go.mod declares the Go style, so the only notification is the run's
+			// status; style notes are covered by the style SARIF test.
+			goModule := map[string][]byte{"go.mod": []byte("module example.test/p\n")}
+			tc.options.extraBase, tc.options.extraHead = goModule, goModule
 			f := newLocalModelFixture(t, tc.options)
 			if tc.missing {
 				f.args = replaceLocalGitChangeValue(f.args, "--head-revision-digest", strings.Repeat("e", 40))
