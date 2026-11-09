@@ -202,6 +202,28 @@ func (c *Investigation) selectedSnapshot(sources []review.ContextSource) (review
 	return review.NewReviewSnapshot(c.options.InitialSnapshot.Workspace(), artifactPayloadHash(encoded), ranges)
 }
 func (c *Investigation) rebuildContext(turn uint8, prior gateway.InvestigationTurnRecord, newIDs []string) (review.InvestigationGenerationContext, error) {
+	return c.buildContext(turn, prior, newIDs, c.scanned)
+}
+
+// initialScannedBytes returns the scan budget readInitial charges: the whole
+// size of each initial head source file, which every initial read must scan
+// exactly. Removed base lines are not read.
+func (c *Investigation) initialScannedBytes() (uint64, bool) {
+	var total uint64
+	for _, s := range c.options.InitialContext.Sources() {
+		if s.Stage() == review.ContextStageRemovedLines {
+			continue
+		}
+		ref, ok := c.byPath[s.EvidenceItem().SourceRange().Path()]
+		if !ok {
+			return 0, false
+		}
+		total += uint64(ref.SizeBytes())
+	}
+	return total, true
+}
+
+func (c *Investigation) buildContext(turn uint8, prior gateway.InvestigationTurnRecord, newIDs []string, scanned uint64) (review.InvestigationGenerationContext, error) {
 	packet := c.options.InitialContext
 	snapshot := c.options.InitialSnapshot
 	if turn > 1 {
@@ -218,7 +240,7 @@ func (c *Investigation) rebuildContext(turn uint8, prior gateway.InvestigationTu
 			return review.InvestigationGenerationContext{}, err
 		}
 	}
-	state := review.InvestigationContextState{Turn: turn, ScannedBytes: c.scanned, ReturnedBytes: c.returned, ToolCallsUsed: uint8(len(c.tools)), NewResultArtifactIdentities: append([]string(nil), newIDs...)}
+	state := review.InvestigationContextState{Turn: turn, ScannedBytes: scanned, ReturnedBytes: c.returned, ToolCallsUsed: uint8(len(c.tools)), NewResultArtifactIdentities: append([]string(nil), newIDs...)}
 	if turn > 1 {
 		state.PreviousRequestIdentity = prior.RequestIdentity()
 		state.PreviousOutcomeIdentity = prior.Outcome().Identity()

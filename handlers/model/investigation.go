@@ -277,8 +277,15 @@ func NewInvestigation(ctx context.Context, o InvestigationOptions) (*Investigati
 		return nil, ErrInvestigation
 	}
 	c.pin = r.Generation.ResolvedRecord().RouteRegistryRecord().Identity()
-	// Establish independent route possibility with pure UNCLAIMED initial authority.
-	initialContext, err := c.rebuildContext(1, gateway.InvestigationTurnRecord{}, nil)
+	// Establish independent route possibility with pure UNCLAIMED initial
+	// authority. The initial sources are not read yet, so the plan uses the scan
+	// total their reads must charge: it plans the exact first turn request,
+	// which is checked once the sources are read.
+	initialScanned, ok := c.initialScannedBytes()
+	if !ok {
+		return nil, ErrInvestigation
+	}
+	initialContext, err := c.buildContext(1, gateway.InvestigationTurnRecord{}, nil, initialScanned)
 	if err != nil {
 		return nil, ErrInvestigation
 	}
@@ -333,6 +340,9 @@ func NewInvestigation(ctx context.Context, o InvestigationOptions) (*Investigati
 	}
 	c.current, err = c.rebuildContext(1, gateway.InvestigationTurnRecord{}, nil)
 	if err != nil {
+		return nil, ErrInvestigation
+	}
+	if current, err := c.current.ProviderRequest(); err != nil || c.scanned != initialScanned || current.Identity() != request.Identity() {
 		return nil, ErrInvestigation
 	}
 	c.owner, err = gateway.NewInvestigationRouteOwner(gateway.InvestigationRouteOwnerOptions{Scope: o.Scope, SessionIdentity: c.binding.Identity(), PolicyIdentity: p.Identity(), Deadline: o.Deadline, MaxTurns: uint8(p.MaxModelTurns()), Budget: r.Budget, Requirements: r.Requirements, Constraints: r.Constraints, Generation: generationPlan, Verification: verificationPlan, Catalog: o.Catalog, Ledger: o.Ledger, Clock: o.Clock, SystemChannelBytes: review.ModelRequestSystemChannelBytes, GenerationResponseFormatBytes: responseFormatBytes(r.GenerationTransport), VerificationResponseFormatBytes: responseFormatBytes(r.VerificationTransport), PlanningRefusals: o.PlanningRefusals})

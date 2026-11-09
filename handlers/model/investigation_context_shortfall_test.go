@@ -67,3 +67,40 @@ func TestInvestigationReportsRouteContextShortfalls(t *testing.T) {
 		})
 	}
 }
+
+// The constructor pre-plans the first turn to establish an independent
+// verifier, so it must plan the exact request the first turn sends: it refuses
+// a route one token too small for that request, before any model effect, and
+// accepts the exact fit.
+func TestInvestigationPrePlanRefusesExactlyWhenTheFirstTurnWould(t *testing.T) {
+	control, _, modelA, _, _, _ := upperFixture(t, "")
+	baseline, err := model.NewInvestigation(context.Background(), control)
+	upperCheck(t, err)
+	_, err = baseline.Step(context.Background())
+	upperCheck(t, err)
+	needOf := func(request provider.Request) uint64 {
+		return uint64(len(request.Payload())) + uint64(review.ModelRequestSystemChannelBytes(request)) + 256 + 4096
+	}
+	need := needOf(modelA.calls[0].Request())
+	for _, tc := range []struct {
+		capacity uint64
+		refused  bool
+	}{{need - 1, true}, {need, false}} {
+		options, _, a, b, _, _ := upperFixture(t, "", tc.capacity)
+		recorder := &shortfallRecorder{}
+		options.PlanningRefusals = recorder.refused
+		controller, err := model.NewInvestigation(context.Background(), options)
+		if tc.refused {
+			if err == nil || a.count() != 0 || b.count() != 0 || len(recorder.shortfall) != 1 || recorder.shortfall[0].RequiredTokens != need {
+				t.Fatalf("capacity %d: constructor err=%v dispatches=%d/%d shortfalls=%+v, want a refusal needing %d", tc.capacity, err, a.count(), b.count(), recorder.shortfall, need)
+			}
+			continue
+		}
+		upperCheck(t, err)
+		step, err := controller.Step(context.Background())
+		upperCheck(t, err)
+		if a.count() != 1 || len(recorder.shortfall) != 0 || step.Turn().RequestIdentity() != a.calls[0].Request().Identity() || needOf(a.calls[0].Request()) != tc.capacity {
+			t.Fatalf("capacity %d: exact fit did not dispatch the planned first turn", tc.capacity)
+		}
+	}
+}
