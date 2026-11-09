@@ -101,6 +101,9 @@ type PublishableFinding struct {
 	severity        Severity
 	startLine       int
 	endLine         int
+	// side tells a renderer whether the lines are head lines or removed base
+	// lines. It is structured data, not model text.
+	side LineSide
 }
 
 var publishableFindingStringFieldClasses = map[string]verifiedFindingStringFieldClass{
@@ -141,6 +144,10 @@ func (finding PublishableFinding) Severity() Severity      { return finding.seve
 func (finding PublishableFinding) StartLine() int          { return finding.startLine }
 func (finding PublishableFinding) EndLine() int            { return finding.endLine }
 
+// Side reports whether Path and the lines name head lines or removed base
+// lines. A base-side finding is always summary-only.
+func (finding PublishableFinding) Side() LineSide { return finding.side }
+
 func publishableFindings(findings []VerifiedFinding) ([]PublishableFinding, error) {
 	if err := validatePublishableFindingFieldFreeze(); err != nil {
 		return nil, err
@@ -151,7 +158,7 @@ func publishableFindings(findings []VerifiedFinding) ([]PublishableFinding, erro
 			return nil, ErrUnclassifiedPublishableField
 		}
 		source := finding.SourceRange()
-		values[index] = PublishableFinding{findingIdentity: finding.Identity(), title: finding.Title(), claim: finding.Claim(), path: source.Path(), severity: finding.Severity(), startLine: source.StartLine(), endLine: source.EndLine()}
+		values[index] = PublishableFinding{findingIdentity: finding.Identity(), title: finding.Title(), claim: finding.Claim(), path: source.Path(), severity: finding.Severity(), startLine: source.StartLine(), endLine: source.EndLine(), side: finding.Side()}
 	}
 	return values, nil
 }

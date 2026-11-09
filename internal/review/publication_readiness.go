@@ -171,11 +171,6 @@ func SelectPublicationFindings(policy PublicationPolicy, receipt IndependentVeri
 	}
 	eligible := make([]VerifiedFinding, 0, len(set.findings))
 	for _, finding := range set.findings {
-		// Publication renders head locations only. Refuse a finding on removed
-		// base lines rather than publish its lines as head lines.
-		if finding.Side() != LineSideHead {
-			return PublicationSelection{}, ErrInvalidPublicationSelection
-		}
 		if severityRank(finding.Severity()) < severityRank(policy.MinimumSeverity()) {
 			selection.belowThresholdCount++
 			continue
@@ -183,7 +178,13 @@ func SelectPublicationFindings(policy PublicationPolicy, receipt IndependentVeri
 		eligible = append(eligible, finding)
 	}
 	sort.Slice(eligible, func(i, j int) bool { return publicationFindingLess(eligible[i], eligible[j]) })
-	count := min(len(eligible), int(policy.MaxInlineFindings()))
+	// Head findings sort first. A finding on removed base lines is never
+	// inline: a forge comment anchors on head lines, so it is summary-only.
+	head := 0
+	for head < len(eligible) && eligible[head].Side() == LineSideHead {
+		head++
+	}
+	count := min(head, int(policy.MaxInlineFindings()))
 	selection.inlineFindings = append([]VerifiedFinding(nil), eligible[:count]...)
 	selection.summaryOnlyFindings = append([]VerifiedFinding(nil), eligible[count:]...)
 	if len(selection.inlineFindings) == 0 {
@@ -286,9 +287,9 @@ func (s PublicationSelection) Validate() error {
 	}
 	previous := VerifiedFinding{}
 	seen := map[string]struct{}{}
-	for _, group := range [][]VerifiedFinding{s.inlineFindings, s.summaryOnlyFindings} {
-		for _, finding := range group {
-			if finding.Validate() != nil || finding.snapshotIdentity != s.snapshotIdentity || severityRank(finding.Severity()) < severityRank(s.policy.MinimumSeverity()) || previous.Identity() != "" && publicationFindingLess(finding, previous) {
+	for group, findings := range [][]VerifiedFinding{s.inlineFindings, s.summaryOnlyFindings} {
+		for _, finding := range findings {
+			if finding.Validate() != nil || finding.snapshotIdentity != s.snapshotIdentity || severityRank(finding.Severity()) < severityRank(s.policy.MinimumSeverity()) || previous.Identity() != "" && publicationFindingLess(finding, previous) || group == 0 && finding.Side() != LineSideHead {
 				return ErrInvalidPublicationSelection
 			}
 			if _, exists := seen[finding.Identity()]; exists {
@@ -577,7 +578,13 @@ func severityRank(s Severity) uint8 {
 	}
 	return 0
 }
+
+// publicationFindingLess orders head findings before findings on removed base
+// lines, then by severity, path, and lines. Head-only order is unchanged.
 func publicationFindingLess(a, b VerifiedFinding) bool {
+	if a.Side() != b.Side() {
+		return a.Side() < b.Side()
+	}
 	if severityRank(a.Severity()) != severityRank(b.Severity()) {
 		return severityRank(a.Severity()) > severityRank(b.Severity())
 	}

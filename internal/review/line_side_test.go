@@ -279,8 +279,8 @@ func TestVerifiedFindingSidesReadBack(t *testing.T) {
 	}
 }
 
-// Consumers that render head locations refuse a base-side finding rather than
-// emit its base lines as head lines.
+// A diagnostic set version without sides refuses a base-side finding rather
+// than export its base lines as head lines.
 func TestHeadOnlyConsumersRefuseABaseSideFinding(t *testing.T) {
 	receipt, verified := verifiedSetFixture(t, "verified", gateway.RouteIndependenceDistinctProvider)
 	base := relabelBaseSide(t, verified)
@@ -291,15 +291,5 @@ func TestHeadOnlyConsumersRefuseABaseSideFinding(t *testing.T) {
 	// Version 2 cannot record a side; only version 8 carries a base-side finding.
 	if _, err := ExportDiagnosticSet(scope, strings.Repeat("1", 40), receipt, base); err == nil {
 		t.Fatal("version 2 diagnostic export accepted a base-side finding")
-	}
-	policy, err := NewPublicationPolicy(SeverityLow, 10, gateway.RouteIndependenceDistinctProvider, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := SelectPublicationFindings(policy, receipt, verified); err != nil {
-		t.Fatalf("head fixture is not publishable: %v", err)
-	}
-	if _, err := SelectPublicationFindings(policy, receipt, base); !errors.Is(err, ErrInvalidPublicationSelection) {
-		t.Fatalf("publication selected a base-side finding: %v", err)
 	}
 }

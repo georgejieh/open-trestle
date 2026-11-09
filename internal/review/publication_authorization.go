@@ -183,12 +183,14 @@ func (p PublicationPlan) Validate() error {
 	}
 	seen := make(map[string]struct{}, len(p.inlineFindings)+len(p.summaryOnlyFindings))
 	groups := [][]VerifiedFinding{p.inlineFindings, p.summaryOnlyFindings}
-	for _, findings := range groups {
+	for group, findings := range groups {
 		for index, finding := range findings {
 			if err := finding.Validate(); err != nil {
 				return err
 			}
-			if finding.snapshotIdentity != p.snapshotIdentity || index > 0 && publicationFindingLess(finding, findings[index-1]) {
+			// An inline comment anchors on head lines, so a finding on removed
+			// base lines is summary-only.
+			if finding.snapshotIdentity != p.snapshotIdentity || index > 0 && publicationFindingLess(finding, findings[index-1]) || group == 0 && finding.Side() != LineSideHead {
 				return ErrInvalidPublicationPlan
 			}
 			if _, exists := seen[finding.Identity()]; exists {
