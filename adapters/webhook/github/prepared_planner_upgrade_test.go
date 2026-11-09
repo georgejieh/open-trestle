@@ -64,6 +64,11 @@ func TestPreparedProcessorResumesARunOpenedByTheVersion1Planner(t *testing.T) {
 		t.Fatal(err)
 	}
 	v1Plan, v1Inputs := v1PreparedPlan(t, planner, stored, base, head)
+	// The identity the version 1 planner (origin/main 29f6558) produced for
+	// this delivery, computed with that code.
+	if v1Plan.Identity() != "cc07e7034cebe5c0cb3f2a91a8e88f3840b4bff2221864d7d0feef269fa7875a" {
+		t.Fatalf("version 1 fixture plan=%s", v1Plan.Identity())
+	}
 	for _, input := range v1Inputs {
 		if _, err := store.Put(ctx, input, stored.Receipt().AcceptedAt()); err != nil {
 			t.Fatal(err)
@@ -100,6 +105,81 @@ func TestPreparedProcessorResumesARunOpenedByTheVersion1Planner(t *testing.T) {
 	}
 	if _, err := store.Get(ctx, v1Plan.Scope(), current.Tasks()[0].InputIdentity(), time.UnixMilli(500)); !errors.Is(err, artifact.ErrArtifactNotFound) {
 		t.Fatalf("resuming wrote version 2 inputs beside the version 1 run: %v", err)
+	}
+}
+
+// The planner names the plan its version 1 produced for a delivery, in both
+// modes, with the identities that code produced, and none for a delivery
+// version 1 could not plan.
+func TestPreparedPlannerNamesTheVersion1Plan(t *testing.T) {
+	ctx := context.Background()
+	base, head := strings.Repeat("1", 40), strings.Repeat("2", 40)
+	payload := func(base, head string) string {
+		return `{"action":"synchronize","number":42,"repository":{"full_name":"owner/repository"},"pull_request":{"base":{"sha":"` + base + `","repo":{"full_name":"owner/repository"}},"head":{"sha":"` + head + `","repo":{"full_name":"owner/repository"}}}}`
+	}
+	for _, c := range []struct {
+		mode     controlplane.ReviewRunMode
+		bindings []TaskHandlerBinding
+		v1       string
+	}{
+		{controlplane.ReviewRunAdvisory, plannerBindings()[:8], "cc07e7034cebe5c0cb3f2a91a8e88f3840b4bff2221864d7d0feef269fa7875a"},
+		{controlplane.ReviewRunRequired, plannerBindings(), "81ff5fcd9e10a23e5cae4056c702c251aeed173fcdc9c803abbcb005459bac35"},
+	} {
+		planner, err := NewBuiltInPreparedPullRequestPlanner("github.com", "owner/repository", strings.Repeat("e", 64), "tenant-github-review", c.mode, c.bindings, artifact.ClassificationRestricted, artifact.ProtectionProcessPrivate, 24*time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		identities, err := planner.SupersededPlanIdentities(ctx, storedPullRequest(t, payload(base, head)))
+		if err != nil || len(identities) != 1 || identities[0] != c.v1 {
+			t.Fatalf("%s version 1 plans=%v err=%v", c.mode, identities, err)
+		}
+		if identities, err := planner.SupersededPlanIdentities(ctx, storedPullRequest(t, payload(head, head))); err != nil || len(identities) != 0 {
+			t.Fatalf("%s version 1 plans for equal commits=%v err=%v", c.mode, identities, err)
+		}
+	}
+}
+
+// A run in the delivery's scope whose plan names the delivery's request but
+// is not one this planner or its version 1 produces (for example opened by a
+// caller with other tasks) is not the delivery's run: it is a conflict, and
+// it is neither adopted nor advanced.
+func TestPreparedProcessorRefusesAPlanThePlannerDidNotProduce(t *testing.T) {
+	ctx := context.Background()
+	planner, err := NewBuiltInPreparedPullRequestPlanner("github.com", "owner/repository", strings.Repeat("e", 64), "tenant-github-review", controlplane.ReviewRunAdvisory, plannerBindings()[:8], artifact.ClassificationRestricted, artifact.ProtectionProcessPrivate, 24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, head := strings.Repeat("1", 40), strings.Repeat("2", 40)
+	stored := storedPullRequest(t, `{"action":"synchronize","number":42,"repository":{"full_name":"owner/repository"},"pull_request":{"base":{"sha":"`+base+`","repo":{"full_name":"owner/repository"}},"head":{"sha":"`+head+`","repo":{"full_name":"owner/repository"}}}}`)
+	current, _, err := planner.Prepare(ctx, stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := controlplane.NewTaskDefinition("source", controlplane.TaskAcquireSource, strings.Repeat("a", 64), strings.Repeat("b", 64), nil, 2, 100, 1000, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := controlplane.NewReviewRunPlan(current.Scope(), stored.Delivery().Identity(), strings.Repeat("c", 64), controlplane.ReviewRunAdvisory, []controlplane.TaskDefinition{task})
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal := controlplane.NewMemoryRunJournal()
+	coordinator, _ := controlplane.NewCoordinator(journal)
+	opened, err := coordinator.Open(ctx, foreign, time.UnixMilli(300))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, _ := artifact.NewMemoryStore(artifact.ProtectionProcessPrivate, 20)
+	processor, err := webhook.NewPreparedProcessor(journal, planner, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = processor.Process(ctx, stored, time.UnixMilli(400))
+	if reason, refused := webhook.DeliveryRefusalReason(err); !refused || reason != webhook.RefusalReasonRunPlanConflict || !errors.Is(err, controlplane.ErrRunPlanConflict) {
+		t.Fatalf("a plan the planner did not produce was adopted: %v", err)
+	}
+	if _, state, err := coordinator.Resume(ctx, current.Scope()); err != nil || state.Revision() != opened.Revision() {
+		t.Fatalf("the foreign run was advanced: %v", err)
 	}
 }
 

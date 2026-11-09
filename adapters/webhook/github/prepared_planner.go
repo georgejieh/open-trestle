@@ -61,10 +61,33 @@ func (p *PreparedPullRequestPlanner) Identity() string {
 	return p.identity
 }
 func (p *PreparedPullRequestPlanner) Prepare(ctx context.Context, stored webhook.StoredDelivery) (controlplane.ReviewRunPlan, []artifact.Artifact, error) {
+	return p.prepare(ctx, stored, 2)
+}
+
+// SupersededPlanIdentities returns the identity of the plan the version 1
+// prepared planner, configured as this one, produced for the delivery: its
+// base task named pull_request.base.sha directly, and it refused equal base
+// and head commits, so such a delivery has none. Like Prepare, it performs no
+// I/O.
+func (p *PreparedPullRequestPlanner) SupersededPlanIdentities(ctx context.Context, stored webhook.StoredDelivery) ([]string, error) {
+	plan, _, err := p.prepare(ctx, stored, 1)
+	if err != nil {
+		if ctx != nil && ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, nil
+	}
+	return []string{plan.Identity()}, nil
+}
+
+// prepare builds the plan and root inputs the given planner version produces.
+// Version 2 acquires the merge base in the source-base task; version 1
+// acquired pull_request.base.sha.
+func (p *PreparedPullRequestPlanner) prepare(ctx context.Context, stored webhook.StoredDelivery, version int) (controlplane.ReviewRunPlan, []artifact.Artifact, error) {
 	if p == nil || p.base == nil || p.identity != derivePreparedPlannerIdentity(p) {
 		return controlplane.ReviewRunPlan{}, nil, ErrInvalidPullRequestPlanner
 	}
-	scope, payload, err := p.base.parseDelivery(ctx, stored, true)
+	scope, payload, err := p.base.parseDelivery(ctx, stored, version >= 2)
 	if err != nil {
 		return controlplane.ReviewRunPlan{}, nil, err
 	}
@@ -83,7 +106,12 @@ func (p *PreparedPullRequestPlanner) Prepare(ctx context.Context, stored webhook
 	}
 	created := stored.Receipt().AcceptedAt()
 	expires := created.Add(p.retention)
-	baseInput, err := sourcehandler.NewMergeBaseInput(repository, baseRevision, headRevision, p.sourceAdapter)
+	var baseInput sourcehandler.Input
+	if version >= 2 {
+		baseInput, err = sourcehandler.NewMergeBaseInput(repository, baseRevision, headRevision, p.sourceAdapter)
+	} else {
+		baseInput, err = sourcehandler.NewInput(repository, baseRevision, p.sourceAdapter)
+	}
 	if err != nil {
 		return controlplane.ReviewRunPlan{}, nil, ErrInvalidPullRequestPayload
 	}

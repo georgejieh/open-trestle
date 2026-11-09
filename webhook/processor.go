@@ -42,6 +42,15 @@ type PreparedRunPlanner interface {
 	Prepare(context.Context, StoredDelivery) (controlplane.ReviewRunPlan, []artifact.Artifact, error)
 }
 
+// SupersedingPlanner is optionally implemented by a prepared planner that
+// replaced earlier versions of itself. SupersededPlanIdentities returns the
+// identities of the plans those versions produced for a delivery, so a run one
+// of them opened is resumed as the delivery's run. Like planning, it performs
+// no I/O; a delivery an earlier version could not plan has none.
+type SupersedingPlanner interface {
+	SupersededPlanIdentities(context.Context, StoredDelivery) ([]string, error)
+}
+
 // Processor opens replay-safe review runs from durable inbox records.
 type Processor struct {
 	coordinator     *controlplane.Coordinator
@@ -124,11 +133,18 @@ func (p *Processor) Process(ctx context.Context, stored StoredDelivery, at time.
 		existingPlan, existingState, resumeErr := p.coordinator.Resume(ctx, scope)
 		if resumeErr == nil {
 			// A delivery's run is opened once and its plan is immutable, so a
-			// run already opened for this exact delivery is its run even when an
-			// earlier planner version produced it; only a plan for another
-			// request conflicts.
-			if existingPlan.Identity() != plan.Identity() && (existingPlan.RequestIdentity() != delivery.Identity() || existingPlan.Scope().Identity() != scope.Identity()) {
-				return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, refuseDelivery(RefusalReasonRunPlanConflict, controlplane.ErrRunPlanConflict)
+			// run whose plan is exactly the one this planner, or an earlier
+			// version of it, produces for the delivery is its run. Any other
+			// plan in the scope conflicts, even one naming this delivery's
+			// request: its tasks and policy are not the planner's.
+			if existingPlan.Identity() != plan.Identity() {
+				superseded, supersededErr := p.supersededPlan(ctx, stored, existingPlan.Identity())
+				if supersededErr != nil {
+					return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, supersededErr
+				}
+				if !superseded {
+					return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, refuseDelivery(RefusalReasonRunPlanConflict, controlplane.ErrRunPlanConflict)
+				}
 			}
 			existingState, resumeErr = p.coordinator.Advance(ctx, existingPlan, at)
 			if resumeErr != nil {
@@ -162,6 +178,29 @@ func (p *Processor) Process(ctx context.Context, stored StoredDelivery, at time.
 	}
 	admission := newRunAdmissionReceipt(stored.Receipt(), p.plannerIdentity, plan.Identity())
 	return admission, runReceipt, nil
+}
+
+// supersededPlan reports whether an earlier version of the prepared planner
+// produced the plan identity for this delivery. Only cancellation is an error:
+// any other failure means no earlier version planned the delivery.
+func (p *Processor) supersededPlan(ctx context.Context, stored StoredDelivery, identity string) (bool, error) {
+	superseding, ok := p.preparedPlanner.(SupersedingPlanner)
+	if !ok {
+		return false, nil
+	}
+	identities, err := superseding.SupersededPlanIdentities(ctx, stored)
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
+	if err != nil {
+		return false, nil
+	}
+	for _, superseded := range identities {
+		if superseded == identity {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 func persistPreparedInputs(ctx context.Context, store artifact.Store, stored StoredDelivery, plan controlplane.ReviewRunPlan, inputs []artifact.Artifact, at time.Time) error {
 	rootInputs := make(map[string]struct{})
