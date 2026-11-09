@@ -164,7 +164,7 @@ qualify a production deployment.
 
 ```sh
 # build and check the committed console assets with the pinned Node release
-# node --version must print v26.7.0; do not accept a build from another Node release.
+# node --version must print v26.12.1; do not accept a build from another Node release.
 node --version
 (cd web && npm ci && npm test && npm run build && npm run dist:check)
 
