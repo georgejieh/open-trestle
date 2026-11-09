@@ -1089,8 +1089,10 @@ JSON uses schema version 5, which keeps every version 4 field (including
 `finding_guidance` and a `--profile` run's `specialist` object) and adds
 `style_recommendations`: one entry per language, in language-token order, with
 `language` (the routing token, such as `python` or `cpp`), `changed_files`, and
-`recommendation` (the table text). If a recognized base style configuration file
-could not be read (over 64 KiB, not valid UTF-8, or beyond the first 256), the
+`recommendation` (the table text). Recommendations use exactly the base style
+configuration files that routing's change-features document carries. If a
+recognized base style configuration file could not be read (over 64 KiB, not
+valid UTF-8, beyond the first 256, or past the 1 MiB change-features bound), the
 declared style is unknown only for the languages that file could govern, by any
 style its name can declare: an unread `pyproject.toml` affects Python, an unread
 `package.json` the languages Prettier governs, and an unread `.editorconfig`
@@ -1102,7 +1104,7 @@ Text reads, for example:
 ```text
 style: no declared TypeScript style for 1 changed file; consider Prettier with ESLint, and commit its configuration
 style: declared Python style unknown for 1 changed file; a base style configuration file that may declare it was not read, so no recommendation is made
-style: 1 base style configuration file was not read (over 64 KiB, not valid UTF-8, or beyond 256 files)
+style: 1 base style configuration file was not read (over 64 KiB, not valid UTF-8, beyond 256 files, or past the 1 MiB change-features bound)
 ```
 
 A result without any of these fields keeps its earlier version.

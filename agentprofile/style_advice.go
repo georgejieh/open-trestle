@@ -13,7 +13,8 @@ var ErrInvalidStyleAdvice = errors.New("invalid style advice")
 // it: a fixed recommendation for each changed language that has a style
 // detector but no style declared by the base tree, and the languages withheld
 // because a base style configuration file that could declare their style was
-// not read (over 64 KiB, not valid UTF-8, or beyond 256 files).
+// not read (over 64 KiB, not valid UTF-8, beyond 256 files, or past the 1 MiB
+// change-features document bound that routing uses).
 // ConfigurationUnread counts those files. Unavailable alone marks a recorded
 // change model, its snapshots or a base style configuration file that could not
 // be read back, so no advice could be derived. The text is the fixed table of
@@ -138,7 +139,7 @@ func (a RecordedStyleAdvice) Lines() []string {
 		if a.ConfigurationUnread != 1 {
 			subject = "files were"
 		}
-		lines = append(lines, fmt.Sprintf("style: %d base style configuration %s not read (over 64 KiB, not valid UTF-8, or beyond 256 files)\n", a.ConfigurationUnread, subject))
+		lines = append(lines, fmt.Sprintf("style: %d base style configuration %s not read (over 64 KiB, not valid UTF-8, beyond 256 files, or past the 1 MiB change-features bound)\n", a.ConfigurationUnread, subject))
 	}
 	if a.Unavailable {
 		lines = append(lines, "style: advice unavailable; the recorded change or base style configuration could not be read back\n")

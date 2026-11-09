@@ -3,9 +3,12 @@ package localreview
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/georgejieh/open-trestle/agentprofile"
 	"github.com/georgejieh/open-trestle/internal/review"
@@ -156,7 +159,7 @@ func TestStyleAdviceJSONAndTextForms(t *testing.T) {
 		}
 		want := "style: no declared TypeScript style for 1 changed file; consider Prettier with ESLint, and commit its configuration\n" +
 			"style: declared Python style unknown for 1 changed file; a base style configuration file that may declare it was not read, so no recommendation is made\n" +
-			"style: 1 base style configuration file was not read (over 64 KiB, not valid UTF-8, or beyond 256 files)\n" +
+			"style: 1 base style configuration file was not read (over 64 KiB, not valid UTF-8, beyond 256 files, or past the 1 MiB change-features bound)\n" +
 			"limitations: "
 		if !strings.Contains(text.String(), want) {
 			t.Fatalf("unread configuration text:\n%s", text.String())
@@ -177,6 +180,40 @@ func TestStyleAdviceJSONAndTextForms(t *testing.T) {
 	})
 }
 
+// TestStyleAdviceUsesTheConfigurationRoutingCarries requires the result's
+// style advice to treat a base style configuration file that did not fit the
+// routing change-features document as unread, exactly as routing does, instead
+// of letting it declare a style for recommendations alone.
+func TestStyleAdviceUsesTheConfigurationRoutingCarries(t *testing.T) {
+	files := map[string][]byte{"ruff.toml": []byte(strings.Repeat("#\n", 29<<10))}
+	for index := 0; index < 17; index++ {
+		files[fmt.Sprintf(".prettierrc.%02d", index)] = []byte(strings.Repeat("a", 58<<10))
+	}
+	base, head := map[string][]byte{"tool.py": []byte("x = 1\n")}, map[string][]byte{"tool.py": []byte("x = 2\n")}
+	for path, content := range files {
+		base[path], head[path] = content, content
+	}
+	f := newRmModelFixture(t, styleTrees(base, head))
+	options := rmOptions(t, f, rmNewClock())
+	// About 1 MiB of configuration in each snapshot needs more than the
+	// fixture's 5 s when the whole suite runs in parallel.
+	options.ArtifactCapacity, options.Timeout = 1024, 30*time.Second
+	s := rmSession(t, options)
+	p := rmPrepare(t, s, f, "style-routing-fit")
+	result, err := s.Run(context.Background(), p)
+	if err != nil || result.wire.RunStatus != "succeeded" {
+		t.Fatalf("review run: %v", err)
+	}
+	features, unread, err := s.ChangeFeatures(context.Background(), p)
+	if err != nil || !reflect.DeepEqual(unread, []string{"ruff.toml"}) || slices.Contains(features.StyleIntents(), agentprofile.StylePEP8) {
+		t.Fatalf("routing unread=%v intents=%v err=%v", unread, features.StyleIntents(), err)
+	}
+	want := StyleAdvice{Withheld: []StyleWithheld{{Language: "python", ChangedFiles: 1}}, ConfigurationUnread: 1}
+	if !reflect.DeepEqual(result.wire.StyleAdvice, want) {
+		t.Fatalf("style advice = %+v, want %+v", result.wire.StyleAdvice, want)
+	}
+}
+
 // TestStyleAdviceIsExplicitlyUnavailableWhenTheChangeCannotBeReadBack requires
 // an unreadable recorded change to yield an explicit unavailable marker, in
 // JSON and text, rather than an absence that reads as "no advice needed".
@@ -192,15 +229,19 @@ func TestStyleAdviceIsExplicitlyUnavailableWhenTheChangeCannotBeReadBack(t *test
 	}
 	at := s.options.Clock.Now()
 	change := rmTaskArtifact(t, s, p, "change", at)
-	if got := s.styleAdvice(context.Background(), p.Plan().Scope(), change.Identity()); !reflect.DeepEqual(got, result.wire.StyleAdvice) {
-		t.Fatalf("recorded change advice = %+v, want %+v", got, result.wire.StyleAdvice)
+	analysis := rmTaskArtifact(t, s, p, "analysis", at)
+	for _, analysisID := range []string{analysis.Identity(), ""} {
+		if got := s.styleAdvice(context.Background(), p.Plan().Scope(), change.Identity(), analysisID); !reflect.DeepEqual(got, result.wire.StyleAdvice) {
+			t.Fatalf("recorded change advice = %+v, want %+v", got, result.wire.StyleAdvice)
+		}
 	}
-	unavailable := s.styleAdvice(context.Background(), p.Plan().Scope(), strings.Repeat("e", 64))
-	if !reflect.DeepEqual(unavailable, StyleAdvice{Unavailable: true}) {
-		t.Fatalf("unreadable change advice = %+v", unavailable)
+	for name, ids := range map[string][2]string{"change": {strings.Repeat("e", 64), ""}, "analysis": {change.Identity(), strings.Repeat("e", 64)}} {
+		if unavailable := s.styleAdvice(context.Background(), p.Plan().Scope(), ids[0], ids[1]); !reflect.DeepEqual(unavailable, StyleAdvice{Unavailable: true}) {
+			t.Fatalf("unreadable %s advice = %+v", name, unavailable)
+		}
 	}
 	// The same result, as readback would build it had the change been unreadable.
-	marked := withStyleAdvice(result, unavailable)
+	marked := withStyleAdvice(result, StyleAdvice{Unavailable: true})
 	encoded, err := EncodeResult(marked)
 	if err != nil || !bytes.Contains(encoded, []byte(`"schema_version":5,`)) || !bytes.HasSuffix(encoded, []byte(`,"style_advice_unavailable":true}`+"\n")) || bytes.Contains(encoded, []byte("style_recommendations")) {
 		t.Fatalf("unavailable advice JSON: %v\n%s", err, encoded)

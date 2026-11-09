@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/georgejieh/open-trestle/agentprofile"
 	sourcehandler "github.com/georgejieh/open-trestle/handlers/source"
@@ -45,7 +46,9 @@ func TestChangeFeaturesSkipConfigFilesBeyondTheDocumentBound(t *testing.T) {
 	}
 	f := newRmModelFixture(t, rmModelFixtureOptions{extraBase: files, extraHead: files})
 	options := rmOptions(t, f, rmNewClock())
-	options.ArtifactCapacity = 1024
+	// About 1 MiB of configuration in each snapshot needs more than the
+	// fixture's 5 s when the whole suite runs in parallel.
+	options.ArtifactCapacity, options.Timeout = 1024, 30*time.Second
 	s := rmSession(t, options)
 	p := rmPrepare(t, s, f, "style-document-bound")
 	if result, err := s.Run(context.Background(), p); err != nil || result.wire.RunStatus != "succeeded" {

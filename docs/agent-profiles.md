@@ -212,7 +212,10 @@ as it is in the base, including one the head deletes.
 
 The same declared style decides the review result's
 [style recommendations](local-model-review.md#style-recommendations)
-(`agentprofile.RecommendStyles`).
+(`agentprofile.RecommendStyles`), from exactly the files the change-features
+document carries: a file routing skips is unread for the recommendations too.
+Only when routing has no change features (the analysis was not recorded) do
+recommendations use every readable file.
 
 ## Assignments document
 

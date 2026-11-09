@@ -354,7 +354,11 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 	// result takes it last, after finding guidance chose version 4.
 	var style StyleAdvice
 	if task, ok := state.Task("change"); ok && task.Status() == controlplane.TaskRuntimeSucceeded {
-		style = s.styleAdvice(ctx, p.Plan().Scope(), task.OutputIdentity())
+		analysisID := ""
+		if analysis, ok := state.Task("analysis"); ok && analysis.Status() == controlplane.TaskRuntimeSucceeded {
+			analysisID = analysis.OutputIdentity()
+		}
+		style = s.styleAdvice(ctx, p.Plan().Scope(), task.OutputIdentity(), analysisID)
 	}
 	if s.investigation != nil {
 		result = withStyleAdvice(result, style)

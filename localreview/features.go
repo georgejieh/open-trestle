@@ -17,6 +17,7 @@ import (
 	sourcehandler "github.com/georgejieh/open-trestle/handlers/source"
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/runtimecatalog"
+	"github.com/georgejieh/open-trestle/semanticimpact"
 )
 
 // ErrChangeFeaturesUnavailable means the run did not record a change model and
@@ -71,17 +72,51 @@ func (s *Session) ChangeFeatures(ctx context.Context, prepared runtimecatalog.Pr
 	if err != nil {
 		return agentprofile.ChangeFeatures{}, nil, ErrChangeFeaturesUnavailable
 	}
-	change, baseArtifact := recorded.change, recorded.base
-	analysisArtifact, err := s.store.Get(ctx, scope, analysisID, now)
+	input, err := s.readRoutingInput(ctx, scope, recorded, analysisID, now)
 	if err != nil {
 		return agentprofile.ChangeFeatures{}, nil, ErrChangeFeaturesUnavailable
 	}
-	analysis, err := analysishandler.ParseResultArtifact(analysisArtifact, recorded.artifact, recorded.base, recorded.head)
-	if err != nil || analysis.ChangeIdentity() != change.Identity() {
+	configFiles, unread, err := s.baseStyleConfigFiles(ctx, scope, recorded.base, now)
+	if err != nil {
 		return agentprofile.ChangeFeatures{}, nil, ErrChangeFeaturesUnavailable
 	}
-	files := make([]agentprofile.ChangedFileSpec, 0, len(change.Entries()))
-	for _, entry := range change.Entries() {
+	fitted, skipped, err := input.fitConfigFiles(configFiles)
+	if err != nil {
+		return agentprofile.ChangeFeatures{}, nil, ErrChangeFeaturesUnavailable
+	}
+	features, err = input.features(fitted)
+	if err != nil {
+		return agentprofile.ChangeFeatures{}, nil, ErrChangeFeaturesUnavailable
+	}
+	return features, mergeUnread(unread, skipped), nil
+}
+
+// routingInput is what routing's change features derive from: the recorded
+// change model's changed files and the analysis's semantic-impact profile.
+type routingInput struct {
+	changeIdentity string
+	files          []agentprofile.ChangedFileSpec
+	impact         semanticimpact.Profile
+}
+
+// readRoutingInput reads the recorded analysis for a recorded change.
+func (s *Session) readRoutingInput(ctx context.Context, scope audit.ReviewScope, recorded recordedChange, analysisID string, at time.Time) (routingInput, error) {
+	analysisArtifact, err := s.store.Get(ctx, scope, analysisID, at)
+	if err != nil {
+		return routingInput{}, err
+	}
+	analysis, err := analysishandler.ParseResultArtifact(analysisArtifact, recorded.artifact, recorded.base, recorded.head)
+	if err != nil {
+		return routingInput{}, err
+	}
+	if analysis.ChangeIdentity() != recorded.change.Identity() {
+		return routingInput{}, ErrChangeFeaturesUnavailable
+	}
+	input := routingInput{changeIdentity: recorded.change.Identity(), impact: analysis.SemanticImpact()}
+	if !lowerHexDigest(input.changeIdentity) {
+		input.changeIdentity = ""
+	}
+	for _, entry := range recorded.change.Entries() {
 		var added uint64
 		for _, lines := range entry.Ranges() {
 			if lines.EndLine() >= lines.StartLine() && lines.StartLine() > 0 {
@@ -91,28 +126,32 @@ func (s *Session) ChangeFeatures(ctx context.Context, prepared runtimecatalog.Pr
 		if added > 1<<24 {
 			added = 1 << 24
 		}
-		files = append(files, agentprofile.ChangedFileSpec{Path: entry.Path(), AddedLines: uint32(added)})
+		input.files = append(input.files, agentprofile.ChangedFileSpec{Path: entry.Path(), AddedLines: uint32(added)})
 	}
-	changeIdentity := change.Identity()
-	if !lowerHexDigest(changeIdentity) {
-		changeIdentity = ""
-	}
-	configFiles, unread, err := s.baseStyleConfigFiles(ctx, scope, baseArtifact, now)
+	return input, nil
+}
+
+func (r routingInput) features(configFiles []agentprofile.ConfigFile) (agentprofile.ChangeFeatures, error) {
+	return agentprofile.ChangeFeaturesFromFileSpecs(r.changeIdentity, r.files, r.impact, agentprofile.AnalysisHints{ConfigFiles: configFiles})
+}
+
+// fitConfigFiles returns the configuration files routing's change-features
+// document carries, in path order, and the paths of those it skips. It fails
+// when routing has no features at all.
+func (r routingInput) fitConfigFiles(configFiles []agentprofile.ConfigFile) ([]agentprofile.ConfigFile, []string, error) {
+	withoutConfig, err := r.features(nil)
 	if err != nil {
-		return agentprofile.ChangeFeatures{}, nil, ErrChangeFeaturesUnavailable
-	}
-	withoutConfig, err := agentprofile.ChangeFeaturesFromFileSpecs(changeIdentity, files, analysis.SemanticImpact(), agentprofile.AnalysisHints{})
-	if err != nil {
-		return agentprofile.ChangeFeatures{}, nil, ErrChangeFeaturesUnavailable
+		return nil, nil, err
 	}
 	fitted, skipped := agentprofile.FitConfigFiles(withoutConfig, configFiles)
-	features, err = agentprofile.ChangeFeaturesFromFileSpecs(changeIdentity, files, analysis.SemanticImpact(), agentprofile.AnalysisHints{ConfigFiles: fitted})
-	if err != nil {
-		return agentprofile.ChangeFeatures{}, nil, ErrChangeFeaturesUnavailable
-	}
-	unread = append(unread, skipped...)
-	sort.Strings(unread)
-	return features, unread, nil
+	return fitted, skipped, nil
+}
+
+// mergeUnread returns every unread path in path order.
+func mergeUnread(unread, skipped []string) []string {
+	merged := append(append([]string(nil), unread...), skipped...)
+	sort.Strings(merged)
+	return merged
 }
 
 // recordedChange is a change model this session recorded, with the base and
@@ -151,10 +190,14 @@ func (s *Session) readRecordedChange(ctx context.Context, scope audit.ReviewScop
 // Removed files are not counted. A language that an unread base style
 // configuration file could govern is withheld, because its declared style is
 // unknown; every other language is still recommended. changeID is the change
-// task's recorded output. When that change model, its snapshots or a base style
-// configuration file cannot be read back, the advice is explicitly unavailable,
-// never silently absent. It never affects the review's status.
-func (s *Session) styleAdvice(ctx context.Context, scope audit.ReviewScope, changeID string) StyleAdvice {
+// task's recorded output and analysisID the analysis task's, or empty when no
+// analysis was recorded. When routing has change features, the advice uses
+// exactly the configuration files routing's document carries, so a file
+// routing skips is unread here too; without them, every readable file is used.
+// When the change model, its snapshots, the analysis or a base style
+// configuration file cannot be read back, the advice is explicitly
+// unavailable, never silently absent. It never affects the review's status.
+func (s *Session) styleAdvice(ctx context.Context, scope audit.ReviewScope, changeID, analysisID string) StyleAdvice {
 	unavailable := StyleAdvice{Unavailable: true}
 	now := s.options.Clock.Now()
 	recorded, err := s.readRecordedChange(ctx, scope, changeID, now)
@@ -164,6 +207,15 @@ func (s *Session) styleAdvice(ctx context.Context, scope audit.ReviewScope, chan
 	configFiles, unread, err := s.baseStyleConfigFiles(ctx, scope, recorded.base, now)
 	if err != nil {
 		return unavailable
+	}
+	if analysisID != "" {
+		input, err := s.readRoutingInput(ctx, scope, recorded, analysisID, now)
+		if err != nil {
+			return unavailable
+		}
+		if fitted, skipped, err := input.fitConfigFiles(configFiles); err == nil {
+			configFiles, unread = fitted, mergeUnread(unread, skipped)
+		}
 	}
 	paths := make([]string, 0, len(recorded.change.Entries()))
 	for _, entry := range recorded.change.Entries() {
