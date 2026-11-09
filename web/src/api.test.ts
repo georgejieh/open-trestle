@@ -4,6 +4,7 @@ import {
   fetchRun,
   fetchRuntimeStatus,
   parseDiagnosticEnvelope,
+  parseDeliveryRefusalEnvelope,
   parseRunEnvelope,
   parseRuntimeStatusEnvelope,
 } from "./api";
@@ -217,6 +218,47 @@ describe("API client", () => {
       },
     ]) {
       expect(() => parseRunEnvelope(envelope(forged))).toThrow(ApiError);
+    }
+  });
+  it("parses a scope-bound delivery refusal and rejects forgeries", () => {
+    const key = "b".repeat(64);
+    const scope = {
+      tenant: "tenant-a",
+      repository: "repo-a",
+      run: `webhook-${key}`,
+    };
+    const refusal = {
+      contract: "open-trestle/webhook-delivery-refusal",
+      schema_version: 1,
+      identity: digest,
+      tenant_id: "tenant-a",
+      repository_id: "repo-a",
+      source: "github",
+      deduplication_key: key,
+      delivery_identity: digest,
+      planner_identity: digest,
+      reason: "retries_exhausted",
+      refused_at_milliseconds: 2000,
+    };
+    const envelope = (value: unknown) => ({
+      contract: "open-trestle/delivery-refusal-response",
+      schema_version: 1,
+      request_id: "request-a",
+      refusal: value,
+    });
+    expect(parseDeliveryRefusalEnvelope(envelope(refusal), scope).reason).toBe(
+      "retries_exhausted",
+    );
+    for (const forged of [
+      { ...refusal, reason: "Not A Token" },
+      { ...refusal, tenant_id: "tenant-b" },
+      { ...refusal, deduplication_key: "c".repeat(64) },
+      { ...refusal, extra: true },
+      { ...refusal, schema_version: 2 },
+    ]) {
+      expect(() =>
+        parseDeliveryRefusalEnvelope(envelope(forged), scope),
+      ).toThrow(ApiError);
     }
   });
   it("rejects duplicate durable task identities", () => {

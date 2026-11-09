@@ -1,6 +1,7 @@
 import type {
   Diagnostic,
   DiagnosticSet,
+  DeliveryRefusal,
   DeterministicObservation,
   Failure,
   FailureReason,
@@ -1365,6 +1366,76 @@ export async function fetchRun(
   const run = parseRunEnvelope(response.body, scope);
   if (response.status !== 200) invalidResponse();
   return run;
+}
+const refusalReasonPattern = /^[a-z][a-z0-9_]{0,63}$/;
+export function parseDeliveryRefusalEnvelope(
+  value: unknown,
+  scope: Scope,
+): DeliveryRefusal {
+  if (!record(value)) invalidResponse();
+  if ("error" in value) parseAPIError(value);
+  if (
+    !exact(value, ["contract", "schema_version", "request_id", "refusal"]) ||
+    value.contract !== "open-trestle/delivery-refusal-response" ||
+    value.schema_version !== 1 ||
+    !nonemptyString(value.request_id, 128)
+  )
+    invalidResponse();
+  const refusal = value.refusal;
+  if (
+    !record(refusal) ||
+    !exact(refusal, [
+      "contract",
+      "schema_version",
+      "identity",
+      "tenant_id",
+      "repository_id",
+      "source",
+      "deduplication_key",
+      "delivery_identity",
+      "planner_identity",
+      "reason",
+      "refused_at_milliseconds",
+    ]) ||
+    refusal.contract !== "open-trestle/webhook-delivery-refusal" ||
+    refusal.schema_version !== 1 ||
+    !validDigest(refusal.identity) ||
+    refusal.tenant_id !== scope.tenant ||
+    refusal.repository_id !== scope.repository ||
+    typeof refusal.source !== "string" ||
+    !["github", "gitlab", "bitbucket_cloud", "gitea", "forgejo"].includes(
+      refusal.source,
+    ) ||
+    !validDigest(refusal.deduplication_key) ||
+    `webhook-${refusal.deduplication_key as string}` !== scope.run ||
+    !validDigest(refusal.delivery_identity) ||
+    !validDigest(refusal.planner_identity) ||
+    typeof refusal.reason !== "string" ||
+    !refusalReasonPattern.test(refusal.reason) ||
+    !integer(refusal.refused_at_milliseconds, 1, 253402300799999)
+  )
+    invalidResponse();
+  return refusal as unknown as DeliveryRefusal;
+}
+export async function fetchDeliveryRefusal(
+  scope: Scope,
+  token: string,
+  fetcher: Fetcher = fetch,
+  signal?: AbortSignal,
+): Promise<DeliveryRefusal> {
+  const response = await request(
+    `${scopePath(scope)}/refusal`,
+    token,
+    fetcher,
+    "GET",
+    undefined,
+    maximumResponseBytes,
+    15000,
+    signal,
+  );
+  const refusal = parseDeliveryRefusalEnvelope(response.body, scope);
+  if (response.status !== 200) invalidResponse();
+  return refusal;
 }
 export async function fetchDiagnostics(
   scope: Scope,

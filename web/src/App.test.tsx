@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import {
   ApiError,
+  fetchDeliveryRefusal,
   fetchDiagnostics,
   fetchRun,
   fetchRunProgress,
@@ -28,6 +29,7 @@ vi.mock("./api", async () => {
   return {
     ...actual,
     fetchRun: vi.fn(),
+    fetchDeliveryRefusal: vi.fn(),
     fetchRunProgress: vi.fn(),
     fetchDiagnostics: vi.fn(),
     fetchRuntimeStatus: vi.fn(),
@@ -609,6 +611,45 @@ describe("console", () => {
       ).toBeGreaterThan(0),
     );
     expect(screen.getAllByText("policy").length).toBeGreaterThan(0);
+  });
+
+  it("names a recorded delivery refusal when no run was opened", async () => {
+    const key = "b".repeat(64);
+    vi.mocked(fetchRun).mockRejectedValue(new ApiError("not_found"));
+    vi.mocked(fetchDeliveryRefusal).mockResolvedValue({
+      contract: "open-trestle/webhook-delivery-refusal",
+      schema_version: 1,
+      identity: digest,
+      tenant_id: "tenant-a",
+      repository_id: "repo-a",
+      source: "github",
+      deduplication_key: key,
+      delivery_identity: digest,
+      planner_identity: digest,
+      reason: "invalid_pull_request_payload",
+      refused_at_milliseconds: 2000,
+    });
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("Tenant"), {
+      target: { value: "tenant-a" },
+    });
+    fireEvent.change(screen.getByLabelText("Repository"), {
+      target: { value: "repo-a" },
+    });
+    fireEvent.change(screen.getByLabelText("Run"), {
+      target: { value: `webhook-${key}` },
+    });
+    fireEvent.change(screen.getByLabelText("Access token"), {
+      target: { value: "x".repeat(32) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          /No run was opened: intake refused this delivery \(invalid_pull_request_payload: the pull request payload cannot be planned\)/,
+        ),
+      ).toBeInTheDocument(),
+    );
   });
 
   it("discloses exact verified finding evidence lineage", async () => {

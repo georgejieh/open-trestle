@@ -2,6 +2,19 @@ export type Scope = { tenant: string; repository: string; run: string };
 export type RunStatus = "active" | "succeeded" | "failed" | "canceled";
 export type TaskStatus =
   "pending" | "available" | "leased" | "succeeded" | "failed" | "skipped";
+export interface DeliveryRefusal {
+  contract: "open-trestle/webhook-delivery-refusal";
+  schema_version: 1;
+  identity: string;
+  tenant_id: string;
+  repository_id: string;
+  source: string;
+  deduplication_key: string;
+  delivery_identity: string;
+  planner_identity: string;
+  reason: string;
+  refused_at_milliseconds: number;
+}
 export type FailureReason =
   "no_merge_base" | "nothing_to_review" | "merge_base_unavailable";
 export type Failure =

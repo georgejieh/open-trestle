@@ -15,6 +15,7 @@ import { InstrumentIcon, StatusIcon, type StatusValue } from "./Icons";
 import { Identity } from "./Identity";
 import {
   ApiError,
+  fetchDeliveryRefusal,
   fetchDiagnostics,
   fetchRun,
   fetchRunProgress,
@@ -26,6 +27,7 @@ import type {
   Diagnostic,
   DiagnosticDeterministicCheck,
   DiagnosticSet,
+  DeliveryRefusal,
   DeterministicObservation,
   FailureReason,
   RunReceipt,
@@ -37,6 +39,20 @@ import type {
 import "./styles.css";
 
 type View = "overview" | "tasks" | "findings" | "runtime";
+const refusalReasonLabels: Record<string, string> = {
+  invalid_pull_request_payload: "the pull request payload cannot be planned",
+  planning_refused: "the planner refused the delivery",
+  run_plan_not_bound: "the plan was outside the delivery's lineage",
+  run_plan_conflict: "the run scope holds a plan for another request",
+  retries_exhausted:
+    "the delivery kept failing on its own until its retries were spent",
+};
+function refusalMessage(refusal: DeliveryRefusal): string {
+  const label =
+    refusalReasonLabels[refusal.reason] ?? "recorded by the planner";
+  const at = new Date(refusal.refused_at_milliseconds).toISOString();
+  return `No run was opened: intake refused this delivery (${refusal.reason}: ${label}) at ${at}. No review result exists.`;
+}
 const failureReasonLabels: Record<FailureReason, string> = {
   no_merge_base:
     "No merge base: the requested base and the head share no history",
@@ -1160,13 +1176,27 @@ function ReviewConsole() {
         );
         return;
       }
+      let message =
+        err instanceof ApiError ? err.message : "The run could not be loaded.";
+      if (!refreshing && err instanceof ApiError && err.code === "not_found") {
+        try {
+          const refusal = await fetchDeliveryRefusal(
+            nextScope,
+            nextToken,
+            undefined,
+            controller.signal,
+          );
+          if (operation !== operationRef.current) return;
+          message = refusalMessage(refusal);
+        } catch {
+          if (operation !== operationRef.current) return;
+        }
+      }
       setToken("");
       setReceipt(null);
       setDiagnostics(null);
       setRuntimeStatus(null);
-      setError(
-        err instanceof ApiError ? err.message : "The run could not be loaded.",
-      );
+      setError(message);
     } finally {
       if (operation === operationRef.current) setBusy(false);
     }
