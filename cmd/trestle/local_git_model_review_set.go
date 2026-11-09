@@ -295,6 +295,15 @@ func planAutoSpecialists(features agentprofile.ChangeFeatures, policy runtimecon
 
 // Set output wire types.
 
+// setContextShortfallWire carries the counts of a member refused because its
+// reservation exceeds the route's declared context.
+type setContextShortfallWire struct {
+	RequiredTokens        uint64 `json:"required_tokens"`
+	EstimatedInputTokens  uint32 `json:"estimated_input_tokens"`
+	MaxOutputTokens       uint32 `json:"max_output_tokens"`
+	DeclaredContextTokens uint32 `json:"declared_context_tokens"`
+}
+
 type setMemberWire struct {
 	Member              string   `json:"member"`
 	ProfileIdentity     string   `json:"profile_identity,omitempty"`
@@ -325,6 +334,10 @@ type setMemberWire struct {
 	reportAvailable     bool
 	statusFindingsEmpty bool
 	failureHint         string
+
+	// ContextShortfall is present only with failure_detail
+	// route_context_insufficient.
+	ContextShortfall *setContextShortfallWire `json:"context_shortfall,omitempty"`
 }
 
 type setContributorWire struct {
@@ -576,6 +589,9 @@ func buildModelReviewSet(selection specialistSelectionWire, members []localModel
 			wire.reportAvailable = true
 			wire.Status, wire.CI, wire.RunStatus, wire.Failure = report.Status, report.CIDisposition, report.RunStatus, report.Failure
 			wire.FailureTask, wire.FailureDetail, wire.failureHint = report.FailureTask, report.FailureDetail, report.FailureHint
+			if s := report.ContextShortfall; s != nil {
+				wire.ContextShortfall = &setContextShortfallWire{RequiredTokens: s.RequiredTokens, EstimatedInputTokens: s.EstimatedInputTokens, MaxOutputTokens: s.MaxOutputTokens, DeclaredContextTokens: s.DeclaredContextTokens}
+			}
 			wire.ReviewRunID, wire.ScopeIdentity, wire.PlanIdentity, wire.ContextIdentity = report.ReviewRunID, report.ScopeIdentity, report.PlanIdentity, report.ContextIdentity
 			wire.GenerationRoute, wire.VerificationRoute, wire.Independence, wire.DiagnosticSet = report.GenerationRoute, report.VerificationRoute, report.Independence, report.DiagnosticSet
 			wire.UsageKnown, wire.ActualCostMicroUSD = report.UsageKnown, report.ActualCostMicroUSD

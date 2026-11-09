@@ -146,6 +146,9 @@ type Report struct {
 	// succeed: the first failed task key, an observed refinement such as
 	// model_output_exhausted, and a one-line plain-language hint.
 	FailureTask, FailureDetail, FailureHint string
+	// ContextShortfall carries the counts of a route_context_insufficient
+	// failure; it is nil otherwise.
+	ContextShortfall *ReportContextShortfall
 
 	Findings []ReportFinding
 
@@ -185,6 +188,10 @@ func (r Result) Report() (Report, error) {
 	}
 	if class, task, detail, hint := r.failureSummary(); class != "" {
 		report.FailureTask, report.FailureDetail, report.FailureHint = task, detail, hint
+		if detail == FailureDetailRouteContextInsufficient && r.wire.ContextShortfall != nil {
+			s := *r.wire.ContextShortfall
+			report.ContextShortfall = &ReportContextShortfall{RequiredTokens: s.RequiredTokens, EstimatedInputTokens: s.EstimatedInputTokens, MaxOutputTokens: s.MaxOutputTokens, DeclaredContextTokens: s.DeclaredContextTokens}
+		}
 	}
 	if r.wire.Specialist != nil {
 		report.SpecialistProfileID, report.SpecialistProfileIdentity = r.wire.Specialist.ProfileID, r.wire.Specialist.ProfileIdentity

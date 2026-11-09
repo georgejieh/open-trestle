@@ -17,6 +17,16 @@ import (
 // exceeded every candidate route's declared max_context_tokens.
 const FailureDetailRouteContextInsufficient = "route_context_insufficient"
 
+// ReportContextShortfall is the content-free count detail of a
+// FailureDetailRouteContextInsufficient failure: the byte-based reservation,
+// its input and output parts, and the largest declared route context.
+type ReportContextShortfall struct {
+	RequiredTokens        uint64
+	EstimatedInputTokens  uint32
+	MaxOutputTokens       uint32
+	DeclaredContextTokens uint32
+}
+
 // contextShortfallWire is the JSON detail of FailureDetailRouteContextInsufficient.
 type contextShortfallWire struct {
 	RequiredTokens        uint64 `json:"required_tokens"`

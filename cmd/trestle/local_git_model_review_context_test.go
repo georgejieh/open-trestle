@@ -49,3 +49,44 @@ func TestLocalModelReviewExplainsARouteContextShortfall(t *testing.T) {
 		t.Fatalf("cost refusal carried a context shortfall: %s", stdout.String())
 	}
 }
+
+// A review set member refused for a context shortfall carries the same counts.
+func TestLocalModelReviewSetMemberCarriesARouteContextShortfall(t *testing.T) {
+	type member struct {
+		Member           string `json:"member"`
+		FailureDetail    string `json:"failure_detail"`
+		ContextShortfall *struct {
+			RequiredTokens        uint64 `json:"required_tokens"`
+			EstimatedInputTokens  uint64 `json:"estimated_input_tokens"`
+			MaxOutputTokens       uint64 `json:"max_output_tokens"`
+			DeclaredContextTokens uint64 `json:"declared_context_tokens"`
+		} `json:"context_shortfall"`
+	}
+	members := func(options localModelFixtureOptions, code int) ([]member, string) {
+		t.Helper()
+		f := newLocalModelFixture(t, options)
+		args := append(append([]string(nil), f.args...), "--specialists", "bug_hunter")
+		var stdout, stderr bytes.Buffer
+		if got := run(args, &stdout, &stderr); got != code {
+			t.Fatalf("exit=%d want %d stderr=%q", got, code, stderr.String())
+		}
+		var wire struct {
+			Members []member `json:"members"`
+		}
+		if err := json.Unmarshal(stdout.Bytes(), &wire); err != nil || len(wire.Members) == 0 {
+			t.Fatalf("set=%s err=%v", stdout.String(), err)
+		}
+		return wire.Members, stdout.String()
+	}
+	refused, _ := members(localModelFixtureOptions{capacity: true}, 4)
+	general := refused[0]
+	if general.Member != "general" || general.FailureDetail != localreview.FailureDetailRouteContextInsufficient || general.ContextShortfall == nil {
+		t.Fatalf("general member=%+v", general)
+	}
+	if s := *general.ContextShortfall; s.DeclaredContextTokens != 5000 || s.RequiredTokens != s.EstimatedInputTokens+s.MaxOutputTokens || s.RequiredTokens <= 5000 {
+		t.Fatalf("member shortfall=%+v", s)
+	}
+	if _, encoded := members(localModelFixtureOptions{generationMode: "malformed"}, 1); strings.Contains(encoded, "context_shortfall") {
+		t.Fatalf("an unrelated member failure carried a context shortfall: %s", encoded)
+	}
+}

@@ -662,7 +662,8 @@ not the single-review result:
   selected and dropped profiles with reasons, inactive profiles.
 - `members`: one entry per member (`general`, then profile IDs) with status, CI
   disposition, run status, failure, `failure_task` and `failure_detail` (when the
-  run did not succeed), run, scope, plan and context identities,
+  run did not succeed), `context_shortfall` (only with `failure_detail`
+  `route_context_insufficient`), run, scope, plan and context identities,
   route record identities, independence, diagnostic set identity, usage and cost,
   verification counts and limitations.
 - `findings`: merged verified findings. Each group has one representative: its
@@ -987,7 +988,8 @@ run is refused with failure `policy` and the JSON result adds
 `"failure_detail": "route_context_insufficient"` and a `context_shortfall`
 object with `required_tokens`, `estimated_input_tokens`, `max_output_tokens`
 and `declared_context_tokens` (the largest declared context among the routes
-too small). Both are absent otherwise. Text output reads, with the counts in
+too small); a review set member carries the same object. Both are absent
+otherwise. Text output reads, with the counts in
 place of N, I, O and D:
 
 ```text
