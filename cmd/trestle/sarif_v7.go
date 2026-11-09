@@ -101,6 +101,13 @@ func buildFinalDiagnosticSetSARIF(set diagnostics.Set) (sarifLog, error) {
 	} else {
 		properties.Reason += "; independent verification not recorded"
 	}
+	// An expired-evidence result carries no evidence; say so at run level so
+	// an empty result list is not read as a clean review.
+	if set.EvidenceExpired() {
+		properties.EvidenceExpired = true
+		properties.Reason += "; evidence expired before the result was recorded"
+		notifications = append(notifications, sarifNotification{Level: "note", Message: sarifMessage{Text: diagnostics.EvidenceExpiredText}})
+	}
 	log := sarifLog{Schema: sarifSchemaURI, Version: "2.1.0", Runs: []sarifRun{{
 		Tool: sarifTool{Driver: sarifDriver{Name: "Open Trestle", Rules: rules}}, Invocations: unplacedFindingInvocations(notifications), Results: results, Properties: properties,
 	}}}

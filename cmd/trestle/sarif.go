@@ -99,6 +99,7 @@ type sarifRegion struct {
 type sarifRunProperties struct {
 	Status                review.Outcome           `json:"trestleStatus"`
 	FinalOutcome          diagnostics.FinalOutcome `json:"trestleFinalOutcome,omitempty"`
+	EvidenceExpired       bool                     `json:"trestleEvidenceExpired,omitempty"`
 	Reason                string                   `json:"trestleReason,omitempty"`
 	FixtureID             string                   `json:"trestleFixtureId,omitempty"`
 	RequestID             string                   `json:"trestleRequestId,omitempty"`

@@ -24,12 +24,21 @@ func receiptRefusalHint(receipt controlplane.ReviewRunReceipt) string {
 	return ""
 }
 
-// setRefusalHint names the context refusal a final result set records, or "".
+// setRefusalHint names the context refusal a final result set records, and
+// whether the result was recorded after its evidence expired, or returns "".
 func setRefusalHint(set diagnostics.Set) string {
+	expired := ""
+	if set.EvidenceExpired() {
+		expired = "runs status: " + diagnostics.EvidenceExpiredText + "\n"
+	}
 	refusal, ok := set.ContextRefusal()
 	if !ok {
-		return ""
+		return expired
 	}
+	return contextRefusalHint(refusal) + expired
+}
+
+func contextRefusalHint(refusal diagnostics.ContextRefusal) string {
 	if refusal.Reason == diagnostics.ContextRefusalRouteContextInsufficient {
 		return refusalHintText("context", string(refusal.Reason), routehint.RouteContextInsufficient, routehint.ContextShortfall(refusal.RequiredTokens, refusal.EstimatedInputTokens, refusal.MaxOutputTokens, refusal.DeclaredContextTokens))
 	}
