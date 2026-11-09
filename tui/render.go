@@ -7,6 +7,7 @@ import (
 
 	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/diagnostics"
+	"github.com/georgejieh/open-trestle/internal/routehint"
 )
 
 func (i *Interface) render(view interfaceView) error {
@@ -29,7 +30,10 @@ func (i *Interface) render(view interfaceView) error {
 	}
 	for _, task := range view.receipt.Tasks() {
 		if reason := task.FailureReason(); reason != 0 {
-			fmt.Fprintf(&builder, "Reason      %s\n", truncateTerminalText(task.Key()+": "+reason.String()+" ("+failureReasonText(reason)+")", width-12))
+			writeSetupWrapped(&builder, "Reason      ", task.Key()+": "+reason.String()+" ("+failureReasonText(reason)+")", width)
+		}
+		if s, counted := task.ContextShortfall(); counted {
+			writeSetupWrapped(&builder, "Hint        ", routehint.ContextShortfall(s.RequiredTokens, s.EstimatedInputTokens, s.MaxOutputTokens, s.DeclaredContextTokens), width)
 		}
 	}
 	builder.WriteString("\nTasks\n")
@@ -65,6 +69,13 @@ func (i *Interface) render(view interfaceView) error {
 
 func writeFinalDiagnostics(builder *strings.Builder, set diagnostics.Set, width int) {
 	fmt.Fprintf(builder, "Final review outcome: %s\n", set.Outcome())
+	if refusal, refused := set.ContextRefusal(); refused {
+		text := routehint.NoEligibleRoute
+		if refusal.Reason == diagnostics.ContextRefusalRouteContextInsufficient {
+			text = routehint.RouteContextInsufficient
+		}
+		writeSetupWrapped(builder, "Context refusal: ", string(refusal.Reason)+" ("+text+")", width)
+	}
 	builder.WriteString("A terminal outcome does not approve the change or prove correctness.\n")
 	if set.AnalysisResultIdentity() == "" {
 		builder.WriteString("Deterministic observations: unknown (evidence unavailable).\n")
@@ -175,6 +186,10 @@ func failureReasonText(reason controlplane.TaskFailureReason) string {
 		return "the head is the requested base or is already contained in it"
 	case controlplane.TaskFailureReasonMergeBaseUnavailable:
 		return "the forge did not report a merge base"
+	case controlplane.TaskFailureReasonRouteContextInsufficient:
+		return routehint.RouteContextInsufficient
+	case controlplane.TaskFailureReasonNoEligibleRoute:
+		return routehint.NoEligibleRoute
 	default:
 		return "unknown reason"
 	}
