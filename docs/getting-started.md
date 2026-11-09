@@ -233,7 +233,8 @@ set up something different, use a new folder: `trestle init --directory NEW_FOLD
 
 Every answer has a flag. With `--no-input` the wizard never prompts; if any
 answer is missing it lists every missing flag and exits `2` without writing
-anything. Proposals that are only labels (base, head, names, folder) are accepted
+anything. Without `--provider` it lists only that flag, because the provider
+decides which other answers are needed. Proposals that are only labels (base, head, names, folder) are accepted
 in `--no-input` mode; facts you must declare are not.
 
 | Answer | Flag |
@@ -244,6 +245,7 @@ in `--no-input` mode; facts you must declare are not.
 | Local server | `--endpoint URL`, optional `--verification-endpoint URL`, `--transport openai_chat_completions\|openai_responses` (for `ollama-signin`, `--endpoint http://127.0.0.1:PORT/v1` names the local Ollama) |
 | Models | `--generation-model ID`, `--verification-model ID` |
 | Capacity | `--context-tokens N`, `--output-tokens N` |
+| Review output allowance (optional, no question) | `--max-output-tokens N`, from the default 4096 up to `--output-tokens` |
 | Prices (remote) | `--input-micro-usd-per-million-tokens N`, `--output-micro-usd-per-million-tokens N`, `--max-cost-micro-usd N` (1 USD = 1000000) |
 | Key variable | `--credential-env OPEN_TRESTLE_PROVIDER_NAME` |
 | Names | `--owner`, `--tenant`, `--repository`, `--repository-authority`, `--repository-namespace`, `--repository-name` |
