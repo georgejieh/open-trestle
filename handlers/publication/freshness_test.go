@@ -302,7 +302,7 @@ func freshnessPublicationFixture(t *testing.T, at time.Time, lifetime time.Durat
 	readiness, err := review.EvaluatePublicationReadiness(publicationPolicy, receipt, findings, verificationContext, selection, scan)
 	check(err)
 	handler := &Handler{store: f.store}
-	binding, err := handler.buildSourceBinding(context.Background(), f.scope, f.target, artifact.Artifact{}, f.inputArtifact, f.contextArtifact, at)
+	binding, err := handler.buildSourceBinding(context.Background(), f.scope, f.target, nil, artifact.Artifact{}, f.inputArtifact, f.contextArtifact, at)
 	check(err)
 	plan, err := review.NewPublicationPlanFromProtectedSource(readiness, f.target, binding)
 	check(err)

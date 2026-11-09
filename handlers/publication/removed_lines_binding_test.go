@@ -35,7 +35,7 @@ func TestBuildSourceBindingRebindsRemovedLinesToTheBaseFile(t *testing.T) {
 		}
 	}
 	handler := &Handler{store: f.store}
-	got, err := handler.buildSourceBinding(context.Background(), f.scope, f.target, artifact.Artifact{}, f.inputArtifact, f.contextArtifact, time.UnixMilli(250))
+	got, err := handler.buildSourceBinding(context.Background(), f.scope, f.target, nil, artifact.Artifact{}, f.inputArtifact, f.contextArtifact, time.UnixMilli(250))
 	if err != nil || got.Validate() != nil {
 		t.Fatalf("publication refused removed_lines evidence: %v", err)
 	}

@@ -8,6 +8,15 @@ Forge planning creates a protected `publication-input` artifact for required-mod
 
 Before requesting effect authority, the handler reconstructs the verification result, generation input, context packet, deterministic evidence, change model, and acquired source snapshots. It creates a `ProtectedSourceBinding` over the review scope, repository, reviewed head, head manifest, change, evidence, context, selected evidence bindings, and pipeline snapshot. A publication plan is valid only when this binding matches readiness and the exact target.
 
+Every generation evidence item is rebound from protected bytes and must match one deterministic authority, or the task fails with `invalid_input`:
+
+- a changed analysis item, bound to its head file and checked against the recorded range, digest, binding, and file identities;
+- a `removed_lines` record, bound to the exact base file it names;
+- a semantic reference range, bound to its head file with the item's binding identity; or
+- a repository instruction prefix: one of the fixed root files `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, and `.trestle/review-instructions.md`, starting at line 1, whose base snapshot copy has the head file's digest and size. It is bound to the head file with the item's binding identity, exactly as context assembly bound it.
+
+Instruction context is advisory evidence only. A finding selected for publication, inline or summary-only, that is located in a file bound as instruction context refuses the binding. Candidate admission already drops such candidates; this check does not rely on it.
+
 ## Effect boundary
 
 Readiness is not write authority. The handler separately:
