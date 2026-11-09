@@ -798,7 +798,10 @@ same estimate as single-generation review. A turn whose routes use
 serialized `response_format` bytes. The turn record stores the system channel
 bytes it reserved for under estimate version 2, and a structured-output turn
 also stores its `response_format_bytes`; a standard turn omits that member and
-keeps its encoding and identity. Turn records written
+keeps its encoding and identity. Every readback of a retained turn re-measures
+both counts from the turn's own recorded request, using the contract version
+that request records, and refuses a record whose counts its request does not
+support. Turn records written
 under estimate version 1 counted the payload alone; they read back with that
 formula and are never re-estimated.
 

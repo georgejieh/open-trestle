@@ -326,7 +326,7 @@ func NewInvestigationToolOperation(b InvestigationToolEvidence, e InvestigationT
 		return InvestigationToolOperation{}, errToolRecord
 	}
 	turnBytes := b.TurnArtifact.Payload()
-	turn, err := gateway.ParseInvestigationTurnRecord(turnBytes)
+	turn, err := parseRetainedInvestigationTurn(turnBytes)
 	if err != nil || turn.Identity() != e.TurnIdentity || turn.RequestIdentity() != e.RequestIdentity || turn.PreviousTurnIdentity() != e.PreviousTurnIdentity || turn.Outcome().Identity() != e.OutcomeIdentity || turn.Dispatch().Response().Identity() != e.ResponseIdentity || turn.Authorization().ReviewScopeIdentity() != e.Scope.Identity() || turn.Authorization().RouteRecordIdentity() != c.Pin {
 		return InvestigationToolOperation{}, errToolRecord
 	}

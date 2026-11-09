@@ -563,7 +563,7 @@ func buildInvestigationResult(inputArtifact artifact.Artifact, c InvestigationAr
 		return InvestigationGenerationResult{}, ErrInvestigationArtifacts
 	}
 	payload := turnArtifact.Payload()
-	turn, err := gateway.ParseInvestigationTurnRecord(payload)
+	turn, err := parseRetainedInvestigationTurn(payload)
 	if err != nil {
 		return InvestigationGenerationResult{}, ErrInvestigationArtifacts
 	}

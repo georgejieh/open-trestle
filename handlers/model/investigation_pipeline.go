@@ -1177,7 +1177,7 @@ func (p *InvestigationPipeline) history(ctx context.Context, events []audit.Even
 			return nil, false, ErrInvestigationPipeline
 		}
 		payload := actual.Payload()
-		record, err := gateway.ParseInvestigationTurnRecord(payload)
+		record, err := parseRetainedInvestigationTurn(payload)
 		if err != nil || c == nil {
 			return nil, false, ErrInvestigationPipeline
 		}
