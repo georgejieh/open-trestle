@@ -113,6 +113,49 @@ func TestLocalGitFeedbackReviewRefusesAmbiguousOrUnknownFields(t *testing.T) {
 	}
 }
 
+// TestLocalGitFeedbackReviewAcceptsVersion5StyleAdviceShapes requires the
+// feedback review to accept a version 5 result whose style advice is only a
+// withheld language (with the unread count that every withheld language
+// comes with) or only the unavailable marker, and to refuse the same style
+// fields under an earlier result version.
+func TestLocalGitFeedbackReviewAcceptsVersion5StyleAdviceShapes(t *testing.T) {
+	oversizedModule := map[string][]byte{"go.mod": []byte("module example.test/p\n" + strings.Repeat("// padding\n", 6000))}
+	for _, test := range []struct {
+		name    string
+		options localModelFixtureOptions
+		// advice, when set, replaces the result's style fields.
+		advice string
+		want   string
+	}{
+		{name: "withheld", options: localModelFixtureOptions{extraBase: oversizedModule, extraHead: oversizedModule}, want: `,"style_withheld":[{"language":"go","changed_files":1}],"style_configuration_unread":1}`},
+		{name: "unavailable", advice: `,"style_advice_unavailable":true}`, want: `,"style_advice_unavailable":true}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newLocalModelFixture(t, test.options)
+			_, reviewOut := localModelExecute(t, f, f.args, 4)
+			if test.advice != "" {
+				const recommended = `,"style_recommendations":[{"language":"go","changed_files":1,"recommendation":"gofmt and Effective Go"}]}`
+				if !strings.HasSuffix(reviewOut, recommended+"\n") {
+					t.Fatalf("review result lacks the Go recommendation: %s", reviewOut)
+				}
+				reviewOut = strings.TrimSuffix(reviewOut, recommended+"\n") + test.advice + "\n"
+			}
+			if !strings.Contains(reviewOut, `"schema_version":5,`) || !strings.HasSuffix(reviewOut, test.want+"\n") || strings.Count(reviewOut, `"style_`) != strings.Count(test.want, `"style_`) {
+				t.Fatalf("review result does not carry only the %s advice: %s", test.name, reviewOut)
+			}
+			feedback := rmiFeedbackFile(t, map[string]string{"a.go": "preference"})
+			reviewPath := feedbackJourneyProtectedFile(t, "review.json", []byte(reviewOut))
+			feedbackJourneyRun(t, feedbackJourneyArgs(f, reviewPath, feedback, rmiOutputPath(t)), 0)
+			for _, version := range []string{"1", "4"} {
+				earlier := strings.Replace(reviewOut, `"schema_version":5,`, `"schema_version":`+version+`,`, 1)
+				earlierPath := feedbackJourneyProtectedFile(t, "review.json", []byte(earlier))
+				feedbackJourneyRun(t, feedbackJourneyArgs(f, earlierPath, feedback, rmiOutputPath(t)), 4)
+			}
+			feedbackJourneyCalls(t, f, 1)
+		})
+	}
+}
+
 func TestLocalGitFeedbackRejectsAmbiguousCanonicalFindingSelection(t *testing.T) {
 	f := newLocalModelFixture(t, localModelFixtureOptions{})
 	_, reviewOut := localModelExecute(t, f, f.args, 4)
