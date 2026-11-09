@@ -1,9 +1,11 @@
 package agentprofile
 
 import (
+	"fmt"
 	"path"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // StyleIntent identifies a repository-declared style contract.
@@ -144,4 +146,88 @@ func styleGoverns(intent StyleIntent, language Language) bool {
 		}
 	}
 	return false
+}
+
+// recommendedStyle is the fixed standard suggested for a changed language.
+type recommendedStyle struct{ name, standard string }
+
+// recommendedStyles holds exactly the languages that a declared intent other
+// than editorconfig can govern. A language without a detector has no entry,
+// because Open Trestle cannot tell whether such a repository declares a style.
+var recommendedStyles = map[Language]recommendedStyle{
+	LanguageGo:         {"Go", "gofmt and Effective Go"},
+	LanguagePython:     {"Python", "PEP 8, enforced with Ruff or Black"},
+	LanguageJavaScript: {"JavaScript", "Prettier with ESLint"},
+	LanguageTypeScript: {"TypeScript", "Prettier with ESLint"},
+	LanguageVue:        {"Vue", "Prettier with ESLint"},
+	LanguageSvelte:     {"Svelte", "Prettier with ESLint"},
+	LanguageCSS:        {"CSS", "Prettier"},
+	LanguageHTML:       {"HTML", "Prettier"},
+	LanguageJSON:       {"JSON", "Prettier"},
+	LanguageYAML:       {"YAML", "Prettier"},
+	LanguageMarkdown:   {"Markdown", "Prettier"},
+	LanguageC:          {"C", "Google C++ Style through clang-format (BasedOnStyle: Google)"},
+	LanguageCPP:        {"C++", "Google C++ Style through clang-format (BasedOnStyle: Google)"},
+	LanguageRust:       {"Rust", "rustfmt"},
+	LanguageRuby:       {"Ruby", "RuboCop and the community Ruby Style Guide"},
+}
+
+// RecommendedStyle returns the display name of a language and the standard
+// style suggested for it when the repository declares none. ok is false for a
+// language without a style detector.
+func RecommendedStyle(language Language) (name, standard string, ok bool) {
+	value, ok := recommendedStyles[language]
+	return value.name, value.standard, ok
+}
+
+// StyleRecommendation suggests the standard style for one changed language
+// that has a style detector but no declared intent governing it. It comes from
+// a fixed table, never from a model, and is advice only.
+type StyleRecommendation struct {
+	Language     Language
+	ChangedFiles int
+}
+
+// RecommendStyles returns one recommendation, in language order, for each
+// language of changedPaths that has a style detector and that no intent
+// declared by configFiles governs. An editorconfig intent alone does not count,
+// because EditorConfig covers only whitespace basics. Vendor and generated
+// files are not counted, as in routing.
+func RecommendStyles(changedPaths []string, configFiles []ConfigFile) ([]StyleRecommendation, error) {
+	if len(changedPaths) > maxFeatureFiles || len(configFiles) > MaxConfigFiles {
+		return nil, fmt.Errorf("%w: too many paths or config files", ErrInvalidChangeFeatures)
+	}
+	for _, config := range configFiles {
+		if !validRepositoryPath(config.Path) || len(config.Content) > MaxConfigFileBytes || !utf8.ValidString(config.Content) {
+			return nil, fmt.Errorf("%w: invalid config file", ErrInvalidChangeFeatures)
+		}
+	}
+	intents := detectStyleIntents(configFiles)
+	counts := map[Language]int{}
+	for _, changedPath := range changedPaths {
+		if !validRepositoryPath(changedPath) {
+			return nil, fmt.Errorf("%w: changed path is not a clean relative repository path", ErrInvalidChangeFeatures)
+		}
+		language, hasLanguage := languageForPath(changedPath)
+		if class := classifyPath(changedPath, language, hasLanguage); !hasLanguage || class == FileClassVendor || class == FileClassGenerated {
+			continue
+		}
+		if _, ok := recommendedStyles[language]; ok {
+			counts[language]++
+		}
+	}
+	var recommendations []StyleRecommendation
+	for language, count := range counts {
+		governed := false
+		for _, intent := range intents {
+			if intent != StyleEditorConfig && styleGoverns(intent, language) {
+				governed = true
+			}
+		}
+		if !governed {
+			recommendations = append(recommendations, StyleRecommendation{Language: language, ChangedFiles: count})
+		}
+	}
+	sort.Slice(recommendations, func(i, j int) bool { return recommendations[i].Language < recommendations[j].Language })
+	return recommendations, nil
 }

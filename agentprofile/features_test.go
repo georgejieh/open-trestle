@@ -149,6 +149,65 @@ func TestProfileStyleConfigFileMatchesDetection(t *testing.T) {
 	}
 }
 
+// TestProfileRecommendedStylesCoverEveryDetectedLanguage requires a
+// recommendation exactly for the languages a non-editorconfig intent governs.
+func TestProfileRecommendedStylesCoverEveryDetectedLanguage(t *testing.T) {
+	detected := map[Language]bool{}
+	for intent, languages := range styleIntentLanguages {
+		if intent == StyleEditorConfig {
+			continue
+		}
+		for _, language := range languages {
+			detected[language] = true
+		}
+	}
+	for _, language := range []Language{LanguageC, LanguageCPP, LanguageCSharp, LanguageCSS, LanguageGo, LanguageHTML, LanguageJava, LanguageJavaScript, LanguageJSON, LanguageKotlin, LanguageMarkdown, LanguagePHP, LanguagePython, LanguageRuby, LanguageRust, LanguageScala, LanguageShell, LanguageSQL, LanguageSvelte, LanguageSwift, LanguageTOML, LanguageTypeScript, LanguageVue, LanguageYAML} {
+		name, standard, ok := RecommendedStyle(language)
+		if ok != detected[language] || ok && (name == "" || standard == "") {
+			t.Errorf("RecommendedStyle(%s) = %q, %q, %t; detector present = %t", language, name, standard, ok, detected[language])
+		}
+	}
+	if len(recommendedStyles) != len(detected) {
+		t.Fatalf("recommendations cover %d languages, detectors %d", len(recommendedStyles), len(detected))
+	}
+}
+
+func TestProfileRecommendStyles(t *testing.T) {
+	ruff := []ConfigFile{{Path: "ruff.toml"}}
+	for _, test := range []struct {
+		name    string
+		paths   []string
+		configs []ConfigFile
+		want    []StyleRecommendation
+	}{
+		{"python without declared style", []string{"tool.py", "pkg/util.py", "pkg/types.pyi"}, nil, []StyleRecommendation{{LanguagePython, 3}}},
+		{"python with ruff", []string{"tool.py"}, ruff, nil},
+		{"editorconfig alone does not count", []string{"tool.py"}, []ConfigFile{{Path: ".editorconfig"}}, []StyleRecommendation{{LanguagePython, 1}}},
+		{"black in pyproject", []string{"tool.py"}, []ConfigFile{{Path: "pyproject.toml", Content: "[tool.black]\n"}}, nil},
+		{"pyproject without style", []string{"tool.py"}, []ConfigFile{{Path: "pyproject.toml", Content: "[project]\n"}}, []StyleRecommendation{{LanguagePython, 1}}},
+		{"java has no detector", []string{"src/Main.java", "build.sh", "query.sql", "Cargo.toml"}, nil, nil},
+		{"eslint governs typescript", []string{"web/app.ts"}, []ConfigFile{{Path: "eslint.config.mjs"}}, nil},
+		{"prettier does not govern go", []string{"main.go", "web/app.ts"}, []ConfigFile{{Path: ".prettierrc"}}, []StyleRecommendation{{LanguageGo, 1}}},
+		{"vendor and generated files are not counted", []string{"vendor/lib/x.py", "api.pb.go", "web/app.min.js"}, nil, nil},
+		{"several languages in order", []string{"main.go", "native/x.cc", "native/x.h", "README.md", "tool.py"}, []ConfigFile{{Path: "go.mod"}}, []StyleRecommendation{{LanguageC, 1}, {LanguageCPP, 1}, {LanguageMarkdown, 1}, {LanguagePython, 1}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := RecommendStyles(test.paths, test.configs)
+			if err != nil || !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("RecommendStyles() = %v, %v; want %v", got, err, test.want)
+			}
+		})
+	}
+	for name, paths := range map[string][]string{"absolute": {"/etc/x.py"}, "traversal": {"../x.py"}} {
+		if _, err := RecommendStyles(paths, nil); !errors.Is(err, ErrInvalidChangeFeatures) {
+			t.Errorf("%s path: err = %v", name, err)
+		}
+	}
+	if _, err := RecommendStyles([]string{"x.py"}, []ConfigFile{{Path: "ruff.toml", Content: "\xff"}}); !errors.Is(err, ErrInvalidChangeFeatures) {
+		t.Errorf("invalid config content: err = %v", err)
+	}
+}
+
 const validFeaturesJSON = `{"schema":"open-trestle/agent-profile-change-features","version":1,` +
 	`"files":[{"path":"web/src/App.tsx","added_lines":40,"deleted_lines":3},{"path":"internal/auth/session.go","added_lines":12,"deleted_lines":0,"signals":["concurrency"]}],` +
 	`"public_api_changes":1,"reference_fan_out":9,"coverage":{"uncovered_changed_lines":30},` +
