@@ -472,21 +472,10 @@ func ModelRequestBudget(request provider.Request, declared provider.ModelCostBud
 	if err := declared.Validate(); err != nil {
 		return provider.ModelCostBudget{}, err
 	}
-	payload := request.Payload()
-	instructionsPayload := payload
-	if sanitized, err := ParseSanitizedModelRequest(payload); err == nil {
-		instructionsPayload = sanitized.request.Payload()
-		if ValidateVerificationModelRequest(sanitized.request, sanitized.ReviewScopeIdentity()) == nil {
-			payload = instructionsPayload
-		}
-	}
 	// The trusted system channel is sent alongside the payload, so its bytes
 	// (the host contract and any specialist guidance) count toward the
 	// estimate. A request without a trusted contract adds none.
-	systemBytes := 0
-	if instructions, err := TrustedModelRequestInstructions(instructionsPayload); err == nil {
-		systemBytes = len(instructions)
-	}
+	payload, systemBytes := modelRequestEstimateParts(request)
 	// Request.Validate bounds payload length to 8 MiB and the system channel is
 	// bounded by the pinned contracts and the embedded catalog.
 	estimated := max(uint64(declared.EstimatedInputTokens()), uint64(len(payload))+uint64(systemBytes)+modelRequestFramingReserve)
