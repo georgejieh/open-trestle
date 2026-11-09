@@ -19,6 +19,10 @@ const (
 	// ContextPacketExpiryTailExpiredV4PolicyTerminated includes active interrupted
 	// cleanup prefixes. It does not mean the run itself is terminal.
 	ContextPacketExpiryTailExpiredV4PolicyTerminated
+	// ContextPacketExpiryTailRefusedV4PolicyTerminated is the exact v4 settled
+	// within its lease as a recorded route refusal, with the same closed cleanup
+	// suffix. It does not mean the run itself is terminal.
+	ContextPacketExpiryTailRefusedV4PolicyTerminated
 )
 
 // HistoricalContextPacketFact describes one replay-validated v4 event. It does
@@ -157,9 +161,11 @@ func historicalFactsForStream(plan ReviewRunPlan, events []RunEvent, state Revie
 			switch {
 			case tail == ContextPacketExpiryTailActiveExactV4 && packetExpiryFailure(facts[tailIndex], event):
 				tail = ContextPacketExpiryTailExpiredV4PolicyTerminated
-			case tail == ContextPacketExpiryTailExpiredV4PolicyTerminated && !tailFinal && packetExpirySkip(plan, event, skipIndex):
+			case tail == ContextPacketExpiryTailActiveExactV4 && packetRefusalFailure(facts[tailIndex], event):
+				tail = ContextPacketExpiryTailRefusedV4PolicyTerminated
+			case (tail == ContextPacketExpiryTailExpiredV4PolicyTerminated || tail == ContextPacketExpiryTailRefusedV4PolicyTerminated) && !tailFinal && packetExpirySkip(plan, event, skipIndex):
 				skipIndex++
-			case tail == ContextPacketExpiryTailExpiredV4PolicyTerminated && !tailFinal && skipIndex == 3 && event.Kind() == RunEventFailed && event.Failure() == RunFailurePolicy:
+			case (tail == ContextPacketExpiryTailExpiredV4PolicyTerminated || tail == ContextPacketExpiryTailRefusedV4PolicyTerminated) && !tailFinal && skipIndex == 3 && event.Kind() == RunEventFailed && event.Failure() == RunFailurePolicy:
 				tailFinal = true
 			default:
 				tail = ContextPacketExpiryTailUnknown
@@ -333,7 +339,13 @@ func historicalAncestorSuccesses(plan ReviewRunPlan, task TaskDefinition, prepar
 
 func packetExpiryFailure(f HistoricalContextPacketFact, event RunEvent) bool {
 	prepared, lease := f.prepared, f.lease
-	return event.Kind() == RunEventTaskFailed && event.PlanIdentity() == prepared.PlanIdentity() && event.Scope() == prepared.Scope() && event.TaskKey() == prepared.TaskKey() && event.TaskIdentity() == prepared.TaskIdentity() && event.Attempt() == prepared.Attempt() && event.LeaseTokenIdentity() == prepared.LeaseTokenIdentity() && event.PreviousIdentity() == prepared.Identity() && event.Sequence() == prepared.Sequence()+1 && event.Failure() == RunFailurePolicy && event.OutputIdentity() == "" && event.RetryAt().IsZero() && !event.OccurredAt().Before(lease.LeaseExpiresAt())
+	return event.Kind() == RunEventTaskFailed && event.PlanIdentity() == prepared.PlanIdentity() && event.Scope() == prepared.Scope() && event.TaskKey() == prepared.TaskKey() && event.TaskIdentity() == prepared.TaskIdentity() && event.Attempt() == prepared.Attempt() && event.LeaseTokenIdentity() == prepared.LeaseTokenIdentity() && event.PreviousIdentity() == prepared.Identity() && event.Sequence() == prepared.Sequence()+1 && event.Failure() == RunFailurePolicy && event.FailureReason() == 0 && event.OutputIdentity() == "" && event.RetryAt().IsZero() && !event.OccurredAt().Before(lease.LeaseExpiresAt())
+}
+
+// packetRefusalFailure is the lease holder's in-lease route refusal of the exact v4.
+func packetRefusalFailure(f HistoricalContextPacketFact, event RunEvent) bool {
+	prepared, lease := f.prepared, f.lease
+	return event.Kind() == RunEventTaskFailed && event.PlanIdentity() == prepared.PlanIdentity() && event.Scope() == prepared.Scope() && event.TaskKey() == prepared.TaskKey() && event.TaskIdentity() == prepared.TaskIdentity() && event.Attempt() == prepared.Attempt() && event.LeaseTokenIdentity() == prepared.LeaseTokenIdentity() && event.PreviousIdentity() == prepared.Identity() && event.Sequence() == prepared.Sequence()+1 && event.Failure() == RunFailurePolicy && contextRefusalReason(event.FailureReason()) && event.OutputIdentity() == "" && event.RetryAt().IsZero() && !event.OccurredAt().After(lease.LeaseExpiresAt())
 }
 
 func packetExpirySkip(plan ReviewRunPlan, event RunEvent, index int) bool {

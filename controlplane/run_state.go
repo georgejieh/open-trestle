@@ -369,11 +369,14 @@ func (s *ReviewRunState) applyTaskEvent(event RunEvent, runtime *TaskRuntimeStat
 		if runtime.preparedEvent.Kind() == RunEventContextInputPrepared && !inputTermination {
 			return ErrPreparedContextInput
 		}
-		packetTermination := runtime.preparedEvent.Kind() == RunEventContextPacketPrepared && event.OutputIdentity() == "" && event.Failure() == RunFailurePolicy && event.retryAtMillis == 0 && event.occurredAtMillis >= runtime.leaseExpiresAtMillis && event.Attempt() == runtime.attempts && event.LeaseTokenIdentity() == runtime.leaseTokenIdentity
-		if runtime.preparedEvent.Kind() == RunEventContextPacketPrepared && !packetTermination {
+		packetTermination := runtime.preparedEvent.Kind() == RunEventContextPacketPrepared && event.OutputIdentity() == "" && event.Failure() == RunFailurePolicy && event.FailureReason() == 0 && event.retryAtMillis == 0 && event.occurredAtMillis >= runtime.leaseExpiresAtMillis && event.Attempt() == runtime.attempts && event.LeaseTokenIdentity() == runtime.leaseTokenIdentity
+		// The lease holder may settle a packet-only preparation as a recorded
+		// route refusal before its lease expires.
+		packetRefusal := runtime.preparedEvent.Kind() == RunEventContextPacketPrepared && event.OutputIdentity() == "" && event.Failure() == RunFailurePolicy && contextRefusalReason(event.FailureReason()) && event.retryAtMillis == 0 && runtime.matchesLeaseResult(event)
+		if runtime.preparedEvent.Kind() == RunEventContextPacketPrepared && !packetTermination && !packetRefusal {
 			return ErrPreparedContextPacket
 		}
-		if runtime.preparedEventIdentity != "" && !packetTermination && !inputTermination && (event.OutputIdentity() != runtime.preparedEvent.OutputIdentity() || event.Failure() != runtime.preparedEvent.Failure() || event.Attempt() != runtime.preparedEvent.Attempt() || event.LeaseTokenIdentity() != runtime.preparedEvent.LeaseTokenIdentity()) {
+		if runtime.preparedEventIdentity != "" && !packetTermination && !packetRefusal && !inputTermination && (event.OutputIdentity() != runtime.preparedEvent.OutputIdentity() || event.Failure() != runtime.preparedEvent.Failure() || event.Attempt() != runtime.preparedEvent.Attempt() || event.LeaseTokenIdentity() != runtime.preparedEvent.LeaseTokenIdentity()) {
 			return ErrPreparedContextAbstention
 		}
 		if runtime.preparedEventIdentity == "" && event.OutputIdentity() != "" && event.occurredAtMillis > runtime.leaseExpiresAtMillis {

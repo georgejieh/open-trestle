@@ -173,7 +173,7 @@ func (c *Coordinator) TerminatePreparedContextPacket(ctx context.Context, plan R
 		if !exists || runtime.Definition().Identity() != prepared.event.TaskIdentity() {
 			return ReviewRunState{}, ErrPreparedContextPacket
 		}
-		if runtime.Status() == TaskRuntimeFailed && runtime.preparedEventIdentity == prepared.Identity() && runtime.OutputIdentity() == "" && runtime.Failure() == RunFailurePolicy {
+		if runtime.Status() == TaskRuntimeFailed && runtime.preparedEventIdentity == prepared.Identity() && runtime.OutputIdentity() == "" && runtime.Failure() == RunFailurePolicy && runtime.FailureReason() == 0 {
 			return state, nil
 		}
 		current, ok := runtime.PreparedContextPacket()
@@ -181,6 +181,54 @@ func (c *Coordinator) TerminatePreparedContextPacket(ctx context.Context, plan R
 			return ReviewRunState{}, ErrPreparedContextPacket
 		}
 		event, err := NewRunEvent(plan, state.Revision()+1, state.HeadIdentity(), RunEventTaskFailed, runtime.Definition(), runtime.Attempts(), runtime.leaseTokenIdentity, "", time.Time{}, "", RunFailurePolicy, time.Time{}, at)
+		if err != nil {
+			return ReviewRunState{}, err
+		}
+		err = c.journal.Append(ctx, state.HeadIdentity(), event)
+		if err == nil {
+			return c.load(ctx, plan)
+		}
+		if !errors.Is(err, ErrRunJournalHeadConflict) {
+			return ReviewRunState{}, err
+		}
+	}
+	return ReviewRunState{}, ErrCoordinatorContention
+}
+
+// RefusePreparedContextPacket settles a leased packet-only preparation as its
+// lease holder's recorded route refusal: a terminal, no-output policy failure
+// with a context route reason and, for route_context_insufficient, its counts.
+// Unlike TerminatePreparedContextPacket it is allowed only within the lease.
+func (c *Coordinator) RefusePreparedContextPacket(ctx context.Context, plan ReviewRunPlan, lease TaskLease, prepared PreparedContextPacket, reason TaskFailureReason, shortfall TaskFailureContextShortfall, at time.Time) (ReviewRunState, error) {
+	if err := c.validate(ctx, plan); err != nil {
+		return ReviewRunState{}, err
+	}
+	if lease.Validate() != nil || prepared.event.Validate() != nil || prepared.event.Kind() != RunEventContextPacketPrepared || prepared.event.PlanIdentity() != plan.Identity() || lease.PlanIdentity() != plan.Identity() || prepared.Descriptor().LeaseIdentity != lease.Identity() || !contextRefusalReason(reason) || !taskFailureReasonAllowed(TaskAssembleContext, reason, shortfall) {
+		return ReviewRunState{}, ErrPreparedContextPacket
+	}
+	for range maxCoordinatorConflicts {
+		state, err := c.load(ctx, plan)
+		if err != nil {
+			return ReviewRunState{}, err
+		}
+		if state.Status() != ReviewRunActive {
+			return ReviewRunState{}, ErrRunAlreadyTerminal
+		}
+		runtime, exists := state.Task(prepared.event.TaskKey())
+		if !exists || runtime.Definition().Identity() != prepared.event.TaskIdentity() || lease.TaskKey() != runtime.Key() {
+			return ReviewRunState{}, ErrPreparedContextPacket
+		}
+		if runtime.Status() == TaskRuntimeFailed && runtime.preparedEventIdentity == prepared.Identity() && runtime.OutputIdentity() == "" && runtime.Failure() == RunFailurePolicy && runtime.FailureReason() == reason && runtime.shortfall == shortfall {
+			return state, nil
+		}
+		current, ok := runtime.PreparedContextPacket()
+		if !ok || current.Identity() != prepared.Identity() || !runtimeMatchesLease(runtime, lease) || !transitionTimeAllowed(state, at) || at.UnixMilli() > runtime.leaseExpiresAtMillis {
+			return ReviewRunState{}, ErrPreparedContextPacket
+		}
+		event, err := NewRunEvent(plan, state.Revision()+1, state.HeadIdentity(), RunEventTaskFailed, runtime.Definition(), runtime.Attempts(), runtime.leaseTokenIdentity, "", time.Time{}, "", RunFailurePolicy, time.Time{}, at)
+		if err == nil {
+			event, err = event.withFailureReason(runtime.Definition(), reason, shortfall)
+		}
 		if err != nil {
 			return ReviewRunState{}, err
 		}

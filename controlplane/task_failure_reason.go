@@ -107,6 +107,11 @@ func ParseTaskFailureReason(value string) (TaskFailureReason, error) {
 	return 0, ErrInvalidTaskFailureReason
 }
 
+// contextRefusalReason reports a route refusal reason of a context task.
+func contextRefusalReason(reason TaskFailureReason) bool {
+	return reason == TaskFailureReasonRouteContextInsufficient || reason == TaskFailureReasonNoEligibleRoute
+}
+
 // taskFailureReasonAllowed reports whether a task of kind may record reason
 // with shortfall: source reasons on source acquisition, route refusals on
 // context assembly, and counts exactly for route_context_insufficient.
