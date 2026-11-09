@@ -33,7 +33,7 @@ const investigationInstructionsIdentity = "990e881d4038ea3c222c4c0aed5b6dad7dbff
 const investigationInstructionsV5Identity = "f5c77f4a3d7c06310e10a4b64280d1b8a3376515352376b253af2d862a911f08"
 
 // investigationInstructionsV6Identity pins the executable version 6 text.
-const investigationInstructionsV6Identity = "9676adfdd8a31389a68dfb995bed16c98a6f6688f8931f1ef1dc1a6fa170792f"
+const investigationInstructionsV6Identity = "dd2f63c1863cb4398a73fa7d516fc35c9c60668e7036284092efb5e698a818fc"
 
 func InvestigationOutputSchema() []byte { return reviewschema.InvestigationOutputSchema() }
 
@@ -557,12 +557,13 @@ func (c InvestigationGenerationContext) EvidenceItems() []evidence.EvidenceItem 
 	return c.selected.EvidenceItems()
 }
 
-// removedLinesSources returns the IDs of the selected removed_lines sources.
-func (c InvestigationGenerationContext) removedLinesSources() map[string]struct{} {
-	removed := map[string]struct{}{}
+// removedLinesSources returns the selected removed_lines sources by ID, with
+// their head lines.
+func (c InvestigationGenerationContext) removedLinesSources() map[string]int {
+	removed := map[string]int{}
 	for _, source := range c.selected.sources {
 		if source.Stage() == ContextStageRemovedLines {
-			removed[source.ReferenceID()] = struct{}{}
+			removed[source.ReferenceID()] = source.HeadLine()
 		}
 	}
 	return removed
@@ -570,11 +571,9 @@ func (c InvestigationGenerationContext) removedLinesSources() map[string]struct{
 
 // ParseInvestigationCandidateBatch strictly decodes the candidates of one
 // investigation turn against its exact context. A candidate located in a
-// removed_lines source is refused, because removed base lines are not head
-// code: an investigation candidate batch is uncategorized and cannot record a
-// dropped proposal, so the turn fails closed instead. A removed_lines source
-// may still be cited as evidence, but never shows that cited evidence covers
-// the anchored head lines.
+// removed_lines source is a base-side finding inside its base lines, with the
+// source's head line; the uncategorized batch then records sides. Base and
+// head lines never cover each other.
 func ParseInvestigationCandidateBatch(response provider.Response, context InvestigationGenerationContext) (CandidateBatch, error) {
 	return parseCandidateBatch(response, context.snapshot, context.selected.EvidenceItems(), 1, removedLinesAnchorRules(context.selected.sources))
 }
@@ -606,18 +605,19 @@ func NewInvestigationVerificationRequestContext(final InvestigationGenerationCon
 	removed := final.removedLinesSources()
 	for _, candidate := range candidates.Findings() {
 		source, ok := allowed[candidate.SourceReferenceID()]
-		if _, baseLines := removed[candidate.SourceReferenceID()]; !ok || baseLines || !rangeContains(source.SourceRange(), candidate.SourceRange()) {
+		headLine, baseAnchor := removed[candidate.SourceReferenceID()]
+		if !ok || baseAnchor != (candidate.Side() == LineSideBase) || baseAnchor && candidate.HeadLine() != headLine || !rangeContains(source.SourceRange(), candidate.SourceRange()) {
 			return VerificationRequestContext{}, ErrInvestigationContext
 		}
-		// Cited evidence must cover the anchored head lines, and removed base
-		// lines never do: their line numbers are base coordinates.
+		// Cited evidence must cover the anchored lines on the same side: base
+		// line numbers never cover head lines, nor head line numbers base ones.
 		cited := false
 		for _, id := range candidate.EvidenceIDs() {
 			item, ok := allowed[id]
 			if !ok {
 				return VerificationRequestContext{}, ErrInvestigationContext
 			}
-			if _, baseLines := removed[id]; !baseLines {
+			if _, baseLines := removed[id]; baseLines == baseAnchor {
 				cited = cited || rangeContains(item.SourceRange(), candidate.SourceRange())
 			}
 		}

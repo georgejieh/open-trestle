@@ -291,11 +291,22 @@ func TestInvestigationRequestCarriesRemovedLines(t *testing.T) {
 	if _, err := NewInvestigationContextBinding(options); err == nil {
 		t.Fatal("investigation admitted removed text without a head source of its file")
 	}
-	// An investigation candidate located in removed lines is refused, and the
-	// verifier projection refuses it too; citing removed text is allowed.
+	// An investigation candidate located in removed lines is a base-side
+	// finding; its uncategorized batch then records sides (encoding version
+	// 3), and the verifier projection accepts it. Citing removed text is
+	// allowed too.
 	anchored := `{"schema_version":1,"candidates":[{"title":"Missing guard","claim":"The zero check was removed.","severity_hint":"high","source_range":{"source_id":"` + removed.ReferenceID() + `","start_line":1,"end_line":1},"evidence_ids":["` + removed.ReferenceID() + `"]}]}`
-	if _, err := ParseInvestigationCandidateBatch(v7Response(t, anchored), initial); !errors.Is(err, ErrCandidateRangeNotSupported) {
-		t.Fatalf("investigation candidate on removed_lines admitted: %v", err)
+	baseBatch, err := ParseInvestigationCandidateBatch(v7Response(t, anchored), initial)
+	if err != nil || len(baseBatch.Findings()) != 1 || baseBatch.Findings()[0].Side() != LineSideBase || baseBatch.SchemaVersion() != 1 {
+		t.Fatalf("investigation candidate on removed_lines refused: %v", err)
+	}
+	if encoded, err := EncodeCandidateBatch(baseBatch); err != nil || !bytes.Contains(encoded, []byte(`"schema_version":3`)) {
+		t.Fatalf("base-side investigation batch is not encoding version 3: %s", encoded)
+	} else if parsed, err := ParseEncodedCandidateBatch(encoded); err != nil || parsed.Identity() != baseBatch.Identity() {
+		t.Fatalf("version 3 batch does not read back: %v", err)
+	}
+	if _, err := NewInvestigationVerificationRequestContext(initial, baseBatch); err != nil {
+		t.Fatalf("verifier projection refused a base-side investigation candidate: %v", err)
 	}
 	cited := `{"schema_version":1,"candidates":[{"title":"Missing guard","claim":"The zero check was removed.","severity_hint":"high","source_range":{"source_id":"` + f.changed.ReferenceID() + `","start_line":1,"end_line":1},"evidence_ids":["` + f.changed.ReferenceID() + `","` + removed.ReferenceID() + `"]}]}`
 	candidates, err := ParseInvestigationCandidateBatch(v7Response(t, cited), initial)

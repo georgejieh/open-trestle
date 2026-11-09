@@ -62,7 +62,9 @@ func EncodeVerifiedFindingSet(set VerifiedFindingSet) ([]byte, error) {
 }
 
 // ParseEncodedVerifiedFindingSet accepts only a canonical promoted finding set.
-// Schema version 2 is used exactly when at least one finding carries a category.
+// Schema version 2 is used exactly when at least one finding carries a
+// category; otherwise version 3 is used exactly when a finding or a binding
+// records base lines, and version 1 for every other set.
 func ParseEncodedVerifiedFindingSet(encoded []byte) (VerifiedFindingSet, error) {
 	if len(encoded) == 0 || len(encoded) > maximumEncodedVerifiedFindingSetBytes {
 		return VerifiedFindingSet{}, ErrInvalidVerifiedFindingSetEncoding
@@ -78,7 +80,7 @@ func ParseEncodedVerifiedFindingSet(encoded []byte) (VerifiedFindingSet, error) 
 	}
 	canonical, err := json.Marshal(wire)
 	if err != nil || !bytes.Equal(canonical, encoded) || wire.Contract != "open-trestle/verified-finding-set" ||
-		(wire.SchemaVersion != 1 && wire.SchemaVersion != 2) || len(wire.Findings) > maxCandidateFindings {
+		wire.SchemaVersion < 1 || wire.SchemaVersion > 3 || len(wire.Findings) > maxCandidateFindings {
 		return VerifiedFindingSet{}, ErrInvalidVerifiedFindingSetEncoding
 	}
 	findings := make([]VerifiedFinding, len(wire.Findings))
@@ -153,6 +155,11 @@ func encodedVerifiedFindingSetWireValue(set VerifiedFindingSet) encodedVerifiedF
 		}
 	}
 	version := 1
+	for _, finding := range set.findings {
+		if finding.side == LineSideBase || hasBaseSide(finding.evidenceBindings) {
+			version = 3
+		}
+	}
 	for _, finding := range set.findings {
 		if finding.category != "" {
 			version = 2

@@ -297,3 +297,30 @@ func TestHeadOnlyConsumersRefuseABaseSideFinding(t *testing.T) {
 		t.Fatal("version 2 diagnostic export accepted a base-side finding")
 	}
 }
+
+// An uncategorized verified set, as investigation produces, records sides in
+// version 3 only when a finding or a binding is on removed base lines.
+func TestUncategorizedBaseSideVerifiedSetUsesVersion3(t *testing.T) {
+	_, verified := verifiedSetFixture(t, "verified", gateway.RouteIndependenceDistinctProvider)
+	if encoded, err := EncodeVerifiedFindingSet(verified); err != nil || !bytes.Contains(encoded, []byte(`"schema_version":1`)) {
+		t.Fatalf("head-only uncategorized set changed version: %s", encoded)
+	}
+	base := relabelBaseSide(t, verified)
+	finding := base.findings[0]
+	finding.category, finding.headLine = "", 4
+	finding.fingerprint = deriveVerifiedFindingFingerprint(finding)
+	finding.identity = deriveVerifiedFindingIdentity(finding)
+	base.findings = []VerifiedFinding{finding}
+	base.identity = deriveVerifiedFindingSetIdentity(base)
+	encoded, err := EncodeVerifiedFindingSet(base)
+	if err != nil || !bytes.Contains(encoded, []byte(`"schema_version":3`)) || !bytes.Contains(encoded, []byte(`"side":"base","head_line":4`)) {
+		t.Fatalf("uncategorized base-side set: %s, %v", encoded, err)
+	}
+	parsed, err := ParseEncodedVerifiedFindingSet(encoded)
+	if err != nil || parsed.Identity() != base.Identity() || parsed.Findings()[0].HeadLine() != 4 {
+		t.Fatalf("version 3 set does not read back: %v", err)
+	}
+	if _, err := ParseEncodedVerifiedFindingSet(bytes.Replace(encoded, []byte(`"schema_version":3`), []byte(`"schema_version":1`), 1)); err == nil {
+		t.Fatal("base-side uncategorized set read back as version 1")
+	}
+}

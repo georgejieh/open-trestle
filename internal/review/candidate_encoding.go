@@ -91,6 +91,20 @@ func encodedEvidenceBindings(bindings []candidateEvidenceBinding) []encodedCandi
 	return values
 }
 
+// candidateBatchEncodingVersion is 2 for categorized candidates, 3 for
+// uncategorized candidates that record sides because one is on removed base
+// lines, and 1 for every other uncategorized batch.
+func candidateBatchEncodingVersion(batch CandidateBatch) int {
+	switch {
+	case batch.categorized:
+		return 2
+	case batch.sided:
+		return 3
+	default:
+		return 1
+	}
+}
+
 // EncodeCandidateBatch returns the canonical durable form of strictly admitted candidates.
 func EncodeCandidateBatch(batch CandidateBatch) ([]byte, error) {
 	if err := batch.Validate(); err != nil {
@@ -106,7 +120,9 @@ func EncodeCandidateBatch(batch CandidateBatch) ([]byte, error) {
 // ParseEncodedCandidateBatch accepts only a canonical previously admitted candidate set.
 // Schema version 1 carries v1 candidates; version 2 carries categorized v2
 // candidates with optional fix guidance and, for base lines of a removed_lines
-// source, a recorded side on the location and on each such evidence binding.
+// source, a recorded side on the location and on each such evidence binding;
+// version 3 carries v1 candidates that record sides because at least one is
+// on removed base lines.
 func ParseEncodedCandidateBatch(encoded []byte) (CandidateBatch, error) {
 	if len(encoded) == 0 || len(encoded) > maximumEncodedCandidateBatchBytes {
 		return CandidateBatch{}, ErrInvalidCandidateBatchEncoding
@@ -122,7 +138,7 @@ func ParseEncodedCandidateBatch(encoded []byte) (CandidateBatch, error) {
 	}
 	canonical, err := json.Marshal(wire)
 	if err != nil || !bytes.Equal(canonical, encoded) ||
-		wire.Contract != "open-trestle/candidate-batch" || (wire.SchemaVersion != 1 && wire.SchemaVersion != 2) ||
+		wire.Contract != "open-trestle/candidate-batch" || wire.SchemaVersion < 1 || wire.SchemaVersion > 3 ||
 		len(wire.Findings) > maxCandidateFindings {
 		return CandidateBatch{}, ErrInvalidCandidateBatchEncoding
 	}
@@ -141,7 +157,7 @@ func ParseEncodedCandidateBatch(encoded []byte) (CandidateBatch, error) {
 	}
 	batch := CandidateBatch{
 		identity: wire.Identity, responseIdentity: wire.ResponseIdentity,
-		snapshotIdentity: wire.SnapshotIdentity, findings: findings, categorized: wire.SchemaVersion == 2,
+		snapshotIdentity: wire.SnapshotIdentity, findings: findings, categorized: wire.SchemaVersion == 2, sided: wire.SchemaVersion == 3,
 		repositoryContextOmitted: wire.RepositoryContextOmitted,
 	}
 	if err := batch.Validate(); err != nil {
@@ -196,7 +212,7 @@ func encodedCandidateBatchWireValue(batch CandidateBatch) encodedCandidateBatchW
 		}
 	}
 	return encodedCandidateBatchWire{
-		Contract: "open-trestle/candidate-batch", SchemaVersion: batch.SchemaVersion(),
+		Contract: "open-trestle/candidate-batch", SchemaVersion: candidateBatchEncodingVersion(batch),
 		Identity: batch.Identity(), ResponseIdentity: batch.ResponseIdentity(),
 		SnapshotIdentity: batch.SnapshotIdentity(), Findings: findings,
 		RepositoryContextOmitted: batch.repositoryContextOmitted,

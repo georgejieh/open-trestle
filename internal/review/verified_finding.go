@@ -383,7 +383,7 @@ func (f VerifiedFinding) Validate() error {
 		}
 	}
 	if !validCandidateTitle(f.title) || !validCandidateClaim(f.claim) || !isKnownSeverity(f.severity) || !validCandidateSourceRange(f.sourceRange) || len(f.evidenceBindings) == 0 || len(f.evidenceBindings) > maxCandidateEvidence ||
-		validateCandidateGuidance(f.category, f.fix) != nil || !validLineSide(f.side) || f.category == "" && (f.side != LineSideHead || hasBaseSide(f.evidenceBindings)) ||
+		validateCandidateGuidance(f.category, f.fix) != nil || !validLineSide(f.side) ||
 		f.headLine < 0 || f.headLine > maxCandidateSourceLine || f.headLine != 0 && f.side != LineSideBase {
 		return ErrVerifiedFindingBindingMismatch
 	}
@@ -595,8 +595,12 @@ func deriveVerifiedFindingIdentity(finding VerifiedFinding) string {
 	}
 	var encoded []byte
 	if finding.category == "" {
-		// A finding promoted from a v1 candidate keeps its historical preimage.
-		encoded, _ = json.Marshal(preimage)
+		// A finding promoted from a v1 candidate keeps its historical preimage
+		// unless it is at a deletion point on removed base lines.
+		encoded, _ = json.Marshal(struct {
+			findingRecord
+			HeadLine int `json:"head_line,omitempty"`
+		}{preimage, finding.headLine})
 	} else {
 		preimage.Version = 2
 		encoded, _ = json.Marshal(struct {

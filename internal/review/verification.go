@@ -329,8 +329,8 @@ func ParseContextVerificationBatch(response provider.Response, candidates Candid
 // VerificationBatchMatchesContext reports whether a recorded verdict batch
 // records exactly the sides its verifier request implies: each result has the
 // side of the candidate it answers, and each cited binding of a verdict on a
-// categorized candidate records base lines exactly when it names a
-// removed_lines source of that request. An uncategorized batch records no side.
+// candidate batch that records sides records base lines exactly when it names
+// a removed_lines source of that request. Any other batch records no side.
 // Readback therefore cannot turn cited base lines into head lines.
 func VerificationBatchMatchesContext(context VerificationRequestContext, candidates CandidateBatch, batch VerificationBatch) bool {
 	if context.Validate() != nil || candidates.Identity() != context.CandidateBatchIdentity() || batch.CandidateBatchIdentity() != candidates.Identity() || len(batch.results) != len(candidates.findings) {
@@ -351,7 +351,7 @@ func VerificationBatchMatchesContext(context VerificationRequestContext, candida
 		for _, binding := range result.evidenceBindings {
 			stage, exists := stages[binding.identity]
 			expected := LineSideHead
-			if candidates.categorized && stage == ContextStageRemovedLines.String() {
+			if candidates.recordsSides() && stage == ContextStageRemovedLines.String() {
 				expected = LineSideBase
 			}
 			if !exists || binding.side != expected {
@@ -400,7 +400,7 @@ func parseVerificationBatch(response provider.Response, candidates CandidateBatc
 		if _, exists := byCandidate[verdict.CandidateID]; exists {
 			return VerificationBatch{}, ErrDuplicateVerificationCandidate
 		}
-		result, err := newVerificationResult(response.Identity(), candidates.SnapshotIdentity(), candidate, verdict, allowedEvidence, baseLines, candidates.categorized)
+		result, err := newVerificationResult(response.Identity(), candidates.SnapshotIdentity(), candidate, verdict, allowedEvidence, baseLines, candidates.recordsSides())
 		if err != nil {
 			return VerificationBatch{}, err
 		}

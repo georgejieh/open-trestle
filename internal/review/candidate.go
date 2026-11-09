@@ -192,14 +192,11 @@ func (f CandidateFinding) Validate() error {
 	if !validCandidateReference(f.sourceReferenceID) {
 		return ErrInvalidCandidateReference
 	}
-	if !validCandidateSourceRange(f.sourceRange) || !validLineSide(f.side) || f.category == "" && f.side != LineSideHead ||
+	if !validCandidateSourceRange(f.sourceRange) || !validLineSide(f.side) ||
 		f.headLine < 0 || f.headLine > maxCandidateSourceLine || f.headLine != 0 && f.side != LineSideBase {
 		return ErrCandidateRangeNotSupported
 	}
 	if len(f.evidenceBindings) == 0 || len(f.evidenceBindings) > maxCandidateEvidence {
-		return ErrInvalidCandidateEvidenceSet
-	}
-	if f.category == "" && hasBaseSide(f.evidenceBindings) {
 		return ErrInvalidCandidateEvidenceSet
 	}
 	previous := ""
@@ -231,6 +228,10 @@ type CandidateBatch struct {
 	findings         []CandidateFinding
 	// categorized marks a model-candidate-batch-v2 batch: every finding carries a category.
 	categorized bool
+	// sided marks an uncategorized batch that records sides because at least
+	// one finding is on removed base lines. A categorized batch always records
+	// sides; another uncategorized batch never does and keeps its bytes.
+	sided bool
 	// repositoryContextOmitted counts v2 proposals dropped at admission because
 	// their source_range named a repository_context source, which cannot
 	// anchor a finding. It is derived only from the exact response and context
@@ -255,6 +256,10 @@ func (b CandidateBatch) SchemaVersion() int {
 	}
 	return 1
 }
+
+// recordsSides reports whether findings and evidence bindings record their side.
+func (b CandidateBatch) recordsSides() bool { return b.categorized || b.sided }
+
 func (b CandidateBatch) ResponseIdentity() string { return b.responseIdentity }
 func (b CandidateBatch) SnapshotIdentity() string { return b.snapshotIdentity }
 func (b CandidateBatch) Findings() []CandidateFinding {
@@ -274,14 +279,21 @@ func (b CandidateBatch) Format(state fmt.State, verb rune) {
 
 // Validate verifies all candidate bindings, ordering, uniqueness, and identity.
 func (b CandidateBatch) Validate() error {
-	if !validCandidateDigest(b.responseIdentity) || !validCandidateDigest(b.snapshotIdentity) || len(b.findings)+int(b.repositoryContextOmitted) > maxCandidateFindings || b.repositoryContextOmitted > 0 && !b.categorized {
+	if !validCandidateDigest(b.responseIdentity) || !validCandidateDigest(b.snapshotIdentity) || len(b.findings)+int(b.repositoryContextOmitted) > maxCandidateFindings || b.repositoryContextOmitted > 0 && !b.categorized || b.sided && b.categorized {
 		return ErrInvalidCandidateBatchIdentity
 	}
 	seen := make(map[string]struct{}, len(b.findings))
+	baseFinding := false
 	for index, finding := range b.findings {
 		if err := finding.Validate(); err != nil {
 			return err
 		}
+		// An uncategorized batch records sides exactly when a finding is on
+		// removed base lines.
+		if !b.recordsSides() && (finding.side != LineSideHead || hasBaseSide(finding.evidenceBindings)) {
+			return ErrInvalidCandidateBatchIdentity
+		}
+		baseFinding = baseFinding || finding.side == LineSideBase
 		if finding.ordinal != uint8(index+1) || finding.responseIdentity != b.responseIdentity || finding.snapshotIdentity != b.snapshotIdentity || (finding.category != "") != b.categorized {
 			return ErrInvalidCandidateBatchIdentity
 		}
@@ -290,6 +302,9 @@ func (b CandidateBatch) Validate() error {
 			return ErrDuplicateCandidateFinding
 		}
 		seen[fingerprint] = struct{}{}
+	}
+	if b.sided && !baseFinding {
+		return ErrInvalidCandidateBatchIdentity
 	}
 	if b.identity != deriveCandidateBatchIdentity(b) {
 		return ErrInvalidCandidateBatchIdentity
@@ -474,7 +489,7 @@ func CandidateBatchMatchesContext(contextPayload []byte, batch CandidateBatch) b
 	if len(contextPayload) == 0 || len(contextPayload) > maxProviderContextPacketBytes || json.Unmarshal(contextPayload, &header) != nil || header.Contract != "open-trestle/review-context-packet" {
 		return false
 	}
-	if batch.categorized != systemChannelGenerationVersion(header.SchemaVersion) {
+	if batch.categorized != systemChannelGenerationVersion(header.SchemaVersion) || batch.sided {
 		return false
 	}
 	if !batch.categorized {
@@ -575,15 +590,15 @@ type candidateAnchorRules struct {
 	baseAnchors                 map[string]int
 }
 
-// removedLinesAnchorRules refuses a candidate located in a removed_lines
-// source of the given sources and keeps removed lines out of citation
-// containment.
+// removedLinesAnchorRules makes a candidate located in a removed_lines source
+// of the given sources a base-side finding with that source's head line, and
+// keeps base and head lines from covering each other.
 func removedLinesAnchorRules(sources []ContextSource) candidateAnchorRules {
-	rules := candidateAnchorRules{refused: make(map[string]struct{}), baseLines: make(map[string]struct{})}
+	rules := candidateAnchorRules{baseLines: make(map[string]struct{}), baseAnchors: make(map[string]int)}
 	for _, source := range sources {
 		if source.Stage() == ContextStageRemovedLines {
-			rules.refused[source.ReferenceID()] = struct{}{}
 			rules.baseLines[source.ReferenceID()] = struct{}{}
+			rules.baseAnchors[source.ReferenceID()] = source.HeadLine()
 		}
 	}
 	return rules
@@ -615,6 +630,15 @@ func parseCandidateBatch(response provider.Response, snapshot ReviewSnapshot, ev
 	findings := make([]CandidateFinding, 0, len(document.Candidates))
 	seen := make(map[string]struct{}, len(document.Candidates))
 	omitted := uint8(0)
+	// A v2 batch always records sides. A v1 batch records them only when one
+	// of its candidates is located on removed base lines, so every other v1
+	// batch keeps its historical bytes.
+	recordSides := version == 2
+	for _, candidate := range document.Candidates {
+		if _, base := rules.baseAnchors[candidate.SourceRange.SourceID]; base {
+			recordSides = true
+		}
+	}
 	for _, candidate := range document.Candidates {
 		if _, refused := rules.refused[candidate.SourceRange.SourceID]; refused {
 			return CandidateBatch{}, ErrCandidateRangeNotSupported
@@ -627,7 +651,7 @@ func parseCandidateBatch(response provider.Response, snapshot ReviewSnapshot, ev
 			omitted++
 			continue
 		}
-		finding, err := newCandidateFinding(response.Identity(), snapshot, uint8(len(findings)+1), candidate, allowedEvidence, rules, version == 2)
+		finding, err := newCandidateFinding(response.Identity(), snapshot, uint8(len(findings)+1), candidate, allowedEvidence, rules, recordSides)
 		if err != nil {
 			return CandidateBatch{}, err
 		}
@@ -641,7 +665,7 @@ func parseCandidateBatch(response provider.Response, snapshot ReviewSnapshot, ev
 	if len(findings) == 0 {
 		findings = nil
 	}
-	batch := CandidateBatch{responseIdentity: response.Identity(), snapshotIdentity: snapshot.Identity(), findings: findings, categorized: version == 2, repositoryContextOmitted: omitted}
+	batch := CandidateBatch{responseIdentity: response.Identity(), snapshotIdentity: snapshot.Identity(), findings: findings, categorized: version == 2, sided: version == 1 && recordSides, repositoryContextOmitted: omitted}
 	batch.identity = deriveCandidateBatchIdentity(batch)
 	if err := batch.Validate(); err != nil {
 		return CandidateBatch{}, err
@@ -918,8 +942,13 @@ func deriveCandidateFindingIdentity(finding CandidateFinding) string {
 	}
 	var encoded []byte
 	if finding.category == "" {
-		// A v1 candidate keeps its historical preimage exactly.
-		encoded, _ = json.Marshal(preimage)
+		// A v1 candidate keeps its historical preimage exactly unless it is
+		// on removed base lines.
+		encoded, _ = json.Marshal(struct {
+			findingRecord
+			Side     string `json:"side,omitempty"`
+			HeadLine int    `json:"head_line,omitempty"`
+		}{preimage, recordedLineSide(finding.side), finding.headLine})
 	} else {
 		preimage.Version = 2
 		encoded, _ = json.Marshal(struct {

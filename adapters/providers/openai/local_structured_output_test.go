@@ -130,7 +130,7 @@ func structuredInvestigationRequest(t *testing.T) provider.Request {
 		InstructionsID      string          `json:"instructions_identity"`
 		Schema              json.RawMessage `json:"output_schema"`
 		Identity            string          `json:"output_schema_identity"`
-	}{"open-trestle/review-context-packet", 6, strings.Repeat("c", 64), review.ContextTaskCandidateGeneration.String(), "9676adfdd8a31389a68dfb995bed16c98a6f6688f8931f1ef1dc1a6fa170792f", review.InvestigationOutputSchema(), "77367fd94611f87d36e4490729096db927b8d27b9d687a4b6ab515db70e2bbc4"})
+	}{"open-trestle/review-context-packet", 6, strings.Repeat("c", 64), review.ContextTaskCandidateGeneration.String(), "dd2f63c1863cb4398a73fa7d516fc35c9c60668e7036284092efb5e698a818fc", review.InvestigationOutputSchema(), "77367fd94611f87d36e4490729096db927b8d27b9d687a4b6ab515db70e2bbc4"})
 	if err != nil {
 		t.Fatal(err)
 	}
