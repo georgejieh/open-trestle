@@ -136,6 +136,7 @@ type TaskCompletion struct {
 	status         TaskCompletionStatus
 	outputIdentity string
 	failure        RunFailure
+	reason         TaskFailureReason
 }
 
 func NewTaskSuccess(outputIdentity string) (TaskCompletion, error) {
@@ -173,9 +174,16 @@ func (c TaskCompletion) Identity() string             { return c.identity }
 func (c TaskCompletion) Status() TaskCompletionStatus { return c.status }
 func (c TaskCompletion) OutputIdentity() string       { return c.outputIdentity }
 func (c TaskCompletion) Failure() RunFailure          { return c.failure }
+
+// FailureReason returns the content-free reason of a failed source task, or zero.
+func (c TaskCompletion) FailureReason() TaskFailureReason { return c.reason }
 func (c TaskCompletion) Validate() error {
 	if c.status == TaskCompletionSucceeded {
-		if !validControlPlaneDigest(c.outputIdentity) || c.failure != 0 || c.planIdentity != "" || c.taskIdentity != "" {
+		if !validControlPlaneDigest(c.outputIdentity) || c.failure != 0 || c.reason != 0 || c.planIdentity != "" || c.taskIdentity != "" {
+			return ErrInvalidTaskCompletion
+		}
+	} else if c.status == TaskCompletionFailed && c.reason != 0 {
+		if c.failure.String() == "" || c.reason.Validate() != nil || c.outputIdentity != "" || !validControlPlaneDigest(c.planIdentity) || !validControlPlaneDigest(c.taskIdentity) {
 			return ErrInvalidTaskCompletion
 		}
 	} else if c.status == TaskCompletionFailed {
@@ -506,6 +514,9 @@ func (c *Coordinator) CompleteTask(ctx context.Context, plan ReviewRunPlan, leas
 		if completion.outputIdentity != "" && completion.Status() == TaskCompletionFailed && (runtime.Definition().Kind() != TaskAssembleContext || completion.planIdentity != plan.Identity() || completion.taskIdentity != runtime.Definition().Identity()) {
 			return ReviewRunState{}, ErrInvalidTaskCompletion
 		}
+		if completion.reason != 0 && (!taskFailureReasonAllowed(runtime.Definition().Kind()) || completion.planIdentity != plan.Identity() || completion.taskIdentity != runtime.Definition().Identity()) {
+			return ReviewRunState{}, ErrInvalidTaskCompletion
+		}
 		if runtime.Status() == TaskRuntimeSucceeded || runtime.Status() == TaskRuntimeFailed {
 			if runtime.preparedInputTerminal {
 				return ReviewRunState{}, ErrPreparedContextInput
@@ -545,6 +556,9 @@ func (c *Coordinator) CompleteTask(ctx context.Context, plan ReviewRunPlan, leas
 			}
 		}
 		event, err := NewRunEvent(plan, state.Revision()+1, state.HeadIdentity(), kind, runtime.Definition(), runtime.Attempts(), runtime.leaseTokenIdentity, "", time.Time{}, output, failure, retryAt, at)
+		if err == nil && completion.reason != 0 {
+			event, err = event.withFailureReason(runtime.Definition(), completion.reason)
+		}
 		if err != nil {
 			return ReviewRunState{}, err
 		}
@@ -788,7 +802,7 @@ func completedTaskMatches(runtime TaskRuntimeState, lease TaskLease, completion 
 	if runtime.Status() == TaskRuntimeSucceeded {
 		return completion.Status() == TaskCompletionSucceeded && runtime.OutputIdentity() == completion.OutputIdentity()
 	}
-	return completion.Status() == TaskCompletionFailed && runtime.Failure() == completion.Failure() && runtime.OutputIdentity() == completion.OutputIdentity()
+	return completion.Status() == TaskCompletionFailed && runtime.Failure() == completion.Failure() && runtime.FailureReason() == completion.FailureReason() && runtime.OutputIdentity() == completion.OutputIdentity()
 }
 func validLeaseToken(token string) bool {
 	if len(token) != 64 || token != strings.ToLower(token) || strings.Trim(token, "0") == "" {
@@ -827,6 +841,17 @@ func deriveTaskCompletionIdentity(completion TaskCompletion) string {
 	status := "failed"
 	if completion.status == TaskCompletionSucceeded {
 		status = "succeeded"
+	}
+	if completion.reason != 0 && completion.status == TaskCompletionFailed {
+		return hashControlPlaneValue(struct {
+			Contract string `json:"contract"`
+			Version  int    `json:"version"`
+			Status   string `json:"status"`
+			Failure  string `json:"failure"`
+			Reason   string `json:"reason"`
+			Plan     string `json:"plan"`
+			Task     string `json:"task"`
+		}{"open-trestle/task-completion", 3, status, completion.failure.String(), completion.reason.String(), completion.planIdentity, completion.taskIdentity})
 	}
 	if completion.outputIdentity != "" && completion.status == TaskCompletionFailed {
 		return hashControlPlaneValue(struct {

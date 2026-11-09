@@ -31,6 +31,9 @@
         },
         {
           "$ref": "urn:open-trestle:schema:controlplane:review-run-receipt:v2"
+        },
+        {
+          "$ref": "urn:open-trestle:schema:controlplane:review-run-receipt:v3"
         }
       ]
     },

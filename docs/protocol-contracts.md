@@ -42,11 +42,14 @@ Control-plane schemas:
 - `schemas/controlplane/review-run-event-v4.schema.json`
 - `schemas/controlplane/review-run-event-v5.schema.json`
 - `schemas/controlplane/review-run-event-v6.schema.json`
+- `schemas/controlplane/review-run-event-v7.schema.json`
 - `schemas/controlplane/review-run-receipt-v1.schema.json`
 - `schemas/controlplane/review-run-receipt-v2.schema.json`
+- `schemas/controlplane/review-run-receipt-v3.schema.json`
 - `schemas/controlplane/review-task-lease-v1.schema.json`
 - `schemas/controlplane/review-task-completion-v1.schema.json`
 - `schemas/controlplane/review-task-completion-v2.schema.json`
+- `schemas/controlplane/review-task-completion-v3.schema.json`
 - `schemas/controlplane/task-claim-request-v1.schema.json`
 - `schemas/controlplane/task-completion-request-v1.schema.json`
 - `schemas/controlplane/task-notification-v1.schema.json`
@@ -56,11 +59,13 @@ Control-plane schemas:
 - `schemas/controlplane/runtime-status-response-v1.schema.json`
 - `schemas/controlplane/run-progress-response-v1.schema.json`
 
-The run-progress response v1 is a separate read-only HTTP envelope with exactly `contract`, `schema_version`, `request_id`, `run`, and `progress`. It references the unchanged canonical receipt v1 or v2. Its four axes are `change`, `deterministic`, `context`, and `verification`, each with a bounded state, optional immutable artifact identity, and only its declared count fields. The schema inventory contains 117 documents. The strict native client additionally validates scope, completed-task binding, exact non-context output identities, count equations, and checked-versus-applicable bounds. Schema validation cannot establish artifact lineage or receipt-head consistency.
+The run-progress response v1 is a separate read-only HTTP envelope with exactly `contract`, `schema_version`, `request_id`, `run`, and `progress`. It references the canonical receipt v1, v2, or v3. Its four axes are `change`, `deterministic`, `context`, and `verification`, each with a bounded state, optional immutable artifact identity, and only its declared count fields. The schema inventory contains 121 documents. The strict native client additionally validates scope, completed-task binding, exact non-context output identities, count equations, and checked-versus-applicable bounds. Schema validation cannot establish artifact lineage or receipt-head consistency.
 
 `not_run` and `unavailable` carry no counts; absent counts mean unknown, not zero. Only an evidenced incomplete deterministic check uses `partial`. The available context artifact identity is the source-proven context packet, which can differ from the receipt's sanitized generation-input output after v6 settlement. Other available axis identities equal their corresponding completed task outputs. The daemon uses at most ten indexed scoped artifact loads and existing canonical parsers, checks the unchanged receipt head, and returns `409 progress_changed` on advancement. It writes no provisional diagnostics, grants no approval, and performs no model or publication effect. `runs status --format progress` emits a single bound `{run, progress}` object rather than the HTTP envelope. See [read-only run progress](daemon-api.md#read-only-run-progress).
 
 The local file-backed full-review context worker emits a v3 `context_abstention_prepared` event before writing any abstention artifact. Its bounded canonical artifact envelope contains omission metadata only, not repository source bytes or a model claim. Recovery must verify the exact scope, plan, task, provenance, failure class, and artifact identity before a v2 failed-task event links the result. Old v1 no-output failures and v2 linked failures remain readable. The PostgreSQL journal's current 1 MiB event limit does not qualify v3; local full review rejects nonlocal stores.
+
+A failed source acquisition may record one closed, content-free reason: `no_merge_base` (the requested base and the head share no history), `nothing_to_review` (the head equals the requested base or is already contained in it), or `merge_base_unavailable` (the forge did not report a usable merge base). `NewSourceTaskFailureWithReason` binds the reason, failure class, plan, and task into a v3 task completion; the coordinator admits it only for an `acquire_source` task of that plan and records it in a v7 `task_failed` event with an empty output. Replay restores the reason on the task until a retry makes the task available again, and a receipt with any task reason is receipt v3, whose task item adds `failure_reason`. The reason is never forge or repository text. Earlier event, completion, and receipt versions keep their bytes and identities.
 
 A v4 `context_packet_prepared` event stores only packet artifact metadata, exact identity, creation/expiry, source root/snapshot, upstream dependencies, scope, task, attempt, exact lease identity, original lease event identity, and lease token identity. The file journal fsyncs this checkpoint before a caller may put packet bytes. This first checkpoint cannot settle success, renew or reclaim the lease, or authorize dispatch. Trusted recovery may terminally fail an expired packet-only preparation with a policy-class, no-output task failure. It cannot treat the preparatory packet as output. This does not implement the later sanitized-input checkpoint or verify packet bytes against immutable upstream sources. v1/v2/v3 event bytes remain unchanged.
 

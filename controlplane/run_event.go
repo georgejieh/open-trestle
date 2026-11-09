@@ -149,6 +149,7 @@ type RunEvent struct {
 	leaseExpiresAtMillis int64
 	outputIdentity       string
 	failure              RunFailure
+	failureReason        TaskFailureReason
 	retryAtMillis        int64
 	occurredAtMillis     int64
 	preparedArtifact     []byte
@@ -236,10 +237,26 @@ func (e RunEvent) WorkerIdentity() string     { return e.workerIdentity }
 func (e RunEvent) LeaseExpiresAt() time.Time  { return runMillisToTime(e.leaseExpiresAtMillis) }
 func (e RunEvent) OutputIdentity() string     { return e.outputIdentity }
 func (e RunEvent) Failure() RunFailure        { return e.failure }
-func (e RunEvent) RetryAt() time.Time         { return runMillisToTime(e.retryAtMillis) }
-func (e RunEvent) OccurredAt() time.Time      { return runMillisToTime(e.occurredAtMillis) }
-func (e RunEvent) String() string             { return "review run event" }
-func (e RunEvent) GoString() string           { return "controlplane.RunEvent{<redacted>}" }
+
+// FailureReason returns the content-free reason of a failed source task, or zero.
+func (e RunEvent) FailureReason() TaskFailureReason { return e.failureReason }
+
+// withFailureReason returns the task-failed event with its source failure reason bound.
+func (e RunEvent) withFailureReason(task TaskDefinition, reason TaskFailureReason) (RunEvent, error) {
+	if e.kind != RunEventTaskFailed || e.outputIdentity != "" || reason.Validate() != nil || !taskFailureReasonAllowed(task.Kind()) || task.Identity() != e.taskIdentity {
+		return RunEvent{}, ErrInvalidTaskFailureReason
+	}
+	e.failureReason = reason
+	e.identity = deriveRunEventIdentity(e)
+	if err := e.Validate(); err != nil {
+		return RunEvent{}, err
+	}
+	return e, nil
+}
+func (e RunEvent) RetryAt() time.Time    { return runMillisToTime(e.retryAtMillis) }
+func (e RunEvent) OccurredAt() time.Time { return runMillisToTime(e.occurredAtMillis) }
+func (e RunEvent) String() string        { return "review run event" }
+func (e RunEvent) GoString() string      { return "controlplane.RunEvent{<redacted>}" }
 func (e RunEvent) Format(state fmt.State, verb rune) {
 	writeRedactedControlPlaneFormat(state, verb, "review run event", "controlplane.RunEvent{<redacted>}")
 }
@@ -293,6 +310,9 @@ func (e RunEvent) validateFields() error {
 	hasTask := e.taskKey != "" || e.taskIdentity != ""
 	if hasTask && (!validReviewTaskKey(e.taskKey) || !validControlPlaneDigest(e.taskIdentity)) {
 		return ErrInvalidRunEventTask
+	}
+	if e.failureReason != 0 && (e.kind != RunEventTaskFailed || e.outputIdentity != "" || e.failureReason.Validate() != nil) {
+		return ErrInvalidTaskFailureReason
 	}
 	switch e.kind {
 	case RunEventOpened:
@@ -385,6 +405,9 @@ func runMillisToTime(value int64) time.Time {
 }
 func deriveRunEventIdentity(event RunEvent) string {
 	version := 1
+	if event.failureReason != 0 {
+		version = 7
+	}
 	if event.kind == RunEventContextInputSettled {
 		version = 6
 	}
@@ -417,6 +440,7 @@ func deriveRunEventIdentity(event RunEvent) string {
 		Output           string                   `json:"output"`
 		OutputKind       string                   `json:"output_kind,omitempty"`
 		Failure          string                   `json:"failure"`
+		FailureReason    string                   `json:"failure_reason,omitempty"`
 		RetryAt          int64                    `json:"retry_at"`
 		OccurredAt       int64                    `json:"occurred_at"`
 		PreparedArtifact []byte                   `json:"prepared_artifact,omitempty"`
@@ -429,7 +453,7 @@ func deriveRunEventIdentity(event RunEvent) string {
 		TaskKey: event.taskKey, Task: event.taskIdentity, Attempt: event.attempt,
 		LeaseToken: event.leaseTokenIdentity, Worker: event.workerIdentity,
 		LeaseExpires: event.leaseExpiresAtMillis, Output: event.outputIdentity, OutputKind: contextFailureOutputKind((event.kind == RunEventTaskFailed && event.outputIdentity != "") || event.kind == RunEventContextAbstentionPrepared),
-		Failure: event.failure.String(), RetryAt: event.retryAtMillis, OccurredAt: event.occurredAtMillis, PreparedArtifact: event.preparedArtifact,
+		Failure: event.failure.String(), FailureReason: event.failureReason.String(), RetryAt: event.retryAtMillis, OccurredAt: event.occurredAtMillis, PreparedArtifact: event.preparedArtifact,
 	}
 	if event.kind == RunEventContextInputPrepared {
 		d := cloneContextInputDescriptor(event.inputDescriptor)

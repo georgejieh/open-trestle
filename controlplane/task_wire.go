@@ -95,6 +95,7 @@ type taskCompletionRecord struct {
 	TaskIdentity   string `json:"task_identity,omitempty"`
 	OutputKind     string `json:"output_kind,omitempty"`
 	Failure        string `json:"failure"`
+	FailureReason  string `json:"failure_reason,omitempty"`
 }
 
 func EncodeTaskCompletion(completion TaskCompletion) ([]byte, error) {
@@ -121,7 +122,7 @@ func ParseTaskCompletion(encoded []byte) (TaskCompletion, error) {
 		return TaskCompletion{}, ErrInvalidTaskCompletionEncoding
 	}
 	canonical, err := json.Marshal(record)
-	if err != nil || !bytes.Equal(canonical, encoded) || record.Contract != "open-trestle/review-task-completion" || (record.SchemaVersion != 1 && record.SchemaVersion != 2) {
+	if err != nil || !bytes.Equal(canonical, encoded) || record.Contract != "open-trestle/review-task-completion" || (record.SchemaVersion != 1 && record.SchemaVersion != 2 && record.SchemaVersion != 3) {
 		return TaskCompletion{}, ErrInvalidTaskCompletionEncoding
 	}
 	status, err := parseTaskCompletionStatus(record.Status)
@@ -132,10 +133,14 @@ func ParseTaskCompletion(encoded []byte) (TaskCompletion, error) {
 	if err != nil {
 		return TaskCompletion{}, err
 	}
-	if record.SchemaVersion != taskCompletionVersion(TaskCompletion{status: status, outputIdentity: record.OutputIdentity}) || (record.SchemaVersion == 2 && record.OutputKind != "context_abstention") || (record.SchemaVersion == 1 && (record.PlanIdentity != "" || record.TaskIdentity != "" || record.OutputKind != "")) {
+	reason, err := ParseTaskFailureReason(record.FailureReason)
+	if err != nil {
 		return TaskCompletion{}, ErrInvalidTaskCompletionEncoding
 	}
-	completion := TaskCompletion{identity: record.Identity, status: status, outputIdentity: record.OutputIdentity, failure: failure, planIdentity: record.PlanIdentity, taskIdentity: record.TaskIdentity}
+	if record.SchemaVersion != taskCompletionVersion(TaskCompletion{status: status, outputIdentity: record.OutputIdentity, reason: reason}) || (record.SchemaVersion == 2 && record.OutputKind != "context_abstention") || (record.SchemaVersion == 3 && record.OutputKind != "") || (record.SchemaVersion == 1 && (record.PlanIdentity != "" || record.TaskIdentity != "" || record.OutputKind != "")) {
+		return TaskCompletion{}, ErrInvalidTaskCompletionEncoding
+	}
+	completion := TaskCompletion{identity: record.Identity, status: status, outputIdentity: record.OutputIdentity, failure: failure, reason: reason, planIdentity: record.PlanIdentity, taskIdentity: record.TaskIdentity}
 	if err := completion.Validate(); err != nil {
 		return TaskCompletion{}, err
 	}
@@ -152,9 +157,17 @@ func taskCompletionToRecord(completion TaskCompletion) taskCompletionRecord {
 		record.TaskIdentity = completion.taskIdentity
 		record.OutputKind = "context_abstention"
 	}
+	if record.SchemaVersion == 3 {
+		record.PlanIdentity = completion.planIdentity
+		record.TaskIdentity = completion.taskIdentity
+		record.FailureReason = completion.reason.String()
+	}
 	return record
 }
 func taskCompletionVersion(completion TaskCompletion) int {
+	if completion.status == TaskCompletionFailed && completion.reason != 0 {
+		return 3
+	}
 	if completion.status == TaskCompletionFailed && completion.outputIdentity != "" {
 		return 2
 	}

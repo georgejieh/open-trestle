@@ -38,6 +38,7 @@ type runEventRecord struct {
 	OutputIdentity             string                   `json:"output_identity"`
 	OutputKind                 string                   `json:"output_kind,omitempty"`
 	Failure                    string                   `json:"failure"`
+	FailureReason              string                   `json:"failure_reason,omitempty"`
 	RetryAtMilliseconds        int64                    `json:"retry_at_milliseconds"`
 	OccurredAtMilliseconds     int64                    `json:"occurred_at_milliseconds"`
 	PreparedArtifact           []byte                   `json:"prepared_artifact,omitempty"`
@@ -76,7 +77,7 @@ func ParseRunEvent(encoded []byte) (RunEvent, error) {
 	if err != nil || !bytes.Equal(canonical, encoded) {
 		return RunEvent{}, ErrInvalidRunEventEncoding
 	}
-	if record.Contract != "open-trestle/review-run-event-record" || (record.SchemaVersion != 1 && record.SchemaVersion != 2 && record.SchemaVersion != 3 && record.SchemaVersion != 4 && record.SchemaVersion != 5 && record.SchemaVersion != 6) || len(encoded) > runEventMaxBytesForVersion(record.SchemaVersion) {
+	if record.Contract != "open-trestle/review-run-event-record" || (record.SchemaVersion != 1 && record.SchemaVersion != 2 && record.SchemaVersion != 3 && record.SchemaVersion != 4 && record.SchemaVersion != 5 && record.SchemaVersion != 6 && record.SchemaVersion != 7) || len(encoded) > runEventMaxBytesForVersion(record.SchemaVersion) {
 		return RunEvent{}, ErrInvalidRunEventEncoding
 	}
 	scope, err := audit.NewReviewScope(record.TenantID, record.RepositoryID, record.ReviewRunID)
@@ -91,13 +92,17 @@ func ParseRunEvent(encoded []byte) (RunEvent, error) {
 	if err != nil {
 		return RunEvent{}, err
 	}
+	reason, err := ParseTaskFailureReason(record.FailureReason)
+	if err != nil {
+		return RunEvent{}, err
+	}
 	event := RunEvent{
 		identity: record.Identity, planIdentity: record.PlanIdentity, scope: scope,
 		sequence: record.Sequence, previousIdentity: record.PreviousIdentity, kind: kind,
 		taskKey: record.TaskKey, taskIdentity: record.TaskIdentity, attempt: record.Attempt,
 		leaseTokenIdentity: record.LeaseTokenIdentity, workerIdentity: record.WorkerIdentity,
 		leaseExpiresAtMillis: record.LeaseExpiresAtMilliseconds, outputIdentity: record.OutputIdentity,
-		failure: failure, retryAtMillis: record.RetryAtMilliseconds,
+		failure: failure, failureReason: reason, retryAtMillis: record.RetryAtMilliseconds,
 		occurredAtMillis: record.OccurredAtMilliseconds, preparedArtifact: append([]byte(nil), record.PreparedArtifact...),
 	}
 	if record.PacketDescriptor != nil {
@@ -127,7 +132,7 @@ func runEventToRecord(event RunEvent) runEventRecord {
 		TaskKey: event.TaskKey(), TaskIdentity: event.TaskIdentity(), Attempt: event.Attempt(),
 		LeaseTokenIdentity: event.LeaseTokenIdentity(), WorkerIdentity: event.WorkerIdentity(),
 		LeaseExpiresAtMilliseconds: event.leaseExpiresAtMillis, OutputIdentity: event.OutputIdentity(), OutputKind: eventContextFailureOutputKind(event),
-		Failure: event.Failure().String(), RetryAtMilliseconds: event.retryAtMillis,
+		Failure: event.Failure().String(), FailureReason: event.failureReason.String(), RetryAtMilliseconds: event.retryAtMillis,
 		OccurredAtMilliseconds: event.occurredAtMillis, PreparedArtifact: event.PreparedArtifact(),
 	}
 	if event.kind == RunEventContextInputPrepared {
@@ -164,6 +169,9 @@ func eventContextFailureOutputKind(event RunEvent) string {
 	return contextFailureOutputKind(event.kind == RunEventContextAbstentionPrepared || event.kind == RunEventTaskFailed && event.outputIdentity != "")
 }
 func runEventVersion(event RunEvent) int {
+	if event.failureReason != 0 {
+		return 7
+	}
 	if event.kind == RunEventContextInputSettled {
 		return 6
 	}
