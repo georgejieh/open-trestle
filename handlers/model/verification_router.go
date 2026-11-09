@@ -130,6 +130,7 @@ type PolicyVerificationAuthorizer struct {
 	requirements provider.ModelRequirements
 	constraints  policy.ProviderDataConstraints
 	budget       provider.ModelCostBudget
+	transport    review.ModelRequestTransport
 	ranking      gateway.RouteRankingPolicy
 	independence gateway.RouteIndependencePolicy
 	ledger       audit.Ledger
@@ -138,10 +139,18 @@ type PolicyVerificationAuthorizer struct {
 
 // NewPolicyVerificationAuthorizer binds exact route policy, inventory, accounting, and audit inputs.
 func NewPolicyVerificationAuthorizer(inventory VerificationRouteInventory, requirements provider.ModelRequirements, constraints policy.ProviderDataConstraints, budget provider.ModelCostBudget, ranking gateway.RouteRankingPolicy, independence gateway.RouteIndependencePolicy, ledger audit.Ledger, clock artifact.Clock) (*PolicyVerificationAuthorizer, error) {
-	if nilInterface(inventory) || !validDigest(inventory.Identity()) || requirements.Validate() != nil || constraints.Validate() != nil || budget.Validate() != nil || ranking.Validate() != nil || independence.Validate() != nil || nilInterface(ledger) || nilInterface(clock) {
+	return NewPolicyVerificationAuthorizerForTransport(review.ModelRequestTransportStandard, inventory, requirements, constraints, budget, ranking, independence, ledger, clock)
+}
+
+// NewPolicyVerificationAuthorizerForTransport is NewPolicyVerificationAuthorizer
+// for routes whose adapters send transport's request wire. Its input estimate is
+// review.ModelRequestBudgetForTransport. A non-standard transport is bound into
+// identity schema version 3; the standard transport keeps version 2.
+func NewPolicyVerificationAuthorizerForTransport(transport review.ModelRequestTransport, inventory VerificationRouteInventory, requirements provider.ModelRequirements, constraints policy.ProviderDataConstraints, budget provider.ModelCostBudget, ranking gateway.RouteRankingPolicy, independence gateway.RouteIndependencePolicy, ledger audit.Ledger, clock artifact.Clock) (*PolicyVerificationAuthorizer, error) {
+	if nilInterface(inventory) || !validDigest(inventory.Identity()) || requirements.Validate() != nil || constraints.Validate() != nil || budget.Validate() != nil || transport.Validate() != nil || ranking.Validate() != nil || independence.Validate() != nil || nilInterface(ledger) || nilInterface(clock) {
 		return nil, ErrInvalidVerificationAuthority
 	}
-	a := &PolicyVerificationAuthorizer{inventory: inventory, requirements: requirements, constraints: constraints, budget: budget, ranking: ranking, independence: independence, ledger: ledger, clock: clock}
+	a := &PolicyVerificationAuthorizer{inventory: inventory, requirements: requirements, constraints: constraints, budget: budget, transport: transport, ranking: ranking, independence: independence, ledger: ledger, clock: clock}
 	a.identity = derivePolicyVerificationAuthorizerIdentity(a)
 	if a.Validate() != nil {
 		return nil, ErrInvalidVerificationAuthority
@@ -155,7 +164,7 @@ func (a *PolicyVerificationAuthorizer) Identity() string {
 	return a.identity
 }
 func (a *PolicyVerificationAuthorizer) Validate() error {
-	if a == nil || nilInterface(a.inventory) || !validDigest(a.inventory.Identity()) || a.requirements.Validate() != nil || a.constraints.Validate() != nil || a.budget.Validate() != nil || a.ranking.Validate() != nil || a.independence.Validate() != nil || nilInterface(a.ledger) || nilInterface(a.clock) || a.identity != derivePolicyVerificationAuthorizerIdentity(a) {
+	if a == nil || nilInterface(a.inventory) || !validDigest(a.inventory.Identity()) || a.requirements.Validate() != nil || a.constraints.Validate() != nil || a.budget.Validate() != nil || a.transport.Validate() != nil || a.ranking.Validate() != nil || a.independence.Validate() != nil || nilInterface(a.ledger) || nilInterface(a.clock) || a.identity != derivePolicyVerificationAuthorizerIdentity(a) {
 		return ErrInvalidVerificationAuthority
 	}
 	return nil
@@ -167,7 +176,7 @@ func (a *PolicyVerificationAuthorizer) Authorize(ctx context.Context, scope audi
 	if review.ValidateVerificationEgressRequest(request, scope.Identity()) != nil {
 		return VerificationAuthority{}, ErrInvalidVerificationAuthority
 	}
-	budget, err := review.ModelRequestBudget(request, a.budget)
+	budget, err := review.ModelRequestBudgetForTransport(request, a.budget, a.transport)
 	if err != nil {
 		return VerificationAuthority{}, ErrInvalidVerificationAuthority
 	}
@@ -243,6 +252,11 @@ func derivePolicyVerificationAuthorizerIdentity(a *PolicyVerificationAuthorizer)
 			zones = append(zones, zone.String())
 		}
 	}
+	// Version 2 has no transport member; version 3 adds it for a non-standard transport.
+	version, transport := 2, ""
+	if a.transport != review.ModelRequestTransportStandard {
+		version, transport = 3, a.transport.String()
+	}
 	encoded, err := json.Marshal(struct {
 		Contract             string   `json:"contract"`
 		SchemaVersion        int      `json:"schema_version"`
@@ -255,11 +269,12 @@ func derivePolicyVerificationAuthorizerIdentity(a *PolicyVerificationAuthorizer)
 		Logging              bool     `json:"logging"`
 		EstimatedInput       uint32   `json:"estimated_input"`
 		InputEstimateVersion int      `json:"input_estimate_version"`
+		InputTransport       string   `json:"input_transport,omitempty"`
 		MaxOutput            uint32   `json:"max_output"`
 		MaxCost              uint64   `json:"max_cost"`
 		Ranking              string   `json:"ranking"`
 		Independence         string   `json:"independence"`
-	}{"open-trestle/policy-verification-authorizer", 2, a.inventory.Identity(), a.requirements.MinContextTokens(), a.requirements.MinOutputTokens(), features, string(a.constraints.Classification()), zones, a.constraints.ContentLoggingAllowed(), a.budget.EstimatedInputTokens(), review.ModelRequestBudgetVersion, a.budget.MaxOutputTokens(), a.budget.MaxCostMicroUSD(), a.ranking.Identity(), a.independence.Identity()})
+	}{"open-trestle/policy-verification-authorizer", version, a.inventory.Identity(), a.requirements.MinContextTokens(), a.requirements.MinOutputTokens(), features, string(a.constraints.Classification()), zones, a.constraints.ContentLoggingAllowed(), a.budget.EstimatedInputTokens(), review.ModelRequestBudgetVersion, transport, a.budget.MaxOutputTokens(), a.budget.MaxCostMicroUSD(), a.ranking.Identity(), a.independence.Identity()})
 	if err != nil {
 		return ""
 	}

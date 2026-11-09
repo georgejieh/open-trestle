@@ -8,9 +8,11 @@ import (
 	"time"
 
 	"github.com/georgejieh/open-trestle/audit"
+	modelhandler "github.com/georgejieh/open-trestle/handlers/model"
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/review"
+	"github.com/georgejieh/open-trestle/internal/testsupport"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 )
 
@@ -109,4 +111,119 @@ func TestLocalStructuredOutputGenerationPlanningReservesTheSchemaFraming(t *test
 	if err != nil || standardPlan.authorization.CostBudget() != standard {
 		t.Fatal("standard local generation reservation changed")
 	}
+}
+
+// Verification planning must reserve the schema framing the structured-output
+// adapter sends with the sanitized verification request.
+func TestLocalStructuredOutputVerificationPlanningReservesTheSchemaFraming(t *testing.T) {
+	ctx := context.Background()
+	scope, err := audit.NewReviewScope("tenant", "repository", "run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, rawVerification := readableModelRequests(t, scope)
+	sanitized, _, err := testsupport.NewCleanVerificationSanitizer().SanitizeVerification(ctx, rawVerification, scope.Identity())
+	if err != nil {
+		t.Fatal(err)
+	}
+	verification, err := sanitized.ProviderRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	inventory, err := runtimeconfig.NewRouteInventory(ctx, localPairDefinitions(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := NewStaticVerificationRouteInventory(inventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorize := func(policy runtimeconfig.RuntimePolicy) (gateway.RouteAttemptAuthorization, string) {
+		t.Helper()
+		generation, err := NewGenerationPolicyAuthorizerFromRuntimePolicy(policy, inventory, audit.NewMemoryLedger())
+		if err != nil {
+			t.Fatal(err)
+		}
+		authorization, err := generation.Authorize(ctx, scope, request, policy.ReviewPolicyIdentity(), time.UnixMilli(100))
+		if err != nil {
+			t.Fatal(err)
+		}
+		usage, _ := provider.NewRouteTokenUsage(1, 1, 0)
+		outcome, err := gateway.NewSuccessfulRouteAttemptOutcome(authorization, strings.Repeat("b", 64), usage, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reconciliation, err := gateway.ReconcileAuthorizedRouteAttemptCost(authorization, outcome)
+		if err != nil {
+			t.Fatal(err)
+		}
+		output, err := gateway.NewSuccessfulRouteOutputReceipt(gateway.RouteOutputCandidateBatch, strings.Repeat("c", 64), strings.Repeat("d", 64), request, authorization, outcome)
+		if err != nil {
+			t.Fatal(err)
+		}
+		execution, err := gateway.NewRouteExecutionRecord(authorization, outcome, reconciliation, output)
+		if err != nil {
+			t.Fatal(err)
+		}
+		verifier, err := NewVerificationPolicyAuthorizerFromRuntimePolicy(policy, view, audit.NewMemoryLedger(), catalogFixedClock{at: time.UnixMilli(200)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		authority, err := verifier.Authorize(ctx, scope, verification, execution)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return authority.Authorization(), verifier.Identity()
+	}
+	structured := structuredPolicy(t, inventory, true, 1)
+	want, err := review.ModelRequestBudgetForTransport(verification, structured.Budget(), review.ModelRequestTransportLocalStructuredOutput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	standard, err := review.ModelRequestBudget(verification, structured.Budget())
+	if err != nil || want.EstimatedInputTokens() <= standard.EstimatedInputTokens() {
+		t.Fatal("fixture does not expose the schema framing")
+	}
+	authorization, structuredIdentity := authorize(structured)
+	if authorization.CostBudget() != want {
+		t.Fatalf("verification authorizer reserved %d input, want %d", authorization.CostBudget().EstimatedInputTokens(), want.EstimatedInputTokens())
+	}
+	result, transport := structuredDispatch(t, inventory, structured, authorization, verification)
+	if result.Status() != gateway.RouteDispatchSucceeded || transport.calls != 1 {
+		t.Fatalf("verification reservation refused by the structured-output adapter: %#v", result)
+	}
+	// The standard transport keeps its estimate and its version 2 identity.
+	disabled := structuredPolicy(t, inventory, false, 1)
+	standardAuthorization, standardIdentity := authorize(disabled)
+	if standardAuthorization.CostBudget() != standard {
+		t.Fatal("standard verification reservation changed")
+	}
+	pinned, err := gateway.NewRouteRankingPolicy(disabled.Ranking().PreferredRoutes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline, err := NewVerificationPolicyAuthorizer(StaticVerificationRouteInventory{inventory: inventory, selected: verifierSnapshot(t, inventory, disabled)}, disabled.Requirements(), disabled.Constraints(), disabled.Budget(), pinned, disabled.Independence(), audit.NewMemoryLedger(), catalogFixedClock{at: time.UnixMilli(200)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if standardIdentity != baseline.Identity() || structuredIdentity == standardIdentity {
+		t.Fatal("verification authorizer identity does not bind exactly the structured transport")
+	}
+}
+
+// verifierSnapshot is the explicit verifier route view that
+// NewVerificationPolicyAuthorizerFromRuntimePolicy selects.
+func verifierSnapshot(t *testing.T, inventory runtimeconfig.RouteInventory, policy runtimeconfig.RuntimePolicy) *modelhandler.VerificationRouteSnapshot {
+	t.Helper()
+	for index, candidate := range inventory.Candidates() {
+		if candidate.ResolvedRecord().RouteRegistryRecord().Identity() == policy.VerificationRouteRecordIdentity() {
+			snapshot, err := modelhandler.NewVerificationRouteSnapshot(inventory.RegistryRevision(), inventory.PerformanceRevision(), []gateway.ObservedRouteCandidate{candidate}, []provider.RoutePerformanceObservation{inventory.PerformanceObservations()[index]})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return &snapshot
+		}
+	}
+	t.Fatal("policy verifier is not in the inventory")
+	return nil
 }

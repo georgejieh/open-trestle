@@ -323,16 +323,17 @@ Dispatch refuses, before credential retrieval or HTTP, an approved reservation
 below the larger of the normal host byte-based request estimate and the inner
 payload bytes plus the trusted system channel bytes plus the serialized
 `response_format` object (including its field wrapper) plus 256 framing bytes.
-Generation route planning counts the same `response_format` bytes, which are
+Route planning counts the same `response_format` bytes, which are
 deterministic from the pinned schema, whenever a planning step's candidate
-routes include a connection with this option: the generation route authorizer
-and the local generation route plan reserve the payload, the system channel and
-the schema framing, so `estimated_input_tokens` need not carry that margin. A
-step reserves once for all of its candidate routes, so a route without the
-option planned in the same step is reserved the same way. Such an authorizer
-binds `input_transport: local_structured_output` into its identity; without the
-option the estimate and identity are unchanged. Verification and investigation
-planning do not count `response_format` yet, so for them `estimated_input_tokens`
+routes include a connection with this option: the generation and verification
+route authorizers and the local generation route plan reserve the payload, the
+system channel and the schema framing, so `estimated_input_tokens` need not
+carry that margin. A step reserves once for all of its candidate routes, so a
+route without the option planned in the same step is reserved the same way.
+Such an authorizer binds `input_transport: local_structured_output` into its
+identity (the verification authorizer moves to identity version 3 for it);
+without the option the estimate and identity are unchanged. Investigation
+planning does not count `response_format` yet, so for it `estimated_input_tokens`
 must still supply that margin. This estimate is conservative byte accounting,
 not exact tokenization. Set a justified reservation that fits the route's
 approved context capacity; no budget is increased after authorization.

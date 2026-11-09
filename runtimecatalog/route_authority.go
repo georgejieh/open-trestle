@@ -66,10 +66,14 @@ func (i StaticVerificationRouteInventory) Snapshot(ctx context.Context, scope au
 	return snapshot, nil
 }
 func NewVerificationPolicyAuthorizer(inventory StaticVerificationRouteInventory, requirements provider.ModelRequirements, constraints policy.ProviderDataConstraints, budget provider.ModelCostBudget, ranking gateway.RouteRankingPolicy, independence gateway.RouteIndependencePolicy, ledger audit.Ledger, clock artifact.Clock) (*modelhandler.PolicyVerificationAuthorizer, error) {
+	return newVerificationPolicyAuthorizer(review.ModelRequestTransportStandard, inventory, requirements, constraints, budget, ranking, independence, ledger, clock)
+}
+
+func newVerificationPolicyAuthorizer(transport review.ModelRequestTransport, inventory StaticVerificationRouteInventory, requirements provider.ModelRequirements, constraints policy.ProviderDataConstraints, budget provider.ModelCostBudget, ranking gateway.RouteRankingPolicy, independence gateway.RouteIndependencePolicy, ledger audit.Ledger, clock artifact.Clock) (*modelhandler.PolicyVerificationAuthorizer, error) {
 	if inventory.inventory.Validate() != nil || inventory.selected != nil && inventory.selected.Validate() != nil {
 		return nil, ErrInvalidRouteAuthority
 	}
-	authorizer, err := modelhandler.NewPolicyVerificationAuthorizer(inventory, requirements, constraints, budget, ranking, independence, ledger, clock)
+	authorizer, err := modelhandler.NewPolicyVerificationAuthorizerForTransport(transport, inventory, requirements, constraints, budget, ranking, independence, ledger, clock)
 	if err != nil {
 		return nil, ErrInvalidRouteAuthority
 	}
@@ -112,5 +116,11 @@ func NewVerificationPolicyAuthorizerFromRuntimePolicy(configuration runtimeconfi
 	if err != nil {
 		return nil, ErrInvalidRouteAuthority
 	}
-	return NewVerificationPolicyAuthorizer(inventory, configuration.Requirements(), configuration.Constraints(), configuration.Budget(), ranking, configuration.Independence(), ledger, clock)
+	// The authorizer plans over the explicit verifier or, without one, every
+	// inventory candidate.
+	routes := inventory.inventory.Candidates()
+	if inventory.selected != nil {
+		routes = inventory.selected.Routes()
+	}
+	return newVerificationPolicyAuthorizer(configuration.ModelRequestTransport(routes), inventory, configuration.Requirements(), configuration.Constraints(), configuration.Budget(), ranking, configuration.Independence(), ledger, clock)
 }
