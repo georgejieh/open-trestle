@@ -175,6 +175,7 @@ func runRemoteScopeOperation(operation string, args []string, stdout, stderr io.
 				fmt.Fprintln(stderr, "runs status: write result failed")
 				return 1
 			}
+			writeRefusalHint(stderr, setRefusalHint(set))
 			return 0
 		}
 		log, buildErr := buildDiagnosticSetSARIF(set)
@@ -182,9 +183,17 @@ func runRemoteScopeOperation(operation string, args []string, stdout, stderr io.
 			fmt.Fprintln(stderr, "runs status: build SARIF failed")
 			return 1
 		}
-		return writeJSONResult(log, stdout, stderr, 0)
+		code := writeJSONResult(log, stdout, stderr, 0)
+		if code == 0 {
+			writeRefusalHint(stderr, setRefusalHint(set))
+		}
+		return code
 	}
-	return writeRemoteReceipt(receipt, stdout, stderr)
+	code := writeRemoteReceipt(receipt, stdout, stderr)
+	if code == 0 && operation == "status" {
+		writeRefusalHint(stderr, receiptRefusalHint(receipt))
+	}
+	return code
 }
 func writeRemoteReceipt(receipt controlplane.ReviewRunReceipt, stdout, stderr io.Writer) int {
 	encoded, err := controlplane.EncodeReviewRunReceipt(receipt)
