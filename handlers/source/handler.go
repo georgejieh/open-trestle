@@ -145,8 +145,20 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 	if !sameAdapterIdentity(input.Adapter(), h.adapter.Identity()) || input.SourceRootIdentity() != h.sourceRootIdentity {
 		return taskFailure(controlplane.RunFailurePolicy)
 	}
+	revision := input.Revision()
+	var derivation sourceoutput.RevisionDerivation
+	if head, derived := input.MergeBaseHead(); derived {
+		mergeBase, refusal, resolved := h.resolveMergeBase(ctx, request, input, head)
+		if !resolved {
+			return refusal
+		}
+		if derivation, err = sourceoutput.NewForgeMergeBaseDerivation(input.Revision(), head, mergeBase); err != nil {
+			return taskFailure(controlplane.RunFailureInternal)
+		}
+		revision = mergeBase
+	}
 	acquisitionRequest, err := evidence.NewRepositoryAcquisitionRequest(
-		input.Repository(), input.Revision(), input.Adapter(),
+		input.Repository(), revision, input.Adapter(),
 		evidence.AcquisitionArtifactManifestAndContent,
 		evidence.AcquisitionEffectReadOnly,
 	)
@@ -163,7 +175,49 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 	if snapshot.Execution().Outcome() != evidence.AcquisitionOutcomeAcquired {
 		return taskFailure(mapAcquisitionFailure(snapshot.Execution().Receipt().Reason()))
 	}
-	return h.persistSnapshot(ctx, request, inputArtifact, input, snapshot, now)
+	return h.persistSnapshot(ctx, request, inputArtifact, input, revision, derivation, snapshot, now)
+}
+
+// resolveMergeBase asks the adapter for the forge's merge base of the
+// requested base and the head. Every refusal is a failed completion with a
+// recorded, content-free reason: no shared history, nothing to review because
+// the head equals or is contained in the base, or no usable merge base.
+func (h *Handler) resolveMergeBase(ctx context.Context, request controlplane.TaskExecutionRequest, input Input, head evidence.RevisionIdentity) (evidence.RevisionIdentity, controlplane.TaskCompletion, bool) {
+	refuse := func(failure controlplane.RunFailure, reason controlplane.TaskFailureReason) (evidence.RevisionIdentity, controlplane.TaskCompletion, bool) {
+		completion, err := controlplane.NewSourceTaskFailureWithReason(failure, reason, request.Plan(), request.Task())
+		if err != nil {
+			return evidence.RevisionIdentity{}, taskFailure(controlplane.RunFailureInternal), false
+		}
+		return evidence.RevisionIdentity{}, completion, false
+	}
+	if input.Revision() == head {
+		return refuse(controlplane.RunFailurePolicy, controlplane.TaskFailureReasonNothingToReview)
+	}
+	resolver, ok := h.adapter.(scm.MergeBaseResolver)
+	if !ok {
+		return refuse(controlplane.RunFailurePolicy, controlplane.TaskFailureReasonMergeBaseUnavailable)
+	}
+	mergeBaseRequest, err := scm.NewMergeBaseRequest(input.Repository(), input.Revision(), head, input.Adapter())
+	if err != nil {
+		return evidence.RevisionIdentity{}, taskFailure(controlplane.RunFailureInvalidInput), false
+	}
+	result := resolver.ResolveMergeBase(ctx, mergeBaseRequest)
+	if ctx.Err() != nil {
+		return evidence.RevisionIdentity{}, taskFailure(controlplane.RunFailureCanceled), false
+	}
+	if scm.ValidateMergeBaseResult(mergeBaseRequest, result) != nil {
+		return refuse(controlplane.RunFailureInternal, controlplane.TaskFailureReasonMergeBaseUnavailable)
+	}
+	switch result.Outcome {
+	case scm.MergeBaseNone:
+		return refuse(controlplane.RunFailurePolicy, controlplane.TaskFailureReasonNoMergeBase)
+	case scm.MergeBaseUnavailable:
+		return refuse(mapAcquisitionFailure(result.Reason), controlplane.TaskFailureReasonMergeBaseUnavailable)
+	}
+	if result.MergeBase == head {
+		return refuse(controlplane.RunFailurePolicy, controlplane.TaskFailureReasonNothingToReview)
+	}
+	return result.MergeBase, controlplane.TaskCompletion{}, true
 }
 
 func (h *Handler) persistSnapshot(
@@ -171,6 +225,8 @@ func (h *Handler) persistSnapshot(
 	request controlplane.TaskExecutionRequest,
 	inputArtifact artifact.Artifact,
 	input Input,
+	revision evidence.RevisionIdentity,
+	derivation sourceoutput.RevisionDerivation,
 	snapshot scm.RepositoryAcquisitionSnapshotExecution,
 	now time.Time,
 ) controlplane.TaskCompletion {
@@ -207,11 +263,21 @@ func (h *Handler) persistSnapshot(
 		references = append(references, sourceoutput.NewFileReference(file.Path(), file.Digest(), file.SizeBytes(), value.Identity()))
 	}
 	sort.Slice(references, func(first, second int) bool { return references[first].Path() < references[second].Path() })
-	index, err := sourceoutput.NewSnapshot(
-		"", execution.RequestIdentity(), execution.ReceiptIdentity(),
-		execution.Identity(), input.Repository().Identity(), input.Revision().Identity(),
-		input.SourceAdapterIdentity(), manifest.Identity(), references,
-	)
+	var index sourceoutput.Snapshot
+	var err error
+	if derivation.Method() != "" {
+		index, err = sourceoutput.NewDerivedSnapshot(
+			"", execution.RequestIdentity(), execution.ReceiptIdentity(),
+			execution.Identity(), input.Repository().Identity(),
+			input.SourceAdapterIdentity(), manifest.Identity(), references, derivation,
+		)
+	} else {
+		index, err = sourceoutput.NewSnapshot(
+			"", execution.RequestIdentity(), execution.ReceiptIdentity(),
+			execution.Identity(), input.Repository().Identity(), revision.Identity(),
+			input.SourceAdapterIdentity(), manifest.Identity(), references,
+		)
+	}
 	if err != nil {
 		return taskFailure(controlplane.RunFailureInternal)
 	}

@@ -48,6 +48,45 @@ type Snapshot struct {
 	repositoryIdentity, revisionIdentity                    string
 	sourceAdapterIdentity, manifestIdentity                 string
 	files                                                   []FileReference
+	// derivation is set only by snapshot schema version 2, whose revision is
+	// derived from the input rather than named by it.
+	derivation RevisionDerivation
+}
+
+// RevisionDerivationForgeMergeBase names a revision that the source adapter's
+// forge reported as the merge base of the requested base and the head.
+const RevisionDerivationForgeMergeBase = "forge_merge_base"
+
+// RevisionDerivation records how an acquired revision was chosen: the
+// requested base, the head, and the merge base the forge reported for them.
+type RevisionDerivation struct {
+	method                              string
+	requestedBaseIdentity, headIdentity string
+	mergeBase                           evidence.RevisionIdentity
+}
+
+// NewForgeMergeBaseDerivation records the forge's merge base of the requested base and head.
+func NewForgeMergeBaseDerivation(requestedBase, head, mergeBase evidence.RevisionIdentity) (RevisionDerivation, error) {
+	derivation := RevisionDerivation{method: RevisionDerivationForgeMergeBase, requestedBaseIdentity: requestedBase.Identity(), headIdentity: head.Identity(), mergeBase: mergeBase}
+	canonicalBase, baseErr := evidence.NewRevisionIdentity(requestedBase.Kind(), requestedBase.Algorithm(), requestedBase.Digest())
+	canonicalHead, headErr := evidence.NewRevisionIdentity(head.Kind(), head.Algorithm(), head.Digest())
+	if baseErr != nil || headErr != nil || canonicalBase != requestedBase || canonicalHead != head || derivation.validate() != nil {
+		return RevisionDerivation{}, ErrInvalidOutput
+	}
+	return derivation, nil
+}
+
+func (d RevisionDerivation) Method() string                       { return d.method }
+func (d RevisionDerivation) RequestedBaseIdentity() string        { return d.requestedBaseIdentity }
+func (d RevisionDerivation) HeadIdentity() string                 { return d.headIdentity }
+func (d RevisionDerivation) MergeBase() evidence.RevisionIdentity { return d.mergeBase }
+
+func (d RevisionDerivation) validate() error {
+	mergeBase, err := evidence.NewRevisionIdentity(d.mergeBase.Kind(), d.mergeBase.Algorithm(), d.mergeBase.Digest())
+	if d.method != RevisionDerivationForgeMergeBase || !validDigest(d.requestedBaseIdentity) || !validDigest(d.headIdentity) || err != nil || mergeBase != d.mergeBase || mergeBase.Kind() != evidence.RevisionKindGitCommit {
+		return ErrInvalidOutput
+	}
+	return nil
 }
 
 func (s Snapshot) Identity() string                        { return s.identity }
@@ -64,8 +103,22 @@ func (s Snapshot) SourceAdapterIdentity() string           { return s.sourceAdap
 func (s Snapshot) ManifestIdentity() string                { return s.manifestIdentity }
 func (s Snapshot) FileCount() int                          { return len(s.files) }
 func (s Snapshot) Files() []FileReference                  { return append([]FileReference(nil), s.files...) }
-func (s Snapshot) String() string                          { return "source snapshot" }
-func (s Snapshot) GoString() string                        { return "source.Snapshot{<redacted>}" }
+
+// SchemaVersion returns 2 for a snapshot with a recorded revision derivation, else 1.
+func (s Snapshot) SchemaVersion() int {
+	if s.derivation.method != "" {
+		return 2
+	}
+	return 1
+}
+
+// Derivation returns how a derived revision was chosen; it reports false for
+// a snapshot of a revision the input named.
+func (s Snapshot) Derivation() (RevisionDerivation, bool) {
+	return s.derivation, s.derivation.method != ""
+}
+func (s Snapshot) String() string   { return "source snapshot" }
+func (s Snapshot) GoString() string { return "source.Snapshot{<redacted>}" }
 func (s Snapshot) Format(state fmt.State, verb rune) {
 	writeSourceOutputRedacted(state, verb, "source snapshot", "source.Snapshot{<redacted>}")
 }
@@ -115,6 +168,16 @@ type snapshotWire struct {
 	SourceAdapterIdentity        string              `json:"source_adapter_identity"`
 	ManifestIdentity             string              `json:"manifest_identity"`
 	Files                        []fileReferenceWire `json:"files"`
+	RevisionDerivation           *derivationWire     `json:"revision_derivation,omitempty"`
+}
+
+type derivationWire struct {
+	Method                     string                     `json:"method"`
+	RequestedBaseIdentity      string                     `json:"requested_base_revision_identity"`
+	HeadIdentity               string                     `json:"head_revision_identity"`
+	MergeBaseRevisionKind      evidence.RevisionKind      `json:"merge_base_revision_kind"`
+	MergeBaseRevisionAlgorithm evidence.RevisionAlgorithm `json:"merge_base_revision_algorithm"`
+	MergeBaseRevisionDigest    string                     `json:"merge_base_revision_digest"`
 }
 
 type fileReferenceWire struct {
@@ -221,6 +284,27 @@ func NewSnapshot(
 	return snapshot, nil
 }
 
+// NewDerivedSnapshot constructs a schema version 2 snapshot whose revision is
+// the derivation's merge base.
+func NewDerivedSnapshot(
+	artifactIdentity string,
+	acquisitionRequest, acquisitionReceipt, acquisitionExecution string,
+	repositoryIdentity, sourceAdapterIdentity, manifestIdentity string,
+	files []FileReference,
+	derivation RevisionDerivation,
+) (Snapshot, error) {
+	if derivation.validate() != nil {
+		return Snapshot{}, ErrInvalidOutput
+	}
+	snapshot, err := NewSnapshot(artifactIdentity, acquisitionRequest, acquisitionReceipt, acquisitionExecution, repositoryIdentity, derivation.mergeBase.Identity(), sourceAdapterIdentity, manifestIdentity, files)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	snapshot.derivation = derivation
+	snapshot.identity = deriveSnapshotIdentity(snapshot)
+	return snapshot, nil
+}
+
 func (s Snapshot) validateFields(requireArtifact bool) error {
 	identities := []string{
 		s.acquisitionRequest, s.acquisitionReceipt, s.acquisitionExec,
@@ -230,6 +314,9 @@ func (s Snapshot) validateFields(requireArtifact bool) error {
 		if !validDigest(identity) {
 			return ErrInvalidOutput
 		}
+	}
+	if s.derivation.method != "" && (s.derivation.validate() != nil || s.derivation.mergeBase.Identity() != s.revisionIdentity) {
+		return ErrInvalidOutput
 	}
 	if requireArtifact && (!validDigest(s.artifactIdentity) || !validDigest(s.scopeIdentity) ||
 		s.classification.String() == "" || s.protection.String() == "") || len(s.files) > maximumSnapshotFiles {
@@ -279,7 +366,7 @@ func ParseSnapshotArtifact(value artifact.Artifact) (Snapshot, error) {
 		return Snapshot{}, ErrInvalidOutput
 	}
 	canonical, err := json.Marshal(wire)
-	if err != nil || !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/source-snapshot" || wire.SchemaVersion != 1 ||
+	if err != nil || !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/source-snapshot" || (wire.SchemaVersion != 1 && wire.SchemaVersion != 2) || (wire.SchemaVersion == 2) != (wire.RevisionDerivation != nil) ||
 		!hasProvenance(value.Provenance(), wire.AcquisitionExecutionIdentity) {
 		return Snapshot{}, ErrInvalidOutput
 	}
@@ -297,6 +384,13 @@ func ParseSnapshotArtifact(value artifact.Artifact) (Snapshot, error) {
 		acquisitionExec: wire.AcquisitionExecutionIdentity, repositoryIdentity: wire.RepositoryIdentity,
 		revisionIdentity: wire.RevisionIdentity, sourceAdapterIdentity: wire.SourceAdapterIdentity,
 		manifestIdentity: wire.ManifestIdentity, files: files,
+	}
+	if record := wire.RevisionDerivation; record != nil {
+		mergeBase, err := evidence.NewRevisionIdentity(record.MergeBaseRevisionKind, record.MergeBaseRevisionAlgorithm, record.MergeBaseRevisionDigest)
+		if err != nil {
+			return Snapshot{}, ErrInvalidOutput
+		}
+		snapshot.derivation = RevisionDerivation{method: record.Method, requestedBaseIdentity: record.RequestedBaseIdentity, headIdentity: record.HeadIdentity, mergeBase: mergeBase}
 	}
 	if snapshot.validateFields(true) != nil {
 		return Snapshot{}, ErrInvalidOutput
@@ -320,8 +414,8 @@ func snapshotWireValue(snapshot Snapshot) snapshotWire {
 			ArtifactIdentity: file.artifactIdentity,
 		}
 	}
-	return snapshotWire{
-		Contract: "open-trestle/source-snapshot", SchemaVersion: 1, Identity: snapshot.identity,
+	wire := snapshotWire{
+		Contract: "open-trestle/source-snapshot", SchemaVersion: snapshot.SchemaVersion(), Identity: snapshot.identity,
 		AcquisitionRequestIdentity:   snapshot.acquisitionRequest,
 		AcquisitionReceiptIdentity:   snapshot.acquisitionReceipt,
 		AcquisitionExecutionIdentity: snapshot.acquisitionExec,
@@ -329,6 +423,13 @@ func snapshotWireValue(snapshot Snapshot) snapshotWire {
 		SourceAdapterIdentity: snapshot.sourceAdapterIdentity, ManifestIdentity: snapshot.manifestIdentity,
 		Files: files,
 	}
+	if d := snapshot.derivation; d.method != "" {
+		wire.RevisionDerivation = &derivationWire{
+			Method: d.method, RequestedBaseIdentity: d.requestedBaseIdentity, HeadIdentity: d.headIdentity,
+			MergeBaseRevisionKind: d.mergeBase.Kind(), MergeBaseRevisionAlgorithm: d.mergeBase.Algorithm(), MergeBaseRevisionDigest: d.mergeBase.Digest(),
+		}
+	}
+	return wire
 }
 
 func deriveSnapshotIdentity(snapshot Snapshot) string {

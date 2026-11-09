@@ -37,6 +37,11 @@ func NewBoundInput(repository evidence.RepositoryIdentity, revision evidence.Rev
 	return sourceinput.NewBoundInput(repository, revision, adapter, sourceRootIdentity)
 }
 
+// NewMergeBaseInput authorizes acquisition of the merge base of the requested base and the head.
+func NewMergeBaseInput(repository evidence.RepositoryIdentity, requestedBase, head evidence.RevisionIdentity, adapter evidence.SourceAdapterIdentity) (Input, error) {
+	return sourceinput.NewMergeBaseInput(repository, requestedBase, head, adapter)
+}
+
 // EncodeInput returns the one canonical JSON representation.
 func EncodeInput(input Input) ([]byte, error) { return sourceinput.EncodeInput(input) }
 

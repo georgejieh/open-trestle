@@ -27,6 +27,30 @@ type Input struct {
 	repository                   evidence.RepositoryIdentity
 	revision                     evidence.RevisionIdentity
 	adapter                      evidence.SourceAdapterIdentity
+	// mergeBaseHead is set only by schema version 3: the input then names the
+	// requested base in revision and acquires the merge base of it and this head.
+	mergeBaseHead evidence.RevisionIdentity
+}
+
+// mergeBaseDerivation names the only derived-base rule of schema version 3.
+const mergeBaseDerivation = "merge_base"
+
+// NewMergeBaseInput authorizes acquisition of the merge base of the requested
+// base and the head, as a pull request diff presents it. The base and head use
+// one object algorithm; equal commits are recorded and refused at acquisition.
+func NewMergeBaseInput(repository evidence.RepositoryIdentity, requestedBase, head evidence.RevisionIdentity, adapter evidence.SourceAdapterIdentity) (Input, error) {
+	input := Input{schemaVersion: 3, repository: repository, revision: requestedBase, adapter: adapter, mergeBaseHead: head}
+	if err := input.validateFields(); err != nil {
+		return Input{}, err
+	}
+	input.identity = deriveInputIdentity(input)
+	return input, nil
+}
+
+// MergeBaseHead returns the head whose merge base with Revision this input
+// acquires. It reports false for an input that acquires Revision itself.
+func (i Input) MergeBaseHead() (evidence.RevisionIdentity, bool) {
+	return i.mergeBaseHead, i.schemaVersion == 3
 }
 
 // NewInput creates an immutable acquisition input for an exact repository revision and adapter.
@@ -76,7 +100,15 @@ func (i Input) Validate() error {
 }
 
 func (i Input) validateFields() error {
-	if i.schemaVersion != 1 && i.schemaVersion != 2 || i.schemaVersion == 1 && i.sourceRootIdentity != "" || i.schemaVersion == 2 && !validInputDigest(i.sourceRootIdentity) {
+	if i.schemaVersion < 1 || i.schemaVersion > 3 || i.schemaVersion != 2 && i.sourceRootIdentity != "" || i.schemaVersion == 2 && !validInputDigest(i.sourceRootIdentity) {
+		return ErrInvalidInput
+	}
+	if i.schemaVersion == 3 {
+		head, err := evidence.NewRevisionIdentity(i.mergeBaseHead.Kind(), i.mergeBaseHead.Algorithm(), i.mergeBaseHead.Digest())
+		if err != nil || head != i.mergeBaseHead || head.Kind() != evidence.RevisionKindGitCommit || i.revision.Kind() != evidence.RevisionKindGitCommit || head.Algorithm() != i.revision.Algorithm() {
+			return ErrInvalidInput
+		}
+	} else if i.mergeBaseHead != (evidence.RevisionIdentity{}) {
 		return ErrInvalidInput
 	}
 	repository, err := evidence.NewRepositoryIdentity(i.repository.Authority(), i.repository.Namespace(), i.repository.Name())
@@ -120,6 +152,8 @@ type inputWire struct {
 	SourceCapabilities    []evidence.SourceAdapterCapability `json:"source_capabilities"`
 	Artifact              string                             `json:"artifact"`
 	Effect                string                             `json:"effect"`
+	BaseDerivation        string                             `json:"base_derivation,omitempty"`
+	MergeBaseHeadDigest   string                             `json:"merge_base_head_revision_digest,omitempty"`
 }
 
 // EncodeInput returns the one canonical JSON representation.
@@ -150,7 +184,8 @@ func ParseInput(encoded []byte) (Input, error) {
 	}
 	canonical, err := json.Marshal(wire)
 	if err != nil || !bytes.Equal(canonical, encoded) || wire.Contract != "open-trestle/source-acquisition-input" ||
-		(wire.SchemaVersion != 1 && wire.SchemaVersion != 2) || wire.SchemaVersion == 1 && wire.SourceRootIdentity != "" || wire.SchemaVersion == 2 && !validInputDigest(wire.SourceRootIdentity) || wire.Artifact != string(evidence.AcquisitionArtifactManifestAndContent) ||
+		(wire.SchemaVersion < 1 || wire.SchemaVersion > 3) || wire.SchemaVersion != 2 && wire.SourceRootIdentity != "" || wire.SchemaVersion == 2 && !validInputDigest(wire.SourceRootIdentity) ||
+		(wire.SchemaVersion == 3) != (wire.BaseDerivation == mergeBaseDerivation) || (wire.SchemaVersion == 3) != (wire.MergeBaseHeadDigest != "") || wire.Artifact != string(evidence.AcquisitionArtifactManifestAndContent) ||
 		wire.Effect != string(evidence.AcquisitionEffectReadOnly) {
 		return Input{}, ErrInvalidInput
 	}
@@ -172,7 +207,13 @@ func ParseInput(encoded []byte) (Input, error) {
 		return Input{}, ErrInvalidInput
 	}
 	var input Input
-	if wire.SchemaVersion == 2 {
+	if wire.SchemaVersion == 3 {
+		head, headErr := evidence.NewRevisionIdentity(wire.RevisionKind, wire.RevisionAlgorithm, wire.MergeBaseHeadDigest)
+		if headErr != nil {
+			return Input{}, ErrInvalidInput
+		}
+		input, err = NewMergeBaseInput(repository, revision, head, adapter)
+	} else if wire.SchemaVersion == 2 {
 		input, err = NewBoundInput(repository, revision, adapter, wire.SourceRootIdentity)
 	} else {
 		input, err = NewInput(repository, revision, adapter)
@@ -188,7 +229,7 @@ func ParseInput(encoded []byte) (Input, error) {
 }
 
 func inputWireValue(input Input) inputWire {
-	return inputWire{
+	wire := inputWire{
 		Contract: "open-trestle/source-acquisition-input", SchemaVersion: input.schemaVersion, SourceRootIdentity: input.sourceRootIdentity, Identity: input.Identity(),
 		RepositoryAuthority: input.repository.Authority(), RepositoryNamespace: input.repository.Namespace(),
 		RepositoryName: input.repository.Name(), RevisionKind: input.revision.Kind(),
@@ -198,6 +239,11 @@ func inputWireValue(input Input) inputWire {
 		SourceCapabilities: input.adapter.Capabilities(),
 		Artifact:           string(evidence.AcquisitionArtifactManifestAndContent), Effect: string(evidence.AcquisitionEffectReadOnly),
 	}
+	if input.schemaVersion == 3 {
+		wire.BaseDerivation = mergeBaseDerivation
+		wire.MergeBaseHeadDigest = input.mergeBaseHead.Digest()
+	}
+	return wire
 }
 
 func deriveInputIdentity(input Input) string {
