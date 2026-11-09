@@ -588,9 +588,14 @@ accepts. An unknown ID is a usage error (exit 2) that lists the valid IDs.
 Selection:
 
 - `auto` derives change features from the general review's own recorded change
-  model and semantic-impact profile, after that review ran; no model is called
-  for selection and no source is read again. It calls the routing planner and
-  keeps activated, planned profiles that may steer defect review, in descending
+  model and semantic-impact profile, after that review ran, and the declared
+  style from the root-level style configuration files of the base tree that
+  review recorded, never the head (see
+  [declared style in local reviews](agent-profiles.md#declared-style-in-local-reviews)).
+  No model is called for selection and no Git object is read again. A base
+  style that governs a changed language activates `style_conformance`. It
+  calls the routing planner and keeps activated, planned profiles that may
+  steer defect review, in descending
   priority (ties by profile ID). The rest are recorded in `selection.dropped`
   with a reason: `not_applicable` (model-free, gap-only, `test_author`, or no
   model call for this change), `max_specialists` (cut by the limit), or a planner

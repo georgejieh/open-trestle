@@ -378,6 +378,8 @@ type localModelFixtureOptions struct {
 	// deletionOnly makes the reviewed change remove the zero guard line from
 	// a.go without changing any head line.
 	deletionOnly bool
+	// extraBase and extraHead add root-level files to the base and head trees.
+	extraBase, extraHead map[string][]byte
 }
 
 func newLocalModelFixture(t *testing.T, options localModelFixtureOptions) *localModelFixture {
@@ -427,6 +429,12 @@ func newLocalModelFixture(t *testing.T, options localModelFixtureOptions) *local
 	if options.instructionOversized {
 		base["AGENTS.md"] = []byte(strings.Repeat(strings.Repeat("p", 99)+"\n", 100))
 		head["AGENTS.md"] = base["AGENTS.md"]
+	}
+	for path, content := range options.extraBase {
+		base[path] = content
+	}
+	for path, content := range options.extraHead {
+		head[path] = content
 	}
 	f.objects, f.base, f.head = writeLocalGitChangeFixture(t, evidence.RevisionAlgorithmSHA1, base, head)
 	zone := provider.ProviderZoneLocal

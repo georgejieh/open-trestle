@@ -285,6 +285,8 @@ type rmModelFixture struct {
 type rmModelFixtureOptions struct {
 	generationMode, verificationMode                      string
 	verifierPending, remote, expensive, capacity, partial bool
+	// extraBase and extraHead add root-level files to the base and head trees.
+	extraBase, extraHead map[string][]byte
 }
 
 func newRmModelFixture(t *testing.T, options rmModelFixtureOptions) *rmModelFixture {
@@ -313,6 +315,12 @@ func newRmModelFixture(t *testing.T, options rmModelFixtureOptions) *rmModelFixt
 	}
 	if options.partial {
 		base["removed.go"] = []byte("package p\n")
+	}
+	for path, content := range options.extraBase {
+		base[path] = content
+	}
+	for path, content := range options.extraHead {
+		head[path] = content
 	}
 	f.objects, f.base, f.head = rmWriteGit(t, evidence.RevisionAlgorithmSHA1, base, head)
 	zone := provider.ProviderZoneLocal

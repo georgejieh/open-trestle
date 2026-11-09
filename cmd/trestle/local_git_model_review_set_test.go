@@ -41,7 +41,8 @@ type localModelSetReceipt struct {
 			ProfileID string `json:"profile_id"`
 			Reason    string `json:"reason"`
 		} `json:"dropped"`
-		RouteAssignment string `json:"route_assignment"`
+		Inactive        []string `json:"inactive"`
+		RouteAssignment string   `json:"route_assignment"`
 	} `json:"selection"`
 	Members []struct {
 		Member            string `json:"member"`
@@ -386,6 +387,35 @@ func TestRunLocalGitModelReviewAutoSpecialistsRunsAndMerges(t *testing.T) {
 				t.Fatal("verifier request received specialist instructions")
 			}
 		}
+	}
+}
+
+// TestRunLocalGitModelReviewAutoSpecialistsUseBaseDeclaredStyle checks that
+// auto selection detects declared style from the base tree only: a head-only
+// style configuration is reviewed as code and does not activate the profile.
+func TestRunLocalGitModelReviewAutoSpecialistsUseBaseDeclaredStyle(t *testing.T) {
+	ruff := []byte("line-length = 100\n")
+	for _, test := range []struct {
+		name       string
+		base, head map[string][]byte
+		selected   bool
+	}{
+		{"ruff.toml in base", map[string][]byte{"ruff.toml": ruff, "tool.py": []byte("x = 1\n")}, map[string][]byte{"ruff.toml": ruff, "tool.py": []byte("x = 2\n")}, true},
+		{"no declared style", map[string][]byte{"tool.py": []byte("x = 1\n")}, map[string][]byte{"tool.py": []byte("x = 2\n")}, false},
+		{"ruff.toml only in head", map[string][]byte{"tool.py": []byte("x = 1\n")}, map[string][]byte{"ruff.toml": ruff, "tool.py": []byte("x = 2\n")}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newLocalModelFixture(t, localModelFixtureOptions{extraBase: test.base, extraHead: test.head})
+			receipt, _ := runLocalModelSet(t, f, []string{"--specialists", "auto", "--max-specialists", "6"}, 4)
+			selected := strings.Contains(","+strings.Join(selectedIDs(receipt), ",")+",", ",style_conformance,")
+			inactive := strings.Contains(","+strings.Join(receipt.Selection.Inactive, ",")+",", ",style_conformance,")
+			if receipt.Selection.Status != "planned" || selected != test.selected || inactive == test.selected {
+				t.Fatalf("style_conformance selected=%t inactive=%t, want selected=%t (selection %+v)", selected, inactive, test.selected, receipt.Selection)
+			}
+			if features := receipt.Selection.Features; features == nil || !strings.Contains(strings.Join(features.Languages, ","), "python") {
+				t.Fatal("selection trace did not record the changed Python file")
+			}
+		})
 	}
 }
 

@@ -36,9 +36,12 @@ What exists today:
   [prompt-injection boundary](prompt-injection-boundary.md).
 - `trestle local-git model-review --specialists auto|ID[,ID...]`. With `auto`,
   the command derives change features from the general review's own recorded
-  change-model and semantic-impact artifacts
+  change-model and semantic-impact artifacts, plus the declared style read from
+  the base tree's style configuration files
   (`localreview.Session.ChangeFeatures`, then
-  `agentprofile.ChangeFeaturesFromFileSpecs`), calls `Plan`, and keeps the
+  `agentprofile.ChangeFeaturesFromFileSpecs`; see
+  [Declared style in local reviews](#declared-style-in-local-reviews)), calls
+  `Plan`, and keeps the
   activated, planned direct-review profiles in priority order, cut to
   `--max-specialists` (default 3, at most 6). It then runs the general review and
   each selected profile as its own sequential, independently verified run and
@@ -66,10 +69,10 @@ What does **not** exist yet:
   assignments file and has no total token cap, so `budget_cap_exceeded` does not
   occur there. The plan's tiers, token budgets and route choice are informational.
 - Recorded change features carry changed head-line counts only (deleted lines
-  count as zero), no repository configuration files and no change description,
-  so `style_conformance` (declared style) and the intent condition of
-  `drift_auditor` never activate under `auto`; name them explicitly instead.
-  Difficulty tiers are informational.
+  count as zero) and no change description, so the intent condition of
+  `drift_auditor` never activates under `auto`; name it explicitly instead.
+  `style_conformance` activates under `auto` when the base tree declares a style
+  that governs a changed language. Difficulty tiers are informational.
 - `trestle profiles plan` reads a features file. It does not derive features
   from a Git change by itself.
 
@@ -172,6 +175,31 @@ gives `black`. A yapf config `based_on_style = google` gives `google_python`.
 `.clang-format` gives `clang_format`, and `BasedOnStyle: Google` in it also gives
 `google_cpp`. `rustfmt.toml` and `.rubocop.yml` give `rustfmt` and `rubocop`.
 Detection never infers a style from source code.
+
+### Declared style in local reviews
+
+`trestle local-git model-review` supplies the configuration files for style
+detection from the review's base tree (the default-branch side), never from the
+head. A change's author controls the head, so a head edit to a style
+configuration must not decide which style that same change is reviewed against;
+the edit is reviewed as ordinary changed code. A configuration that exists only
+in the head declares nothing, and one that differs between base and head is read
+as it is in the base, including one the head deletes.
+
+- Only root-level files are read, following the repository instruction files
+  (see [context assembly](context-assembly-handler.md)). A subproject's own
+  configuration, such as `services/api/ruff.toml`, is not read.
+- Only the names detection recognizes are read (`agentprofile.IsStyleConfigFile`):
+  `go.mod`, `.editorconfig`, `.prettierrc` and `.prettierrc.*`,
+  `prettier.config.*`, `package.json`, `.eslintrc` and `.eslintrc.*`,
+  `eslint.config.*`, `.flake8`, `.pycodestyle`, `ruff.toml`, `.ruff.toml`,
+  `setup.cfg`, `tox.ini`, `pyproject.toml`, `.style.yapf`, `.clang-format`,
+  `_clang-format`, `rustfmt.toml`, `.rustfmt.toml` and `.rubocop.yml`.
+- Contents come from the base file artifacts that source acquisition already
+  recorded for the run. No Git object is read again.
+- A file larger than 64 KiB, or not valid UTF-8, is skipped whole and never
+  truncated; so is every readable file after the first 256 in path order. A
+  skipped file declares nothing.
 
 ## Assignments document
 

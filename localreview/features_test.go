@@ -1,0 +1,133 @@
+package localreview
+
+import (
+	"context"
+	"fmt"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/georgejieh/open-trestle/agentprofile"
+	sourcehandler "github.com/georgejieh/open-trestle/handlers/source"
+	"github.com/georgejieh/open-trestle/internal/sourceoutput"
+	"github.com/georgejieh/open-trestle/runtimecatalog"
+)
+
+// styleFeaturesRun runs the real nine-task review over the fixture change plus
+// the given root-level files, then reads its change features. The artifact
+// capacity holds every fixture file of both snapshots.
+func styleFeaturesRun(t *testing.T, name string, base, head map[string][]byte) (*Session, runtimecatalog.PreparedReviewRun, agentprofile.ChangeFeatures) {
+	t.Helper()
+	f := newRmModelFixture(t, rmModelFixtureOptions{extraBase: base, extraHead: head})
+	options := rmOptions(t, f, rmNewClock())
+	options.ArtifactCapacity = 1024
+	s := rmSession(t, options)
+	p := rmPrepare(t, s, f, "style-"+name)
+	result, err := s.Run(context.Background(), p)
+	if err != nil || result.wire.RunStatus != "succeeded" {
+		t.Fatalf("review run: %v status=%s", err, result.wire.RunStatus)
+	}
+	features, err := s.ChangeFeatures(context.Background(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s, p, features
+}
+
+func TestChangeFeaturesDetectStyleFromTheBaseTree(t *testing.T) {
+	ruff := []byte("line-length = 100\n")
+	for _, test := range []struct {
+		name       string
+		base, head map[string][]byte
+		want       []agentprofile.StyleIntent
+		// languages are the changed languages; a changed TOML config is one.
+		languages []string
+	}{
+		{
+			name:      "ruff.toml in base",
+			base:      map[string][]byte{"ruff.toml": ruff, "tool.py": []byte("x = 1\n")},
+			head:      map[string][]byte{"ruff.toml": ruff, "tool.py": []byte("x = 2\n")},
+			want:      []agentprofile.StyleIntent{agentprofile.StylePEP8},
+			languages: []string{"go", "python"},
+		},
+		{
+			name:      "ruff.toml only in head",
+			base:      map[string][]byte{"tool.py": []byte("x = 1\n")},
+			head:      map[string][]byte{"ruff.toml": ruff, "tool.py": []byte("x = 2\n")},
+			languages: []string{"go", "python", "toml"},
+		},
+		{
+			name:      "pyproject.toml differs between base and head",
+			base:      map[string][]byte{"pyproject.toml": []byte("[tool.black]\n"), "tool.py": []byte("x = 1\n")},
+			head:      map[string][]byte{"pyproject.toml": []byte("[tool.ruff]\n"), "tool.py": []byte("x = 2\n")},
+			want:      []agentprofile.StyleIntent{agentprofile.StyleBlack},
+			languages: []string{"go", "python", "toml"},
+		},
+		{
+			name:      "ruff.toml deleted in head",
+			base:      map[string][]byte{"ruff.toml": ruff, "tool.py": []byte("x = 1\n")},
+			head:      map[string][]byte{"tool.py": []byte("x = 2\n")},
+			want:      []agentprofile.StyleIntent{agentprofile.StylePEP8},
+			languages: []string{"go", "python", "toml"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, _, features := styleFeaturesRun(t, strings.ReplaceAll(test.name, " ", "-"), test.base, test.head)
+			if got := features.StyleIntents(); !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("style intents = %v, want %v", got, test.want)
+			}
+			if languages := features.Summary().Languages; !reflect.DeepEqual(languages, test.languages) {
+				t.Fatalf("changed languages = %v, want %v", languages, test.languages)
+			}
+		})
+	}
+}
+
+func TestBaseStyleConfigFilesSkipOverBoundFilesWhole(t *testing.T) {
+	// The ruff marker leads the oversized file, so a truncated read would detect it.
+	oversized := append([]byte("[tool.ruff]\n"), []byte(strings.Repeat("#\n", agentprofile.MaxConfigFileBytes/2))...)
+	files := map[string][]byte{
+		"go.mod":         []byte("module example.test/p\n"),
+		"pyproject.toml": oversized,
+		"setup.cfg":      []byte("[flake8]\n\xff\n"),
+	}
+	s, p, features := styleFeaturesRun(t, "over-bound", files, files)
+	if got := features.StyleIntents(); !reflect.DeepEqual(got, []agentprofile.StyleIntent{agentprofile.StyleGofmt}) {
+		t.Fatalf("style intents = %v, want only gofmt_effective_go", got)
+	}
+	at := s.options.Clock.Now()
+	read, unread, err := s.baseStyleConfigFiles(context.Background(), p.Plan().Scope(), rmTaskArtifact(t, s, p, "source-base", at), at)
+	if err != nil || unread != 2 || len(read) != 1 || read[0].Path != "go.mod" || read[0].Content != "module example.test/p\n" {
+		t.Fatalf("read=%v unread=%d err=%v", read, unread, err)
+	}
+}
+
+func TestBaseStyleConfigFilesStopAtTheFileCountBound(t *testing.T) {
+	files := map[string][]byte{}
+	for index := 0; index <= agentprofile.MaxConfigFiles; index++ {
+		files[fmt.Sprintf(".prettierrc.%03d", index)] = []byte("{}\n")
+	}
+	s, p, features := styleFeaturesRun(t, "count-bound", files, files)
+	if got := features.StyleIntents(); !reflect.DeepEqual(got, []agentprofile.StyleIntent{agentprofile.StylePrettier}) {
+		t.Fatalf("style intents = %v", got)
+	}
+	at := s.options.Clock.Now()
+	read, unread, err := s.baseStyleConfigFiles(context.Background(), p.Plan().Scope(), rmTaskArtifact(t, s, p, "source-base", at), at)
+	if err != nil || len(read) != agentprofile.MaxConfigFiles || unread != 1 || read[len(read)-1].Path != fmt.Sprintf(".prettierrc.%03d", agentprofile.MaxConfigFiles-1) {
+		t.Fatalf("read=%d unread=%d err=%v", len(read), unread, err)
+	}
+}
+
+func TestStyleConfigCandidatesAreRootLevelRecognizedNames(t *testing.T) {
+	var references []sourcehandler.FileReference
+	for _, path := range []string{".editorconfig", ".github/.editorconfig", "README.md", "a.go", "go.mod", "pyproject.toml", "services/api/ruff.toml", "web/package.json"} {
+		references = append(references, sourceoutput.NewFileReference(path, strings.Repeat("a", 64), 1, strings.Repeat("b", 64)))
+	}
+	var got []string
+	for _, reference := range styleConfigCandidates(references) {
+		got = append(got, reference.Path())
+	}
+	if want := []string{".editorconfig", "go.mod", "pyproject.toml"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("candidates = %v, want %v", got, want)
+	}
+}

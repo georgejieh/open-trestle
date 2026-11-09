@@ -3,11 +3,17 @@ package localreview
 import (
 	"context"
 	"errors"
+	"strings"
+	"time"
+	"unicode/utf8"
 
 	"github.com/georgejieh/open-trestle/agentprofile"
+	"github.com/georgejieh/open-trestle/artifact"
+	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
 	analysishandler "github.com/georgejieh/open-trestle/handlers/analysis"
 	changehandler "github.com/georgejieh/open-trestle/handlers/change"
+	sourcehandler "github.com/georgejieh/open-trestle/handlers/source"
 	"github.com/georgejieh/open-trestle/runtimecatalog"
 )
 
@@ -24,7 +30,8 @@ var ErrChangeFeaturesUnavailable = errors.New("local review change features unav
 //
 // The change model records changed head-line ranges, not deleted-line counts,
 // so AddedLines is the number of changed head lines and DeletedLines is zero.
-// No repository configuration file or change description is inspected.
+// Declared style comes from the base tree's root-level style configuration
+// files (see baseStyleConfigFiles). No change description is inspected.
 func (s *Session) ChangeFeatures(ctx context.Context, prepared runtimecatalog.PreparedReviewRun) (agentprofile.ChangeFeatures, error) {
 	if s == nil || ctx == nil || ctx.Err() != nil || prepared.Validate() != nil {
 		return agentprofile.ChangeFeatures{}, ErrChangeFeaturesUnavailable
@@ -98,11 +105,71 @@ func (s *Session) ChangeFeatures(ctx context.Context, prepared runtimecatalog.Pr
 	if !lowerHexDigest(changeIdentity) {
 		changeIdentity = ""
 	}
-	features, err := agentprofile.ChangeFeaturesFromFileSpecs(changeIdentity, files, analysis.SemanticImpact(), agentprofile.AnalysisHints{})
+	configFiles, _, err := s.baseStyleConfigFiles(ctx, scope, baseArtifact, now)
+	if err != nil {
+		return agentprofile.ChangeFeatures{}, ErrChangeFeaturesUnavailable
+	}
+	features, err := agentprofile.ChangeFeaturesFromFileSpecs(changeIdentity, files, analysis.SemanticImpact(), agentprofile.AnalysisHints{ConfigFiles: configFiles})
 	if err != nil {
 		return agentprofile.ChangeFeatures{}, ErrChangeFeaturesUnavailable
 	}
 	return features, nil
+}
+
+// baseStyleConfigFiles reads the style configuration files that declare the
+// style a change is reviewed against. They come from the base tree (the
+// default-branch side), never the head: a change's author controls the head, so
+// a head edit to a style configuration must not decide which style that same
+// change is reviewed against; the edit is reviewed as code. As for repository
+// instruction files, only root-level files are read, and only names that
+// declared-style detection recognizes. Content comes from the base file
+// artifacts the source task already recorded, so there is no new Git read.
+//
+// A file larger than agentprofile.MaxConfigFileBytes, not valid UTF-8, or
+// beyond the first agentprofile.MaxConfigFiles readable files (in path order) is
+// skipped whole, never truncated, and counted in the second result.
+func (s *Session) baseStyleConfigFiles(ctx context.Context, scope audit.ReviewScope, baseArtifact artifact.Artifact, at time.Time) ([]agentprofile.ConfigFile, int, error) {
+	base, err := sourcehandler.ParseSnapshotArtifact(baseArtifact)
+	if err != nil {
+		return nil, 0, err
+	}
+	var files []agentprofile.ConfigFile
+	unread := 0
+	for _, reference := range styleConfigCandidates(base.Files()) {
+		if len(files) == agentprofile.MaxConfigFiles || reference.SizeBytes() > agentprofile.MaxConfigFileBytes {
+			unread++
+			continue
+		}
+		value, err := s.store.Get(ctx, scope, reference.ArtifactIdentity(), at)
+		if err != nil {
+			return nil, 0, err
+		}
+		file, err := sourcehandler.ParseFileArtifact(value, base, reference)
+		if err != nil {
+			return nil, 0, err
+		}
+		content := file.Content()
+		if utf8.Valid(content) {
+			files = append(files, agentprofile.ConfigFile{Path: reference.Path(), Content: string(content)})
+		} else {
+			unread++
+		}
+		clear(content)
+	}
+	return files, unread, nil
+}
+
+// styleConfigCandidates returns the root-level snapshot files whose names
+// declared-style detection recognizes, in snapshot (path) order. Nested copies,
+// such as a subproject's own configuration, are never read.
+func styleConfigCandidates(files []sourcehandler.FileReference) []sourcehandler.FileReference {
+	var candidates []sourcehandler.FileReference
+	for _, reference := range files {
+		if !strings.Contains(reference.Path(), "/") && agentprofile.IsStyleConfigFile(reference.Path()) {
+			candidates = append(candidates, reference)
+		}
+	}
+	return candidates
 }
 
 func lowerHexDigest(value string) bool {
