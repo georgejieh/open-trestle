@@ -305,6 +305,9 @@ func (s *Server) runPrompt(prompt *admittedPrompt) []any {
 		return []any{rpcSuccess(prompt.requestID, map[string]any{"stopReason": "cancelled"})}
 	}
 	if err != nil {
+		if text, refused := s.refusalText(prompt.ctx); refused {
+			return []any{agentMessage(prompt.sessionID, text), rpcSuccess(prompt.requestID, map[string]any{"stopReason": "end_turn"})}
+		}
 		return []any{agentMessage(prompt.sessionID, "Review status is unavailable."), rpcSuccess(prompt.requestID, map[string]any{"stopReason": "end_turn"})}
 	}
 	if receipt.Scope().Identity() != s.scope.Identity() {

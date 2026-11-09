@@ -14,7 +14,7 @@ The server implements the stateless MCP `2026-07-28` request model. Each request
 
 Current tools are deterministic and JSON-Schema described:
 
-- `open_trestle.run_status` reads one secret-free run receipt. It is read-only, idempotent, and closed-world.
+- `open_trestle.run_status` reads one secret-free run receipt. It is read-only, idempotent, and closed-world. When no run exists because intake refused the scope's webhook delivery, the tool returns an error result that names the fixed reason and its explanation and includes the content-free `open-trestle/webhook-delivery-refusal` record, rather than a bare read failure.
 - `open_trestle.submit_run` submits canonical plan JSON that an authorized planner already produced. Repeating the exact plan is idempotent. Submission cannot weaken policy or directly authorize publication.
 
 The server does not expose credentials, raw lease capabilities, source files, arbitrary filesystem reads, shell execution, policy mutation, provider selection overrides, or publication. Repository strings and returned receipt text remain untrusted data. Tool annotations are hints for host confirmation and never replace daemon authorization.

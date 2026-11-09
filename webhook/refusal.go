@@ -62,6 +62,30 @@ func (r *DeliveryRefusal) Is(target error) bool { return target == ErrDeliveryRe
 func (r *DeliveryRefusal) String() string       { return "webhook delivery refusal" }
 func (r *DeliveryRefusal) GoString() string     { return "webhook.DeliveryRefusal{<redacted>}" }
 
+// RefusalExplanation explains a recorded refusal reason in fixed host words.
+func RefusalExplanation(reason string) string {
+	switch reason {
+	case "invalid_pull_request_payload":
+		return "the pull request payload cannot be planned"
+	case RefusalReasonPlanningRefused:
+		return "the planner refused the delivery"
+	case RefusalReasonRunPlanNotBound:
+		return "the plan was outside the delivery's lineage"
+	case RefusalReasonRunPlanConflict:
+		return "the run scope holds a plan for another request"
+	case RefusalReasonRetriesExhausted:
+		return "the delivery kept failing on its own until its retries were spent"
+	default:
+		return "recorded by the planner"
+	}
+}
+
+// RefusalSummary is the one content-free sentence every read surface uses to
+// report a refused delivery.
+func RefusalSummary(record RefusalRecord) string {
+	return "No review run was opened: intake refused this delivery: " + record.reason + " (" + RefusalExplanation(record.reason) + ")."
+}
+
 // DeliveryRefusalReason returns the reason of a refusal error.
 func DeliveryRefusalReason(err error) (string, bool) {
 	var refusal *DeliveryRefusal

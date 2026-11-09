@@ -42,29 +42,11 @@ func (i *Interface) renderRefusal(record webhook.RefusalRecord) error {
 	scope := i.options.Scope
 	fmt.Fprintf(&builder, "Scope       %s\n", truncateTerminalText(fmt.Sprintf("%s / %s / %s", scope.TenantID(), scope.RepositoryID(), scope.ReviewRunID()), width-12))
 	builder.WriteString("Run         not opened\n")
-	fmt.Fprintf(&builder, "Refusal     %s\n", truncateTerminalText(record.Reason()+" ("+refusalReasonText(record.Reason())+")", width-12))
+	fmt.Fprintf(&builder, "Refusal     %s\n", truncateTerminalText(record.Reason()+" ("+webhook.RefusalExplanation(record.Reason())+")", width-12))
 	fmt.Fprintf(&builder, "Refused     %s\n", record.RefusedAt().Format("2006-01-02 15:04:05 UTC"))
 	fmt.Fprintf(&builder, "Delivery    %s\n", truncateTerminalText(record.DeliveryIdentity(), width-12))
 	fmt.Fprintf(&builder, "Planner     %s\n", truncateTerminalText(record.PlannerIdentity(), width-12))
 	builder.WriteString("\nIntake recorded this refusal instead of opening a review run. No review result exists.\n")
 	_, err := i.output.Write([]byte(builder.String()))
 	return err
-}
-
-// refusalReasonText explains a recorded refusal reason in fixed host words.
-func refusalReasonText(reason string) string {
-	switch reason {
-	case "invalid_pull_request_payload":
-		return "the pull request payload cannot be planned"
-	case webhook.RefusalReasonPlanningRefused:
-		return "the planner refused the delivery"
-	case webhook.RefusalReasonRunPlanNotBound:
-		return "the plan was outside the delivery's lineage"
-	case webhook.RefusalReasonRunPlanConflict:
-		return "the run scope holds a plan for another request"
-	case webhook.RefusalReasonRetriesExhausted:
-		return "the delivery kept failing on its own until its retries were spent"
-	default:
-		return "recorded by the planner"
-	}
 }
