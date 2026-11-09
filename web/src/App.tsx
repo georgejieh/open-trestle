@@ -15,6 +15,7 @@ import { InstrumentIcon, StatusIcon, type StatusValue } from "./Icons";
 import { Identity } from "./Identity";
 import {
   ApiError,
+  contextShortfallHint,
   fetchDeliveryRefusal,
   fetchDiagnostics,
   fetchRun,
@@ -24,6 +25,7 @@ import {
   validScope,
 } from "./api";
 import type {
+  ContextShortfall,
   Diagnostic,
   DiagnosticDeterministicCheck,
   DiagnosticSet,
@@ -60,6 +62,10 @@ const failureReasonLabels: Record<FailureReason, string> = {
     "Nothing to review: the head is the requested base or is already contained in it",
   merge_base_unavailable:
     "Merge base unavailable: the forge did not report a merge base",
+  route_context_insufficient:
+    "Route context insufficient: the review request needs more context than the route declares",
+  no_eligible_route:
+    "No eligible route: no configured route met the runtime policy for this request",
 };
 const emptyScope: Scope = { tenant: "", repository: "", run: "" };
 function rememberedScope(): Scope {
@@ -279,6 +285,12 @@ function TaskInspector({ task }: { task: RunTask | undefined }) {
           <div>
             <dt>Reason</dt>
             <dd>{failureReasonLabels[task.failure_reason]}</dd>
+          </div>
+        )}
+        {task.context_shortfall && (
+          <div>
+            <dt>Hint</dt>
+            <dd>{contextShortfallHint(task.context_shortfall)}</dd>
           </div>
         )}
         <Identity label="Task identity" value={task.task_identity} />
@@ -611,6 +623,24 @@ function Findings({
               ? "Review completed. Read the separate deterministic and verified results below; an empty list does not approve the change."
               : `Review ${set.outcome}. Available evidence is shown below. Missing evidence was not run and is not a clear result.`}
           </p>
+          {set.context_refusal && (
+            <dl>
+              <div>
+                <dt>Context refusal</dt>
+                <dd>{failureReasonLabels[set.context_refusal.reason]}</dd>
+              </div>
+              {set.context_refusal.context_shortfall && (
+                <div>
+                  <dt>Hint</dt>
+                  <dd>
+                    {contextShortfallHint(
+                      set.context_refusal.context_shortfall,
+                    )}
+                  </dd>
+                </div>
+              )}
+            </dl>
+          )}
         </section>
         <section aria-label="Deterministic observations">
           <h3>Deterministic observations</h3>
@@ -1385,6 +1415,18 @@ function ReviewConsole() {
                             task.failure_reason as FailureReason
                           ]
                         }
+                      </dd>
+                    </div>
+                  ))}
+                {receipt.tasks
+                  .filter((task) => task.context_shortfall)
+                  .map((task) => (
+                    <div key={`hint-${task.key}`}>
+                      <dt>Hint</dt>
+                      <dd>
+                        {contextShortfallHint(
+                          task.context_shortfall as ContextShortfall,
+                        )}
                       </dd>
                     </div>
                   ))}

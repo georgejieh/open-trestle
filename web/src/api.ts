@@ -1,4 +1,6 @@
 import type {
+  ContextRefusal,
+  ContextShortfall,
   Diagnostic,
   DiagnosticSet,
   DeliveryRefusal,
@@ -34,11 +36,48 @@ const failures = new Set<Failure>([
   "dependency",
   "internal",
 ]);
-const failureReasons = new Set<FailureReason>([
+const sourceFailureReasons = new Set<FailureReason>([
   "no_merge_base",
   "nothing_to_review",
   "merge_base_unavailable",
 ]);
+const contextFailureReasons = new Set<FailureReason>([
+  "route_context_insufficient",
+  "no_eligible_route",
+]);
+const maxUint32 = 4294967295;
+/** Reports a route_context_insufficient count set with its host invariants. */
+function validContextShortfall(value: unknown): value is ContextShortfall {
+  return (
+    record(value) &&
+    exact(value, [
+      "required_tokens",
+      "estimated_input_tokens",
+      "max_output_tokens",
+      "declared_context_tokens",
+    ]) &&
+    integer(value.estimated_input_tokens, 1, maxUint32) &&
+    integer(value.max_output_tokens, 1, maxUint32) &&
+    integer(value.declared_context_tokens, 1, maxUint32) &&
+    value.required_tokens ===
+      value.estimated_input_tokens + value.max_output_tokens &&
+    value.declared_context_tokens < value.required_tokens
+  );
+}
+/** The daemon's fixed hint for a route_context_insufficient refusal. */
+export function contextShortfallHint(s: ContextShortfall): string {
+  return `the review needs up to ${s.required_tokens} tokens (a byte-based upper bound: ${s.estimated_input_tokens} input plus ${s.max_output_tokens} output) but the route declares max_context_tokens ${s.declared_context_tokens}; raise max_context_tokens on the route and the model server's context length to at least ${s.required_tokens} (docs/named-local-runtimes.md#context-length)`;
+}
+/** Reports a v7 refusal copy: a context reason and counts exactly with it. */
+function validContextRefusal(value: unknown): value is ContextRefusal {
+  if (!record(value) || typeof value.reason !== "string") return false;
+  const counted = value.reason === "route_context_insufficient";
+  return (
+    contextFailureReasons.has(value.reason as FailureReason) &&
+    exact(value, counted ? ["reason", "context_shortfall"] : ["reason"]) &&
+    (!counted || validContextShortfall(value.context_shortfall))
+  );
+}
 const taskStatuses = new Set<TaskStatus>([
   "pending",
   "available",
@@ -183,7 +222,9 @@ function parseTask(value: unknown): RunTask {
     "retry_at_milliseconds",
   ];
   const optional = record(value)
-    ? ["output_kind", "failure_reason"].filter((key) => key in value)
+    ? ["output_kind", "failure_reason", "context_shortfall"].filter(
+        (key) => key in value,
+      )
     : [];
   if (
     !record(value) ||
@@ -209,20 +250,34 @@ function parseTask(value: unknown): RunTask {
     invalidResponse();
   }
   // A failed task carries an output only as a context abstention, and a
-  // content-free reason only on a failed source acquisition without output.
+  // content-free reason only without output: a source reason on source
+  // acquisition, a route refusal on context assembly, and counts exactly
+  // with route_context_insufficient.
   const linkedOutput =
     value.status === "failed" && value.output_identity !== "";
+  const reason = value.failure_reason;
+  const reasonKind =
+    typeof reason !== "string"
+      ? ""
+      : sourceFailureReasons.has(reason as FailureReason)
+        ? "acquire_source"
+        : contextFailureReasons.has(reason as FailureReason)
+          ? "assemble_context"
+          : "";
   if (
     "output_kind" in value !== linkedOutput ||
     (linkedOutput &&
       (value.output_kind !== "context_abstention" ||
         value.kind !== "assemble_context")) ||
     ("failure_reason" in value &&
-      (typeof value.failure_reason !== "string" ||
-        !failureReasons.has(value.failure_reason as FailureReason) ||
+      (reasonKind === "" ||
         value.status !== "failed" ||
-        value.kind !== "acquire_source" ||
-        value.output_identity !== ""))
+        value.kind !== reasonKind ||
+        value.output_identity !== "")) ||
+    "context_shortfall" in value !==
+      (reason === "route_context_insufficient") ||
+    ("context_shortfall" in value &&
+      !validContextShortfall(value.context_shortfall))
   ) {
     invalidResponse();
   }
@@ -637,6 +692,7 @@ export function parseDiagnosticEnvelope(
       "outcome",
       ...(Object.hasOwn(d, "deterministic") ? ["deterministic"] : []),
       ...(Object.hasOwn(d, "verified") ? ["verified"] : []),
+      ...(Object.hasOwn(d, "context_refusal") ? ["context_refusal"] : []),
     ];
     const emptySource = d.snapshot_identity === "" && d.head_revision === "";
     const completeSource =
@@ -659,7 +715,11 @@ export function parseDiagnosticEnvelope(
         "inconclusive",
       ].includes(d.outcome as string) ||
       (d.outcome === "completed" && !Object.hasOwn(d, "verified")) ||
-      (Object.hasOwn(d, "verified") && !Object.hasOwn(d, "deterministic"))
+      (Object.hasOwn(d, "verified") && !Object.hasOwn(d, "deterministic")) ||
+      (Object.hasOwn(d, "context_refusal") &&
+        (d.outcome !== "failed" ||
+          Object.hasOwn(d, "verified") ||
+          !validContextRefusal(d.context_refusal)))
     )
       invalidResponse();
     const parsePart = (part: unknown, ...versions: number[]) => {

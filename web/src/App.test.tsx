@@ -613,6 +613,57 @@ describe("console", () => {
     expect(screen.getAllByText("policy").length).toBeGreaterThan(0);
   });
 
+  it("names a context route refusal and its hint beside the failure", async () => {
+    const shortfall = {
+      required_tokens: 14282,
+      estimated_input_tokens: 10186,
+      max_output_tokens: 4096,
+      declared_context_tokens: 4097,
+    };
+    vi.mocked(fetchRun).mockResolvedValue({
+      ...receipt,
+      schema_version: 3,
+      status: "failed",
+      failure: "policy",
+      tasks: receipt.tasks.map((task) => ({
+        ...task,
+        kind: "assemble_context" as const,
+        status: "failed" as const,
+        output_identity: "",
+        failure: "policy" as const,
+        failure_reason: "route_context_insufficient" as const,
+        context_shortfall: shortfall,
+      })),
+    });
+    vi.mocked(fetchDiagnostics).mockRejectedValue(new Error("not ready"));
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("Tenant"), {
+      target: { value: "tenant-a" },
+    });
+    fireEvent.change(screen.getByLabelText("Repository"), {
+      target: { value: "repo-a" },
+    });
+    fireEvent.change(screen.getByLabelText("Run"), {
+      target: { value: "run-a" },
+    });
+    fireEvent.change(screen.getByLabelText("Access token"), {
+      target: { value: "x".repeat(32) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
+    await waitFor(() =>
+      expect(
+        screen.getAllByText(
+          /Route context insufficient: the review request needs more context than the route declares/,
+        ).length,
+      ).toBeGreaterThan(0),
+    );
+    expect(
+      screen.getAllByText(
+        /the review needs up to 14282 tokens \(a byte-based upper bound: 10186 input plus 4096 output\) but the route declares max_context_tokens 4097/,
+      ).length,
+    ).toBeGreaterThan(0);
+  });
+
   it("names a recorded delivery refusal when no run was opened", async () => {
     const key = "b".repeat(64);
     vi.mocked(fetchRun).mockRejectedValue(new ApiError("not_found"));

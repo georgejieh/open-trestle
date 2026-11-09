@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   ApiError,
+  contextShortfallHint,
   fetchRun,
   fetchRuntimeStatus,
   parseDiagnosticEnvelope,
@@ -260,6 +261,85 @@ describe("API client", () => {
         parseDeliveryRefusalEnvelope(envelope(forged), scope),
       ).toThrow(ApiError);
     }
+  });
+  it("accepts a context route refusal with its counts only on context assembly", () => {
+    const envelope = (value: unknown) => ({
+      contract: "open-trestle/api-response",
+      schema_version: 1,
+      request_id: "request-a",
+      run: value,
+    });
+    const shortfall = {
+      required_tokens: 14282,
+      estimated_input_tokens: 10186,
+      max_output_tokens: 4096,
+      declared_context_tokens: 4097,
+    };
+    const refusedContext = {
+      ...run.tasks[0],
+      kind: "assemble_context",
+      status: "failed",
+      attempts: 1,
+      failure: "policy",
+      failure_reason: "route_context_insufficient",
+      context_shortfall: shortfall,
+    };
+    const refused = {
+      ...run,
+      schema_version: 3,
+      status: "failed",
+      failure: "policy",
+      tasks: [refusedContext],
+    };
+    const parsed = parseRunEnvelope(envelope(refused)).tasks[0];
+    expect(parsed?.failure_reason).toBe("route_context_insufficient");
+    expect(parsed?.context_shortfall).toEqual(shortfall);
+    const { context_shortfall: _counts, ...uncounted } = refusedContext;
+    const noRoute = { ...uncounted, failure_reason: "no_eligible_route" };
+    expect(
+      parseRunEnvelope(envelope({ ...refused, tasks: [noRoute] })).tasks[0]
+        ?.failure_reason,
+    ).toBe("no_eligible_route");
+    for (const forged of [
+      { ...refusedContext, kind: "acquire_source" },
+      { ...noRoute, kind: "acquire_source" },
+      { ...refusedContext, failure_reason: "no_merge_base" },
+      uncounted,
+      { ...noRoute, context_shortfall: shortfall },
+      { ...refusedContext, output_identity: digest },
+      {
+        ...refusedContext,
+        context_shortfall: { ...shortfall, required_tokens: 14283 },
+      },
+      {
+        ...refusedContext,
+        context_shortfall: { ...shortfall, declared_context_tokens: 20000 },
+      },
+      {
+        ...refusedContext,
+        context_shortfall: { ...shortfall, estimated_input_tokens: 0 },
+      },
+      { ...refusedContext, context_shortfall: { ...shortfall, extra: 1 } },
+    ]) {
+      expect(() =>
+        parseRunEnvelope(envelope({ ...refused, tasks: [forged] })),
+      ).toThrow(ApiError);
+    }
+    expect(() =>
+      parseRunEnvelope(envelope({ ...refused, schema_version: 2 })),
+    ).toThrow(ApiError);
+  });
+  it("renders the daemon's fixed context shortfall hint", () => {
+    expect(
+      contextShortfallHint({
+        required_tokens: 14282,
+        estimated_input_tokens: 10186,
+        max_output_tokens: 4096,
+        declared_context_tokens: 4097,
+      }),
+    ).toBe(
+      "the review needs up to 14282 tokens (a byte-based upper bound: 10186 input plus 4096 output) but the route declares max_context_tokens 4097; raise max_context_tokens on the route and the model server's context length to at least 14282 (docs/named-local-runtimes.md#context-length)",
+    );
   });
   it("rejects duplicate durable task identities", () => {
     expect(() =>
@@ -2294,6 +2374,49 @@ describe("API client", () => {
         verified,
       },
       { ...root, deterministic, verified, unexpected: "field" },
+    ])
+      expect(() => parseDiagnosticEnvelope(envelope(bad), scope)).toThrow(
+        ApiError,
+      );
+    const shortfall = {
+      required_tokens: 14282,
+      estimated_input_tokens: 10186,
+      max_output_tokens: 4096,
+      declared_context_tokens: 4097,
+    };
+    const counted = {
+      reason: "route_context_insufficient",
+      context_shortfall: shortfall,
+    };
+    const failed = { ...root, outcome: "failed", deterministic };
+    for (const refusal of [counted, { reason: "no_eligible_route" }]) {
+      const refused = parseDiagnosticEnvelope(
+        envelope({ ...failed, context_refusal: refusal }),
+        scope,
+      );
+      if (refused.schema_version !== 7) throw new Error("unexpected schema");
+      expect(refused.context_refusal).toEqual(refusal);
+    }
+    for (const bad of [
+      { ...failed, outcome: "canceled", context_refusal: counted },
+      { ...failed, verified, context_refusal: counted },
+      { ...failed, context_refusal: { reason: "route_context_insufficient" } },
+      {
+        ...failed,
+        context_refusal: {
+          reason: "no_eligible_route",
+          context_shortfall: shortfall,
+        },
+      },
+      { ...failed, context_refusal: { reason: "no_merge_base" } },
+      {
+        ...failed,
+        context_refusal: {
+          ...counted,
+          context_shortfall: { ...shortfall, required_tokens: 1 },
+        },
+      },
+      { ...failed, context_refusal: { ...counted, extra: true } },
     ])
       expect(() => parseDiagnosticEnvelope(envelope(bad), scope)).toThrow(
         ApiError,

@@ -15,8 +15,22 @@ export interface DeliveryRefusal {
   reason: string;
   refused_at_milliseconds: number;
 }
-export type FailureReason =
+export type SourceFailureReason =
   "no_merge_base" | "nothing_to_review" | "merge_base_unavailable";
+export type ContextFailureReason =
+  "route_context_insufficient" | "no_eligible_route";
+export type FailureReason = SourceFailureReason | ContextFailureReason;
+/** The counts of a route_context_insufficient refusal. */
+export interface ContextShortfall {
+  required_tokens: number;
+  estimated_input_tokens: number;
+  max_output_tokens: number;
+  declared_context_tokens: number;
+}
+export interface ContextRefusal {
+  reason: ContextFailureReason;
+  context_shortfall?: ContextShortfall;
+}
 export type Failure =
   | ""
   | "transient"
@@ -51,6 +65,7 @@ export interface RunTask {
   output_kind?: "context_abstention";
   failure: Failure;
   failure_reason?: FailureReason;
+  context_shortfall?: ContextShortfall;
   retry_at_milliseconds: number;
 }
 export interface RunReceipt {
@@ -230,6 +245,7 @@ export type DiagnosticSet =
         "completed" | "failed" | "canceled" | "abstained" | "inconclusive";
       deterministic?: Extract<DiagnosticSet, { schema_version: 6 }>;
       verified?: Extract<DiagnosticSet, { schema_version: 5 | 8 }>;
+      context_refusal?: ContextRefusal;
     };
 
 export type RuntimeComponentState = "starting" | "ready";
