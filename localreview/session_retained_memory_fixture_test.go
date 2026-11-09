@@ -173,8 +173,8 @@ func (m *rmModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.Req
 	payload := []byte(wire.Input[0].Content[0].Text)
 	var packet rmModelPacket
 	request, requestErr := provider.NewRequest(provider.CapabilityReviewV1, "application/json", payload)
-	if json.Unmarshal(payload, &packet) != nil || requestErr != nil || packet.Task == "candidate_generation" && packet.Version != 7 || packet.Task != "candidate_generation" && packet.Version != 6 {
-		t.Error("model did not receive the actual v7 generation or v6 verification context")
+	if json.Unmarshal(payload, &packet) != nil || requestErr != nil || packet.Task == "candidate_generation" && packet.Version != 8 || packet.Task != "candidate_generation" && packet.Version != 7 {
+		t.Error("model did not receive the actual v8 generation or v7 verification context")
 		http.Error(w, "invalid context", http.StatusBadRequest)
 		return
 	}

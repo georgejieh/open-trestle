@@ -172,14 +172,15 @@ func (h *Handler) Validate() error {
 }
 
 // contextAssemblyHandlerVersion versions the route-granting context handler.
-// Version 6 assembles version 7 generation contexts, admits non-Go changed text
+// Version 6 assembled version 7 generation contexts, admits non-Go changed text
 // through the text fallback, and adds root repository instruction files from the
 // base snapshot (used only when the head is byte-identical) as repository_context
-// sources. A plan that recorded the version 5 identity is not
-// executed by this handler, so a run that straddles an upgrade fails closed
-// instead of rebuilding different packet bytes; its recorded artifacts stay
-// readable through the recorded-readback validators.
-const contextAssemblyHandlerVersion = 6
+// sources. Version 7 assembles version 8 generation contexts. A plan that
+// recorded an earlier identity is not executed by this handler, so a run that
+// straddles an upgrade fails closed instead of rebuilding different packet
+// bytes; its recorded artifacts stay readable through the recorded-readback
+// validators.
+const contextAssemblyHandlerVersion = 7
 
 // deriveHandlerIdentity omits the specialist fields when no specialist is bound.
 func deriveHandlerIdentity(authorizer, sanitizer string, specialist review.ContextSpecialist) string {

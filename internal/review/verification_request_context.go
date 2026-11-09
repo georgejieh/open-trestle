@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/georgejieh/open-trestle/internal/evidence"
+	"github.com/georgejieh/open-trestle/internal/memory"
 	"github.com/georgejieh/open-trestle/internal/provider"
 )
 
@@ -67,17 +68,16 @@ func ReconstructRecordedVerificationRequestContext(
 	// generation context is bound through generation_context_identity, but its
 	// specialist guidance is not forwarded, and candidate categories and fix
 	// guidance are bound only through candidate_batch_identity and candidate_id:
-	// the verifier never receives them. A v7 generation context yields a
-	// version 6 verifier request, whose contract travels only in the trusted
-	// system channel; recorded earlier generation versions keep their own
+	// the verifier never receives them. A v8 generation context yields a
+	// version 7 verifier request and a recorded v7 context a version 6 one; both
+	// contracts travel only in the trusted system channel. The verifier receives
+	// every generation source, so removed_lines sources at a deletion point
+	// reach it unchanged. Recorded earlier generation versions keep their own
 	// verifier version for readback.
 	if !candidateBatchMatchesContextVersion(generationWire.SchemaVersion, candidates) {
 		return VerificationRequestContext{}, ErrInvalidVerificationRequestContext
 	}
-	verificationVersion := generationWire.SchemaVersion
-	if verificationVersion == modelGenerationContextVersion {
-		verificationVersion = modelVerificationContextVersion
-	}
+	verificationVersion := verificationVersionForGeneration(generationWire.SchemaVersion)
 	wire := verificationContextWire{
 		Contract: "open-trestle/verification-context-packet", SchemaVersion: verificationVersion,
 		GenerationContextIdentity: generationContextIdentity, ReviewScopeIdentity: reviewScopeIdentity,
@@ -311,7 +311,7 @@ func decodeVerificationContextWire(payload []byte) (verificationContextWire, err
 		return verificationContextWire{}, ErrInvalidVerificationRequestContext
 	}
 	canonical, err := json.Marshal(wire)
-	if err != nil || !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/verification-context-packet" || (wire.SchemaVersion != 2 && wire.SchemaVersion != 3 && wire.SchemaVersion != modelContextVersion && wire.SchemaVersion != modelVerificationContextVersion) {
+	if err != nil || !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/verification-context-packet" || (wire.SchemaVersion != 2 && wire.SchemaVersion != 3 && wire.SchemaVersion != modelContextVersion && wire.SchemaVersion != modelVerificationContextVersionV6 && wire.SchemaVersion != modelVerificationContextVersion) {
 		return verificationContextWire{}, ErrInvalidVerificationRequestContext
 	}
 	return wire, nil
@@ -339,18 +339,22 @@ func verificationSourcesMatch(wire verificationContextWire, items []evidence.Evi
 	for index, source := range wire.Sources {
 		item := items[index]
 		rangeValue := item.SourceRange()
-		if _, exists := seen[item.ID()]; exists || !rangeSupportedBySnapshot(rangeValue, snapshot) ||
+		// Removed base lines are not head ranges and are never in the snapshot.
+		removed := source.Stage == ContextStageRemovedLines.String()
+		if _, exists := seen[item.ID()]; exists || !removed && !rangeSupportedBySnapshot(rangeValue, snapshot) ||
 			source.SourceID != item.ID() || source.EvidenceDigest != item.Digest() ||
 			source.Path != rangeValue.Path() || source.StartLine != rangeValue.StartLine() ||
 			source.EndLine != rangeValue.EndLine() || !utf8.ValidString(source.Content) ||
-			!validContextStageToken(source.Stage) || !validContextTaintToken(source.Taint) {
+			!validContextStageToken(source.Stage, wire.SchemaVersion == modelVerificationContextVersion) || !validContextTaintToken(source.Taint) ||
+			removed && source.Taint != memory.TaintRepositoryControlled.String() {
 			return false
 		}
 		seen[item.ID()] = struct{}{}
 		contentDigest := sha256.Sum256([]byte(source.Content))
+		currentRules := wire.SchemaVersion == modelVerificationContextVersionV6 || wire.SchemaVersion == modelVerificationContextVersion
 		if hex.EncodeToString(contentDigest[:]) != item.Digest() ||
 			contextSourceLineCount(source.Content) != rangeValue.EndLine()-rangeValue.StartLine()+1 ||
-			!slices.Equal(source.RiskFlags, contextRiskTokens(recordedSourceRisks(wire.SchemaVersion == modelVerificationContextVersion, source.Path, source.Content))) ||
+			!slices.Equal(source.RiskFlags, contextRiskTokens(recordedSourceRisks(currentRules, source.Path, source.Content))) ||
 			len(source.Content) > int(^uint32(0)-sourceBytes) {
 			return false
 		}

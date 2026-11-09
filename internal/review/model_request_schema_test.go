@@ -28,7 +28,7 @@ func TestTrustedModelRequestOutputSchemaUsesPinnedContracts(t *testing.T) {
 		InstructionsIdentity string          `json:"instructions_identity"`
 		OutputSchema         json.RawMessage `json:"output_schema"`
 		OutputSchemaIdentity string          `json:"output_schema_identity"`
-	}{"open-trestle/review-context-packet", investigationContextVersion, ContextTaskCandidateGeneration.String(), modelInstructionsIdentity(investigationInstructionsV5), InvestigationOutputSchema(), investigationSchemaIdentity})
+	}{"open-trestle/review-context-packet", investigationContextVersion, ContextTaskCandidateGeneration.String(), modelInstructionsIdentity(investigationInstructionsV6), InvestigationOutputSchema(), investigationSchemaIdentity})
 	if err != nil {
 		t.Fatal(err)
 	}

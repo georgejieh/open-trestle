@@ -29,8 +29,11 @@ const investigationSchemaIdentity = "77367fd94611f87d36e4490729096db927b8d27b9d6
 // investigationInstructionsIdentity pins the recorded version 4 text.
 const investigationInstructionsIdentity = "990e881d4038ea3c222c4c0aed5b6dad7dbff547faa5f30ff067b3ac18072c8c"
 
-// investigationInstructionsV5Identity pins the executable version 5 text.
+// investigationInstructionsV5Identity pins the recorded version 5 text.
 const investigationInstructionsV5Identity = "f5c77f4a3d7c06310e10a4b64280d1b8a3376515352376b253af2d862a911f08"
+
+// investigationInstructionsV6Identity pins the executable version 6 text.
+const investigationInstructionsV6Identity = "9676adfdd8a31389a68dfb995bed16c98a6f6688f8931f1ef1dc1a6fa170792f"
 
 func InvestigationOutputSchema() []byte { return reviewschema.InvestigationOutputSchema() }
 
@@ -194,7 +197,7 @@ func investigationPacketMatches(p ContextPacket, s ReviewSnapshot, scope, manife
 	if sourceBytes > uint64(p.limits.MaxSourceBytes()) {
 		return false
 	}
-	if len(s.ranges) == 0 || len(s.ranges) > maxSelectedContextSources || len(p.sources) == 0 || len(p.sources) > maxSelectedContextSources || s.Validate() != nil || p.Validate() != nil || p.ReviewScopeIdentity() != scope || p.SnapshotIdentity() != s.Identity() || p.Task() != ContextTaskCandidateGeneration || p.MemoryItemCount() != 0 || p.limits.MaxMemoryItems() != 0 || len(s.ranges) != len(p.sources) {
+	if len(s.ranges) == 0 || len(s.ranges) > maxSelectedContextSources || len(p.sources) == 0 || len(p.sources) > maxSelectedContextSources || s.Validate() != nil || p.Validate() != nil || p.ReviewScopeIdentity() != scope || p.SnapshotIdentity() != s.Identity() || p.Task() != ContextTaskCandidateGeneration || p.MemoryItemCount() != 0 || p.limits.MaxMemoryItems() != 0 {
 		return false
 	}
 	type rangeWire struct {
@@ -206,19 +209,38 @@ func investigationPacketMatches(p ContextPacket, s ReviewSnapshot, scope, manife
 	byRange := map[evidence.SourceRange]string{}
 	byPath := map[string]string{}
 	bindings := map[string]bool{}
+	headSources := 0
 	for _, source := range p.sources {
 		if !source.HasSliceBinding() || source.SliceBinding().Validate() != nil {
 			return false
 		}
 		binding := source.SliceBinding()
-		span := source.EvidenceItem().SourceRange()
-		file := binding.RepositoryFileIdentity()
-		if bindings[binding.Identity()] || byRange[span] != "" || byPath[span.Path()] != "" && byPath[span.Path()] != file {
+		if bindings[binding.Identity()] {
 			return false
 		}
 		bindings[binding.Identity()] = true
+		// Removed base lines are bound to the base file and carry base line
+		// numbers, so they are neither head ranges nor snapshot ranges.
+		if source.Stage() == ContextStageRemovedLines {
+			continue
+		}
+		headSources++
+		span := source.EvidenceItem().SourceRange()
+		file := binding.RepositoryFileIdentity()
+		if byRange[span] != "" || byPath[span.Path()] != "" && byPath[span.Path()] != file {
+			return false
+		}
 		byRange[span] = file
 		byPath[span.Path()] = file
+	}
+	if len(s.ranges) != headSources {
+		return false
+	}
+	// Removed text is supplied only beside a head source of the same file.
+	for _, source := range p.sources {
+		if source.Stage() == ContextStageRemovedLines && byPath[source.EvidenceItem().SourceRange().Path()] == "" {
+			return false
+		}
 	}
 	ranges := make([]rangeWire, len(s.ranges))
 	for i, span := range s.ranges {
@@ -447,10 +469,10 @@ func NewInvestigationGenerationContext(binding InvestigationContextBinding, sele
 }
 
 func encodeInvestigationContext(value InvestigationGenerationContext, results []any) ([]byte, error) {
-	schema, instructions := InvestigationOutputSchema(), investigationInstructionsV5
-	// The recorded version 4 text keeps its own pin; version 5 is pinned too,
-	// so neither contract can drift unnoticed.
-	if investigationContextDigest(schema) != investigationSchemaIdentity || investigationContextDigest([]byte(InvestigationInstructions())) != investigationInstructionsIdentity || investigationContextDigest([]byte(instructions)) != investigationInstructionsV5Identity {
+	schema, instructions := InvestigationOutputSchema(), investigationInstructionsV6
+	// The recorded version 4 and 5 texts keep their own pins; version 6 is
+	// pinned too, so no contract can drift unnoticed.
+	if investigationContextDigest(schema) != investigationSchemaIdentity || investigationContextDigest([]byte(InvestigationInstructions())) != investigationInstructionsIdentity || investigationContextDigest([]byte(investigationInstructionsV5)) != investigationInstructionsV5Identity || investigationContextDigest([]byte(instructions)) != investigationInstructionsV6Identity {
 		return nil, ErrInvestigationContext
 	}
 	legacy, err := encodeContextPacket(value.selected)
@@ -463,7 +485,7 @@ func encodeInvestigationContext(value InvestigationGenerationContext, results []
 	}
 	set := func(key string, v any) { wire[key], _ = json.Marshal(v) }
 	set("schema_version", investigationContextVersion)
-	// Investigation version 5 sends its contract only in the trusted system
+	// Investigation version 6 sends its contract only in the trusted system
 	// channel; the payload binds it by instructions_identity and carries no
 	// instruction prose.
 	delete(wire, "instructions")
@@ -498,6 +520,29 @@ func (c InvestigationGenerationContext) Snapshot() ReviewSnapshot {
 func (c InvestigationGenerationContext) EvidenceItems() []evidence.EvidenceItem {
 	return c.selected.EvidenceItems()
 }
+
+// removedLinesSources returns the IDs of the selected removed_lines sources.
+func (c InvestigationGenerationContext) removedLinesSources() map[string]struct{} {
+	removed := map[string]struct{}{}
+	for _, source := range c.selected.sources {
+		if source.Stage() == ContextStageRemovedLines {
+			removed[source.ReferenceID()] = struct{}{}
+		}
+	}
+	return removed
+}
+
+// ParseInvestigationCandidateBatch strictly decodes the candidates of one
+// investigation turn against its exact context. A candidate located in a
+// removed_lines source is refused, because removed base lines are not head
+// code: an investigation candidate batch is uncategorized and cannot record a
+// dropped proposal, so the turn fails closed instead. A removed_lines source
+// may still be cited as evidence, but never shows that cited evidence covers
+// the anchored head lines.
+func ParseInvestigationCandidateBatch(response provider.Response, context InvestigationGenerationContext) (CandidateBatch, error) {
+	return parseCandidateBatch(response, context.snapshot, context.selected.EvidenceItems(), 1, removedLinesAnchorRules(context.selected.sources))
+}
+
 func (c InvestigationGenerationContext) Validate() error {
 	canonical, err := NewInvestigationGenerationContext(c.binding, c.selected, c.snapshot, c.state)
 	if err != nil || c.identity != canonical.identity || c.payload != canonical.payload {
@@ -522,15 +567,26 @@ func NewInvestigationVerificationRequestContext(final InvestigationGenerationCon
 	for _, item := range p.EvidenceItems() {
 		allowed[item.ID()] = item
 	}
+	removed := final.removedLinesSources()
 	for _, candidate := range candidates.Findings() {
 		source, ok := allowed[candidate.SourceReferenceID()]
-		if !ok || !rangeContains(source.SourceRange(), candidate.SourceRange()) {
+		if _, baseLines := removed[candidate.SourceReferenceID()]; !ok || baseLines || !rangeContains(source.SourceRange(), candidate.SourceRange()) {
 			return VerificationRequestContext{}, ErrInvestigationContext
 		}
+		// Cited evidence must cover the anchored head lines, and removed base
+		// lines never do: their line numbers are base coordinates.
+		cited := false
 		for _, id := range candidate.EvidenceIDs() {
-			if _, ok := allowed[id]; !ok {
+			item, ok := allowed[id]
+			if !ok {
 				return VerificationRequestContext{}, ErrInvestigationContext
 			}
+			if _, baseLines := removed[id]; !baseLines {
+				cited = cited || rangeContains(item.SourceRange(), candidate.SourceRange())
+			}
+		}
+		if !cited {
+			return VerificationRequestContext{}, ErrInvestigationContext
 		}
 	}
 	legacy, err := encodeContextPacket(p)

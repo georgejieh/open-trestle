@@ -27,7 +27,7 @@ func TestVersionedVerifierClarificationFixedContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	generationFields := modelContractFields(t, request.Payload())
-	if generationFields["instructions"] != nil || string(generationFields["instructions_identity"]) != `"`+modelInstructionsIdentity(candidateOutputInstructionsV7)+`"` || string(generationFields["schema_version"]) != "7" {
+	if generationFields["instructions"] != nil || string(generationFields["instructions_identity"]) != `"`+modelInstructionsIdentity(candidateOutputInstructionsV8)+`"` || string(generationFields["schema_version"]) != "8" {
 		t.Error("ordinary generation must use v7 bound to the pinned v7 candidate instructions by identity")
 	}
 	if candidateOutputInstructions != pinnedV3CandidateInstructions {
@@ -61,13 +61,13 @@ func TestVersionedVerifierClarificationFixedContract(t *testing.T) {
 				t.Fatal("packet and durable constructors disagree")
 			}
 			fields := modelContractFields(t, sent.Payload())
-			if fields["instructions"] != nil || string(fields["instructions_identity"]) != `"`+modelInstructionsIdentity(verificationOutputInstructionsV6)+`"` || string(fields["schema_version"]) != "6" {
+			if fields["instructions"] != nil || string(fields["instructions_identity"]) != `"`+modelInstructionsIdentity(verificationOutputInstructionsV7)+`"` || string(fields["schema_version"]) != "7" {
 				t.Error("verifier must use the v6 contract bound by identity")
 			}
-			if trusted, err := TrustedModelRequestInstructions(sent.Payload()); err != nil || trusted != verificationOutputInstructionsV6 || !strings.HasPrefix(trusted, instructionHierarchy) {
+			if trusted, err := TrustedModelRequestInstructions(sent.Payload()); err != nil || trusted != verificationOutputInstructionsV7 || !strings.HasPrefix(trusted, instructionHierarchy) {
 				t.Error("verifier system channel is not the pinned v6 contract")
 			}
-			if !strings.Contains(verificationOutputInstructionsV6, pinnedEmptyCandidateSentence) {
+			if !strings.Contains(verificationOutputInstructionsV6, pinnedEmptyCandidateSentence) || !strings.Contains(verificationOutputInstructionsV7, pinnedEmptyCandidateSentence) {
 				t.Error("v6 verifier contract lost the empty-candidate clarification")
 			}
 			if tc.name == "empty" && string(fields["candidates"]) != "[]" {

@@ -50,14 +50,19 @@ func ParseRecordedContext(payload []byte, scope audit.ReviewScope, head sourceou
 	if err != nil || manifest.Identity() != head.ManifestIdentity() {
 		return RecordedContext{}, ErrInvalidContextPacketRequest
 	}
-	ranges := make([]evidence.SourceRange, len(wire.Sources))
+	// The snapshot holds head ranges only: removed_lines sources carry base
+	// line numbers and are evidence, not snapshot ranges.
+	ranges := make([]evidence.SourceRange, 0, len(wire.Sources))
 	items := make([]evidence.EvidenceItem, len(wire.Sources))
 	for i, source := range wire.Sources {
-		ranges[i], err = evidence.NewSourceRange(source.Path, source.StartLine, source.EndLine)
-		if err != nil {
+		sourceRange, rangeErr := evidence.NewSourceRange(source.Path, source.StartLine, source.EndLine)
+		if rangeErr != nil {
 			return RecordedContext{}, ErrInvalidContextPacketRequest
 		}
-		items[i], err = evidence.NewEvidenceItem(source.SourceID, evidence.EvidenceKindSource, source.EvidenceDigest, ranges[i])
+		if source.Stage != ContextStageRemovedLines.String() {
+			ranges = append(ranges, sourceRange)
+		}
+		items[i], err = evidence.NewEvidenceItem(source.SourceID, evidence.EvidenceKindSource, source.EvidenceDigest, sourceRange)
 		if err != nil {
 			return RecordedContext{}, ErrInvalidContextPacketRequest
 		}

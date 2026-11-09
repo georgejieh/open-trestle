@@ -211,13 +211,16 @@ type CandidateBatch struct {
 	// categorized marks a model-candidate-batch-v2 batch: every finding carries a category.
 	categorized bool
 	// repositoryContextOmitted counts v2 proposals dropped at admission because
-	// their source_range named a repository_context source. It is derived only
-	// from the exact response and context bytes and is bound into the identity.
+	// their source_range named a source that cannot anchor a finding: a
+	// repository_context source and, from generation context version 8, a
+	// removed_lines source. It is derived only from the exact response and
+	// context bytes and is bound into the identity.
 	repositoryContextOmitted uint8
 }
 
 // RepositoryContextAnchorOmittedCount reports proposals dropped because they
-// were located in a repository_context source rather than reviewed code.
+// were located in a repository_context source or, from generation context
+// version 8, a removed_lines source rather than in reviewed head code.
 func (b CandidateBatch) RepositoryContextAnchorOmittedCount() int {
 	return int(b.repositoryContextOmitted)
 }
@@ -426,15 +429,15 @@ func validCandidateFix(value string) bool {
 
 // candidateBatchMatchesContextVersion reports whether a candidate batch can be the
 // output of a generation context version. A categorized v2 batch requires a
-// version 7 context. An uncategorized v1 batch is accepted for every version so
+// version 7 or 8 context. An uncategorized v1 batch is accepted for every version so
 // that recorded readback and investigation projections keep their v1 candidates.
 func candidateBatchMatchesContextVersion(version int, batch CandidateBatch) bool {
-	return !batch.categorized || version == modelGenerationContextVersion
+	return !batch.categorized || systemChannelGenerationVersion(version)
 }
 
 // CandidateBatchMatchesContext reports whether a batch is exactly the candidate
-// schema the recorded generation context requested: v2 for a version 7 context
-// and v1 for every earlier generation context.
+// schema the recorded generation context requested: v2 for a version 7 or 8
+// context and v1 for every earlier generation context.
 func CandidateBatchMatchesContext(contextPayload []byte, batch CandidateBatch) bool {
 	var header struct {
 		Contract      string `json:"contract"`
@@ -443,22 +446,27 @@ func CandidateBatchMatchesContext(contextPayload []byte, batch CandidateBatch) b
 	if len(contextPayload) == 0 || len(contextPayload) > maxProviderContextPacketBytes || json.Unmarshal(contextPayload, &header) != nil || header.Contract != "open-trestle/review-context-packet" {
 		return false
 	}
-	return batch.categorized == (header.SchemaVersion == modelGenerationContextVersion)
+	return batch.categorized == systemChannelGenerationVersion(header.SchemaVersion)
 }
 
 // ParseCandidateBatch strictly decodes one model-candidate-batch-v1 response
 // against exact snapshot evidence. New generation contexts request v2; use
 // ParseContextCandidateBatch for their responses.
 func ParseCandidateBatch(response provider.Response, snapshot ReviewSnapshot, evidenceItems []evidence.EvidenceItem) (CandidateBatch, error) {
-	return parseCandidateBatch(response, snapshot, evidenceItems, 1, nil)
+	return parseCandidateBatch(response, snapshot, evidenceItems, 1, candidateAnchorRules{})
 }
 
 // ParseContextCandidateBatch strictly decodes one response against the output
-// contract of the exact generation context bytes it answers. A version 7 context
-// requires model-candidate-batch-v2 and drops, and counts, each candidate whose
-// source_range names a repository_context source: repository instruction files
-// are advisory preferences, not reviewed code, and changed instruction lines are
-// a separate changed_hunk source. Earlier versions require v1.
+// contract of the exact generation context bytes it answers. A version 7 or 8
+// context requires model-candidate-batch-v2 and drops, and counts, each
+// candidate whose source_range names a source that cannot anchor a finding: a
+// repository_context source (repository instruction files are advisory
+// preferences, not reviewed code, and changed instruction lines are a separate
+// changed_hunk source) and, from version 8, a removed_lines source (removed
+// base lines are not head code; a finding about a removal anchors on the
+// changed_hunk lines around the deletion point). From version 8 a removed_lines
+// source may be cited as evidence but never establishes that the cited
+// evidence covers the anchored head lines. Earlier versions require v1.
 func ParseContextCandidateBatch(response provider.Response, contextPayload []byte, snapshot ReviewSnapshot, evidenceItems []evidence.EvidenceItem) (CandidateBatch, error) {
 	if len(contextPayload) == 0 || len(contextPayload) > maxProviderContextPacketBytes {
 		return CandidateBatch{}, ErrInvalidContextPacketRequest
@@ -467,25 +475,55 @@ func ParseContextCandidateBatch(response provider.Response, contextPayload []byt
 	if err != nil || wire.Contract != "open-trestle/review-context-packet" || !validRecordedModelOutputContract(wire.SchemaVersion, wire.Instructions, wire.InstructionsIdentity, wire.OutputSchema, false) {
 		return CandidateBatch{}, ErrInvalidContextPacketRequest
 	}
-	if wire.SchemaVersion != modelGenerationContextVersion {
+	if !systemChannelGenerationVersion(wire.SchemaVersion) {
 		return ParseCandidateBatch(response, snapshot, evidenceItems)
 	}
 	if len(wire.Sources) != len(evidenceItems) {
 		return CandidateBatch{}, ErrInvalidCandidateEvidenceSet
 	}
-	repositoryContext := make(map[string]struct{})
+	rules := candidateAnchorRules{dropped: make(map[string]struct{}), baseLines: make(map[string]struct{})}
 	for index, source := range wire.Sources {
 		if source.SourceID != evidenceItems[index].ID() {
 			return CandidateBatch{}, ErrInvalidCandidateEvidenceSet
 		}
-		if source.Stage == ContextStageRepositoryContext.String() {
-			repositoryContext[source.SourceID] = struct{}{}
+		switch source.Stage {
+		case ContextStageRepositoryContext.String():
+			rules.dropped[source.SourceID] = struct{}{}
+		case ContextStageRemovedLines.String():
+			rules.dropped[source.SourceID] = struct{}{}
+			rules.baseLines[source.SourceID] = struct{}{}
 		}
 	}
-	return parseCandidateBatch(response, snapshot, evidenceItems, 2, repositoryContext)
+	return parseCandidateBatch(response, snapshot, evidenceItems, 2, rules)
 }
 
-func parseCandidateBatch(response provider.Response, snapshot ReviewSnapshot, evidenceItems []evidence.EvidenceItem, version int, repositoryContext map[string]struct{}) (CandidateBatch, error) {
+// candidateAnchorRules names, by source ID, the sources a candidate cannot be
+// located in. A candidate located in a dropped source is dropped and counted;
+// one located in a refused source refuses the whole batch, for an
+// uncategorized batch that cannot record a drop. A baseLines source carries
+// base line numbers: it may be cited as evidence, but never establishes that
+// cited evidence covers the anchored head lines, because base and head line
+// numbers are different coordinates. All rules apply to the one strictly
+// parsed document, never to a second, lenient reading of the response.
+type candidateAnchorRules struct {
+	dropped, refused, baseLines map[string]struct{}
+}
+
+// removedLinesAnchorRules refuses a candidate located in a removed_lines
+// source of the given sources and keeps removed lines out of citation
+// containment.
+func removedLinesAnchorRules(sources []ContextSource) candidateAnchorRules {
+	rules := candidateAnchorRules{refused: make(map[string]struct{}), baseLines: make(map[string]struct{})}
+	for _, source := range sources {
+		if source.Stage() == ContextStageRemovedLines {
+			rules.refused[source.ReferenceID()] = struct{}{}
+			rules.baseLines[source.ReferenceID()] = struct{}{}
+		}
+	}
+	return rules
+}
+
+func parseCandidateBatch(response provider.Response, snapshot ReviewSnapshot, evidenceItems []evidence.EvidenceItem, version int, rules candidateAnchorRules) (CandidateBatch, error) {
 	if err := response.Validate(); err != nil {
 		return CandidateBatch{}, err
 	}
@@ -512,14 +550,18 @@ func parseCandidateBatch(response provider.Response, snapshot ReviewSnapshot, ev
 	seen := make(map[string]struct{}, len(document.Candidates))
 	omitted := uint8(0)
 	for _, candidate := range document.Candidates {
-		if _, anchored := repositoryContext[candidate.SourceRange.SourceID]; anchored {
-			// A proposal located in repository instruction context is not about
-			// reviewed code. Drop only that proposal, deterministically, and keep
-			// the rest; kept proposals take contiguous ordinals.
+		if _, refused := rules.refused[candidate.SourceRange.SourceID]; refused {
+			return CandidateBatch{}, ErrCandidateRangeNotSupported
+		}
+		if _, anchored := rules.dropped[candidate.SourceRange.SourceID]; anchored {
+			// A proposal located in repository instruction context or in
+			// removed base lines is not located in reviewed head code. Drop only
+			// that proposal, deterministically, and keep the rest; kept
+			// proposals take contiguous ordinals.
 			omitted++
 			continue
 		}
-		finding, err := newCandidateFinding(response.Identity(), snapshot, uint8(len(findings)+1), candidate, allowedEvidence)
+		finding, err := newCandidateFinding(response.Identity(), snapshot, uint8(len(findings)+1), candidate, allowedEvidence, rules.baseLines)
 		if err != nil {
 			return CandidateBatch{}, err
 		}
@@ -541,7 +583,7 @@ func parseCandidateBatch(response provider.Response, snapshot ReviewSnapshot, ev
 	return batch, nil
 }
 
-func newCandidateFinding(responseIdentity string, snapshot ReviewSnapshot, ordinal uint8, document candidateFindingDocument, allowed map[string]evidence.EvidenceItem) (CandidateFinding, error) {
+func newCandidateFinding(responseIdentity string, snapshot ReviewSnapshot, ordinal uint8, document candidateFindingDocument, allowed map[string]evidence.EvidenceItem, removedLines map[string]struct{}) (CandidateFinding, error) {
 	sourceItem, exists := allowed[document.SourceRange.SourceID]
 	if !exists {
 		return CandidateFinding{}, ErrCandidateEvidenceNotAllowed
@@ -558,7 +600,9 @@ func newCandidateFinding(responseIdentity string, snapshot ReviewSnapshot, ordin
 			return CandidateFinding{}, ErrCandidateEvidenceNotAllowed
 		}
 		bindings = append(bindings, candidateEvidenceBinding{identity: item.ID(), digest: item.Digest(), sourceRange: item.SourceRange()})
-		citedRange = citedRange || rangeContains(item.SourceRange(), sourceRange)
+		if _, baseLines := removedLines[identity]; !baseLines {
+			citedRange = citedRange || rangeContains(item.SourceRange(), sourceRange)
+		}
 	}
 	if !citedRange {
 		return CandidateFinding{}, ErrCandidateEvidenceRangeMismatch

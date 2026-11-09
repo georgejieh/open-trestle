@@ -24,7 +24,8 @@ type encodedCandidateBatchWire struct {
 	SnapshotIdentity string                        `json:"snapshot_identity"`
 	Findings         []encodedCandidateFindingWire `json:"findings"`
 	// RepositoryContextOmitted counts v2 proposals dropped for naming a
-	// repository_context source; omitted when zero.
+	// repository_context source or, from generation context version 8, a
+	// removed_lines source; omitted when zero.
 	RepositoryContextOmitted uint8 `json:"repository_context_anchor_omitted,omitempty"`
 }
 

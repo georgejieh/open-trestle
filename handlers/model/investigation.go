@@ -842,7 +842,7 @@ func (c *Investigation) verify(ctx context.Context) (InvestigationVerification, 
 	if turn.Authorization().Identity() != authorization.Identity() {
 		return InvestigationVerification{}, ErrInvestigation
 	}
-	verification, err := review.ParseVerificationBatch(turn.Dispatch().Response(), g.Candidates(), verificationContext.EvidenceItems())
+	verification, err := review.ParseContextVerificationBatch(turn.Dispatch().Response(), g.Candidates(), verificationContext)
 	if err != nil {
 		return InvestigationVerification{}, err
 	}

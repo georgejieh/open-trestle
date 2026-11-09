@@ -120,8 +120,8 @@ func (m *artifactsModel) DispatchRoute(ctx context.Context, r gateway.RouteDispa
 	line := packet.Sources[0].Start
 	candidate := map[string]any{"title": "Zero input divides by zero", "claim": "The supplied division does not guard zero input.", "severity_hint": "high", "source_range": map[string]any{"source_id": id, "start_line": line, "end_line": line}, "evidence_ids": []string{id}}
 	schemaVersion := 1
-	if packet.SchemaVersion == 7 {
-		// A plain version 7 generation context requests candidate batch v2;
+	if packet.SchemaVersion == 8 {
+		// A plain version 8 generation context requests candidate batch v2;
 		// investigation contexts keep candidate batch v1.
 		schemaVersion, candidate["category"] = 2, "correctness"
 	}

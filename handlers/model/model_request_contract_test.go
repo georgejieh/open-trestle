@@ -126,12 +126,12 @@ func TestGenerationDispatchAndOutputReadbackBindReadableContract(t *testing.T) {
 	}
 }
 
-// expectedDispatchedContractVersion is 7 for generation (candidate batch v2) and 5 for verification.
+// expectedDispatchedContractVersion is 8 for generation (candidate batch v2) and 7 for verification.
 func expectedDispatchedContractVersion(schemaIdentity string) int {
 	if schemaIdentity == review.ModelCandidateBatchSchemaIdentity {
-		return 7
+		return 8
 	}
-	return 6
+	return 7
 }
 
 // trustedSystemBytes is the length of the trusted system-channel text that a

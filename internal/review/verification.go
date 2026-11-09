@@ -296,6 +296,31 @@ func ValidateVerificationDocumentSyntax(payload []byte) error {
 
 // ParseVerificationBatch binds strict verifier output to every exact candidate and allowed evidence item.
 func ParseVerificationBatch(response provider.Response, candidates CandidateBatch, evidenceItems []evidence.EvidenceItem) (VerificationBatch, error) {
+	return parseVerificationBatch(response, candidates, evidenceItems, nil)
+}
+
+// ParseContextVerificationBatch is ParseVerificationBatch against the exact
+// verifier request it answers. A removed_lines source of that request may be
+// cited, but never shows that a verified verdict's evidence covers the
+// candidate's head lines, because its line numbers are base coordinates.
+func ParseContextVerificationBatch(response provider.Response, candidates CandidateBatch, context VerificationRequestContext) (VerificationBatch, error) {
+	if context.Validate() != nil || candidates.Identity() != context.CandidateBatchIdentity() {
+		return VerificationBatch{}, ErrInvalidVerificationRequestContext
+	}
+	wire, err := decodeVerificationContextWire(context.Payload())
+	if err != nil {
+		return VerificationBatch{}, ErrInvalidVerificationRequestContext
+	}
+	baseLines := make(map[string]struct{})
+	for _, source := range wire.Sources {
+		if source.Stage == ContextStageRemovedLines.String() {
+			baseLines[source.SourceID] = struct{}{}
+		}
+	}
+	return parseVerificationBatch(response, candidates, context.EvidenceItems(), baseLines)
+}
+
+func parseVerificationBatch(response provider.Response, candidates CandidateBatch, evidenceItems []evidence.EvidenceItem, baseLines map[string]struct{}) (VerificationBatch, error) {
 	if err := response.Validate(); err != nil {
 		return VerificationBatch{}, err
 	}
@@ -333,7 +358,7 @@ func ParseVerificationBatch(response provider.Response, candidates CandidateBatc
 		if _, exists := byCandidate[verdict.CandidateID]; exists {
 			return VerificationBatch{}, ErrDuplicateVerificationCandidate
 		}
-		result, err := newVerificationResult(response.Identity(), candidates.SnapshotIdentity(), candidate, verdict, allowedEvidence)
+		result, err := newVerificationResult(response.Identity(), candidates.SnapshotIdentity(), candidate, verdict, allowedEvidence, baseLines)
 		if err != nil {
 			return VerificationBatch{}, err
 		}
@@ -361,7 +386,7 @@ func ParseVerificationBatch(response provider.Response, candidates CandidateBatc
 	return batch, nil
 }
 
-func newVerificationResult(responseIdentity, snapshotIdentity string, candidate CandidateFinding, verdict verificationVerdictDocument, allowed map[string]evidence.EvidenceItem) (VerificationResult, error) {
+func newVerificationResult(responseIdentity, snapshotIdentity string, candidate CandidateFinding, verdict verificationVerdictDocument, allowed map[string]evidence.EvidenceItem, baseLines map[string]struct{}) (VerificationResult, error) {
 	outcome, _ := ParseVerificationOutcome(verdict.Outcome)
 	bindings := make([]candidateEvidenceBinding, 0, len(verdict.EvidenceIDs))
 	for _, identity := range verdict.EvidenceIDs {
@@ -384,7 +409,9 @@ func newVerificationResult(responseIdentity, snapshotIdentity string, candidate 
 	if outcome == VerificationVerified {
 		cited := false
 		for _, binding := range bindings {
-			cited = cited || rangeContains(binding.sourceRange, candidate.SourceRange())
+			if _, base := baseLines[binding.identity]; !base {
+				cited = cited || rangeContains(binding.sourceRange, candidate.SourceRange())
+			}
 		}
 		if !cited {
 			return VerificationResult{}, ErrVerificationEvidenceRangeMismatch

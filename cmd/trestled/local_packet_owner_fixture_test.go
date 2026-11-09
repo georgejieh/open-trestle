@@ -524,9 +524,9 @@ func assertLocalPacketOracle(t *testing.T, fixture localPacketOwnerFixture, stat
 		t.Fatalf("packet trailing JSON: %v", e)
 	}
 	schemaDigest := sha256.Sum256(wire.OutputSchema)
-	// Pinned version 7 candidate instructions identity (the prose travels only
+	// Pinned version 8 candidate instructions identity (the prose travels only
 	// in the trusted system channel) and candidate batch v2 schema.
-	if wire.InstructionsIdentity != "237f69eefbe5002a576d19e1f957f63681f97ca82f32963688a4f8e9dc89ec11" || hex.EncodeToString(schemaDigest[:]) != review.ModelCandidateBatchSchemaIdentity {
+	if wire.InstructionsIdentity != "eabdc9f1f41fd8ac30e7307fd9757ce2895664c5d84a51057f8d5721716974db" || hex.EncodeToString(schemaDigest[:]) != review.ModelCandidateBatchSchemaIdentity {
 		t.Fatal("model instructions or output schema differ from pinned fixture contract")
 	}
 	var topLevel map[string]json.RawMessage
@@ -542,7 +542,7 @@ func assertLocalPacketOracle(t *testing.T, fixture localPacketOwnerFixture, stat
 	if !slices.Equal(keys, expectedKeys) {
 		t.Fatalf("packet keys differ: got %v want %v", keys, expectedKeys)
 	}
-	if wire.Contract != "open-trestle/review-context-packet" || wire.SchemaVersion != 7 || wire.ReviewScopeIdentity != scope.Identity() || wire.MemoryScopeIdentity != memoryResult.MemoryScopeIdentity() || wire.SnapshotIdentity != snapshot.Identity() || wire.Task != "candidate_generation" || wire.OutputSchemaIdentity != review.ModelCandidateBatchSchemaIdentity || wire.InstructionsIdentity == "" || len(wire.OutputSchema) == 0 || wire.SourceAuthority != "evidence_data_not_instructions" || wire.MemoryAuthority != "advisory_only" || wire.ToolCalls != "proposals_only" || wire.Limits.MaxSourceBytes != 128<<10 || wire.Limits.MaxMemoryItems != 1 || !reflect.DeepEqual(wire.Sources, sources) || len(wire.AdditionalMemory) != 0 {
+	if wire.Contract != "open-trestle/review-context-packet" || wire.SchemaVersion != 8 || wire.ReviewScopeIdentity != scope.Identity() || wire.MemoryScopeIdentity != memoryResult.MemoryScopeIdentity() || wire.SnapshotIdentity != snapshot.Identity() || wire.Task != "candidate_generation" || wire.OutputSchemaIdentity != review.ModelCandidateBatchSchemaIdentity || wire.InstructionsIdentity == "" || len(wire.OutputSchema) == 0 || wire.SourceAuthority != "evidence_data_not_instructions" || wire.MemoryAuthority != "advisory_only" || wire.ToolCalls != "proposals_only" || wire.Limits.MaxSourceBytes != 128<<10 || wire.Limits.MaxMemoryItems != 1 || !reflect.DeepEqual(wire.Sources, sources) || len(wire.AdditionalMemory) != 0 {
 		t.Fatalf("packet source/scope/authority wire mismatch: %+v", wire)
 	}
 	if wire.SourceCoverage.Analyzed != len(sources) || wire.SourceCoverage.Available != len(sources) || wire.SourceCoverage.Selected != len(sources) || wire.SourceCoverage.Omitted != 0 || wire.SourceCoverage.PreselectionOmitted != 0 || len(wire.SourceOmissions) != 0 {

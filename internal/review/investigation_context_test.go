@@ -201,8 +201,8 @@ func TestInvestigationContextCurrentControlAndCanonicalV4Contract(t *testing.T) 
 	v4Check(t, err)
 	var current contextPacketWire
 	v4Check(t, json.Unmarshal(before.Payload(), &current))
-	if current.SchemaVersion != 7 || current.ToolCalls != "proposals_only" || current.OutputSchemaIdentity != ModelCandidateBatchSchemaIdentity {
-		t.Fatal("current v7 constructor contract changed")
+	if current.SchemaVersion != 8 || current.ToolCalls != "proposals_only" || current.OutputSchemaIdentity != ModelCandidateBatchSchemaIdentity {
+		t.Fatal("current v8 constructor contract changed")
 	}
 	v4Check(t, ValidateCandidateModelRequest(before, f.binding.Scope.Identity()))
 	v4 := v4Initial(t, f)
@@ -210,7 +210,7 @@ func TestInvestigationContextCurrentControlAndCanonicalV4Contract(t *testing.T) 
 	v4Check(t, err)
 	trusted, err := TrustedModelRequestInstructions(request.Payload())
 	v4Check(t, err)
-	if trusted != investigationInstructionsV5 || !strings.HasPrefix(trusted, "Instruction hierarchy:") || !strings.HasSuffix(trusted, InvestigationInstructions()) || v4Hash([]byte(trusted)) != investigationInstructionsV5Identity {
+	if trusted != investigationInstructionsV6 || !strings.HasPrefix(trusted, "Instruction hierarchy:") || !strings.HasSuffix(trusted, InvestigationInstructions()) || !strings.Contains(trusted, removedLinesInvestigationSentence) || v4Hash([]byte(trusted)) != investigationInstructionsV6Identity {
 		t.Fatal("investigation request lost its pinned host instructions")
 	}
 	if v4.Validate() != nil || v4.Identity() != v4Hash(request.Payload()) || request.Identity() == before.Identity() {
@@ -230,7 +230,7 @@ func TestInvestigationContextCurrentControlAndCanonicalV4Contract(t *testing.T) 
 		} `json:"investigation"`
 	}
 	v4Check(t, json.Unmarshal(request.Payload(), &wire))
-	if wire.Version != 5 || wire.Instructions != nil || wire.IdentityBind != modelInstructionsIdentity(investigationInstructionsV5) || wire.Tools != "host_admitted_snapshot_read_v1" || wire.Investigation.Mode != "fixed_generation_route_v1" || wire.Investigation.Memory != "empty_not_ingested" || wire.Investigation.Head != f.binding.HeadSnapshotIdentity {
+	if wire.Version != 6 || wire.Instructions != nil || wire.IdentityBind != modelInstructionsIdentity(investigationInstructionsV6) || wire.Tools != "host_admitted_snapshot_read_v1" || wire.Investigation.Mode != "fixed_generation_route_v1" || wire.Investigation.Memory != "empty_not_ingested" || wire.Investigation.Head != f.binding.HeadSnapshotIdentity {
 		t.Fatal("explicit v4 profile or claimed fixed head changed")
 	}
 	if !bytes.Equal(wire.Schema, InvestigationOutputSchema()) || wire.SchemaID != v4Hash(wire.Schema) || wire.SchemaID != "77367fd94611f87d36e4490729096db927b8d27b9d687a4b6ab515db70e2bbc4" || v4Hash([]byte(InvestigationInstructions())) != "990e881d4038ea3c222c4c0aed5b6dad7dbff547faa5f30ff067b3ac18072c8c" || bytes.Contains(request.Payload(), []byte("Return only one JSON object")) {
@@ -379,12 +379,12 @@ func TestInvestigationV4ProjectsExactCurrentVerifierV3(t *testing.T) {
 	expected.GenerationContextIdentity = final.Identity()
 	payload := v4JSON(t, expected)
 	if !bytes.Equal(projected.Payload(), payload) || projected.Identity() != v4Hash(payload) || projected.GenerationContextIdentity() != final.Identity() || projected.SnapshotIdentity() != f.expandedSnapshot.Identity() || projected.CandidateBatchIdentity() != candidates.Identity() {
-		t.Fatal("named projection changed current v6 mapping or final lineage")
+		t.Fatal("named projection changed current v7 mapping or final lineage")
 	}
 	request, err := projected.ProviderRequest()
 	v4Check(t, err)
 	v4Check(t, ValidateVerificationModelRequest(request, f.binding.Scope.Identity()))
-	if expected.SchemaVersion != 6 || expected.ToolCalls != "proposals_only" || !reflect.DeepEqual(projected.EvidenceItems(), f.expanded.EvidenceItems()) || len(expected.SourceOmissions) != 1 || expected.Sources[1].Stage != "repository_context" {
+	if expected.SchemaVersion != 7 || expected.ToolCalls != "proposals_only" || !reflect.DeepEqual(projected.EvidenceItems(), f.expanded.EvidenceItems()) || len(expected.SourceOmissions) != 1 || expected.Sources[1].Stage != "repository_context" {
 		t.Fatal("projection inflated source grades/omissions or granted verifier tools")
 	}
 	if _, err := NewInvestigationVerificationRequestContext(final, CandidateBatch{}); err == nil {

@@ -95,7 +95,7 @@ func (c *Investigation) finishGeneration(ctx context.Context, turn gateway.Inves
 	if request.Identity() != turn.RequestIdentity() || turn.Authorization().RouteRecordIdentity() != c.pin {
 		return InvestigationGeneration{}, ErrInvestigation
 	}
-	candidates, err := review.ParseCandidateBatch(turn.Dispatch().Response(), c.current.Snapshot(), c.current.EvidenceItems())
+	candidates, err := review.ParseInvestigationCandidateBatch(turn.Dispatch().Response(), c.current)
 	if err != nil {
 		return InvestigationGeneration{}, err
 	}

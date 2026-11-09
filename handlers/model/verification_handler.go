@@ -244,7 +244,7 @@ func (h *VerificationHandler) Execute(ctx context.Context, task controlplane.Tas
 	if dispatch.Status() == gateway.RouteDispatchFailed {
 		return generationFailure(mapRouteFailure(dispatch.Failure()))
 	}
-	verification, err := review.ParseVerificationBatch(dispatch.Response(), generation.Candidates(), verificationContext.EvidenceItems())
+	verification, err := review.ParseContextVerificationBatch(dispatch.Response(), generation.Candidates(), verificationContext)
 	if err != nil {
 		return generationFailure(controlplane.RunFailureInternal)
 	}

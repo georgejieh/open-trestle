@@ -198,7 +198,7 @@ func (m *upperModel) DispatchRoute(ctx context.Context, r gateway.RouteDispatchR
 	m.mu.Unlock()
 	var result any
 	if p.Task == "candidate_verification" {
-		if m.adapter != "adapter-b" || p.Schema != 6 || len(p.Candidates) != 1 {
+		if m.adapter != "adapter-b" || p.Schema != 7 || len(p.Candidates) != 1 {
 			m.t.Fatal("verifier lost exact independent final candidate")
 		}
 		ids := []string{}
@@ -207,7 +207,7 @@ func (m *upperModel) DispatchRoute(ctx context.Context, r gateway.RouteDispatchR
 		}
 		result = map[string]any{"schema_version": 1, "verdicts": []any{map[string]any{"candidate_id": p.Candidates[0].ID, "outcome": "verified", "severity": "high", "rationale": "The unguarded division is enabled for zero requests by the cited source.", "evidence_ids": ids}}}
 	} else {
-		if p.Schema != 5 || p.Investigation.Mode != "fixed_generation_route_v1" || p.Investigation.Pin != r.Authorization().RouteRecordIdentity() {
+		if p.Schema != 6 || p.Investigation.Mode != "fixed_generation_route_v1" || p.Investigation.Pin != r.Authorization().RouteRecordIdentity() {
 			m.t.Fatal("generation did not bind explicit actual fixed route")
 		}
 		ref := ""

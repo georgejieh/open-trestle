@@ -122,7 +122,7 @@ func TestRunLocalGitModelReviewProfilePlacesSpecialistOnlyInGeneration(t *testin
 	}
 	generation := generated[0]
 	var block map[string]string
-	if generation.Packet.Version != 7 || generation.Packet.Task != "candidate_generation" || json.Unmarshal(generation.Packet.Specialist, &block) != nil {
+	if generation.Packet.Version != 8 || generation.Packet.Task != "candidate_generation" || json.Unmarshal(generation.Packet.Specialist, &block) != nil {
 		t.Fatal("generation request is not a version 7 specialist context")
 	}
 	// The payload binds the profile by identity only; the skill text travels
@@ -142,7 +142,7 @@ func TestRunLocalGitModelReviewProfilePlacesSpecialistOnlyInGeneration(t *testin
 	}
 
 	verification := verified[0]
-	if verification.Packet.Version != 6 || verification.Packet.Task != "candidate_verification" || verification.Packet.Specialist != nil || verification.Packet.GenerationContext != generation.ContextID {
+	if verification.Packet.Version != 7 || verification.Packet.Task != "candidate_verification" || verification.Packet.Specialist != nil || verification.Packet.GenerationContext != generation.ContextID {
 		t.Fatal("verification request is not version 6 bound to the specialist generation")
 	}
 	for _, forbidden := range []string{specialist.Instructions(), "Bug hunter profile", specialist.ProfileIdentity(), "operator_packaged_instructions"} {
@@ -166,7 +166,7 @@ func TestRunLocalGitModelReviewProfileTextNamesProfile(t *testing.T) {
 		t.Fatalf("text result did not name the profile: %q", stdout.String())
 	}
 	_, generated := f.generation.snapshot()
-	if len(generated) != 1 || generated[0].Packet.Version != 7 {
+	if len(generated) != 1 || generated[0].Packet.Version != 8 {
 		t.Fatal("text-format profile run did not send a version 7 generation context")
 	}
 }

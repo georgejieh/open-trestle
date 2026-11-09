@@ -417,13 +417,13 @@ func (d *bridgeDispatcher) document(p bridgePacket) (map[string]any, error) {
 		return fail()
 	}
 	if p.Task == "candidate_verification" {
-		if d.adapter != "adapter-b" || p.Version != 6 || p.GenerationContext == "" || p.CandidateBatch == "" || len(ids) != 2 || len(p.Candidates) != 1 {
+		if d.adapter != "adapter-b" || p.Version != 7 || p.GenerationContext == "" || p.CandidateBatch == "" || len(ids) != 2 || len(p.Candidates) != 1 {
 			return fail()
 		}
 		return map[string]any{"schema_version": 1, "verdicts": []any{map[string]any{"candidate_id": p.Candidates[0].ID, "outcome": "verified", "severity": "high", "rationale": "The division guard is absent and the cited deployment text enables zero requests.", "evidence_ids": ids}}}, nil
 	}
 	s := p.Investigation
-	if d.adapter != "adapter-a" || p.Task != "candidate_generation" || p.Version != 5 || s.MemoryState != "empty_not_ingested" || s.Session == "" || s.Policy == "" {
+	if d.adapter != "adapter-a" || p.Task != "candidate_generation" || p.Version != 6 || s.MemoryState != "empty_not_ingested" || s.Session == "" || s.Policy == "" {
 		return fail()
 	}
 	var ref string

@@ -28,16 +28,18 @@ func contextAssemblyIdentityPreimage(t *testing.T, version int, authorizer, sani
 	return hex.EncodeToString(digest[:])
 }
 
-// The text-fallback, instruction-file, and version 7 context changes alter the
-// packet bytes this handler builds, so its identity moves to version 6. A plan
-// that recorded the version 5 identity is not served by this handler.
-func TestContextAssemblyHandlerIdentityIsVersionSix(t *testing.T) {
+// The version 8 context (removed_lines sources and their contract sentence)
+// alters the packet bytes this handler builds, so its identity moves to
+// version 7, as the text-fallback, instruction-file, and version 7 context
+// changes moved it to version 6. A plan that recorded an earlier identity is
+// not served by this handler.
+func TestContextAssemblyHandlerIdentityIsVersionSeven(t *testing.T) {
 	authorizer, sanitizer := strings.Repeat("5", 64), contextTestSanitizer{}.Identity()
 	current := deriveHandlerIdentity(authorizer, sanitizer, review.ContextSpecialist{})
-	if current != contextAssemblyIdentityPreimage(t, 6, authorizer, sanitizer) {
-		t.Fatal("route-granting context handler identity is not the version 6 preimage")
+	if current != contextAssemblyIdentityPreimage(t, 7, authorizer, sanitizer) {
+		t.Fatal("route-granting context handler identity is not the version 7 preimage")
 	}
-	if current == contextAssemblyIdentityPreimage(t, 5, authorizer, sanitizer) {
+	if current == contextAssemblyIdentityPreimage(t, 6, authorizer, sanitizer) || current == contextAssemblyIdentityPreimage(t, 5, authorizer, sanitizer) {
 		t.Fatal("context handler identity did not change with its packet bytes")
 	}
 	specialist, err := review.NewContextSpecialist("bug_hunter")
@@ -49,36 +51,46 @@ func TestContextAssemblyHandlerIdentityIsVersionSix(t *testing.T) {
 	}
 }
 
-// A context packet recorded by the version 5 handler stays readable as recorded
-// bytes but can no longer start a model attempt.
-func TestRecordedVersionFivePacketIsReadbackOnly(t *testing.T) {
-	encoded, err := os.ReadFile("testdata/v5_packet_candidate_envelope.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	value, err := artifact.Parse(encoded)
-	if err != nil || value.Kind() != artifact.KindContextPacket {
-		t.Fatalf("recorded v5 envelope unreadable: %v", err)
-	}
-	var header struct {
-		SchemaVersion        int    `json:"schema_version"`
-		OutputSchemaIdentity string `json:"output_schema_identity"`
-		ReviewScopeIdentity  string `json:"review_scope_identity"`
-	}
-	if err := json.Unmarshal(value.Payload(), &header); err != nil || header.SchemaVersion != 5 || header.OutputSchemaIdentity != review.ModelCandidateBatchV1SchemaIdentity {
-		t.Fatal("fixture is not a recorded v5 context requesting candidate batch v1")
-	}
-	if _, bound, err := review.RecordedContextSpecialist(value.Payload()); err != nil || bound {
-		t.Fatalf("recorded v5 output contract rejected for readback: %v", err)
-	}
-	request, err := provider.NewRequest(provider.CapabilityReviewV1, "application/json", value.Payload())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if review.ValidateCandidateModelRequest(request, header.ReviewScopeIdentity) == nil {
-		t.Fatal("recorded v5 context admitted for a new model attempt")
-	}
-	if _, err := review.TrustedModelRequestInstructions(value.Payload()); err == nil {
-		t.Fatal("recorded v5 context produced trusted egress instructions")
+// Context packets recorded by the version 5 and version 6 handlers (generation
+// contexts 5 and 7) stay readable as recorded bytes but can no longer start a
+// model attempt.
+func TestRecordedEarlierPacketsAreReadbackOnly(t *testing.T) {
+	for _, recorded := range []struct {
+		path    string
+		version int
+		schema  string
+	}{
+		{"testdata/v5_packet_candidate_envelope.json", 5, review.ModelCandidateBatchV1SchemaIdentity},
+		{"testdata/v7_packet_candidate_envelope.json", 7, review.ModelCandidateBatchSchemaIdentity},
+	} {
+		encoded, err := os.ReadFile(recorded.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		value, err := artifact.Parse(encoded)
+		if err != nil || value.Kind() != artifact.KindContextPacket {
+			t.Fatalf("recorded v%d envelope unreadable: %v", recorded.version, err)
+		}
+		var header struct {
+			SchemaVersion        int    `json:"schema_version"`
+			OutputSchemaIdentity string `json:"output_schema_identity"`
+			ReviewScopeIdentity  string `json:"review_scope_identity"`
+		}
+		if err := json.Unmarshal(value.Payload(), &header); err != nil || header.SchemaVersion != recorded.version || header.OutputSchemaIdentity != recorded.schema {
+			t.Fatalf("fixture is not a recorded v%d context", recorded.version)
+		}
+		if _, bound, err := review.RecordedContextSpecialist(value.Payload()); err != nil || bound {
+			t.Fatalf("recorded v%d output contract rejected for readback: %v", recorded.version, err)
+		}
+		request, err := provider.NewRequest(provider.CapabilityReviewV1, "application/json", value.Payload())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if review.ValidateCandidateModelRequest(request, header.ReviewScopeIdentity) == nil {
+			t.Fatalf("recorded v%d context admitted for a new model attempt", recorded.version)
+		}
+		if _, err := review.TrustedModelRequestInstructions(value.Payload()); err == nil {
+			t.Fatalf("recorded v%d context produced trusted egress instructions", recorded.version)
+		}
 	}
 }

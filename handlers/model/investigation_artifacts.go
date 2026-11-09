@@ -590,7 +590,7 @@ func buildInvestigationResult(inputArtifact artifact.Artifact, c InvestigationAr
 			return InvestigationGenerationResult{}, ErrInvestigationArtifacts
 		}
 	}
-	candidates, err := review.ParseCandidateBatch(turn.Dispatch().Response(), input.snapshot, input.evidence)
+	candidates, err := review.ParseInvestigationCandidateBatch(turn.Dispatch().Response(), c.Context)
 	if err != nil {
 		return InvestigationGenerationResult{}, ErrInvestigationArtifacts
 	}

@@ -68,8 +68,17 @@ var (
 // ContextStage identifies the bounded retrieval expansion that produced source evidence.
 type ContextStage uint8
 
+// Stage values order source selection and packet sources. Only their names
+// are recorded, so a new stage may take any position in the order.
 const (
 	ContextStageChangedHunk ContextStage = iota + 1
+	// ContextStageRemovedLines carries the base lines a deletion-only change
+	// removed at one deletion point, bound to the exact base file and labelled
+	// with base line numbers. It is evidence of what was removed, never an
+	// anchor: findings anchor on head lines. It is valid from generation
+	// context version 8, verification version 7 and investigation version 6,
+	// and is selected right after the changed hunks it belongs to.
+	ContextStageRemovedLines
 	ContextStageEnclosingSymbol
 	ContextStageDirectReference
 	ContextStageRepositoryContext
@@ -79,6 +88,8 @@ func (s ContextStage) String() string {
 	switch s {
 	case ContextStageChangedHunk:
 		return "changed_hunk"
+	case ContextStageRemovedLines:
+		return "removed_lines"
 	case ContextStageEnclosingSymbol:
 		return "enclosing_symbol"
 	case ContextStageDirectReference:
@@ -191,6 +202,9 @@ func (s ContextSource) validateFields() error {
 	}
 	if err := s.taint.Validate(); err != nil {
 		return err
+	}
+	if s.stage == ContextStageRemovedLines && s.taint != memory.TaintRepositoryControlled {
+		return ErrInvalidContextSource
 	}
 	if !validCandidateReference(s.evidenceItem.ID()) || !validCandidateDigest(s.evidenceItem.Digest()) {
 		return ErrInvalidContextSource
@@ -623,7 +637,7 @@ func (p ContextPacket) EvidenceItems() []evidence.EvidenceItem {
 func (p ContextPacket) Specialist() ContextSpecialist { return p.specialist }
 
 // WithSpecialist returns a copy that binds one packaged specialist profile. The
-// copy encodes the optional specialist block of context schema version 7; the
+// copy encodes the optional specialist block of context schema version 8; the
 // receiver is unchanged.
 func (p ContextPacket) WithSpecialist(specialist ContextSpecialist) (ContextPacket, error) {
 	if err := p.Validate(); err != nil {
@@ -845,7 +859,7 @@ type contextMemoryItemWire struct {
 }
 
 func encodeContextPacket(packet ContextPacket) ([]byte, error) {
-	// Every new generation context is version 7. The specialist block is present
+	// Every new generation context is version 8. The specialist block is present
 	// only when a packaged profile is bound. Instruction prose never enters the
 	// payload: the model receives it only through the trusted system channel,
 	// and the payload binds it by instructions_identity.
@@ -893,8 +907,8 @@ func ValidateContextPacketRequest(
 	return nil
 }
 
-// ValidateRecordedContextPacketRequest verifies exact v2, v3, v5 or v7 bytes for readback.
-// A v7 specialist block must re-derive exactly from the embedded profile catalog.
+// ValidateRecordedContextPacketRequest verifies exact v2, v3, v5, v7 or v8 bytes for readback.
+// A v7 or v8 specialist block must re-derive exactly from the embedded profile catalog.
 // It does not admit a legacy context for a new model attempt.
 func ValidateRecordedContextPacketRequest(
 	payload []byte,
@@ -958,7 +972,9 @@ func ValidateRecordedContextPacketRequest(
 	seenEvidence := make(map[string]struct{}, len(evidenceItems))
 	for index, source := range wire.Sources {
 		item := evidenceItems[index]
-		if _, exists := seenEvidence[item.ID()]; exists || !rangeSupportedBySnapshot(item.SourceRange(), snapshot) {
+		// Removed base lines are not head ranges and are never in the snapshot.
+		removed := source.Stage == ContextStageRemovedLines.String()
+		if _, exists := seenEvidence[item.ID()]; exists || !removed && !rangeSupportedBySnapshot(item.SourceRange(), snapshot) {
 			return ErrInvalidContextPacketRequest
 		}
 		seenEvidence[item.ID()] = struct{}{}
@@ -966,13 +982,14 @@ func ValidateRecordedContextPacketRequest(
 		if source.SourceID != item.ID() || source.EvidenceDigest != item.Digest() ||
 			source.Path != rangeValue.Path() || source.StartLine != rangeValue.StartLine() ||
 			source.EndLine != rangeValue.EndLine() || !utf8.ValidString(source.Content) ||
-			!validContextStageToken(source.Stage) || !validContextTaintToken(source.Taint) {
+			!validContextStageToken(source.Stage, wire.SchemaVersion == modelGenerationContextVersion) || !validContextTaintToken(source.Taint) ||
+			removed && source.Taint != memory.TaintRepositoryControlled.String() {
 			return ErrInvalidContextPacketRequest
 		}
 		contentDigest := sha256.Sum256([]byte(source.Content))
 		if hex.EncodeToString(contentDigest[:]) != item.Digest() ||
 			contextSourceLineCount(source.Content) != rangeValue.EndLine()-rangeValue.StartLine()+1 ||
-			!slices.Equal(source.RiskFlags, contextRiskTokens(recordedSourceRisks(wire.SchemaVersion == modelGenerationContextVersion, source.Path, source.Content))) ||
+			!slices.Equal(source.RiskFlags, contextRiskTokens(recordedSourceRisks(systemChannelGenerationVersion(wire.SchemaVersion), source.Path, source.Content))) ||
 			len(source.Content) > int(^uint32(0)-sourceBytes) {
 			return ErrInvalidContextPacketRequest
 		}
@@ -986,7 +1003,12 @@ func ValidateRecordedContextPacketRequest(
 
 const maxProviderContextPacketBytes = 8 << 20
 
-func validContextStageToken(value string) bool {
+// validContextStageToken admits removed_lines only for the contract versions
+// that define it; every earlier version keeps its original stage set.
+func validContextStageToken(value string, removedLines bool) bool {
+	if value == ContextStageRemovedLines.String() {
+		return removedLines
+	}
 	for stage := ContextStageChangedHunk; stage <= ContextStageRepositoryContext; stage++ {
 		if value == stage.String() {
 			return true

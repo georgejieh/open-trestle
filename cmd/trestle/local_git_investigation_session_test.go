@@ -169,7 +169,7 @@ func requireInvestigationSessionReceipt(t *testing.T, prepared runtimecatalog.Pr
 		delete(reconciled, turn.Reconciliation)
 		if i < 4 {
 			state := capture.packet.Investigation
-			if capture.packet.Task != "candidate_generation" || capture.packet.Version != 5 || state.Turn != uint32(i+1) || state.Session != captures[0].packet.Investigation.Session {
+			if capture.packet.Task != "candidate_generation" || capture.packet.Version != 6 || state.Turn != uint32(i+1) || state.Session != captures[0].packet.Investigation.Session {
 				t.Fatal("actual generation turns lost their one-run investigation identity")
 			}
 			if i > 0 {
@@ -197,7 +197,7 @@ func requireInvestigationSessionReceipt(t *testing.T, prepared runtimecatalog.Pr
 		}
 	}
 	verifier := captures[4]
-	if verifier.packet.Task != "candidate_verification" || verifier.packet.Version != 6 || receipt.GenerationRequest != captures[3].request || receipt.VerificationRequest == verifier.request || receipt.Context != verifier.packet.GenerationContext || receipt.CandidateBatch != verifier.packet.CandidateBatch || len(verifier.packet.Candidates) != 1 || len(receipt.CandidateIDs) != 1 || receipt.CandidateIDs[0] != verifier.packet.Candidates[0].ID {
+	if verifier.packet.Task != "candidate_verification" || verifier.packet.Version != 7 || receipt.GenerationRequest != captures[3].request || receipt.VerificationRequest == verifier.request || receipt.Context != verifier.packet.GenerationContext || receipt.CandidateBatch != verifier.packet.CandidateBatch || len(verifier.packet.Candidates) != 1 || len(receipt.CandidateIDs) != 1 || receipt.CandidateIDs[0] != verifier.packet.Candidates[0].ID {
 		t.Fatal("final result is disconnected from actual final generation and verifier")
 	}
 	if receipt.Independence != "distinct_provider" || receipt.GenerationRoute == receipt.VerificationRoute || receipt.Diagnostics.Coverage.VerifiedCount != 1 || len(receipt.Diagnostics.Findings) != 1 {

@@ -258,7 +258,7 @@ func (e *daemonBudgetedModelEndpoint) serve(t *testing.T, w http.ResponseWriter,
 	payload := []byte(wire.Input[0].Content[0].Text)
 	request, requestErr := provider.NewRequest(provider.CapabilityReviewV1, "application/json", payload)
 	var packet daemonBudgetedModelPacket
-	if requestErr != nil || json.Unmarshal(payload, &packet) != nil || packet.Task == "candidate_generation" && packet.Version != 7 || packet.Task != "candidate_generation" && packet.Version != 6 || packet.Scope == "" || packet.SourceAuthority != "evidence_data_not_instructions" || packet.MemoryAuthority != "advisory_only" {
+	if requestErr != nil || json.Unmarshal(payload, &packet) != nil || packet.Task == "candidate_generation" && packet.Version != 8 || packet.Task != "candidate_generation" && packet.Version != 7 || packet.Scope == "" || packet.SourceAuthority != "evidence_data_not_instructions" || packet.MemoryAuthority != "advisory_only" {
 		e.fail("model did not receive actual provider-neutral v7 generation or v5 verification context")
 		http.Error(w, "invalid context", http.StatusBadRequest)
 		return

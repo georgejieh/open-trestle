@@ -117,13 +117,13 @@ func contextSpecialistFromWire(wire *contextSpecialistWire) (ContextSpecialist, 
 }
 
 // validGenerationContextSpecialist binds the specialist block to the context
-// version: version 7 permits one, which must re-derive exactly from the embedded
-// catalog. Every other version forbids the block.
+// version: versions 7 and 8 permit one, which must re-derive exactly from the
+// embedded catalog. Every other version forbids the block.
 func validGenerationContextSpecialist(wire contextPacketWire) bool {
 	if wire.Specialist == nil {
 		return true
 	}
-	if wire.SchemaVersion != modelGenerationContextVersion {
+	if !systemChannelGenerationVersion(wire.SchemaVersion) {
 		return false
 	}
 	_, ok := contextSpecialistFromWire(wire.Specialist)
@@ -131,7 +131,7 @@ func validGenerationContextSpecialist(wire contextPacketWire) bool {
 }
 
 // executableGenerationContextVersion reports whether a generation context may
-// start a new model attempt. Versions 2, 3 and 5 are recorded readback only.
+// start a new model attempt. Versions 2, 3, 5 and 7 are recorded readback only.
 func executableGenerationContextVersion(version int) bool {
 	return version == modelGenerationContextVersion
 }
