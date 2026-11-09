@@ -98,7 +98,8 @@ type setRecordV7 struct {
 	Deterministic    *setRecordV6 `json:"deterministic,omitempty"`
 	Verified         *setRecordV5 `json:"verified,omitempty"`
 
-	ContextRefusal *contextRefusalRecord `json:"context_refusal,omitempty"`
+	ContextRefusal  *contextRefusalRecord `json:"context_refusal,omitempty"`
+	EvidenceExpired bool                  `json:"evidence_expired,omitempty"`
 }
 
 func setToRecordV7(s Set) setRecordV7 {
@@ -113,6 +114,7 @@ func setToRecordV7(s Set) setRecordV7 {
 		r.Verified = &value
 	}
 	r.ContextRefusal = contextRefusalToRecord(s.contextRefusal)
+	r.EvidenceExpired = s.evidenceExpired
 	return r
 }
 func parseSetV7(encoded []byte) (Set, error) {
@@ -152,6 +154,9 @@ func parseSetV7(encoded []byte) (Set, error) {
 			return Set{}, ErrInvalidSetEncoding
 		}
 		result, err = result.WithContextRefusal(refusal)
+	}
+	if err == nil && r.EvidenceExpired {
+		result, err = result.WithEvidenceExpired()
 	}
 	if err != nil || result.identity != r.Identity {
 		return Set{}, ErrInvalidSetIdentity

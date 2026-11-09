@@ -137,6 +137,10 @@
           ]
         }
       }
+    },
+    "evidence_expired": {
+      "description": "The result was recorded after the run's evidence retention lapsed. Its outcome is only what the run journal proves; it carries no evidence part, and absent evidence is unknown, not clean.",
+      "const": true
     }
   },
   "allOf": [
@@ -216,6 +220,47 @@
             "verified"
           ]
         }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "evidence_expired"
+        ]
+      },
+      "then": {
+        "properties": {
+          "outcome": {
+            "enum": [
+              "failed",
+              "canceled",
+              "abstained",
+              "inconclusive"
+            ]
+          },
+          "snapshot_identity": {
+            "const": ""
+          },
+          "head_revision": {
+            "const": ""
+          }
+        },
+        "allOf": [
+          {
+            "not": {
+              "required": [
+                "deterministic"
+              ]
+            }
+          },
+          {
+            "not": {
+              "required": [
+                "verified"
+              ]
+            }
+          }
+        ]
       }
     }
   ],

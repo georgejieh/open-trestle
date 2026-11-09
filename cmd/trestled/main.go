@@ -766,6 +766,7 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 			if projectorErr != nil {
 				return nil, ErrInvalidDaemonConfiguration
 			}
+			finalProjector.clock = daemonArtifactClock
 			localSupervisor, supervisorErr := worker.NewRepositorySupervisor(journal, preModelCatalog, worker.RepositorySupervisorOptions{TenantID: *tenantID, RepositoryIDs: []string(repositories), WorkerIdentity: "trestled-local-premodel", PollInterval: time.Second, RenewalInterval: 10 * time.Second, ExecutionTimeout: 30 * time.Minute, Clock: daemonArtifactClock, FinalizeSettled: true, OnTerminal: finalProjector.Project})
 			if supervisorErr != nil {
 				return nil, ErrInvalidDaemonConfiguration

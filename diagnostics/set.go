@@ -289,7 +289,8 @@ type Set struct {
 	candidateCount, rejectedCount, inconclusiveCount                                     uint16
 	sourceAnalyzedCount, sourceSelectedCount, sourceOmittedCount                         uint32
 
-	contextRefusal ContextRefusal
+	contextRefusal  ContextRefusal
+	evidenceExpired bool
 }
 
 // NewSet constructs the version 1 diagnostic contract for compatibility.
@@ -454,6 +455,9 @@ func (s Set) Validate() error {
 		rebuilt, err = NewFinalReviewSet(s.scope, s.snapshotIdentity, s.headRevision, s.finalOutcome, deterministic, verified)
 		if err == nil && s.contextRefusal.Reason != "" {
 			rebuilt, err = rebuilt.WithContextRefusal(s.contextRefusal)
+		}
+		if err == nil && s.evidenceExpired {
+			rebuilt, err = rebuilt.WithEvidenceExpired()
 		}
 	} else {
 		return ErrInvalidSet

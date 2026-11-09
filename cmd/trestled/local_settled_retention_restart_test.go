@@ -182,3 +182,60 @@ func TestDaemonLocalModelWorkersSettledRunsAfterRetentionRefusals(t *testing.T) 
 		})
 	}
 }
+
+// A run that ended before its final result was recorded, and is first
+// projected after retention lapses, must not stop the supervisor: it gets the
+// result its journal proves, marked evidence-expired, never a completed pass.
+func TestDaemonLocalModelWorkersProjectAfterRetentionKeepsServing(t *testing.T) {
+	args, getenv, fake, repository, base, head, policy, inventory := localModelWorkerFixture(t)
+	args = append(args, "--local-model-workers")
+	clock := &daemonBudgetedHandlerClock{at: time.Now().UTC().Truncate(time.Millisecond)}
+	statePath := daemonTestFlagValue(t, args, "--state-dir")
+	d, api, server := startContextRefusalDaemon(t, args, getenv, clock)
+	scope := runLocalFullReviewOnSupervisors(t, d, api, "run-projected-late", repository, base, head, policy, inventory, clock.Now())
+	receipt, err := api.GetRun(context.Background(), scope)
+	if err != nil || receipt.Status() != controlplane.ReviewRunSucceeded {
+		t.Fatalf("fixture run status=%v err=%v", receipt.Status(), err)
+	}
+	server.Close()
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a crash between finalization and projection.
+	entries, err := os.ReadDir(filepath.Join(statePath, "diagnostics"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	removed := 0
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".diagnostic-set.json") {
+			if err := os.Remove(filepath.Join(statePath, "diagnostics", entry.Name())); err != nil {
+				t.Fatal(err)
+			}
+			removed++
+		}
+	}
+	if removed != 1 {
+		t.Fatalf("removed %d final results", removed)
+	}
+	clock.mu.Lock()
+	clock.at = clock.at.Add(25 * time.Hour)
+	clock.mu.Unlock()
+	d, api, _ = startContextRefusalDaemon(t, args, getenv, clock)
+	for _, index := range []int{1, 2} {
+		if _, err := d.supervisors[index].(*worker.RepositorySupervisor).RunOnce(context.Background()); err != nil {
+			t.Fatalf("supervisor %d stopped projecting expired evidence: %v", index, err)
+		}
+	}
+	final, err := api.GetDiagnosticSet(context.Background(), scope)
+	if err != nil || final.Outcome() != diagnostics.FinalOutcomeInconclusive || !final.EvidenceExpired() || final.VerifiedSetIdentity() != "" || final.AnalysisResultIdentity() != "" {
+		t.Fatalf("late result outcome=%s expired=%v err=%v", final.Outcome(), final.EvidenceExpired(), err)
+	}
+	later := runLocalFullReviewOnSupervisors(t, d, api, "run-after-late-projection", repository, base, head, policy, inventory, clock.Now())
+	if result, err := api.GetDiagnosticSet(context.Background(), later); err != nil || result.Outcome() != diagnostics.FinalOutcomeCompleted || result.EvidenceExpired() {
+		t.Fatalf("later run result=%s err=%v", result.Outcome(), err)
+	}
+	if calls, _, _, _ := fake.generation.snapshot(); calls != 2 {
+		t.Fatalf("generation calls=%d", calls)
+	}
+}

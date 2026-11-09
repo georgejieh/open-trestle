@@ -24,6 +24,8 @@ type LocalFinalDiagnosticProjector struct {
 	artifacts               artifact.Store
 	destination             diagnostics.Store
 	analysisHandlerIdentity string
+	// clock reads evidence at the daemon's time; nil means the system clock.
+	clock artifact.Clock
 }
 
 func NewLocalFinalDiagnosticProjector(artifacts artifact.Store, destination diagnostics.Store, analysisHandlerIdentity string) (*LocalFinalDiagnosticProjector, error) {
@@ -55,7 +57,11 @@ func (p *LocalFinalDiagnosticProjector) Project(ctx context.Context, state contr
 	// was already projected; avoid repeatedly opening the evidence graph.
 	existing, err := p.destination.GetDiagnosticSet(ctx, scope)
 	if err == nil {
-		if existing.SchemaVersion() != 7 || existing.Scope().Identity() != scope.Identity() || !localFinalOutcomeMatchesState(existing.Outcome(), state) {
+		matches := localFinalOutcomeMatchesState(existing.Outcome(), state)
+		if existing.EvidenceExpired() {
+			matches = existing.Outcome() == expiredFinalOutcome(state)
+		}
+		if existing.SchemaVersion() != 7 || existing.Scope().Identity() != scope.Identity() || !matches {
 			return diagnostics.ErrSetConflict
 		}
 		return nil
@@ -89,15 +95,15 @@ func (p *LocalFinalDiagnosticProjector) Project(ctx context.Context, state contr
 		return ErrInvalidLocalFinalDiagnosticProjection
 	}
 	at := time.Now().UTC()
+	if p.clock != nil {
+		at = p.clock.Now().UTC()
+	}
 	deterministic, verified, err := publication.BuildFinalDiagnosticParts(ctx, p.artifacts, scope, analysisID, changeID, verificationID, at)
+	if errors.Is(err, artifact.ErrArtifactExpired) {
+		return p.projectExpired(ctx, state)
+	}
 	if err != nil {
-		// A run refused for its route may be finalized after its evidence
-		// retention lapsed. The refusal is in the journal, so it still gets
-		// its failed result; the expired parts are reported unavailable.
-		if _, refused := finalContextRefusal(state); !refused || state.Status() != controlplane.ReviewRunFailed || verificationID != "" || !errors.Is(err, artifact.ErrArtifactExpired) {
-			return err
-		}
-		deterministic, verified = diagnostics.Set{}, diagnostics.Set{}
+		return err
 	}
 	outcome := diagnostics.FinalOutcomeFailed
 	switch state.Status() {
@@ -126,6 +132,9 @@ func (p *LocalFinalDiagnosticProjector) Project(ctx context.Context, state contr
 				}
 				if contextState.Status() == controlplane.TaskRuntimeFailed && contextState.OutputIdentity() != "" {
 					valid, err := p.validContextAbstention(ctx, state, contextTask, analysisID, changeID, contextState.OutputIdentity(), at)
+					if errors.Is(err, artifact.ErrArtifactExpired) {
+						return p.projectExpired(ctx, state)
+					}
 					if err != nil {
 						return err
 					}
@@ -329,4 +338,45 @@ func finalContextRefusal(state controlplane.ReviewRunState) (diagnostics.Context
 	default:
 		return diagnostics.ContextRefusal{}, false
 	}
+}
+
+// projectExpired records the final result of a run whose evidence retention
+// lapsed before it was projected. It reads no artifact: the outcome is only
+// what the journal proves, the result carries no evidence part, and it is
+// marked evidence-expired so readers do not take absent evidence as clean.
+func (p *LocalFinalDiagnosticProjector) projectExpired(ctx context.Context, state controlplane.ReviewRunState) error {
+	outcome := expiredFinalOutcome(state)
+	result, err := diagnostics.NewFinalReviewSet(state.Plan().Scope(), "", "", outcome, diagnostics.Set{}, diagnostics.Set{})
+	if err != nil {
+		return err
+	}
+	if refusal, refused := finalContextRefusal(state); refused && outcome == diagnostics.FinalOutcomeFailed {
+		if result, err = result.WithContextRefusal(refusal); err != nil {
+			return err
+		}
+	}
+	if result, err = result.WithEvidenceExpired(); err != nil {
+		return err
+	}
+	_, err = p.destination.PutDiagnosticSet(ctx, result)
+	return err
+}
+
+// expiredFinalOutcome is the outcome the journal alone proves. A succeeded
+// run is inconclusive without its verified evidence, never completed, and a
+// context abstention cannot be confirmed without its artifact, so it fails.
+func expiredFinalOutcome(state controlplane.ReviewRunState) diagnostics.FinalOutcome {
+	switch state.Status() {
+	case controlplane.ReviewRunCanceled:
+		return diagnostics.FinalOutcomeCanceled
+	case controlplane.ReviewRunSucceeded:
+		return diagnostics.FinalOutcomeInconclusive
+	}
+	verification, _ := state.Task("verification")
+	candidates, _ := state.Task("candidates")
+	contextState, _ := state.Task("context")
+	if verification.Status() == controlplane.TaskRuntimeFailed || candidates.Status() == controlplane.TaskRuntimeFailed || contextState.Status() == controlplane.TaskRuntimeSucceeded && verification.Status() == controlplane.TaskRuntimeSkipped {
+		return diagnostics.FinalOutcomeInconclusive
+	}
+	return diagnostics.FinalOutcomeFailed
 }

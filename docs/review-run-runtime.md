@@ -88,9 +88,15 @@ Startup then still requires the exact recipe, current pipeline enrollment and
 review policy, no linked input, no route effect in the scope's audit, and no
 scope marker, but it neither reads nor deletes the expired bytes and appends
 nothing, so every later boot reaches the same result. Removing an expired
-artifact file does not change that result. A refused run finalized after its
-retention lapsed gets its failed result with the recorded refusal and reports
-the expired deterministic evidence as unavailable. A v4 the journal has not
+artifact file does not change that result. A run first projected after its
+evidence retention lapsed (for example a daemon stopped between finalization
+and projection) gets the final result its journal proves, marked
+`evidence_expired` and without any deterministic or verified part; no expired
+artifact is read. A canceled run stays canceled and a failed run failed or
+inconclusive, with a recorded route refusal kept. A succeeded run is reported
+inconclusive, never completed, because a completed result needs its verified
+evidence, and a context abstention cannot be confirmed without its artifact,
+so it is reported failed. The supervisor keeps serving later runs. A v4 the journal has not
 settled still requires live packet retention: its startup termination is
 authorized only by the byte proof, so boot refuses it once retention lapses.
 
