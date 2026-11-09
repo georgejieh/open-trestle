@@ -120,7 +120,11 @@ func (p *Processor) Process(ctx context.Context, stored StoredDelivery, at time.
 	if prepared {
 		existingPlan, existingState, resumeErr := p.coordinator.Resume(ctx, scope)
 		if resumeErr == nil {
-			if existingPlan.Identity() != plan.Identity() {
+			// A delivery's run is opened once and its plan is immutable, so a
+			// run already opened for this exact delivery is its run even when an
+			// earlier planner version produced it; only a plan for another
+			// request conflicts.
+			if existingPlan.Identity() != plan.Identity() && (existingPlan.RequestIdentity() != delivery.Identity() || existingPlan.Scope().Identity() != scope.Identity()) {
 				return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, refuseDelivery(RefusalReasonRunPlanConflict, controlplane.ErrRunPlanConflict)
 			}
 			existingState, resumeErr = p.coordinator.Advance(ctx, existingPlan, at)
