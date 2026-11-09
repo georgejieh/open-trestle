@@ -872,44 +872,88 @@ its identity and slice binding from the bytes, and adds one `removed_lines`
 source per deletion point. The source's `path` is the file and its `start_line`
 and `end_line` are base line numbers, not head lines. Like every other source it
 is `repository_controlled` data with `risk_flags` computed by the same rules, so
-an injection payload in deleted text is flagged and never followed. The
-generation (context version 8), verification (version 7) and investigation
-(version 6) contracts each tell the model that `removed_lines` sources are
-deleted base lines: evidence of what was removed, not code that remains. The
-verifier receives the same sources, so it sees the removed text for a finding at
-a deletion point.
+an injection payload in deleted text is flagged and never followed. A
+deletion point's source also carries `head_line`, the head line beside which the
+lines were removed (the first line of its `analysis_deleted_lines` omission).
+Readback refuses a `head_line` on any other stage, or one outside every
+`changed_hunk` source of the same file. The generation (context version 8),
+verification (version 7) and investigation (version 6) contracts each tell the
+model that `removed_lines` sources are deleted base lines, and how to report an
+issue in the removed code on them. The verifier receives the same sources.
 
-A `removed_lines` source never anchors a finding. Findings anchor on head lines,
-and the `changed_hunk` windows around each deletion point already cover the lines
-on either side of it. Generation admission drops, and counts, a candidate located
-in a `removed_lines` source, with the mechanism that drops `repository_context`
-anchors: the count is the existing `repository_context_anchor_omitted` batch
-count and `repository_context_anchor_candidates_omitted` limitation, which from
-context version 8 also covers removed-lines anchors. An investigation turn whose
-candidate is located in removed lines fails closed, because an uncategorized
-investigation batch cannot record a drop. A candidate or verified verdict may
-cite a `removed_lines` source as evidence, but its base line numbers never count
-as covering the anchored head lines.
+### Base-side findings
+
+A finding about code that still exists is located on head lines, as before. A
+finding about the removed code itself may be located in the `removed_lines`
+source that holds it: a base-side finding. Its `start_line` and `end_line` are
+base line numbers inside that source, and it records the source's `head_line`
+(none for an emptied or removed file). Base and head line numbers are different
+coordinate spaces: base-line evidence never covers a head location, head-line
+evidence never covers a base-side location, and only cited `removed_lines`
+evidence can verify a base-side finding. The `repository_context_anchor_omitted`
+count again covers only `repository_context` anchors, which are still dropped.
+Investigation turns admit base-side findings too.
+
+Every recorded format names the side explicitly, so readback can never turn base
+lines into head lines:
+
+- candidate-batch encoding v2, verified-finding-set v2 and verification-context
+  v7 record `"side":"base"` and `head_line` (they exist only in this development
+  candidate and were extended in place);
+- formats that predate this candidate keep their bytes and gain a version used
+  only when a base side is present: candidate-batch encoding v3 and
+  verified-finding-set v3 (uncategorized, from investigation),
+  verification-batch v2, model-generation-input v4 (unsanitized, with
+  `removed_lines` evidence marked `"side":"base"`) and v5 (an investigation
+  input with such evidence), and verified diagnostic set
+  v8 (`schemas/diagnostics/verified-diagnostic-set-v8.schema.json`), which the
+  final set v7 may embed in place of v5.
+
+Each output shows a base-side finding without presenting its numbers as head
+lines:
+
+| Output | Base-side finding |
+|---|---|
+| Text result and review set | `source: path removed base lines a-b (beside head line h)` |
+| JSON result | the recorded diagnostic set, with `side` and `head_line` |
+| SARIF | a result at the head line beside the deletion point, with `(removed base lines a-b)` in the message and `trestleSide`, `trestleBaseStartLine` and `trestleBaseEndLine` properties; with no head line (an emptied or removed file), a run-level notification instead of a result |
+| GitHub | the review summary only, labelled `` `path` removed base lines a-b ``; never an inline comment |
+| Web console and terminal | the location is labelled as removed base lines |
+| Language server | a file-level diagnostic whose message starts `Base lines a-b (removed code):`; a removed file has no open head document |
+| Retained-memory feedback | matches head findings only |
+
+Review sets never merge a base-side finding with a head finding.
+
+### Bounds and removed files
 
 Removed text is bounded per deletion point (64 lines, 8 KiB) and per file
 (32 KiB). Text past a bound is never truncated: that point's removed text is
 recorded whole as an `analysis_removed_lines_limit` omission whose lines are the
 removed base lines. Removed text that is not valid UTF-8 text, on an excluded or
 unauthorized path, or past the candidate limit is omitted with the usual reason
-at its base lines. A `removed_lines` source is supplied only beside a selected
-head source of the same file; one whose head context did not fit the packet is
-recorded as a `packet_budget` omission at its base lines.
+at its base lines. A deletion point's removed text is supplied only when a
+selected `changed_hunk` of its file holds its `head_line`; otherwise it is a
+`packet_budget` omission at its base lines.
 
-The whole-entry `no_changed_head_lines` gap (context omission
-`analysis_no_changed_head_lines`) remains when deletion-point context cannot be
-built: the diff is unsupported or over its limits, or the evidence limits are
-reached. A file whose head is now empty and a removed file have no head line to
-anchor a finding, so their removed text is not supplied either: they stay
-explicit whole-entry omissions (`analysis_no_changed_head_lines` and
-`analysis_removed_file`). Existing semantic references may still supply
-reviewable head source. If no source remains, the run refuses with
-`all_sources_omitted`; that is not a completed model review or clearance.
-Removed text alone never makes a change reviewable.
+A file whose head is now empty, and a removed file, keep their whole-entry
+omission (`analysis_no_changed_head_lines` or `analysis_removed_file`), so their
+review is never full clearance. Their removed base text is also bound and
+supplied, with no `head_line`: consecutive line-aligned chunks of at most 64
+lines and 8 KiB each, up to 32 KiB per file, covering the base file from line 1.
+The rest of the file, from the first line that does not fit, is one
+`analysis_removed_lines_limit` omission at its base lines; a line is never cut.
+This text needs no head neighbor, so a change that only removes files is reviewed
+from it: its review snapshot has no head range and its packet holds only removed
+text. A removed file whose text cannot be supplied (for example binary content)
+leaves nothing to review, and such a change still refuses with
+`all_sources_omitted`, which is not a completed model review or clearance. The
+whole-entry `no_changed_head_lines` gap also remains, without removed text, when
+a file that still has head lines cannot get deletion-point context: the diff is
+unsupported or over its limits, or the evidence limits are reached.
+
+An investigation turn needs head files to read, so investigation mode still
+requires at least one head range: a change that only removes files is reviewed
+by the direct mode.
 
 ## Results and limits
 

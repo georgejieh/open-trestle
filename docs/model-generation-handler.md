@@ -37,7 +37,7 @@ A successful response is admitted only when:
 - semantic duplicate findings are absent
 - reconciled cost does not exceed the authorized budget
 
-A candidate whose `source_range` names a `repository_context` source or, from context version 8, a `removed_lines` source is dropped from the admitted batch, not treated as a failure: the remaining candidates are admitted with contiguous ordinals, and the drop count is bound into the batch identity and durable encoding (`repository_context_anchor_omitted`, absent when zero; the name predates `removed_lines` and the count covers both). A `removed_lines` source may be cited as evidence, but its base line numbers never count as covering the candidate's head lines.
+A candidate whose `source_range` names a `repository_context` source is dropped from the admitted batch, not treated as a failure: the remaining candidates are admitted with contiguous ordinals, and the drop count is bound into the batch identity and durable encoding (`repository_context_anchor_omitted`, absent when zero). From context version 8 a candidate located in a `removed_lines` source is a base-side finding: its lines are base lines inside that source, it records the source's `head_line`, and only cited `removed_lines` evidence covers it. Base-line evidence never covers a head location. The durable candidate-batch encoding records `"side":"base"` and `head_line` on such a candidate and on each cited removed_lines binding; see [base-side findings](local-model-review.md#base-side-findings).
 
 Provider reasoning and invalid model output are not persisted as candidates.
 

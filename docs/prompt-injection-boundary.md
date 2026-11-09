@@ -142,8 +142,9 @@ model as `removed_lines` sources with `repository_controlled` taint and
 in deleted code is flagged, stays inside a JSON string value, and leaves the
 system channel unchanged. Each contract says, in one sentence, that these
 sources are deleted base lines with base line numbers: evidence of what was
-removed, not code that remains. They never anchor a finding, and their base line
-numbers never count as covering a finding's head lines. Publication content scans also keep the legacy
+removed, not code that remains, and that an issue in the removed code itself is
+located on that source with its base line numbers. Base and head line numbers
+never cover each other. Publication content scans also keep the legacy
 rules. The base-tree instruction files that the
 [context-assembly handler](context-assembly-handler.md#repository-instruction-files)
 supplies as `repository_context` all match `agent_configuration`.

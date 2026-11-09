@@ -18,6 +18,8 @@ Publication uses `POST /repos/{owner}/{repo}/pulls/{number}/reviews` with:
 - all summary-only findings in the review body
 - a deterministic operation marker derived from the authorization
 
+A finding on removed base lines is always summary-only, labelled `` `path` removed base lines a-b ``, and never an inline comment. An inline comment anchors on head lines (side `RIGHT`), and GitHub numbers the left side of a pull request diff from the merge base, which need not be the reviewed base revision, so base line numbers could point at other lines. Selection and plan validation refuse an inline base-side finding, and the adapter refuses to build one.
+
 Only independently verified findings contained in the authorized publication plan enter the request. The adapter checks the returned review ID and exact commit ID. It hashes the external review reference before returning it to the runtime.
 
 Finding text remains untrusted. The renderer neutralizes user mentions, HTML, image syntax, emphasis, links, headings, code delimiters, and table syntax before GitHub interprets Markdown. The request fails closed if the body or complete JSON exceeds its bound. Provider error bodies are discarded and never enter results.
