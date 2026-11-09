@@ -44,6 +44,7 @@ type recordedNamesFixture struct {
 	prepared     controlplane.PreparedContextPacket
 	ownerFixture localPacketOwnerFixture
 	journalPath  string
+	lease        controlplane.TaskLease
 }
 
 // Reuse synthetic source artifacts, then record their exact first-attempt
@@ -233,7 +234,7 @@ func newRecordedNamesFixture(t *testing.T, alter func([]controlplane.TaskDefinit
 	if err != nil || len(facts) != 1 {
 		t.Fatal("facts", len(facts), err)
 	}
-	return recordedNamesFixture{fact: facts[0], a: a, root: f.rootDigest, catalog: catalog, binding: historicalRecordedSourceBinding{f.rootDigest, f.repository.Identity(), f.adapter.Identity().Identity()}, journal: j, coordinator: c, prepared: prepared, ownerFixture: f, journalPath: journalPath}
+	return recordedNamesFixture{fact: facts[0], a: a, root: f.rootDigest, catalog: catalog, binding: historicalRecordedSourceBinding{f.rootDigest, f.repository.Identity(), f.adapter.Identity().Identity()}, journal: j, coordinator: c, prepared: prepared, ownerFixture: f, journalPath: journalPath, lease: lease}
 }
 
 func TestRecordedHistoricalV4NamesRejectsEmpty(t *testing.T) {

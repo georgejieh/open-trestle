@@ -28,9 +28,20 @@ func expiredPacketCheckpoint(f controlplane.HistoricalContextPacketFact) histori
 	return historicalExpiredPacketCheckpoint{f.Plan().Scope(), f.Plan().Identity(), f.PreparedEvent().Identity(), f.FinalHeadIdentity(), f.FinalRevision()}
 }
 
+// policyTerminatedV4Tail reports a packet-only preparation already settled by
+// a no-output policy failure: a lease-expiry termination or an in-lease route
+// refusal, each possibly followed by part of the closed cleanup suffix.
+func policyTerminatedV4Tail(tail controlplane.ContextPacketExpiryTail) bool {
+	return tail == controlplane.ContextPacketExpiryTailExpiredV4PolicyTerminated || tail == controlplane.ContextPacketExpiryTailRefusedV4PolicyTerminated
+}
+
+// expiredPacketCheckpointValid admits an exact or expiry-terminated v4 only
+// after its original lease expired, and a refused v4 at any time, since its
+// lease holder already settled it. Packet retention must remain live for all.
 func expiredPacketCheckpointValid(f controlplane.HistoricalContextPacketFact, now time.Time) error {
 	tail := f.ExpiryTail()
-	if tail != controlplane.ContextPacketExpiryTailActiveExactV4 && tail != controlplane.ContextPacketExpiryTailExpiredV4PolicyTerminated || now.UnixMilli() <= 0 || now.Before(f.LeaseEvent().LeaseExpiresAt()) || now.UnixMilli() >= f.PreparedEvent().PacketDescriptor().ExpiresAtMilliseconds {
+	leaseBound := tail == controlplane.ContextPacketExpiryTailActiveExactV4 || tail == controlplane.ContextPacketExpiryTailExpiredV4PolicyTerminated
+	if !leaseBound && tail != controlplane.ContextPacketExpiryTailRefusedV4PolicyTerminated || now.UnixMilli() <= 0 || leaseBound && now.Before(f.LeaseEvent().LeaseExpiresAt()) || now.UnixMilli() >= f.PreparedEvent().PacketDescriptor().ExpiresAtMilliseconds {
 		return errHistoricalPacketExpiryStartup
 	}
 	if _, linked := f.LinkedInputEvent(); linked {
@@ -104,7 +115,12 @@ func verifyOwnerExpiredPacketStartup(ctx context.Context, owner *localPacketOwne
 		return errors.Join(errHistoricalPacketExpiryStartup, err)
 	}
 	for i, f := range after {
-		if expiredPacketCheckpoint(f) != checkpoints[i] || f.ExpiryTail() != controlplane.ContextPacketExpiryTailExpiredV4PolicyTerminated {
+		// A termination appended above leaves the expiry tail; a refusal stays one.
+		want := controlplane.ContextPacketExpiryTailExpiredV4PolicyTerminated
+		if facts[i].ExpiryTail() == controlplane.ContextPacketExpiryTailRefusedV4PolicyTerminated {
+			want = controlplane.ContextPacketExpiryTailRefusedV4PolicyTerminated
+		}
+		if expiredPacketCheckpoint(f) != checkpoints[i] || f.ExpiryTail() != want {
 			return errHistoricalPacketExpiryStartup
 		}
 	}

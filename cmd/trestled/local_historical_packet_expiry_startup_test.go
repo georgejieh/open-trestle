@@ -21,7 +21,17 @@ import (
 // The parser fixture executes only existing synthetic source/deterministic tasks.
 func expiryStartupFixture(t *testing.T) recordedNamesFixture {
 	t.Helper()
+	return expiryStartupFixtureAfter(t, nil)
+}
+
+// expiryStartupFixtureAfter lets settle extend the recorded journal before it
+// is seeded into the owner's state.
+func expiryStartupFixtureAfter(t *testing.T, settle func(*recordedNamesFixture)) recordedNamesFixture {
+	t.Helper()
 	f := newRecordedNamesFixture(t, nil, "", false)
+	if settle != nil {
+		settle(&f)
+	}
 	allowed, err := recordedHistoricalV4Names(f.fact, f.a, f.binding)
 	if err != nil {
 		t.Fatal(err)

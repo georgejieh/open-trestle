@@ -36,7 +36,7 @@ type historicalRecordedV4Artifacts struct {
 // Current pipeline enrollment is checked separately.
 // Canonical physical reads and their final witnesses remain the caller's job.
 func recordedHistoricalV4Names(fact controlplane.HistoricalContextPacketFact, a historicalRecordedV4Artifacts, binding historicalRecordedSourceBinding) ([]string, error) {
-	if fact.ExpiryTail() != controlplane.ContextPacketExpiryTailActiveExactV4 && fact.ExpiryTail() != controlplane.ContextPacketExpiryTailExpiredV4PolicyTerminated {
+	if fact.ExpiryTail() != controlplane.ContextPacketExpiryTailActiveExactV4 && !policyTerminatedV4Tail(fact.ExpiryTail()) {
 		return nil, errHistoricalRecordedV4Names
 	}
 	if _, ok := fact.LinkedInputEvent(); ok {

@@ -73,6 +73,10 @@ Marker-free complete-v4 startup is limited to the exact first-attempt local
 nine-task recipe, either at its prepared head or a recognized policy-failure
 cleanup prefix. The original lease must be expired at the actual check time
 (expiry inclusive), while packet retention must remain live (expiry exclusive).
+A v4 its lease holder already settled as a recorded route refusal, with or
+without part of the same cleanup suffix, needs no lease expiry because it holds
+no lease; every other condition below applies unchanged, and startup appends
+nothing to it.
 Each recorded envelope must expire no earlier than the packet. Before store
 activation, startup checks canonical bytes and exact same-scope names against the
 configured source root/repository/adapter. After current pipeline construction,
@@ -102,7 +106,7 @@ The package provides the task graph, canonical encodings, memory and durable loc
 A previously policy-terminated context packet (V4) may coexist with a later
 owner-settled context input (V6) at restart. This is a narrow composition of two
 existing proofs, not generic mixed-history recovery. Every unlinked packet must
-have the exact expired policy-failure tail, the current nine-task recipe and
+have the exact expired policy-failure or recorded route-refusal tail, the current nine-task recipe and
 catalog, retained canonical source/context envelopes and exact same-scope file
 names, and no route effects in its audit stream. Each linked scope must have its
 own V6 settlement and pass the existing byte, replay and route-audit proof before

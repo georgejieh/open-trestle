@@ -165,7 +165,7 @@ func inspectRecordedHistoricalPackets(ctx context.Context, journal *controlplane
 						index++
 						linked, hasLinked := fact.LinkedInputEvent()
 						if !hasLinked {
-							terminatedV4 := fact.ExpiryTail() == controlplane.ContextPacketExpiryTailExpiredV4PolicyTerminated && recordedV4PlanShape(fact.Plan()) && expiredPacketCheckpointValid(fact, now) == nil
+							terminatedV4 := policyTerminatedV4Tail(fact.ExpiryTail()) && recordedV4PlanShape(fact.Plan()) && expiredPacketCheckpointValid(fact, now) == nil
 							if !terminatedV4 {
 								allOwnerSettled = false
 								allOwnerVersioned = false
@@ -247,7 +247,7 @@ func inspectRecordedHistoricalPackets(ctx context.Context, journal *controlplane
 								}
 								continue
 							}
-							if fact.ExpiryTail() != controlplane.ContextPacketExpiryTailExpiredV4PolicyTerminated || !recordedV4PlanShape(fact.Plan()) || expiredPacketCheckpointValid(fact, now) != nil {
+							if !policyTerminatedV4Tail(fact.ExpiryTail()) || !recordedV4PlanShape(fact.Plan()) || expiredPacketCheckpointValid(fact, now) != nil {
 								return errHistoricalPacketObservedAtStartup
 							}
 							if err := observeBorrowedHistoricalRecordedV4Names(ctx, artifactRoot, fact, historicalRecordedSourceBinding{RootIdentity: sourceDigest, RepositoryIdentity: repository.Identity(), AdapterIdentity: adapter.Identity().Identity()}); err != nil {
