@@ -134,7 +134,9 @@ func feedbackDecisionText(set diagnostics.Set, path string, start uint32, decisi
 	var selected diagnostics.Finding
 	count := 0
 	for _, finding := range set.Findings() {
-		if finding.Path() == path && finding.StartLine() == start {
+		// Feedback names a head path and line; a finding on removed base lines
+		// never matches, even with equal numbers.
+		if finding.Side() == diagnostics.LineSideHead && finding.Path() == path && finding.StartLine() == start {
 			selected = finding
 			count++
 		}

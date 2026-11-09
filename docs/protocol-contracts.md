@@ -171,6 +171,7 @@ Diagnostic schemas:
 - `schemas/diagnostics/verified-diagnostic-set-v5.schema.json`
 - `schemas/diagnostics/deterministic-diagnostic-set-v6.schema.json`
 - `schemas/diagnostics/full-review-diagnostic-set-v7.schema.json`
+- `schemas/diagnostics/verified-diagnostic-set-v8.schema.json`
 
 Webhook schemas:
 

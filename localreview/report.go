@@ -1,6 +1,7 @@
 package localreview
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/georgejieh/open-trestle/diagnostics"
@@ -96,6 +97,20 @@ type ReportFinding struct {
 	Fix            string
 }
 
+// ErrBaseSideFindingUnsupported identifies a result whose verified findings
+// include removed base lines, which the text and report projections cannot
+// place without presenting base line numbers as head lines.
+var ErrBaseSideFindingUnsupported = errors.New("local review result has a finding on removed base lines")
+
+func hasBaseSideFinding(set diagnostics.Set) bool {
+	for _, finding := range set.Findings() {
+		if finding.Side() != diagnostics.LineSideHead {
+			return true
+		}
+	}
+	return false
+}
+
 // ReportOmission counts bounded source omissions by reason.
 type ReportOmission struct {
 	Reason string
@@ -149,6 +164,9 @@ type Report struct {
 func (r Result) Report() (Report, error) {
 	if !r.valid || r.wire.ComprehensiveClearance {
 		return Report{}, ErrInvalidResult
+	}
+	if hasBaseSideFinding(r.diagnostics) {
+		return Report{}, ErrBaseSideFindingUnsupported
 	}
 	report := Report{
 		Status: r.wire.Status, CIDisposition: r.wire.CI, RunStatus: r.wire.RunStatus, Failure: r.wire.Failure,

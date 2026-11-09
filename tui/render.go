@@ -124,7 +124,7 @@ func writeVerifiedDiagnostics(builder *strings.Builder, set diagnostics.Set, wid
 					fmt.Fprintf(builder, "  %d %s\n", summary.Count(), strings.ReplaceAll(summary.Reason().String(), "_", " "))
 				}
 			}
-			if set.SchemaVersion() == 5 {
+			if set.SchemaVersion() == 5 || set.SchemaVersion() == 8 {
 				check := set.DeterministicChecks()[0]
 				switch check.State() {
 				case diagnostics.CheckPassed:
@@ -141,7 +141,14 @@ func writeVerifiedDiagnostics(builder *strings.Builder, set diagnostics.Set, wid
 		}
 		builder.WriteString("Coverage does not approve the change or prove correctness.\n")
 	}
+	hidden := 0
 	for _, finding := range findings {
+		// This view lists head locations only. A finding on removed base lines
+		// is counted, never shown with its base lines as head lines.
+		if finding.Side() != diagnostics.LineSideHead {
+			hidden++
+			continue
+		}
 		location := fmt.Sprintf("%s:%d", safeTerminalText(finding.Path()), finding.StartLine())
 		if finding.EndLine() != finding.StartLine() {
 			location += fmt.Sprintf("-%d", finding.EndLine())
@@ -152,5 +159,8 @@ func writeVerifiedDiagnostics(builder *strings.Builder, set diagnostics.Set, wid
 			available = 1
 		}
 		fmt.Fprintf(builder, "%-11s %s  %s\n", finding.Severity().String(), location, truncateTerminalText(finding.Title(), available))
+	}
+	if hidden > 0 {
+		fmt.Fprintf(builder, "%d verified finding(s) on removed base lines are not shown in this view.\n", hidden)
 	}
 }

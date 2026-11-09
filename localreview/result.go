@@ -754,6 +754,9 @@ func RenderResult(writer io.Writer, r Result) error {
 	if nilValue(writer) || !r.valid {
 		return ErrInvalidResult
 	}
+	if hasBaseSideFinding(r.diagnostics) {
+		return ErrBaseSideFindingUnsupported
+	}
 	if r.sealedText != nil {
 		n, err := writer.Write(append([]byte(nil), r.sealedText...))
 		if err == nil && n != len(r.sealedText) {

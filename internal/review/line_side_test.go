@@ -288,8 +288,9 @@ func TestHeadOnlyConsumersRefuseABaseSideFinding(t *testing.T) {
 	if _, err := ExportDiagnosticSet(scope, strings.Repeat("1", 40), receipt, verified); err != nil {
 		t.Fatalf("head fixture does not export: %v", err)
 	}
-	if _, err := ExportDiagnosticSet(scope, strings.Repeat("1", 40), receipt, base); !errors.Is(err, ErrVerifiedFindingBindingMismatch) {
-		t.Fatalf("diagnostic export accepted a base-side finding: %v", err)
+	// Version 2 cannot record a side; only version 8 carries a base-side finding.
+	if _, err := ExportDiagnosticSet(scope, strings.Repeat("1", 40), receipt, base); err == nil {
+		t.Fatal("version 2 diagnostic export accepted a base-side finding")
 	}
 	policy, err := NewPublicationPolicy(SeverityLow, 10, gateway.RouteIndependenceDistinctProvider, true)
 	if err != nil {

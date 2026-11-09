@@ -253,6 +253,13 @@ func buildDiagnosticSetSARIF(set diagnostics.Set) (sarifLog, error) {
 	if err := set.Validate(); err != nil {
 		return sarifLog{}, fmt.Errorf("diagnostic set is invalid: %w", err)
 	}
+	// SARIF regions are head-revision regions. Refuse a finding on removed
+	// base lines rather than emit its base line numbers as a head region.
+	for _, finding := range set.Findings() {
+		if finding.Side() != diagnostics.LineSideHead {
+			return sarifLog{}, fmt.Errorf("diagnostic set has a finding on removed base lines, which SARIF output cannot place")
+		}
+	}
 	if version == 1 {
 		return buildHistoricalV1DiagnosticSetSARIF(set)
 	}

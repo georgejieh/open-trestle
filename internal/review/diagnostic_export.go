@@ -60,7 +60,7 @@ func MaterializeDiagnosticSetWithSourceCoverage(
 	return exported, created, nil
 }
 
-// MaterializeDiagnosticSetWithDeterministicChecks exports and idempotently persists version 5 diagnostics.
+// MaterializeDiagnosticSetWithDeterministicChecks exports and idempotently persists version 5 or 8 diagnostics.
 func MaterializeDiagnosticSetWithDeterministicChecks(
 	ctx context.Context,
 	store diagnostics.Store,
@@ -134,20 +134,32 @@ func ExportDiagnosticSetWithSourceCoverage(scope audit.ReviewScope, headRevision
 	return diagnostics.NewSetWithSourceCoverage(scope, set.SnapshotIdentity(), headRevision, set.Identity(), coverage.VerificationContextIdentity(), uint16(set.CandidateCount()), uint16(set.RejectedCount()), uint16(set.InconclusiveCount()), coverage.AnalyzedCount(), coverage.SelectedCount(), coverage.OmittedCount(), findings)
 }
 
-// ExportDiagnosticSetWithDeterministicChecks adds exact content-free checks to version 5 diagnostics.
+// ExportDiagnosticSetWithDeterministicChecks adds exact content-free checks to
+// version 5 diagnostics, or version 8 when a verified finding is on removed
+// base lines.
 func ExportDiagnosticSetWithDeterministicChecks(scope audit.ReviewScope, headRevision string, receipt IndependentVerificationReceipt, set VerifiedFindingSet, coverage ContextSourceCoverage, checks []diagnostics.DeterministicCheck) (diagnostics.Set, error) {
-	base, err := ExportDiagnosticSetWithOmissionReasons(scope, headRevision, receipt, set, coverage)
+	findings, summaries, err := exportDiagnosticFindingsWithOmissions(scope, receipt, set, coverage)
 	if err != nil {
 		return diagnostics.Set{}, err
 	}
-	return diagnostics.NewSetWithDeterministicChecks(base.Scope(), base.SnapshotIdentity(), base.HeadRevision(), base.VerifiedSetIdentity(), base.VerificationContextIdentity(), base.CandidateCount(), base.RejectedCount(), base.InconclusiveCount(), base.SourceAnalyzedCount(), base.SourceSelectedCount(), base.SourceOmittedCount(), base.OmissionSummaries(), checks, base.Findings())
+	return diagnostics.NewSetWithDeterministicChecks(scope, set.SnapshotIdentity(), headRevision, set.Identity(), coverage.VerificationContextIdentity(), uint16(set.CandidateCount()), uint16(set.RejectedCount()), uint16(set.InconclusiveCount()), coverage.AnalyzedCount(), coverage.SelectedCount(), coverage.OmittedCount(), summaries, checks, findings)
 }
 
 // ExportDiagnosticSetWithOmissionReasons adds bounded aggregate omission reasons to version 4 diagnostics.
 func ExportDiagnosticSetWithOmissionReasons(scope audit.ReviewScope, headRevision string, receipt IndependentVerificationReceipt, set VerifiedFindingSet, coverage ContextSourceCoverage) (diagnostics.Set, error) {
-	findings, err := exportDiagnosticFindings(scope, receipt, set)
+	findings, summaries, err := exportDiagnosticFindingsWithOmissions(scope, receipt, set, coverage)
 	if err != nil {
 		return diagnostics.Set{}, err
+	}
+	return diagnostics.NewSetWithOmissionReasons(scope, set.SnapshotIdentity(), headRevision, set.Identity(), coverage.VerificationContextIdentity(), uint16(set.CandidateCount()), uint16(set.RejectedCount()), uint16(set.InconclusiveCount()), coverage.AnalyzedCount(), coverage.SelectedCount(), coverage.OmittedCount(), summaries, findings)
+}
+
+// exportDiagnosticFindingsWithOmissions exports verified findings and the
+// exact aggregate omission reasons of a coverage bound to the same receipt.
+func exportDiagnosticFindingsWithOmissions(scope audit.ReviewScope, receipt IndependentVerificationReceipt, set VerifiedFindingSet, coverage ContextSourceCoverage) ([]diagnostics.Finding, []diagnostics.OmissionSummary, error) {
+	findings, err := exportDiagnosticFindings(scope, receipt, set)
+	if err != nil {
+		return nil, nil, err
 	}
 	validCoverage := coverage.Validate() == nil && coverage.VerificationContextIdentity() == receipt.VerificationContextIdentity() && coverage.ReviewScopeIdentity() == scope.Identity() && coverage.SnapshotIdentity() == receipt.SnapshotIdentity() && coverage.CandidateBatchIdentity() == receipt.CandidateBatchIdentity()
 	contextSummaries := coverage.OmissionSummaries()
@@ -157,17 +169,17 @@ func ExportDiagnosticSetWithOmissionReasons(scope audit.ReviewScope, headRevisio
 		summaryTotal += uint64(value.Count())
 		reason, reasonErr := diagnosticOmissionReason(value.Reason())
 		if reasonErr != nil {
-			return diagnostics.Set{}, ErrVerifiedFindingBindingMismatch
+			return nil, nil, ErrVerifiedFindingBindingMismatch
 		}
 		summaries[index], err = diagnostics.NewOmissionSummary(reason, value.Count())
 		if err != nil {
-			return diagnostics.Set{}, err
+			return nil, nil, err
 		}
 	}
 	if !validCoverage || summaryTotal != uint64(coverage.OmittedCount()) || (coverage.OmittedCount() == 0) != (len(summaries) == 0) {
-		return diagnostics.Set{}, ErrVerifiedFindingBindingMismatch
+		return nil, nil, ErrVerifiedFindingBindingMismatch
 	}
-	return diagnostics.NewSetWithOmissionReasons(scope, set.SnapshotIdentity(), headRevision, set.Identity(), coverage.VerificationContextIdentity(), uint16(set.CandidateCount()), uint16(set.RejectedCount()), uint16(set.InconclusiveCount()), coverage.AnalyzedCount(), coverage.SelectedCount(), coverage.OmittedCount(), summaries, findings)
+	return findings, summaries, nil
 }
 
 func diagnosticOmissionReason(value ContextSourceOmissionCategory) (diagnostics.OmissionReason, error) {
@@ -195,13 +207,14 @@ func exportDiagnosticFindings(scope audit.ReviewScope, receipt IndependentVerifi
 	}
 	findings := make([]diagnostics.Finding, 0, set.VerifiedCount())
 	for _, finding := range set.Findings() {
-		// No diagnostic set version records base lines: refuse a finding on
-		// removed base lines rather than export its lines as head lines.
-		if finding.Side() != LineSideHead {
-			return nil, ErrVerifiedFindingBindingMismatch
-		}
 		sourceRange := finding.SourceRange()
-		value, err := diagnostics.NewFinding(finding.Identity(), finding.Fingerprint(), finding.Title(), finding.Claim(), diagnosticSeverity(finding.Severity()), sourceRange.Path(), uint32(sourceRange.StartLine()), uint32(sourceRange.EndLine()), finding.EvidenceIDs())
+		side := diagnostics.LineSideHead
+		if finding.Side() == LineSideBase {
+			side = diagnostics.LineSideBase
+		}
+		// Only a set version that records sides accepts a base-side finding;
+		// the earlier versions refuse it rather than relabel base lines as head.
+		value, err := diagnostics.NewFindingOnSide(finding.Identity(), finding.Fingerprint(), finding.Title(), finding.Claim(), diagnosticSeverity(finding.Severity()), sourceRange.Path(), side, uint32(sourceRange.StartLine()), uint32(sourceRange.EndLine()), finding.EvidenceIDs())
 		if err != nil {
 			return nil, err
 		}

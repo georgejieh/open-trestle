@@ -339,6 +339,9 @@ func (s *Server) runPrompt(prompt *admittedPrompt) []any {
 					text += fmt.Sprintf("\nVerified findings: %d.", set.VerifiedCount())
 				}
 			}
+			if base := baseSideFindingCount(set); base > 0 {
+				text += fmt.Sprintf("\n%d verified finding(s) are on removed base lines: their path and lines, marked \"side\":\"base\", are base-revision lines, not head lines.", base)
+			}
 			candidate := text + "\n\n" + label + ":\n" + string(encodedSet)
 			frame, frameErr := json.Marshal(agentMessage(prompt.sessionID, candidate))
 			if frameErr == nil && len(frame)+1 <= maxACPMessageBytes {
@@ -530,4 +533,15 @@ func isNilService(service ReviewService) bool {
 	}
 	value := reflect.ValueOf(service)
 	return value.Kind() == reflect.Ptr && value.IsNil()
+}
+
+// baseSideFindingCount counts verified findings on removed base lines.
+func baseSideFindingCount(set diagnostics.Set) int {
+	count := 0
+	for _, finding := range set.Findings() {
+		if finding.Side() != diagnostics.LineSideHead {
+			count++
+		}
+	}
+	return count
 }

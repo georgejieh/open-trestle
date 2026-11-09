@@ -62,7 +62,14 @@
       "$ref": "urn:open-trestle:schema:diagnostics:set:v6"
     },
     "verified": {
-      "$ref": "urn:open-trestle:schema:diagnostics:set:v5"
+      "oneOf": [
+        {
+          "$ref": "urn:open-trestle:schema:diagnostics:set:v5"
+        },
+        {
+          "$ref": "urn:open-trestle:schema:diagnostics:set:v8"
+        }
+      ]
     }
   },
   "allOf": [
@@ -126,5 +133,5 @@
       }
     }
   ],
-  "description": "The runtime derives identity from exact bytes, validates embedded V5 and V6 identities, binds their common scope/head/check, and enforces the shared one MiB budget. The top-level and V6 snapshot is the physical source snapshot; the V5 snapshot is the selected review snapshot and need not equal it. Absent evidence means not run, not clean or verified."
+  "description": "The runtime derives identity from exact bytes, validates embedded V5 or V8 and V6 identities, binds their common scope/head/check, and enforces the shared one MiB budget. The top-level and V6 snapshot is the physical source snapshot; the V5 or V8 snapshot is the selected review snapshot and need not equal it. Absent evidence means not run, not clean or verified."
 }

@@ -192,6 +192,13 @@ func (s *Server) diagnostic(ctx context.Context, state *session, id json.RawMess
 	if err != nil || set.Validate() != nil || set.Scope().Identity() != state.scope.Identity() {
 		return failure(id, -32603, "Review diagnostics are unavailable.")
 	}
+	// Diagnostics are placed on head documents. Refuse a finding on removed
+	// base lines rather than place its base line numbers on a head document.
+	for _, finding := range set.Findings() {
+		if finding.Side() != diagnostics.LineSideHead {
+			return failure(id, -32603, "Review diagnostics include findings on removed base lines, which this server cannot place.")
+		}
+	}
 	if params.PreviousResultID == set.Identity() {
 		return success(id, map[string]any{"kind": "unchanged", "resultId": set.Identity()})
 	}

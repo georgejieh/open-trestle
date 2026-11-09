@@ -26,7 +26,8 @@ func (o FinalOutcome) valid() bool {
 }
 
 // NewFinalReviewSet creates a terminal full-review set from independently validated
-// V6 observations and V5 verification. Zero parts mean evidence was not available;
+// V6 observations and V5 verification, or V8 verification when a verified
+// finding is on removed base lines. Zero parts mean evidence was not available;
 // absence of a check must not be interpreted as a passed check.
 func NewFinalReviewSet(scope audit.ReviewScope, snapshotIdentity, headRevision string, outcome FinalOutcome, deterministic, verified Set) (Set, error) {
 	hasDeterministic := deterministic.schemaVersion != 0
@@ -38,7 +39,7 @@ func NewFinalReviewSet(scope audit.ReviewScope, snapshotIdentity, headRevision s
 	if hasDeterministic && (deterministic.schemaVersion != 6 || deterministic.Validate() != nil || deterministic.scope.Identity() != scope.Identity() || deterministic.snapshotIdentity != snapshotIdentity || deterministic.headRevision != headRevision) {
 		return Set{}, ErrInvalidSet
 	}
-	if hasVerified && (verified.schemaVersion != 5 || verified.Validate() != nil || verified.scope.Identity() != scope.Identity() || verified.headRevision != headRevision || verified.deterministicChecks[0].Identity() != deterministic.deterministicChecks[0].Identity()) {
+	if hasVerified && (!verifiedVersion(verified.schemaVersion) || verified.Validate() != nil || verified.scope.Identity() != scope.Identity() || verified.headRevision != headRevision || verified.deterministicChecks[0].Identity() != deterministic.deterministicChecks[0].Identity()) {
 		return Set{}, ErrInvalidSet
 	}
 	set := Set{scope: scope, snapshotIdentity: snapshotIdentity, headRevision: headRevision, schemaVersion: 7, finalOutcome: outcome}
@@ -100,7 +101,7 @@ func setToRecordV7(s Set) setRecordV7 {
 		value := setToRecordV6(deterministic)
 		r.Deterministic = &value
 	}
-	if verified.schemaVersion == 5 {
+	if verifiedVersion(verified.schemaVersion) {
 		value := setToRecordV5(verified)
 		r.Verified = &value
 	}
