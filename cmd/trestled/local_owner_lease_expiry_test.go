@@ -12,6 +12,7 @@ import (
 	"github.com/georgejieh/open-trestle/runtimecatalog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -102,6 +103,33 @@ func TestOwnerExpiredMarkerFreeV5TerminatesAtRestart(t *testing.T) {
 	defer secondLedger.Close()
 	if err := verifyOwnerSettledStartup(ctx, secondOwner, secondLedger, fixture.gitRoot); err != nil {
 		t.Fatal("terminal restart proof:", err)
+	}
+	// After the packet retention lapses the terminated v5 is proved from the
+	// journal and audit; startup reads no expired envelope and appends nothing.
+	if err := secondLedger.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before := ownerStartupJournalBytes(t, fixture.statePath)
+	lapsed := localPacketFixtureClock{prepared.Packet.ExpiresAt().Add(time.Hour)}
+	third := &daemon{}
+	defer third.Close()
+	_, _, thirdOwner, err := startLocalSourceOwnerGate(ctx, third, fixture.statePath, fixture.setupPath, &fixture.setupPlan, "tenant-a", "repo-a", fixture.repository, fixture.gitRoot, fixture.objectStore, fixture.adapter, fixture.rootDigest, lapsed)
+	if err != nil {
+		t.Fatal("terminated v5 restart after retention refused:", err)
+	}
+	thirdLedger, err := audit.NewFileLedger(ledgerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer thirdLedger.Close()
+	if err := verifyOwnerSettledStartup(ctx, thirdOwner, thirdLedger, fixture.gitRoot); err != nil {
+		t.Fatal("terminal restart proof after retention:", err)
+	}
+	if !reflect.DeepEqual(before, ownerStartupJournalBytes(t, fixture.statePath)) {
+		t.Fatal("restart after retention appended")
 	}
 }
 

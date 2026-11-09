@@ -132,7 +132,23 @@ func testGenerationRejectionStartupRefusals(t *testing.T, args []string, getenv 
 	changedVerifier := deps()
 	changedVerifier.verificationSanitizer = mismatchedVerificationScanner{changedVerifier.verificationSanitizer}
 	refusal("changed verification catalog enrollment", changedVerifier)
+	// Past retention the settled rejection is proved from its journal and
+	// audit alone, so startup admits it without reading the expired bytes;
+	// the audit chain must still hold.
 	expired := deps()
 	expired.clock = generationRejectionExpiryClock{time.Now().UTC().Add(48 * time.Hour)}
-	refusal("expired history", expired)
+	lapsed, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, expired)
+	if err != nil {
+		t.Fatalf("settled rejection refused after retention: %v", err)
+	}
+	if err := lapsed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(auditPath, append(append([]byte{}, raw...), append(rows[len(rows)-1], '\n')...), 0600); err != nil {
+		t.Fatal(err)
+	}
+	refusal("extra audit after retention", expired)
+	if err := os.WriteFile(auditPath, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
 }

@@ -65,6 +65,14 @@ func observeOwnerGenerationRejections(ctx context.Context, owner *localPacketOwn
 				terminal, hasTerminal := fact.TerminalEvent()
 				settlement, hasSettlement := fact.TaskSettlementEvent()
 				if hasTerminal && terminal.Kind() == controlplane.RunEventFailed && hasSettlement && settlement.Kind() == controlplane.RunEventContextInputSettled {
+					if now := owner.clock.Now().UTC(); retiredSettledLinked(fact, now) {
+						// Past retention the tail is proved without its bytes.
+						if err := owner.generationStartup.observeRetired(ctx, stateRoot, fact, now); err != nil {
+							return errors.Join(errHistoricalInputIntentQuarantinedAtStartup, err)
+						}
+						rejected[fact.Plan().Scope().Identity()] = fact.FinalHeadIdentity()
+						continue
+					}
 					window, err := owner.generationStartup.observe(ctx, stateRoot, artifactRoot, fact, owner.sourceBinding, owner.clock.Now().UTC())
 					if err != nil {
 						return errors.Join(errHistoricalInputIntentQuarantinedAtStartup, err)

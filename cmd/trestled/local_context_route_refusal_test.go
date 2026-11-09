@@ -325,38 +325,47 @@ func TestDaemonLocalModelWorkersRefusedRunLaterRunAndRestart(t *testing.T) {
 	}
 	capacity := floor
 	capacity.context = float64((large + small) / 2)
-	args, getenv, fake, repository, base, head, policy, inventory := capacityModelWorkerFixture(t, capacity)
-	args = append(args, "--local-model-workers")
-	largeHead := largeReviewHead(t, args)
-	clock := &daemonBudgetedHandlerClock{at: time.Now().UTC().Truncate(time.Millisecond)}
-	statePath := daemonTestFlagValue(t, args, "--state-dir")
-	d, api, server := startContextRefusalDaemon(t, args, getenv, clock)
-	refused := runLocalFullReviewOnSupervisors(t, d, api, "run-large-refused", repository, base, largeHead, policy, inventory, clock.Now())
-	assertContextRouteRefusal(t, d, api, fake, refused, statePath, clock.Now(), uint32(capacity.context), 0)
-	later := runLocalFullReviewOnSupervisors(t, d, api, "run-small-later", repository, base, head, policy, inventory, clock.Now())
-	finals := map[audit.ReviewScope]string{}
-	for scope, outcome := range map[audit.ReviewScope]diagnostics.FinalOutcome{refused: diagnostics.FinalOutcomeFailed, later: diagnostics.FinalOutcomeCompleted} {
-		final, err := api.GetDiagnosticSet(context.Background(), scope)
-		if err != nil || final.Outcome() != outcome {
-			t.Fatalf("%s final=%s err=%v", scope.Identity(), final.Outcome(), err)
-		}
-		finals[scope] = final.Identity()
+	// The mixed history restarts within retention and after it lapses.
+	for _, lapse := range []time.Duration{0, 25 * time.Hour} {
+		t.Run(lapse.String(), func(t *testing.T) {
+			args, getenv, fake, repository, base, head, policy, inventory := capacityModelWorkerFixture(t, capacity)
+			args = append(args, "--local-model-workers")
+			largeHead := largeReviewHead(t, args)
+			clock := &daemonBudgetedHandlerClock{at: time.Now().UTC().Truncate(time.Millisecond)}
+			statePath := daemonTestFlagValue(t, args, "--state-dir")
+			d, api, server := startContextRefusalDaemon(t, args, getenv, clock)
+			refused := runLocalFullReviewOnSupervisors(t, d, api, "run-large-refused", repository, base, largeHead, policy, inventory, clock.Now())
+			assertContextRouteRefusal(t, d, api, fake, refused, statePath, clock.Now(), uint32(capacity.context), 0)
+			later := runLocalFullReviewOnSupervisors(t, d, api, "run-small-later", repository, base, head, policy, inventory, clock.Now())
+			finals := map[audit.ReviewScope]string{}
+			for scope, outcome := range map[audit.ReviewScope]diagnostics.FinalOutcome{refused: diagnostics.FinalOutcomeFailed, later: diagnostics.FinalOutcomeCompleted} {
+				final, err := api.GetDiagnosticSet(context.Background(), scope)
+				if err != nil || final.Outcome() != outcome {
+					t.Fatalf("%s final=%s err=%v", scope.Identity(), final.Outcome(), err)
+				}
+				finals[scope] = final.Identity()
+			}
+			settledAt := clock.Now()
+			server.Close()
+			if err := d.Close(); err != nil {
+				t.Fatal(err)
+			}
+			clock.mu.Lock()
+			clock.at = clock.at.Add(lapse)
+			clock.mu.Unlock()
+			d, api, _ = startContextRefusalDaemon(t, args, getenv, clock)
+			for _, index := range []int{1, 2} {
+				if _, err := d.supervisors[index].(*worker.RepositorySupervisor).RunOnce(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for scope, identity := range finals {
+				final, err := api.GetDiagnosticSet(context.Background(), scope)
+				if err != nil || final.Identity() != identity {
+					t.Fatalf("restart changed %s result: %v", scope.Identity(), err)
+				}
+			}
+			assertContextRouteRefusal(t, d, api, fake, refused, statePath, settledAt, uint32(capacity.context), 1)
+		})
 	}
-	server.Close()
-	if err := d.Close(); err != nil {
-		t.Fatal(err)
-	}
-	d, api, _ = startContextRefusalDaemon(t, args, getenv, clock)
-	for _, index := range []int{1, 2} {
-		if _, err := d.supervisors[index].(*worker.RepositorySupervisor).RunOnce(context.Background()); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for scope, identity := range finals {
-		final, err := api.GetDiagnosticSet(context.Background(), scope)
-		if err != nil || final.Identity() != identity {
-			t.Fatalf("restart changed %s result: %v", scope.Identity(), err)
-		}
-	}
-	assertContextRouteRefusal(t, d, api, fake, refused, statePath, clock.Now(), uint32(capacity.context), 1)
 }

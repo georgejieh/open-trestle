@@ -392,6 +392,24 @@ func TestDaemonLocalFullCandidatePutSyntheticRestartPreservesDispatchFence(t *te
 	if calls, _, _, _ := model.verification.snapshot(); calls != 0 {
 		t.Fatalf("second startup verification calls=%d", calls)
 	}
+	// After the 24-hour retention lapses the exhausted lease is proved from
+	// the journal and audit; the expired bytes are not read.
+	if err := second.Close(); err != nil {
+		t.Fatal(err)
+	}
+	deps.clock = daemonBudgetedRawClock{at: future.Now().Add(25 * time.Hour)}
+	third, err := buildDaemonWithDependencies(ctx, args, getenv, &bytes.Buffer{}, deps)
+	if err != nil {
+		t.Fatalf("startup after retention lapsed on an exhausted candidate lease: %v", err)
+	}
+	defer third.Close()
+	journalAfterThird, err := os.ReadFile(streamPath)
+	if err != nil || !bytes.Equal(journalBeforeSecond, journalAfterThird) {
+		t.Fatalf("startup after retention changed terminal journal: %v", err)
+	}
+	if calls, _, _, _ := model.generation.snapshot(); calls != 1 {
+		t.Fatalf("startup after retention generation calls=%d", calls)
+	}
 }
 
 func assertCandidateRestartAudit(t *testing.T, events []audit.Event) {

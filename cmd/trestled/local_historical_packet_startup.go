@@ -107,22 +107,44 @@ func inspectRecordedHistoricalPackets(ctx context.Context, journal *controlplane
 				// A terminal v4 past its packet retention is proved from the
 				// journal; its expired bytes are not read. The post-activation
 				// proof still checks its enrollment and route absence.
+				// A settled context input past retention is likewise proved from
+				// the journal and audit here and again after activation.
 				var retired []historicalExpiredPacketCheckpoint
+				retiredLinked := false
 				live := make([]controlplane.HistoricalContextPacketFact, 0, len(facts))
 				for _, fact := range facts {
-					if !retiredTerminalV4(fact, now) {
+					linkedRetired := retiredSettledLinked(fact, now)
+					if !retiredTerminalV4(fact, now) && !linkedRetired {
 						live = append(live, fact)
 						continue
 					}
 					if err := reconcileRecordedHistoricalFact(fact, tenant, repositoryID, sourceDigest); err != nil {
 						return err
 					}
-					retired = append(retired, expiredPacketCheckpoint(fact))
+					if !linkedRetired {
+						retired = append(retired, expiredPacketCheckpoint(fact))
+						continue
+					}
+					linked, _ := fact.LinkedInputEvent()
+					if err := validateLinkedHistoricalInput(fact, linked); err != nil {
+						return err
+					}
+					settlement, _ := fact.TaskSettlementEvent()
+					if terminal, ok := fact.TerminalEvent(); ok && terminal.Kind() == controlplane.RunEventFailed && settlement.Kind() == controlplane.RunEventContextInputSettled {
+						if err := generationStartup.observeRetired(ctx, stateRoot, fact, now); err != nil {
+							return errors.Join(errHistoricalInputIntentQuarantinedAtStartup, err)
+						}
+					}
+					retiredLinked = true
 				}
 				facts = live
 				withRetired := func() {
 					*pendingV4 = append(*pendingV4, retired...)
 					sortExpiredPacketCheckpoints(*pendingV4)
+					// The settled-input audit proof must run for retired inputs.
+					if retiredLinked && (*classification == historicalPacketNone || *classification == historicalPacketExpiredV4Candidate) {
+						*classification = historicalPacketOwnerSettledCandidate
+					}
 				}
 				expectedPackets := make([]physicalPacketExpectation, 0, len(facts)*4)
 				for _, fact := range facts {
@@ -315,8 +337,8 @@ func inspectRecordedHistoricalPackets(ctx context.Context, journal *controlplane
 							selected = historicalPacketExpiredV4Candidate
 						}
 					}
-					withRetired()
 					*classification = selected // Provisional until all postchecks and borrowed roots close.
+					withRetired()
 					if probe != nil && probe.afterClassified != nil {
 						return probe.afterClassified(selected)
 					}

@@ -53,6 +53,7 @@ func verifyOwnerSettledStartup(ctx context.Context, owner *localPacketOwner, led
 	verifiedScopes := make(map[string]audit.ReviewScope, len(facts))
 	preparedScopes := make(map[string]bool)
 	expiredScopes := make(map[string]bool)
+	retiredScopes := make(map[string]bool)
 	for _, fact := range facts {
 		if _, linked := fact.LinkedInputEvent(); !linked && slices.Contains(owner.pendingExpiredPackets, expiredPacketCheckpoint(fact)) {
 			continue
@@ -105,6 +106,12 @@ func verifyOwnerSettledStartup(ctx context.Context, owner *localPacketOwner, led
 			continue
 		}
 		d := linked.InputDescriptor()
+		// Past retention a settled input is proved by its journal and the
+		// route audit below; its expired envelopes are not read.
+		retired := retiredSettledLinked(fact, owner.clock.Now().UTC())
+		if retired {
+			retiredScopes[scope.Identity()] = true
+		}
 		expectations := [4]physicalPacketExpectation{
 			{scope: scope, descriptor: packet.PacketDescriptor()},
 			{scope: scope, role: physicalRoleRequest, input: d.Request},
@@ -112,6 +119,9 @@ func verifyOwnerSettledStartup(ctx context.Context, owner *localPacketOwner, led
 			{scope: scope, role: physicalRoleInput, input: d.Input},
 		}
 		for _, e := range expectations {
+			if retired {
+				break
+			}
 			identity := e.descriptor.ArtifactIdentity
 			if e.role != physicalRolePacket {
 				identity = e.input.ArtifactIdentity
@@ -158,6 +168,9 @@ func verifyOwnerSettledStartup(ctx context.Context, owner *localPacketOwner, led
 			return controlplane.ErrScopeIntentUnresolved
 		}
 		markerScopes[markerScope] = true
+		if retiredScopes[markerScope] {
+			return controlplane.ErrScopeIntentUnresolved
+		}
 		if _, okay := verifiedScopes[markerScope]; !okay {
 			return controlplane.ErrScopeIntentUnresolved
 		}
