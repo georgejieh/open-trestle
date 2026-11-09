@@ -943,6 +943,11 @@ supplied, with no `head_line`: consecutive line-aligned chunks of at most 64
 lines and 8 KiB each, up to 32 KiB per file, covering the base file from line 1.
 The rest of the file, from the first line that does not fit, is one
 `analysis_removed_lines_limit` omission at its base lines; a line is never cut.
+This text uses only the analysis budget that the changed files left, and only
+the bytes it binds count, so removing large files never takes budget from a
+changed file. Removed files are read from a separate 64 MiB bound: a removed
+file past it is not read, and its whole removed text is one
+`analysis_removed_lines_limit` omission with no lines.
 This text needs no head neighbor, so a change that only removes files is reviewed
 from it: its review snapshot has no head range and its packet holds only removed
 text. A removed file whose text cannot be supplied (for example binary content)

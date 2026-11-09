@@ -164,6 +164,9 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 	}
 	evidenceLimit := workUnits > maximumEvidenceItems
 	loaded := 0
+	// The removed text of emptied and removed files is bound in a second pass,
+	// after every other entry, so it never takes evidence budget from them.
+	var wholeFileRemoved []changehandler.Entry
 	var applicableFiles, applicableRanges, checkedFiles, checkedRanges, matches uint32
 	expires := minimumTime(changeArtifact.ExpiresAt(), baseArtifact.ExpiresAt(), headArtifact.ExpiresAt())
 	for _, entry := range change.Entries() {
@@ -196,12 +199,7 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 			// not all removed.
 			emptied := gap.Reason() == "no_changed_head_lines" && references[entry.Path()].SizeBytes() == 0 && references[entry.Path()].Digest() == entry.HeadDigest()
 			if emptied || gap.Reason() == "removed_file" {
-				chunks, limitGaps, failureCode := h.buildWholeFileRemovedText(ctx, request.Plan().Scope(), at, base, entry, &loaded, &expires, len(removed), len(gaps))
-				if failureCode != 0 {
-					return failure(failureCode)
-				}
-				removed = append(removed, chunks...)
-				gaps = append(gaps, limitGaps...)
+				wholeFileRemoved = append(wholeFileRemoved, entry)
 			}
 			continue
 		}
@@ -289,6 +287,21 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 			items = append(items, item)
 		}
 		clear(content)
+	}
+	// Second pass: removed text spends only the evidence budget left by every
+	// other entry, charged by the bytes it binds, and reads removed files from
+	// a separate bound.
+	removedRead := 0
+	for _, entry := range wholeFileRemoved {
+		if ctx.Err() != nil {
+			return failure(controlplane.RunFailureCanceled)
+		}
+		chunks, limitGaps, failureCode := h.buildWholeFileRemovedText(ctx, request.Plan().Scope(), at, base, entry, &loaded, &removedRead, &expires, len(removed), len(gaps))
+		if failureCode != 0 {
+			return failure(failureCode)
+		}
+		removed = append(removed, chunks...)
+		gaps = append(gaps, limitGaps...)
 	}
 	semanticProfile, semanticExpires, err := buildSemanticProfile(ctx, h.store, request.Plan().Scope(), at, base, head, change)
 	if err != nil {

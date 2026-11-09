@@ -23,6 +23,10 @@ const (
 	removedLinesPerPoint = 64
 	removedBytesPerPoint = 8 << 10
 	removedBytesPerEntry = 32 << 10
+	// removedFileReadBytes bounds the base bytes read to bind the removed text
+	// of emptied and removed files. It is apart from the evidence budget,
+	// which that text is charged only by the bytes it binds.
+	removedFileReadBytes = 64 << 20
 )
 
 // deletionContext is the reviewable evidence for one deletion-only entry: the
@@ -171,14 +175,19 @@ func (h *Handler) buildDeletionContext(ctx context.Context, scope audit.ReviewSc
 
 // buildWholeFileRemovedText binds the removed base text of an entry that has
 // no head line left: a deletion-only entry whose head file is empty, or a
-// removed file. Its base content is bound as consecutive line-aligned chunks
-// of at most removedLinesPerPoint lines and removedBytesPerPoint bytes, up to
-// removedBytesPerEntry for the entry. The rest of the file, from the first
-// line that does not fit, is one removed_lines_limit gap at its base lines;
-// text is never truncated inside a line. An empty base file binds nothing, and
-// a file past the source budget or the evidence limits binds nothing, leaving
-// only the entry's whole-entry gap.
-func (h *Handler) buildWholeFileRemovedText(ctx context.Context, scope audit.ReviewScope, at time.Time, base source.Snapshot, entry changehandler.Entry, loaded *int, expires *time.Time, removedCount, gapCount int) ([]Item, []Gap, controlplane.RunFailure) {
+// removed file. It runs after every other entry and spends only the evidence
+// budget they left. Its base content is bound as consecutive line-aligned
+// chunks of at most removedLinesPerPoint lines and removedBytesPerPoint bytes,
+// up to removedBytesPerEntry for the entry or the budget left, whichever is
+// smaller, and only those bound bytes are charged to loaded. The rest of the
+// file, from the first line that does not fit, is one removed_lines_limit gap
+// at its base lines; text is never truncated inside a line. A file is read
+// from the separate removedFileReadBytes bound counted by read; one that would
+// pass that bound, or that finds no evidence budget left, is not read and is
+// one whole-entry removed_lines_limit gap. An empty base file and a file past
+// the evidence item limits bind nothing and are charged nothing, leaving only
+// the entry's whole-entry gap.
+func (h *Handler) buildWholeFileRemovedText(ctx context.Context, scope audit.ReviewScope, at time.Time, base source.Snapshot, entry changehandler.Entry, loaded, read *int, expires *time.Time, removedCount, gapCount int) ([]Item, []Gap, controlplane.RunFailure) {
 	var reference source.FileReference
 	found := false
 	for _, value := range base.Files() {
@@ -190,15 +199,19 @@ func (h *Handler) buildWholeFileRemovedText(ctx context.Context, scope audit.Rev
 	if !found || reference.Digest() != entry.BaseDigest() {
 		return nil, nil, controlplane.RunFailureInvalidInput
 	}
-	if reference.SizeBytes() == 0 || *loaded+reference.SizeBytes() > maximumEvidenceSourceBytes || gapCount >= maximumEvidenceItems {
+	if reference.SizeBytes() == 0 || gapCount >= maximumEvidenceItems {
 		return nil, nil, 0
+	}
+	budget := min(removedBytesPerEntry, maximumEvidenceSourceBytes-*loaded)
+	if budget <= 0 || *read+reference.SizeBytes() > removedFileReadBytes {
+		return nil, []Gap{analysiscodec.NewGap(entry, 0, 0, analysiscodec.RemovedLinesLimitReason)}, 0
 	}
 	content, failureCode := h.loadSourceFile(ctx, scope, at, base, reference, expires)
 	if failureCode != 0 {
 		return nil, nil, failureCode
 	}
 	defer clear(content)
-	*loaded += len(content)
+	*read += len(content)
 	baseFile, err := evidence.NewRepositoryFile(entry.Path(), content)
 	if err != nil || baseFile.Digest() != entry.BaseDigest() || baseFile.SizeBytes() != reference.SizeBytes() {
 		return nil, nil, controlplane.RunFailureInvalidInput
@@ -218,7 +231,7 @@ func (h *Handler) buildWholeFileRemovedText(ctx context.Context, scope audit.Rev
 		end, size := next-1, 0
 		for end < len(lines) && end-next+1 < removedLinesPerPoint {
 			lineBytes := lines[end] - offset - size
-			if size+lineBytes > removedBytesPerPoint || total+size+lineBytes > removedBytesPerEntry {
+			if size+lineBytes > removedBytesPerPoint || total+size+lineBytes > budget {
 				break
 			}
 			size += lineBytes
@@ -242,6 +255,7 @@ func (h *Handler) buildWholeFileRemovedText(ctx context.Context, scope audit.Rev
 		items = append(items, item)
 		offset, total, next = offset+size, total+size, end+1
 	}
+	*loaded += total
 	var gaps []Gap
 	if next <= len(lines) {
 		gaps = append(gaps, analysiscodec.NewGap(entry, next, len(lines), analysiscodec.RemovedLinesLimitReason))
