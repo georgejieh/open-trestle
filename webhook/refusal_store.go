@@ -82,7 +82,8 @@ func (s *FileStore) refusalPath(scope RepositoryScope, source Source, key, plann
 
 // RecordRefusal persists a refusal of a stored delivery beside it, atomically.
 // Refusal files never match the delivery suffix, so listing and replay
-// indexing ignore them; they count toward the root's file limit.
+// indexing ignore them; they count toward the sidecar bound, never the
+// delivery bound.
 func (s *FileStore) RecordRefusal(ctx context.Context, record RefusalRecord) (RefusalRecord, bool, error) {
 	if err := validateInboxOperation(ctx); err != nil {
 		return RefusalRecord{}, false, err
@@ -108,11 +109,9 @@ func (s *FileStore) RecordRefusal(ctx context.Context, record RefusalRecord) (Re
 	} else if recorded {
 		return matchRecordedRefusal(existing, record)
 	}
-	entries, err := os.ReadDir(s.root)
-	if err != nil {
-		return RefusalRecord{}, false, fmt.Errorf("%w: read root", ErrInboxStorePersistence)
-	}
-	if len(entries) >= maxInboxStoreFiles {
+	if _, sidecars, err := s.rootFiles(); err != nil {
+		return RefusalRecord{}, false, err
+	} else if sidecars >= maxInboxStoreSidecars {
 		return RefusalRecord{}, false, ErrInboxStoreCapacity
 	}
 	encoded, err := EncodeRefusalRecord(record)

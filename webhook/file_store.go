@@ -16,9 +16,14 @@ import (
 )
 
 const (
+	// maxInboxStoreFiles bounds the root's files other than sidecars: the
+	// deliveries and the writer lock.
 	maxInboxStoreFiles = 10000
-	inboxLockFileName  = ".inbox-writer.lock"
-	deliveryFileSuffix = ".delivery.json"
+	// maxInboxStoreSidecars bounds refusal and retry files apart from them,
+	// two per delivery, so a sidecar never takes a delivery's place.
+	maxInboxStoreSidecars = 2 * maxInboxStoreFiles
+	inboxLockFileName     = ".inbox-writer.lock"
+	deliveryFileSuffix    = ".delivery.json"
 )
 
 var (
@@ -128,11 +133,11 @@ func (s *FileStore) Put(ctx context.Context, delivery VerifiedDelivery, at time.
 	if _, replayed := s.replays[delivery.ReplayKey()]; replayed {
 		return StoredDelivery{}, false, ErrDeliveryReplayed
 	}
-	entries, err := os.ReadDir(s.root)
+	files, _, err := s.rootFiles()
 	if err != nil {
-		return StoredDelivery{}, false, fmt.Errorf("%w: read root", ErrInboxStorePersistence)
+		return StoredDelivery{}, false, err
 	}
-	if len(entries) >= maxInboxStoreFiles {
+	if files >= maxInboxStoreFiles {
 		return StoredDelivery{}, false, ErrInboxStoreCapacity
 	}
 	stored := StoredDelivery{delivery: delivery, receipt: receipt}
@@ -162,7 +167,7 @@ func (s *FileStore) loadReplayIndex() error {
 	if err != nil {
 		return fmt.Errorf("%w: read root", ErrInboxStorePersistence)
 	}
-	if len(directoryEntries) > maxInboxStoreFiles+1 {
+	if len(directoryEntries) > maxInboxStoreFiles+maxInboxStoreSidecars+1 {
 		return ErrInboxStoreCapacity
 	}
 	replays := make(map[string]string)
@@ -213,7 +218,7 @@ func (s *FileStore) List(ctx context.Context, scope RepositoryScope, source Sour
 	if err != nil {
 		return nil, fmt.Errorf("%w: read root", ErrInboxStorePersistence)
 	}
-	if len(directoryEntries) > maxInboxStoreFiles+1 {
+	if len(directoryEntries) > maxInboxStoreFiles+maxInboxStoreSidecars+1 {
 		return nil, ErrInboxStoreCapacity
 	}
 	prefix := scope.Identity() + "-" + source.String() + "-"
@@ -251,6 +256,23 @@ func (s *FileStore) List(ctx context.Context, scope RepositoryScope, source Sour
 		stored = append(stored, entry)
 	}
 	return stored, nil
+}
+
+// rootFiles counts the root's sidecar files apart from its other files, so
+// each kind is held to its own bound.
+func (s *FileStore) rootFiles() (files, sidecars int, err error) {
+	entries, err := os.ReadDir(s.root)
+	if err != nil {
+		return 0, 0, fmt.Errorf("%w: read root", ErrInboxStorePersistence)
+	}
+	for _, entry := range entries {
+		if name := entry.Name(); strings.HasSuffix(name, refusalFileSuffix) || strings.HasSuffix(name, retryFileSuffix) {
+			sidecars++
+		} else {
+			files++
+		}
+	}
+	return files, sidecars, nil
 }
 func (s *FileStore) deliveryPath(scope RepositoryScope, source Source, key string) string {
 	return filepath.Join(s.root, scope.Identity()+"-"+source.String()+"-"+key+deliveryFileSuffix)
