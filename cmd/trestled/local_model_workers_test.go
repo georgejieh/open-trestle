@@ -481,7 +481,7 @@ func TestDaemonLocalModelWorkersMissingVerifierDoesNotPromote(t *testing.T) {
 	if worked, err := d.supervisors[1].(*worker.RepositorySupervisor).RunOnce(context.Background()); err != nil || !worked {
 		t.Fatalf("premodel worked=%t err=%v", worked, err)
 	}
-	fake.verification.server.Close()
+	fake.verification.makeUnavailable()
 	if worked, err := d.supervisors[2].(*worker.RepositorySupervisor).RunOnce(context.Background()); err != nil || !worked {
 		t.Fatalf("model worked=%t err=%v", worked, err)
 	}

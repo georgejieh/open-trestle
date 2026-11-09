@@ -114,6 +114,11 @@ type daemonBudgetedModelEndpoint struct {
 	aggregateBytes      int64
 	captures            []daemonBudgetedModelCapture
 	failures            []string
+	// unavailable makes every request fail at the transport. Tests use it
+	// instead of closing the server so the listener keeps its port: a closed
+	// httptest port can be reused by a parallel test's endpoint, which would
+	// then answer requests meant for this unavailable one.
+	unavailable bool
 }
 
 type daemonBudgetedModelFixture struct {
@@ -206,9 +211,28 @@ func (e *daemonBudgetedModelEndpoint) URL() string {
 	return e.server.URL
 }
 
+// makeUnavailable keeps the endpoint's port bound while every later request
+// fails at the transport, as a stopped model server would.
+func (e *daemonBudgetedModelEndpoint) makeUnavailable() {
+	e.mu.Lock()
+	e.unavailable = true
+	e.mu.Unlock()
+	e.server.CloseClientConnections()
+}
+
 func (e *daemonBudgetedModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 	t.Helper()
 	e.mu.Lock()
+	if e.unavailable {
+		e.mu.Unlock()
+		if hijacker, ok := w.(http.Hijacker); ok {
+			if connection, _, err := hijacker.Hijack(); err == nil {
+				_ = connection.Close()
+				return
+			}
+		}
+		panic(http.ErrAbortHandler)
+	}
 	e.calls++
 	call := e.calls
 	e.mu.Unlock()
