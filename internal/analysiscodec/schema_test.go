@@ -264,3 +264,59 @@ func TestDeterministicEvidenceV5AndV6SchemasDescribeDeletionResults(t *testing.T
 		t.Fatalf("deleted_lines gap accepted by the v5 schema: %v", err)
 	}
 }
+
+func TestDeterministicEvidenceV7SchemaDescribesRemovedLines(t *testing.T) {
+	schemas := publishedArtifactSchemas(t)
+	v6, v7 := deterministicEvidenceSchema(t, schemas, 6), deterministicEvidenceSchema(t, schemas, 7)
+	properties := v7["properties"].(map[string]any)
+	removed := properties["removed_lines"].(map[string]any)
+	if removed["description"] == nil || !reflect.DeepEqual(schemaWithoutDescription(removed), properties["items"]) {
+		t.Fatal("v7 removed_lines records do not share the item record shape")
+	}
+	required := schemaStrings(v7["required"])
+	wantRequired := []string{}
+	for _, name := range schemaStrings(v6["required"]) {
+		wantRequired = append(wantRequired, name)
+		if name == "items" {
+			wantRequired = append(wantRequired, "removed_lines")
+		}
+	}
+	if !reflect.DeepEqual(required, wantRequired) {
+		t.Fatalf("v7 required=%v want %v", required, wantRequired)
+	}
+	trimmed := schemaWithout(t, v7)
+	delete(trimmed["properties"].(map[string]any), "removed_lines")
+	trimmed["required"] = v6["required"]
+	if !reflect.DeepEqual(trimmed, schemaWithout(t, v6)) {
+		t.Fatal("v7 changes more than the version, removed_lines and the gap reasons of v6")
+	}
+	if want := append(gapReasons(v6), "removed_lines_limit"); !reflect.DeepEqual(gapReasons(v7), want) {
+		t.Fatalf("v7 gap reasons=%v want %v", gapReasons(v7), want)
+	}
+	for _, limit := range []bool{false, true} {
+		output, _, _, _, _, _ := removedLinesAnalysis(t, limit)
+		document := decodeSchemaDocument(t, output.Payload())
+		if err := validateSchemaDocument(schemas, v7, document, "v7"); err != nil {
+			t.Fatalf("encoded v7 result (limit=%v) does not match its schema: %v", limit, err)
+		}
+		if err := validateSchemaDocument(schemas, v6, document, "v6"); err == nil {
+			t.Fatalf("v7 result (limit=%v) accepted by the v6 schema", limit)
+		}
+	}
+	v6Output, _, _, _, _, _ := deletionContextAnalysis(t)
+	relabeled := decodeSchemaDocument(t, v6Output.Payload()).(map[string]any)
+	relabeled["schema_version"] = float64(7)
+	if err := validateSchemaDocument(schemas, v7, relabeled, "v7"); err == nil || !strings.Contains(err.Error(), "removed_lines") {
+		t.Fatalf("v6 bytes without removed_lines accepted by the v7 schema: %v", err)
+	}
+}
+
+func schemaWithoutDescription(schema map[string]any) map[string]any {
+	copied := make(map[string]any, len(schema))
+	for key, value := range schema {
+		if key != "description" {
+			copied[key] = value
+		}
+	}
+	return copied
+}

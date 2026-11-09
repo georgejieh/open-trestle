@@ -2,6 +2,7 @@ package context
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 )
 
@@ -38,6 +39,28 @@ func TestDeletionOnlyChangeIsReviewableFromDeletionPointContext(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("deletion point omission missing: %v", result.omissionSet)
+	}
+}
+
+// Removed text past the analysis bound reaches the packet as an explicit
+// analysis_removed_lines_limit omission at its base range, counted with the
+// resource-limit omissions; the change stays reviewable from its head context.
+func TestRemovedLinesPastTheBoundAreAnExplicitOmission(t *testing.T) {
+	removed := strings.Repeat("dropped line\n", 70)
+	base := map[string][]byte{"a.txt": []byte("keep one\n" + removed + "keep two\n")}
+	head := map[string][]byte{"a.txt": []byte("keep one\nkeep two\n")}
+	result := assembleTextFallback(t, base, head)
+	if result.failure != 0 || result.abstention != nil {
+		t.Fatalf("deletion-only change refused: failure=%s abstention=%v", result.failure, result.abstention != nil)
+	}
+	found := false
+	for _, omission := range result.assembly.Packet.SourceOmissions() {
+		if omission.Path() == "a.txt" && omission.Reason() == "analysis_removed_lines_limit" && omission.StartLine() == 2 && omission.EndLine() == 71 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("removed-lines limit omission missing: %v", result.omissionSet)
 	}
 }
 

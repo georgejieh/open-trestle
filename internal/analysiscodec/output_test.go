@@ -45,6 +45,7 @@ func rejectResult(t *testing.T, original, change, base, head artifact.Artifact, 
 func canonicalMutation(t *testing.T, result Result, mutate func(*Result)) []byte {
 	t.Helper()
 	result.items = append([]Item(nil), result.items...)
+	result.removed = append([]Item(nil), result.removed...)
 	result.gaps = append([]Gap(nil), result.gaps...)
 	result.checks = append([]DeterministicCheck(nil), result.checks...)
 	result.observations = append([]Observation(nil), result.observations...)

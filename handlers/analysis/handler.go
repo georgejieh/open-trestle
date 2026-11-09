@@ -82,7 +82,7 @@ func deriveHandlerIdentity(projectDiagnostics bool) string {
 		Contract             string `json:"contract"`
 		SchemaVersion        int    `json:"schema_version"`
 		DiagnosticProjection bool   `json:"diagnostic_projection"`
-	}{"open-trestle/deterministic-evidence-handler", 6, projectDiagnostics})
+	}{"open-trestle/deterministic-evidence-handler", 7, projectDiagnostics})
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }
@@ -151,6 +151,7 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 		references[reference.Path()] = reference
 	}
 	items := make([]Item, 0)
+	removed := make([]Item, 0)
 	matchItems := make([]boundMatch, 0)
 	gaps := make([]Gap, 0)
 	workUnits := 0
@@ -176,12 +177,13 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 			applicableRanges += uint32(len(ranges))
 		}
 		if len(ranges) == 0 && entry.Reason() == "no_changed_head_lines" && !evidenceLimit {
-			deletion, built, failureCode := h.buildDeletionContext(ctx, request.Plan().Scope(), at, base, head, entry, &loaded, &expires, len(items), len(gaps))
+			deletion, built, failureCode := h.buildDeletionContext(ctx, request.Plan().Scope(), at, base, head, entry, &loaded, &expires, len(items), len(removed), len(gaps))
 			if failureCode != 0 {
 				return failure(failureCode)
 			}
 			if built {
 				items = append(items, deletion.items...)
+				removed = append(removed, deletion.removed...)
 				gaps = append(gaps, deletion.gaps...)
 				continue
 			}
@@ -299,7 +301,7 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 			return failure(controlplane.RunFailureInternal)
 		}
 	}
-	result, err := analysiscodec.NewResult(changeArtifact, change, headArtifact, head, items, gaps, []DeterministicCheck{check}, observations, semanticProfile)
+	result, err := analysiscodec.NewResultWithRemovedLines(changeArtifact, change, headArtifact, head, items, removed, gaps, []DeterministicCheck{check}, observations, semanticProfile)
 	if err != nil {
 		return failure(controlplane.RunFailureInternal)
 	}

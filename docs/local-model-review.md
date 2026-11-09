@@ -819,11 +819,14 @@ as a deterministic-evidence item. These items enter the context packet as
 `changed_hunk` sources, so the model reviews the code that now sits where the
 lines were removed. Each deletion point is also recorded as an
 `analysis_deleted_lines` source omission whose lines are the head lines on either
-side of the removed lines (one line at the start or end of the file). The removed
-base text itself is not supplied to the model; the omission is how the packet
-says that lines were deleted there. That omission counts as an unsupported source
-omission, so such a review is never comprehensive clearance. Deterministic
-evidence that carries deletion-point context is schema version 6.
+side of the removed lines (one line at the start or end of the file). The
+omission is how the packet says that lines were deleted there. That omission
+counts as an unsupported source omission, so such a review is never comprehensive
+clearance. Analysis also binds the removed base lines of each deletion point to
+the exact base file (deterministic evidence schema version 7; version 6 recorded
+the context without them), but the context packet does not yet supply that text
+to the model. Removed text past its bound is recorded as an
+`analysis_removed_lines_limit` omission whose lines are the removed base lines.
 
 The whole-entry `no_changed_head_lines` gap (context omission
 `analysis_no_changed_head_lines`) remains when deletion-point context cannot be

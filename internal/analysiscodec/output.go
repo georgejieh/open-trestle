@@ -65,17 +65,36 @@ func NewItem(entry changecodec.Entry, binding evidence.SourceSliceBinding) (Item
 }
 
 // DeletionContextReason labels a deletion point inside a deletion-only entry.
-// The gap's lines are the head lines on either side of the removed base lines;
-// the removed text itself is not supplied as source evidence.
+// The gap's lines are the head lines on either side of the removed base lines.
+// Version 6 supplies no removed text; version 7 binds it as removed-lines
+// records or records a RemovedLinesLimitReason gap.
 const DeletionContextReason = "deleted_lines"
+
+// RemovedLinesLimitReason labels the removed base lines of one deletion point
+// that exceed the per-point or per-entry bound and are therefore not bound as
+// removed-lines evidence. Unlike every other ranged gap, its lines are base
+// lines: the exact base range that was removed.
+const RemovedLinesLimitReason = "removed_lines_limit"
 
 // NewDeletionContextItem binds unchanged head lines around a deletion point of
 // a deletion-only entry (reason no_changed_head_lines). Such an entry has no
 // changed head range, so the item is not contained in one; it is valid only in
-// a version 6 result together with a deleted_lines gap for the same entry.
+// a version 6 or 7 result together with a deleted_lines gap for the same entry.
 func NewDeletionContextItem(entry changecodec.Entry, binding evidence.SourceSliceBinding) (Item, error) {
 	rangeValue := binding.SourceRange()
 	if binding.Validate() != nil || !deletionOnlyEntry(entry) || rangeValue.Path() != entry.Path() || binding.RepositoryFileIdentity() != entry.HeadIdentity() || binding.RepositoryFileDigest() != entry.HeadDigest() {
+		return Item{}, ErrInvalidResult
+	}
+	return Item{evidenceID: binding.Identity(), bindingIdentity: binding.Identity(), changeEntryIdentity: entry.Identity(), changeExecutionIdentity: entry.ExecutionIdentity(), path: entry.Path(), startLine: rangeValue.StartLine(), endLine: rangeValue.EndLine(), digest: binding.SliceDigest(), fileIdentity: binding.RepositoryFileIdentity(), fileDigest: binding.RepositoryFileDigest(), sliceBytes: binding.SliceBytes()}, nil
+}
+
+// NewRemovedLinesItem binds the exact base lines removed at one deletion point
+// of a deletion-only entry. Its range and file are the base range and base file,
+// not head lines, so it is never a changed range or an anchor. It is valid only
+// in a version 7 result together with deletion-point context for the entry.
+func NewRemovedLinesItem(entry changecodec.Entry, binding evidence.SourceSliceBinding) (Item, error) {
+	rangeValue := binding.SourceRange()
+	if binding.Validate() != nil || !deletionOnlyEntry(entry) || rangeValue.Path() != entry.Path() || binding.RepositoryFileDigest() != entry.BaseDigest() {
 		return Item{}, ErrInvalidResult
 	}
 	return Item{evidenceID: binding.Identity(), bindingIdentity: binding.Identity(), changeEntryIdentity: entry.Identity(), changeExecutionIdentity: entry.ExecutionIdentity(), path: entry.Path(), startLine: rangeValue.StartLine(), endLine: rangeValue.EndLine(), digest: binding.SliceDigest(), fileIdentity: binding.RepositoryFileIdentity(), fileDigest: binding.RepositoryFileDigest(), sliceBytes: binding.SliceBytes()}, nil
@@ -158,6 +177,7 @@ type Result struct {
 	identity, artifactIdentity, scopeIdentity, changeArtifactIdentity, changeIdentity, repositoryIdentity, headRevisionIdentity, headSnapshotArtifactIdentity, headSnapshotIdentity, headManifestIdentity string
 	schemaVersion, changedEntries, changedRanges                                                                                                                                                          int
 	items                                                                                                                                                                                                 []Item
+	removed                                                                                                                                                                                               []Item
 	gaps                                                                                                                                                                                                  []Gap
 	checks                                                                                                                                                                                                []DeterministicCheck
 	observations                                                                                                                                                                                          []Observation
@@ -174,6 +194,7 @@ func (r Result) HeadSnapshotIdentity() string           { return r.headSnapshotI
 func (r Result) HeadManifestIdentity() string           { return r.headManifestIdentity }
 func (r Result) SchemaVersion() int                     { return r.schemaVersion }
 func (r Result) Items() []Item                          { return append([]Item(nil), r.items...) }
+func (r Result) RemovedLines() []Item                   { return append([]Item(nil), r.removed...) }
 func (r Result) Gaps() []Gap                            { return append([]Gap(nil), r.gaps...) }
 func (r Result) Checks() []DeterministicCheck           { return append([]DeterministicCheck(nil), r.checks...) }
 func (r Result) Observations() []Observation            { return append([]Observation(nil), r.observations...) }
@@ -246,6 +267,7 @@ type resultWire struct {
 	EvidenceItems                int                      `json:"evidence_items"`
 	CoverageGaps                 int                      `json:"coverage_gaps"`
 	Items                        []itemWire               `json:"items"`
+	RemovedLines                 []itemWire               `json:"removed_lines,omitempty"`
 	Gaps                         []gapWire                `json:"gaps"`
 	Checks                       []deterministicCheckWire `json:"checks,omitempty"`
 	Observations                 []observationWire        `json:"observations"`
@@ -254,7 +276,40 @@ type resultWire struct {
 
 func (w resultWire) MarshalJSON() ([]byte, error) {
 	type current resultWire
-	if w.SchemaVersion == 4 || w.SchemaVersion == 5 || w.SchemaVersion == 6 {
+	if w.SchemaVersion == 7 {
+		// Version 7 always carries removed_lines, even when every deletion
+		// point's removed text was recorded as a removed_lines_limit gap.
+		if w.Observations == nil {
+			w.Observations = []observationWire{}
+		}
+		if w.RemovedLines == nil {
+			w.RemovedLines = []itemWire{}
+		}
+		type versionSeven struct {
+			Contract                     string                   `json:"contract"`
+			SchemaVersion                int                      `json:"schema_version"`
+			Identity                     string                   `json:"identity"`
+			ChangeArtifactIdentity       string                   `json:"change_artifact_identity"`
+			ChangeIdentity               string                   `json:"change_identity"`
+			RepositoryIdentity           string                   `json:"repository_identity"`
+			HeadRevisionIdentity         string                   `json:"head_revision_identity"`
+			HeadSnapshotArtifactIdentity string                   `json:"head_snapshot_artifact_identity"`
+			HeadSnapshotIdentity         string                   `json:"head_snapshot_identity"`
+			HeadManifestIdentity         string                   `json:"head_manifest_identity"`
+			ChangedEntries               int                      `json:"changed_entries"`
+			ChangedRanges                int                      `json:"changed_ranges"`
+			EvidenceItems                int                      `json:"evidence_items"`
+			CoverageGaps                 int                      `json:"coverage_gaps"`
+			Items                        []itemWire               `json:"items"`
+			RemovedLines                 []itemWire               `json:"removed_lines"`
+			Gaps                         []gapWire                `json:"gaps"`
+			Checks                       []deterministicCheckWire `json:"checks,omitempty"`
+			Observations                 []observationWire        `json:"observations"`
+			SemanticImpact               json.RawMessage          `json:"semantic_impact"`
+		}
+		return json.Marshal(versionSeven{w.Contract, w.SchemaVersion, w.Identity, w.ChangeArtifactIdentity, w.ChangeIdentity, w.RepositoryIdentity, w.HeadRevisionIdentity, w.HeadSnapshotArtifactIdentity, w.HeadSnapshotIdentity, w.HeadManifestIdentity, w.ChangedEntries, w.ChangedRanges, w.EvidenceItems, w.CoverageGaps, w.Items, w.RemovedLines, w.Gaps, w.Checks, w.Observations, w.SemanticImpact})
+	}
+	if observationVersion(w.SchemaVersion) {
 		if w.Observations == nil {
 			w.Observations = []observationWire{}
 		}
@@ -283,7 +338,18 @@ func (w resultWire) MarshalJSON() ([]byte, error) {
 	return json.Marshal(legacy{w.Contract, w.SchemaVersion, w.Identity, w.ChangeArtifactIdentity, w.ChangeIdentity, w.RepositoryIdentity, w.HeadRevisionIdentity, w.HeadSnapshotArtifactIdentity, w.HeadSnapshotIdentity, w.HeadManifestIdentity, w.ChangedEntries, w.ChangedRanges, w.EvidenceItems, w.CoverageGaps, w.Items, w.Gaps, w.Checks, w.SemanticImpact})
 }
 
+// observationVersion reports whether a result version records the exact
+// static-check observations array (version 4 and later).
+func observationVersion(version int) bool { return version >= 4 && version <= 7 }
+
 func NewResult(changeArtifact artifact.Artifact, change changecodec.Result, headArtifact artifact.Artifact, head sourceoutput.Snapshot, items []Item, gaps []Gap, checks []DeterministicCheck, observations []Observation, semanticProfile semanticimpact.Profile) (Result, error) {
+	return NewResultWithRemovedLines(changeArtifact, change, headArtifact, head, items, nil, gaps, checks, observations, semanticProfile)
+}
+
+// NewResultWithRemovedLines additionally records the removed base lines of
+// deletion points. Removed-lines records or removed_lines_limit gaps make the
+// result version 7; without them a result keeps its version 4, 5 or 6 bytes.
+func NewResultWithRemovedLines(changeArtifact artifact.Artifact, change changecodec.Result, headArtifact artifact.Artifact, head sourceoutput.Snapshot, items, removed []Item, gaps []Gap, checks []DeterministicCheck, observations []Observation, semanticProfile semanticimpact.Profile) (Result, error) {
 	schemaVersion := 4
 	changedRanges := 0
 	deletionOnly := map[string]bool{}
@@ -301,8 +367,18 @@ func NewResult(changeArtifact artifact.Artifact, change changecodec.Result, head
 			schemaVersion = 6
 		}
 	}
-	result := Result{schemaVersion: schemaVersion, changeArtifactIdentity: changeArtifact.Identity(), changeIdentity: change.Identity(), repositoryIdentity: change.Repository().Identity(), headRevisionIdentity: change.HeadRevision().Identity(), headSnapshotArtifactIdentity: headArtifact.Identity(), headSnapshotIdentity: head.Identity(), headManifestIdentity: head.ManifestIdentity(), changedEntries: len(change.Entries()), changedRanges: changedRanges, items: append([]Item(nil), items...), gaps: append([]Gap(nil), gaps...), checks: append([]DeterministicCheck(nil), checks...), observations: append([]Observation(nil), observations...), semanticProfile: semanticProfile}
+	// Version 7 adds the removed base text of deletion points.
+	if len(removed) > 0 {
+		schemaVersion = 7
+	}
+	for _, gap := range gaps {
+		if gap.reason == RemovedLinesLimitReason {
+			schemaVersion = 7
+		}
+	}
+	result := Result{schemaVersion: schemaVersion, changeArtifactIdentity: changeArtifact.Identity(), changeIdentity: change.Identity(), repositoryIdentity: change.Repository().Identity(), headRevisionIdentity: change.HeadRevision().Identity(), headSnapshotArtifactIdentity: headArtifact.Identity(), headSnapshotIdentity: head.Identity(), headManifestIdentity: head.ManifestIdentity(), changedEntries: len(change.Entries()), changedRanges: changedRanges, items: append([]Item(nil), items...), removed: append([]Item(nil), removed...), gaps: append([]Gap(nil), gaps...), checks: append([]DeterministicCheck(nil), checks...), observations: append([]Observation(nil), observations...), semanticProfile: semanticProfile}
 	sort.Slice(result.items, func(i, j int) bool { return itemKey(result.items[i]) < itemKey(result.items[j]) })
+	sort.Slice(result.removed, func(i, j int) bool { return itemKey(result.removed[i]) < itemKey(result.removed[j]) })
 	sort.Slice(result.gaps, func(i, j int) bool { return gapKey(result.gaps[i]) < gapKey(result.gaps[j]) })
 	sort.Slice(result.observations, func(i, j int) bool {
 		return observationKey(result.observations[i]) < observationKey(result.observations[j])
@@ -314,10 +390,10 @@ func NewResult(changeArtifact artifact.Artifact, change changecodec.Result, head
 	return result, nil
 }
 func (r Result) validate(requireArtifact bool, change changecodec.Result) error {
-	if change.Identity() != r.changeIdentity || change.ArtifactIdentity() != r.changeArtifactIdentity || change.Repository().Identity() != r.repositoryIdentity || change.HeadRevision().Identity() != r.headRevisionIdentity || change.HeadSnapshotArtifactIdentity() != r.headSnapshotArtifactIdentity || change.HeadSnapshotIdentity() != r.headSnapshotIdentity || change.HeadManifestIdentity() != r.headManifestIdentity || r.changedEntries != len(change.Entries()) || len(r.items) > MaxEvidenceItems || len(r.gaps) > MaxEvidenceItems || len(r.observations) > MaxEvidenceItems || r.semanticProfile.BaseSnapshotIdentity() != change.BaseSnapshotIdentity() || r.semanticProfile.HeadSnapshotIdentity() != change.HeadSnapshotIdentity() || r.semanticProfile.ChangeModelIdentity() != change.Identity() || requireArtifact && (!validDigest(r.artifactIdentity) || !validDigest(r.scopeIdentity)) {
+	if change.Identity() != r.changeIdentity || change.ArtifactIdentity() != r.changeArtifactIdentity || change.Repository().Identity() != r.repositoryIdentity || change.HeadRevision().Identity() != r.headRevisionIdentity || change.HeadSnapshotArtifactIdentity() != r.headSnapshotArtifactIdentity || change.HeadSnapshotIdentity() != r.headSnapshotIdentity || change.HeadManifestIdentity() != r.headManifestIdentity || r.changedEntries != len(change.Entries()) || len(r.items) > MaxEvidenceItems || len(r.removed) > MaxEvidenceItems || len(r.gaps) > MaxEvidenceItems || len(r.observations) > MaxEvidenceItems || r.semanticProfile.BaseSnapshotIdentity() != change.BaseSnapshotIdentity() || r.semanticProfile.HeadSnapshotIdentity() != change.HeadSnapshotIdentity() || r.semanticProfile.ChangeModelIdentity() != change.Identity() || requireArtifact && (!validDigest(r.artifactIdentity) || !validDigest(r.scopeIdentity)) {
 		return ErrInvalidResult
 	}
-	validChecks := r.schemaVersion == 2 && len(r.checks) == 0 && len(r.observations) == 0 || r.schemaVersion == 3 && len(r.checks) == 1 && len(r.observations) == 0 || (r.schemaVersion == 4 || r.schemaVersion == 5 || r.schemaVersion == 6) && len(r.checks) == 1
+	validChecks := r.schemaVersion == 2 && len(r.checks) == 0 && len(r.observations) == 0 || r.schemaVersion == 3 && len(r.checks) == 1 && len(r.observations) == 0 || observationVersion(r.schemaVersion) && len(r.checks) == 1
 	if !validChecks {
 		return ErrInvalidResult
 	}
@@ -326,7 +402,7 @@ func (r Result) validate(requireArtifact bool, change changecodec.Result) error 
 			return ErrInvalidResult
 		}
 	}
-	if (r.schemaVersion == 4 || r.schemaVersion == 5 || r.schemaVersion == 6) && uint32(len(r.observations)) != r.checks[0].MatchCount() {
+	if observationVersion(r.schemaVersion) && uint32(len(r.observations)) != r.checks[0].MatchCount() {
 		return ErrInvalidResult
 	}
 	entryByIdentity := make(map[string]changecodec.Entry, r.changedEntries)
@@ -366,11 +442,32 @@ func (r Result) validate(requireArtifact bool, change changecodec.Result) error 
 		covered[coverageKey(item.changeEntryIdentity, item.startLine, item.endLine)]++
 		previous = key
 	}
+	// Removed-lines records and removed_lines_limit gaps use base lines, so they
+	// never enter head coverage. Each removed base range is accounted for once.
+	removedText := make(map[string][]Item)
+	previous = ""
+	for _, item := range r.removed {
+		key := itemKey(item)
+		if r.schemaVersion != 7 || key <= previous || !validRemovedItem(item, entryByIdentity) {
+			return ErrInvalidResult
+		}
+		if _, ok := seen[item.evidenceID]; ok {
+			return ErrInvalidResult
+		}
+		seen[item.evidenceID] = struct{}{}
+		removedText[item.changeEntryIdentity] = append(removedText[item.changeEntryIdentity], item)
+		previous = key
+	}
 	previous = ""
 	for _, gap := range r.gaps {
 		key := gapKey(gap)
 		if key <= previous || !validGap(gap, entryByIdentity, r.schemaVersion, change.SchemaVersion()) {
 			return ErrInvalidResult
+		}
+		previous = key
+		if gap.reason == RemovedLinesLimitReason {
+			removedText[gap.changeEntryIdentity] = append(removedText[gap.changeEntryIdentity], Item{startLine: gap.startLine, endLine: gap.endLine})
+			continue
 		}
 		if gap.reason == DeletionContextReason {
 			deletionGaps[gap.changeEntryIdentity]++
@@ -380,11 +477,24 @@ func (r Result) validate(requireArtifact bool, change changecodec.Result) error 
 		} else {
 			covered[coverageKey(gap.changeEntryIdentity, gap.startLine, gap.endLine)]++
 		}
-		previous = key
 	}
-	// Version 6 exists only to carry deletion-point context.
-	if r.schemaVersion == 6 && len(deletionItems) == 0 {
+	// Versions 6 and 7 exist only to carry deletion-point context. Removed text
+	// never appears without that context, and version 7 accounts for removed
+	// text on every entry that carries it.
+	if (r.schemaVersion == 6 || r.schemaVersion == 7) && len(deletionItems) == 0 {
 		return ErrInvalidResult
+	}
+	for identity, ranges := range removedText {
+		if deletionItems[identity] == 0 || deletionGaps[identity] == 0 || !disjointBaseRanges(ranges) {
+			return ErrInvalidResult
+		}
+	}
+	if r.schemaVersion == 7 {
+		for identity := range deletionItems {
+			if len(removedText[identity]) == 0 {
+				return ErrInvalidResult
+			}
+		}
 	}
 	for _, entry := range change.Entries() {
 		if wholeEntryGap[entry.Identity()] {
@@ -420,7 +530,7 @@ func validItem(item Item, entries map[string]changecodec.Entry, schemaVersion in
 		return false
 	}
 	sourceRange, err := evidence.NewSourceRange(item.path, item.startLine, item.endLine)
-	deletionContext := schemaVersion == 6 && deletionOnlyEntry(entry)
+	deletionContext := (schemaVersion == 6 || schemaVersion == 7) && deletionOnlyEntry(entry)
 	if err != nil || !deletionContext && !containsRange(entry.Ranges(), item.startLine, item.endLine) {
 		return false
 	}
@@ -430,6 +540,38 @@ func validItem(item Item, entries map[string]changecodec.Entry, schemaVersion in
 	}
 	return deriveBindingIdentity(item) == item.bindingIdentity
 }
+
+// validRemovedItem checks one removed-lines record against the base side of
+// its deletion-only entry. The record carries base lines of the base file.
+func validRemovedItem(item Item, entries map[string]changecodec.Entry) bool {
+	entry, ok := entries[item.changeEntryIdentity]
+	if !ok || !deletionOnlyEntry(entry) || entry.ExecutionIdentity() != item.changeExecutionIdentity || entry.Path() != item.path || entry.BaseDigest() != item.fileDigest || item.evidenceID != item.bindingIdentity || !validDigest(item.evidenceID) || !validDigest(item.digest) || !validDigest(item.fileIdentity) || item.sliceBytes <= 0 || item.sliceBytes > 1<<20 {
+		return false
+	}
+	sourceRange, err := evidence.NewSourceRange(item.path, item.startLine, item.endLine)
+	if err != nil {
+		return false
+	}
+	evidenceItem, err := evidence.NewEvidenceItem(item.evidenceID, evidence.EvidenceKindSource, item.digest, sourceRange)
+	if err != nil || evidenceItem.ID() != item.evidenceID {
+		return false
+	}
+	return deriveBindingIdentity(item) == item.bindingIdentity
+}
+
+// disjointBaseRanges reports whether the removed base ranges of one entry,
+// records and limit gaps together, never overlap.
+func disjointBaseRanges(ranges []Item) bool {
+	ordered := append([]Item(nil), ranges...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].startLine < ordered[j].startLine })
+	for index := 1; index < len(ordered); index++ {
+		if ordered[index].startLine <= ordered[index-1].endLine {
+			return false
+		}
+	}
+	return true
+}
+
 func validGap(gap Gap, entries map[string]changecodec.Entry, schemaVersion, changeSchemaVersion int) bool {
 	entry, ok := entries[gap.changeEntryIdentity]
 	if !ok || entry.ExecutionIdentity() != gap.changeExecutionIdentity || entry.Path() != gap.path {
@@ -441,9 +583,13 @@ func validGap(gap Gap, entries map[string]changecodec.Entry, schemaVersion, chan
 		}
 		if gap.reason == DeletionContextReason {
 			_, err := evidence.NewSourceRange(gap.path, gap.startLine, gap.endLine)
-			return schemaVersion == 6 && err == nil
+			return (schemaVersion == 6 || schemaVersion == 7) && err == nil
 		}
-		return (schemaVersion == 5 || schemaVersion == 6) && gap.startLine == 0 && gap.endLine == 0 && gap.reason == entry.Reason()
+		if gap.reason == RemovedLinesLimitReason {
+			_, err := evidence.NewSourceRange(gap.path, gap.startLine, gap.endLine)
+			return schemaVersion == 7 && err == nil
+		}
+		return (schemaVersion == 5 || schemaVersion == 6 || schemaVersion == 7) && gap.startLine == 0 && gap.endLine == 0 && gap.reason == entry.Reason()
 	}
 	if gap.startLine == 0 && gap.endLine == 0 {
 		if gap.reason == "evidence_limit" {
@@ -532,7 +678,7 @@ func ParseResultArtifactWithChange(value, changeArtifact artifact.Artifact, chan
 		return Result{}, ErrInvalidResult
 	}
 	canonical, _ := json.Marshal(wire)
-	validVersion := wire.SchemaVersion == 2 && len(wire.Checks) == 0 && len(wire.Observations) == 0 || wire.SchemaVersion == 3 && len(wire.Checks) == 1 && len(wire.Observations) == 0 || (wire.SchemaVersion == 4 || wire.SchemaVersion == 5 || wire.SchemaVersion == 6) && len(wire.Checks) == 1
+	validVersion := wire.SchemaVersion == 2 && len(wire.Checks) == 0 && len(wire.Observations) == 0 || wire.SchemaVersion == 3 && len(wire.Checks) == 1 && len(wire.Observations) == 0 || observationVersion(wire.SchemaVersion) && len(wire.Checks) == 1
 	if !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/deterministic-evidence-result" || !validVersion || wire.EvidenceItems != len(wire.Items) || wire.CoverageGaps != len(wire.Gaps) {
 		return Result{}, ErrInvalidResult
 	}
@@ -563,10 +709,25 @@ func ParseResultArtifactWithChange(value, changeArtifact artifact.Artifact, chan
 	}
 	return result, nil
 }
-func toWire(r Result) resultWire {
-	items := make([]itemWire, len(r.items))
-	for i, v := range r.items {
+func itemWireValues(values []Item) []itemWire {
+	items := make([]itemWire, len(values))
+	for i, v := range values {
 		items[i] = itemWire{EvidenceID: v.evidenceID, BindingIdentity: v.bindingIdentity, ChangeEntryIdentity: v.changeEntryIdentity, ChangeExecutionIdentity: v.changeExecutionIdentity, Path: v.path, StartLine: v.startLine, EndLine: v.endLine, Digest: v.digest, FileIdentity: v.fileIdentity, FileDigest: v.fileDigest, SliceBytes: v.sliceBytes}
+	}
+	return items
+}
+func itemValues(values []itemWire) []Item {
+	items := make([]Item, len(values))
+	for i, v := range values {
+		items[i] = Item{evidenceID: v.EvidenceID, bindingIdentity: v.BindingIdentity, changeEntryIdentity: v.ChangeEntryIdentity, changeExecutionIdentity: v.ChangeExecutionIdentity, path: v.Path, startLine: v.StartLine, endLine: v.EndLine, digest: v.Digest, fileIdentity: v.FileIdentity, fileDigest: v.FileDigest, sliceBytes: v.SliceBytes}
+	}
+	return items
+}
+func toWire(r Result) resultWire {
+	items := itemWireValues(r.items)
+	var removed []itemWire
+	if len(r.removed) > 0 {
+		removed = itemWireValues(r.removed)
 	}
 	gaps := make([]gapWire, len(r.gaps))
 	for i, v := range r.gaps {
@@ -581,18 +742,19 @@ func toWire(r Result) resultWire {
 		observations[index] = observationWire{Identity: observation.identity, Fingerprint: observation.fingerprint, CheckIdentity: observation.checkIdentity, EvidenceID: observation.evidenceID, Path: observation.path, StartLine: observation.startLine, EndLine: observation.endLine, Digest: observation.digest, FileIdentity: observation.fileIdentity, FileDigest: observation.fileDigest, SliceBytes: observation.sliceBytes}
 	}
 	semanticEncoded, _ := semanticimpact.EncodeProfile(r.semanticProfile)
-	return resultWire{Contract: "open-trestle/deterministic-evidence-result", SchemaVersion: r.schemaVersion, Identity: r.identity, ChangeArtifactIdentity: r.changeArtifactIdentity, ChangeIdentity: r.changeIdentity, RepositoryIdentity: r.repositoryIdentity, HeadRevisionIdentity: r.headRevisionIdentity, HeadSnapshotArtifactIdentity: r.headSnapshotArtifactIdentity, HeadSnapshotIdentity: r.headSnapshotIdentity, HeadManifestIdentity: r.headManifestIdentity, ChangedEntries: r.changedEntries, ChangedRanges: r.changedRanges, EvidenceItems: len(r.items), CoverageGaps: len(r.gaps), Items: items, Gaps: gaps, Checks: checks, Observations: observations, SemanticImpact: semanticEncoded}
+	return resultWire{Contract: "open-trestle/deterministic-evidence-result", SchemaVersion: r.schemaVersion, Identity: r.identity, ChangeArtifactIdentity: r.changeArtifactIdentity, ChangeIdentity: r.changeIdentity, RepositoryIdentity: r.repositoryIdentity, HeadRevisionIdentity: r.headRevisionIdentity, HeadSnapshotArtifactIdentity: r.headSnapshotArtifactIdentity, HeadSnapshotIdentity: r.headSnapshotIdentity, HeadManifestIdentity: r.headManifestIdentity, ChangedEntries: r.changedEntries, ChangedRanges: r.changedRanges, EvidenceItems: len(r.items), CoverageGaps: len(r.gaps), Items: items, RemovedLines: removed, Gaps: gaps, Checks: checks, Observations: observations, SemanticImpact: semanticEncoded}
 }
 func fromWire(w resultWire, checks []DeterministicCheck, observations []Observation, semanticProfile semanticimpact.Profile) Result {
-	items := make([]Item, len(w.Items))
-	for i, v := range w.Items {
-		items[i] = Item{evidenceID: v.EvidenceID, bindingIdentity: v.BindingIdentity, changeEntryIdentity: v.ChangeEntryIdentity, changeExecutionIdentity: v.ChangeExecutionIdentity, path: v.Path, startLine: v.StartLine, endLine: v.EndLine, digest: v.Digest, fileIdentity: v.FileIdentity, fileDigest: v.FileDigest, sliceBytes: v.SliceBytes}
+	items := itemValues(w.Items)
+	var removed []Item
+	if len(w.RemovedLines) > 0 {
+		removed = itemValues(w.RemovedLines)
 	}
 	gaps := make([]Gap, len(w.Gaps))
 	for i, v := range w.Gaps {
 		gaps[i] = Gap{changeEntryIdentity: v.ChangeEntryIdentity, changeExecutionIdentity: v.ChangeExecutionIdentity, path: v.Path, startLine: v.StartLine, endLine: v.EndLine, reason: v.Reason}
 	}
-	return Result{identity: w.Identity, schemaVersion: w.SchemaVersion, changeArtifactIdentity: w.ChangeArtifactIdentity, changeIdentity: w.ChangeIdentity, repositoryIdentity: w.RepositoryIdentity, headRevisionIdentity: w.HeadRevisionIdentity, headSnapshotArtifactIdentity: w.HeadSnapshotArtifactIdentity, headSnapshotIdentity: w.HeadSnapshotIdentity, headManifestIdentity: w.HeadManifestIdentity, changedEntries: w.ChangedEntries, changedRanges: w.ChangedRanges, items: items, gaps: gaps, checks: append([]DeterministicCheck(nil), checks...), observations: append([]Observation(nil), observations...), semanticProfile: semanticProfile}
+	return Result{identity: w.Identity, schemaVersion: w.SchemaVersion, changeArtifactIdentity: w.ChangeArtifactIdentity, changeIdentity: w.ChangeIdentity, repositoryIdentity: w.RepositoryIdentity, headRevisionIdentity: w.HeadRevisionIdentity, headSnapshotArtifactIdentity: w.HeadSnapshotArtifactIdentity, headSnapshotIdentity: w.HeadSnapshotIdentity, headManifestIdentity: w.HeadManifestIdentity, changedEntries: w.ChangedEntries, changedRanges: w.ChangedRanges, items: items, removed: removed, gaps: gaps, checks: append([]DeterministicCheck(nil), checks...), observations: append([]Observation(nil), observations...), semanticProfile: semanticProfile}
 }
 func deriveIdentity(r Result) string {
 	wire := toWire(r)

@@ -54,7 +54,7 @@ Control-plane schemas:
 - `schemas/controlplane/runtime-status-response-v1.schema.json`
 - `schemas/controlplane/run-progress-response-v1.schema.json`
 
-The run-progress response v1 is a separate read-only HTTP envelope with exactly `contract`, `schema_version`, `request_id`, `run`, and `progress`. It references the unchanged canonical receipt v1 or v2. Its four axes are `change`, `deterministic`, `context`, and `verification`, each with a bounded state, optional immutable artifact identity, and only its declared count fields. The schema inventory contains 116 documents. The strict native client additionally validates scope, completed-task binding, exact non-context output identities, count equations, and checked-versus-applicable bounds. Schema validation cannot establish artifact lineage or receipt-head consistency.
+The run-progress response v1 is a separate read-only HTTP envelope with exactly `contract`, `schema_version`, `request_id`, `run`, and `progress`. It references the unchanged canonical receipt v1 or v2. Its four axes are `change`, `deterministic`, `context`, and `verification`, each with a bounded state, optional immutable artifact identity, and only its declared count fields. The schema inventory contains 117 documents. The strict native client additionally validates scope, completed-task binding, exact non-context output identities, count equations, and checked-versus-applicable bounds. Schema validation cannot establish artifact lineage or receipt-head consistency.
 
 `not_run` and `unavailable` carry no counts; absent counts mean unknown, not zero. Only an evidenced incomplete deterministic check uses `partial`. The available context artifact identity is the source-proven context packet, which can differ from the receipt's sanitized generation-input output after v6 settlement. Other available axis identities equal their corresponding completed task outputs. The daemon uses at most ten indexed scoped artifact loads and existing canonical parsers, checks the unchanged receipt head, and returns `409 progress_changed` on advancement. It writes no provisional diagnostics, grants no approval, and performs no model or publication effect. `runs status --format progress` emits a single bound `{run, progress}` object rather than the HTTP envelope. See [read-only run progress](daemon-api.md#read-only-run-progress).
 
@@ -81,6 +81,7 @@ Artifact schemas:
 - `schemas/artifact/deterministic-evidence-result-v4.schema.json`
 - `schemas/artifact/deterministic-evidence-result-v5.schema.json`
 - `schemas/artifact/deterministic-evidence-result-v6.schema.json`
+- `schemas/artifact/deterministic-evidence-result-v7.schema.json`
 - `schemas/artifact/semantic-impact-profile-v1.schema.json`
 - `schemas/artifact/memory-retrieval-result-v1.schema.json`
 - `schemas/artifact/publication-readiness-result-v1.schema.json`
