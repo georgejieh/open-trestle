@@ -134,9 +134,16 @@ func investigationOwnerOptionsFixture(t *testing.T, mode string, cap uint64, tur
 		t.Fatal(err)
 	}
 	clock := &investigationOwnerClock{time.UnixMilli(1000)}
-	options := InvestigationRouteOwnerOptions{Scope: d.scope, SessionIdentity: strings.Repeat("b", 64), PolicyIdentity: strings.Repeat("c", 64), Deadline: time.UnixMilli(10000), MaxTurns: turns, Budget: budget, Requirements: requirements, Constraints: constraints, Generation: plan, Verification: plan, Catalog: catalog, Ledger: ledger, Clock: clock}
+	options := InvestigationRouteOwnerOptions{Scope: d.scope, SessionIdentity: strings.Repeat("b", 64), PolicyIdentity: strings.Repeat("c", 64), Deadline: time.UnixMilli(10000), MaxTurns: turns, Budget: budget, Requirements: requirements, Constraints: constraints, Generation: plan, Verification: plan, Catalog: catalog, Ledger: ledger, Clock: clock, SystemChannelBytes: investigationOwnerSystemChannel}
 	return options, d, clock, ledger
 }
+
+// investigationOwnerSystemBytes stands in for the trusted system channel that
+// review.ModelRequestSystemChannelBytes measures in production.
+const investigationOwnerSystemBytes = 1000
+
+func investigationOwnerSystemChannel(provider.Request) uint32 { return investigationOwnerSystemBytes }
+
 func investigationOwnerFixture(t *testing.T, mode string, cap uint64, turns uint8) (*InvestigationRouteOwner, *investigationOwnerDispatcher, *investigationOwnerClock, audit.Ledger) {
 	t.Helper()
 	options, d, clock, ledger := investigationOwnerOptionsFixture(t, mode, cap, turns)
@@ -306,7 +313,7 @@ func TestInvestigationRouteOwnerTurnLimitDeniesWithAmpleRemainingMoney(t *testin
 	}
 	next := ownerRequest(t, "second")
 	remaining := owner.State().RemainingCostMicroUSD()
-	if remaining != 81000 || uint64(len(next.Payload()))+256+16000 >= remaining || first.Authorization().ReservedCostMicroUSD() >= remaining {
+	if remaining != 81000 || uint64(len(next.Payload()))+investigationOwnerSystemBytes+256+16000 >= remaining || first.Authorization().ReservedCostMicroUSD() >= remaining {
 		t.Fatal("turn-limit fixture is money-constrained")
 	}
 	before := investigationOwnerEvents(t, ledger, d.scope)
@@ -319,7 +326,7 @@ func TestInvestigationRouteOwnerTurnLimitDeniesWithAmpleRemainingMoney(t *testin
 	}
 }
 func TestInvestigationRouteOwnerInvalidConstructorHasNoEffects(t *testing.T) {
-	for _, mode := range []string{"zero", "scope", "session identity", "policy identity", "deadline zero", "deadline expired", "deadline equality", "turns zero", "turns ceiling", "budget", "generation plan", "verification plan", "catalog", "ledger nil", "ledger typed nil", "clock nil", "clock typed nil"} {
+	for _, mode := range []string{"zero", "scope", "session identity", "policy identity", "deadline zero", "deadline expired", "deadline equality", "turns zero", "turns ceiling", "budget", "generation plan", "verification plan", "catalog", "ledger nil", "ledger typed nil", "clock nil", "clock typed nil", "system channel nil"} {
 		t.Run(mode, func(t *testing.T) {
 			options, d, clock, ledger := investigationOwnerOptionsFixture(t, "", 100000, 5)
 			switch mode {
@@ -359,6 +366,8 @@ func TestInvestigationRouteOwnerInvalidConstructorHasNoEffects(t *testing.T) {
 			case "clock typed nil":
 				var missing *investigationOwnerClock
 				options.Clock = missing
+			case "system channel nil":
+				options.SystemChannelBytes = nil
 			}
 			owner, err := NewInvestigationRouteOwner(options)
 			if err == nil || owner != nil {
@@ -616,7 +625,7 @@ func TestInvestigationTurnRecordRejectsRehashedCrossWiredComponents(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, mode := range []string{"scope", "request", "selection", "ranking", "authorization", "dispatch", "outcome", "reconciliation", "timing", "estimate version", "ordinal"} {
+	for _, mode := range []string{"scope", "request", "selection", "ranking", "authorization", "dispatch", "outcome", "reconciliation", "timing", "estimate version", "estimate version 1 relabel", "system channel bytes", "ordinal"} {
 		t.Run(mode, func(t *testing.T) {
 			changed := second
 			switch mode {
@@ -639,7 +648,11 @@ func TestInvestigationTurnRecordRejectsRehashedCrossWiredComponents(t *testing.T
 			case "timing":
 				changed.finishedMillis = changed.deadlineMillis
 			case "estimate version":
-				changed.estimateVersion = 2
+				changed.estimateVersion = InvestigationBudgetEstimateVersion + 1
+			case "estimate version 1 relabel":
+				changed.estimateVersion = investigationBudgetEstimateVersionV1
+			case "system channel bytes":
+				changed.systemBytes++
 			case "ordinal":
 				changed.ordinal = 1
 			}

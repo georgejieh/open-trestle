@@ -76,12 +76,16 @@ attempt. The version number is shared with generation context version 5 on the
 same contract name; the two are told apart by task, `tool_calls` and the pinned
 output schema identity, and neither validator accepts the other.
 
-The model's input-token estimate (`review.ModelRequestBudget`) and the local
-structured-output reservation count the system channel's bytes as well as the
-payload's. The investigation route owner's per-turn reservation is persisted in
-its turn record and still estimates the payload alone; the local structured-output
-check fails closed if the approved budget does not also cover the system channel,
-so set `estimated_input_tokens` with that margin.
+The model's input-token estimate (`review.ModelRequestBudget`), the
+investigation route owner's per-turn reservation and the local structured-output
+reservation count the system channel's bytes as well as the payload's. A local
+verification envelope is measured by the verification request it carries. Each
+investigation turn record stores the system channel bytes it reserved for
+(estimate version 2); records written under estimate version 1 estimated the
+payload alone and still read back with that formula. The local structured-output
+check also counts the serialized `response_format`, which route planning does
+not, so set `estimated_input_tokens` with that margin (see
+[local model review](local-model-review.md)).
 
 ## Instruction hierarchy
 

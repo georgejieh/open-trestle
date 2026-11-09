@@ -365,7 +365,7 @@ func (f *persistFixtureData) rebuild() {
 
 func (f *persistFixtureData) preflight() {
 	t, o := f.t, f.options
-	budget, err := provider.NewModelCostBudget(uint64(len(f.request.Payload()))+256, 4096, o.Routing.Budget.MaxCostMicroUSD())
+	budget, err := gateway.InvestigationTurnCostBudget(o.Routing.Budget, f.request, review.ModelRequestSystemChannelBytes(f.request), o.Routing.Budget.MaxCostMicroUSD())
 	upperCheck(t, err)
 	input, err := gateway.NewReviewRoutingInput(o.Scope, f.request, o.Routing.Requirements, o.Routing.Constraints)
 	upperCheck(t, err)
@@ -553,7 +553,7 @@ func (f *persistFixtureData) calibrate() persistSizing {
 	}
 	pin, err := gateway.NewPinnedRouteRankingPolicy(o.Routing.Generation.ResolvedRecord().RouteRegistryRecord().RouteCandidateDeclaration().RouteCapabilityDeclaration().RouteReference(), nil)
 	upperCheck(t, err)
-	owner, err := gateway.NewInvestigationRouteOwner(gateway.InvestigationRouteOwnerOptions{Scope: o.Scope, SessionIdentity: f.binding.Identity(), PolicyIdentity: o.Policy.Identity(), Deadline: o.Deadline, MaxTurns: uint8(o.Policy.MaxModelTurns()), Budget: o.Routing.Budget, Requirements: o.Routing.Requirements, Constraints: o.Routing.Constraints, Generation: makePlan([]gateway.ObservedRouteCandidate{o.Routing.Generation}, pin), Verification: makePlan(o.Routing.Verification, o.Routing.VerificationRanking), Catalog: catalog, Ledger: ledger, Clock: o.Clock})
+	owner, err := gateway.NewInvestigationRouteOwner(gateway.InvestigationRouteOwnerOptions{Scope: o.Scope, SessionIdentity: f.binding.Identity(), PolicyIdentity: o.Policy.Identity(), Deadline: o.Deadline, MaxTurns: uint8(o.Policy.MaxModelTurns()), Budget: o.Routing.Budget, Requirements: o.Routing.Requirements, Constraints: o.Routing.Constraints, Generation: makePlan([]gateway.ObservedRouteCandidate{o.Routing.Generation}, pin), Verification: makePlan(o.Routing.Verification, o.Routing.VerificationRanking), Catalog: catalog, Ledger: ledger, Clock: o.Clock, SystemChannelBytes: review.ModelRequestSystemChannelBytes})
 	upperCheck(t, err)
 	turn, err := owner.Dispatch(context.Background(), gateway.InvestigationGenerationTurn, f.request)
 	upperCheck(t, err)

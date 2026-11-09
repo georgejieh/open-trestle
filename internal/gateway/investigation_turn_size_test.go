@@ -25,7 +25,7 @@ const (
 	turnSizePartLimit             = 2 << 20
 	turnSizePartCount             = 64
 	turnSizeArtifactPayloadLimit  = 16 << 20
-	turnSizeMetadataCeiling       = 941490
+	turnSizeMetadataCeiling       = 941524
 	turnSizeResponseBase64Ceiling = 11185064
 )
 
@@ -45,7 +45,9 @@ func turnSizeMetadataOracle(t *testing.T, value reflect.Type, name string, tag r
 		for i := 0; i < value.NumField(); i++ {
 			field := value.Field(i)
 			key, options, hasOptions := strings.Cut(field.Tag.Get("json"), ",")
-			if key == "" || hasOptions && (options != "omitempty" || key != "reported_debit_upper_bound" || field.Type != reflect.TypeOf((*reportedDebitUpperBoundWire)(nil))) {
+			debit := key == "reported_debit_upper_bound" && field.Type == reflect.TypeOf((*reportedDebitUpperBoundWire)(nil))
+			system := key == "system_channel_bytes" && field.Type == reflect.TypeOf((*uint32)(nil))
+			if key == "" || hasOptions && (options != "omitempty" || !debit && !system) {
 				t.Fatal("wire field lacks an exact supported JSON key/options")
 			}
 			size += encodedLength(key) + 1 + turnSizeMetadataOracle(t, field.Type, key, field.Tag)
@@ -55,6 +57,9 @@ func turnSizeMetadataOracle(t *testing.T, value reflect.Type, name string, tag r
 		}
 		return size
 	case reflect.Pointer:
+		if value == reflect.TypeOf((*uint32)(nil)) && name == "system_channel_bytes" && tag.Get("json") == "system_channel_bytes,omitempty" {
+			return turnSizeMetadataOracle(t, value.Elem(), "", "")
+		}
 		if value != reflect.TypeOf((*reportedDebitUpperBoundWire)(nil)) || name != "reported_debit_upper_bound" || tag.Get("json") != "reported_debit_upper_bound,omitempty" {
 			t.Fatal("unsupported optional wire pointer")
 		}
@@ -154,7 +159,7 @@ func TestInvestigationTurnSizeUsefulAdmissionMonotonicityAndOverflow(t *testing.
 		}
 	}
 	oversized, err := EstimateInvestigationTurnPayloadBytes(turnSizeRequestLimit)
-	if err != nil || oversized != 23311366 || oversized <= turnSizeArtifactPayloadLimit {
+	if err != nil || oversized != 23311400 || oversized <= turnSizeArtifactPayloadLimit {
 		t.Fatalf("valid maximum request must return an inadmissible bound, not an error: (%d, %v)", oversized, err)
 	}
 	base := uint64(turnSizeMetadataCeiling + turnSizeResponseBase64Ceiling)
@@ -255,6 +260,23 @@ func TestInvestigationTurnSizeShapeFailsClosed(t *testing.T) {
 			b.fields = append(b.fields, investigationTurnField{prefix: `"extra":`, shape: &investigationTurnShape{kind: reflect.Bool}})
 		}},
 		{"unsupported optional scalar", func(s *investigationTurnShape) { s.fields[0].optional = true }},
+		{"nil system channel element", func(s *investigationTurnShape) { turnSizeField(t, s, "system_channel_bytes").element = nil }},
+		{"system channel element kind", func(s *investigationTurnShape) {
+			turnSizeField(t, s, "system_channel_bytes").element.kind = reflect.Uint64
+		}},
+		{"system channel element width", func(s *investigationTurnShape) {
+			turnSizeField(t, s, "system_channel_bytes").element.bits = 64
+		}},
+		{"system channel element limit", func(s *investigationTurnShape) {
+			turnSizeField(t, s, "system_channel_bytes").element.limit = 1
+		}},
+		{"required system channel pointer", func(s *investigationTurnShape) {
+			for i := range s.fields {
+				if s.fields[i].prefix == `"system_channel_bytes":` {
+					s.fields[i].optional = false
+				}
+			}
+		}},
 		{"required bound pointer", func(s *investigationTurnShape) {
 			for i := range s.fields {
 				if s.fields[i].prefix == `"dispatch":` {

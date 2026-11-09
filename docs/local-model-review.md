@@ -319,8 +319,10 @@ protected policy and obtain fresh exact approvals where required.
 
 The existing `estimated_input_tokens` policy value must cover the larger of the
 normal host byte-based request estimate and the inner payload bytes plus the
-serialized `response_format` object (including its field wrapper) plus 256
-framing bytes. Dispatch refuses an insufficient approved reservation before
+trusted system channel bytes plus the serialized `response_format` object
+(including its field wrapper) plus 256 framing bytes. Route planning already
+counts the payload and the system channel but not `response_format`, so only
+the declared value can supply that margin. Dispatch refuses an insufficient approved reservation before
 credential retrieval or HTTP. This estimate is conservative byte accounting,
 not exact tokenization. Set a justified reservation that fits the route's
 approved context capacity; no budget is increased after authorization.
@@ -756,6 +758,13 @@ replay. A fresh command is new paid work, not recovery. Library callers can opt 
 with `localreview.NewInvestigationSession(options, policy)`; each admitted run gets
 a fresh bridge and acquisition owner. Root ownership and bounded Close rules are
 unchanged.
+
+Each model turn reserves the larger of `estimated_input_tokens` and the request
+payload bytes plus the trusted system channel bytes plus 256 framing bytes, the
+same estimate as single-generation review. The turn record stores the system
+channel bytes it reserved for under estimate version 2. Turn records written
+under estimate version 1 counted the payload alone; they read back with that
+formula and are never re-estimated.
 
 Opted-in results use schema version 2. They include all retained turns and their
 request, route, audit, and tool-result identities, rather than only the final two

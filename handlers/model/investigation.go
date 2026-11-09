@@ -317,7 +317,7 @@ func NewInvestigation(ctx context.Context, o InvestigationOptions) (*Investigati
 	if err != nil {
 		return nil, ErrInvestigation
 	}
-	c.owner, err = gateway.NewInvestigationRouteOwner(gateway.InvestigationRouteOwnerOptions{Scope: o.Scope, SessionIdentity: c.binding.Identity(), PolicyIdentity: p.Identity(), Deadline: o.Deadline, MaxTurns: uint8(p.MaxModelTurns()), Budget: r.Budget, Requirements: r.Requirements, Constraints: r.Constraints, Generation: generationPlan, Verification: verificationPlan, Catalog: o.Catalog, Ledger: o.Ledger, Clock: o.Clock})
+	c.owner, err = gateway.NewInvestigationRouteOwner(gateway.InvestigationRouteOwnerOptions{Scope: o.Scope, SessionIdentity: c.binding.Identity(), PolicyIdentity: p.Identity(), Deadline: o.Deadline, MaxTurns: uint8(p.MaxModelTurns()), Budget: r.Budget, Requirements: r.Requirements, Constraints: r.Constraints, Generation: generationPlan, Verification: verificationPlan, Catalog: o.Catalog, Ledger: o.Ledger, Clock: o.Clock, SystemChannelBytes: review.ModelRequestSystemChannelBytes})
 	if err != nil {
 		return nil, ErrInvestigation
 	}
@@ -347,7 +347,9 @@ func (c *Investigation) observations(routes []gateway.ObservedRouteCandidate) []
 }
 func (c *Investigation) plan(request provider.Request, routes []gateway.ObservedRouteCandidate, rankingPolicy gateway.RouteRankingPolicy, remaining uint64) (gateway.RouteAttemptAuthorization, error) {
 	r := c.options.Routing
-	budget, err := provider.NewModelCostBudget(max(uint64(r.Budget.EstimatedInputTokens()), uint64(len(request.Payload()))+256), uint64(r.Budget.MaxOutputTokens()), remaining)
+	// The owner plans the same turn with the same function and system channel
+	// count, so this pre-planned authorization must equal the dispatched one.
+	budget, err := gateway.InvestigationTurnCostBudget(r.Budget, request, review.ModelRequestSystemChannelBytes(request), remaining)
 	if err != nil {
 		return gateway.RouteAttemptAuthorization{}, err
 	}

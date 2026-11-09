@@ -141,6 +141,12 @@ func (w *investigationTurnSizeWalk) value(shape *investigationTurnShape, path st
 	case reflect.Pointer:
 		switch path {
 		case "dispatch.reported_debit_upper_bound", "dispatch.response.reported_debit_upper_bound", "outcome.reported_debit_upper_bound":
+		case "system_channel_bytes":
+			if shape.bits != 0 || shape.limit != 0 || shape.element == nil || shape.element.kind != reflect.Uint32 || len(shape.element.fields) != 0 || shape.element.element != nil {
+				return 0, errInvestigationTurnSize
+			}
+			// Count the optional count as present; absence cannot increase its encoding.
+			return w.value(shape.element, path, depth+1)
 		default:
 			return 0, errInvestigationTurnSize
 		}

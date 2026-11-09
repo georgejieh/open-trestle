@@ -186,7 +186,8 @@ func artifactsOwnerID(o gateway.InvestigationRouteOwnerOptions) string {
 			zones = append(zones, z.String())
 		}
 	}
-	b, _ := json.Marshal([]any{"open-trestle/investigation-route-owner", 1, o.Scope.Identity(), o.SessionIdentity, o.PolicyIdentity, o.Deadline.UnixMilli(), o.MaxTurns, 1, o.Budget.EstimatedInputTokens(), o.Budget.MaxOutputTokens(), o.Budget.MaxCostMicroUSD(), o.Requirements.MinContextTokens(), o.Requirements.MinOutputTokens(), features, string(o.Constraints.Classification()), zones, o.Constraints.ContentLoggingAllowed(), o.Generation.Identity(), o.Verification.Identity(), o.Catalog.Identity()})
+	// The eighth element is the per-turn estimate version, 2 since the system channel is counted.
+	b, _ := json.Marshal([]any{"open-trestle/investigation-route-owner", 1, o.Scope.Identity(), o.SessionIdentity, o.PolicyIdentity, o.Deadline.UnixMilli(), o.MaxTurns, 2, o.Budget.EstimatedInputTokens(), o.Budget.MaxOutputTokens(), o.Budget.MaxCostMicroUSD(), o.Requirements.MinContextTokens(), o.Requirements.MinOutputTokens(), features, string(o.Constraints.Classification()), zones, o.Constraints.ContentLoggingAllowed(), o.Generation.Identity(), o.Verification.Identity(), o.Catalog.Identity()})
 	return artifactsHash(b)
 }
 func newArtifactsFixture(t *testing.T, runLabels ...string) artifactsFixture {
@@ -309,7 +310,7 @@ func newArtifactsFixture(t *testing.T, runLabels ...string) artifactsFixture {
 	artifactsCheck(t, err)
 	verificationPlan, err := gateway.NewInvestigationRoutePlan(1, []gateway.ObservedRouteCandidate{v}, ranking, 1, []provider.RoutePerformanceObservation{vp})
 	artifactsCheck(t, err)
-	options := gateway.InvestigationRouteOwnerOptions{Scope: scope, SessionIdentity: contextBinding.Identity(), PolicyIdentity: p.Identity(), Deadline: time.UnixMilli(6000), MaxTurns: 5, Budget: budget, Requirements: requirements, Constraints: constraints, Generation: generationPlan, Verification: verificationPlan, Catalog: catalog, Ledger: ledger, Clock: clock}
+	options := gateway.InvestigationRouteOwnerOptions{Scope: scope, SessionIdentity: contextBinding.Identity(), PolicyIdentity: p.Identity(), Deadline: time.UnixMilli(6000), MaxTurns: 5, Budget: budget, Requirements: requirements, Constraints: constraints, Generation: generationPlan, Verification: verificationPlan, Catalog: catalog, Ledger: ledger, Clock: clock, SystemChannelBytes: review.ModelRequestSystemChannelBytes}
 	owner, err := gateway.NewInvestigationRouteOwner(options)
 	artifactsCheck(t, err)
 	expected := InvestigationArtifactExpectations{Scope: scope, SessionIdentity: contextBinding.Identity(), PolicyIdentity: p.Identity(), OwnerIdentity: artifactsOwnerID(options), HeadSnapshotArtifactIdentity: headArtifact.Identity(), HeadSnapshotIdentity: head.Identity(), HeadManifestIdentity: head.ManifestIdentity(), ContextArtifactIdentity: contextArtifact.Identity(), ToolResultArtifactIdentities: []string{}}
@@ -317,8 +318,7 @@ func newArtifactsFixture(t *testing.T, runLabels ...string) artifactsFixture {
 }
 func (f artifactsFixture) predicted(t *testing.T, request provider.Request) gateway.RouteAttemptAuthorization {
 	t.Helper()
-	encoded := request.Payload()
-	budget, err := provider.NewModelCostBudget(max(uint64(f.options.Budget.EstimatedInputTokens()), uint64(len(encoded))+256), uint64(f.options.Budget.MaxOutputTokens()), f.options.Budget.MaxCostMicroUSD())
+	budget, err := gateway.InvestigationTurnCostBudget(f.options.Budget, request, review.ModelRequestSystemChannelBytes(request), f.options.Budget.MaxCostMicroUSD())
 	artifactsCheck(t, err)
 	input, err := gateway.NewReviewRoutingInput(f.options.Scope, request, f.options.Requirements, f.options.Constraints)
 	artifactsCheck(t, err)

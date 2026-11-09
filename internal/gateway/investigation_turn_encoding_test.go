@@ -121,7 +121,7 @@ func turnEncodingDocument(t *testing.T, r InvestigationTurnRecord) map[string]an
 	}
 	o, c, d := r.outcome, r.reconciliation, r.dispatch
 	actual := c.ActualCost()
-	return map[string]any{
+	document := map[string]any{
 		"contract": "open-trestle/investigation-turn", "schema_version": 1, "identity": r.identity,
 		"owner_identity": r.ownerIdentity, "session_identity": r.sessionIdentity, "policy_identity": r.policyIdentity, "scope_identity": r.scopeIdentity,
 		"ordinal": r.ordinal, "role": r.role.String(), "previous_turn_identity": r.previous,
@@ -143,16 +143,25 @@ func turnEncodingDocument(t *testing.T, r InvestigationTurnRecord) map[string]an
 		"remaining_before_micro_usd": r.authorization.RemainingCostBeforeMicroUSD(), "reserved_micro_usd": r.authorization.ReservedCostMicroUSD(),
 		"actual_cost_micro_usd": actual.TotalCostMicroUSD(), "remaining_micro_usd": c.RemainingCostMicroUSD(),
 	}
+	// Estimate version 2 adds the reserved system channel count; version 1 omits it.
+	if r.estimateVersion != 1 {
+		document["system_channel_bytes"] = r.systemBytes
+	}
+	return document
 }
 
 func turnEncodingPreimage(r InvestigationTurnRecord) []any {
-	return []any{
+	preimage := []any{
 		"open-trestle/investigation-turn", 1, r.ownerIdentity, r.sessionIdentity, r.policyIdentity, r.scopeIdentity,
 		r.ordinal, r.role.String(), r.previous, r.deadlineMillis, r.startedMillis, r.finishedMillis,
 		r.estimateVersion, r.declaredInput, r.maxOutput, r.originalCap,
 		r.request.Identity(), r.selection.Identity(), r.authorization.Identity(), r.dispatch.Identity(), r.outcome.Identity(), r.reconciliation.Identity(),
 		r.authorization.RemainingCostBeforeMicroUSD(), r.authorization.ReservedCostMicroUSD(), r.reconciliation.ActualCost().TotalCostMicroUSD(), r.reconciliation.RemainingCostMicroUSD(),
 	}
+	if r.estimateVersion != 1 {
+		preimage = append(preimage, r.systemBytes)
+	}
+	return preimage
 }
 
 func turnEncodingAssertRoundTrip(t *testing.T, r InvestigationTurnRecord) InvestigationTurnRecord {
@@ -161,7 +170,7 @@ func turnEncodingAssertRoundTrip(t *testing.T, r InvestigationTurnRecord) Invest
 		t.Fatal("fixture is not a valid complete readback record")
 	}
 	preimage := turnEncodingPreimage(r)
-	if len(preimage) != 26 {
+	if want := map[uint8]int{1: 26, 2: 27}[r.estimateVersion]; len(preimage) != want {
 		t.Fatal("turn identity recipe changed")
 	}
 	digest := sha256.Sum256(turnEncodingJSON(t, preimage))

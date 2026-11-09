@@ -19,9 +19,50 @@ import (
 	"github.com/georgejieh/open-trestle/internal/provider"
 )
 
-const InvestigationBudgetEstimateVersion = 1
+// InvestigationBudgetEstimateVersion identifies the per-turn input estimate
+// that new turns use and record. Version 2 reserves the declared input
+// estimate or, when larger, the request payload bytes plus the trusted system
+// channel bytes plus a 256-byte framing reserve, which equals
+// review.ModelRequestBudget for every investigation request. Version 1 counted
+// the payload and the reserve only; it is recorded readback only.
+const InvestigationBudgetEstimateVersion = 2
+
+const (
+	investigationBudgetEstimateVersionV1 = 1
+	investigationEstimateFramingReserve  = 256
+)
 
 var ErrInvestigationRouteOwner = errors.New("investigation route owner refused operation")
+
+// InvestigationTurnCostBudget returns the estimate version 2 reservation for one
+// investigation turn. systemChannelBytes must be the trusted system channel the
+// adapter sends with request (review.ModelRequestSystemChannelBytes); the owner
+// plans and records each turn with this function, so a caller that pre-plans a
+// turn obtains the same budget and authorization.
+func InvestigationTurnCostBudget(declared provider.ModelCostBudget, request provider.Request, systemChannelBytes uint32, remainingCostMicroUSD uint64) (provider.ModelCostBudget, error) {
+	if declared.Validate() != nil || request.Validate() != nil {
+		return provider.ModelCostBudget{}, ErrInvestigationRouteOwner
+	}
+	return investigationTurnEstimate(InvestigationBudgetEstimateVersion, declared.EstimatedInputTokens(), declared.MaxOutputTokens(), request, systemChannelBytes, remainingCostMicroUSD)
+}
+
+// investigationTurnEstimate applies the recorded estimate version exactly. A
+// version 1 turn never counts system channel bytes, so its recorded budget is
+// never re-derived with the version 2 formula.
+func investigationTurnEstimate(version uint8, declaredInput, maxOutput uint32, request provider.Request, systemChannelBytes uint32, remainingCostMicroUSD uint64) (provider.ModelCostBudget, error) {
+	estimated := uint64(len(request.Payload())) + investigationEstimateFramingReserve
+	switch version {
+	case investigationBudgetEstimateVersionV1:
+		if systemChannelBytes != 0 {
+			return provider.ModelCostBudget{}, ErrInvestigationRouteOwner
+		}
+	case InvestigationBudgetEstimateVersion:
+		estimated += uint64(systemChannelBytes)
+	default:
+		return provider.ModelCostBudget{}, ErrInvestigationRouteOwner
+	}
+	return provider.NewModelCostBudget(max(uint64(declaredInput), estimated), uint64(maxOutput), remainingCostMicroUSD)
+}
 
 type InvestigationTurnRole uint8
 
@@ -108,6 +149,11 @@ type InvestigationRouteOwnerOptions struct {
 	Catalog                         RouteDispatcherCatalog
 	Ledger                          audit.Ledger
 	Clock                           artifact.Clock
+	// SystemChannelBytes returns the trusted system channel bytes an adapter
+	// sends with a turn request; it is required. Production passes
+	// review.ModelRequestSystemChannelBytes, which this package cannot import.
+	// Each turn records the value it reserved.
+	SystemChannelBytes func(provider.Request) uint32
 }
 
 type InvestigationAccountState struct {
@@ -135,7 +181,7 @@ type InvestigationRouteOwner struct {
 }
 
 func NewInvestigationRouteOwner(o InvestigationRouteOwnerOptions) (*InvestigationRouteOwner, error) {
-	if o.Scope.Validate() != nil || !validInvestigationIdentity(o.SessionIdentity) || !validInvestigationIdentity(o.PolicyIdentity) || o.MaxTurns == 0 || o.MaxTurns > 8 || o.Budget.Validate() != nil || o.Requirements.Validate() != nil || o.Constraints.Validate() != nil || o.Generation.Validate() != nil || o.Verification.Validate() != nil || o.Catalog.Validate() != nil || isNilInterfaceValue(o.Ledger) || isNilInterfaceValue(o.Clock) || o.Budget.MaxOutputTokens() < o.Requirements.MinOutputTokens() {
+	if o.Scope.Validate() != nil || !validInvestigationIdentity(o.SessionIdentity) || !validInvestigationIdentity(o.PolicyIdentity) || o.MaxTurns == 0 || o.MaxTurns > 8 || o.Budget.Validate() != nil || o.Requirements.Validate() != nil || o.Constraints.Validate() != nil || o.Generation.Validate() != nil || o.Verification.Validate() != nil || o.Catalog.Validate() != nil || isNilInterfaceValue(o.Ledger) || isNilInterfaceValue(o.Clock) || o.SystemChannelBytes == nil || o.Budget.MaxOutputTokens() < o.Requirements.MinOutputTokens() {
 		return nil, ErrInvestigationRouteOwner
 	}
 	at := investigationProtocolTime(o.Clock.Now())
@@ -199,14 +245,15 @@ func (o *InvestigationRouteOwner) State() InvestigationAccountState {
 	return o.state
 }
 
-func (o *InvestigationRouteOwner) planning(request provider.Request, role InvestigationTurnRole) (RouteSelectionReceipt, RouteRankingResult, RouteAttemptAuthorization, error) {
-	budget, err := provider.NewModelCostBudget(max(uint64(o.options.Budget.EstimatedInputTokens()), uint64(len(request.Payload()))+256), uint64(o.options.Budget.MaxOutputTokens()), o.state.remaining)
+func (o *InvestigationRouteOwner) planning(request provider.Request, role InvestigationTurnRole) (RouteSelectionReceipt, RouteRankingResult, RouteAttemptAuthorization, uint32, error) {
+	systemBytes := o.options.SystemChannelBytes(request)
+	budget, err := InvestigationTurnCostBudget(o.options.Budget, request, systemBytes, o.state.remaining)
 	if err != nil {
-		return RouteSelectionReceipt{}, RouteRankingResult{}, RouteAttemptAuthorization{}, err
+		return RouteSelectionReceipt{}, RouteRankingResult{}, RouteAttemptAuthorization{}, 0, err
 	}
 	input, err := NewReviewRoutingInput(o.options.Scope, request, o.options.Requirements, o.options.Constraints)
 	if err != nil {
-		return RouteSelectionReceipt{}, RouteRankingResult{}, RouteAttemptAuthorization{}, err
+		return RouteSelectionReceipt{}, RouteRankingResult{}, RouteAttemptAuthorization{}, 0, err
 	}
 	plan := o.options.Generation
 	if role == InvestigationVerificationTurn {
@@ -214,7 +261,7 @@ func (o *InvestigationRouteOwner) planning(request provider.Request, role Invest
 	}
 	eligible, err := FilterEligibleRoutes(input, budget, plan.registryRevision, plan.routes)
 	if err != nil {
-		return RouteSelectionReceipt{}, RouteRankingResult{}, RouteAttemptAuthorization{}, err
+		return RouteSelectionReceipt{}, RouteRankingResult{}, RouteAttemptAuthorization{}, 0, err
 	}
 	observations := make([]provider.RoutePerformanceObservation, 0, len(plan.observations))
 	for _, route := range eligible.EligibleRoutes() {
@@ -227,14 +274,14 @@ func (o *InvestigationRouteOwner) planning(request provider.Request, role Invest
 	}
 	ranking, err := RankEligibleRoutes(eligible, plan.ranking, plan.performanceRevision, observations)
 	if err != nil {
-		return RouteSelectionReceipt{}, RouteRankingResult{}, RouteAttemptAuthorization{}, err
+		return RouteSelectionReceipt{}, RouteRankingResult{}, RouteAttemptAuthorization{}, 0, err
 	}
 	selection, err := NewRouteSelectionReceipt(eligible, ranking)
 	if err != nil {
-		return RouteSelectionReceipt{}, RouteRankingResult{}, RouteAttemptAuthorization{}, err
+		return RouteSelectionReceipt{}, RouteRankingResult{}, RouteAttemptAuthorization{}, 0, err
 	}
 	authority, err := NewInitialRouteAttemptAuthorization(request, selection, ranking)
-	return selection, ranking, authority, err
+	return selection, ranking, authority, systemBytes, err
 }
 
 func (o *InvestigationRouteOwner) current(ctx context.Context, earliest time.Time) bool {
@@ -252,7 +299,7 @@ func (o *InvestigationRouteOwner) Dispatch(ctx context.Context, role Investigati
 		o.mu.Unlock()
 		return InvestigationTurnRecord{}, ErrInvestigationRouteOwner
 	}
-	selection, ranking, authority, err := o.planning(request, role)
+	selection, ranking, authority, systemBytes, err := o.planning(request, role)
 	if err != nil || authority.ReservedCostMicroUSD() > o.state.remaining || !o.current(ctx, o.lastProtocolTime) {
 		o.mu.Unlock()
 		return InvestigationTurnRecord{}, ErrInvestigationRouteOwner
@@ -340,7 +387,7 @@ func (o *InvestigationRouteOwner) Dispatch(ctx context.Context, role Investigati
 		o.mu.Unlock()
 		return InvestigationTurnRecord{}, ErrInvestigationRouteOwner
 	}
-	record, err := newInvestigationTurnRecord(o, ordinal, role, previous, request, selection, ranking, authority, dispatch, outcome, reconciliation, started, finished)
+	record, err := newInvestigationTurnRecord(o, ordinal, role, previous, request, systemBytes, selection, ranking, authority, dispatch, outcome, reconciliation, started, finished)
 	if err != nil || !o.current(execution, finished) {
 		o.state.frozen = true
 		o.mu.Unlock()

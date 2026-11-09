@@ -621,7 +621,7 @@ func TestInvestigationUpperNonIndependentOnlyRefusesBeforeAnyModel(t *testing.T)
 	upperCheck(t, err)
 	vp, err := gateway.NewInvestigationRoutePlan(options.Routing.RegistryRevision, options.Routing.Verification, options.Routing.VerificationRanking, options.Routing.PerformanceRevision, observations(options.Routing.Verification))
 	upperCheck(t, err)
-	_, err = gateway.NewInvestigationRouteOwner(gateway.InvestigationRouteOwnerOptions{Scope: options.Scope, SessionIdentity: options.SessionIdentity, PolicyIdentity: options.Policy.Identity(), Deadline: options.Deadline, MaxTurns: 5, Budget: options.Routing.Budget, Requirements: options.Routing.Requirements, Constraints: options.Routing.Constraints, Generation: gp, Verification: vp, Catalog: options.Catalog, Ledger: options.Ledger, Clock: options.Clock})
+	_, err = gateway.NewInvestigationRouteOwner(gateway.InvestigationRouteOwnerOptions{Scope: options.Scope, SessionIdentity: options.SessionIdentity, PolicyIdentity: options.Policy.Identity(), Deadline: options.Deadline, MaxTurns: 5, Budget: options.Routing.Budget, Requirements: options.Routing.Requirements, Constraints: options.Routing.Constraints, Generation: gp, Verification: vp, Catalog: options.Catalog, Ledger: options.Ledger, Clock: options.Clock, SystemChannelBytes: review.ModelRequestSystemChannelBytes})
 	upperCheck(t, err)
 	controller, err := model.NewInvestigation(context.Background(), options)
 	if err == nil || controller != nil || a.count() != 0 || b.count() != 0 {
@@ -754,8 +754,11 @@ func TestInvestigationUpperPinnedCapacityGrowthCannotReroute(t *testing.T) {
 	upperCheck(t, err)
 	first, err := baseline.Step(context.Background())
 	upperCheck(t, err)
-	initialNeed := uint64(len(modelA.calls[0].Request().Payload())) + 256 + 4096
-	nextNeed := uint64(len(first.NextRequest().Payload())) + 256 + 4096
+	need := func(request provider.Request) uint64 {
+		return uint64(len(request.Payload())) + uint64(review.ModelRequestSystemChannelBytes(request)) + 256 + 4096
+	}
+	initialNeed := need(modelA.calls[0].Request())
+	nextNeed := need(first.NextRequest())
 	if nextNeed <= initialNeed+32 {
 		t.Fatal("listing did not create a meaningful larger model request")
 	}

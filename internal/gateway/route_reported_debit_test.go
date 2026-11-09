@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -48,13 +49,28 @@ func TestReportedDebitLegacyBaseline(t *testing.T) {
 			t.Fatalf("legacy identity or bytes changed: %t %s", known, got)
 		}
 	}
+	// The same rich turn as recorded under estimate version 1, before version 2.
+	recorded, err := os.ReadFile("testdata/investigation-turn-estimate-v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := ParseInvestigationTurnRecord(recorded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reencoded, err := EncodeInvestigationTurnRecord(legacy); err != nil || !bytes.Equal(reencoded, recorded) {
+		t.Fatal("legacy investigation bytes no longer re-encode exactly", err)
+	}
+	if got := fmt.Sprintf("%s %x", legacy.Identity(), sha256.Sum256(recorded)); got != "d629c18b4df9a41156821e96ddf3ec40dcbcb2ad67dcfcd0e44801198609e8e3 4cee64f9845d1ab237526717e44cb216e2fdbde6c9074406be289f2c3f4b8099" {
+		t.Fatal("legacy investigation bytes changed", got)
+	}
 	turn := turnEncodingRichRecord(t, false)
 	encoded, err := EncodeInvestigationTurnRecord(turn)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := fmt.Sprintf("%s %x", turn.Identity(), sha256.Sum256(encoded)); got != "d629c18b4df9a41156821e96ddf3ec40dcbcb2ad67dcfcd0e44801198609e8e3 4cee64f9845d1ab237526717e44cb216e2fdbde6c9074406be289f2c3f4b8099" {
-		t.Fatal("legacy investigation bytes changed", got)
+	if got := fmt.Sprintf("%s %x", turn.Identity(), sha256.Sum256(encoded)); got != "a3102a372a2dd15048ea1b737f09fea5741d2bccf00b11554a3bea5b6055634a 4902ced67b2adc1040161443472f1141189114bc5bc69eebb3d6b0d5c163ee64" {
+		t.Fatal("estimate version 2 investigation bytes changed", got)
 	}
 }
 

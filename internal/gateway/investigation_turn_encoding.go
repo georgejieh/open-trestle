@@ -188,6 +188,9 @@ type investigationTurnWire struct {
 	Selection               investigationTurnSelectionWire `json:"selection"`
 	SessionIdentity         string                         `json:"session_identity"`
 	StartedMilliseconds     int64                          `json:"started_milliseconds"`
+	// SystemChannelBytes is present exactly for estimate version 2; version 1
+	// bytes omit it and keep their original encoding.
+	SystemChannelBytes *uint32 `json:"system_channel_bytes,omitempty"`
 }
 
 // The schema is built from fixed host types, never from untrusted JSON.
@@ -209,6 +212,12 @@ type investigationTurnField struct {
 
 var investigationTurnEncodingShape = newInvestigationTurnShape(reflect.TypeOf(investigationTurnWire{}), "", "")
 
+// investigationTurnOptionalType names the only pointer types an omitempty wire
+// member may use: the reported debit object and the system channel count.
+func investigationTurnOptionalType(value reflect.Type) bool {
+	return value == reflect.TypeOf((*reportedDebitUpperBoundWire)(nil)) || value == reflect.TypeOf((*uint32)(nil))
+}
+
 func newInvestigationTurnShape(value reflect.Type, name string, tag reflect.StructTag) *investigationTurnShape {
 	shape := &investigationTurnShape{kind: value.Kind(), payload: tag.Get("payload"), selectionCount: tag.Get("count") == "selection"}
 	switch value.Kind() {
@@ -217,10 +226,10 @@ func newInvestigationTurnShape(value reflect.Type, name string, tag reflect.Stru
 		for i := 0; i < value.NumField(); i++ {
 			field := value.Field(i)
 			key, options, _ := strings.Cut(field.Tag.Get("json"), ",")
-			shape.fields[i] = investigationTurnField{prefix: `"` + key + `":`, optional: options == "omitempty" && field.Type == reflect.TypeOf((*reportedDebitUpperBoundWire)(nil)), shape: newInvestigationTurnShape(field.Type, key, field.Tag)}
+			shape.fields[i] = investigationTurnField{prefix: `"` + key + `":`, optional: options == "omitempty" && investigationTurnOptionalType(field.Type), shape: newInvestigationTurnShape(field.Type, key, field.Tag)}
 		}
 	case reflect.Pointer:
-		if value == reflect.TypeOf((*reportedDebitUpperBoundWire)(nil)) {
+		if investigationTurnOptionalType(value) {
 			shape.element = newInvestigationTurnShape(value.Elem(), "", "")
 		}
 	case reflect.Slice:
@@ -607,6 +616,11 @@ func investigationTurnResponseValue(response provider.Response) investigationTur
 func investigationTurnWireValue(record InvestigationTurnRecord) investigationTurnWire {
 	dispatch, outcome, cost := record.dispatch, record.outcome, record.reconciliation
 	actual := cost.ActualCost()
+	var systemBytes *uint32
+	if record.estimateVersion != investigationBudgetEstimateVersionV1 {
+		value := record.systemBytes
+		systemBytes = &value
+	}
 	return investigationTurnWire{
 		ActualCostMicroUSD: actual.TotalCostMicroUSD(), Authorization: routeAuthorizationWireValue(record.authorization),
 		Contract: "open-trestle/investigation-turn", DeadlineMilliseconds: record.deadlineMillis, DeclaredInputTokens: record.declaredInput,
@@ -634,6 +648,7 @@ func investigationTurnWireValue(record InvestigationTurnRecord) investigationTur
 		Request:          investigationTurnRequestWire{Capability: record.request.Capability().String(), Identity: record.request.Identity(), MediaType: record.request.MediaType(), PayloadBase64: base64.StdEncoding.EncodeToString(record.request.Payload())},
 		ReservedMicroUSD: record.authorization.ReservedCostMicroUSD(), Role: record.role.String(), SchemaVersion: 1, ScopeIdentity: record.scopeIdentity,
 		Selection: investigationTurnSelectionValue(record.selection), SessionIdentity: record.sessionIdentity, StartedMilliseconds: record.startedMillis,
+		SystemChannelBytes: systemBytes,
 	}
 }
 
@@ -959,14 +974,24 @@ func parseInvestigationTurnWire(wire investigationTurnWire) (InvestigationTurnRe
 	if wire.ActualCostMicroUSD != cost.ActualCost().TotalCostMicroUSD() || wire.RemainingBeforeMicroUSD != authorization.RemainingCostBeforeMicroUSD() || wire.RemainingMicroUSD != cost.RemainingCostMicroUSD() || wire.ReservedMicroUSD != authorization.ReservedCostMicroUSD() {
 		return InvestigationTurnRecord{}, errInvestigationTurnEncoding
 	}
+	// Version 1 bytes never carry a system channel count; version 2 bytes always do.
+	var systemBytes uint32
+	switch {
+	case wire.EstimateVersion == investigationBudgetEstimateVersionV1 && wire.SystemChannelBytes == nil:
+	case wire.EstimateVersion == InvestigationBudgetEstimateVersion && wire.SystemChannelBytes != nil:
+		systemBytes = *wire.SystemChannelBytes
+	default:
+		return InvestigationTurnRecord{}, errInvestigationTurnEncoding
+	}
 	record := InvestigationTurnRecord{
 		identity: wire.Identity, ownerIdentity: wire.OwnerIdentity, sessionIdentity: wire.SessionIdentity, policyIdentity: wire.PolicyIdentity, scopeIdentity: wire.ScopeIdentity,
 		ordinal: wire.Ordinal, role: role, previous: wire.PreviousTurnIdentity,
 		deadlineMillis: wire.DeadlineMilliseconds, startedMillis: wire.StartedMilliseconds, finishedMillis: wire.FinishedMilliseconds,
-		estimateVersion: wire.EstimateVersion, declaredInput: wire.DeclaredInputTokens, maxOutput: wire.MaxOutputTokens, originalCap: wire.OriginalCapMicroUSD,
+		estimateVersion: wire.EstimateVersion, declaredInput: wire.DeclaredInputTokens, maxOutput: wire.MaxOutputTokens, originalCap: wire.OriginalCapMicroUSD, systemBytes: systemBytes,
 		request: request, selection: selection, ranking: ranking, authorization: authorization, dispatch: dispatch, outcome: outcome, reconciliation: cost,
 	}
-	// Existing validation recomputes initial authority, dispatch outcome, cost and the 26-element hash.
+	// Existing validation recomputes initial authority, dispatch outcome, cost,
+	// the recorded estimate and the 26-element (version 1) or 27-element hash.
 	if record.Validate() != nil {
 		return InvestigationTurnRecord{}, errInvestigationTurnEncoding
 	}
