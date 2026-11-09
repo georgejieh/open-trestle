@@ -29,7 +29,7 @@ What exists today:
   model-calling profile's skill instructions into the candidate-generation
   request. The skill text goes only into the trusted system channel, looked up
   from the embedded catalog. The context's optional `specialist` block (review-context
-  schema version 7) carries only the profile and catalog identities, which bind
+  schema versions 7 and 8) carries only the profile and catalog identities, which bind
   request identity, and the result reports them. The verifier request does not
   carry the instructions. See
   [local model review](local-model-review.md#specialist-profile-opt-in) and the

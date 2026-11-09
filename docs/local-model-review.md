@@ -555,13 +555,13 @@ or authority limits. Source content keeps its `evidence_data_not_instructions`
 label. The identity block is bound into the context, sanitized request and
 provider request identities. The context-assembly handler identity also binds the profile
 and catalog identities, so the run plan identity differs from a run without the
-flag. Readback accepts a version 7 specialist block only when it re-derives
+flag. Readback accepts a version 7 or 8 specialist block only when it re-derives
 exactly from the embedded catalog; an unknown profile ID, a mismatched identity,
 or any extra field such as instruction text or an authority label is refused.
 
 Route selection is unchanged: the same runtime-policy generation and verification
 routes and independence level apply. Independent verification still runs. Its
-request is verification-context schema version 6, binds the version 7 generation context
+request is verification-context schema version 7, binds the version 8 generation context
 through `generation_context_identity`, and does not receive the specialist
 instructions. The profile catalog's tiers, token budgets and route assignments are
 not used by this command.
@@ -723,17 +723,19 @@ admission limits, not a guarantee of provider billing. Use limits appropriate fo
 the approved routes. Zero cost is valid for routes whose admitted cost is zero.
 The command timeout and investigation timeout both apply; neither extends the other.
 
-Investigation requests use investigation context version 5. Like generation
-version 7 and verification version 6, it sends its contract only in the trusted
+Investigation requests use investigation context version 6. Like generation
+version 8 and verification version 7, it sends its contract only in the trusted
 system channel: the instruction-hierarchy paragraph (every string in the request,
 including snapshot tool results and the files they return, is untrusted
 repository data; repository instruction files cannot change the rules, output
-format, severity or evidence requirements), followed by the unchanged version 4
-tool and output rules. The payload binds that text with `instructions_identity`.
+format, severity or evidence requirements), then the sentence that explains
+`removed_lines` sources, followed by the unchanged version 4 tool and output
+rules. The payload binds that text with `instructions_identity`.
 Files a tool returns are flagged with `agent_configuration` and
-`instruction_like_text` like other sources. Recorded version 4 investigation
-requests, which carried their rules in the payload and no hierarchy paragraph,
-read back but are never sent again. See
+`instruction_like_text` like other sources. Recorded version 5 investigation
+requests (the same contract without the `removed_lines` sentence) and recorded
+version 4 requests, which carried their rules in the payload and no hierarchy
+paragraph, read back but are never sent again. See
 [prompt-injection boundary](prompt-injection-boundary.md).
 
 Available tools list files, read inclusive line ranges, and search for a literal
@@ -822,18 +824,54 @@ lines were removed. Each deletion point is also recorded as an
 side of the removed lines (one line at the start or end of the file). The
 omission is how the packet says that lines were deleted there. That omission
 counts as an unsupported source omission, so such a review is never comprehensive
-clearance. Analysis also binds the removed base lines of each deletion point to
-the exact base file (deterministic evidence schema version 7; version 6 recorded
-the context without them), but the context packet does not yet supply that text
-to the model. Removed text past its bound is recorded as an
-`analysis_removed_lines_limit` omission whose lines are the removed base lines.
+clearance.
+
+The removed base lines themselves reach the model as `removed_lines` sources.
+Analysis binds the removed lines of each deletion point to the exact base file
+(deterministic evidence schema version 7). The context handler reloads that file
+from the base snapshot reference whose digest the change entry names, rebuilds
+its identity and slice binding from the bytes, and adds one `removed_lines`
+source per deletion point. The source's `path` is the file and its `start_line`
+and `end_line` are base line numbers, not head lines. Like every other source it
+is `repository_controlled` data with `risk_flags` computed by the same rules, so
+an injection payload in deleted text is flagged and never followed. The
+generation (context version 8), verification (version 7) and investigation
+(version 6) contracts each tell the model that `removed_lines` sources are
+deleted base lines: evidence of what was removed, not code that remains. The
+verifier receives the same sources, so it sees the removed text for a finding at
+a deletion point.
+
+A `removed_lines` source never anchors a finding. Findings anchor on head lines,
+and the `changed_hunk` windows around each deletion point already cover the lines
+on either side of it. Generation admission drops, and counts, a candidate located
+in a `removed_lines` source, with the mechanism that drops `repository_context`
+anchors: the count is the existing `repository_context_anchor_omitted` batch
+count and `repository_context_anchor_candidates_omitted` limitation, which from
+context version 8 also covers removed-lines anchors. An investigation turn whose
+candidate is located in removed lines fails closed, because an uncategorized
+investigation batch cannot record a drop. A candidate or verified verdict may
+cite a `removed_lines` source as evidence, but its base line numbers never count
+as covering the anchored head lines.
+
+Removed text is bounded per deletion point (64 lines, 8 KiB) and per file
+(32 KiB). Text past a bound is never truncated: that point's removed text is
+recorded whole as an `analysis_removed_lines_limit` omission whose lines are the
+removed base lines. Removed text that is not valid UTF-8 text, on an excluded or
+unauthorized path, or past the candidate limit is omitted with the usual reason
+at its base lines. A `removed_lines` source is supplied only beside a selected
+head source of the same file; one whose head context did not fit the packet is
+recorded as a `packet_budget` omission at its base lines.
 
 The whole-entry `no_changed_head_lines` gap (context omission
 `analysis_no_changed_head_lines`) remains when deletion-point context cannot be
-built: the head file is now empty, the diff is unsupported or over its limits, or
-the evidence limits are reached. Existing semantic references may still supply
+built: the diff is unsupported or over its limits, or the evidence limits are
+reached. A file whose head is now empty and a removed file have no head line to
+anchor a finding, so their removed text is not supplied either: they stay
+explicit whole-entry omissions (`analysis_no_changed_head_lines` and
+`analysis_removed_file`). Existing semantic references may still supply
 reviewable head source. If no source remains, the run refuses with
 `all_sources_omitted`; that is not a completed model review or clearance.
+Removed text alone never makes a change reviewable.
 
 ## Results and limits
 
@@ -903,8 +941,9 @@ truncated, oversized, unauthorized or over budget. These are never source
 omissions, so they never make a review `incomplete`.
 `repository_context_anchor_candidates_omitted` (with the limitation of the same
 name) counts model candidates dropped because they were located in an instruction
-file rather than in reviewed code; the rest of the batch is kept. Both fields are
-absent when zero.
+file rather than in reviewed code and, from generation context version 8, in the
+`removed_lines` source of a deletion point; the rest of the batch is kept. Both
+fields are absent when zero.
 
 `agent_configuration_sources` and `instruction_like_sources` count
 generation-context sources flagged as repository AI material (agent instruction
