@@ -199,19 +199,86 @@ func TestProfileRecommendStyles(t *testing.T) {
 		{"several languages in order", []string{"main.go", "native/x.cc", "native/x.h", "README.md", "tool.py"}, []ConfigFile{{Path: "go.mod"}}, []StyleRecommendation{{LanguageC, 1}, {LanguageCPP, 1}, {LanguageMarkdown, 1}, {LanguagePython, 1}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := RecommendStyles(test.paths, test.configs)
-			if err != nil || !reflect.DeepEqual(got, test.want) {
-				t.Fatalf("RecommendStyles() = %v, %v; want %v", got, err, test.want)
+			got, err := RecommendStyles(test.paths, test.configs, nil)
+			if err != nil || !reflect.DeepEqual(got.Recommendations, test.want) || got.Withheld != nil {
+				t.Fatalf("RecommendStyles() = %+v, %v; want %v", got, err, test.want)
 			}
 		})
 	}
 	for name, paths := range map[string][]string{"absolute": {"/etc/x.py"}, "traversal": {"../x.py"}} {
-		if _, err := RecommendStyles(paths, nil); !errors.Is(err, ErrInvalidChangeFeatures) {
+		if _, err := RecommendStyles(paths, nil, nil); !errors.Is(err, ErrInvalidChangeFeatures) {
 			t.Errorf("%s path: err = %v", name, err)
 		}
 	}
-	if _, err := RecommendStyles([]string{"x.py"}, []ConfigFile{{Path: "ruff.toml", Content: "\xff"}}); !errors.Is(err, ErrInvalidChangeFeatures) {
+	if _, err := RecommendStyles([]string{"x.py"}, []ConfigFile{{Path: "ruff.toml", Content: "\xff"}}, nil); !errors.Is(err, ErrInvalidChangeFeatures) {
 		t.Errorf("invalid config content: err = %v", err)
+	}
+	for _, unread := range []string{"README.md", "../ruff.toml"} {
+		if _, err := RecommendStyles([]string{"x.py"}, nil, []string{unread}); !errors.Is(err, ErrInvalidChangeFeatures) {
+			t.Errorf("unread path %q: err = %v", unread, err)
+		}
+	}
+}
+
+// TestProfileRecommendStylesWithholdsOnlyLanguagesAnUnreadFileCouldGovern
+// requires an unread configuration file to make its own languages unknown and
+// leave every other language's recommendation in place.
+func TestProfileRecommendStylesWithholdsOnlyLanguagesAnUnreadFileCouldGovern(t *testing.T) {
+	changed := []string{"tool.py", "web/app.ts", "web/site.css", "native/x.cc", "main.go"}
+	for _, test := range []struct {
+		name                string
+		unread              []string
+		configs             []ConfigFile
+		recommend, withheld []StyleRecommendation
+	}{
+		{"pyproject.toml unread", []string{"pyproject.toml"}, []ConfigFile{{Path: "go.mod"}},
+			[]StyleRecommendation{{LanguageCPP, 1}, {LanguageCSS, 1}, {LanguageTypeScript, 1}}, []StyleRecommendation{{LanguagePython, 1}}},
+		{"package.json unread", []string{"package.json"}, []ConfigFile{{Path: "go.mod"}},
+			[]StyleRecommendation{{LanguageCPP, 1}, {LanguagePython, 1}}, []StyleRecommendation{{LanguageCSS, 1}, {LanguageTypeScript, 1}}},
+		{"clang-format and go.mod unread", []string{".clang-format", "go.mod"}, nil,
+			[]StyleRecommendation{{LanguageCSS, 1}, {LanguagePython, 1}, {LanguageTypeScript, 1}}, []StyleRecommendation{{LanguageCPP, 1}, {LanguageGo, 1}}},
+		{"editorconfig unread withholds nothing", []string{".editorconfig"}, []ConfigFile{{Path: "go.mod"}},
+			[]StyleRecommendation{{LanguageCPP, 1}, {LanguageCSS, 1}, {LanguagePython, 1}, {LanguageTypeScript, 1}}, nil},
+		{"a declared language is not withheld", []string{"pyproject.toml"}, []ConfigFile{{Path: "go.mod"}, {Path: "ruff.toml"}},
+			[]StyleRecommendation{{LanguageCPP, 1}, {LanguageCSS, 1}, {LanguageTypeScript, 1}}, nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := RecommendStyles(changed, test.configs, test.unread)
+			if err != nil || !reflect.DeepEqual(got.Recommendations, test.recommend) || !reflect.DeepEqual(got.Withheld, test.withheld) {
+				t.Fatalf("RecommendStyles() = %+v, %v; want recommend %v withheld %v", got, err, test.recommend, test.withheld)
+			}
+		})
+	}
+}
+
+// TestProfileStyleConfigIntentsBoundDetection requires every intent detection
+// can derive from a recognized file to be among the intents its name can declare.
+func TestProfileStyleConfigIntentsBoundDetection(t *testing.T) {
+	for name, want := range map[string][]StyleIntent{
+		"pyproject.toml": {StyleBlack, StyleGooglePython, StylePEP8},
+		".clang-format":  {StyleClangFormat, StyleGoogleCPP},
+		"package.json":   {StylePrettier},
+		".style.yapf":    {StyleGooglePython, StylePEP8},
+		".editorconfig":  {StyleEditorConfig},
+		"README.md":      nil,
+	} {
+		if got := styleConfigIntents(name); !reflect.DeepEqual(got, want) {
+			t.Errorf("styleConfigIntents(%q) = %v, want %v", name, got, want)
+		}
+	}
+	const everyMarker = "\"prettier\"\n[flake8]\n[pycodestyle]\nbased_on_style = google\n[tool.ruff]\n[tool.black]\n[tool.yapf]\nBasedOnStyle: Google\n"
+	for _, name := range []string{"go.mod", ".editorconfig", ".prettierrc.json", "package.json", "eslint.config.mjs", "ruff.toml", "setup.cfg", "tox.ini", "pyproject.toml", ".style.yapf", ".clang-format", ".rustfmt.toml", ".rubocop.yml"} {
+		possible := map[StyleIntent]bool{}
+		for _, intent := range styleConfigIntents(name) {
+			possible[intent] = true
+		}
+		for _, content := range []string{"", everyMarker} {
+			for _, intent := range detectStyleIntents([]ConfigFile{{Path: name, Content: content}}) {
+				if !possible[intent] {
+					t.Errorf("%s declares %s, which its name cannot declare", name, intent)
+				}
+			}
+		}
 	}
 }
 

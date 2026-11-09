@@ -392,16 +392,15 @@ type modelReviewSetWire struct {
 	Bounds                 setBoundsWire           `json:"bounds"`
 	Limitations            []string                `json:"limitations"`
 	ComprehensiveClearance bool                    `json:"comprehensive_clearance"`
-	// StyleRecommendations and StyleConfigurationUnread repeat the general
-	// member's style advice once for the set. They are omitted when it has
-	// none, so a set without advice keeps its version 1 bytes.
-	StyleRecommendations     []localreview.StyleRecommendation `json:"style_recommendations,omitempty"`
-	StyleConfigurationUnread int                               `json:"style_configuration_unread,omitempty"`
-	headRevision             string
-	independence             string
-	failure                  string
-	runStatus                string
-	report                   *localreview.Report
+	// StyleAdvice repeats the general member's style advice once for the set,
+	// inline. Its fields are omitted when it has none, so a set without advice
+	// keeps its version 1 bytes.
+	localreview.StyleAdvice
+	headRevision string
+	independence string
+	failure      string
+	runStatus    string
+	report       *localreview.Report
 }
 
 // runLocalModelReviewSet runs the general review, then each selected
@@ -536,7 +535,7 @@ func buildModelReviewSet(selection specialistSelectionWire, members []localModel
 	// Style advice derives from the change and base tree that every member
 	// shares, so the set reports the general member's once, never per member.
 	if len(members) > 0 && members[0].specialist.IsZero() {
-		set.StyleRecommendations, set.StyleConfigurationUnread = members[0].result.StyleAdvice()
+		set.StyleAdvice = members[0].result.StyleAdvice()
 	}
 	var memberFindings [][]localreview.ReportFinding
 	labels := make([]string, len(members))
@@ -1011,7 +1010,7 @@ func renderModelReviewSetText(set modelReviewSetWire) ([]byte, error) {
 		}
 		fmt.Fprintf(&buffer, "contributors: %s\n", strings.Join(finding.contributorLabels(), ", "))
 	}
-	for _, line := range localreview.StyleAdviceLines(set.StyleRecommendations, set.StyleConfigurationUnread) {
+	for _, line := range set.StyleAdvice.Lines() {
 		buffer.WriteString(line)
 	}
 	fmt.Fprintf(&buffer, "limitations: %s\ncomprehensive clearance: false\n", strings.Join(set.Limitations, ", "))

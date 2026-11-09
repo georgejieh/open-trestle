@@ -133,29 +133,26 @@ func (s *Session) readRecordedChange(ctx context.Context, scope audit.ReviewScop
 	return recordedChange{change: change, artifact: changeArtifact, base: baseArtifact, head: headArtifact}, nil
 }
 
-// styleAdvice derives a direct review's style recommendations from its
-// recorded change model and the style its base tree declares (see
-// baseStyleConfigFiles). Removed files are not counted. While any base style
-// configuration file is unread, the declared style is unknown, so it returns no
-// recommendation and only the unread count. ok is false when the change model
-// was not recorded or could not be read back; the result then carries no style
-// advice. It never affects the review's status.
-func (s *Session) styleAdvice(ctx context.Context, scope audit.ReviewScope, state controlplane.ReviewRunState) (recommendations []agentprofile.StyleRecommendation, unread int, ok bool) {
+// styleAdvice derives a direct review's style advice from its recorded change
+// model and the style its base tree declares (see baseStyleConfigFiles).
+// Removed files are not counted. A language that an unread base style
+// configuration file could govern is withheld, because its declared style is
+// unknown; every other language is still recommended. ok is false when the
+// change model was not recorded or could not be read back; the result then
+// carries no style advice. It never affects the review's status.
+func (s *Session) styleAdvice(ctx context.Context, scope audit.ReviewScope, state controlplane.ReviewRunState) (StyleAdvice, bool) {
 	task, exists := state.Task("change")
 	if !exists || task.Status() != controlplane.TaskRuntimeSucceeded {
-		return nil, 0, false
+		return StyleAdvice{}, false
 	}
 	now := s.options.Clock.Now()
 	recorded, err := s.readRecordedChange(ctx, scope, task.OutputIdentity(), now)
 	if err != nil {
-		return nil, 0, false
+		return StyleAdvice{}, false
 	}
 	configFiles, unread, err := s.baseStyleConfigFiles(ctx, scope, recorded.base, now)
 	if err != nil {
-		return nil, 0, false
-	}
-	if unread > 0 {
-		return nil, unread, true
+		return StyleAdvice{}, false
 	}
 	paths := make([]string, 0, len(recorded.change.Entries()))
 	for _, entry := range recorded.change.Entries() {
@@ -163,11 +160,11 @@ func (s *Session) styleAdvice(ctx context.Context, scope audit.ReviewScope, stat
 			paths = append(paths, entry.Path())
 		}
 	}
-	recommendations, err = agentprofile.RecommendStyles(paths, configFiles)
+	advice, err := agentprofile.RecommendStyles(paths, configFiles, unread)
 	if err != nil {
-		return nil, 0, false
+		return StyleAdvice{}, false
 	}
-	return recommendations, 0, true
+	return newStyleAdvice(advice, len(unread)), true
 }
 
 // baseStyleConfigFiles reads the style configuration files that declare the
@@ -181,32 +178,31 @@ func (s *Session) styleAdvice(ctx context.Context, scope audit.ReviewScope, stat
 //
 // A file larger than agentprofile.MaxConfigFileBytes, not valid UTF-8, or
 // beyond the first agentprofile.MaxConfigFiles readable files (in path order) is
-// skipped whole, never truncated, and counted in the second result.
-func (s *Session) baseStyleConfigFiles(ctx context.Context, scope audit.ReviewScope, baseArtifact artifact.Artifact, at time.Time) ([]agentprofile.ConfigFile, int, error) {
+// skipped whole, never truncated, and its path is returned as unread, in path
+// order.
+func (s *Session) baseStyleConfigFiles(ctx context.Context, scope audit.ReviewScope, baseArtifact artifact.Artifact, at time.Time) (files []agentprofile.ConfigFile, unread []string, err error) {
 	base, err := sourcehandler.ParseSnapshotArtifact(baseArtifact)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, err
 	}
-	var files []agentprofile.ConfigFile
-	unread := 0
 	for _, reference := range styleConfigCandidates(base.Files()) {
 		if len(files) == agentprofile.MaxConfigFiles || reference.SizeBytes() > agentprofile.MaxConfigFileBytes {
-			unread++
+			unread = append(unread, reference.Path())
 			continue
 		}
 		value, err := s.store.Get(ctx, scope, reference.ArtifactIdentity(), at)
 		if err != nil {
-			return nil, 0, err
+			return nil, nil, err
 		}
 		file, err := sourcehandler.ParseFileArtifact(value, base, reference)
 		if err != nil {
-			return nil, 0, err
+			return nil, nil, err
 		}
 		content := file.Content()
 		if utf8.Valid(content) {
 			files = append(files, agentprofile.ConfigFile{Path: reference.Path(), Content: string(content)})
 		} else {
-			unread++
+			unread = append(unread, reference.Path())
 		}
 		clear(content)
 	}

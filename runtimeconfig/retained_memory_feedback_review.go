@@ -40,7 +40,7 @@ func LoadProtectedFeedbackReview(ctx context.Context, path, tenant, repositoryID
 		keys = append(keys, "finding_guidance")
 	}
 	styled := false
-	for _, key := range []string{"style_recommendations", "style_configuration_unread"} {
+	for _, key := range []string{"style_recommendations", "style_withheld", "style_configuration_unread"} {
 		if _, ok := fields[key]; ok {
 			keys, styled = append(keys, key), true
 		}

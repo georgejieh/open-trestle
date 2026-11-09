@@ -127,26 +127,39 @@ func (r Result) CompletedMetadata() (CompletedResultMetadata, error) {
 // guidance. Style advice is checked only for shape; it is never imported as a
 // finding.
 func importableResultVersion(wire resultWire) bool {
-	styled := len(wire.StyleRecommendations) > 0 || wire.StyleConfigurationUnread != 0
+	styled := !wire.StyleAdvice.empty()
 	return wire.Version == 1 && wire.Guidance == nil && !styled ||
 		wire.Version == guidanceResultVersion && len(wire.Guidance) > 0 && !styled ||
-		wire.Version == styleResultVersion && styled && validImportedStyleAdvice(wire)
+		wire.Version == styleResultVersion && styled && validImportedStyleAdvice(wire.StyleAdvice)
 }
 
-// validImportedStyleAdvice requires recommendations in strict language order,
-// each the fixed table text for a language with a style detector, or only a
-// positive unread count.
-func validImportedStyleAdvice(wire resultWire) bool {
-	if wire.StyleConfigurationUnread < 0 || wire.StyleConfigurationUnread > 0 && len(wire.StyleRecommendations) > 0 {
+// validImportedStyleAdvice requires recommendations and withheld languages in
+// strict language order, each a language with a style detector and each
+// recommendation its fixed table text. No language is both recommended and
+// withheld, and a withheld language needs an unread file.
+func validImportedStyleAdvice(advice StyleAdvice) bool {
+	if advice.ConfigurationUnread < 0 || len(advice.Withheld) > 0 && advice.ConfigurationUnread == 0 {
 		return false
 	}
+	seen := map[string]bool{}
+	valid := func(language string, changedFiles int, previous string) bool {
+		_, _, ok := agentprofile.RecommendedStyle(agentprofile.Language(language))
+		return ok && !seen[language] && changedFiles >= 1 && changedFiles <= changecodec.MaxChangedEntries && language > previous
+	}
 	previous := ""
-	for _, value := range wire.StyleRecommendations {
-		_, standard, ok := agentprofile.RecommendedStyle(agentprofile.Language(value.Language))
-		if !ok || value.Recommendation != standard || value.ChangedFiles < 1 || value.ChangedFiles > changecodec.MaxChangedEntries || value.Language <= previous {
+	for _, value := range advice.Recommendations {
+		_, standard, _ := agentprofile.RecommendedStyle(agentprofile.Language(value.Language))
+		if !valid(value.Language, value.ChangedFiles, previous) || value.Recommendation != standard {
 			return false
 		}
-		previous = value.Language
+		seen[value.Language], previous = true, value.Language
+	}
+	previous = ""
+	for _, value := range advice.Withheld {
+		if !valid(value.Language, value.ChangedFiles, previous) {
+			return false
+		}
+		seen[value.Language], previous = true, value.Language
 	}
 	return true
 }

@@ -53,8 +53,8 @@ func TestStyleAdviceRecommendsAStandardOnlyForUndeclaredLanguages(t *testing.T) 
 	}
 	ruff := "line-length = 100\n"
 	declared := styleResultRun(t, "declared", styleTrees(with(python("x = 1\n"), "ruff.toml", ruff), with(python("x = 2\n"), "ruff.toml", ruff)), review.ContextSpecialist{})
-	if declared.wire.Version != guidanceResultVersion || declared.wire.StyleRecommendations != nil || declared.wire.StyleConfigurationUnread != 0 {
-		t.Fatalf("declared style produced style advice: version=%d advice=%v", declared.wire.Version, declared.wire.StyleRecommendations)
+	if declared.wire.Version != guidanceResultVersion || !reflect.DeepEqual(declared.wire.StyleAdvice, StyleAdvice{}) {
+		t.Fatalf("declared style produced style advice: version=%d advice=%+v", declared.wire.Version, declared.wire.StyleAdvice)
 	}
 	for _, test := range []struct {
 		name    string
@@ -71,8 +71,8 @@ func TestStyleAdviceRecommendsAStandardOnlyForUndeclaredLanguages(t *testing.T) 
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			result := styleResultRun(t, strings.ReplaceAll(test.name, " ", "-"), test.options, review.ContextSpecialist{})
-			if !reflect.DeepEqual(result.wire.StyleRecommendations, test.want) || result.wire.StyleConfigurationUnread != 0 {
-				t.Fatalf("style advice = %+v unread=%d, want %+v", result.wire.StyleRecommendations, result.wire.StyleConfigurationUnread, test.want)
+			if !reflect.DeepEqual(result.wire.StyleAdvice, StyleAdvice{Recommendations: test.want}) {
+				t.Fatalf("style advice = %+v, want recommendations %+v", result.wire.StyleAdvice, test.want)
 			}
 			wantVersion := guidanceResultVersion
 			if test.want != nil {
@@ -138,20 +138,29 @@ func TestStyleAdviceJSONAndTextForms(t *testing.T) {
 			t.Fatalf("text result lacks the plural style line:\n%s", text.String())
 		}
 	})
-	t.Run("unread configuration", func(t *testing.T) {
-		oversized := map[string][]byte{"pyproject.toml": []byte("[project]\n" + strings.Repeat("#\n", agentprofile.MaxConfigFileBytes/2))}
-		base, head := map[string][]byte{"tool.py": []byte("x = 1\n")}, map[string][]byte{"tool.py": []byte("x = 2\n")}
-		for path, content := range oversized {
-			base[path], head[path] = content, content
-		}
+	t.Run("unread configuration withholds only its languages", func(t *testing.T) {
+		oversized := []byte("[project]\n" + strings.Repeat("#\n", agentprofile.MaxConfigFileBytes/2))
+		base := map[string][]byte{"pyproject.toml": oversized, "tool.py": []byte("x = 1\n"), "app.ts": []byte("let x = 1\n")}
+		head := map[string][]byte{"pyproject.toml": oversized, "tool.py": []byte("x = 2\n"), "app.ts": []byte("let x = 2\n")}
 		result := styleResultRun(t, "unread", styleTrees(base, head), review.ContextSpecialist{})
 		encoded, err := EncodeResult(result)
-		if err != nil || result.wire.Version != styleResultVersion || result.wire.StyleRecommendations != nil || !bytes.HasSuffix(encoded, []byte(`,"style_configuration_unread":1}`+"\n")) {
+		const advice = `,"style_recommendations":[{"language":"typescript","changed_files":1,"recommendation":"Prettier with ESLint"}],"style_withheld":[{"language":"python","changed_files":1}],"style_configuration_unread":1}` + "\n"
+		if err != nil || result.wire.Version != styleResultVersion || !bytes.HasSuffix(encoded, []byte(advice)) {
 			t.Fatalf("unread configuration JSON: %v\n%s", err, encoded)
 		}
 		var text bytes.Buffer
-		if err := RenderResult(&text, result); err != nil || !strings.Contains(text.String(), "style: no recommendation; 1 base style configuration file was not read (over 64 KiB, not valid UTF-8, or beyond 256 files)\n") || strings.Contains(text.String(), "no declared") {
+		if err := RenderResult(&text, result); err != nil {
+			t.Fatal(err)
+		}
+		want := "style: no declared TypeScript style for 1 changed file; consider Prettier with ESLint, and commit its configuration\n" +
+			"style: declared Python style unknown for 1 changed file; a base style configuration file that may declare it was not read, so no recommendation is made\n" +
+			"style: 1 base style configuration file was not read (over 64 KiB, not valid UTF-8, or beyond 256 files)\n" +
+			"limitations: "
+		if !strings.Contains(text.String(), want) {
 			t.Fatalf("unread configuration text:\n%s", text.String())
+		}
+		if _, err := ParseCompletedResult(encoded); err != nil {
+			t.Fatalf("result with withheld advice does not import: %v", err)
 		}
 	})
 	t.Run("specialist", func(t *testing.T) {
@@ -160,7 +169,7 @@ func TestStyleAdviceJSONAndTextForms(t *testing.T) {
 			t.Fatal(err)
 		}
 		result := styleResultRun(t, "specialist", styleTrees(map[string][]byte{"go.mod": nil}, map[string][]byte{"go.mod": nil}), specialist)
-		if result.wire.Version != styleResultVersion || result.wire.Specialist == nil || result.wire.Specialist.ProfileID != "bug_hunter" || len(result.wire.StyleRecommendations) != 1 || len(result.wire.Guidance) == 0 {
+		if result.wire.Version != styleResultVersion || result.wire.Specialist == nil || result.wire.Specialist.ProfileID != "bug_hunter" || len(result.wire.StyleAdvice.Recommendations) != 1 || len(result.wire.Guidance) == 0 {
 			t.Fatalf("version 5 dropped the specialist block or guidance: %+v", result.wire)
 		}
 	})
@@ -215,7 +224,9 @@ func TestStyleAdviceResultsImportAndOlderVersionsReadBack(t *testing.T) {
 			"language without detector":   bytes.Replace(encoded, []byte(`"language":"python"`), []byte(`"language":"java"`), 1),
 			"zero changed files":          bytes.Replace(encoded, []byte(`"changed_files":1`), []byte(`"changed_files":0`), 1),
 			"duplicate language":          bytes.Replace(encoded, []byte(recommendation), []byte(recommendation+","+recommendation), 1),
-			"unread with recommendation":  bytes.Replace(encoded, []byte(recommendation+"]"), []byte(recommendation+`],"style_configuration_unread":1`), 1),
+			"withheld without unread":     bytes.Replace(encoded, []byte(recommendation+"]"), []byte(recommendation+`],"style_withheld":[{"language":"go","changed_files":1}]`), 1),
+			"withheld and recommended":    bytes.Replace(encoded, []byte(recommendation+"]"), []byte(recommendation+`],"style_withheld":[{"language":"python","changed_files":1}],"style_configuration_unread":1`), 1),
+			"withheld without detector":   bytes.Replace(encoded, []byte(recommendation+"]"), []byte(recommendation+`],"style_withheld":[{"language":"java","changed_files":1}],"style_configuration_unread":1`), 1),
 			"negative unread":             bytes.Replace(encoded, []byte(recommendation+"]"), []byte(recommendation+`],"style_configuration_unread":-1`), 1),
 		} {
 			if bytes.Equal(tampered, encoded) {

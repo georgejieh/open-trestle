@@ -45,24 +45,96 @@ var styleIntentLanguages = map[StyleIntent][]Language{
 	StyleRustfmt: {LanguageRust},
 }
 
+// styleConfigRule declares one kind of style configuration file: the lowercase
+// base names and name prefixes it matches, every intent such a file can declare,
+// and, when its content selects among them, the function that does so. A rule
+// without declares declares all of its intents by the file's presence.
+type styleConfigRule struct {
+	names, prefixes []string
+	intents         []StyleIntent
+	declares        func(content string) []StyleIntent
+}
+
+// styleConfigRules is the single table that recognition, detection and the
+// intents a file name can declare all derive from. Intents are sorted.
+var styleConfigRules = []styleConfigRule{
+	{names: []string{"go.mod"}, intents: []StyleIntent{StyleGofmt}},
+	{names: []string{".editorconfig"}, intents: []StyleIntent{StyleEditorConfig}},
+	{names: []string{".prettierrc"}, prefixes: []string{".prettierrc.", "prettier.config."}, intents: []StyleIntent{StylePrettier}},
+	{names: []string{"package.json"}, intents: []StyleIntent{StylePrettier}, declares: func(content string) []StyleIntent {
+		return markedIntents(content, StylePrettier, `"prettier"`)
+	}},
+	{names: []string{".eslintrc"}, prefixes: []string{".eslintrc.", "eslint.config."}, intents: []StyleIntent{StyleESLint}},
+	{names: []string{".flake8", ".pycodestyle", "ruff.toml", ".ruff.toml"}, intents: []StyleIntent{StylePEP8}},
+	{names: []string{"setup.cfg", "tox.ini"}, intents: []StyleIntent{StyleGooglePython, StylePEP8}, declares: func(content string) []StyleIntent {
+		return append(markedIntents(content, StyleGooglePython, "based_on_style = google", "based_on_style=google"),
+			markedIntents(content, StylePEP8, "[flake8]", "[pycodestyle]")...)
+	}},
+	{names: []string{"pyproject.toml"}, intents: []StyleIntent{StyleBlack, StyleGooglePython, StylePEP8}, declares: func(content string) []StyleIntent {
+		intents := append(markedIntents(content, StyleBlack, "[tool.black"), markedIntents(content, StylePEP8, "[tool.ruff", "[tool.flake8", "[tool.pycodestyle")...)
+		if strings.Contains(content, "[tool.yapf") && strings.Contains(content, "google") {
+			intents = append(intents, StyleGooglePython)
+		}
+		return intents
+	}},
+	{names: []string{".style.yapf"}, intents: []StyleIntent{StyleGooglePython, StylePEP8}, declares: func(content string) []StyleIntent {
+		if strings.Contains(content, "google") {
+			return []StyleIntent{StyleGooglePython}
+		}
+		return []StyleIntent{StylePEP8}
+	}},
+	{names: []string{".clang-format", "_clang-format"}, intents: []StyleIntent{StyleClangFormat, StyleGoogleCPP}, declares: func(content string) []StyleIntent {
+		return append([]StyleIntent{StyleClangFormat}, markedIntents(content, StyleGoogleCPP, "basedonstyle: google")...)
+	}},
+	{names: []string{"rustfmt.toml", ".rustfmt.toml"}, intents: []StyleIntent{StyleRustfmt}},
+	{names: []string{".rubocop.yml"}, intents: []StyleIntent{StyleRubocop}},
+}
+
+// markedIntents returns intent when lowercase content holds any marker.
+func markedIntents(content string, intent StyleIntent, markers ...string) []StyleIntent {
+	for _, marker := range markers {
+		if strings.Contains(content, marker) {
+			return []StyleIntent{intent}
+		}
+	}
+	return nil
+}
+
+// styleConfigRuleFor returns the rule matching a path's base name, ignoring case.
+func styleConfigRuleFor(filePath string) (styleConfigRule, bool) {
+	base := strings.ToLower(path.Base(filePath))
+	for _, rule := range styleConfigRules {
+		for _, name := range rule.names {
+			if base == name {
+				return rule, true
+			}
+		}
+		for _, prefix := range rule.prefixes {
+			if strings.HasPrefix(base, prefix) {
+				return rule, true
+			}
+		}
+	}
+	return styleConfigRule{}, false
+}
+
 // IsStyleConfigFile reports whether declared-style detection reads a file with
 // this path's base name. Matching is exact and case-insensitive, as in
 // detection. A recognized file declares a style only when detection finds its
 // documented marker.
 func IsStyleConfigFile(filePath string) bool {
-	base := strings.ToLower(path.Base(filePath))
-	switch base {
-	case "go.mod", ".editorconfig", ".prettierrc", "package.json", ".eslintrc",
-		".flake8", ".pycodestyle", "ruff.toml", ".ruff.toml", "setup.cfg", "tox.ini", "pyproject.toml", ".style.yapf",
-		".clang-format", "_clang-format", "rustfmt.toml", ".rustfmt.toml", ".rubocop.yml":
-		return true
+	_, ok := styleConfigRuleFor(filePath)
+	return ok
+}
+
+// styleConfigIntents returns every intent a file with this name can declare,
+// whatever its content, or nil for a name detection does not recognize.
+func styleConfigIntents(filePath string) []StyleIntent {
+	rule, ok := styleConfigRuleFor(filePath)
+	if !ok {
+		return nil
 	}
-	for _, prefix := range []string{".prettierrc.", "prettier.config.", ".eslintrc.", "eslint.config."} {
-		if strings.HasPrefix(base, prefix) {
-			return true
-		}
-	}
-	return false
+	return append([]StyleIntent(nil), rule.intents...)
 }
 
 // detectStyleIntents derives declared style intents from configuration file
@@ -71,53 +143,16 @@ func IsStyleConfigFile(filePath string) bool {
 func detectStyleIntents(configFiles []ConfigFile) []StyleIntent {
 	set := map[StyleIntent]struct{}{}
 	for _, file := range configFiles {
-		base := strings.ToLower(path.Base(file.Path))
-		content := strings.ToLower(file.Content)
-		switch {
-		case base == "go.mod":
-			set[StyleGofmt] = struct{}{}
-		case base == ".editorconfig":
-			set[StyleEditorConfig] = struct{}{}
-		case base == ".prettierrc" || strings.HasPrefix(base, ".prettierrc.") || strings.HasPrefix(base, "prettier.config."):
-			set[StylePrettier] = struct{}{}
-		case base == "package.json" && strings.Contains(content, `"prettier"`):
-			set[StylePrettier] = struct{}{}
-		case base == ".eslintrc" || strings.HasPrefix(base, ".eslintrc.") || strings.HasPrefix(base, "eslint.config."):
-			set[StyleESLint] = struct{}{}
-		case base == ".flake8" || base == ".pycodestyle" || base == "ruff.toml" || base == ".ruff.toml":
-			set[StylePEP8] = struct{}{}
-		case base == "setup.cfg" || base == "tox.ini":
-			if strings.Contains(content, "[flake8]") || strings.Contains(content, "[pycodestyle]") {
-				set[StylePEP8] = struct{}{}
-			}
-			if strings.Contains(content, "based_on_style = google") || strings.Contains(content, "based_on_style=google") {
-				set[StyleGooglePython] = struct{}{}
-			}
-		case base == "pyproject.toml":
-			if strings.Contains(content, "[tool.ruff") || strings.Contains(content, "[tool.flake8") || strings.Contains(content, "[tool.pycodestyle") {
-				set[StylePEP8] = struct{}{}
-			}
-			if strings.Contains(content, "[tool.black") {
-				set[StyleBlack] = struct{}{}
-			}
-			if strings.Contains(content, "[tool.yapf") && strings.Contains(content, "google") {
-				set[StyleGooglePython] = struct{}{}
-			}
-		case base == ".style.yapf":
-			if strings.Contains(content, "google") {
-				set[StyleGooglePython] = struct{}{}
-			} else {
-				set[StylePEP8] = struct{}{}
-			}
-		case base == ".clang-format" || base == "_clang-format":
-			set[StyleClangFormat] = struct{}{}
-			if strings.Contains(content, "basedonstyle: google") {
-				set[StyleGoogleCPP] = struct{}{}
-			}
-		case base == "rustfmt.toml" || base == ".rustfmt.toml":
-			set[StyleRustfmt] = struct{}{}
-		case base == ".rubocop.yml":
-			set[StyleRubocop] = struct{}{}
+		rule, ok := styleConfigRuleFor(file.Path)
+		if !ok {
+			continue
+		}
+		intents := rule.intents
+		if rule.declares != nil {
+			intents = rule.declares(strings.ToLower(file.Content))
+		}
+		for _, intent := range intents {
+			set[intent] = struct{}{}
 		}
 	}
 	if len(set) == 0 {
@@ -188,26 +223,46 @@ type StyleRecommendation struct {
 	ChangedFiles int
 }
 
-// RecommendStyles returns one recommendation, in language order, for each
-// language of changedPaths that has a style detector and that no intent
-// declared by configFiles governs. An editorconfig intent alone does not count,
-// because EditorConfig covers only whitespace basics. Vendor and generated
-// files are not counted, as in routing, and neither are generated dependency
-// lock files such as package-lock.json.
-func RecommendStyles(changedPaths []string, configFiles []ConfigFile) ([]StyleRecommendation, error) {
+// StyleAdvice is the outcome of RecommendStyles, each list in language order.
+// Withheld lists the changed languages left without a recommendation because a
+// configuration file that could declare their style was not read, so their
+// declared style is unknown.
+type StyleAdvice struct {
+	Recommendations []StyleRecommendation
+	Withheld        []StyleRecommendation
+}
+
+// RecommendStyles returns one recommendation for each language of changedPaths
+// that has a style detector and that no intent declared by configFiles governs.
+// An editorconfig intent alone does not count, because EditorConfig covers only
+// whitespace basics. Vendor and generated files are not counted, as in routing,
+// and neither are generated dependency lock files such as package-lock.json.
+//
+// unreadConfigPaths names recognized configuration files that could not be
+// read. A language that one of them could govern, by any intent its name can
+// declare, is withheld instead of recommended; every other language is still
+// recommended.
+func RecommendStyles(changedPaths []string, configFiles []ConfigFile, unreadConfigPaths []string) (StyleAdvice, error) {
 	if len(changedPaths) > maxFeatureFiles || len(configFiles) > MaxConfigFiles {
-		return nil, fmt.Errorf("%w: too many paths or config files", ErrInvalidChangeFeatures)
+		return StyleAdvice{}, fmt.Errorf("%w: too many paths or config files", ErrInvalidChangeFeatures)
 	}
 	for _, config := range configFiles {
 		if !validRepositoryPath(config.Path) || len(config.Content) > MaxConfigFileBytes || !utf8.ValidString(config.Content) {
-			return nil, fmt.Errorf("%w: invalid config file", ErrInvalidChangeFeatures)
+			return StyleAdvice{}, fmt.Errorf("%w: invalid config file", ErrInvalidChangeFeatures)
 		}
 	}
-	intents := detectStyleIntents(configFiles)
+	var unknown []StyleIntent
+	for _, unread := range unreadConfigPaths {
+		if !validRepositoryPath(unread) || !IsStyleConfigFile(unread) {
+			return StyleAdvice{}, fmt.Errorf("%w: unread config path is not a recognized configuration file", ErrInvalidChangeFeatures)
+		}
+		unknown = append(unknown, styleConfigIntents(unread)...)
+	}
+	declared := detectStyleIntents(configFiles)
 	counts := map[Language]int{}
 	for _, changedPath := range changedPaths {
 		if !validRepositoryPath(changedPath) {
-			return nil, fmt.Errorf("%w: changed path is not a clean relative repository path", ErrInvalidChangeFeatures)
+			return StyleAdvice{}, fmt.Errorf("%w: changed path is not a clean relative repository path", ErrInvalidChangeFeatures)
 		}
 		language, hasLanguage := languageForPath(changedPath)
 		if class := classifyPath(changedPath, language, hasLanguage); !hasLanguage || class == FileClassVendor || class == FileClassGenerated || isDependencyLockFile(changedPath) {
@@ -217,18 +272,29 @@ func RecommendStyles(changedPaths []string, configFiles []ConfigFile) ([]StyleRe
 			counts[language]++
 		}
 	}
-	var recommendations []StyleRecommendation
+	var advice StyleAdvice
 	for language, count := range counts {
-		governed := false
-		for _, intent := range intents {
-			if intent != StyleEditorConfig && styleGoverns(intent, language) {
-				governed = true
-			}
-		}
-		if !governed {
-			recommendations = append(recommendations, StyleRecommendation{Language: language, ChangedFiles: count})
+		value := StyleRecommendation{Language: language, ChangedFiles: count}
+		switch {
+		case governsLanguage(declared, language):
+		case governsLanguage(unknown, language):
+			advice.Withheld = append(advice.Withheld, value)
+		default:
+			advice.Recommendations = append(advice.Recommendations, value)
 		}
 	}
-	sort.Slice(recommendations, func(i, j int) bool { return recommendations[i].Language < recommendations[j].Language })
-	return recommendations, nil
+	for _, list := range [][]StyleRecommendation{advice.Recommendations, advice.Withheld} {
+		sort.Slice(list, func(i, j int) bool { return list[i].Language < list[j].Language })
+	}
+	return advice, nil
+}
+
+// governsLanguage reports whether an intent other than editorconfig governs language.
+func governsLanguage(intents []StyleIntent, language Language) bool {
+	for _, intent := range intents {
+		if intent != StyleEditorConfig && styleGoverns(intent, language) {
+			return true
+		}
+	}
+	return false
 }

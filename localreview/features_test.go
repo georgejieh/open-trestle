@@ -100,8 +100,8 @@ func TestBaseStyleConfigFilesSkipOverBoundFilesWhole(t *testing.T) {
 	}
 	at := s.options.Clock.Now()
 	read, unread, err := s.baseStyleConfigFiles(context.Background(), p.Plan().Scope(), rmTaskArtifact(t, s, p, "source-base", at), at)
-	if err != nil || unread != 2 || len(read) != 1 || read[0].Path != "go.mod" || read[0].Content != "module example.test/p\n" {
-		t.Fatalf("read=%v unread=%d err=%v", read, unread, err)
+	if err != nil || !reflect.DeepEqual(unread, []string{"pyproject.toml", "setup.cfg"}) || len(read) != 1 || read[0].Path != "go.mod" || read[0].Content != "module example.test/p\n" {
+		t.Fatalf("read=%v unread=%v err=%v", read, unread, err)
 	}
 }
 
@@ -117,8 +117,8 @@ func TestBaseStyleConfigFilesStopAtTheFileCountBound(t *testing.T) {
 	}
 	at := s.options.Clock.Now()
 	read, unread, err := s.baseStyleConfigFiles(context.Background(), p.Plan().Scope(), rmTaskArtifact(t, s, p, "source-base", at), at)
-	if err != nil || len(read) != agentprofile.MaxConfigFiles || unread != 1 || read[len(read)-1].Path != fmt.Sprintf(".prettierrc.%03d", agentprofile.MaxConfigFiles-1) {
-		t.Fatalf("read=%d unread=%d err=%v", len(read), unread, err)
+	if err != nil || len(read) != agentprofile.MaxConfigFiles || !reflect.DeepEqual(unread, []string{fmt.Sprintf(".prettierrc.%03d", agentprofile.MaxConfigFiles)}) || read[len(read)-1].Path != fmt.Sprintf(".prettierrc.%03d", agentprofile.MaxConfigFiles-1) {
+		t.Fatalf("read=%d unread=%v err=%v", len(read), unread, err)
 	}
 }
 

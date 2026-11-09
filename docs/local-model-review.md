@@ -668,11 +668,11 @@ not the single-review result:
   Only members whose run succeeded contribute. The rule is a heuristic
   (`deduplication_is_heuristic`).
 - `summary`, `bounds`, `limitations` and `comprehensive_clearance: false`.
-- `style_recommendations` or `style_configuration_unread`: the general review's
-  [style recommendations](#style-recommendations), once for the set and never
-  per member, because every member reviews the same change against the same
-  base tree. Both fields are absent when the general review has no advice, so
-  such a set keeps its earlier bytes. Text output adds the same `style:` lines
+- `style_recommendations`, `style_withheld` and `style_configuration_unread`:
+  the general review's [style advice](#style-recommendations), once for the set
+  and never per member, because every member reviews the same change against
+  the same base tree. The fields are absent when the general review has no
+  advice, so such a set keeps its earlier bytes. Text output adds the same `style:` lines
   before `limitations:`. The advice never changes the set's status, CI
   disposition or exit code, and set SARIF does not carry it.
 
@@ -988,15 +988,21 @@ JSON uses schema version 5, which keeps every version 4 field (including
 `language` (the routing token, such as `python` or `cpp`), `changed_files`, and
 `recommendation` (the table text). If a recognized base style configuration file
 could not be read (over 64 KiB, not valid UTF-8, or beyond the first 256), the
-declared style is unknown, so no recommendation is made; the result instead
-reports `style_configuration_unread` with the count, and text reads, for one
-file:
+declared style is unknown only for the languages that file could govern, by any
+style its name can declare: an unread `pyproject.toml` affects Python, an unread
+`package.json` the languages Prettier governs, and an unread `.editorconfig`
+none. Those languages are listed in `style_withheld` (`language`,
+`changed_files`) instead of being recommended, every other language is still
+recommended, and `style_configuration_unread` gives the number of unread files.
+Text reads, for example:
 
 ```text
-style: no recommendation; 1 base style configuration file was not read (over 64 KiB, not valid UTF-8, or beyond 256 files)
+style: no declared TypeScript style for 1 changed file; consider Prettier with ESLint, and commit its configuration
+style: declared Python style unknown for 1 changed file; a base style configuration file that may declare it was not read, so no recommendation is made
+style: 1 base style configuration file was not read (over 64 KiB, not valid UTF-8, or beyond 256 files)
 ```
 
-A result without either field keeps its earlier version.
+A result without any of these fields keeps its earlier version.
 
 A recommendation is advice only. It is not a finding, never blocks, and never
 changes `status`, `ci_disposition`, the exit code under any
