@@ -69,7 +69,6 @@ func TestReviewContractsRejectMissingIdentityAndSnapshotData(t *testing.T) {
 	}{
 		{name: "missing workspace", revision: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", ranges: []evidence.SourceRange{sourceRange}},
 		{name: "missing revision", workspace: "workspace", ranges: []evidence.SourceRange{sourceRange}},
-		{name: "missing ranges", workspace: "workspace", revision: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
 		{name: "invalid range", workspace: "workspace", revision: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", ranges: []evidence.SourceRange{{}}},
 	}
 	for _, testCase := range testCases {
@@ -78,6 +77,12 @@ func TestReviewContractsRejectMissingIdentityAndSnapshotData(t *testing.T) {
 				t.Fatal("NewReviewSnapshot() error = nil, want validation error")
 			}
 		})
+	}
+	// A snapshot with no source range belongs to a change that only removes
+	// files; it is valid, and distinct from one with a range.
+	empty, err := NewReviewSnapshot("workspace", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", nil)
+	if err != nil || empty.Validate() != nil || len(empty.Ranges()) != 0 {
+		t.Fatalf("snapshot without ranges: %v", err)
 	}
 
 	snapshot, err := NewReviewSnapshot("workspace", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", []evidence.SourceRange{sourceRange})

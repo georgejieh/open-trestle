@@ -46,6 +46,26 @@ func TestLocalModelReviewReviewsDeletionOnlyChange(t *testing.T) {
 	}
 }
 
+// A change that only removes a file used to be refused at the context task
+// (all_sources_omitted). It is now reviewed from the file's removed text, and
+// the verified finding is on its removed base lines.
+func TestLocalModelReviewReviewsAChangeThatOnlyRemovesAFile(t *testing.T) {
+	f := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, removedOnly: true})
+	result, _ := localModelExecute(t, f, f.args, 4)
+	gc, _ := f.generation.snapshot()
+	vc, _ := f.verification.snapshot()
+	if result.Status != "findings" || result.RunStatus != "succeeded" || gc != 1 || vc != 1 || len(result.Diagnostics.Findings) != 1 {
+		t.Fatalf("removed-only review status=%s run=%s calls=%d/%d findings=%d", result.Status, result.RunStatus, gc, vc, len(result.Diagnostics.Findings))
+	}
+	if finding := result.Diagnostics.Findings[0]; finding.Path != "gone.go" || finding.Side != "base" || finding.Start != 3 || finding.End != 3 || finding.HeadLine != 0 {
+		t.Fatalf("removed-file finding=%+v", finding)
+	}
+	text := runLocalModelText(t, newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, removedOnly: true}), 4)
+	if !strings.Contains(text, "status: findings\n") || !strings.Contains(text, "source: gone.go removed base lines 3-3\n") || strings.Contains(text, "gone.go:3-3") {
+		t.Fatalf("removed-only text=%q", text)
+	}
+}
+
 // Defect B: a failed run printed only its status; it now names the failure
 // class, the failing task and a plain-language hint.
 func TestLocalModelReviewTextNamesFailureClassTaskAndHint(t *testing.T) {

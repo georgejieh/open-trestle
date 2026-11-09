@@ -64,15 +64,19 @@ func TestRemovedLinesPastTheBoundAreAnExplicitOmission(t *testing.T) {
 	}
 }
 
-// An emptied head file has no line to anchor the deletion: the existing
-// whole-entry omission and all_sources_omitted refusal remain.
-func TestDeletionToEmptyFileStillRefusesWithoutInventedSource(t *testing.T) {
+// An emptied head file has no head line beside the deletion: it is reviewed
+// from its removed text alone, keeps its whole-entry omission, and gains no
+// invented head source.
+func TestDeletionToEmptyFileIsReviewedFromItsRemovedText(t *testing.T) {
 	result := assembleTextFallback(t, map[string][]byte{"a.txt": []byte("gone\n")}, map[string][]byte{"a.txt": []byte("")})
-	if result.abstention == nil {
-		t.Fatalf("emptied file produced a packet: failure=%s sources=%v", result.failure, result.sources)
+	if result.abstention != nil || result.failure != 0 {
+		t.Fatalf("emptied file refused: failure=%s", result.failure)
 	}
-	reasons := result.omissionReasons(t)
-	if !reasons["abstention|all_sources_omitted"] || !reasons["a.txt|analysis_no_changed_head_lines"] {
-		t.Fatalf("reasons=%v", reasons)
+	removed, ok := result.sources["a.txt|removed_lines"]
+	if !ok || string(removed.Content()) != "gone\n" || removed.HeadLine() != 0 || len(result.sources) != 1 {
+		t.Fatalf("sources=%v", result.sources)
+	}
+	if !result.omissionSet["a.txt|analysis_no_changed_head_lines"] || len(result.assembly.Snapshot.Ranges()) != 0 {
+		t.Fatalf("emptied file lost its whole-entry omission or gained a head range: %v", result.omissionSet)
 	}
 }

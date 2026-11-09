@@ -76,6 +76,8 @@ type localModelReceipt struct {
 			Path     string   `json:"path"`
 			Start    uint32   `json:"start_line"`
 			End      uint32   `json:"end_line"`
+			Side     string   `json:"side"`
+			HeadLine uint32   `json:"head_line"`
 			Severity string   `json:"severity"`
 			Evidence []string `json:"evidence_ids"`
 		} `json:"findings"`

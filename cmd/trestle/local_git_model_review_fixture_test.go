@@ -102,6 +102,7 @@ type localModelEndpoint struct {
 	chatCompletions bool
 	specialist      bool
 	deletionOnly    bool
+	removedOnly     bool
 	mu              sync.Mutex
 	calls           int
 	captures        []localModelCapture
@@ -242,6 +243,10 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 		return
 	}
 
+	if m.removedOnly {
+		m.respond(t, w, packet, removedOnlyModelResult(t, m.model, packet))
+		return
+	}
 	var changed, caller, removed localModelSource
 	for _, source := range packet.Sources {
 		if source.Path == "a.go" && source.Stage == "changed_hunk" {
@@ -314,6 +319,12 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 		}
 		result = map[string]any{"schema_version": 1, "verdicts": verdicts}
 	}
+	m.respond(t, w, packet, result)
+
+}
+
+// respond writes one structured model response in the endpoint's wire format.
+func (m *localModelEndpoint) respond(t *testing.T, w http.ResponseWriter, packet localModelPacket, result any) {
 	text, err := json.Marshal(result)
 	if err != nil {
 		t.Error(err)
@@ -352,6 +363,39 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 	}
 }
 
+const removedOnlyGone = "package p\n\nfunc Helper() int { return 1 }\n"
+
+// removedOnlyModelResult answers a review of a change that only removes
+// gone.go. Its removed text is the only source: the generation reports the
+// removed helper on its removed base line, and the verification verifies it
+// from that removed_lines source.
+func removedOnlyModelResult(t *testing.T, model string, packet localModelPacket) any {
+	t.Helper()
+	var gone localModelSource
+	for _, source := range packet.Sources {
+		if source.Path == "gone.go" && source.Stage == "removed_lines" {
+			gone = source
+		}
+		if source.Stage != "removed_lines" {
+			t.Error("a change that only removes a file gained a head source")
+		}
+	}
+	if gone.ID == "" || gone.Content != removedOnlyGone || gone.Start != 1 || gone.End != 3 {
+		t.Error("removed file text did not reach the model as removed_lines evidence")
+	}
+	if packet.Task == "candidate_generation" {
+		return map[string]any{"schema_version": 2, "candidates": []any{map[string]any{
+			"title": "Removed helper", "claim": "Helper is removed while callers elsewhere may still use it.", "severity_hint": "high", "category": "correctness",
+			"source_range": map[string]any{"source_id": gone.ID, "start_line": 3, "end_line": 3}, "evidence_ids": []string{gone.ID},
+		}}}
+	}
+	verdicts := []any{}
+	for _, candidate := range packet.Candidates {
+		verdicts = append(verdicts, map[string]any{"candidate_id": candidate.ID, "outcome": "verified", "severity": "high", "rationale": "The removed lines define Helper.", "evidence_ids": []string{gone.ID}})
+	}
+	return map[string]any{"schema_version": 1, "verdicts": verdicts}
+}
+
 type localModelFixture struct {
 	args                               []string
 	objects, base, head                string
@@ -378,6 +422,9 @@ type localModelFixtureOptions struct {
 	// deletionOnly makes the reviewed change remove the zero guard line from
 	// a.go without changing any head line.
 	deletionOnly bool
+	// removedOnly makes the reviewed change only remove gone.go; the model
+	// reports the removed helper on its removed base lines.
+	removedOnly bool
 	// extraBase and extraHead add root-level files to the base and head trees;
 	// a nil content removes the fixture's file of that name.
 	extraBase, extraHead map[string][]byte
@@ -389,7 +436,7 @@ func newLocalModelFixture(t *testing.T, options localModelFixtureOptions) *local
 	endpoints := make([]string, 0, 2)
 	for i, mode := range []string{options.generationMode, options.verificationMode} {
 		name := []string{"a", "b"}[i]
-		endpoint := &localModelEndpoint{noAuth: options.noAuth, chatCompletions: options.chatCompletions, specialist: options.specialist, deletionOnly: options.deletionOnly, mode: mode, model: "model-" + name, entered: make(chan struct{}), canceled: make(chan struct{}), stop: make(chan struct{})}
+		endpoint := &localModelEndpoint{noAuth: options.noAuth, chatCompletions: options.chatCompletions, specialist: options.specialist, deletionOnly: options.deletionOnly, removedOnly: options.removedOnly, mode: mode, model: "model-" + name, entered: make(chan struct{}), canceled: make(chan struct{}), stop: make(chan struct{})}
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { endpoint.serve(t, w, r) }))
 		t.Cleanup(func() { close(endpoint.stop); server.Close() })
 		endpoints = append(endpoints, server.URL+"/v1")
@@ -419,6 +466,10 @@ func newLocalModelFixture(t *testing.T, options localModelFixtureOptions) *local
 	}
 	if options.partial {
 		base["removed.go"] = []byte("package p\n")
+	}
+	if options.removedOnly {
+		head["a.go"] = base["a.go"]
+		base["gone.go"] = []byte(removedOnlyGone)
 	}
 	if options.instructionRewrite {
 		base["AGENTS.md"] = []byte("Prefer explicit error handling.\n")

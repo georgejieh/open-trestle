@@ -176,7 +176,7 @@ func (i GenerationInput) Validate() error {
 	if !validDigest(i.reviewScopeIdentity) || !validDigest(i.contextArtifactIdentity) ||
 		!validDigest(i.contextIdentity) || !validDigest(i.memoryScopeIdentity) || !validDigest(i.memoryIdentity) || i.snapshot.Validate() != nil ||
 		i.authorization.Validate() != nil || i.authorization.ReviewScopeIdentity() != i.reviewScopeIdentity ||
-		len(i.evidenceItems) > 2048 ||
+		len(i.evidenceItems) > 2048 || len(i.snapshot.Ranges()) == 0 && len(i.baseEvidence) == 0 ||
 		i.outputSchemaIdentity != review.ModelCandidateBatchSchemaIdentity && i.outputSchemaIdentity != review.ModelCandidateBatchV1SchemaIdentity {
 		return ErrInvalidGenerationInput
 	}

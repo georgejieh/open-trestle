@@ -521,7 +521,7 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 		}
 		return &value, failureCode
 	}
-	if len(candidates) == 0 {
+	abstainAllOmitted := func() (contextAssembly, provider.Request, *artifact.Artifact, controlplane.RunFailure) {
 		reason := "all_sources_omitted"
 		if len(omissions) == 0 {
 			reason = "no_source_changes"
@@ -540,12 +540,7 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 		abstention, failureCode := makeAbstention(reason, controlplane.RunFailurePolicy, omissions)
 		return contextAssembly{}, provider.Request{}, abstention, failureCode
 	}
-	limits, _ := review.NewContextLimits(maximumContextPacketSourceBytes, uint8(min(50, memoryItems)))
-	selection, err := review.SelectContextSources(candidates, limits)
-	if err != nil {
-		return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureResourceLimit
-	}
-	if selection.SelectedCount() == 0 {
+	abstainZeroSelection := func() (contextAssembly, provider.Request, *artifact.Artifact, controlplane.RunFailure) {
 		for _, candidate := range candidates {
 			rangeValue := candidate.EvidenceItem().SourceRange()
 			omission, err := review.NewContextSourceOmission(rangeValue.Path(), rangeValue.StartLine(), rangeValue.EndLine(), "packet_budget")
@@ -557,18 +552,43 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 		abstention, failureCode := makeAbstention("packet_budget_zero_selection", controlplane.RunFailureResourceLimit, omissions)
 		return contextAssembly{}, provider.Request{}, abstention, failureCode
 	}
-	// The removed base lines of deletion points are added after the abstention
-	// decisions too: removed text cannot anchor a finding, so it never turns an
-	// all-omitted change into a reviewable packet.
+	// The removed text of an emptied or removed file is reviewable on its own:
+	// a change that only removes files is reviewed from that text. The removed
+	// text of a deletion point is supplied only beside its head context, so it
+	// never turns an all-omitted change into a reviewable packet.
+	wholeFileRemoved := false
+	for _, item := range analysis.RemovedLines() {
+		wholeFileRemoved = wholeFileRemoved || item.HeadLine() == 0
+	}
+	if len(candidates) == 0 && !wholeFileRemoved {
+		return abstainAllOmitted()
+	}
+	limits, _ := review.NewContextLimits(maximumContextPacketSourceBytes, uint8(min(50, memoryItems)))
+	var selection review.ContextSourceSelection
+	if len(candidates) > 0 {
+		selection, err = review.SelectContextSources(candidates, limits)
+		if err != nil {
+			return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureResourceLimit
+		}
+		if selection.SelectedCount() == 0 {
+			return abstainZeroSelection()
+		}
+	}
 	if removed := analysis.RemovedLines(); len(removed) > 0 {
 		var removedFailure controlplane.RunFailure
 		candidates, omissions, removedFailure = h.appendRemovedLinesCandidates(ctx, request.Plan().Scope(), readAt, base, removed, memoryScope, candidates, omissions, &expires)
 		if removedFailure != 0 {
 			return contextAssembly{}, provider.Request{}, nil, removedFailure
 		}
+		if len(candidates) == 0 {
+			return abstainAllOmitted()
+		}
 		candidates, selection, omissions, removedFailure = fitRemovedLinesCandidates(candidates, limits, omissions)
 		if removedFailure != 0 {
 			return contextAssembly{}, provider.Request{}, nil, removedFailure
+		}
+		if selection.SelectedCount() == 0 {
+			return abstainZeroSelection()
 		}
 	}
 	// Instruction files are added only after the abstention decisions so they can
@@ -592,7 +612,8 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 		}
 	}
 	// The review snapshot holds head ranges only. Removed base lines carry base
-	// line numbers and are evidence, never snapshot ranges or anchors.
+	// line numbers and are never snapshot ranges; a change that only removes
+	// files has a snapshot with no head range.
 	ranges := make([]evidence.SourceRange, 0, selection.SelectedCount())
 	for _, source := range selection.SelectedSources() {
 		if source.Stage() != review.ContextStageRemovedLines {
