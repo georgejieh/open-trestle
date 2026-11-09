@@ -51,6 +51,15 @@ type SupersedingPlanner interface {
 	SupersededPlanIdentities(context.Context, StoredDelivery) ([]string, error)
 }
 
+// ReleaseAwarePlanner is optionally implemented by a prepared planner that can
+// recognise a run an earlier release opened for a delivery: a plan with this
+// planner's task graph, policy and mode for the delivery's request that names
+// task handlers this daemon does not run. Such a run can neither be adopted
+// nor make progress here, so it is refused with its own reason.
+type ReleaseAwarePlanner interface {
+	OpenedByIncompatibleRelease(StoredDelivery, controlplane.ReviewRunPlan) bool
+}
+
 // Processor opens replay-safe review runs from durable inbox records.
 type Processor struct {
 	coordinator     *controlplane.Coordinator
@@ -143,7 +152,11 @@ func (p *Processor) Process(ctx context.Context, stored StoredDelivery, at time.
 					return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, supersededErr
 				}
 				if !superseded {
-					return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, refuseDelivery(RefusalReasonRunPlanConflict, controlplane.ErrRunPlanConflict)
+					reason := RefusalReasonRunPlanConflict
+					if p.openedByIncompatibleRelease(stored, existingPlan) {
+						reason = RefusalReasonRunOpenedByIncompatibleRelease
+					}
+					return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, refuseDelivery(reason, controlplane.ErrRunPlanConflict)
 				}
 			}
 			existingState, resumeErr = p.coordinator.Advance(ctx, existingPlan, at)
@@ -178,6 +191,11 @@ func (p *Processor) Process(ctx context.Context, stored StoredDelivery, at time.
 	}
 	admission := newRunAdmissionReceipt(stored.Receipt(), p.plannerIdentity, plan.Identity())
 	return admission, runReceipt, nil
+}
+
+func (p *Processor) openedByIncompatibleRelease(stored StoredDelivery, plan controlplane.ReviewRunPlan) bool {
+	aware, ok := p.preparedPlanner.(ReleaseAwarePlanner)
+	return ok && plan.RequestIdentity() == stored.Delivery().Identity() && aware.OpenedByIncompatibleRelease(stored, plan)
 }
 
 // supersededPlan reports whether an earlier version of the prepared planner

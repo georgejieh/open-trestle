@@ -51,6 +51,8 @@ const refusalReasonLabels: Record<string, string> = {
     "the delivery kept failing on its own until its retries were spent",
   retry_capacity_exhausted:
     "the delivery failed and the inbox had no room to record its retry state",
+  run_opened_by_incompatible_release:
+    "an earlier release opened this delivery's run with task handlers this daemon does not run; push a new commit or reopen the pull request for a fresh review",
 };
 function refusalMessage(refusal: DeliveryRefusal): string {
   const label =

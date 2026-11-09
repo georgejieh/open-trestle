@@ -28,6 +28,10 @@ const (
 	RefusalReasonPlanningRefused = "planning_refused"
 	RefusalReasonRunPlanNotBound = "run_plan_not_bound"
 	RefusalReasonRunPlanConflict = "run_plan_conflict"
+	// RefusalReasonRunOpenedByIncompatibleRelease records a delivery whose run
+	// an earlier release opened with task handlers this daemon does not run,
+	// so the run can neither be adopted nor make progress.
+	RefusalReasonRunOpenedByIncompatibleRelease = "run_opened_by_incompatible_release"
 	// RefusalReasonRetriesExhausted records a delivery whose own failures
 	// outlasted its bounded retries while intake stayed available.
 	RefusalReasonRetriesExhausted = "retries_exhausted"
@@ -77,6 +81,8 @@ func RefusalExplanation(reason string) string {
 		return "the plan was outside the delivery's lineage"
 	case RefusalReasonRunPlanConflict:
 		return "the run scope holds a plan the planner did not produce for this delivery"
+	case RefusalReasonRunOpenedByIncompatibleRelease:
+		return "an earlier release opened this delivery's run with task handlers this daemon does not run; push a new commit or reopen the pull request for a fresh review"
 	case RefusalReasonRetriesExhausted:
 		return "the delivery kept failing on its own until its retries were spent"
 	case RefusalReasonRetryCapacityExhausted:

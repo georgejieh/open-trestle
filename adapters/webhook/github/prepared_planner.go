@@ -152,11 +152,46 @@ func (p *PreparedPullRequestPlanner) prepare(ctx context.Context, stored webhook
 	sort.Slice(inputs, func(i, j int) bool { return inputs[i].Identity() < inputs[j].Identity() })
 	return plan, inputs, nil
 }
-func (p *PreparedPullRequestPlanner) tasks(delivery webhook.VerifiedDelivery, number int64, base, head, baseInput, headInput, publicationInput string) ([]controlplane.TaskDefinition, error) {
+
+// taskSpecifications is the task graph every version of this planner plans.
+func (p *PreparedPullRequestPlanner) taskSpecifications() []taskSpecification {
 	specs := []taskSpecification{{"source-base", controlplane.TaskAcquireSource, nil}, {"source-head", controlplane.TaskAcquireSource, nil}, {"change", controlplane.TaskBuildChange, []string{"source-base", "source-head"}}, {"analysis", controlplane.TaskInspectDeterministic, []string{"change"}}, {"memory", controlplane.TaskRetrieveContext, []string{"change"}}, {"context", controlplane.TaskAssembleContext, []string{"analysis", "memory"}}, {"candidates", controlplane.TaskGenerateCandidates, []string{"context"}}, {"verification", controlplane.TaskVerifyCandidates, []string{"candidates"}}, {"readiness", controlplane.TaskEvaluatePublication, []string{"analysis", "change", "verification"}}}
 	if p.base.mode == controlplane.ReviewRunRequired {
 		specs = append(specs, taskSpecification{"publication", controlplane.TaskPublishResult, []string{"readiness"}})
 	}
+	return specs
+}
+
+// OpenedByIncompatibleRelease reports whether a plan for the delivery has this
+// planner's task graph, policy and mode but names a task handler this daemon
+// does not run, as a run an earlier release opened does: its handler
+// identities are bound into its plan, so it can neither be adopted nor make
+// progress here. Like planning, it performs no I/O.
+func (p *PreparedPullRequestPlanner) OpenedByIncompatibleRelease(stored webhook.StoredDelivery, plan controlplane.ReviewRunPlan) bool {
+	if p == nil || p.base == nil || stored.Validate() != nil || plan.Validate() != nil || plan.RequestIdentity() != stored.Delivery().Identity() || plan.PolicyIdentity() != p.base.policyIdentity || plan.Mode() != p.base.mode {
+		return false
+	}
+	specs := p.taskSpecifications()
+	if len(plan.Tasks()) != len(specs) {
+		return false
+	}
+	unserved := false
+	for _, spec := range specs {
+		task, exists := plan.Task(spec.key)
+		dependencies := task.Dependencies()
+		sort.Strings(dependencies)
+		expected := append([]string(nil), spec.dependencies...)
+		sort.Strings(expected)
+		if !exists || task.Kind() != spec.kind || strings.Join(dependencies, ",") != strings.Join(expected, ",") {
+			return false
+		}
+		unserved = unserved || task.HandlerIdentity() != p.base.handlers[spec.kind]
+	}
+	return unserved
+}
+
+func (p *PreparedPullRequestPlanner) tasks(delivery webhook.VerifiedDelivery, number int64, base, head, baseInput, headInput, publicationInput string) ([]controlplane.TaskDefinition, error) {
+	specs := p.taskSpecifications()
 	identities := make(map[string]string, len(specs))
 	tasks := make([]controlplane.TaskDefinition, 0, len(specs))
 	for _, spec := range specs {
