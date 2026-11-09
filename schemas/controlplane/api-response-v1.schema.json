@@ -22,7 +22,17 @@
       "maxLength": 128
     },
     "run": {
-      "$ref": "urn:open-trestle:schema:controlplane:review-run-receipt:v1"
+      "oneOf": [
+        {
+          "$ref": "urn:open-trestle:schema:controlplane:review-run-receipt:v1"
+        },
+        {
+          "$ref": "urn:open-trestle:schema:controlplane:review-run-receipt:v2"
+        },
+        {
+          "$ref": "urn:open-trestle:schema:controlplane:review-run-receipt:v3"
+        }
+      ]
     },
     "lease": {
       "oneOf": [
