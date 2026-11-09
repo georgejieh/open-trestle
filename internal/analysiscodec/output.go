@@ -701,7 +701,10 @@ func validGap(gap Gap, entries map[string]changecodec.Entry, schemaVersion, chan
 		// keep empty_added_file.
 		sizeLimited := schemaVersion >= 4 && (entry.Kind() == "removed" || entry.Kind() == "added") && gap.reason == "resource_limit" && entry.Reason() == "resource_limit"
 		unsupportedAdded := schemaVersion >= 4 && entry.Kind() == "added" && gap.reason == "unsupported_content" && entry.Reason() == "unsupported_content"
-		return sizeLimited || unsupportedAdded || entry.Kind() == "removed" && gap.reason == "removed_file" || entry.Kind() == "added" && gap.reason == "empty_added_file" || entry.Kind() == "modified" && gap.reason == entry.Reason() && (gap.reason == "unsupported_content" || gap.reason == "resource_limit")
+		// From version 4 empty_added_file means an added file with zero bytes;
+		// versions 1 to 3 keep the label they were published with.
+		emptyAdded := entry.Kind() == "added" && gap.reason == "empty_added_file" && (schemaVersion < 4 || entry.Reason() == "added_file")
+		return sizeLimited || unsupportedAdded || emptyAdded || entry.Kind() == "removed" && gap.reason == "removed_file" || entry.Kind() == "modified" && gap.reason == entry.Reason() && (gap.reason == "unsupported_content" || gap.reason == "resource_limit")
 	}
 	if gap.reason != "slice_resource_limit" && gap.reason != "resource_limit" {
 		return false

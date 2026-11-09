@@ -31,8 +31,8 @@ Publication readiness validates the same analysis result and change before mappi
 - Each source slice is limited to 1 MiB.
 - Every changed range is represented exactly once by evidence or a typed gap.
 - Removed, binary or unsupported, empty-added, source-limit, slice-limit, and aggregate evidence-limit cases remain explicit.
-- An added file without a reviewable range is labelled by why it has none, from version 4: `empty_added_file` only when it has zero bytes, `unsupported_content` for content the change model cannot diff (for example binary), and `resource_limit` past the size bound. Recorded results that labelled such a file `empty_added_file` stay readable unchanged.
-- A file the change model could not diff because of its size (over 1 MiB) is one whole-entry `resource_limit` gap whatever its kind, from version 4. A removed or emptied one is never read: its removed text is one whole-entry `removed_lines_limit` gap. An added one that still gets no range was recorded as `empty_added_file` before; recorded results keep that label and stay readable.
+- An added file without a reviewable range is labelled by why it has none, from version 4: `empty_added_file` only when it has zero bytes, `unsupported_content` for content the change model cannot diff (for example binary), and `resource_limit` past the size bound. Readback admits `empty_added_file` from version 4 only for an added file with zero bytes; versions 1 to 3, as published, read back unchanged.
+- A file the change model could not diff because of its size (over 1 MiB) is one whole-entry `resource_limit` gap whatever its kind, from version 4. A removed or emptied one is never read: its removed text is one whole-entry `removed_lines_limit` gap. An added one that still gets no range was recorded as `empty_added_file` before; from version 4 that label is refused for it on readback.
 
 If the number of required coverage records exceeds the limit, one `evidence_limit` gap covers each changed entry. The output never silently truncates ranges.
 
