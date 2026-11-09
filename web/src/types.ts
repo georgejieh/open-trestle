@@ -246,6 +246,8 @@ export type DiagnosticSet =
       deterministic?: Extract<DiagnosticSet, { schema_version: 6 }>;
       verified?: Extract<DiagnosticSet, { schema_version: 5 | 8 }>;
       context_refusal?: ContextRefusal;
+      /** Recorded after the evidence expired: no evidence part, journal outcome only. */
+      evidence_expired?: true;
     };
 
 export type RuntimeComponentState = "starting" | "ready";

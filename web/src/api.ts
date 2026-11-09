@@ -693,6 +693,7 @@ export function parseDiagnosticEnvelope(
       ...(Object.hasOwn(d, "deterministic") ? ["deterministic"] : []),
       ...(Object.hasOwn(d, "verified") ? ["verified"] : []),
       ...(Object.hasOwn(d, "context_refusal") ? ["context_refusal"] : []),
+      ...(Object.hasOwn(d, "evidence_expired") ? ["evidence_expired"] : []),
     ];
     const emptySource = d.snapshot_identity === "" && d.head_revision === "";
     const completeSource =
@@ -719,7 +720,14 @@ export function parseDiagnosticEnvelope(
       (Object.hasOwn(d, "context_refusal") &&
         (d.outcome !== "failed" ||
           Object.hasOwn(d, "verified") ||
-          !validContextRefusal(d.context_refusal)))
+          !validContextRefusal(d.context_refusal))) ||
+      // An expired-evidence result has no evidence part and is never completed.
+      (Object.hasOwn(d, "evidence_expired") &&
+        (d.evidence_expired !== true ||
+          d.outcome === "completed" ||
+          !emptySource ||
+          Object.hasOwn(d, "deterministic") ||
+          Object.hasOwn(d, "verified")))
     )
       invalidResponse();
     const parsePart = (part: unknown, ...versions: number[]) => {

@@ -626,6 +626,14 @@ function Findings({
               ? "Review completed. Read the separate deterministic and verified results below; an empty list does not approve the change."
               : `Review ${set.outcome}. Available evidence is shown below. Missing evidence was not run and is not a clear result.`}
           </p>
+          {set.evidence_expired && (
+            <p className="note">
+              Evidence expired: this result was recorded after the run's
+              evidence retention lapsed. The outcome comes from the run journal
+              only; no findings or observations are available, and that is not a
+              clear result.
+            </p>
+          )}
           {set.context_refusal && (
             <dl>
               <div>

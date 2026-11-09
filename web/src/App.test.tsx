@@ -443,6 +443,7 @@ describe("console", () => {
         ...base,
         schema_version: 7,
         outcome: "inconclusive",
+        evidence_expired: true,
       })
       .mockResolvedValueOnce({
         ...base,
@@ -511,6 +512,9 @@ describe("console", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(/Verification is not available/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Evidence expired: this result was recorded after/),
     ).toBeInTheDocument();
     expect(screen.queryByText("Verified issue")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));

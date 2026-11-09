@@ -2421,5 +2421,38 @@ describe("API client", () => {
       expect(() => parseDiagnosticEnvelope(envelope(bad), scope)).toThrow(
         ApiError,
       );
+    const bare = {
+      ...root,
+      outcome: "inconclusive",
+      snapshot_identity: "",
+      head_revision: "",
+    };
+    const expired = parseDiagnosticEnvelope(
+      envelope({ ...bare, evidence_expired: true }),
+      scope,
+    );
+    if (expired.schema_version !== 7) throw new Error("unexpected schema");
+    expect(expired.evidence_expired).toBe(true);
+    const expiredRefusal = parseDiagnosticEnvelope(
+      envelope({
+        ...bare,
+        outcome: "failed",
+        context_refusal: counted,
+        evidence_expired: true,
+      }),
+      scope,
+    );
+    if (expiredRefusal.schema_version !== 7)
+      throw new Error("unexpected schema");
+    expect(expiredRefusal.context_refusal).toEqual(counted);
+    for (const bad of [
+      { ...bare, evidence_expired: false },
+      { ...bare, outcome: "completed", evidence_expired: true },
+      { ...root, outcome: "failed", deterministic, evidence_expired: true },
+      { ...root, outcome: "failed", evidence_expired: true },
+    ])
+      expect(() => parseDiagnosticEnvelope(envelope(bad), scope)).toThrow(
+        ApiError,
+      );
   });
 });
