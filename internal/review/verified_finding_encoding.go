@@ -30,19 +30,22 @@ type encodedVerifiedFindingSetWire struct {
 	Findings                   []encodedVerifiedFindingWire `json:"findings"`
 }
 type encodedVerifiedFindingWire struct {
-	Identity             string                         `json:"identity"`
-	Fingerprint          string                         `json:"fingerprint"`
-	CandidateIdentity    string                         `json:"candidate_identity"`
-	VerificationIdentity string                         `json:"verification_identity"`
-	Title                string                         `json:"title"`
-	Claim                string                         `json:"claim"`
-	Category             string                         `json:"category,omitempty"`
-	Fix                  string                         `json:"fix,omitempty"`
-	Severity             string                         `json:"severity"`
-	Path                 string                         `json:"path"`
-	StartLine            int                            `json:"start_line"`
-	EndLine              int                            `json:"end_line"`
-	Evidence             []encodedCandidateEvidenceWire `json:"evidence"`
+	Identity             string `json:"identity"`
+	Fingerprint          string `json:"fingerprint"`
+	CandidateIdentity    string `json:"candidate_identity"`
+	VerificationIdentity string `json:"verification_identity"`
+	Title                string `json:"title"`
+	Claim                string `json:"claim"`
+	Category             string `json:"category,omitempty"`
+	Fix                  string `json:"fix,omitempty"`
+	Severity             string `json:"severity"`
+	Path                 string `json:"path"`
+	StartLine            int    `json:"start_line"`
+	EndLine              int    `json:"end_line"`
+	// Side is "base" for a location on removed base lines. It and any evidence
+	// side appear only in schema version 2, whose findings are categorized.
+	Side     string                         `json:"side,omitempty"`
+	Evidence []encodedCandidateEvidenceWire `json:"evidence"`
 }
 
 // EncodeVerifiedFindingSet returns the canonical durable form of promoted findings.
@@ -113,18 +116,13 @@ func parseEncodedVerifiedFinding(
 	if err != nil {
 		return VerifiedFinding{}, err
 	}
-	bindings := make([]candidateEvidenceBinding, len(wire.Evidence))
-	for index, encodedBinding := range wire.Evidence {
-		bindingRange, err := evidence.NewSourceRange(
-			encodedBinding.Path, encodedBinding.StartLine, encodedBinding.EndLine,
-		)
-		if err != nil {
-			return VerifiedFinding{}, err
-		}
-		bindings[index] = candidateEvidenceBinding{
-			identity: encodedBinding.Identity, digest: encodedBinding.Digest,
-			sourceRange: bindingRange,
-		}
+	bindings, err := parseEncodedEvidenceBindings(wire.Evidence)
+	if err != nil {
+		return VerifiedFinding{}, err
+	}
+	side, ok := parseRecordedLineSide(wire.Side)
+	if !ok {
+		return VerifiedFinding{}, ErrVerifiedFindingBindingMismatch
 	}
 	finding := VerifiedFinding{
 		identity: wire.Identity, fingerprint: wire.Fingerprint,
@@ -132,7 +130,7 @@ func parseEncodedVerifiedFinding(
 		snapshotIdentity:           set.SnapshotIdentity, candidateIdentity: wire.CandidateIdentity,
 		verificationIdentity: wire.VerificationIdentity, title: wire.Title, claim: wire.Claim,
 		severity: Severity(wire.Severity), sourceRange: sourceRange, evidenceBindings: bindings,
-		category: CandidateCategory(wire.Category), fix: wire.Fix,
+		category: CandidateCategory(wire.Category), fix: wire.Fix, side: side,
 	}
 	if err := finding.Validate(); err != nil {
 		return VerifiedFinding{}, err
@@ -143,20 +141,14 @@ func parseEncodedVerifiedFinding(
 func encodedVerifiedFindingSetWireValue(set VerifiedFindingSet) encodedVerifiedFindingSetWire {
 	findings := make([]encodedVerifiedFindingWire, len(set.findings))
 	for index, finding := range set.findings {
-		bindings := make([]encodedCandidateEvidenceWire, len(finding.evidenceBindings))
-		for bindingIndex, binding := range finding.evidenceBindings {
-			bindings[bindingIndex] = encodedCandidateEvidenceWire{
-				Identity: binding.identity, Digest: binding.digest, Path: binding.sourceRange.Path(),
-				StartLine: binding.sourceRange.StartLine(), EndLine: binding.sourceRange.EndLine(),
-			}
-		}
 		findings[index] = encodedVerifiedFindingWire{
 			Identity: finding.Identity(), Fingerprint: finding.Fingerprint(),
 			CandidateIdentity: finding.CandidateIdentity(), VerificationIdentity: finding.VerificationIdentity(),
 			Title: finding.Title(), Claim: finding.Claim(), Category: string(finding.Category()), Fix: finding.Fix(),
 			Severity: string(finding.Severity()),
 			Path:     finding.SourceRange().Path(), StartLine: finding.SourceRange().StartLine(),
-			EndLine: finding.SourceRange().EndLine(), Evidence: bindings,
+			EndLine: finding.SourceRange().EndLine(), Side: recordedLineSide(finding.side),
+			Evidence: encodedEvidenceBindings(finding.evidenceBindings),
 		}
 	}
 	version := 1

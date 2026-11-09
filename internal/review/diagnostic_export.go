@@ -195,6 +195,11 @@ func exportDiagnosticFindings(scope audit.ReviewScope, receipt IndependentVerifi
 	}
 	findings := make([]diagnostics.Finding, 0, set.VerifiedCount())
 	for _, finding := range set.Findings() {
+		// No diagnostic set version records base lines: refuse a finding on
+		// removed base lines rather than export its lines as head lines.
+		if finding.Side() != LineSideHead {
+			return nil, ErrVerifiedFindingBindingMismatch
+		}
 		sourceRange := finding.SourceRange()
 		value, err := diagnostics.NewFinding(finding.Identity(), finding.Fingerprint(), finding.Title(), finding.Claim(), diagnosticSeverity(finding.Severity()), sourceRange.Path(), uint32(sourceRange.StartLine()), uint32(sourceRange.EndLine()), finding.EvidenceIDs())
 		if err != nil {

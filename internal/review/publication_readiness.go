@@ -171,6 +171,11 @@ func SelectPublicationFindings(policy PublicationPolicy, receipt IndependentVeri
 	}
 	eligible := make([]VerifiedFinding, 0, len(set.findings))
 	for _, finding := range set.findings {
+		// Publication renders head locations only. Refuse a finding on removed
+		// base lines rather than publish its lines as head lines.
+		if finding.Side() != LineSideHead {
+			return PublicationSelection{}, ErrInvalidPublicationSelection
+		}
 		if severityRank(finding.Severity()) < severityRank(policy.MinimumSeverity()) {
 			selection.belowThresholdCount++
 			continue

@@ -359,7 +359,8 @@ func ParseVerificationResultArtifact(
 		return VerificationResult{}, ErrInvalidVerificationResult
 	}
 	verification, err := review.ParseEncodedVerificationBatch(wire.VerificationBatch)
-	if err != nil || verification.Identity() != wire.VerificationBatchIdentity || verification.CandidateBatchIdentity() != generation.Candidates().Identity() {
+	if err != nil || verification.Identity() != wire.VerificationBatchIdentity || verification.CandidateBatchIdentity() != generation.Candidates().Identity() ||
+		!review.VerificationBatchMatchesContext(verificationContext, generation.Candidates(), verification) {
 		return VerificationResult{}, ErrInvalidVerificationResult
 	}
 	routeExecution, err := gateway.ParseRouteExecutionRecord(wire.RouteExecution)

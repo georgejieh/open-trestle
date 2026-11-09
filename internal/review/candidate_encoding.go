@@ -30,26 +30,64 @@ type encodedCandidateBatchWire struct {
 }
 
 type encodedCandidateFindingWire struct {
-	Identity          string                         `json:"identity"`
-	Ordinal           uint8                          `json:"ordinal"`
-	Title             string                         `json:"title"`
-	Claim             string                         `json:"claim"`
-	Category          string                         `json:"category,omitempty"`
-	Fix               string                         `json:"fix,omitempty"`
-	SeverityHint      string                         `json:"severity_hint"`
-	SourceReferenceID string                         `json:"source_reference_id"`
-	Path              string                         `json:"path"`
-	StartLine         int                            `json:"start_line"`
-	EndLine           int                            `json:"end_line"`
-	Evidence          []encodedCandidateEvidenceWire `json:"evidence"`
+	Identity          string `json:"identity"`
+	Ordinal           uint8  `json:"ordinal"`
+	Title             string `json:"title"`
+	Claim             string `json:"claim"`
+	Category          string `json:"category,omitempty"`
+	Fix               string `json:"fix,omitempty"`
+	SeverityHint      string `json:"severity_hint"`
+	SourceReferenceID string `json:"source_reference_id"`
+	Path              string `json:"path"`
+	StartLine         int    `json:"start_line"`
+	EndLine           int    `json:"end_line"`
+	// Side is "base" for a location on removed base lines; it is absent for
+	// head lines and never present in a version 1 batch.
+	Side     string                         `json:"side,omitempty"`
+	Evidence []encodedCandidateEvidenceWire `json:"evidence"`
 }
 
+// encodedCandidateEvidenceWire is one recorded evidence binding of a candidate,
+// verdict, or verified finding. Side is "base" for a cited removed_lines source
+// of a categorized (v2) record and absent otherwise.
 type encodedCandidateEvidenceWire struct {
 	Identity  string `json:"identity"`
 	Digest    string `json:"digest"`
 	Path      string `json:"path"`
 	StartLine int    `json:"start_line"`
 	EndLine   int    `json:"end_line"`
+	Side      string `json:"side,omitempty"`
+}
+
+// parseEncodedEvidenceBindings rebuilds recorded evidence bindings, accepting
+// only an absent side or "base".
+func parseEncodedEvidenceBindings(values []encodedCandidateEvidenceWire) ([]candidateEvidenceBinding, error) {
+	bindings := make([]candidateEvidenceBinding, len(values))
+	for index, value := range values {
+		bindingRange, err := evidence.NewSourceRange(value.Path, value.StartLine, value.EndLine)
+		if err != nil {
+			return nil, err
+		}
+		side, ok := parseRecordedLineSide(value.Side)
+		if !ok {
+			return nil, ErrInvalidCandidateEvidenceSet
+		}
+		bindings[index] = candidateEvidenceBinding{identity: value.Identity, digest: value.Digest, sourceRange: bindingRange, side: side}
+	}
+	return bindings, nil
+}
+
+// encodedEvidenceBindings returns the recorded form of evidence bindings.
+func encodedEvidenceBindings(bindings []candidateEvidenceBinding) []encodedCandidateEvidenceWire {
+	values := make([]encodedCandidateEvidenceWire, len(bindings))
+	for index, binding := range bindings {
+		values[index] = encodedCandidateEvidenceWire{
+			Identity: binding.identity, Digest: binding.digest,
+			Path: binding.sourceRange.Path(), StartLine: binding.sourceRange.StartLine(),
+			EndLine: binding.sourceRange.EndLine(), Side: recordedLineSide(binding.side),
+		}
+	}
+	return values
 }
 
 // EncodeCandidateBatch returns the canonical durable form of strictly admitted candidates.
@@ -66,7 +104,8 @@ func EncodeCandidateBatch(batch CandidateBatch) ([]byte, error) {
 
 // ParseEncodedCandidateBatch accepts only a canonical previously admitted candidate set.
 // Schema version 1 carries v1 candidates; version 2 carries categorized v2
-// candidates with optional fix guidance.
+// candidates with optional fix guidance and, for base lines of a removed_lines
+// source, a recorded side on the location and on each such evidence binding.
 func ParseEncodedCandidateBatch(encoded []byte) (CandidateBatch, error) {
 	if len(encoded) == 0 || len(encoded) > maximumEncodedCandidateBatchBytes {
 		return CandidateBatch{}, ErrInvalidCandidateBatchEncoding
@@ -122,25 +161,20 @@ func parseEncodedCandidateFinding(
 	if err != nil {
 		return CandidateFinding{}, err
 	}
-	bindings := make([]candidateEvidenceBinding, len(wire.Evidence))
-	for index, encodedBinding := range wire.Evidence {
-		bindingRange, err := evidence.NewSourceRange(
-			encodedBinding.Path, encodedBinding.StartLine, encodedBinding.EndLine,
-		)
-		if err != nil {
-			return CandidateFinding{}, err
-		}
-		bindings[index] = candidateEvidenceBinding{
-			identity: encodedBinding.Identity, digest: encodedBinding.Digest,
-			sourceRange: bindingRange,
-		}
+	bindings, err := parseEncodedEvidenceBindings(wire.Evidence)
+	if err != nil {
+		return CandidateFinding{}, err
+	}
+	side, ok := parseRecordedLineSide(wire.Side)
+	if !ok {
+		return CandidateFinding{}, ErrCandidateRangeNotSupported
 	}
 	finding := CandidateFinding{
 		identity: wire.Identity, responseIdentity: responseIdentity,
 		snapshotIdentity: snapshotIdentity, ordinal: wire.Ordinal,
 		title: wire.Title, claim: wire.Claim, severityHint: Severity(wire.SeverityHint),
 		sourceReferenceID: wire.SourceReferenceID, sourceRange: sourceRange,
-		evidenceBindings: bindings, category: CandidateCategory(wire.Category), fix: wire.Fix,
+		evidenceBindings: bindings, category: CandidateCategory(wire.Category), fix: wire.Fix, side: side,
 	}
 	if err := finding.Validate(); err != nil {
 		return CandidateFinding{}, err
@@ -151,21 +185,13 @@ func parseEncodedCandidateFinding(
 func encodedCandidateBatchWireValue(batch CandidateBatch) encodedCandidateBatchWire {
 	findings := make([]encodedCandidateFindingWire, len(batch.findings))
 	for index, finding := range batch.findings {
-		bindings := make([]encodedCandidateEvidenceWire, len(finding.evidenceBindings))
-		for bindingIndex, binding := range finding.evidenceBindings {
-			bindings[bindingIndex] = encodedCandidateEvidenceWire{
-				Identity: binding.identity, Digest: binding.digest,
-				Path: binding.sourceRange.Path(), StartLine: binding.sourceRange.StartLine(),
-				EndLine: binding.sourceRange.EndLine(),
-			}
-		}
 		findings[index] = encodedCandidateFindingWire{
 			Identity: finding.Identity(), Ordinal: finding.Ordinal(),
 			Title: finding.Title(), Claim: finding.Claim(), Category: string(finding.Category()), Fix: finding.Fix(),
 			SeverityHint:      string(finding.SeverityHint()),
 			SourceReferenceID: finding.SourceReferenceID(), Path: finding.SourceRange().Path(),
 			StartLine: finding.SourceRange().StartLine(), EndLine: finding.SourceRange().EndLine(),
-			Evidence: bindings,
+			Side: recordedLineSide(finding.side), Evidence: encodedEvidenceBindings(finding.evidenceBindings),
 		}
 	}
 	return encodedCandidateBatchWire{

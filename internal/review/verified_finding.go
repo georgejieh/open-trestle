@@ -330,6 +330,8 @@ type VerifiedFinding struct {
 	// checks only the claim; category stays advisory and fix stays unverified.
 	category CandidateCategory
 	fix      string
+	// side is the coordinate space of sourceRange, copied from the candidate.
+	side LineSide
 }
 
 func (f VerifiedFinding) Identity() string                  { return f.identity }
@@ -340,6 +342,10 @@ func (f VerifiedFinding) Title() string                     { return f.title }
 func (f VerifiedFinding) Claim() string                     { return f.claim }
 func (f VerifiedFinding) Severity() Severity                { return f.severity }
 func (f VerifiedFinding) SourceRange() evidence.SourceRange { return f.sourceRange }
+
+// Side returns the coordinate space of SourceRange: head lines of the reviewed
+// snapshot, or base lines of a removed_lines source.
+func (f VerifiedFinding) Side() LineSide { return f.side }
 
 // Category returns the advisory candidate category; the zero value means a v1 candidate.
 func (f VerifiedFinding) Category() CandidateCategory { return f.category }
@@ -371,16 +377,16 @@ func (f VerifiedFinding) Validate() error {
 		}
 	}
 	if !validCandidateTitle(f.title) || !validCandidateClaim(f.claim) || !isKnownSeverity(f.severity) || !validCandidateSourceRange(f.sourceRange) || len(f.evidenceBindings) == 0 || len(f.evidenceBindings) > maxCandidateEvidence ||
-		validateCandidateGuidance(f.category, f.fix) != nil {
+		validateCandidateGuidance(f.category, f.fix) != nil || !validLineSide(f.side) || f.category == "" && (f.side != LineSideHead || hasBaseSide(f.evidenceBindings)) {
 		return ErrVerifiedFindingBindingMismatch
 	}
 	previous := ""
 	cited := false
 	for _, binding := range f.evidenceBindings {
-		if !validCandidateReference(binding.identity) || !validCandidateDigest(binding.digest) || !validCandidateSourceRange(binding.sourceRange) || previous != "" && binding.identity <= previous {
+		if !validCandidateReference(binding.identity) || !validCandidateDigest(binding.digest) || !validCandidateSourceRange(binding.sourceRange) || !validLineSide(binding.side) || previous != "" && binding.identity <= previous {
 			return ErrVerifiedFindingBindingMismatch
 		}
-		cited = cited || rangeContains(binding.sourceRange, f.sourceRange)
+		cited = cited || bindingCovers(binding, f.side, f.sourceRange)
 		previous = binding.identity
 	}
 	if !cited || f.fingerprint != deriveVerifiedFindingFingerprint(f) {
@@ -427,7 +433,7 @@ func PromoteVerifiedCandidates(receipt IndependentVerificationReceipt, candidate
 	findings := make([]VerifiedFinding, 0, receipt.VerifiedCount())
 	for index, candidate := range candidateValues {
 		result := resultValues[index]
-		if result.CandidateIdentity() != candidate.Identity() {
+		if result.CandidateIdentity() != candidate.Identity() || result.side != candidate.side {
 			return VerifiedFindingSet{}, ErrVerifiedFindingBindingMismatch
 		}
 		if result.Outcome() != VerificationVerified {
@@ -438,7 +444,7 @@ func PromoteVerifiedCandidates(receipt IndependentVerificationReceipt, candidate
 			candidateIdentity: candidate.Identity(), verificationIdentity: result.Identity(),
 			title: candidate.Title(), claim: candidate.Claim(), severity: result.FinalSeverity(),
 			sourceRange: candidate.SourceRange(), evidenceBindings: append([]candidateEvidenceBinding(nil), result.evidenceBindings...),
-			category: candidate.Category(), fix: candidate.Fix(),
+			category: candidate.Category(), fix: candidate.Fix(), side: candidate.side,
 		}
 		finding.fingerprint = deriveVerifiedFindingFingerprint(finding)
 		finding.identity = deriveVerifiedFindingIdentity(finding)
@@ -550,10 +556,13 @@ func deriveVerifiedFindingFingerprint(finding VerifiedFinding) string {
 		End      int    `json:"end"`
 		Title    string `json:"title"`
 		Claim    string `json:"claim"`
+		// Side is present only for a base-line location, so a base and a head
+		// finding with equal path and line numbers never share a fingerprint.
+		Side string `json:"side,omitempty"`
 	}{
 		Snapshot: finding.snapshotIdentity, Path: finding.sourceRange.Path(),
 		Start: finding.sourceRange.StartLine(), End: finding.sourceRange.EndLine(),
-		Title: finding.title, Claim: finding.claim,
+		Title: finding.title, Claim: finding.claim, Side: recordedLineSide(finding.side),
 	}
 	encoded, _ := json.Marshal(preimage)
 	digest := sha256.Sum256(encoded)

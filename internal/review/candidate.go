@@ -107,6 +107,9 @@ type candidateEvidenceBinding struct {
 	identity    string
 	digest      string
 	sourceRange evidence.SourceRange
+	// side is base for a removed_lines source cited by a categorized (v2)
+	// candidate or its verdict. Uncategorized (v1) records never carry a side.
+	side LineSide
 }
 
 // CandidateFinding is an unverified, evidence-bound model proposal.
@@ -123,6 +126,9 @@ type CandidateFinding struct {
 	evidenceBindings  []candidateEvidenceBinding
 	category          CandidateCategory
 	fix               string
+	// side is the coordinate space of sourceRange. Only a categorized (v2)
+	// candidate records a side.
+	side LineSide
 }
 
 func (f CandidateFinding) Identity() string                  { return f.identity }
@@ -132,6 +138,10 @@ func (f CandidateFinding) Claim() string                     { return f.claim }
 func (f CandidateFinding) SeverityHint() Severity            { return f.severityHint }
 func (f CandidateFinding) SourceReferenceID() string         { return f.sourceReferenceID }
 func (f CandidateFinding) SourceRange() evidence.SourceRange { return f.sourceRange }
+
+// Side returns the coordinate space of SourceRange: head lines, or base lines
+// of a removed_lines source.
+func (f CandidateFinding) Side() LineSide { return f.side }
 
 // Category returns the advisory v2 category, or the zero value for a v1 candidate.
 func (f CandidateFinding) Category() CandidateCategory { return f.category }
@@ -175,22 +185,25 @@ func (f CandidateFinding) Validate() error {
 	if !validCandidateReference(f.sourceReferenceID) {
 		return ErrInvalidCandidateReference
 	}
-	if !validCandidateSourceRange(f.sourceRange) {
+	if !validCandidateSourceRange(f.sourceRange) || !validLineSide(f.side) || f.category == "" && f.side != LineSideHead {
 		return ErrCandidateRangeNotSupported
 	}
 	if len(f.evidenceBindings) == 0 || len(f.evidenceBindings) > maxCandidateEvidence {
 		return ErrInvalidCandidateEvidenceSet
 	}
+	if f.category == "" && hasBaseSide(f.evidenceBindings) {
+		return ErrInvalidCandidateEvidenceSet
+	}
 	previous := ""
 	citedRange := false
 	for _, binding := range f.evidenceBindings {
-		if !validCandidateReference(binding.identity) || !validCandidateDigest(binding.digest) || !validCandidateSourceRange(binding.sourceRange) {
+		if !validCandidateReference(binding.identity) || !validCandidateDigest(binding.digest) || !validCandidateSourceRange(binding.sourceRange) || !validLineSide(binding.side) {
 			return ErrInvalidCandidateEvidenceSet
 		}
 		if previous != "" && binding.identity <= previous {
 			return ErrDuplicateCandidateEvidence
 		}
-		citedRange = citedRange || rangeContains(binding.sourceRange, f.sourceRange)
+		citedRange = citedRange || bindingCovers(binding, f.side, f.sourceRange)
 		previous = binding.identity
 	}
 	if !citedRange {
@@ -437,7 +450,13 @@ func candidateBatchMatchesContextVersion(version int, batch CandidateBatch) bool
 
 // CandidateBatchMatchesContext reports whether a batch is exactly the candidate
 // schema the recorded generation context requested: v2 for a version 7 or 8
-// context and v1 for every earlier generation context.
+// context and v1 for every earlier generation context. For a v2 batch it also
+// checks every recorded location and side against the stage of the context
+// source it names: admission drops a proposal located in a repository_context
+// or removed_lines source, so a recorded finding is on head lines of another
+// source; an evidence binding records base lines exactly when it names a
+// removed_lines source; and every named source is a source of that context.
+// Readback therefore cannot turn base lines into head lines, or the reverse.
 func CandidateBatchMatchesContext(contextPayload []byte, batch CandidateBatch) bool {
 	var header struct {
 		Contract      string `json:"contract"`
@@ -446,7 +465,42 @@ func CandidateBatchMatchesContext(contextPayload []byte, batch CandidateBatch) b
 	if len(contextPayload) == 0 || len(contextPayload) > maxProviderContextPacketBytes || json.Unmarshal(contextPayload, &header) != nil || header.Contract != "open-trestle/review-context-packet" {
 		return false
 	}
-	return batch.categorized == systemChannelGenerationVersion(header.SchemaVersion)
+	if batch.categorized != systemChannelGenerationVersion(header.SchemaVersion) {
+		return false
+	}
+	if !batch.categorized {
+		return true
+	}
+	wire, err := decodeGenerationContextWire(contextPayload)
+	if err != nil {
+		return false
+	}
+	stages := make(map[string]string, len(wire.Sources))
+	for _, source := range wire.Sources {
+		stages[source.SourceID] = source.Stage
+	}
+	sideOf := func(identity string) (LineSide, bool) {
+		stage, exists := stages[identity]
+		if !exists {
+			return 0, false
+		}
+		if stage == ContextStageRemovedLines.String() {
+			return LineSideBase, true
+		}
+		return LineSideHead, true
+	}
+	for _, finding := range batch.findings {
+		stage, exists := stages[finding.sourceReferenceID]
+		if !exists || finding.side != LineSideHead || stage == ContextStageRepositoryContext.String() || stage == ContextStageRemovedLines.String() {
+			return false
+		}
+		for _, binding := range finding.evidenceBindings {
+			if side, exists := sideOf(binding.identity); !exists || side != binding.side {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // ParseCandidateBatch strictly decodes one model-candidate-batch-v1 response
@@ -561,7 +615,7 @@ func parseCandidateBatch(response provider.Response, snapshot ReviewSnapshot, ev
 			omitted++
 			continue
 		}
-		finding, err := newCandidateFinding(response.Identity(), snapshot, uint8(len(findings)+1), candidate, allowedEvidence, rules.baseLines)
+		finding, err := newCandidateFinding(response.Identity(), snapshot, uint8(len(findings)+1), candidate, allowedEvidence, rules.baseLines, version == 2)
 		if err != nil {
 			return CandidateBatch{}, err
 		}
@@ -583,7 +637,10 @@ func parseCandidateBatch(response provider.Response, snapshot ReviewSnapshot, ev
 	return batch, nil
 }
 
-func newCandidateFinding(responseIdentity string, snapshot ReviewSnapshot, ordinal uint8, document candidateFindingDocument, allowed map[string]evidence.EvidenceItem, removedLines map[string]struct{}) (CandidateFinding, error) {
+// newCandidateFinding admits one proposal. removedLines names the removed_lines
+// sources, whose base lines never cover the anchored head lines; a v2
+// candidate (recordSides) also records each such citation as a base binding.
+func newCandidateFinding(responseIdentity string, snapshot ReviewSnapshot, ordinal uint8, document candidateFindingDocument, allowed map[string]evidence.EvidenceItem, removedLines map[string]struct{}, recordSides bool) (CandidateFinding, error) {
 	sourceItem, exists := allowed[document.SourceRange.SourceID]
 	if !exists {
 		return CandidateFinding{}, ErrCandidateEvidenceNotAllowed
@@ -599,8 +656,13 @@ func newCandidateFinding(responseIdentity string, snapshot ReviewSnapshot, ordin
 		if !exists {
 			return CandidateFinding{}, ErrCandidateEvidenceNotAllowed
 		}
-		bindings = append(bindings, candidateEvidenceBinding{identity: item.ID(), digest: item.Digest(), sourceRange: item.SourceRange()})
-		if _, baseLines := removedLines[identity]; !baseLines {
+		binding := candidateEvidenceBinding{identity: item.ID(), digest: item.Digest(), sourceRange: item.SourceRange()}
+		_, baseLines := removedLines[identity]
+		if baseLines && recordSides {
+			binding.side = LineSideBase
+		}
+		bindings = append(bindings, binding)
+		if !baseLines {
 			citedRange = citedRange || rangeContains(item.SourceRange(), sourceRange)
 		}
 	}
@@ -800,12 +862,16 @@ func deriveCandidateFindingIdentity(finding CandidateFinding) string {
 		Path     string `json:"path"`
 		Start    int    `json:"start"`
 		End      int    `json:"end"`
+		// Side is present only for base lines, so head bindings keep their
+		// historical preimage.
+		Side string `json:"side,omitempty"`
 	}
 	bindings := make([]bindingRecord, len(finding.evidenceBindings))
 	for index, binding := range finding.evidenceBindings {
 		bindings[index] = bindingRecord{
 			Identity: binding.identity, Digest: binding.digest, Path: binding.sourceRange.Path(),
 			Start: binding.sourceRange.StartLine(), End: binding.sourceRange.EndLine(),
+			Side: recordedLineSide(binding.side),
 		}
 	}
 	type findingRecord struct {
@@ -840,7 +906,9 @@ func deriveCandidateFindingIdentity(finding CandidateFinding) string {
 			findingRecord
 			Category string `json:"category"`
 			Fix      string `json:"fix"`
-		}{preimage, string(finding.category), finding.fix})
+			// Side is present only for a base-line location.
+			Side string `json:"side,omitempty"`
+		}{preimage, string(finding.category), finding.fix, recordedLineSide(finding.side)})
 	}
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
@@ -855,10 +923,11 @@ func deriveCandidateContentFingerprint(finding CandidateFinding) string {
 		Start        int      `json:"start"`
 		End          int      `json:"end"`
 		Evidence     []string `json:"evidence"`
+		Side         string   `json:"side,omitempty"`
 	}{
 		Title: finding.title, Claim: finding.claim, SeverityHint: string(finding.severityHint),
 		Path: finding.sourceRange.Path(), Start: finding.sourceRange.StartLine(),
-		End: finding.sourceRange.EndLine(), Evidence: finding.EvidenceIDs(),
+		End: finding.sourceRange.EndLine(), Evidence: finding.EvidenceIDs(), Side: recordedLineSide(finding.side),
 	}
 	encoded, _ := json.Marshal(preimage)
 	digest := sha256.Sum256(encoded)
