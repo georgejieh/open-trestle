@@ -306,7 +306,9 @@ func (r *Runner) execute(ctx context.Context, plan controlplane.ReviewRunPlan, r
 			settledInput := taskReceipt.Status() == controlplane.TaskRuntimeSucceeded
 			settledAbstention := taskReceipt.Status() == controlplane.TaskRuntimeFailed && (taskReceipt.Failure() == controlplane.RunFailurePolicy || taskReceipt.Failure() == controlplane.RunFailureResourceLimit) && taskReceipt.OutputIdentity() != ""
 			expiredOwner := taskReceipt.Status() == controlplane.TaskRuntimeFailed && taskReceipt.Failure() == controlplane.RunFailurePolicy && taskReceipt.OutputIdentity() == "" && !r.options.Clock.Now().UTC().Before(lease.ExpiresAt())
-			if !found || (!settledInput && !settledAbstention && !expiredOwner) || settledInput && taskReceipt.OutputIdentity() == "" {
+			// A route refusal is an ordinary outcome the owner records within its lease.
+			refusedOwner := taskReceipt.Status() == controlplane.TaskRuntimeFailed && taskReceipt.Failure() == controlplane.RunFailurePolicy && taskReceipt.OutputIdentity() == "" && (taskReceipt.FailureReason() == controlplane.TaskFailureReasonRouteContextInsufficient || taskReceipt.FailureReason() == controlplane.TaskFailureReasonNoEligibleRoute)
+			if !found || (!settledInput && !settledAbstention && !expiredOwner && !refusedOwner) || settledInput && taskReceipt.OutputIdentity() == "" {
 				return controlplane.ReviewRunReceipt{}, ErrWorkerState
 			}
 			return settled, nil
