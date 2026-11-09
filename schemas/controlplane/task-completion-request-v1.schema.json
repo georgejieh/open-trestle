@@ -21,7 +21,17 @@
       "$ref": "urn:open-trestle:schema:controlplane:review-task-lease:v1"
     },
     "completion": {
-      "$ref": "urn:open-trestle:schema:controlplane:review-task-completion:v1"
+      "oneOf": [
+        {
+          "$ref": "urn:open-trestle:schema:controlplane:review-task-completion:v1"
+        },
+        {
+          "$ref": "urn:open-trestle:schema:controlplane:review-task-completion:v2"
+        },
+        {
+          "$ref": "urn:open-trestle:schema:controlplane:review-task-completion:v3"
+        }
+      ]
     }
   }
 }
