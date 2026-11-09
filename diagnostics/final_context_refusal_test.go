@@ -2,10 +2,10 @@ package diagnostics
 
 import (
 	"bytes"
-	"encoding/json"
-	"os"
-	"strings"
+	"path/filepath"
 	"testing"
+
+	"github.com/georgejieh/open-trestle/internal/schemacheck"
 )
 
 var testContextShortfall = ContextRefusal{Reason: ContextRefusalRouteContextInsufficient, RequiredTokens: 14282, EstimatedInputTokens: 10186, MaxOutputTokens: 4096, DeclaredContextTokens: 4097}
@@ -43,7 +43,14 @@ func TestFinalSetCarriesContextRefusal(t *testing.T) {
 		if got, ok := parsed.ContextRefusal(); err != nil || parsed.Identity() != refused.Identity() || !ok || got != refusal {
 			t.Fatalf("%s: parsed refusal %v", name, err)
 		}
-		assertFinalRefusalSchemaShape(t, encoded)
+		assertFinalSetValidates(t, encoded)
+		if refusal.RequiredTokens != 0 {
+			counts := []byte(`,"context_shortfall":{"required_tokens":14282,"estimated_input_tokens":10186,"max_output_tokens":4096,"declared_context_tokens":4097}`)
+			assertFinalSetRefused(t, "missing counts", bytes.Replace(encoded, counts, nil, 1))
+			assertFinalSetRefused(t, "zero declared", bytes.Replace(encoded, []byte(`"declared_context_tokens":4097`), []byte(`"declared_context_tokens":0`), 1))
+		} else {
+			assertFinalSetRefused(t, "unknown reason", bytes.Replace(encoded, []byte(`"reason":"no_eligible_route"`), []byte(`"reason":"no_merge_base"`), 1))
+		}
 	}
 	if _, ok := failed.ContextRefusal(); ok {
 		t.Fatal("refusal-free set reports a refusal")
@@ -101,42 +108,27 @@ func TestFinalSetRefusesMisplacedContextRefusal(t *testing.T) {
 	}
 }
 
-// assertFinalRefusalSchemaShape checks the refusal object against the v7 schema's
-// declared properties, required fields and closed reason vocabulary.
-func assertFinalRefusalSchemaShape(t *testing.T, encoded []byte) {
+// assertFinalSetValidates checks a fully encoded v7 set, every nested part
+// included, against the repository's v7 schema.
+func assertFinalSetValidates(t *testing.T, encoded []byte) {
 	t.Helper()
-	raw, err := os.ReadFile("../schemas/diagnostics/full-review-diagnostic-set-v7.schema.json")
+	registry, err := schemacheck.Load(filepath.Join("..", "schemas"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var schema struct {
-		Properties map[string]struct {
-			AdditionalProperties bool     `json:"additionalProperties"`
-			Required             []string `json:"required"`
-			Properties           map[string]struct {
-				Enum     []string `json:"enum"`
-				Required []string `json:"required"`
-			} `json:"properties"`
-		} `json:"properties"`
+	if err := registry.Validate("urn:open-trestle:schema:diagnostics:set:v7", encoded); err != nil {
+		t.Fatalf("v7 set does not validate: %v\n%s", err, encoded)
 	}
-	if err := json.Unmarshal(raw, &schema); err != nil {
+}
+
+// assertFinalSetRefused checks that the v7 schema refuses a forged encoding.
+func assertFinalSetRefused(t *testing.T, name string, encoded []byte) {
+	t.Helper()
+	registry, err := schemacheck.Load(filepath.Join("..", "schemas"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	refusal, ok := schema.Properties["context_refusal"]
-	if !ok || refusal.AdditionalProperties || strings.Join(refusal.Required, ",") != "reason" || strings.Join(refusal.Properties["reason"].Enum, ",") != "route_context_insufficient,no_eligible_route" || strings.Join(refusal.Properties["context_shortfall"].Required, ",") != "required_tokens,estimated_input_tokens,max_output_tokens,declared_context_tokens" {
-		t.Fatalf("schema context_refusal = %+v", refusal)
-	}
-	var record map[string]map[string]json.RawMessage
-	var top map[string]json.RawMessage
-	if err := json.Unmarshal(encoded, &top); err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal([]byte(`{"x":`+string(top["context_refusal"])+`}`), &record); err != nil {
-		t.Fatal(err)
-	}
-	for key := range record["x"] {
-		if _, declared := refusal.Properties[key]; !declared {
-			t.Fatalf("encoded refusal field %q is not in the schema", key)
-		}
+	if err := registry.Validate("urn:open-trestle:schema:diagnostics:set:v7", encoded); err == nil {
+		t.Fatalf("%s validated against the v7 schema:\n%s", name, encoded)
 	}
 }

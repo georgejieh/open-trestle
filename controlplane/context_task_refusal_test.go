@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/georgejieh/open-trestle/internal/schemacheck"
 )
 
 // A context task refused before any model effect records a closed route
@@ -123,8 +125,17 @@ func TestContextTaskRefusalRecordsTheRouteShortfall(t *testing.T) {
 	} else if got, present := task.ContextShortfall(); !present || got != shortfall || task.FailureReason() != TaskFailureReasonRouteContextInsufficient {
 		t.Fatal("receipt readback lost the counts")
 	}
-	schemas := filepath.Join("..", "schemas", "controlplane")
-	assertSchemaRecordShape(t, filepath.Join(schemas, "review-task-completion-v3.schema.json"), encoded)
-	assertSchemaRecordShape(t, filepath.Join(schemas, "review-run-event-v7.schema.json"), encodedEvent)
-	assertSchemaRecordShape(t, filepath.Join(schemas, "review-run-receipt-v3.schema.json"), encodedReceipt)
+	registry, err := schemacheck.Load(filepath.Join("..", "schemas"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, value := range map[string][]byte{
+		"urn:open-trestle:schema:controlplane:review-task-completion:v3": encoded,
+		"urn:open-trestle:schema:controlplane:review-run-event:v7":       encodedEvent,
+		"urn:open-trestle:schema:controlplane:review-run-receipt:v3":     encodedReceipt,
+	} {
+		if err := registry.Validate(id, value); err != nil {
+			t.Fatalf("%s: %v", id, err)
+		}
+	}
 }
