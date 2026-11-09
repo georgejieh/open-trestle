@@ -85,6 +85,13 @@ WHERE tenant_id = $1 AND repository_id = $2 AND review_run_id = $3`
 const daemonBudgetedWebhookRetryReadSQL = `SELECT delivery_identity, failures, not_before_milliseconds
 FROM open_trestle_webhook_retries
 WHERE tenant_id = $1 AND repository_id = $2 AND source = $3 AND deduplication_key = $4 AND planner_identity = $5`
+
+// daemonBudgetedWebhookRefusalReadSQL is the inbox refusal read the
+// supervisor makes before processing a delivery; this fixture records no
+// refusals, so it never has a row.
+const daemonBudgetedWebhookRefusalReadSQL = `SELECT delivery_identity, record_identity, reason, refused_at_milliseconds
+FROM open_trestle_webhook_refusals
+WHERE tenant_id = $1 AND repository_id = $2 AND source = $3 AND deduplication_key = $4 AND planner_identity = $5`
 const daemonBudgetedWebhookMappingCountSQL = `SELECT count(*)
 FROM open_trestle_webhook_deliveries
 WHERE tenant_id = $1 AND repository_id = $2 AND source = $3 AND expires_at > $4`
@@ -529,7 +536,7 @@ func (tx *daemonBudgetedTx) Rollback() error {
 
 func (tx *daemonBudgetedTx) statement(_ context.Context, id string, a []driver.Value, query bool) ([][]driver.Value, int64, error) {
 	wantQuery := map[string]bool{
-		"authority_schemas": true, "authority_identity": true, "migration_rows": true, "role": true, "relation": true, "attributes": true, "constraints": true, "indexes": true, "policies": true, "table_privileges": true, "confirmation_privileges": true, "allowance_counter_privileges": true, "allowance_immutable_privileges": true, "user_triggers": true, "metadata_read": true, "scope_read": true, "run_plan_read": true, "run_plan_identity_read": true, "run_event_first_plan": true, "run_plans_list": true, "run_event_head": true, "run_events_read": true, "audit_event_head": true, "audit_events_read": true, "key_occupancy": true, "legacy_lineage": true, "admission_read": true, "admission_lock_read": true, "operation_presence": true, "operation_read": true, "operation_ref_read": true, "diagnostic_read": true, "webhook_read": true, "webhook_list": true, "webhook_replay_owner": true, "run_events_before": true, "webhook_count": true, "webhook_retry_read": true, "rate_limit_update": true, "rate_limit_conflict": true, "rate_limit_count": true,
+		"authority_schemas": true, "authority_identity": true, "migration_rows": true, "role": true, "relation": true, "attributes": true, "constraints": true, "indexes": true, "policies": true, "table_privileges": true, "confirmation_privileges": true, "allowance_counter_privileges": true, "allowance_immutable_privileges": true, "user_triggers": true, "metadata_read": true, "scope_read": true, "run_plan_read": true, "run_plan_identity_read": true, "run_event_first_plan": true, "run_plans_list": true, "run_event_head": true, "run_events_read": true, "audit_event_head": true, "audit_events_read": true, "key_occupancy": true, "legacy_lineage": true, "admission_read": true, "admission_lock_read": true, "operation_presence": true, "operation_read": true, "operation_ref_read": true, "diagnostic_read": true, "webhook_read": true, "webhook_list": true, "webhook_replay_owner": true, "run_events_before": true, "webhook_count": true, "webhook_retry_read": true, "webhook_refusal_read": true, "rate_limit_update": true, "rate_limit_conflict": true, "rate_limit_count": true,
 	}[id]
 	if query != wantQuery {
 		return nil, 0, tx.conn.service.fail("query/exec mismatch for " + id)
@@ -814,6 +821,11 @@ func (tx *daemonBudgetedTx) statement(_ context.Context, id string, a []driver.V
 			return nil, 0, tx.conn.service.fail("webhook_retry_read args")
 		}
 		return nil, 0, nil
+	case "webhook_refusal_read":
+		if len(a) != 5 {
+			return nil, 0, tx.conn.service.fail("webhook_refusal_read args")
+		}
+		return nil, 0, nil
 	case "webhook_read":
 		if len(a) != 4 {
 			return nil, 0, tx.conn.service.fail("webhook_read args")
@@ -1074,6 +1086,7 @@ func daemonBudgetedStatementID(q string) string {
 		daemonBudgetedNormalizeSQL(daemonBudgetedDiagnosticMappingReadSQL):              "diagnostic_read",
 		daemonBudgetedNormalizeSQL(daemonBudgetedWebhookMappingCountSQL):                "webhook_count",
 		daemonBudgetedNormalizeSQL(daemonBudgetedWebhookRetryReadSQL):                   "webhook_retry_read",
+		daemonBudgetedNormalizeSQL(daemonBudgetedWebhookRefusalReadSQL):                 "webhook_refusal_read",
 		daemonBudgetedNormalizeSQL(daemonBudgetedWebhookMappingInsertSQL):               "webhook_insert",
 		daemonBudgetedNormalizeSQL(daemonBudgetedWebhookReplayOwnerSQL):                 "webhook_replay_owner",
 		daemonBudgetedNormalizeSQL(daemonBudgetedRunEventsBeforeSQL):                    "run_events_before",
@@ -1165,6 +1178,7 @@ func daemonBudgetedColumnCounts() map[string]int {
 		"webhook_read":                   8,
 		"webhook_replay_owner":           1,
 		"webhook_retry_read":             3,
+		"webhook_refusal_read":           4,
 	}
 }
 func daemonBudgetedNormalizeSQL(q string) string { return strings.Join(strings.Fields(q), " ") }

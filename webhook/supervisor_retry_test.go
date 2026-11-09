@@ -184,3 +184,56 @@ func TestSupervisorRetryStateSurvivesARestart(t *testing.T) {
 		t.Fatal("retry state outlived the refusal")
 	}
 }
+
+// A refusal is terminal for its delivery and planner: once a delivery's
+// retries are exhausted, later passes start no new retry cycle, clear retry
+// state a crash left beside the refusal, and never open the delivery's run
+// after the failure clears.
+func TestSupervisorTreatsARecordedRefusalAsTerminal(t *testing.T) {
+	ctx := context.Background()
+	journal := failingJournal{MemoryRunJournal: controlplane.NewMemoryRunJournal()}
+	f, clock := retryFixture(t, &journal)
+	journal.run = ReviewRunIDForDelivery(f.deliveries[0])
+	scope, planner, key := f.deliveries[0].Scope(), strings.Repeat("d", 64), f.deliveries[0].DeduplicationKey()
+	for attempt := 1; attempt <= int(f.supervisor.options.MaximumRetries); attempt++ {
+		if err := f.supervisor.reconcile(ctx); err != nil {
+			t.Fatal(err)
+		}
+		clock.at = clock.at.Add(maximumSupervisorDelay)
+	}
+	first, refused, err := f.store.Refusal(ctx, scope, SourceGitHub, key, planner)
+	if err != nil || !refused || first.Reason() != RefusalReasonRetriesExhausted {
+		t.Fatalf("retries were not exhausted: refused=%t err=%v", refused, err)
+	}
+	if err := f.supervisor.reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if retry, retrying, _ := f.supervisor.retries.Retry(ctx, scope, SourceGitHub, key, planner); retrying {
+		t.Fatalf("a refused delivery started a new retry cycle: failures=%d", retry.Failures())
+	}
+	stored, _, err := f.store.Get(ctx, scope, SourceGitHub, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lingering, err := NewRetryRecord(stored, planner, 1, clock.at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.supervisor.retries.RecordRetry(ctx, lingering); err != nil {
+		t.Fatal(err)
+	}
+	journal.run = ""
+	clock.at = clock.at.Add(maximumSupervisorDelay)
+	if err := f.supervisor.reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if f.admitted(t, f.deliveries[0]) {
+		t.Fatal("a run was opened for a refused delivery")
+	}
+	if _, retrying, _ := f.supervisor.retries.Retry(ctx, scope, SourceGitHub, key, planner); retrying {
+		t.Fatal("retry state left beside a refusal was kept")
+	}
+	if again, _, _ := f.store.Refusal(ctx, scope, SourceGitHub, key, planner); again.Identity() != first.Identity() {
+		t.Fatal("the refusal record changed")
+	}
+}

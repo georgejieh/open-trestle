@@ -191,31 +191,41 @@ func (s *Supervisor) reconcile(ctx context.Context) error {
 	}
 }
 
-// handle admits one stored delivery. A deterministic refusal is recorded once
-// with its reason and is not an error; expired prepared inputs are skipped as
-// before. Any other failure is global when the run journal or artifact store
-// does not answer an unrelated read, and is returned for supervisor retry
-// without counting against the delivery. Otherwise it is the delivery's own:
-// the delivery backs off on its own schedule while the others keep flowing,
-// and once its bounded attempts are spent it is recorded as refused with
-// retries_exhausted, so it is visible and not retried forever.
+// handle admits one stored delivery. A refusal is terminal for its delivery
+// and planner: a delivery with a recorded refusal is never processed again. A
+// deterministic refusal is recorded once with its reason and is not an error;
+// expired prepared inputs are skipped as before. Any other failure is global
+// when the run journal or artifact store does not answer an unrelated read,
+// and is returned for supervisor retry without counting against the delivery.
+// Otherwise it is the delivery's own: the delivery backs off on its own
+// schedule while the others keep flowing, and once its bounded attempts are
+// spent it is recorded as refused with retries_exhausted, so it is visible and
+// not retried forever.
 func (s *Supervisor) handle(ctx context.Context, stored StoredDelivery) error {
 	at := s.options.Clock.Now().UTC()
 	delivery := stored.Delivery()
 	planner := s.processor.PlannerIdentity()
-	retry, retrying, err := s.retries.Retry(ctx, delivery.Scope(), delivery.Source(), delivery.DeduplicationKey(), planner)
+	_, refused, err := s.refusals.Refusal(ctx, delivery.Scope(), delivery.Source(), delivery.DeduplicationKey(), planner)
 	if err != nil {
 		return err
 	}
-	if retrying && at.Before(retry.NotBefore()) {
-		s.scheduleRetry(retry.NotBefore(), at)
-		return nil
+	retry, retrying, err := s.retries.Retry(ctx, delivery.Scope(), delivery.Source(), delivery.DeduplicationKey(), planner)
+	if err != nil {
+		return err
 	}
 	clear := func() error {
 		if !retrying {
 			return nil
 		}
 		return s.retries.ClearRetry(ctx, delivery.Scope(), delivery.Source(), delivery.DeduplicationKey(), planner)
+	}
+	if refused {
+		// Retry state beside a refusal is left by an interrupted earlier pass.
+		return clear()
+	}
+	if retrying && at.Before(retry.NotBefore()) {
+		s.scheduleRetry(retry.NotBefore(), at)
+		return nil
 	}
 	_, _, err = s.processor.Process(ctx, stored, at)
 	if err == nil || errors.Is(err, ErrPreparedInputsExpired) {
