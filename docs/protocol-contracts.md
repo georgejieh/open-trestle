@@ -131,6 +131,7 @@ Evaluation schemas:
 - `schemas/evaluation/evaluation-adjudication-v1.schema.json`
 - `schemas/evaluation/evaluation-adjudication-result-v1.schema.json`
 - `schemas/evaluation/model-corpus-labels-v1.schema.json` (pending fixture-author labels for one model-review corpus case; version 1 admits no reviewer or review date)
+- `schemas/evaluation/model-corpus-run-bundle-v1.schema.json` (the index of one model-review corpus driver batch: exact output file pins, exit, latency and copied status, usage and cost fields per run)
 
 Runtime authority schemas:
 

@@ -1,0 +1,409 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:evaluation:model-corpus-run-bundle:v1",
+  "title": "Open Trestle model-review corpus run bundle v1",
+  "description": "The index of one driver batch over the pending model-review corpus: for every run, the exact stdout and stderr files with their SHA-256, the process exit, the wall-clock latency, and the status, usage and cost fields copied from the result. The result summary is a convenience copy; the stdout bytes are the evidence. A bundle is never release evidence and its labels are pending human review.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "review_state",
+    "release_evidence_eligible",
+    "label_status",
+    "completion",
+    "corpus_identity",
+    "manifest_sha256",
+    "driver",
+    "trestle_path",
+    "trestle_sha256",
+    "runs_per_case",
+    "operator_arguments",
+    "repository_authority",
+    "repository_namespace",
+    "revision_algorithm",
+    "process_timeout_seconds",
+    "environment",
+    "started_at",
+    "finished_at",
+    "cases"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/model-corpus-run-bundle"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "review_state": {
+      "const": "pending"
+    },
+    "release_evidence_eligible": {
+      "const": false
+    },
+    "label_status": {
+      "const": "labels_pending_human_review"
+    },
+    "completion": {
+      "enum": [
+        "in_progress",
+        "complete",
+        "interrupted",
+        "failed"
+      ],
+      "description": "in_progress while runs continue; failed when the driver stopped early, for example because the trestle executable changed. Every recorded run remains valid evidence of what was sent."
+    },
+    "corpus_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "manifest_sha256": {
+      "$ref": "#/$defs/digest"
+    },
+    "driver": {
+      "const": "open_trestle_eval.model_runs/1"
+    },
+    "trestle_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "trestle_sha256": {
+      "$ref": "#/$defs/digest"
+    },
+    "runs_per_case": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10
+    },
+    "operator_arguments": {
+      "type": "array",
+      "minItems": 12,
+      "maxItems": 14,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      },
+      "description": "The operator's setup flags, exactly as passed to every run after the driver-owned flags."
+    },
+    "repository_authority": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 253
+    },
+    "repository_namespace": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255
+    },
+    "revision_algorithm": {
+      "const": "sha1"
+    },
+    "process_timeout_seconds": {
+      "type": "number",
+      "minimum": 1,
+      "maximum": 3600
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "os",
+        "release",
+        "architecture",
+        "python"
+      ],
+      "properties": {
+        "os": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "release": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "architecture": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "python": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      }
+    },
+    "started_at": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "finished_at": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/timestamp"
+        }
+      ]
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": {
+        "$ref": "#/$defs/case"
+      }
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "bytes"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^runs/[a-z][a-z0-9_]{0,63}/run-[0-9]{1,2}\\.(stdout|stderr)$"
+        },
+        "sha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 262144
+        }
+      }
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "case_id",
+        "labels_sha256",
+        "repository_name",
+        "base_revision",
+        "head_revision",
+        "runs"
+      ],
+      "properties": {
+        "case_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        "labels_sha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "repository_name": {
+          "type": "string",
+          "pattern": "^case-[0-9]{2}$"
+        },
+        "base_revision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "head_revision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "runs": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "$ref": "#/$defs/run"
+          }
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_index",
+        "started_at",
+        "termination",
+        "exit_code",
+        "signal",
+        "latency_ns",
+        "stdout",
+        "stderr",
+        "result"
+      ],
+      "properties": {
+        "run_index": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "started_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "termination": {
+          "enum": [
+            "exited",
+            "signaled",
+            "timed_out",
+            "output_limit"
+          ],
+          "description": "timed_out and output_limit mean the driver signalled the process group; the captured output is kept as far as it was read."
+        },
+        "exit_code": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 255
+        },
+        "signal": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 128
+        },
+        "latency_ns": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615,
+          "description": "Wall-clock time from before process creation until exit and the end of both output streams. It includes start-up, source acquisition, transport waits and both model requests; it is not isolated inference latency."
+        },
+        "stdout": {
+          "$ref": "#/$defs/file"
+        },
+        "stderr": {
+          "$ref": "#/$defs/file"
+        },
+        "result": {
+          "$ref": "#/$defs/result"
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "parsed",
+        "contract",
+        "schema_version",
+        "status",
+        "ci_disposition",
+        "run_status",
+        "usage_known",
+        "actual_cost_micro_usd",
+        "context_shortfall"
+      ],
+      "description": "Fields copied from the stdout JSON when it is one LF-terminated object; a field of an unexpected type is null. The result records no consumed token counts; context_shortfall holds the byte-based token estimates of a route-context refusal.",
+      "properties": {
+        "parsed": {
+          "type": "boolean"
+        },
+        "contract": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 256
+        },
+        "schema_version": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "status": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 256
+        },
+        "ci_disposition": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 256
+        },
+        "run_status": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 256
+        },
+        "usage_known": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "actual_cost_micro_usd": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "context_shortfall": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "required_tokens",
+                "estimated_input_tokens",
+                "max_output_tokens",
+                "declared_context_tokens"
+              ],
+              "properties": {
+                "required_tokens": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 18446744073709551615
+                },
+                "estimated_input_tokens": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 4294967295
+                },
+                "max_output_tokens": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 4294967295
+                },
+                "declared_context_tokens": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 4294967295
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}
