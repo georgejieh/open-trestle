@@ -1026,7 +1026,13 @@ a malformed response. Reasoning models do this when they spend the whole output
 allowance on their reasoning trace. The run failure stays `internal` (the run
 failure set is closed), and the JSON result adds
 `"failure_detail": "model_output_exhausted"`; the field is absent otherwise.
-Text output reads:
+Such a reply is a completed provider response, so the failed attempt keeps the
+usage it reported, under the same checks and profile rules as a successful
+reply's usage (the OpenCode console profile withholds native usage from both),
+and its cost settles from that usage exactly as a successful attempt's does. An
+exhausted reply that reported no usage, or usage those checks refuse, keeps
+unknown usage and the attempt's whole reservation stays held, as before. The
+failure classification is unchanged. Text output reads:
 
 ```text
 failure: internal (task verification): model_output_exhausted
@@ -1086,9 +1092,9 @@ review whose two attempts each reported 100 input and 100 output tokens reads:
   false and the three counts are absent, never zero, for example
   `{"known":false,"route_attempts":1}`. That happens when the provider sent no
   usage, the response was refused before its usage was accepted, or no adapter
-  result was observed for a claimed attempt. Every shipped provider adapter
-  reports no usage for a failed dispatch, so a failed attempt counts as unknown
-  even when the provider sent usage, for example with `output_exhausted`.
+  result was observed for a claimed attempt. Of the failed dispatches, only an
+  [exhausted reply](#exhausted-model-output) can carry usage; an HTTP error, a
+  transport failure or a reply the adapter refuses as invalid counts as unknown.
 - A successful attempt is read from the run's recorded route execution. Any
   other claimed attempt is read from the adapter result the session observed for
   it in the same process, so a generation that was dispatched but whose response

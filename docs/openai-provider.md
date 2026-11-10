@@ -39,7 +39,7 @@ Every request includes:
 
 `store: false` is not a substitute for account-level retention controls. The configured content-logging mode must match the approved route record. Operators are responsible for making that declaration match the provider account and connection controls.
 
-The adapter accepts completed responses and the closed incomplete reasons `max_output_tokens` and `content_filter`. It discards provider reasoning items, preserves assistant text and refusals, and represents valid JSON output as structured data. Unknown output item types, duplicate JSON keys, case-variant JSON keys, model mismatches, invalid usage, and excessive content fail closed.
+The adapter accepts completed responses and the closed incomplete reasons `max_output_tokens` and `content_filter`. It discards provider reasoning items, preserves assistant text and refusals, and represents valid JSON output as structured data. Unknown output item types, duplicate JSON keys, case-variant JSON keys, model mismatches, invalid usage, and excessive content fail closed. A reply that stopped at the output limit with no answer fails as `output_exhausted` but keeps the usage it reported, checked as for a successful reply, so its cost settles from that usage; without valid usage it stays unknown. Every other failed dispatch reports unknown usage.
 
 ## Transport and credentials
 
