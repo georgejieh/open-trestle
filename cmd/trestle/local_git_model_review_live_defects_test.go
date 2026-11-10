@@ -125,18 +125,18 @@ func TestLocalModelReviewReportsExhaustedVerifierOutput(t *testing.T) {
 		t.Fatalf("result=%+v err=%v", wire, err)
 	}
 	// The exhausted verifier reply reported its usage, so the failed attempt
-	// keeps it and the run's tokens are known. Cost stays unknown: it counts
-	// only recorded executions.
+	// keeps it and settles from it: the run's tokens and cost are known.
 	const stage = `{"known":true,"route_attempts":1,"input_tokens":100,"output_tokens":100,"cached_input_tokens":0}`
 	const tokens = `"token_usage":{"known":true,"route_attempts":2,"input_tokens":200,"output_tokens":200,"cached_input_tokens":0,"generation":` + stage + `,"verification":` + stage + `}`
-	if !strings.Contains(stdout.String(), `"usage_known":false,"actual_cost_micro_usd":0,`+tokens+`,`) {
-		t.Fatalf("failed verifier attempt token usage: %s", stdout.String())
+	if !strings.Contains(stdout.String(), `"usage_known":true,"actual_cost_micro_usd":0,`+tokens+`,`) || strings.Contains(stdout.String(), "unknown_final_usage") {
+		t.Fatalf("failed verifier attempt usage and cost: %s", stdout.String())
 	}
-	// The same reply without usage leaves the attempt, and so the run, unknown.
+	// The same reply without usage leaves the attempt, and so the run's tokens
+	// and cost, unknown.
 	unreported := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, verificationMode: "exhausted_unreported"})
 	stdout.Reset()
-	const unknown = `"token_usage":{"known":false,"route_attempts":2,"generation":` + stage + `,"verification":{"known":false,"route_attempts":1}}`
-	if code := run(unreported.args, &stdout, &stderr); code != 1 || !strings.Contains(stdout.String(), `"failure_detail":"model_output_exhausted"`) || !strings.Contains(stdout.String(), unknown) {
+	const unknown = `"usage_known":false,"actual_cost_micro_usd":0,"token_usage":{"known":false,"route_attempts":2,"generation":` + stage + `,"verification":{"known":false,"route_attempts":1}}`
+	if code := run(unreported.args, &stdout, &stderr); code != 1 || !strings.Contains(stdout.String(), `"failure_detail":"model_output_exhausted"`) || !strings.Contains(stdout.String(), unknown) || !strings.Contains(stdout.String(), "unknown_final_usage") {
 		t.Fatalf("unreported exhausted reply: %s", stdout.String())
 	}
 	text := runLocalModelText(t, newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, verificationMode: "exhausted"}), 1)

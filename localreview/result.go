@@ -415,8 +415,11 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 	if s.investigation != nil && exists != (len(events) != 0) {
 		return Result{}, ErrInvalidResult
 	}
-	claims := 0
 	var claimed []string
+	// reconciled names the authorizations whose cost reconciliation the run
+	// recorded: the event's causal parents are the authorization and outcome.
+	reconciled := map[string]bool{}
+	settled := func(authorization string) bool { return reconciled[authorization] }
 	previousAudit := ""
 	for index, event := range events {
 		if s.investigation != nil && (event.Sequence() != uint64(index+1) || event.PreviousIdentity() != previousAudit) {
@@ -428,8 +431,12 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 		}
 		w.Audit = append(w.Audit, auditResult{event.Kind().String(), event.SubjectIdentity()})
 		if event.Kind() == audit.EventRouteAttemptClaimed {
-			claims++
 			claimed = append(claimed, event.SubjectIdentity())
+		}
+		if event.Kind() == audit.EventRouteCostReconciled {
+			for _, parent := range event.CausalParentIdentities() {
+				reconciled[parent] = true
+			}
 		}
 	}
 	if s.investigation != nil {
@@ -497,13 +504,13 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 			// Without the turn records no attempt has a known stage; the
 			// observed adapter results can still give the total.
 			unattributed := func(string) tokenStage { return tokenStageUnattributed }
-			return withTokenUsage(result, accountTokenUsage(claimed, nil, unattributed, s.routeFailures.dispatchedUsage)), nil
+			return withTokenUsage(result, accountRouteAttempts(claimed, nil, unattributed, s.routeFailures.dispatchedAttempt, settled).tokens), nil
 		}
 		if view.PlanIdentity() != w.Plan || view.ScopeIdentity() != w.Scope || view.RunStatus() != state.Status() || view.OutputIdentity() != w.Output {
 			return Result{}, ErrInvalidResult
 		}
 		var err error
-		if tokens, err = s.projectInvestigation(&result, p, state, view, events, claimed); err != nil {
+		if tokens, err = s.projectInvestigation(&result, p, state, view, events, claimed, settled); err != nil {
 			return Result{}, err
 		}
 		verification, hasVerification = view.Verification()
@@ -515,7 +522,7 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 		}
 		var contextArtifact artifact.Artifact
 		generationAuthorization := ""
-		recorded := map[string]recordedTokenUsage{}
+		recorded := map[string]recordedAttempt{}
 		if hasContext {
 			input, err := modelhandler.ParseGenerationInput(inputArtifact.Payload())
 			if err != nil {
@@ -549,8 +556,6 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 			return Result{}, err
 		}
 		var generation modelhandler.GenerationResult
-		knownExecutions := 0
-		knownCost := uint64(0)
 		if hasGeneration {
 			if !hasContext {
 				return Result{}, ErrInvalidResult
@@ -568,15 +573,7 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 				w.Limitations = append(w.Limitations, repositoryContextAnchorOmittedLimitation)
 			}
 			execution := generation.RouteExecution()
-			recorded[execution.Authorization().Identity()] = recordedTokenUsage{execution.Outcome().Usage(), tokenStageGeneration}
-			cost := execution.Reconciliation().ActualCost()
-			if cost.IsKnown() {
-				if knownCost > ^uint64(0)-cost.TotalCostMicroUSD() {
-					return Result{}, ErrInvalidResult
-				}
-				knownExecutions++
-				knownCost += cost.TotalCostMicroUSD()
-			}
+			recorded[execution.Authorization().Identity()] = recordedAttempt{execution.Outcome().Usage(), execution.Reconciliation().ActualCost(), tokenStageGeneration}
 		}
 		verificationArtifact, hasVerification, err = taskOutput("verification")
 		if err != nil {
@@ -595,21 +592,7 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 			w.VerificationRoute = verification.RouteExecution().Authorization().RouteRecordIdentity()
 			w.Independence = verification.RouteIndependence().Level().String()
 			execution := verification.RouteExecution()
-			recorded[execution.Authorization().Identity()] = recordedTokenUsage{execution.Outcome().Usage(), tokenStageVerification}
-			cost := execution.Reconciliation().ActualCost()
-			if cost.IsKnown() {
-				if knownCost > ^uint64(0)-cost.TotalCostMicroUSD() {
-					return Result{}, ErrInvalidResult
-				}
-				knownExecutions++
-				knownCost += cost.TotalCostMicroUSD()
-			}
-		}
-		w.UsageKnown = claims == knownExecutions
-		if w.UsageKnown {
-			w.ActualCostMicroUSD = knownCost
-		} else {
-			w.Limitations = append(w.Limitations, "unknown_final_usage")
+			recorded[execution.Authorization().Identity()] = recordedAttempt{execution.Outcome().Usage(), execution.Reconciliation().ActualCost(), tokenStageVerification}
 		}
 		// A direct run claims at most the generation attempt, whose
 		// authorization its recorded input names, and then the verification
@@ -624,7 +607,17 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 				return tokenStageVerification
 			}
 		}
-		tokens = accountTokenUsage(claimed, recorded, stageOf, s.routeFailures.dispatchedUsage)
+		// Cost covers every claimed attempt, as token usage does: a recorded
+		// execution's reconciliation, or a settled failed attempt's observed
+		// usage priced as its reconciliation prices it.
+		account := accountRouteAttempts(claimed, recorded, stageOf, s.routeFailures.dispatchedAttempt, settled)
+		tokens = account.tokens
+		w.UsageKnown = account.costKnown
+		if w.UsageKnown {
+			w.ActualCostMicroUSD = account.costMicroUSD
+		} else {
+			w.Limitations = append(w.Limitations, "unknown_final_usage")
+		}
 	}
 	if hasVerification {
 		if omitted := verification.VerificationContext().SourceCoverage().InstructionContextOmittedCount(); omitted > 0 {

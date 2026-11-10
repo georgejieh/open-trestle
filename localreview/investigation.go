@@ -312,19 +312,32 @@ type investigationResultWire struct {
 }
 
 // projectInvestigation projects the investigation readback into result and
-// returns the token usage of the claimed route attempts: each recorded turn's
-// usage under its role, and the observed adapter result of any claim without a
-// turn record, which has no known stage.
-func (s *Session) projectInvestigation(result *Result, prepared runtimecatalog.PreparedReviewRun, state controlplane.ReviewRunState, view modelhandler.InvestigationPipelineReadback, events []audit.Event, claims []string) (TokenUsage, error) {
-	tokens, err := s.projectInvestigationTurns(result, prepared, state, view, events)
+// accounts the claimed route attempts: each recorded turn's usage and settled
+// cost under its role, and the observed adapter result of any claim without a
+// turn record, which has no known stage. It returns the token usage. The cost
+// is known when every claimed attempt has a known settlement and the sum is the
+// route owner's own settled total.
+func (s *Session) projectInvestigation(result *Result, prepared runtimecatalog.PreparedReviewRun, state controlplane.ReviewRunState, view modelhandler.InvestigationPipelineReadback, events []audit.Event, claims []string, settled func(string) bool) (TokenUsage, error) {
+	recorded, err := s.projectInvestigationTurns(result, prepared, state, view, events)
 	if err != nil {
 		return TokenUsage{}, err
 	}
 	unattributed := func(string) tokenStage { return tokenStageUnattributed }
-	return accountTokenUsage(claims, tokens, unattributed, s.routeFailures.dispatchedUsage), nil
+	account := accountRouteAttempts(claims, recorded, unattributed, s.routeFailures.dispatchedAttempt, settled)
+	w := &result.wire
+	w.UsageKnown = account.costKnown && account.costMicroUSD == w.Investigation.KnownCostMicroUSD
+	if w.UsageKnown {
+		w.ActualCostMicroUSD = account.costMicroUSD
+	} else {
+		w.Limitations = append(w.Limitations, "unknown_final_usage")
+	}
+	if state.Status() == controlplane.ReviewRunSucceeded && !w.UsageKnown {
+		return TokenUsage{}, ErrInvalidResult
+	}
+	return account.tokens, nil
 }
 
-func (s *Session) projectInvestigationTurns(result *Result, prepared runtimecatalog.PreparedReviewRun, state controlplane.ReviewRunState, view modelhandler.InvestigationPipelineReadback, events []audit.Event) (map[string]recordedTokenUsage, error) {
+func (s *Session) projectInvestigationTurns(result *Result, prepared runtimecatalog.PreparedReviewRun, state controlplane.ReviewRunState, view modelhandler.InvestigationPipelineReadback, events []audit.Event) (map[string]recordedAttempt, error) {
 	w := &result.wire
 	wire := w.Investigation
 	policy := s.investigation.profile.Policy()
@@ -338,7 +351,7 @@ func (s *Session) projectInvestigationTurns(result *Result, prepared runtimecata
 	if uint64(len(turns)) > policy.MaxModelTurns() || uint64(wire.ToolCalls) > policy.MaxToolCalls() || wire.ScannedBytes > policy.MaxScannedBytes() || wire.ReturnedBytes > policy.MaxReturnedBytes() {
 		return nil, ErrInvalidResult
 	}
-	recorded := make(map[string]recordedTokenUsage, len(turns))
+	recorded := make(map[string]recordedAttempt, len(turns))
 	claimed, completed, reconciled := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for _, event := range events {
 		var subjects map[string]bool
@@ -386,7 +399,7 @@ func (s *Session) projectInvestigationTurns(result *Result, prepared runtimecata
 		if record.Role() == gateway.InvestigationVerificationTurn {
 			stage = tokenStageVerification
 		}
-		recorded[authorization] = recordedTokenUsage{usage, stage}
+		recorded[authorization] = recordedAttempt{usage, cost, stage}
 		links := append([]string{}, turn.ToolResultArtifactIdentities()...)
 		for _, identity := range links {
 			if controlplane.ValidateHandlerIdentity(identity) != nil || toolResults[identity] {
@@ -398,12 +411,6 @@ func (s *Session) projectInvestigationTurns(result *Result, prepared runtimecata
 	}
 	if uint64(len(toolResults)) > policy.MaxToolCalls() {
 		return nil, ErrInvalidResult
-	}
-	w.UsageKnown = view.UsageKnown() && len(claimed)+len(completed)+len(reconciled) == 0 && knownCost == wire.KnownCostMicroUSD
-	if w.UsageKnown {
-		w.ActualCostMicroUSD = knownCost
-	} else {
-		w.Limitations = append(w.Limitations, "unknown_final_usage")
 	}
 	generation, hasGeneration := view.Generation()
 	verification, hasVerification := view.Verification()
@@ -444,7 +451,9 @@ func (s *Session) projectInvestigationTurns(result *Result, prepared runtimecata
 			return nil, ErrInvalidResult
 		}
 	}
-	if state.Status() == controlplane.ReviewRunSucceeded && (!hasVerification || !w.UsageKnown || len(toolResults) != int(wire.ToolCalls)) {
+	// A succeeded run's turns are every claimed attempt, and the route owner
+	// agrees on their settled cost.
+	if state.Status() == controlplane.ReviewRunSucceeded && (!hasVerification || !view.UsageKnown() || len(claimed)+len(completed)+len(reconciled) != 0 || knownCost != wire.KnownCostMicroUSD || len(toolResults) != int(wire.ToolCalls)) {
 		return nil, ErrInvalidResult
 	}
 	return recorded, nil

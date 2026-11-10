@@ -75,10 +75,11 @@ const (
 	tokenStageVerification
 )
 
-// recordedTokenUsage is the usage of a route attempt whose execution the run
-// recorded, with the stage it served.
-type recordedTokenUsage struct {
+// recordedAttempt is the usage and settled actual cost of a route attempt
+// whose execution the run recorded, with the stage it served.
+type recordedAttempt struct {
 	usage provider.RouteTokenUsage
+	cost  provider.RouteActualCost
 	stage tokenStage
 }
 
@@ -108,16 +109,28 @@ func (t tokenTally) count() TokenCount {
 	return count
 }
 
-// accountTokenUsage sums provider-reported usage over the route attempts a run
-// claimed, each counted once. An attempt the run recorded uses its recorded
-// outcome; any other claimed attempt uses the adapter result observed for it,
-// or is unknown when none was observed, and serves the stage stageOf names. A
-// recorded attempt without a claim is still counted. Callers bound claims, so
-// the sums cannot overflow.
-func accountTokenUsage(claims []string, recorded map[string]recordedTokenUsage, stageOf func(string) tokenStage, observed func(string) (provider.RouteTokenUsage, bool)) TokenUsage {
+// attemptAccount is the token usage and the settled cost of a run's route
+// attempts. The cost is known only when every attempt has a known settlement.
+type attemptAccount struct {
+	tokens       TokenUsage
+	costKnown    bool
+	costMicroUSD uint64
+}
+
+// accountRouteAttempts sums provider-reported usage and settled actual cost
+// over the route attempts a run claimed, each counted once. An attempt the run
+// recorded uses its recorded outcome and reconciliation. Any other claimed
+// attempt uses the adapter result observed for it, or is unknown when none was
+// observed, and serves the stage stageOf names; its cost is the actual cost its
+// settlement derives from that usage, and counts only when settled reports the
+// attempt's cost reconciliation, because a dispatch without one was never
+// settled. A recorded attempt without a claim is still counted. A sum that
+// would overflow makes the cost unknown.
+func accountRouteAttempts(claims []string, recorded map[string]recordedAttempt, stageOf func(string) tokenStage, observed func(string) (observedAttempt, bool), settled func(string) bool) attemptAccount {
 	var total, generation, verification tokenTally
 	unattributed := false
-	add := func(stage tokenStage, usage provider.RouteTokenUsage, reported bool) {
+	account := attemptAccount{costKnown: true}
+	add := func(stage tokenStage, usage provider.RouteTokenUsage, reported bool, cost provider.RouteActualCost, costSettled bool) {
 		total.add(usage, reported)
 		switch stage {
 		case tokenStageGeneration:
@@ -127,6 +140,11 @@ func accountTokenUsage(claims []string, recorded map[string]recordedTokenUsage, 
 		default:
 			unattributed = true
 		}
+		if !costSettled || !cost.IsKnown() || account.costMicroUSD > ^uint64(0)-cost.TotalCostMicroUSD() {
+			account.costKnown = false
+			return
+		}
+		account.costMicroUSD += cost.TotalCostMicroUSD()
 	}
 	seen := make(map[string]bool, len(claims)+len(recorded))
 	for _, authorization := range claims {
@@ -135,11 +153,11 @@ func accountTokenUsage(claims []string, recorded map[string]recordedTokenUsage, 
 		}
 		seen[authorization] = true
 		if record, ok := recorded[authorization]; ok {
-			add(record.stage, record.usage, true)
+			add(record.stage, record.usage, true, record.cost, true)
 			continue
 		}
-		usage, ok := observed(authorization)
-		add(stageOf(authorization), usage, ok)
+		attempt, ok := observed(authorization)
+		add(stageOf(authorization), attempt.usage, ok, attempt.cost, ok && settled(authorization))
 	}
 	unclaimed := make([]string, 0, len(recorded))
 	for authorization := range recorded {
@@ -149,12 +167,17 @@ func accountTokenUsage(claims []string, recorded map[string]recordedTokenUsage, 
 	}
 	slices.Sort(unclaimed)
 	for _, authorization := range unclaimed {
-		add(recorded[authorization].stage, recorded[authorization].usage, true)
+		record := recorded[authorization]
+		add(record.stage, record.usage, true, record.cost, true)
 	}
 	if unattributed {
 		generation.unknown, verification.unknown = true, true
 	}
-	return TokenUsage{TokenCount: total.count(), Generation: generation.count(), Verification: verification.count()}
+	account.tokens = TokenUsage{TokenCount: total.count(), Generation: generation.count(), Verification: verification.count()}
+	if !account.costKnown {
+		account.costMicroUSD = 0
+	}
+	return account
 }
 
 // validCompletedTokenUsage checks the token usage of a completed direct
