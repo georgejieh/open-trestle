@@ -130,6 +130,7 @@ Evaluation schemas:
 - `schemas/evaluation/deterministic-corpus-performance-observation-v1.schema.json`
 - `schemas/evaluation/evaluation-adjudication-v1.schema.json`
 - `schemas/evaluation/evaluation-adjudication-result-v1.schema.json`
+- `schemas/evaluation/model-corpus-labels-v1.schema.json` (pending fixture-author labels for one model-review corpus case; version 1 admits no reviewer or review date)
 
 Runtime authority schemas:
 

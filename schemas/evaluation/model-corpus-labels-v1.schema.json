@@ -1,0 +1,454 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:evaluation:model-corpus-labels:v1",
+  "title": "Open Trestle model-review corpus case labels v1",
+  "description": "Pending fixture-author labels for one case of the model-review evaluation corpus. Version 1 admits only review_state pending with no reviewer and no review date, so a document of this version is never adjudicated truth. Base and head line numbers are different coordinate spaces. The loader additionally checks that every location names an existing file of its side, that end_line is not before start_line and lies inside that file, that identifiers are unique and ordered, and that a base location of a deletion_defect case lies on removed lines.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "case_id",
+    "case_kind",
+    "review_state",
+    "reviewer_identifier",
+    "review_date",
+    "fixture_author_identifier",
+    "go_version",
+    "go_semantics",
+    "expected_outcome",
+    "expected_findings",
+    "false_positive_traps",
+    "abstention_reason"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/model-corpus-labels"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "case_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+    },
+    "case_kind": {
+      "enum": [
+        "defect",
+        "deletion_defect",
+        "near_miss",
+        "clean",
+        "abstention"
+      ]
+    },
+    "review_state": {
+      "const": "pending"
+    },
+    "reviewer_identifier": {
+      "const": null,
+      "description": "Always null in version 1. A reviewer is recorded only by a later, separately reviewed contract."
+    },
+    "review_date": {
+      "const": null,
+      "description": "Always null in version 1."
+    },
+    "fixture_author_identifier": {
+      "const": "open-trestle-maintainers"
+    },
+    "go_version": {
+      "type": "string",
+      "pattern": "^1\\.[0-9]{1,3}$",
+      "description": "The go directive of the head tree's go.mod, which selects the language semantics the labels assume."
+    },
+    "go_semantics": {
+      "$ref": "#/$defs/text"
+    },
+    "expected_outcome": {
+      "enum": [
+        "findings",
+        "no_finding",
+        "abstention"
+      ]
+    },
+    "expected_findings": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "$ref": "#/$defs/expected_finding"
+      }
+    },
+    "false_positive_traps": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "$ref": "#/$defs/trap"
+      }
+    },
+    "abstention_reason": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/text"
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "expected_outcome"
+        ],
+        "properties": {
+          "expected_outcome": {
+            "const": "findings"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "expected_findings": {
+            "minItems": 1
+          },
+          "abstention_reason": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "expected_outcome"
+        ],
+        "properties": {
+          "expected_outcome": {
+            "const": "no_finding"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "expected_findings": {
+            "maxItems": 0
+          },
+          "abstention_reason": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "expected_outcome"
+        ],
+        "properties": {
+          "expected_outcome": {
+            "const": "abstention"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "expected_findings": {
+            "maxItems": 0
+          },
+          "abstention_reason": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "case_kind"
+        ],
+        "properties": {
+          "case_kind": {
+            "const": "defect"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "expected_outcome": {
+            "const": "findings"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "case_kind"
+        ],
+        "properties": {
+          "case_kind": {
+            "const": "deletion_defect"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "expected_outcome": {
+            "const": "findings"
+          },
+          "expected_findings": {
+            "contains": {
+              "required": [
+                "side"
+              ],
+              "properties": {
+                "side": {
+                  "const": "base"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "case_kind"
+        ],
+        "properties": {
+          "case_kind": {
+            "const": "near_miss"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "expected_outcome": {
+            "const": "no_finding"
+          },
+          "false_positive_traps": {
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "case_kind"
+        ],
+        "properties": {
+          "case_kind": {
+            "const": "clean"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "expected_outcome": {
+            "const": "no_finding"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "case_kind"
+        ],
+        "properties": {
+          "case_kind": {
+            "const": "abstention"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "expected_outcome": {
+            "const": "abstention"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$"
+    },
+    "side": {
+      "enum": [
+        "head",
+        "base"
+      ],
+      "description": "head names lines of the head tree; base names removed lines of the base tree."
+    },
+    "line": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100000
+    },
+    "category": {
+      "enum": [
+        "correctness",
+        "security",
+        "concurrency",
+        "performance",
+        "reliability",
+        "maintainability",
+        "style",
+        "documentation",
+        "testing"
+      ]
+    },
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "side",
+        "start_line",
+        "end_line"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "side": {
+          "$ref": "#/$defs/side"
+        },
+        "start_line": {
+          "$ref": "#/$defs/line"
+        },
+        "end_line": {
+          "$ref": "#/$defs/line"
+        }
+      }
+    },
+    "expected_finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "path",
+        "side",
+        "start_line",
+        "end_line",
+        "also_accept_locations",
+        "category",
+        "also_compatible_categories",
+        "severity_hint",
+        "defect",
+        "rationale"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^f[1-9]$"
+        },
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "side": {
+          "$ref": "#/$defs/side"
+        },
+        "start_line": {
+          "$ref": "#/$defs/line"
+        },
+        "end_line": {
+          "$ref": "#/$defs/line"
+        },
+        "also_accept_locations": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/location"
+          },
+          "description": "Further locations at which a finding about the same defect also counts as a match."
+        },
+        "category": {
+          "$ref": "#/$defs/category"
+        },
+        "also_compatible_categories": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/category"
+          }
+        },
+        "severity_hint": {
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ],
+          "description": "Informational. The scorer reports the observed severity beside it and never matches on it."
+        },
+        "defect": {
+          "$ref": "#/$defs/text"
+        },
+        "rationale": {
+          "$ref": "#/$defs/text"
+        }
+      }
+    },
+    "trap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "path",
+        "side",
+        "start_line",
+        "end_line",
+        "also_match_locations",
+        "wrong_finding",
+        "why_wrong"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^t[1-9]$"
+        },
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "side": {
+          "$ref": "#/$defs/side"
+        },
+        "start_line": {
+          "$ref": "#/$defs/line"
+        },
+        "end_line": {
+          "$ref": "#/$defs/line"
+        },
+        "also_match_locations": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/location"
+          }
+        },
+        "wrong_finding": {
+          "$ref": "#/$defs/text",
+          "description": "The specific finding that would be a false positive."
+        },
+        "why_wrong": {
+          "$ref": "#/$defs/text",
+          "description": "The exact reason the code is correct, or why the evidence cannot support the finding."
+        }
+      }
+    }
+  }
+}
