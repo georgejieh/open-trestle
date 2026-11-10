@@ -141,6 +141,9 @@ type Report struct {
 	SpecialistProfileID, SpecialistProfileIdentity            string
 	UsageKnown                                                bool
 	ActualCostMicroUSD                                        uint64
+	// TokenUsage is a version 6 result's token usage, and nil for a result
+	// that reports none.
+	TokenUsage *TokenUsage
 
 	// FailureTask, FailureDetail and FailureHint explain a run that did not
 	// succeed: the first failed task key, an observed refinement such as
@@ -195,6 +198,10 @@ func (r Result) Report() (Report, error) {
 	}
 	if r.wire.Specialist != nil {
 		report.SpecialistProfileID, report.SpecialistProfileIdentity = r.wire.Specialist.ProfileID, r.wire.Specialist.ProfileIdentity
+	}
+	if r.wire.TokenUsage != nil {
+		usage := r.wire.TokenUsage.clone()
+		report.TokenUsage = &usage
 	}
 	set := r.diagnostics
 	if set.Identity() != "" {

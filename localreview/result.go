@@ -72,6 +72,7 @@ type resultWire struct {
 	ComprehensiveClearance bool                     `json:"comprehensive_clearance"`
 	UsageKnown             bool                     `json:"usage_known"`
 	ActualCostMicroUSD     uint64                   `json:"actual_cost_micro_usd"`
+	TokenUsage             *TokenUsage              `json:"token_usage,omitempty"` // schema version 6 only
 	LeaseRenewals          uint64                   `json:"lease_renewals"`
 	Tasks                  []taskResult             `json:"tasks"`
 	Audit                  []auditResult            `json:"audit"`
@@ -188,6 +189,14 @@ func (r Result) StyleAdvice() StyleAdvice {
 	advice.Recommendations = append([]StyleRecommendation(nil), advice.Recommendations...)
 	advice.Withheld = append([]StyleWithheld(nil), advice.Withheld...)
 	return advice
+}
+
+// withTokenUsage reports the token usage of an opened run. A result with it is
+// schema version 6, which keeps every field of the earlier versions.
+func withTokenUsage(result Result, usage TokenUsage) Result {
+	result.wire.Version = tokenUsageResultVersion
+	result.wire.TokenUsage = &usage
+	return result
 }
 
 // specialistResultWire identifies the packaged profile bound into generation.
@@ -407,6 +416,7 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 		return Result{}, ErrInvalidResult
 	}
 	claims := 0
+	var claimed []string
 	previousAudit := ""
 	for index, event := range events {
 		if s.investigation != nil && (event.Sequence() != uint64(index+1) || event.PreviousIdentity() != previousAudit) {
@@ -419,6 +429,7 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 		w.Audit = append(w.Audit, auditResult{event.Kind().String(), event.SubjectIdentity()})
 		if event.Kind() == audit.EventRouteAttemptClaimed {
 			claims++
+			claimed = append(claimed, event.SubjectIdentity())
 		}
 	}
 	if s.investigation != nil {
@@ -471,6 +482,7 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 	var verification modelhandler.VerificationResult
 	var verificationArtifact artifact.Artifact
 	var hasVerification bool
+	var tokens TokenUsage
 	if s.investigation != nil {
 		if state.Status() != controlplane.ReviewRunSucceeded {
 			s.retainInvestigationDiagnostics(ctx, p, &result)
@@ -482,12 +494,16 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 				w.Status, w.CI = "failed", "error"
 			}
 			w.Limitations = append(w.Limitations, "investigation_readback_unavailable", "unknown_final_usage")
-			return result, nil
+			// Without the turn records no attempt has a known stage; the
+			// observed adapter results can still give the total.
+			unattributed := func(string) tokenStage { return tokenStageUnattributed }
+			return withTokenUsage(result, accountTokenUsage(claimed, nil, unattributed, s.routeFailures.dispatchedUsage)), nil
 		}
 		if view.PlanIdentity() != w.Plan || view.ScopeIdentity() != w.Scope || view.RunStatus() != state.Status() || view.OutputIdentity() != w.Output {
 			return Result{}, ErrInvalidResult
 		}
-		if err := s.projectInvestigation(&result, p, state, view, events); err != nil {
+		var err error
+		if tokens, err = s.projectInvestigation(&result, p, state, view, events, claimed); err != nil {
 			return Result{}, err
 		}
 		verification, hasVerification = view.Verification()
@@ -498,6 +514,8 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 			return Result{}, err
 		}
 		var contextArtifact artifact.Artifact
+		generationAuthorization := ""
+		recorded := map[string]recordedTokenUsage{}
 		if hasContext {
 			input, err := modelhandler.ParseGenerationInput(inputArtifact.Payload())
 			if err != nil {
@@ -524,6 +542,7 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 			w.Context = input.ContextIdentity()
 			w.GenerationRequest = input.Authorization().RequestIdentity()
 			w.GenerationRoute = input.Authorization().RouteRecordIdentity()
+			generationAuthorization = input.Authorization().Identity()
 		}
 		generationArtifact, hasGeneration, err := taskOutput("candidates")
 		if err != nil {
@@ -548,7 +567,9 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 				w.RepositoryContextAnchorOmitted = dropped
 				w.Limitations = append(w.Limitations, repositoryContextAnchorOmittedLimitation)
 			}
-			cost := generation.RouteExecution().Reconciliation().ActualCost()
+			execution := generation.RouteExecution()
+			recorded[execution.Authorization().Identity()] = recordedTokenUsage{execution.Outcome().Usage(), tokenStageGeneration}
+			cost := execution.Reconciliation().ActualCost()
 			if cost.IsKnown() {
 				if knownCost > ^uint64(0)-cost.TotalCostMicroUSD() {
 					return Result{}, ErrInvalidResult
@@ -573,7 +594,9 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 			w.VerificationRequest = verification.RouteExecution().Authorization().RequestIdentity()
 			w.VerificationRoute = verification.RouteExecution().Authorization().RouteRecordIdentity()
 			w.Independence = verification.RouteIndependence().Level().String()
-			cost := verification.RouteExecution().Reconciliation().ActualCost()
+			execution := verification.RouteExecution()
+			recorded[execution.Authorization().Identity()] = recordedTokenUsage{execution.Outcome().Usage(), tokenStageVerification}
+			cost := execution.Reconciliation().ActualCost()
 			if cost.IsKnown() {
 				if knownCost > ^uint64(0)-cost.TotalCostMicroUSD() {
 					return Result{}, ErrInvalidResult
@@ -588,6 +611,20 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 		} else {
 			w.Limitations = append(w.Limitations, "unknown_final_usage")
 		}
+		// A direct run claims at most the generation attempt, whose
+		// authorization its recorded input names, and then the verification
+		// attempt.
+		stageOf := func(authorization string) tokenStage {
+			switch {
+			case generationAuthorization == "":
+				return tokenStageUnattributed
+			case authorization == generationAuthorization:
+				return tokenStageGeneration
+			default:
+				return tokenStageVerification
+			}
+		}
+		tokens = accountTokenUsage(claimed, recorded, stageOf, s.routeFailures.dispatchedUsage)
 	}
 	if hasVerification {
 		if omitted := verification.VerificationContext().SourceCoverage().InstructionContextOmittedCount(); omitted > 0 {
@@ -667,6 +704,7 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 	if s.investigation == nil {
 		result = withStyleAdvice(result, style)
 	}
+	result = withTokenUsage(result, tokens)
 	if s.investigation != nil {
 		result = fitInvestigationDiagnostics(result)
 	}
@@ -803,6 +841,9 @@ func RenderResult(writer io.Writer, r Result) error {
 	if r.wire.AgentConfigurationSources > 0 || r.wire.InstructionLikeSources > 0 {
 		// Reviewed AI material is untrusted data and is reviewed as code.
 		fmt.Fprintf(&buffer, "ai material in review context: agent_configuration=%d instruction_like=%d (reviewed as code, never followed)\n", r.wire.AgentConfigurationSources, r.wire.InstructionLikeSources)
+	}
+	if r.wire.TokenUsage != nil {
+		buffer.WriteString(r.wire.TokenUsage.line())
 	}
 	for _, line := range r.wire.StyleAdvice.Lines() {
 		buffer.WriteString(line)

@@ -14,38 +14,41 @@ import (
 
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/internal/evidence"
+	"github.com/georgejieh/open-trestle/localreview"
 )
 
 type localModelReceipt struct {
-	Contract               string   `json:"contract"`
-	Version                int      `json:"schema_version"`
-	Status                 string   `json:"status"`
-	CI                     string   `json:"ci_disposition"`
-	RunStatus              string   `json:"run_status"`
-	Failure                string   `json:"failure"`
-	Run                    string   `json:"review_run_id"`
-	Scope                  string   `json:"scope_identity"`
-	Request                string   `json:"request_identity"`
-	Plan                   string   `json:"plan_identity"`
-	Output                 string   `json:"output_identity"`
-	Repository             string   `json:"repository_identity"`
-	Base                   string   `json:"base_revision_identity"`
-	Head                   string   `json:"head_revision_identity"`
-	Inventory              string   `json:"inventory_identity"`
-	Policy                 string   `json:"runtime_policy_identity"`
-	Context                string   `json:"context_identity"`
-	GenerationRequest      string   `json:"generation_request_identity"`
-	VerificationRequest    string   `json:"verification_request_identity"`
-	VerificationContext    string   `json:"verification_context_identity"`
-	CandidateBatch         string   `json:"candidate_batch_identity"`
-	CandidateIDs           []string `json:"candidate_ids"`
-	Readiness              string   `json:"readiness_identity"`
-	GenerationRoute        string   `json:"generation_route_record_identity"`
-	VerificationRoute      string   `json:"verification_route_record_identity"`
-	Independence           string   `json:"independence"`
-	Limitations            []string `json:"limitations"`
-	ComprehensiveClearance bool     `json:"comprehensive_clearance"`
-	LeaseRenewals          uint64   `json:"lease_renewals"`
+	Contract               string                  `json:"contract"`
+	Version                int                     `json:"schema_version"`
+	Status                 string                  `json:"status"`
+	CI                     string                  `json:"ci_disposition"`
+	RunStatus              string                  `json:"run_status"`
+	Failure                string                  `json:"failure"`
+	Run                    string                  `json:"review_run_id"`
+	Scope                  string                  `json:"scope_identity"`
+	Request                string                  `json:"request_identity"`
+	Plan                   string                  `json:"plan_identity"`
+	Output                 string                  `json:"output_identity"`
+	Repository             string                  `json:"repository_identity"`
+	Base                   string                  `json:"base_revision_identity"`
+	Head                   string                  `json:"head_revision_identity"`
+	Inventory              string                  `json:"inventory_identity"`
+	Policy                 string                  `json:"runtime_policy_identity"`
+	Context                string                  `json:"context_identity"`
+	GenerationRequest      string                  `json:"generation_request_identity"`
+	VerificationRequest    string                  `json:"verification_request_identity"`
+	VerificationContext    string                  `json:"verification_context_identity"`
+	CandidateBatch         string                  `json:"candidate_batch_identity"`
+	CandidateIDs           []string                `json:"candidate_ids"`
+	Readiness              string                  `json:"readiness_identity"`
+	GenerationRoute        string                  `json:"generation_route_record_identity"`
+	VerificationRoute      string                  `json:"verification_route_record_identity"`
+	Independence           string                  `json:"independence"`
+	Limitations            []string                `json:"limitations"`
+	ComprehensiveClearance bool                    `json:"comprehensive_clearance"`
+	UsageKnown             bool                    `json:"usage_known"`
+	TokenUsage             *localreview.TokenUsage `json:"token_usage"`
+	LeaseRenewals          uint64                  `json:"lease_renewals"`
 	Tasks                  []struct {
 		Key         string `json:"key"`
 		Status      string `json:"status"`
@@ -105,9 +108,11 @@ func localModelExecute(t *testing.T, f *localModelFixture, args []string, wantCo
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	// Version 4 adds finding_guidance when a verified finding carries a category,
-	// and version 5 adds style advice when a changed language declares no style.
-	if result.Contract != "open-trestle/local-git-model-review-result" || result.Version != 1 && result.Version != 4 && result.Version != 5 || result.ComprehensiveClearance {
+	// An opened run's result is version 6, which reports token_usage beside
+	// every earlier field (finding_guidance, style advice); a run that never
+	// opened keeps version 1.
+	opened := result.RunStatus != "not_opened" && result.RunStatus != "unknown"
+	if result.Contract != "open-trestle/local-git-model-review-result" || opened && (result.Version != 6 || result.TokenUsage == nil) || !opened && (result.Version != 1 || result.TokenUsage != nil) || result.ComprehensiveClearance {
 		t.Fatal("missing versioned local model receipt or false comprehensive-clearance claim")
 	}
 	for _, forbidden := range []string{f.objects, f.inventoryPath, f.policyPath, localModelSecret, localModelKey, "return 10 / x", "OPEN_TRESTLE_PROVIDER_LOCAL_TEST", "Bearer "} {

@@ -56,6 +56,9 @@ func (o *routeFailureObserver) record(authorization string, capability provider.
 // dispatchedUsage returns the usage observed for an authorization and whether
 // an adapter result was observed for it at all.
 func (o *routeFailureObserver) dispatchedUsage(authorization string) (provider.RouteTokenUsage, bool) {
+	if o == nil {
+		return provider.NewUnknownRouteTokenUsage(), false
+	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	usage, ok := o.usages[authorization]

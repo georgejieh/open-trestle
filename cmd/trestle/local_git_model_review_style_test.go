@@ -57,8 +57,8 @@ func TestLocalGitInvestigationResultCarriesStyleAdvice(t *testing.T) {
 		goModule bool
 		version  int
 	}{
-		{"no go.mod", false, 5},
-		{"go.mod in base", true, 2},
+		{"no go.mod", false, 6},
+		{"go.mod in base", true, 6},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -180,8 +180,8 @@ func TestRunLocalGitModelReviewRecommendsStyleWithoutBlocking(t *testing.T) {
 		version  int
 		advising bool
 	}{
-		{"no go.mod", localModelFixtureOptions{}, 5, true},
-		{"go.mod in base", localModelFixtureOptions{extraBase: goModule, extraHead: goModule}, 4, false},
+		{"no go.mod", localModelFixtureOptions{}, 6, true},
+		{"go.mod in base", localModelFixtureOptions{extraBase: goModule, extraHead: goModule}, 6, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := newLocalModelFixture(t, test.options)

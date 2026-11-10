@@ -58,7 +58,7 @@ func TestStyleAdviceRecommendsAStandardOnlyForUndeclaredLanguages(t *testing.T) 
 	}
 	ruff := "line-length = 100\n"
 	declared := styleResultRun(t, "declared", styleTrees(with(python("x = 1\n"), "ruff.toml", ruff), with(python("x = 2\n"), "ruff.toml", ruff)), review.ContextSpecialist{})
-	if declared.wire.Version != guidanceResultVersion || !reflect.DeepEqual(declared.wire.StyleAdvice, StyleAdvice{}) {
+	if declared.wire.Version != tokenUsageResultVersion || len(declared.wire.Guidance) == 0 || !reflect.DeepEqual(declared.wire.StyleAdvice, StyleAdvice{}) {
 		t.Fatalf("declared style produced style advice: version=%d advice=%+v", declared.wire.Version, declared.wire.StyleAdvice)
 	}
 	for _, test := range []struct {
@@ -79,12 +79,8 @@ func TestStyleAdviceRecommendsAStandardOnlyForUndeclaredLanguages(t *testing.T) 
 			if !reflect.DeepEqual(result.wire.StyleAdvice, StyleAdvice{Recommendations: test.want}) {
 				t.Fatalf("style advice = %+v, want recommendations %+v", result.wire.StyleAdvice, test.want)
 			}
-			wantVersion := guidanceResultVersion
-			if test.want != nil {
-				wantVersion = styleResultVersion
-			}
-			if result.wire.Version != wantVersion || len(result.wire.Guidance) != len(declared.wire.Guidance) {
-				t.Fatalf("version=%d guidance=%d, want version %d with guidance kept", result.wire.Version, len(result.wire.Guidance), wantVersion)
+			if result.wire.Version != tokenUsageResultVersion || len(result.wire.Guidance) != len(declared.wire.Guidance) {
+				t.Fatalf("version=%d guidance=%d, want version %d with guidance kept", result.wire.Version, len(result.wire.Guidance), tokenUsageResultVersion)
 			}
 			assertStyleAdviceDoesNotBlock(t, result, declared)
 		})
@@ -115,7 +111,7 @@ func TestStyleAdviceJSONAndTextForms(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, want := range []string{`"schema_version":5,`, `,"finding_guidance":[`, `,"style_recommendations":[{"language":"python","changed_files":1,"recommendation":"PEP 8, enforced with Ruff or Black"}]}` + "\n"} {
+		for _, want := range []string{`"schema_version":6,`, `,"finding_guidance":[`, `,"style_recommendations":[{"language":"python","changed_files":1,"recommendation":"PEP 8, enforced with Ruff or Black"}]}` + "\n"} {
 			if !bytes.Contains(encoded, []byte(want)) {
 				t.Fatalf("JSON result lacks %s:\n%s", want, encoded)
 			}
@@ -150,7 +146,7 @@ func TestStyleAdviceJSONAndTextForms(t *testing.T) {
 		result := styleResultRun(t, "unread", styleTrees(base, head), review.ContextSpecialist{})
 		encoded, err := EncodeResult(result)
 		const advice = `,"style_recommendations":[{"language":"typescript","changed_files":1,"recommendation":"Prettier with ESLint"}],"style_withheld":[{"language":"python","changed_files":1}],"style_configuration_unread":1}` + "\n"
-		if err != nil || result.wire.Version != styleResultVersion || !bytes.HasSuffix(encoded, []byte(advice)) {
+		if err != nil || result.wire.Version != tokenUsageResultVersion || !bytes.HasSuffix(encoded, []byte(advice)) {
 			t.Fatalf("unread configuration JSON: %v\n%s", err, encoded)
 		}
 		var text bytes.Buffer
@@ -174,8 +170,8 @@ func TestStyleAdviceJSONAndTextForms(t *testing.T) {
 			t.Fatal(err)
 		}
 		result := styleResultRun(t, "specialist", styleTrees(map[string][]byte{"go.mod": nil}, map[string][]byte{"go.mod": nil}), specialist)
-		if result.wire.Version != styleResultVersion || result.wire.Specialist == nil || result.wire.Specialist.ProfileID != "bug_hunter" || len(result.wire.StyleAdvice.Recommendations) != 1 || len(result.wire.Guidance) == 0 {
-			t.Fatalf("version 5 dropped the specialist block or guidance: %+v", result.wire)
+		if result.wire.Version != tokenUsageResultVersion || result.wire.Specialist == nil || result.wire.Specialist.ProfileID != "bug_hunter" || len(result.wire.StyleAdvice.Recommendations) != 1 || len(result.wire.Guidance) == 0 || result.wire.TokenUsage == nil {
+			t.Fatalf("version 6 dropped the specialist block, guidance or token usage: %+v", result.wire)
 		}
 	})
 }
@@ -241,9 +237,9 @@ func TestStyleAdviceIsExplicitlyUnavailableWhenTheChangeCannotBeReadBack(t *test
 		}
 	}
 	// The same result, as readback would build it had the change been unreadable.
-	marked := withStyleAdvice(result, StyleAdvice{Unavailable: true})
+	marked := withTokenUsage(withStyleAdvice(result, StyleAdvice{Unavailable: true}), *result.wire.TokenUsage)
 	encoded, err := EncodeResult(marked)
-	if err != nil || !bytes.Contains(encoded, []byte(`"schema_version":5,`)) || !bytes.HasSuffix(encoded, []byte(`,"style_advice_unavailable":true}`+"\n")) || bytes.Contains(encoded, []byte("style_recommendations")) {
+	if err != nil || !bytes.Contains(encoded, []byte(`"schema_version":6,`)) || !bytes.HasSuffix(encoded, []byte(`,"style_advice_unavailable":true}`+"\n")) || bytes.Contains(encoded, []byte("style_recommendations")) {
 		t.Fatalf("unavailable advice JSON: %v\n%s", err, encoded)
 	}
 	var text bytes.Buffer
@@ -263,13 +259,13 @@ func TestStyleAdviceIsExplicitlyUnavailableWhenTheChangeCannotBeReadBack(t *test
 	}
 }
 
+// TestStyleAdviceResultsImportAndOlderVersionsReadBack requires every
+// result to import as version 6 and the same result as an earlier build
+// recorded it, without token usage and labelled with its earlier version, to
+// import and re-encode to the same bytes.
 func TestStyleAdviceResultsImportAndOlderVersionsReadBack(t *testing.T) {
-	importable := func(t *testing.T, result Result, version int) []byte {
+	readBack := func(t *testing.T, encoded []byte, version int) {
 		t.Helper()
-		encoded, err := EncodeResult(result)
-		if err != nil || result.wire.Version != version {
-			t.Fatalf("result version=%d want %d: %v", result.wire.Version, version, err)
-		}
 		imported, err := ParseCompletedResult(encoded)
 		if err != nil {
 			t.Fatalf("version %d result does not import: %v", version, err)
@@ -279,9 +275,20 @@ func TestStyleAdviceResultsImportAndOlderVersionsReadBack(t *testing.T) {
 		}
 		reencoded, err := EncodeResult(imported)
 		if err != nil || !bytes.Equal(reencoded, encoded) {
-			t.Fatal("imported result does not re-encode to the same bytes")
+			t.Fatalf("imported version %d result does not re-encode to the same bytes", version)
 		}
-		return encoded
+	}
+	// importable returns the version 6 bytes and the earlier version's bytes.
+	importable := func(t *testing.T, result Result, version int) ([]byte, []byte) {
+		t.Helper()
+		encoded, err := EncodeResult(result)
+		if err != nil || result.wire.Version != tokenUsageResultVersion {
+			t.Fatalf("result version=%d want %d: %v", result.wire.Version, tokenUsageResultVersion, err)
+		}
+		readBack(t, encoded, tokenUsageResultVersion)
+		earlier := earlierVersion(t, result, encoded, fmt.Sprint(version))
+		readBack(t, earlier, version)
+		return encoded, earlier
 	}
 	ruff := map[string][]byte{"ruff.toml": []byte("line-length = 100\n"), "tool.py": []byte("x = 1\n")}
 	ruffHead := map[string][]byte{"ruff.toml": ruff["ruff.toml"], "tool.py": []byte("x = 2\n")}
@@ -303,29 +310,32 @@ func TestStyleAdviceResultsImportAndOlderVersionsReadBack(t *testing.T) {
 		importable(t, result, styleResultVersion)
 	})
 	t.Run("version 5", func(t *testing.T) {
-		encoded := importable(t, styleResultRun(t, "v5", styleTrees(map[string][]byte{"tool.py": []byte("x = 1\n")}, map[string][]byte{"tool.py": []byte("x = 2\n")}), review.ContextSpecialist{}), styleResultVersion)
+		current, earlier := importable(t, styleResultRun(t, "v5", styleTrees(map[string][]byte{"tool.py": []byte("x = 1\n")}, map[string][]byte{"tool.py": []byte("x = 2\n")}), review.ContextSpecialist{}), styleResultVersion)
 		recommendation := `{"language":"python","changed_files":1,"recommendation":"PEP 8, enforced with Ruff or Black"}`
-		for name, tampered := range map[string][]byte{
-			"version 4 with style advice": bytes.Replace(encoded, []byte(`"schema_version":5`), []byte(`"schema_version":4`), 1),
-			"version 1 with style advice": bytes.Replace(encoded, []byte(`"schema_version":5`), []byte(`"schema_version":1`), 1),
-			"edited recommendation":       bytes.Replace(encoded, []byte(`"recommendation":"PEP 8, enforced with Ruff or Black"`), []byte(`"recommendation":"PEP 8"`), 1),
-			"language without detector":   bytes.Replace(encoded, []byte(`"language":"python"`), []byte(`"language":"java"`), 1),
-			"zero changed files":          bytes.Replace(encoded, []byte(`"changed_files":1`), []byte(`"changed_files":0`), 1),
-			"duplicate language":          bytes.Replace(encoded, []byte(recommendation), []byte(recommendation+","+recommendation), 1),
-			"withheld without unread":     bytes.Replace(encoded, []byte(recommendation+"]"), []byte(recommendation+`],"style_withheld":[{"language":"go","changed_files":1}]`), 1),
-			"withheld and recommended":    bytes.Replace(encoded, []byte(recommendation+"]"), []byte(recommendation+`],"style_withheld":[{"language":"python","changed_files":1}],"style_configuration_unread":1`), 1),
-			"withheld without detector":   bytes.Replace(encoded, []byte(recommendation+"]"), []byte(recommendation+`],"style_withheld":[{"language":"java","changed_files":1}],"style_configuration_unread":1`), 1),
-			"negative unread":             bytes.Replace(encoded, []byte(recommendation+"]"), []byte(recommendation+`],"style_configuration_unread":-1`), 1),
-		} {
-			if bytes.Equal(tampered, encoded) {
-				t.Fatalf("%s fixture did not change the result", name)
-			}
-			if _, err := ParseCompletedResult(tampered); err == nil {
-				t.Fatalf("%s imported", name)
+		for version, encoded := range map[string][]byte{"5": earlier, "6": current} {
+			label := []byte(`"schema_version":` + version)
+			for name, tampered := range map[string][]byte{
+				"version 4 with style advice": bytes.Replace(encoded, label, []byte(`"schema_version":4`), 1),
+				"version 1 with style advice": bytes.Replace(encoded, label, []byte(`"schema_version":1`), 1),
+				"edited recommendation":       bytes.Replace(encoded, []byte(`"recommendation":"PEP 8, enforced with Ruff or Black"`), []byte(`"recommendation":"PEP 8"`), 1),
+				"language without detector":   bytes.Replace(encoded, []byte(`"language":"python"`), []byte(`"language":"java"`), 1),
+				"zero changed files":          bytes.Replace(encoded, []byte(`"changed_files":1`), []byte(`"changed_files":0`), 1),
+				"duplicate language":          bytes.Replace(encoded, []byte(recommendation), []byte(recommendation+","+recommendation), 1),
+				"withheld without unread":     bytes.Replace(encoded, []byte(recommendation+"]"), []byte(recommendation+`],"style_withheld":[{"language":"go","changed_files":1}]`), 1),
+				"withheld and recommended":    bytes.Replace(encoded, []byte(recommendation+"]"), []byte(recommendation+`],"style_withheld":[{"language":"python","changed_files":1}],"style_configuration_unread":1`), 1),
+				"withheld without detector":   bytes.Replace(encoded, []byte(recommendation+"]"), []byte(recommendation+`],"style_withheld":[{"language":"java","changed_files":1}],"style_configuration_unread":1`), 1),
+				"negative unread":             bytes.Replace(encoded, []byte(recommendation+"]"), []byte(recommendation+`],"style_configuration_unread":-1`), 1),
+			} {
+				if bytes.Equal(tampered, encoded) {
+					t.Fatalf("version %s %s fixture did not change the result", version, name)
+				}
+				if _, err := ParseCompletedResult(tampered); err == nil {
+					t.Fatalf("version %s %s imported", version, name)
+				}
 			}
 		}
-		withoutAdvice := bytes.Replace(encoded, []byte(`,"style_recommendations":[`+recommendation+"]"), nil, 1)
-		if bytes.Equal(withoutAdvice, encoded) {
+		withoutAdvice := bytes.Replace(earlier, []byte(`,"style_recommendations":[`+recommendation+"]"), nil, 1)
+		if bytes.Equal(withoutAdvice, earlier) {
 			t.Fatal("version 5 without style advice fixture did not change the result")
 		}
 		if _, err := ParseCompletedResult(withoutAdvice); err == nil {

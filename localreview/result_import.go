@@ -13,7 +13,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/review"
 )
 
-// CompletedResultMetadata contains only identities and observations in a completed v1, v4 or v5 result.
+// CompletedResultMetadata contains only identities and observations in a completed v1, v4, v5 or v6 result.
 type CompletedResultMetadata struct {
 	RepositoryIdentity   string
 	BaseRevisionIdentity string
@@ -25,8 +25,9 @@ type CompletedResultMetadata struct {
 }
 
 // ParseCompletedResult reads the canonical emitted v1 result, a v4 result that
-// differs only by finding_guidance, or a v5 result that adds style advice (and
-// may carry finding_guidance), not candidate or diagnostic JSON.
+// differs only by finding_guidance, a v5 result that adds style advice (and
+// may carry finding_guidance), or a v6 result that adds token_usage to any of
+// them, not candidate or diagnostic JSON.
 // Structural consistency and a capture hash do not authenticate its producer.
 func ParseCompletedResult(encoded []byte) (Result, error) {
 	if len(encoded) == 0 || len(encoded) > MaxResultJSONBytes || encoded[len(encoded)-1] != '\n' {
@@ -68,6 +69,9 @@ func ParseCompletedResult(encoded []byte) (Result, error) {
 	}
 	status, ci := localReadinessDisposition(uint32(set.VerifiedCount()), set.SourceOmittedCount(), uint32(set.InconclusiveCount()), uint32(set.CandidateCount()))
 	if wire.Status != status || wire.CI != ci || !wire.UsageKnown && wire.ActualCostMicroUSD != 0 {
+		return Result{}, ErrInvalidResult
+	}
+	if wire.TokenUsage != nil && !validCompletedTokenUsage(*wire.TokenUsage, wire.UsageKnown) {
 		return Result{}, ErrInvalidResult
 	}
 	ids := make(map[string]bool, len(wire.CandidateIDs))
@@ -121,14 +125,17 @@ func (r Result) CompletedMetadata() (CompletedResultMetadata, error) {
 }
 
 // importableResultVersion accepts v1 without guidance or style advice, v4 with
-// guidance and no style advice, and v5 with style advice that a review could
-// have recorded (agentprofile.RecordedStyleAdvice.Validate) and optional
-// guidance. Style advice is never imported as a finding.
+// guidance and no style advice, v5 with style advice that a review could have
+// recorded (agentprofile.RecordedStyleAdvice.Validate) and optional guidance,
+// and v6 with token usage and optional guidance and style advice. Only v6
+// carries token usage. Style advice is never imported as a finding.
 func importableResultVersion(wire resultWire) bool {
 	styled := !wire.StyleAdvice.Empty()
-	return wire.Version == 1 && wire.Guidance == nil && !styled ||
-		wire.Version == guidanceResultVersion && len(wire.Guidance) > 0 && !styled ||
-		wire.Version == styleResultVersion && styled && wire.StyleAdvice.Validate() == nil
+	counted := wire.TokenUsage != nil
+	return wire.Version == 1 && wire.Guidance == nil && !styled && !counted ||
+		wire.Version == guidanceResultVersion && len(wire.Guidance) > 0 && !styled && !counted ||
+		wire.Version == styleResultVersion && styled && wire.StyleAdvice.Validate() == nil && !counted ||
+		wire.Version == tokenUsageResultVersion && counted && (!styled || wire.StyleAdvice.Validate() == nil)
 }
 
 // validImportedGuidance requires guidance for distinct diagnostic findings, in

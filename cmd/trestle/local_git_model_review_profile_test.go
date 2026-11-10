@@ -106,10 +106,10 @@ func TestRunLocalGitModelReviewProfilePlacesSpecialistOnlyInGeneration(t *testin
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	// A specialist run with categorized findings reports version 4, which keeps the specialist block.
-	if result.Contract != "open-trestle/local-git-model-review-result" || result.Version != 4 || result.Specialist == nil ||
+	// A specialist run reports version 6, which keeps the specialist block.
+	if result.Contract != "open-trestle/local-git-model-review-result" || result.Version != 6 || result.Specialist == nil ||
 		result.Specialist.ProfileID != "bug_hunter" || result.Specialist.ProfileIdentity != specialist.ProfileIdentity() || result.Specialist.CatalogIdentity != specialist.CatalogIdentity() {
-		t.Fatal("result did not report the selected specialist under schema version 3")
+		t.Fatal("result did not report the selected specialist under schema version 6")
 	}
 	if result.Status != "findings" || result.CI != "blocked" || result.RunStatus != "succeeded" {
 		t.Fatal("specialist run did not complete independent verification")

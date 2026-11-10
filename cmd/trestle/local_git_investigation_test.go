@@ -432,7 +432,7 @@ func TestLocalGitInvestigationReadsUnselectedSnapshotAndVerifies(t *testing.T) {
 			ReturnedBytes uint64 `json:"returned_bytes"`
 		} `json:"investigation"`
 	}
-	if json.Unmarshal(stdout.Bytes(), &receipt) != nil || code != 4 || receipt.Status != "findings" || receipt.RunStatus != "succeeded" || receipt.Version != 2 || stderr.Len() != 0 {
+	if json.Unmarshal(stdout.Bytes(), &receipt) != nil || code != 4 || receipt.Status != "findings" || receipt.RunStatus != "succeeded" || receipt.Version != 6 || stderr.Len() != 0 {
 		t.Fatal("investigation did not produce a bounded independent finding")
 	}
 	captures := endpoint.snapshot()
@@ -571,6 +571,14 @@ func TestLocalGitInvestigationRefusesUnsafeContinuation(t *testing.T) {
 			for _, c := range captures {
 				if c.packet.Task == "candidate_verification" {
 					t.Fatal("refused investigation reached verifier")
+				}
+			}
+			if receipt.TokenUsage == nil || receipt.TokenUsage.RouteAttempts > uint32(want) {
+				t.Fatalf("token usage %+v counts more than the %d dispatched turns", receipt.TokenUsage, want)
+			}
+			if mode == "unknown usage" {
+				if tokens, err := json.Marshal(receipt.TokenUsage); err != nil || string(tokens) != `{"known":false,"route_attempts":2,"generation":{"known":false,"route_attempts":1},"verification":{"known":false,"route_attempts":0}}` {
+					t.Fatalf("a turn without reported usage left token usage %s", tokens)
 				}
 			}
 		})

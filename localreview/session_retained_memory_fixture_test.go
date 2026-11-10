@@ -267,6 +267,14 @@ func (m *rmModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.Req
 		"output": []any{map[string]any{"id": "message-" + m.model, "type": "message", "role": "assistant", "status": "completed", "content": []any{map[string]any{"type": "output_text", "text": string(text)}}}},
 		"usage":  map[string]any{"input_tokens": 100, "output_tokens": 100, "total_tokens": 200},
 	}
+	// cached reports 40 of the input tokens as cached; unreported omits usage,
+	// as a provider that reports none does. Both otherwise answer normally.
+	switch m.mode {
+	case "cached":
+		response["usage"] = map[string]any{"input_tokens": 100, "output_tokens": 100, "total_tokens": 200, "input_tokens_details": map[string]any{"cached_tokens": 40}}
+	case "unreported":
+		delete(response, "usage")
+	}
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		t.Error(err)
