@@ -71,3 +71,84 @@ The result schema is `schemas/evaluation/evaluation-adjudication-result-v1.schem
 Exit codes are 1 for input, scoring or output failure; 2 for invalid usage; 3 for a complete imported score with the original mismatch; and 4 for a complete imported score with original exact match. Neither 3 nor 4 is quality approval. Existing evaluation commands keep their historical bytes, pending status and exit semantics.
 
 This command only records externally declared human confirmation of existing deterministic labels. It does not import actual model candidates or verified run diagnostics, authenticate their production origin, measure model quality/cost/latency, qualify a deployment or complete the independently adjudicated quality release gate. No filled human record or imported score is shipped as release evidence.
+
+
+## Pending model-review corpus
+
+`evaluation/testdata/model-corpus-v1/` is an evaluation set for the model-backed reviewer, `trestle local-git model-review`. Its 23 small Go cases are original synthetic material. No model has been run against it in this repository, and its labels have not been adjudicated.
+
+| Kind | Cases | What a correct review does |
+|---|---|---|
+| `defect` | 12 | Reports the defect the head adds: an off-by-one, a nil map write, an ignored error, a lock left held on an early return, a data race on a shared slice, a uint32 size overflow, a path traversal, string-built SQL, a non-constant-time token comparison, `%v` breaking `errors.Is`, an unclosed HTTP body, or slice aliasing through `append`. |
+| `deletion_defect` | 3 | Reports a defect whose cause is a removal: a bounds check, an authorization check or a nil guard. The primary label is on the removed base lines, so these cases exercise base-side findings. |
+| `near_miss` | 3 | Reports nothing. Each change looks wrong but is correct under the Go version its head `go.mod` declares: removed loop-variable copies under go 1.22, `time.After` in a loop under go 1.23, and a removed nil check before a nil-map read. |
+| `clean` | 3 | Reports nothing for a rename, an extracted function or a test-only change. |
+| `abstention` | 2 | Abstains. The verdict depends on an external module that is deliberately absent, so no verified finding is supported. |
+
+Each case has exact `base/` and `head/` trees, each with a `go.mod` whose `go` directive states the semantics the case assumes. When the semantics matter, as in two near misses, the head raises the directive inside the diff. Every tree builds, vets and tests with the standard library and no network, except the two abstention trees, which require a module that does not exist. Each case also has a `README.md` stating its kind, Go semantics and what changed, and a `labels.json`.
+
+Labels follow the closed schema `schemas/evaluation/model-corpus-labels-v1.schema.json`. A label set names the case kind, the head Go version and its semantics, and the expected outcome: `findings`, `no_finding` or `abstention`. Each expected finding records a path, a side (`head`, or `base` for removed lines), a line range, any further accepted locations, a category with compatible alternatives, an informational severity hint, a one-sentence defect statement and a rationale. A near miss or abstention also records false-positive traps: the specific wrong finding and why it is wrong. Version 1 admits only `review_state: pending`, a null `reviewer_identifier` and `review_date`, and the declared fixture author `open-trestle-maintainers`, so a version 1 label set is never adjudicated truth. `manifest.json` pins every file, README and label set by SHA-256 and derives the corpus identity from them. `adjudication.json` records the corpus review as pending.
+
+Check the corpus, or inspect one case as a bare Git repository, from the repository root:
+
+```sh
+PYTHONPATH=python/open_trestle_eval/src python3 -m open_trestle_eval.model_corpus verify
+PYTHONPATH=python/open_trestle_eval/src python3 -m open_trestle_eval.model_corpus \
+  materialize --case near_miss_time_after_go123 --output /owned/new/case.git
+git --git-dir /owned/new/case.git log -p base..main
+```
+
+`materialize` writes loose SHA-1 objects with fixed, neutral commit metadata, so the base and head revisions are the same on every machine. `refs/heads/base` names the base commit and `refs/heads/main` the head. After editing a case, `manifest --write` recomputes the pins and identity; `manifest --check` fails while they are stale.
+
+### Adjudication before any run
+
+A person other than the fixture author must adjudicate every case before its run output is read. Work source-first:
+
+1. Materialize the case and read the base and head trees and their diff, without looking at `labels.json` or any model output. The case identifier and README already name the kind of case; judge the code, not the name.
+2. Write down what a correct review should report: each defect with its path, side, lines and category; or that the change is correct; or that the evidence cannot decide it.
+3. Compare that with `labels.json`. Confirm, revise or reject each expected finding, each accepted location, the category set, each trap and its reason, the abstention reason and the stated Go semantics. Check version claims against the Go release notes, for example per-iteration loop variables in Go 1.22 and timer collection in Go 1.23, rather than against the label text.
+4. Record every decision with its reason, the reviewer, the date, the corpus identity and the label digest in a separate human-authored record. This candidate defines no import for that record, so scores stay `labels_pending_human_review`. Put a revised label in a new corpus version instead of editing version 1, because every run bundle pins the version 1 label digests.
+5. Only then compare run output with the labels. Resolve a disagreement by rereading the source, never by changing a label to fit an observed result.
+
+A model must not supply this review or stand in for the reviewer.
+
+### Running the driver
+
+`open_trestle_eval.model_runs` makes real model requests. Run it only with a separately approved `trestle` binary, routes, credentials and spend. It writes each selected case as a throwaway repository and runs `trestle local-git model-review --format json` against it, by default three times per case, round-robin over the cases. The repository labels are `corpus.invalid`, `model-corpus-v1` and `case-NN` and the commit messages are `base` and `head`, so the driver passes no case identifier to trestle. `--repository-authority` and `--repository-namespace` before `--` change the first two labels, and `--work-dir` sets the parent of the throwaway repositories, which are removed afterwards. Pass the operator's existing setup flags after `--`:
+
+```sh
+PYTHONPATH=python/open_trestle_eval/src python3 -m open_trestle_eval.model_runs \
+  --trestle /approved/trestle --output /owned/new-bundle \
+  -- --tenant "$TENANT" --repository "$REPOSITORY_SCOPE" \
+  --route-inventory /protected/routes.json --runtime-policy /protected/policy.json \
+  --egress local-only --timeout 5m
+```
+
+The operator flags are `--tenant`, `--repository`, `--route-inventory`, `--runtime-policy`, `--egress` and `--timeout`, with an optional `--profile`. The driver refuses the source, revision and format flags it sets itself. It also refuses `--specialists`, `--max-specialists`, `--investigation-policy`, `--retained-memory-input` and `--exit-code-policy`, whose output this corpus does not score or whose advisory memory could know these cases. `--runs` (1 to 10) and repeated `--case ID` narrow the batch.
+
+Before anything runs, the driver prints its plan: the trestle path and SHA-256, the number of invocations, what the egress mode allows, the zone, provider, model and content-logging fields of every route the inventory declares, every `endpoint` the runtime policy names, and the changed files and size of every case. Without `--confirm-model-calls` it stops after the plan with exit 2 and makes no call. With it, the same plan is printed and the runs start. Exit 0 means every planned run was recorded, 1 that the batch failed or was interrupted, and 2 invalid usage or missing confirmation. None of these codes says anything about review quality.
+
+The default batch is 23 cases by 3 runs: 69 invocations. Each normally makes one candidate-generation and one verification request; a run refused before dispatch makes none. With `--egress local-only`, trestle admits only local routes on numeric loopback endpoints. With `--egress policy-approved`, sanitized, secret-scanned source that trestle selects from each case leaves the machine for the approved `private_remote` or `brokered_remote` routes, under those providers' terms. The corpus contains no private code, but it is still sent. The driver itself opens no network connection. It reads the inventory and policy only to print the summary, and passes its environment to trestle so the policy's credential references resolve as in an ordinary review.
+
+The output directory must be new. `bundle.json` follows `schemas/evaluation/model-corpus-run-bundle-v1.schema.json` and is rewritten after every run. It binds the corpus identity, manifest digest, label digests, revisions, trestle digest and operator flags. Each run has its exact stdout and stderr in new `0600` files under `runs/CASE/`, their SHA-256, the exit status or signal, the wall-clock latency, and the status, `usage_known`, `actual_cost_micro_usd` and any `context_shortfall` copied from the result. The result records no consumed token counts. Stdout beyond 256 KiB, stderr beyond 64 KiB, or a run longer than the timeout plus 60 seconds signals the process group and is recorded as `output_limit` or `timed_out`. A changed trestle executable stops the batch. [`trestle evaluate model-result`](model-result-evaluation.md) accepts only deterministic corpus cases, so the binding of a capture to its source is the driver's record of the revisions it materialized, which anyone can reproduce with `materialize`.
+
+### Scoring and what the numbers mean
+
+```sh
+PYTHONPATH=python/open_trestle_eval/src python3 -m open_trestle_eval.model_score \
+  --bundle /owned/new-bundle --output /owned/new-score.json
+```
+
+The scorer refuses a bundle that does not bind this exact corpus, its label digests and revisions, or whose stdout files do not match their pins. It reads each result's verified diagnostic set and finding guidance. A verified finding matches an expected finding when it has the same path and side, its lines overlap the primary or an accepted location, and its category is in the compatible set. A finding without a category, as in a version 1 result, matches on location alone and is counted in `category_unchecked_true_positive`. Assignment is one-to-one and maximal. An unmatched finding is a false positive, classed as `duplicate` (a second match for one expected finding), `near_miss` (at a labelled trap), `category_mismatch` (right place, incompatible category) or `other`. An expected finding left unmatched is a false negative.
+
+A run with verified findings has the outcome `findings`. One with none and at least one inconclusive verdict is an `abstention`, and any other completed run is `no_finding`. Refused, canceled, failed and unparseable runs are counted under `runs` and kept out of every rate. For each case and in aggregate, the report in `schemas/evaluation/model-corpus-score-v1.schema.json` gives:
+
+- true positives, false positives with their classes, and false negatives;
+- precision, `TP / (TP + FP)`, and recall, `TP / (TP + FN)`;
+- the false-positive rate, the share of completed runs of `no_finding` cases with at least one false positive, and the same rate for near misses at their traps;
+- abstention correctness, the share of abstention-case runs that abstained, with the overclaimed and silent runs beside it;
+- outcome agreement, and the mean, range and sample standard deviation across runs of latency and known cost. Token use is reported as unknown.
+
+Ratios are integer numerator and denominator pairs; `0/0` is not success. Every number carries `label_status: labels_pending_human_review`, `release_evidence_eligible` is false and `golden_status` is `prohibited_pending_human_review`, as in the deterministic corpus tooling. A written report exits 4, never 0.
+
+These numbers describe agreement with pending fixture-author labels on 23 synthetic cases. They are not adjudicated quality, and with three runs per case a rate is a count, not an estimate with a confidence interval. A match is agreement of location and category, not proof that the finding states the labelled defect, so the reviewer should read the matched claims. Latency is the end-to-end wall-clock time of one command, including start-up, source acquisition and both model requests, on one machine. It is not inference latency. Cost is what the result's route reconciliation reports and is unknown when `usage_known` is false. The report evaluates no threshold, does not reverify the result's sealed identities, and does not satisfy the independently adjudicated quality release gate.
