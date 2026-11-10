@@ -6,36 +6,67 @@ import (
 
 	modelhandler "github.com/georgejieh/open-trestle/handlers/model"
 	"github.com/georgejieh/open-trestle/internal/gateway"
+	"github.com/georgejieh/open-trestle/internal/provider"
 )
 
+// maxObservedRouteUsages bounds the usage records of one run. A direct run
+// claims two route attempts and an investigation run at most eight turns.
+const maxObservedRouteUsages = 64
+
 // routeFailureObserver records the adapter-classified failure class of each
-// failed model dispatch of the session's current run. It observes only the
-// gateway result the adapter already returned; it never changes the result,
+// failed model dispatch of the session's current run, and the provider-reported
+// token usage of every dispatch by its authorization identity. It observes only
+// the gateway result the adapter already returned; it never changes the result,
 // request, or routing, and it records no content.
 type routeFailureObserver struct {
 	mu       sync.Mutex
 	failures map[gateway.RouteFailureClass]bool
+	usages   map[string]provider.RouteTokenUsage
 	// shortfall is the first planning refusal of the run that named a route
 	// context shortfall.
 	shortfall *gateway.RouteContextShortfall
 }
 
-func (o *routeFailureObserver) record(result gateway.RouteDispatchResult) {
-	if result.Status() != gateway.RouteDispatchFailed {
-		return
+// record keeps the usage of one adapter result for its authorization. A result
+// the gateway would refuse, or a second result for one authorization, records
+// unknown usage rather than a count nothing accepted.
+func (o *routeFailureObserver) record(authorization string, capability provider.Capability, result gateway.RouteDispatchResult) {
+	usage := provider.NewUnknownRouteTokenUsage()
+	if result.Validate() == nil && result.AuthorizationIdentity() == "" && (result.Status() != gateway.RouteDispatchSucceeded || result.Response().Capability() == capability) {
+		usage = result.Usage()
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if o.failures == nil {
-		o.failures = map[gateway.RouteFailureClass]bool{}
+	if result.Status() == gateway.RouteDispatchFailed {
+		if o.failures == nil {
+			o.failures = map[gateway.RouteFailureClass]bool{}
+		}
+		o.failures[result.Failure()] = true
 	}
-	o.failures[result.Failure()] = true
+	if o.usages == nil {
+		o.usages = map[string]provider.RouteTokenUsage{}
+	}
+	if _, repeated := o.usages[authorization]; repeated {
+		o.usages[authorization] = provider.NewUnknownRouteTokenUsage()
+	} else if len(o.usages) < maxObservedRouteUsages {
+		o.usages[authorization] = usage
+	}
+}
+
+// dispatchedUsage returns the usage observed for an authorization and whether
+// an adapter result was observed for it at all.
+func (o *routeFailureObserver) dispatchedUsage(authorization string) (provider.RouteTokenUsage, bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	usage, ok := o.usages[authorization]
+	return usage, ok
 }
 
 func (o *routeFailureObserver) reset() {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.failures = nil
+	o.usages = nil
 	o.shortfall = nil
 }
 
@@ -52,7 +83,7 @@ type observedRouteDispatcher struct {
 
 func (d observedRouteDispatcher) DispatchRoute(ctx context.Context, request gateway.RouteDispatchRequest) gateway.RouteDispatchResult {
 	result := d.RouteDispatcher.DispatchRoute(ctx, request)
-	d.observer.record(result)
+	d.observer.record(request.Authorization().Identity(), request.Request().Capability(), result)
 	return result
 }
 
@@ -66,7 +97,7 @@ type observedSanitizedRouteDispatcher struct {
 
 func (d observedSanitizedRouteDispatcher) DispatchSanitizedRoute(ctx context.Context, request gateway.RouteDispatchRequest, proof modelhandler.SanitizedDispatchProof) gateway.RouteDispatchResult {
 	result := d.sanitized.DispatchSanitizedRoute(ctx, request, proof)
-	d.observer.record(result)
+	d.observer.record(request.Authorization().Identity(), request.Request().Capability(), result)
 	return result
 }
 
