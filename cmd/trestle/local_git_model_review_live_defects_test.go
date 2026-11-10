@@ -124,18 +124,26 @@ func TestLocalModelReviewReportsExhaustedVerifierOutput(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &wire); err != nil || wire.Status != "failed" || wire.Failure != "internal" || wire.FailureDetail != localreview.FailureDetailModelOutputExhausted {
 		t.Fatalf("result=%+v err=%v", wire, err)
 	}
-	// The adapter reports no usage for a failed dispatch, so the exhausted
-	// verifier attempt is counted with unknown tokens and the total is unknown,
-	// never zero; the recorded generation keeps its tokens.
-	const tokens = `"token_usage":{"known":false,"route_attempts":2,"generation":{"known":true,"route_attempts":1,"input_tokens":100,"output_tokens":100,"cached_input_tokens":0},"verification":{"known":false,"route_attempts":1}}`
+	// The exhausted verifier reply reported its usage, so the failed attempt
+	// keeps it and the run's tokens are known. Cost stays unknown: it counts
+	// only recorded executions.
+	const stage = `{"known":true,"route_attempts":1,"input_tokens":100,"output_tokens":100,"cached_input_tokens":0}`
+	const tokens = `"token_usage":{"known":true,"route_attempts":2,"input_tokens":200,"output_tokens":200,"cached_input_tokens":0,"generation":` + stage + `,"verification":` + stage + `}`
 	if !strings.Contains(stdout.String(), `"usage_known":false,"actual_cost_micro_usd":0,`+tokens+`,`) {
 		t.Fatalf("failed verifier attempt token usage: %s", stdout.String())
+	}
+	// The same reply without usage leaves the attempt, and so the run, unknown.
+	unreported := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, verificationMode: "exhausted_unreported"})
+	stdout.Reset()
+	const unknown = `"token_usage":{"known":false,"route_attempts":2,"generation":` + stage + `,"verification":{"known":false,"route_attempts":1}}`
+	if code := run(unreported.args, &stdout, &stderr); code != 1 || !strings.Contains(stdout.String(), `"failure_detail":"model_output_exhausted"`) || !strings.Contains(stdout.String(), unknown) {
+		t.Fatalf("unreported exhausted reply: %s", stdout.String())
 	}
 	text := runLocalModelText(t, newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, verificationMode: "exhausted"}), 1)
 	if !strings.Contains(text, "failure: internal (task verification): model_output_exhausted\nhint: the model used its whole output allowance (reasoning) before answering") || !strings.Contains(text, "--max-output-tokens") {
 		t.Fatalf("exhausted output not reported: %q", text)
 	}
-	if !strings.Contains(text, "\ntokens: unknown over 2 route attempts (not every attempt reported usage)\n") {
+	if !strings.Contains(text, "\ntokens: input=200 output=200 cached_input=0 over 2 route attempts\n") {
 		t.Fatalf("exhausted text lacks the token line: %q", text)
 	}
 	// Any other failure keeps the field absent, so other results keep their bytes.

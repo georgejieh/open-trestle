@@ -585,7 +585,9 @@ func (a *Adapter) executeWithDispatchProof(
 		normalized, err = a.normalizeProviderResponse(content, route)
 	}
 	if errors.Is(err, errModelOutputExhausted) {
-		return failed(gateway.RouteFailureOutputExhausted, gateway.RouteReplayOutcomeUnknown, 0)
+		// The provider completed the request and may have reported what it
+		// consumed; settle the attempt from that usage, as for a success.
+		return failedWithUsage(gateway.RouteFailureOutputExhausted, gateway.RouteReplayOutcomeUnknown, exhaustedUsage(err))
 	}
 	if err != nil {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayOutcomeUnknown, 0)
@@ -722,6 +724,34 @@ var errInvalidResponseBody = errors.New("invalid OpenAI response body")
 // document shape, ended the request.
 var errModelOutputExhausted = errors.New("model output allowance exhausted before an answer")
 
+// outputExhaustedError is errModelOutputExhausted with the usage the provider
+// reported on the exhausted response. The usage passed the same checks as a
+// successful response's usage; usage that fails them, or none, is unknown, so
+// the failure class never depends on the usage.
+type outputExhaustedError struct{ usage provider.RouteTokenUsage }
+
+func (e outputExhaustedError) Error() string        { return errModelOutputExhausted.Error() }
+func (e outputExhaustedError) Is(target error) bool { return target == errModelOutputExhausted }
+
+// exhaustedWithUsage returns errModelOutputExhausted carrying usage, or
+// unknown usage when normalizing it failed.
+func exhaustedWithUsage(usage provider.RouteTokenUsage, err error) error {
+	if err != nil {
+		usage = provider.NewUnknownRouteTokenUsage()
+	}
+	return outputExhaustedError{usage: usage}
+}
+
+// exhaustedUsage returns the reported usage an exhausted-response error
+// carries, and unknown usage for any other error.
+func exhaustedUsage(err error) provider.RouteTokenUsage {
+	var exhausted outputExhaustedError
+	if errors.As(err, &exhausted) {
+		return exhausted.usage
+	}
+	return provider.NewUnknownRouteTokenUsage()
+}
+
 // errNoOutputParts is a response with no answer part (for example only a
 // reasoning item). It is refused like any malformed response unless the
 // response stopped at the output limit.
@@ -841,7 +871,7 @@ func normalizeResponse(content []byte, route provider.RouteReference) (provider.
 	}
 	parts, err := normalizeOutput(wire.Output, wire.Status)
 	if errors.Is(err, errNoOutputParts) && finish == provider.ResponseFinishLength {
-		return provider.Response{}, errModelOutputExhausted
+		return provider.Response{}, exhaustedWithUsage(normalizeUsage(wire.Usage))
 	}
 	if errors.Is(err, errNoOutputParts) {
 		return provider.Response{}, ErrInvalidConfig
@@ -1064,6 +1094,16 @@ func failed(failure gateway.RouteFailureClass, safety gateway.RouteReplaySafety,
 		provider.NewUnknownRouteTokenUsage(),
 		retryAfter,
 	)
+	return result
+}
+
+// failedWithUsage is a failure whose response reported usage. Usage the
+// gateway refuses falls back to unknown, so the failure is still recorded.
+func failedWithUsage(failure gateway.RouteFailureClass, safety gateway.RouteReplaySafety, usage provider.RouteTokenUsage) gateway.RouteDispatchResult {
+	result, err := gateway.NewFailedRouteDispatchResult(failure, safety, usage, 0)
+	if err != nil {
+		return failed(failure, safety, 0)
+	}
 	return result
 }
 

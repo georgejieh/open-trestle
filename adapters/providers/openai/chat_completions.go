@@ -132,7 +132,7 @@ func normalizeChatResponse(content []byte, route provider.RouteReference) (provi
 		return provider.Response{}, ErrInvalidConfig
 	}
 	if finish == provider.ResponseFinishLength && (message.Refusal == nil || *message.Refusal == "") && (message.Content == nil || strings.TrimSpace(*message.Content) == "") {
-		return provider.Response{}, errModelOutputExhausted
+		return provider.Response{}, exhaustedWithUsage(normalizeChatUsage(wire.Usage))
 	}
 	item := messageContentWire{Type: "output_text"}
 	if message.Content != nil {

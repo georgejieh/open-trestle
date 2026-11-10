@@ -3,6 +3,7 @@ package openai
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"math/big"
 	"strconv"
 	"strings"
@@ -46,6 +47,10 @@ func normalizeOpenCodeConsoleResponse(content []byte, route provider.RouteRefere
 		return provider.Response{}, ErrInvalidConfig
 	}
 	response, err := normalizeChatResponse(generic, route)
+	if errors.Is(err, errModelOutputExhausted) {
+		// Native usage is withheld from an exhausted reply as from a successful one.
+		return provider.Response{}, errModelOutputExhausted
+	}
 	if err != nil {
 		return provider.Response{}, err
 	}

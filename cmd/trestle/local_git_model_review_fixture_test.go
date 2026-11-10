@@ -348,13 +348,17 @@ func (m *localModelEndpoint) respond(t *testing.T, w http.ResponseWriter, packet
 		finish := "stop"
 		// exhausted mirrors a reasoning model that spent the whole output
 		// allowance before answering: a length stop with empty content.
-		if m.mode == "exhausted" {
+		// exhausted_unreported is the same reply without usage.
+		if m.mode == "exhausted" || m.mode == "exhausted_unreported" {
 			finish, message["content"] = "length", ""
 		}
 		response = map[string]any{
 			"id": "chatcmpl-" + m.model, "object": "chat.completion", "model": m.model,
 			"choices": []any{map[string]any{"index": 0, "finish_reason": finish, "message": message}},
 			"usage":   map[string]any{"prompt_tokens": 100, "completion_tokens": 100, "total_tokens": 200},
+		}
+		if m.mode == "exhausted_unreported" {
+			delete(response, "usage")
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
