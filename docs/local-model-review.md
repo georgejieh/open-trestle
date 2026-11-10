@@ -1105,10 +1105,17 @@ review whose two attempts each reported 100 input and 100 output tokens reads:
   usage, because its cost is known). A claimed turn without a turn record has no
   known stage, so both stage objects are then unknown while the total can still
   be known.
-- `usage_known` and `actual_cost_micro_usd` keep their meaning: cost, which
-  needs pricing and is reported only when every claimed attempt is a recorded
-  execution with known usage. A completed direct review has `token_usage.known`
-  equal to `usage_known`; a failed run can know its tokens but not its cost.
+- `usage_known` and `actual_cost_micro_usd` cover the same claimed attempts:
+  `actual_cost_micro_usd` is the sum of their settled actual costs, and
+  `usage_known` is true only when every one has a known settlement. A recorded
+  execution contributes its reconciliation; any other attempt contributes the
+  actual cost its reconciliation derives from the observed usage (the same
+  pricing calculation), and only when the run recorded that reconciliation. So
+  a failed attempt that reported usage and was settled from it, such as an
+  exhausted reply, keeps the cost known. In a direct review `usage_known` equals
+  `token_usage.known` unless an attempt that reported usage was never settled;
+  an `--investigation-policy` run also requires the sum to equal the route
+  owner's own settled total (`investigation.known_cost_micro_usd`).
 
 Text output adds one line before any `style:` line and `limitations:`:
 
@@ -1250,8 +1257,8 @@ By default there is no exit-0 branch; `--exit-code-policy` is the explicit opt-i
 the repository is clear. Source omissions, independent abstention, bounded source
 selection, empty memory, lack of publication, and ephemeral state remain visible.
 Unknown final usage after an incomplete model dispatch is not presented as a
-known zero cost. The initial receipt reports aggregate cost only when the recorded
-successful model artifacts provide all claimed costs.
+known zero cost. The receipt reports aggregate cost only when every claimed
+attempt has a known settlement (see [Token usage](#token-usage)).
 
 The default artifact capacity is 4096 objects. Library callers may choose 1 to
 16384. This is a count bound, not a total resident-memory promise. Existing source,
