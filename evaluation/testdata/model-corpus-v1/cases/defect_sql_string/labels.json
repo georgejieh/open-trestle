@@ -1,0 +1,30 @@
+{
+  "contract": "open-trestle/model-corpus-labels",
+  "schema_version": 1,
+  "case_id": "defect_sql_string",
+  "case_kind": "defect",
+  "review_state": "pending",
+  "reviewer_identifier": null,
+  "review_date": null,
+  "fixture_author_identifier": "open-trestle-maintainers",
+  "go_version": "1.22",
+  "go_semantics": "Both trees declare go 1.22 in go.mod. The labels assume Go 1.22 language semantics and standard library, built by a Go 1.22 or later toolchain with this module as the main module.",
+  "expected_outcome": "findings",
+  "expected_findings": [
+    {
+      "id": "f1",
+      "path": "store.go",
+      "side": "head",
+      "start_line": 29,
+      "end_line": 30,
+      "also_accept_locations": [],
+      "category": "security",
+      "also_compatible_categories": [],
+      "severity_hint": "critical",
+      "defect": "`TitlesByOwner` builds its SQL by concatenating `owner` into a quoted literal, so an owner value containing a quote can change the query (SQL injection).",
+      "rationale": "The existing `Title` method shows the driver's placeholder convention. Concatenation lets input such as `x' OR '1'='1` alter the WHERE clause instead of being bound as a parameter."
+    }
+  ],
+  "false_positive_traps": [],
+  "abstention_reason": null
+}

@@ -1,0 +1,30 @@
+{
+  "contract": "open-trestle/model-corpus-labels",
+  "schema_version": 1,
+  "case_id": "defect_token_compare",
+  "case_kind": "defect",
+  "review_state": "pending",
+  "reviewer_identifier": null,
+  "review_date": null,
+  "fixture_author_identifier": "open-trestle-maintainers",
+  "go_version": "1.22",
+  "go_semantics": "Both trees declare go 1.22 in go.mod. The labels assume Go 1.22 language semantics and standard library, built by a Go 1.22 or later toolchain with this module as the main module.",
+  "expected_outcome": "findings",
+  "expected_findings": [
+    {
+      "id": "f1",
+      "path": "auth.go",
+      "side": "head",
+      "start_line": 28,
+      "end_line": 28,
+      "also_accept_locations": [],
+      "category": "security",
+      "also_compatible_categories": [],
+      "severity_hint": "medium",
+      "defect": "The bearer token is now compared with `==`, which can return as soon as a byte differs, so response timing can reveal how much of a guessed token is correct.",
+      "rationale": "String equality can stop at the first differing byte. `subtle.ConstantTimeCompare` was used to make the comparison time independent of the token's contents, and the change removes that property for a secret."
+    }
+  ],
+  "false_positive_traps": [],
+  "abstention_reason": null
+}

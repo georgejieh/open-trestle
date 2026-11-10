@@ -1,0 +1,16 @@
+{
+  "contract": "open-trestle/model-corpus-labels",
+  "schema_version": 1,
+  "case_id": "clean_rename",
+  "case_kind": "clean",
+  "review_state": "pending",
+  "reviewer_identifier": null,
+  "review_date": null,
+  "fixture_author_identifier": "open-trestle-maintainers",
+  "go_version": "1.22",
+  "go_semantics": "Both trees declare go 1.22 in go.mod. The labels assume Go 1.22 language semantics and standard library, built by a Go 1.22 or later toolchain with this module as the main module.",
+  "expected_outcome": "no_finding",
+  "expected_findings": [],
+  "false_positive_traps": [],
+  "abstention_reason": null
+}

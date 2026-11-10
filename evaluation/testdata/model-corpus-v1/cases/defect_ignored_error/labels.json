@@ -1,0 +1,33 @@
+{
+  "contract": "open-trestle/model-corpus-labels",
+  "schema_version": 1,
+  "case_id": "defect_ignored_error",
+  "case_kind": "defect",
+  "review_state": "pending",
+  "reviewer_identifier": null,
+  "review_date": null,
+  "fixture_author_identifier": "open-trestle-maintainers",
+  "go_version": "1.22",
+  "go_semantics": "Both trees declare go 1.22 in go.mod. The labels assume Go 1.22 language semantics and standard library, built by a Go 1.22 or later toolchain with this module as the main module.",
+  "expected_outcome": "findings",
+  "expected_findings": [
+    {
+      "id": "f1",
+      "path": "config.go",
+      "side": "head",
+      "start_line": 31,
+      "end_line": 32,
+      "also_accept_locations": [],
+      "category": "correctness",
+      "also_compatible_categories": [
+        "reliability",
+        "maintainability"
+      ],
+      "severity_hint": "medium",
+      "defect": "`Load` discards the error from `json.Unmarshal`, so a malformed or mistyped configuration file returns default or partially decoded settings with a nil error.",
+      "rationale": "`json.Unmarshal` reports syntax errors without decoding and type mismatches after decoding other fields. Ignoring its result lets `Load` claim success for a file it did not read correctly."
+    }
+  ],
+  "false_positive_traps": [],
+  "abstention_reason": null
+}

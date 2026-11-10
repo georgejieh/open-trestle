@@ -1,0 +1,40 @@
+{
+  "contract": "open-trestle/model-corpus-labels",
+  "schema_version": 1,
+  "case_id": "defect_error_wrap",
+  "case_kind": "defect",
+  "review_state": "pending",
+  "reviewer_identifier": null,
+  "review_date": null,
+  "fixture_author_identifier": "open-trestle-maintainers",
+  "go_version": "1.22",
+  "go_semantics": "Both trees declare go 1.22 in go.mod. The labels assume Go 1.22 language semantics and standard library, built by a Go 1.22 or later toolchain with this module as the main module.",
+  "expected_outcome": "findings",
+  "expected_findings": [
+    {
+      "id": "f1",
+      "path": "items.go",
+      "side": "head",
+      "start_line": 35,
+      "end_line": 35,
+      "also_accept_locations": [
+        {
+          "path": "items.go",
+          "side": "head",
+          "start_line": 48,
+          "end_line": 48
+        }
+      ],
+      "category": "correctness",
+      "also_compatible_categories": [
+        "reliability",
+        "maintainability"
+      ],
+      "severity_hint": "medium",
+      "defect": "`Get` now formats `ErrNotFound` with `%v`, which does not wrap it, so `errors.Is(err, ErrNotFound)` in `ServeHTTP` is false and a missing item returns 500 instead of 404.",
+      "rationale": "Only the `%w` verb records the wrapped error for `errors.Is` and `errors.As`; `%v` keeps only its text, so the handler's sentinel check no longer matches."
+    }
+  ],
+  "false_positive_traps": [],
+  "abstention_reason": null
+}

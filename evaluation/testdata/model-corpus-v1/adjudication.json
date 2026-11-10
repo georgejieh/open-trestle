@@ -1,0 +1,9 @@
+{
+  "contract": "open-trestle/model-corpus-adjudication",
+  "schema_version": 1,
+  "corpus_identity": "33cced6dcc2c32c6513084335df4d60931f426e3d8aabf648552339ca35ea36a",
+  "review_state": "pending",
+  "method": "independent_human_review",
+  "decision": "pending",
+  "case_decisions": []
+}

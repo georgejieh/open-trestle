@@ -1,0 +1,40 @@
+{
+  "contract": "open-trestle/model-corpus-labels",
+  "schema_version": 1,
+  "case_id": "deletion_bounds_check",
+  "case_kind": "deletion_defect",
+  "review_state": "pending",
+  "reviewer_identifier": null,
+  "review_date": null,
+  "fixture_author_identifier": "open-trestle-maintainers",
+  "go_version": "1.22",
+  "go_semantics": "Both trees declare go 1.22 in go.mod. The labels assume Go 1.22 language semantics and standard library, built by a Go 1.22 or later toolchain with this module as the main module.",
+  "expected_outcome": "findings",
+  "expected_findings": [
+    {
+      "id": "f1",
+      "path": "page.go",
+      "side": "base",
+      "start_line": 33,
+      "end_line": 35,
+      "also_accept_locations": [
+        {
+          "path": "page.go",
+          "side": "head",
+          "start_line": 33,
+          "end_line": 33
+        }
+      ],
+      "category": "correctness",
+      "also_compatible_categories": [
+        "reliability",
+        "security"
+      ],
+      "severity_hint": "high",
+      "defect": "Removing the position check makes `Page.At` panic with an index out of range for a negative or too-large position instead of returning `ErrOutOfRange`, which the unchanged handler passes straight from the request path.",
+      "rationale": "The doc comment and `EntryHandler` still rely on `ErrOutOfRange`; without the check `p.entries[i]` is evaluated for any integer the client sends, so a request such as `/results/99` panics in the handler, which `net/http` recovers by logging the panic and dropping the connection instead of answering 404."
+    }
+  ],
+  "false_positive_traps": [],
+  "abstention_reason": null
+}

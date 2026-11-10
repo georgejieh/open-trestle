@@ -1,0 +1,27 @@
+{
+  "contract": "open-trestle/model-corpus-labels",
+  "schema_version": 1,
+  "case_id": "abstention_argument_order",
+  "case_kind": "abstention",
+  "review_state": "pending",
+  "reviewer_identifier": null,
+  "review_date": null,
+  "fixture_author_identifier": "open-trestle-maintainers",
+  "go_version": "1.22",
+  "go_semantics": "Both trees declare go 1.22 in go.mod. The labels assume Go 1.22 language semantics and standard library, built by a Go 1.22 or later toolchain with this module as the main module. The required module example.test/platform is not present, so neither tree builds; that missing context is the point of the case.",
+  "expected_outcome": "abstention",
+  "expected_findings": [],
+  "false_positive_traps": [
+    {
+      "id": "t1",
+      "path": "push.go",
+      "side": "head",
+      "start_line": 28,
+      "end_line": 28,
+      "also_match_locations": [],
+      "wrong_finding": "A verified finding that the swapped call now retries 200 times with a 5 ms backoff, or that the base order was the bug.",
+      "why_wrong": "Either claim needs the signature of `retry.Do`, which is not in the reviewed source; only an inconclusive or abstaining outcome is supported by the evidence."
+    }
+  ],
+  "abstention_reason": "`retry.Do` belongs to the module `example.test/platform`, whose source is in neither tree. Whether its second parameter is the attempt count or the backoff decides whether the head introduces a bug or fixes one, and the diff cannot show which."
+}

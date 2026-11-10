@@ -1,0 +1,33 @@
+{
+  "contract": "open-trestle/model-corpus-labels",
+  "schema_version": 1,
+  "case_id": "defect_lock_not_released",
+  "case_kind": "defect",
+  "review_state": "pending",
+  "reviewer_identifier": null,
+  "review_date": null,
+  "fixture_author_identifier": "open-trestle-maintainers",
+  "go_version": "1.22",
+  "go_semantics": "Both trees declare go 1.22 in go.mod. The labels assume Go 1.22 language semantics and standard library, built by a Go 1.22 or later toolchain with this module as the main module.",
+  "expected_outcome": "findings",
+  "expected_findings": [
+    {
+      "id": "f1",
+      "path": "cache.go",
+      "side": "head",
+      "start_line": 47,
+      "end_line": 50,
+      "also_accept_locations": [],
+      "category": "concurrency",
+      "also_compatible_categories": [
+        "reliability",
+        "correctness"
+      ],
+      "severity_hint": "high",
+      "defect": "`Refresh` returns false for an absent or expired key while still holding `c.mu`, so every later `Set`, `Get` or `Refresh` call blocks forever.",
+      "rationale": "The mutex is unlocked only on the success path. The early return skips `c.mu.Unlock()`, and `sync.Mutex` is not reentrant, so the cache deadlocks after the first miss."
+    }
+  ],
+  "false_positive_traps": [],
+  "abstention_reason": null
+}

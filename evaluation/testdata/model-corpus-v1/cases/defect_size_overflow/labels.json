@@ -1,0 +1,40 @@
+{
+  "contract": "open-trestle/model-corpus-labels",
+  "schema_version": 1,
+  "case_id": "defect_size_overflow",
+  "case_kind": "defect",
+  "review_state": "pending",
+  "reviewer_identifier": null,
+  "review_date": null,
+  "fixture_author_identifier": "open-trestle-maintainers",
+  "go_version": "1.22",
+  "go_semantics": "Both trees declare go 1.22 in go.mod. The labels assume Go 1.22 language semantics and standard library, built by a Go 1.22 or later toolchain with this module as the main module.",
+  "expected_outcome": "findings",
+  "expected_findings": [
+    {
+      "id": "f1",
+      "path": "frame.go",
+      "side": "head",
+      "start_line": 24,
+      "end_line": 25,
+      "also_accept_locations": [
+        {
+          "path": "frame.go",
+          "side": "head",
+          "start_line": 28,
+          "end_line": 28
+        }
+      ],
+      "category": "security",
+      "also_compatible_categories": [
+        "reliability",
+        "correctness"
+      ],
+      "severity_hint": "high",
+      "defect": "`count * size` is computed in uint32 and can wrap around, so a header such as 65536 by 65536 passes the 16 MiB limit as 0 and the decoder then allocates 4 GiB from attacker-controlled input.",
+      "rationale": "Unsigned Go arithmetic wraps modulo 2^32 without an error. The limit check uses the wrapped product while the allocation uses the unwrapped `int` product, so the bound does not hold."
+    }
+  ],
+  "false_positive_traps": [],
+  "abstention_reason": null
+}

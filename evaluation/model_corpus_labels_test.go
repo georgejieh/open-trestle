@@ -2,6 +2,7 @@ package evaluation
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -102,5 +103,61 @@ func TestModelCorpusLabelsSchemaAdmitsOnlyPendingConsistentLabels(t *testing.T) 
 	}
 	if !strings.HasPrefix(modelCorpusLabelsSchema, "urn:open-trestle:schema:evaluation:") || !registry.Has(modelCorpusLabelsSchema) {
 		t.Fatal("labels schema not published under the evaluation namespace")
+	}
+}
+
+// The Python loader in open_trestle_eval.model_corpus checks digests, file
+// inventory and line bounds; this test checks every committed label set
+// against the published schema with an independent checker.
+func TestModelCorpusV1LabelsSatisfyThePublishedSchema(t *testing.T) {
+	registry, err := schemacheck.Load(filepath.Join("..", "schemas"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join("testdata", "model-corpus-v1")
+	encoded, err := os.ReadFile(filepath.Join(root, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		ReviewState    string `json:"review_state"`
+		LabelsContract string `json:"labels_contract"`
+		Cases          []struct {
+			ID     string `json:"id"`
+			Kind   string `json:"kind"`
+			Labels struct {
+				Path string `json:"path"`
+			} `json:"labels"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(encoded, &manifest); err != nil || manifest.ReviewState != "pending" || manifest.LabelsContract != modelCorpusLabelsSchema || len(manifest.Cases) == 0 {
+		t.Fatalf("manifest is not a pending model corpus manifest: %v", err)
+	}
+	listed, err := filepath.Glob(filepath.Join(root, "cases", "*", "labels.json"))
+	if err != nil || len(listed) != len(manifest.Cases) {
+		t.Fatalf("labels files=%d, manifest cases=%d (%v)", len(listed), len(manifest.Cases), err)
+	}
+	kinds := map[string]int{}
+	for _, item := range manifest.Cases {
+		labels, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(item.Labels.Path)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := registry.Validate(modelCorpusLabelsSchema, labels); err != nil {
+			t.Fatalf("%s: %v", item.ID, err)
+		}
+		var identity struct {
+			CaseID   string `json:"case_id"`
+			CaseKind string `json:"case_kind"`
+		}
+		if json.Unmarshal(labels, &identity) != nil || identity.CaseID != item.ID || identity.CaseKind != item.Kind {
+			t.Fatalf("%s: labels name case %q of kind %q", item.ID, identity.CaseID, identity.CaseKind)
+		}
+		kinds[item.Kind]++
+	}
+	for _, kind := range []string{"defect", "deletion_defect", "near_miss", "clean", "abstention"} {
+		if kinds[kind] == 0 {
+			t.Fatalf("corpus has no %s case", kind)
+		}
 	}
 }
