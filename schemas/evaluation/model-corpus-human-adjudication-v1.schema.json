@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:evaluation:model-corpus-human-adjudication:v1",
+  "title": "Open Trestle model-review corpus human adjudication v1",
+  "description": "Externally asserted, source-first human review of the exact pending labels of one model-review corpus, with one decision per case in corpus order. The importer pins the record by the SHA-256 of its exact bytes and checks every case identifier, order and label digest against the corpus. The record does not authenticate a reviewer, prove independence or review order, change a label, set a threshold or approve a release.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "corpus_identity",
+    "manifest_sha256",
+    "reviewer_identifier",
+    "fixture_author_identifier",
+    "review_date",
+    "method",
+    "source_first",
+    "prior_run_output_exposure",
+    "cases"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/model-corpus-human-adjudication"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "corpus_identity": {
+      "$ref": "#/$defs/digest",
+      "description": "The corpus_identity of the reviewed corpus manifest."
+    },
+    "manifest_sha256": {
+      "$ref": "#/$defs/digest",
+      "description": "The SHA-256 of the reviewed manifest.json bytes."
+    },
+    "reviewer_identifier": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/identifier"
+        },
+        {
+          "not": {
+            "const": "open-trestle-maintainers"
+          }
+        }
+      ],
+      "description": "The reviewer's own identifier, distinct from the declared fixture author. It is not authenticated."
+    },
+    "fixture_author_identifier": {
+      "const": "open-trestle-maintainers",
+      "description": "The fixture author every version 1 label set declares."
+    },
+    "review_date": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+      "description": "A calendar date, YYYY-MM-DD; the importer also refuses a day the month does not have."
+    },
+    "method": {
+      "const": "independent_human_review"
+    },
+    "source_first": {
+      "const": true,
+      "description": "The reviewer read each case's base and head trees and diff before its labels."
+    },
+    "prior_run_output_exposure": {
+      "const": "none_declared",
+      "description": "The reviewer declares no exposure to any model run output for this corpus before completing the review. Disclosed exposure has no admissible value."
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": {
+        "$ref": "#/$defs/case_decision"
+      },
+      "description": "Exactly one row for every corpus case, in manifest case order."
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9._-]{0,63}$"
+    },
+    "case_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+    },
+    "case_decision": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "case_id",
+            "labels_sha256",
+            "decision"
+          ],
+          "properties": {
+            "case_id": {
+              "$ref": "#/$defs/case_id"
+            },
+            "labels_sha256": {
+              "$ref": "#/$defs/digest"
+            },
+            "decision": {
+              "const": "confirmed"
+            }
+          },
+          "description": "The case's existing labels are confirmed as they stand."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "case_id",
+            "labels_sha256",
+            "decision",
+            "reason"
+          ],
+          "properties": {
+            "case_id": {
+              "$ref": "#/$defs/case_id"
+            },
+            "labels_sha256": {
+              "$ref": "#/$defs/digest"
+            },
+            "decision": {
+              "enum": [
+                "revised",
+                "rejected"
+              ]
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            }
+          },
+          "description": "The labels need a revision or the case is rejected. The case is excluded from adjudicated scoring and reported with this reason; a revised label belongs in a new corpus version."
+        }
+      ]
+    }
+  }
+}

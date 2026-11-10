@@ -131,6 +131,7 @@ Evaluation schemas:
 - `schemas/evaluation/evaluation-adjudication-v1.schema.json`
 - `schemas/evaluation/evaluation-adjudication-result-v1.schema.json`
 - `schemas/evaluation/model-corpus-labels-v1.schema.json` (pending fixture-author labels for one model-review corpus case; version 1 admits no reviewer or review date)
+- `schemas/evaluation/model-corpus-human-adjudication-v1.schema.json` (a human-authored, externally asserted review of one model-review corpus: its identity and manifest digest, a reviewer distinct from the fixture author, the review date, source-first and no-prior-run-output declarations, and one confirmed, revised or rejected decision per case in corpus order with each label digest)
 - `schemas/evaluation/model-corpus-run-bundle-v1.schema.json` (the index of one model-review corpus driver batch: exact output file pins, exit, latency and copied status, usage, cost and token usage fields per run)
 - `schemas/evaluation/model-corpus-score-v1.schema.json` (counts and integer ratio pairs from matching a run bundle to the pending labels, with latency, cost and token spreads across runs; every number is `labels_pending_human_review` and `release_evidence_eligible` is false)
 
