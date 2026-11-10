@@ -1,0 +1,348 @@
+import contextlib
+import hashlib
+import io
+import json
+import math
+import os
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from jsonschema_subset import SchemaError, validate
+from open_trestle_eval.model_corpus import LABEL_STATUS, default_corpus_root, load_corpus, plan_revisions
+from open_trestle_eval.model_runs import run_corpus, summarize_result
+from open_trestle_eval.model_score import ScoreError, main, read_review, score_bundle
+from test_model_runs import FAKE_TRESTLE, operator_flags
+
+SCHEMAS = Path(__file__).resolve().parents[3] / "schemas/evaluation"
+SCORE_SCHEMA = json.loads((SCHEMAS / "model-corpus-score-v1.schema.json").read_text(encoding="utf-8"))
+BUNDLE_SCHEMA = json.loads((SCHEMAS / "model-corpus-run-bundle-v1.schema.json").read_text(encoding="utf-8"))
+CORPUS = load_corpus(default_corpus_root())
+
+
+def finding(path: str, start: int, end: int, *, side: str = "head", category: str | None = "correctness", severity: str = "error", salt: str = "") -> dict:
+    identity = hashlib.sha256(f"{path}:{side}:{start}:{end}:{salt}".encode()).hexdigest()
+    value = {
+        "identity": identity,
+        "source_identity": hashlib.sha256(b"source:" + identity.encode()).hexdigest(),
+        "fingerprint": hashlib.sha256(b"fingerprint:" + identity.encode()).hexdigest(),
+        "title": "Synthetic title",
+        "message": "Synthetic claim.",
+        "severity": severity,
+        "path": path,
+        "start_line": start,
+        "end_line": end,
+        "evidence_ids": ["source-1"],
+        "_category": category,
+    }
+    if side == "base":
+        value["side"] = "base"
+    return value
+
+
+def result(*findings: dict, status: str | None = None, inconclusive: int = 0, rejected: int = 0, version: int = 4, usage_known: bool = True, cost: int = 100, diagnostics: bool = True) -> bytes:
+    clean = [{key: item for key, item in value.items() if key != "_category"} for value in findings]
+    guidance = [{"finding_identity": value["source_identity"], "category": value["_category"]} for value in findings if value["_category"]]
+    status = status or ("findings" if findings else ("incomplete" if inconclusive or rejected else "no_candidates"))
+    document = {
+        "contract": "open-trestle/local-git-model-review-result",
+        "schema_version": version,
+        "status": status,
+        "ci_disposition": "blocked" if findings else "inconclusive",
+        "run_status": "succeeded",
+        "usage_known": usage_known,
+        "actual_cost_micro_usd": cost,
+        "diagnostics": {
+            "contract": "open-trestle/review-diagnostic-set",
+            "schema_version": 8 if any(value.get("side") == "base" for value in clean) else 5,
+            "coverage": {
+                "candidate_count": len(clean) + inconclusive + rejected,
+                "verified_count": len(clean),
+                "rejected_count": rejected,
+                "inconclusive_count": inconclusive,
+            },
+            "findings": clean,
+        } if diagnostics else None,
+    }
+    if guidance and version >= 4:
+        document["finding_guidance"] = guidance
+    return (json.dumps(document, separators=(",", ":")) + "\n").encode()
+
+
+def refused() -> bytes:
+    return result(status="refused", diagnostics=False, usage_known=False, cost=0)
+
+
+def write_bundle(root: Path, runs: dict[str, list[tuple[bytes, int]]], completion: str = "complete") -> Path:
+    bundle_dir = root / "bundle"
+    (bundle_dir / "runs").mkdir(parents=True)
+    cases = []
+    for case_id, items in runs.items():
+        case = CORPUS.case(case_id)
+        base, head = plan_revisions(case)[:2]
+        (bundle_dir / "runs" / case_id).mkdir()
+        records = []
+        for index, (stdout, latency) in enumerate(items, start=1):
+            files = {}
+            for stream, data in (("stdout", stdout), ("stderr", b"")):
+                relative = f"runs/{case_id}/run-{index}.{stream}"
+                (bundle_dir / relative).write_bytes(data)
+                files[stream] = {"path": relative, "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}
+            records.append({
+                "run_index": index, "started_at": "2026-11-09T00:00:00Z", "termination": "exited", "exit_code": 4,
+                "signal": None, "latency_ns": latency, **files, "result": summarize_result(stdout),
+            })
+        cases.append({
+            "case_id": case_id, "labels_sha256": case.labels_sha256, "repository_name": f"case-{CORPUS.cases.index(case) + 1:02d}",
+            "base_revision": base, "head_revision": head, "runs": records,
+        })
+    bundle = {
+        "contract": "open-trestle/model-corpus-run-bundle", "schema_version": 1, "review_state": "pending",
+        "release_evidence_eligible": False, "label_status": LABEL_STATUS, "completion": completion,
+        "corpus_identity": CORPUS.identity, "manifest_sha256": CORPUS.manifest_sha256, "driver": "open_trestle_eval.model_runs/1",
+        "trestle_path": "/synthetic/trestle", "trestle_sha256": "a" * 64, "runs_per_case": 3,
+        "operator_arguments": ["--tenant", "t", "--repository", "r", "--route-inventory", "/i", "--runtime-policy", "/p", "--egress", "local-only", "--timeout", "1m"],
+        "repository_authority": "corpus.invalid", "repository_namespace": "model-corpus-v1", "revision_algorithm": "sha1",
+        "process_timeout_seconds": 120, "environment": {"os": "Linux", "release": "synthetic", "architecture": "x86_64", "python": "3"},
+        "started_at": "2026-11-09T00:00:00Z", "finished_at": "2026-11-09T00:01:00Z", "cases": cases,
+    }
+    validate(BUNDLE_SCHEMA, bundle)
+    (bundle_dir / "bundle.json").write_text(json.dumps(bundle, indent=2) + "\n", encoding="utf-8")
+    return bundle_dir
+
+
+def every_number_is_labelled(test: unittest.TestCase, metrics: dict) -> None:
+    for key, value in metrics.items():
+        test.assertIsInstance(value, dict, key)
+        test.assertEqual(value["label_status"], LABEL_STATUS, key)
+        for inner in value.values():
+            if isinstance(inner, dict):
+                test.assertEqual(inner["label_status"], LABEL_STATUS, key)
+
+
+class ReadReviewTest(unittest.TestCase):
+    def test_classifies_outcomes_and_reads_categories_and_sides(self) -> None:
+        review = read_review(result(finding("page.go", 33, 35, side="base"), finding("page.go", 33, 33, category=None)))
+        self.assertEqual((review.completion, review.outcome), ("completed", "findings"))
+        self.assertEqual([(item.side, item.category) for item in review.findings], [("base", "correctness"), ("head", None)])
+        self.assertEqual(read_review(result(inconclusive=1)).outcome, "abstention")
+        self.assertEqual(read_review(result(rejected=2)).outcome, "no_finding")
+        self.assertEqual(read_review(result()).outcome, "no_finding")
+        self.assertEqual(read_review(refused()).completion, "not_completed")
+        self.assertEqual(read_review(result(status="incomplete", diagnostics=False)).completion, "not_completed")
+
+    def test_unreadable_results_are_not_scored(self) -> None:
+        good = result(finding("a.go", 1, 1))
+        document = json.loads(good)
+        variants = [
+            b"not json\n",
+            good[:-1],
+            good + good,
+            json.dumps({**document, "schema_version": 2}).encode() + b"\n",
+            json.dumps({**document, "schema_version": True}).encode() + b"\n",
+            json.dumps({**document, "contract": "other"}).encode() + b"\n",
+            json.dumps({**document, "status": "no_candidates"}).encode() + b"\n",
+            json.dumps({**document, "diagnostics": {**document["diagnostics"], "schema_version": 4}}).encode() + b"\n",
+            json.dumps({**document, "finding_guidance": [{"finding_identity": "x", "category": "naming"}]}).encode() + b"\n",
+        ]
+        broken = json.loads(good)
+        broken["diagnostics"]["findings"][0]["end_line"] = 0
+        variants.append(json.dumps(broken).encode() + b"\n")
+        for raw in variants:
+            with self.subTest(raw=raw[:60]):
+                self.assertEqual(read_review(raw).completion, "unreadable")
+
+
+class ScoreBundleTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.root = Path(self.directory.name)
+
+    def tearDown(self) -> None:
+        self.directory.cleanup()
+
+    def score(self, runs: dict, completion: str = "complete") -> dict:
+        report = score_bundle(CORPUS, write_bundle(self.root, runs, completion))
+        validate(SCORE_SCHEMA, report)
+        self.assertEqual((report["review_state"], report["label_status"], report["release_evidence_eligible"], report["golden_status"]),
+                         ("pending", LABEL_STATUS, False, "prohibited_pending_human_review"))
+        every_number_is_labelled(self, report["aggregate"])
+        for case in report["cases"]:
+            every_number_is_labelled(self, case["metrics"])
+        return report
+
+    def test_matches_on_path_side_lines_and_category(self) -> None:
+        report = self.score({
+            "defect_off_by_one": [
+                (result(finding("tail.go", 25, 26)), 1000),
+                (result(finding("tail.go", 5, 5)), 2000),
+                (result(), 3000),
+            ],
+            "deletion_bounds_check": [
+                (result(finding("page.go", 33, 35, side="base")), 10),
+                (result(finding("page.go", 33, 33, category="reliability")), 20),
+                (result(finding("page.go", 34, 34)), 30),
+            ],
+        })
+        off_by_one, bounds = report["cases"]
+        self.assertEqual([len(run["matches"]) for run in off_by_one["runs"]], [1, 0, 0])
+        self.assertEqual(off_by_one["runs"][1]["false_positives"][0]["class"], "other")
+        self.assertEqual([run["false_negatives"] for run in off_by_one["runs"]], [[], ["f1"], ["f1"]])
+        self.assertEqual(off_by_one["metrics"]["counts"]["true_positive"], 1)
+        self.assertEqual(off_by_one["metrics"]["recall"], {"label_status": LABEL_STATUS, "numerator": 1, "denominator": 3})
+        self.assertEqual(off_by_one["metrics"]["precision"], {"label_status": LABEL_STATUS, "numerator": 1, "denominator": 2})
+        self.assertEqual(off_by_one["metrics"]["outcome_agreement"]["numerator"], 2)
+        # Base-side removed lines and the head-side deletion point both count;
+        # head line 34 is a different line in a different coordinate space.
+        self.assertEqual([len(run["matches"]) for run in bounds["runs"]], [1, 1, 0])
+        self.assertEqual(bounds["runs"][2]["false_positives"][0]["side"], "head")
+        aggregate = report["aggregate"]
+        self.assertEqual((aggregate["counts"]["true_positive"], aggregate["counts"]["false_positive"], aggregate["counts"]["false_negative"]), (3, 2, 3))
+        self.assertEqual(aggregate["latency_ns"]["sample_count"], 6)
+        self.assertEqual((aggregate["latency_ns"]["minimum"], aggregate["latency_ns"]["maximum"]), (10, 3000))
+        values = [1000, 2000, 3000]
+        spread = off_by_one["metrics"]["latency_ns"]
+        self.assertEqual(spread["mean"], 2000)
+        self.assertEqual(spread["sample_standard_deviation"], round(math.sqrt(sum((v - 2000) ** 2 for v in values) / 2), 3))
+
+    def test_classifies_false_positives(self) -> None:
+        report = self.score({
+            "defect_data_race": [
+                (result(finding("fetch.go", 29, 29, category="concurrency"), finding("fetch.go", 29, 29, category="correctness", salt="2")), 1),
+                (result(finding("fetch.go", 29, 29, category="style")), 1),
+                (result(finding("fetch.go", 28, 28, category="concurrency"), finding("fetch.go", 29, 29, category=None, salt="3")), 1),
+            ],
+        })
+        runs = report["cases"][0]["runs"]
+        self.assertEqual([item["class"] for item in runs[0]["false_positives"]], ["duplicate"])
+        self.assertEqual([item["class"] for item in runs[1]["false_positives"]], ["category_mismatch"])
+        self.assertEqual(runs[1]["false_negatives"], ["f1"])
+        self.assertEqual([(item["class"], item["trap_id"]) for item in runs[2]["false_positives"]], [("near_miss", "t1")])
+        self.assertEqual(runs[2]["matches"][0]["category_checked"], False)
+        counts = report["aggregate"]["counts"]
+        self.assertEqual(
+            (counts["duplicate_false_positive"], counts["category_mismatch_false_positive"], counts["near_miss_false_positive"], counts["category_unchecked_true_positive"]),
+            (1, 1, 1, 1),
+        )
+
+    def test_near_misses_clean_changes_abstentions_and_incomplete_runs(self) -> None:
+        report = self.score({
+            "abstention_unit_unknown": [
+                (result(inconclusive=1), 5),
+                (result(finding("session.go", 29, 29, category="correctness")), 5),
+                (result(), 5),
+            ],
+            "clean_rename": [(refused(), 1), (b"garbage\n", 1), (result(rejected=1), 7)],
+            "near_miss_loop_variable_go122": [
+                (result(finding("notify.go", 19, 19, category="concurrency")), 3),
+                (result(finding("notify.go", 17, 17, side="base", category="concurrency")), 3),
+                (result(), 3),
+            ],
+        })
+        aggregate = report["aggregate"]
+        self.assertEqual(aggregate["runs"], {"label_status": LABEL_STATUS, "total": 9, "completed": 7, "not_completed": 1, "unreadable": 1})
+        self.assertEqual(aggregate["abstention"]["correctness"], {"label_status": LABEL_STATUS, "numerator": 1, "denominator": 3})
+        self.assertEqual((aggregate["abstention"]["overclaimed"], aggregate["abstention"]["silent"]), (1, 1))
+        self.assertEqual(aggregate["false_positive_rate"], {"label_status": LABEL_STATUS, "numerator": 2, "denominator": 4})
+        self.assertEqual(aggregate["near_miss_false_positive_rate"], {"label_status": LABEL_STATUS, "numerator": 2, "denominator": 3})
+        self.assertEqual(aggregate["counts"]["near_miss_false_positive"], 3)
+        self.assertEqual(aggregate["precision"], {"label_status": LABEL_STATUS, "numerator": 0, "denominator": 3})
+        self.assertEqual(aggregate["recall"], {"label_status": LABEL_STATUS, "numerator": 0, "denominator": 0})
+        clean = report["cases"][1]
+        self.assertEqual([run["completion"] for run in clean["runs"]], ["not_completed", "unreadable", "completed"])
+        self.assertEqual(clean["metrics"]["latency_ns"]["sample_count"], 1)
+        self.assertEqual(clean["runs"][0]["outcome_matches_expected"], None)
+        self.assertEqual(aggregate["tokens"], {"label_status": LABEL_STATUS, "known": False, "reason": "result_records_no_consumed_token_counts"})
+
+    def test_cost_spread_counts_unknown_usage(self) -> None:
+        report = self.score({
+            "clean_rename": [(result(cost=100), 1), (result(cost=300), 1), (result(usage_known=False, cost=0), 1)],
+        })
+        cost = report["aggregate"]["cost_micro_usd"]
+        self.assertEqual((cost["sample_count"], cost["unknown_count"], cost["mean"], cost["minimum"], cost["maximum"]), (2, 1, 200, 100, 300))
+        self.assertEqual(cost["sample_standard_deviation"], round(math.sqrt(20000), 3))
+        single = self.score_empty_spread()
+        self.assertIsNone(single["sample_standard_deviation"])
+
+    def score_empty_spread(self) -> dict:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        report = score_bundle(CORPUS, write_bundle(Path(directory.name), {"clean_rename": [(result(), 9)]}))
+        return report["aggregate"]["latency_ns"]
+
+    def test_score_schema_refuses_an_adjudicated_report(self) -> None:
+        report = self.score({"clean_rename": [(result(), 1)]})
+        for mutate in (
+            lambda value: value.update(release_evidence_eligible=True),
+            lambda value: value.update(label_status="adjudicated"),
+            lambda value: value["aggregate"]["precision"].update(label_status="adjudicated"),
+            lambda value: value["aggregate"]["counts"].update(extra=1),
+        ):
+            altered = json.loads(json.dumps(report))
+            mutate(altered)
+            with self.assertRaises(SchemaError):
+                validate(SCORE_SCHEMA, altered)
+
+    def test_refuses_a_bundle_that_does_not_bind_this_corpus(self) -> None:
+        bundle_dir = write_bundle(self.root, {"clean_rename": [(result(), 1)]})
+        index = json.loads((bundle_dir / "bundle.json").read_text(encoding="utf-8"))
+        edits = {
+            "corpus": lambda value: value.update(corpus_identity="b" * 64),
+            "labels": lambda value: value["cases"][0].update(labels_sha256="c" * 64),
+            "revision": lambda value: value["cases"][0].update(head_revision="d" * 40),
+            "unknown case": lambda value: value["cases"][0].update(case_id="missing_case"),
+            "repeated case": lambda value: value["cases"].append(value["cases"][0]),
+            "run order": lambda value: value["cases"][0]["runs"][0].update(run_index=2),
+            "escape": lambda value: value["cases"][0]["runs"][0]["stdout"].update(path="../bundle.json"),
+            "contract": lambda value: value.update(contract="other"),
+        }
+        for name, edit in edits.items():
+            with self.subTest(name=name):
+                altered = json.loads(json.dumps(index))
+                edit(altered)
+                (bundle_dir / "bundle.json").write_text(json.dumps(altered), encoding="utf-8")
+                with self.assertRaises(ScoreError):
+                    score_bundle(CORPUS, bundle_dir)
+        (bundle_dir / "bundle.json").write_text(json.dumps(index), encoding="utf-8")
+        stdout = bundle_dir / "runs/clean_rename/run-1.stdout"
+        stdout.write_bytes(stdout.read_bytes().replace(b"no_candidates", b"no_candidatez"))
+        with self.assertRaisesRegex(ScoreError, "does not match its pin"):
+            score_bundle(CORPUS, bundle_dir)
+
+    def test_scores_a_bundle_the_driver_wrote(self) -> None:
+        trestle = self.root / "trestle"
+        trestle.write_text(FAKE_TRESTLE, encoding="utf-8")
+        trestle.chmod(0o700)
+        case = CORPUS.case("deletion_authz_check")
+        canned = result(finding("service.go", 49, 51, side="base", category="security")).decode()
+        config = self.root / "fake.json"
+        config.write_text(json.dumps({"log": str(self.root / "log"), "results": {}, "default": {"stdout": canned, "exit": 4}}), encoding="utf-8")
+        (self.root / "routes.json").write_text("{}", encoding="utf-8")
+        (self.root / "policy.json").write_text("{}", encoding="utf-8")
+        with patch.dict(os.environ, {"FAKE_TRESTLE_CONFIG": str(config)}):
+            run_corpus(
+                corpus=CORPUS, cases=[case], trestle=trestle.resolve(), runs=2,
+                operator_arguments=operator_flags(self.root), output=self.root / "driven",
+                repository_authority="corpus.invalid", repository_namespace="model-corpus-v1",
+            )
+        report = score_bundle(CORPUS, self.root / "driven")
+        validate(SCORE_SCHEMA, report)
+        self.assertEqual(report["aggregate"]["recall"], {"label_status": LABEL_STATUS, "numerator": 2, "denominator": 2})
+        self.assertEqual(report["aggregate"]["latency_ns"]["sample_count"], 2)
+
+    def test_command_line_writes_a_new_pending_report(self) -> None:
+        bundle_dir = write_bundle(self.root, {"clean_rename": [(result(), 1)]}, completion="interrupted")
+        output = self.root / "score.json"
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            self.assertEqual(main(["--bundle", str(bundle_dir), "--output", str(output)]), 4)
+            report = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(report["bundle_completion"], "interrupted")
+            self.assertEqual(report["bundle_sha256"], hashlib.sha256((bundle_dir / "bundle.json").read_bytes()).hexdigest())
+            self.assertEqual(main(["--bundle", str(bundle_dir), "--output", str(output)]), 1)
+        self.assertIn("not release evidence", stderr.getvalue())
+
+
+if __name__ == "__main__":
+    unittest.main()
