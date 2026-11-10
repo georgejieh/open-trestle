@@ -156,6 +156,49 @@ func TestLocalGitFeedbackReviewAcceptsVersion5StyleAdviceShapes(t *testing.T) {
 	}
 }
 
+// TestLocalGitFeedbackReviewAcceptsVersion6TokenUsage requires the feedback
+// review to accept a version 6 result, which reports token_usage, and to refuse
+// token_usage under an earlier version or a version 6 result without it.
+func TestLocalGitFeedbackReviewAcceptsVersion6TokenUsage(t *testing.T) {
+	f := newLocalModelFixture(t, localModelFixtureOptions{})
+	_, reviewOut := localModelExecute(t, f, f.args, 4)
+	var wire map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(reviewOut), &wire); err != nil {
+		t.Fatal(err)
+	}
+	const usage = `{"known":true,"route_attempts":2,"input_tokens":200,"output_tokens":200,"cached_input_tokens":0,"generation":{"known":true,"route_attempts":1,"input_tokens":100,"output_tokens":100,"cached_input_tokens":0},"verification":{"known":true,"route_attempts":1,"input_tokens":100,"output_tokens":100,"cached_input_tokens":0}}`
+	document := func(version, tokens string) string {
+		changed := make(map[string]json.RawMessage, len(wire)+1)
+		for key, value := range wire {
+			changed[key] = value
+		}
+		changed["schema_version"] = json.RawMessage(version)
+		delete(changed, "token_usage")
+		if tokens != "" {
+			changed["token_usage"] = json.RawMessage(tokens)
+		}
+		return string(feedbackJourneyJSON(t, changed)) + "\n"
+	}
+	feedback := rmiFeedbackFile(t, map[string]string{"a.go": "preference"})
+	for _, test := range []struct {
+		name, version, tokens string
+		want                  int
+	}{
+		{"version 6 with token usage", "6", usage, 0},
+		{"version 6 without token usage", "6", "", 4},
+		{"version 6 with null token usage", "6", "null", 4},
+		{"version 6 with non-object token usage", "6", "true", 4},
+		{"version 5 with token usage", "5", usage, 4},
+		{"version 1 with token usage", "1", usage, 4},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			reviewPath := feedbackJourneyProtectedFile(t, "review.json", []byte(document(test.version, test.tokens)))
+			feedbackJourneyRun(t, feedbackJourneyArgs(f, reviewPath, feedback, rmiOutputPath(t)), test.want)
+		})
+	}
+	feedbackJourneyCalls(t, f, 1)
+}
+
 // TestLocalGitFeedbackReviewRefusesStyleAdviceNoReviewEmits requires the
 // feedback review to refuse a version 5 result whose style advice a review
 // could not have recorded.

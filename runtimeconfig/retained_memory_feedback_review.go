@@ -46,6 +46,15 @@ func LoadProtectedFeedbackReview(ctx context.Context, path, tenant, repositoryID
 			keys, styled = append(keys, key), true
 		}
 	}
+	// A version 6 result adds token_usage to any earlier shape. The feedback
+	// review does not use the counts.
+	tokens, counted := fields["token_usage"]
+	if counted {
+		keys = append(keys, "token_usage")
+		if trimmed := bytes.TrimSpace(tokens); len(trimmed) == 0 || trimmed[0] != '{' {
+			return fail()
+		}
+	}
 	if len(fields) != len(keys) {
 		return fail()
 	}
@@ -68,7 +77,7 @@ func LoadProtectedFeedbackReview(ctx context.Context, path, tenant, repositoryID
 		Comprehensive       bool            `json:"comprehensive_clearance"`
 		Diagnostics         json.RawMessage `json:"diagnostics"`
 	}
-	if json.Unmarshal(encoded, &wire) != nil || wire.Contract != "open-trestle/local-git-model-review-result" || !feedbackReviewVersion(wire.Version, guided, styled) || !validFeedbackStyleAdvice(encoded, styled) || wire.RunStatus != "succeeded" || wire.Comprehensive || wire.Repository != repository.Identity() || wire.Policy != policy.Identity() {
+	if json.Unmarshal(encoded, &wire) != nil || wire.Contract != "open-trestle/local-git-model-review-result" || !feedbackReviewVersion(wire.Version, guided, styled, counted) || !validFeedbackStyleAdvice(encoded, styled) || wire.RunStatus != "succeeded" || wire.Comprehensive || wire.Repository != repository.Identity() || wire.Policy != policy.Identity() {
 		return fail()
 	}
 	if wire.Status != "findings" && wire.Status != "incomplete" && wire.Status != "no_candidates" {
@@ -105,16 +114,19 @@ func validFeedbackStyleAdvice(encoded []byte, styled bool) bool {
 }
 
 // feedbackReviewVersion accepts version 1 without guidance or style advice,
-// version 4 with guidance only, and version 5 with style advice and optional
-// guidance.
-func feedbackReviewVersion(version int, guided, styled bool) bool {
+// version 4 with guidance only, version 5 with style advice and optional
+// guidance, and version 6 with token usage and optional guidance and advice.
+// Only version 6 carries token usage.
+func feedbackReviewVersion(version int, guided, styled, counted bool) bool {
 	switch version {
 	case 1:
-		return !guided && !styled
+		return !guided && !styled && !counted
 	case 4:
-		return guided && !styled
+		return guided && !styled && !counted
 	case 5:
-		return styled
+		return styled && !counted
+	case 6:
+		return counted
 	}
 	return false
 }

@@ -31,26 +31,35 @@ func TestFeedbackReviewStyleAdviceRefusesAdviceNoReviewEmits(t *testing.T) {
 
 func TestFeedbackReviewVersionAcceptsEachResultVersionWithItsOwnFields(t *testing.T) {
 	for _, test := range []struct {
-		version        int
-		guided, styled bool
-		want           bool
+		version                 int
+		guided, styled, counted bool
+		want                    bool
 	}{
-		{1, false, false, true},
-		{1, true, false, false},
-		{1, false, true, false},
-		{4, true, false, true},
-		{4, false, false, false},
-		{4, true, true, false},
-		{5, false, true, true},
-		{5, true, true, true},
-		{5, false, false, false},
-		{5, true, false, false},
-		{2, false, false, false},
-		{3, false, false, false},
-		{6, false, true, false},
+		{1, false, false, false, true},
+		{1, true, false, false, false},
+		{1, false, true, false, false},
+		{1, false, false, true, false},
+		{4, true, false, false, true},
+		{4, false, false, false, false},
+		{4, true, true, false, false},
+		{4, true, false, true, false},
+		{5, false, true, false, true},
+		{5, true, true, false, true},
+		{5, false, false, false, false},
+		{5, true, false, false, false},
+		{5, false, true, true, false},
+		{6, false, false, true, true},
+		{6, true, false, true, true},
+		{6, false, true, true, true},
+		{6, true, true, true, true},
+		{6, false, true, false, false},
+		{6, false, false, false, false},
+		{2, false, false, false, false},
+		{3, false, false, false, false},
+		{7, false, false, true, false},
 	} {
-		if got := feedbackReviewVersion(test.version, test.guided, test.styled); got != test.want {
-			t.Errorf("feedbackReviewVersion(%d, guided=%t, styled=%t) = %t, want %t", test.version, test.guided, test.styled, got, test.want)
+		if got := feedbackReviewVersion(test.version, test.guided, test.styled, test.counted); got != test.want {
+			t.Errorf("feedbackReviewVersion(%d, guided=%t, styled=%t, counted=%t) = %t, want %t", test.version, test.guided, test.styled, test.counted, got, test.want)
 		}
 	}
 }
