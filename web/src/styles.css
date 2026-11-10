@@ -50,7 +50,8 @@ button {
 }
 button:focus-visible,
 input:focus-visible,
-a:focus-visible {
+a:focus-visible,
+summary:focus-visible {
   outline: 2px solid #fff;
   outline-offset: 1px;
   box-shadow: 0 0 0 4px var(--cobalt);
