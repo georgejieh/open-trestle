@@ -13,7 +13,7 @@ from jsonschema_subset import SchemaError, validate
 from open_trestle_eval.model_corpus import LABEL_STATUS, default_corpus_root, load_corpus, plan_revisions
 from open_trestle_eval.model_runs import run_corpus, summarize_result
 from open_trestle_eval.model_score import ScoreError, main, read_review, score_bundle
-from test_model_runs import FAKE_TRESTLE, operator_flags
+from test_model_runs import FAKE_TRESTLE, KNOWN_TOKENS, UNKNOWN_TOKENS, operator_flags
 
 SCHEMAS = Path(__file__).resolve().parents[3] / "schemas/evaluation"
 SCORE_SCHEMA = json.loads((SCHEMAS / "model-corpus-score-v1.schema.json").read_text(encoding="utf-8"))
@@ -41,7 +41,16 @@ def finding(path: str, start: int, end: int, *, side: str = "head", category: st
     return value
 
 
-def result(*findings: dict, status: str | None = None, inconclusive: int = 0, rejected: int = 0, version: int = 4, usage_known: bool = True, cost: int = 100, diagnostics: bool = True) -> bytes:
+def tokens(input_tokens: int, output_tokens: int, cached: int) -> dict:
+    """Returns known token usage split as generation 2/3 and verification 1/3."""
+    def count(attempts: int, values: tuple[int, int, int]) -> dict:
+        return {"known": True, "route_attempts": attempts, "input_tokens": values[0], "output_tokens": values[1], "cached_input_tokens": values[2]}
+    generation = (input_tokens * 2 // 3, output_tokens * 2 // 3, cached)
+    verification = (input_tokens - generation[0], output_tokens - generation[1], 0)
+    return {**count(2, (input_tokens, output_tokens, cached)), "generation": count(1, generation), "verification": count(1, verification)}
+
+
+def result(*findings: dict, status: str | None = None, inconclusive: int = 0, rejected: int = 0, version: int = 4, usage_known: bool = True, cost: int = 100, diagnostics: bool = True, token_usage: dict | None = None) -> bytes:
     clean = [{key: item for key, item in value.items() if key != "_category"} for value in findings]
     guidance = [{"finding_identity": value["source_identity"], "category": value["_category"]} for value in findings if value["_category"]]
     status = status or ("findings" if findings else ("incomplete" if inconclusive or rejected else "no_candidates"))
@@ -67,6 +76,8 @@ def result(*findings: dict, status: str | None = None, inconclusive: int = 0, re
     }
     if guidance and version >= 4:
         document["finding_guidance"] = guidance
+    if token_usage is not None:
+        document["token_usage"] = token_usage
     return (json.dumps(document, separators=(",", ":")) + "\n").encode()
 
 
@@ -145,6 +156,10 @@ class ReadReviewTest(unittest.TestCase):
             json.dumps({**document, "status": "no_candidates"}).encode() + b"\n",
             json.dumps({**document, "diagnostics": {**document["diagnostics"], "schema_version": 4}}).encode() + b"\n",
             json.dumps({**document, "finding_guidance": [{"finding_identity": "x", "category": "naming"}]}).encode() + b"\n",
+            json.dumps({**document, "schema_version": 6}).encode() + b"\n",
+            json.dumps({**document, "token_usage": KNOWN_TOKENS}).encode() + b"\n",
+            json.dumps({**document, "schema_version": 6, "token_usage": {**KNOWN_TOKENS, "known": False}}).encode() + b"\n",
+            json.dumps({**document, "schema_version": 6, "token_usage": {**UNKNOWN_TOKENS, "input_tokens": 0}}).encode() + b"\n",
         ]
         broken = json.loads(good)
         broken["diagnostics"]["findings"][0]["end_line"] = 0
@@ -253,7 +268,64 @@ class ScoreBundleTest(unittest.TestCase):
         self.assertEqual([run["completion"] for run in clean["runs"]], ["not_completed", "unreadable", "completed"])
         self.assertEqual(clean["metrics"]["latency_ns"]["sample_count"], 1)
         self.assertEqual(clean["runs"][0]["outcome_matches_expected"], None)
-        self.assertEqual(aggregate["tokens"], {"label_status": LABEL_STATUS, "known": False, "reason": "result_records_no_consumed_token_counts"})
+        # No result here reports token usage, so every completed run is unknown.
+        for key in ("input_tokens", "output_tokens", "cached_input_tokens"):
+            self.assertEqual((aggregate["tokens"][key]["sample_count"], aggregate["tokens"][key]["unknown_count"], aggregate["tokens"][key]["mean"]), (0, 7, None))
+        self.assertEqual([run["token_usage"] for run in clean["runs"]], [None, None, None])
+
+    def test_token_spread_counts_unknown_and_earlier_results(self) -> None:
+        report = self.score({
+            "clean_rename": [
+                (result(version=6, token_usage=tokens(900, 300, 120)), 1),
+                (result(version=6, token_usage=tokens(1500, 600, 0)), 1),
+                (result(version=6, usage_known=False, cost=0, token_usage=UNKNOWN_TOKENS), 1),
+            ],
+            "clean_extract_function": [
+                (result(version=4), 1),
+                (result(version=6, token_usage=tokens(1200, 450, 60)), 1),
+                (result(status="failed", diagnostics=False, usage_known=False, cost=0, version=6, token_usage=tokens(600, 200, 0)), 1),
+            ],
+        })
+        spread = report["aggregate"]["tokens"]
+        self.assertEqual(spread["label_status"], LABEL_STATUS)
+        for key, values in (("input_tokens", [900, 1500, 1200]), ("output_tokens", [300, 600, 450]), ("cached_input_tokens", [120, 0, 60])):
+            mean = sum(values) / 3
+            self.assertEqual(
+                (spread[key]["sample_count"], spread[key]["unknown_count"], spread[key]["mean"], spread[key]["minimum"], spread[key]["maximum"]),
+                (3, 2, round(mean, 3), min(values), max(values)),
+            )
+            self.assertEqual(spread[key]["sample_standard_deviation"], round(math.sqrt(sum((value - mean) ** 2 for value in values) / 2), 3))
+        rename, extract = report["cases"]
+        self.assertEqual([run["token_usage"] for run in rename["runs"]], [tokens(900, 300, 120), tokens(1500, 600, 0), UNKNOWN_TOKENS])
+        self.assertEqual([run["token_usage"] for run in extract["runs"]], [None, tokens(1200, 450, 60), tokens(600, 200, 0)])
+        self.assertEqual(rename["metrics"]["tokens"]["input_tokens"]["mean"], 1200)
+        for mutate in (
+            lambda value: value["aggregate"]["tokens"]["input_tokens"].update(unknown_count=None),
+            lambda value: value["cases"][0]["runs"][2]["token_usage"].update(input_tokens=0),
+            lambda value: value["cases"][0]["runs"][0]["token_usage"].update(known=False),
+        ):
+            altered = json.loads(json.dumps(report))
+            mutate(altered)
+            with self.assertRaises(SchemaError):
+                validate(SCORE_SCHEMA, altered)
+
+    def test_refuses_a_bundle_whose_token_usage_disagrees_with_its_result(self) -> None:
+        bundle_dir = write_bundle(self.root, {"clean_rename": [(result(version=6, token_usage=tokens(900, 300, 120)), 1)]})
+        index = json.loads((bundle_dir / "bundle.json").read_text(encoding="utf-8"))
+        for name, recorded in (("changed", tokens(901, 300, 120)), ("absent", None)):
+            with self.subTest(name=name):
+                altered = json.loads(json.dumps(index))
+                altered["cases"][0]["runs"][0]["result"]["token_usage"] = recorded
+                (bundle_dir / "bundle.json").write_text(json.dumps(altered), encoding="utf-8")
+                with self.assertRaisesRegex(ScoreError, "token usage"):
+                    score_bundle(CORPUS, bundle_dir)
+
+    def test_an_unreadable_result_with_token_usage_is_one_unscored_run(self) -> None:
+        # A result no build writes, version 5 with token usage, is one
+        # unreadable run, not a refused bundle, though the driver copied it.
+        report = self.score({"clean_rename": [(result(version=5, token_usage=tokens(900, 300, 120)), 1), (result(version=6, token_usage=tokens(900, 300, 120)), 1)]})
+        self.assertEqual([run["completion"] for run in report["cases"][0]["runs"]], ["unreadable", "completed"])
+        self.assertEqual(report["aggregate"]["tokens"]["input_tokens"]["sample_count"], 1)
 
     def test_cost_spread_counts_unknown_usage(self) -> None:
         report = self.score({

@@ -95,8 +95,8 @@
           "location_and_category_matching_not_claim_semantics",
           "not_completed_and_unreadable_runs_excluded_from_rates",
           "result_identities_not_reverified",
-          "result_records_no_consumed_token_counts",
-          "small_synthetic_corpus"
+          "small_synthetic_corpus",
+          "token_counts_provider_reported"
         ]
       }
     },
@@ -449,22 +449,209 @@
           "additionalProperties": false,
           "required": [
             "label_status",
-            "known",
-            "reason"
+            "input_tokens",
+            "output_tokens",
+            "cached_input_tokens"
           ],
           "properties": {
             "label_status": {
               "const": "labels_pending_human_review"
             },
+            "input_tokens": {
+              "$ref": "#/$defs/token_spread"
+            },
+            "output_tokens": {
+              "$ref": "#/$defs/token_spread"
+            },
+            "cached_input_tokens": {
+              "$ref": "#/$defs/token_spread"
+            }
+          },
+          "description": "token_usage totals of completed runs whose result reports known token usage; each unknown_count counts the other completed runs, including results earlier than schema version 6, which report no token usage."
+        }
+      }
+    },
+    "token_spread": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "label_status",
+        "sample_count",
+        "mean",
+        "minimum",
+        "maximum",
+        "sample_standard_deviation",
+        "unknown_count"
+      ],
+      "properties": {
+        "label_status": {
+          "const": "labels_pending_human_review"
+        },
+        "sample_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "mean": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "minimum": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "maximum": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "sample_standard_deviation": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "unknown_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        }
+      },
+      "description": "Mean, range and sample standard deviation across runs of one provider-reported token count."
+    },
+    "token_count": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "known",
+            "route_attempts",
+            "input_tokens",
+            "output_tokens",
+            "cached_input_tokens"
+          ],
+          "properties": {
+            "known": {
+              "const": true
+            },
+            "route_attempts": {
+              "$ref": "#/$defs/token_number"
+            },
+            "input_tokens": {
+              "$ref": "#/$defs/token_number"
+            },
+            "output_tokens": {
+              "$ref": "#/$defs/token_number"
+            },
+            "cached_input_tokens": {
+              "$ref": "#/$defs/token_number"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "known",
+            "route_attempts"
+          ],
+          "properties": {
             "known": {
               "const": false
             },
-            "reason": {
-              "const": "result_records_no_consumed_token_counts"
+            "route_attempts": {
+              "$ref": "#/$defs/token_number"
             }
           }
         }
-      }
+      ],
+      "description": "Provider-reported tokens summed over route attempts. The counts are present only when every summed attempt reported usage; an unknown count is never zero. input_tokens includes cached_input_tokens."
+    },
+    "token_number": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "token_usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "known",
+        "route_attempts",
+        "generation",
+        "verification"
+      ],
+      "properties": {
+        "known": {
+          "type": "boolean"
+        },
+        "route_attempts": {
+          "$ref": "#/$defs/token_number"
+        },
+        "input_tokens": {
+          "$ref": "#/$defs/token_number"
+        },
+        "output_tokens": {
+          "$ref": "#/$defs/token_number"
+        },
+        "cached_input_tokens": {
+          "$ref": "#/$defs/token_number"
+        },
+        "generation": {
+          "$ref": "#/$defs/token_count"
+        },
+        "verification": {
+          "$ref": "#/$defs/token_count"
+        }
+      },
+      "if": {
+        "properties": {
+          "known": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "input_tokens",
+          "output_tokens",
+          "cached_input_tokens"
+        ]
+      },
+      "else": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "input_tokens"
+              ]
+            },
+            {
+              "required": [
+                "output_tokens"
+              ]
+            },
+            {
+              "required": [
+                "cached_input_tokens"
+              ]
+            }
+          ]
+        }
+      },
+      "description": "A version 6 result's token_usage: the total over every route attempt the run claimed, and the generation and verification shares."
     },
     "run": {
       "type": "object",
@@ -479,6 +666,7 @@
         "latency_ns",
         "usage_known",
         "actual_cost_micro_usd",
+        "token_usage",
         "matches",
         "false_positives",
         "false_negatives"
@@ -590,6 +778,17 @@
           ],
           "minimum": 0,
           "maximum": 18446744073709551615
+        },
+        "token_usage": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/token_usage"
+            }
+          ],
+          "description": "The result's token_usage; null for a result that reports none, such as one earlier than schema version 6, or an unreadable run."
         },
         "matches": {
           "type": "array",

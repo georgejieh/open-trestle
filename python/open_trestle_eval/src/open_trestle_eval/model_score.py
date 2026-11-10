@@ -29,13 +29,16 @@ from .model_corpus import (
     load_corpus,
     plan_revisions,
 )
-from .model_runs import BUNDLE_CONTRACT, MAX_STDOUT_BYTES
+from .model_runs import BUNDLE_CONTRACT, MAX_STDOUT_BYTES, read_token_usage
 
 SCORER = "open_trestle_eval.model_score/1"
 SCORE_CONTRACT = "open-trestle/model-corpus-score"
 RESULT_CONTRACT = "open-trestle/local-git-model-review-result"
 DIAGNOSTIC_CONTRACT = "open-trestle/review-diagnostic-set"
-RESULT_VERSIONS = (1, 3, 4, 5)
+RESULT_VERSIONS = (1, 3, 4, 5, 6)
+# Result schema version 6 is the first to report token_usage.
+TOKEN_RESULT_VERSION = 6
+TOKEN_COUNTS = ("input_tokens", "output_tokens", "cached_input_tokens")
 DIAGNOSTIC_VERSIONS = (5, 8)
 COMPLETED_STATUSES = ("findings", "no_candidates", "incomplete")
 STATUSES = (*COMPLETED_STATUSES, "refused", "canceled", "failed")
@@ -45,8 +48,8 @@ LIMITATIONS = (
     "location_and_category_matching_not_claim_semantics",
     "not_completed_and_unreadable_runs_excluded_from_rates",
     "result_identities_not_reverified",
-    "result_records_no_consumed_token_counts",
     "small_synthetic_corpus",
+    "token_counts_provider_reported",
 )
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _RUN_PATH = re.compile(r"^runs/[a-z][a-z0-9_]{0,63}/run-[0-9]{1,2}\.stdout$")
@@ -76,9 +79,10 @@ class Review:
     findings: tuple[ObservedFinding, ...]
     usage_known: bool | None
     actual_cost_micro_usd: int | None
+    token_usage: dict[str, Any] | None
 
 
-_UNREADABLE = Review("unreadable", None, None, None, (), None, None)
+_UNREADABLE = Review("unreadable", None, None, None, (), None, None, None)
 
 
 def _int(value: Any, minimum: int = 0) -> int:
@@ -106,9 +110,14 @@ def read_review(stdout: bytes) -> Review:
         return _UNREADABLE
     usage_known = value.get("usage_known") if type(value.get("usage_known")) is bool else None
     cost = value.get("actual_cost_micro_usd") if type(value.get("actual_cost_micro_usd")) is int and value["actual_cost_micro_usd"] >= 0 else None
+    # Only version 6 reports token usage, and it always does; anything else is
+    # not a result trestle writes.
+    token_usage = read_token_usage(value.get("token_usage"))
+    if (value["schema_version"] >= TOKEN_RESULT_VERSION) != ("token_usage" in value) or "token_usage" in value and token_usage is None:
+        return _UNREADABLE
     diagnostics = value.get("diagnostics")
     if status not in COMPLETED_STATUSES or diagnostics is None:
-        return Review("not_completed", status, None, None, (), usage_known, cost)
+        return Review("not_completed", status, None, None, (), usage_known, cost, token_usage)
     try:
         if not isinstance(diagnostics, dict) or diagnostics.get("contract") != DIAGNOSTIC_CONTRACT or diagnostics.get("schema_version") not in DIAGNOSTIC_VERSIONS:
             raise ScoreError("unsupported diagnostic set")
@@ -153,7 +162,7 @@ def read_review(stdout: bytes) -> Review:
         outcome = "abstention"
     else:
         outcome = "no_finding"
-    return Review("completed", status, outcome, coverage, tuple(findings), usage_known, cost)
+    return Review("completed", status, outcome, coverage, tuple(findings), usage_known, cost, token_usage)
 
 
 def _maximum_matching(edges: list[list[int]]) -> dict[int, int]:
@@ -266,6 +275,8 @@ class _Tally:
         self.latency: list[int] = []
         self.cost: list[int] = []
         self.cost_unknown = 0
+        self.tokens: dict[str, list[int]] = {key: [] for key in TOKEN_COUNTS}
+        self.tokens_unknown = 0
 
     def add(self, case: CorpusCase, review: Review, matched: dict[str, Any] | None, latency_ns: int) -> None:
         self.runs["total"] += 1
@@ -297,6 +308,11 @@ class _Tally:
             self.cost.append(review.actual_cost_micro_usd)
         else:
             self.cost_unknown += 1
+        if review.token_usage is not None and review.token_usage["known"]:
+            for key in TOKEN_COUNTS:
+                self.tokens[key].append(review.token_usage[key])
+        else:
+            self.tokens_unknown += 1
 
     def report(self) -> dict[str, Any]:
         tp, fp, fn = self.counts["true_positive"], self.counts["false_positive"], self.counts["false_negative"]
@@ -318,7 +334,7 @@ class _Tally:
             },
             "latency_ns": _spread(self.latency),
             "cost_micro_usd": _spread(self.cost, self.cost_unknown),
-            "tokens": {"label_status": LABEL_STATUS, "known": False, "reason": "result_records_no_consumed_token_counts"},
+            "tokens": {"label_status": LABEL_STATUS, **{key: _spread(self.tokens[key], self.tokens_unknown) for key in TOKEN_COUNTS}},
         }
 
 
@@ -374,6 +390,12 @@ def score_bundle(corpus: Corpus, bundle_dir: Path) -> dict[str, Any]:
             stdout = _strict_file(bundle_dir, run["stdout"].get("path"), run["stdout"].get("sha256"), run["stdout"].get("bytes"))
             latency_ns = _int(run.get("latency_ns"))
             review = read_review(stdout)
+            # The token numbers come from the pinned result, and the copy the
+            # driver recorded must agree with them; an unreadable result is
+            # not scored, so its copy is not compared.
+            recorded = run.get("result")
+            if review.completion != "unreadable" and (not isinstance(recorded, dict) or recorded.get("token_usage") != review.token_usage):
+                raise ScoreError("the run's recorded token usage does not match its result")
             matched = match_run(case, review) if review.completion == "completed" else None
             tally.add(case, review, matched, latency_ns)
             aggregate.add(case, review, matched, latency_ns)
@@ -387,6 +409,7 @@ def score_bundle(corpus: Corpus, bundle_dir: Path) -> dict[str, Any]:
                 "latency_ns": latency_ns,
                 "usage_known": review.usage_known,
                 "actual_cost_micro_usd": review.actual_cost_micro_usd,
+                "token_usage": review.token_usage,
                 "matches": matched["matches"] if matched else [],
                 "false_positives": matched["false_positives"] if matched else [],
                 "false_negatives": matched["false_negatives"] if matched else [],
