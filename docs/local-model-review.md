@@ -1045,9 +1045,10 @@ bytes are unchanged.
 
 JSON uses `open-trestle/local-git-model-review-result`. Every run that opened
 writes schema version 6, which keeps every field of versions 1 to 5 and adds
-[`token_usage`](#token-usage). A result that reports no opened run (`run_status`
-`not_opened` or `unknown`) carries no token usage and keeps version 1 (version 2
-with `--investigation-policy`, version 3 with `--profile`). Earlier builds wrote
+[`token_usage`](#token-usage), except the investigation fallback that
+[Token usage](#token-usage) names. A result that reports no opened run
+(`run_status` `not_opened` or `unknown`) carries no token usage and keeps
+version 1 (version 2 with `--investigation-policy`, version 3 with `--profile`). Earlier builds wrote
 an opened run as version 1, version 2 with `--investigation-policy`, version 3
 with `--profile`, version 4 with finding guidance or version 5 with
 [style recommendations](#style-recommendations); those bytes read back
