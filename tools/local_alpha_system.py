@@ -1951,6 +1951,11 @@ def main() -> int:
         execute(["git", "commit", "-m", "head"], repository)
         head = execute(["git", "rev-parse", "HEAD"], repository).stdout.decode().strip()
         objects = (repository / ".git/objects").resolve()
+        # The daemon's local source owner accepts only a private 0700 objects
+        # directory (docs/local-first-bootstrap.md). This evaluator owns the
+        # synthetic repository, so it makes the chosen objects directory private,
+        # as an operator would for an owned private checkout.
+        objects.chmod(0o700)
         setup_path = setup_dir / "plan.json"
         setup = execute([str(trestle), "setup", "init", "--profile", "local_single_node", "--tenant", "tenant-a", "--repository", "repository-a", "--recovery-owner", "platform-owner", "--state", str(setup_path)])
         write_artifact(artifacts / "setup-init.json", setup.stdout)
