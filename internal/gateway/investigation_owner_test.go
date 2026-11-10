@@ -687,3 +687,25 @@ func TestInvestigationRoutePlanCopiesCallerSlices(t *testing.T) {
 		t.Fatal("route plan retained mutable caller slice authority")
 	}
 }
+
+func TestInvestigationTurnRecordReportsItsRoleThroughEncoding(t *testing.T) {
+	ctx := context.Background()
+	owner, _, _, _ := investigationOwnerFixture(t, "", 40000, 4)
+	for _, role := range []InvestigationTurnRole{InvestigationGenerationTurn, InvestigationVerificationTurn} {
+		turn, err := owner.Dispatch(ctx, role, ownerRequest(t, role.String()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := EncodeInvestigationTurnRecord(turn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoded, err := ParseInvestigationTurnRecord(encoded)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if turn.Role() != role || decoded.Role() != role {
+			t.Fatalf("role=%s decoded=%s, want %s", turn.Role(), decoded.Role(), role)
+		}
+	}
+}

@@ -48,6 +48,10 @@ func (r InvestigationTurnRecord) Dispatch() RouteDispatchResult            { ret
 func (r InvestigationTurnRecord) Outcome() RouteAttemptOutcome             { return r.outcome }
 func (r InvestigationTurnRecord) Reconciliation() RouteCostReconciliation  { return r.reconciliation }
 
+// Role returns whether the turn served investigation generation or the final
+// verification.
+func (r InvestigationTurnRecord) Role() InvestigationTurnRole { return r.role }
+
 // EstimateVersion returns the recorded input estimate version of the turn.
 func (r InvestigationTurnRecord) EstimateVersion() uint8 { return r.estimateVersion }
 
