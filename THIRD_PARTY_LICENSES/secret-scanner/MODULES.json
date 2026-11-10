@@ -39,19 +39,14 @@
     {
       "files": [
         {
-          "file": "github.com_andybalholm_brotli_v1.2.1/LICENSE",
+          "file": "github.com_andybalholm_brotli_v1.2.7/LICENSE",
           "sha256": "3d180008e36922a4e8daec11c34c7af264fed5962d07924aea928c38e8663c94",
           "upstream_path": "LICENSE"
-        },
-        {
-          "file": "github.com_andybalholm_brotli_v1.2.1/flate_LICENSE",
-          "sha256": "2d36597f7117c38b006835ae7f537487207d8ec407aa9d9980794b2030cbc067",
-          "upstream_path": "flate/LICENSE"
         }
       ],
-      "license": "MIT AND BSD-3-Clause",
+      "license": "MIT",
       "module": "github.com/andybalholm/brotli",
-      "version": "v1.2.1"
+      "version": "v1.2.7"
     },
     {
       "files": [
@@ -287,29 +282,29 @@
     {
       "files": [
         {
-          "file": "github.com_klauspost_compress_v1.18.6/LICENSE",
+          "file": "github.com_klauspost_compress_v1.20.2/LICENSE",
           "sha256": "0d9e582ee4bff57bf1189c9e514e6da7ce277f9cd3bc2d488b22fbb39a6d87cf",
           "upstream_path": "LICENSE"
         },
         {
-          "file": "github.com_klauspost_compress_v1.18.6/internal_snapref_LICENSE",
+          "file": "github.com_klauspost_compress_v1.20.2/internal_snapref_LICENSE",
           "sha256": "f69f157b0be75da373605dbc8bbf142e8924ee82d8f44f11bcaf351335bf98cf",
           "upstream_path": "internal/snapref/LICENSE"
         },
         {
-          "file": "github.com_klauspost_compress_v1.18.6/s2_LICENSE",
+          "file": "github.com_klauspost_compress_v1.20.2/s2_LICENSE",
           "sha256": "08683b14bda8ae3538abf19e1879e853a39e3b8276a8d673363b529d15a61c1a",
           "upstream_path": "s2/LICENSE"
         },
         {
-          "file": "github.com_klauspost_compress_v1.18.6/zstd_internal_xxhash_LICENSE.txt",
+          "file": "github.com_klauspost_compress_v1.20.2/zstd_internal_xxhash_LICENSE.txt",
           "sha256": "f566a9f97bacdaf00d9f21dd991e81dc11201c4e016c86b470799429a1c9a79c",
           "upstream_path": "zstd/internal/xxhash/LICENSE.txt"
         }
       ],
       "license": "BSD-3-Clause AND MIT",
       "module": "github.com/klauspost/compress",
-      "version": "v1.18.6"
+      "version": "v1.20.2"
     },
     {
       "files": [
