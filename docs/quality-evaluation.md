@@ -109,10 +109,34 @@ A person other than the fixture author must adjudicate every case before its run
 1. Materialize the case and read the base and head trees and their diff, without looking at `labels.json` or any model output. The case identifier and README already name the kind of case; judge the code, not the name.
 2. Write down what a correct review should report: each defect with its path, side, lines and category; or that the change is correct; or that the evidence cannot decide it.
 3. Compare that with `labels.json`. Confirm, revise or reject each expected finding, each accepted location, the category set, each trap and its reason, the abstention reason and the stated Go semantics. Check version claims against the Go release notes, for example per-iteration loop variables in Go 1.22 and timer collection in Go 1.23, rather than against the label text.
-4. Record every decision with its reason, the reviewer, the date, the corpus identity and the label digest in a separate human-authored record. This candidate defines no import for that record, so scores stay `labels_pending_human_review`. Put a revised label in a new corpus version instead of editing version 1, because every run bundle pins the version 1 label digests.
+4. Record one decision per case in a separate human-authored record, described in [Recording and pinning the adjudication](#recording-and-pinning-the-adjudication). A case is `confirmed` only when every element in step 3 is confirmed. Otherwise it is `revised`, when a corrected label would stand, or `rejected`, when the case cannot, and the record gives the reason. Put a revised label in a new corpus version instead of editing version 1, because every run bundle pins the version 1 label digests.
 5. Only then compare run output with the labels. Resolve a disagreement by rereading the source, never by changing a label to fit an observed result.
 
 A model must not supply this review or stand in for the reviewer.
+
+### Recording and pinning the adjudication
+
+The reviewer writes the record by hand, following the closed schema `schemas/evaluation/model-corpus-human-adjudication-v1.schema.json`. No command generates, fills in or edits it. Keep it outside the corpus directory: the corpus admits no unlisted file, and its `adjudication.json` stays pending. The record holds:
+
+- `contract` `open-trestle/model-corpus-human-adjudication` and `schema_version` 1;
+- `corpus_identity`, as `model_corpus verify` prints it, and `manifest_sha256`, the SHA-256 of the exact `manifest.json` bytes reviewed;
+- `reviewer_identifier`, the reviewer's own lowercase identifier, which must differ from `fixture_author_identifier`, always `open-trestle-maintainers` for version 1 labels;
+- `review_date`, a calendar date written `YYYY-MM-DD`;
+- `method` `independent_human_review`, `source_first` `true`, and `prior_run_output_exposure` `none_declared`, which declares that the reviewer saw no model run output for this corpus before completing the review;
+- `cases`, one row per case in manifest order: its `case_id`, the `labels_sha256` that `manifest.json` lists for it, and its `decision`. A `confirmed` row holds nothing more. A `revised` or `rejected` row adds a `reason` of 1 to 1024 characters.
+
+The contract has no value for exposure, a non-source-first review or a review by the fixture author, so such a review cannot be recorded with it. Do not relabel disclosed exposure as none to fit it.
+
+The reviewer hands over the record with the SHA-256 of its exact bytes, for example from `sha256sum`. Whitespace is the reviewer's choice, but the pin covers it, so any later edit needs a new pin. Check the record without a bundle:
+
+```sh
+PYTHONPATH=python/open_trestle_eval/src python3 -m open_trestle_eval.model_adjudication \
+  check --adjudication /owned/record.json --adjudication-sha256 "$RECORD_SHA256"
+```
+
+`check` prints the pin, the corpus identity, the confirmed and excluded counts and each excluded case with its decision, not its reason. It writes nothing and exits 0 when the record imports and 1 when it is refused. It refuses a record that does not match its pin, exceeds 1 MiB, is not a regular file or is not strict JSON; that has an unknown, missing, duplicate or null field; that misses, repeats, reorders or adds a case; whose label digest, corpus identity or manifest digest differs from the corpus; that names the fixture author as reviewer or gives an impossible date; or that does not declare a source-first review without prior exposure to run output.
+
+A matching pin and a distinct identifier do not authenticate a person, establish independence, or prove that a review took place or was source-first. Those declarations stay externally asserted, and the operator must inspect where the record and its pin came from.
 
 ### Running the driver
 
@@ -151,6 +175,24 @@ A run with verified findings has the outcome `findings`. One with none and at le
 - abstention correctness, the share of abstention-case runs that abstained, with the overclaimed and silent runs beside it;
 - outcome agreement, and the mean, range and sample standard deviation across runs of latency, known cost, and known input, output and cached-input tokens.
 
-Ratios are integer numerator and denominator pairs; `0/0` is not success. Every number carries `label_status: labels_pending_human_review`, `release_evidence_eligible` is false and `golden_status` is `prohibited_pending_human_review`, as in the deterministic corpus tooling. A written report exits 4, never 0.
+Ratios are integer numerator and denominator pairs; `0/0` is not success. Without an imported adjudication, every number carries `label_status: labels_pending_human_review`, `release_evidence_eligible` is false and `golden_status` is `prohibited_pending_human_review`, as in the deterministic corpus tooling. A written report exits 4, never 0.
 
-These numbers describe agreement with pending fixture-author labels on 23 synthetic cases. They are not adjudicated quality, and with three runs per case a rate is a count, not an estimate with a confidence interval. A match is agreement of location and category, not proof that the finding states the labelled defect, so the reviewer should read the matched claims. Latency is the end-to-end wall-clock time of one command, including start-up, source acquisition and both model requests, on one machine. It is not inference latency. Cost is what the result's route reconciliation reports and is unknown when `usage_known` is false. Tokens are the `token_usage` totals the provider reported over the run's route attempts, not a tokenization by Open Trestle (`token_counts_provider_reported`). A completed run whose result says its tokens are not known, or whose result is earlier than version 6 and reports none, counts in each token spread's `unknown_count`, never as zero, and each run in the report carries its result's `token_usage`. The scorer reads the tokens from the pinned stdout, like cost, and refuses a bundle whose recorded `token_usage` copy disagrees with it; a version 6 result without `token_usage`, or an earlier result with it, is unreadable. The report evaluates no threshold, does not reverify the result's sealed identities, and does not satisfy the independently adjudicated quality release gate.
+Without an imported adjudication, these numbers describe agreement with pending fixture-author labels on 23 synthetic cases and are not adjudicated quality. With three runs per case a rate is a count, not an estimate with a confidence interval. A match is agreement of location and category, not proof that the finding states the labelled defect, so the reviewer should read the matched claims. Latency is the end-to-end wall-clock time of one command, including start-up, source acquisition and both model requests, on one machine. It is not inference latency. Cost is what the result's route reconciliation reports and is unknown when `usage_known` is false. Tokens are the `token_usage` totals the provider reported over the run's route attempts, not a tokenization by Open Trestle (`token_counts_provider_reported`). A completed run whose result says its tokens are not known, or whose result is earlier than version 6 and reports none, counts in each token spread's `unknown_count`, never as zero, and each run in the report carries its result's `token_usage`. The scorer reads the tokens from the pinned stdout, like cost, and refuses a bundle whose recorded `token_usage` copy disagrees with it; a version 6 result without `token_usage`, or an earlier result with it, is unreadable. The report evaluates no threshold, does not reverify the result's sealed identities, and does not satisfy the independently adjudicated quality release gate.
+
+### Scoring with an imported adjudication
+
+```sh
+PYTHONPATH=python/open_trestle_eval/src python3 -m open_trestle_eval.model_score \
+  --bundle /owned/new-bundle --adjudication /owned/record.json \
+  --adjudication-sha256 "$RECORD_SHA256" --output /owned/new-adjudicated-score.json
+```
+
+The two adjudication flags are given together. The scorer imports the record exactly as `check` does and refuses a record that does not bind this corpus, its manifest and every case's label digest. It checks the bundle against the same digests, so a bundle whose digests differ from the record is refused, never scored. It then writes a report in `schemas/evaluation/model-corpus-adjudicated-score-v1.schema.json` instead of the pending one:
+
+- confirmed cases are matched and counted by the rules above, and every number carries `label_status: adjudicated_externally_asserted`. `provenance_status` is `externally_asserted`: these are labels a declared human review confirmed, not verified truth;
+- revised and rejected cases are left out of every number. Their runs are still checked against their pins, and `excluded_cases` lists each case with its kind, label digest, decision, the record's reason and the number of its runs not scored;
+- `release_evidence_eligible` is true only when the record confirms every case and a `complete` bundle ran every corpus case. Otherwise it is false and `release_evidence_blockers` names each reason: `cases_excluded_by_review`, `bundle_omits_cases` or `bundle_not_complete`;
+- `adjudication` gives the record's pinned SHA-256 and its case, confirmed and excluded counts. The digest binds the reviewer identifier and date, which the report does not repeat;
+- `acceptance_status` is `not_decided`. No threshold is set or evaluated, and a written report still exits 4.
+
+An eligible report is the input to the owner's threshold decision, not that decision, and keeps every other limit above. A revised case can be scored only after its corrected labels are published as a new corpus version and reviewed with a record of their own.
