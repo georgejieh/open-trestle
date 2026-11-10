@@ -1,24 +1,30 @@
 import contextlib
+import dataclasses
 import hashlib
 import io
 import json
 import math
 import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from jsonschema_subset import SchemaError, validate
-from open_trestle_eval.model_corpus import LABEL_STATUS, default_corpus_root, load_corpus, plan_revisions
+from open_trestle_eval.model_adjudication import import_adjudication
+from open_trestle_eval.model_corpus import LABEL_STATUS, default_corpus_root, load_corpus, plan_revisions, refresh_manifest
 from open_trestle_eval.model_runs import run_corpus, summarize_result
 from open_trestle_eval.model_score import ScoreError, main, read_review, score_bundle
+from test_model_adjudication import SYNTHETIC_REASON, encode, pin, synthetic_record
 from test_model_runs import FAKE_TRESTLE, KNOWN_TOKENS, UNKNOWN_TOKENS, operator_flags
 
 SCHEMAS = Path(__file__).resolve().parents[3] / "schemas/evaluation"
 SCORE_SCHEMA = json.loads((SCHEMAS / "model-corpus-score-v1.schema.json").read_text(encoding="utf-8"))
+ADJUDICATED_SCHEMA = json.loads((SCHEMAS / "model-corpus-adjudicated-score-v1.schema.json").read_text(encoding="utf-8"))
 BUNDLE_SCHEMA = json.loads((SCHEMAS / "model-corpus-run-bundle-v1.schema.json").read_text(encoding="utf-8"))
 CORPUS = load_corpus(default_corpus_root())
+ADJUDICATED = "adjudicated_externally_asserted"
 
 
 def finding(path: str, start: int, end: int, *, side: str = "head", category: str | None = "correctness", severity: str = "error", salt: str = "") -> dict:
@@ -123,13 +129,24 @@ def write_bundle(root: Path, runs: dict[str, list[tuple[bytes, int]]], completio
     return bundle_dir
 
 
-def every_number_is_labelled(test: unittest.TestCase, metrics: dict) -> None:
+def every_number_is_labelled(test: unittest.TestCase, metrics: dict, label_status: str = LABEL_STATUS) -> None:
     for key, value in metrics.items():
         test.assertIsInstance(value, dict, key)
-        test.assertEqual(value["label_status"], LABEL_STATUS, key)
+        test.assertEqual(value["label_status"], label_status, key)
         for inner in value.values():
             if isinstance(inner, dict):
-                test.assertEqual(inner["label_status"], LABEL_STATUS, key)
+                test.assertEqual(inner["label_status"], label_status, key)
+
+
+def relabelled(metrics: dict) -> dict:
+    """Returns pending metrics with every number relabelled as adjudicated."""
+    return json.loads(json.dumps(metrics).replace(f'"{LABEL_STATUS}"', f'"{ADJUDICATED}"'))
+
+
+def adjudication(corpus=CORPUS, excluded: dict[str, str] | None = None):
+    """Imports a synthetic record; no person reviewed the corpus for it."""
+    data = encode(synthetic_record(corpus, excluded))
+    return import_adjudication(corpus, data, pin(data))
 
 
 class ReadReviewTest(unittest.TestCase):
@@ -414,6 +431,187 @@ class ScoreBundleTest(unittest.TestCase):
             self.assertEqual(report["bundle_sha256"], hashlib.sha256((bundle_dir / "bundle.json").read_bytes()).hexdigest())
             self.assertEqual(main(["--bundle", str(bundle_dir), "--output", str(output)]), 1)
         self.assertIn("not release evidence", stderr.getvalue())
+
+
+class AdjudicatedScoreTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.root = Path(self.directory.name)
+
+    def tearDown(self) -> None:
+        self.directory.cleanup()
+
+    def bundle(self, runs: dict, completion: str = "complete", name: str = "bundle") -> Path:
+        parent = self.root / name
+        parent.mkdir()
+        return write_bundle(parent, runs, completion)
+
+    @staticmethod
+    def every_case_runs() -> dict:
+        runs = {case.id: [(result(), 5)] for case in CORPUS.cases}
+        runs["defect_off_by_one"] = [(result(finding("tail.go", 25, 26)), 1000), (result(), 2000)]
+        return runs
+
+    def adjudicated(self, bundle_dir: Path, record) -> dict:
+        report = score_bundle(CORPUS, bundle_dir, record)
+        validate(ADJUDICATED_SCHEMA, report)
+        self.assertEqual(
+            (report["contract"], report["label_status"], report["provenance_status"], report["acceptance_status"]),
+            ("open-trestle/model-corpus-adjudicated-score", ADJUDICATED, "externally_asserted", "not_decided"),
+        )
+        self.assertNotIn(LABEL_STATUS, json.dumps(report))
+        every_number_is_labelled(self, report["aggregate"], ADJUDICATED)
+        for case in report["cases"]:
+            every_number_is_labelled(self, case["metrics"], ADJUDICATED)
+        return report
+
+    def test_a_full_confirmation_scores_every_case_as_adjudicated(self) -> None:
+        bundle_dir = self.bundle(self.every_case_runs())
+        record = adjudication()
+        report = self.adjudicated(bundle_dir, record)
+        pending = score_bundle(CORPUS, bundle_dir)
+        validate(SCORE_SCHEMA, pending)
+        # The same matching produces the same numbers; only their status differs.
+        self.assertEqual(report["aggregate"], relabelled(pending["aggregate"]))
+        self.assertEqual(report["cases"], relabelled(pending["cases"]))
+        for key in ("scorer", "corpus_identity", "manifest_sha256", "bundle_sha256", "bundle_completion", "matching"):
+            self.assertEqual(report[key], pending[key], key)
+        self.assertEqual(report["aggregate"]["counts"]["true_positive"], 1)
+        self.assertEqual((report["release_evidence_eligible"], report["release_evidence_blockers"], report["excluded_cases"]), (True, [], []))
+        self.assertEqual(report["adjudication"], {
+            "contract": "open-trestle/model-corpus-human-adjudication", "schema_version": 1, "record_sha256": record.record_sha256,
+            "case_count": 23, "confirmed_count": 23, "excluded_count": 0,
+        })
+        self.assertNotIn("synthetic-test-reviewer", json.dumps(report))
+
+    def test_a_revised_case_is_excluded_and_reported_with_its_reason(self) -> None:
+        runs = self.every_case_runs()
+        bundle_dir = self.bundle(runs)
+        record = adjudication(excluded={"defect_off_by_one": "revised"})
+        report = self.adjudicated(bundle_dir, record)
+        self.assertEqual([case["case_id"] for case in report["cases"]], [case.id for case in CORPUS.cases if case.id != "defect_off_by_one"])
+        self.assertEqual(report["excluded_cases"], [{
+            "case_id": "defect_off_by_one", "case_kind": "defect", "labels_sha256": CORPUS.case("defect_off_by_one").labels_sha256,
+            "decision": "revised", "reason": SYNTHETIC_REASON, "runs_not_scored": 2,
+        }])
+        self.assertEqual((report["release_evidence_eligible"], report["release_evidence_blockers"]), (False, ["cases_excluded_by_review"]))
+        self.assertEqual((report["adjudication"]["confirmed_count"], report["adjudication"]["excluded_count"]), (22, 1))
+        # The excluded case's runs leave every number.
+        self.assertEqual((report["aggregate"]["counts"]["true_positive"], report["aggregate"]["runs"]["total"]), (0, 22))
+        without = {key: value for key, value in runs.items() if key != "defect_off_by_one"}
+        self.assertEqual(report["aggregate"], relabelled(score_bundle(CORPUS, self.bundle(without, name="without"))["aggregate"]))
+        # An excluded case's runs are still checked against their pins.
+        stdout = bundle_dir / "runs/defect_off_by_one/run-1.stdout"
+        stdout.write_bytes(stdout.read_bytes().replace(b"tail.go", b"tail.gx"))
+        with self.assertRaisesRegex(ScoreError, "does not match its pin"):
+            score_bundle(CORPUS, bundle_dir, record)
+
+    def test_a_partial_or_unfinished_bundle_is_not_release_evidence(self) -> None:
+        record = adjudication()
+        partial = self.adjudicated(self.bundle({"clean_rename": [(result(), 1)]}, name="partial"), record)
+        self.assertEqual((partial["release_evidence_eligible"], partial["release_evidence_blockers"]), (False, ["bundle_omits_cases"]))
+        interrupted = self.adjudicated(self.bundle(self.every_case_runs(), completion="interrupted", name="interrupted"), record)
+        self.assertEqual((interrupted["release_evidence_eligible"], interrupted["release_evidence_blockers"]), (False, ["bundle_not_complete"]))
+        excluded = adjudication(excluded={"clean_rename": "rejected", "defect_off_by_one": "revised"})
+        everything = self.adjudicated(self.bundle({"clean_rename": [(result(), 1)]}, completion="in_progress", name="everything"), excluded)
+        self.assertEqual(everything["release_evidence_blockers"], ["cases_excluded_by_review", "bundle_omits_cases", "bundle_not_complete"])
+        self.assertEqual((everything["cases"], everything["aggregate"]["runs"]["total"]), ([], 0))
+        self.assertEqual([(case["case_id"], case["runs_not_scored"]) for case in everything["excluded_cases"]], [("clean_rename", 1), ("defect_off_by_one", 0)])
+
+    def test_refuses_a_record_or_bundle_whose_digests_differ(self) -> None:
+        bundle_dir = self.bundle({"clean_rename": [(result(), 1)]})
+        other_root = self.root / "corpus"
+        shutil.copytree(default_corpus_root(), other_root)
+        labels_path = other_root / "cases/clean_rename/labels.json"
+        labels = json.loads(labels_path.read_text(encoding="utf-8"))
+        labels["go_semantics"] += " Synthetic revision."
+        labels_path.write_text(json.dumps(labels, indent=2) + "\n", encoding="utf-8")
+        manifest, pending = refresh_manifest(other_root)
+        (other_root / "manifest.json").write_bytes(manifest)
+        (other_root / "adjudication.json").write_bytes(pending)
+        other = load_corpus(other_root)
+        self.assertNotEqual(other.case("clean_rename").labels_sha256, CORPUS.case("clean_rename").labels_sha256)
+        # A record of another corpus version does not bind these labels.
+        with self.assertRaisesRegex(ScoreError, "adjudication record does not bind this corpus"):
+            score_bundle(CORPUS, bundle_dir, adjudication(other))
+        record = adjudication()
+        first = record.decisions[0]
+        for name, tampered in (
+            ("label digest", dataclasses.replace(record, decisions=(dataclasses.replace(first, labels_sha256="e" * 64), *record.decisions[1:]))),
+            ("case order", dataclasses.replace(record, decisions=(record.decisions[1], first, *record.decisions[2:]))),
+            ("missing case", dataclasses.replace(record, decisions=record.decisions[1:])),
+            ("manifest", dataclasses.replace(record, manifest_sha256="f" * 64)),
+        ):
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(ScoreError, "adjudication record does not bind this corpus"):
+                    score_bundle(CORPUS, bundle_dir, tampered)
+        # A bundle captured from other labels is refused before any score.
+        with self.assertRaisesRegex(ScoreError, "different corpus"):
+            score_bundle(other, bundle_dir, adjudication(other))
+        index = json.loads((bundle_dir / "bundle.json").read_text(encoding="utf-8"))
+        index["cases"][0]["labels_sha256"] = other.case("clean_rename").labels_sha256
+        (bundle_dir / "bundle.json").write_text(json.dumps(index), encoding="utf-8")
+        with self.assertRaisesRegex(ScoreError, "does not match the corpus labels"):
+            score_bundle(CORPUS, bundle_dir, record)
+
+    def test_adjudicated_schema_refuses_inconsistent_reports(self) -> None:
+        report = self.adjudicated(self.bundle(self.every_case_runs()), adjudication())
+        excluded_row = {
+            "case_id": "clean_rename", "case_kind": "clean", "labels_sha256": CORPUS.case("clean_rename").labels_sha256,
+            "decision": "rejected", "reason": SYNTHETIC_REASON, "runs_not_scored": 1,
+        }
+        for name, mutate in {
+            "eligible with a blocker": lambda value: value.update(release_evidence_blockers=["bundle_not_complete"]),
+            "ineligible without a blocker": lambda value: value.update(release_evidence_eligible=False),
+            "eligible with an excluded case": lambda value: value["excluded_cases"].append(excluded_row),
+            "pending status": lambda value: value.update(label_status=LABEL_STATUS),
+            "pending number": lambda value: value["aggregate"]["precision"].update(label_status=LABEL_STATUS),
+            "verified provenance": lambda value: value.update(provenance_status="verified"),
+            "decided acceptance": lambda value: value.update(acceptance_status="accepted"),
+            "reviewer echoed": lambda value: value["adjudication"].update(reviewer_identifier="synthetic-test-reviewer"),
+            "unknown blocker": lambda value: value.update(release_evidence_eligible=False, release_evidence_blockers=["threshold_unmet"]),
+            "golden status": lambda value: value.update(golden_status="prohibited_pending_human_review"),
+        }.items():
+            with self.subTest(name=name):
+                altered = json.loads(json.dumps(report))
+                mutate(altered)
+                with self.assertRaises(SchemaError):
+                    validate(ADJUDICATED_SCHEMA, altered)
+        altered = json.loads(json.dumps(report))
+        altered.update(release_evidence_eligible=False, release_evidence_blockers=["cases_excluded_by_review"])
+        altered["excluded_cases"].append(excluded_row)
+        validate(ADJUDICATED_SCHEMA, altered)
+
+    def test_adjudicated_schema_keeps_the_pending_score_definitions(self) -> None:
+        definitions = dict(ADJUDICATED_SCHEMA["$defs"])
+        excluded_case = definitions.pop("excluded_case")
+        self.assertEqual(definitions, relabelled(SCORE_SCHEMA["$defs"]))
+        self.assertEqual(excluded_case["properties"]["case_kind"], SCORE_SCHEMA["$defs"]["case"]["properties"]["case_kind"])
+        for key in ("scorer", "corpus_identity", "manifest_sha256", "bundle_sha256", "bundle_completion", "matching"):
+            self.assertEqual(ADJUDICATED_SCHEMA["properties"][key], SCORE_SCHEMA["properties"][key], key)
+
+    def test_command_line_imports_the_pinned_record(self) -> None:
+        bundle_dir = self.bundle(self.every_case_runs())
+        data = encode(synthetic_record())
+        record = self.root / "record.json"
+        record.write_bytes(data)
+        output = self.root / "score.json"
+        arguments = ["--bundle", str(bundle_dir), "--adjudication", str(record), "--output", str(output)]
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            self.assertEqual(main([*arguments, "--adjudication-sha256", pin(data + b" ")]), 1)
+            self.assertFalse(output.exists())
+            self.assertEqual(main([*arguments, "--adjudication-sha256", pin(data)]), 4)
+            for partial in (["--bundle", str(bundle_dir), "--adjudication", str(record)], ["--bundle", str(bundle_dir), "--adjudication-sha256", pin(data)]):
+                with self.assertRaises(SystemExit) as raised:
+                    main(partial)
+                self.assertEqual(raised.exception.code, 2)
+        report = json.loads(output.read_text(encoding="utf-8"))
+        validate(ADJUDICATED_SCHEMA, report)
+        self.assertEqual((report["release_evidence_eligible"], report["adjudication"]["record_sha256"]), (True, pin(data)))
+        self.assertIn("pinned SHA-256", stderr.getvalue())
+        self.assertIn("adjudicated score written", stderr.getvalue())
+        self.assertIn("release_evidence_eligible=true", stderr.getvalue())
 
 
 if __name__ == "__main__":

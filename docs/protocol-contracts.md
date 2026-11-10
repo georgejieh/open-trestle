@@ -134,6 +134,7 @@ Evaluation schemas:
 - `schemas/evaluation/model-corpus-human-adjudication-v1.schema.json` (a human-authored, externally asserted review of one model-review corpus: its identity and manifest digest, a reviewer distinct from the fixture author, the review date, source-first and no-prior-run-output declarations, and one confirmed, revised or rejected decision per case in corpus order with each label digest)
 - `schemas/evaluation/model-corpus-run-bundle-v1.schema.json` (the index of one model-review corpus driver batch: exact output file pins, exit, latency and copied status, usage, cost and token usage fields per run)
 - `schemas/evaluation/model-corpus-score-v1.schema.json` (counts and integer ratio pairs from matching a run bundle to the pending labels, with latency, cost and token spreads across runs; every number is `labels_pending_human_review` and `release_evidence_eligible` is false)
+- `schemas/evaluation/model-corpus-adjudicated-score-v1.schema.json` (the same counts, ratios and spreads over only the cases an imported human adjudication record confirms, every number `adjudicated_externally_asserted`, with revised and rejected cases listed with their reasons; `release_evidence_eligible` is true only when every case is confirmed and a complete bundle ran every case, and acceptance is not decided)
 
 Runtime authority schemas:
 

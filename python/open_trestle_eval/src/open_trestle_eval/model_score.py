@@ -1,8 +1,13 @@
-"""Scores a model-review corpus run bundle against the pending labels.
+"""Scores a model-review corpus run bundle against the corpus labels.
 
-Every number is labelled ``labels_pending_human_review`` and the report is
-never release evidence: the labels are fixture-author labels that no
-independent reviewer has adjudicated.
+Without an imported human adjudication every number is labelled
+``labels_pending_human_review`` and the report is never release evidence: the
+labels are fixture-author labels that no independent reviewer has adjudicated.
+
+With one, only the cases the record confirms are scored, by the same rules,
+and every number is labelled ``adjudicated_externally_asserted``. The record's
+declarations are not authenticated, so this is never verified truth. Revised
+and rejected cases are excluded and listed with their reasons.
 """
 
 from __future__ import annotations
@@ -18,6 +23,14 @@ import sys
 from pathlib import Path
 from typing import Any, Sequence
 
+from .model_adjudication import (
+    PROVENANCE_STATUS,
+    RECORD_CONTRACT,
+    AdjudicationError,
+    HumanAdjudication,
+    import_adjudication,
+    read_record,
+)
 from .model_corpus import (
     CATEGORIES,
     LABEL_STATUS,
@@ -33,6 +46,8 @@ from .model_runs import BUNDLE_CONTRACT, MAX_STDOUT_BYTES, read_token_usage
 
 SCORER = "open_trestle_eval.model_score/1"
 SCORE_CONTRACT = "open-trestle/model-corpus-score"
+ADJUDICATED_SCORE_CONTRACT = "open-trestle/model-corpus-adjudicated-score"
+ADJUDICATED_LABEL_STATUS = "adjudicated_externally_asserted"
 RESULT_CONTRACT = "open-trestle/local-git-model-review-result"
 DIAGNOSTIC_CONTRACT = "open-trestle/review-diagnostic-set"
 RESULT_VERSIONS = (1, 3, 4, 5, 6)
@@ -51,6 +66,19 @@ LIMITATIONS = (
     "small_synthetic_corpus",
     "token_counts_provider_reported",
 )
+ADJUDICATED_LIMITATIONS = (
+    "human_review_externally_asserted",
+    "location_and_category_matching_not_claim_semantics",
+    "not_completed_and_unreadable_runs_excluded_from_rates",
+    "result_identities_not_reverified",
+    "small_synthetic_corpus",
+    "token_counts_provider_reported",
+)
+_MATCHING = {
+    "rule": "same_path_same_side_overlapping_lines_compatible_category",
+    "uncategorized_findings": "matched_on_location_only",
+    "assignment": "maximum_one_to_one",
+}
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _RUN_PATH = re.compile(r"^runs/[a-z][a-z0-9_]{0,63}/run-[0-9]{1,2}\.stdout$")
 
@@ -239,13 +267,13 @@ def match_run(case: CorpusCase, review: Review) -> dict[str, Any]:
     return {"matches": matches, "false_positives": false_positives, "false_negatives": false_negatives}
 
 
-def _ratio(numerator: int, denominator: int) -> dict[str, Any]:
-    return {"label_status": LABEL_STATUS, "numerator": numerator, "denominator": denominator}
+def _ratio(label_status: str, numerator: int, denominator: int) -> dict[str, Any]:
+    return {"label_status": label_status, "numerator": numerator, "denominator": denominator}
 
 
-def _spread(values: Sequence[int], unknown: int | None = None) -> dict[str, Any]:
+def _spread(label_status: str, values: Sequence[int], unknown: int | None = None) -> dict[str, Any]:
     summary: dict[str, Any] = {
-        "label_status": LABEL_STATUS,
+        "label_status": label_status,
         "sample_count": len(values),
         "mean": round(sum(values) / len(values), 3) if values else None,
         "minimum": min(values) if values else None,
@@ -261,7 +289,8 @@ def _spread(values: Sequence[int], unknown: int | None = None) -> dict[str, Any]
 
 
 class _Tally:
-    def __init__(self) -> None:
+    def __init__(self, label_status: str) -> None:
+        self.label_status = label_status
         self.runs = {"total": 0, "completed": 0, "not_completed": 0, "unreadable": 0}
         self.counts = dict.fromkeys(
             ("true_positive", "false_positive", "false_negative", "near_miss_false_positive", "duplicate_false_positive", "category_mismatch_false_positive", "category_unchecked_true_positive"),
@@ -315,26 +344,27 @@ class _Tally:
             self.tokens_unknown += 1
 
     def report(self) -> dict[str, Any]:
+        status = self.label_status
         tp, fp, fn = self.counts["true_positive"], self.counts["false_positive"], self.counts["false_negative"]
         return {
-            "runs": {"label_status": LABEL_STATUS, **self.runs},
-            "counts": {"label_status": LABEL_STATUS, **self.counts},
-            "observed_outcomes": {"label_status": LABEL_STATUS, **self.outcomes},
-            "precision": _ratio(tp, tp + fp),
-            "recall": _ratio(tp, tp + fn),
-            "false_positive_rate": _ratio(*self.clean_runs),
-            "near_miss_false_positive_rate": _ratio(*self.near_miss_runs),
-            "outcome_agreement": _ratio(*self.agreement),
+            "runs": {"label_status": status, **self.runs},
+            "counts": {"label_status": status, **self.counts},
+            "observed_outcomes": {"label_status": status, **self.outcomes},
+            "precision": _ratio(status, tp, tp + fp),
+            "recall": _ratio(status, tp, tp + fn),
+            "false_positive_rate": _ratio(status, *self.clean_runs),
+            "near_miss_false_positive_rate": _ratio(status, *self.near_miss_runs),
+            "outcome_agreement": _ratio(status, *self.agreement),
             "abstention": {
-                "label_status": LABEL_STATUS,
+                "label_status": status,
                 "correct": self.abstention["correct"],
                 "overclaimed": self.abstention["overclaimed"],
                 "silent": self.abstention["silent"],
-                "correctness": _ratio(self.abstention["correct"], self.abstention["total"]),
+                "correctness": _ratio(status, self.abstention["correct"], self.abstention["total"]),
             },
-            "latency_ns": _spread(self.latency),
-            "cost_micro_usd": _spread(self.cost, self.cost_unknown),
-            "tokens": {"label_status": LABEL_STATUS, **{key: _spread(self.tokens[key], self.tokens_unknown) for key in TOKEN_COUNTS}},
+            "latency_ns": _spread(status, self.latency),
+            "cost_micro_usd": _spread(status, self.cost, self.cost_unknown),
+            "tokens": {"label_status": status, **{key: _spread(status, self.tokens[key], self.tokens_unknown) for key in TOKEN_COUNTS}},
         }
 
 
@@ -350,8 +380,25 @@ def _strict_file(bundle_dir: Path, relative: Any, digest: Any, size: Any) -> byt
     return data
 
 
-def score_bundle(corpus: Corpus, bundle_dir: Path) -> dict[str, Any]:
-    """Scores every recorded run of a bundle captured from this exact corpus."""
+def _binds(adjudication: HumanAdjudication, corpus: Corpus) -> bool:
+    return (
+        adjudication.corpus_identity == corpus.identity
+        and adjudication.manifest_sha256 == corpus.manifest_sha256
+        and [(item.case_id, item.labels_sha256) for item in adjudication.decisions] == [(case.id, case.labels_sha256) for case in corpus.cases]
+    )
+
+
+def score_bundle(corpus: Corpus, bundle_dir: Path, adjudication: HumanAdjudication | None = None) -> dict[str, Any]:
+    """Scores every recorded run of a bundle captured from this exact corpus.
+
+    With an imported adjudication, which must bind this exact corpus, only
+    confirmed cases are scored; every run is still checked against its pin.
+    The bundle is checked against the same corpus and label digests, so a
+    bundle whose digests differ from the record's is refused, never scored.
+    """
+    if adjudication is not None and not _binds(adjudication, corpus):
+        raise ScoreError("the adjudication record does not bind this corpus")
+    label_status = LABEL_STATUS if adjudication is None else ADJUDICATED_LABEL_STATUS
     bundle_dir = Path(bundle_dir)
     index_path = bundle_dir / "bundle.json"
     if index_path.is_symlink() or not index_path.is_file():
@@ -368,9 +415,10 @@ def score_bundle(corpus: Corpus, bundle_dir: Path) -> dict[str, Any]:
     if bundle.get("completion") not in ("in_progress", "complete", "interrupted", "failed") or not isinstance(bundle.get("cases"), list):
         raise ScoreError("invalid bundle completion or case list")
     by_id = {case.id: case for case in corpus.cases}
-    aggregate = _Tally()
+    aggregate = _Tally(label_status)
     cases = []
     seen = set()
+    unscored_runs: dict[str, int] = {}
     for item in bundle["cases"]:
         if not isinstance(item, dict) or item.get("case_id") not in by_id or item["case_id"] in seen:
             raise ScoreError("bundle names an unknown or repeated case")
@@ -382,7 +430,8 @@ def score_bundle(corpus: Corpus, bundle_dir: Path) -> dict[str, Any]:
         runs = item.get("runs")
         if not isinstance(runs, list):
             raise ScoreError("invalid run list")
-        tally = _Tally()
+        scored = adjudication is None or not adjudication.for_case(case.id).excluded
+        tally = _Tally(label_status)
         details = []
         for position, run in enumerate(runs, start=1):
             if not isinstance(run, dict) or run.get("run_index") != position or not isinstance(run.get("stdout"), dict):
@@ -396,6 +445,8 @@ def score_bundle(corpus: Corpus, bundle_dir: Path) -> dict[str, Any]:
             recorded = run.get("result")
             if review.completion != "unreadable" and (not isinstance(recorded, dict) or recorded.get("token_usage") != review.token_usage):
                 raise ScoreError("the run's recorded token usage does not match its result")
+            if not scored:
+                continue
             matched = match_run(case, review) if review.completion == "completed" else None
             tally.add(case, review, matched, latency_ns)
             aggregate.add(case, review, matched, latency_ns)
@@ -414,6 +465,9 @@ def score_bundle(corpus: Corpus, bundle_dir: Path) -> dict[str, Any]:
                 "false_positives": matched["false_positives"] if matched else [],
                 "false_negatives": matched["false_negatives"] if matched else [],
             })
+        if not scored:
+            unscored_runs[case.id] = len(runs)
+            continue
         cases.append({
             "case_id": case.id,
             "case_kind": case.kind,
@@ -422,28 +476,70 @@ def score_bundle(corpus: Corpus, bundle_dir: Path) -> dict[str, Any]:
             "metrics": tally.report(),
             "runs": details,
         })
-    if not cases:
+    if not seen:
         raise ScoreError("bundle records no case")
+    if adjudication is None:
+        return {
+            "contract": SCORE_CONTRACT,
+            "schema_version": 1,
+            "review_state": "pending",
+            "label_status": LABEL_STATUS,
+            "release_evidence_eligible": False,
+            "golden_status": "prohibited_pending_human_review",
+            "scorer": SCORER,
+            "corpus_identity": corpus.identity,
+            "manifest_sha256": corpus.manifest_sha256,
+            "bundle_sha256": hashlib.sha256(index_bytes).hexdigest(),
+            "bundle_completion": bundle["completion"],
+            "matching": dict(_MATCHING),
+            "limitations": list(LIMITATIONS),
+            "aggregate": aggregate.report(),
+            "cases": cases,
+        }
+    excluded = adjudication.excluded
+    blockers = []
+    if excluded:
+        blockers.append("cases_excluded_by_review")
+    if seen != set(by_id):
+        blockers.append("bundle_omits_cases")
+    if bundle["completion"] != "complete":
+        blockers.append("bundle_not_complete")
     return {
-        "contract": SCORE_CONTRACT,
+        "contract": ADJUDICATED_SCORE_CONTRACT,
         "schema_version": 1,
-        "review_state": "pending",
-        "label_status": LABEL_STATUS,
-        "release_evidence_eligible": False,
-        "golden_status": "prohibited_pending_human_review",
+        "label_status": ADJUDICATED_LABEL_STATUS,
+        "provenance_status": PROVENANCE_STATUS,
+        "acceptance_status": "not_decided",
+        "release_evidence_eligible": not blockers,
+        "release_evidence_blockers": blockers,
         "scorer": SCORER,
         "corpus_identity": corpus.identity,
         "manifest_sha256": corpus.manifest_sha256,
         "bundle_sha256": hashlib.sha256(index_bytes).hexdigest(),
         "bundle_completion": bundle["completion"],
-        "matching": {
-            "rule": "same_path_same_side_overlapping_lines_compatible_category",
-            "uncategorized_findings": "matched_on_location_only",
-            "assignment": "maximum_one_to_one",
+        "adjudication": {
+            "contract": RECORD_CONTRACT,
+            "schema_version": 1,
+            "record_sha256": adjudication.record_sha256,
+            "case_count": len(adjudication.decisions),
+            "confirmed_count": len(adjudication.decisions) - len(excluded),
+            "excluded_count": len(excluded),
         },
-        "limitations": list(LIMITATIONS),
+        "matching": dict(_MATCHING),
+        "limitations": list(ADJUDICATED_LIMITATIONS),
         "aggregate": aggregate.report(),
         "cases": cases,
+        "excluded_cases": [
+            {
+                "case_id": item.case_id,
+                "case_kind": by_id[item.case_id].kind,
+                "labels_sha256": item.labels_sha256,
+                "decision": item.decision,
+                "reason": item.reason,
+                "runs_not_scored": unscored_runs.get(item.case_id, 0),
+            }
+            for item in excluded
+        ],
     }
 
 
@@ -452,24 +548,41 @@ def encode_score(value: dict[str, Any]) -> bytes:
 
 
 def main(arguments: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Score a model-review corpus run bundle against the pending labels.")
+    parser = argparse.ArgumentParser(
+        description="Score a model-review corpus run bundle against the pending labels, or against the labels an imported human adjudication confirms."
+    )
     parser.add_argument("--bundle", type=Path, required=True, help="bundle directory written by open_trestle_eval.model_runs")
     parser.add_argument("--corpus", type=Path, default=None)
     parser.add_argument("--output", type=Path, default=None, help="new file for the report; stdout when absent")
+    parser.add_argument("--adjudication", type=Path, default=None, help="human-authored model-corpus adjudication record")
+    parser.add_argument("--adjudication-sha256", default=None, help="SHA-256 of the record's exact bytes, from the reviewer's handoff")
     args = parser.parse_args(arguments)
+    if (args.adjudication is None) != (args.adjudication_sha256 is None):
+        parser.error("--adjudication and --adjudication-sha256 must be given together")
     try:
         corpus = load_corpus(args.corpus or default_corpus_root())
-        encoded = encode_score(score_bundle(corpus, args.bundle))
+        adjudication = None
+        if args.adjudication is not None:
+            adjudication = import_adjudication(corpus, read_record(args.adjudication), args.adjudication_sha256)
+        report = score_bundle(corpus, args.bundle, adjudication)
+        encoded = encode_score(report)
         if args.output is None:
             sys.stdout.buffer.write(encoded)
         else:
             descriptor = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
             with os.fdopen(descriptor, "wb") as stream:
                 stream.write(encoded)
-    except (OSError, CorpusError, ScoreError) as error:
+    except (OSError, CorpusError, ScoreError, AdjudicationError) as error:
         print(f"model score: {error}", file=sys.stderr)
         return 1
-    print(f"pending score written ({LABEL_STATUS}; not release evidence)", file=sys.stderr)
+    if adjudication is None:
+        print(f"pending score written ({LABEL_STATUS}; not release evidence)", file=sys.stderr)
+    else:
+        eligible = "true" if report["release_evidence_eligible"] else "false"
+        print(
+            f"adjudicated score written ({ADJUDICATED_LABEL_STATUS}; release_evidence_eligible={eligible}; acceptance not decided)",
+            file=sys.stderr,
+        )
     return 4
 
 
