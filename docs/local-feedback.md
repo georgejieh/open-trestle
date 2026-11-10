@@ -8,7 +8,7 @@ Use `--review-input PATH` instead of `--revision-algorithm` and
 `--head-revision-digest`. Keep the repository labels, tenant, logical repository,
 route inventory, runtime policy, local-only egress, timeout, validity, feedback
 input and new output arguments from the existing authoring command. The result
-must be schema version 1, terminal succeeded, and contain a canonical verified
+must be schema version 1, 4, 5 or 6, terminal succeeded, and contain a canonical verified
 diagnostic set with matching scope, repository, head and runtime policy. The
 file is operator-supplied evidence, not authenticated authorship or source custody.
 

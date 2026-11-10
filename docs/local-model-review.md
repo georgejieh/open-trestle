@@ -116,9 +116,9 @@ through their existing policy and credential boundaries. This example uses
 `local-only`, which refuses remote routes.
 
 Capture stdout as one terminal JSON receipt and retain the process exit status.
-The receipt uses `open-trestle/local-git-model-review-result`, schema version 1,
-version 4 when a verified finding carries a category, or version 5 when it also
-or instead carries a [style recommendation](#style-recommendations) (see
+The receipt uses `open-trestle/local-git-model-review-result`, schema version 6
+for every run that opened, which adds [token usage](#token-usage) to the fields
+of versions 1 to 5, and version 1 for a request that never opened a run (see
 [Results and limits](#results-and-limits)); inspect `status`, `ci_disposition`,
 `run_status`, `limitations` and `diagnostics` together. A succeeded run means the pipeline finished, not that the repository
 is clear. Verified findings use `ci_disposition: blocked`; no candidates,
@@ -580,11 +580,12 @@ instructions. The profile catalog's tiers, token budgets and route assignments a
 not used by this command.
 
 Without `--profile`, the version 7 request has no `specialist` block and the result
-does not report a profile. With it, the result uses schema version 3 (version 4
-when it also reports finding guidance, version 5 with a
-[style recommendation](#style-recommendations)) and adds
+does not report a profile. With it, the result adds
 `specialist` with `profile_id`, `profile_identity` and `catalog_identity`, both on
-completed and on refused or failed runs. The reported profile must match the one
+completed and on refused or failed runs. Such a result is schema version 6 once
+its run opened and version 3 before; earlier builds wrote an opened run as
+version 3, version 4 with finding guidance or version 5 with a
+[style recommendation](#style-recommendations). The reported profile must match the one
 recorded in the generation context. Text output adds a `specialist profile:` line.
 The instruction text itself is not written to the result. The retained-memory
 feedback review and the [model-result evaluation](model-result-evaluation.md)
@@ -665,7 +666,9 @@ not the single-review result:
   run did not succeed), `context_shortfall` (only with `failure_detail`
   `route_context_insufficient`), run, scope, plan and context identities,
   route record identities, independence, diagnostic set identity, usage and cost,
-  verification counts and limitations.
+  the member result's [`token_usage`](#token-usage) (absent when the member's
+  result reports none, as for a member that never ran), verification counts and
+  limitations.
 - `findings`: merged verified findings. Each group has one representative: its
   first finding in run order, replaced by a later member's finding of higher
   severity. A finding joins a group when it comes from a different member than
@@ -806,10 +809,14 @@ support. Turn records written
 under estimate version 1 counted the payload alone; they read back with that
 formula and are never re-estimated.
 
-Opted-in results use schema version 2, or version 5 when they carry
+Opted-in results use schema version 6 once the run opened and version 2 before;
+earlier builds wrote version 2, or version 5 with
 [style advice](#style-recommendations). They include all retained turns and their
 request, route, audit, and tool-result identities, rather than only the final two
-model calls. Known observed cost remains visible when total usage is unknown.
+model calls. Each turn also carries its provider-reported `input_tokens`,
+`output_tokens` and `cached_input_tokens`, and `token_usage` sums the turns by
+role (see [Token usage](#token-usage)). Known observed cost remains visible when
+total usage is unknown.
 On terminal failure, an actual scoped diagnostic set may remain as historical data
 with `diagnostics_not_terminal_success`. It grants no readiness or success. If the
 whole optional set cannot fit, it is omitted with
@@ -1036,20 +1043,83 @@ init` wizard as a flag) writes a larger allowance, from 4096 up to the declared
 same allowance and must fit `--max-cost-micro-usd`. Without the flag, the policy
 bytes are unchanged.
 
-By default, JSON uses `open-trestle/local-git-model-review-result`, schema version 1
-(version 2 with `--investigation-policy`, version 3 with `--profile`, version 5
-with [style recommendations](#style-recommendations)). When at least
-one verified finding carries a category, the result is version 4 and adds
+JSON uses `open-trestle/local-git-model-review-result`. Every run that opened
+writes schema version 6, which keeps every field of versions 1 to 5 and adds
+[`token_usage`](#token-usage). A result that reports no opened run (`run_status`
+`not_opened` or `unknown`) carries no token usage and keeps version 1 (version 2
+with `--investigation-policy`, version 3 with `--profile`). Earlier builds wrote
+an opened run as version 1, version 2 with `--investigation-policy`, version 3
+with `--profile`, version 4 with finding guidance or version 5 with
+[style recommendations](#style-recommendations); those bytes read back
+unchanged, and a version 1 to 5 result never carries `token_usage`. When at least
+one verified finding carries a category, the result adds
 `finding_guidance`: one entry per categorized finding, in diagnostic order, with
 `finding_identity` (the diagnostic finding's `source_identity`), `category`, and,
 when the generator offered one, `fix` with `fix_authority:
-unverified_model_guidance`. A version 4 result keeps a `--profile` run's
+unverified_model_guidance`. The result keeps a `--profile` run's
 `specialist` object. Text output adds `category:` and `fix:` lines after each such
 finding. The verifier checked the finding's claim, not its category or fix: the
 category is the generator's advisory label, and the fix is untrusted model text
 that is printed, never applied, and is not part of the diagnostic set. SARIF carries it only as a labeled result property.
 The model-result evaluation import and the retained-memory feedback review accept
-version 4 without a specialist and ignore the guidance.
+version 4 and version 6 results without a specialist and ignore the guidance.
+
+### Token usage
+
+A version 6 result reports `token_usage`: the input, output and cached-input
+tokens the provider reported, summed over every route attempt the run claimed,
+with `generation` and `verification` objects of the same shape. A completed
+review whose two attempts each reported 100 input and 100 output tokens reads:
+
+```json
+"token_usage":{"known":true,"route_attempts":2,"input_tokens":200,"output_tokens":200,"cached_input_tokens":0,"generation":{"known":true,"route_attempts":1,"input_tokens":100,"output_tokens":100,"cached_input_tokens":0},"verification":{"known":true,"route_attempts":1,"input_tokens":100,"output_tokens":100,"cached_input_tokens":0}}
+```
+
+- `route_attempts` is the number of claimed attempts summed. A direct review
+  claims at most one generation and one verification attempt; an
+  `--investigation-policy` run claims one per turn.
+- `input_tokens` includes `cached_input_tokens`, as providers report them. The
+  counts are the provider's report, not a tokenization by Open Trestle, and
+  carry no content.
+- `known` is true only when every summed attempt reported usage. Otherwise it is
+  false and the three counts are absent, never zero, for example
+  `{"known":false,"route_attempts":1}`. That happens when the provider sent no
+  usage, the response was refused before its usage was accepted, or no adapter
+  result was observed for a claimed attempt. Every shipped provider adapter
+  reports no usage for a failed dispatch, so a failed attempt counts as unknown
+  even when the provider sent usage, for example with `output_exhausted`.
+- A successful attempt is read from the run's recorded route execution. Any
+  other claimed attempt is read from the adapter result the session observed for
+  it in the same process, so a generation that was dispatched but whose response
+  was refused as malformed still counts the tokens it reported.
+- In an `--investigation-policy` run each recorded turn counts under its role,
+  and each entry of `investigation.turns` carries its own `input_tokens`,
+  `output_tokens` and `cached_input_tokens` (a recorded turn always has known
+  usage, because its cost is known). A claimed turn without a turn record has no
+  known stage, so both stage objects are then unknown while the total can still
+  be known.
+- `usage_known` and `actual_cost_micro_usd` keep their meaning: cost, which
+  needs pricing and is reported only when every claimed attempt is a recorded
+  execution with known usage. A completed direct review has `token_usage.known`
+  equal to `usage_known`; a failed run can know its tokens but not its cost.
+
+Text output adds one line before any `style:` line and `limitations:`:
+
+```text
+tokens: input=200 output=200 cached_input=0 over 2 route attempts
+tokens: unknown over 2 route attempts (not every attempt reported usage)
+```
+
+A result without `token_usage` reports no token use. That is a result that never
+opened a run, and the fallback written when readback or closure of an
+`--investigation-policy` run failed before its usage was read, which keeps
+version 2 or 5. SARIF does not carry token usage. The model-result evaluation
+import accepts a completed version 6 result only when its `token_usage` has
+exactly one generation and one verification attempt, each a usage report an
+adapter could return, whose counts sum to the totals, with `known` equal to
+`usage_known`; the retained-memory feedback review accepts version 6 and ignores
+the counts. A [review set](#specialist-review-set-opt-in) member carries its own
+result's `token_usage`.
 
 ### Style recommendations
 
@@ -1085,8 +1155,8 @@ language before `limitations:`, for example:
 style: no declared Python style for 3 changed files; consider PEP 8, enforced with Ruff or Black, and commit its configuration
 ```
 
-JSON uses schema version 5, which keeps every version 4 field (including
-`finding_guidance` and a `--profile` run's `specialist` object) and adds
+JSON keeps every other field (including `finding_guidance` and a `--profile`
+run's `specialist` object) and adds, in version 6 as it did in version 5,
 `style_recommendations`: one entry per language, in language-token order, with
 `language` (the routing token, such as `python` or `cpp`), `changed_files`, and
 `recommendation` (the table text). Recommendations use exactly the base style
@@ -1107,7 +1177,8 @@ style: declared Python style unknown for 1 changed file; a base style configurat
 style: 1 base style configuration file was not read (over 64 KiB, not valid UTF-8, beyond 256 files, or past the 1 MiB change-features bound)
 ```
 
-A result without any of these fields keeps its earlier version.
+A result without any of these fields has no style advice; in earlier builds it
+kept version 1 or 4.
 
 A recommendation is advice only. It is not a finding, never blocks, and never
 changes `status`, `ci_disposition`, the exit code under any
@@ -1115,9 +1186,8 @@ changes `status`, `ci_disposition`, the exit code under any
 `comprehensive_clearance`. SARIF carries it at run level only, as the
 `trestleStyleAdvice` property and `note` notifications (see
 [SARIF output](#sarif-output)), never as a result with a location. An
-`--investigation-policy` result with advice is
-also version 5 and keeps its `investigation` object; without advice it stays
-version 2. A `--specialists` review set reports the general review's advice
+`--investigation-policy` result with advice keeps its `investigation` object; in
+earlier builds it was version 5, and version 2 without advice. A `--specialists` review set reports the general review's advice
 once (see [Specialist review set](#specialist-review-set-opt-in)). A run that
 failed before it recorded its change model reviewed nothing and carries no
 style advice, as it carries no findings. When the recorded change model, its
@@ -1125,8 +1195,8 @@ snapshots or a base style configuration file cannot be read back, the advice is
 reported as unavailable rather than left out: JSON adds
 `style_advice_unavailable: true` (with no other style field) and text reads
 `style: advice unavailable; the recorded change or base style configuration could not be read back`. The model-result evaluation import
-and the retained-memory feedback review accept version 5 and otherwise ignore
-the advice, but both refuse advice that no review records (one validator,
+and the retained-memory feedback review accept version 5 and version 6 and
+otherwise ignore the advice, but both refuse advice that no review records (one validator,
 `agentprofile.RecordedStyleAdvice.Validate`): a language without a style
 detector, a recommendation other than its table text, languages out of order,
 repeated or both recommended and withheld, a withheld language without an
