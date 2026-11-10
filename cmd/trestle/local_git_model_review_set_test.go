@@ -57,6 +57,9 @@ type localModelSetReceipt struct {
 		GenerationRoute   string `json:"generation_route_record_identity"`
 		VerificationRoute string `json:"verification_route_record_identity"`
 		UsageKnown        bool   `json:"usage_known"`
+		// TokenUsage is the member result's token_usage, absent for a member
+		// that never ran.
+		TokenUsage *localreview.TokenUsage `json:"token_usage"`
 	} `json:"members"`
 	Summary struct {
 		MembersRun       int            `json:"members_run"`
@@ -144,6 +147,18 @@ func droppedReason(receipt localModelSetReceipt, id string) string {
 		}
 	}
 	return ""
+}
+
+// memberTokens is the token_usage of a member whose route attempts each
+// reported 100 input and 100 output tokens: generation, then verification.
+func memberTokens(attempts int) string {
+	stage := `{"known":true,"route_attempts":1,"input_tokens":100,"output_tokens":100,"cached_input_tokens":0}`
+	verification := stage
+	if attempts == 1 {
+		verification = `{"known":true,"route_attempts":0,"input_tokens":0,"output_tokens":0,"cached_input_tokens":0}`
+	}
+	total := attempts * 100
+	return fmt.Sprintf(`{"known":true,"route_attempts":%d,"input_tokens":%d,"output_tokens":%d,"cached_input_tokens":0,"generation":%s,"verification":%s}`, attempts, total, total, stage, verification)
 }
 
 func TestParseSpecialistRequest(t *testing.T) {
@@ -353,6 +368,9 @@ func TestRunLocalGitModelReviewAutoSpecialistsRunsAndMerges(t *testing.T) {
 		if member.GenerationRoute != f.generationRoute || member.VerificationRoute != f.verificationRoute || !member.UsageKnown {
 			t.Fatal("member did not use the runtime policy route pair")
 		}
+		if tokens, err := json.Marshal(member.TokenUsage); err != nil || string(tokens) != memberTokens(2) {
+			t.Fatalf("member %s token usage = %s", member.Member, tokens)
+		}
 		runs[member.ReviewRunID] = true
 	}
 	if len(receipt.Findings) != 1 || receipt.Summary.DuplicatesMerged != 2 || receipt.Summary.BySeverity["error"] != 1 || receipt.Summary.ByCategory["correctness"] != 1 {
@@ -527,6 +545,20 @@ func TestRunLocalGitModelReviewSpecialistFailureStopsFurtherMembers(t *testing.T
 			}
 			if skipped.Member != "backend" || skipped.Launched || skipped.NotLaunchedReason != "stopped_after_bug_hunter_failed" || skipped.ReviewRunID != "" {
 				t.Fatalf("further member was launched or mislabeled: %+v", skipped)
+			}
+			// The failed specialist's rejected generation was dispatched and
+			// reported its usage; the member that never ran reports none.
+			for _, member := range []struct {
+				name     string
+				tokens   *localreview.TokenUsage
+				attempts int
+			}{{"general", general.TokenUsage, 2}, {"bug_hunter", failed.TokenUsage, 1}} {
+				if tokens, err := json.Marshal(member.tokens); err != nil || string(tokens) != memberTokens(member.attempts) {
+					t.Fatalf("member %s token usage = %s", member.name, tokens)
+				}
+			}
+			if skipped.TokenUsage != nil {
+				t.Fatalf("member that never ran reports token usage %+v", skipped.TokenUsage)
 			}
 			gc, _ := f.generation.snapshot()
 			vc, _ := f.verification.snapshot()

@@ -305,32 +305,35 @@ type setContextShortfallWire struct {
 }
 
 type setMemberWire struct {
-	Member              string   `json:"member"`
-	ProfileIdentity     string   `json:"profile_identity,omitempty"`
-	Launched            bool     `json:"launched"`
-	NotLaunchedReason   string   `json:"not_launched_reason,omitempty"`
-	Status              string   `json:"status"`
-	CI                  string   `json:"ci_disposition"`
-	RunStatus           string   `json:"run_status"`
-	Failure             string   `json:"failure"`
-	FailureTask         string   `json:"failure_task,omitempty"`
-	FailureDetail       string   `json:"failure_detail,omitempty"`
-	ReviewRunID         string   `json:"review_run_id"`
-	ScopeIdentity       string   `json:"scope_identity"`
-	PlanIdentity        string   `json:"plan_identity"`
-	ContextIdentity     string   `json:"context_identity"`
-	GenerationRoute     string   `json:"generation_route_record_identity"`
-	VerificationRoute   string   `json:"verification_route_record_identity"`
-	Independence        string   `json:"independence"`
-	DiagnosticSet       string   `json:"diagnostic_set_identity"`
-	UsageKnown          bool     `json:"usage_known"`
-	ActualCostMicroUSD  uint64   `json:"actual_cost_micro_usd"`
-	Candidates          *uint16  `json:"candidate_count,omitempty"`
-	Verified            *uint16  `json:"verified_count,omitempty"`
-	Rejected            *uint16  `json:"rejected_count,omitempty"`
-	Inconclusive        *uint16  `json:"inconclusive_count,omitempty"`
-	VerifiedFindings    int      `json:"verified_findings"`
-	Limitations         []string `json:"limitations"`
+	Member             string `json:"member"`
+	ProfileIdentity    string `json:"profile_identity,omitempty"`
+	Launched           bool   `json:"launched"`
+	NotLaunchedReason  string `json:"not_launched_reason,omitempty"`
+	Status             string `json:"status"`
+	CI                 string `json:"ci_disposition"`
+	RunStatus          string `json:"run_status"`
+	Failure            string `json:"failure"`
+	FailureTask        string `json:"failure_task,omitempty"`
+	FailureDetail      string `json:"failure_detail,omitempty"`
+	ReviewRunID        string `json:"review_run_id"`
+	ScopeIdentity      string `json:"scope_identity"`
+	PlanIdentity       string `json:"plan_identity"`
+	ContextIdentity    string `json:"context_identity"`
+	GenerationRoute    string `json:"generation_route_record_identity"`
+	VerificationRoute  string `json:"verification_route_record_identity"`
+	Independence       string `json:"independence"`
+	DiagnosticSet      string `json:"diagnostic_set_identity"`
+	UsageKnown         bool   `json:"usage_known"`
+	ActualCostMicroUSD uint64 `json:"actual_cost_micro_usd"`
+	// TokenUsage is the member result's token_usage. It is absent when the
+	// member result reports none, as for a member that never ran.
+	TokenUsage          *localreview.TokenUsage `json:"token_usage,omitempty"`
+	Candidates          *uint16                 `json:"candidate_count,omitempty"`
+	Verified            *uint16                 `json:"verified_count,omitempty"`
+	Rejected            *uint16                 `json:"rejected_count,omitempty"`
+	Inconclusive        *uint16                 `json:"inconclusive_count,omitempty"`
+	VerifiedFindings    int                     `json:"verified_findings"`
+	Limitations         []string                `json:"limitations"`
 	reportAvailable     bool
 	statusFindingsEmpty bool
 	failureHint         string
@@ -594,7 +597,7 @@ func buildModelReviewSet(selection specialistSelectionWire, members []localModel
 			}
 			wire.ReviewRunID, wire.ScopeIdentity, wire.PlanIdentity, wire.ContextIdentity = report.ReviewRunID, report.ScopeIdentity, report.PlanIdentity, report.ContextIdentity
 			wire.GenerationRoute, wire.VerificationRoute, wire.Independence, wire.DiagnosticSet = report.GenerationRoute, report.VerificationRoute, report.Independence, report.DiagnosticSet
-			wire.UsageKnown, wire.ActualCostMicroUSD = report.UsageKnown, report.ActualCostMicroUSD
+			wire.UsageKnown, wire.ActualCostMicroUSD, wire.TokenUsage = report.UsageKnown, report.ActualCostMicroUSD, report.TokenUsage
 			wire.Limitations = append(wire.Limitations, report.Limitations...)
 			wire.VerifiedFindings = len(report.Findings)
 			wire.statusFindingsEmpty = report.Status == "findings" && len(report.Findings) == 0
