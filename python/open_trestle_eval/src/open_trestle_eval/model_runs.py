@@ -342,8 +342,46 @@ def capture_run(command: Sequence[str], *, timeout_seconds: float, cwd: Path) ->
     }
 
 
+_TOKEN_COUNTS = ("input_tokens", "output_tokens", "cached_input_tokens")
+
+
+def _token_count(value: Any) -> dict[str, Any] | None:
+    """Returns one well-formed token count: counts present exactly when known."""
+    if not isinstance(value, dict) or type(value.get("known")) is not bool:
+        return None
+    attempts = value.get("route_attempts")
+    if type(attempts) is not int or attempts < 0:
+        return None
+    if not value["known"]:
+        return {"known": False, "route_attempts": attempts} if set(value) == {"known", "route_attempts"} else None
+    if set(value) != {"known", "route_attempts", *_TOKEN_COUNTS}:
+        return None
+    if any(type(value[key]) is not int or value[key] < 0 for key in _TOKEN_COUNTS) or value["cached_input_tokens"] > value["input_tokens"]:
+        return None
+    return {key: value[key] for key in ("known", "route_attempts", *_TOKEN_COUNTS)}
+
+
+def read_token_usage(value: Any) -> dict[str, Any] | None:
+    """Returns a result's token_usage when it is well formed, otherwise None.
+
+    A version 6 result reports the provider-reported input, output and
+    cached-input tokens summed over the run's route attempts, with generation
+    and verification shares; the counts are absent, never zero, when not every
+    attempt reported usage. Earlier result versions carry none.
+    """
+    if not isinstance(value, dict) or not {"generation", "verification"} <= set(value):
+        return None
+    total = _token_count({key: item for key, item in value.items() if key not in ("generation", "verification")})
+    stages = [_token_count(value[stage]) for stage in ("generation", "verification")]
+    if total is None or None in stages or total["route_attempts"] < sum(stage["route_attempts"] for stage in stages):
+        return None
+    if total["known"] and all(stage["known"] for stage in stages) and any(total[key] != sum(stage[key] for stage in stages) for key in _TOKEN_COUNTS):
+        return None
+    return {**total, "generation": stages[0], "verification": stages[1]}
+
+
 def summarize_result(stdout: bytes) -> dict[str, Any]:
-    """Copies status, usage and cost fields from one LF-terminated JSON result."""
+    """Copies status, usage, cost and token fields from one LF-terminated JSON result."""
     summary: dict[str, Any] = {
         "parsed": False,
         "contract": None,
@@ -354,6 +392,7 @@ def summarize_result(stdout: bytes) -> dict[str, Any]:
         "usage_known": None,
         "actual_cost_micro_usd": None,
         "context_shortfall": None,
+        "token_usage": None,
     }
     if not stdout.endswith(b"\n") or b"\n" in stdout[:-1]:
         return summary
@@ -377,6 +416,7 @@ def summarize_result(stdout: bytes) -> dict[str, Any]:
     fields = ("required_tokens", "estimated_input_tokens", "max_output_tokens", "declared_context_tokens")
     if isinstance(shortfall, dict) and set(shortfall) == set(fields) and all(type(shortfall[key]) is int and shortfall[key] >= 0 for key in fields):
         summary["context_shortfall"] = {key: shortfall[key] for key in fields}
+    summary["token_usage"] = read_token_usage(value.get("token_usage"))
     return summary
 
 

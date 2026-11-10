@@ -77,6 +77,21 @@ RESULT = {
     "diagnostics": None,
 }
 
+# The token_usage of a version 6 result whose generation reported 300 input
+# (40 cached) and 100 output tokens and whose verification reported 200 and 50.
+KNOWN_TOKENS = {
+    "known": True, "route_attempts": 2, "input_tokens": 500, "output_tokens": 150, "cached_input_tokens": 40,
+    "generation": {"known": True, "route_attempts": 1, "input_tokens": 300, "output_tokens": 100, "cached_input_tokens": 40},
+    "verification": {"known": True, "route_attempts": 1, "input_tokens": 200, "output_tokens": 50, "cached_input_tokens": 0},
+}
+# A version 6 result whose verification attempt reported no usage.
+UNKNOWN_TOKENS = {
+    "known": False, "route_attempts": 2,
+    "generation": KNOWN_TOKENS["generation"],
+    "verification": {"known": False, "route_attempts": 1},
+}
+RESULT_V6 = {**RESULT, "schema_version": 6, "token_usage": KNOWN_TOKENS}
+
 
 def operator_flags(root: Path, egress: str = "policy-approved", timeout: str = "1s") -> list[str]:
     return [
@@ -126,6 +141,32 @@ class OperatorArgumentTest(unittest.TestCase):
             self.assertFalse(summarize_result(raw)["parsed"])
         odd = summarize_result((json.dumps({**RESULT, "usage_known": 1, "actual_cost_micro_usd": True, "status": 7}) + "\n").encode())
         self.assertEqual((odd["usage_known"], odd["actual_cost_micro_usd"], odd["status"]), (None, None, None))
+
+    def test_copies_only_well_formed_token_usage(self) -> None:
+        self.assertIsNone(summarize_result((json.dumps(RESULT) + "\n").encode())["token_usage"])
+        for name, usage in (("known", KNOWN_TOKENS), ("unknown", UNKNOWN_TOKENS)):
+            with self.subTest(name=name):
+                summary = summarize_result((json.dumps({**RESULT_V6, "token_usage": usage}) + "\n").encode())
+                self.assertEqual(summary["token_usage"], usage)
+        stage = KNOWN_TOKENS["generation"]
+        malformed = {
+            "known without counts": {**UNKNOWN_TOKENS, "known": True},
+            "unknown with counts": {**KNOWN_TOKENS, "known": False},
+            "zero standing in for unknown": {**UNKNOWN_TOKENS, "input_tokens": 0, "output_tokens": 0, "cached_input_tokens": 0},
+            "cached above input": {**KNOWN_TOKENS, "cached_input_tokens": 501},
+            "negative count": {**KNOWN_TOKENS, "output_tokens": -1},
+            "boolean count": {**KNOWN_TOKENS, "input_tokens": True},
+            "missing stage": {key: value for key, value in KNOWN_TOKENS.items() if key != "verification"},
+            "extra field": {**KNOWN_TOKENS, "total_tokens": 900},
+            "stage with extra field": {**KNOWN_TOKENS, "generation": {**stage, "model": "x"}},
+            "string known": {**KNOWN_TOKENS, "known": "true"},
+            "total not the sum": {**KNOWN_TOKENS, "input_tokens": 501},
+            "fewer attempts than its stages": {**KNOWN_TOKENS, "route_attempts": 1},
+            "not an object": [KNOWN_TOKENS],
+        }
+        for name, usage in malformed.items():
+            with self.subTest(name=name):
+                self.assertIsNone(summarize_result((json.dumps({**RESULT_V6, "token_usage": usage}) + "\n").encode())["token_usage"])
 
 
 class DriverTest(unittest.TestCase):
@@ -259,6 +300,33 @@ class DriverTest(unittest.TestCase):
         self.assertEqual(bundle["cases"][0]["runs"][0]["result"]["actual_cost_micro_usd"], 125)
         self.assertEqual((output / bundle["cases"][0]["runs"][0]["stderr"]["path"]).read_bytes(), b"note\n")
         self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o700)
+
+    def test_records_the_result_token_usage(self) -> None:
+        first, second, third = (self.corpus.case(name) for name in ("clean_rename", "defect_off_by_one", "near_miss_time_after_go123"))
+        self.configure(results={
+            repository_name(self.corpus, first): {"stdout": json.dumps(RESULT_V6) + "\n", "exit": 4},
+            repository_name(self.corpus, second): {"stdout": json.dumps({**RESULT_V6, "usage_known": False, "token_usage": UNKNOWN_TOKENS}) + "\n", "exit": 4},
+            repository_name(self.corpus, third): {"stdout": json.dumps(RESULT) + "\n", "exit": 4},
+        })
+        bundle = run_corpus(
+            corpus=self.corpus, cases=[first, second, third], trestle=self.trestle.resolve(), runs=1,
+            operator_arguments=operator_flags(self.root), output=self.root / "bundle-tokens",
+            repository_authority="corpus.invalid", repository_namespace="model-corpus-v1",
+        )
+        validate(SCHEMA, bundle)
+        recorded = [item["runs"][0]["result"]["token_usage"] for item in bundle["cases"]]
+        self.assertEqual(recorded, [KNOWN_TOKENS, UNKNOWN_TOKENS, None])
+        for mutate in (
+            lambda usage: usage.update(known=False),
+            lambda usage: usage.update(input_tokens=-1),
+            lambda usage: usage.update(verification={"known": False, "route_attempts": 1, "input_tokens": 0}),
+            lambda usage: usage["generation"].pop("cached_input_tokens"),
+            lambda usage: usage.update(tokens=1),
+        ):
+            altered = json.loads(json.dumps(bundle))
+            mutate(altered["cases"][0]["runs"][0]["result"]["token_usage"])
+            with self.assertRaises(SchemaError):
+                validate(SCHEMA, altered)
 
     def bounded_run(self, mode: str) -> dict:
         self.configure(mode=mode)

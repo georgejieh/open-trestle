@@ -309,7 +309,7 @@
         "actual_cost_micro_usd",
         "context_shortfall"
       ],
-      "description": "Fields copied from the stdout JSON when it is one LF-terminated object; a field of an unexpected type is null. The result records no consumed token counts; context_shortfall holds the byte-based token estimates of a route-context refusal.",
+      "description": "Fields copied from the stdout JSON when it is one LF-terminated object; a field of an unexpected type is null. token_usage copies the provider-reported tokens a version 6 result consumed; context_shortfall holds the byte-based token estimates of a route-context refusal.",
       "properties": {
         "parsed": {
           "type": "boolean"
@@ -402,8 +402,142 @@
               }
             }
           ]
+        },
+        "token_usage": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/token_usage"
+            }
+          ],
+          "description": "The result's token_usage when it is well formed; null for a result that reports none, such as one earlier than result schema version 6."
         }
       }
+    },
+    "token_count": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "known",
+            "route_attempts",
+            "input_tokens",
+            "output_tokens",
+            "cached_input_tokens"
+          ],
+          "properties": {
+            "known": {
+              "const": true
+            },
+            "route_attempts": {
+              "$ref": "#/$defs/token_number"
+            },
+            "input_tokens": {
+              "$ref": "#/$defs/token_number"
+            },
+            "output_tokens": {
+              "$ref": "#/$defs/token_number"
+            },
+            "cached_input_tokens": {
+              "$ref": "#/$defs/token_number"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "known",
+            "route_attempts"
+          ],
+          "properties": {
+            "known": {
+              "const": false
+            },
+            "route_attempts": {
+              "$ref": "#/$defs/token_number"
+            }
+          }
+        }
+      ],
+      "description": "Provider-reported tokens summed over route attempts. The counts are present only when every summed attempt reported usage; an unknown count is never zero. input_tokens includes cached_input_tokens."
+    },
+    "token_number": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "token_usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "known",
+        "route_attempts",
+        "generation",
+        "verification"
+      ],
+      "properties": {
+        "known": {
+          "type": "boolean"
+        },
+        "route_attempts": {
+          "$ref": "#/$defs/token_number"
+        },
+        "input_tokens": {
+          "$ref": "#/$defs/token_number"
+        },
+        "output_tokens": {
+          "$ref": "#/$defs/token_number"
+        },
+        "cached_input_tokens": {
+          "$ref": "#/$defs/token_number"
+        },
+        "generation": {
+          "$ref": "#/$defs/token_count"
+        },
+        "verification": {
+          "$ref": "#/$defs/token_count"
+        }
+      },
+      "if": {
+        "properties": {
+          "known": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "input_tokens",
+          "output_tokens",
+          "cached_input_tokens"
+        ]
+      },
+      "else": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "input_tokens"
+              ]
+            },
+            {
+              "required": [
+                "output_tokens"
+              ]
+            },
+            {
+              "required": [
+                "cached_input_tokens"
+              ]
+            }
+          ]
+        }
+      },
+      "description": "A version 6 result's token_usage: the total over every route attempt the run claimed, and the generation and verification shares."
     }
   }
 }
