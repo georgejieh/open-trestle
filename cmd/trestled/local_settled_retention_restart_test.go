@@ -23,10 +23,12 @@ import (
 
 // Local review artifacts are retained for 24 hours. A run the journal already
 // settled must not stop the daemon from starting once that retention lapses,
-// and its receipt and result must stay readable and unchanged.
+// and its receipt and result must stay readable and unchanged. That holds for
+// a run whose model requests the provider rate-limited and the handler
+// retried on the same route, completed or rejected by document shape.
 func TestDaemonLocalModelWorkersSettledRunsStartAfterRetention(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"completed", "verification-rejected", "verification-inconclusive", "generation-empty", "generation-malformed", "canceled-after-context"} {
+	for _, mode := range []string{"completed", "verification-rejected", "verification-inconclusive", "generation-empty", "generation-malformed", "canceled-after-context", "completed-after-rate-limits", "generation-malformed-after-rate-limits"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			args, getenv, fake, repository, base, head, policy, inventory := localModelWorkerFixture(t)
@@ -35,6 +37,10 @@ func TestDaemonLocalModelWorkersSettledRunsStartAfterRetention(t *testing.T) {
 				fake.verification.verificationOutcome = mode[len("verification-"):]
 			case "generation-empty", "generation-malformed":
 				fake.generation.generationOutcome = mode[len("generation-"):]
+			case "completed-after-rate-limits":
+				fake.generation.rateLimits, fake.verification.rateLimits = 2, 1
+			case "generation-malformed-after-rate-limits":
+				fake.generation.rateLimits, fake.generation.generationOutcome = 2, "malformed"
 			}
 			args = append(args, "--local-model-workers")
 			clock := &daemonBudgetedHandlerClock{at: time.Now().UTC().Truncate(time.Millisecond)}
@@ -78,7 +84,7 @@ func TestDaemonLocalModelWorkersSettledRunsStartAfterRetention(t *testing.T) {
 			if err != nil {
 				t.Fatalf("no final result: %v", err)
 			}
-			if mode == "completed" && (receipt.Status() != controlplane.ReviewRunSucceeded || final.Outcome() != diagnostics.FinalOutcomeCompleted) {
+			if strings.HasPrefix(mode, "completed") && (receipt.Status() != controlplane.ReviewRunSucceeded || final.Outcome() != diagnostics.FinalOutcomeCompleted) {
 				t.Fatalf("completed fixture status=%v outcome=%s", receipt.Status(), final.Outcome())
 			}
 			generationCalls, _, _, _ := fake.generation.snapshot()
@@ -87,32 +93,44 @@ func TestDaemonLocalModelWorkersSettledRunsStartAfterRetention(t *testing.T) {
 			if err := d.Close(); err != nil {
 				t.Fatal(err)
 			}
-			clock.mu.Lock()
-			clock.at = clock.at.Add(25 * time.Hour)
-			clock.mu.Unlock()
-			journalBefore := ownerStartupJournalBytes(t, statePath)
-			d, api, _ = startContextRefusalDaemon(t, args, getenv, clock)
-			for _, index := range []int{1, 2} {
-				if _, err := d.supervisors[index].(*worker.RepositorySupervisor).RunOnce(context.Background()); err != nil {
-					t.Fatalf("restart supervisor %d: %v", index, err)
+			// A retried run also restarts while its artifacts are retained,
+			// where startup proves the tail from their bytes.
+			advances := []time.Duration{25 * time.Hour}
+			if strings.HasSuffix(mode, "after-rate-limits") {
+				advances = []time.Duration{time.Hour, 24 * time.Hour}
+			}
+			for _, advance := range advances {
+				clock.mu.Lock()
+				clock.at = clock.at.Add(advance)
+				clock.mu.Unlock()
+				journalBefore := ownerStartupJournalBytes(t, statePath)
+				d, api, server = startContextRefusalDaemon(t, args, getenv, clock)
+				for _, index := range []int{1, 2} {
+					if _, err := d.supervisors[index].(*worker.RepositorySupervisor).RunOnce(context.Background()); err != nil {
+						t.Fatalf("restart supervisor %d: %v", index, err)
+					}
 				}
-			}
-			if !reflect.DeepEqual(journalBefore, ownerStartupJournalBytes(t, statePath)) {
-				t.Fatal("restart appended to a settled run")
-			}
-			after, err := api.GetRun(context.Background(), scope)
-			if err != nil || after.HeadIdentity() != receipt.HeadIdentity() || after.Status() != receipt.Status() {
-				t.Fatalf("restart changed the run: %v", err)
-			}
-			reopened, err := api.GetDiagnosticSet(context.Background(), scope)
-			if err != nil || reopened.Identity() != final.Identity() {
-				t.Fatalf("restart changed the result: %v", err)
-			}
-			if calls, _, _, _ := fake.generation.snapshot(); calls != generationCalls {
-				t.Fatalf("restart redispatched generation: %d", calls)
-			}
-			if calls, _, _, _ := fake.verification.snapshot(); calls != verificationCalls {
-				t.Fatalf("restart redispatched verification: %d", calls)
+				if !reflect.DeepEqual(journalBefore, ownerStartupJournalBytes(t, statePath)) {
+					t.Fatal("restart appended to a settled run")
+				}
+				after, err := api.GetRun(context.Background(), scope)
+				if err != nil || after.HeadIdentity() != receipt.HeadIdentity() || after.Status() != receipt.Status() {
+					t.Fatalf("restart changed the run: %v", err)
+				}
+				reopened, err := api.GetDiagnosticSet(context.Background(), scope)
+				if err != nil || reopened.Identity() != final.Identity() {
+					t.Fatalf("restart changed the result: %v", err)
+				}
+				if calls, _, _, _ := fake.generation.snapshot(); calls != generationCalls {
+					t.Fatalf("restart redispatched generation: %d", calls)
+				}
+				if calls, _, _, _ := fake.verification.snapshot(); calls != verificationCalls {
+					t.Fatalf("restart redispatched verification: %d", calls)
+				}
+				server.Close()
+				if err := d.Close(); err != nil {
+					t.Fatal(err)
+				}
 			}
 		})
 	}

@@ -15,7 +15,7 @@ var errGenerationRejectionJournal = errors.New("generation rejection journal pro
 func validateGenerationRejectionJournal(fact controlplane.HistoricalContextPacketFact, events []controlplane.RunEvent, auditEvents []audit.Event, now time.Time) error {
 	fail := func() error { return errGenerationRejectionJournal }
 	plan := fact.Plan()
-	if !recordedV4PlanShape(plan) || len(auditEvents) != 5 || len(events) == 0 || now.UnixMilli() <= 0 {
+	if !recordedV4PlanShape(plan) || !generationRejectionAuditShape(auditEvents) || len(events) == 0 || now.UnixMilli() <= 0 {
 		return fail()
 	}
 	linked, ok := fact.LinkedInputEvent()
@@ -108,9 +108,6 @@ func validateGenerationRejectionJournal(fact controlplane.HistoricalContextPacke
 			return fail()
 		}
 		previous = event.OccurredAtUnixMilliseconds()
-	}
-	if auditEvents[4].Kind() != audit.EventGenerationRejected {
-		return fail()
 	}
 	return nil
 }

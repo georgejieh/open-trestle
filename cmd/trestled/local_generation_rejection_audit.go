@@ -22,7 +22,7 @@ var errGenerationRejectionAudit = errors.New("generation rejection audit proof r
 func validateGenerationRejectionAudit(events []audit.Event, value, inputArtifact, packet, requestArtifact, receiptArtifact artifact.Artifact, descriptor controlplane.ContextInputDescriptor, route runtimecatalog.LocalGenerationRoutePlan, handler string, now time.Time) error {
 	fail := func() error { return errGenerationRejectionAudit }
 	rejection, err := modelhandler.ParseGenerationRejectionArtifact(value, inputArtifact, packet)
-	if err != nil || !physicalPacketDigest(handler) || rejection.HandlerIdentity() != handler || now.UnixMilli() <= 0 || now.Before(value.CreatedAt()) || !now.Before(value.ExpiresAt()) || len(events) != 5 {
+	if err != nil || !physicalPacketDigest(handler) || rejection.HandlerIdentity() != handler || now.UnixMilli() <= 0 || now.Before(value.CreatedAt()) || !now.Before(value.ExpiresAt()) || !generationRejectionAuditShape(events) {
 		return fail()
 	}
 	for _, item := range []artifact.Artifact{value, inputArtifact, packet, requestArtifact, receiptArtifact} {
@@ -41,8 +41,14 @@ func validateGenerationRejectionAudit(events []audit.Event, value, inputArtifact
 		return fail()
 	}
 	attempt := rejection.Attempt()
-	authorization := attempt.Authorization()
-	if authorization.Kind() != gateway.RouteAttemptInitial || authorization.AttemptOrdinal() != 1 || authorization.RouteAttemptOrdinal() != 1 || authorization.PreviousOutcomeIdentity() != "" || authorization.ContinuationDecisionIdentity() != "" || authorization.ReviewScopeIdentity() != value.Scope().Identity() || authorization.Identity() != input.Authorization().Identity() {
+	initial, authorization := input.Authorization(), attempt.Authorization()
+	if initial.Kind() != gateway.RouteAttemptInitial || initial.AttemptOrdinal() != 1 || initial.RouteAttemptOrdinal() != 1 || initial.PreviousOutcomeIdentity() != "" || initial.ContinuationDecisionIdentity() != "" || initial.ReviewScopeIdentity() != value.Scope().Identity() || !gateway.IsSameReservationRetryOf(initial, authorization) {
+		return fail()
+	}
+	// The refused attempts the handler retried left no artifact: their claims
+	// must carry the lineage the gateway grants from the input's authorization.
+	attempts, ok := recordedRouteAttempts(events, 1, initial.SelectionReceiptIdentity())
+	if !ok || !routeAttemptsGrantedFrom(events, attempts, initial) || !finalRouteAttemptIs(events, attempts, authorization) {
 		return fail()
 	}
 	sanitized, err := review.ParseSanitizedModelRequest(requestArtifact.Payload())
@@ -53,7 +59,7 @@ func validateGenerationRejectionAudit(events []audit.Event, value, inputArtifact
 	if err != nil || providerRequest.Identity() != authorization.RequestIdentity() {
 		return fail()
 	}
-	if descriptor.Input.ArtifactIdentity != inputArtifact.Identity() || descriptor.PacketArtifactIdentity != packet.Identity() || descriptor.GenerationInputIdentity != input.Identity() || descriptor.AuthorizationIdentity != authorization.Identity() || descriptor.SelectionReceiptIdentity != authorization.SelectionReceiptIdentity() || descriptor.SelectedRecordIdentity != authorization.RouteRecordIdentity() || descriptor.Request.ArtifactIdentity != input.SanitizedRequestArtifactIdentity() || descriptor.Receipt.ArtifactIdentity != input.SanitizedEgressReceiptArtifactIdentity() || descriptor.ReceiptIdentity != input.SanitizedEgressReceiptIdentity() {
+	if descriptor.Input.ArtifactIdentity != inputArtifact.Identity() || descriptor.PacketArtifactIdentity != packet.Identity() || descriptor.GenerationInputIdentity != input.Identity() || descriptor.AuthorizationIdentity != initial.Identity() || descriptor.SelectionReceiptIdentity != initial.SelectionReceiptIdentity() || descriptor.SelectedRecordIdentity != initial.RouteRecordIdentity() || descriptor.Request.ArtifactIdentity != input.SanitizedRequestArtifactIdentity() || descriptor.Receipt.ArtifactIdentity != input.SanitizedEgressReceiptArtifactIdentity() || descriptor.ReceiptIdentity != input.SanitizedEgressReceiptIdentity() {
 		return fail()
 	}
 	if !physicalPacketDigest(route.RankingPolicyIdentity()) || route.SelectionIdentity() != descriptor.SelectionReceiptIdentity || route.RoutingInputIdentity() != descriptor.RoutingInputIdentity || route.SelectedRecordIdentity() != descriptor.SelectedRecordIdentity || route.RequestIdentity() != authorization.RequestIdentity() || route.PolicyIdentity() != descriptor.PolicyIdentity || route.PairIdentity() != descriptor.RoutePairIdentity || route.RegistryRevision() != descriptor.RegistryRevision || route.PerformanceRevision() != descriptor.PerformanceRevision {
@@ -63,17 +69,15 @@ func validateGenerationRejectionAudit(events []audit.Event, value, inputArtifact
 	if err != nil {
 		return fail()
 	}
-	expected := []struct {
-		kind    audit.EventKind
-		subject string
-		parents []string
-	}{
-		{audit.EventRouteSelected, authorization.SelectionReceiptIdentity(), []string{route.RoutingInputIdentity(), route.SelectedRecordIdentity(), route.RankingPolicyIdentity()}},
-		{audit.EventRouteAttemptClaimed, authorization.Identity(), []string{authorization.SelectionReceiptIdentity()}},
-		{audit.EventRouteDispatchCompleted, attempt.Outcome().Identity(), []string{authorization.Identity(), dispatch, attempt.Outcome().ResponseIdentity()}},
-		{audit.EventRouteCostReconciled, attempt.Reconciliation().Identity(), []string{authorization.Identity(), attempt.Outcome().Identity()}},
-		{audit.EventGenerationRejected, value.Identity(), []string{inputArtifact.Identity(), packet.Identity(), attempt.Identity()}},
+	final := attempts[len(attempts)-1].claim
+	expected := []auditEventSpec{{audit.EventRouteSelected, initial.SelectionReceiptIdentity(), []string{route.RoutingInputIdentity(), route.SelectedRecordIdentity(), route.RankingPolicyIdentity()}}}
+	for _, event := range events[1 : final+1] {
+		expected = append(expected, recordedAuditEventSpec(event))
 	}
+	expected = append(expected,
+		auditEventSpec{audit.EventRouteDispatchCompleted, attempt.Outcome().Identity(), []string{authorization.Identity(), dispatch, attempt.Outcome().ResponseIdentity()}},
+		auditEventSpec{audit.EventRouteCostReconciled, attempt.Reconciliation().Identity(), []string{authorization.Identity(), attempt.Outcome().Identity()}},
+		auditEventSpec{audit.EventGenerationRejected, value.Identity(), []string{inputArtifact.Identity(), packet.Identity(), attempt.Identity()}})
 	previous := ""
 	at := packet.CreatedAt().UnixMilli()
 	for i, event := range events {
@@ -84,7 +88,7 @@ func validateGenerationRejectionAudit(events []audit.Event, value, inputArtifact
 		}
 		previous, at = event.Identity(), event.OccurredAtUnixMilliseconds()
 	}
-	if events[4].OccurredAtUnixMilliseconds() < value.CreatedAt().UnixMilli() {
+	if events[len(events)-1].OccurredAtUnixMilliseconds() < value.CreatedAt().UnixMilli() {
 		return fail()
 	}
 	return nil

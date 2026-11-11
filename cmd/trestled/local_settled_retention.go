@@ -40,44 +40,55 @@ func retiredSettledLinked(f controlplane.HistoricalContextPacketFact, now time.T
 	return false
 }
 
+// retiredModelTail is what follows the generation request in a retired model
+// tail's audit: nothing for a candidate lease expiry, the rejection, or the
+// verification request up to the claim its lease ended at.
+type retiredModelTail uint8
+
+const (
+	retiredCandidateExpiry retiredModelTail = iota + 1
+	retiredGenerationRejection
+	retiredVerificationExpiry
+)
+
 // retiredModelAudit checks a model tail's closed audit stream without reading
-// an artifact: the exact kinds in sequence, the hash chain and time order, the
-// context input's route selection and its first attempt as the input recorded
-// them, and every later model event caused by that attempt.
-func retiredModelAudit(events []audit.Event, f controlplane.HistoricalContextPacketFact, kinds []audit.EventKind, latest time.Time) bool {
+// an artifact: the hash chain and time order, the context input's route
+// selection and its first attempt as the input recorded them, the generation
+// request's same-route retries after rate limits by shape, its final attempt's
+// response and reconciliation, and then exactly tail.
+func retiredModelAudit(events []audit.Event, f controlplane.HistoricalContextPacketFact, tail retiredModelTail, latest time.Time) bool {
 	linked, ok := f.LinkedInputEvent()
-	if !ok || len(events) != len(kinds) || len(events) < 2 {
+	if !ok || len(events) < 4 {
 		return false
 	}
 	scope, d := f.Plan().Scope(), linked.InputDescriptor()
 	previous, at := "", f.PreparedEvent().PacketDescriptor().CreatedAtMilliseconds
 	for i, event := range events {
-		if event.Validate() != nil || event.Scope() != scope || event.Sequence() != uint64(i+1) || event.PreviousIdentity() != previous || event.Kind() != kinds[i] || event.OccurredAtUnixMilliseconds() < at || event.OccurredAtUnixMilliseconds() > latest.UnixMilli() {
+		if event.Validate() != nil || event.Scope() != scope || event.Sequence() != uint64(i+1) || event.PreviousIdentity() != previous || event.OccurredAtUnixMilliseconds() < at || event.OccurredAtUnixMilliseconds() > latest.UnixMilli() {
 			return false
 		}
 		previous, at = event.Identity(), event.OccurredAtUnixMilliseconds()
 	}
-	selection, claim := events[0], events[1]
+	selection := events[0]
 	parents := selection.CausalParentIdentities()
-	if selection.SubjectIdentity() != d.SelectionReceiptIdentity || selection.OccurredAtUnixMilliseconds() > linked.OccurredAt().UnixMilli() || len(parents) != 3 || !slices.Contains(parents, d.RoutingInputIdentity) || !slices.Contains(parents, d.SelectedRecordIdentity) {
+	if selection.Kind() != audit.EventRouteSelected || selection.SubjectIdentity() != d.SelectionReceiptIdentity || selection.OccurredAtUnixMilliseconds() > linked.OccurredAt().UnixMilli() || len(parents) != 3 || !slices.Contains(parents, d.RoutingInputIdentity) || !slices.Contains(parents, d.SelectedRecordIdentity) {
 		return false
 	}
-	if claim.SubjectIdentity() != d.AuthorizationIdentity || !slices.Equal(claim.CausalParentIdentities(), []string{d.SelectionReceiptIdentity}) {
+	attempts, ok := recordedRouteAttempts(events, 1, d.SelectionReceiptIdentity)
+	if !ok || events[1].SubjectIdentity() != d.AuthorizationIdentity || !respondedRouteAttempt(events, attempts[len(attempts)-1].claim) {
 		return false
 	}
-	for _, event := range events[2:] {
-		switch event.Kind() {
-		case audit.EventRouteDispatchCompleted, audit.EventRouteCostReconciled:
-			if !slices.Contains(event.CausalParentIdentities(), d.AuthorizationIdentity) {
-				return false
-			}
-		case audit.EventGenerationRejected:
-			if !slices.Contains(event.CausalParentIdentities(), d.Input.ArtifactIdentity) || !slices.Contains(event.CausalParentIdentities(), d.PacketArtifactIdentity) {
-				return false
-			}
-		}
+	rest := events[attempts[len(attempts)-1].claim+3:]
+	switch tail {
+	case retiredCandidateExpiry:
+		return len(rest) == 0
+	case retiredGenerationRejection:
+		return len(rest) == 1 && rest[0].Kind() == audit.EventGenerationRejected && slices.Contains(rest[0].CausalParentIdentities(), d.Input.ArtifactIdentity) && slices.Contains(rest[0].CausalParentIdentities(), d.PacketArtifactIdentity)
+	case retiredVerificationExpiry:
+		verification, ok := modelRequestAudit(events, len(events)-len(rest))
+		return ok && verification[len(verification)-1].claim == len(events)-1
 	}
-	return true
+	return false
 }
 
 // observeRetired proves a failed run's candidate-generation rejection or model
@@ -124,23 +135,23 @@ func (a *localGenerationStartupAuthority) observeRetired(ctx context.Context, st
 		return errors.Join(errRetiredSettledInput, err)
 	}
 	terminal, _ := fact.TerminalEvent()
-	model := []audit.EventKind{audit.EventRouteSelected, audit.EventRouteAttemptClaimed, audit.EventRouteDispatchCompleted, audit.EventRouteCostReconciled}
 	if terminal.Failure() == controlplane.RunFailureResourceLimit {
 		proof, err := validateTerminalModelExpiryJournal(fact, now)
 		if err != nil {
 			return err
 		}
+		tail := retiredCandidateExpiry
 		if proof.task == "verification" {
-			model = append(model, audit.EventRouteSelected, audit.EventRouteAttemptClaimed)
+			tail = retiredVerificationExpiry
 		}
-		if !retiredModelAudit(events, fact, model, proof.failed.OccurredAt()) || proof.task == "verification" && !slices.Equal(events[5].CausalParentIdentities(), []string{events[4].SubjectIdentity()}) {
+		if !retiredModelAudit(events, fact, tail, proof.failed.OccurredAt()) {
 			return errRetiredSettledInput
 		}
 	} else {
 		if err := validateGenerationRejectionJournal(fact, fact.ReplayEvents(), events, now); err != nil {
 			return err
 		}
-		if !retiredModelAudit(events, fact, append(model, audit.EventGenerationRejected), terminal.OccurredAt()) {
+		if !retiredModelAudit(events, fact, retiredGenerationRejection, terminal.OccurredAt()) {
 			return errRetiredSettledInput
 		}
 	}

@@ -28,8 +28,25 @@ import (
 // This reconstructs a valid journal prefix after a real candidate Put; it is
 // not a process interrupted at the instruction boundary.
 func TestDaemonLocalFullCandidatePutSyntheticRestartPreservesDispatchFence(t *testing.T) {
+	runCandidatePutSyntheticRestart(t, 0)
+}
+
+// A candidate request the provider rate-limited twice and the handler retried
+// on the same route leaves the same exhausted lease after the synthetic crash,
+// and the daemon still boots, before and after retention lapses, from the
+// journal and the retried attempts' audit.
+func TestDaemonLocalFullCandidateRateLimitedRestartBootsAfterLeaseExpiry(t *testing.T) {
+	runCandidatePutSyntheticRestart(t, 2)
+}
+
+// runCandidatePutSyntheticRestart drives a candidate generation the provider
+// first rate-limits rateLimits times, cuts the journal back to its lease, and
+// restarts after the lease and after the retention lapse.
+func runCandidatePutSyntheticRestart(t *testing.T, rateLimits int) {
 	ctx := context.Background()
 	model := newDaemonBudgetedModelFixture(t, "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
+	model.generation.rateLimits = rateLimits
+	sent := 1 + rateLimits
 	args, originalEnv, repository, base, head, _, _ := localFullDaemonFixture(t)
 	policyPath := daemonTestFlagValue(t, args, "--runtime-policy")
 	inventoryPath := daemonTestFlagValue(t, args, "--runtime-route-inventory")
@@ -212,8 +229,8 @@ func TestDaemonLocalFullCandidatePutSyntheticRestartPreservesDispatchFence(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertCandidateRestartAudit(t, auditEvents)
-	if calls, _, captures, failures := model.generation.snapshot(); calls != 1 || len(captures) != 1 || len(failures) != 0 {
+	assertCandidateRestartAudit(t, auditEvents, rateLimits)
+	if calls, _, captures, failures := model.generation.snapshot(); calls != sent || len(captures) != 1 || len(failures) != 0 {
 		t.Fatalf("generation calls=%d captures=%d failures=%v", calls, len(captures), failures)
 	}
 	if calls, _, _, _ := model.verification.snapshot(); calls != 0 {
@@ -268,7 +285,7 @@ func TestDaemonLocalFullCandidatePutSyntheticRestartPreservesDispatchFence(t *te
 		t.Fatalf("restart after candidate Put: %v", err)
 	}
 	defer d.Close()
-	if calls, _, _, _ := model.generation.snapshot(); calls != 1 {
+	if calls, _, _, _ := model.generation.snapshot(); calls != sent {
 		t.Fatalf("restart dispatched generation: %d", calls)
 	}
 	coordinator, err := controlplane.NewCoordinator(d.journal)
@@ -345,10 +362,10 @@ func TestDaemonLocalFullCandidatePutSyntheticRestartPreservesDispatchFence(t *te
 	if len(after) != len(auditEvents) {
 		t.Fatalf("audit appended on duplicate claim: before=%d after=%d", len(auditEvents), len(after))
 	}
-	assertCandidateRestartAudit(t, after)
+	assertCandidateRestartAudit(t, after, rateLimits)
 	genCalls, _, _, genFailures := model.generation.snapshot()
 	verCalls, _, _, verFailures := model.verification.snapshot()
-	if genCalls != 1 || verCalls != 0 || len(genFailures)+len(verFailures) != 0 {
+	if genCalls != sent || verCalls != 0 || len(genFailures)+len(verFailures) != 0 {
 		t.Fatalf("restarted traffic gen=%d verify=%d failures=%v/%v", genCalls, verCalls, genFailures, verFailures)
 	}
 
@@ -386,7 +403,7 @@ func TestDaemonLocalFullCandidatePutSyntheticRestartPreservesDispatchFence(t *te
 	if value, err := second.artifactStore.Get(ctx, scope, outputID, future.Now()); err != nil || value.Identity() != outputArtifact.Identity() {
 		t.Fatalf("second startup candidate changed: %v", err)
 	}
-	if calls, _, _, _ := model.generation.snapshot(); calls != 1 {
+	if calls, _, _, _ := model.generation.snapshot(); calls != sent {
 		t.Fatalf("second startup generation calls=%d", calls)
 	}
 	if calls, _, _, _ := model.verification.snapshot(); calls != 0 {
@@ -407,14 +424,20 @@ func TestDaemonLocalFullCandidatePutSyntheticRestartPreservesDispatchFence(t *te
 	if err != nil || !bytes.Equal(journalBeforeSecond, journalAfterThird) {
 		t.Fatalf("startup after retention changed terminal journal: %v", err)
 	}
-	if calls, _, _, _ := model.generation.snapshot(); calls != 1 {
+	if calls, _, _, _ := model.generation.snapshot(); calls != sent {
 		t.Fatalf("startup after retention generation calls=%d", calls)
 	}
 }
 
-func assertCandidateRestartAudit(t *testing.T, events []audit.Event) {
+// assertCandidateRestartAudit requires the route selection and, for each of
+// the rateLimits refused requests and the final one, a claimed, completed and
+// settled route attempt.
+func assertCandidateRestartAudit(t *testing.T, events []audit.Event, rateLimits int) {
 	t.Helper()
-	want := []audit.EventKind{audit.EventRouteSelected, audit.EventRouteAttemptClaimed, audit.EventRouteDispatchCompleted, audit.EventRouteCostReconciled}
+	want := []audit.EventKind{audit.EventRouteSelected}
+	for range rateLimits + 1 {
+		want = append(want, audit.EventRouteAttemptClaimed, audit.EventRouteDispatchCompleted, audit.EventRouteCostReconciled)
+	}
 	if len(events) != len(want) {
 		t.Fatalf("route audit event count=%d, want %d", len(events), len(want))
 	}

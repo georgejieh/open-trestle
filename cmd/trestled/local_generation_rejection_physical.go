@@ -79,7 +79,7 @@ func observeGenerationRejectionPhysicalWindow(ctx context.Context, stateRoot, ar
 			return err
 		}
 		scope := fact.Plan().Scope()
-		expected = append(expected, physicalPacketExpectation{scope: scope, role: physicalRoleRequest, input: descriptor.Request}, physicalPacketExpectation{scope: scope, role: physicalRoleReceipt, input: descriptor.Receipt}, physicalPacketExpectation{scope: scope, role: physicalRoleInput, input: descriptor.Input}, physicalPacketExpectation{scope: scope, role: physicalRoleRecorded, recordedIdentity: events[4].SubjectIdentity(), recordedKind: artifact.KindGenerationRejection, recordedOrigin: artifact.OriginHost})
+		expected = append(expected, physicalPacketExpectation{scope: scope, role: physicalRoleRequest, input: descriptor.Request}, physicalPacketExpectation{scope: scope, role: physicalRoleReceipt, input: descriptor.Receipt}, physicalPacketExpectation{scope: scope, role: physicalRoleInput, input: descriptor.Input}, physicalPacketExpectation{scope: scope, role: physicalRoleRecorded, recordedIdentity: events[len(events)-1].SubjectIdentity(), recordedKind: artifact.KindGenerationRejection, recordedOrigin: artifact.OriginHost})
 		restriction := &physicalExactScopeNames{prefix: scope.Identity() + "-", names: make(map[string]struct{})}
 		first, firstRoot, err := physicalPacketScan(ctx, artifactRoot, (*os.File).Close)
 		if err != nil {

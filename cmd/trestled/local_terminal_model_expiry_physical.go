@@ -64,11 +64,7 @@ func observeTerminalModelExpiryPhysical(ctx context.Context, stateRoot, artifact
 		return window, errors.Join(errTerminalModelExpiry, err)
 	}
 	events, err := audit.ObserveFileStream(ctx, auditRoot, scope)
-	count := 4
-	if proof.task == "verification" {
-		count = 6
-	}
-	if err != nil || len(events) != count {
+	if err != nil || !terminalExpiryAuditShape(events, proof.task == "verification") {
 		return window, errors.Join(errTerminalModelExpiry, err)
 	}
 	recorded := physicalRecordedV4Derivation{fact: fact, binding: binding}
@@ -194,12 +190,15 @@ func observeTerminalModelExpiryPhysical(ctx context.Context, stateRoot, artifact
 					window.expires = item.value.ExpiresAt()
 				}
 			}
-			generation, err := validateTerminalExpiryGeneration(ctx, events, fact, proof, all, configuration, inventory, generationScanner, now)
+			generation, next, err := validateTerminalExpiryGeneration(ctx, events, fact, proof, all, configuration, inventory, generationScanner, now)
 			if err != nil {
 				return err
 			}
 			if proof.task == "verification" {
-				return validateTerminalExpiryVerifier(ctx, events, fact, proof, all, generation, configuration, inventory, verificationScanner)
+				return validateTerminalExpiryVerifier(ctx, events, next, fact, proof, all, generation, configuration, inventory, verificationScanner)
+			}
+			if next != len(events) {
+				return errTerminalModelExpiry
 			}
 			return nil
 		}

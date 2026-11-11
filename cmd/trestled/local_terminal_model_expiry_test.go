@@ -100,38 +100,68 @@ func testTerminalCandidateExpiryProof(t *testing.T, ctx context.Context, d *daem
 	if err != nil {
 		t.Fatal(err)
 	}
-	var changed bytes.Buffer
-	previous := ""
-	for i, line := range bytes.Split(bytes.TrimSpace(original), []byte("\n")) {
-		event, err := audit.ParseEvent(line)
-		if err != nil {
+	lines := bytes.Split(bytes.TrimSpace(original), []byte("\n"))
+	// rewrite rechains the audit with each event's subject and parents mapped
+	// through rename, and reports whether startup still proves it.
+	rewrite := func(rename func(i int, identity string) string) error {
+		t.Helper()
+		var changed bytes.Buffer
+		previous := ""
+		for i, line := range lines {
+			event, err := audit.ParseEvent(line)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parents := event.CausalParentIdentities()
+			for j, parent := range parents {
+				parents[j] = rename(-1, parent)
+			}
+			event, err = audit.NewEvent(event.Scope(), event.Sequence(), previous, event.Kind(), rename(i, event.SubjectIdentity()), parents, time.UnixMilli(event.OccurredAtUnixMilliseconds()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := audit.EncodeEvent(event)
+			if err != nil {
+				t.Fatal(err)
+			}
+			changed.Write(encoded)
+			changed.WriteByte(10)
+			previous = event.Identity()
+		}
+		if err := os.WriteFile(auditPath, changed.Bytes(), 0600); err != nil {
 			t.Fatal(err)
 		}
-		subject := event.SubjectIdentity()
+		refused := check(now, binding)
+		if err := os.WriteFile(auditPath, original, 0600); err != nil {
+			t.Fatal(err)
+		}
+		return refused
+	}
+	invented := strings.Repeat("f", 64)
+	if rewrite(func(i int, identity string) string {
 		if i == 1 {
-			subject = strings.Repeat("f", 64)
+			return invented
 		}
-		event, err = audit.NewEvent(event.Scope(), event.Sequence(), previous, event.Kind(), subject, event.CausalParentIdentities(), time.UnixMilli(event.OccurredAtUnixMilliseconds()))
-		if err != nil {
-			t.Fatal(err)
-		}
-		encoded, err := audit.EncodeEvent(event)
-		if err != nil {
-			t.Fatal(err)
-		}
-		changed.Write(encoded)
-		changed.WriteByte(10)
-		previous = event.Identity()
-	}
-	if err := os.WriteFile(auditPath, changed.Bytes(), 0600); err != nil {
-		t.Fatal(err)
-	}
-	refused = check(now, binding)
-	if err := os.WriteFile(auditPath, original, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if refused == nil {
+		return identity
+	}) == nil {
 		t.Fatal("invented claim subject admitted")
+	}
+	// A refused attempt the handler retried left no artifact, so only its
+	// lineage ties it to the input's authorization: a consistently renamed
+	// retry claim is still not the one the gateway grants.
+	if len(lines) > 7 {
+		retry, err := audit.ParseEvent(lines[4])
+		if err != nil || retry.Kind() != audit.EventRouteAttemptClaimed {
+			t.Fatalf("retried audit shape: %v", err)
+		}
+		if rewrite(func(_ int, identity string) string {
+			if identity == retry.SubjectIdentity() {
+				return invented
+			}
+			return identity
+		}) == nil {
+			t.Fatal("renamed retry claim admitted")
+		}
 	}
 	if err := check(now, binding); err != nil {
 		t.Fatalf("restored proof: %v", err)
