@@ -171,6 +171,12 @@ func TestLocalModelReviewNamesProviderRefusals(t *testing.T) {
 		{"authentication", "refuse_401", "", 4, "policy", "candidates", localreview.FailureDetailProviderAuthenticationFailed, "the provider did not accept the credential"},
 		{"authorization", "refuse_403", "", 4, "policy", "candidates", localreview.FailureDetailProviderAuthorizationDenied, "the provider refused this account access"},
 		{"rate limited", "refuse_429", "", 1, "transient", "candidates", localreview.FailureDetailProviderRateLimited, "the provider rate-limited the request on its last attempt"},
+		// A provider that answers HTTP 200 with a reply the adapter refuses, or
+		// with a status the adapter does not classify, used to fail the run as
+		// a bare internal failure that read like an internal bug.
+		{"reply with an unknown field", "reply_unknown_field", "", 1, "internal", "candidates", localreview.FailureDetailProviderResponseInvalid, "the provider answered, but its reply did not match what Open Trestle accepts, for example malformed or truncated output, an unrecognized field or an unexpected HTTP status: run the review again; if it repeats, choose another model or route and report it"},
+		{"truncated reply at verification", "", "reply_truncated", 1, "internal", "verification", localreview.FailureDetailProviderResponseInvalid, "the provider answered, but its reply did not match"},
+		{"unclassified status", "refuse_400", "", 1, "internal", "candidates", localreview.FailureDetailProviderResponseInvalid, "the provider answered, but its reply did not match"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			options := localModelFixtureOptions{chatCompletions: true, generationMode: test.generation, verificationMode: test.verification}
@@ -209,6 +215,12 @@ func TestLocalModelReviewNamesProviderRefusals(t *testing.T) {
 	f := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, generationMode: "refuse_402"})
 	_, text := runLocalModelSet(t, f, []string{"--specialists", "auto", "--format", "text"}, 4)
 	if !strings.Contains(text, "member: general status=refused run=failed verified_findings=0 failure=policy (task candidates): provider_payment_required\nmember hint: general: the provider refused the request for billing") {
+		t.Fatalf("set text=%q", text)
+	}
+	assertNoProviderRefusalText(t, text)
+	unaccepted := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, generationMode: "reply_unknown_field"})
+	_, text = runLocalModelSet(t, unaccepted, []string{"--specialists", "auto", "--format", "text"}, 1)
+	if !strings.Contains(text, "member: general status=failed run=failed verified_findings=0 failure=internal (task candidates): provider_response_invalid\nmember hint: general: the provider answered, but its reply did not match") {
 		t.Fatalf("set text=%q", text)
 	}
 	assertNoProviderRefusalText(t, text)
@@ -273,7 +285,7 @@ func TestLocalModelReviewRetriesARateLimitedRequest(t *testing.T) {
 
 func assertNoProviderRefusalText(t *testing.T, output string) {
 	t.Helper()
-	for _, forbidden := range []string{localModelRefusalText, "usage credits", "ollama.com/plans", "retired on", "glm-5.3-flash", "not found, try pulling"} {
+	for _, forbidden := range []string{localModelRefusalText, localModelReplyField, "usage credits", "ollama.com/plans", "retired on", "glm-5.3-flash", "not found, try pulling"} {
 		if strings.Contains(output, forbidden) {
 			t.Fatalf("provider message text %q reached the output", forbidden)
 		}

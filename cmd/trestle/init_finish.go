@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/georgejieh/open-trestle/internal/fileauthority"
+	"github.com/georgejieh/open-trestle/localreview"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 	setupcore "github.com/georgejieh/open-trestle/setup"
 )
@@ -567,9 +568,17 @@ func (w *initWizard) renderLocal(messages []string) string {
 		}
 		if requirement.Key() == setupcore.CheckLocalInferenceValidated && state == "refused" {
 			for _, message := range messages {
-				if reason, ok := strings.CutPrefix(message, string(setupcore.CheckLocalInferenceValidated)+": "); ok {
-					text[1] = "A model server refused the test request (" + strings.Replace(reason, ": ", "): ", 1) + "."
+				reason, ok := strings.CutPrefix(message, string(setupcore.CheckLocalInferenceValidated)+": ")
+				if !ok {
+					continue
 				}
+				// A server that answered with a reply the adapter refused did
+				// not refuse the request; the check's own advice fits it.
+				if detail, _, _ := strings.Cut(reason, ": "); detail == localreview.FailureDetailProviderResponseInvalid {
+					text[1] = "A model server answered the test request, but its reply was not in the expected format (" + detail + "). Check that both servers are running and the model IDs are exact, then run `trestle init` again and allow the test requests."
+					continue
+				}
+				text[1] = "A model server refused the test request (" + strings.Replace(reason, ": ", "): ", 1) + "."
 			}
 		}
 		tally[state]++

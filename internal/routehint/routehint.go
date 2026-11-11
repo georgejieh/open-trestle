@@ -25,8 +25,9 @@ func ContextShortfall(required uint64, input, output, declared uint32) string {
 }
 
 // providerRefusal is the content-free detail and fixed words of one refusal a
-// provider answered with: a console label, what the refusal means, and what
-// the operator can do. None ever carries the provider's own message. The
+// provider answered with, or of a provider reply the adapter refused: a
+// console label, what the refusal means, and what the operator can do. None
+// ever carries the provider's own message or names a field of its reply. The
 // detail is also the model task's failure reason token.
 type providerRefusal struct{ detail, label, text, action string }
 
@@ -39,12 +40,15 @@ var providerRefusals = map[gateway.RouteFailureClass]providerRefusal{
 	gateway.RouteFailureAuthentication:   {"provider_authentication_failed", "Provider authentication failed", "the provider did not accept the credential", "check the API key the route names (for ollama-signin, run `ollama signin`), then retry"},
 	gateway.RouteFailureAuthorization:    {"provider_authorization_denied", "Provider authorization denied", "the provider refused this account access to the model or endpoint", "check the account's access, or choose another route"},
 	gateway.RouteFailureRateLimited:      {"provider_rate_limited", "Provider rate limited", "the provider rate-limited the request on its last attempt", "wait and run the review again, or choose another route"},
+	gateway.RouteFailureInvalidResponse:  {"provider_response_invalid", "Provider reply refused", "the provider answered, but its reply did not match what Open Trestle accepts, for example malformed or truncated output, an unrecognized field or an unexpected HTTP status", "run the review again; if it repeats, choose another model or route and report it"},
 }
 
 // ProviderRefusal returns the failure detail and one-line hint for a route
-// attempt the provider refused, from its closed failure class alone. Any
-// other class returns ok false. The caller decides that the provider answered:
-// a credential that could not be read is not a provider refusal.
+// attempt the provider refused, or whose reply the adapter refused
+// (invalid_response), from its closed failure class alone. Any other class
+// returns ok false. The caller decides that the provider answered: a
+// credential that could not be read, or a request that could not be built, is
+// not a provider refusal.
 func ProviderRefusal(failure gateway.RouteFailureClass) (detail, hint string, ok bool) {
 	refusal, ok := providerRefusals[failure]
 	if !ok {

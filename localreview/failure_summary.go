@@ -20,6 +20,14 @@ const (
 	FailureDetailProviderRateLimited          = "provider_rate_limited"
 )
 
+// FailureDetailProviderResponseInvalid records that the provider answered the
+// last model request but the adapter refused its reply: malformed, truncated,
+// empty or oversized, with an unrecognized field, or with an HTTP status it
+// does not classify. The run failure stays internal; the detail tells the
+// operator that the provider's reply, not an internal check, ended the run.
+// It never carries the reply or names any of its fields.
+const FailureDetailProviderResponseInvalid = "provider_response_invalid"
+
 // FailureDetailProviderNoAllowedEndpoint records that OpenRouter answered the
 // last request with HTTP 404: it serves no endpoint for the model that the
 // request may use. With zero data retention required, by Open Trestle on

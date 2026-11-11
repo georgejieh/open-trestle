@@ -29,6 +29,7 @@ func TestProviderRefusalDetailsMatchTheSharedHints(t *testing.T) {
 		gateway.RouteFailureAuthentication:   FailureDetailProviderAuthenticationFailed,
 		gateway.RouteFailureAuthorization:    FailureDetailProviderAuthorizationDenied,
 		gateway.RouteFailureRateLimited:      FailureDetailProviderRateLimited,
+		gateway.RouteFailureInvalidResponse:  FailureDetailProviderResponseInvalid,
 	} {
 		if detail, hint, ok := routehint.ProviderRefusal(class); !ok || detail != want || hint == "" {
 			t.Fatalf("%s = (%q, %q, %t), want %q", class, detail, hint, ok, want)
@@ -53,8 +54,19 @@ func TestRouteObserverNamesOnlyTheRefusalThatEndedTheRun(t *testing.T) {
 		{"authentication", []gateway.RouteDispatchResult{observedRefusal(t, gateway.RouteFailureAuthentication, gateway.RouteReplayNoSideEffect)}, controlplane.RunFailurePolicy, FailureDetailProviderAuthenticationFailed},
 		{"authorization", []gateway.RouteDispatchResult{observedRefusal(t, gateway.RouteFailureAuthorization, gateway.RouteReplayNoSideEffect)}, controlplane.RunFailurePolicy, FailureDetailProviderAuthorizationDenied},
 		{"rate limit on the last attempt", []gateway.RouteDispatchResult{observedRefusal(t, gateway.RouteFailureRateLimited, gateway.RouteReplayNoSideEffect), observedRefusal(t, gateway.RouteFailureRateLimited, gateway.RouteReplayNoSideEffect)}, controlplane.RunFailureTransient, FailureDetailProviderRateLimited},
+		// A reply the adapter refused after a 200, and an unclassified status.
+		{"reply refused", []gateway.RouteDispatchResult{observedRefusal(t, gateway.RouteFailureInvalidResponse, gateway.RouteReplayOutcomeUnknown)}, controlplane.RunFailureInternal, FailureDetailProviderResponseInvalid},
+		{"unclassified status", []gateway.RouteDispatchResult{observedRefusal(t, gateway.RouteFailureInvalidResponse, gateway.RouteReplayNoSideEffect)}, controlplane.RunFailureInternal, FailureDetailProviderResponseInvalid},
 		// A credential that could not be read never reached the provider.
 		{"credential unavailable", []gateway.RouteDispatchResult{observedRefusal(t, gateway.RouteFailureAuthentication, gateway.RouteReplayNotDispatched)}, controlplane.RunFailurePolicy, ""},
+		// A request the adapter could not build was never sent.
+		{"request not sent", []gateway.RouteDispatchResult{observedRefusal(t, gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched)}, controlplane.RunFailureInternal, ""},
+		// An exhausted output allowance is its own detail, not a refused reply.
+		{"output exhausted", []gateway.RouteDispatchResult{observedRefusal(t, gateway.RouteFailureOutputExhausted, gateway.RouteReplayOutcomeUnknown)}, controlplane.RunFailureInternal, ""},
+		// A refused reply that a later attempt outlived names none.
+		{"reply refused then outlived", []gateway.RouteDispatchResult{observedRefusal(t, gateway.RouteFailureInvalidResponse, gateway.RouteReplayOutcomeUnknown), observerSuccess(t, observerUsage(t, 1, 1, 0))}, controlplane.RunFailureInternal, ""},
+		// A refused reply does not explain a policy run failure.
+		{"reply refused under another failure", []gateway.RouteDispatchResult{observedRefusal(t, gateway.RouteFailureInvalidResponse, gateway.RouteReplayOutcomeUnknown)}, controlplane.RunFailurePolicy, ""},
 		// A later attempt that succeeded outlived the earlier refusal.
 		{"outlived", []gateway.RouteDispatchResult{observedRefusal(t, gateway.RouteFailureRateLimited, gateway.RouteReplayNoSideEffect), observerSuccess(t, observerUsage(t, 1, 1, 0))}, controlplane.RunFailureTransient, ""},
 		// A later failure of another class is the run's cause.
@@ -89,6 +101,7 @@ func TestRenderResultNamesTheProviderRefusalAndItsHint(t *testing.T) {
 		{"policy", FailureDetailProviderPaymentRequired, "failure: policy (task candidates): provider_payment_required\nhint: the provider refused the request for billing: add credit or a subscription to the provider account, or choose another route\n"},
 		{"policy", FailureDetailProviderModelRetired, "failure: policy (task candidates): provider_model_retired\nhint: the provider no longer serves this model: choose a model the provider lists as available and re-run setup\n"},
 		{"transient", FailureDetailProviderRateLimited, "failure: transient (task candidates): provider_rate_limited\nhint: the provider rate-limited the request on its last attempt: wait and run the review again, or choose another route\n"},
+		{"internal", FailureDetailProviderResponseInvalid, "failure: internal (task candidates): provider_response_invalid\nhint: the provider answered, but its reply did not match what Open Trestle accepts, for example malformed or truncated output, an unrecognized field or an unexpected HTTP status: run the review again; if it repeats, choose another model or route and report it\n"},
 	} {
 		result := Result{valid: true, wire: resultWire{Status: "refused", CI: "blocked", RunStatus: "failed", Failure: test.failure, FailureDetail: test.detail, Tasks: []taskResult{{Key: "context", Status: "succeeded"}, {Key: "candidates", Status: "failed"}, {Key: "verification", Status: "skipped"}}}}
 		var buffer bytes.Buffer

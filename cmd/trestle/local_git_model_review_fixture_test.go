@@ -168,6 +168,13 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 		_, _ = io.WriteString(w, refusal.body)
 		return
 	}
+	// probe_reply_unknown_field answers only the setup probe with HTTP 200 and
+	// a reply carrying a field the adapter does not accept.
+	if m.mode == "probe_reply_unknown_field" && bytes.Contains(encoded, []byte("func setupProbe()")) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"chatcmpl-probe","object":"chat.completion","model":"`+m.model+`","choices":[],"`+localModelReplyField+`":"`+localModelRefusalText+`"}`)
+		return
+	}
 	var payload []byte
 	var chatInstructions string
 	if m.chatCompletions {
@@ -416,11 +423,30 @@ func (m *localModelEndpoint) respond(t *testing.T, w http.ResponseWriter, packet
 			delete(response, "usage")
 		}
 	}
+	// reply_unknown_field adds a top-level field the adapter does not accept,
+	// and reply_truncated cuts the reply in half: HTTP 200 answers whose reply
+	// the adapter refuses. Neither the field nor its value may reach any output.
+	if m.mode == "reply_unknown_field" {
+		response[localModelReplyField] = localModelRefusalText
+	}
 	w.Header().Set("Content-Type", "application/json")
+	if m.mode == "reply_truncated" {
+		encoded, err := json.Marshal(response)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		_, _ = w.Write(encoded[:len(encoded)/2])
+		return
+	}
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		t.Error(err)
 	}
 }
+
+// localModelReplyField is the unknown field reply_unknown_field adds to an
+// otherwise valid reply.
+const localModelReplyField = "trestle_unexpected_field_5521"
 
 const removedOnlyGone = "package p\n\nfunc Helper() int { return 1 }\n"
 

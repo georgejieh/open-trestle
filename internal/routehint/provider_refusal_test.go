@@ -19,6 +19,7 @@ func TestProviderRefusalNamesEachRefusalClass(t *testing.T) {
 		gateway.RouteFailureAuthentication:   "provider_authentication_failed",
 		gateway.RouteFailureAuthorization:    "provider_authorization_denied",
 		gateway.RouteFailureRateLimited:      "provider_rate_limited",
+		gateway.RouteFailureInvalidResponse:  "provider_response_invalid",
 	}
 	hints := map[string]bool{}
 	for class := gateway.RouteFailureTransport; class.Validate() == nil; class++ {
@@ -79,5 +80,22 @@ func TestProviderRefusalHintsNameAnAction(t *testing.T) {
 	}
 	if _, hint, _ := ProviderRefusal(gateway.RouteFailureModelRetired); hint != "the provider no longer serves this model: choose a model the provider lists as available and re-run setup" {
 		t.Fatalf("retired hint = %q", hint)
+	}
+}
+
+// A reply the adapter refused is named as a provider reply, not as an
+// internal check, with an action; the words name no reply field.
+func TestProviderResponseInvalidNamesTheRefusedReply(t *testing.T) {
+	detail, hint, ok := ProviderRefusal(gateway.RouteFailureInvalidResponse)
+	if !ok || detail != "provider_response_invalid" || hint != "the provider answered, but its reply did not match what Open Trestle accepts, for example malformed or truncated output, an unrecognized field or an unexpected HTTP status: run the review again; if it repeats, choose another model or route and report it" {
+		t.Fatalf("invalid response = (%q, %q, %t)", detail, hint, ok)
+	}
+	if label, _, _, found := ProviderRefusalWords(detail); !found || label != "Provider reply refused" {
+		t.Fatalf("label = %q", label)
+	}
+	for _, class := range []gateway.RouteFailureClass{gateway.RouteFailureOutputExhausted, gateway.RouteFailureProviderServer, gateway.RouteFailurePolicyDenied, gateway.RouteFailureBudgetExhausted, gateway.RouteFailureCancelled} {
+		if detail, _, ok := ProviderRefusal(class); ok {
+			t.Fatalf("%s names %q", class, detail)
+		}
 	}
 }
