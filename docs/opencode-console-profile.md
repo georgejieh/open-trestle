@@ -148,10 +148,13 @@ Credit purchases incur 4.6% + $0.31; do not add that fee to every inference.
 nor eligible for fallback, the task is refused as `policy`, and the local review
 reports `provider_payment_required`. 404 and 410 map to `model_unavailable` and
 `model_retired` as for every profile. 429 includes policy-budget refusal;
-it need not be temporary RPM throttling. Budgets are checked at request start,
-so already-running requests may exceed them slightly. Timeouts/transport loss/
-5xx/malformed post-effect replies remain outcome unknown; there is no automatic
-retry, fallback or raw upstream error-body persistence.
+it need not be temporary RPM throttling. Like every profile's 429 it is retried
+on the same route at most twice inside the task attempt, after its
+`Retry-After` or the task's fixed delay, each retry taking over the refused
+attempt's reservation. Budgets are checked at request start, so
+already-running requests may exceed them slightly. Timeouts/transport loss/
+5xx/malformed post-effect replies remain outcome unknown; there is no other
+automatic retry, no fallback and no raw upstream error-body persistence.
 
 ## Metadata and setup
 

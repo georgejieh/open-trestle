@@ -1085,18 +1085,25 @@ mapping:
 | 403 | `authorization` | `policy` | no | `provider_authorization_denied` |
 | 404 | `model_unavailable` | `policy` | no | `provider_model_unavailable` |
 | 410 | `model_retired` | `policy` | no | `provider_model_retired` |
-| 429 | `rate_limited` | `transient` | only if the plan allows another attempt | `provider_rate_limited` |
-| 5xx | `provider_server` | `transient` | only if the plan allows another attempt | none |
+| 429 | `rate_limited` | `transient` | twice on the same route, inside the task attempt | `provider_rate_limited` |
+| 5xx | `provider_server` | `transient` | no | none |
 
 A `policy` run is `refused` with CI disposition `blocked` and exit code 4, so a
 refusal the provider repeats on every request is attempted once. A `transient`
-run is `failed` with `error` and exit code 1. Generation and verification have
-one attempt in every current plan, so neither is retried after a 429. The
-task_failed event records the `Retry-After` delay the provider asked for. A plan
-that allowed another attempt would wait that delay instead of the plan's fixed
-retry delay, capped at the longest retry delay a plan task may declare (one
-hour) and never past the review's `--timeout` deadline, and the event's retry
-time would record the delay used. Before this
+run is `failed` with `error` and exit code 1. Generation and verification keep
+one task attempt, but a 429 means the provider refused the request before
+processing it, so the model handler retries it on the same route at most twice
+inside that attempt. Each retry waits the provider's `Retry-After`, at least the
+task's fixed retry delay (one second), which also applies without
+`Retry-After`; a `Retry-After` beyond 15 minutes, or one that would end after the
+review's `--timeout` deadline, is not waited for and the task fails at once.
+Each retry is its own route attempt, claimed, completed and settled in the
+audit ledger and claimed no sooner than its delay after the refusal, and it takes over
+the refused attempt's cost reservation, so the reservation is never made again
+or exceeded. A rate-limited attempt reports no usage, so a review that needed a
+retry reports that stage's token usage and the run's cost as unknown, as for any
+failed attempt. When the second retry is rate-limited too, the review fails as
+`transient` with `provider_rate_limited`. Before this
 mapping, 402, 404 and 410 were `invalid_response`, so the run failed as a
 retryable `internal` failure with no detail. The detail is recorded only when
 the most recent model request the provider answered was refused that way and
@@ -1131,9 +1138,12 @@ receipt v3. `trestle runs status` prints it on stderr, for example
 `runs status: task candidates failed: provider_payment_required (the provider
 refused the request for billing)` and a `hint:` line with the action; the TUI
 prints a `Reason` and a `Hint` line, the web console a labeled reason and hint,
-and the ACP review-state message a `Task failure` line. A daemon run has no run
-deadline, so a retry its plan allowed after a rate limit would be bounded by the
-one-hour cap alone.
+and the ACP review-state message a `Task failure` line. A daemon run retries a
+429 the same way, never past the task's execution deadline. The daemon's
+startup proofs that retire a failed run's expired context input recognize only
+a single-attempt model task, so a run whose rate-limited request was retried
+before its generation was rejected for document shape, or before its lease
+expired, is quarantined at startup instead of retired.
 
 ### Token usage
 
