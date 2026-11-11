@@ -1086,23 +1086,29 @@ mapping:
 | 404 | `model_unavailable` | `policy` | no | `provider_model_unavailable` |
 | 410 | `model_retired` | `policy` | no | `provider_model_retired` |
 | 429 | `rate_limited` | `transient` | twice on the same route, inside the task attempt | `provider_rate_limited` |
-| 5xx | `provider_server` | `transient` | no | none |
+| 503 with a `Retry-After` in seconds | `rate_limited` | `transient` | as 429 | `provider_rate_limited` |
+| other 5xx | `provider_server` | `transient` | no | none |
 
 A `policy` run is `refused` with CI disposition `blocked` and exit code 4, so a
 refusal the provider repeats on every request is attempted once. A `transient`
 run is `failed` with `error` and exit code 1. Generation and verification keep
 one task attempt, but a 429 means the provider refused the request before
 processing it, so the model handler retries it on the same route at most twice
-inside that attempt. Each retry waits the provider's `Retry-After`, at least the
-task's fixed retry delay (one second), which also applies without
-`Retry-After`; a `Retry-After` beyond 15 minutes, or one that would end after the
+inside that attempt. A 503 that names a `Retry-After` in seconds is the same
+refusal and is handled the same way; a 503 without one, or with an HTTP date or
+zero, stays a `provider_server` failure and is not retried. Each retry waits
+the provider's `Retry-After`, at least the task's fixed retry delay (one
+second), which also applies to a 429 without `Retry-After`; a `Retry-After`
+beyond 15 minutes, or one that would end after the
 review's `--timeout` deadline, is not waited for and the task fails at once.
 Each retry is its own route attempt, claimed, completed and settled in the
 audit ledger and claimed no sooner than its delay after the refusal, and it takes over
 the refused attempt's cost reservation, so the reservation is never made again
-or exceeded. A rate-limited attempt reports no usage, so a review that needed a
-retry reports that stage's token usage and the run's cost as unknown, as for any
-failed attempt. When the second retry is rate-limited too, the review fails as
+or exceeded. The provider processed nothing, so a rate-limited attempt records
+known zero usage and settles at zero cost; a review that needed a retry keeps
+that stage's token usage and the run's cost known when its final attempt
+reports usage. No other failure is assumed to cost nothing. When the second
+retry is rate-limited too, the review fails as
 `transient` with `provider_rate_limited`. Before this
 mapping, 402, 404 and 410 were `invalid_response`, so the run failed as a
 retryable `internal` failure with no detail. The detail is recorded only when
@@ -1139,11 +1145,15 @@ receipt v3. `trestle runs status` prints it on stderr, for example
 refused the request for billing)` and a `hint:` line with the action; the TUI
 prints a `Reason` and a `Hint` line, the web console a labeled reason and hint,
 and the ACP review-state message a `Task failure` line. A daemon run retries a
-429 the same way, never past the task's execution deadline. The daemon's
-startup proofs that retire a failed run's expired context input recognize only
-a single-attempt model task, so a run whose rate-limited request was retried
-before its generation was rejected for document shape, or before its lease
-expired, is quarantined at startup instead of retired.
+rate limit the same way, never past the task's execution deadline. The daemon's
+startup proofs of a failed run's model audit, for a generation rejected for
+document shape or an exhausted model lease, accept the same shape before and
+after the run's retention lapses: at most two refused attempts, each claimed,
+completed without a response and settled, then the final attempt, each retry
+claim naming the selection, the refused outcome and its retry decision. While
+the run's artifacts are retained, each retry claim must also carry the identity
+the gateway grants for that lineage from the input's authorization. Any other
+audit shape stays quarantined at startup.
 
 ### Token usage
 
@@ -1157,8 +1167,9 @@ review whose two attempts each reported 100 input and 100 output tokens reads:
 ```
 
 - `route_attempts` is the number of claimed attempts summed. A direct review
-  claims at most one generation and one verification attempt; an
-  `--investigation-policy` run claims one per turn.
+  claims one generation and one verification attempt, plus one for each
+  same-route retry after a [rate limit](#provider-refusals) (at most two per
+  stage); an `--investigation-policy` run claims one per turn.
 - `input_tokens` includes `cached_input_tokens`, as providers report them. The
   counts are the provider's report, not a tokenization by Open Trestle, and
   carry no content.
@@ -1166,9 +1177,11 @@ review whose two attempts each reported 100 input and 100 output tokens reads:
   false and the three counts are absent, never zero, for example
   `{"known":false,"route_attempts":1}`. That happens when the provider sent no
   usage, the response was refused before its usage was accepted, or no adapter
-  result was observed for a claimed attempt. Of the failed dispatches, only an
-  [exhausted reply](#exhausted-model-output) can carry usage; an HTTP error, a
-  transport failure or a reply the adapter refuses as invalid counts as unknown.
+  result was observed for a claimed attempt. Of the failed dispatches, an
+  [exhausted reply](#exhausted-model-output) can carry usage and a rate limit
+  (429, or 503 with a `Retry-After`) records known zero usage; any other HTTP
+  error, a transport failure or a reply the adapter refuses as invalid counts
+  as unknown.
 - A successful attempt is read from the run's recorded route execution. Any
   other claimed attempt is read from the adapter result the session observed for
   it in the same process, so a generation that was dispatched but whose response

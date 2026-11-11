@@ -39,13 +39,13 @@ Every request includes:
 
 `store: false` is not a substitute for account-level retention controls. The configured content-logging mode must match the approved route record. Operators are responsible for making that declaration match the provider account and connection controls.
 
-The adapter accepts completed responses and the closed incomplete reasons `max_output_tokens` and `content_filter`. It discards provider reasoning items, preserves assistant text and refusals, and represents valid JSON output as structured data. Unknown output item types, duplicate JSON keys, case-variant JSON keys, model mismatches, invalid usage, and excessive content fail closed. A reply that stopped at the output limit with no answer fails as `output_exhausted` but keeps the usage it reported, checked as for a successful reply, so its cost settles from that usage; without valid usage it stays unknown. Every other failed dispatch reports unknown usage.
+The adapter accepts completed responses and the closed incomplete reasons `max_output_tokens` and `content_filter`. It discards provider reasoning items, preserves assistant text and refusals, and represents valid JSON output as structured data. Unknown output item types, duplicate JSON keys, case-variant JSON keys, model mismatches, invalid usage, and excessive content fail closed. A reply that stopped at the output limit with no answer fails as `output_exhausted` but keeps the usage it reported, checked as for a successful reply, so its cost settles from that usage; without valid usage it stays unknown. A rate limit (429, or a 503 that names a `Retry-After` in seconds) is a refusal before processing, so it reports known zero usage. Every other failed dispatch reports unknown usage.
 
 ## Transport and credentials
 
 Credentials are retrieved for each request through `APIKeyProvider`. Keys are bounded, header-safe values and redact themselves during formatting. Redirects are rejected so authorization headers cannot move to another origin. Response bodies, error bodies, headers, and request duration are bounded.
 
-HTTP failures become closed gateway classes without retaining provider error text. Network ambiguity, server errors, malformed successful responses, and timeouts use `outcome_unknown` replay safety. The gateway will not retry those outcomes automatically. Explicit rate-limit responses can carry a bounded `Retry-After` delay and are marked as having no model side effect.
+HTTP failures become closed gateway classes without retaining provider error text. Network ambiguity, server errors, malformed successful responses, and timeouts use `outcome_unknown` replay safety. The gateway will not retry those outcomes automatically. Explicit rate-limit responses can carry a bounded `Retry-After` delay and are marked as having no model side effect and known zero usage. A 503 that names a `Retry-After` in seconds is classified as a rate limit too; a 503 without one, or with an HTTP date or zero, stays `provider_server`.
 
 Every request profile, the OpenCode console included, classifies a non-200 status the same way, from the status alone. The error body is drained unread, so a provider's message never reaches a result, record or log:
 
@@ -58,11 +58,12 @@ Every request profile, the OpenCode console included, classifies a non-200 statu
 | 408, 504 | `timeout` | `outcome_unknown` |
 | 410 | `model_retired` | `no_side_effect` |
 | 413 | `budget_exhausted` | `no_side_effect` |
-| 429 | `rate_limited`, with a bounded `Retry-After` | `no_side_effect` |
+| 429 | `rate_limited`, with a bounded `Retry-After` and known zero usage | `no_side_effect` |
+| 503 with a `Retry-After` in seconds | `rate_limited`, as 429 | `no_side_effect` |
 | other 5xx | `provider_server` | `outcome_unknown` |
 | any other | `invalid_response` | `no_side_effect` |
 
-`payment_required`, `model_unavailable` and `model_retired` are not transient, so the gateway never retries them. A payment refusal is also not eligible for fallback to another route, like a spent budget; a model refusal leaves another route's model eligible. The model handlers fail the task as a `policy` refusal for each of them, as for `authentication` and `authorization`, and record the matching `provider_*` task failure reason when the provider answered (a 429 is first retried on the same route at most twice inside the task attempt, after its bounded `Retry-After`, each retry taking over the refused attempt's reservation, and records `provider_rate_limited` only when every retry is rate-limited too); the local review reports them as failure details; see [local model review](local-model-review.md#provider-refusals).
+`payment_required`, `model_unavailable` and `model_retired` are not transient, so the gateway never retries them. A payment refusal is also not eligible for fallback to another route, like a spent budget; a model refusal leaves another route's model eligible. The model handlers fail the task as a `policy` refusal for each of them, as for `authentication` and `authorization`, and record the matching `provider_*` task failure reason when the provider answered (a rate limit is first retried on the same route at most twice inside the task attempt, after its bounded `Retry-After`, each retry taking over the refused attempt's reservation, and records `provider_rate_limited` only when every retry is rate-limited too); the local review reports them as failure details; see [local model review](local-model-review.md#provider-refusals).
 
 The adapter performs no request during construction and has no background activity.
 
