@@ -81,6 +81,29 @@ func IsSameReservationRetryOf(authorization, attempt RouteAttemptAuthorization) 
 	return deriveRouteAttemptAuthorizationIdentity(expected) == attempt.Identity()
 }
 
+// SameReservationRetryIdentity returns the identity the depth-th same-route
+// retry of initial has when it follows the refused outcome previousOutcome
+// under the retry decision decision, as NewRateLimitedRetryAttemptAuthorization
+// grants it, so a reader holding only recorded identities can check a retry
+// chain. It is false for an initial that is not a first attempt, a depth
+// outside 1..MaxRateLimitRetries, or an identity that is not a digest.
+func SameReservationRetryIdentity(initial RouteAttemptAuthorization, depth int, previousOutcome, decision string) (string, bool) {
+	if initial.Validate() != nil || initial.Kind() == RouteAttemptRetry || depth < 1 || depth > MaxRateLimitRetries ||
+		int(initial.routeAttemptOrdinal)+depth > int(maxRouteRetryAttempts) || int(initial.attemptOrdinal)+depth > int(maxRouteAttemptOrdinal) {
+		return "", false
+	}
+	expected := initial
+	expected.kind = RouteAttemptRetry
+	expected.attemptOrdinal += uint8(depth)
+	expected.routeAttemptOrdinal += uint8(depth)
+	expected.previousOutcomeIdentity, expected.continuationDecisionIdentity = previousOutcome, decision
+	expected.identity = deriveRouteAttemptAuthorizationIdentity(expected)
+	if expected.Validate() != nil {
+		return "", false
+	}
+	return expected.identity, true
+}
+
 // retryDecisionMatches reports whether decision was evaluated for exactly
 // previous and its outcome.
 func retryDecisionMatches(previous RouteAttemptAuthorization, outcome RouteAttemptOutcome, decision RouteAttemptRetryDecision) bool {

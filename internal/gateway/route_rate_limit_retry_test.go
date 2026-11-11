@@ -205,6 +205,44 @@ func TestRateLimitedRetryIsTheSameForHeldAndReleasedReservations(t *testing.T) {
 	}
 }
 
+// A reader holding only the recorded identities of each refused outcome and
+// retry decision derives every retry's identity in a chain, and nothing else.
+func TestSameReservationRetryIdentityDerivesTheRecordedChain(t *testing.T) {
+	request, fixture, _ := newInitialAttemptFixture(t)
+	initial, _ := NewInitialRouteAttemptAuthorization(request, fixture.selection, fixture.ranking)
+	policy, _ := NewRateLimitRetryPolicy(1_000)
+	current := initial
+	for depth := 1; depth <= MaxRateLimitRetries; depth++ {
+		outcome, reconciliation := rateLimitedAttempt(t, current, 0)
+		decision := mustRetryDecision(t, policy, current, outcome)
+		next, err := NewRateLimitedRetryAttemptAuthorization(current, outcome, reconciliation, decision)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if derived, ok := SameReservationRetryIdentity(initial, depth, outcome.Identity(), decision.Identity()); !ok || derived != next.Identity() {
+			t.Fatalf("depth %d derived %q, want %q", depth, derived, next.Identity())
+		}
+		current = next
+	}
+	digest := initial.Identity()
+	for name, derive := range map[string]func() (string, bool){
+		"depth zero": func() (string, bool) { return SameReservationRetryIdentity(initial, 0, digest, digest) },
+		"too deep": func() (string, bool) {
+			return SameReservationRetryIdentity(initial, MaxRateLimitRetries+1, digest, digest)
+		},
+		"not a digest": func() (string, bool) { return SameReservationRetryIdentity(initial, 1, "outcome", digest) },
+		"no decision":  func() (string, bool) { return SameReservationRetryIdentity(initial, 1, digest, "") },
+		"invalid initial": func() (string, bool) {
+			return SameReservationRetryIdentity(RouteAttemptAuthorization{}, 1, digest, digest)
+		},
+		"retry as initial": func() (string, bool) { return SameReservationRetryIdentity(current, 1, digest, digest) },
+	} {
+		if derived, ok := derive(); ok || derived != "" {
+			t.Fatalf("%s derived %q", name, derived)
+		}
+	}
+}
+
 func mustRetryDecision(t *testing.T, policy RouteRetryPolicy, authorization RouteAttemptAuthorization, outcome RouteAttemptOutcome) RouteAttemptRetryDecision {
 	t.Helper()
 	decision, err := EvaluateRouteAttemptRetry(policy, authorization, outcome)
