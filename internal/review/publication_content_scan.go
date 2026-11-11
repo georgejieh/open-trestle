@@ -547,11 +547,18 @@ func (scanner *FixedPublicationContentScanner) Scan(ctx context.Context, indepen
 	return receipt, nil
 }
 
+// PublicationContentScannerIdentity derives the scanner authority from the
+// profile's own build profile, so a receipt recorded under an earlier
+// readable profile keeps the identity it was written with.
 func PublicationContentScannerIdentity(profile ScannerProfile) string {
-	return derivePublicationContentScannerIdentity(ScannerBinaryDigests{LauncherSHA256: profile.LauncherSHA256, WorkerSHA256: profile.WorkerSHA256})
+	return publicationContentScannerIdentity(profile.BuildProfile, ScannerBinaryDigests{LauncherSHA256: profile.LauncherSHA256, WorkerSHA256: profile.WorkerSHA256})
 }
 
 func derivePublicationContentScannerIdentity(digests ScannerBinaryDigests) string {
+	return publicationContentScannerIdentity(secretscan.BuildProfile, digests)
+}
+
+func publicationContentScannerIdentity(buildProfile string, digests ScannerBinaryDigests) string {
 	encoded, _ := json.Marshal(struct {
 		Contract string `json:"contract"`
 		Version  int    `json:"version"`
@@ -559,7 +566,7 @@ func derivePublicationContentScannerIdentity(digests ScannerBinaryDigests) strin
 		Profile  string `json:"profile"`
 		Launcher string `json:"launcher"`
 		Worker   string `json:"worker"`
-	}{"open-trestle/publication-content-scanner", 1, secretscan.ScannerName, secretscan.BuildProfile, digests.LauncherSHA256, digests.WorkerSHA256})
+	}{"open-trestle/publication-content-scanner", 1, secretscan.ScannerName, buildProfile, digests.LauncherSHA256, digests.WorkerSHA256})
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }
