@@ -13,6 +13,7 @@ import (
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
 	modelhandler "github.com/georgejieh/open-trestle/handlers/model"
+	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/testsupport"
 	"github.com/georgejieh/open-trestle/runtimecatalog"
 )
@@ -33,8 +34,58 @@ func (r consoleHTTPFailureTransport) RoundTrip(request *http.Request) (*http.Res
 	return response, nil
 }
 
+// classRecordingDispatcher keeps the console adapter's proof-bearing dispatch
+// and records the closed failure class of each result it returns.
+type classRecordingDispatcher struct {
+	modelhandler.SanitizedRouteDispatcher
+	failures *[]gateway.RouteFailureClass
+}
+
+func (d classRecordingDispatcher) DispatchSanitizedRoute(ctx context.Context, request gateway.RouteDispatchRequest, proof modelhandler.SanitizedDispatchProof) gateway.RouteDispatchResult {
+	result := d.SanitizedRouteDispatcher.DispatchSanitizedRoute(ctx, request, proof)
+	*d.failures = append(*d.failures, result.Failure())
+	return result
+}
+
+// recordConsoleFailures wraps every console dispatcher of catalog; the
+// wrapped catalog keeps each adapter and configuration identity.
+func recordConsoleFailures(t *testing.T, catalog gateway.RouteDispatcherCatalog) (gateway.RouteDispatcherCatalog, *[]gateway.RouteFailureClass) {
+	t.Helper()
+	failures := &[]gateway.RouteFailureClass{}
+	dispatchers := []gateway.RouteDispatcher{}
+	for _, id := range catalog.AdapterIDs() {
+		dispatcher, ok := catalog.Resolve(id)
+		sanitized, isSanitized := dispatcher.(modelhandler.SanitizedRouteDispatcher)
+		if !ok || !isSanitized {
+			t.Fatal("console dispatcher lost its sanitized dispatch")
+		}
+		dispatchers = append(dispatchers, classRecordingDispatcher{sanitized, failures})
+	}
+	wrapped, err := gateway.NewRouteDispatcherCatalog(dispatchers)
+	requiredCheck(t, err)
+	if wrapped.Identity() != catalog.Identity() {
+		t.Fatal("recording changed the catalog identity")
+	}
+	return wrapped, failures
+}
+
+// Each console HTTP failure is classified by its status alone, as for every
+// other profile: 402 is a payment refusal, not a spent local budget.
 func TestOpenCodeConsoleHandlerHTTPFailuresNeverRetryOrPersistProviderBody(t *testing.T) {
-	for _, status := range []int{401, 402, 403, 429, 500} {
+	for _, test := range []struct {
+		status  int
+		failure gateway.RouteFailureClass
+		run     controlplane.RunFailure
+	}{
+		{401, gateway.RouteFailureAuthentication, controlplane.RunFailurePolicy},
+		{402, gateway.RouteFailurePaymentRequired, controlplane.RunFailurePolicy},
+		{403, gateway.RouteFailureAuthorization, controlplane.RunFailurePolicy},
+		{404, gateway.RouteFailureModelUnavailable, controlplane.RunFailurePolicy},
+		{410, gateway.RouteFailureModelRetired, controlplane.RunFailurePolicy},
+		{429, gateway.RouteFailureRateLimited, controlplane.RunFailureTransient},
+		{500, gateway.RouteFailureProviderServer, controlplane.RunFailureTransient},
+	} {
+		status := test.status
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			ctx := context.Background()
 			clock := &requiredClock{at: time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)}
@@ -45,6 +96,7 @@ func TestOpenCodeConsoleHandlerHTTPFailuresNeverRetryOrPersistProviderBody(t *te
 			transport := &consoleCallerTransport{t: t}
 			catalog, err := runtimecatalog.NewOpenAIRouteDispatcherCatalogWithOptions(inventory, configuration, brokeredResolver{credentials}, runtimecatalog.OpenAICatalogOptions{Clock: clock, HTTPClient: &http.Client{Transport: consoleHTTPFailureTransport{transport, status}, Timeout: time.Minute}, HTTPClientIdentity: requiredDigest("console-error-http")})
 			requiredCheck(t, err)
+			catalog, failures := recordConsoleFailures(t, catalog)
 			store, err := artifact.NewMemoryStore(artifact.ProtectionProcessPrivate, 100)
 			requiredCheck(t, err)
 			ledger := audit.NewMemoryLedger()
@@ -67,6 +119,9 @@ func TestOpenCodeConsoleHandlerHTTPFailuresNeverRetryOrPersistProviderBody(t *te
 			completion := handler.Execute(ctx, request)
 			if completion.Status() != controlplane.TaskCompletionFailed || completion.Validate() != nil || transport.calls != 1 || credentials.calls != 1 {
 				t.Fatal("error retried, succeeded or skipped authorized request")
+			}
+			if len(*failures) != 1 || (*failures)[0] != test.failure || completion.Failure() != test.run {
+				t.Fatalf("status %d classified %v, task failure %s; want %s, %s", status, *failures, completion.Failure(), test.failure, test.run)
 			}
 			events, err := ledger.Read(ctx, scope, 0, 20)
 			requiredCheck(t, err)

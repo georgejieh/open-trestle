@@ -564,10 +564,6 @@ func (a *Adapter) executeWithDispatchProof(
 		return failed(gateway.RouteFailureTransport, gateway.RouteReplayOutcomeUnknown, 0)
 	}
 	if response.StatusCode != http.StatusOK {
-		if a.requestProfile == RequestProfileOpenCodeConsoleChatV1 && response.StatusCode == http.StatusPaymentRequired {
-			drainAndClose(response.Body)
-			return failed(gateway.RouteFailureBudgetExhausted, gateway.RouteReplayNoSideEffect, 0)
-		}
 		return classifyHTTPFailure(response)
 	}
 	content, readErr := readBounded(response)
@@ -680,6 +676,9 @@ func (a *Adapter) newRequest(
 	return request, nil
 }
 
+// classifyHTTPFailure maps a non-200 answer of every request profile to one
+// closed class by its status alone. The body is discarded unread: provider
+// error text is untrusted and never reaches a result, record or log.
 func classifyHTTPFailure(response *http.Response) gateway.RouteDispatchResult {
 	if response == nil {
 		return failed(gateway.RouteFailureTransport, gateway.RouteReplayOutcomeUnknown, 0)
@@ -688,8 +687,14 @@ func classifyHTTPFailure(response *http.Response) gateway.RouteDispatchResult {
 	switch response.StatusCode {
 	case http.StatusUnauthorized:
 		return failed(gateway.RouteFailureAuthentication, gateway.RouteReplayNoSideEffect, 0)
+	case http.StatusPaymentRequired:
+		return failed(gateway.RouteFailurePaymentRequired, gateway.RouteReplayNoSideEffect, 0)
 	case http.StatusForbidden:
 		return failed(gateway.RouteFailureAuthorization, gateway.RouteReplayNoSideEffect, 0)
+	case http.StatusNotFound:
+		return failed(gateway.RouteFailureModelUnavailable, gateway.RouteReplayNoSideEffect, 0)
+	case http.StatusGone:
+		return failed(gateway.RouteFailureModelRetired, gateway.RouteReplayNoSideEffect, 0)
 	case http.StatusRequestTimeout, http.StatusGatewayTimeout:
 		return failed(gateway.RouteFailureTimeout, gateway.RouteReplayOutcomeUnknown, 0)
 	case http.StatusTooManyRequests:
