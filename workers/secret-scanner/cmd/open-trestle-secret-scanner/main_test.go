@@ -69,6 +69,9 @@ func TestSandboxedWorkerScansOneFrameWithoutLeaksOrFiles(t *testing.T) {
 	if response.Status != protocol.StatusComplete || len(response.Matches) == 0 {
 		t.Fatalf("unexpected response status=%q matches=%d", response.Status, len(response.Matches))
 	}
+	if response.BuildProfile != protocol.BuildProfile {
+		t.Fatalf("sandboxed worker emitted build profile %q, want %q", response.BuildProfile, protocol.BuildProfile)
+	}
 	after := directoryNames(t, temporary)
 	if strings.Join(before, "\x00") != strings.Join(after, "\x00") {
 		t.Fatalf("worker changed filesystem: before=%v after=%v", before, after)
