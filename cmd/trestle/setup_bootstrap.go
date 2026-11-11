@@ -24,6 +24,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/fileauthority"
 	"github.com/georgejieh/open-trestle/internal/localownerroot"
 	"github.com/georgejieh/open-trestle/internal/provider"
+	"github.com/georgejieh/open-trestle/internal/routehint"
 	"github.com/georgejieh/open-trestle/internal/scm"
 	"github.com/georgejieh/open-trestle/runtimecatalog"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
@@ -76,6 +77,9 @@ type setupBootstrapResult struct {
 	LaunchCommand          []string `json:"launch_command,omitempty"`
 	Limitations            []string `json:"limitations"`
 	Scope                  string   `json:"scope,omitempty"`
+	// Messages names, in fixed words, why this check's synthetic probe was
+	// refused when a model server refused it; it is absent otherwise.
+	Messages []string `json:"messages,omitempty"`
 }
 
 func runSetupBootstrap(args []string, stdout, stderr io.Writer) int {
@@ -206,11 +210,13 @@ func runSetupBootstrapWithContext(ctx context.Context, args []string, stdout, st
 		writeSetupBootstrapUsage(stderr)
 		return 2
 	}
+	var probeMessages []string
 	if args[0] == "check" {
 		if *values["approved-by"] != plan.RecoveryOwner() {
 			return writeSetupBootstrapRefusal(stdout)
 		}
-		if err := checkSetupBootstrap(ctx, directoryAbs, *values["backup-directory"], *values["approved-by"], *probe, direct, plan, inventory, policy, clock); err != nil {
+		probeMessages, err = checkSetupBootstrap(ctx, directoryAbs, *values["backup-directory"], *values["approved-by"], *probe, direct, plan, inventory, policy, clock)
+		if err != nil {
 			return writeSetupBootstrapRefusal(stdout)
 		}
 		manifest, plan, _, _, err = loadSetupBootstrap(ctx, directoryAbs)
@@ -243,7 +249,7 @@ func runSetupBootstrapWithContext(ctx context.Context, args []string, stdout, st
 		manifest.CreatedAt = intent.CreatedAt
 		manifest.ReviewCommand, _, _ = setupBootstrapCommands(directoryAbs, manifest, plan, policy, manifest.EphemeralReviewCommand[3:])
 	}
-	result := setupBootstrapResult{Contract: "open-trestle/local-first-bootstrap-result", Version: 1, Status: "pending", Ready: plan.Ready(), Plan: plan.Identity(), Pending: []string{}, ReviewCommand: manifest.ReviewCommand, EphemeralReviewCommand: manifest.EphemeralReviewCommand, StatusCommand: manifest.StatusCommand, LaunchCommand: manifest.LaunchCommand, Limitations: setupBootstrapLimitations()}
+	result := setupBootstrapResult{Contract: "open-trestle/local-first-bootstrap-result", Version: 1, Status: "pending", Ready: plan.Ready(), Plan: plan.Identity(), Pending: []string{}, ReviewCommand: manifest.ReviewCommand, EphemeralReviewCommand: manifest.EphemeralReviewCommand, StatusCommand: manifest.StatusCommand, LaunchCommand: manifest.LaunchCommand, Limitations: setupBootstrapLimitations(), Messages: probeMessages}
 	if direct {
 		// Readiness covers only the checks the foreground review relies on; the
 		// daemon commands are omitted because this result does not qualify them.
@@ -605,56 +611,74 @@ func loadSetupBootstrap(ctx context.Context, dir string) (setupBootstrapManifest
 	return manifest, plan, inventory, policy, nil
 }
 
-func checkSetupBootstrap(ctx context.Context, dir, backupDir, owner string, allowProbe, direct bool, plan setupcore.Plan, inventory runtimeconfig.RouteInventory, policy runtimeconfig.RuntimePolicy, clock setupClock) error {
+// setupProbeRefusal names a model server's refusal of the synthetic local
+// probe in the fixed words a review prints for the same refusal, or returns
+// nil. No probe, a probe that passed or failed otherwise, names none.
+func setupProbeRefusal(inference *setupcore.LocalInferenceChecker) []string {
+	failure, sent := inference.ProbeFailure()
+	if !sent {
+		return nil
+	}
+	detail, hint, ok := routehint.ProviderRefusal(failure)
+	if !ok {
+		return nil
+	}
+	return []string{string(setupcore.CheckLocalInferenceValidated) + ": " + detail + ": " + hint}
+}
+
+// checkSetupBootstrap runs the setup checks that have not passed, in order,
+// and returns the fixed reason a refused local probe gives, if any.
+func checkSetupBootstrap(ctx context.Context, dir, backupDir, owner string, allowProbe, direct bool, plan setupcore.Plan, inventory runtimeconfig.RouteInventory, policy runtimeconfig.RuntimePolicy, clock setupClock) ([]string, error) {
 	store, err := setupcore.OpenStateFile(filepath.Join(dir, "runs", "setup", "plan.json"))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer store.Close()
 	approval, err := setupcore.NewRuntimePolicyApproval(plan, inventory.Identity(), policy.Identity(), policy.ReviewPolicyIdentity(), owner)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	policyChecker, err := setupcore.NewRuntimePolicyFileChecker(filepath.Join(dir, "routes.json"), filepath.Join(dir, "policy.json"), approval)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	storage, err := setupcore.NewStateStorageChecker(filepath.Join(dir, "runs", "setup"))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	administrator, err := setupcore.NewLocalAdministratorChecker(plan, owner)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	observer, err := setupcore.NewObserverCredentialPostureChecker(os.Getenv)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	dryRun, err := setupcore.NewDryRunChecker(policyChecker)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	checkers := []setupcore.Checker{storage, administrator, observer, policyChecker, dryRun}
 	if direct {
 		// The foreground review never reads the daemon's API/observer tokens.
 		checkers = []setupcore.Checker{storage, administrator, policyChecker, dryRun}
 	}
+	var inference *setupcore.LocalInferenceChecker
 	if allowProbe {
 		factory, err := newSetupLocalInferenceFactory(os.Getenv)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		inference, err := setupcore.NewLocalInferenceChecker(policyChecker, factory)
+		inference, err = setupcore.NewLocalInferenceChecker(policyChecker, factory)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		checkers = append(checkers, inference)
 	}
 	for _, checker := range checkers {
 		current, err := store.Current(ctx)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		passed := false
 		for _, r := range current.Requirements() {
@@ -667,57 +691,57 @@ func checkSetupBootstrap(ctx context.Context, dir, backupDir, owner string, allo
 		}
 		runner, err := setupcore.NewRunner(store, []setupcore.Checker{checker}, clock)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		_, receipt, err := runner.Run(ctx, checker.Key())
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if receipt.State() != setupcore.CheckPassed {
-			return nil
+			return setupProbeRefusal(inference), nil
 		}
 	}
 	current, err := store.Current(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, r := range current.Requirements() {
 		if r.Key() == setupcore.CheckBackupValidated && r.State() == setupcore.CheckPassed {
-			return nil
+			return nil, nil
 		}
 	}
 	if backupDir == "" {
-		return nil
+		return nil, nil
 	}
 	backupDir, err = filepath.Abs(backupDir)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// Backup creation inspects the live state independently, so release its writer first.
 	if err := store.Close(); err != nil {
-		return err
+		return nil, err
 	}
 	snapshot := filepath.Join(backupDir, current.Identity()+".json")
 	if _, err := os.Lstat(snapshot); os.IsNotExist(err) {
 		if _, err := setupcore.CreateBackupSnapshot(ctx, filepath.Join(dir, "runs", "setup", "plan.json"), snapshot, current.Identity()); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	backup, err := setupcore.NewBackupSnapshotChecker(filepath.Join(dir, "runs", "setup", "plan.json"), snapshot, current)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	reopened, err := setupcore.OpenStateFile(filepath.Join(dir, "runs", "setup", "plan.json"))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer reopened.Close()
 	runner, err := setupcore.NewRunner(reopened, []setupcore.Checker{backup}, clock)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	_, _, err = runner.Run(ctx, backup.Key())
-	return err
+	return nil, err
 }
 
 func writeSetupBootstrapUsage(w io.Writer) {

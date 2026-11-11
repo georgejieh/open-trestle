@@ -161,6 +161,13 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
+	// probe_refuse_* refuses only the setup probe's fixed sample request.
+	if refusal, ok := localModelRefusals[strings.TrimPrefix(m.mode, "probe_")]; ok && strings.HasPrefix(m.mode, "probe_") && bytes.Contains(encoded, []byte("func setupProbe()")) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(refusal.status)
+		_, _ = io.WriteString(w, refusal.body)
+		return
+	}
 	var payload []byte
 	var chatInstructions string
 	if m.chatCompletions {
@@ -335,12 +342,14 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 const localModelRefusalText = "PROVIDER_REFUSAL_TEXT_5521"
 
 // localModelRefusals are the refusal modes: the live Ollama answers for an
-// account without credit and a retired cloud model, and the other provider
-// refusal statuses, each with the provider's message in the body.
+// account without credit and a retired cloud model, the other provider
+// refusal statuses, and a plain bad request, each with the provider's message
+// in the body.
 var localModelRefusals = map[string]struct {
 	status int
 	body   string
 }{
+	"refuse_400": {http.StatusBadRequest, `{"error":{"message":"bad request ` + localModelRefusalText + `","type":"api_error"}}`},
 	"refuse_401": {http.StatusUnauthorized, `{"error":{"message":"unauthorized ` + localModelRefusalText + `","type":"api_error"}}`},
 	"refuse_402": {http.StatusPaymentRequired, `{"error":{"message":"Add usage credits or subscribe and save up to 66%: https://ollama.com/plans (ref: ` + localModelRefusalText + `)","type":"api_error","param":null,"code":null}}`},
 	"refuse_403": {http.StatusForbidden, `{"error":{"message":"forbidden ` + localModelRefusalText + `","type":"api_error"}}`},

@@ -223,9 +223,10 @@ func initDecodedEvidence(t *testing.T, routes string) string {
 // answer GET /v1/models, so the wizard's probe sees exactly one model per server.
 // With packed set, the checkout is an ordinary `git clone --no-local` of the
 // fixture: objects in a pack file, objects folder mode 0755.
-func initLocalModelServers(t *testing.T, packed bool) (string, string, string, *localModelFixture) {
+// A generation mode, when given, selects how the first server answers.
+func initLocalModelServers(t *testing.T, packed bool, generationMode ...string) (string, string, string, *localModelFixture) {
 	t.Helper()
-	f := newLocalModelFixture(t, localModelFixtureOptions{noAuth: true, chatCompletions: true})
+	f := newLocalModelFixture(t, localModelFixtureOptions{noAuth: true, chatCompletions: true, generationMode: strings.Join(generationMode, "")})
 	checkout := t.TempDir()
 	checkoutGit(t, checkout, "init")
 	if err := os.CopyFS(filepath.Join(checkout, ".git", "objects"), os.DirFS(f.objects)); err != nil {

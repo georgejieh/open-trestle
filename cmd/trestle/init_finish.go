@@ -377,7 +377,7 @@ func (w *initWizard) check(setup initSetup) (initOutcome, error) {
 	if json.Unmarshal(out.Bytes(), &result) != nil {
 		return initOutcome{}, initStopf(initExitFailed, "the setup check returned an unreadable result")
 	}
-	summary := w.renderLocal()
+	summary := w.renderLocal(result.Messages)
 	// The direct-review scope reports ready only when every check the review
 	// relies on passed; the daemon-only items are not part of it.
 	return initOutcome{code: code, ready: result.Ready && result.Scope == setupBootstrapDirectReviewScope && len(result.EphemeralReviewCommand) > 3, reviewCommand: result.EphemeralReviewCommand, summary: summary}, nil
@@ -502,7 +502,10 @@ var initLocalCheckText = map[setupcore.CheckKey][2]string{
 // never reads them, and the direct-review check does not run them.
 var initDaemonOnlyChecks = []setupcore.CheckKey{setupcore.CheckObserverCredentialPostureValidated, setupcore.CheckBackupValidated}
 
-func (w *initWizard) renderLocal() string {
+// renderLocal prints each local setup check. A refused test request that the
+// bootstrap check named (messages) shows that fixed reason instead of the
+// generic advice.
+func (w *initWizard) renderLocal(messages []string) string {
 	tally := initTally{}
 	plan, err := setupcore.InspectStateFile(w.ctx, filepath.Join(w.a.directory, "runs", "setup", "plan.json"))
 	if err != nil {
@@ -528,6 +531,13 @@ func (w *initWizard) renderLocal() string {
 		}
 		if requirement.Key() == setupcore.CheckLocalInferenceValidated && state == "pending" {
 			state, text = "optional", [2]string{"Test requests to both models (optional; not sent)", ""}
+		}
+		if requirement.Key() == setupcore.CheckLocalInferenceValidated && state == "refused" {
+			for _, message := range messages {
+				if reason, ok := strings.CutPrefix(message, string(setupcore.CheckLocalInferenceValidated)+": "); ok {
+					text[1] = "A model server refused the test request (" + strings.Replace(reason, ": ", "): ", 1) + "."
+				}
+			}
 		}
 		tally[state]++
 		w.say("    %s %s", w.mark(state), text[0])
