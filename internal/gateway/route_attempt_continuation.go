@@ -164,7 +164,7 @@ func NewRouteRetryAttemptAuthorization(previous RouteAttemptAuthorization, outco
 	if err := decision.Validate(); err != nil {
 		return RouteAttemptAuthorization{}, err
 	}
-	if decision.AuthorizationIdentity() != previous.Identity() || decision.OutcomeIdentity() != outcome.Identity() || decision.RequestIdentity() != previous.RequestIdentity() || decision.RouteRecordIdentity() != previous.RouteRecordIdentity() || decision.RouteAttemptOrdinal() != previous.RouteAttemptOrdinal() || decision.Failure() != outcome.Failure() || decision.ReplaySafety() != outcome.ReplaySafety() || decision.RetryAfterMilliseconds() != outcome.RetryAfterMilliseconds() {
+	if !retryDecisionMatches(previous, outcome, decision) {
 		return RouteAttemptAuthorization{}, ErrRouteAttemptContinuationMismatch
 	}
 	if !decision.ShouldRetry() {
