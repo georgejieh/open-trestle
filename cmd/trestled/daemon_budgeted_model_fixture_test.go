@@ -117,6 +117,10 @@ type daemonBudgetedModelEndpoint struct {
 	// rateLimits answers the first requests with HTTP 429 and a one-second
 	// Retry-After, before reading them, so the handler retries on the same route.
 	rateLimits int
+	// onDispatch, when set before the first request, runs for each request
+	// that is not rate-limited, before it is read or answered, while the
+	// handler waits on it.
+	onDispatch func(call int)
 	// unavailable makes every request fail at the transport. Tests use it
 	// instead of closing the server so the listener keeps its port: a closed
 	// httptest port can be reused by a parallel test's endpoint, which would
@@ -238,12 +242,15 @@ func (e *daemonBudgetedModelEndpoint) serve(t *testing.T, w http.ResponseWriter,
 	}
 	e.calls++
 	call := e.calls
-	rateLimited := call <= e.rateLimits
+	rateLimited, onDispatch := call <= e.rateLimits, e.onDispatch
 	e.mu.Unlock()
 	if rateLimited {
 		w.Header().Set("Retry-After", "1")
 		http.Error(w, "rate limited", http.StatusTooManyRequests)
 		return
+	}
+	if onDispatch != nil {
+		onDispatch(call)
 	}
 	if call > daemonBudgetedModelMaxRequests {
 		e.fail("model request limit exceeded")
