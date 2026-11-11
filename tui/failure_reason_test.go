@@ -12,7 +12,45 @@ import (
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/diagnostics"
+	"github.com/georgejieh/open-trestle/internal/testsupport"
 )
+
+// A model task's recorded provider refusal shows its reason and the local
+// review's action, wrapped within the terminal width.
+func TestRunShowsProviderRefusalReasonAndHint(t *testing.T) {
+	ctx := context.Background()
+	scope, err := audit.NewReviewScope("tenant-a", "repo-a", "run-provider-refusal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := testsupport.ProviderRefusalReceipt(scope, controlplane.TaskFailureReasonProviderPaymentRequired, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	view, err := New(&fakeService{receipt: receipt, diagnosticErr: errors.New("not ready")}, strings.NewReader("q\n"), &output, Options{Scope: scope, RefreshInterval: time.Second, Width: 80, Plain: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := view.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	rendered := output.String()
+	joined := regexp.MustCompile(`\n {12,}`).ReplaceAllString(rendered, " ")
+	for _, want := range []string{
+		"Reason      candidates: provider_payment_required (the provider refused the request for billing)\n",
+		"Hint        add credit or a subscription to the provider account, or choose another route\n",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing %q in:\n%s", want, rendered)
+		}
+	}
+	for _, line := range strings.Split(rendered, "\n") {
+		if len([]rune(line)) > 80 {
+			t.Errorf("line exceeds width: %q", line)
+		}
+	}
+}
 
 // A refused source acquisition shows its recorded reason beside the run
 // disposition, so an operator can tell no-merge-base from a transport failure.

@@ -13,6 +13,7 @@ import (
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/diagnostics"
+	"github.com/georgejieh/open-trestle/internal/testsupport"
 )
 
 var hintShortfall = controlplane.TaskFailureContextShortfall{RequiredTokens: 14282, EstimatedInputTokens: 10186, MaxOutputTokens: 4096, DeclaredContextTokens: 4097}
@@ -106,6 +107,30 @@ func runStatusAgainst(t *testing.T, receipt controlplane.ReviewRunReceipt, set *
 	var out, errs bytes.Buffer
 	exit := run([]string{"runs", "status", "--tenant", "tenant-a", "--repository", "repo-a", "--run", "run-a", "--server", server.URL, "--format", format}, &out, &errs)
 	return exit, out.String(), errs.String()
+}
+
+// runs status names a model task's recorded provider refusal on stderr with
+// the local review's explanation and action, never provider text.
+func TestRunStatusNamesProviderRefusal(t *testing.T) {
+	scope, _ := audit.NewReviewScope("tenant-a", "repo-a", "run-a")
+	for _, test := range []struct {
+		reason controlplane.TaskFailureReason
+		want   string
+	}{
+		{controlplane.TaskFailureReasonProviderPaymentRequired, "runs status: task candidates failed: provider_payment_required (the provider refused the request for billing)\nhint: add credit or a subscription to the provider account, or choose another route\n"},
+		{controlplane.TaskFailureReasonProviderModelRetired, "runs status: task candidates failed: provider_model_retired (the provider no longer serves this model)\nhint: choose a model the provider lists as available and re-run setup\n"},
+		{controlplane.TaskFailureReasonProviderRateLimited, "runs status: task candidates failed: provider_rate_limited (the provider rate-limited the request on its last attempt)\nhint: wait and run the review again, or choose another route\n"},
+	} {
+		receipt, err := testsupport.ProviderRefusalReceipt(scope, test.reason, 7_000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		exit, out, errs := runStatusAgainst(t, receipt, nil, "run")
+		encoded, _ := controlplane.EncodeReviewRunReceipt(receipt)
+		if exit != 0 || out != string(encoded)+"\n" || errs != test.want {
+			t.Fatalf("%s: exit=%d stderr=%q", test.reason, exit, errs)
+		}
+	}
 }
 
 // runs status names a recorded context route refusal on stderr with the

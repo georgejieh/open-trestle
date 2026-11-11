@@ -6,7 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/diagnostics"
+	"github.com/georgejieh/open-trestle/internal/testsupport"
 )
 
 func TestServerLabelsFinalOutcomesAndDistinctEvidence(t *testing.T) {
@@ -101,6 +103,24 @@ func TestServerDistinguishesObservedZeroFromMissingFinalEvidence(t *testing.T) {
 	}
 	if bytes.Contains(messages[0], []byte("unknown (evidence unavailable)")) {
 		t.Fatalf("present evidence reported unknown: %s", messages[0])
+	}
+}
+
+// A run whose model task recorded a provider refusal names it, with the local
+// review's action, after the receipt; any other run names none.
+func TestServerNamesProviderRefusal(t *testing.T) {
+	scope, plain, set := acpFixture(t)
+	receipt, err := testsupport.ProviderRefusalReceipt(scope, controlplane.TaskFailureReasonProviderModelRetired, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Task failure: candidates: provider_model_retired (the provider no longer serves this model).\nHint: choose a model the provider lists as available and re-run setup"
+	messages := promptMessages(t, &serviceStub{receipt: receipt, set: set}, scope)
+	if !strings.Contains(string(messages[0]), jsonEscaped(t, want)) {
+		t.Fatalf("missing %q in %s", want, messages[0])
+	}
+	if messages := promptMessages(t, &serviceStub{receipt: plain, set: set}, scope); bytes.Contains(messages[0], []byte("Task failure:")) {
+		t.Fatalf("a run without a refusal named one: %s", messages[0])
 	}
 }
 

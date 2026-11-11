@@ -9,8 +9,9 @@ import (
 	"github.com/georgejieh/open-trestle/internal/routehint"
 )
 
-// receiptRefusalHint names the first context route refusal a receipt records,
-// with the same hint as the local review, or returns "".
+// receiptRefusalHint names the first context route refusal or provider
+// refusal a receipt records, with the same hint as the local review, or
+// returns "".
 func receiptRefusalHint(receipt controlplane.ReviewRunReceipt) string {
 	for _, task := range receipt.Tasks() {
 		switch task.FailureReason() {
@@ -19,6 +20,9 @@ func receiptRefusalHint(receipt controlplane.ReviewRunReceipt) string {
 			return refusalHintText(task.Key(), task.FailureReason().String(), routehint.RouteContextInsufficient, routehint.ContextShortfall(s.RequiredTokens, s.EstimatedInputTokens, s.MaxOutputTokens, s.DeclaredContextTokens))
 		case controlplane.TaskFailureReasonNoEligibleRoute:
 			return refusalHintText(task.Key(), task.FailureReason().String(), routehint.NoEligibleRoute, "")
+		}
+		if _, text, action, ok := routehint.ProviderRefusalWords(task.FailureReason().String()); ok {
+			return fmt.Sprintf("runs status: task %s failed: %s (%s)\nhint: %s\n", task.Key(), task.FailureReason(), text, action)
 		}
 	}
 	return ""

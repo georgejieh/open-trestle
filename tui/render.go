@@ -31,6 +31,9 @@ func (i *Interface) render(view interfaceView) error {
 	for _, task := range view.receipt.Tasks() {
 		if reason := task.FailureReason(); reason != 0 {
 			writeSetupWrapped(&builder, "Reason      ", task.Key()+": "+reason.String()+" ("+failureReasonText(reason)+")", width)
+			if _, _, action, provider := routehint.ProviderRefusalWords(reason.String()); provider {
+				writeSetupWrapped(&builder, "Hint        ", action, width)
+			}
 		}
 		if s, counted := task.ContextShortfall(); counted {
 			writeSetupWrapped(&builder, "Hint        ", routehint.ContextShortfall(s.RequiredTokens, s.EstimatedInputTokens, s.MaxOutputTokens, s.DeclaredContextTokens), width)
@@ -193,7 +196,9 @@ func failureReasonText(reason controlplane.TaskFailureReason) string {
 		return routehint.RouteContextInsufficient
 	case controlplane.TaskFailureReasonNoEligibleRoute:
 		return routehint.NoEligibleRoute
-	default:
-		return "unknown reason"
 	}
+	if _, text, _, ok := routehint.ProviderRefusalWords(reason.String()); ok {
+		return text
+	}
+	return "unknown reason"
 }

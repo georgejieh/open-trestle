@@ -1,6 +1,7 @@
 package routehint
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -39,6 +40,34 @@ func TestProviderRefusalNamesEachRefusalClass(t *testing.T) {
 	}
 	if ProviderRefusalHint("model_output_exhausted") != "" || ProviderRefusalHint("") != "" {
 		t.Fatal("a detail that is not a provider refusal has a provider hint")
+	}
+}
+
+// Each provider refusal's hint is its explanation and its action, and the
+// console labels the same reason with the same words, so every surface names
+// a refusal identically.
+func TestProviderRefusalWordsMatchTheHintAndTheConsole(t *testing.T) {
+	app, err := os.ReadFile("../../web/src/App.tsx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for class := gateway.RouteFailureTransport; class.Validate() == nil; class++ {
+		detail, hint, ok := ProviderRefusal(class)
+		if !ok {
+			continue
+		}
+		label, text, action, found := ProviderRefusalWords(detail)
+		if !found || label == "" || text+": "+action != hint {
+			t.Fatalf("%s words (%q, %q, %q) do not compose its hint %q", detail, label, text, action, hint)
+		}
+		for _, pinned := range []string{`"` + label + ": " + text + `"`, `"` + action + `"`} {
+			if !strings.Contains(strings.Join(strings.Fields(string(app)), " "), pinned) {
+				t.Fatalf("web/src/App.tsx lacks %s", pinned)
+			}
+		}
+	}
+	if _, _, _, found := ProviderRefusalWords("no_merge_base"); found {
+		t.Fatal("a reason that is not a provider refusal has provider words")
 	}
 }
 
