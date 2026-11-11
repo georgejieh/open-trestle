@@ -240,13 +240,22 @@ func TestLocalModelReviewRetriesARateLimitedRequest(t *testing.T) {
 			}
 			assertNoProviderRefusalText(t, stdout)
 			// The refused request consumed nothing, so its known zero usage
-			// keeps the retried stage's usage, and so the run's, known.
+			// keeps the retried stage's usage, and so the run's usage and
+			// cost, known.
 			retried := `"` + test.name + `":{"known":true,"route_attempts":2,"input_tokens":100,"output_tokens":100,"cached_input_tokens":0}`
-			if !strings.Contains(stdout, `"token_usage":{"known":true,"route_attempts":3,`) || !strings.Contains(stdout, retried) {
+			if !strings.Contains(stdout, `"usage_known":true,"actual_cost_micro_usd":0,"token_usage":{"known":true,"route_attempts":3,`) || !strings.Contains(stdout, retried) {
 				t.Fatalf("retried usage is not known: %s", stdout)
 			}
 		})
 	}
+	// A 503 that names a Retry-After is the same refusal before processing:
+	// retried on the same route, with known zero usage.
+	unavailable := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, generationMode: "refuse_503_once"})
+	result, unavailableOut := localModelExecute(t, unavailable, unavailable.args, 4)
+	if calls, _ := unavailable.generation.snapshot(); calls != 2 || result.RunStatus != "succeeded" || !strings.Contains(unavailableOut, `"generation":{"known":true,"route_attempts":2,`) {
+		t.Fatalf("503 with Retry-After: calls=%d run=%s", calls, result.RunStatus)
+	}
+	assertNoProviderRefusalText(t, unavailableOut)
 	// Both model tasks using both retries still read back as one result.
 	both := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, generationMode: "refuse_429_twice", verificationMode: "refuse_429_twice"})
 	if result, _ := localModelExecute(t, both, both.args, 4); result.RunStatus != "succeeded" || len(result.Diagnostics.Findings) != 1 {

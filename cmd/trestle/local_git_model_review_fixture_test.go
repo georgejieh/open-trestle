@@ -267,6 +267,15 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 		_, _ = io.WriteString(w, refusal.body)
 		return
 	}
+	// refuse_503_once answers the first request 503 with a Retry-After, a
+	// refusal before processing like a 429, and then answers as usual.
+	if m.mode == "refuse_503_once" && call == 1 {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Retry-After", "1")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, `{"error":{"message":"overloaded `+localModelRefusalText+`","type":"api_error"}}`)
+		return
+	}
 
 	if m.removedOnly {
 		m.respond(t, w, packet, removedOnlyModelResult(t, m.model, packet))
