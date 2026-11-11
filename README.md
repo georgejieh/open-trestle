@@ -144,11 +144,12 @@ cd path/to/your-repository
 trestle init
 ```
 
-`trestle init` asks where the two models run (OpenRouter ZDR routes, Ollama Cloud,
-OpenCode Go, a model server on this machine, or Ollama on this machine signed in to
-Ollama Cloud), which model finds problems and which different model double-checks
-them, and, when the provider needs a key, which environment variable holds it (the
-key itself is never asked for or stored). It shows every
+`trestle init` asks where the two models run (OpenRouter, with zero data
+retention by default; Ollama Cloud; OpenCode Go; a model server on this machine;
+or Ollama on this machine signed in to Ollama Cloud), which model finds problems
+and which different model double-checks them, and, when the provider needs a
+key, which environment variable holds it (the key itself is never asked for or
+stored). It shows every
 privacy or capability declaration in plain words and requires a typed `yes`,
 writes a protected configuration, runs the setup checks with a one-line fix for
 anything missing, and runs the first review only after you agree to send the

@@ -26,8 +26,8 @@ your explicit answer.
   and `HEAD`, the same commit a pull request is compared against.
 - **Somewhere to run two models.** One model looks for problems, a different
   model double-checks them. Choose one of:
-  - OpenRouter with zero-data-retention routes, Ollama Cloud, or OpenCode Go.
-    You need an account and an API key.
+  - OpenRouter, Ollama Cloud, or OpenCode Go. You need an account and an API
+    key. For OpenRouter, zero data retention is recommended and on by default.
   - A model server on this machine: Ollama, llama.cpp, vLLM or LM Studio
     (any OpenAI-compatible server on `127.0.0.1`).
   - Ollama on this machine, signed in to Ollama Cloud with `ollama signin`. It
@@ -62,12 +62,12 @@ your explicit answer.
   is needed only for the optional background daemon.
 
 No repository source is sent anywhere during setup. Setup does make a few network
-reads, each described below: it may fetch a provider's public model list, list
-models with your API key only when you agree (the key goes only to that
-provider's model-list address), and fetch a public evidence page you name once
-you confirm. With a local Ollama it reads that Ollama's model list
-(`/api/tags` on `127.0.0.1`), and for the Ollama Cloud sign-in option it can send
-one fixed test message, only if you agree. Your source goes to the models only
+reads, each described below: it may fetch a provider's public model list (for
+OpenRouter, also its public zero-data-retention endpoint list), and fetch a
+public evidence page you name once you confirm. None of these sends a key. With
+a local Ollama it reads that Ollama's model list (`/api/tags` on `127.0.0.1`),
+and for the Ollama Cloud sign-in option it can send one fixed test message, only
+if you agree. Your source goes to the models only
 when you agree to run a review.
 
 ## What the wizard asks
@@ -86,17 +86,30 @@ when you agree to run a review.
    "Ollama on this machine, signed in to Ollama Cloud".
 4. **The two models.** For Ollama Cloud and OpenCode Go it reads the public model
    list (no key or code is sent). For a local server it reads the server's
-   `/v1/models` list from `127.0.0.1` only. For OpenRouter, if your key variable
-   (such as `OPEN_TRESTLE_PROVIDER_OPENROUTER`) is already set, it offers to read
-   `https://openrouter.ai/api/v1/models` with it; the key is sent only there and
-   never shown. A successful read shows the list is reachable, not that the key
-   may run models. Each list read accepts a response of at most 4 MiB; a larger
-   or unreadable list falls back to typing the IDs. Otherwise type the IDs
-   exactly, for example `vendor/model-name`.
+   `/v1/models` list from `127.0.0.1` only. Each list read accepts a response of
+   at most 4 MiB; a larger or unreadable list falls back to typing the IDs.
+   Otherwise type the IDs exactly, for example `vendor/model-name`.
+
+   For OpenRouter it reads two public lists, with no key or code:
+   `https://openrouter.ai/api/v1/models` and
+   `https://openrouter.ai/api/v1/endpoints/zdr`. Models with zero-data-retention
+   (ZDR) endpoints are marked in the list. After you pick the two models it shows
+   what OpenRouter's API reported for each: its ZDR endpoints, context, output,
+   prices and structured output. It fills those in for you; there are no slug,
+   capacity or price questions. Then it asks one question, "Require zero data
+   retention on every request (recommended)?", where Enter means yes. If a model
+   has no ZDR endpoint, it says that an account or key with ZDR enforced will
+   refuse that model's requests and offers to pick one that has them. Saying no,
+   or keeping that model, explains in two sentences that the model provider may
+   then keep your prompts under its own terms, and continues after one `y`. If
+   OpenRouter's API cannot be read, it says why and asks for the limits and
+   prices instead. See [OpenRouter zero data retention](openrouter-zdr-profile.md).
    A list longer than 40 entries asks for part of a name first. The checker must
    differ from the finder; choosing the same model asks again. Models that look like 7B parameters or fewer are
-   flagged: they give weak reviews. You also state each model's context window
-   and output limit, and for remote providers the prices and a per-review cost cap.
+   flagged: they give weak reviews. For other providers you also state each
+   model's context window and output limit, and for remote providers the prices.
+   Every remote provider asks for a per-review cost cap; for OpenRouter the
+   default covers a request that fills the whole context.
    For Ollama Cloud, OpenCode Go and the Ollama Cloud sign-in option it first
    asks whether your plan charges per token; if not, it records zero prices and a
    zero cost cap.
@@ -131,14 +144,12 @@ when you agree to run a review.
    again to re-check.
 6. **Declarations.** Each fact the bootstrap needs is shown in plain words with a
    link, and you must type `yes`. Typing `no` stops with nothing written.
-   - Every remote provider: the [route declaration](remote-model-review.md#common-declarations)
+   - OpenRouter: one consent that each review sends the selected source, after
+     secret scanning, to OpenRouter for the two models, whether zero data
+     retention is required, and that you have not turned on prompt logging for
+     the key. No evidence, timestamps or slugs.
+   - Every other remote provider: the [route declaration](remote-model-review.md#common-declarations)
      (capacity, structured output, logging off, prices, availability).
-   - OpenRouter: provider slugs, six evidence items, a review window and the
-     [account declaration](remote-model-review.md#openrouter-zdr). A slug names
-     the upstream provider and cannot be derived from the model ID, so you type
-     the finder's slug once; the checker's question proposes the same slug. When
-     both slugs match, the checker's upstream and slug evidence propose the
-     finder's answers, one keypress each.
    - OpenCode Go: four evidence items, a review window and the
      [workspace declaration](remote-model-review.md#opencode-go).
    - Ollama signed in to Ollama Cloud: the
@@ -147,20 +158,17 @@ when you agree to run a review.
      under your signed-in account.
    - Local server: the [local capability declaration](local-first-bootstrap.md#choose-the-repository-and-model-pair).
 
-   For evidence, give the web address you read. OpenRouter's broker and slug
-   evidence propose the ZDR guide that
-   [the profile](openrouter-zdr-profile.md) cites,
-   `https://openrouter.ai/docs/guides/features/zdr`; press Enter to use it or type
-   the page you actually reviewed. For a public page the wizard offers to fetch it
-   once and compute the SHA-256 on this machine: one `https` GET with no key,
-   cookie, query or repository content, public addresses only, at most 8 MiB and
-   20 seconds. It shows the address and digest, and records them only if you
-   confirm. Otherwise give the SHA-256 of a copy you saved, or that file's path,
-   and the wizard hashes it locally. Account evidence is never fetched: save a
-   copy of your own account page and give its path. The review window proposes
-   `now` as the review time and 30 days of validity, and cannot be earlier than a
-   fetch made during setup. Both are shown in the declaration you confirm, so
-   change them if they are not accurate.
+   For OpenCode Go evidence, give the web address you read. For a public page
+   the wizard offers to fetch it once and compute the SHA-256 on this machine:
+   one `https` GET with no key, cookie, query or repository content, public
+   addresses only, at most 8 MiB and 20 seconds. It shows the address and
+   digest, and records them only if you confirm. Otherwise give the SHA-256 of a
+   copy you saved, or that file's path, and the wizard hashes it locally.
+   Account evidence is never fetched: save a copy of your own account page and
+   give its path. The review window proposes `now` as the review time and 30
+   days of validity, and cannot be earlier than a fetch made during setup. Both
+   are shown in the declaration you confirm, so change them if they are not
+   accurate.
 7. **Names.** Labels for the configuration and review records, derived from your
    user and repository names. Accept them or type your own.
 8. **Save and check.** The configuration goes into a new private folder,
@@ -180,11 +188,13 @@ when you agree to run a review.
 
 With `TERM=dumb` the marks are `[ok]`, `[..]`, `[x]` and `[--]`.
 
-Remote checks: the review window is current (OpenRouter, OpenCode Go), the saved
-configuration loads, the API key variable is set, and the secret scanner is
-installed. For the Ollama Cloud sign-in option, the key check is replaced by a
-check that your local Ollama lists both models as Ollama Cloud models. A review
-is offered only when all of them pass.
+Remote checks: the review window is current (OpenCode Go, and OpenRouter setups
+made before ZDR was detected), the saved configuration loads, the API key
+variable is set, and the secret scanner is installed. For OpenRouter a last line
+says whether zero data retention is required on every request or not required
+by Open Trestle. For the Ollama Cloud sign-in option, the key check is replaced
+by a check that your local Ollama lists both models as Ollama Cloud models. A
+review is offered only when all of them pass.
 
 Local checks run in the bootstrap's direct-review scope
 (`trestle setup bootstrap check --scope direct-review`): the setup folder is
@@ -204,7 +214,7 @@ shell, and saves it with the check command in `NEXT-STEPS.txt` in the setup
 folder. It then asks:
 
 ```text
-  A review sends the selected source to OpenRouter (https://openrouter.ai/api/v1).
+  A review sends the selected source to OpenRouter (https://openrouter.ai/api/v1), zero data retention required on every request.
   Run the first review now? (y/N):
 ```
 
@@ -248,18 +258,18 @@ in `--no-input` mode; facts you must declare are not.
 | --- | --- |
 | Commits | `--base REF`, `--head REF` |
 | Setup folder | `--directory PATH` |
-| Provider | `--provider openrouter-zdr\|ollama-cloud\|opencode-go\|local\|ollama-signin` |
+| Provider | `--provider openrouter\|openrouter-zdr\|ollama-cloud\|opencode-go\|local\|ollama-signin` (`openrouter-zdr` requires zero data retention) |
 | Local server | `--endpoint URL`, optional `--verification-endpoint URL`, `--transport openai_chat_completions\|openai_responses` (for `ollama-signin`, `--endpoint http://127.0.0.1:PORT/v1` names the local Ollama) |
 | Models | `--generation-model ID`, `--verification-model ID` |
-| Capacity | `--context-tokens N`, `--output-tokens N` |
+| Capacity | `--context-tokens N`, `--output-tokens N` (OpenRouter: detected unless given) |
 | Review output allowance (optional, no question) | `--max-output-tokens N`, from the default 4096 up to `--output-tokens` |
-| Prices (remote) | `--input-micro-usd-per-million-tokens N`, `--output-micro-usd-per-million-tokens N`, `--max-cost-micro-usd N` (1 USD = 1000000) |
+| Prices (remote) | `--input-micro-usd-per-million-tokens N`, `--output-micro-usd-per-million-tokens N` (OpenRouter: detected unless given), `--max-cost-micro-usd N` (1 USD = 1000000) |
 | Key variable | `--credential-env OPEN_TRESTLE_PROVIDER_NAME` |
 | Names | `--owner`, `--tenant`, `--repository`, `--repository-authority`, `--repository-namespace`, `--repository-name` |
-| OpenRouter | `--generation-provider-slug`, `--verification-provider-slug`, `--generation-upstream-evidence`, `--verification-upstream-evidence`, `--generation-slug-evidence`, `--verification-slug-evidence` |
+| OpenRouter | `--without-zdr` (continue without zero data retention), `--generation-provider-slug SLUG[,SLUG]` and `--verification-provider-slug SLUG[,SLUG]` (override the detected ZDR endpoints) |
 | OpenCode Go | `--generation-model-evidence`, `--verification-model-evidence` |
 | Evidence window | `--broker-evidence`, `--account-evidence`, `--evidence-retrieved-at`, `--reviewed-at`, `--valid-from`, `--valid-until` |
-| Declarations | `--declare-remote-route`, `--declare-openrouter-zdr-account`, `--declare-opencode-go-account`, `--declare-ollama-cloud-signin`, `--declare-local-capabilities` |
+| Declarations | `--declare-remote-route`, `--declare-opencode-go-account`, `--declare-ollama-cloud-signin`, `--declare-local-capabilities` |
 | Local test requests | `--allow-local-probe` |
 | Consent to review | `--run-review` |
 
@@ -277,6 +287,22 @@ trestle init --no-input --provider ollama-cloud \
   --credential-env OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD \
   --declare-remote-route
 ```
+
+For OpenRouter, the model facts come from its API:
+
+```sh
+trestle init --no-input --provider openrouter \
+  --generation-model YOUR_OPENROUTER_GENERATION_MODEL \
+  --verification-model YOUR_DIFFERENT_OPENROUTER_MODEL \
+  --max-cost-micro-usd 500000 \
+  --credential-env OPEN_TRESTLE_PROVIDER_OPENROUTER \
+  --declare-remote-route
+```
+
+It requires zero data retention when both models have ZDR endpoints. If one has
+none, it stops and names `--without-zdr`; with `--provider openrouter-zdr` it
+stops instead. If OpenRouter's API cannot be read, it lists the capacity and
+price flags to add.
 
 The values above are placeholders, not recommendations.
 
@@ -296,7 +322,10 @@ writing anything if setup was not yet saved.
 ## Limits
 
 - The wizard records your declarations; it cannot check account settings,
-  provider conduct, model capability, price or availability.
+  provider conduct, model capability, price or availability. OpenRouter facts
+  are recorded as reported by its API at setup time, not verified. OpenRouter's
+  API does not say whether your account or key enforces zero data retention, so
+  the wizard never claims it does or does not.
 - It never installs software, downloads models, starts servers, provisions keys
   or changes repository permissions.
 - The local model list and remote catalogs are availability observations, not

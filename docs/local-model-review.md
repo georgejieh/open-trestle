@@ -257,7 +257,8 @@ existing local transport disables proxies and confines dialing. `policy-approved
 still applies the protected inventory and policy, and the direct review uses the
 standard runtime generation and independent-verification handlers. They admit a
 `private_remote` route, or a `brokered_remote` route with a current OpenRouter ZDR,
-OpenCode Go or OpenCode Console declaration, only after separate Betterleaks scans,
+OpenCode Go or OpenCode Console declaration or an API-observed OpenRouter ZDR
+witness (which has no window), only after separate Betterleaks scans,
 a fresh zero-finding residual scan, artifact reload, and a handler-sealed dispatch
 proof. A binary without injected scanner digests, or without the installed
 scanner, therefore refuses remote requests before credential retrieval. Use the
@@ -1135,8 +1136,15 @@ credential: check the API key the route names (for ollama-signin, run `ollama
 signin`), then retry"; 403 "the provider refused this account access to the
 model or endpoint: check the account's access, or choose another route"; 429
 "the provider rate-limited the request on its last attempt: wait and run the
-review again, or choose another route". `failure_detail` takes these values in
-result schema version 6; a result without a provider refusal keeps its bytes.
+review again, or choose another route". On an OpenRouter route a 404 records
+`provider_no_allowed_endpoint` instead, with a hint that a model without
+zero-data-retention endpoints is refused when zero data retention is required
+by the setup or by the OpenRouter account or key (see
+[OpenRouter zero data retention](openrouter-zdr-profile.md#when-openrouter-refuses-a-request)).
+A result whose policy has an OpenRouter route that does not require zero data
+retention lists the limitation `openrouter_zero_data_retention_not_required`.
+`failure_detail` takes these values in result schema version 6; a result
+without a provider refusal keeps its bytes.
 A daemon run is classified the same way, and its generation or verification
 task records the detail as its content-free failure reason (the same
 `provider_*` token) in task completion v3, the v7 `task_failed` event and

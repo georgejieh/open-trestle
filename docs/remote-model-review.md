@@ -9,15 +9,17 @@ You never hand-author `routes.json` or compute a hash.
 The review is the existing foreground direct path,
 `local-git model-review --egress policy-approved`. It sends sanitized, scanned
 selected source to the provider you configure. Bootstrap itself makes no model
-call; its only network request is, for `ollama-signin`, one bounded `GET
-/api/tags` to your local Ollama daemon. There is no daemon, resume or
-publication in this journey.
+call. Its only network requests are, for `ollama-signin`, one bounded `GET
+/api/tags` to your local Ollama daemon, and for OpenRouter, one bounded,
+credential-free GET each of OpenRouter's public model list and zero-data-retention
+endpoint list. There is no daemon, resume or publication in this journey.
 
 Supported providers:
 
 | `--provider` | Endpoint | Zone | Request profile |
 |---|---|---|---|
-| `openrouter-zdr` | `https://openrouter.ai/api/v1` | `brokered_remote` | [`openrouter_zdr_chat_v1`](openrouter-zdr-profile.md) |
+| `openrouter-zdr` | `https://openrouter.ai/api/v1` | `brokered_remote` | [`openrouter_zdr_chat_v2`](openrouter-zdr-profile.md): zero data retention required on every request |
+| `openrouter` | `https://openrouter.ai/api/v1` | `private_remote` | none (generic Chat Completions); zero data retention not required by Open Trestle |
 | `opencode-go` | `https://opencode.ai/inference/go/openai/v1` | `brokered_remote` | [`opencode_go_chat_v1`](opencode-go-profile.md) |
 | `ollama-cloud` | `https://ollama.com/v1` | `private_remote` | none (generic Chat Completions) |
 | `ollama-signin` | `http://127.0.0.1:11434/v1` (your local Ollama, relaying to Ollama Cloud) | `private_remote` | `ollama_signin_chat_v1`, no credential |
@@ -84,29 +86,20 @@ trestle setup bootstrap init --provider openrouter-zdr \
   --verification-model YOUR_DIFFERENT_VERIFIER_MODEL \
   --generation-credential-environment OPEN_TRESTLE_PROVIDER_OPENROUTER \
   --declared-by owner \
-  --context-tokens 128000 --output-tokens 8192 \
-  --input-micro-usd-per-million-tokens 3000000 \
-  --output-micro-usd-per-million-tokens 15000000 \
   --max-cost-micro-usd 500000 \
-  --declare-remote-route \
-  --generation-provider-slug YOUR_GENERATION_SLUG \
-  --verification-provider-slug YOUR_VERIFIER_SLUG \
-  --generation-upstream-evidence https://example.invalid/upstream-a,SHA256 \
-  --verification-upstream-evidence https://example.invalid/upstream-b,SHA256 \
-  --generation-slug-evidence https://example.invalid/slug-a,SHA256 \
-  --verification-slug-evidence https://example.invalid/slug-b,SHA256 \
-  --broker-evidence https://example.invalid/openrouter-zdr,SHA256 \
-  --account-evidence https://example.invalid/account-review,SHA256 \
-  --evidence-retrieved-at 2026-11-07T09:00:00Z --reviewed-at 2026-11-07T10:00:00Z \
-  --valid-from 2026-11-07T10:00:00Z --valid-until 2026-12-07T00:00:00Z \
-  --declare-openrouter-zdr-account
+  --declare-remote-route
 
 trestle setup bootstrap check --directory "$HOME/.local/state/open-trestle/remote"
 ```
 
-Replace every placeholder. Prices, capacities and slugs are illustrative, not
-recommendations. When `check` returns `ready` (exit 0), run its `review_command`
-array exactly as printed. It is
+Replace every placeholder; the cost cap is illustrative, not a recommendation.
+For OpenRouter, the context, output, prices and routing slugs come from
+OpenRouter's API (see [OpenRouter](#openrouter)). Other providers also need
+`--context-tokens N --output-tokens N --input-micro-usd-per-million-tokens N
+--output-micro-usd-per-million-tokens N` and their own declarations below.
+
+When `check` returns `ready` (exit 0), run its `review_command` array exactly
+as printed. It is
 `trestle local-git model-review --checkout ... --egress policy-approved --timeout 10m --format text`
 with the pinned base and head commit digests and this directory's `routes.json`
 and `policy.json`. `inspect` is the same read-only report as `check`.
@@ -120,7 +113,8 @@ or refused prerequisite is reported by `check`, never discovered mid-review.
 Checks reported by `check`:
 
 - `privacy_declaration_current`: the declared review window contains now
-  (named profiles only). Before `--valid-from` it is pending; after
+  (OpenCode Go, and OpenRouter setups made before zero data retention was
+  detected). Before `--valid-from` it is pending; after
   `--valid-until` it is refused and needs a fresh review and directory.
 - `dispatch_catalog_validated`: the protected files construct the
   policy-approved dispatcher catalog, without credential retrieval or requests.
@@ -129,41 +123,60 @@ Checks reported by `check`:
   still lists both models as Ollama Cloud models. A daemon that is not running
   is pending; a model it no longer relays to `https://ollama.com` is refused.
 
+For OpenRouter the result also carries `data_retention`: `required_per_request`
+or `not_required_by_open_trestle`. It states what each request requires, never
+what a provider retains.
+
 `ready` means these local prerequisites hold. It is not provider qualification,
 review clearance or proof of any declared fact.
 
 ## Common declarations
 
 `--declare-remote-route` is required for every provider. With it, you declare
-that both models have the stated context and output capacity, return
-structured JSON, are used with content logging disabled, cost no more than the
-stated per-million-token prices, and are currently available. Without it, init
-refuses rather than inventing those facts. Reviews reserve the 4096-token output
-cap plus the actual request size against `--max-cost-micro-usd`. Init refuses a
-cap that cannot cover the output reservation. Set the prices to the higher of
-the two models. Declare `0` prices only if your plan has no per-token charge.
-`--declared-by` names the operator recorded in each evidence manifest.
+that both models have the stated context and output capacity, return structured
+JSON, are used with content logging disabled, cost no more than the stated
+per-million-token prices, and are currently available. Without it, init refuses
+rather than inventing those facts. For OpenRouter those facts come from its API,
+so the flag is your consent that each review sends the selected source to
+OpenRouter and your statement that prompt logging is off for the key. Reviews
+reserve the 4096-token output cap plus the actual request size against
+`--max-cost-micro-usd`. Init refuses a cap that cannot cover the output
+reservation. Set the prices to the higher of the two models. Declare `0` prices
+only if your plan has no per-token charge. `--declared-by` names the operator
+recorded in each evidence manifest.
 
 The generation and verification models must differ. Endpoints for the named
 profiles are fixed, so `--endpoint` is refused for them.
 
-## OpenRouter ZDR
+## OpenRouter
 
-`--declare-openrouter-zdr-account` is your explicit declaration that you checked
-the actual key's effective account and guardrails. It means Safety Retention is
-denied for Google and other providers, training and content logging are disabled,
-and BYOK, private endpoints, tools and plugins are unused. You also accept
-`openrouter_zdr_with_documented_exceptions`, not unconditional non-retention.
-Without the flag, init refuses to write any ZDR claim. Read
-[the OpenRouter ZDR profile](openrouter-zdr-profile.md) first.
+Bootstrap reads `https://openrouter.ai/api/v1/endpoints/zdr` and
+`https://openrouter.ai/api/v1/models` once each, with no key, and records the
+exact SHA-256 and time of each response. For each model it fills in the
+zero-data-retention (ZDR) endpoints it can pin and their routing slugs, the
+smaller context and output limit of the two models, and the higher input and
+output price. Any `--context-tokens`, `--output-tokens`,
+`--input-micro-usd-per-million-tokens`, `--output-micro-usd-per-million-tokens`
+or `--*-provider-slug SLUG[,SLUG]` flag overrides the detected value. These facts
+are recorded as reported by OpenRouter's API, not verified.
 
-Each role needs its own routing slug and its own upstream and slug-coverage
-evidence. The broker and account review evidence are shared. Each `--*-evidence`
-value is `HTTPS_URL,SHA256`, where the digest covers the exact bytes you reviewed
-(for example `sha256sum saved-page.pdf`). URLs must have a host and no
-credentials, query or fragment. Bootstrap does not fetch URLs or prove that an
-artifact supports a claim. Times are canonical UTC RFC3339 and must satisfy
-retrieval <= review <= `--valid-from` < `--valid-until`.
+- `--provider openrouter-zdr` requires ZDR on every request (`provider.zdr`),
+  limited to the pinned endpoints. A model without a ZDR endpoint is refused
+  with that reason. If the API cannot be read, pass the four capacity and price
+  flags; the route then requires ZDR without pinning endpoints.
+- `--provider openrouter` does not require ZDR. It is a generic
+  `private_remote` route that sends no provider controls, so a model provider
+  may keep prompts under its own terms; your account or key settings may still
+  enforce ZDR. `bootstrap check` and every review result say so.
+
+The API does not report whether your account or key enforces ZDR, and setup does
+not claim either way. An OpenRouter request refused with HTTP 404 records
+`provider_no_allowed_endpoint` with a hint that names the ZDR setting. The flags
+of the earlier reviewed setup (`--*-upstream-evidence`, `--*-slug-evidence`,
+`--broker-evidence`, `--account-evidence`, the four times and
+`--declare-openrouter-zdr-account`) are refused as no longer used. Details,
+including what the witness records: [OpenRouter zero data
+retention](openrouter-zdr-profile.md).
 
 ## OpenCode Go
 
@@ -307,8 +320,9 @@ stops before writing anything. The body of the answer is never read or shown.
 
 ## Limits
 
-- Bootstrap records operator declarations. It does not verify account settings,
-  provider conduct, model capability, price or availability.
+- Bootstrap records operator declarations and, for OpenRouter, what OpenRouter's
+  API reported at setup time. It does not verify account settings, provider
+  conduct, model capability, price or availability.
 - The direct review is foreground and ephemeral: no resume, daemon state or
   publication. Investigation and retained memory remain local-only.
 - The checkout source uses the existing bounded Git reader with the

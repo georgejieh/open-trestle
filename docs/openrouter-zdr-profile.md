@@ -1,321 +1,215 @@
-# OpenRouter ZDR Chat profile
+# OpenRouter zero data retention
 
-Runtime policy version 3 adds the closed `openrouter_zdr_chat_v1` request profile.
-Versions 1 and 2 and their accepted identity preimages remain unchanged. This
-profile is not generic permission to use brokered providers.
+OpenRouter can require zero data retention (ZDR) on a single request: with
+`"provider": {"zdr": true}` it routes the request only to endpoints on its ZDR
+list. Open Trestle uses that per-request switch. `trestle init` recommends it and
+selects it by default; it is not a gate you must pass before setup continues.
 
-## Required authority
+This page describes what setup reads from OpenRouter, what it records, what each
+request sends, and how a route without ZDR is labelled. The setup steps are in
+[getting started](getting-started.md) and
+[remote model review](remote-model-review.md#openrouter).
 
-The connection must use `openai_chat_completions`, bearer credentials and the
-exact base `https://openrouter.ai/api/v1`. Its single approved inventory record
-must declare provider `openrouter`, zone `brokered_remote` and disabled content
-logging. `brokered_route_authority` binds that record identity, evidence manifest
-digest, account policy identity, tenant, logical repository, provider routing slug
-and canonical UTC `valid_from`/`valid_until`. The interval includes its start and
-excludes its end. The credential reference is bound through the connection's
-derived credential identity, never through the secret value.
+## What setup reads
 
-These fields must match a typed `openrouter_privacy` section in the immutable
-evidence manifest. The runtime checks the declaration and its exact linkage, not
-provider conduct, account ownership or ZDR eligibility. A digest alone is not
-privacy approval. Before enabling
-the route, verify that the actual credential belongs to the approved account and
-that the evidence covers every endpoint the selected provider slug can match.
-A slug may cover a family or variant; a discovery tag is not that approval.
+Setup makes two bounded, credential-free GET requests to OpenRouter's public API,
+through the same client as the wizard's evidence fetch (public addresses only,
+no key, cookie, query or repository content, at most 8 MiB and 20 seconds each):
 
-## Dispatch contract
+- `https://openrouter.ai/api/v1/endpoints/zdr`, the endpoints OpenRouter routes
+  to when a request requires ZDR, with each endpoint's routing slug (`tag`),
+  prices, context length, maximum output and supported parameters;
+- `https://openrouter.ai/api/v1/models`, the model list.
 
-Every Chat request sets the same provider controls:
+For each chosen model it keeps the ZDR endpoints Open Trestle can use: those
+that report `safety_retention: false`, accept `max_tokens`, list decimal
+prices, and have at least 8192 tokens of context and 4096 of output. They are
+ordered by price, cheapest first, at most 32. Endpoints that report Safety
+Retention (or do not say) are left out and listed as excluded: OpenRouter
+documents that a ZDR request may still be routed to Safety Retention endpoints,
+depending on account settings, and pinning the others keeps them out.
+
+From those endpoints it fills in the facts the configuration needs: the routing
+slugs, the smaller context and output limit of the two models, the higher input
+and output price in micro-USD per million tokens (rounded up), and whether
+structured output is reported. Any flag you pass overrides the detected value.
+
+The API cannot tell Open Trestle whether your OpenRouter account or key enforces
+ZDR, so setup does not claim either way. If a chosen model has no ZDR endpoint,
+the wizard warns that an account or key with ZDR enforced will refuse its
+requests, and offers to pick a model that has one.
+
+If the API cannot be read, setup says why and asks for the limits and prices
+instead. It can still require ZDR on every request; it then pins no endpoints
+and OpenRouter chooses among its own ZDR endpoints, which may include Safety
+Retention endpoints depending on your account settings.
+
+## The two routes
+
+| Route | `--provider` | Zone | Request profile | Runtime policy |
+|---|---|---|---|---|
+| ZDR required on every request | `openrouter-zdr` | `brokered_remote` | `openrouter_zdr_chat_v2` | version 8 |
+| ZDR not required by Open Trestle | `openrouter` | `private_remote` | none (generic Chat Completions) | version 2 |
+
+### ZDR required
+
+Every request sets the same provider controls:
 
 ```json
-{"provider":{"zdr":true,"only":["<approved-slug>"],"order":["<approved-slug>"],"allow_fallbacks":false,"require_parameters":true}}
+{"provider":{"zdr":true,"only":["<slug>","..."],"order":["<slug>","..."],"allow_fallbacks":false,"require_parameters":true}}
 ```
 
-The existing exact model selector, output bound, host instructions, sanitized
+`only` and `order` are the recorded slugs, so OpenRouter may use only those
+endpoints, in that order. A route with no recorded slugs sends neither list.
+Because the request itself requires ZDR, OpenRouter refuses it rather than
+sending it to an endpoint outside its ZDR list; there is no review window to
+expire. The exact model selector, output bound, host instructions, sanitized
 context, strict response parser, usage reconciliation and bounded transport
-still apply. There is no arbitrary request overlay, tool execution, model array,
-provider fallback or implicit credential downgrade.
+still apply. There is no request overlay, tool execution, model array or
+provider fallback.
 
-The common catalog rejects stale declarations before resolving credential
-providers. Each dispatch rechecks freshness, the full route and approved record,
-and the trusted handler's opaque repository, run and request attestation before
-retrieving a key or making HTTP calls. One catalog can serve successive runs in
-its declared repository; another repository is not admitted. Expiry after
-preparation still refuses dispatch. A raw request or receipt alone has no
-remote dispatch authority.
+The setup summary, `bootstrap check` (`data_retention: required_per_request`)
+and the wizard all say that ZDR is required on every request. That is a fact
+about the request, not a promise about what any provider retains: OpenRouter
+documents legal exceptions to ZDR, such as CSAM handling.
 
-## Reachability and limits
+### ZDR not required
 
-Two compositions reach this profile. The opt-in GitHub advisory daemon consumes
-protected inventory and runtime policy as explicit operator inputs. The direct
-foreground `trestle local-git model-review --egress policy-approved` path also
-admits it through the same catalog and sanitized handlers, while
-`--egress local-only` still rejects it. `trestle setup bootstrap init --provider
-openrouter-zdr` writes that protected configuration and this witness from explicit
-operator declarations; see [remote model review](remote-model-review.md). A setup
-approval receipt is a separate readiness artifact; the daemon does not consume
-it as dispatch authority. Publication remains separately authorized.
+The route is a generic `private_remote` Chat Completions connection to
+`https://openrouter.ai/api/v1`, like Ollama Cloud. Requests carry no `provider`
+object, so OpenRouter routes them by its defaults and your account and key
+settings. The model provider may keep prompts under its own terms. Your account
+or key may still enforce ZDR, in which case a model without a ZDR endpoint is
+refused.
 
-OpenRouter documents legal CSAM handling exceptions to ZDR. ZDR is not a claim
-that no processing, exceptional retention or other account controls exist.
-Review current provider terms and account controls before sending source.
+`trestle init` chooses this route only after it explains that in two sentences
+and you answer yes, or with `--without-zdr`; `setup bootstrap init --provider
+openrouter` is that choice made directly. It is labelled everywhere it appears: the
+wizard summary and review prompt ("zero data retention not required by Open
+Trestle"), `bootstrap check` (`data_retention: not_required_by_open_trestle`
+and the limitation `zero_data_retention_not_required_by_open_trestle`) and every
+review result (`openrouter_zero_data_retention_not_required`). None of these
+claims that a provider retains or deletes anything.
 
-Offline synthetic transports establish development behavior only. They do not
-qualify an actual OpenRouter account, selected upstream, model quality, live
-usage/cancellation semantics, Go, Ollama Cloud or any other named service. Live
-inference, credentials, private source egress and charges require separate
-explicit authorization.
+## What is recorded
 
+Each ZDR route record carries a privacy witness, schema version 3, in its
+evidence manifest. It binds the route and effective selector, the fixed
+endpoint, profile, protocol and bearer mode, the credential reference identity
+(a digest of the variable name, never the key), the tenant and repository, the
+fixed `zero_data_retention: required_per_request`, the pinned `provider_slugs`,
+and where they came from (`provider_slug_source`: `openrouter_api`, `operator`
+for `--*-provider-slug` flags, or `none`). Its `observation` holds what the API
+reported, or `null` when the API could not be read:
 
-## Typed privacy witness
+- `authority_label`: `as reported by OpenRouter's API at <time>; not reviewed or
+  verified by the operator`;
+- `retrieved_at` and `sources`: both API addresses, each with its own retrieval
+  time and the SHA-256 of the exact response bytes;
+- `zdr_endpoints`: for each pinned endpoint its tag, provider name, context,
+  prompt and output limits, prices and structured-output support;
+- `safety_retention_endpoints_excluded`: the ZDR endpoints left out.
 
-The reserved `openrouter_privacy` member uses local contract
-`open-trestle/openrouter-privacy-witness`, schema version 2. It binds the full
-route tuple and effective model selector (version when nonempty, otherwise model
-ID), exact endpoint/profile/protocol/bearer mode, routing slug and
-`all_slug_matches` scope, tenant/repository, credential-reference identity
-and exact policy validity interval. The scope covers every endpoint matched by
-the slug, including its Safety Retention variants. It is not a physical endpoint
-pin.
-
-A schema version 1 witness, or one with the earlier `all_zdr_eligible_matches`
-scope or account-policy version 1, is not upgraded or reported separately: it is
-treated exactly like a missing witness, so the named profile refuses at its next
-validation. Re-record the witness at version 2 and approve the renewed
-configuration identities.
-
-Four fixed evidence objects are required: upstream model/slug retention and
-no-training evidence, broker retention/exception evidence, slug-coverage evidence
-and a separate account/workspace review reference. Each contains `url`,
-`retrieved_at` and nonzero lowercase `content_sha256`. Account review must cover
-the actual account settings and key ownership. A public privacy page alone is
-not account review. Source substance remains a human obligation; the parser does
-not fetch URLs or prove that an artifact supports a claim. Roles may reference
-the same artifact, so structural acceptance is not proof of independent review.
-
-The account requires `safety_retention_scope` exactly
-`effective_account_and_guardrails`, plus `effective_safety_retention_google` and
-`effective_safety_retention_other` both exactly `denied`. Review must establish
-that the actual key's effective account and applicable guardrails deny Safety
-Retention for both groups throughout the reviewed interval. Missing, null,
-allowed, unknown or account-only declarations refuse. These are local evidence
-fields, not request parameters and not a live inspection of provider settings.
-
-OpenRouter documents that request `provider.zdr:true` follows the effective
-account/guardrail Safety Retention choice. Self-serve accounts with no saved
-choice may allow it. The Guardrails API fields
-`allow_safety_retention_google` and `allow_safety_retention_other` are not Chat
-request fields. A successful request or a ZDR label alone is not evidence of the
-required denial. Recheck the [current ZDR documentation](https://openrouter.ai/docs/guides/features/zdr)
-and actual key/account settings before approval. Provider conduct and later
-settings drift remain outside local structural validation.
-
-All declared training and content logging states are `disabled`. BYOK, private
-endpoints, tools and plugins are `excluded`. Upstream, broker and repository
-approval must explicitly accept
-`openrouter_zdr_with_documented_exceptions`, not unconditional non-retention.
-This profile cannot satisfy a separate unconditional-retention requirement.
-The current generic policy has no such separate requirement field; protected
-operator review must not use logging-disabled as a substitute for it.
-
-The witness has closed, required, non-null fields, including `model_version`
-(which may be empty). Labels and slugs are at most 256 UTF-8 bytes; evidence URLs
-are HTTPS, at most 2048 bytes, with a host and no user information, query or
-fragment. Existing 1 MiB manifest and 64-route/8 MiB inventory limits remain.
-Timestamps use canonical UTC RFC3339Nano. Every source retrieval is no later
-than review, review is no later than `valid_from`, and `valid_from` is strictly
-before `valid_until`. No default TTL or grace is added.
-
-Only brokered OpenRouter candidates are considered for projection. Their entire
-JSON manifest is scanned for duplicate/noncanonical keys and trailing values
-before the reserved member is located. Other top-level members remain
-semantically opaque but are subject to that scan. Missing, malformed or
-non-object manifests retain generic inventory behavior; the named profile
-refuses them. Generic v1/v2 opaque manifests and identity preimages are unchanged.
-The common catalog validates currentness before resolving any credential
-provider. Dispatch uses the same exact window before key retrieval and HTTP.
-
+The witness records what the API reported at one time. It is not evidence that
+an endpoint retains nothing, and the operator does not review or vouch for it.
+A route without ZDR records the same observation, without endpoint facts, in an
+informational `openrouter_route` member labelled
+`not_required_by_open_trestle`.
 
 ### Synthetic format example
 
-This complete witness is an offline format example, not evidence about an actual
-provider or account. Replace its route, source artifacts, credential-reference,
-scope and reviewed window through protected operator review. Recompute the
-account identity and the enclosing manifest/record/inventory/policy identities;
-do not copy this fixture as a live approval.
+This witness is an offline format example, not an observation of OpenRouter.
+Setup writes the real one; do not copy this.
 
 ```json
 {
   "openrouter_privacy": {
     "contract": "open-trestle/openrouter-privacy-witness",
-    "schema_version": 2,
+    "schema_version": 3,
     "route": {
       "zone": "brokered_remote",
       "provider_id": "openrouter",
-      "adapter_id": "adapter-a",
-      "connection_id": "primary/openrouter",
+      "adapter_id": "openrouter-generation",
+      "connection_id": "openrouter/generation",
       "model_id": "vendor/model",
-      "model_version": "fixture-version",
-      "effective_selector": "fixture-version"
+      "model_version": "",
+      "effective_selector": "vendor/model"
     },
     "endpoint": "https://openrouter.ai/api/v1",
-    "request_profile": "openrouter_zdr_chat_v1",
+    "request_profile": "openrouter_zdr_chat_v2",
     "protocol": "openai_chat_completions",
     "credential_mode": "bearer",
-    "provider_slug": "fixture-upstream/region",
-    "provider_slug_scope": "all_slug_matches",
-    "upstream": {
-      "retention_contract": "openrouter_zdr_with_documented_exceptions",
-      "training": "disabled",
-      "evidence": {
-        "url": "https://evidence.fixture.invalid/upstream-model-slug-scope",
-        "retrieved_at": "2026-09-30T00:00:00Z",
-        "content_sha256": "e6b11692df5754cdf6d2c71791df04ea1c3cc6483d887ce7ba5c4f491caee63a"
-      }
-    },
-    "broker": {
-      "retention_contract": "openrouter_zdr_with_documented_exceptions",
-      "evidence": {
-        "url": "https://evidence.fixture.invalid/broker-retention-exceptions",
-        "retrieved_at": "2026-09-30T00:00:00Z",
-        "content_sha256": "4df85e58e5206a5a1ae7fc7d672ca80a270bc9c3b4332fa14a122201c4aae40b"
-      }
-    },
-    "slug_evidence": {
-      "url": "https://evidence.fixture.invalid/all-zdr-eligible-slug-matches",
-      "retrieved_at": "2026-09-30T00:00:00Z",
-      "content_sha256": "b882ee7acf551e591577a5b1db2236d1ec202f2c2a9b5f83501cdf29b7812878"
-    },
-    "account": {
-      "authority_label": "synthetic account review, not live approval",
-      "credential_reference_identity": "99d4435c2238d0cdf988ace246b7f44305262a35bd1c45ebe0559ed0d0286e4c",
-      "content_logging": "disabled",
-      "training": "disabled",
-      "safety_retention_scope": "effective_account_and_guardrails",
-      "effective_safety_retention_google": "denied",
-      "effective_safety_retention_other": "denied",
-      "review_evidence": {
-        "url": "https://account-review.fixture.invalid/reviews/synthetic-account",
-        "retrieved_at": "2026-09-30T00:00:00Z",
-        "content_sha256": "d0e58a62d765bce7ccb529fe9a7fbc6a9344bca732e511dec2289686c07b8d2d"
-      }
-    },
-    "tenant_id": "tenant-a",
-    "repository_id": "repository-a",
-    "accepted_retention_contract": "openrouter_zdr_with_documented_exceptions",
-    "reviewed_at": "2026-09-30T00:00:00Z",
-    "valid_from": "2026-10-01T00:00:00Z",
-    "valid_until": "2026-11-01T00:00:00Z",
-    "byok": "excluded",
-    "private_endpoints": "excluded",
-    "tools": "excluded",
-    "plugins": "excluded"
+    "credential_reference_identity": "99d4435c2238d0cdf988ace246b7f44305262a35bd1c45ebe0559ed0d0286e4c",
+    "tenant_id": "personal",
+    "repository_id": "project",
+    "zero_data_retention": "required_per_request",
+    "provider_slugs": ["fixture-cloud", "fixture-cloud/us"],
+    "provider_slug_source": "openrouter_api",
+    "observation": {
+      "authority_label": "as reported by OpenRouter's API at 2026-11-10T21:00:00Z; not reviewed or verified by the operator",
+      "retrieved_at": "2026-11-10T21:00:00Z",
+      "sources": [
+        {"url": "https://openrouter.ai/api/v1/endpoints/zdr", "retrieved_at": "2026-11-10T21:00:00Z", "content_sha256": "e6b11692df5754cdf6d2c71791df04ea1c3cc6483d887ce7ba5c4f491caee63a"},
+        {"url": "https://openrouter.ai/api/v1/models", "retrieved_at": "2026-11-10T21:00:01Z", "content_sha256": "4df85e58e5206a5a1ae7fc7d672ca80a270bc9c3b4332fa14a122201c4aae40b"}
+      ],
+      "zdr_endpoints": [
+        {"tag": "fixture-cloud", "provider_name": "Fixture Cloud", "context_length": 200000, "max_prompt_tokens": 0, "max_completion_tokens": 64000, "prompt_micro_usd_per_million_tokens": 3000000, "completion_micro_usd_per_million_tokens": 15000000, "structured_outputs": true},
+        {"tag": "fixture-cloud/us", "provider_name": "Fixture Cloud", "context_length": 200000, "max_prompt_tokens": 0, "max_completion_tokens": 64000, "prompt_micro_usd_per_million_tokens": 3300000, "completion_micro_usd_per_million_tokens": 16500000, "structured_outputs": true}
+      ],
+      "safety_retention_endpoints_excluded": ["fixture-safety/global"]
+    }
   }
 }
 ```
 
-### Account identity calculation
+Every member is required and closed; only `observation` may be `null`. Slugs are
+lowercase letters, digits, `-`, `_`, `.` and `/`, at most 256 bytes, distinct,
+at most 32. With `openrouter_api` the slugs are exactly the observed endpoint
+tags in order; `operator` needs at least one slug and `none` none. An excluded
+tag is never pinned. Each source time is no earlier than `retrieved_at`, and
+the label names that time.
 
-`account_policy_identity` is SHA-256 lowercase hexadecimal of `encoding/json.Marshal`
-of the fixed Go struct below, without a trailing newline. The wrapper contract
-is `open-trestle/openrouter-account-policy`, version 2. Account field order is
-`authority_label`, `credential_reference_identity`, `content_logging`, `training`,
-`safety_retention_scope`, `effective_safety_retention_google`,
-`effective_safety_retention_other`, `review_evidence`. Field order, Go JSON string
-escaping and already-canonical UTC timestamp strings matter. The account
-subsection includes its review evidence, so changing that evidence changes the
-account identity too. A nonzero arbitrary digest is not accepted.
+### Runtime policy version 8
 
-Save this standard-library-only calculation as `account-identity.go` outside the
-product source tree, then run `go run account-identity.go manifest.json` against
-the protected non-secret manifest. It performs no network or credential lookup.
-It only calculates the candidate value; it does not validate the witness, prove
-account ownership or grant approval. Run `trestle config validate --route-inventory inventory.json --runtime-policy policy.json`
-against the complete inventory/policy after authoring it. Do not treat this
-recipe's permissive decoding as the product validator.
+Version 8 admits generic connections and the `openrouter_zdr_chat_v2` profile.
+Its `brokered_route_authority` has exactly `route_record_identity`,
+`evidence_manifest_digest`, `tenant_id`, `repository_id` and `provider_slugs`.
+The record must carry a valid version 3 witness whose route, credential
+reference, scope and slugs match the connection exactly. There is no account
+identity, single slug or validity window. No v8 JSON Schema is published. The
+adapter configuration identity binds the slug list under adapter preimage
+version 3.
 
-```go
-package main
+## When OpenRouter refuses a request
 
-import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
-	"fmt"
-	"io"
-	"os"
-)
+The review classifies a refusal by its HTTP status alone and never reads the
+error body. For an OpenRouter route, HTTP 404 means OpenRouter served no
+endpoint for the request: the model ID is not served, or no endpoint the request
+may use can take it, for example because ZDR is required (by the request or by
+your account or key) and the model has no ZDR endpoint. Which status OpenRouter
+uses for the second case was not confirmed offline; if it is another status, the
+generic detail for that status applies. A 404 records `failure_detail`
+`provider_no_allowed_endpoint` and the hint "OpenRouter has no endpoint for
+this model that the request may use: if zero data retention is required (by
+this setup or by your OpenRouter account or key settings), choose a model with
+zero-data-retention endpoints and run trestle init again
+(https://openrouter.ai/docs/guides/features/zdr); otherwise check the model
+ID". The daemon still records the generic `provider_model_unavailable` reason.
 
-type source struct {
-	URL           string `json:"url"`
-	RetrievedAt   string `json:"retrieved_at"`
-	ContentSHA256 string `json:"content_sha256"`
-}
+## Earlier reviewed setups
 
-type account struct {
-	AuthorityLabel                 string `json:"authority_label"`
-	CredentialReferenceIdentity    string `json:"credential_reference_identity"`
-	ContentLogging                 string `json:"content_logging"`
-	Training                       string `json:"training"`
-	SafetyRetentionScope           string `json:"safety_retention_scope"`
-	EffectiveSafetyRetentionGoogle string `json:"effective_safety_retention_google"`
-	EffectiveSafetyRetentionOther  string `json:"effective_safety_retention_other"`
-	ReviewEvidence                 source `json:"review_evidence"`
-}
+Setups made before this change use the `openrouter_zdr_chat_v1` profile in
+runtime policy version 3, 4 or 5, with a version 2 witness that you reviewed and
+declared by hand: one slug per model, four evidence objects, an account review
+and a validity window. Their bytes, identities and dispatch are unchanged. They
+keep working until their review window ends; `bootstrap check` then reports
+`privacy_declaration_current` as refused. To continue, run `trestle init
+--directory NEW_FOLDER`, which writes the version 3 form above. `setup bootstrap
+init --provider openrouter-zdr` no longer accepts the slug evidence, account
+declaration or review-window flags; each one is refused with a message that it
+is no longer used.
 
-func main() {
-	if len(os.Args) != 2 {
-		panic("usage: go run account-identity.go manifest.json")
-	}
-	file, err := os.Open(os.Args[1])
-	if err != nil {
-		panic(err)
-	}
-	defer file.Close()
-	encoded, err := io.ReadAll(io.LimitReader(file, (1<<20)+1))
-	if err != nil || len(encoded) > 1<<20 {
-		panic("cannot read bounded manifest")
-	}
-	var manifest struct {
-		Privacy struct {
-			Account account `json:"account"`
-		} `json:"openrouter_privacy"`
-	}
-	if err := json.Unmarshal(encoded, &manifest); err != nil {
-		panic(err)
-	}
-	preimage, err := json.Marshal(struct {
-		Contract string  `json:"contract"`
-		Version  int     `json:"version"`
-		Account  account `json:"account"`
-	}{"open-trestle/openrouter-account-policy", 2, manifest.Privacy.Account})
-	if err != nil {
-		panic(err)
-	}
-	digest := sha256.Sum256(preimage)
-	fmt.Println(hex.EncodeToString(digest[:]))
-}
-```
-
-The account `credential_reference_identity` is SHA-256 of
-`open-trestle/provider-credential-environment/` followed by the exact environment
-variable name, not its value. Changing the reference makes the witness,
-manifest, record, inventory and policy environment-specific. Replacing a real
-key behind an unchanged reference does not prove account continuity.
-
-### Compatibility
-
-The existing runtime-policy v3 schema bytes stay unchanged. Named OpenRouter
-consumption now requires privacy witness schema version 2 and account-policy
-identity version 2. Retained v1 witness bytes and account identities do not gain
-Safety Retention authority and fail named validation, even if they previously
-passed. Generic v1/v2 opaque manifest handling and accepted identity preimages
-are unchanged. There is no automatic rewrite or receipt upgrade. Obtain fresh
-reviewed effective settings and all-slug-match evidence, author a v2 witness,
-then recompute the account, manifest, record, inventory and policy identities.
-Renewed witness bytes require fresh exact setup approval. The daemon still consumes protected
-configuration, not setup receipts.
-
-The binding uses the existing transitive chain: policy record identity and
-evidence digest -> immutable manifest -> typed witness, plus the derived account
-identity. There is no second approval list, mutable registry or self-hash.
+Offline synthetic transports establish development behavior only. They do not
+qualify an actual OpenRouter account, endpoint, model quality, retention
+practice or live usage. Live inference, credentials, private source egress and
+charges require separate explicit authorization.

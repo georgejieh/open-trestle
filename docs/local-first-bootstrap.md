@@ -88,7 +88,7 @@ Only references are stored. Provision those environment values through your
 approved secret store before checking or reviewing. Never paste secrets into
 CLI flags, checked-in files or receipts. Do not use this local mode for remote
 services, cloud model selectors, browser sessions or sign-in token caches. For
-OpenRouter ZDR, OpenCode Go or Ollama Cloud models, use the remote mode in
+OpenRouter, OpenCode Go or Ollama Cloud models, use the remote mode in
 [remote model review](remote-model-review.md): `init --provider` writes the
 protected remote configuration, and `check` reports the scanner and credential
 prerequisites for the direct `--egress policy-approved` review.
