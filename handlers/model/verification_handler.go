@@ -242,7 +242,7 @@ func (h *VerificationHandler) Execute(ctx context.Context, task controlplane.Tas
 		return generationFailure(controlplane.RunFailurePolicy)
 	}
 	if dispatch.Status() == gateway.RouteDispatchFailed {
-		return generationFailure(mapRouteFailure(dispatch.Failure()))
+		return routeFailureCompletion(task, dispatch)
 	}
 	verification, err := review.ParseContextVerificationBatch(dispatch.Response(), generation.Candidates(), verificationContext)
 	if err != nil {

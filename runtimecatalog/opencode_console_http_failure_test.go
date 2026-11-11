@@ -76,14 +76,15 @@ func TestOpenCodeConsoleHandlerHTTPFailuresNeverRetryOrPersistProviderBody(t *te
 		status  int
 		failure gateway.RouteFailureClass
 		run     controlplane.RunFailure
+		reason  controlplane.TaskFailureReason
 	}{
-		{401, gateway.RouteFailureAuthentication, controlplane.RunFailurePolicy},
-		{402, gateway.RouteFailurePaymentRequired, controlplane.RunFailurePolicy},
-		{403, gateway.RouteFailureAuthorization, controlplane.RunFailurePolicy},
-		{404, gateway.RouteFailureModelUnavailable, controlplane.RunFailurePolicy},
-		{410, gateway.RouteFailureModelRetired, controlplane.RunFailurePolicy},
-		{429, gateway.RouteFailureRateLimited, controlplane.RunFailureTransient},
-		{500, gateway.RouteFailureProviderServer, controlplane.RunFailureTransient},
+		{401, gateway.RouteFailureAuthentication, controlplane.RunFailurePolicy, controlplane.TaskFailureReasonProviderAuthenticationFailed},
+		{402, gateway.RouteFailurePaymentRequired, controlplane.RunFailurePolicy, controlplane.TaskFailureReasonProviderPaymentRequired},
+		{403, gateway.RouteFailureAuthorization, controlplane.RunFailurePolicy, controlplane.TaskFailureReasonProviderAuthorizationDenied},
+		{404, gateway.RouteFailureModelUnavailable, controlplane.RunFailurePolicy, controlplane.TaskFailureReasonProviderModelUnavailable},
+		{410, gateway.RouteFailureModelRetired, controlplane.RunFailurePolicy, controlplane.TaskFailureReasonProviderModelRetired},
+		{429, gateway.RouteFailureRateLimited, controlplane.RunFailureTransient, controlplane.TaskFailureReasonProviderRateLimited},
+		{500, gateway.RouteFailureProviderServer, controlplane.RunFailureTransient, 0},
 	} {
 		status := test.status
 		t.Run(http.StatusText(status), func(t *testing.T) {
@@ -120,8 +121,8 @@ func TestOpenCodeConsoleHandlerHTTPFailuresNeverRetryOrPersistProviderBody(t *te
 			if completion.Status() != controlplane.TaskCompletionFailed || completion.Validate() != nil || transport.calls != 1 || credentials.calls != 1 {
 				t.Fatal("error retried, succeeded or skipped authorized request")
 			}
-			if len(*failures) != 1 || (*failures)[0] != test.failure || completion.Failure() != test.run {
-				t.Fatalf("status %d classified %v, task failure %s; want %s, %s", status, *failures, completion.Failure(), test.failure, test.run)
+			if len(*failures) != 1 || (*failures)[0] != test.failure || completion.Failure() != test.run || completion.FailureReason() != test.reason {
+				t.Fatalf("status %d classified %v, task failure %s reason %s; want %s, %s, %s", status, *failures, completion.Failure(), completion.FailureReason(), test.failure, test.run, test.reason)
 			}
 			events, err := ledger.Read(ctx, scope, 0, 20)
 			requiredCheck(t, err)

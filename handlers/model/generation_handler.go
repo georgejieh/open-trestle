@@ -259,7 +259,7 @@ func (h *GenerationHandler) Execute(ctx context.Context, task controlplane.TaskE
 		return generationFailure(controlplane.RunFailurePolicy)
 	}
 	if dispatchResult.Status() == gateway.RouteDispatchFailed {
-		return generationFailure(mapRouteFailure(dispatchResult.Failure()))
+		return routeFailureCompletion(task, dispatchResult)
 	}
 	// The context version selects the candidate schema and identifies
 	// repository_context sources that cannot anchor a candidate.
@@ -359,6 +359,40 @@ func mapRouteFailure(failure gateway.RouteFailureClass) controlplane.RunFailure 
 	default:
 		return controlplane.RunFailureInternal
 	}
+}
+
+// providerRefusalReasons names each provider refusal class as the model
+// task's content-free failure reason.
+var providerRefusalReasons = map[gateway.RouteFailureClass]controlplane.TaskFailureReason{
+	gateway.RouteFailurePaymentRequired:  controlplane.TaskFailureReasonProviderPaymentRequired,
+	gateway.RouteFailureModelUnavailable: controlplane.TaskFailureReasonProviderModelUnavailable,
+	gateway.RouteFailureModelRetired:     controlplane.TaskFailureReasonProviderModelRetired,
+	gateway.RouteFailureAuthentication:   controlplane.TaskFailureReasonProviderAuthenticationFailed,
+	gateway.RouteFailureAuthorization:    controlplane.TaskFailureReasonProviderAuthorizationDenied,
+	gateway.RouteFailureRateLimited:      controlplane.TaskFailureReasonProviderRateLimited,
+}
+
+// routeFailureCompletion fails a model task for a failed dispatch. A refusal
+// the provider answered records its content-free reason, and a rate limit the
+// provider's Retry-After; any other failure, or one before the request was
+// sent, records only the run failure.
+func routeFailureCompletion(task controlplane.TaskExecutionRequest, result gateway.RouteDispatchResult) controlplane.TaskCompletion {
+	failure := mapRouteFailure(result.Failure())
+	reason, refusal := providerRefusalReasons[result.Failure()]
+	if !refusal || result.ReplaySafety() == gateway.RouteReplayNotDispatched {
+		return generationFailure(failure)
+	}
+	var completion controlplane.TaskCompletion
+	var err error
+	if reason == controlplane.TaskFailureReasonProviderRateLimited {
+		completion, err = controlplane.NewRateLimitedModelTaskFailure(result.RetryAfterMilliseconds(), task.Plan(), task.Task())
+	} else {
+		completion, err = controlplane.NewModelTaskFailureWithReason(failure, reason, task.Plan(), task.Task())
+	}
+	if err != nil {
+		return generationFailure(failure)
+	}
+	return completion
 }
 
 func generationStoreReadFailure(ctx context.Context, err error) controlplane.RunFailure {

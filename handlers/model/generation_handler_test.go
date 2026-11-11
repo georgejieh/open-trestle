@@ -598,13 +598,32 @@ func TestGenerationHandlerAuditsTypedProviderFailureWithoutOutput(t *testing.T) 
 
 // A provider that refuses for billing, or does not serve or has retired the
 // model, fails the task once as a policy refusal that the control plane does
-// not retry, as an authentication refusal does.
+// not retry, as an authentication refusal does. The completion names the
+// refusal with its content-free reason; a rate limit also carries the
+// provider's Retry-After; a credential that was never sent names none.
 func TestGenerationHandlerRefusesProviderRefusalAsPolicy(t *testing.T) {
-	for _, failure := range []gateway.RouteFailureClass{gateway.RouteFailurePaymentRequired, gateway.RouteFailureModelUnavailable, gateway.RouteFailureModelRetired} {
-		t.Run(failure.String(), func(t *testing.T) {
+	for _, test := range []struct {
+		failure    gateway.RouteFailureClass
+		safety     gateway.RouteReplaySafety
+		retryAfter uint32
+		run        controlplane.RunFailure
+		reason     controlplane.TaskFailureReason
+	}{
+		{gateway.RouteFailurePaymentRequired, gateway.RouteReplayNoSideEffect, 0, controlplane.RunFailurePolicy, controlplane.TaskFailureReasonProviderPaymentRequired},
+		{gateway.RouteFailureModelUnavailable, gateway.RouteReplayNoSideEffect, 0, controlplane.RunFailurePolicy, controlplane.TaskFailureReasonProviderModelUnavailable},
+		{gateway.RouteFailureModelRetired, gateway.RouteReplayNoSideEffect, 0, controlplane.RunFailurePolicy, controlplane.TaskFailureReasonProviderModelRetired},
+		{gateway.RouteFailureAuthentication, gateway.RouteReplayNoSideEffect, 0, controlplane.RunFailurePolicy, controlplane.TaskFailureReasonProviderAuthenticationFailed},
+		{gateway.RouteFailureAuthorization, gateway.RouteReplayNoSideEffect, 0, controlplane.RunFailurePolicy, controlplane.TaskFailureReasonProviderAuthorizationDenied},
+		{gateway.RouteFailureRateLimited, gateway.RouteReplayNoSideEffect, 7_000, controlplane.RunFailureTransient, controlplane.TaskFailureReasonProviderRateLimited},
+		{gateway.RouteFailureRateLimited, gateway.RouteReplayNoSideEffect, 0, controlplane.RunFailureTransient, controlplane.TaskFailureReasonProviderRateLimited},
+		{gateway.RouteFailureAuthentication, gateway.RouteReplayNotDispatched, 0, controlplane.RunFailurePolicy, 0},
+		{gateway.RouteFailureProviderServer, gateway.RouteReplayOutcomeUnknown, 0, controlplane.RunFailureTransient, 0},
+	} {
+		failure := test.failure
+		t.Run(failure.String()+"/"+test.safety.String(), func(t *testing.T) {
 			scope, snapshot, packet, contextArtifact, providerRequest := generationContextFixture(t)
 			authorization := generationAuthorization(t, scope, providerRequest)
-			failedResult, _ := gateway.NewFailedRouteDispatchResult(failure, gateway.RouteReplayNoSideEffect, provider.NewUnknownRouteTokenUsage(), 0)
+			failedResult, _ := gateway.NewFailedRouteDispatchResult(failure, test.safety, provider.NewUnknownRouteTokenUsage(), test.retryAfter)
 			dispatcher := &recordingDispatcher{adapterID: "test-model", result: failedResult}
 			catalog, _ := gateway.NewRouteDispatcherCatalog([]gateway.RouteDispatcher{dispatcher})
 			ledger := audit.NewMemoryLedger()
@@ -616,8 +635,11 @@ func TestGenerationHandlerRefusesProviderRefusalAsPolicy(t *testing.T) {
 			inputArtifact, _ := NewGenerationInputArtifact(input, contextArtifact, []string{strings.Repeat("4", 64)}, time.UnixMilli(70))
 			_, _ = store.Put(context.Background(), inputArtifact, time.UnixMilli(70))
 			completion := handler.Execute(context.Background(), generationTaskRequest(t, scope, inputArtifact.Identity(), handler.HandlerIdentity(), 1))
-			if completion.Status() != controlplane.TaskCompletionFailed || completion.Failure() != controlplane.RunFailurePolicy || completion.Failure().Retryable() || completion.OutputIdentity() != "" || dispatcher.calls != 1 {
-				t.Fatalf("completion failure=%s calls=%d", completion.Failure(), dispatcher.calls)
+			if completion.Status() != controlplane.TaskCompletionFailed || completion.Validate() != nil || completion.Failure() != test.run || completion.FailureReason() != test.reason || completion.RetryAfterMilliseconds() != test.retryAfter || completion.OutputIdentity() != "" || dispatcher.calls != 1 {
+				t.Fatalf("completion failure=%s reason=%s retry after=%d calls=%d", completion.Failure(), completion.FailureReason(), completion.RetryAfterMilliseconds(), dispatcher.calls)
+			}
+			if test.run == controlplane.RunFailurePolicy && completion.Failure().Retryable() {
+				t.Fatal("a provider refusal is retryable")
 			}
 		})
 	}
