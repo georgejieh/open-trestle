@@ -45,7 +45,6 @@ type runEventRecord struct {
 	PreparedArtifact           []byte                      `json:"prepared_artifact,omitempty"`
 	PacketDescriptor           *ContextPacketDescriptor    `json:"packet_descriptor,omitempty"`
 	InputDescriptor            *ContextInputDescriptor     `json:"input_descriptor,omitempty"`
-	RetryAfterMilliseconds     uint32                      `json:"retry_after_milliseconds,omitempty"`
 }
 
 // EncodeRunEvent emits bounded canonical JSON without lease secrets or raw errors.
@@ -111,7 +110,6 @@ func ParseRunEvent(encoded []byte) (RunEvent, error) {
 		leaseExpiresAtMillis: record.LeaseExpiresAtMilliseconds, outputIdentity: record.OutputIdentity,
 		failure: failure, failureReason: reason, shortfall: taskFailureShortfallFromRecord(record.ContextShortfall), retryAtMillis: record.RetryAtMilliseconds,
 		occurredAtMillis: record.OccurredAtMilliseconds, preparedArtifact: append([]byte(nil), record.PreparedArtifact...),
-		retryAfterMillis: record.RetryAfterMilliseconds,
 	}
 	if record.PacketDescriptor != nil {
 		if record.SchemaVersion != 4 {
@@ -142,7 +140,6 @@ func runEventToRecord(event RunEvent) runEventRecord {
 		LeaseExpiresAtMilliseconds: event.leaseExpiresAtMillis, OutputIdentity: event.OutputIdentity(), OutputKind: eventContextFailureOutputKind(event),
 		Failure: event.Failure().String(), FailureReason: event.failureReason.String(), ContextShortfall: taskFailureShortfallToRecord(event.shortfall), RetryAtMilliseconds: event.retryAtMillis,
 		OccurredAtMilliseconds: event.occurredAtMillis, PreparedArtifact: event.PreparedArtifact(),
-		RetryAfterMilliseconds: event.retryAfterMillis,
 	}
 	if event.kind == RunEventContextInputPrepared {
 		d := event.InputDescriptor()

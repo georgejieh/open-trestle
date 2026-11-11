@@ -110,7 +110,7 @@ func TestServerDistinguishesObservedZeroFromMissingFinalEvidence(t *testing.T) {
 // review's action, after the receipt; any other run names none.
 func TestServerNamesProviderRefusal(t *testing.T) {
 	scope, plain, set := acpFixture(t)
-	receipt, err := testsupport.ProviderRefusalReceipt(scope, controlplane.TaskFailureReasonProviderModelRetired, 0)
+	receipt, err := testsupport.ProviderRefusalReceipt(scope, controlplane.TaskFailureReasonProviderModelRetired)
 	if err != nil {
 		t.Fatal(err)
 	}

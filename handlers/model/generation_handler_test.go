@@ -643,8 +643,8 @@ func TestGenerationHandlerRefusesProviderRefusalAsPolicy(t *testing.T) {
 			if failure == gateway.RouteFailureRateLimited && test.safety == gateway.RouteReplayNoSideEffect {
 				calls = 1 + gateway.MaxRateLimitRetries
 			}
-			if completion.Status() != controlplane.TaskCompletionFailed || completion.Validate() != nil || completion.Failure() != test.run || completion.FailureReason() != test.reason || completion.RetryAfterMilliseconds() != test.retryAfter || completion.OutputIdentity() != "" || dispatcher.calls != calls {
-				t.Fatalf("completion failure=%s reason=%s retry after=%d calls=%d", completion.Failure(), completion.FailureReason(), completion.RetryAfterMilliseconds(), dispatcher.calls)
+			if completion.Status() != controlplane.TaskCompletionFailed || completion.Validate() != nil || completion.Failure() != test.run || completion.FailureReason() != test.reason || completion.OutputIdentity() != "" || dispatcher.calls != calls {
+				t.Fatalf("completion failure=%s reason=%s calls=%d", completion.Failure(), completion.FailureReason(), dispatcher.calls)
 			}
 			if test.run == controlplane.RunFailurePolicy && completion.Failure().Retryable() {
 				t.Fatal("a provider refusal is retryable")

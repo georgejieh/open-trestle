@@ -12,8 +12,8 @@ import (
 // ProviderRefusalReceipt returns the receipt of a one-attempt run whose
 // candidates task failed because the provider refused it with reason, after
 // its source, change and context tasks succeeded, so a surface test can render
-// a recorded provider refusal. A rate limit carries retryAfter.
-func ProviderRefusalReceipt(scope audit.ReviewScope, reason controlplane.TaskFailureReason, retryAfter uint32) (controlplane.ReviewRunReceipt, error) {
+// a recorded provider refusal.
+func ProviderRefusalReceipt(scope audit.ReviewScope, reason controlplane.TaskFailureReason) (controlplane.ReviewRunReceipt, error) {
 	ctx := context.Background()
 	chain := []controlplane.TaskDefinition{}
 	for index, step := range []struct {
@@ -53,11 +53,11 @@ func ProviderRefusalReceipt(scope audit.ReviewScope, reason controlplane.TaskFai
 		}
 		completion, err := controlplane.NewTaskSuccess(strings.Repeat("e", 64))
 		if task.Kind() == controlplane.TaskGenerateCandidates {
+			failure := controlplane.RunFailurePolicy
 			if reason == controlplane.TaskFailureReasonProviderRateLimited {
-				completion, err = controlplane.NewRateLimitedModelTaskFailure(retryAfter, plan, task)
-			} else {
-				completion, err = controlplane.NewModelTaskFailureWithReason(controlplane.RunFailurePolicy, reason, plan, task)
+				failure = controlplane.RunFailureTransient
 			}
+			completion, err = controlplane.NewModelTaskFailureWithReason(failure, reason, plan, task)
 		}
 		if err != nil {
 			return controlplane.ReviewRunReceipt{}, err

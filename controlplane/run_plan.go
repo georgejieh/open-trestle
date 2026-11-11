@@ -20,9 +20,6 @@ const (
 	maxReviewTaskAttempts     uint8 = 5
 	minReviewTaskLeaseMillis        = 1_000
 	maxReviewTaskLeaseMillis        = 3_600_000
-	// maxReviewTaskRetryDelayMillis is the longest retry delay a plan task
-	// may declare, and so the longest a provider's Retry-After may defer one.
-	maxReviewTaskRetryDelayMillis uint32 = maxReviewTaskLeaseMillis
 )
 
 var (
@@ -185,7 +182,7 @@ func NewTaskDefinition(
 	if maxAttempts == 0 || maxAttempts > maxReviewTaskAttempts {
 		return TaskDefinition{}, ErrInvalidReviewTaskAttempts
 	}
-	if retryDelayMillis > maxReviewTaskRetryDelayMillis {
+	if retryDelayMillis > maxReviewTaskLeaseMillis {
 		return TaskDefinition{}, ErrInvalidReviewTaskRetry
 	}
 	if leaseDurationMillis < minReviewTaskLeaseMillis || leaseDurationMillis > maxReviewTaskLeaseMillis {

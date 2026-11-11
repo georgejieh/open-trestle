@@ -178,21 +178,6 @@ func taskFailureReasonFailureAllowed(reason TaskFailureReason, failure RunFailur
 	return true
 }
 
-// NewRateLimitedModelTaskFailure binds a model task attempt the provider
-// rate-limited to one plan and task, with the delay the provider asked for
-// before another attempt (its Retry-After), capped at the longest retry delay
-// a plan task may declare. Zero means the provider named no delay, and the
-// task's fixed retry delay applies.
-func NewRateLimitedModelTaskFailure(retryAfterMilliseconds uint32, plan ReviewRunPlan, task TaskDefinition) (TaskCompletion, error) {
-	completion, err := NewModelTaskFailureWithReason(RunFailureTransient, TaskFailureReasonProviderRateLimited, plan, task)
-	if err != nil {
-		return TaskCompletion{}, err
-	}
-	completion.retryAfterMillis = min(retryAfterMilliseconds, maxReviewTaskRetryDelayMillis)
-	completion.identity = deriveTaskCompletionIdentity(completion)
-	return completion, nil
-}
-
 // NewModelTaskFailureWithReason binds a failed candidate generation or
 // verification attempt and the provider refusal that ended it to one plan
 // and task. The failure must be the one the reason names.

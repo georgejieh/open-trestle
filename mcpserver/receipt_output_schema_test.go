@@ -111,7 +111,7 @@ func matchesOutputSchema(schema map[string]any, value map[string]any) bool {
 // carries a model task's provider refusal reason unchanged.
 func TestReceiptToolsDeclareEveryReceiptVersion(t *testing.T) {
 	scope, _ := audit.NewReviewScope("tenant-a", "repo-a", "run-a")
-	refused, err := testsupport.ProviderRefusalReceipt(scope, controlplane.TaskFailureReasonProviderPaymentRequired, 0)
+	refused, err := testsupport.ProviderRefusalReceipt(scope, controlplane.TaskFailureReasonProviderPaymentRequired)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -23,7 +23,7 @@ func TestRunShowsProviderRefusalReasonAndHint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, err := testsupport.ProviderRefusalReceipt(scope, controlplane.TaskFailureReasonProviderPaymentRequired, 0)
+	receipt, err := testsupport.ProviderRefusalReceipt(scope, controlplane.TaskFailureReasonProviderPaymentRequired)
 	if err != nil {
 		t.Fatal(err)
 	}

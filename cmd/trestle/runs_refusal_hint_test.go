@@ -121,7 +121,7 @@ func TestRunStatusNamesProviderRefusal(t *testing.T) {
 		{controlplane.TaskFailureReasonProviderModelRetired, "runs status: task candidates failed: provider_model_retired (the provider no longer serves this model)\nhint: choose a model the provider lists as available and re-run setup\n"},
 		{controlplane.TaskFailureReasonProviderRateLimited, "runs status: task candidates failed: provider_rate_limited (the provider rate-limited the request on its last attempt)\nhint: wait and run the review again, or choose another route\n"},
 	} {
-		receipt, err := testsupport.ProviderRefusalReceipt(scope, test.reason, 7_000)
+		receipt, err := testsupport.ProviderRefusalReceipt(scope, test.reason)
 		if err != nil {
 			t.Fatal(err)
 		}

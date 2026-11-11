@@ -138,9 +138,6 @@ type TaskCompletion struct {
 	failure        RunFailure
 	reason         TaskFailureReason
 	shortfall      TaskFailureContextShortfall
-	// retryAfterMillis is the delay a provider asked for before another
-	// attempt of a rate-limited model task; zero when it named none.
-	retryAfterMillis uint32
 }
 
 func NewTaskSuccess(outputIdentity string) (TaskCompletion, error) {
@@ -186,10 +183,6 @@ func (c TaskCompletion) FailureReason() TaskFailureReason { return c.reason }
 func (c TaskCompletion) ContextShortfall() (TaskFailureContextShortfall, bool) {
 	return c.shortfall, c.shortfall.Present()
 }
-
-// RetryAfterMilliseconds returns the delay a provider asked for before
-// another attempt of a rate-limited model task, or zero.
-func (c TaskCompletion) RetryAfterMilliseconds() uint32 { return c.retryAfterMillis }
 func (c TaskCompletion) Validate() error {
 	if c.status == TaskCompletionSucceeded {
 		if !validControlPlaneDigest(c.outputIdentity) || c.failure != 0 || c.reason != 0 || c.shortfall.Present() || c.planIdentity != "" || c.taskIdentity != "" {
@@ -204,9 +197,6 @@ func (c TaskCompletion) Validate() error {
 			return ErrInvalidTaskCompletion
 		}
 	} else {
-		return ErrInvalidTaskCompletion
-	}
-	if c.retryAfterMillis != 0 && (c.reason != TaskFailureReasonProviderRateLimited || c.retryAfterMillis > maxReviewTaskRetryDelayMillis) {
 		return ErrInvalidTaskCompletion
 	}
 	if c.identity != deriveTaskCompletionIdentity(c) {
@@ -505,16 +495,7 @@ func (c *Coordinator) RenewTaskLease(ctx context.Context, plan ReviewRunPlan, le
 	return TaskLease{}, ReviewRunState{}, ErrCoordinatorContention
 }
 
-// CompleteTask records one leased attempt's completion with no run deadline.
 func (c *Coordinator) CompleteTask(ctx context.Context, plan ReviewRunPlan, lease TaskLease, completion TaskCompletion, at time.Time) (ReviewRunState, error) {
-	return c.CompleteTaskWithin(ctx, plan, lease, completion, at, time.Time{})
-}
-
-// CompleteTaskWithin records one leased attempt's completion. A retry after a
-// rate-limited model attempt that named a Retry-After is scheduled at that
-// delay, never past deadline when one is set; every other retry keeps the
-// task's fixed delay.
-func (c *Coordinator) CompleteTaskWithin(ctx context.Context, plan ReviewRunPlan, lease TaskLease, completion TaskCompletion, at, deadline time.Time) (ReviewRunState, error) {
 	if err := c.validate(ctx, plan); err != nil {
 		return ReviewRunState{}, err
 	}
@@ -577,15 +558,12 @@ func (c *Coordinator) CompleteTaskWithin(ctx context.Context, plan ReviewRunPlan
 			kind = RunEventTaskFailed
 			failure = completion.Failure()
 			if failure.Retryable() && runtime.Attempts() < runtime.Definition().MaxAttempts() {
-				retryAt = at.Add(taskRetryDelay(runtime.Definition(), completion, at, deadline))
+				retryAt = at.Add(time.Duration(runtime.Definition().RetryDelayMilliseconds()) * time.Millisecond)
 			}
 		}
 		event, err := NewRunEvent(plan, state.Revision()+1, state.HeadIdentity(), kind, runtime.Definition(), runtime.Attempts(), runtime.leaseTokenIdentity, "", time.Time{}, output, failure, retryAt, at)
 		if err == nil && completion.reason != 0 {
 			event, err = event.withFailureReason(runtime.Definition(), completion.reason, completion.shortfall)
-		}
-		if err == nil && completion.retryAfterMillis != 0 {
-			event, err = event.withRetryAfter(completion.retryAfterMillis)
 		}
 		if err != nil {
 			return ReviewRunState{}, err
@@ -823,23 +801,6 @@ func runtimeMatchesLease(runtime TaskRuntimeState, lease TaskLease) bool {
 	matchingWorker := runtime.workerIdentity == lease.workerIdentity
 	return active && matchingTask && matchingAttempt && matchingToken && matchingWorker
 }
-
-// taskRetryDelay is the wait before a failed attempt's retry: the provider's
-// Retry-After for a rate-limited model attempt that named one, which the
-// completion already caps at the longest task retry delay, shortened so the
-// retry is never later than deadline when one is set; otherwise the task's
-// fixed retry delay.
-func taskRetryDelay(task TaskDefinition, completion TaskCompletion, at, deadline time.Time) time.Duration {
-	if completion.retryAfterMillis == 0 {
-		return time.Duration(task.RetryDelayMilliseconds()) * time.Millisecond
-	}
-	delay := time.Duration(min(completion.retryAfterMillis, maxReviewTaskRetryDelayMillis)) * time.Millisecond
-	if !deadline.IsZero() {
-		delay = max(min(delay, deadline.Sub(at)), 0)
-	}
-	return delay
-}
-
 func completedTaskMatches(runtime TaskRuntimeState, lease TaskLease, completion TaskCompletion) bool {
 	if runtime.Definition().Identity() != lease.TaskIdentity() || runtime.Attempts() != lease.Attempt() || runtime.leaseTokenIdentity != lease.tokenIdentity {
 		return false
@@ -847,7 +808,7 @@ func completedTaskMatches(runtime TaskRuntimeState, lease TaskLease, completion 
 	if runtime.Status() == TaskRuntimeSucceeded {
 		return completion.Status() == TaskCompletionSucceeded && runtime.OutputIdentity() == completion.OutputIdentity()
 	}
-	return completion.Status() == TaskCompletionFailed && runtime.Failure() == completion.Failure() && runtime.FailureReason() == completion.FailureReason() && runtime.shortfall == completion.shortfall && runtime.retryAfterMillis == completion.retryAfterMillis && runtime.OutputIdentity() == completion.OutputIdentity()
+	return completion.Status() == TaskCompletionFailed && runtime.Failure() == completion.Failure() && runtime.FailureReason() == completion.FailureReason() && runtime.shortfall == completion.shortfall && runtime.OutputIdentity() == completion.OutputIdentity()
 }
 func validLeaseToken(token string) bool {
 	if len(token) != 64 || token != strings.ToLower(token) || strings.Trim(token, "0") == "" {
@@ -889,16 +850,15 @@ func deriveTaskCompletionIdentity(completion TaskCompletion) string {
 	}
 	if completion.reason != 0 && completion.status == TaskCompletionFailed {
 		return hashControlPlaneValue(struct {
-			Contract   string                      `json:"contract"`
-			Version    int                         `json:"version"`
-			Status     string                      `json:"status"`
-			Failure    string                      `json:"failure"`
-			Reason     string                      `json:"reason"`
-			Shortfall  *taskFailureShortfallRecord `json:"context_shortfall,omitempty"`
-			Plan       string                      `json:"plan"`
-			Task       string                      `json:"task"`
-			RetryAfter uint32                      `json:"retry_after_milliseconds,omitempty"`
-		}{"open-trestle/task-completion", 3, status, completion.failure.String(), completion.reason.String(), taskFailureShortfallToRecord(completion.shortfall), completion.planIdentity, completion.taskIdentity, completion.retryAfterMillis})
+			Contract  string                      `json:"contract"`
+			Version   int                         `json:"version"`
+			Status    string                      `json:"status"`
+			Failure   string                      `json:"failure"`
+			Reason    string                      `json:"reason"`
+			Shortfall *taskFailureShortfallRecord `json:"context_shortfall,omitempty"`
+			Plan      string                      `json:"plan"`
+			Task      string                      `json:"task"`
+		}{"open-trestle/task-completion", 3, status, completion.failure.String(), completion.reason.String(), taskFailureShortfallToRecord(completion.shortfall), completion.planIdentity, completion.taskIdentity})
 	}
 	if completion.outputIdentity != "" && completion.status == TaskCompletionFailed {
 		return hashControlPlaneValue(struct {

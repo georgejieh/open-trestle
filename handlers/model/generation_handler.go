@@ -350,22 +350,16 @@ var providerRefusalReasons = map[gateway.RouteFailureClass]controlplane.TaskFail
 }
 
 // routeFailureCompletion fails a model task for a failed dispatch. A refusal
-// the provider answered records its content-free reason, and a rate limit the
-// provider's Retry-After; any other failure, or one before the request was
-// sent, records only the run failure.
+// the provider answered records its content-free reason; any other failure,
+// or one before the request was sent, records only the run failure. A rate
+// limit reaches it only once its same-route retries are spent or not allowed.
 func routeFailureCompletion(task controlplane.TaskExecutionRequest, result gateway.RouteDispatchResult) controlplane.TaskCompletion {
 	failure := mapRouteFailure(result.Failure())
 	reason, refusal := providerRefusalReasons[result.Failure()]
 	if !refusal || result.ReplaySafety() == gateway.RouteReplayNotDispatched {
 		return generationFailure(failure)
 	}
-	var completion controlplane.TaskCompletion
-	var err error
-	if reason == controlplane.TaskFailureReasonProviderRateLimited {
-		completion, err = controlplane.NewRateLimitedModelTaskFailure(result.RetryAfterMilliseconds(), task.Plan(), task.Task())
-	} else {
-		completion, err = controlplane.NewModelTaskFailureWithReason(failure, reason, task.Plan(), task.Task())
-	}
+	completion, err := controlplane.NewModelTaskFailureWithReason(failure, reason, task.Plan(), task.Task())
 	if err != nil {
 		return generationFailure(failure)
 	}

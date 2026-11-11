@@ -30,9 +30,6 @@ type LocalControl struct {
 	journal        controlplane.RunJournal
 	clock          Clock
 	workerIdentity string
-	// runDeadline, when set, is the instant on clock by which the run must
-	// finish; a provider's Retry-After never defers a retry past it.
-	runDeadline time.Time
 }
 
 func NewLocalControl(journal controlplane.RunJournal, clock Clock, workerIdentity string) (*LocalControl, error) {
@@ -41,21 +38,6 @@ func NewLocalControl(journal controlplane.RunJournal, clock Clock, workerIdentit
 		return nil, ErrInvalidWorker
 	}
 	return &LocalControl{coordinator: coordinator, journal: journal, clock: clock, workerIdentity: workerIdentity}, nil
-}
-
-// NewLocalRunControl is NewLocalControl for a run that must finish by
-// runDeadline on clock, such as a foreground review with a timeout: a retry
-// after a rate-limited attempt is never scheduled past it.
-func NewLocalRunControl(journal controlplane.RunJournal, clock Clock, workerIdentity string, runDeadline time.Time) (*LocalControl, error) {
-	if !runDeadline.IsZero() && runDeadline.UnixMilli() <= 0 {
-		return nil, ErrInvalidWorker
-	}
-	control, err := NewLocalControl(journal, clock, workerIdentity)
-	if err != nil {
-		return nil, err
-	}
-	control.runDeadline = runDeadline
-	return control, nil
 }
 func (c *LocalControl) GetRun(ctx context.Context, scope audit.ReviewScope) (controlplane.ReviewRunReceipt, error) {
 	var receipt controlplane.ReviewRunReceipt
@@ -260,7 +242,7 @@ func (c *LocalControl) CompleteTask(ctx context.Context, scope audit.ReviewScope
 		err = withLocalScopeIntent(ctx, journal, scope, "worker-complete-task", lease.Identity(), nil,
 			func(inner context.Context) error {
 				var state controlplane.ReviewRunState
-				state, err = c.coordinator.CompleteTaskWithin(inner, plan, lease, completion, c.clock.Now().UTC(), c.runDeadline)
+				state, err = c.coordinator.CompleteTask(inner, plan, lease, completion, c.clock.Now().UTC())
 				if err != nil {
 					return err
 				}
@@ -292,7 +274,7 @@ func (c *LocalControl) CompleteTask(ctx context.Context, scope audit.ReviewScope
 		return receipt, nil
 	}
 	// Non-file journal path: coordinator does everything inline.
-	state, err := c.coordinator.CompleteTaskWithin(ctx, plan, lease, completion, c.clock.Now().UTC(), c.runDeadline)
+	state, err := c.coordinator.CompleteTask(ctx, plan, lease, completion, c.clock.Now().UTC())
 	if err != nil {
 		return controlplane.ReviewRunReceipt{}, err
 	}
