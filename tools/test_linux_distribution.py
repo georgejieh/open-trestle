@@ -957,6 +957,35 @@ class LifecycleTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "immediate predecessor"):
                 linux_distribution_runtime.rollback_version(first, destdir)
 
+    def test_production_lifecycle_resolves_the_root_once_without_reparsing_it_as_destdir(self):
+        # A production command runs as root with no --destdir and resolves "/".
+        # The --destdir parser refuses "/", so feeding the resolved root back
+        # into a destdir-taking function broke every production upgrade and
+        # rollback-version. Map "no --destdir" onto a sandbox and fail on any
+        # internal re-entry with a resolved root.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first, _ = _build(root / "first", b"first", "1.0.0")
+            second, _ = _build(root / "second", b"second", "1.1.0")
+            sandbox = root / "root"
+            sandbox.mkdir()
+
+            def production_root(destdir):
+                if destdir is not None:
+                    raise AssertionError(f"resolved root {destdir} re-entered the --destdir parser")
+                return sandbox
+
+            installed = sandbox / linux_distribution_runtime.LIFECYCLE_PATH
+            with patch.object(linux_distribution_runtime, "_installation_root", production_root):
+                linux_distribution_runtime.install(first, None)
+                linux_distribution_runtime.upgrade(second, None)
+                self.assertEqual(linux_distribution_runtime.verify_installed(second, None)["version"], "1.1.0")
+                linux_distribution_runtime.rollback_version(installed, None)
+                self.assertEqual(linux_distribution_runtime.verify_installed(first, None)["version"], "1.0.0")
+                linux_distribution_runtime.upgrade(second, None)
+                linux_distribution_runtime.uninstall(installed, None)
+            self.assertEqual(list(sandbox.iterdir()), [])
+
     def test_upgrade_preflight_refuses_non_newer_collision_and_untrusted_control_without_mutation(self):
         cases = ("1.0.0", "0.9.0")
         for candidate_version in cases:

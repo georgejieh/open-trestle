@@ -1654,7 +1654,13 @@ def _validate_installed_file(root: Path, item: InstalledFile) -> os.stat_result:
 
 
 def verify_installed(archive_path: Path, destdir: Path | None = None) -> dict[str, object]:
-    root = _installation_root(destdir)
+    return _verify_installed_at(archive_path, _installation_root(destdir))
+
+
+def _verify_installed_at(archive_path: Path, root: Path) -> dict[str, object]:
+    # Takes the root that _installation_root already resolved. A resolved
+    # production root is "/", which the --destdir parser rightly refuses, so
+    # internal callers must never feed a root back through verify_installed.
     _require_no_recovery(root)
     validated = validate_archive(archive_path)
     receipt, _, files = _load_control(root)
@@ -1691,7 +1697,7 @@ def _managed_generation(validated: ValidatedArchive) -> tuple[InstalledFile, ...
 
 def _verified_installed_generation(root: Path) -> tuple[ValidatedArchive, dict[str, object], tuple[InstalledFile, ...]]:
     archive = validate_archive(root / LIFECYCLE_PATH, root / SIDECAR_PATH)
-    receipt = verify_installed(archive.path, root)
+    receipt = _verify_installed_at(archive.path, root)
     _, _, files = _load_control(root)
     return archive, receipt, files
 
@@ -2162,7 +2168,7 @@ def _remove_created_directories(root: Path, directories: list[str] | tuple[str, 
 def _remove_installation(archive_path: Path, destdir: Path | None, action: str) -> None:
     root = _installation_root(destdir)
     recover(destdir)
-    receipt = verify_installed(archive_path, destdir)
+    receipt = _verify_installed_at(archive_path, root)
     _, _, files = _load_control(root)
     owned: list[tuple[Path, InstalledFile, tuple[int, int]]] = []
     for item in files:
@@ -2207,7 +2213,7 @@ def uninstall(archive_path: Path, destdir: Path | None = None) -> None:
 
 def smoke(archive_path: Path, destdir: Path | None = None, output: Path | None = None) -> dict[str, object]:
     root = _installation_root(destdir)
-    receipt = verify_installed(archive_path, destdir)
+    receipt = _verify_installed_at(archive_path, root)
     executable = root / "usr/local/bin/trestle"
     completed = subprocess.run(
         [str(executable)],
