@@ -17,6 +17,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/internal/scm"
 	"github.com/georgejieh/open-trestle/runtimecatalog"
+	"github.com/georgejieh/open-trestle/runtimeconfig"
 	"io"
 	"strings"
 )
@@ -265,6 +266,9 @@ func (s *Session) emptyResult(status string) Result {
 	if err != nil {
 		return Result{}
 	}
+	if s != nil && openRouterZDRNotRequired(s.options.Policy) {
+		result.wire.Limitations = append(result.wire.Limitations, LimitationOpenRouterZDRNotRequired)
+	}
 	if s != nil && s.options.RetainedMemoryInput != nil {
 		limitations := make([]string, 0, len(result.wire.Limitations)+1)
 		for _, limitation := range result.wire.Limitations {
@@ -277,6 +281,17 @@ func (s *Session) emptyResult(status string) Result {
 		result.wire.Limitations = limitations
 	}
 	return result
+}
+
+// openRouterZDRNotRequired reports a connection to OpenRouter whose requests
+// do not require zero data retention.
+func openRouterZDRNotRequired(policy runtimeconfig.RuntimePolicy) bool {
+	for _, connection := range policy.Connections() {
+		if connection.Endpoint() == "https://openrouter.ai/api/v1" && !connection.RequiresZeroDataRetention() {
+			return true
+		}
+	}
+	return false
 }
 
 // NewUnstartedResult describes only a refused/unavailable host operation. It

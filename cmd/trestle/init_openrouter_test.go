@@ -108,6 +108,9 @@ func TestInitOpenRouterBothModelsWithZDRRequiresItByDefault(t *testing.T) {
 		"Limits: context 128000 and output 16000 tokens", "Prices: up to $3.3 input and $16.5 output", "[0.49]",
 		"Zero data retention is required on every request", "Review finished: 1 confirmed finding",
 		"A review sends the selected source to OpenRouter (https://openrouter.ai/api/v1), zero data retention required on every request")
+	if strings.Contains(result.stdout, "openrouter_zero_data_retention_not_required") {
+		t.Fatal("a ZDR review was labelled as not requiring zero data retention")
+	}
 	for _, asked := range []string{"provider slug for", "Evidence:", "How many days", "review window", "SHA-256 of the copy"} {
 		if strings.Contains(result.stdout, asked) {
 			t.Fatalf("the wizard still asked for %q:\n%s", asked, result.stdout)
@@ -187,7 +190,7 @@ func TestInitOpenRouterModelWithoutZDRContinuesOnlyWithConsent(t *testing.T) {
 		t.Fatalf("init exit=%d\nstdout:\n%s\nstderr:\n%s", result.code, result.stdout, result.stderr)
 	}
 	initAssertOutput(t, result, "may keep your prompts under its own terms", "https://openrouter.ai/docs/guides/features/zdr",
-		"Limits: context 64000 and output 8192 tokens", "Zero data retention is not required by Open Trestle", "zero data retention not required by Open Trestle", "Review finished")
+		"Limits: context 64000 and output 8192 tokens", "Zero data retention is not required by Open Trestle", "zero data retention not required by Open Trestle", "Review finished", "openrouter_zero_data_retention_not_required")
 	for _, controls := range transport.providers {
 		if controls != nil {
 			t.Fatalf("a request without zero data retention carried provider controls: %v", controls)

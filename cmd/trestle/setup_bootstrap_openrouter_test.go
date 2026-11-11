@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -73,6 +75,32 @@ func TestSetupBootstrapOpenRouterRepeatIsIdempotentPerObservation(t *testing.T) 
 	}
 	if later, out := invoke(fixedSetupClock{at: clock.at.Add(time.Minute)}); later != 4 || !strings.Contains(out, "already exists with different content") {
 		t.Fatalf("a later observation overwrote or was not refused clearly: exit=%d %s", later, out)
+	}
+}
+
+// openRouterRefusingTransport answers every model request with HTTP 404, as
+// OpenRouter does when no endpoint may take the request.
+type openRouterRefusingTransport struct{ requests int }
+
+func (r *openRouterRefusingTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	r.requests++
+	return &http.Response{StatusCode: http.StatusNotFound, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"error":{"message":"synthetic provider text that must never be shown"}}`)), Request: request}, nil
+}
+
+func TestOpenRouterNotFoundNamesTheZDRSetting(t *testing.T) {
+	remoteScannerInstalled(t)
+	t.Setenv("OPEN_TRESTLE_PROVIDER_REMOTE_TEST", remoteTestKey)
+	args, _ := remoteBootstrapArgs(t, "openrouter-zdr")
+	ready, _ := remoteBootstrapInvoke(t, args, 0)
+	transport := &openRouterRefusingTransport{}
+	localReviewModelHTTPClient = &http.Client{Transport: transport, Timeout: time.Minute}
+	localReviewModelHTTPClientIdentity = localModelDigest([]byte("offline refusing OpenRouter fixture"))
+	t.Cleanup(func() { localReviewModelHTTPClient, localReviewModelHTTPClientIdentity = nil, "" })
+	var stdout, stderr bytes.Buffer
+	code := run(ready.ReviewCommand[1:], &stdout, &stderr)
+	text := stdout.String() + stderr.String()
+	if code != 4 || transport.requests != 1 || !strings.Contains(text, "failure: policy (task candidates): provider_no_allowed_endpoint") || !strings.Contains(text, "OpenRouter account or key settings") || strings.Contains(text, "synthetic provider text") {
+		t.Fatalf("OpenRouter 404 exit=%d requests=%d:\n%s", code, transport.requests, text)
 	}
 }
 

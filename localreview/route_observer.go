@@ -31,6 +31,8 @@ type routeFailureObserver struct {
 	// last is the class of the most recent dispatch when it failed after the
 	// request was sent, and zero after a success or a failure before sending.
 	last gateway.RouteFailureClass
+	// lastOpenRouter reports that last came from an OpenRouter route.
+	lastOpenRouter bool
 }
 
 // observedAttempt is one dispatch's reported usage and the actual cost that
@@ -101,6 +103,15 @@ func (o *routeFailureObserver) reset() {
 	o.attempts = nil
 	o.shortfall = nil
 	o.last = 0
+	o.lastOpenRouter = false
+}
+
+// recordRoute notes whether the dispatch record just saw went to OpenRouter.
+// It reads only the authorized route's provider ID.
+func (o *routeFailureObserver) recordRoute(route provider.RouteReference) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.lastOpenRouter = o.last != 0 && route.ProviderID() == "openrouter"
 }
 
 func (o *routeFailureObserver) saw(failure gateway.RouteFailureClass) bool {
@@ -126,11 +137,14 @@ var providerRefusalRunFailure = map[gateway.RouteFailureClass]controlplane.RunFa
 // attempt outlived, or one that does not explain the run failure, names none.
 func (o *routeFailureObserver) providerRefusal(failure controlplane.RunFailure) (string, bool) {
 	o.mu.Lock()
-	last := o.last
+	last, openRouter := o.last, o.lastOpenRouter
 	o.mu.Unlock()
 	expected, refusal := providerRefusalRunFailure[last]
 	if !refusal || expected != failure {
 		return "", false
+	}
+	if last == gateway.RouteFailureModelUnavailable && openRouter {
+		return FailureDetailProviderNoAllowedEndpoint, true
 	}
 	detail, _, ok := routehint.ProviderRefusal(last)
 	return detail, ok
@@ -144,6 +158,7 @@ type observedRouteDispatcher struct {
 func (d observedRouteDispatcher) DispatchRoute(ctx context.Context, request gateway.RouteDispatchRequest) gateway.RouteDispatchResult {
 	result := d.RouteDispatcher.DispatchRoute(ctx, request)
 	d.observer.record(request.Authorization().Identity(), request.Request().Capability(), request.Authorization().Pricing(), result)
+	d.observer.recordRoute(request.Authorization().RouteReference())
 	return result
 }
 
@@ -158,6 +173,7 @@ type observedSanitizedRouteDispatcher struct {
 func (d observedSanitizedRouteDispatcher) DispatchSanitizedRoute(ctx context.Context, request gateway.RouteDispatchRequest, proof modelhandler.SanitizedDispatchProof) gateway.RouteDispatchResult {
 	result := d.sanitized.DispatchSanitizedRoute(ctx, request, proof)
 	d.observer.record(request.Authorization().Identity(), request.Request().Capability(), request.Authorization().Pricing(), result)
+	d.observer.recordRoute(request.Authorization().RouteReference())
 	return result
 }
 

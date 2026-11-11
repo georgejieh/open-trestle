@@ -20,6 +20,18 @@ const (
 	FailureDetailProviderRateLimited          = "provider_rate_limited"
 )
 
+// FailureDetailProviderNoAllowedEndpoint records that OpenRouter answered the
+// last request with HTTP 404: it serves no endpoint for the model that the
+// request may use. With zero data retention required, by Open Trestle on
+// every request or by the OpenRouter account or key, a model without a
+// zero-data-retention endpoint is refused this way.
+const FailureDetailProviderNoAllowedEndpoint = "provider_no_allowed_endpoint"
+
+// LimitationOpenRouterZDRNotRequired marks a result whose policy has an
+// OpenRouter route that does not require zero data retention. It claims
+// neither that a provider retains prompts nor that it does not.
+const LimitationOpenRouterZDRNotRequired = "openrouter_zero_data_retention_not_required"
+
 // failureHints are plain-language explanations of each run failure class.
 // They describe what the class usually means; they are not diagnoses.
 var failureHints = map[string]string{
@@ -39,7 +51,8 @@ var taskFailureHints = map[[2]string]string{
 }
 
 var failureDetailHints = map[string]string{
-	FailureDetailModelOutputExhausted: "the model used its whole output allowance (reasoning) before answering; choose a non-reasoning model for this role or raise the review output allowance (setup bootstrap init --max-output-tokens)",
+	FailureDetailModelOutputExhausted:      "the model used its whole output allowance (reasoning) before answering; choose a non-reasoning model for this role or raise the review output allowance (setup bootstrap init --max-output-tokens)",
+	FailureDetailProviderNoAllowedEndpoint: "OpenRouter has no endpoint for this model that the request may use: if zero data retention is required (by this setup or by your OpenRouter account or key settings), choose a model with zero-data-retention endpoints and run trestle init again (https://openrouter.ai/docs/guides/features/zdr); otherwise check the model ID",
 }
 
 // failureTask returns the key of the first task, in plan order, that failed.
