@@ -23,6 +23,10 @@ type initSetup struct {
 	credentials                        []string
 	endpoints                          []string
 	generationModel, verificationModel string
+	// windowed is a setup whose privacy declaration has a review window.
+	windowed bool
+	// retention is the OpenRouter data-retention requirement, or "".
+	retention string
 }
 
 type initOutcome struct {
@@ -82,7 +86,11 @@ func (w *initWizard) loadSetup() (initSetup, error) {
 	setup := initSetup{credentials: header.CredentialEnvironments}
 	switch header.Contract {
 	case remoteBootstrapContract:
-		index := slices.IndexFunc(initProviders, func(p initProviderInfo) bool { return p.key == header.Provider })
+		key := header.Provider
+		if initIsOpenRouterSetup(key) {
+			key = "openrouter"
+		}
+		index := slices.IndexFunc(initProviders, func(p initProviderInfo) bool { return p.key == key })
 		if index < 0 || header.Provider == "local" {
 			return fail("unknown provider")
 		}
@@ -101,7 +109,12 @@ func (w *initWizard) loadSetup() (initSetup, error) {
 	if err != nil {
 		return fail("routes.json or policy.json is unprotected or invalid")
 	}
+	setup.retention = remoteDataRetention(policy)
 	for _, connection := range policy.Connections() {
+		switch connection.RequestProfile() {
+		case runtimeconfig.OpenRouterZDRChatProfile, runtimeconfig.OpenCodeGoChatProfile:
+			setup.windowed = true
+		}
 		if !slices.Contains(setup.endpoints, connection.Endpoint()) {
 			setup.endpoints = append(setup.endpoints, connection.Endpoint())
 		}
@@ -131,7 +144,7 @@ func (w *initWizard) loadSetup() (initSetup, error) {
 
 func (s initSetup) destination() string {
 	if s.remote {
-		return s.provider.short + " (" + strings.Join(s.endpoints, ", ") + ")"
+		return s.provider.short + " (" + strings.Join(s.endpoints, ", ") + ")" + initRetentionNote(s.retention)
 	}
 	return "your local model server (" + strings.Join(s.endpoints, ", ") + ")"
 }
@@ -212,7 +225,11 @@ func (w *initWizard) bootstrapArgs() []string {
 		args = append(args, w.reviewOutputArgs()...)
 		return append(args, a.declarations...)
 	}
-	args := append([]string{"init", "--provider", a.provider.key}, common...)
+	providerName := a.provider.key
+	if providerName == "openrouter" {
+		providerName = w.openRouterBootstrapProvider()
+	}
+	args := append([]string{"init", "--provider", providerName}, common...)
 	if a.provider.key == ollamaSigninProvider {
 		// No key: the local Ollama uses its own `ollama signin` account.
 		if a.generationEndpoint != ollamaSigninDefaultBaseURL {
@@ -244,7 +261,11 @@ func (w *initWizard) stepWrite() (int, error) {
 		created = true
 	}
 	var out, errOut bytes.Buffer
-	code := runSetupBootstrapWithContext(w.ctx, w.bootstrapArgs(), &out, &errOut, w.clock)
+	ctx := w.ctx
+	if w.openRouter != nil {
+		ctx = withOpenRouterObservation(ctx, w.openRouter)
+	}
+	code := runSetupBootstrapWithContext(ctx, w.bootstrapArgs(), &out, &errOut, w.clock)
 	if (code == initExitRefused || code == initExitUsage || code == initExitFailed) && !w.setupWritten() {
 		reason := w.refusalReason(out.Bytes(), errOut.String())
 		cleanup := ""
@@ -410,7 +431,7 @@ func (t initTally) String() string {
 func (w *initWizard) renderRemote(result remoteBootstrapResult, setup initSetup) string {
 	tally := initTally{}
 	keys := []string{}
-	if setup.provider.key != "ollama-cloud" && setup.provider.key != ollamaSigninProvider {
+	if setup.windowed {
 		keys = append(keys, "privacy_declaration_current")
 	}
 	keys = append(keys, "dispatch_catalog_validated")
@@ -472,6 +493,13 @@ func (w *initWizard) renderRemote(result remoteBootstrapResult, setup initSetup)
 			w.say("    %s %s", w.mark(state(key)), key)
 			w.say("%s", initWrap(strings.Join(result.Messages, " "), "        ", 86))
 		}
+	}
+	switch result.DataRetention {
+	case "required_per_request":
+		w.say("    %s Zero data retention is required on every request", w.ok)
+	case "not_required_by_open_trestle":
+		w.say("    %s Zero data retention is not required by Open Trestle (your OpenRouter account or", w.optional)
+		w.say("      key settings may still enforce it); a model provider may keep prompts under its own terms")
 	}
 	return tally.String()
 }

@@ -14,8 +14,8 @@ func TestInitProposesTheExampleContextForLocalServers(t *testing.T) {
 		{"local", 0, 32768},
 		{"local", 128000, 32768},
 		{"local", 16384, 16384},
-		{"openrouter-zdr", 128000, 128000},
-		{"openrouter-zdr", 0, 0},
+		{"openrouter", 128000, 128000},
+		{"openrouter", 0, 0},
 	} {
 		if got := initContextProposal(tc.provider, tc.listed); got != tc.want {
 			t.Fatalf("%s with listed context %d: proposed %d, want %d", tc.provider, tc.listed, got, tc.want)

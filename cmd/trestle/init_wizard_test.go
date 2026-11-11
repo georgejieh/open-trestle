@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -32,9 +31,21 @@ type initRun struct {
 	stdout, stderr string
 }
 
+// initOfflineTransport answers every setup fetch with an error, so a test
+// that installs no fake never reaches the network.
+type initOfflineTransport struct{}
+
+func (initOfflineTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, io.ErrUnexpectedEOF
+}
+
 func runInitScript(t *testing.T, checkout string, args []string, script ...string) initRun {
 	t.Helper()
 	t.Chdir(checkout)
+	if initEvidenceTransport == nil {
+		initEvidenceTransport = initOfflineTransport{}
+		defer func() { initEvidenceTransport = nil }()
+	}
 	var stdout, stderr bytes.Buffer
 	input := strings.Join(script, "\n")
 	if len(script) != 0 {
@@ -124,86 +135,6 @@ func initFakeEvidence(t *testing.T, pages map[string]string) *initFakeEvidencePa
 func initSHA256(text string) string {
 	sum := sha256.Sum256([]byte(text))
 	return hex.EncodeToString(sum[:])
-}
-
-func TestInitOpenRouterInteractiveThroughFirstReview(t *testing.T) {
-	remoteScannerInstalled(t)
-	t.Setenv("OPEN_TRESTLE_PROVIDER_OPENROUTER", remoteTestKey)
-	listed := []string{"vendor/generator", "other/verifier"}
-	for i := range 43 {
-		listed = append(listed, "filler/model-"+strconv.Itoa(i))
-	}
-	calls := initFakeModelList(t, listed...)
-	pages := initFakeEvidence(t, map[string]string{initOpenRouterZDRDocs: "synthetic zdr page"})
-	transport := &remoteModelTransport{t: t, target: "https://openrouter.ai/api/v1/chat/completions", models: map[string]string{"vendor/generator": "fixture-upstream/region", "other/verifier": "fixture-upstream/region"}}
-	remoteModelClient(t, transport)
-	checkout := remoteBootstrapCheckout(t)
-	dir := filepath.Join(t.TempDir(), "setup")
-	saved := filepath.Join(t.TempDir(), "account-review.pdf")
-	if err := os.WriteFile(saved, []byte("synthetic account review"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	args := []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review"}
-	result := runInitScript(t, checkout, args,
-		"1",                // OpenRouter
-		"",                 // read the model list with the key variable that is set
-		"generator",        // filter the long list
-		"1",                // vendor/generator
-		"",                 // checker: no filter, type the ID
-		"vendor/generator", // same model: must re-prompt
-		"other/verifier",
-		"128000", "8192",
-		"1", "2", // prices in USD per million tokens
-		"0.001", // below the output reservation: must re-prompt
-		"1",
-		"", // accept the proposed credential variable name
-		"yes",
-		"fixture-upstream/region", "", // finder slug; checker keeps the same provider
-		"", "", "", // broker: proposed ZDR page, fetch it, record it
-		"https://evidence.fixture.invalid/account", saved, // account review: never fetched
-		"https://evidence.fixture.invalid/upstream", "n", remoteTestDigest, // decline the fetch
-		"",     // finder slug evidence: proposed ZDR page, already fetched
-		"", "", // checker evidence reuses the finder's (same slug)
-		"", "30", // reviewed now, valid 30 days
-		"yes",
-		"", // keep names
-		"y",
-	)
-	if result.code != initExitDone {
-		t.Fatalf("init exit=%d\nstdout:\n%s\nstderr:\n%s", result.code, result.stdout, result.stderr)
-	}
-	for _, want := range []string{"OPEN_TRESTLE_PROVIDER_OPENROUTER is set in this shell", "Read 45 models", "45 models are listed", "same model as the finder", "at least $0.008192", "Already fetched during this setup", "uses the same provider", "SHA-256 of exactly that content", "Review finished: 1 confirmed finding", "A review sends the selected source to OpenRouter (https://openrouter.ai/api/v1)"} {
-		if !strings.Contains(result.stdout, want) {
-			t.Fatalf("output lacks %q:\n%s", want, result.stdout)
-		}
-	}
-	if !slices.Equal(*calls, []string{initOpenRouterModels + " with OPEN_TRESTLE_PROVIDER_OPENROUTER"}) {
-		t.Fatalf("model list was not read once with the key variable: %v", *calls)
-	}
-	if !slices.Equal(pages.requests, []string{initOpenRouterZDRDocs}) {
-		t.Fatalf("evidence fetches: %v (want one, only for the public page and only with consent)", pages.requests)
-	}
-	if !slices.Equal(transport.requests, []string{"candidate_generation:vendor/generator", "candidate_verification:other/verifier"}) {
-		t.Fatalf("review did not use the two chosen models: %v", transport.requests)
-	}
-	initAssertProtected(t, dir, "routes.json", "policy.json", "bootstrap.json", "NEXT-STEPS.txt")
-	routes := stringMustRead(t, filepath.Join(dir, "routes.json"))
-	if !strings.Contains(routes, "vendor/generator") || strings.Contains(stringMustRead(t, filepath.Join(dir, "policy.json")), remoteTestKey) {
-		t.Fatal("configuration lost the chosen model or stored the key")
-	}
-	if manifest := stringMustRead(t, filepath.Join(dir, "bootstrap.json")); !strings.Contains(manifest, "OPEN_TRESTLE_PROVIDER_OPENROUTER") {
-		t.Fatal("manifest lost the credential reference")
-	}
-	evidence := initDecodedEvidence(t, routes)
-	for _, want := range []string{initOpenRouterZDRDocs, initSHA256("synthetic zdr page"), initSHA256("synthetic account review"), "https://evidence.fixture.invalid/upstream"} {
-		if !strings.Contains(evidence, want) {
-			t.Fatalf("evidence manifest lacks %s:\n%s", want, evidence)
-		}
-	}
-	next := stringMustRead(t, filepath.Join(dir, "NEXT-STEPS.txt"))
-	if !strings.Contains(next, "local-git model-review") || strings.Contains(next, remoteTestKey) {
-		t.Fatal("NEXT-STEPS.txt lacks the review command or disclosed the key")
-	}
 }
 
 func initDecodedEvidence(t *testing.T, routes string) string {
@@ -483,17 +414,21 @@ func TestInitMissingCredentialThenRerunRechecks(t *testing.T) {
 func TestInitNoInputListsMissingAnswersAndWritesNothing(t *testing.T) {
 	checkout := remoteBootstrapCheckout(t)
 	dir := filepath.Join(t.TempDir(), "setup")
+	// No fake API: the offline transport makes OpenRouter's API unreachable,
+	// so the facts it would have supplied are listed too.
 	result := runInitScript(t, checkout, []string{"--no-input", "--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review", "--provider", "openrouter-zdr", "--generation-model", "vendor/generator"})
 	if result.code != initExitUsage {
 		t.Fatalf("exit=%d stderr=%s", result.code, result.stderr)
 	}
-	for _, want := range []string{"--verification-model", "--context-tokens", "--output-tokens", "--max-cost-micro-usd", "--credential-env", "--declare-remote-route", "--generation-provider-slug", "--broker-evidence", "--verification-slug-evidence", "--reviewed-at", "--valid-until", "--declare-openrouter-zdr-account"} {
+	for _, want := range []string{"--verification-model", "--context-tokens", "--output-tokens", "--max-cost-micro-usd", "--credential-env", "--declare-remote-route"} {
 		if !strings.Contains(result.stderr, "\n  "+want+"\n") && !strings.HasSuffix(strings.SplitN(result.stderr, "\nSee", 2)[0], "\n  "+want) {
 			t.Fatalf("missing answer %s not listed:\n%s", want, result.stderr)
 		}
 	}
-	if strings.Contains(result.stderr, "--generation-model\n") || strings.Contains(result.stderr, "--yes") {
-		t.Fatal("listed an answer that was given, or suggested a blanket bypass")
+	for _, unwanted := range []string{"--generation-model\n", "--yes", "slug", "evidence", "reviewed-at", "valid-until", "declare-openrouter-zdr-account"} {
+		if strings.Contains(result.stderr, unwanted) {
+			t.Fatalf("listed %q, which is given, detected or no longer asked:\n%s", unwanted, result.stderr)
+		}
 	}
 	initAssertAbsent(t, dir)
 	noProvider := runInitScript(t, checkout, []string{"--no-input", "--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review"})

@@ -24,7 +24,6 @@ import (
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/secretscan"
 	"github.com/georgejieh/open-trestle/modelcatalog"
-	"github.com/georgejieh/open-trestle/runtimecatalog"
 )
 
 // `trestle init` is a guided front end over the existing bootstrap. It collects
@@ -52,14 +51,12 @@ type initProviderInfo struct {
 	key, label, short  string
 	credentialProposal string
 	catalog            *modelcatalog.Source
-	// keyedCatalog is a model list read only with the operator's key variable.
-	keyedCatalog *modelcatalog.Source
-	example      string
-	docs         string
+	example            string
+	docs               string
 }
 
 var initProviders = []initProviderInfo{
-	{key: "openrouter-zdr", label: "OpenRouter, zero-data-retention routes (remote, needs an API key)", short: "OpenRouter", credentialProposal: "OPEN_TRESTLE_PROVIDER_OPENROUTER", keyedCatalog: &modelcatalog.Source{ID: "openrouter", Kind: "openai_models", URL: initOpenRouterModels}, example: "vendor/model-name, exactly as listed at https://openrouter.ai/models", docs: "docs/remote-model-review.md#openrouter-zdr"},
+	{key: "openrouter", label: "OpenRouter (remote, needs an API key)", short: "OpenRouter", credentialProposal: "OPEN_TRESTLE_PROVIDER_OPENROUTER", example: "vendor/model-name, exactly as listed at https://openrouter.ai/models", docs: "docs/remote-model-review.md#openrouter"},
 	{key: "ollama-cloud", label: "Ollama Cloud (remote, needs an API key)", short: "Ollama Cloud", credentialProposal: "OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD", catalog: &modelcatalog.Source{ID: "ollama-cloud", Kind: "ollama_tags", URL: "https://ollama.com/api/tags"}, example: "name:tag", docs: "docs/remote-model-review.md#ollama-cloud"},
 	{key: "opencode-go", label: "OpenCode Go (remote, needs an API key)", short: "OpenCode Go", credentialProposal: "OPEN_TRESTLE_PROVIDER_OPENCODE_GO", catalog: &modelcatalog.Source{ID: "opencode-go", Kind: "openai_models", URL: "https://opencode.ai/inference/go/v1/models"}, example: "model-name", docs: "docs/remote-model-review.md#opencode-go"},
 	{key: "local", label: "A model server on this machine (Ollama, llama.cpp, vLLM, LM Studio)", short: "your local model server", docs: "docs/local-first-bootstrap.md"},
@@ -75,8 +72,8 @@ var initLocalServers = []struct{ name, endpoint string }{
 	{"vLLM", "http://127.0.0.1:8000/v1"},
 }
 
-var initStringFlags = []string{"directory", "base", "head", "provider", "endpoint", "verification-endpoint", "transport", "generation-model", "verification-model", "credential-env", "owner", "tenant", "repository", "repository-authority", "repository-namespace", "repository-name", "context-tokens", "output-tokens", "max-output-tokens", "input-micro-usd-per-million-tokens", "output-micro-usd-per-million-tokens", "max-cost-micro-usd", "generation-provider-slug", "verification-provider-slug", "generation-upstream-evidence", "verification-upstream-evidence", "generation-slug-evidence", "verification-slug-evidence", "generation-model-evidence", "verification-model-evidence", "broker-evidence", "account-evidence", "evidence-retrieved-at", "reviewed-at", "valid-from", "valid-until"}
-var initBoolFlags = []string{"no-input", "run-review", "allow-local-probe", "declare-local-capabilities", "declare-remote-route", "declare-openrouter-zdr-account", "declare-opencode-go-account", "declare-ollama-cloud-signin"}
+var initStringFlags = []string{"directory", "base", "head", "provider", "endpoint", "verification-endpoint", "transport", "generation-model", "verification-model", "credential-env", "owner", "tenant", "repository", "repository-authority", "repository-namespace", "repository-name", "context-tokens", "output-tokens", "max-output-tokens", "input-micro-usd-per-million-tokens", "output-micro-usd-per-million-tokens", "max-cost-micro-usd", "generation-provider-slug", "verification-provider-slug", "generation-model-evidence", "verification-model-evidence", "broker-evidence", "account-evidence", "evidence-retrieved-at", "reviewed-at", "valid-from", "valid-until"}
+var initBoolFlags = []string{"no-input", "run-review", "allow-local-probe", "declare-local-capabilities", "declare-remote-route", "without-zdr", "declare-opencode-go-account", "declare-ollama-cloud-signin"}
 
 // initStop ends the wizard with a plain-language reason and exit code.
 type initStop struct {
@@ -127,6 +124,8 @@ type initWizard struct {
 	modelEndpoint           string    // the local server whose model is being chosen
 	ollamaBinary            bool      // the ollama command was found on PATH
 	pendingHeader           string    // a --no-input step header not yet printed
+	openRouter              *openRouterObservation
+	zdr                     bool // every OpenRouter request requires zero data retention
 }
 
 func runInit(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -183,7 +182,7 @@ func (w *initWizard) writtenNote() string {
 // string flag takes VALUE.
 var initFlagValues = map[string]string{
 	"directory": "PATH", "base": "REF", "head": "REF",
-	"provider": "openrouter-zdr|ollama-cloud|opencode-go|local|ollama-signin",
+	"provider": "openrouter|openrouter-zdr|ollama-cloud|opencode-go|local|ollama-signin",
 	"endpoint": "URL", "verification-endpoint": "URL",
 	"transport":        "openai_chat_completions|openai_responses",
 	"generation-model": "ID", "verification-model": "ID",
@@ -192,7 +191,7 @@ var initFlagValues = map[string]string{
 	"repository-authority": "LABEL", "repository-namespace": "LABEL", "repository-name": "LABEL",
 	"context-tokens": "N", "output-tokens": "N", "max-output-tokens": "N",
 	"input-micro-usd-per-million-tokens": "N", "output-micro-usd-per-million-tokens": "N", "max-cost-micro-usd": "N",
-	"generation-provider-slug": "SLUG", "verification-provider-slug": "SLUG",
+	"generation-provider-slug": "SLUG[,SLUG]", "verification-provider-slug": "SLUG[,SLUG]",
 	"evidence-retrieved-at": "UTC_TIME", "reviewed-at": "UTC_TIME", "valid-from": "UTC_TIME", "valid-until": "UTC_TIME",
 }
 
@@ -656,9 +655,13 @@ func (w *initWizard) stepProvider() error {
 		keys, labels = append(keys, p.key), append(labels, label)
 	}
 	if raw, ok := w.flags["provider"]; ok {
+		// openrouter-zdr is OpenRouter with zero data retention required.
+		if raw == "openrouter-zdr" {
+			raw = "openrouter"
+		}
 		index := slices.Index(keys, raw)
 		if index < 0 {
-			return initStopf(initExitUsage, "--provider must be one of %s.", strings.Join(keys, ", "))
+			return initStopf(initExitUsage, "--provider must be one of %s (or openrouter-zdr).", strings.Join(keys, ", "))
 		}
 		w.a.provider = initProviders[index]
 	} else if w.prompt == nil {
@@ -698,6 +701,9 @@ func (w *initWizard) stepProvider() error {
 
 func (w *initWizard) stepModels() error {
 	w.header(4, "Choose the two models")
+	if w.a.provider.key == "openrouter" {
+		return w.openRouterModels()
+	}
 	if w.a.provider.key == "local" {
 		if err := w.localModels(); err != nil {
 			return err
@@ -731,53 +737,8 @@ func (w *initWizard) remoteModels() error {
 		} else {
 			models = listed
 		}
-	} else if w.prompt != nil && catalog == nil && !(generationGiven && verificationGiven) {
-		listed, err := w.keyedModelList()
-		if err != nil {
-			return err
-		}
-		models = listed
 	}
 	return w.pickPair(models, models)
-}
-
-// keyedModelList offers to read the provider's model list with the operator's
-// key variable when it is already set. One bounded GET through the catalog
-// reader; the key is sent only to that address and never shown or stored.
-func (w *initWizard) keyedModelList() ([]modelcatalog.Model, error) {
-	keyed := w.a.provider.keyedCatalog
-	name := w.a.provider.credentialProposal
-	if raw, ok := w.flags["credential-env"]; ok {
-		name = raw
-	}
-	if _, err := initCredentialName(name); keyed == nil || err != nil || os.Getenv(name) == "" {
-		w.say("  To pick from %s's model list, export your key variable (such as %s)", w.a.provider.short, w.a.provider.credentialProposal)
-		w.say("  before running trestle init. For now, type each model ID exactly (format: %s).", w.a.provider.example)
-		return nil, nil
-	}
-	host, _ := url.Parse(keyed.URL)
-	w.say("  %s %s is set in this shell (its value is not shown).", w.ok, name)
-	use, err := w.prompt.confirm(fmt.Sprintf("Use it to read %s's model list (one request to %s; no code is sent)?", w.a.provider.short, host.Host), true)
-	if err != nil || !use {
-		if err == nil {
-			w.say("  Type each model ID exactly (format: %s).", w.a.provider.example)
-		}
-		return nil, err
-	}
-	resolver, err := runtimecatalog.NewEnvironmentOpenAICredentialResolver(os.Getenv)
-	if err != nil {
-		return nil, err
-	}
-	source := *keyed
-	source.CredentialEnvironment = name
-	listed, err := initListModels(w.ctx, source, true, resolver)
-	if err != nil || len(listed) == 0 {
-		w.say("  %s Could not read the model list with %s. Check the key and your connection;", w.wait, name)
-		w.say("  for now, type each model ID exactly (format: %s).", w.a.provider.example)
-		return nil, nil
-	}
-	w.say("  %s Read %d models. This shows the list can be read; it does not prove the key may run models.", w.ok, len(listed))
-	return listed, nil
 }
 
 func (w *initWizard) pickPair(generation, verification []modelcatalog.Model) error {
@@ -822,6 +783,9 @@ func initModelNote(model modelcatalog.Model) string {
 	notes := []string{}
 	if n := initMetadataNumber(model.Metadata, "context_length", "context_window", "max_context_length", "max_model_len"); n > 0 {
 		notes = append(notes, fmt.Sprintf("context %d", n))
+	}
+	if initMetadataNumber(model.Metadata, "zero_data_retention_endpoints") > 0 {
+		notes = append(notes, "zero data retention")
 	}
 	if initSmallModel(model) {
 		notes = append(notes, "small: weak reviews")
@@ -1169,7 +1133,7 @@ func (w *initWizard) prices() error {
 	perToken := true
 	if !flagged && w.prompt != nil {
 		w.say("\n  Cost. Open Trestle refuses a review that could cost more than your limit.")
-		if w.a.provider.key != "openrouter-zdr" {
+		if w.a.provider.key != "openrouter" {
 			var err error
 			if perToken, err = w.prompt.confirm("Does your "+w.a.provider.short+" plan charge per token?", false); err != nil {
 				return err
@@ -1192,6 +1156,15 @@ func (w *initWizard) prices() error {
 			w.missing = append(w.missing, "--max-cost-micro-usd")
 		}
 		return err
+	}
+	return w.costLimit(false)
+}
+
+// costLimit asks for the most one review may cost. With propose set, the
+// cost of a request that fills the whole context is offered as the default.
+func (w *initWizard) costLimit(propose bool) error {
+	if _, given := w.flags["max-cost-micro-usd"]; !given && w.prompt != nil && propose {
+		w.say("\n  Cost. Open Trestle refuses a review that could cost more than your limit.")
 	}
 	input, _ := strconv.ParseUint(w.a.inputPrice, 10, 64)
 	output, _ := strconv.ParseUint(w.a.outputPrice, 10, 64)
@@ -1216,7 +1189,16 @@ func (w *initWizard) prices() error {
 			return micro, nil
 		}
 	}
-	w.a.maxCost, err = w.answer(initQuestion{flag: "max-cost-micro-usd", question: "Most one review may cost, in USD", validate: limit(initUSD), validateFlag: limit(initMicro)})
+	proposal := ""
+	if propose {
+		cents := (full + 9_999) / 10_000 * 10_000
+		proposal = strings.TrimPrefix(initFormatUSD(max(cents, reservation)), "$")
+		if w.prompt != nil {
+			w.say("  The proposed limit covers a request that fills the whole context.")
+		}
+	}
+	var err error
+	w.a.maxCost, err = w.answer(initQuestion{flag: "max-cost-micro-usd", question: "Most one review may cost, in USD", proposed: proposal, validate: limit(initUSD), validateFlag: limit(initMicro)})
 	return err
 }
 
@@ -1325,6 +1307,9 @@ func (w *initWizard) stepCredentials() error {
 func (w *initWizard) stepDeclarations() error {
 	w.header(6, "Privacy and model declarations")
 	a := &w.a
+	if a.provider.key == "openrouter" {
+		return w.openRouterConsent()
+	}
 	capacity := fmt.Sprintf("accept %s tokens of input and write up to %s tokens of output", a.contextTokens, a.outputTokens)
 	if a.provider.key == "local" {
 		return w.declare("declare-local-capabilities", "your local models", "docs/local-first-bootstrap.md#choose-the-repository-and-model-pair", []string{
@@ -1347,8 +1332,6 @@ func (w *initWizard) stepDeclarations() error {
 		return err
 	}
 	switch a.provider.key {
-	case "openrouter-zdr":
-		return w.openRouterDeclarations()
 	case "opencode-go":
 		return w.openCodeGoDeclarations()
 	case ollamaSigninProvider:
@@ -1364,23 +1347,6 @@ func (w *initWizard) stepDeclarations() error {
 		w.say("  private source (https://docs.ollama.com/cloud).")
 		return nil
 	}
-}
-
-// slug asks for one role's OpenRouter routing slug. The slug names the upstream
-// provider OpenRouter routes to; it cannot be derived from the model ID because
-// one model is often served by several providers, so the operator states it.
-// The checker's question proposes the finder's slug.
-func (w *initWizard) slug(role, proposed string) (string, error) {
-	question := "OpenRouter provider slug for the " + initRoleName(role) + " model"
-	if proposed != "" {
-		question += " (Enter: the same provider)"
-	}
-	return w.answer(initQuestion{flag: role + "-provider-slug", question: question, proposed: proposed, validate: func(value string) (string, error) {
-		if !remoteValidSlug(value) {
-			return "", errors.New("A provider slug is lowercase letters, digits, - _ . and /, such as deepinfra/fp8.")
-		}
-		return value, nil
-	}})
 }
 
 // initEvidence describes one evidence answer the wizard asks for.
@@ -1419,7 +1385,7 @@ func (w *initWizard) evidenceItem(item initEvidence) (string, error) {
 		}
 	}
 	if item.proposedURL != "" {
-		w.say("    Proposed: the page docs/openrouter-zdr-profile.md cites for this. Press Enter to use it,")
+		w.say("    Proposed: the page the profile documentation cites for this. Press Enter to use it,")
 		w.say("    or type the address of the page you actually reviewed.")
 	}
 	if item.account {
@@ -1603,66 +1569,6 @@ func (w *initWizard) witnessIntro(provider string) {
 	w.say("  address you read and a SHA-256 of that exact content. For a public page, Open Trestle")
 	w.say("  can fetch it once and compute the SHA-256 here (you confirm it). Otherwise give the")
 	w.say("  SHA-256 of a copy you saved, or that file's path. Your account page is never fetched.")
-}
-
-func (w *initWizard) openRouterDeclarations() error {
-	w.witnessIntro("OpenRouter's zero-data-retention profile")
-	if w.prompt != nil {
-		w.say("\n  Each model needs an OpenRouter provider slug: the upstream provider OpenRouter must")
-		w.say("  route to, as listed for that model on openrouter.ai (for example deepinfra or")
-		w.say("  deepinfra/fp8). It cannot be worked out from the model ID, because one model is often")
-		w.say("  served by several providers.")
-	}
-	extra := []string{}
-	slugs := map[string]string{}
-	for _, role := range []string{"generation", "verification"} {
-		slug, err := w.slug(role, slugs["generation"])
-		if err != nil {
-			return err
-		}
-		slugs[role] = slug
-		extra = append(extra, "--"+role+"-provider-slug", slug)
-	}
-	named := func(role string) string {
-		if slugs[role] == "" {
-			return "the " + initRoleName(role) + "'s provider slug"
-		}
-		return "the slug " + slugs[role]
-	}
-	items := []initEvidence{
-		{flag: "broker-evidence", description: "OpenRouter's documentation of zero-data-retention routing and its exceptions", proposedURL: initOpenRouterZDRDocs},
-		{flag: "account-evidence", description: "your review of this key's account and guardrail settings (a public page is not an account review)", account: true},
-		{flag: "generation-upstream-evidence", description: "the retention and no-training terms of the finder's upstream provider (" + named("generation") + ")"},
-		{flag: "generation-slug-evidence", description: "evidence that every endpoint " + named("generation") + " can match uses zero data retention", proposedURL: initOpenRouterZDRDocs},
-		{flag: "verification-upstream-evidence", description: "the retention and no-training terms of the checker's upstream provider (" + named("verification") + ")"},
-		{flag: "verification-slug-evidence", description: "evidence that every endpoint " + named("verification") + " can match uses zero data retention", proposedURL: initOpenRouterZDRDocs},
-	}
-	answers := map[string]string{}
-	for _, item := range items {
-		if role, ok := strings.CutPrefix(item.flag, "verification-"); ok && slugs["generation"] != "" && slugs["generation"] == slugs["verification"] {
-			item.reuse, item.reuseLabel = answers["generation-"+role], "finder model"
-		}
-		value, err := w.evidenceItem(item)
-		if err != nil {
-			return err
-		}
-		answers[item.flag] = value
-		extra = append(extra, "--"+item.flag, value)
-	}
-	window, windowFact, err := w.reviewWindow()
-	if err != nil {
-		return err
-	}
-	extra = append(extra, window...)
-	w.a.extra = extra
-	return w.declare("declare-openrouter-zdr-account", "your OpenRouter account privacy", "docs/remote-model-review.md#openrouter-zdr and docs/openrouter-zdr-profile.md", []string{
-		"you checked the account and guardrails that apply to this API key",
-		"Safety Retention is denied for Google and for every other provider",
-		"training on your data and content logging are turned off",
-		"you do not use BYOK (your own provider keys), private endpoints, tools or plugins",
-		"you accept OpenRouter's zero-data-retention terms with their documented exceptions; this is not a promise that nothing is ever retained",
-		windowFact,
-	})
 }
 
 func (w *initWizard) openCodeGoDeclarations() error {

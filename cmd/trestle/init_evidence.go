@@ -26,12 +26,6 @@ import (
 const (
 	initEvidenceMaxBytes = 8 << 20
 	initEvidenceTimeout  = 20 * time.Second
-
-	// The one OpenRouter page docs/openrouter-zdr-profile.md cites for the ZDR
-	// routing contract, its documented exceptions and which endpoints honor it.
-	initOpenRouterZDRDocs = "https://openrouter.ai/docs/guides/features/zdr"
-	// OpenRouter's model list, read only with the operator's key variable.
-	initOpenRouterModels = "https://openrouter.ai/api/v1/models"
 )
 
 // Tests replace the transport; production dials public addresses only.

@@ -31,8 +31,10 @@ import (
 
 // The remote bootstrap writes protected configuration for the direct
 // `local-git model-review --egress policy-approved` path. It has no setup plan,
-// daemon or publication; every provider and account fact is an explicit
-// operator declaration, never something this command observed.
+// daemon or publication. Account facts and consent are explicit operator
+// declarations. For OpenRouter, model and endpoint facts the operator does not
+// give as flags are read from OpenRouter's public API and recorded as reported
+// by it; nothing else is observed.
 
 const (
 	remoteBootstrapContract       = "open-trestle/remote-model-review-bootstrap"
@@ -55,9 +57,14 @@ type remoteBootstrapProvider struct {
 }
 
 var remoteBootstrapProviders = map[string]remoteBootstrapProvider{
-	"openrouter-zdr": {provider.ProviderZoneBrokeredRemote, "openrouter", "https://openrouter.ai/api/v1", runtimeconfig.OpenRouterZDRChatProfile, 3, true},
-	"opencode-go":    {provider.ProviderZoneBrokeredRemote, "opencode-go", "https://opencode.ai/inference/go/openai/v1", runtimeconfig.OpenCodeGoChatProfile, 4, true},
-	"ollama-cloud":   {provider.ProviderZonePrivateRemote, "ollama-cloud", "https://ollama.com/v1", "", 2, false},
+	// Every request requires zero data retention (provider.zdr), limited to the
+	// detected or named provider slugs.
+	"openrouter-zdr": {provider.ProviderZoneBrokeredRemote, "openrouter", "https://openrouter.ai/api/v1", runtimeconfig.OpenRouterZDRChatV2Profile, 8, false},
+	// The same API without that requirement: a generic private_remote route,
+	// like Ollama Cloud. Account or key settings may still enforce ZDR.
+	"openrouter":   {provider.ProviderZonePrivateRemote, "openrouter", "https://openrouter.ai/api/v1", "", 2, false},
+	"opencode-go":  {provider.ProviderZoneBrokeredRemote, "opencode-go", "https://opencode.ai/inference/go/openai/v1", runtimeconfig.OpenCodeGoChatProfile, 4, true},
+	"ollama-cloud": {provider.ProviderZonePrivateRemote, "ollama-cloud", "https://ollama.com/v1", "", 2, false},
 	// A local Ollama daemon signed in to Ollama Cloud: loopback endpoint, no
 	// key, but source leaves the machine, so the zone is private_remote.
 	ollamaSigninProvider: {provider.ProviderZonePrivateRemote, runtimeconfig.OllamaSigninProviderID, ollamaSigninDefaultBaseURL, runtimeconfig.OllamaSigninChatProfile, 7, false},
@@ -86,6 +93,10 @@ type remoteBootstrapResult struct {
 	Messages      []string `json:"messages"`
 	ReviewCommand []string `json:"review_command,omitempty"`
 	Limitations   []string `json:"limitations"`
+	// DataRetention is set for OpenRouter only: required_per_request when every
+	// request sets provider.zdr, not_required_by_open_trestle otherwise. It
+	// states what Open Trestle requires, never what a provider retains.
+	DataRetention string `json:"data_retention,omitempty"`
 }
 
 var remoteBootstrapStringFlags = []string{"provider", "tenant", "repository", "checkout", "base", "head", "repository-authority", "repository-namespace", "repository-name", "generation-model", "verification-model", "generation-credential-environment", "verification-credential-environment", "endpoint", "declared-by", "valid-from", "valid-until", "reviewed-at", "evidence-retrieved-at", "generation-provider-slug", "verification-provider-slug", "generation-upstream-evidence", "verification-upstream-evidence", "generation-slug-evidence", "verification-slug-evidence", "generation-model-evidence", "verification-model-evidence", "broker-evidence", "account-evidence"}
@@ -94,12 +105,19 @@ var remoteBootstrapBoolFlags = []string{"declare-remote-route", "declare-openrou
 
 // Flags that only one provider family may use. Every other flag is common.
 var remoteBootstrapProviderOnlyFlags = map[string][]string{
-	"openrouter-zdr":     {"generation-provider-slug", "verification-provider-slug", "generation-upstream-evidence", "verification-upstream-evidence", "generation-slug-evidence", "verification-slug-evidence", "declare-openrouter-zdr-account"},
+	"openrouter-zdr":     {"generation-provider-slug", "verification-provider-slug"},
 	"opencode-go":        {"generation-model-evidence", "verification-model-evidence", "declare-opencode-go-account"},
 	"ollama-cloud":       {"endpoint"},
 	ollamaSigninProvider: {"endpoint", "declare-ollama-cloud-signin"},
 }
 var remoteBootstrapWitnessFlags = []string{"valid-from", "valid-until", "reviewed-at", "evidence-retrieved-at", "broker-evidence", "account-evidence"}
+
+// Flags the reviewed OpenRouter witness needed. Setup now records OpenRouter's
+// API responses itself, so no provider accepts them.
+var remoteBootstrapRetiredFlags = []string{"generation-upstream-evidence", "verification-upstream-evidence", "generation-slug-evidence", "verification-slug-evidence", "declare-openrouter-zdr-account"}
+
+// OpenRouter facts setup reads from the API unless given as these flags.
+var remoteBootstrapOpenRouterDetected = []string{"context-tokens", "output-tokens", "input-micro-usd-per-million-tokens", "output-micro-usd-per-million-tokens"}
 
 func remoteSetupBootstrapRequested(args []string) bool {
 	if len(args) == 0 {
@@ -145,16 +163,59 @@ func remoteSetupBootstrapRequested(args []string) bool {
 	return json.Unmarshal(content, &header) == nil && header.Contract == remoteBootstrapContract
 }
 
-func remoteBootstrapLimitations(providerName string) []string {
+func remoteBootstrapLimitations(providerName string, policy runtimeconfig.RuntimePolicy) []string {
 	if providerName == ollamaSigninProvider {
 		return []string{"operator_declared_provider_account_and_model_facts_not_verified", "loopback_ollama_model_list_read_no_model_call_during_setup", "ollama_cloud_signin_not_verified_by_setup", "ready_is_local_prerequisites_not_review_clearance", "foreground_review_is_ephemeral_no_resume", "no_publication", "no_credential_provisioning"}
+	}
+	if remoteOpenRouterObserved(providerName, policy) {
+		limitations := []string{"openrouter_api_reported_model_facts_not_verified", "operator_declared_consent_and_account_settings_not_verified", "openrouter_public_api_read_no_model_call_during_setup"}
+		if remoteDataRetention(policy) == "not_required_by_open_trestle" {
+			limitations = append(limitations, "zero_data_retention_not_required_by_open_trestle")
+		}
+		return append(limitations, "ready_is_local_prerequisites_not_review_clearance", "foreground_review_is_ephemeral_no_resume", "no_publication", "no_credential_provisioning")
 	}
 	return []string{"operator_declared_provider_account_and_model_facts_not_verified", "no_network_or_model_call_during_setup", "ready_is_local_prerequisites_not_review_clearance", "foreground_review_is_ephemeral_no_resume", "no_publication", "no_credential_provisioning"}
 }
 
+// remoteOpenRouterObserved reports an OpenRouter setup whose facts came from
+// OpenRouter's API: the provider name of an init, or the profile and endpoint
+// of a saved policy. A reviewed (v1 profile) setup is not one.
+func remoteOpenRouterObserved(providerName string, policy runtimeconfig.RuntimePolicy) bool {
+	connections := policy.Connections()
+	if len(connections) == 0 {
+		return providerName == "openrouter" || providerName == "openrouter-zdr"
+	}
+	for _, connection := range connections {
+		if connection.RequestProfile() == runtimeconfig.OpenRouterZDRChatV2Profile || connection.RequestProfile() == "" && connection.Endpoint() == "https://openrouter.ai/api/v1" {
+			return true
+		}
+	}
+	return false
+}
+
+// remoteDataRetention names what an OpenRouter policy requires of every
+// request, or "" for a policy with no OpenRouter connection.
+func remoteDataRetention(policy runtimeconfig.RuntimePolicy) string {
+	value := ""
+	for _, connection := range policy.Connections() {
+		if connection.Endpoint() != "https://openrouter.ai/api/v1" {
+			continue
+		}
+		if !connection.RequiresZeroDataRetention() {
+			return "not_required_by_open_trestle"
+		}
+		value = "required_per_request"
+	}
+	return value
+}
+
 func writeRemoteBootstrapRefusal(stdout, stderr io.Writer, reason string) int {
+	return writeRemoteBootstrapRefusalFor(stdout, stderr, reason, "")
+}
+
+func writeRemoteBootstrapRefusalFor(stdout, stderr io.Writer, reason, providerName string) int {
 	fmt.Fprintln(stderr, "trestle setup bootstrap: "+reason)
-	result := remoteBootstrapResult{Contract: remoteBootstrapResultContract, Version: 1, Status: "refused", Pending: []string{}, Refused: []string{"configuration_validated"}, Messages: []string{reason}, Limitations: remoteBootstrapLimitations("")}
+	result := remoteBootstrapResult{Contract: remoteBootstrapResultContract, Version: 1, Status: "refused", Pending: []string{}, Refused: []string{"configuration_validated"}, Messages: []string{reason}, Limitations: remoteBootstrapLimitations(providerName, runtimeconfig.RuntimePolicy{})}
 	if json.NewEncoder(stdout).Encode(result) != nil {
 		return 1
 	}
@@ -162,7 +223,7 @@ func writeRemoteBootstrapRefusal(stdout, stderr io.Writer, reason string) int {
 }
 
 func writeRemoteSetupBootstrapUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: trestle setup bootstrap init --provider openrouter-zdr|opencode-go|ollama-cloud|ollama-signin --directory PATH --tenant ID --repository ID --checkout PATH --base FULL_REF_OR_COMMIT --head FULL_REF_OR_COMMIT --repository-authority LABEL --repository-namespace NAME --repository-name NAME --generation-model ID --verification-model ID [--generation-credential-environment OPEN_TRESTLE_PROVIDER_NAME [--verification-credential-environment OPEN_TRESTLE_PROVIDER_NAME]] --declared-by NAME --context-tokens N --output-tokens N [--max-output-tokens N] --input-micro-usd-per-million-tokens N --output-micro-usd-per-million-tokens N --max-cost-micro-usd N --declare-remote-route [provider declarations, see docs/remote-model-review.md]")
+	fmt.Fprintln(w, "usage: trestle setup bootstrap init --provider openrouter-zdr|openrouter|opencode-go|ollama-cloud|ollama-signin --directory PATH --tenant ID --repository ID --checkout PATH --base FULL_REF_OR_COMMIT --head FULL_REF_OR_COMMIT --repository-authority LABEL --repository-namespace NAME --repository-name NAME --generation-model ID --verification-model ID [--generation-credential-environment OPEN_TRESTLE_PROVIDER_NAME [--verification-credential-environment OPEN_TRESTLE_PROVIDER_NAME]] --declared-by NAME --context-tokens N --output-tokens N [--max-output-tokens N] --input-micro-usd-per-million-tokens N --output-micro-usd-per-million-tokens N --max-cost-micro-usd N --declare-remote-route [provider declarations, see docs/remote-model-review.md]")
 	fmt.Fprintln(w, "       trestle setup bootstrap check --directory PATH")
 	fmt.Fprintln(w, "       trestle setup bootstrap inspect --directory PATH")
 }
@@ -224,7 +285,7 @@ func runRemoteSetupBootstrap(ctx context.Context, args []string, stdout, stderr 
 	}
 	if args[0] == "init" {
 		if err := initializeRemoteSetupBootstrap(ctx, directoryAbs, values, numbers, declarations, set, clock); err != nil {
-			return writeRemoteBootstrapRefusal(stdout, stderr, err.Error())
+			return writeRemoteBootstrapRefusalFor(stdout, stderr, err.Error(), *values["provider"])
 		}
 	}
 	manifest, inventory, policy, err := loadRemoteSetupBootstrap(ctx, directoryAbs)
@@ -247,7 +308,7 @@ func runRemoteSetupBootstrap(ctx context.Context, args []string, stdout, stderr 
 }
 
 func checkRemoteSetupBootstrap(ctx context.Context, manifest remoteBootstrapManifest, inventory runtimeconfig.RouteInventory, policy runtimeconfig.RuntimePolicy, now time.Time) remoteBootstrapResult {
-	result := remoteBootstrapResult{Contract: remoteBootstrapResultContract, Version: 1, Provider: manifest.Provider, Inventory: manifest.Inventory, Policy: manifest.Policy, Pending: []string{}, Refused: []string{}, Messages: []string{}, ReviewCommand: manifest.ReviewCommand, Limitations: remoteBootstrapLimitations(manifest.Provider)}
+	result := remoteBootstrapResult{Contract: remoteBootstrapResultContract, Version: 1, Provider: manifest.Provider, Inventory: manifest.Inventory, Policy: manifest.Policy, Pending: []string{}, Refused: []string{}, Messages: []string{}, ReviewCommand: manifest.ReviewCommand, Limitations: remoteBootstrapLimitations(manifest.Provider, policy), DataRetention: remoteDataRetention(policy)}
 	pending := func(key, message string) {
 		result.Pending = append(result.Pending, key)
 		result.Messages = append(result.Messages, message)
@@ -387,17 +448,6 @@ type remoteWitnessRoute struct {
 }
 
 // Field order is identity-bearing: it must match the runtimeconfig account preimages.
-type openRouterAccountDeclaration struct {
-	AuthorityLabel                 string         `json:"authority_label"`
-	CredentialReferenceIdentity    string         `json:"credential_reference_identity"`
-	ContentLogging                 string         `json:"content_logging"`
-	Training                       string         `json:"training"`
-	SafetyRetentionScope           string         `json:"safety_retention_scope"`
-	EffectiveSafetyRetentionGoogle string         `json:"effective_safety_retention_google"`
-	EffectiveSafetyRetentionOther  string         `json:"effective_safety_retention_other"`
-	ReviewEvidence                 remoteEvidence `json:"review_evidence"`
-}
-
 type openCodeGoAccountDeclaration struct {
 	AuthorityLabel              string         `json:"authority_label"`
 	CredentialReferenceIdentity string         `json:"credential_reference_identity"`
@@ -470,8 +520,9 @@ func initializeRemoteSetupBootstrap(ctx context.Context, dir string, values map[
 	name := value("provider")
 	family, ok := remoteBootstrapProviders[name]
 	if !ok {
-		return errors.New("--provider must be openrouter-zdr, opencode-go, ollama-cloud or ollama-signin")
+		return errors.New("--provider must be openrouter-zdr, openrouter, opencode-go, ollama-cloud or ollama-signin")
 	}
+	openRouter := family.providerID == "openrouter"
 	allowed := map[string]bool{"directory": true}
 	for _, flagName := range append(append(append([]string{}, remoteBootstrapStringFlags...), remoteBootstrapUintFlags...), remoteBootstrapBoolFlags...) {
 		allowed[flagName] = true
@@ -487,25 +538,35 @@ func initializeRemoteSetupBootstrap(ctx context.Context, dir string, values map[
 	for _, flagName := range remoteBootstrapWitnessFlags {
 		allowed[flagName] = family.witness
 	}
+	for _, flagName := range remoteBootstrapRetiredFlags {
+		allowed[flagName] = false
+	}
 	if name == ollamaSigninProvider {
 		// The daemon uses its own `ollama signin` account; no key is sent.
 		allowed["generation-credential-environment"], allowed["verification-credential-environment"] = false, false
 	}
 	for flagName := range set {
 		if !allowed[flagName] {
+			if openRouter && (slices.Contains(remoteBootstrapRetiredFlags, flagName) || slices.Contains(remoteBootstrapWitnessFlags, flagName)) {
+				return fmt.Errorf("--%s is no longer used: OpenRouter setup records OpenRouter's API responses itself and needs no evidence, timestamps or review window (docs/openrouter-zdr-profile.md)", flagName)
+			}
+			if name == "openrouter" && strings.HasSuffix(flagName, "-provider-slug") {
+				return fmt.Errorf("--%s applies only with zero data retention (--provider openrouter-zdr)", flagName)
+			}
 			if name == ollamaSigninProvider && strings.HasSuffix(flagName, "-credential-environment") {
 				return fmt.Errorf("--%s does not apply to --provider %s: it sends no key; your local Ollama uses its own `ollama signin` account", flagName, name)
 			}
 			return fmt.Errorf("--%s does not apply to --provider %s", flagName, name)
 		}
 	}
-	required := []string{"tenant", "repository", "checkout", "base", "head", "repository-authority", "repository-namespace", "repository-name", "generation-model", "verification-model", "declared-by", "context-tokens", "output-tokens", "input-micro-usd-per-million-tokens", "output-micro-usd-per-million-tokens", "max-cost-micro-usd"}
+	required := []string{"tenant", "repository", "checkout", "base", "head", "repository-authority", "repository-namespace", "repository-name", "generation-model", "verification-model", "declared-by", "max-cost-micro-usd"}
+	if !openRouter {
+		required = append(required, remoteBootstrapOpenRouterDetected...)
+	}
 	if name != ollamaSigninProvider {
 		required = append(required, "generation-credential-environment")
 	}
 	switch name {
-	case "openrouter-zdr":
-		required = append(required, "generation-provider-slug", "verification-provider-slug", "generation-upstream-evidence", "verification-upstream-evidence", "generation-slug-evidence", "verification-slug-evidence")
 	case "opencode-go":
 		required = append(required, "generation-model-evidence", "verification-model-evidence")
 	}
@@ -522,11 +583,11 @@ func initializeRemoteSetupBootstrap(ctx context.Context, dir string, values map[
 			return fmt.Errorf("--%s is too long", flagName)
 		}
 	}
+	if openRouter && !*declarations["declare-remote-route"] {
+		return errors.New("refusing to send source to OpenRouter without consent: pass --declare-remote-route to consent that each review sends the selected source, after secret scanning, to OpenRouter for both models, and to state that prompt logging is off for the key")
+	}
 	if !*declarations["declare-remote-route"] {
 		return errors.New("refusing to invent route facts: pass --declare-remote-route to declare, as the operator, both models' context/output capacity, structured JSON output, disabled content logging, the stated prices and current availability")
-	}
-	if name == "openrouter-zdr" && !*declarations["declare-openrouter-zdr-account"] {
-		return errors.New("refusing to claim OpenRouter ZDR: pass --declare-openrouter-zdr-account only after reviewing that the key's effective account and guardrails deny Safety Retention for Google and other providers, disable training and content logging, and that BYOK, private endpoints, tools and plugins are unused")
 	}
 	if name == "opencode-go" && !*declarations["declare-opencode-go-account"] {
 		return errors.New("refusing to claim OpenCode Go privacy: pass --declare-opencode-go-account only after reviewing that the key belongs to a single-member Go workspace with privacy training and extra usage disabled, and that both models document zero-day retention without training")
@@ -552,6 +613,15 @@ func initializeRemoteSetupBootstrap(ctx context.Context, dir string, values map[
 	declaredBy := value("declared-by")
 	if len(declaredBy) > 64 || strings.TrimSpace(declaredBy) != declaredBy || strings.ContainsFunc(declaredBy, unicode.IsControl) {
 		return errors.New("--declared-by must be a short printable operator name")
+	}
+	var detected openRouterPlan
+	if openRouter {
+		models := map[string]string{"generation": value("generation-model"), "verification": value("verification-model")}
+		slugs := map[string]string{"generation": value("generation-provider-slug"), "verification": value("verification-provider-slug")}
+		var err error
+		if detected, err = planOpenRouter(observeOpenRouter(ctx, clock), family.profile != "", models, slugs, set, numbers); err != nil {
+			return err
+		}
 	}
 	endpoint := family.endpoint
 	if set["endpoint"] && name == ollamaSigninProvider {
@@ -617,11 +687,6 @@ func initializeRemoteSetupBootstrap(ctx context.Context, dir string, values map[
 			return err
 		}
 	}
-	for _, role := range []string{"generation", "verification"} {
-		if name == "openrouter-zdr" && !remoteValidSlug(value(role+"-provider-slug")) {
-			return fmt.Errorf("--%s-provider-slug must be a lowercase OpenRouter provider slug such as anthropic or deepinfra/fp8", role)
-		}
-	}
 
 	checkout, err := filepath.Abs(value("checkout"))
 	if err != nil {
@@ -662,25 +727,9 @@ func initializeRemoteSetupBootstrap(ctx context.Context, dir string, values map[
 		manifest := map[string]any{"open_trestle_bootstrap_declaration": declaration}
 		switch name {
 		case "openrouter-zdr":
-			upstream, err := evidenceFor(role + "-upstream-evidence")
-			if err != nil {
-				return err
-			}
-			slug, err := evidenceFor(role + "-slug-evidence")
-			if err != nil {
-				return err
-			}
-			declared := openRouterAccountDeclaration{AuthorityLabel: authorityLabel, CredentialReferenceIdentity: credentialIdentity, ContentLogging: "disabled", Training: "disabled", SafetyRetentionScope: "effective_account_and_guardrails", EffectiveSafetyRetentionGoogle: "denied", EffectiveSafetyRetentionOther: "denied", ReviewEvidence: account}
-			accounts[role] = remoteAccountIdentity("open-trestle/openrouter-account-policy", 2, declared)
-			manifest["openrouter_privacy"] = map[string]any{
-				"contract": "open-trestle/openrouter-privacy-witness", "schema_version": 2, "route": route, "endpoint": family.endpoint, "request_profile": family.profile, "protocol": "openai_chat_completions", "credential_mode": "bearer",
-				"provider_slug": value(role + "-provider-slug"), "provider_slug_scope": "all_slug_matches",
-				"upstream":      map[string]any{"retention_contract": "openrouter_zdr_with_documented_exceptions", "training": "disabled", "evidence": upstream},
-				"broker":        map[string]any{"retention_contract": "openrouter_zdr_with_documented_exceptions", "evidence": broker},
-				"slug_evidence": slug, "account": declared, "tenant_id": value("tenant"), "repository_id": value("repository"),
-				"accepted_retention_contract": "openrouter_zdr_with_documented_exceptions", "reviewed_at": reviewedAt, "valid_from": validFrom, "valid_until": validUntil,
-				"byok": "excluded", "private_endpoints": "excluded", "tools": "excluded", "plugins": "excluded",
-			}
+			manifest["openrouter_privacy"] = detected.witness(role, route, credentialIdentity, value("tenant"), value("repository"))
+		case "openrouter":
+			manifest["openrouter_route"] = detected.routeObservation(role)
 		case ollamaSigninProvider:
 			tag := observed[role]
 			manifest["ollama_daemon_observation"] = map[string]any{"source": "GET /api/tags on the loopback daemon during setup", "listed_name": tag.Name, "remote_model": tag.RemoteModel, "remote_host": tag.RemoteHost, "limitations": "an observation of the daemon's model list, not proof of sign-in, account state or Ollama Cloud retention"}
@@ -723,17 +772,17 @@ func initializeRemoteSetupBootstrap(ctx context.Context, dir string, values map[
 	}
 	for i, role := range []string{"generation", "verification"} {
 		record := records[family.providerID+"-"+role]
+		if family.profile == runtimeconfig.OpenRouterZDRChatV2Profile {
+			connections[i]["request_profile"] = family.profile
+			connections[i]["brokered_route_authority"] = map[string]any{"route_record_identity": record.Identity(), "evidence_manifest_digest": record.EvidenceManifestDigest(), "tenant_id": value("tenant"), "repository_id": value("repository"), "provider_slugs": detected.slugs[role]}
+			continue
+		}
 		if !family.witness {
 			continue
 		}
 		authority := map[string]any{"route_record_identity": record.Identity(), "evidence_manifest_digest": record.EvidenceManifestDigest(), "account_policy_identity": accounts[role], "tenant_id": value("tenant"), "repository_id": value("repository"), "valid_from": validFrom, "valid_until": validUntil}
 		connections[i]["request_profile"] = family.profile
-		if name == "openrouter-zdr" {
-			authority["provider_slug"] = value(role + "-provider-slug")
-			connections[i]["brokered_route_authority"] = authority
-		} else {
-			connections[i]["opencode_go_authority"] = authority
-		}
+		connections[i]["opencode_go_authority"] = authority
 	}
 	generation, verification := records[family.providerID+"-generation"], records[family.providerID+"-verification"]
 	reviewPolicy := sha256.Sum256([]byte("open-trestle/remote-model-review-bootstrap/review-policy/v1/" + name + "/distinct-model/no-publication"))

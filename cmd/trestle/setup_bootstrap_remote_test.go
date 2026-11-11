@@ -31,11 +31,15 @@ var remoteTestDigest = strings.Repeat("ab", 32)
 type remoteModelTransport struct {
 	t      *testing.T
 	target string
-	models map[string]string // model -> expected OpenRouter slug ("" for no provider controls)
+	// models maps each model to the JSON list its request must pin with
+	// OpenRouter's only and order ("[]" requires zero data retention without
+	// pinning), or "" for a request without provider controls.
+	models map[string]string
 	// anonymous expects no Authorization header at all (the Ollama sign-in route).
 	anonymous bool
 	mu        sync.Mutex
-	requests  []string // "task:model"
+	requests  []string                     // "task:model"
+	providers []map[string]json.RawMessage // each request's provider object, nil when absent
 }
 
 func (r *remoteModelTransport) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -61,17 +65,25 @@ func (r *remoteModelTransport) RoundTrip(request *http.Request) (*http.Response,
 	if json.Unmarshal(body, &wire) != nil || wire.MaxTokens != 4096 || wire.Stream || len(wire.Messages) != 2 || wire.Messages[0].Role != "system" || wire.Messages[1].Role != "user" {
 		return nil, errors.New("remote request lost the bounded Chat Completions wire")
 	}
-	slug, known := r.models[wire.Model]
+	slugs, known := r.models[wire.Model]
 	if !known {
 		return nil, fmt.Errorf("remote request used undeclared model %q", wire.Model)
 	}
-	if slug == "" && wire.Provider != nil {
+	if slugs == "" && wire.Provider != nil {
 		return nil, errors.New("direct remote request carried provider routing controls")
 	}
-	if slug != "" {
-		for key, expected := range map[string]string{"zdr": "true", "only": `["` + slug + `"]`, "order": `["` + slug + `"]`, "allow_fallbacks": "false", "require_parameters": "true"} {
+	if slugs != "" {
+		expected := map[string]string{"zdr": "true", "only": slugs, "order": slugs, "allow_fallbacks": "false", "require_parameters": "true"}
+		if slugs == "[]" {
+			delete(expected, "only")
+			delete(expected, "order")
+			if _, pinned := wire.Provider["only"]; pinned || wire.Provider["order"] != nil {
+				return nil, errors.New("an unpinned OpenRouter request sent a slug list")
+			}
+		}
+		for key, want := range expected {
 			var compact bytes.Buffer
-			if json.Compact(&compact, wire.Provider[key]) != nil || compact.String() != expected {
+			if json.Compact(&compact, wire.Provider[key]) != nil || compact.String() != want {
 				return nil, fmt.Errorf("OpenRouter routing control %s lost", key)
 			}
 		}
@@ -122,10 +134,11 @@ func (r *remoteModelTransport) RoundTrip(request *http.Request) (*http.Response,
 	}
 	r.mu.Lock()
 	r.requests = append(r.requests, packet.Task+":"+wire.Model)
+	r.providers = append(r.providers, wire.Provider)
 	r.mu.Unlock()
 	text, _ := json.Marshal(output)
 	usage := map[string]any{"prompt_tokens": 120, "completion_tokens": 80, "total_tokens": 200}
-	if slug != "" {
+	if strings.HasPrefix(r.target, "https://openrouter.ai/") {
 		usage["cost"], usage["is_byok"] = 0.0012, false
 		usage["cost_details"] = map[string]any{"upstream_inference_prompt_cost": 0.0008, "upstream_inference_completions_cost": 0.0004, "upstream_inference_cost": nil}
 	}
@@ -162,9 +175,13 @@ func remoteBootstrapArgs(t *testing.T, providerName string) ([]string, string) {
 	args := []string{"init", "--provider", providerName, "--directory", directory, "--tenant", "tenant-remote", "--repository", "repository-remote", "--checkout", remoteBootstrapCheckout(t), "--base", "refs/heads/base", "--head", "refs/heads/review", "--repository-authority", "example.test", "--repository-namespace", "private/team", "--repository-name", "sample", "--generation-model", "vendor/generator", "--verification-model", "other/verifier", "--generation-credential-environment", "OPEN_TRESTLE_PROVIDER_REMOTE_TEST", "--declared-by", "fixture-operator", "--context-tokens", "128000", "--output-tokens", "8192", "--input-micro-usd-per-million-tokens", "1000000", "--output-micro-usd-per-million-tokens", "2000000", "--max-cost-micro-usd", "1000000", "--declare-remote-route"}
 	witness := []string{"--evidence-retrieved-at", reviewed, "--reviewed-at", reviewed, "--valid-from", now.Add(-time.Hour).Format(time.RFC3339), "--valid-until", now.Add(24 * time.Hour).Format(time.RFC3339), "--broker-evidence", "https://evidence.fixture.invalid/broker," + remoteTestDigest, "--account-evidence", "https://evidence.fixture.invalid/account," + remoteTestDigest}
 	switch providerName {
-	case "openrouter-zdr":
-		args = append(args, witness...)
-		args = append(args, "--generation-provider-slug", "fixture-upstream/region", "--verification-provider-slug", "other-upstream", "--generation-upstream-evidence", "https://evidence.fixture.invalid/gen-upstream,"+remoteTestDigest, "--verification-upstream-evidence", "https://evidence.fixture.invalid/ver-upstream,"+remoteTestDigest, "--generation-slug-evidence", "https://evidence.fixture.invalid/gen-slug,"+remoteTestDigest, "--verification-slug-evidence", "https://evidence.fixture.invalid/ver-slug,"+remoteTestDigest, "--declare-openrouter-zdr-account")
+	case "openrouter-zdr", "openrouter":
+		// Context, output and prices come from the fake OpenRouter API.
+		for _, name := range remoteBootstrapOpenRouterDetected {
+			index := slices.Index(args, "--"+name)
+			args = slices.Delete(args, index, index+2)
+		}
+		fakeOpenRouter(t, fakeORFinder, fakeORChecker, fakeORNoZDR)
 	case "opencode-go":
 		args = append(args, witness...)
 		args = append(args, "--generation-model-evidence", "https://evidence.fixture.invalid/gen-model,"+remoteTestDigest, "--verification-model-evidence", "https://evidence.fixture.invalid/ver-model,"+remoteTestDigest, "--declare-opencode-go-account")
@@ -212,7 +229,8 @@ func TestSetupBootstrapRemoteDirectPolicyApprovedReview(t *testing.T) {
 		provider, target, generator, verifier string
 		models                                map[string]string
 	}{
-		{"openrouter-zdr", "https://openrouter.ai/api/v1/chat/completions", "vendor/generator", "other/verifier", map[string]string{"vendor/generator": "fixture-upstream/region", "other/verifier": "other-upstream"}},
+		{"openrouter-zdr", "https://openrouter.ai/api/v1/chat/completions", "vendor/generator", "other/verifier", map[string]string{"vendor/generator": `["fixture-cloud","fixture-cloud/us"]`, "other/verifier": `["fixture-host/fp8"]`}},
+		{"openrouter", "https://openrouter.ai/api/v1/chat/completions", "vendor/generator", "other/verifier", map[string]string{"vendor/generator": "", "other/verifier": ""}},
 		{"ollama-cloud", "https://ollama.com/v1/chat/completions", "gemma4:31b", "qwen3.5:397b", map[string]string{"gemma4:31b": "", "qwen3.5:397b": ""}},
 		{"opencode-go", "https://opencode.ai/inference/go/openai/v1/chat/completions", "vendor/generator", "other/verifier", map[string]string{"vendor/generator": "", "other/verifier": ""}},
 	} {
@@ -230,9 +248,13 @@ func TestSetupBootstrapRemoteDirectPolicyApprovedReview(t *testing.T) {
 					t.Fatal("remote bootstrap did not protect", name, err)
 				}
 			}
-			// Re-running init with identical declarations is idempotent.
-			if again, _ := remoteBootstrapInvoke(t, args, 3); again.Policy != initial.Policy || again.Inventory != initial.Inventory {
-				t.Fatal("repeated init changed derived identities")
+			// Re-running init with identical declarations is idempotent. An
+			// OpenRouter init records when it read the API, so a repeat in a
+			// later second is a new observation and is checked elsewhere.
+			if !strings.HasPrefix(test.provider, "openrouter") {
+				if again, _ := remoteBootstrapInvoke(t, args, 3); again.Policy != initial.Policy || again.Inventory != initial.Inventory {
+					t.Fatal("repeated init changed derived identities")
+				}
 			}
 			t.Setenv("OPEN_TRESTLE_PROVIDER_REMOTE_TEST", remoteTestKey)
 			ready, _ := remoteBootstrapInvoke(t, []string{"check", "--directory", dir}, 0)
@@ -307,7 +329,7 @@ func TestSetupBootstrapRemoteRefusesInventedOrUnsafeInput(t *testing.T) {
 		mutate                 func([]string) []string
 	}{
 		{"missing route declaration", "ollama-cloud", "--declare-remote-route", func(a []string) []string { return without(a, "--declare-remote-route") }},
-		{"missing ZDR declaration", "openrouter-zdr", "refusing to claim OpenRouter ZDR", func(a []string) []string { return without(a, "--declare-openrouter-zdr-account") }},
+		{"missing OpenRouter consent", "openrouter-zdr", "refusing to send source to OpenRouter without consent", func(a []string) []string { return without(a, "--declare-remote-route") }},
 		{"missing OpenCode Go declaration", "opencode-go", "refusing to claim OpenCode Go privacy", func(a []string) []string { return without(a, "--declare-opencode-go-account") }},
 		{"credential value instead of name", "openrouter-zdr", "never a key value", func(a []string) []string {
 			return replaceLocalGitChangeValue(a, "--generation-credential-environment", "sk-or-v1-"+strings.Repeat("a", 32))
@@ -315,14 +337,22 @@ func TestSetupBootstrapRemoteRefusesInventedOrUnsafeInput(t *testing.T) {
 		{"loopback endpoint", "ollama-cloud", "remote HTTPS base URL", func(a []string) []string { return append(a, "--endpoint", "http://127.0.0.1:11434/v1") }},
 		{"endpoint on fixed profile", "openrouter-zdr", "does not apply", func(a []string) []string { return append(a, "--endpoint", "https://example.test/v1") }},
 		{"same model", "ollama-cloud", "must differ", func(a []string) []string { return replaceLocalGitChangeValue(a, "--verification-model", "gemma4:31b") }},
-		{"missing evidence", "openrouter-zdr", "missing required --generation-slug-evidence", func(a []string) []string {
-			index := slices.Index(a, "--generation-slug-evidence")
-			return slices.Delete(slices.Clone(a), index, index+2)
+		{"retired evidence", "openrouter-zdr", "--generation-slug-evidence is no longer used", func(a []string) []string {
+			return append(a, "--generation-slug-evidence", "https://evidence.fixture.invalid/slug,"+remoteTestDigest)
+		}},
+		{"retired account declaration", "openrouter", "--declare-openrouter-zdr-account is no longer used", func(a []string) []string { return append(a, "--declare-openrouter-zdr-account") }},
+		{"slug without zero data retention", "openrouter", "applies only with zero data retention", func(a []string) []string { return append(a, "--generation-provider-slug", "fixture-cloud") }},
+		{"model without zero data retention", "openrouter-zdr", "plain/verifier has no zero-data-retention endpoint", func(a []string) []string {
+			return replaceLocalGitChangeValue(a, "--verification-model", "plain/verifier")
+		}},
+		{"model not listed", "openrouter", "does not list the model missing/model", func(a []string) []string {
+			return replaceLocalGitChangeValue(a, "--verification-model", "missing/model")
 		}},
 		{"evidence without digest", "opencode-go", "SHA-256", func(a []string) []string {
 			return replaceLocalGitChangeValue(a, "--broker-evidence", "https://evidence.fixture.invalid/broker,")
 		}},
-		{"noncanonical time", "openrouter-zdr", "canonical UTC", func(a []string) []string { return replaceLocalGitChangeValue(a, "--valid-until", "tomorrow") }},
+		{"noncanonical time", "opencode-go", "canonical UTC", func(a []string) []string { return replaceLocalGitChangeValue(a, "--valid-until", "tomorrow") }},
+		{"retired review window", "openrouter-zdr", "--valid-until is no longer used", func(a []string) []string { return append(a, "--valid-until", "2026-12-01T00:00:00Z") }},
 		{"unpayable budget", "ollama-cloud", "cannot cover", func(a []string) []string { return replaceLocalGitChangeValue(a, "--max-cost-micro-usd", "1") }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
