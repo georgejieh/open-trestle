@@ -698,9 +698,15 @@ func classifyHTTPFailure(response *http.Response) gateway.RouteDispatchResult {
 	case http.StatusRequestTimeout, http.StatusGatewayTimeout:
 		return failed(gateway.RouteFailureTimeout, gateway.RouteReplayOutcomeUnknown, 0)
 	case http.StatusTooManyRequests:
-		return failed(gateway.RouteFailureRateLimited, gateway.RouteReplayNoSideEffect, retryAfterMilliseconds(response.Header.Get("Retry-After")))
+		return rateLimited(retryAfterMilliseconds(response.Header.Get("Retry-After")))
 	case http.StatusRequestEntityTooLarge:
 		return failed(gateway.RouteFailureBudgetExhausted, gateway.RouteReplayNoSideEffect, 0)
+	case http.StatusServiceUnavailable:
+		// Only a 503 that names how long to wait is a refusal before
+		// processing; without a delay in seconds it is a server failure.
+		if retryAfter := retryAfterMilliseconds(response.Header.Get("Retry-After")); retryAfter != 0 {
+			return rateLimited(retryAfter)
+		}
 	}
 	if response.StatusCode >= 500 {
 		return failed(gateway.RouteFailureProviderServer, gateway.RouteReplayOutcomeUnknown, 0)
@@ -1090,6 +1096,16 @@ func requireJSONEOF(decoder *json.Decoder) error {
 		return ErrInvalidConfig
 	}
 	return nil
+}
+
+// rateLimited is a provider's refusal before processing the request (HTTP 429,
+// or a 503 that names a Retry-After). The provider processed nothing, so the
+// attempt consumed nothing: its usage is known zero, never assumed for any
+// other failure.
+func rateLimited(retryAfter uint32) gateway.RouteDispatchResult {
+	zero, _ := provider.NewRouteTokenUsage(0, 0, 0)
+	result, _ := gateway.NewFailedRouteDispatchResult(gateway.RouteFailureRateLimited, gateway.RouteReplayNoSideEffect, zero, retryAfter)
+	return result
 }
 
 func failed(failure gateway.RouteFailureClass, safety gateway.RouteReplaySafety, retryAfter uint32) gateway.RouteDispatchResult {

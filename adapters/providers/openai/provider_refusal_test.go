@@ -65,30 +65,40 @@ func TestExecuteClassifiesProviderRefusalsWithoutProviderText(t *testing.T) {
 
 // TestHTTPFailureClassificationNamesEachProviderStatus pins the one status
 // classification every request profile uses, the OpenCode console included,
-// and requires it to close the body it does not read.
+// and requires it to close the body it does not read. A 429, and a 503 that
+// names a Retry-After, is a refusal before processing: it records known zero
+// usage. Every other failure keeps unknown usage.
 func TestHTTPFailureClassificationNamesEachProviderStatus(t *testing.T) {
 	for _, test := range []struct {
-		status  int
-		failure gateway.RouteFailureClass
-		safety  gateway.RouteReplaySafety
-		retry   uint32
+		status     int
+		retryAfter string
+		failure    gateway.RouteFailureClass
+		safety     gateway.RouteReplaySafety
+		retry      uint32
+		zero       bool
 	}{
-		{http.StatusUnauthorized, gateway.RouteFailureAuthentication, gateway.RouteReplayNoSideEffect, 0},
-		{http.StatusPaymentRequired, gateway.RouteFailurePaymentRequired, gateway.RouteReplayNoSideEffect, 0},
-		{http.StatusForbidden, gateway.RouteFailureAuthorization, gateway.RouteReplayNoSideEffect, 0},
-		{http.StatusNotFound, gateway.RouteFailureModelUnavailable, gateway.RouteReplayNoSideEffect, 0},
-		{http.StatusGone, gateway.RouteFailureModelRetired, gateway.RouteReplayNoSideEffect, 0},
-		{http.StatusTooManyRequests, gateway.RouteFailureRateLimited, gateway.RouteReplayNoSideEffect, 7000},
-		{http.StatusInternalServerError, gateway.RouteFailureProviderServer, gateway.RouteReplayOutcomeUnknown, 0},
-		{http.StatusServiceUnavailable, gateway.RouteFailureProviderServer, gateway.RouteReplayOutcomeUnknown, 0},
-		{http.StatusBadRequest, gateway.RouteFailureInvalidResponse, gateway.RouteReplayNoSideEffect, 0},
+		{http.StatusUnauthorized, "7", gateway.RouteFailureAuthentication, gateway.RouteReplayNoSideEffect, 0, false},
+		{http.StatusPaymentRequired, "7", gateway.RouteFailurePaymentRequired, gateway.RouteReplayNoSideEffect, 0, false},
+		{http.StatusForbidden, "7", gateway.RouteFailureAuthorization, gateway.RouteReplayNoSideEffect, 0, false},
+		{http.StatusNotFound, "7", gateway.RouteFailureModelUnavailable, gateway.RouteReplayNoSideEffect, 0, false},
+		{http.StatusGone, "7", gateway.RouteFailureModelRetired, gateway.RouteReplayNoSideEffect, 0, false},
+		{http.StatusTooManyRequests, "7", gateway.RouteFailureRateLimited, gateway.RouteReplayNoSideEffect, 7000, true},
+		{http.StatusTooManyRequests, "", gateway.RouteFailureRateLimited, gateway.RouteReplayNoSideEffect, 0, true},
+		{http.StatusInternalServerError, "7", gateway.RouteFailureProviderServer, gateway.RouteReplayOutcomeUnknown, 0, false},
+		{http.StatusServiceUnavailable, "7", gateway.RouteFailureRateLimited, gateway.RouteReplayNoSideEffect, 7000, true},
+		{http.StatusServiceUnavailable, "", gateway.RouteFailureProviderServer, gateway.RouteReplayOutcomeUnknown, 0, false},
+		{http.StatusServiceUnavailable, "Wed, 21 Oct 2026 07:28:00 GMT", gateway.RouteFailureProviderServer, gateway.RouteReplayOutcomeUnknown, 0, false},
+		{http.StatusServiceUnavailable, "0", gateway.RouteFailureProviderServer, gateway.RouteReplayOutcomeUnknown, 0, false},
+		{http.StatusBadRequest, "7", gateway.RouteFailureInvalidResponse, gateway.RouteReplayNoSideEffect, 0, false},
 	} {
-		t.Run(http.StatusText(test.status), func(t *testing.T) {
+		t.Run(http.StatusText(test.status)+"/"+test.retryAfter, func(t *testing.T) {
 			body := &closeRecorder{Reader: strings.NewReader(providerPaymentBody)}
-			response := &http.Response{StatusCode: test.status, Header: http.Header{"Retry-After": []string{"7"}}, Body: body}
+			response := &http.Response{StatusCode: test.status, Header: http.Header{"Retry-After": []string{test.retryAfter}}, Body: body}
 			result := classifyHTTPFailure(response)
-			if result.Failure() != test.failure || result.ReplaySafety() != test.safety || result.RetryAfterMilliseconds() != test.retry || result.Usage().IsKnown() || result.Validate() != nil || !body.closed {
-				t.Fatalf("status %d = %s/%s retry %d closed=%t", test.status, result.Failure(), result.ReplaySafety(), result.RetryAfterMilliseconds(), body.closed)
+			usage := result.Usage()
+			zero := usage.IsKnown() && usage.InputTokens() == 0 && usage.OutputTokens() == 0 && usage.CachedInputTokens() == 0
+			if result.Failure() != test.failure || result.ReplaySafety() != test.safety || result.RetryAfterMilliseconds() != test.retry || usage.IsKnown() != test.zero || zero != test.zero || result.Validate() != nil || !body.closed {
+				t.Fatalf("status %d = %s/%s retry %d known usage %t closed=%t", test.status, result.Failure(), result.ReplaySafety(), result.RetryAfterMilliseconds(), usage.IsKnown(), body.closed)
 			}
 		})
 	}

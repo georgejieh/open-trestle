@@ -239,6 +239,12 @@ func TestLocalModelReviewRetriesARateLimitedRequest(t *testing.T) {
 				t.Fatalf("requests generation=%d verification=%d, want %v", gc, vc, want)
 			}
 			assertNoProviderRefusalText(t, stdout)
+			// The refused request consumed nothing, so its known zero usage
+			// keeps the retried stage's usage, and so the run's, known.
+			retried := `"` + test.name + `":{"known":true,"route_attempts":2,"input_tokens":100,"output_tokens":100,"cached_input_tokens":0}`
+			if !strings.Contains(stdout, `"token_usage":{"known":true,"route_attempts":3,`) || !strings.Contains(stdout, retried) {
+				t.Fatalf("retried usage is not known: %s", stdout)
+			}
 		})
 	}
 	// Both model tasks using both retries still read back as one result.
