@@ -212,7 +212,7 @@ func ParseGenerationResultArtifact(
 	}
 	routeExecution, err := gateway.ParseRouteExecutionRecord(wire.RouteExecution)
 	if err != nil || routeExecution.Identity() != wire.RouteExecutionIdentity ||
-		routeExecution.Authorization().Identity() != input.Authorization().Identity() ||
+		!gateway.IsSameReservationRetryOf(input.Authorization(), routeExecution.Authorization()) ||
 		routeExecution.Authorization().ReviewScopeIdentity() != value.Scope().Identity() {
 		return GenerationResult{}, ErrInvalidGenerationResult
 	}

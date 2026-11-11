@@ -52,6 +52,30 @@ func NewRateLimitedRetryAttemptAuthorization(previous RouteAttemptAuthorization,
 	return next, nil
 }
 
+// IsSameReservationRetryOf reports whether attempt is authorization itself or
+// a same-route retry of it, at most MaxRateLimitRetries deep, that kept its
+// request, route, terms and reservation and changed only the retry lineage, as
+// NewRateLimitedRetryAttemptAuthorization grants after a rate limit.
+func IsSameReservationRetryOf(authorization, attempt RouteAttemptAuthorization) bool {
+	if authorization.Validate() != nil || attempt.Validate() != nil {
+		return false
+	}
+	if attempt.Identity() == authorization.Identity() {
+		return true
+	}
+	if attempt.Kind() != RouteAttemptRetry || attempt.routeAttemptOrdinal <= authorization.routeAttemptOrdinal || attempt.attemptOrdinal <= authorization.attemptOrdinal {
+		return false
+	}
+	depth := attempt.routeAttemptOrdinal - authorization.routeAttemptOrdinal
+	if depth > MaxRateLimitRetries || attempt.attemptOrdinal-authorization.attemptOrdinal != depth {
+		return false
+	}
+	expected := authorization
+	expected.kind, expected.attemptOrdinal, expected.routeAttemptOrdinal = attempt.kind, attempt.attemptOrdinal, attempt.routeAttemptOrdinal
+	expected.previousOutcomeIdentity, expected.continuationDecisionIdentity = attempt.previousOutcomeIdentity, attempt.continuationDecisionIdentity
+	return deriveRouteAttemptAuthorizationIdentity(expected) == attempt.Identity()
+}
+
 // retryDecisionMatches reports whether decision was evaluated for exactly
 // previous and its outcome.
 func retryDecisionMatches(previous RouteAttemptAuthorization, outcome RouteAttemptOutcome, decision RouteAttemptRetryDecision) bool {

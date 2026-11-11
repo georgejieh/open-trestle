@@ -29,6 +29,8 @@ type GenerationHandler struct {
 	clock             artifact.Clock
 	expected          review.ScannerBinaryDigests
 	requiresSanitized bool
+	// wait waits out a rate-limit retry delay; nil waits on a timer.
+	wait routeWait
 }
 
 // NewGenerationHandler binds exact dispatchers, audit ledger, and protected storage.
@@ -127,7 +129,9 @@ func deriveGenerationHandlerIdentity(catalogIdentity string, expected review.Sca
 	return hex.EncodeToString(digest[:])
 }
 
-// Execute performs exactly one provider attempt. Control-plane retry authority is rejected.
+// Execute performs one task attempt. Control-plane retry authority is rejected;
+// within the attempt a request the provider rate-limited is retried on the
+// same route at most twice (settleRouteAttempts).
 func (h *GenerationHandler) Execute(ctx context.Context, task controlplane.TaskExecutionRequest) controlplane.TaskCompletion {
 	if nilInterface(ctx) || h == nil || h.Validate() != nil || task.Validate() != nil ||
 		task.Task().Kind() != controlplane.TaskGenerateCandidates ||
@@ -216,48 +220,18 @@ func (h *GenerationHandler) Execute(ctx context.Context, task controlplane.TaskE
 			return generationFailure(controlplane.RunFailureInvalidInput)
 		}
 	}
-	if _, acquired, err := gateway.ClaimRouteAttempt(ctx, h.ledger, task.Plan().Scope(), input.Authorization(), started); err != nil || !acquired {
-		return generationFailure(controlplane.RunFailureInternal)
+	dispatch := func(ctx context.Context, authorization gateway.RouteAttemptAuthorization) (gateway.RouteDispatchResult, error) {
+		if input.IsSanitized() {
+			return dispatchAuthorizedSanitizedRouteFromCatalog(ctx, h.catalog, authorization, providerRequest, dispatchProof)
+		}
+		return gateway.DispatchAuthorizedRouteFromCatalog(ctx, h.catalog, authorization, providerRequest)
 	}
-	var dispatchResult gateway.RouteDispatchResult
-	if input.IsSanitized() {
-		dispatchResult, err = dispatchAuthorizedSanitizedRouteFromCatalog(
-			ctx, h.catalog, input.Authorization(), providerRequest, dispatchProof,
-		)
-	} else {
-		dispatchResult, err = gateway.DispatchAuthorizedRouteFromCatalog(
-			ctx, h.catalog, input.Authorization(), providerRequest,
-		)
+	attempt, failed, settled := settleRouteAttempts(ctx, task, h.ledger, h.clock, h.wait, input.Authorization(), started, dispatch)
+	if !settled {
+		return failed
 	}
-	if err != nil {
-		return generationFailure(controlplane.RunFailurePolicy)
-	}
-	finished := h.clock.Now().UTC()
-	duration, ok := boundedDurationMilliseconds(started, finished)
-	if !ok {
-		return generationFailure(controlplane.RunFailureInternal)
-	}
-	outcome, err := gateway.NewRouteAttemptOutcomeFromDispatch(input.Authorization(), dispatchResult, duration)
-	if err != nil {
-		return generationFailure(controlplane.RunFailureInternal)
-	}
-	if _, err := gateway.RecordRouteDispatchCompleted(
-		ctx, h.ledger, task.Plan().Scope(), input.Authorization(), dispatchResult, outcome, finished,
-	); err != nil {
-		return generationFailure(controlplane.RunFailureInternal)
-	}
-	reconciliation, err := gateway.ReconcileAuthorizedRouteAttemptCost(input.Authorization(), outcome)
-	if err != nil {
-		return generationFailure(controlplane.RunFailureInternal)
-	}
-	if _, err := gateway.RecordRouteCostReconciliation(
-		ctx, h.ledger, task.Plan().Scope(), input.Authorization(), outcome, reconciliation, finished,
-	); err != nil {
-		return generationFailure(controlplane.RunFailureInternal)
-	}
-	if reconciliation.Status() == gateway.RouteCostBudgetExceeded {
-		return generationFailure(controlplane.RunFailurePolicy)
-	}
+	// After a rate-limited retry the last attempt holds its own authorization.
+	authorization, dispatchResult, outcome, reconciliation, finished := attempt.authorization, attempt.result, attempt.outcome, attempt.reconciliation, attempt.finished
 	if dispatchResult.Status() == gateway.RouteDispatchFailed {
 		return routeFailureCompletion(task, dispatchResult)
 	}
@@ -269,19 +243,19 @@ func (h *GenerationHandler) Execute(ctx context.Context, task controlplane.TaskE
 	if err != nil {
 		if errors.Is(err, review.ErrInvalidCandidateDocumentShape) {
 			// Failure to persist the witness remains an unproven internal failure.
-			_ = h.recordDocumentShapeRejection(ctx, task, inputArtifact, contextArtifact, input, outcome, reconciliation)
+			_ = h.recordDocumentShapeRejection(ctx, task, inputArtifact, contextArtifact, input, authorization, outcome, reconciliation)
 		}
 		return generationFailure(controlplane.RunFailureInternal)
 	}
 	outputReceipt, err := gateway.NewSuccessfulRouteOutputReceipt(
 		gateway.RouteOutputCandidateBatch, input.ContextIdentity(), candidates.Identity(),
-		providerRequest, input.Authorization(), outcome,
+		providerRequest, authorization, outcome,
 	)
 	if err != nil {
 		return generationFailure(controlplane.RunFailureInternal)
 	}
 	routeExecution, err := gateway.NewRouteExecutionRecord(
-		input.Authorization(), outcome, reconciliation, outputReceipt,
+		authorization, outcome, reconciliation, outputReceipt,
 	)
 	if err != nil {
 		return generationFailure(controlplane.RunFailureInternal)
@@ -298,8 +272,11 @@ func (h *GenerationHandler) Execute(ctx context.Context, task controlplane.TaskE
 	}
 	provenance := []string{
 		inputArtifact.Identity(), contextArtifact.Identity(), candidates.Identity(),
-		input.Authorization().Identity(), outcome.Identity(), reconciliation.Identity(),
+		authorization.Identity(), outcome.Identity(), reconciliation.Identity(),
 		outputReceipt.Identity(), routeExecution.Identity(),
+	}
+	if authorization.Identity() != input.Authorization().Identity() {
+		provenance = append(provenance, input.Authorization().Identity())
 	}
 	if input.IsSanitized() {
 		provenance = append(provenance, input.SanitizedRequestArtifactIdentity(), input.SanitizedEgressReceiptArtifactIdentity())

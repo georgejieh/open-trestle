@@ -28,6 +28,8 @@ type VerificationHandler struct {
 	sanitizer         review.VerificationRequestSanitizer
 	sanitizerIdentity string
 	expected          review.ScannerBinaryDigests
+	// wait waits out a rate-limit retry delay; nil waits on a timer.
+	wait routeWait
 }
 
 // NewVerificationHandler binds exact verifier routing, dispatch, audit, and storage authority.
@@ -212,35 +214,15 @@ func (h *VerificationHandler) Execute(ctx context.Context, task controlplane.Tas
 	if err != nil {
 		return generationFailure(controlplane.RunFailureInvalidInput)
 	}
-	if _, acquired, err := gateway.ClaimRouteAttempt(ctx, h.ledger, task.Plan().Scope(), authority.Authorization(), started); err != nil || !acquired {
-		return generationFailure(controlplane.RunFailureInternal)
+	send := func(ctx context.Context, authorization gateway.RouteAttemptAuthorization) (gateway.RouteDispatchResult, error) {
+		return dispatchAuthorizedSanitizedRouteFromCatalog(ctx, h.catalog, authorization, dispatchRequest, dispatchProof)
 	}
-	dispatch, err := dispatchAuthorizedSanitizedRouteFromCatalog(ctx, h.catalog, authority.Authorization(), dispatchRequest, dispatchProof)
-	if err != nil {
-		return generationFailure(controlplane.RunFailurePolicy)
+	attempt, failed, settled := settleRouteAttempts(ctx, task, h.ledger, h.clock, h.wait, authority.Authorization(), started, send)
+	if !settled {
+		return failed
 	}
-	finished := h.clock.Now().UTC()
-	duration, ok := boundedDurationMilliseconds(started, finished)
-	if !ok {
-		return generationFailure(controlplane.RunFailureInternal)
-	}
-	outcome, err := gateway.NewRouteAttemptOutcomeFromDispatch(authority.Authorization(), dispatch, duration)
-	if err != nil {
-		return generationFailure(controlplane.RunFailureInternal)
-	}
-	if _, err := gateway.RecordRouteDispatchCompleted(ctx, h.ledger, task.Plan().Scope(), authority.Authorization(), dispatch, outcome, finished); err != nil {
-		return generationFailure(controlplane.RunFailureInternal)
-	}
-	reconciliation, err := gateway.ReconcileAuthorizedRouteAttemptCost(authority.Authorization(), outcome)
-	if err != nil {
-		return generationFailure(controlplane.RunFailureInternal)
-	}
-	if _, err := gateway.RecordRouteCostReconciliation(ctx, h.ledger, task.Plan().Scope(), authority.Authorization(), outcome, reconciliation, finished); err != nil {
-		return generationFailure(controlplane.RunFailureInternal)
-	}
-	if reconciliation.Status() == gateway.RouteCostBudgetExceeded {
-		return generationFailure(controlplane.RunFailurePolicy)
-	}
+	// After a rate-limited retry the last attempt holds its own authorization.
+	authorization, dispatch, outcome, reconciliation, finished := attempt.authorization, attempt.result, attempt.outcome, attempt.reconciliation, attempt.finished
 	if dispatch.Status() == gateway.RouteDispatchFailed {
 		return routeFailureCompletion(task, dispatch)
 	}
@@ -248,15 +230,15 @@ func (h *VerificationHandler) Execute(ctx context.Context, task controlplane.Tas
 	if err != nil {
 		return generationFailure(controlplane.RunFailureInternal)
 	}
-	output, err := gateway.NewSuccessfulRouteOutputReceipt(gateway.RouteOutputVerificationBatch, verificationContext.Identity(), verification.Identity(), dispatchRequest, authority.Authorization(), outcome)
+	output, err := gateway.NewSuccessfulRouteOutputReceipt(gateway.RouteOutputVerificationBatch, verificationContext.Identity(), verification.Identity(), dispatchRequest, authorization, outcome)
 	if err != nil {
 		return generationFailure(controlplane.RunFailureInternal)
 	}
-	routeExecution, err := gateway.NewRouteExecutionRecord(authority.Authorization(), outcome, reconciliation, output)
+	routeExecution, err := gateway.NewRouteExecutionRecord(authorization, outcome, reconciliation, output)
 	if err != nil {
 		return generationFailure(controlplane.RunFailureInternal)
 	}
-	independence, err := gateway.VerifyIndependentRouteAttempts(authority.IndependencePolicy(), generation.RouteExecution().Authorization(), generation.RouteExecution().Outcome(), authority.Authorization(), outcome)
+	independence, err := gateway.VerifyIndependentRouteAttempts(authority.IndependencePolicy(), generation.RouteExecution().Authorization(), generation.RouteExecution().Outcome(), authorization, outcome)
 	if err != nil {
 		return generationFailure(controlplane.RunFailurePolicy)
 	}
@@ -280,7 +262,10 @@ func (h *VerificationHandler) Execute(ctx context.Context, task controlplane.Tas
 	if err != nil {
 		return generationFailure(controlplane.RunFailureResourceLimit)
 	}
-	provenance := []string{generationArtifact.Identity(), generationInputArtifact.Identity(), generationContextArtifact.Identity(), reloadedRequest.Identity(), reloadedReceipt.Identity(), reloadedEgressReceipt.Identity(), dispatchRequest.Identity(), verification.Identity(), routeExecution.Identity(), authority.Authorization().SelectionReceiptIdentity(), authority.Authorization().Identity(), outcome.Identity(), reconciliation.Identity(), output.Identity(), independence.Identity(), independent.Identity(), findings.Identity()}
+	provenance := []string{generationArtifact.Identity(), generationInputArtifact.Identity(), generationContextArtifact.Identity(), reloadedRequest.Identity(), reloadedReceipt.Identity(), reloadedEgressReceipt.Identity(), dispatchRequest.Identity(), verification.Identity(), routeExecution.Identity(), authorization.SelectionReceiptIdentity(), authorization.Identity(), outcome.Identity(), reconciliation.Identity(), output.Identity(), independence.Identity(), independent.Identity(), findings.Identity()}
+	if authorization.Identity() != authority.Authorization().Identity() {
+		provenance = append(provenance, authority.Authorization().Identity())
+	}
 	sort.Strings(provenance)
 	outputArtifact, err := artifact.New(task.Plan().Scope(), artifact.KindVerifiedFindingSet, "application/json", generationArtifact.Classification(), artifact.OriginIndependentVerifier, generationArtifact.Protection(), provenance, payload, finished, generationArtifact.ExpiresAt())
 	if err != nil {

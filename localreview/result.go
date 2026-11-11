@@ -405,7 +405,10 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 		diagnostic.wire.Limitations = append(append([]string{}, w.Limitations...), "execution_readback_incomplete", "unknown_final_usage")
 		s.rememberInvestigationResult(diagnostic)
 	}
-	auditLimit, maximumAudit := uint16(32), 16
+	// A direct run records up to 16 events, and each same-route retry after a
+	// rate limit adds a claim, a completion and a settlement, at most
+	// gateway.MaxRateLimitRetries times for each of its two model tasks.
+	auditLimit, maximumAudit := uint16(32), 16+2*3*gateway.MaxRateLimitRetries
 	if s.investigation != nil {
 		auditLimit, maximumAudit = 1000, 1000
 	}

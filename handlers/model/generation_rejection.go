@@ -114,7 +114,8 @@ func ParseGenerationRejectionArtifact(value, inputArtifact, contextArtifact arti
 		return fail()
 	}
 	attempt, err := gateway.ParseCompletedRouteAttemptRecord(wire.Attempt)
-	if err != nil || attempt.Authorization().Identity() != input.Authorization().Identity() {
+	// The rejected reply may come from a rate-limited request's retry.
+	if err != nil || !gateway.IsSameReservationRetryOf(input.Authorization(), attempt.Authorization()) {
 		return fail()
 	}
 	r := GenerationRejection{identity: wire.Identity, inputArtifactIdentity: wire.InputArtifactIdentity, contextArtifactIdentity: wire.ContextArtifactIdentity, contextIdentity: wire.ContextIdentity, handlerIdentity: wire.HandlerIdentity, attempt: attempt}
@@ -130,7 +131,7 @@ func ParseGenerationRejectionArtifact(value, inputArtifact, contextArtifact arti
 	return r, nil
 }
 
-func (h *GenerationHandler) recordDocumentShapeRejection(ctx context.Context, task controlplane.TaskExecutionRequest, inputArtifact, contextArtifact artifact.Artifact, input GenerationInput, outcome gateway.RouteAttemptOutcome, cost gateway.RouteCostReconciliation) error {
+func (h *GenerationHandler) recordDocumentShapeRejection(ctx context.Context, task controlplane.TaskExecutionRequest, inputArtifact, contextArtifact artifact.Artifact, input GenerationInput, authorization gateway.RouteAttemptAuthorization, outcome gateway.RouteAttemptOutcome, cost gateway.RouteCostReconciliation) error {
 	if !h.requiresSanitized || !input.IsSanitized() {
 		return ErrInvalidGenerationRejection
 	}
@@ -141,7 +142,7 @@ func (h *GenerationHandler) recordDocumentShapeRejection(ctx context.Context, ta
 	if !live() {
 		return ErrInvalidGenerationRejection
 	}
-	attempt, err := gateway.NewCompletedRouteAttemptRecord(input.Authorization(), outcome, cost)
+	attempt, err := gateway.NewCompletedRouteAttemptRecord(authorization, outcome, cost)
 	if err != nil {
 		return err
 	}

@@ -572,9 +572,10 @@ func TestGenerationHandlerRejectsControlPlaneRetryAuthority(t *testing.T) {
 func TestGenerationHandlerAuditsTypedProviderFailureWithoutOutput(t *testing.T) {
 	scope, snapshot, packet, contextArtifact, providerRequest := generationContextFixture(t)
 	authorization := generationAuthorization(t, scope, providerRequest)
+	// A server error is not retried, so the one attempt is audited alone.
 	failedResult, _ := gateway.NewFailedRouteDispatchResult(
-		gateway.RouteFailureRateLimited, gateway.RouteReplayNoSideEffect,
-		provider.NewUnknownRouteTokenUsage(), 2000,
+		gateway.RouteFailureProviderServer, gateway.RouteReplayOutcomeUnknown,
+		provider.NewUnknownRouteTokenUsage(), 0,
 	)
 	dispatcher := &recordingDispatcher{adapterID: "test-model", result: failedResult}
 	catalog, _ := gateway.NewRouteDispatcherCatalog([]gateway.RouteDispatcher{dispatcher})
@@ -631,11 +632,18 @@ func TestGenerationHandlerRefusesProviderRefusalAsPolicy(t *testing.T) {
 			store, _ := artifact.NewMemoryStore(artifact.ProtectionProcessPrivate, 20)
 			_, _ = store.Put(context.Background(), contextArtifact, time.UnixMilli(60))
 			handler, _ := newLegacyGenerationHandler(store, catalog, ledger, fixedClock{at: time.UnixMilli(200)})
+			handler.wait = func(context.Context, time.Duration) error { return nil }
 			input, _ := NewGenerationInput(contextArtifact, packet, snapshot, authorization)
 			inputArtifact, _ := NewGenerationInputArtifact(input, contextArtifact, []string{strings.Repeat("4", 64)}, time.UnixMilli(70))
 			_, _ = store.Put(context.Background(), inputArtifact, time.UnixMilli(70))
 			completion := handler.Execute(context.Background(), generationTaskRequest(t, scope, inputArtifact.Identity(), handler.HandlerIdentity(), 1))
-			if completion.Status() != controlplane.TaskCompletionFailed || completion.Validate() != nil || completion.Failure() != test.run || completion.FailureReason() != test.reason || completion.RetryAfterMilliseconds() != test.retryAfter || completion.OutputIdentity() != "" || dispatcher.calls != 1 {
+			// A rate limit the provider refused before processing is retried
+			// twice on the same route; every other refusal is sent once.
+			calls := 1
+			if failure == gateway.RouteFailureRateLimited && test.safety == gateway.RouteReplayNoSideEffect {
+				calls = 1 + gateway.MaxRateLimitRetries
+			}
+			if completion.Status() != controlplane.TaskCompletionFailed || completion.Validate() != nil || completion.Failure() != test.run || completion.FailureReason() != test.reason || completion.RetryAfterMilliseconds() != test.retryAfter || completion.OutputIdentity() != "" || dispatcher.calls != calls {
 				t.Fatalf("completion failure=%s reason=%s retry after=%d calls=%d", completion.Failure(), completion.FailureReason(), completion.RetryAfterMilliseconds(), dispatcher.calls)
 			}
 			if test.run == controlplane.RunFailurePolicy && completion.Failure().Retryable() {

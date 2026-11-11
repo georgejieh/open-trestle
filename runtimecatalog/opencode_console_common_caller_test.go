@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -62,7 +63,15 @@ func (r *consoleCallerTransport) RoundTrip(request *http.Request) (*http.Respons
 	}
 	events, err := r.ledger.Read(request.Context(), r.scope, 0, 20)
 	requiredCheck(r.t, err)
-	if len(events) == 0 || events[len(events)-1].Kind() != audit.EventRouteAttemptClaimed || events[len(events)-1].SubjectIdentity() != r.authorization.Identity() {
+	// A same-route retry after a rate limit is claimed under its own
+	// authorization, bound to the same selection and the refused outcome.
+	if len(events) == 0 {
+		r.t.Fatal("HTTP occurred before any authorization claim")
+	}
+	last := events[len(events)-1]
+	claimed := last.Kind() == audit.EventRouteAttemptClaimed
+	retry := r.calls > 1 && len(last.CausalParentIdentities()) == 3 && slices.Contains(last.CausalParentIdentities(), r.authorization.SelectionReceiptIdentity())
+	if !claimed || last.SubjectIdentity() != r.authorization.Identity() && !retry {
 		r.t.Fatal("HTTP occurred before the actual authorization claim")
 	}
 	defer request.Body.Close()

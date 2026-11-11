@@ -70,8 +70,10 @@ func recordConsoleFailures(t *testing.T, catalog gateway.RouteDispatcherCatalog)
 }
 
 // Each console HTTP failure is classified by its status alone, as for every
-// other profile: 402 is a payment refusal, not a spent local budget.
-func TestOpenCodeConsoleHandlerHTTPFailuresNeverRetryOrPersistProviderBody(t *testing.T) {
+// other profile: 402 is a payment refusal, not a spent local budget. Only a
+// 429, which the provider refused before processing, is retried, twice on the
+// same route; no provider body is persisted.
+func TestOpenCodeConsoleHandlerHTTPFailuresRetryOnlyRateLimitsAndPersistNoProviderBody(t *testing.T) {
 	for _, test := range []struct {
 		status  int
 		failure gateway.RouteFailureClass
@@ -118,10 +120,14 @@ func TestOpenCodeConsoleHandlerHTTPFailuresNeverRetryOrPersistProviderBody(t *te
 			requiredCheck(t, err)
 			transport.scope, transport.authorization = scope, input.Authorization()
 			completion := handler.Execute(ctx, request)
-			if completion.Status() != controlplane.TaskCompletionFailed || completion.Validate() != nil || transport.calls != 1 || credentials.calls != 1 {
-				t.Fatal("error retried, succeeded or skipped authorized request")
+			sent := 1
+			if status == http.StatusTooManyRequests {
+				sent = 3
 			}
-			if len(*failures) != 1 || (*failures)[0] != test.failure || completion.Failure() != test.run || completion.FailureReason() != test.reason {
+			if completion.Status() != controlplane.TaskCompletionFailed || completion.Validate() != nil || transport.calls != sent || credentials.calls != sent {
+				t.Fatalf("status %d sent %d requests with %d credentials, want %d", status, transport.calls, credentials.calls, sent)
+			}
+			if len(*failures) != sent || (*failures)[sent-1] != test.failure || completion.Failure() != test.run || completion.FailureReason() != test.reason {
 				t.Fatalf("status %d classified %v, task failure %s reason %s; want %s, %s, %s", status, *failures, completion.Failure(), completion.FailureReason(), test.failure, test.run, test.reason)
 			}
 			events, err := ledger.Read(ctx, scope, 0, 20)

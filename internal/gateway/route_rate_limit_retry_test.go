@@ -143,6 +143,42 @@ func TestRateLimitedRetryRefusesEveryOtherFailure(t *testing.T) {
 	}
 }
 
+// A takeover retry chain descends from its first authorization; a retry whose
+// balance moved, an ancestor or an invalid authorization does not.
+func TestIsSameReservationRetryOfRecognizesOnlyTakeoverRetries(t *testing.T) {
+	request, fixture, _ := newInitialAttemptFixture(t)
+	initial, _ := NewInitialRouteAttemptAuthorization(request, fixture.selection, fixture.ranking)
+	policy, _ := NewRateLimitRetryPolicy(1_000)
+	outcome, reconciliation := rateLimitedAttempt(t, initial, 0)
+	first, err := NewRateLimitedRetryAttemptAuthorization(initial, outcome, reconciliation, mustRetryDecision(t, policy, initial, outcome))
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, reconciliation = rateLimitedAttempt(t, first, 0)
+	second, err := NewRateLimitedRetryAttemptAuthorization(first, outcome, reconciliation, mustRetryDecision(t, policy, first, outcome))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, attempt := range map[string]RouteAttemptAuthorization{"itself": initial, "first retry": first, "second retry": second} {
+		if !IsSameReservationRetryOf(initial, attempt) {
+			t.Fatalf("%s is not recognized", name)
+		}
+	}
+	if IsSameReservationRetryOf(first, initial) || IsSameReservationRetryOf(initial, RouteAttemptAuthorization{}) {
+		t.Fatal("an ancestor or an invalid authorization was recognized")
+	}
+	spent, _ := provider.NewRouteTokenUsage(1_000, 1_000, 0)
+	_, _, timeoutInitial, timeout, settled := failedInitialAttempt(t, RouteFailureTimeout, spent)
+	retryPolicy, _ := NewRouteRetryPolicy(3, 100, 1_000, 0, 2_000)
+	ordinary, err := NewRouteRetryAttemptAuthorization(timeoutInitial, timeout, settled, mustRetryDecision(t, retryPolicy, timeoutInitial, timeout))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if IsSameReservationRetryOf(timeoutInitial, ordinary) {
+		t.Fatal("a retry whose balance moved was recognized")
+	}
+}
+
 func mustRetryDecision(t *testing.T, policy RouteRetryPolicy, authorization RouteAttemptAuthorization, outcome RouteAttemptOutcome) RouteAttemptRetryDecision {
 	t.Helper()
 	decision, err := EvaluateRouteAttemptRetry(policy, authorization, outcome)
