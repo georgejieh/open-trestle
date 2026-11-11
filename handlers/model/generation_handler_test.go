@@ -596,6 +596,68 @@ func TestGenerationHandlerAuditsTypedProviderFailureWithoutOutput(t *testing.T) 
 	}
 }
 
+// A provider that refuses for billing, or does not serve or has retired the
+// model, fails the task once as a policy refusal that the control plane does
+// not retry, as an authentication refusal does.
+func TestGenerationHandlerRefusesProviderRefusalAsPolicy(t *testing.T) {
+	for _, failure := range []gateway.RouteFailureClass{gateway.RouteFailurePaymentRequired, gateway.RouteFailureModelUnavailable, gateway.RouteFailureModelRetired} {
+		t.Run(failure.String(), func(t *testing.T) {
+			scope, snapshot, packet, contextArtifact, providerRequest := generationContextFixture(t)
+			authorization := generationAuthorization(t, scope, providerRequest)
+			failedResult, _ := gateway.NewFailedRouteDispatchResult(failure, gateway.RouteReplayNoSideEffect, provider.NewUnknownRouteTokenUsage(), 0)
+			dispatcher := &recordingDispatcher{adapterID: "test-model", result: failedResult}
+			catalog, _ := gateway.NewRouteDispatcherCatalog([]gateway.RouteDispatcher{dispatcher})
+			ledger := audit.NewMemoryLedger()
+			seedRouteSelection(t, ledger, scope, authorization)
+			store, _ := artifact.NewMemoryStore(artifact.ProtectionProcessPrivate, 20)
+			_, _ = store.Put(context.Background(), contextArtifact, time.UnixMilli(60))
+			handler, _ := newLegacyGenerationHandler(store, catalog, ledger, fixedClock{at: time.UnixMilli(200)})
+			input, _ := NewGenerationInput(contextArtifact, packet, snapshot, authorization)
+			inputArtifact, _ := NewGenerationInputArtifact(input, contextArtifact, []string{strings.Repeat("4", 64)}, time.UnixMilli(70))
+			_, _ = store.Put(context.Background(), inputArtifact, time.UnixMilli(70))
+			completion := handler.Execute(context.Background(), generationTaskRequest(t, scope, inputArtifact.Identity(), handler.HandlerIdentity(), 1))
+			if completion.Status() != controlplane.TaskCompletionFailed || completion.Failure() != controlplane.RunFailurePolicy || completion.Failure().Retryable() || completion.OutputIdentity() != "" || dispatcher.calls != 1 {
+				t.Fatalf("completion failure=%s calls=%d", completion.Failure(), dispatcher.calls)
+			}
+		})
+	}
+}
+
+// Every route failure class maps to one run failure; a refusal an operator
+// must act on is never a retryable internal failure.
+func TestMapRouteFailureCoversEveryClass(t *testing.T) {
+	want := map[gateway.RouteFailureClass]controlplane.RunFailure{
+		gateway.RouteFailureTransport:        controlplane.RunFailureTransient,
+		gateway.RouteFailureRateLimited:      controlplane.RunFailureTransient,
+		gateway.RouteFailureProviderServer:   controlplane.RunFailureTransient,
+		gateway.RouteFailureTimeout:          controlplane.RunFailureTransient,
+		gateway.RouteFailureConnection:       controlplane.RunFailureTransient,
+		gateway.RouteFailureInvalidResponse:  controlplane.RunFailureInternal,
+		gateway.RouteFailureAuthentication:   controlplane.RunFailurePolicy,
+		gateway.RouteFailureAuthorization:    controlplane.RunFailurePolicy,
+		gateway.RouteFailurePolicyDenied:     controlplane.RunFailurePolicy,
+		gateway.RouteFailureBudgetExhausted:  controlplane.RunFailurePolicy,
+		gateway.RouteFailureCancelled:        controlplane.RunFailureCanceled,
+		gateway.RouteFailureOutputExhausted:  controlplane.RunFailureInternal,
+		gateway.RouteFailurePaymentRequired:  controlplane.RunFailurePolicy,
+		gateway.RouteFailureModelUnavailable: controlplane.RunFailurePolicy,
+		gateway.RouteFailureModelRetired:     controlplane.RunFailurePolicy,
+	}
+	for class := gateway.RouteFailureTransport; class.Validate() == nil; class++ {
+		expected, ok := want[class]
+		if !ok {
+			t.Fatalf("route failure %s has no expected run failure", class)
+		}
+		if got := mapRouteFailure(class); got != expected {
+			t.Fatalf("route failure %s maps to %s, want %s", class, got, expected)
+		}
+		delete(want, class)
+	}
+	if len(want) != 0 {
+		t.Fatalf("classes outside the closed set: %v", want)
+	}
+}
+
 func TestGenerationInputEncodingIsCanonicalAndDefensive(t *testing.T) {
 	scope, snapshot, packet, contextArtifact, providerRequest := generationContextFixture(t)
 	authorization := generationAuthorization(t, scope, providerRequest)
