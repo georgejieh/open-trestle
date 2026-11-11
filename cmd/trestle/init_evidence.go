@@ -117,52 +117,62 @@ func initEvidenceClient() *http.Client {
 
 // initFetchEvidence performs one bounded GET and hashes the exact bytes served.
 func initFetchEvidence(ctx context.Context, location string) (initFetchedEvidence, error) {
-	if err := initPublicEvidenceURL(location); err != nil {
+	body, final, err := initFetchBody(ctx, location, "text/html,application/pdf;q=0.9,*/*;q=0.8")
+	if err != nil {
 		return initFetchedEvidence{}, err
+	}
+	sum := sha256.Sum256(body)
+	return initFetchedEvidence{url: final, digest: hex.EncodeToString(sum[:]), size: int64(len(body))}, nil
+}
+
+// initFetchBody performs one bounded, credential-free GET of a public address
+// and returns the exact bytes served and the address actually read.
+func initFetchBody(ctx context.Context, location, accept string) ([]byte, string, error) {
+	if err := initPublicEvidenceURL(location); err != nil {
+		return nil, "", err
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, initEvidenceTimeout)
 	defer cancel()
 	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, location, nil)
 	if err != nil {
-		return initFetchedEvidence{}, errors.New("that address cannot be requested")
+		return nil, "", errors.New("that address cannot be requested")
 	}
 	request.Header.Set("User-Agent", "open-trestle-init/1 (evidence digest)")
-	request.Header.Set("Accept", "text/html,application/pdf;q=0.9,*/*;q=0.8")
+	request.Header.Set("Accept", accept)
 	response, err := initEvidenceClient().Do(request)
 	if err != nil {
 		if requestCtx.Err() != nil {
-			return initFetchedEvidence{}, errors.New("no answer within 20 seconds")
+			return nil, "", errors.New("no answer within 20 seconds")
 		}
 		var redirect *url.Error
 		if errors.As(err, &redirect) && redirect.Err != nil {
-			return initFetchedEvidence{}, redirect.Err
+			return nil, "", redirect.Err
 		}
-		return initFetchedEvidence{}, errors.New("the page could not be reached")
+		return nil, "", errors.New("the page could not be reached")
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return initFetchedEvidence{}, fmt.Errorf("the server answered with HTTP status %d", response.StatusCode)
+		return nil, "", fmt.Errorf("the server answered with HTTP status %d", response.StatusCode)
 	}
 	if response.ContentLength > initEvidenceMaxBytes {
-		return initFetchedEvidence{}, errors.New("the page is larger than 8 MiB")
+		return nil, "", errors.New("the page is larger than 8 MiB")
 	}
-	sum := sha256.New()
-	size, err := io.Copy(sum, io.LimitReader(response.Body, initEvidenceMaxBytes+1))
+	body, err := io.ReadAll(io.LimitReader(response.Body, initEvidenceMaxBytes+1))
 	if err != nil {
-		return initFetchedEvidence{}, errors.New("the page could not be read completely")
+		return nil, "", errors.New("the page could not be read completely")
 	}
-	if size > initEvidenceMaxBytes {
-		return initFetchedEvidence{}, errors.New("the page is larger than 8 MiB")
+	if len(body) > initEvidenceMaxBytes {
+		return nil, "", errors.New("the page is larger than 8 MiB")
 	}
-	if size == 0 {
-		return initFetchedEvidence{}, errors.New("the page was empty")
+	if len(body) == 0 {
+		return nil, "", errors.New("the page was empty")
 	}
 	final := location
 	if response.Request != nil && response.Request.URL != nil {
 		final = response.Request.URL.String()
 	}
 	if initPublicEvidenceURL(final) != nil {
-		return initFetchedEvidence{}, errors.New("the page redirected to an address that cannot be recorded")
+		return nil, "", errors.New("the page redirected to an address that cannot be recorded")
 	}
-	return initFetchedEvidence{url: final, digest: hex.EncodeToString(sum.Sum(nil)), size: size}, nil
+	return body, final, nil
 }
