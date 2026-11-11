@@ -11,7 +11,6 @@ import (
 	"io"
 	"net/url"
 	"os"
-	"os/user"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -120,10 +119,11 @@ type initWizard struct {
 	models                  map[string][]modelcatalog.Model
 	saved                   bool // the bootstrap wrote or found a complete setup
 	fetched                 map[string]initFetchedEvidence
-	lastFetch               time.Time // the latest evidence fetch, if any
-	modelEndpoint           string    // the local server whose model is being chosen
-	ollamaBinary            bool      // the ollama command was found on PATH
-	pendingHeader           string    // a --no-input step header not yet printed
+	lastFetch               time.Time                       // the latest evidence fetch, if any
+	modelEndpoint           string                          // the local server whose model is being chosen
+	listed                  map[string][]modelcatalog.Model // model lists read from local servers
+	ollamaBinary            bool                            // the ollama command was found on PATH
+	pendingHeader           string                          // a --no-input step header not yet printed
 	openRouter              *openRouterObservation
 	zdr                     bool // every OpenRouter request requires zero data retention
 	style                   initStyle
@@ -444,7 +444,7 @@ func (w *initWizard) run() (int, error) {
 		}
 		return w.resume()
 	}
-	steps := []func() error{w.stepSelection, w.stepExplain, w.stepProvider, w.stepModels, w.stepCredentials, w.stepDeclarations, w.stepLabels}
+	steps := []func() error{w.stepSelection, w.stepProvider, w.stepModels, w.stepCredentials, w.autoNames, w.stepSummary, w.stepDeclarations}
 	for _, step := range steps {
 		if err := step(); err != nil {
 			return 0, err
@@ -541,18 +541,8 @@ func (w *initWizard) stepSelection() error {
 			label = proposedLabel
 		}
 		w.printSelection(base, label, head, source, initSummarizeChange(w.ctx, w.checkout, source.base, source.head))
-		accept := true
-		if !baseGiven && !headGiven && !askBoth {
-			var err error
-			if accept, err = w.confirm("Review these changes?", true, true); err != nil {
-				return err
-			}
-		}
-		if accept {
-			w.a.base, w.a.head, w.a.source = base, head, source
-			return w.sourcePreflight()
-		}
-		askBoth = true
+		w.a.base, w.a.head, w.a.source = base, head, source
+		return w.sourcePreflight()
 	}
 	return errInitTooManyTries
 }
@@ -620,14 +610,6 @@ func (w *initWizard) sourcePreflight() error {
 		"  Your repository was not changed. Nothing was written.", err, initShellQuote(w.checkout), initShellQuote(w.checkout+"-review"))
 }
 
-// --- Step 2: plain explanation --------------------------------------------------
-
-func (w *initWizard) stepExplain() error {
-	w.header(2, "How a review works")
-	w.say("  Open Trestle uses two AI models. The first reads your change and lists possible problems; a second, different model double-checks each one, and only confirmed findings are reported. Setup sends none of your source anywhere: it is sent to the models only when you run a review.")
-	return nil
-}
-
 // --- Step 3: where the models run -----------------------------------------------
 
 // initScannerBlock reports why this binary cannot send source to a remote
@@ -680,7 +662,7 @@ func (w *initWizard) sayPackagingSteps() {
 }
 
 func (w *initWizard) stepProvider() error {
-	w.header(3, "Where should the models run?")
+	w.header(2, "Where the models run")
 	block := initScannerBlock()
 	if block != "" {
 		w.explainScannerBlock(block)
@@ -740,7 +722,7 @@ func (w *initWizard) stepProvider() error {
 // --- Step 4: models ---------------------------------------------------------------
 
 func (w *initWizard) stepModels() error {
-	w.header(4, "Choose the two models")
+	w.header(3, "The two models")
 	if w.a.provider.key == "openrouter" {
 		return w.openRouterModels()
 	}
@@ -787,7 +769,7 @@ func (w *initWizard) pickPair(generation, verification []modelcatalog.Model) err
 		return err
 	}
 	if w.prompt != nil {
-		w.say("\n  The checker must be a different model. A second model is less likely to repeat the first one's mistakes, so findings both agree on are more reliable.")
+		w.say("\n  The checker must be a different model, so a finding both agree on is more reliable.")
 	}
 	w.a.verificationModel, err = w.pickModel("verification-model", "Checker model: double-checks each finding", verification, w.a.generationModel)
 	return err
@@ -975,8 +957,18 @@ func (w *initWizard) localEndpoint(flagName, question, proposed string) (string,
 	if _, given := w.flags[flagName]; given || w.prompt == nil || proposed != "" {
 		return w.answer(initQuestion{flag: flagName, question: question, proposed: proposed, acceptProposal: proposed != "", validate: validate})
 	}
-	options := []string{}
+	servers := []initLocalServer{}
 	for _, server := range initLocalServers {
+		servers = append(servers, initLocalServer{name: server.name, endpoint: server.endpoint})
+	}
+	if found := w.detectLocalServers(); len(found) == 1 {
+		w.say("  %s Found %s at %s.", w.ok, found[0].name, found[0].endpoint)
+		return found[0].endpoint, nil
+	} else if len(found) > 1 {
+		servers = found
+	}
+	options := []string{}
+	for _, server := range servers {
 		options = append(options, fmt.Sprintf("%-10s %s", server.name, server.endpoint))
 	}
 	options = append(options, "Another address on this machine")
@@ -985,10 +977,47 @@ func (w *initWizard) localEndpoint(flagName, question, proposed string) (string,
 	if err != nil {
 		return "", err
 	}
-	if index < len(initLocalServers) {
-		return initLocalServers[index].endpoint, nil
+	if index < len(servers) {
+		return servers[index].endpoint, nil
 	}
 	return w.prompt.ask("Server API address", "", validate)
+}
+
+// initLocalServer is a known local model server and the models it lists.
+type initLocalServer struct {
+	name, endpoint string
+	models         []modelcatalog.Model
+}
+
+// initDetectLocalServers reads each known local server's model list once (a
+// bounded GET to a loopback address; no model request) and returns those that
+// list a model. Tests replace it so they never reach a real local server.
+var initDetectLocalServers = func(ctx context.Context) []initLocalServer {
+	found := []initLocalServer{}
+	for _, server := range initLocalServers {
+		models, err := initListModels(ctx, modelcatalog.Source{ID: "local-server", Kind: "openai_models", URL: server.endpoint + "/models"}, false, nil)
+		if err == nil && len(models) > 0 {
+			found = append(found, initLocalServer{name: server.name, endpoint: server.endpoint, models: models})
+		}
+	}
+	return found
+}
+
+// detectLocalServers returns the answering servers not already chosen and
+// remembers their model lists, so they are not read twice.
+func (w *initWizard) detectLocalServers() []initLocalServer {
+	found := []initLocalServer{}
+	for _, server := range initDetectLocalServers(w.ctx) {
+		if server.endpoint == w.a.generationEndpoint {
+			continue
+		}
+		if w.listed == nil {
+			w.listed = map[string][]modelcatalog.Model{}
+		}
+		w.listed[server.endpoint] = server.models
+		found = append(found, server)
+	}
+	return found
 }
 
 // probeLocal reads the server's model list: one bounded GET to a loopback
@@ -997,11 +1026,19 @@ func (w *initWizard) probeLocal(endpoint string) ([]modelcatalog.Model, error) {
 	if w.prompt == nil {
 		return nil, nil
 	}
+	if models, ok := w.listed[endpoint]; ok {
+		w.say("  %s Found %d model%s.", w.ok, len(models), initPlural(len(models)))
+		return models, nil
+	}
 	for {
 		w.say("  Reading the model list from %s/models ...", endpoint)
 		models, err := initListModels(w.ctx, modelcatalog.Source{ID: "local-server", Kind: "openai_models", URL: endpoint + "/models"}, false, nil)
 		if err == nil && len(models) > 0 {
 			w.say("  %s Found %d model%s.", w.ok, len(models), initPlural(len(models)))
+			if w.listed == nil {
+				w.listed = map[string][]modelcatalog.Model{}
+			}
+			w.listed[endpoint] = models
 			return models, nil
 		}
 		reason := "it answered, but listed no models"
@@ -1038,13 +1075,9 @@ func (w *initWizard) localModels() error {
 	}
 	_, flagged := w.flags["verification-endpoint"]
 	sameServer := !flagged
-	if w.prompt != nil && !flagged {
-		if len(generation) == 1 {
-			w.say("\n  This server offers one model. llama.cpp and vLLM usually run the second model as a separate server on another port, such as http://127.0.0.1:8081/v1.")
-			sameServer = false
-		} else if sameServer, err = w.prompt.confirm("Is the checker model on the same server?", true); err != nil {
-			return err
-		}
+	if w.prompt != nil && !flagged && len(generation) == 1 {
+		w.say("\n  This server offers one model. llama.cpp and vLLM usually run the second model as a separate server on another port, such as http://127.0.0.1:8081/v1.")
+		sameServer = false
 	}
 	verification := generation
 	if sameServer {
@@ -1058,7 +1091,7 @@ func (w *initWizard) localModels() error {
 		}
 	}
 	if w.prompt != nil {
-		w.say("\n  The checker must be a different model. A second model is less likely to repeat the first one's mistakes, so findings both agree on are more reliable.")
+		w.say("\n  The checker must be a different model, so a finding both agree on is more reliable.")
 	}
 	w.modelEndpoint = w.a.verificationEndpoint
 	if w.a.verificationModel, err = w.pickModel("verification-model", "Checker model: double-checks each finding", verification, w.a.generationModel); err != nil {
@@ -1113,6 +1146,25 @@ func (w *initWizard) capacities() error {
 	}
 	listed := contextProposal
 	contextProposal = initContextProposal(w.a.provider.key, listed)
+	if w.a.provider.key == "local" && outputProposal == 0 {
+		// A review writes at most 4096 tokens, which every local model with the
+		// proposed context can.
+		outputProposal = remoteReviewMaxOutputTokens
+	}
+	_, contextGiven := w.flags["context-tokens"]
+	_, outputGiven := w.flags["output-tokens"]
+	if outputProposal > contextProposal {
+		outputProposal = contextProposal
+	}
+	if !contextGiven && !outputGiven && contextProposal >= 8192 && outputProposal >= remoteReviewMaxOutputTokens {
+		w.a.contextTokens, w.a.outputTokens = strconv.FormatUint(contextProposal, 10), strconv.FormatUint(outputProposal, 10)
+		source := "from the model list"
+		if w.a.provider.key == "local" {
+			source = "start both servers with this context length (llama.cpp --ctx-size, Ollama OLLAMA_CONTEXT_LENGTH, vLLM --max-model-len, LM Studio --context-length; docs/named-local-runtimes.md#context-length)"
+		}
+		w.say("\n  Limits: context %s and output %s tokens; %s.", w.a.contextTokens, w.a.outputTokens, source)
+		return nil
+	}
 	if w.prompt != nil {
 		w.say("\n  Model capacity. Check each model's page (or your server's settings) and give the smaller of the two values. A review reads up to the context and writes up to 4096 tokens, so models must support at least 8192 and 4096.")
 		if w.a.provider.key == "local" {
@@ -1161,7 +1213,7 @@ func (w *initWizard) prices() error {
 	}
 	perToken := true
 	if !flagged && w.prompt != nil {
-		w.say("\n  Cost. Open Trestle refuses a review that could cost more than your limit.")
+		w.say("")
 		if w.a.provider.key != "openrouter" {
 			var err error
 			if perToken, err = w.prompt.confirm("Does your "+w.a.provider.short+" plan charge per token?", false); err != nil {
@@ -1185,24 +1237,21 @@ func (w *initWizard) prices() error {
 		}
 		return err
 	}
-	return w.costLimit(false)
+	return w.costLimit(true)
 }
 
 // costLimit asks for the most one review may cost. With propose set, the
 // cost of a request that fills the whole context is offered as the default.
 func (w *initWizard) costLimit(propose bool) error {
-	if _, given := w.flags["max-cost-micro-usd"]; !given && w.prompt != nil && propose {
-		w.say("\n  Cost. Open Trestle refuses a review that could cost more than your limit.")
-	}
+
 	input, _ := strconv.ParseUint(w.a.inputPrice, 10, 64)
 	output, _ := strconv.ParseUint(w.a.outputPrice, 10, 64)
 	contextTokens, _ := strconv.ParseUint(w.a.contextTokens, 10, 64)
 	reviewOutput := w.reviewOutputTokens()
 	reservation := (reviewOutput*output + 999_999) / 1_000_000
 	full := reservation + (contextTokens*input+999_999)/1_000_000
-	if w.prompt != nil {
-		w.say("  Each review reserves %s for the %d-token answer plus the size of the request.", initFormatUSD(reservation), reviewOutput)
-		w.say("  A request that fills the whole context would cost about %s.", initFormatUSD(full))
+	if _, given := w.flags["max-cost-micro-usd"]; !given && w.prompt != nil {
+		w.say("\n  A review that could cost more than your limit is refused. One that fills the whole context costs about %s.", initFormatUSD(full))
 	}
 	limit := func(parse func(string) (string, error)) func(string) (string, error) {
 		return func(value string) (string, error) {
@@ -1221,12 +1270,31 @@ func (w *initWizard) costLimit(propose bool) error {
 	if propose {
 		cents := (full + 9_999) / 10_000 * 10_000
 		proposal = strings.TrimPrefix(initFormatUSD(max(cents, reservation)), "$")
-		if w.prompt != nil {
-			w.say("  The proposed limit covers a request that fills the whole context.")
-		}
 	}
 	var err error
 	w.a.maxCost, err = w.answer(initQuestion{flag: "max-cost-micro-usd", question: "Most one review may cost, in USD", proposed: proposal, validate: limit(initUSD), validateFlag: limit(initMicro)})
+	return err
+}
+
+// costLimitWith asks the cost limit again, proposing the current value.
+func (w *initWizard) costLimitWith(proposal string) error {
+	output, _ := strconv.ParseUint(w.a.outputPrice, 10, 64)
+	input, _ := strconv.ParseUint(w.a.inputPrice, 10, 64)
+	reservation := (w.reviewOutputTokens()*output + 999_999) / 1_000_000
+	value, err := w.prompt.ask("Most one review may cost, in USD", proposal, func(value string) (string, error) {
+		micro, err := initUSD(value)
+		if err != nil {
+			return "", err
+		}
+		n, _ := strconv.ParseUint(micro, 10, 64)
+		if n < reservation || input+output > 0 && n == 0 {
+			return "", fmt.Errorf("The limit must be at least %s to cover the 4096-token answer.", initFormatUSD(max(reservation, 1)))
+		}
+		return micro, nil
+	})
+	if err == nil {
+		w.a.maxCost = value
+	}
 	return err
 }
 
@@ -1279,50 +1347,43 @@ func initCredentialName(value string) (string, error) {
 	return "", errors.New("The name must start with OPEN_TRESTLE_PROVIDER_ and use only capital letters, digits and _.")
 }
 
+// stepCredentials names the key variable. The provider's usual name is used
+// unless --credential-env names another; the key itself is never asked for,
+// stored or shown. A local server needs no key when both model lists were
+// read without one; otherwise the operator says whether it does.
 func (w *initWizard) stepCredentials() error {
-	w.header(5, "API key")
 	if w.a.provider.key == ollamaSigninProvider {
 		w.say("  No API key: your local Ollama sends requests to Ollama Cloud with the account it is signed in to (`ollama signin`). Open Trestle stores and sends no key.")
 		return nil
 	}
 	if w.a.provider.key == "local" {
 		if _, given := w.flags["credential-env"]; !given {
-			needs, err := w.confirm("Does your local server require an API key?", false, false)
-			if err != nil || !needs {
-				if err == nil {
-					w.say("  No key: requests to your local server are sent without one.")
+			_, generationListed := w.listed[w.a.generationEndpoint]
+			_, verificationListed := w.listed[w.a.verificationEndpoint]
+			needs := false
+			if !generationListed || !verificationListed {
+				var err error
+				if needs, err = w.confirm("Does your local server require an API key?", false, false); err != nil {
+					return err
 				}
-				return err
+			}
+			if !needs {
+				w.say("  No key: requests to your local server are sent without one.")
+				return nil
 			}
 		}
-	} else {
-		w.say("  Open Trestle never asks for, stores or prints your key. It reads the key from an environment variable whose name you choose; only the name is saved.")
 	}
 	proposal := w.a.provider.credentialProposal
 	if proposal == "" {
 		proposal = "OPEN_TRESTLE_PROVIDER_LOCAL"
 	}
-	name, err := w.answer(initQuestion{flag: "credential-env", question: "Environment variable that holds the key", proposed: proposal, acceptProposal: false, validate: initCredentialName})
-	if err != nil || name == "" {
-		return err
-	}
-	w.a.credentialEnv = name
-	if os.Getenv(name) != "" {
-		w.say("  %s %s is set in this shell (its value is not shown or stored).", w.ok, name)
-		return nil
-	}
-	w.say("  %s %s is not set in this shell.", w.wait, name)
-	w.say("    Set it in the shell that runs Open Trestle, without showing the key on screen:")
-	w.sayVerbatim("      read -rs " + name + " && export " + name)
-	w.say("    or from your secret manager:")
-	w.sayVerbatim("      export " + name + "=\"$(your-secret-tool read your-key)\"")
-	w.say("    A running program cannot see a variable exported later, so after exporting it, run `trestle init` again: it finds this setup and re-checks the key.")
-	proceed, err := w.confirm("Continue setup now and re-check the key later?", true, true)
-	if err != nil {
-		return err
-	}
-	if !proceed {
-		return initStopf(initExitPending, "stopped before writing anything. Export %s, then run `trestle init` again.", name)
+	w.a.credentialEnv = proposal
+	if raw, ok := w.flags["credential-env"]; ok {
+		name, err := initCredentialName(raw)
+		if err != nil {
+			return initStopf(initExitUsage, "--credential-env: %v", err)
+		}
+		w.a.credentialEnv = name
 	}
 	return nil
 }
@@ -1330,7 +1391,7 @@ func (w *initWizard) stepCredentials() error {
 // --- Step 6: declarations ---------------------------------------------------------
 
 func (w *initWizard) stepDeclarations() error {
-	w.header(6, "Privacy and model declarations")
+	w.header(5, "Your consent")
 	a := &w.a
 	if a.provider.key == "openrouter" {
 		return w.openRouterConsent()
@@ -1645,51 +1706,6 @@ func initValidLabel(value string) (string, error) {
 		return "", errors.New("Use lowercase letters, digits, - _ and . only, starting and ending with a letter or digit.")
 	}
 	return value, nil
-}
-
-func (w *initWizard) stepLabels() error {
-	owner := "owner"
-	if current, err := user.Current(); err == nil {
-		owner = initLabel(current.Username, "owner")
-	}
-	proposals := []struct{ flag, question, proposal string }{
-		{"owner", "Owner (you; recorded as the person making the declarations)", owner},
-		{"tenant", "Tenant (a group name for your setups)", "personal"},
-		{"repository", "Repository ID", w.repoName},
-		{"repository-authority", "Host label (where the code lives)", "local"},
-		{"repository-namespace", "Namespace (the owner or team on that host)", owner},
-		{"repository-name", "Repository name on that host", w.repoName},
-	}
-	given := false
-	for _, p := range proposals {
-		_, ok := w.flags[p.flag]
-		given = given || ok
-	}
-	w.header(7, "Names for this setup")
-	values := map[string]string{}
-	if !given && w.prompt != nil {
-		w.say("  These names label your configuration and review records:")
-		for _, p := range proposals {
-			label, _, _ := strings.Cut(p.question, " (")
-			w.say("    %-30s %s", label+":", p.proposal)
-			values[p.flag] = p.proposal
-		}
-		keep, err := w.prompt.confirm("Keep these names?", true)
-		if err != nil {
-			return err
-		}
-		if keep {
-			return w.setLabels(values)
-		}
-	}
-	for _, p := range proposals {
-		value, err := w.answer(initQuestion{flag: p.flag, question: p.question, proposed: p.proposal, acceptProposal: true, validate: initValidLabel})
-		if err != nil {
-			return err
-		}
-		values[p.flag] = value
-	}
-	return w.setLabels(values)
 }
 
 func (w *initWizard) setLabels(values map[string]string) error {

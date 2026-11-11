@@ -414,9 +414,9 @@ func TestInitOllamaSigninNotSignedInThenConsentedSigninRechecks(t *testing.T) {
 		"y",           // run ollama signin
 		"", "8192",    // accept the listed context; output limit
 		"n",   // the plan does not charge per token
+		"",    // use the settings shown
 		"yes", // route declaration
 		"yes", // Ollama Cloud sign-in declaration
-		"",    // keep names
 		"y",   // run the first review
 	)
 	if result.code != initExitDone {

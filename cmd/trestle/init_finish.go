@@ -246,7 +246,7 @@ func (w *initWizard) bootstrapArgs() []string {
 }
 
 func (w *initWizard) stepWrite() (int, error) {
-	w.header(8, "Save and check")
+	w.header(6, "Save and check")
 	dir := w.a.directory
 	if dir == "" {
 		return 0, initStopf(initExitUsage, "cannot find your home folder for the default setup folder. Pass --directory PATH.")
@@ -472,7 +472,7 @@ func (w *initWizard) renderRemote(result remoteBootstrapResult, setup initSetup)
 		"privacy_declaration_current/refused":    "Your declared review window has ended. Review the provider terms and your account again, then run trestle init --directory NEW_FOLDER.",
 		"dispatch_catalog_validated/refused":     "The saved files could not be prepared for sending. Set up again with trestle init --directory NEW_FOLDER.",
 		"dispatch_catalog_validated/skipped":     "Checked once the review window is current.",
-		"credential_environment_present/pending": "Run: read -rs NAME && export NAME   (NAME = " + names + "), then run `trestle init` again in this repository.",
+		"credential_environment_present/pending": "Export the key in this shell without showing it, then run `trestle init` again in this repository:",
 		"ollama_cloud_models_listed/pending":     "Start Ollama on this machine (`ollama serve`, or the Ollama app), then run `trestle init` again in this repository.",
 		"ollama_cloud_models_listed/refused":     "A chosen model is no longer listed as an Ollama Cloud model by your local Ollama. Set up again with trestle init --directory NEW_FOLDER.",
 		"sanitized_egress_scanner/pending":       "Install the scanner from a packaged release: sudo ./open-trestle-linux-amd64.pyz install (docs/remote-model-review.md#prerequisite-1-a-scanner-bound-binary-and-installed-scanner).",
@@ -484,6 +484,13 @@ func (w *initWizard) renderRemote(result remoteBootstrapResult, setup initSetup)
 		w.say("    %s %s", w.mark(current), labels[key])
 		if hint := hints[key+"/"+current]; hint != "" {
 			w.hint("        " + hint)
+		}
+		if key == "credential_environment_present" && current == "pending" {
+			for _, name := range setup.credentials {
+				if os.Getenv(name) == "" {
+					w.sayVerbatim("          read -rs " + name + " && export " + name)
+				}
+			}
 		}
 	}
 	for _, key := range append(append([]string{}, result.Pending...), result.Refused...) {
@@ -591,8 +598,8 @@ func (w *initWizard) finish(setup initSetup, outcome initOutcome) (int, error) {
 		w.say("  Not ready for a review yet. Fix the items marked %s or %s above, then run `trestle init` again in this repository: it finds this setup and re-checks it.", w.wait, w.bad)
 		return outcome.code, nil
 	}
-	w.say("\nReady for the first review")
-	w.say("%s", strings.Repeat("─", 26))
+	w.say("\n%s", w.style.paint(initToneHeading, "Ready for the first review"))
+	w.say("%s", w.style.paint(initToneRule, strings.Repeat("─", 26)))
 	w.say("  Review command (each argument quoted for a POSIX shell; run it yourself any time):")
 	w.sayVerbatim(initRenderCommand(outcome.reviewCommand))
 	run := w.bools["run-review"]

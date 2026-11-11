@@ -88,10 +88,8 @@ func TestInitLocalShowsTheProbeRefusalReason(t *testing.T) {
 		"1",
 		"5", verification,
 		"1",
-		"", "8192", // accept the listed context; output limit
-		"n",   // no API key
+		"",    // use the settings shown
 		"yes", // local capabilities
-		"",    // keep names
 		"y",   // send the synthetic test requests
 	)
 	output := strings.Join(strings.Fields(result.stdout), " ")

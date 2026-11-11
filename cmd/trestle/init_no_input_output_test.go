@@ -33,10 +33,13 @@ func TestInitNoInputPrintsNoPromptHintsOrEmptySteps(t *testing.T) {
 		` __|X| \___----___/ |X|__   Open Trestle · setup`,
 		"===|X|=|==|==|==|===|X|===",
 		"",
+		"  Two AI models review your change: one lists possible",
+		"  problems, a different one double-checks each, and only",
+		"  confirmed findings are reported. Setup sends no source.",
 		"  --no-input: every answer comes from a flag.",
 		"",
-		"●○○○○○○○  Step 1 of 8 · What will be reviewed",
-		"─────────────────────────────────────────────",
+		"●○○○○○  Step 1 of 6 · What will be reviewed",
+		"───────────────────────────────────────────",
 		"  Repository: " + initDisplayPath(top) + "  (on branch " + branch + ")",
 		"  Base:       refs/heads/base  (" + base + ")",
 		"  Head:       refs/heads/review  (" + head + ")",
@@ -45,21 +48,19 @@ func TestInitNoInputPrintsNoPromptHintsOrEmptySteps(t *testing.T) {
 		"  Open Trestle compares exactly these two commits; it does",
 		"  not fetch.",
 		"",
-		"●●○○○○○○  Step 2 of 8 · How a review works",
+		"●●○○○○  Step 2 of 6 · Where the models run",
 		"──────────────────────────────────────────",
-		"  Open Trestle uses two AI models. The first reads your",
-		"  change and lists possible problems; a second, different",
-		"  model double-checks each one, and only confirmed findings",
-		"  are reported. Setup sends none of your source anywhere: it",
-		"  is sent to the models only when you run a review.",
-		"",
-		"●●●○○○○○  Step 3 of 8 · Where should the models run?",
-		"────────────────────────────────────────────────────",
 		"  Using: A model server on this machine (Ollama, llama.cpp,",
 		"  vLLM, LM Studio)",
 		"",
-		"●●●●●○○○  Step 5 of 8 · API key",
-		"───────────────────────────────",
+		"●●●○○○  Step 3 of 6 · The two models",
+		"────────────────────────────────────",
+		"",
+		"  Limits: context 32768 and output 4096 tokens; start both",
+		"  servers with this context length (llama.cpp --ctx-size,",
+		"  Ollama OLLAMA_CONTEXT_LENGTH, vLLM --max-model-len, LM",
+		"  Studio --context-length;",
+		"  docs/named-local-runtimes.md#context-length).",
 		"  No key: requests to your local server are sent without",
 		"  one.",
 		"",
@@ -68,7 +69,7 @@ func TestInitNoInputPrintsNoPromptHintsOrEmptySteps(t *testing.T) {
 	if result.stdout != want {
 		t.Fatalf("stdout differs.\ngot:\n%s\nwant:\n%s", result.stdout, want)
 	}
-	for _, missing := range []string{"--endpoint", "--generation-model", "--verification-model", "--context-tokens", "--output-tokens", "--declare-local-capabilities"} {
+	for _, missing := range []string{"--endpoint", "--generation-model", "--verification-model", "--declare-local-capabilities"} {
 		if !initHas(result.stderr, "\n  "+missing+"\n") {
 			t.Fatalf("stderr does not list %s:\n%s", missing, result.stderr)
 		}
@@ -89,7 +90,7 @@ func TestInitNoInputCompleteSetupHasNoEmptySteps(t *testing.T) {
 	if result.code != initExitDone {
 		t.Fatalf("exit=%d\n%s\n%s", result.code, result.stdout, result.stderr)
 	}
-	for _, unwanted := range []string{"Press Enter", "Ctrl-D", "[brackets]", "Step 4 of 8", "Step 7 of 8"} {
+	for _, unwanted := range []string{"Enter accepts", "Ctrl-D", "[brackets]", "Step 3 of 6"} {
 		if initHas(result.stdout, unwanted) {
 			t.Fatalf("--no-input output contains %q:\n%s", unwanted, result.stdout)
 		}
@@ -104,7 +105,7 @@ func TestInitNoInputCompleteSetupHasNoEmptySteps(t *testing.T) {
 			t.Fatalf("a step header has nothing under it:\n%s", result.stdout)
 		}
 	}
-	if got := len(headers); got != 6 {
-		t.Fatalf("shown steps = %d, want 1, 2, 3, 5, 6 and 8:\n%s", got, result.stdout)
+	if got := len(headers); got != 5 {
+		t.Fatalf("shown steps = %d, want 1, 2, 4, 5 and 6:\n%s", got, result.stdout)
 	}
 }

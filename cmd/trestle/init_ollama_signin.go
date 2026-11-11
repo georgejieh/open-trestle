@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"strings"
 
 	"github.com/georgejieh/open-trestle/internal/routehint"
@@ -18,15 +17,12 @@ func (w *initWizard) ollamaSigninModels() error {
 	if w.prompt != nil {
 		w.say("  Your local Ollama relays Ollama Cloud models (names ending in :cloud or -cloud) to ollama.com with the account you signed in with (`ollama signin`). Open Trestle talks only to Ollama on this machine and needs no API key, but your source does leave this machine: when you run a review it is secret-scanned, then sent to Ollama Cloud.")
 	}
-	endpoint, err := w.answer(initQuestion{flag: "endpoint", question: "Local Ollama address", proposed: ollamaSigninDefaultBaseURL, acceptProposal: true, validate: func(value string) (string, error) {
-		value = strings.TrimRight(value, "/")
-		if !runtimeconfig.ValidOllamaSigninEndpoint(value) {
-			return "", errors.New("Type Ollama's address on this machine as http://127.0.0.1:PORT/v1, such as http://127.0.0.1:11434/v1.")
+	endpoint := ollamaSigninDefaultBaseURL
+	if raw, ok := w.flags["endpoint"]; ok {
+		endpoint = strings.TrimRight(raw, "/")
+		if !runtimeconfig.ValidOllamaSigninEndpoint(endpoint) {
+			return initStopf(initExitUsage, "--endpoint: give Ollama's address on this machine as http://127.0.0.1:PORT/v1, such as http://127.0.0.1:11434/v1.")
 		}
-		return value, nil
-	}})
-	if err != nil || endpoint == "" {
-		return err
 	}
 	w.a.generationEndpoint, w.a.verificationEndpoint = endpoint, endpoint
 	if _, err := ollamaLookPath(); err == nil {

@@ -47,7 +47,7 @@ func (w *initWizard) openRouterModels() error {
 
 func (w *initWizard) readOpenRouter() *openRouterObservation {
 	if w.prompt != nil {
-		w.say("  Reading OpenRouter's public model list and zero-data-retention endpoint list (two requests to openrouter.ai; no key or code is sent) ...")
+		w.say("  Reading OpenRouter's public model and zero-data-retention lists (no key or code is sent) ...")
 	}
 	observation := readOpenRouterObservation(w.ctx, w.clock)
 	if observation.err != nil {

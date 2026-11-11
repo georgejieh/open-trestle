@@ -95,9 +95,8 @@ func TestInitOpenRouterBothModelsWithZDRRequiresItByDefault(t *testing.T) {
 		"other/verifier",
 		"",    // require zero data retention (the default)
 		"",    // accept the proposed cost limit
-		"",    // accept the proposed key variable name
+		"",    // use the settings shown
 		"yes", // consent
-		"",    // keep names
 		"y",   // run the review
 	)
 	if result.code != initExitDone {
@@ -153,7 +152,7 @@ func TestInitOpenRouterModelWithoutZDRWarnsAndSteersToOne(t *testing.T) {
 		"",  // choose a model with zero-data-retention endpoints instead
 		"2", // other/verifier from the ZDR-only list
 		"",  // require zero data retention
-		"", "", "yes", "", "n",
+		"", "", "yes", "n",
 	)
 	if result.code != initExitDone {
 		t.Fatalf("init exit=%d\nstdout:\n%s\nstderr:\n%s", result.code, result.stdout, result.stderr)
@@ -184,7 +183,7 @@ func TestInitOpenRouterModelWithoutZDRContinuesOnlyWithConsent(t *testing.T) {
 		"1", "generator", "1", "plain", "1",
 		"n", // keep the model without zero data retention
 		"y", // continue without zero data retention
-		"", "", "yes", "", "y",
+		"", "", "yes", "y",
 	)
 	if result.code != initExitDone {
 		t.Fatalf("init exit=%d\nstdout:\n%s\nstderr:\n%s", result.code, result.stdout, result.stderr)
@@ -218,7 +217,7 @@ func TestInitOpenRouterUserDeclinesZDR(t *testing.T) {
 		"1", "generator", "1", "", "other/verifier",
 		"n", // do not require zero data retention
 		"y", // continue without it
-		"", "", "yes", "", "n",
+		"", "", "yes", "n",
 	)
 	if result.code != initExitDone {
 		t.Fatalf("init exit=%d\nstdout:\n%s\nstderr:\n%s", result.code, result.stdout, result.stderr)
@@ -285,7 +284,7 @@ func TestInitOpenRouterUnreachableAPIFallsBackToTypedAnswers(t *testing.T) {
 		"",               // require zero data retention
 		"128000", "8192", // typed limits
 		"3", "15", "1", // typed prices and cost limit
-		"", "yes", "", "y",
+		"", "yes", "y",
 	)
 	if result.code != initExitDone {
 		t.Fatalf("init exit=%d\nstdout:\n%s\nstderr:\n%s", result.code, result.stdout, result.stderr)
@@ -312,10 +311,10 @@ func TestInitOpenRouterZDRProviderDoesNotAskAgain(t *testing.T) {
 	api := fakeOpenRouter(t, initOpenRouterModels()...)
 	checkout := remoteBootstrapCheckout(t)
 	for _, reachable := range []bool{true, false} {
-		script := []string{"generator", "1", "", "other/verifier", "", "", "yes", "", "n"}
+		script := []string{"generator", "1", "", "other/verifier", "", "", "yes", "n"}
 		if !reachable {
 			api.zdr = ""
-			script = []string{"vendor/generator", "other/verifier", "128000", "8192", "3", "15", "1", "", "yes", "", "n"}
+			script = []string{"vendor/generator", "other/verifier", "128000", "8192", "3", "15", "1", "", "yes", "n"}
 		}
 		dir := filepath.Join(t.TempDir(), "setup")
 		result := runInitScript(t, checkout, []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review", "--provider", "openrouter-zdr"}, script...)

@@ -35,9 +35,8 @@ func TestInitDevelopmentBuildReportsSavedRemoteSetup(t *testing.T) {
 			"1", "2", // the two listed models
 			"128000", "8192",
 			"n",   // no per-token charge
-			"",    // the proposed key variable, which is set
+			"",    // use the settings shown
 			"yes", // route declaration
-			"",    // keep names
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

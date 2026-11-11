@@ -25,7 +25,7 @@ import (
 // the one exception.
 const initWidth = 60
 
-const initSteps = 8
+const initSteps = 6
 
 type initPalette int
 
@@ -153,11 +153,15 @@ func initFit(line string, width int) []string {
 }
 
 // banner is the opening: the compact bridge mark with the product name beside
-// it, then how to answer.
+// it, what a review does in three lines, then how to answer.
 func (s initStyle) banner(noInput bool) []string {
 	mark := tui.AmbassadorBridgeCompactMark
 	title := s.paint(initToneHeading, "Open Trestle · setup")
 	lines := []string{s.paint(initToneRule, strings.TrimRight(mark[0], " ")), s.paint(initToneRule, mark[1]) + "  " + title, s.paint(initToneRule, strings.TrimRight(mark[2], " ")), ""}
+	lines = append(lines,
+		"  Two AI models review your change: one lists possible",
+		"  problems, a different one double-checks each, and only",
+		"  confirmed findings are reported. Setup sends no source.")
 	if noInput {
 		return append(lines, "  --no-input: every answer comes from a flag.")
 	}
@@ -245,4 +249,19 @@ func initWrapWords(text string, width int) []string {
 		lines = append(lines, line)
 	}
 	return lines
+}
+
+// framed colors a panel's frame in the rule tone and leaves its text in the
+// terminal's own color.
+func (s initStyle) framed(lines []string) []string {
+	out := make([]string, len(lines))
+	for i, line := range lines {
+		if i == 0 || i == len(lines)-1 {
+			out[i] = s.paint(initToneRule, line)
+			continue
+		}
+		runes := []rune(line)
+		out[i] = s.paint(initToneRule, string(runes[:1])) + string(runes[1:len(runes)-1]) + s.paint(initToneRule, string(runes[len(runes)-1:]))
+	}
+	return out
 }

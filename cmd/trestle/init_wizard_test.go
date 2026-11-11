@@ -46,6 +46,10 @@ func runInitScript(t *testing.T, checkout string, args []string, script ...strin
 		initEvidenceTransport = initOfflineTransport{}
 		defer func() { initEvidenceTransport = nil }()
 	}
+	// No test reaches a real model server on this machine's default ports.
+	previousDetect := initDetectLocalServers
+	initDetectLocalServers = func(context.Context) []initLocalServer { return initFakeLocalServers }
+	defer func() { initDetectLocalServers = previousDetect }()
 	var stdout, stderr bytes.Buffer
 	input := strings.Join(script, "\n")
 	if len(script) != 0 {
@@ -61,6 +65,10 @@ func runInitScript(t *testing.T, checkout string, args []string, script ...strin
 	initAssertWidth(t, result.stderr)
 	return result
 }
+
+// initFakeLocalServers are the local servers the wizard's detection finds in
+// a test; none unless a test sets them.
+var initFakeLocalServers []initLocalServer
 
 // initHas reports whether text contains want once line wrapping is undone:
 // every run of spaces and line breaks counts as one space.
@@ -225,17 +233,15 @@ func TestInitLocalServerProbedModelsThroughFirstReview(t *testing.T) {
 				"1",               // the only listed model
 				"5", verification, // the second server
 				"1",
-				"", "8192", // accept the listed context; output limit
-				"n",   // no API key
+				"",    // use the settings shown
 				"yes", // local capabilities
-				"",    // keep names
 				"n",   // no synthetic test requests
 				"y",
 			)
 			if result.code != initExitDone {
 				t.Fatalf("init exit=%d\nstdout:\n%s\nstderr:\n%s", result.code, result.stdout, result.stderr)
 			}
-			for _, want := range []string{"Found 1 model.", "model-a  (context 128000)", "This server offers one model", "Context window in tokens (how much each model can read) [32768]", "✓ Model configuration approved", "✓ Dry run without models", "– Test requests to both models (optional; not sent)", "– Background-service tokens and backup", "Ready for the first review", "Review finished"} {
+			for _, want := range []string{"Found 1 model.", "model-a  (context 128000)", "This server offers one model", "Limits: context 32768 and output 4096 tokens; start both servers with this context length", "✓ Model configuration approved", "✓ Dry run without models", "– Test requests to both models (optional; not sent)", "– Background-service tokens and backup", "Ready for the first review", "Review finished"} {
 				if !initHas(result.stdout, want) {
 					t.Fatalf("output lacks %q:\n%s", want, result.stdout)
 				}
@@ -277,7 +283,7 @@ func TestInitDevelopmentBuildExplainsScannerAndOffersLocal(t *testing.T) {
 	if result.code != initExitUsage || !initHas(result.stderr, "input ended") {
 		t.Fatalf("exit=%d\n%s\n%s", result.code, result.stdout, result.stderr)
 	}
-	provider := result.stdout[strings.Index(result.stdout, "Step 3 of 8"):]
+	provider := result.stdout[strings.Index(result.stdout, "Step 2 of 6"):]
 	for _, want := range []string{"remote models need the packaged build", "secret-scanned before it", "python3 tools/package_secret_scanner.py --output .container", "sudo ./open-trestle-linux-amd64.pyz install", "(remote, needs an API key) [needs the packaged build]", "This build cannot send source to OpenRouter", "Using: A model server on this machine"} {
 		if !initHas(provider, want) {
 			t.Fatalf("step 3 lacks %q:\n%s", want, provider)
@@ -306,7 +312,7 @@ func TestInitUnreadableObjectStorageStopsBeforeQuestions(t *testing.T) {
 	}
 	dir := filepath.Join(t.TempDir(), "setup")
 	result := runInitScript(t, checkout, []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review"})
-	if result.code != initExitRefused || !initHas(result.stderr, "cannot read the selected commits") || !initHas(result.stderr, "git clone --no-local --no-hardlinks") || initHas(result.stdout, "Step 3 of 8") {
+	if result.code != initExitRefused || !initHas(result.stderr, "cannot read the selected commits") || !initHas(result.stderr, "git clone --no-local --no-hardlinks") || initHas(result.stdout, "Step 2 of 6") {
 		t.Fatalf("exit=%d\n%s\n%s", result.code, result.stdout, result.stderr)
 	}
 	initAssertAbsent(t, dir)
@@ -389,7 +395,7 @@ func TestInitMissingCredentialThenRerunRechecks(t *testing.T) {
 	checkout := remoteBootstrapCheckout(t)
 	dir := filepath.Join(t.TempDir(), "setup")
 	args := []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review", "--provider", "ollama-cloud", "--generation-model", "gemma4:31b", "--verification-model", "qwen3.5:397b", "--context-tokens", "128000", "--output-tokens", "8192", "--input-micro-usd-per-million-tokens", "0", "--output-micro-usd-per-million-tokens", "0", "--max-cost-micro-usd", "0", "--credential-env", "OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD"}
-	first := runInitScript(t, checkout, args, "y", "yes", "")
+	first := runInitScript(t, checkout, args, "", "yes")
 	if first.code != initExitPending || !initHas(first.stdout, "read -rs OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD && export OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD") || !initHas(first.stdout, "Not ready for a review yet") {
 		t.Fatalf("missing key was not a pending setup: exit=%d\n%s\n%s", first.code, first.stdout, first.stderr)
 	}
@@ -422,7 +428,7 @@ func TestInitNoInputListsMissingAnswersAndWritesNothing(t *testing.T) {
 	if result.code != initExitUsage {
 		t.Fatalf("exit=%d stderr=%s", result.code, result.stderr)
 	}
-	for _, want := range []string{"--verification-model", "--context-tokens", "--output-tokens", "--max-cost-micro-usd", "--credential-env", "--declare-remote-route"} {
+	for _, want := range []string{"--verification-model", "--context-tokens", "--output-tokens", "--max-cost-micro-usd", "--declare-remote-route"} {
 		if !initHas(result.stderr, "\n  "+want+"\n") && !strings.HasSuffix(strings.SplitN(result.stderr, "\nSee", 2)[0], "\n  "+want) {
 			t.Fatalf("missing answer %s not listed:\n%s", want, result.stderr)
 		}
