@@ -1085,14 +1085,18 @@ mapping:
 | 403 | `authorization` | `policy` | no | `provider_authorization_denied` |
 | 404 | `model_unavailable` | `policy` | no | `provider_model_unavailable` |
 | 410 | `model_retired` | `policy` | no | `provider_model_retired` |
-| 429 | `rate_limited` | `transient` | while the task has attempts left | `provider_rate_limited` |
-| 5xx | `provider_server` | `transient` | while the task has attempts left | none |
+| 429 | `rate_limited` | `transient` | only if the plan allows another attempt | `provider_rate_limited` |
+| 5xx | `provider_server` | `transient` | only if the plan allows another attempt | none |
 
 A `policy` run is `refused` with CI disposition `blocked` and exit code 4, so a
 refusal the provider repeats on every request is attempted once. A `transient`
-run is `failed` with `error` and exit code 1. A 429 attempt records the
-provider's bounded `Retry-After` delay on its route outcome, but the task retry
-waits the plan's fixed retry delay; it does not read `Retry-After`. Before this
+run is `failed` with `error` and exit code 1. Generation and verification have
+one attempt in every current plan, so neither is retried after a 429. The
+task_failed event records the `Retry-After` delay the provider asked for. A plan
+that allowed another attempt would wait that delay instead of the plan's fixed
+retry delay, capped at the longest retry delay a plan task may declare (one
+hour) and never past the review's `--timeout` deadline, and the event's retry
+time would record the delay used. Before this
 mapping, 402, 404 and 410 were `invalid_response`, so the run failed as a
 retryable `internal` failure with no detail. The detail is recorded only when
 the most recent model request the provider answered was refused that way and
@@ -1120,9 +1124,16 @@ model or endpoint: check the account's access, or choose another route"; 429
 "the provider rate-limited the request on its last attempt: wait and run the
 review again, or choose another route". `failure_detail` takes these values in
 result schema version 6; a result without a provider refusal keeps its bytes.
-A daemon run is classified the same way (a `policy` task failure, attempted
-once), but its run receipt does not yet record a failure reason for a model
-task, so `trestle runs`, the TUI and the web console show only the class.
+A daemon run is classified the same way, and its generation or verification
+task records the detail as its content-free failure reason (the same
+`provider_*` token) in task completion v3, the v7 `task_failed` event and
+receipt v3. `trestle runs status` prints it on stderr, for example
+`runs status: task candidates failed: provider_payment_required (the provider
+refused the request for billing)` and a `hint:` line with the action; the TUI
+prints a `Reason` and a `Hint` line, the web console a labeled reason and hint,
+and the ACP review-state message a `Task failure` line. A daemon run has no run
+deadline, so a retry its plan allowed after a rate limit would be bounded by the
+one-hour cap alone.
 
 ### Token usage
 
