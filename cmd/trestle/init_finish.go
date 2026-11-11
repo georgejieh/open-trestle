@@ -618,6 +618,28 @@ func (w *initWizard) finish(setup initSetup, outcome initOutcome) (int, error) {
 	return w.review(outcome.reviewCommand), nil
 }
 
+// initHangingWrap wraps one "label: value" result line to width, indenting
+// continuation lines under the value so a long hint or limitation list does
+// not read as a new field. A line without a short lowercase label, or whose
+// label leaves too little room, wraps flush.
+func initHangingWrap(line string, width int) []string {
+	label, value, found := strings.Cut(line, ": ")
+	indent := len(label) + 2
+	if !found || label == "" || indent > width/3 || strings.TrimFunc(label, func(r rune) bool { return r >= 'a' && r <= 'z' || r == ' ' || r == '_' }) != "" {
+		return initWrapWords(line, width)
+	}
+	parts := initWrapWords(value, width-indent)
+	lines := make([]string, len(parts))
+	for i, part := range parts {
+		if i == 0 {
+			lines[i] = label + ": " + part
+		} else {
+			lines[i] = strings.Repeat(" ", indent) + part
+		}
+	}
+	return lines
+}
+
 func (w *initWizard) review(command []string) int {
 	if len(command) < 4 || strings.Join(command[:3], " ") != "trestle local-git model-review" {
 		fmt.Fprintln(w.errOut, "trestle init: the setup did not produce a usable review command")
@@ -628,7 +650,7 @@ func (w *initWizard) review(command []string) int {
 	code := runLocalGitModelReview(w.ctx, command[3:], &out, &errOut)
 	status, findings := "", 0
 	for _, line := range strings.Split(strings.TrimRight(out.String(), "\n"), "\n") {
-		for _, part := range initWrapWords(line, initWidth-4) {
+		for _, part := range initHangingWrap(line, initWidth-4) {
 			w.sayVerbatim("  │ " + part)
 		}
 		if value, ok := strings.CutPrefix(line, "status: "); ok && status == "" {

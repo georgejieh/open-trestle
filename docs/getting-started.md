@@ -145,8 +145,10 @@ runs in six steps:
    - **Ollama Cloud and OpenCode Go** ask for the limits when the model list does
      not state them, and whether your plan charges per token.
 
-   Every remote provider then asks for the most one review may cost, proposing
-   the cost of a request that fills the whole context.
+   Every remote provider then asks for the most one model request may cost,
+   proposing the cost of a request that fills the whole context. The limit
+   applies to each request, and a review sends two (one to each model), so a
+   review costs at most twice the limit.
 4. **Your settings.** One panel shows everything, asked or filled in:
 
    ```text
@@ -157,8 +159,8 @@ runs in six steps:
    │ Finder   vendor/finder-model                             │
    │ Checker  other/checker-model                             │
    │ Limits   context 128000 · output 16000 tokens            │
-   │ Cost     $3.3 in · $16.5 out per million tokens · at     │
-   │          most $0.49 a review                             │
+   │ Cost     $3.30 in · $16.50 out per million tokens · at   │
+   │          most $0.49 a request ($0.98 a review)           │
    │ Key      OPEN_TRESTLE_PROVIDER_OPENROUTER (set; never    │
    │          stored)                                         │
    │ Source   github.com/owner/project                        │

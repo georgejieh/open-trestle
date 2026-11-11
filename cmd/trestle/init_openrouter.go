@@ -286,6 +286,9 @@ func (w *initWizard) openRouterLimits() error {
 		}
 		w.a.contextTokens, w.a.outputTokens = strconv.FormatUint(context, 10), strconv.FormatUint(output, 10)
 		source := ", the smaller of the two models"
+		if w.zdr {
+			source = ", the smallest that any pinned endpoint of either model allows"
+		}
 		if _, given := w.flags["context-tokens"]; given {
 			source = ""
 		} else if _, given := w.flags["output-tokens"]; given {

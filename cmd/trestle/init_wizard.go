@@ -829,6 +829,7 @@ func initValidSelector(value string) error {
 
 func (w *initWizard) pickModel(flagName, question string, models []modelcatalog.Model, exclude string) (string, error) {
 	shown := models
+	filtered := false
 	_, given := w.flags[flagName]
 	if w.prompt != nil && len(models) > initModelListLimit && !given {
 		w.say("\n  %s", question)
@@ -836,12 +837,14 @@ func (w *initWizard) pickModel(flagName, question string, models []modelcatalog.
 		if shown, err = w.filterModels(models); err != nil {
 			return "", err
 		}
+		filtered = len(shown) > 0
 		if len(shown) > 0 {
 			question = "Matching models"
 		} else {
 			question = "Exact model ID"
 		}
 	}
+	pool := len(shown)
 	if len(shown) > initModelListLimit {
 		shown = shown[:initModelListLimit]
 	}
@@ -850,7 +853,9 @@ func (w *initWizard) pickModel(flagName, question string, models []modelcatalog.
 		for i, model := range shown {
 			w.say("    %2d) %s%s", i+1, model.Selector, initModelNote(model))
 		}
-		if len(models) > len(shown) {
+		if filtered && pool > len(shown) {
+			w.say("    ... %d more match; type more of the name, or an exact ID.", pool-len(shown))
+		} else if !filtered && len(models) > len(shown) {
 			w.say("    ... %d more; type an exact ID to use one of them.", len(models)-len(shown))
 		}
 	}
@@ -917,6 +922,24 @@ func (w *initWizard) filterModels(models []modelcatalog.Model) ([]modelcatalog.M
 			}
 		}
 		if len(matches) != 0 {
+			// An exact ID first, then the same name under another vendor
+			// prefix, then names that start with the text; otherwise the
+			// catalog order is kept.
+			needle := strings.ToLower(text)
+			rank := func(model modelcatalog.Model) int {
+				selector := strings.ToLower(model.Selector)
+				_, name, _ := strings.Cut(selector, "/")
+				switch {
+				case selector == needle:
+					return 0
+				case name == needle:
+					return 1
+				case strings.HasPrefix(selector, needle) || strings.HasPrefix(name, needle):
+					return 2
+				}
+				return 3
+			}
+			slices.SortStableFunc(matches, func(x, y modelcatalog.Model) int { return rank(x) - rank(y) })
 			return matches, nil
 		}
 		w.say("    No listed model contains %q. Try a shorter part of the name.", text)
@@ -1240,8 +1263,10 @@ func (w *initWizard) prices() error {
 	return w.costLimit(true)
 }
 
-// costLimit asks for the most one review may cost. With propose set, the
-// cost of a request that fills the whole context is offered as the default.
+// costLimit asks for the most one model request may cost. Each request has
+// its own budget and a review sends two (the finder's and the checker's), so
+// a review costs at most twice the limit. With propose set, the cost of a
+// request that fills the whole context is offered as the default.
 func (w *initWizard) costLimit(propose bool) error {
 
 	input, _ := strconv.ParseUint(w.a.inputPrice, 10, 64)
@@ -1251,7 +1276,7 @@ func (w *initWizard) costLimit(propose bool) error {
 	reservation := (reviewOutput*output + 999_999) / 1_000_000
 	full := reservation + (contextTokens*input+999_999)/1_000_000
 	if _, given := w.flags["max-cost-micro-usd"]; !given && w.prompt != nil {
-		w.say("\n  A review that could cost more than your limit is refused. One that fills the whole context costs about %s.", initFormatUSD(full))
+		w.say("\n  The limit applies to each model request. A review sends two, one to each model, so it costs at most twice the limit; a request that could cost more is refused. A request that fills the whole context costs about %s.", initFormatUSD(full))
 	}
 	limit := func(parse func(string) (string, error)) func(string) (string, error) {
 		return func(value string) (string, error) {
@@ -1261,7 +1286,7 @@ func (w *initWizard) costLimit(propose bool) error {
 			}
 			n, _ := strconv.ParseUint(micro, 10, 64)
 			if n < reservation || input+output > 0 && n == 0 {
-				return "", fmt.Errorf("The limit must be at least %s to cover the 4096-token answer.", initFormatUSD(max(reservation, 1)))
+				return "", fmt.Errorf("The limit must be at least %s to cover the %d-token answer.", initFormatUSD(max(reservation, 1)), reviewOutput)
 			}
 			return micro, nil
 		}
@@ -1272,7 +1297,7 @@ func (w *initWizard) costLimit(propose bool) error {
 		proposal = strings.TrimPrefix(initFormatUSD(max(cents, reservation)), "$")
 	}
 	var err error
-	w.a.maxCost, err = w.answer(initQuestion{flag: "max-cost-micro-usd", question: "Most one review may cost, in USD", proposed: proposal, validate: limit(initUSD), validateFlag: limit(initMicro)})
+	w.a.maxCost, err = w.answer(initQuestion{flag: "max-cost-micro-usd", question: "Most one model request may cost, in USD", proposed: proposal, validate: limit(initUSD), validateFlag: limit(initMicro)})
 	return err
 }
 
@@ -1280,15 +1305,16 @@ func (w *initWizard) costLimit(propose bool) error {
 func (w *initWizard) costLimitWith(proposal string) error {
 	output, _ := strconv.ParseUint(w.a.outputPrice, 10, 64)
 	input, _ := strconv.ParseUint(w.a.inputPrice, 10, 64)
-	reservation := (w.reviewOutputTokens()*output + 999_999) / 1_000_000
-	value, err := w.prompt.ask("Most one review may cost, in USD", proposal, func(value string) (string, error) {
+	reviewOutput := w.reviewOutputTokens()
+	reservation := (reviewOutput*output + 999_999) / 1_000_000
+	value, err := w.prompt.ask("Most one model request may cost, in USD", proposal, func(value string) (string, error) {
 		micro, err := initUSD(value)
 		if err != nil {
 			return "", err
 		}
 		n, _ := strconv.ParseUint(micro, 10, 64)
 		if n < reservation || input+output > 0 && n == 0 {
-			return "", fmt.Errorf("The limit must be at least %s to cover the 4096-token answer.", initFormatUSD(max(reservation, 1)))
+			return "", fmt.Errorf("The limit must be at least %s to cover the %d-token answer.", initFormatUSD(max(reservation, 1)), reviewOutput)
 		}
 		return micro, nil
 	})
@@ -1327,10 +1353,11 @@ func initUSD(value string) (string, error) {
 }
 
 func initFormatUSD(micro uint64) string {
-	text := fmt.Sprintf("$%d.%06d", micro/1_000_000, micro%1_000_000)
-	text = strings.TrimRight(text, "0")
-	if strings.HasSuffix(text, ".") {
-		text += "00"
+	// Whole cents at least ($0.10, $3.30), with more digits only when the
+	// amount has them ($0.048692).
+	text := strings.TrimRight(fmt.Sprintf("$%d.%06d", micro/1_000_000, micro%1_000_000), "0")
+	if _, decimals, _ := strings.Cut(text, "."); len(decimals) < 2 {
+		text += strings.Repeat("0", 2-len(decimals))
 	}
 	return text
 }

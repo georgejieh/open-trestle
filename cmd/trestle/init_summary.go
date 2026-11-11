@@ -154,7 +154,7 @@ func (w *initWizard) summaryRows() [][2]string {
 		if input+output == 0 {
 			prices = "no per-token charge"
 		}
-		rows = append(rows, [2]string{"Cost", prices + " · at most " + initFormatUSD(limit) + " a review"})
+		rows = append(rows, [2]string{"Cost", prices + " · at most " + initFormatUSD(limit) + " a request (" + initFormatUSD(2*limit) + " a review)"})
 	}
 	switch {
 	case a.credentialEnv == "":

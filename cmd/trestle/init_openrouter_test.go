@@ -104,7 +104,9 @@ func TestInitOpenRouterBothModelsWithZDRRequiresItByDefault(t *testing.T) {
 	}
 	initAssertOutput(t, result, "46 models listed; 2 have zero-data-retention endpoints", "same model as the finder",
 		"zero data retention on 2 endpoints (fixture-cloud, fixture-cloud/us)", "zero data retention on 1 endpoint (fixture-host/fp8)",
-		"Limits: context 128000 and output 16000 tokens", "Prices: up to $3.3 input and $16.5 output", "[0.49]", "Endpoints that may keep prompts for Safety Retention are left out.",
+		"Limits: context 128000 and output 16000 tokens, the smallest that any pinned endpoint of either model allows", "Prices: up to $3.30 input and $16.50 output", "[0.49]", "Endpoints that may keep prompts for Safety Retention are left out.",
+		"The limit applies to each model request. A review sends two, one to each model, so it costs at most twice the limit", "Most one model request may cost, in USD",
+		"most $0.49 a request ($0.98 a review)",
 		"Zero data retention is required on every request", "Review finished: 1 confirmed finding",
 		"A review sends the selected source to OpenRouter (https://openrouter.ai/api/v1), zero data retention required on every request")
 	if initHas(result.stdout, "openrouter_zero_data_retention_not_required") {
@@ -138,6 +140,34 @@ func TestInitOpenRouterBothModelsWithZDRRequiresItByDefault(t *testing.T) {
 			sources[0].(map[string]any)["content_sha256"] != initSHA256(api.zdr) || sources[1].(map[string]any)["content_sha256"] != initSHA256(api.models) {
 			t.Fatalf("witness does not record the API observation: %v", witness)
 		}
+	}
+}
+
+func TestInitOpenRouterFilterRanksExactIDFirstAndCountsOnlyMatches(t *testing.T) {
+	remoteScannerInstalled(t)
+	t.Setenv("OPEN_TRESTLE_PROVIDER_OPENROUTER", remoteTestKey)
+	longer := fakeORFinder
+	longer.id = "vendor/generator-pro"
+	models := append([]fakeORModel{longer}, initOpenRouterModels()...)
+	fakeOpenRouter(t, models...)
+	checkout := remoteBootstrapCheckout(t)
+	dir := filepath.Join(t.TempDir(), "setup")
+	result := runInitScript(t, checkout, []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review"},
+		"1",                     // OpenRouter
+		"vendor/generator", "1", // the exact ID is listed first, ahead of a longer name
+		"model", "other/verifier", // 43 fillers match; 40 are listed
+		"",    // require zero data retention
+		"",    // accept the proposed cost limit
+		"",    // use the settings shown
+		"yes", // consent
+		"n",   // no review
+	)
+	if result.code != initExitDone {
+		t.Fatalf("init exit=%d\nstdout:\n%s\nstderr:\n%s", result.code, result.stdout, result.stderr)
+	}
+	initAssertOutput(t, result, "1) vendor/generator (context 200000", "2) vendor/generator-pro", "Finder vendor/generator", "... 3 more match; type more of the name, or an exact ID.")
+	if initHas(result.stdout, "more; type an exact ID") {
+		t.Fatalf("a filtered list counted models that do not match:\n%s", result.stdout)
 	}
 }
 
@@ -320,6 +350,36 @@ func TestInitOpenRouterZDRProviderDoesNotAskAgain(t *testing.T) {
 		result := runInitScript(t, checkout, []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review", "--provider", "openrouter-zdr"}, script...)
 		if result.code != initExitDone || initHas(result.stdout, "Require zero data retention on every request") || initReadOpenRouterSetup(t, dir).bootstrap["provider"] != "openrouter-zdr" {
 			t.Fatalf("reachable=%t exit=%d\n%s\n%s", reachable, result.code, result.stdout, result.stderr)
+		}
+	}
+}
+
+func TestInitHangingWrapIndentsContinuationUnderTheValue(t *testing.T) {
+	got := initHangingWrap("limitations: loose_and_pack_index_v1_subset, empty_memory_index, bounded_source_context, no_publication", 56)
+	want := []string{
+		"limitations: loose_and_pack_index_v1_subset,",
+		"             empty_memory_index, bounded_source_context,",
+		"             no_publication",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("hanging wrap:\n%q\nwant\n%q", got, want)
+	}
+	for _, line := range []string{"No label on this line, which is long enough that it has to wrap onto another line", "comprehensive clearance: false", "Status: failed"} {
+		if got, flush := initHangingWrap(line, 56), initWrapWords(line, 56); !slices.Equal(got, flush) {
+			t.Fatalf("%q wrapped %q, want flush %q", line, got, flush)
+		}
+	}
+	for _, line := range initHangingWrap("hint: "+strings.Repeat("word ", 30), 56) {
+		if len(line) > 56 {
+			t.Fatalf("line longer than the width: %q", line)
+		}
+	}
+}
+
+func TestInitFormatUSDShowsWholeCents(t *testing.T) {
+	for micro, want := range map[uint64]string{0: "$0.00", 100_000: "$0.10", 3_300_000: "$3.30", 16_500_000: "$16.50", 490_000: "$0.49", 48_692: "$0.048692", 1: "$0.000001", 2_000_000: "$2.00"} {
+		if got := initFormatUSD(micro); got != want {
+			t.Fatalf("initFormatUSD(%d) = %q, want %q", micro, got, want)
 		}
 	}
 }
