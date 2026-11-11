@@ -1,9 +1,24 @@
 package localreview
 
+import "github.com/georgejieh/open-trestle/internal/routehint"
+
 // FailureDetailModelOutputExhausted records that a model route finished with
 // a length stop and no answer: the model spent its whole output allowance,
 // typically on reasoning, before writing the requested document.
 const FailureDetailModelOutputExhausted = "model_output_exhausted"
+
+// Provider refusal details record that the last model request a provider
+// answered was refused, from the HTTP status class alone: billing (402),
+// credential (401), account access (403), model or endpoint not served (404),
+// model retired (410) or rate limit (429). They never carry provider text.
+const (
+	FailureDetailProviderPaymentRequired      = "provider_payment_required"
+	FailureDetailProviderModelUnavailable     = "provider_model_unavailable"
+	FailureDetailProviderModelRetired         = "provider_model_retired"
+	FailureDetailProviderAuthenticationFailed = "provider_authentication_failed"
+	FailureDetailProviderAuthorizationDenied  = "provider_authorization_denied"
+	FailureDetailProviderRateLimited          = "provider_rate_limited"
+)
 
 // failureHints are plain-language explanations of each run failure class.
 // They describe what the class usually means; they are not diagnoses.
@@ -49,6 +64,9 @@ func (r Result) failureSummary() (class, task, detail, hint string) {
 		hint = value
 	}
 	if value, ok := failureDetailHints[detail]; ok {
+		hint = value
+	}
+	if value := routehint.ProviderRefusalHint(detail); value != "" {
 		hint = value
 	}
 	if detail == FailureDetailRouteContextInsufficient && r.wire.ContextShortfall != nil {

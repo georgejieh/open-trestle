@@ -4,9 +4,11 @@ import (
 	"context"
 	"sync"
 
+	"github.com/georgejieh/open-trestle/controlplane"
 	modelhandler "github.com/georgejieh/open-trestle/handlers/model"
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/provider"
+	"github.com/georgejieh/open-trestle/internal/routehint"
 )
 
 // maxObservedRouteUsages bounds the usage records of one run. A direct run
@@ -26,6 +28,9 @@ type routeFailureObserver struct {
 	// shortfall is the first planning refusal of the run that named a route
 	// context shortfall.
 	shortfall *gateway.RouteContextShortfall
+	// last is the class of the most recent dispatch when it failed after the
+	// request was sent, and zero after a success or a failure before sending.
+	last gateway.RouteFailureClass
 }
 
 // observedAttempt is one dispatch's reported usage and the actual cost that
@@ -54,11 +59,15 @@ func (o *routeFailureObserver) record(authorization string, capability provider.
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	o.last = 0
 	if result.Status() == gateway.RouteDispatchFailed {
 		if o.failures == nil {
 			o.failures = map[gateway.RouteFailureClass]bool{}
 		}
 		o.failures[result.Failure()] = true
+		if result.ReplaySafety() != gateway.RouteReplayNotDispatched {
+			o.last = result.Failure()
+		}
 	}
 	if o.attempts == nil {
 		o.attempts = map[string]observedAttempt{}
@@ -91,12 +100,40 @@ func (o *routeFailureObserver) reset() {
 	o.failures = nil
 	o.attempts = nil
 	o.shortfall = nil
+	o.last = 0
 }
 
 func (o *routeFailureObserver) saw(failure gateway.RouteFailureClass) bool {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	return o.failures[failure]
+}
+
+// providerRefusalRunFailure is the run failure the model handlers record for
+// each provider refusal class.
+var providerRefusalRunFailure = map[gateway.RouteFailureClass]controlplane.RunFailure{
+	gateway.RouteFailurePaymentRequired:  controlplane.RunFailurePolicy,
+	gateway.RouteFailureModelUnavailable: controlplane.RunFailurePolicy,
+	gateway.RouteFailureModelRetired:     controlplane.RunFailurePolicy,
+	gateway.RouteFailureAuthentication:   controlplane.RunFailurePolicy,
+	gateway.RouteFailureAuthorization:    controlplane.RunFailurePolicy,
+	gateway.RouteFailureRateLimited:      controlplane.RunFailureTransient,
+}
+
+// providerRefusal returns the failure detail of a run that failed with
+// failure when the most recent dispatch was a provider refusal that the model
+// handlers record as exactly that run failure. An earlier refusal that a later
+// attempt outlived, or one that does not explain the run failure, names none.
+func (o *routeFailureObserver) providerRefusal(failure controlplane.RunFailure) (string, bool) {
+	o.mu.Lock()
+	last := o.last
+	o.mu.Unlock()
+	expected, refusal := providerRefusalRunFailure[last]
+	if !refusal || expected != failure {
+		return "", false
+	}
+	detail, _, ok := routehint.ProviderRefusal(last)
+	return detail, ok
 }
 
 type observedRouteDispatcher struct {

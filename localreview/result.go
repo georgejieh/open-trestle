@@ -381,6 +381,11 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 			w.ContextShortfall = &contextShortfallWire{RequiredTokens: shortfall.RequiredTokens, EstimatedInputTokens: shortfall.EstimatedInputTokens, MaxOutputTokens: shortfall.MaxOutputTokens, DeclaredContextTokens: shortfall.DeclaredContextTokens}
 		}
 	}
+	if state.Status() == controlplane.ReviewRunFailed && s.routeFailures != nil && w.FailureDetail == "" {
+		if detail, ok := s.routeFailures.providerRefusal(state.Failure()); ok {
+			w.FailureDetail = detail
+		}
+	}
 	if state.Status() == controlplane.ReviewRunCanceled {
 		w.Status = "canceled"
 	} else if state.Status() == controlplane.ReviewRunFailed {
