@@ -41,6 +41,15 @@ const sourceFailureReasons = new Set<FailureReason>([
   "nothing_to_review",
   "merge_base_unavailable",
 ]);
+/** Each provider refusal reason and the run failure it is recorded with. */
+const providerFailureReasons = new Map<FailureReason, Failure>([
+  ["provider_payment_required", "policy"],
+  ["provider_model_unavailable", "policy"],
+  ["provider_model_retired", "policy"],
+  ["provider_authentication_failed", "policy"],
+  ["provider_authorization_denied", "policy"],
+  ["provider_rate_limited", "transient"],
+]);
 const contextFailureReasons = new Set<FailureReason>([
   "route_context_insufficient",
   "no_eligible_route",
@@ -251,29 +260,37 @@ function parseTask(value: unknown): RunTask {
   }
   // A failed task carries an output only as a context abstention, and a
   // content-free reason only without output: a source reason on source
-  // acquisition, a route refusal on context assembly, and counts exactly
-  // with route_context_insufficient.
+  // acquisition, a route refusal on context assembly, a provider refusal on
+  // a model task with its fixed failure, and counts exactly with
+  // route_context_insufficient.
   const linkedOutput =
     value.status === "failed" && value.output_identity !== "";
   const reason = value.failure_reason;
-  const reasonKind =
+  const providerFailure =
+    typeof reason === "string"
+      ? providerFailureReasons.get(reason as FailureReason)
+      : undefined;
+  const reasonKinds: readonly string[] =
     typeof reason !== "string"
-      ? ""
+      ? []
       : sourceFailureReasons.has(reason as FailureReason)
-        ? "acquire_source"
+        ? ["acquire_source"]
         : contextFailureReasons.has(reason as FailureReason)
-          ? "assemble_context"
-          : "";
+          ? ["assemble_context"]
+          : providerFailure !== undefined
+            ? ["generate_candidates", "verify_candidates"]
+            : [];
   if (
     "output_kind" in value !== linkedOutput ||
     (linkedOutput &&
       (value.output_kind !== "context_abstention" ||
         value.kind !== "assemble_context")) ||
     ("failure_reason" in value &&
-      (reasonKind === "" ||
+      (!reasonKinds.includes(value.kind as string) ||
         value.status !== "failed" ||
-        value.kind !== reasonKind ||
-        value.output_identity !== "")) ||
+        value.output_identity !== "" ||
+        (providerFailure !== undefined &&
+          value.failure !== providerFailure))) ||
     "context_shortfall" in value !==
       (reason === "route_context_insufficient") ||
     ("context_shortfall" in value &&

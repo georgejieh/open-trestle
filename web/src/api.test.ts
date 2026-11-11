@@ -221,6 +221,68 @@ describe("API client", () => {
       expect(() => parseRunEnvelope(envelope(forged))).toThrow(ApiError);
     }
   });
+  it("accepts a provider refusal reason only on a model task with its failure", () => {
+    const envelope = (value: unknown) => ({
+      contract: "open-trestle/api-response",
+      schema_version: 1,
+      request_id: "request-a",
+      run: value,
+    });
+    const reasons = [
+      ["provider_payment_required", "policy"],
+      ["provider_model_unavailable", "policy"],
+      ["provider_model_retired", "policy"],
+      ["provider_authentication_failed", "policy"],
+      ["provider_authorization_denied", "policy"],
+      ["provider_rate_limited", "transient"],
+    ] as const;
+    for (const [reason, failure] of reasons) {
+      for (const kind of ["generate_candidates", "verify_candidates"]) {
+        const refused = {
+          ...run.tasks[0],
+          kind,
+          status: "failed",
+          attempts: 1,
+          failure,
+          failure_reason: reason,
+        };
+        const receipt = {
+          ...run,
+          schema_version: 3,
+          status: "failed",
+          failure,
+          tasks: [refused],
+        };
+        expect(
+          parseRunEnvelope(envelope(receipt)).tasks[0]?.failure_reason,
+        ).toBe(reason);
+        for (const forged of [
+          { ...refused, kind: "assemble_context" },
+          { ...refused, kind: "acquire_source" },
+          { ...refused, failure: "internal" },
+          {
+            ...refused,
+            failure: failure === "policy" ? "transient" : "policy",
+          },
+          { ...refused, status: "succeeded" },
+          { ...refused, output_identity: digest },
+          {
+            ...refused,
+            context_shortfall: {
+              required_tokens: 14282,
+              estimated_input_tokens: 10186,
+              max_output_tokens: 4096,
+              declared_context_tokens: 4097,
+            },
+          },
+        ]) {
+          expect(() =>
+            parseRunEnvelope(envelope({ ...receipt, tasks: [forged] })),
+          ).toThrow(ApiError);
+        }
+      }
+    }
+  });
   it("parses a scope-bound delivery refusal and rejects forgeries", () => {
     const key = "b".repeat(64);
     const scope = {

@@ -71,6 +71,33 @@ const failureReasonLabels: Record<FailureReason, string> = {
     "Route context insufficient: the review request needs more context than the route declares",
   no_eligible_route:
     "No eligible route: no configured route met the runtime policy for this request",
+  provider_payment_required:
+    "Provider payment required: the provider refused the request for billing",
+  provider_model_unavailable:
+    "Provider model unavailable: the provider does not serve this model at this endpoint",
+  provider_model_retired:
+    "Provider model retired: the provider no longer serves this model",
+  provider_authentication_failed:
+    "Provider authentication failed: the provider did not accept the credential",
+  provider_authorization_denied:
+    "Provider authorization denied: the provider refused this account access to the model or endpoint",
+  provider_rate_limited:
+    "Provider rate limited: the provider rate-limited the request on its last attempt",
+};
+/** The fixed action for each provider refusal, as the local review prints it. */
+const failureReasonHints: Partial<Record<FailureReason, string>> = {
+  provider_payment_required:
+    "add credit or a subscription to the provider account, or choose another route",
+  provider_model_unavailable:
+    "check the model name and endpoint, choose a model the provider lists as available, and re-run setup",
+  provider_model_retired:
+    "choose a model the provider lists as available and re-run setup",
+  provider_authentication_failed:
+    "check the API key the route names (for ollama-signin, run `ollama signin`), then retry",
+  provider_authorization_denied:
+    "check the account's access, or choose another route",
+  provider_rate_limited:
+    "wait and run the review again, or choose another route",
 };
 const emptyScope: Scope = { tenant: "", repository: "", run: "" };
 function rememberedScope(): Scope {
@@ -290,6 +317,12 @@ function TaskInspector({ task }: { task: RunTask | undefined }) {
           <div>
             <dt>Reason</dt>
             <dd>{failureReasonLabels[task.failure_reason]}</dd>
+          </div>
+        )}
+        {task.failure_reason && failureReasonHints[task.failure_reason] && (
+          <div>
+            <dt>Hint</dt>
+            <dd>{failureReasonHints[task.failure_reason]}</dd>
           </div>
         )}
         {task.context_shortfall && (
@@ -1425,6 +1458,24 @@ function ReviewConsole() {
                         {task.key}:{" "}
                         {
                           failureReasonLabels[
+                            task.failure_reason as FailureReason
+                          ]
+                        }
+                      </dd>
+                    </div>
+                  ))}
+                {receipt.tasks
+                  .filter(
+                    (task) =>
+                      task.failure_reason &&
+                      failureReasonHints[task.failure_reason],
+                  )
+                  .map((task) => (
+                    <div key={`provider-hint-${task.key}`}>
+                      <dt>Hint</dt>
+                      <dd>
+                        {
+                          failureReasonHints[
                             task.failure_reason as FailureReason
                           ]
                         }

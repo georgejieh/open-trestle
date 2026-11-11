@@ -19,7 +19,16 @@ export type SourceFailureReason =
   "no_merge_base" | "nothing_to_review" | "merge_base_unavailable";
 export type ContextFailureReason =
   "route_context_insufficient" | "no_eligible_route";
-export type FailureReason = SourceFailureReason | ContextFailureReason;
+/** A model task's provider refusal, named from the HTTP status alone. */
+export type ProviderFailureReason =
+  | "provider_payment_required"
+  | "provider_model_unavailable"
+  | "provider_model_retired"
+  | "provider_authentication_failed"
+  | "provider_authorization_denied"
+  | "provider_rate_limited";
+export type FailureReason =
+  SourceFailureReason | ContextFailureReason | ProviderFailureReason;
 /** The counts of a route_context_insufficient refusal. */
 export interface ContextShortfall {
   required_tokens: number;

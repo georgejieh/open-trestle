@@ -668,6 +668,50 @@ describe("console", () => {
     ).toBeGreaterThan(0);
   });
 
+  it("names a provider refusal and its hint beside the failure", async () => {
+    vi.mocked(fetchRun).mockResolvedValue({
+      ...receipt,
+      schema_version: 3,
+      status: "failed",
+      failure: "policy",
+      tasks: receipt.tasks.map((task) => ({
+        ...task,
+        kind: "generate_candidates" as const,
+        status: "failed" as const,
+        output_identity: "",
+        failure: "policy" as const,
+        failure_reason: "provider_payment_required" as const,
+      })),
+    });
+    vi.mocked(fetchDiagnostics).mockRejectedValue(new Error("not ready"));
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("Tenant"), {
+      target: { value: "tenant-a" },
+    });
+    fireEvent.change(screen.getByLabelText("Repository"), {
+      target: { value: "repo-a" },
+    });
+    fireEvent.change(screen.getByLabelText("Run"), {
+      target: { value: "run-a" },
+    });
+    fireEvent.change(screen.getByLabelText("Access token"), {
+      target: { value: "x".repeat(32) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
+    await waitFor(() =>
+      expect(
+        screen.getAllByText(
+          /Provider payment required: the provider refused the request for billing/,
+        ).length,
+      ).toBeGreaterThan(0),
+    );
+    expect(
+      screen.getAllByText(
+        "add credit or a subscription to the provider account, or choose another route",
+      ).length,
+    ).toBeGreaterThan(0);
+  });
+
   it("names a recorded delivery refusal when no run was opened", async () => {
     const key = "b".repeat(64);
     vi.mocked(fetchRun).mockRejectedValue(new ApiError("not_found"));
