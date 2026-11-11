@@ -93,7 +93,10 @@
           "const": 417
         },
         "build_profile": {
-          "const": "public_detect_run_re2_purego_go1.26.10_linux_amd64_v1"
+          "enum": [
+            "public_detect_run_re2_purego_go1.26.11_linux_amd64_v1",
+            "public_detect_run_re2_purego_go1.26.10_linux_amd64_v1"
+          ]
         },
         "launcher_sha256": {
           "type": "string",

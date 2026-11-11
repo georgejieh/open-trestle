@@ -76,7 +76,7 @@ Unit tests exercise canonical persistence, tenant transaction setup, advisory lo
 
 ```sh
 OPEN_TRESTLE_TEST_POSTGRES_URL='postgres://...?...' \
-  GOWORK=off GOTOOLCHAIN=go1.26.10 go test ./adapters/storage/postgres \
+  GOWORK=off GOTOOLCHAIN=go1.26.11 go test ./adapters/storage/postgres \
   -run 'Test(PostgresIntegration|PgxSimpleProtocolKeepsPlaceholdersInsideDollarQuotesLiteral)$' -count=1
 ```
 

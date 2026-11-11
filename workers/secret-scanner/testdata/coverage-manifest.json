@@ -7,7 +7,7 @@
     "scanner_commit": "5eab48332cc48565864514e3bc6de89df091a7c4",
     "ruleset_identity": "27ded783c81940d13c22cc46556a3f8184baf397bff08a69fcfae87991925f42",
     "ruleset_rule_count": 417,
-    "build_profile": "public_detect_run_re2_purego_go1.26.10_linux_amd64_v1"
+    "build_profile": "public_detect_run_re2_purego_go1.26.11_linux_amd64_v1"
   },
   "summary": {
     "expected_occurrences": 14,

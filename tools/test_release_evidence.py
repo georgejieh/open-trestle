@@ -774,7 +774,7 @@ class ComponentInventoryTest(unittest.TestCase):
 
     def test_go_build_info_inventory_uses_embedded_runtime_dependencies(self):
         components = release_evidence.parse_go_components(
-            """binary: go1.26.10
+            """binary: go1.26.11
 	path	github.com/example/tool
 	mod	github.com/example/project	(devel)	
 	dep	github.com/jackc/pgx/v5	v5.9.2	h1:sum
@@ -813,7 +813,7 @@ class ComponentInventoryTest(unittest.TestCase):
             binary = Path(directory) / "trestle"
             binary.write_bytes(b"binary")
             run.return_value.stdout = (
-                "trestle: go1.26.10\n"
+                "trestle: go1.26.11\n"
                 "\tdep\texample.org/runtime\tv1.2.3\th1:sum\n"
             )
 
@@ -845,7 +845,7 @@ class ComponentInventoryTest(unittest.TestCase):
 
     def test_go_build_info_replacements_fail_closed(self):
         build_info = (
-            "trestle: go1.26.10\n"
+            "trestle: go1.26.11\n"
             "\tdep\texample.org/runtime\tv1.2.3\th1:sum\n"
             "\t=>\t../local-runtime\t(devel)\t\n"
         )

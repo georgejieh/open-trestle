@@ -71,18 +71,18 @@ jobs:
           go-version-file: go.mod
           cache: false
       - name: Verify root module sums
-        run: GOWORK=off GOTOOLCHAIN=go1.26.10 go mod verify
+        run: GOWORK=off GOTOOLCHAIN=go1.26.11 go mod verify
       - name: Run tests
         run: |
           umask 022
-          GOWORK=off GOTOOLCHAIN=go1.26.10 go test -p=1 -timeout=30m ./...
+          GOWORK=off GOTOOLCHAIN=go1.26.11 go test -p=1 -timeout=30m ./...
       - name: Verify static-debug evaluation evidence
         run: |
-          GOWORK=off GOTOOLCHAIN=go1.26.10 go run ./cmd/trestle evaluate static-debug > "$RUNNER_TEMP/open-trestle-static-debug-evaluation.json"
+          GOWORK=off GOTOOLCHAIN=go1.26.11 go run ./cmd/trestle evaluate static-debug > "$RUNNER_TEMP/open-trestle-static-debug-evaluation.json"
           cmp evaluation/testdata/static-debug-report-v1.json "$RUNNER_TEMP/open-trestle-static-debug-evaluation.json"
       - name: Verify pending deterministic-corpus candidate tooling
         run: |
-          GOWORK=off GOTOOLCHAIN=go1.26.10 go build -o "$RUNNER_TEMP/trestle" ./cmd/trestle
+          GOWORK=off GOTOOLCHAIN=go1.26.11 go build -o "$RUNNER_TEMP/trestle" ./cmd/trestle
           set +e
           "$RUNNER_TEMP/trestle" evaluate deterministic-corpus-candidate > "$RUNNER_TEMP/corpus-candidate-a.json"
           FIRST_STATUS=$?
@@ -96,14 +96,14 @@ jobs:
       - name: Run evaluation-helper tests
         run: PYTHONPATH=python/open_trestle_eval/src python3 -m unittest discover -s python/open_trestle_eval/tests -p "test_*.py"
       - name: Run race tests
-        run: GOWORK=off GOTOOLCHAIN=go1.26.10 go test -race -p=1 -timeout=30m ./...
+        run: GOWORK=off GOTOOLCHAIN=go1.26.11 go test -race -p=1 -timeout=30m ./...
       - name: Run vet
-        run: GOWORK=off GOTOOLCHAIN=go1.26.10 go vet ./...
+        run: GOWORK=off GOTOOLCHAIN=go1.26.11 go vet ./...
       - name: Cross-compile root packages
         run: |
-          GOWORK=off GOTOOLCHAIN=go1.26.10 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -run='^$' -exec=true ./...
-          GOWORK=off GOTOOLCHAIN=go1.26.10 CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go test -run='^$' -exec=true ./...
-          GOWORK=off GOTOOLCHAIN=go1.26.10 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go test -run='^$' -exec=true ./...
+          GOWORK=off GOTOOLCHAIN=go1.26.11 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -run='^$' -exec=true ./...
+          GOWORK=off GOTOOLCHAIN=go1.26.11 CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go test -run='^$' -exec=true ./...
+          GOWORK=off GOTOOLCHAIN=go1.26.11 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go test -run='^$' -exec=true ./...
       - name: Run release-tool tests
         run: python3 -m unittest discover -s tools -p "test_*.py"
       - name: Verify Linux candidate SIGKILL recovery matrix
@@ -115,23 +115,23 @@ jobs:
           cache: false
       - name: Verify secret-scanner module sums
         working-directory: workers/secret-scanner
-        run: GOWORK=off GOTOOLCHAIN=go1.26.10 go mod verify
+        run: GOWORK=off GOTOOLCHAIN=go1.26.11 go mod verify
       - name: Run secret-scanner tests
         working-directory: workers/secret-scanner
-        run: GOWORK=off GOTOOLCHAIN=go1.26.10 go test -timeout=15m ./...
+        run: GOWORK=off GOTOOLCHAIN=go1.26.11 go test -timeout=15m ./...
       - name: Run secret-scanner race tests
         working-directory: workers/secret-scanner
-        run: GOWORK=off GOTOOLCHAIN=go1.26.10 go test -race -p=1 -timeout=30m ./...
+        run: GOWORK=off GOTOOLCHAIN=go1.26.11 go test -race -p=1 -timeout=30m ./...
       - name: Run secret-scanner vet
         working-directory: workers/secret-scanner
-        run: GOWORK=off GOTOOLCHAIN=go1.26.10 go vet ./...
+        run: GOWORK=off GOTOOLCHAIN=go1.26.11 go vet ./...
       - name: Provision pinned Zig musl builder and build deterministic release staging
         run: |
           python3 tools/package_secret_scanner.py
           python3 tools/package_secret_scanner.py --verify .container
       - name: Run passive dependency vulnerability gate
         run: |
-          (cd tools/govulncheck && GOWORK=off GOTOOLCHAIN=go1.26.10 go mod verify)
+          (cd tools/govulncheck && GOWORK=off GOTOOLCHAIN=go1.26.11 go mod verify)
           python3 tools/vulnerability_gate.py --staging .container
       - name: Verify deterministic Linux amd64 candidate lifecycle
         env:
@@ -277,4 +277,4 @@ jobs:
           python3 -c 'import json,struct,sys; body=json.dumps({"schema_version":1,"request_id":"f"*64,"sources":[{"ordinal":0,"content_base64":"eg=="}]},separators=(",",":")).encode(); sys.stdout.buffer.write(struct.pack(">I",len(body))+body)' > "$RUNNER_TEMP/scanner-request"
           docker run --rm --network=none --read-only --cap-drop=ALL --pids-limit=64 --memory=256m --security-opt=no-new-privileges=true -i --entrypoint /usr/local/libexec/open-trestle/open-trestle-secret-scanner open-trestle:verify --stdio-v1 < "$RUNNER_TEMP/scanner-request" > "$RUNNER_TEMP/scanner-response" 2> "$RUNNER_TEMP/scanner-stderr"
           test ! -s "$RUNNER_TEMP/scanner-stderr"
-          python3 -c 'import json,struct,sys; data=open(sys.argv[1],"rb").read(); size=struct.unpack(">I",data[:4])[0]; doc=json.loads(data[4:]); assert size==len(data)-4 and doc["status"]=="complete" and doc["matches"]==[] and doc["scanner"]=="betterleaks" and doc["scanner_version"]=="v1.8.1" and doc["build_profile"]=="public_detect_run_re2_purego_go1.26.10_linux_amd64_v1"' "$RUNNER_TEMP/scanner-response"
+          python3 -c 'import json,struct,sys; data=open(sys.argv[1],"rb").read(); size=struct.unpack(">I",data[:4])[0]; doc=json.loads(data[4:]); assert size==len(data)-4 and doc["status"]=="complete" and doc["matches"]==[] and doc["scanner"]=="betterleaks" and doc["scanner_version"]=="v1.8.1" and doc["build_profile"]=="public_detect_run_re2_purego_go1.26.11_linux_amd64_v1"' "$RUNNER_TEMP/scanner-response"

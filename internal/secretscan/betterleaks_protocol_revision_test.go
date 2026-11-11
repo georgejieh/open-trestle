@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -62,7 +63,6 @@ func TestSecretScannerSchemasPinBetterleaksAndDecodedUTF8(t *testing.T) {
 		"scanner_version":  ScannerVersion,
 		"scanner_commit":   ScannerCommit,
 		"ruleset_identity": RulesetIdentity,
-		"build_profile":    BuildProfile,
 	}
 	for name, value := range want {
 		property := responseProperties[name].(map[string]any)
@@ -72,6 +72,13 @@ func TestSecretScannerSchemasPinBetterleaksAndDecodedUTF8(t *testing.T) {
 		if strings.TrimSpace(property["description"].(string)) == "" {
 			t.Fatalf("response schema %s has no description", name)
 		}
+	}
+	buildProfile := responseProperties["build_profile"].(map[string]any)
+	if _, pinned := buildProfile["const"]; pinned || !reflect.DeepEqual(buildProfile["enum"], []any{BuildProfile, go12610BuildProfile}) {
+		t.Fatalf("response schema build_profile = %v, want exactly the current and recorded go1.26.10 profiles", buildProfile)
+	}
+	if strings.TrimSpace(buildProfile["description"].(string)) == "" {
+		t.Fatal("response schema build_profile has no description")
 	}
 }
 

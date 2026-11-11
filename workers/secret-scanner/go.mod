@@ -2,7 +2,7 @@ module github.com/georgejieh/open-trestle/workers/secret-scanner
 
 go 1.25.0
 
-toolchain go1.26.10
+toolchain go1.26.11
 
 require (
 	github.com/betterleaks/betterleaks v1.8.1

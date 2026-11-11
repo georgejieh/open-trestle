@@ -113,6 +113,9 @@ func runClientTestHelper() {
 	if status != StatusComplete {
 		response.Matches = []Match{}
 	}
+	if bytes.Contains(content, []byte("helper:recorded-profile")) {
+		response.BuildProfile = go12610BuildProfile
+	}
 	encoded, err := EncodeResponseFrame(response, ResponseExpectation{
 		Request:         request,
 		RulesetIdentity: RulesetIdentity,
@@ -296,6 +299,7 @@ func TestClientClosesEveryFailureClass(t *testing.T) {
 		{"trailing stdout", []byte("helper:trailing"), FailurePolicy},
 		{"oversized stdout", []byte("helper:oversized"), FailurePolicy},
 		{"valid frame then abnormal exit", []byte("helper:frame-exit"), FailurePolicy},
+		{"recorded go1.26.10 profile from a live worker", []byte("helper:recorded-profile TOKEN"), FailurePolicy},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

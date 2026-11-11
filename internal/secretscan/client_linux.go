@@ -312,7 +312,7 @@ func (client *Client) invoke(ctx context.Context, requestFrame []byte, request R
 		return Response{}, FailurePolicy
 	}
 	response, err := ParseResponseFrame(output, ResponseExpectation{Request: request, RulesetIdentity: RulesetIdentity, RuleIDs: pinnedRuleIDSetProduction()})
-	if err != nil {
+	if err != nil || response.BuildProfile != BuildProfile {
 		return Response{}, FailurePolicy
 	}
 	return response, FailureNone

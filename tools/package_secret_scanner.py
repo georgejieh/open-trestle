@@ -26,9 +26,9 @@ SCANNER_VERSION = "v1.8.1"
 SCANNER_COMMIT = "5eab48332cc48565864514e3bc6de89df091a7c4"
 RULESET_IDENTITY = "27ded783c81940d13c22cc46556a3f8184baf397bff08a69fcfae87991925f42"
 RULESET_RULE_COUNT = 417
-BUILD_PROFILE = "public_detect_run_re2_purego_go1.26.10_linux_amd64_v1"
-ROOT_GO = "go1.26.10"
-WORKER_GO = "go1.26.10"
+BUILD_PROFILE = "public_detect_run_re2_purego_go1.26.11_linux_amd64_v1"
+ROOT_GO = "go1.26.11"
+WORKER_GO = "go1.26.11"
 LAUNCHER_TOOLCHAIN_MANIFEST = "workers/secret-scanner/launcher/toolchain-v1.json"
 LAUNCHER_TOOLCHAIN_CACHE = ".tmp/toolchains/zig-x86_64-linux-0.14.1.tar.xz"
 LAUNCHER_ZIG_VERSION = "0.14.1"
@@ -890,10 +890,10 @@ def package(repository: Path, output: Path) -> None:
     if output == repository or repository not in output.parents:
         raise ValueError("staging output must be a repository subdirectory")
     root_mod = (repository / "go.mod").read_text(encoding="utf-8")
-    if "\ngo 1.25.0\n" not in root_mod or "\ntoolchain go1.26.10\n" not in root_mod:
+    if "\ngo 1.25.0\n" not in root_mod or "\ntoolchain go1.26.11\n" not in root_mod:
         raise ValueError("root toolchain pin changed")
     worker_mod = (repository / "workers/secret-scanner/go.mod").read_text(encoding="utf-8")
-    if "\ngo 1.25.0\n" not in worker_mod or "\ntoolchain go1.26.10\n" not in worker_mod:
+    if "\ngo 1.25.0\n" not in worker_mod or "\ntoolchain go1.26.11\n" not in worker_mod:
         raise ValueError("worker toolchain pin changed")
     temporary_root = repository / ".tmp"
     temporary_root.mkdir(exist_ok=True)

@@ -267,7 +267,7 @@ func (value SanitizedEgressReceipt) Validate() error {
 }
 
 func validScannerProfile(profile ScannerProfile) bool {
-	return profile.WorkerProtocol == 1 && profile.Scanner == secretscan.ScannerName && profile.ScannerVersion == secretscan.ScannerVersion && profile.ScannerCommit == secretscan.ScannerCommit && profile.RulesetIdentity == secretscan.RulesetIdentity && profile.RulesetRuleCount == secretscan.RulesetRuleCount && profile.BuildProfile == secretscan.BuildProfile && validNonzeroDigest(profile.LauncherSHA256) && validNonzeroDigest(profile.WorkerSHA256)
+	return profile.WorkerProtocol == 1 && profile.Scanner == secretscan.ScannerName && profile.ScannerVersion == secretscan.ScannerVersion && profile.ScannerCommit == secretscan.ScannerCommit && profile.RulesetIdentity == secretscan.RulesetIdentity && profile.RulesetRuleCount == secretscan.RulesetRuleCount && secretscan.KnownBuildProfile(profile.BuildProfile) && validNonzeroDigest(profile.LauncherSHA256) && validNonzeroDigest(profile.WorkerSHA256)
 }
 func validNonzeroDigest(value string) bool {
 	return validCandidateDigest(value) && value != strings.Repeat("0", 64)

@@ -1,6 +1,6 @@
 # Secret scanner dependencies
 
-The secret scanner is an isolated Go module. It builds with Go 1.26.10 and does not add dependencies to the repository root module.
+The secret scanner is an isolated Go module. It builds with Go 1.26.11 and does not add dependencies to the repository root module.
 
 ## Betterleaks pin
 
@@ -30,7 +30,7 @@ The linked launcher contains musl 1.2.5 and Zig compiler-rt 0.14.1. Both are MIT
 The following versions are the unique module inputs reported by:
 
 ```text
-GOWORK=off GOTOOLCHAIN=go1.26.10 go list -deps -f '{{with .Module}}{{if .Version}}{{.Path}} {{.Version}}{{end}}{{end}}' ./internal/adapter
+GOWORK=off GOTOOLCHAIN=go1.26.11 go list -deps -f '{{with .Module}}{{if .Version}}{{.Path}} {{.Version}}{{end}}{{end}}' ./internal/adapter
 ```
 
 - `dario.cat/mergo v1.0.2`
