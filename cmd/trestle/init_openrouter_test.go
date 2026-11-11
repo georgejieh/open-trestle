@@ -57,7 +57,7 @@ func initReadOpenRouterSetup(t *testing.T, dir string) initSavedOpenRouter {
 func initAssertOutput(t *testing.T, result initRun, wants ...string) {
 	t.Helper()
 	for _, want := range wants {
-		if !strings.Contains(result.stdout, want) {
+		if !initHas(result.stdout, want) {
 			t.Fatalf("output lacks %q:\n%s", want, result.stdout)
 		}
 	}
@@ -73,7 +73,7 @@ func initAssertNotLabelledZDR(t *testing.T, saved initSavedOpenRouter, shown str
 		}
 	}
 	for _, forbidden := range []string{"zero data retention required", "Zero data retention is required", "will require zero data retention"} {
-		if strings.Contains(shown, forbidden) {
+		if initHas(shown, forbidden) {
 			t.Fatalf("a setup without zero data retention showed %q:\n%s", forbidden, shown)
 		}
 	}
@@ -108,11 +108,11 @@ func TestInitOpenRouterBothModelsWithZDRRequiresItByDefault(t *testing.T) {
 		"Limits: context 128000 and output 16000 tokens", "Prices: up to $3.3 input and $16.5 output", "[0.49]", "Endpoints that may keep prompts for Safety Retention are left out.",
 		"Zero data retention is required on every request", "Review finished: 1 confirmed finding",
 		"A review sends the selected source to OpenRouter (https://openrouter.ai/api/v1), zero data retention required on every request")
-	if strings.Contains(result.stdout, "openrouter_zero_data_retention_not_required") {
+	if initHas(result.stdout, "openrouter_zero_data_retention_not_required") {
 		t.Fatal("a ZDR review was labelled as not requiring zero data retention")
 	}
 	for _, asked := range []string{"provider slug for", "Evidence:", "How many days", "review window", "SHA-256 of the copy"} {
-		if strings.Contains(result.stdout, asked) {
+		if initHas(result.stdout, asked) {
 			t.Fatalf("the wizard still asked for %q:\n%s", asked, result.stdout)
 		}
 	}
@@ -175,7 +175,7 @@ func TestInitOpenRouterModelWithoutZDRContinuesOnlyWithConsent(t *testing.T) {
 	// Declining to continue writes nothing.
 	declined := filepath.Join(t.TempDir(), "setup")
 	stopped := runInitScript(t, checkout, []string{"--directory", declined, "--base", "refs/heads/base", "--head", "refs/heads/review"}, "1", "generator", "1", "plain", "1", "n", "")
-	if stopped.code != initExitRefused || !strings.Contains(stopped.stderr, "nothing was written") {
+	if stopped.code != initExitRefused || !initHas(stopped.stderr, "nothing was written") {
 		t.Fatalf("declining did not stop: exit=%d %s", stopped.code, stopped.stderr)
 	}
 	initAssertAbsent(t, declined)
@@ -251,7 +251,7 @@ func TestInitOpenRouterNoInputUsesDetectionAndFlags(t *testing.T) {
 		t.Fatalf("flags did not override detection: exit=%d\n%s\n%s", result.code, result.stdout, result.stderr)
 	}
 	result, dir = run("--provider", "openrouter", "--verification-model", "plain/verifier")
-	if result.code != initExitUsage || !strings.Contains(result.stderr, "Pass --without-zdr") {
+	if result.code != initExitUsage || !initHas(result.stderr, "Pass --without-zdr") {
 		t.Fatalf("a model without ZDR was accepted silently: exit=%d %s", result.code, result.stderr)
 	}
 	initAssertAbsent(t, dir)
@@ -261,12 +261,12 @@ func TestInitOpenRouterNoInputUsesDetectionAndFlags(t *testing.T) {
 	}
 	initAssertNotLabelledZDR(t, initReadOpenRouterSetup(t, dir), result.stdout)
 	result, dir = run("--provider", "openrouter-zdr", "--verification-model", "plain/verifier")
-	if result.code != initExitUsage || !strings.Contains(result.stderr, "needs zero-data-retention endpoints for both models") {
+	if result.code != initExitUsage || !initHas(result.stderr, "needs zero-data-retention endpoints for both models") {
 		t.Fatalf("openrouter-zdr accepted a model without ZDR: exit=%d %s", result.code, result.stderr)
 	}
 	initAssertAbsent(t, dir)
 	result, _ = run("--provider", "openrouter-zdr", "--verification-model", "other/verifier", "--without-zdr")
-	if result.code != initExitUsage || !strings.Contains(result.stderr, "cannot be combined") {
+	if result.code != initExitUsage || !initHas(result.stderr, "cannot be combined") {
 		t.Fatalf("contradictory flags: exit=%d %s", result.code, result.stderr)
 	}
 }
@@ -319,7 +319,7 @@ func TestInitOpenRouterZDRProviderDoesNotAskAgain(t *testing.T) {
 		}
 		dir := filepath.Join(t.TempDir(), "setup")
 		result := runInitScript(t, checkout, []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review", "--provider", "openrouter-zdr"}, script...)
-		if result.code != initExitDone || strings.Contains(result.stdout, "Require zero data retention on every request") || initReadOpenRouterSetup(t, dir).bootstrap["provider"] != "openrouter-zdr" {
+		if result.code != initExitDone || initHas(result.stdout, "Require zero data retention on every request") || initReadOpenRouterSetup(t, dir).bootstrap["provider"] != "openrouter-zdr" {
 			t.Fatalf("reachable=%t exit=%d\n%s\n%s", reachable, result.code, result.stdout, result.stderr)
 		}
 	}

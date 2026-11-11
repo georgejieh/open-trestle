@@ -11,6 +11,16 @@ const ambassadorBridgeMark = `       |X|\                     /|X|
 =======|X|=|==|==|==|==|==|==|==|=|X|=======
 `
 
+// AmbassadorBridgeCompactMark is the same silhouette in three lines for narrow
+// headers such as `trestle init`: the two X-braced towers, the suspension
+// cables leaving each tower and the deck. Every line is ASCII and the same
+// width, so text can sit beside it.
+var AmbassadorBridgeCompactMark = [3]string{
+	"   |X|\\            /|X|   ",
+	" __|X| \\___----___/ |X|__ ",
+	"===|X|=|==|==|==|===|X|===",
+}
+
 func writeAmbassadorBridgeMark(builder *strings.Builder) {
 	builder.WriteString(ambassadorBridgeMark)
 }

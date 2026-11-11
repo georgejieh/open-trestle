@@ -182,7 +182,8 @@ func (w *initWizard) resume() (int, error) {
 		if !outcome.ready {
 			return outcome.code, nil
 		}
-		w.say("\n  Review command:\n%s", initRenderCommand(outcome.reviewCommand))
+		w.say("\n  Review command:")
+		w.sayVerbatim(initRenderCommand(outcome.reviewCommand))
 		return initExitDone, nil
 	}
 	return w.finish(setup, outcome)
@@ -316,15 +317,14 @@ func (w *initWizard) rerunCommand(program string) string {
 // this trestle cannot send source at all, and how a re-run continues it.
 func (w *initWizard) explainSavedWithoutScanner(setup initSetup, block string) {
 	if block == "platform" {
-		w.say("  Your setup is saved, but this machine cannot send source to %s: the sandboxed", setup.provider.short)
-		w.say("  secret scanner that checks every request runs only on Linux.")
+		w.say("  Your setup is saved, but this machine cannot send source to %s: the sandboxed secret scanner that checks every request runs only on Linux.", setup.provider.short)
 		return
 	}
 	w.say("  Your setup is saved, but this development build cannot send source to %s.", setup.provider.short)
 	w.say("  Build and install the packaged trestle from a clean checkout (docs/operations.md):")
 	w.sayPackagingSteps()
 	w.say("  Then run this in the repository; it finds this setup and re-checks it:")
-	w.say("    %s", w.rerunCommand("/usr/local/bin/trestle"))
+	w.sayVerbatim("    " + w.rerunCommand("/usr/local/bin/trestle"))
 }
 
 func (w *initWizard) refusalReason(out []byte, errText string) string {
@@ -363,8 +363,7 @@ func (w *initWizard) localProbeConsent() (bool, error) {
 			}
 		}
 	}
-	w.say("\n  Optional: send two tiny test requests (fixed sample code, never your source) to your")
-	w.say("  local servers to check that both models answer in the expected format.")
+	w.say("\n  Optional: send two tiny test requests (fixed sample code, never your source) to your local servers to check that both models answer in the expected format.")
 	return w.prompt.confirm("Send the two test requests?", false)
 }
 
@@ -484,22 +483,21 @@ func (w *initWizard) renderRemote(result remoteBootstrapResult, setup initSetup)
 		tally[current]++
 		w.say("    %s %s", w.mark(current), labels[key])
 		if hint := hints[key+"/"+current]; hint != "" {
-			w.say("%s", initWrap(hint, "        ", 86))
+			w.hint("        " + hint)
 		}
 	}
 	for _, key := range append(append([]string{}, result.Pending...), result.Refused...) {
 		if !slices.Contains(keys, key) {
 			tally[state(key)]++
 			w.say("    %s %s", w.mark(state(key)), key)
-			w.say("%s", initWrap(strings.Join(result.Messages, " "), "        ", 86))
+			w.hint("        " + strings.Join(result.Messages, " "))
 		}
 	}
 	switch result.DataRetention {
 	case "required_per_request":
 		w.say("    %s Zero data retention is required on every request", w.ok)
 	case "not_required_by_open_trestle":
-		w.say("    %s Zero data retention is not required by Open Trestle (your OpenRouter account or", w.optional)
-		w.say("      key settings may still enforce it); a model provider may keep prompts under its own terms")
+		w.say("    %s Zero data retention is not required by Open Trestle (your OpenRouter account or key settings may still enforce it); a model provider may keep prompts under its own terms", w.optional)
 	}
 	return tally.String()
 }
@@ -570,7 +568,7 @@ func (w *initWizard) renderLocal(messages []string) string {
 		tally[state]++
 		w.say("    %s %s", w.mark(state), text[0])
 		if state != "passed" && text[1] != "" {
-			w.say("%s", initWrap(text[1], "        ", 86))
+			w.hint("        " + text[1])
 		}
 	}
 	if daemonOnly {
@@ -590,14 +588,13 @@ func (w *initWizard) finish(setup initSetup, outcome initOutcome) (int, error) {
 			w.explainSavedWithoutScanner(setup, block)
 			return outcome.code, nil
 		}
-		w.say("  Not ready for a review yet. Fix the items marked %s or %s above, then run", w.wait, w.bad)
-		w.say("  `trestle init` again in this repository: it finds this setup and re-checks it.")
+		w.say("  Not ready for a review yet. Fix the items marked %s or %s above, then run `trestle init` again in this repository: it finds this setup and re-checks it.", w.wait, w.bad)
 		return outcome.code, nil
 	}
 	w.say("\nReady for the first review")
 	w.say("%s", strings.Repeat("─", 26))
 	w.say("  Review command (each argument quoted for a POSIX shell; run it yourself any time):")
-	w.say("%s", initRenderCommand(outcome.reviewCommand))
+	w.sayVerbatim(initRenderCommand(outcome.reviewCommand))
 	run := w.bools["run-review"]
 	if w.prompt != nil && !run {
 		var err error
@@ -624,7 +621,9 @@ func (w *initWizard) review(command []string) int {
 	code := runLocalGitModelReview(w.ctx, command[3:], &out, &errOut)
 	status, findings := "", 0
 	for _, line := range strings.Split(strings.TrimRight(out.String(), "\n"), "\n") {
-		w.say("  │ %s", line)
+		for _, part := range initWrapWords(line, initWidth-4) {
+			w.sayVerbatim("  │ " + part)
+		}
 		if value, ok := strings.CutPrefix(line, "status: "); ok && status == "" {
 			status = value
 		}
@@ -638,13 +637,10 @@ func (w *initWizard) review(command []string) int {
 	w.say("")
 	switch status {
 	case "findings":
-		w.say("  %s Review finished: %d confirmed finding%s above. Each was proposed by the finder", w.ok, findings, initPlural(findings))
-		w.say("    and confirmed by the checker. Treat them like a colleague's comments; the review")
-		w.say("    is not a complete audit (comprehensive clearance: false).")
+		w.say("  %s Review finished: %d confirmed finding%s above. Each was proposed by the finder and confirmed by the checker. Treat them like a colleague's comments; the review is not a complete audit (comprehensive clearance: false).", w.ok, findings, initPlural(findings))
 		return initExitDone
 	case "no_candidates":
-		w.say("  %s Review finished: no problems were found and confirmed for this change.", w.ok)
-		w.say("    That is not proof the change is correct; it is not a complete audit.")
+		w.say("  %s Review finished: no problems were found and confirmed for this change. That is not proof the change is correct; it is not a complete audit.", w.ok)
 		return initExitDone
 	case "incomplete":
 		w.say("  %s The review could not cover everything; see coverage and omissions above.", w.wait)
@@ -653,12 +649,10 @@ func (w *initWizard) review(command []string) int {
 		w.say("  %s The review was stopped before it finished.", w.wait)
 		return initExitPending
 	case "refused":
-		w.say("  %s The review was refused before it started. Run `trestle init` again to", w.bad)
-		w.say("    re-check the setup, and check that the selected commits still exist.")
+		w.say("  %s The review was refused before it started. Run `trestle init` again to re-check the setup, and check that the selected commits still exist.", w.bad)
 		return initExitRefused
 	}
-	w.say("  %s The review failed (exit %d). Check that the models are reachable, then run the", w.bad, code)
-	w.say("    review command above again.")
+	w.say("  %s The review failed (exit %d). Check that the models are reachable, then run the review command above again.", w.bad, code)
 	return initExitFailed
 }
 
@@ -722,20 +716,4 @@ func initRenderCommand(args []string) string {
 		lines = append(lines, "      "+part)
 	}
 	return strings.Join(lines, " \\\n")
-}
-
-func initWrap(text, indent string, width int) string {
-	var lines []string
-	line := indent
-	for _, word := range strings.Fields(text) {
-		if len(line) > len(indent) && len(line)+1+len(word) > width {
-			lines = append(lines, line)
-			line = indent
-		}
-		if len(line) > len(indent) {
-			line += " "
-		}
-		line += word
-	}
-	return strings.Join(append(lines, line), "\n")
 }

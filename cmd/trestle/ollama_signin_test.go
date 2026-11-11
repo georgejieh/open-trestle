@@ -423,12 +423,12 @@ func TestInitOllamaSigninNotSignedInThenConsentedSigninRechecks(t *testing.T) {
 		t.Fatalf("init exit=%d\nstdout:\n%s\nstderr:\n%s", result.code, result.stdout, result.stderr)
 	}
 	for _, want := range []string{"The ollama command is installed", "Found 2 Ollama Cloud models", "llama3.2:3b is not one of the Ollama Cloud models", "uses your Ollama Cloud usage", "not signed in to Ollama Cloud (HTTP 401)", "ollama signin finished", "Your local Ollama is signed in", "No API key", "Your local Ollama lists both models as Ollama Cloud models", "A review sends the selected source to Ollama Cloud through your signed-in local Ollama (" + daemon.endpoint() + ")", "Review finished: 1 confirmed finding"} {
-		if !strings.Contains(result.stdout, want) {
+		if !initHas(result.stdout, want) {
 			t.Fatalf("output lacks %q:\n%s", want, result.stdout)
 		}
 	}
 	for _, unwanted := range []string{"imposter:7b-cloud", "elsewhere:1b-cloud", "API key variable"} {
-		if strings.Contains(result.stdout, unwanted) {
+		if initHas(result.stdout, unwanted) {
 			t.Fatalf("output offered or mentioned %q:\n%s", unwanted, result.stdout)
 		}
 	}
@@ -528,7 +528,7 @@ func TestInitOllamaSigninSendsNothingWithoutConsent(t *testing.T) {
 		"5", "1", "2",
 		"n", // do not send the test message
 	)
-	if result.code != initExitUsage || !strings.Contains(result.stdout, "The ollama command was not found on PATH") || !strings.Contains(result.stdout, "Not checked.") {
+	if result.code != initExitUsage || !initHas(result.stdout, "The ollama command was not found on PATH") || !initHas(result.stdout, "Not checked.") {
 		t.Fatalf("init exit=%d\nstdout:\n%s\nstderr:\n%s", result.code, result.stdout, result.stderr)
 	}
 	if chats, _, _ := daemon.counts(); chats != 0 {
@@ -541,7 +541,7 @@ func TestInitLocalRefusesOllamaCloudModel(t *testing.T) {
 	checkout := remoteBootstrapCheckout(t)
 	dir := filepath.Join(t.TempDir(), "setup")
 	result := runInitScript(t, checkout, []string{"--no-input", "--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review", "--provider", "local", "--endpoint", "http://127.0.0.1:9/v1", "--verification-endpoint", "http://127.0.0.1:9/v1", "--generation-model", "gpt-oss:20b-cloud", "--verification-model", "llama3.2:3b"})
-	if result.code != initExitUsage || !strings.Contains(result.stderr, "gpt-oss:20b-cloud: "+ollamaCloudLocalRefusal) {
+	if result.code != initExitUsage || !initHas(result.stderr, "gpt-oss:20b-cloud: "+ollamaCloudLocalRefusal) {
 		t.Fatalf("init exit=%d\nstdout:\n%s\nstderr:\n%s", result.code, result.stdout, result.stderr)
 	}
 	initAssertAbsent(t, dir)

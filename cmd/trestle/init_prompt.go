@@ -29,12 +29,14 @@ type initLine struct {
 type initPrompter struct {
 	ctx   context.Context
 	out   io.Writer
+	style initStyle
+	say   func(string) // writes one wrapped line, as the wizard does
 	lines chan initLine
 	done  chan struct{}
 }
 
-func newInitPrompter(ctx context.Context, in io.Reader, out io.Writer) *initPrompter {
-	p := &initPrompter{ctx: ctx, out: out, lines: make(chan initLine), done: make(chan struct{})}
+func newInitPrompter(ctx context.Context, in io.Reader, out io.Writer, style initStyle, say func(string)) *initPrompter {
+	p := &initPrompter{ctx: ctx, out: out, style: style, say: say, lines: make(chan initLine), done: make(chan struct{})}
 	go func() {
 		defer close(p.lines)
 		reader := bufio.NewReaderSize(in, initMaxAnswerBytes)
@@ -81,8 +83,16 @@ func readInitLine(reader *bufio.Reader) (string, error) {
 	return strings.TrimSpace(strings.TrimRight(string(line), "\r\n")), nil
 }
 
+// next shows a question in the prompt color, wrapped so that its last line is
+// where the answer is typed, and returns the answer.
 func (p *initPrompter) next(prompt string) (string, error) {
-	fmt.Fprint(p.out, prompt)
+	parts := initFit(prompt, initWidth)
+	for _, part := range parts[:len(parts)-1] {
+		fmt.Fprintln(p.out, p.style.paint(initTonePrompt, part))
+	}
+	last := parts[len(parts)-1]
+	trailing := last[len(strings.TrimRight(last, " ")):]
+	fmt.Fprint(p.out, p.style.paint(initTonePrompt, strings.TrimRight(last, " "))+trailing)
 	select {
 	case <-p.ctx.Done():
 		fmt.Fprintln(p.out)
@@ -108,21 +118,21 @@ func (p *initPrompter) ask(question, proposed string, validate func(string) (str
 			return "", err
 		}
 		if answer == "\x00too-long" {
-			fmt.Fprintln(p.out, "    That answer is too long. Please try again.")
+			p.say("    That answer is too long. Please try again.")
 			continue
 		}
 		if answer == "" {
 			answer = proposed
 		}
 		if answer == "" {
-			fmt.Fprintln(p.out, "    An answer is needed here.")
+			p.say("    An answer is needed here.")
 			continue
 		}
 		value, err := validate(answer)
 		if err == nil {
 			return value, nil
 		}
-		fmt.Fprintln(p.out, "    "+err.Error())
+		p.say("    " + err.Error())
 	}
 	return "", errInitTooManyTries
 }
@@ -137,7 +147,7 @@ func (p *initPrompter) askOptional(question string) (string, error) {
 		if answer != "\x00too-long" {
 			return answer, nil
 		}
-		fmt.Fprintln(p.out, "    That answer is too long. Please try again.")
+		p.say("    That answer is too long. Please try again.")
 	}
 	return "", errInitTooManyTries
 }
@@ -145,7 +155,7 @@ func (p *initPrompter) askOptional(question string) (string, error) {
 // choose prints numbered options and returns the zero-based index of the choice.
 func (p *initPrompter) choose(question string, options []string) (int, error) {
 	for i, option := range options {
-		fmt.Fprintf(p.out, "    %d) %s\n", i+1, option)
+		p.say(fmt.Sprintf("    %d) %s", i+1, option))
 	}
 	answer, err := p.ask(fmt.Sprintf("%s (1-%d)", question, len(options)), "", func(value string) (string, error) {
 		n, err := strconv.Atoi(value)
@@ -180,7 +190,7 @@ func (p *initPrompter) confirm(question string, defaultYes bool) (bool, error) {
 		case "n", "no":
 			return false, nil
 		}
-		fmt.Fprintln(p.out, "    Please answer y or n.")
+		p.say("    Please answer y or n.")
 	}
 	return false, errInitTooManyTries
 }
@@ -198,7 +208,7 @@ func (p *initPrompter) typedYes(question string) (bool, error) {
 		case "no", "n":
 			return false, nil
 		}
-		fmt.Fprintln(p.out, "    Please type the full word yes to confirm, or no to stop.")
+		p.say("    Please type the full word yes to confirm, or no to stop.")
 	}
 	return false, errInitTooManyTries
 }

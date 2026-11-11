@@ -47,8 +47,7 @@ func (w *initWizard) openRouterModels() error {
 
 func (w *initWizard) readOpenRouter() *openRouterObservation {
 	if w.prompt != nil {
-		w.say("  Reading OpenRouter's public model list and zero-data-retention endpoint list")
-		w.say("  (two requests to openrouter.ai; no key or code is sent) ...")
+		w.say("  Reading OpenRouter's public model list and zero-data-retention endpoint list (two requests to openrouter.ai; no key or code is sent) ...")
 	}
 	observation := readOpenRouterObservation(w.ctx, w.clock)
 	if observation.err != nil {
@@ -122,8 +121,7 @@ func (w *initWizard) openRouterChooseZDR() error {
 	observation := w.openRouter
 	required := w.flags["provider"] == "openrouter-zdr"
 	if observation.err != nil {
-		w.say("\n  Without OpenRouter's API, Open Trestle cannot check which models have zero-data-retention")
-		w.say("  endpoints. It can still require zero data retention on every request.")
+		w.say("\n  Without OpenRouter's API, Open Trestle cannot check which models have zero-data-retention endpoints. It can still require zero data retention on every request.")
 		if w.bools["without-zdr"] {
 			return w.declineZDR()
 		}
@@ -153,8 +151,7 @@ func (w *initWizard) openRouterChooseZDR() error {
 			break
 		}
 		model := w.roleModel(missing)
-		w.say("\n  %s %s has no zero-data-retention endpoint on OpenRouter. If your OpenRouter account or", w.wait, model)
-		w.say("  key requires zero data retention, its requests will fail.")
+		w.say("\n  %s %s has no zero-data-retention endpoint on OpenRouter. If your OpenRouter account or key requires zero data retention, its requests will fail.", w.wait, model)
 		_, given := w.flags[missing+"-model"]
 		if w.prompt == nil || given {
 			if required {
@@ -236,8 +233,7 @@ func (w *initWizard) repickWithZDR(role string) error {
 // after one yes (or --without-zdr).
 func (w *initWizard) declineZDR() error {
 	w.zdr = false
-	w.say("  Without zero data retention, the model provider may keep your prompts under its own terms")
-	w.say("  (%s). Open Trestle will not require it; your account or key settings still may.", openRouterDocsZDR)
+	w.say("  Without zero data retention, the model provider may keep your prompts under its own terms (%s). Open Trestle will not require it; your account or key settings still may.", openRouterDocsZDR)
 	if w.bools["without-zdr"] {
 		w.say("  Continuing without zero data retention (--without-zdr).")
 		return nil

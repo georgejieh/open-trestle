@@ -51,7 +51,7 @@ func TestInitDevelopmentBuildReportsSavedRemoteSetup(t *testing.T) {
 			args := append([]string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review"}, tc.args...)
 			first := runInitScript(t, checkout, args, tc.script...)
 			for _, unwanted := range []string{"setup was refused", "new --directory", "Some files were written"} {
-				if strings.Contains(first.stdout+first.stderr, unwanted) {
+				if initHas(first.stdout+first.stderr, unwanted) {
 					t.Fatalf("a saved setup was reported as refused (%q): exit=%d\n%s\n%s", unwanted, first.code, first.stdout, first.stderr)
 				}
 			}
@@ -63,20 +63,20 @@ func TestInitDevelopmentBuildReportsSavedRemoteSetup(t *testing.T) {
 				"/usr/local/bin/trestle init --directory " + initShellQuote(dir),
 				"it finds this setup and re-checks it",
 			} {
-				if !strings.Contains(first.stdout, want) {
+				if !initHas(first.stdout, want) {
 					t.Fatalf("output lacks %q:\n%s", want, first.stdout)
 				}
 			}
 			initAssertProtected(t, dir, "routes.json", "policy.json", "bootstrap.json", "NEXT-STEPS.txt")
 
 			again := runInitScript(t, checkout, []string{"--no-input", "--directory", dir})
-			if !strings.Contains(again.stdout, "already has an Open Trestle setup") {
+			if !initHas(again.stdout, "already has an Open Trestle setup") {
 				t.Fatalf("the re-run did not find the saved setup:\n%s\n%s", again.stdout, again.stderr)
 			}
 			if again.code != first.code || initSetupChecks(t, again.stdout) != initSetupChecks(t, first.stdout) {
 				t.Fatalf("first run and re-run disagree: exit %d and %d\nfirst:\n%s\nre-run:\n%s", first.code, again.code, first.stdout, again.stdout)
 			}
-			if !strings.Contains(again.stdout, "Your setup is saved, but this development build cannot send source to Ollama Cloud.") {
+			if !initHas(again.stdout, "Your setup is saved, but this development build cannot send source to Ollama Cloud.") {
 				t.Fatalf("the re-run lacks the next step:\n%s", again.stdout)
 			}
 		})

@@ -99,7 +99,7 @@ func TestInitLocalShowsTheProbeRefusalReason(t *testing.T) {
 	if result.code != 4 || !strings.Contains(output, "A model server refused the test request (provider_model_retired): "+retired+".") || strings.Contains(output, "in the expected format. Check that both servers") {
 		t.Fatalf("init exit=%d\nstdout:\n%s\nstderr:\n%s", result.code, result.stdout, result.stderr)
 	}
-	if strings.Contains(result.stdout+result.stderr, localModelRefusalText) {
+	if initHas(result.stdout+result.stderr, localModelRefusalText) {
 		t.Fatal("the wizard repeated the server's message")
 	}
 }

@@ -126,6 +126,7 @@ type initWizard struct {
 	pendingHeader           string    // a --no-input step header not yet printed
 	openRouter              *openRouterObservation
 	zdr                     bool // every OpenRouter request requires zero data retention
+	style                   initStyle
 }
 
 func runInit(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -137,12 +138,10 @@ func runInitWithClock(ctx context.Context, args []string, stdin io.Reader, stdou
 	if code, done := w.parseFlags(args); done {
 		return code
 	}
-	w.ok, w.wait, w.bad, w.optional = "✓", "…", "✗", "–"
-	if os.Getenv("TERM") == "dumb" {
-		w.ok, w.wait, w.bad, w.optional = "[ok]", "[..]", "[x]", "[--]"
-	}
+	w.style = newInitStyle(stdout, w.bools["no-input"])
+	w.ok, w.wait, w.bad, w.optional = w.style.marks()
 	if !w.bools["no-input"] {
-		w.prompt = newInitPrompter(ctx, stdin, stdout)
+		w.prompt = newInitPrompter(ctx, stdin, stdout, w.style, func(line string) { w.say("%s", line) })
 		defer w.prompt.close()
 	}
 	code, err := w.run()
@@ -157,18 +156,44 @@ func (w *initWizard) stop(err error) int {
 	switch {
 	case errors.As(err, &stop):
 		fmt.Fprintln(w.out)
-		fmt.Fprintln(w.errOut, "trestle init: "+stop.message)
+		w.complain(stop.message)
 		return stop.code
 	case errors.Is(err, errInitInputEnded):
-		fmt.Fprintln(w.errOut, "trestle init: stopped because input ended (Ctrl-D, Ctrl-C or a closed pipe). "+w.writtenNote())
+		w.complain("stopped because input ended (Ctrl-D, Ctrl-C or a closed pipe). " + w.writtenNote())
 		return initExitUsage
 	case errors.Is(err, errInitTooManyTries):
-		fmt.Fprintln(w.errOut, "trestle init: stopped after three answers that could not be used. "+w.writtenNote()+" `trestle init --help` lists the answer flags.")
+		w.complain("stopped after three answers that could not be used. " + w.writtenNote() + " `trestle init --help` lists the answer flags.")
 		return initExitUsage
 	default:
-		fmt.Fprintln(w.errOut, "trestle init: internal error: "+err.Error())
+		w.complain("internal error: " + err.Error())
 		return initExitFailed
 	}
+}
+
+// complain writes a stopping reason to standard error, wrapped to the same
+// width as everything else.
+func (w *initWizard) complain(message string) {
+	for index, line := range strings.Split("trestle init: "+message, "\n") {
+		if index > 0 && strings.HasPrefix(line, "  ") && initCommandLine(line) {
+			fmt.Fprintln(w.errOut, line)
+			continue
+		}
+		for _, part := range initFit(line, initWidth) {
+			fmt.Fprintln(w.errOut, part)
+		}
+	}
+}
+
+// initCommandLine reports a line that shows a command to copy: it keeps its
+// full length so the command still works when pasted.
+func initCommandLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	for _, prefix := range []string{"trestle ", "--", "python3 ", "sudo ", "./", "sha256sum ", "REVISION=", "CREATED=", "git clone ", "read -rs ", "export ", "/usr/local/bin/trestle", "ollama ", "chmod "} {
+		if strings.HasPrefix(trimmed, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (w *initWizard) writtenNote() string {
@@ -275,19 +300,42 @@ func (w *initWizard) parseFlags(args []string) (int, bool) {
 	return 0, false
 }
 
+// say prints text, each line wrapped to initWidth columns.
 func (w *initWizard) say(format string, args ...any) {
+	w.flushHeader()
+	for _, line := range strings.Split(fmt.Sprintf(format, args...), "\n") {
+		for _, part := range initFit(line, initWidth) {
+			fmt.Fprintln(w.out, part)
+		}
+	}
+}
+
+// sayVerbatim prints a command to copy exactly as given, never wrapped.
+func (w *initWizard) sayVerbatim(text string) {
+	w.flushHeader()
+	fmt.Fprintln(w.out, text)
+}
+
+// hint prints a dim explanation under a mark or question.
+func (w *initWizard) hint(text string) {
+	w.flushHeader()
+	for _, part := range initFit(text, initWidth) {
+		fmt.Fprintln(w.out, w.style.paint(initToneDim, part))
+	}
+}
+
+func (w *initWizard) flushHeader() {
 	if w.pendingHeader != "" {
 		fmt.Fprint(w.out, w.pendingHeader)
 		w.pendingHeader = ""
 	}
-	fmt.Fprintf(w.out, format+"\n", args...)
 }
 
 // header starts a step. Interactively a question always follows, so it is
 // printed at once. With --no-input a step may have nothing to show, so its
 // header waits for the step's first line and is dropped when none comes.
 func (w *initWizard) header(step int, title string) {
-	text := fmt.Sprintf("\nStep %d of 8 · %s\n%s\n", step, title, strings.Repeat("─", min(len(title)+14, 60)))
+	text := strings.Join(w.style.stepHeader(step, title), "\n") + "\n"
 	if w.prompt != nil {
 		fmt.Fprint(w.out, text)
 		return
@@ -348,7 +396,7 @@ func (w *initWizard) declare(flagName, title, doc string, facts []string) error 
 	w.say("  Open Trestle records what you state here; it cannot check it for you.")
 	w.say("  By confirming, you state that:")
 	for _, fact := range facts {
-		w.say("%s", strings.Replace(initWrap(fact, "      ", 88), "      ", "    • ", 1))
+		w.say("    • %s", fact)
 	}
 	w.say("  Details: %s", doc)
 	if w.bools[flagName] {
@@ -378,11 +426,8 @@ func (w *initWizard) run() (int, error) {
 	}
 	w.checkout = filepath.Clean(top)
 	w.repoName = initLabel(filepath.Base(w.checkout), "repository")
-	if w.prompt != nil {
-		w.say("Open Trestle setup: answer a few questions to configure and run a first review.")
-		w.say("Press Enter to accept a value in [brackets]; Ctrl-D stops without saving.")
-	} else {
-		w.say("Open Trestle setup (--no-input): every answer comes from a flag.")
+	for _, line := range w.style.banner(w.prompt == nil) {
+		w.say("%s", line)
 	}
 
 	w.a.directory = w.defaultDirectory()
@@ -579,10 +624,7 @@ func (w *initWizard) sourcePreflight() error {
 
 func (w *initWizard) stepExplain() error {
 	w.header(2, "How a review works")
-	w.say("  Open Trestle uses two AI models. The first reads your change and lists")
-	w.say("  possible problems; a second, different model double-checks each one, and")
-	w.say("  only confirmed findings are reported. Setup sends none of your source anywhere:")
-	w.say("  it is sent to the models only when you run a review.")
+	w.say("  Open Trestle uses two AI models. The first reads your change and lists possible problems; a second, different model double-checks each one, and only confirmed findings are reported. Setup sends none of your source anywhere: it is sent to the models only when you run a review.")
 	return nil
 }
 
@@ -603,12 +645,10 @@ func initScannerBlock() string {
 
 func (w *initWizard) explainScannerBlock(block string) {
 	if block == "platform" {
-		w.say("  Note: remote models need the sandboxed secret scanner, which runs only on Linux, so")
-		w.say("  this build cannot send source to a remote provider. A model server on this machine works.")
+		w.say("  Note: remote models need the sandboxed secret scanner, which runs only on Linux, so this build cannot send source to a remote provider. A model server on this machine works.")
 		return
 	}
-	w.say("  Note: remote models need the packaged build. Your source is secret-scanned before it")
-	w.say("  leaves this machine, and this development build lacks the scanner fingerprints, so it refuses.")
+	w.say("  Note: remote models need the packaged build. Your source is secret-scanned before it leaves this machine, and this development build lacks the scanner fingerprints, so it refuses.")
 	w.say("  To build and install it from a clean checkout (docs/operations.md):")
 	w.sayPackagingSteps()
 	w.say("  Then run /usr/local/bin/trestle init. A model server on this machine works with this build.")
@@ -634,7 +674,7 @@ var initPackagingSteps = [][]string{
 func (w *initWizard) sayPackagingSteps() {
 	for _, step := range initPackagingSteps {
 		for _, line := range step {
-			w.say("    %s", line)
+			w.sayVerbatim("    " + line)
 		}
 	}
 }
@@ -747,8 +787,7 @@ func (w *initWizard) pickPair(generation, verification []modelcatalog.Model) err
 		return err
 	}
 	if w.prompt != nil {
-		w.say("\n  The checker must be a different model. A second model is less likely to")
-		w.say("  repeat the first one's mistakes, so findings both agree on are more reliable.")
+		w.say("\n  The checker must be a different model. A second model is less likely to repeat the first one's mistakes, so findings both agree on are more reliable.")
 	}
 	w.a.verificationModel, err = w.pickModel("verification-model", "Checker model: double-checks each finding", verification, w.a.generationModel)
 	return err
@@ -873,8 +912,7 @@ func (w *initWizard) pickModel(flagName, question string, models []modelcatalog.
 		w.say("    Note: %s is not in the list above; it will be used exactly as typed.", choice)
 	}
 	if initSmallModel(model) {
-		w.say("    %s Warning: %s looks like a small model (7B parameters or fewer). Small models", w.wait, choice)
-		w.say("      miss real problems and report false ones; expect weak reviews.")
+		w.say("    %s Warning: %s looks like a small model (7B parameters or fewer). Small models miss real problems and report false ones; expect weak reviews.", w.wait, choice)
 	}
 	w.models[flagName] = []modelcatalog.Model{model}
 	return choice, nil
@@ -884,8 +922,7 @@ const initModelListLimit = 40
 
 // filterModels narrows a long list by a typed substring; Enter skips the list.
 func (w *initWizard) filterModels(models []modelcatalog.Model) ([]modelcatalog.Model, error) {
-	w.say("  %d models are listed. Type part of a name to narrow the list (for example qwen),", len(models))
-	w.say("  or press Enter to type an exact model ID.")
+	w.say("  %d models are listed. Type part of a name to narrow the list (for example qwen), or press Enter to type an exact model ID.", len(models))
 	for range initMaxTries {
 		text, err := w.prompt.askOptional("Filter")
 		if err != nil || text == "" {
@@ -985,8 +1022,7 @@ func (w *initWizard) probeLocal(endpoint string) ([]modelcatalog.Model, error) {
 
 func (w *initWizard) localModels() error {
 	if w.prompt != nil {
-		w.say("  Note: local models are only as good as their size allows. Models with 7B")
-		w.say("  parameters or fewer give weak reviews; larger models need more memory.")
+		w.say("  Note: local models are only as good as their size allows. Models with 7B parameters or fewer give weak reviews; larger models need more memory.")
 	}
 	var err error
 	if w.a.generationEndpoint, err = w.localEndpoint("endpoint", "Where is the finder model's server?", ""); err != nil {
@@ -1004,8 +1040,7 @@ func (w *initWizard) localModels() error {
 	sameServer := !flagged
 	if w.prompt != nil && !flagged {
 		if len(generation) == 1 {
-			w.say("\n  This server offers one model. llama.cpp and vLLM usually run the second model")
-			w.say("  as a separate server on another port, such as http://127.0.0.1:8081/v1.")
+			w.say("\n  This server offers one model. llama.cpp and vLLM usually run the second model as a separate server on another port, such as http://127.0.0.1:8081/v1.")
 			sameServer = false
 		} else if sameServer, err = w.prompt.confirm("Is the checker model on the same server?", true); err != nil {
 			return err
@@ -1023,8 +1058,7 @@ func (w *initWizard) localModels() error {
 		}
 	}
 	if w.prompt != nil {
-		w.say("\n  The checker must be a different model. A second model is less likely to")
-		w.say("  repeat the first one's mistakes, so findings both agree on are more reliable.")
+		w.say("\n  The checker must be a different model. A second model is less likely to repeat the first one's mistakes, so findings both agree on are more reliable.")
 	}
 	w.modelEndpoint = w.a.verificationEndpoint
 	if w.a.verificationModel, err = w.pickModel("verification-model", "Checker model: double-checks each finding", verification, w.a.generationModel); err != nil {
@@ -1080,14 +1114,9 @@ func (w *initWizard) capacities() error {
 	listed := contextProposal
 	contextProposal = initContextProposal(w.a.provider.key, listed)
 	if w.prompt != nil {
-		w.say("\n  Model capacity. Check each model's page (or your server's settings) and give the")
-		w.say("  smaller of the two values. A review reads up to the context and writes up to 4096")
-		w.say("  tokens, so models must support at least 8192 and 4096.")
+		w.say("\n  Model capacity. Check each model's page (or your server's settings) and give the smaller of the two values. A review reads up to the context and writes up to 4096 tokens, so models must support at least 8192 and 4096.")
 		if w.a.provider.key == "local" {
-			w.say("  Start both servers with the same context length you give here (llama.cpp")
-			w.say("  --ctx-size, Ollama OLLAMA_CONTEXT_LENGTH, vLLM --max-model-len, LM Studio")
-			w.say("  --context-length). Reviews reserve input by bytes, so 32768 is proposed; see")
-			w.say("  docs/named-local-runtimes.md#context-length.")
+			w.say("  Start both servers with the same context length you give here (llama.cpp --ctx-size, Ollama OLLAMA_CONTEXT_LENGTH, vLLM --max-model-len, LM Studio --context-length). Reviews reserve input by bytes, so 32768 is proposed; see docs/named-local-runtimes.md#context-length.")
 		} else if contextProposal > 0 {
 			w.say("  The value in brackets comes from the model list you just read.")
 		}
@@ -1139,8 +1168,7 @@ func (w *initWizard) prices() error {
 				return err
 			}
 			if !perToken {
-				w.say("  Recording zero per-token prices and a zero cost limit. Plan quotas still apply")
-				w.say("  and are not checked by Open Trestle.")
+				w.say("  Recording zero per-token prices and a zero cost limit. Plan quotas still apply and are not checked by Open Trestle.")
 				w.a.inputPrice, w.a.outputPrice, w.a.maxCost = "0", "0", "0"
 				return nil
 			}
@@ -1254,8 +1282,7 @@ func initCredentialName(value string) (string, error) {
 func (w *initWizard) stepCredentials() error {
 	w.header(5, "API key")
 	if w.a.provider.key == ollamaSigninProvider {
-		w.say("  No API key: your local Ollama sends requests to Ollama Cloud with the account it is")
-		w.say("  signed in to (`ollama signin`). Open Trestle stores and sends no key.")
+		w.say("  No API key: your local Ollama sends requests to Ollama Cloud with the account it is signed in to (`ollama signin`). Open Trestle stores and sends no key.")
 		return nil
 	}
 	if w.a.provider.key == "local" {
@@ -1269,8 +1296,7 @@ func (w *initWizard) stepCredentials() error {
 			}
 		}
 	} else {
-		w.say("  Open Trestle never asks for, stores or prints your key. It reads the key from an")
-		w.say("  environment variable whose name you choose; only the name is saved.")
+		w.say("  Open Trestle never asks for, stores or prints your key. It reads the key from an environment variable whose name you choose; only the name is saved.")
 	}
 	proposal := w.a.provider.credentialProposal
 	if proposal == "" {
@@ -1287,11 +1313,10 @@ func (w *initWizard) stepCredentials() error {
 	}
 	w.say("  %s %s is not set in this shell.", w.wait, name)
 	w.say("    Set it in the shell that runs Open Trestle, without showing the key on screen:")
-	w.say("      read -rs %s && export %s", name, name)
+	w.sayVerbatim("      read -rs " + name + " && export " + name)
 	w.say("    or from your secret manager:")
-	w.say("      export %s=\"$(your-secret-tool read your-key)\"", name)
-	w.say("    A running program cannot see a variable exported later, so after exporting it,")
-	w.say("    run `trestle init` again: it finds this setup and re-checks the key.")
+	w.sayVerbatim("      export " + name + "=\"$(your-secret-tool read your-key)\"")
+	w.say("    A running program cannot see a variable exported later, so after exporting it, run `trestle init` again: it finds this setup and re-checks the key.")
 	proceed, err := w.confirm("Continue setup now and re-check the key later?", true, true)
 	if err != nil {
 		return err
@@ -1342,9 +1367,7 @@ func (w *initWizard) stepDeclarations() error {
 			"their use counts against that account's Ollama Cloud plan; Open Trestle records no retention or zero-data promise for Ollama Cloud (read https://docs.ollama.com/cloud)",
 		})
 	default:
-		w.say("\n  Ollama Cloud: Open Trestle records no retention or zero-data promise for this")
-		w.say("  provider. Read Ollama's current privacy terms and your plan before you send")
-		w.say("  private source (https://docs.ollama.com/cloud).")
+		w.say("\n  Ollama Cloud: Open Trestle records no retention or zero-data promise for this provider. Read Ollama's current privacy terms and your plan before you send private source (https://docs.ollama.com/cloud).")
 		return nil
 	}
 }
@@ -1385,12 +1408,10 @@ func (w *initWizard) evidenceItem(item initEvidence) (string, error) {
 		}
 	}
 	if item.proposedURL != "" {
-		w.say("    Proposed: the page the profile documentation cites for this. Press Enter to use it,")
-		w.say("    or type the address of the page you actually reviewed.")
+		w.say("    Proposed: the page the profile documentation cites for this. Press Enter to use it, or type the address of the page you actually reviewed.")
 	}
 	if item.account {
-		w.say("    This is your own account page, so it is never fetched: save a copy of it (for example")
-		w.say("    print it to PDF) and give the address you read plus that file's path.")
+		w.say("    This is your own account page, so it is never fetched: save a copy of it (for example print it to PDF) and give the address you read plus that file's path.")
 	}
 	location, err := w.prompt.ask("Web address you read (https://...)", item.proposedURL, func(value string) (string, error) {
 		if check(value+","+strings.Repeat("ab", 32)) != nil {
@@ -1501,8 +1522,7 @@ func (w *initWizard) reviewWindow() ([]string, string, error) {
 		return value, nil
 	}
 	if w.prompt != nil {
-		w.say("\n  Review window. Remote reviews are refused outside the window you declare, so")
-		w.say("  you review the provider's terms and your account again when it ends.")
+		w.say("\n  Review window. Remote reviews are refused outside the window you declare, so you review the provider's terms and your account again when it ends.")
 	}
 	reviewed, err := w.answer(initQuestion{flag: "reviewed-at", question: "When did you review the evidence and your account (UTC, or now)", proposed: "now", validate: canonical})
 	if err != nil {
@@ -1565,10 +1585,7 @@ func (w *initWizard) witnessIntro(provider string) {
 	if w.prompt == nil {
 		return
 	}
-	w.say("\n  %s needs a record of what you reviewed. For each item, give the web", provider)
-	w.say("  address you read and a SHA-256 of that exact content. For a public page, Open Trestle")
-	w.say("  can fetch it once and compute the SHA-256 here (you confirm it). Otherwise give the")
-	w.say("  SHA-256 of a copy you saved, or that file's path. Your account page is never fetched.")
+	w.say("\n  %s needs a record of what you reviewed. For each item, give the web address you read and a SHA-256 of that exact content. For a public page, Open Trestle can fetch it once and compute the SHA-256 here (you confirm it). Otherwise give the SHA-256 of a copy you saved, or that file's path. Your account page is never fetched.", provider)
 }
 
 func (w *initWizard) openCodeGoDeclarations() error {
@@ -1685,7 +1702,7 @@ func (w *initWizard) setLabels(values map[string]string) error {
 	return nil
 }
 
-const initDisplayPathLimit = 60
+const initDisplayPathLimit = 44
 
 // initDisplayPath shortens a path for reading only: the home folder becomes ~,
 // and a path still longer than about 60 characters keeps its start and end

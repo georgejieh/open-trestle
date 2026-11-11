@@ -53,10 +53,19 @@ func runInitScript(t *testing.T, checkout string, args []string, script ...strin
 	}
 	code := runInitWithClock(context.Background(), args, strings.NewReader(input), &stdout, &stderr, systemSetupClock{})
 	result := initRun{code, stdout.String(), stderr.String()}
-	if strings.Contains(result.stdout+result.stderr, remoteTestKey) {
+	if initHas(result.stdout+result.stderr, remoteTestKey) {
 		t.Fatal("init output disclosed a credential value")
 	}
+	// Every wizard run, in every test, stays within the shown width.
+	initAssertWidth(t, result.stdout)
+	initAssertWidth(t, result.stderr)
 	return result
+}
+
+// initHas reports whether text contains want once line wrapping is undone:
+// every run of spaces and line breaks counts as one space.
+func initHas(text, want string) bool {
+	return strings.Contains(strings.Join(strings.Fields(text), " "), strings.Join(strings.Fields(want), " "))
 }
 
 func initFakeModelList(t *testing.T, models ...string) *[]string {
@@ -227,11 +236,11 @@ func TestInitLocalServerProbedModelsThroughFirstReview(t *testing.T) {
 				t.Fatalf("init exit=%d\nstdout:\n%s\nstderr:\n%s", result.code, result.stdout, result.stderr)
 			}
 			for _, want := range []string{"Found 1 model.", "model-a  (context 128000)", "This server offers one model", "Context window in tokens (how much each model can read) [32768]", "✓ Model configuration approved", "✓ Dry run without models", "– Test requests to both models (optional; not sent)", "– Background-service tokens and backup", "Ready for the first review", "Review finished"} {
-				if !strings.Contains(result.stdout, want) {
+				if !initHas(result.stdout, want) {
 					t.Fatalf("output lacks %q:\n%s", want, result.stdout)
 				}
 			}
-			if strings.Contains(result.stdout, "OPEN_TRESTLE_API_TOKEN") {
+			if initHas(result.stdout, "OPEN_TRESTLE_API_TOKEN") {
 				t.Fatal("the direct review asked for daemon tokens")
 			}
 			if calls, _ := f.generation.snapshot(); calls != 1 {
@@ -265,31 +274,24 @@ func TestInitDevelopmentBuildExplainsScannerAndOffersLocal(t *testing.T) {
 	checkout := remoteBootstrapCheckout(t)
 	dir := filepath.Join(t.TempDir(), "setup")
 	result := runInitScript(t, checkout, []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review"}, "1", "n", "4")
-	if result.code != initExitUsage || !strings.Contains(result.stderr, "input ended") {
+	if result.code != initExitUsage || !initHas(result.stderr, "input ended") {
 		t.Fatalf("exit=%d\n%s\n%s", result.code, result.stdout, result.stderr)
 	}
 	provider := result.stdout[strings.Index(result.stdout, "Step 3 of 8"):]
 	for _, want := range []string{"remote models need the packaged build", "secret-scanned before it", "python3 tools/package_secret_scanner.py --output .container", "sudo ./open-trestle-linux-amd64.pyz install", "(remote, needs an API key) [needs the packaged build]", "This build cannot send source to OpenRouter", "Using: A model server on this machine"} {
-		if !strings.Contains(provider, want) {
+		if !initHas(provider, want) {
 			t.Fatalf("step 3 lacks %q:\n%s", want, provider)
 		}
 	}
 	if strings.Index(provider, "packaged build") > strings.Index(provider, "1) OpenRouter") {
 		t.Fatal("the scanner explanation came after the provider question")
 	}
-	// Scripted answers are not echoed, so a prompt and the next output share a
-	// captured line; measure each part separately.
-	for _, line := range strings.Split(result.stdout, "\n") {
-		for _, part := range initPromptEnd.Split(line, -1) {
-			if len([]rune(part)) > 100 {
-				t.Fatalf("line wider than 100 columns: %q", part)
-			}
-		}
-	}
 	initAssertAbsent(t, dir)
 }
 
-var initPromptEnd = regexp.MustCompile(`\((?:y/N|Y/n|1-\d+)\): `)
+// Scripted answers are not echoed, so a prompt and the next output share a
+// captured line; the width check measures each part separately.
+var initPromptEnd = regexp.MustCompile(`: {2,}|\((?:y/N|Y/n|1-\d+)\): |Type yes or no: `)
 
 func TestInitUnreadableObjectStorageStopsBeforeQuestions(t *testing.T) {
 	source := remoteBootstrapCheckout(t)
@@ -304,7 +306,7 @@ func TestInitUnreadableObjectStorageStopsBeforeQuestions(t *testing.T) {
 	}
 	dir := filepath.Join(t.TempDir(), "setup")
 	result := runInitScript(t, checkout, []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review"})
-	if result.code != initExitRefused || !strings.Contains(result.stderr, "cannot read the selected commits") || !strings.Contains(result.stderr, "git clone --no-local --no-hardlinks") || strings.Contains(result.stdout, "Step 3 of 8") {
+	if result.code != initExitRefused || !initHas(result.stderr, "cannot read the selected commits") || !initHas(result.stderr, "git clone --no-local --no-hardlinks") || initHas(result.stdout, "Step 3 of 8") {
 		t.Fatalf("exit=%d\n%s\n%s", result.code, result.stdout, result.stderr)
 	}
 	initAssertAbsent(t, dir)
@@ -372,7 +374,7 @@ func TestInitDecliningDeclarationWritesNothing(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "setup")
 	result := runInitScript(t, checkout, []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review", "--credential-env", "OPEN_TRESTLE_PROVIDER_UNSET_FOR_TEST"},
 		"2", "1", "2", "128000", "8192", "n", "y", "no")
-	if result.code != initExitRefused || !strings.Contains(result.stderr, "did not confirm") || !strings.Contains(result.stderr, "Nothing was written") {
+	if result.code != initExitRefused || !initHas(result.stderr, "did not confirm") || !initHas(result.stderr, "Nothing was written") {
 		t.Fatalf("declined declaration exit=%d stderr=%s", result.code, result.stderr)
 	}
 	if !slices.Equal(*calls, []string{"https://ollama.com/api/tags"}) {
@@ -388,7 +390,7 @@ func TestInitMissingCredentialThenRerunRechecks(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "setup")
 	args := []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review", "--provider", "ollama-cloud", "--generation-model", "gemma4:31b", "--verification-model", "qwen3.5:397b", "--context-tokens", "128000", "--output-tokens", "8192", "--input-micro-usd-per-million-tokens", "0", "--output-micro-usd-per-million-tokens", "0", "--max-cost-micro-usd", "0", "--credential-env", "OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD"}
 	first := runInitScript(t, checkout, args, "y", "yes", "")
-	if first.code != initExitPending || !strings.Contains(first.stdout, "read -rs OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD && export OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD") || !strings.Contains(first.stdout, "Not ready for a review yet") {
+	if first.code != initExitPending || !initHas(first.stdout, "read -rs OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD && export OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD") || !initHas(first.stdout, "Not ready for a review yet") {
 		t.Fatalf("missing key was not a pending setup: exit=%d\n%s\n%s", first.code, first.stdout, first.stderr)
 	}
 	before := map[string]string{}
@@ -397,11 +399,11 @@ func TestInitMissingCredentialThenRerunRechecks(t *testing.T) {
 	}
 	t.Setenv("OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD", remoteTestKey)
 	again := runInitScript(t, checkout, []string{"--directory", dir}, "1")
-	if again.code != initExitDone || !strings.Contains(again.stdout, "already has an Open Trestle setup") || !strings.Contains(again.stdout, "✓ API key variable OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD is set") || !strings.Contains(again.stdout, "--egress policy-approved") {
+	if again.code != initExitDone || !initHas(again.stdout, "already has an Open Trestle setup") || !initHas(again.stdout, "✓ API key variable OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD is set") || !initHas(again.stdout, "--egress policy-approved") {
 		t.Fatalf("rerun did not re-check the existing setup: exit=%d\n%s\n%s", again.code, again.stdout, again.stderr)
 	}
 	quit := runInitScript(t, checkout, []string{"--directory", dir}, "3")
-	if quit.code != initExitDone || !strings.Contains(quit.stdout, "Nothing was changed") {
+	if quit.code != initExitDone || !initHas(quit.stdout, "Nothing was changed") {
 		t.Fatalf("quit on rerun: exit=%d %s", quit.code, quit.stderr)
 	}
 	for name, content := range before {
@@ -421,18 +423,18 @@ func TestInitNoInputListsMissingAnswersAndWritesNothing(t *testing.T) {
 		t.Fatalf("exit=%d stderr=%s", result.code, result.stderr)
 	}
 	for _, want := range []string{"--verification-model", "--context-tokens", "--output-tokens", "--max-cost-micro-usd", "--credential-env", "--declare-remote-route"} {
-		if !strings.Contains(result.stderr, "\n  "+want+"\n") && !strings.HasSuffix(strings.SplitN(result.stderr, "\nSee", 2)[0], "\n  "+want) {
+		if !initHas(result.stderr, "\n  "+want+"\n") && !strings.HasSuffix(strings.SplitN(result.stderr, "\nSee", 2)[0], "\n  "+want) {
 			t.Fatalf("missing answer %s not listed:\n%s", want, result.stderr)
 		}
 	}
 	for _, unwanted := range []string{"--generation-model\n", "--yes", "slug", "evidence", "reviewed-at", "valid-until", "declare-openrouter-zdr-account"} {
-		if strings.Contains(result.stderr, unwanted) {
+		if initHas(result.stderr, unwanted) {
 			t.Fatalf("listed %q, which is given, detected or no longer asked:\n%s", unwanted, result.stderr)
 		}
 	}
 	initAssertAbsent(t, dir)
 	noProvider := runInitScript(t, checkout, []string{"--no-input", "--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review"})
-	if noProvider.code != initExitUsage || !strings.Contains(noProvider.stderr, "--provider") || !strings.Contains(noProvider.stderr, "add --provider first") {
+	if noProvider.code != initExitUsage || !initHas(noProvider.stderr, "--provider") || !initHas(noProvider.stderr, "add --provider first") {
 		t.Fatalf("missing provider: exit=%d %s", noProvider.code, noProvider.stderr)
 	}
 	initAssertAbsent(t, dir)
@@ -447,11 +449,11 @@ func TestInitNoInputCompleteSetupRunsReviewOnlyWithFlag(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "setup")
 	args := []string{"--no-input", "--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review", "--provider", "ollama-cloud", "--generation-model", "gemma4:31b", "--verification-model", "qwen3.5:397b", "--context-tokens", "128000", "--output-tokens", "8192", "--input-micro-usd-per-million-tokens", "0", "--output-micro-usd-per-million-tokens", "0", "--max-cost-micro-usd", "0", "--credential-env", "OPEN_TRESTLE_PROVIDER_REMOTE_TEST", "--declare-remote-route"}
 	setup := runInitScript(t, checkout, args)
-	if setup.code != initExitDone || len(transport.requests) != 0 || !strings.Contains(setup.stdout, "No review was run") {
+	if setup.code != initExitDone || len(transport.requests) != 0 || !initHas(setup.stdout, "No review was run") {
 		t.Fatalf("setup without --run-review: exit=%d requests=%v\n%s\n%s", setup.code, transport.requests, setup.stdout, setup.stderr)
 	}
 	reviewed := runInitScript(t, checkout, []string{"--no-input", "--directory", dir, "--run-review"})
-	if reviewed.code != initExitDone || len(transport.requests) != 2 || !strings.Contains(reviewed.stdout, "Review finished") {
+	if reviewed.code != initExitDone || len(transport.requests) != 2 || !initHas(reviewed.stdout, "Review finished") {
 		t.Fatalf("rerun with --run-review: exit=%d requests=%v\n%s\n%s", reviewed.code, transport.requests, reviewed.stdout, reviewed.stderr)
 	}
 }
@@ -462,7 +464,7 @@ func TestInitEndOfInputMidFlowLeavesNoFiles(t *testing.T) {
 	checkout := remoteBootstrapCheckout(t)
 	dir := filepath.Join(t.TempDir(), "setup")
 	result := runInitScript(t, checkout, []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review"}, "1", "vendor/generator")
-	if result.code != initExitUsage || !strings.Contains(result.stderr, "input ended") || !strings.Contains(result.stderr, "Nothing was written") {
+	if result.code != initExitUsage || !initHas(result.stderr, "input ended") || !initHas(result.stderr, "Nothing was written") {
 		t.Fatalf("EOF: exit=%d stderr=%s", result.code, result.stderr)
 	}
 	initAssertAbsent(t, dir)
@@ -474,7 +476,7 @@ func TestInitSameModelThreeTimesStops(t *testing.T) {
 	checkout := remoteBootstrapCheckout(t)
 	dir := filepath.Join(t.TempDir(), "setup")
 	result := runInitScript(t, checkout, []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review"}, "2", "1", "1", "gemma4:31b", "1")
-	if result.code != initExitUsage || strings.Count(result.stdout, "same model as the finder") != 3 || !strings.Contains(result.stderr, "three answers") {
+	if result.code != initExitUsage || strings.Count(result.stdout, "same model as the finder") != 3 || !initHas(result.stderr, "three answers") {
 		t.Fatalf("same model: exit=%d\n%s\n%s", result.code, result.stdout, result.stderr)
 	}
 	initAssertAbsent(t, dir)
@@ -487,13 +489,13 @@ func TestInitRefusesCredentialValueAndForeignDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	foreign := runInitScript(t, checkout, []string{"--directory", dir})
-	if foreign.code != initExitRefused || !strings.Contains(foreign.stderr, "no finished Open Trestle setup") || stringMustRead(t, filepath.Join(dir, "unrelated.txt")) != "keep me" {
+	if foreign.code != initExitRefused || !initHas(foreign.stderr, "no finished Open Trestle setup") || stringMustRead(t, filepath.Join(dir, "unrelated.txt")) != "keep me" {
 		t.Fatalf("foreign directory: exit=%d %s", foreign.code, foreign.stderr)
 	}
 	fresh := filepath.Join(t.TempDir(), "setup")
 	key := remoteTestKey
 	result := runInitScript(t, checkout, []string{"--no-input", "--directory", fresh, "--base", "refs/heads/base", "--head", "refs/heads/review", "--provider", "ollama-cloud", "--credential-env", key})
-	if result.code != initExitUsage || !strings.Contains(result.stderr, "looks like a key") {
+	if result.code != initExitUsage || !initHas(result.stderr, "looks like a key") {
 		t.Fatalf("credential value: exit=%d %s", result.code, result.stderr)
 	}
 	initAssertAbsent(t, fresh)

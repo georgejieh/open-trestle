@@ -16,10 +16,7 @@ import (
 // offers the consented sign-in check.
 func (w *initWizard) ollamaSigninModels() error {
 	if w.prompt != nil {
-		w.say("  Your local Ollama relays Ollama Cloud models (names ending in :cloud or -cloud) to")
-		w.say("  ollama.com with the account you signed in with (`ollama signin`). Open Trestle talks")
-		w.say("  only to Ollama on this machine and needs no API key, but your source does leave this")
-		w.say("  machine: when you run a review it is secret-scanned, then sent to Ollama Cloud.")
+		w.say("  Your local Ollama relays Ollama Cloud models (names ending in :cloud or -cloud) to ollama.com with the account you signed in with (`ollama signin`). Open Trestle talks only to Ollama on this machine and needs no API key, but your source does leave this machine: when you run a review it is secret-scanned, then sent to Ollama Cloud.")
 	}
 	endpoint, err := w.answer(initQuestion{flag: "endpoint", question: "Local Ollama address", proposed: ollamaSigninDefaultBaseURL, acceptProposal: true, validate: func(value string) (string, error) {
 		value = strings.TrimRight(value, "/")
@@ -36,8 +33,7 @@ func (w *initWizard) ollamaSigninModels() error {
 		w.ollamaBinary = true
 		w.say("  %s The ollama command is installed.", w.ok)
 	} else {
-		w.say("  %s The ollama command was not found on PATH. A running Ollama still works, but", w.wait)
-		w.say("    Open Trestle cannot offer to run `ollama signin` for you (https://ollama.com/download).")
+		w.say("  %s The ollama command was not found on PATH. A running Ollama still works, but Open Trestle cannot offer to run `ollama signin` for you (https://ollama.com/download).", w.wait)
 	}
 	origin, _ := ollamaDaemonOrigin(endpoint)
 	w.say("  Reading the model list from %s/api/tags (no code is sent) ...", origin)
@@ -77,10 +73,7 @@ func (w *initWizard) ollamaSigninCheck() error {
 		return nil
 	}
 	model := w.a.generationModel
-	w.say("\n  Sign-in check. Open Trestle can send one fixed test message, %q, to %s", ollamaSigninProbePrompt, model)
-	w.say("  through your local Ollama. It contains none of your code, but Ollama sends it to Ollama")
-	w.say("  Cloud and it uses your Ollama Cloud usage. If you are not signed in, Open Trestle can run")
-	w.say("  `ollama signin` (only if you agree) and then send the same message once more.")
+	w.say("\n  Sign-in check. Open Trestle can send one fixed test message, %q, to %s through your local Ollama. It contains none of your code, but Ollama sends it to Ollama Cloud and it uses your Ollama Cloud usage. If you are not signed in, Open Trestle can run `ollama signin` (only if you agree) and then send the same message once more.", ollamaSigninProbePrompt, model)
 	send, err := w.prompt.confirm("Send the test message?", false)
 	if err != nil {
 		return err
@@ -116,11 +109,11 @@ func (w *initWizard) ollamaSigninCheck() error {
 			return w.continueWithoutSignin("Run `ollama signin` in a terminal on this machine")
 		case ollamaProbePaymentRequired:
 			w.say("  %s Ollama Cloud refused the test message for billing (%s):", w.bad, detail)
-			w.say("%s", initWrap(ollamaProbeRefusalHint(outcome)+".", "    ", 86))
+			w.hint("    " + ollamaProbeRefusalHint(outcome) + ".")
 			return w.continueUnchecked("Add credit or a subscription to your Ollama account", "add it before the first review", "Add credit or a subscription to your Ollama account")
 		case ollamaProbeModelUnavailable, ollamaProbeModelRetired:
 			w.say("  %s Ollama Cloud does not serve %s (%s):", w.bad, model, detail)
-			w.say("%s", initWrap(ollamaProbeRefusalHint(outcome)+".", "    ", 86))
+			w.hint("    " + ollamaProbeRefusalHint(outcome) + ".")
 			return initStopf(initExitPending, "%s cannot be used (%s): %s. Nothing was written.", model, detail, ollamaProbeRefusalHint(outcome))
 		default:
 			w.say("  %s The test message failed (%s), so the sign-in could not be checked.", w.wait, detail)

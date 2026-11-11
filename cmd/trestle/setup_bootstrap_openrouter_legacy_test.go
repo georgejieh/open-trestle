@@ -125,7 +125,7 @@ func TestSetupBootstrapCheckReadsBackALegacyOpenRouterDirectory(t *testing.T) {
 		t.Fatalf("an expired legacy window was not refused clearly: %+v", refused)
 	}
 	resumed := runInitScript(t, remoteBootstrapCheckout(t), []string{"--directory", current}, "1")
-	if resumed.code != initExitDone || !strings.Contains(resumed.stdout, "Your declared privacy review window is current") || !strings.Contains(resumed.stdout, "zero data retention required on every request") {
+	if resumed.code != initExitDone || !initHas(resumed.stdout, "Your declared privacy review window is current") || !initHas(resumed.stdout, "zero data retention required on every request") {
 		t.Fatalf("trestle init did not resume the legacy setup: exit=%d\n%s\n%s", resumed.code, resumed.stdout, resumed.stderr)
 	}
 }
