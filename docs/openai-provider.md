@@ -47,6 +47,23 @@ Credentials are retrieved for each request through `APIKeyProvider`. Keys are bo
 
 HTTP failures become closed gateway classes without retaining provider error text. Network ambiguity, server errors, malformed successful responses, and timeouts use `outcome_unknown` replay safety. The gateway will not retry those outcomes automatically. Explicit rate-limit responses can carry a bounded `Retry-After` delay and are marked as having no model side effect.
 
+Every request profile, the OpenCode console included, classifies a non-200 status the same way, from the status alone. The error body is drained unread, so a provider's message never reaches a result, record or log:
+
+| Status | Class | Replay safety |
+|---|---|---|
+| 401 | `authentication` | `no_side_effect` |
+| 402 | `payment_required` (billing or quota) | `no_side_effect` |
+| 403 | `authorization` | `no_side_effect` |
+| 404 | `model_unavailable` (model or endpoint not served) | `no_side_effect` |
+| 408, 504 | `timeout` | `outcome_unknown` |
+| 410 | `model_retired` | `no_side_effect` |
+| 413 | `budget_exhausted` | `no_side_effect` |
+| 429 | `rate_limited`, with a bounded `Retry-After` | `no_side_effect` |
+| other 5xx | `provider_server` | `outcome_unknown` |
+| any other | `invalid_response` | `no_side_effect` |
+
+`payment_required`, `model_unavailable` and `model_retired` are not transient, so the gateway never retries them. A payment refusal is also not eligible for fallback to another route, like a spent budget; a model refusal leaves another route's model eligible. The model handlers fail the task as a `policy` refusal for each of them, as for `authentication` and `authorization`, and the local review reports them as failure details; see [local model review](local-model-review.md#provider-refusals).
+
 The adapter performs no request during construction and has no background activity.
 
 For controlled-hybrid and Kubernetes HA setup, `trestle setup check provider` separately records named approval of the exact protected inventory, policy, endpoint locality, credential environment references, logging posture, budget, and distinct-provider route pair. That authorization reads no credential and constructs no adapter. It is not a connectivity probe or dispatch authority.

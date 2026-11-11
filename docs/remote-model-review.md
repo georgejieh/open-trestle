@@ -208,8 +208,13 @@ trestle setup bootstrap check --directory "$HOME/.local/state/open-trestle/ollam
 ```
 
 Zero prices fit a plan without per-token billing; plan quotas still apply and are
-not checked. `--endpoint` may replace the base with another remote HTTPS Ollama
-Cloud base. Loopback or private endpoints are refused; use the
+not checked. When the account has no usage credit Ollama answers HTTP 402, and
+for a retired model HTTP 410; a review then fails as `policy (task candidates):
+provider_payment_required` or `provider_model_retired` with a fixed hint (see
+[provider refusals](local-model-review.md#provider-refusals)). Ollama's own
+message is never shown or stored. `--endpoint` may replace the base with
+another remote HTTPS Ollama Cloud base. Loopback or private endpoints are
+refused; use the
 [local-first bootstrap](local-first-bootstrap.md) for models that run on this
 machine, or `ollama-signin` (below) for a local Ollama signed in to Ollama Cloud.
 
@@ -235,8 +240,15 @@ This is remote egress, and it is treated exactly like the other remote routes:
   still refuses a loopback endpoint in a remote zone.
 - `init` reads the daemon's model list once (`GET /api/tags`, no source, no
   key) and refuses unless both models are listed with
-  `remote_host` `https://ollama.com`. `check` repeats that read.
-- Budget, usage and timeout handling are the same as for `ollama-cloud`.
+  `remote_host` `https://ollama.com`. `check` repeats that read and sends no
+  model request, so it cannot see a missing credit or a retired model; a
+  listed model can still be retired.
+- Budget, usage and timeout handling are the same as for `ollama-cloud`. The
+  daemon relays Ollama Cloud's refusals: HTTP 402 (no usage credit) and 410
+  (retired model) fail a review as `provider_payment_required` and
+  `provider_model_retired`, 401 (not signed in) as
+  `provider_authentication_failed`, each with a fixed hint and never Ollama's
+  own message (see [provider refusals](local-model-review.md#provider-refusals)).
 
 `--declare-ollama-cloud-signin` is your explicit consent: the daemon is signed
 in to an Ollama account you control, and each review sends the selected source,
@@ -284,7 +296,14 @@ fixed test message, "Reply with OK", to the finder model to check the sign-in.
 That message contains none of your code, but it goes to Ollama Cloud and uses
 your Ollama Cloud usage. If the daemon answers 401 or 403 (not signed in), the
 wizard offers to run `ollama signin` with your terminal attached (only on `y`)
-and then sends the same message once more.
+and then sends the same message once more. If it answers 402, the wizard says
+Ollama Cloud refused the message for billing, prints the review's hint ("the
+provider refused the request for billing: add credit or a subscription to the
+provider account, or choose another route") and asks whether to continue. If it
+answers 404 or 410, the chosen model is not served or has been retired: the
+wizard prints the review's hint ("the provider no longer serves this model:
+choose a model the provider lists as available and re-run setup" for 410) and
+stops before writing anything. The body of the answer is never read or shown.
 
 ## Limits
 

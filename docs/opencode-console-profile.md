@@ -143,7 +143,11 @@ No zero-price activation or permanent price claim follows.
 Credit purchases incur 4.6% + $0.31; do not add that fee to every inference.
 
 401/403 use existing authentication/authorization failures. Console 402 maps to
-budget exhausted with no replay side effect. 429 includes policy-budget refusal;
+`payment_required` with no replay side effect, the class every profile uses for
+402 (it was `budget_exhausted` before); like a spent budget it is neither retried
+nor eligible for fallback, the task is refused as `policy`, and the local review
+reports `provider_payment_required`. 404 and 410 map to `model_unavailable` and
+`model_retired` as for every profile. 429 includes policy-budget refusal;
 it need not be temporary RPM throttling. Budgets are checked at request start,
 so already-running requests may exceed them slightly. Timeouts/transport loss/
 5xx/malformed post-effect replies remain outcome unknown; there is no automatic

@@ -1071,6 +1071,59 @@ that is printed, never applied, and is not part of the diagnostic set. SARIF car
 The model-result evaluation import and the retained-memory feedback review accept
 version 4 and version 6 results without a specialist and ignore the guidance.
 
+### Provider refusals
+
+A provider that answers a model request with an HTTP refusal is classified by
+the status alone; its error body is discarded unread and never reaches a
+result, record or log. Every OpenAI-compatible request profile uses the same
+mapping:
+
+| HTTP status | Route failure | Run failure | Retried | `failure_detail` |
+|---|---|---|---|---|
+| 401 | `authentication` | `policy` | no | `provider_authentication_failed` |
+| 402 | `payment_required` | `policy` | no | `provider_payment_required` |
+| 403 | `authorization` | `policy` | no | `provider_authorization_denied` |
+| 404 | `model_unavailable` | `policy` | no | `provider_model_unavailable` |
+| 410 | `model_retired` | `policy` | no | `provider_model_retired` |
+| 429 | `rate_limited` | `transient` | while the task has attempts left | `provider_rate_limited` |
+| 5xx | `provider_server` | `transient` | while the task has attempts left | none |
+
+A `policy` run is `refused` with CI disposition `blocked` and exit code 4, so a
+refusal the provider repeats on every request is attempted once. A `transient`
+run is `failed` with `error` and exit code 1. A 429 attempt records the
+provider's bounded `Retry-After` delay on its route outcome, but the task retry
+waits the plan's fixed retry delay; it does not read `Retry-After`. Before this
+mapping, 402, 404 and 410 were `invalid_response`, so the run failed as a
+retryable `internal` failure with no detail. The detail is recorded only when
+the most recent model request the provider answered was refused that way and
+that refusal is the recorded run failure: a credential that could not be read
+before sending, or a rate limit a later attempt outlived, records none. Text
+output names the failing task, the detail and a fixed hint, for example:
+
+```text
+failure: policy (task candidates): provider_payment_required
+hint: the provider refused the request for billing: add credit or a subscription to the provider account, or choose another route
+```
+
+```text
+failure: policy (task verification): provider_model_retired
+hint: the provider no longer serves this model: choose a model the provider lists as available and re-run setup
+```
+
+A review set member carries the same `failure_detail` and `member hint:` line.
+The other hints are: 404 "the provider does not serve this model at this
+endpoint: check the model name and endpoint, choose a model the provider lists
+as available, and re-run setup"; 401 "the provider did not accept the
+credential: check the API key the route names (for ollama-signin, run `ollama
+signin`), then retry"; 403 "the provider refused this account access to the
+model or endpoint: check the account's access, or choose another route"; 429
+"the provider rate-limited the request on its last attempt: wait and run the
+review again, or choose another route". `failure_detail` takes these values in
+result schema version 6; a result without a provider refusal keeps its bytes.
+A daemon run is classified the same way (a `policy` task failure, attempted
+once), but its run receipt does not yet record a failure reason for a model
+task, so `trestle runs`, the TUI and the web console show only the class.
+
 ### Token usage
 
 A version 6 result reports `token_usage`: the input, output and cached-input

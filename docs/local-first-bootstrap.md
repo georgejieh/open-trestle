@@ -146,7 +146,13 @@ backup checks. The backup directory must be protected and outside the live
 bootstrap directory. Its snapshot name is derived automatically from the current
 plan. A missing permission, credential, unavailable model, invalid model output
 or unsupported backup location cannot become ready. Correct the dependency and
-repeat `check`. Passed checks are historical receipts, not fresh liveness checks;
+repeat `check`. When a model server refuses the probe with HTTP 401, 402, 403,
+404, 410 or 429, the result adds `messages` naming the check, the review's
+failure detail and its fixed hint, for example
+`local_inference_validated: provider_model_unavailable: the provider does not
+serve this model at this endpoint: ...`, and `trestle init` shows the same
+reason; the server's own message is never shown. `messages` is absent
+otherwise, and `check` sends no request beyond the probe. Passed checks are historical receipts, not fresh liveness checks;
 repeat calls do not silently repeat a successful inference probe. `inspect` is
 read-only and never contacts models.
 
