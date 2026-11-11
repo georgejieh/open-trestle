@@ -1131,7 +1131,8 @@ hint: the provider no longer serves this model: choose a model the provider list
 
 A provider that answers HTTP 200 with a reply the adapter refuses (malformed
 or truncated JSON, an empty or oversized body, a Chat Completions reply with
-an unrecognized field, a model other than the route's, or another document the
+an unrecognized field (for OpenRouter, in the answer rather than its routing
+metadata), a model other than the route's, or another document the
 strict parser does not accept), or with a status no route failure class names
 (for example 400; see [OpenAI provider](openai-provider.md)), keeps the
 `internal` run failure it always had, so the run is `failed` with `error` and
