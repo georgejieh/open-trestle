@@ -106,6 +106,11 @@
           "maximum": 4294967295
         }
       }
+    },
+    "retry_after_milliseconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3600000
     }
   },
   "allOf": [
@@ -177,6 +182,23 @@
             }
           }
         ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "retry_after_milliseconds"
+        ]
+      },
+      "then": {
+        "required": [
+          "failure_reason"
+        ],
+        "properties": {
+          "failure_reason": {
+            "const": "provider_rate_limited"
+          }
+        }
       }
     }
   ]

@@ -96,6 +96,7 @@ type TaskRuntimeState struct {
 	failureReason         TaskFailureReason
 	shortfall             TaskFailureContextShortfall
 	retryAtMillis         int64
+	retryAfterMillis      uint32
 	lastEventRevision     uint64
 	lastEventIdentity     string
 	lastEventAtMillis     int64
@@ -270,6 +271,7 @@ func (s *ReviewRunState) applyTaskEvent(event RunEvent, runtime *TaskRuntimeStat
 		}
 		runtime.status = TaskRuntimeAvailable
 		runtime.retryAtMillis = 0
+		runtime.retryAfterMillis = 0
 		runtime.failure = 0
 		runtime.failureReason = 0
 		runtime.shortfall = TaskFailureContextShortfall{}
@@ -406,6 +408,7 @@ func (s *ReviewRunState) applyTaskEvent(event RunEvent, runtime *TaskRuntimeStat
 		runtime.shortfall = event.shortfall
 		runtime.outputIdentity = event.OutputIdentity()
 		runtime.retryAtMillis = event.retryAtMillis
+		runtime.retryAfterMillis = event.retryAfterMillis
 		runtime.workerIdentity = ""
 		runtime.leaseExpiresAtMillis = 0
 	case RunEventTaskSkipped:

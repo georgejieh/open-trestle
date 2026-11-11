@@ -31,6 +31,9 @@ var (
 	ErrInvalidRunEventFailure = errors.New("invalid run event failure")
 	// ErrInvalidRunEventTime identifies a missing, excessive, or inconsistent time.
 	ErrInvalidRunEventTime = errors.New("invalid run event time")
+	// ErrInvalidRunEventRetry identifies a requested retry delay that is not a
+	// rate-limited model attempt's, or a retry scheduled later than it allows.
+	ErrInvalidRunEventRetry = errors.New("invalid run event retry")
 	// ErrInvalidRunEventIdentity identifies event content inconsistent with its identity.
 	ErrInvalidRunEventIdentity = errors.New("invalid run event identity")
 )
@@ -153,9 +156,12 @@ type RunEvent struct {
 	shortfall            TaskFailureContextShortfall
 	retryAtMillis        int64
 	occurredAtMillis     int64
-	preparedArtifact     []byte
-	packetDescriptor     ContextPacketDescriptor
-	inputDescriptor      ContextInputDescriptor
+	// retryAfterMillis is the delay a provider asked for before retrying a
+	// rate-limited model attempt; retryAtMillis records the delay used.
+	retryAfterMillis uint32
+	preparedArtifact []byte
+	packetDescriptor ContextPacketDescriptor
+	inputDescriptor  ContextInputDescriptor
 }
 
 // NewRunEvent creates one structurally closed journal event.
@@ -247,6 +253,17 @@ func (e RunEvent) ContextShortfall() (TaskFailureContextShortfall, bool) {
 	return e.shortfall, e.shortfall.Present()
 }
 
+// withRetryAfter returns the rate-limited task-failed event with the delay the
+// provider asked for bound.
+func (e RunEvent) withRetryAfter(milliseconds uint32) (RunEvent, error) {
+	e.retryAfterMillis = milliseconds
+	e.identity = deriveRunEventIdentity(e)
+	if err := e.Validate(); err != nil {
+		return RunEvent{}, err
+	}
+	return e, nil
+}
+
 // withFailureReason returns the task-failed event with its failure reason, and
 // any route context counts, bound.
 func (e RunEvent) withFailureReason(task TaskDefinition, reason TaskFailureReason, shortfall TaskFailureContextShortfall) (RunEvent, error) {
@@ -260,10 +277,14 @@ func (e RunEvent) withFailureReason(task TaskDefinition, reason TaskFailureReaso
 	}
 	return e, nil
 }
-func (e RunEvent) RetryAt() time.Time    { return runMillisToTime(e.retryAtMillis) }
-func (e RunEvent) OccurredAt() time.Time { return runMillisToTime(e.occurredAtMillis) }
-func (e RunEvent) String() string        { return "review run event" }
-func (e RunEvent) GoString() string      { return "controlplane.RunEvent{<redacted>}" }
+func (e RunEvent) RetryAt() time.Time { return runMillisToTime(e.retryAtMillis) }
+
+// RetryAfterMilliseconds returns the delay a provider asked for before
+// retrying a rate-limited model attempt, or zero.
+func (e RunEvent) RetryAfterMilliseconds() uint32 { return e.retryAfterMillis }
+func (e RunEvent) OccurredAt() time.Time          { return runMillisToTime(e.occurredAtMillis) }
+func (e RunEvent) String() string                 { return "review run event" }
+func (e RunEvent) GoString() string               { return "controlplane.RunEvent{<redacted>}" }
 func (e RunEvent) Format(state fmt.State, verb rune) {
 	writeRedactedControlPlaneFormat(state, verb, "review run event", "controlplane.RunEvent{<redacted>}")
 }
@@ -317,6 +338,9 @@ func (e RunEvent) validateFields() error {
 	hasTask := e.taskKey != "" || e.taskIdentity != ""
 	if hasTask && (!validReviewTaskKey(e.taskKey) || !validControlPlaneDigest(e.taskIdentity)) {
 		return ErrInvalidRunEventTask
+	}
+	if e.retryAfterMillis != 0 && (e.kind != RunEventTaskFailed || e.failureReason != TaskFailureReasonProviderRateLimited || e.retryAfterMillis > maxReviewTaskRetryDelayMillis || e.retryAtMillis != 0 && uint64(e.retryAtMillis-e.occurredAtMillis) > uint64(e.retryAfterMillis)) {
+		return ErrInvalidRunEventRetry
 	}
 	if e.failureReason != 0 && (e.kind != RunEventTaskFailed || e.outputIdentity != "" || e.failureReason.Validate() != nil || !taskFailureReasonFailureAllowed(e.failureReason, e.failure)) || e.shortfall.Present() != (e.failureReason == TaskFailureReasonRouteContextInsufficient) || e.shortfall.Present() && !e.shortfall.valid() {
 		return ErrInvalidTaskFailureReason
@@ -454,6 +478,7 @@ func deriveRunEventIdentity(event RunEvent) string {
 		PreparedArtifact []byte                      `json:"prepared_artifact,omitempty"`
 		PacketDescriptor *ContextPacketDescriptor    `json:"packet_descriptor,omitempty"`
 		InputDescriptor  *ContextInputDescriptor     `json:"input_descriptor,omitempty"`
+		RetryAfter       uint32                      `json:"retry_after_milliseconds,omitempty"`
 	}{
 		Contract: "open-trestle/review-run-event", Version: version,
 		Plan: event.planIdentity, Scope: event.scope.Identity(), Sequence: event.sequence,
@@ -462,6 +487,7 @@ func deriveRunEventIdentity(event RunEvent) string {
 		LeaseToken: event.leaseTokenIdentity, Worker: event.workerIdentity,
 		LeaseExpires: event.leaseExpiresAtMillis, Output: event.outputIdentity, OutputKind: contextFailureOutputKind((event.kind == RunEventTaskFailed && event.outputIdentity != "") || event.kind == RunEventContextAbstentionPrepared),
 		Failure: event.failure.String(), FailureReason: event.failureReason.String(), ContextShortfall: taskFailureShortfallToRecord(event.shortfall), RetryAt: event.retryAtMillis, OccurredAt: event.occurredAtMillis, PreparedArtifact: event.preparedArtifact,
+		RetryAfter: event.retryAfterMillis,
 	}
 	if event.kind == RunEventContextInputPrepared {
 		d := cloneContextInputDescriptor(event.inputDescriptor)
