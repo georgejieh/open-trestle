@@ -469,7 +469,7 @@ func planRouteFallback(selection RouteSelectionReceipt, ranking RouteRankingResu
 	if !safety.permitsAutomaticRetry() {
 		return finalizeRouteFallbackDecision(base, RouteFallbackUnsafeReplay, RankedRoute{})
 	}
-	if failure == RouteFailureCancelled || failure == RouteFailurePolicyDenied || failure == RouteFailureBudgetExhausted {
+	if failure == RouteFailureCancelled || failure == RouteFailurePolicyDenied || failure == RouteFailureBudgetExhausted || failure == RouteFailurePaymentRequired {
 		return finalizeRouteFallbackDecision(base, RouteFallbackFailureNotEligible, RankedRoute{})
 	}
 	from := rankedByIdentity[fromIdentity]
