@@ -147,10 +147,11 @@ trestle init
 `trestle init` asks where the two models run (OpenRouter, with zero data
 retention by default; Ollama Cloud; OpenCode Go; a model server on this machine;
 or Ollama on this machine signed in to Ollama Cloud), which model finds problems
-and which different model double-checks them, and, when the provider needs a
-key, which environment variable holds it (the key itself is never asked for or
-stored). It shows every
-privacy or capability declaration in plain words and requires a typed `yes`,
+and which different model double-checks them. It fills in the rest (the names
+from the Git remote, the key variable name, and limits and prices a provider
+reports), shows every setting in one panel, and never asks for the key itself.
+It shows every privacy or capability declaration in plain words and requires a
+typed `yes`,
 writes a protected configuration, runs the setup checks with a one-line fix for
 anything missing, and runs the first review only after you agree to send the
 selected source. Every answer also has a flag for `--no-input` use. Remote

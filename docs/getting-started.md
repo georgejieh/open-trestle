@@ -1,8 +1,9 @@
 # Getting started
 
 `trestle init` is the first step. Run it inside the Git repository you want
-reviewed. It asks a few plain questions, saves a protected configuration, runs
-the setup checks, and offers to run your first review. If something is missing,
+reviewed. It asks only what it cannot work out itself, shows every setting in
+one panel, saves a protected configuration, runs the setup checks, and offers
+to run your first review. If something is missing,
 it says what is missing and what to do, then stops without guessing.
 
 ```sh
@@ -15,8 +16,8 @@ The wizard is a front end over the existing
 [remote model review](remote-model-review.md) commands. It calls the same
 `trestle setup bootstrap init` and `check` code in-process and runs the same
 `trestle local-git model-review` command they print. It adds no configuration
-format, default model, privacy claim or shortcut. Everything it records is still
-your explicit answer.
+format, default model, privacy claim or shortcut. What it fills in for you is
+shown before you consent, and every declaration is still your explicit answer.
 
 ## Before you start
 
@@ -72,110 +73,145 @@ when you agree to run a review.
 
 ## What the wizard asks
 
-1. **What will be reviewed.** It finds your default branch (`origin/HEAD`'s
-   branch when it exists locally, otherwise `main` or `master`) and proposes the
-   merge base of that branch and `HEAD` as the base (shown as, for example,
-   "merge base with main"; it runs only the read-only `git merge-base`), and
-   `HEAD` as the head. The commit count and changed-file summary come from those
-   same two commits, so commits added to the default branch after you branched
-   are not shown as your changes. If Git finds no merge base, the branch itself
-   is proposed. You can type a branch name, tag, full ref or commit ID instead.
-2. **How a review works.** A short explanation; nothing to answer.
-3. **Where the models run.** Pick a provider or a local server. The options are
-   OpenRouter, Ollama Cloud, OpenCode Go, a model server on this machine, and
-   "Ollama on this machine, signed in to Ollama Cloud".
-4. **The two models.** For Ollama Cloud and OpenCode Go it reads the public model
-   list (no key or code is sent). For a local server it reads the server's
-   `/v1/models` list from `127.0.0.1` only. Each list read accepts a response of
-   at most 4 MiB; a larger or unreadable list falls back to typing the IDs.
-   Otherwise type the IDs exactly, for example `vendor/model-name`.
+The wizard asks only what you alone can answer: where the models run, which
+two models, whether to require zero data retention on OpenRouter, a cost limit,
+and your consent. Everything it can work out itself is filled in and shown in a
+settings panel before you consent; Enter accepts each recommended default. It
+runs in six steps:
 
-   For OpenRouter it reads two public lists, with no key or code:
-   `https://openrouter.ai/api/v1/models` and
-   `https://openrouter.ai/api/v1/endpoints/zdr`. Models with zero-data-retention
-   (ZDR) endpoints are marked in the list. After you pick the two models it shows
-   what OpenRouter's API reported for each: its ZDR endpoints, context, output,
-   prices and structured output. It fills those in for you; there are no slug,
-   capacity or price questions. Then it asks one question, "Require zero data
-   retention on every request (recommended)?", where Enter means yes. If a model
-   has no ZDR endpoint, it says that an account or key with ZDR enforced will
-   refuse that model's requests and offers to pick one that has them. Saying no,
-   or keeping that model, explains in two sentences that the model provider may
-   then keep your prompts under its own terms, and continues after one `y`. If
-   OpenRouter's API cannot be read, it says why and asks for the limits and
-   prices instead. See [OpenRouter zero data retention](openrouter-zdr-profile.md).
-   A list longer than 40 entries asks for part of a name first. The checker must
-   differ from the finder; choosing the same model asks again. Models that look like 7B parameters or fewer are
-   flagged: they give weak reviews. For other providers you also state each
-   model's context window and output limit, and for remote providers the prices.
-   Every remote provider asks for a per-review cost cap; for OpenRouter the
-   default covers a request that fills the whole context.
-   For Ollama Cloud, OpenCode Go and the Ollama Cloud sign-in option it first
-   asks whether your plan charges per token; if not, it records zero prices and a
-   zero cost cap.
-   No model, capacity or price is filled in unless it came from the model list
-   you just read, except that a local server is proposed a 32768-token context
-   (or the smaller listed value): start both servers with that context length, as
-   [named local runtimes](named-local-runtimes.md#context-length) describes.
+```text
+   |X|\            /|X|
+ __|X| \___----___/ |X|__   Open Trestle · setup
+===|X|=|==|==|==|===|X|===
 
-   With a local server, a model that the local Ollama relays to Ollama Cloud is
-   refused, because it would send your source off this machine: the wizard
-   refuses any name ending in `:cloud` or `-cloud`, then asks the server's
-   `/api/tags` list and refuses an entry with a `remote_host`. If an Ollama
-   daemon answers but its list cannot be read, the wizard refuses too, because
-   it cannot tell where the model runs. Choose the Ollama Cloud sign-in option
-   for cloud models instead.
+  Two AI models review your change: one lists possible
+  problems, a different one double-checks each, and only
+  confirmed findings are reported. Setup sends no source.
+  Enter accepts a value in [brackets]; Ctrl-D stops.
 
-   With "Ollama on this machine, signed in to Ollama Cloud", the wizard checks
-   that the `ollama` command is installed, reads the daemon's `/api/tags` list
-   and offers only the models it relays to `https://ollama.com`. It then offers a
-   sign-in check: one fixed test message, "Reply with OK", sent to the finder
-   model only if you agree. The message contains none of your code, but it goes
-   to Ollama Cloud and uses your Ollama Cloud usage. If Ollama answers that you
-   are not signed in, the wizard offers to run `ollama signin` in this terminal
-   (only on `y`) and then sends the same message once more.
-5. **API key.** (Not asked for the Ollama Cloud sign-in option, which sends no
-   key. For a local server it first asks whether the server needs a key at all;
-   the default is no.) You choose the name of an environment variable, such as
-   `OPEN_TRESTLE_PROVIDER_OPENROUTER`. The key is never asked for, stored or
-   printed. If the variable is not set, the wizard shows how to set it without
-   echoing the key (`read -rs NAME && export NAME`). A running program cannot see
-   a variable exported later, so continue, export it, and run `trestle init`
-   again to re-check.
-6. **Declarations.** Each fact the bootstrap needs is shown in plain words with a
+●○○○○○  Step 1 of 6 · What will be reviewed
+───────────────────────────────────────────
+  Repository: ~/src/project  (on branch feature)
+  Base:       1a2b3c4d5e6f  (merge base with main)
+  Head:       HEAD  (7f8e9d0c1b2a)
+  Changes:    3 commits · 4 files changed, 52 insertions(+)
+  Open Trestle compares exactly these two commits; it does
+  not fetch.
+
+●●○○○○  Step 2 of 6 · Where the models run
+──────────────────────────────────────────
+    1) OpenRouter (remote, needs an API key)
+    2) Ollama Cloud (remote, needs an API key)
+    3) OpenCode Go (remote, needs an API key)
+    4) A model server on this machine (Ollama, llama.cpp,
+       vLLM, LM Studio)
+    5) Ollama on this machine, signed in to Ollama Cloud
+       (remote)
+  Choose (1-5):
+```
+
+1. **What will be reviewed.** The merge base of your default branch (`origin/HEAD`'s
+   branch when it exists locally, otherwise `main` or `master`) and `HEAD`. It
+   runs only read-only Git queries; the commit count and change summary come
+   from those same two commits. Nothing is asked unless no default branch is
+   found. To review other commits, pass `--base` and `--head`, or change them
+   in step 4.
+2. **Where the models run.** OpenRouter, Ollama Cloud, OpenCode Go, a model
+   server on this machine, or "Ollama on this machine, signed in to Ollama
+   Cloud".
+3. **The two models.** Pick each from the provider's list; the checker must
+   differ from the finder. A list longer than 40 entries asks for part of a name
+   first, and models that look like 7B parameters or fewer are flagged as weak.
+   - **OpenRouter** reads its public model and zero-data-retention lists (no key
+     or code is sent), shows what the API reported for each model and fills in
+     the routing, limits and prices. It then asks "Require zero data retention on
+     every request (recommended)?", where Enter means yes. A model without a ZDR
+     endpoint is warned about, because an account or key with ZDR enforced will
+     refuse it, and can be replaced; keeping it, or answering no, continues after
+     one `y`. See [OpenRouter zero data retention](openrouter-zdr-profile.md).
+   - **A local server** answering on its usual port (Ollama 11434, LM Studio
+     1234, llama.cpp 8080, vLLM 8000) is used without a question; otherwise pick
+     it or type its `127.0.0.1` address. The checker shares the server when it
+     lists two models. No key is assumed when both model lists were read without
+     one. The limits are the proposed 32768-token context (or a smaller listed
+     value) and a 4096-token output: start both servers with that context, as
+     [named local runtimes](named-local-runtimes.md#context-length) describes. A
+     model the local Ollama relays to Ollama Cloud is refused here; choose the
+     sign-in option for cloud models.
+   - **Ollama signed in to Ollama Cloud** uses the local daemon at
+     `http://127.0.0.1:11434/v1` (or `--endpoint`), offers only the models it
+     relays to `https://ollama.com`, and offers one fixed test message, "Reply
+     with OK", only if you agree; it can run `ollama signin` for you on `y`.
+   - **Ollama Cloud and OpenCode Go** ask for the limits when the model list does
+     not state them, and whether your plan charges per token.
+
+   Every remote provider then asks for the most one review may cost, proposing
+   the cost of a request that fills the whole context.
+4. **Your settings.** One panel shows everything, asked or filled in:
+
+   ```text
+   ┌─ Setup summary ──────────────────────────────────────────┐
+   │ Review   1a2b3c4d5e6f → 7f8e9d0c1b2a                     │
+   │ Runs on  OpenRouter, zero data retention required on     │
+   │          every request                                   │
+   │ Finder   vendor/finder-model                             │
+   │ Checker  other/checker-model                             │
+   │ Limits   context 128000 · output 16000 tokens            │
+   │ Cost     $3.3 in · $16.5 out per million tokens · at     │
+   │          most $0.49 a review                             │
+   │ Key      OPEN_TRESTLE_PROVIDER_OPENROUTER (set; never    │
+   │          stored)                                         │
+   │ Source   github.com/owner/project                        │
+   │ Names    tenant personal · repository project · owner    │
+   │          you                                             │
+   │ Folder   ~/.local/state/open-trestle/project-1a2b3c4d    │
+   └──────────────────────────────────────────────────────────┘
+     Use these settings? (Y/n):
+   ```
+
+   The key variable is the provider's usual name; the key itself is never asked
+   for, stored or printed. The names come from `origin`'s URL (its host,
+   namespace and name; a credential in the URL is ignored) or the folder name,
+   and the owner from `$USER`. Answering `n` offers to change the commits, the
+   names, the key variable, or the limits and prices, then shows the panel
+   again. Every value also has a flag (see [non-interactive use](#non-interactive-use)).
+5. **Your consent.** Each fact the bootstrap needs is shown in plain words with a
    link, and you must type `yes`. Typing `no` stops with nothing written.
-   - OpenRouter: one consent that each review sends the selected source, after
-     secret scanning, to OpenRouter for the two models, whether zero data
-     retention is required, and that you have not turned on prompt logging for
-     the key. No evidence, timestamps or slugs.
-   - Every other remote provider: the [route declaration](remote-model-review.md#common-declarations)
+   - OpenRouter: that each review sends the selected source, after secret
+     scanning, to OpenRouter for the two models, whether zero data retention is
+     required, and that you have not turned on prompt logging for the key.
+   - Ollama Cloud and OpenCode Go: the [route declaration](remote-model-review.md#common-declarations)
      (capacity, structured output, logging off, prices, availability).
-   - OpenCode Go: four evidence items, a review window and the
-     [workspace declaration](remote-model-review.md#opencode-go).
+   - OpenCode Go also asks for four evidence items, a review window and the
+     [workspace declaration](remote-model-review.md#opencode-go). For a public
+     page the wizard offers to fetch it once and compute its SHA-256 here: one
+     `https` GET with no key, cookie, query or repository content, public
+     addresses only, at most 8 MiB and 20 seconds. Account evidence is never
+     fetched: save a copy of your own account page and give its path.
    - Ollama signed in to Ollama Cloud: the
      [sign-in declaration](remote-model-review.md#ollama-signed-in-to-ollama-cloud)
-     (`--declare-ollama-cloud-signin`) that your source is sent to Ollama Cloud
-     under your signed-in account.
+     that your source is sent to Ollama Cloud under your signed-in account.
    - Local server: the [local capability declaration](local-first-bootstrap.md#choose-the-repository-and-model-pair).
-
-   For OpenCode Go evidence, give the web address you read. For a public page
-   the wizard offers to fetch it once and compute the SHA-256 on this machine:
-   one `https` GET with no key, cookie, query or repository content, public
-   addresses only, at most 8 MiB and 20 seconds. It shows the address and
-   digest, and records them only if you confirm. Otherwise give the SHA-256 of a
-   copy you saved, or that file's path, and the wizard hashes it locally.
-   Account evidence is never fetched: save a copy of your own account page and
-   give its path. The review window proposes `now` as the review time and 30
-   days of validity, and cannot be earlier than a fetch made during setup. Both
-   are shown in the declaration you confirm, so change them if they are not
-   accurate.
-7. **Names.** Labels for the configuration and review records, derived from your
-   user and repository names. Accept them or type your own.
-8. **Save and check.** The configuration goes into a new private folder,
+6. **Save and check.** The configuration goes into a new private folder,
    `~/.local/state/open-trestle/<repository>-<8 hex characters>` by default
-   (mode `0700`, files `0600`). Existing files are never overwritten. Long paths
-   are shortened on screen (`~` for your home folder, `...` in the middle);
-   commands and `NEXT-STEPS.txt` always keep the full paths.
+   (mode `0700`, files `0600`). Existing files are never overwritten. If the key
+   variable is not set, the check says so and shows the command that sets it
+   without echoing the key (`read -rs NAME && export NAME`); export it and run
+   `trestle init` again.
+
+### How it looks
+
+Every line fits in 60 columns, the terminal interface's minimum width; only a
+command to copy, or a link too long for a line, keeps its full length. Long
+paths are shortened on screen (`~` for your home folder, `...` in the middle);
+commands and `NEXT-STEPS.txt` keep full paths. On an interactive terminal the
+wizard uses the web console's colors: cobalt for the title, the current step
+and questions, slate for rules and frames, green, amber and red for `✓`, `…`
+and `✗`, and dim text for hints, in 24-bit color when `COLORTERM` is
+`truecolor` or `24bit` and 256 colors otherwise. Body text keeps your
+terminal's own color, and every state keeps its mark. It prints no color when
+`NO_COLOR` is set to any value, `TERM` is `dumb`, the output is not a terminal,
+or with `--no-input`.
 
 ## Reading the check results
 
@@ -186,7 +222,8 @@ when you agree to run a review.
 | `✗` | Needs a fix. The hint gives the exact remedy. |
 | `–` | Optional and not set up (local mode: the test requests you did not allow, and items only the background daemon needs). |
 
-With `TERM=dumb` the marks are `[ok]`, `[..]`, `[x]` and `[--]`.
+With `TERM=dumb` the marks are `[ok]`, `[..]`, `[x]` and `[--]`, the step
+indicator is `#` and `.`, and frames are ASCII.
 
 Remote checks: the review window is current (OpenCode Go, and OpenRouter setups
 made before ZDR was detected), the saved configuration loads, the API key
@@ -251,8 +288,11 @@ set up something different, use a new folder: `trestle init --directory NEW_FOLD
 Every answer has a flag. With `--no-input` the wizard never prompts; if any
 answer is missing it lists every missing flag and exits `2` without writing
 anything. Without `--provider` it lists only that flag, because the provider
-decides which other answers are needed. Proposals that are only labels (base, head, names, folder) are accepted
-in `--no-input` mode; facts you must declare are not.
+decides which other answers are needed. Everything the wizard fills in by
+itself (commits, names, owner, folder, key variable, and limits and prices a
+provider or model list states) is filled in the same way with `--no-input`,
+and a flag overrides it; facts you must declare are not filled in. A complete
+`--no-input` run prints the settings panel, without color.
 
 | Answer | Flag |
 | --- | --- |
@@ -264,8 +304,8 @@ in `--no-input` mode; facts you must declare are not.
 | Capacity | `--context-tokens N`, `--output-tokens N` (OpenRouter: detected unless given) |
 | Review output allowance (optional, no question) | `--max-output-tokens N`, from the default 4096 up to `--output-tokens` |
 | Prices (remote) | `--input-micro-usd-per-million-tokens N`, `--output-micro-usd-per-million-tokens N` (OpenRouter: detected unless given), `--max-cost-micro-usd N` (1 USD = 1000000) |
-| Key variable | `--credential-env OPEN_TRESTLE_PROVIDER_NAME` |
-| Names | `--owner`, `--tenant`, `--repository`, `--repository-authority`, `--repository-namespace`, `--repository-name` |
+| Key variable (default: the provider's usual name) | `--credential-env OPEN_TRESTLE_PROVIDER_NAME` |
+| Names (default: from `origin`, the folder and `$USER`) | `--owner`, `--tenant`, `--repository`, `--repository-authority`, `--repository-namespace`, `--repository-name` |
 | OpenRouter | `--without-zdr` (continue without zero data retention), `--generation-provider-slug SLUG[,SLUG]` and `--verification-provider-slug SLUG[,SLUG]` (override the detected ZDR endpoints) |
 | OpenCode Go | `--generation-model-evidence`, `--verification-model-evidence` |
 | Evidence window | `--broker-evidence`, `--account-evidence`, `--evidence-retrieved-at`, `--reviewed-at`, `--valid-from`, `--valid-until` |
