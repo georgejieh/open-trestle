@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/georgejieh/open-trestle/audit"
@@ -39,6 +40,38 @@ type LocalInferenceChecker struct {
 	policy                                 *RuntimePolicyChecker
 	factory                                LocalInferenceDispatcherFactory
 	factoryIdentity, configurationIdentity string
+
+	mu           sync.Mutex
+	probeFailure gateway.RouteFailureClass
+}
+
+// localInferenceProbeFailure is a probe request that was sent and failed with
+// a closed class; it keeps the check outcome err selects.
+type localInferenceProbeFailure struct {
+	failure gateway.RouteFailureClass
+	err     error
+}
+
+func (e localInferenceProbeFailure) Error() string { return e.err.Error() }
+func (e localInferenceProbeFailure) Unwrap() error { return e.err }
+
+// ProbeFailure returns the closed route failure class of the probe request
+// that was sent and failed in the most recent Check, such as a provider's
+// billing or retired-model refusal, so setup can name the same reason a review
+// does. It is false when that Check sent no request that failed.
+func (c *LocalInferenceChecker) ProbeFailure() (gateway.RouteFailureClass, bool) {
+	if c == nil {
+		return 0, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.probeFailure, c.probeFailure != 0
+}
+
+func (c *LocalInferenceChecker) setProbeFailure(failure gateway.RouteFailureClass) {
+	c.mu.Lock()
+	c.probeFailure = failure
+	c.mu.Unlock()
 }
 
 // NewLocalInferenceChecker binds an exact policy authority and adapter factory without resolving credentials or contacting an endpoint.
@@ -59,6 +92,9 @@ func (c *LocalInferenceChecker) Check(ctx context.Context, plan Plan) CheckResul
 	configurationIdentity := ""
 	if c != nil {
 		configurationIdentity = c.configurationIdentity
+	}
+	if c != nil {
+		c.setProbeFailure(0)
 	}
 	if c != nil && ctx != nil && ctx.Err() == nil && plan.Validate() == nil {
 		if c.factory.FactoryIdentity() != c.factoryIdentity {
@@ -85,6 +121,10 @@ func (c *LocalInferenceChecker) Check(ctx context.Context, plan Plan) CheckResul
 				configurationIdentity = checkerConfigIdentity(CheckLocalInferenceValidated, loadedIdentity+"\x00"+c.policy.approval.Identity()+"\x00"+c.factoryIdentity+"\x00"+catalog.Identity())
 				var execution string
 				execution, err = executeSetupLocalInference(bounded, plan, inventory, policy, catalog)
+				var sent localInferenceProbeFailure
+				if errors.As(err, &sent) {
+					c.setProbeFailure(sent.failure)
+				}
 				if err == nil {
 					state, outcome = CheckPassed, "valid"
 					configurationIdentity = checkerConfigIdentity(CheckLocalInferenceValidated, configurationIdentity+"\x00"+execution)
@@ -265,12 +305,15 @@ func executeSetupLocalInferenceRoute(ctx context.Context, catalog gateway.RouteD
 		return gateway.RouteExecutionRecord{}, err
 	}
 	if result.Status() == gateway.RouteDispatchFailed {
+		failure := ErrInvalidCheckerRuntime
 		switch result.Failure() {
 		case gateway.RouteFailureTransport, gateway.RouteFailureRateLimited, gateway.RouteFailureProviderServer, gateway.RouteFailureTimeout, gateway.RouteFailureConnection, gateway.RouteFailureCancelled:
-			return gateway.RouteExecutionRecord{}, errLocalInferenceUnavailable
-		default:
-			return gateway.RouteExecutionRecord{}, ErrInvalidCheckerRuntime
+			failure = errLocalInferenceUnavailable
 		}
+		if result.ReplaySafety() != gateway.RouteReplayNotDispatched {
+			return gateway.RouteExecutionRecord{}, localInferenceProbeFailure{failure: result.Failure(), err: failure}
+		}
+		return gateway.RouteExecutionRecord{}, failure
 	}
 	// Reported input may not exceed the probe's reservation, a byte-based upper
 	// bound on the tokens it sends.

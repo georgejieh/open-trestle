@@ -23,6 +23,7 @@ type localInferenceFixtureFactory struct {
 	inputTokens, outputTokens uint64
 	err                       error
 	failure                   gateway.RouteFailureClass
+	safety                    gateway.RouteReplaySafety
 }
 
 func (f *localInferenceFixtureFactory) FactoryIdentity() string {
@@ -44,7 +45,7 @@ func (f *localInferenceFixtureFactory) Build(ctx context.Context, inventory runt
 			return gateway.RouteDispatcherCatalog{}, errors.New("missing")
 		}
 		if f.failure != 0 {
-			dispatchers = append(dispatchers, localInferenceFailureDispatcher{connection.AdapterID(), dryRunIdentity("failure", connection.AdapterID()), f.failure})
+			dispatchers = append(dispatchers, localInferenceFailureDispatcher{connection.AdapterID(), dryRunIdentity("failure", connection.AdapterID()), f.failure, f.safety})
 		} else {
 			dispatchers = append(dispatchers, countingLocalInferenceDispatcher{setupDryRunDispatcher{authority, dryRunIdentity("local-inference-fixture", connection.AdapterID())}, f})
 		}
@@ -84,12 +85,17 @@ func (d countingLocalInferenceDispatcher) DispatchRoute(ctx context.Context, req
 type localInferenceFailureDispatcher struct {
 	adapter, identity string
 	failure           gateway.RouteFailureClass
+	safety            gateway.RouteReplaySafety
 }
 
 func (d localInferenceFailureDispatcher) AdapterID() string             { return d.adapter }
 func (d localInferenceFailureDispatcher) ConfigurationIdentity() string { return d.identity }
 func (d localInferenceFailureDispatcher) DispatchRoute(context.Context, gateway.RouteDispatchRequest) gateway.RouteDispatchResult {
-	result, _ := gateway.NewFailedRouteDispatchResult(d.failure, gateway.RouteReplayNoSideEffect, provider.NewUnknownRouteTokenUsage(), 0)
+	safety := d.safety
+	if safety == 0 {
+		safety = gateway.RouteReplayNoSideEffect
+	}
+	result, _ := gateway.NewFailedRouteDispatchResult(d.failure, safety, provider.NewUnknownRouteTokenUsage(), 0)
 	return result
 }
 
@@ -251,6 +257,49 @@ func TestLocalInferenceCheckerSeparatesTransientAndInvalidResponses(t *testing.T
 		checker, _ := NewLocalInferenceChecker(policyChecker, factory)
 		if result := checker.Check(context.Background(), plan); result.State() != test.want {
 			t.Fatalf("%s=%s", test.failure.String(), result.State())
+		}
+	}
+}
+
+// A probe the provider refused keeps the refused check states and reports the
+// refusal's closed class, so setup can name the same reason a review does. A
+// failure before the request was sent, or a probe that passed, reports none.
+func TestLocalInferenceCheckerReportsTheProviderAnsweredFailure(t *testing.T) {
+	invDoc, polDoc := setupRuntimeDocuments(t, "local", []string{"http://127.0.0.1:11434/v1", "http://[::1]:11435/v1"}, 0, false)
+	inventory, policy := parseSetupRuntimeDocuments(t, invDoc, polDoc)
+	plan, _ := NewPlan(ProfileLocalSingleNode, "tenant-a", "repo-a", "owner", setupTime(1))
+	policyChecker, _ := NewRuntimePolicyChecker(inventory, policy, setupRuntimeApproval(t, plan, inventory, policy))
+	plan = policyCheckedPlan(t, plan, policyChecker)
+	for _, test := range []struct {
+		failure  gateway.RouteFailureClass
+		safety   gateway.RouteReplaySafety
+		state    CheckState
+		reported bool
+	}{
+		{gateway.RouteFailurePaymentRequired, gateway.RouteReplayNoSideEffect, CheckBlocked, true},
+		{gateway.RouteFailureModelUnavailable, gateway.RouteReplayNoSideEffect, CheckBlocked, true},
+		{gateway.RouteFailureModelRetired, gateway.RouteReplayNoSideEffect, CheckBlocked, true},
+		{gateway.RouteFailureRateLimited, gateway.RouteReplayNoSideEffect, CheckUnavailable, true},
+		{gateway.RouteFailureAuthentication, gateway.RouteReplayNotDispatched, CheckBlocked, false},
+	} {
+		factory := &localInferenceFixtureFactory{failure: test.failure, safety: test.safety}
+		checker, _ := NewLocalInferenceChecker(policyChecker, factory)
+		if failure, ok := checker.ProbeFailure(); ok || failure != 0 {
+			t.Fatal("a checker that never ran reported a probe failure")
+		}
+		if result := checker.Check(context.Background(), plan); result.State() != test.state {
+			t.Fatalf("%s=%s", test.failure, result.State())
+		}
+		failure, ok := checker.ProbeFailure()
+		if ok != test.reported || ok && failure != test.failure {
+			t.Fatalf("%s reported (%s, %t)", test.failure, failure, ok)
+		}
+		factory.failure = 0
+		if result := checker.Check(context.Background(), plan); result.State() != CheckPassed {
+			t.Fatalf("recovered probe = %s", result.State())
+		}
+		if failure, ok := checker.ProbeFailure(); ok || failure != 0 {
+			t.Fatal("a passed check kept an earlier probe failure")
 		}
 	}
 }
