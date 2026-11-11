@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/georgejieh/open-trestle/adapters/providers/openai"
+	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 )
@@ -249,12 +250,26 @@ const (
 	ollamaProbeFailed ollamaProbeOutcome = iota
 	ollamaProbeSignedIn
 	ollamaProbeNotSignedIn
+	// The provider refusals a review names the same way: billing (402), a
+	// model the provider does not serve (404) and a retired model (410).
+	ollamaProbePaymentRequired
+	ollamaProbeModelUnavailable
+	ollamaProbeModelRetired
 )
+
+// ollamaProbeRefusalClass is the route failure class a review records for
+// the same refusal, which selects the same fixed hint.
+var ollamaProbeRefusalClass = map[ollamaProbeOutcome]gateway.RouteFailureClass{
+	ollamaProbePaymentRequired:  gateway.RouteFailurePaymentRequired,
+	ollamaProbeModelUnavailable: gateway.RouteFailureModelUnavailable,
+	ollamaProbeModelRetired:     gateway.RouteFailureModelRetired,
+}
 
 // probeOllamaSignin sends one fixed synthetic Chat Completions request
 // ("Reply with OK") to the chosen cloud model through the loopback daemon. It
 // never carries repository content. HTTP 401 or 403 means the daemon is not
-// signed in to Ollama Cloud.
+// signed in to Ollama Cloud; 402, 404 and 410 are the provider refusals a
+// review reports. A refusal body is never read: its text is untrusted.
 //
 // An HTTP 200 is accepted only when the answer names the requested cloud
 // selector (or the remote name Ollama reports for it), exactly as dispatch
@@ -293,6 +308,12 @@ func probeOllamaSignin(ctx context.Context, endpoint, model string) (ollamaProbe
 		return ollamaProbeSignedIn, ""
 	case response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden:
 		return ollamaProbeNotSignedIn, fmt.Sprintf("HTTP %d", response.StatusCode)
+	case response.StatusCode == http.StatusPaymentRequired:
+		return ollamaProbePaymentRequired, "HTTP 402"
+	case response.StatusCode == http.StatusNotFound:
+		return ollamaProbeModelUnavailable, "HTTP 404"
+	case response.StatusCode == http.StatusGone:
+		return ollamaProbeModelRetired, "HTTP 410"
 	}
 	return ollamaProbeFailed, fmt.Sprintf("HTTP %d", response.StatusCode)
 }

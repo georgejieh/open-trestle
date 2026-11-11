@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/georgejieh/open-trestle/internal/routehint"
 	"github.com/georgejieh/open-trestle/modelcatalog"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 )
@@ -113,6 +114,14 @@ func (w *initWizard) ollamaSigninCheck() error {
 				}
 			}
 			return w.continueWithoutSignin("Run `ollama signin` in a terminal on this machine")
+		case ollamaProbePaymentRequired:
+			w.say("  %s Ollama Cloud refused the test message for billing (%s):", w.bad, detail)
+			w.say("%s", initWrap(ollamaProbeRefusalHint(outcome)+".", "    ", 86))
+			return w.continueUnchecked("Add credit or a subscription to your Ollama account", "add it before the first review", "Add credit or a subscription to your Ollama account")
+		case ollamaProbeModelUnavailable, ollamaProbeModelRetired:
+			w.say("  %s Ollama Cloud does not serve %s (%s):", w.bad, model, detail)
+			w.say("%s", initWrap(ollamaProbeRefusalHint(outcome)+".", "    ", 86))
+			return initStopf(initExitPending, "%s cannot be used (%s): %s. Nothing was written.", model, detail, ollamaProbeRefusalHint(outcome))
 		default:
 			w.say("  %s The test message failed (%s), so the sign-in could not be checked.", w.wait, detail)
 			return w.continueWithoutSignin("Check that Ollama is running and that " + model + " is available")
@@ -122,13 +131,26 @@ func (w *initWizard) ollamaSigninCheck() error {
 }
 
 func (w *initWizard) continueWithoutSignin(advice string) error {
-	w.say("    %s. Then run `trestle init` again, or continue now and sign in before the first review.", advice)
+	return w.continueUnchecked(advice, "sign in before the first review", "Run `ollama signin`")
+}
+
+// continueUnchecked offers to save the setup although the check did not pass:
+// advice says what to do, later when to do it, and first what to do before
+// running `trestle init` again when the operator stops here.
+func (w *initWizard) continueUnchecked(advice, later, first string) error {
+	w.say("    %s. Then run `trestle init` again, or continue now and %s.", advice, later)
 	proceed, err := w.prompt.confirm("Continue setup now?", true)
 	if err != nil {
 		return err
 	}
 	if !proceed {
-		return initStopf(initExitPending, "stopped before writing anything. Run `ollama signin`, then run `trestle init` again.")
+		return initStopf(initExitPending, "stopped before writing anything. %s, then run `trestle init` again.", first)
 	}
 	return nil
+}
+
+// ollamaProbeRefusalHint is the hint a review prints for the same refusal.
+func ollamaProbeRefusalHint(outcome ollamaProbeOutcome) string {
+	_, hint, _ := routehint.ProviderRefusal(ollamaProbeRefusalClass[outcome])
+	return hint
 }

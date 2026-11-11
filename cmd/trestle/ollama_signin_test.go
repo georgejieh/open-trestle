@@ -14,6 +14,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/georgejieh/open-trestle/internal/gateway"
+	"github.com/georgejieh/open-trestle/internal/routehint"
 )
 
 // All Ollama daemons below are in-process loopback httptest servers with
@@ -75,6 +78,19 @@ type ollamaFakeDaemon struct {
 	probes    int
 	refused   int
 	chats     int
+	// refusal, when set, answers every chat with that status and an Ollama
+	// error body carrying ollamaRefusalText.
+	refusal int
+}
+
+// ollamaRefusalText marks the provider's own message in a refusal body; it
+// must never reach the wizard's output.
+const ollamaRefusalText = "OLLAMA_REFUSAL_TEXT_3318"
+
+func (d *ollamaFakeDaemon) setRefusal(status int) {
+	d.mu.Lock()
+	d.refusal = status
+	d.mu.Unlock()
 }
 
 func newOllamaFakeDaemon(t *testing.T, tags []map[string]any, transport *remoteModelTransport) *ollamaFakeDaemon {
@@ -119,11 +135,17 @@ func (d *ollamaFakeDaemon) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		d.mu.Lock()
 		d.chats++
-		signedIn := d.signedIn
+		signedIn, refusal := d.signedIn, d.refusal
 		if !signedIn {
 			d.refused++
 		}
 		d.mu.Unlock()
+		if refusal != 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(refusal)
+			_, _ = w.Write([]byte(`{"error":{"message":"Add usage credits or the model was retired on September 25, 2026 (ref: ` + ollamaRefusalText + `)","type":"api_error","param":null,"code":null}}`))
+			return
+		}
 		if !signedIn {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
@@ -419,6 +441,78 @@ func TestInitOllamaSigninNotSignedInThenConsentedSigninRechecks(t *testing.T) {
 	initAssertProtected(t, dir, "routes.json", "policy.json", "bootstrap.json", "NEXT-STEPS.txt")
 	if policy := stringMustRead(t, filepath.Join(dir, "policy.json")); strings.Contains(policy, "credential_environment") || !strings.Contains(policy, "ollama_signin_chat_v1") {
 		t.Fatal("the wizard wrote a credential or lost the profile")
+	}
+}
+
+// The sign-in check names a provider refusal by its status alone, the same
+// way a review does, and never reads or repeats the provider's message.
+func TestOllamaSigninProbeNamesProviderRefusals(t *testing.T) {
+	daemon := newOllamaFakeDaemon(t, ollamaFixtureTags(), nil)
+	for _, test := range []struct {
+		status  int
+		outcome ollamaProbeOutcome
+		detail  string
+		class   string
+	}{
+		{http.StatusPaymentRequired, ollamaProbePaymentRequired, "HTTP 402", "provider_payment_required"},
+		{http.StatusNotFound, ollamaProbeModelUnavailable, "HTTP 404", "provider_model_unavailable"},
+		{http.StatusGone, ollamaProbeModelRetired, "HTTP 410", "provider_model_retired"},
+	} {
+		daemon.setRefusal(test.status)
+		outcome, detail := probeOllamaSignin(context.Background(), daemon.endpoint(), ollamaTestGenerator)
+		if outcome != test.outcome || detail != test.detail {
+			t.Fatalf("status %d = (%d, %q)", test.status, outcome, detail)
+		}
+		wantDetail, wantHint, _ := routehint.ProviderRefusal(ollamaProbeRefusalClass[outcome])
+		if wantDetail != test.class || ollamaProbeRefusalHint(outcome) != wantHint || wantHint == "" {
+			t.Fatalf("status %d names %q with hint %q", test.status, wantDetail, ollamaProbeRefusalHint(outcome))
+		}
+	}
+}
+
+// A sign-in check that Ollama Cloud refuses for billing prints the review's
+// payment hint and offers to continue; a retired model stops before anything
+// is written, with the review's retired-model hint.
+func TestInitOllamaSigninReportsProviderRefusals(t *testing.T) {
+	remoteScannerInstalled(t)
+	useRealOllamaTags(t)
+	useRealOllamaProbe(t)
+	_, payment, _ := routehint.ProviderRefusal(gateway.RouteFailurePaymentRequired)
+	_, retired, _ := routehint.ProviderRefusal(gateway.RouteFailureModelRetired)
+	for _, test := range []struct {
+		name   string
+		status int
+		script []string
+		want   []string
+	}{
+		{"payment required", http.StatusPaymentRequired, []string{"5", "1", "2", "y", "n"}, []string{"Ollama Cloud refused the test message for billing (HTTP 402):", payment, "Add credit or a subscription to your Ollama account. Then run `trestle init` again, or continue now and add it before the first review."}},
+		{"model retired", http.StatusGone, []string{"5", "1", "2", "y"}, []string{"Ollama Cloud does not serve " + ollamaTestGenerator + " (HTTP 410):", retired}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			daemon := newOllamaFakeDaemon(t, ollamaFixtureTags(), nil)
+			daemon.setRefusal(test.status)
+			checkout := remoteBootstrapCheckout(t)
+			dir := filepath.Join(t.TempDir(), "setup")
+			result := runInitScript(t, checkout, []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review", "--endpoint", daemon.endpoint()}, test.script...)
+			output := result.stdout + result.stderr
+			if result.code != initExitPending {
+				t.Fatalf("init exit=%d\nstdout:\n%s\nstderr:\n%s", result.code, result.stdout, result.stderr)
+			}
+			for _, want := range test.want {
+				if !strings.Contains(strings.Join(strings.Fields(output), " "), strings.Join(strings.Fields(want), " ")) {
+					t.Fatalf("output lacks %q:\n%s", want, output)
+				}
+			}
+			for _, forbidden := range []string{ollamaRefusalText, "usage credits", "September 25"} {
+				if strings.Contains(output, forbidden) {
+					t.Fatalf("output repeated the provider's message %q:\n%s", forbidden, output)
+				}
+			}
+			if chats, _, _ := daemon.counts(); chats != 1 {
+				t.Fatalf("sign-in check sent %d messages", chats)
+			}
+			initAssertAbsent(t, dir)
+		})
 	}
 }
 
