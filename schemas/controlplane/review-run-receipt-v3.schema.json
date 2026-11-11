@@ -232,7 +232,13 @@
               "nothing_to_review",
               "merge_base_unavailable",
               "route_context_insufficient",
-              "no_eligible_route"
+              "no_eligible_route",
+              "provider_payment_required",
+              "provider_model_unavailable",
+              "provider_model_retired",
+              "provider_authentication_failed",
+              "provider_authorization_denied",
+              "provider_rate_limited"
             ]
           },
           "retry_at_milliseconds": {
@@ -328,7 +334,9 @@
                 "kind": {
                   "enum": [
                     "acquire_source",
-                    "assemble_context"
+                    "assemble_context",
+                    "generate_candidates",
+                    "verify_candidates"
                   ]
                 },
                 "output_identity": {
@@ -356,9 +364,31 @@
                     }
                   },
                   "else": {
-                    "properties": {
-                      "kind": {
-                        "const": "assemble_context"
+                    "if": {
+                      "properties": {
+                        "failure_reason": {
+                          "enum": [
+                            "route_context_insufficient",
+                            "no_eligible_route"
+                          ]
+                        }
+                      }
+                    },
+                    "then": {
+                      "properties": {
+                        "kind": {
+                          "const": "assemble_context"
+                        }
+                      }
+                    },
+                    "else": {
+                      "properties": {
+                        "kind": {
+                          "enum": [
+                            "generate_candidates",
+                            "verify_candidates"
+                          ]
+                        }
                       }
                     }
                   }
@@ -389,6 +419,52 @@
                 ]
               }
             }
+          },
+          {
+            "if": {
+              "required": [
+                "failure_reason"
+              ],
+              "properties": {
+                "failure_reason": {
+                  "enum": [
+                    "provider_payment_required",
+                    "provider_model_unavailable",
+                    "provider_model_retired",
+                    "provider_authentication_failed",
+                    "provider_authorization_denied",
+                    "provider_rate_limited"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "failure_reason": {
+                        "const": "provider_rate_limited"
+                      }
+                    }
+                  },
+                  "then": {
+                    "properties": {
+                      "failure": {
+                        "const": "transient"
+                      }
+                    }
+                  },
+                  "else": {
+                    "properties": {
+                      "failure": {
+                        "const": "policy"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
           }
         ]
       },
@@ -400,7 +476,9 @@
           "kind": {
             "enum": [
               "acquire_source",
-              "assemble_context"
+              "assemble_context",
+              "generate_candidates",
+              "verify_candidates"
             ]
           },
           "output_identity": {
@@ -412,7 +490,13 @@
               "nothing_to_review",
               "merge_base_unavailable",
               "route_context_insufficient",
-              "no_eligible_route"
+              "no_eligible_route",
+              "provider_payment_required",
+              "provider_model_unavailable",
+              "provider_model_retired",
+              "provider_authentication_failed",
+              "provider_authorization_denied",
+              "provider_rate_limited"
             ]
           }
         },

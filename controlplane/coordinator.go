@@ -189,7 +189,7 @@ func (c TaskCompletion) Validate() error {
 			return ErrInvalidTaskCompletion
 		}
 	} else if c.status == TaskCompletionFailed && c.reason != 0 {
-		if c.failure.String() == "" || c.reason.Validate() != nil || c.shortfall.Present() != (c.reason == TaskFailureReasonRouteContextInsufficient) || c.shortfall.Present() && !c.shortfall.valid() || c.outputIdentity != "" || !validControlPlaneDigest(c.planIdentity) || !validControlPlaneDigest(c.taskIdentity) {
+		if c.failure.String() == "" || c.reason.Validate() != nil || !taskFailureReasonFailureAllowed(c.reason, c.failure) || c.shortfall.Present() != (c.reason == TaskFailureReasonRouteContextInsufficient) || c.shortfall.Present() && !c.shortfall.valid() || c.outputIdentity != "" || !validControlPlaneDigest(c.planIdentity) || !validControlPlaneDigest(c.taskIdentity) {
 			return ErrInvalidTaskCompletion
 		}
 	} else if c.status == TaskCompletionFailed {

@@ -318,7 +318,7 @@ func (e RunEvent) validateFields() error {
 	if hasTask && (!validReviewTaskKey(e.taskKey) || !validControlPlaneDigest(e.taskIdentity)) {
 		return ErrInvalidRunEventTask
 	}
-	if e.failureReason != 0 && (e.kind != RunEventTaskFailed || e.outputIdentity != "" || e.failureReason.Validate() != nil) || e.shortfall.Present() != (e.failureReason == TaskFailureReasonRouteContextInsufficient) || e.shortfall.Present() && !e.shortfall.valid() {
+	if e.failureReason != 0 && (e.kind != RunEventTaskFailed || e.outputIdentity != "" || e.failureReason.Validate() != nil || !taskFailureReasonFailureAllowed(e.failureReason, e.failure)) || e.shortfall.Present() != (e.failureReason == TaskFailureReasonRouteContextInsufficient) || e.shortfall.Present() && !e.shortfall.valid() {
 		return ErrInvalidTaskFailureReason
 	}
 	switch e.kind {

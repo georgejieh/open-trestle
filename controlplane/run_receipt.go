@@ -67,7 +67,7 @@ func (r ReviewTaskReceipt) Validate() error {
 	if !validKey || !validIdentities || !validKinds || !validAttempts {
 		return ErrInvalidReviewRunReceipt
 	}
-	if r.failureReason != 0 && (r.status != TaskRuntimeFailed || r.outputIdentity != "" || r.failureReason.Validate() != nil || !taskFailureReasonAllowed(r.kind, r.failureReason, r.shortfall)) || r.failureReason == 0 && r.shortfall.Present() {
+	if r.failureReason != 0 && (r.status != TaskRuntimeFailed || r.outputIdentity != "" || r.failureReason.Validate() != nil || !taskFailureReasonAllowed(r.kind, r.failureReason, r.shortfall) || !taskFailureReasonFailureAllowed(r.failureReason, r.failure)) || r.failureReason == 0 && r.shortfall.Present() {
 		return ErrInvalidReviewRunReceipt
 	}
 	switch r.status {

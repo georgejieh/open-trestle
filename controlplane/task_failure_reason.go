@@ -7,7 +7,8 @@ var ErrInvalidTaskFailureReason = errors.New("invalid task failure reason")
 
 // TaskFailureReason is a closed, content-free refinement of one failed task
 // attempt. It names why a task refused and never carries forge, provider, or
-// repository text. Source acquisition and context assembly record reasons.
+// repository text. Source acquisition, context assembly and the two model
+// tasks record reasons.
 type TaskFailureReason uint8
 
 const (
@@ -28,6 +29,18 @@ const (
 	// TaskFailureReasonNoEligibleRoute records that no candidate route was
 	// eligible for a context task's model request for another reason.
 	TaskFailureReasonNoEligibleRoute
+	// The provider refusal reasons record that the provider answered a model
+	// task's request with a refusal, named from the HTTP status alone: billing
+	// or quota (402), a model or endpoint it does not serve (404), a retired
+	// model (410), a credential it did not accept (401), an account it refused
+	// access (403) and a rate limit (429). The first five are policy failures
+	// and the rate limit a transient one.
+	TaskFailureReasonProviderPaymentRequired
+	TaskFailureReasonProviderModelUnavailable
+	TaskFailureReasonProviderModelRetired
+	TaskFailureReasonProviderAuthenticationFailed
+	TaskFailureReasonProviderAuthorizationDenied
+	TaskFailureReasonProviderRateLimited
 )
 
 // TaskFailureContextShortfall carries the counts of a
@@ -82,6 +95,18 @@ func (r TaskFailureReason) String() string {
 		return "route_context_insufficient"
 	case TaskFailureReasonNoEligibleRoute:
 		return "no_eligible_route"
+	case TaskFailureReasonProviderPaymentRequired:
+		return "provider_payment_required"
+	case TaskFailureReasonProviderModelUnavailable:
+		return "provider_model_unavailable"
+	case TaskFailureReasonProviderModelRetired:
+		return "provider_model_retired"
+	case TaskFailureReasonProviderAuthenticationFailed:
+		return "provider_authentication_failed"
+	case TaskFailureReasonProviderAuthorizationDenied:
+		return "provider_authorization_denied"
+	case TaskFailureReasonProviderRateLimited:
+		return "provider_rate_limited"
 	default:
 		return ""
 	}
@@ -99,7 +124,7 @@ func ParseTaskFailureReason(value string) (TaskFailureReason, error) {
 	if value == "" {
 		return 0, nil
 	}
-	for reason := TaskFailureReasonNoMergeBase; reason <= TaskFailureReasonNoEligibleRoute; reason++ {
+	for reason := TaskFailureReasonNoMergeBase; reason <= TaskFailureReasonProviderRateLimited; reason++ {
 		if reason.String() == value {
 			return reason, nil
 		}
@@ -124,7 +149,50 @@ func taskFailureReasonAllowed(kind TaskKind, reason TaskFailureReason, shortfall
 	case TaskFailureReasonNoEligibleRoute:
 		return kind == TaskAssembleContext && !shortfall.Present()
 	}
+	if _, provider := providerRefusalFailure(reason); provider {
+		return (kind == TaskGenerateCandidates || kind == TaskVerifyCandidates) && !shortfall.Present()
+	}
 	return false
+}
+
+// providerRefusalFailure returns the one run failure a provider refusal
+// reason is recorded with, and whether reason is a provider refusal.
+func providerRefusalFailure(reason TaskFailureReason) (RunFailure, bool) {
+	switch reason {
+	case TaskFailureReasonProviderPaymentRequired, TaskFailureReasonProviderModelUnavailable, TaskFailureReasonProviderModelRetired,
+		TaskFailureReasonProviderAuthenticationFailed, TaskFailureReasonProviderAuthorizationDenied:
+		return RunFailurePolicy, true
+	case TaskFailureReasonProviderRateLimited:
+		return RunFailureTransient, true
+	}
+	return 0, false
+}
+
+// taskFailureReasonFailureAllowed reports whether failure may carry reason:
+// a provider refusal names exactly one run failure, and the other reasons
+// keep the failure their constructor chose.
+func taskFailureReasonFailureAllowed(reason TaskFailureReason, failure RunFailure) bool {
+	if expected, provider := providerRefusalFailure(reason); provider {
+		return failure == expected
+	}
+	return true
+}
+
+// NewModelTaskFailureWithReason binds a failed candidate generation or
+// verification attempt and the provider refusal that ended it to one plan
+// and task. The failure must be the one the reason names.
+func NewModelTaskFailureWithReason(failure RunFailure, reason TaskFailureReason, plan ReviewRunPlan, task TaskDefinition) (TaskCompletion, error) {
+	expected, provider := providerRefusalFailure(reason)
+	if !provider || failure != expected || plan.Validate() != nil || task.Validate() != nil || !taskFailureReasonAllowed(task.Kind(), reason, TaskFailureContextShortfall{}) {
+		return TaskCompletion{}, ErrInvalidTaskCompletion
+	}
+	canonical, exists := plan.Task(task.Key())
+	if !exists || canonical.Identity() != task.Identity() {
+		return TaskCompletion{}, ErrInvalidTaskCompletion
+	}
+	completion := TaskCompletion{status: TaskCompletionFailed, failure: failure, reason: reason, planIdentity: plan.Identity(), taskIdentity: task.Identity()}
+	completion.identity = deriveTaskCompletionIdentity(completion)
+	return completion, nil
 }
 
 // NewSourceTaskFailureWithReason binds a failed source acquisition and its
