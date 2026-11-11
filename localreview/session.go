@@ -453,6 +453,8 @@ func (s *Session) Run(ctx context.Context, prepared runtimecatalog.PreparedRevie
 		timeout = min(timeout, time.Duration(s.investigation.profile.Policy().TimeoutMilliseconds())*time.Millisecond)
 	}
 	execution, cancel := context.WithTimeout(ctx, timeout)
+	// The run deadline on the session clock bounds a provider's Retry-After.
+	runDeadline := s.options.Clock.Now().Add(timeout)
 	done := make(chan struct{})
 	s.cancel = cancel
 	s.done = done
@@ -516,7 +518,7 @@ func (s *Session) Run(ctx context.Context, prepared runtimecatalog.PreparedRevie
 	if runnerErr == nil {
 		setupFailed := false
 		runnerErr = func() error {
-			control, err := worker.NewLocalControl(s.journal, s.options.Clock, "local-review-worker")
+			control, err := worker.NewLocalRunControl(s.journal, s.options.Clock, "local-review-worker", runDeadline)
 			if err != nil {
 				setupFailed = true
 				return ErrInvalidSession
