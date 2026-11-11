@@ -121,9 +121,12 @@ func (w *initWizard) openRouterChooseZDR() error {
 		if w.bools["without-zdr"] {
 			return w.declineZDR()
 		}
-		yes, err := w.confirm("Require zero data retention on every request (recommended)?", true, true)
-		if err != nil {
-			return err
+		yes := true
+		if !required {
+			var err error
+			if yes, err = w.confirm("Require zero data retention on every request (recommended)?", true, true); err != nil {
+				return err
+			}
 		}
 		if !yes {
 			return w.declineZDR()
@@ -177,14 +180,14 @@ func (w *initWizard) openRouterChooseZDR() error {
 	if w.bools["without-zdr"] {
 		return w.declineZDR()
 	}
-	yes, err := w.confirm("Require zero data retention on every request (recommended)?", true, true)
-	if err != nil {
-		return err
+	yes := true
+	if !required {
+		var err error
+		if yes, err = w.confirm("Require zero data retention on every request (recommended)?", true, true); err != nil {
+			return err
+		}
 	}
 	if !yes {
-		if required {
-			return initStopf(initExitRefused, "stopped: --provider openrouter-zdr requires zero data retention. Nothing was written.")
-		}
 		return w.declineZDR()
 	}
 	w.zdr = true

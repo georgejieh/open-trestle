@@ -303,3 +303,24 @@ func TestInitOpenRouterUnreachableAPIFallsBackToTypedAnswers(t *testing.T) {
 		}
 	}
 }
+
+// --provider openrouter-zdr has already chosen zero data retention, so the
+// wizard does not ask again, even when the API cannot be read.
+func TestInitOpenRouterZDRProviderDoesNotAskAgain(t *testing.T) {
+	remoteScannerInstalled(t)
+	t.Setenv("OPEN_TRESTLE_PROVIDER_OPENROUTER", remoteTestKey)
+	api := fakeOpenRouter(t, initOpenRouterModels()...)
+	checkout := remoteBootstrapCheckout(t)
+	for _, reachable := range []bool{true, false} {
+		script := []string{"generator", "1", "", "other/verifier", "", "", "yes", "", "n"}
+		if !reachable {
+			api.zdr = ""
+			script = []string{"vendor/generator", "other/verifier", "128000", "8192", "3", "15", "1", "", "yes", "", "n"}
+		}
+		dir := filepath.Join(t.TempDir(), "setup")
+		result := runInitScript(t, checkout, []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review", "--provider", "openrouter-zdr"}, script...)
+		if result.code != initExitDone || strings.Contains(result.stdout, "Require zero data retention on every request") || initReadOpenRouterSetup(t, dir).bootstrap["provider"] != "openrouter-zdr" {
+			t.Fatalf("reachable=%t exit=%d\n%s\n%s", reachable, result.code, result.stdout, result.stderr)
+		}
+	}
+}
