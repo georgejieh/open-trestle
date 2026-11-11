@@ -8,10 +8,16 @@ import (
 )
 
 // rateLimitedAttempt settles a rate-limited, no-side-effect attempt under
-// authorization that reported no usage, as an HTTP 429 does.
+// authorization with the known zero usage the adapter records for an HTTP 429.
 func rateLimitedAttempt(t *testing.T, authorization RouteAttemptAuthorization, retryAfter uint32) (RouteAttemptOutcome, RouteCostReconciliation) {
 	t.Helper()
-	outcome, err := NewFailedRouteAttemptOutcome(authorization, RouteFailureRateLimited, RouteReplayNoSideEffect, provider.NewUnknownRouteTokenUsage(), retryAfter, 10)
+	zero, _ := provider.NewRouteTokenUsage(0, 0, 0)
+	return settledRateLimit(t, authorization, retryAfter, zero)
+}
+
+func settledRateLimit(t *testing.T, authorization RouteAttemptAuthorization, retryAfter uint32, usage provider.RouteTokenUsage) (RouteAttemptOutcome, RouteCostReconciliation) {
+	t.Helper()
+	outcome, err := NewFailedRouteAttemptOutcome(authorization, RouteFailureRateLimited, RouteReplayNoSideEffect, usage, retryAfter, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -23,8 +29,8 @@ func rateLimitedAttempt(t *testing.T, authorization RouteAttemptAuthorization, r
 }
 
 // A rate-limited attempt is retried at most twice on the same route, each
-// retry taking over the refused attempt's reservation: the fixture's budget
-// fits one reservation, so a retry that reserved again could not run.
+// retry holding the same reservation from the same balance: the refused
+// attempt consumed nothing, so its known zero usage released its reservation.
 func TestRateLimitedRetryTakesOverTheRefusedReservation(t *testing.T) {
 	request, fixture, _ := newInitialAttemptFixture(t)
 	initial, err := NewInitialRouteAttemptAuthorization(request, fixture.selection, fixture.ranking)
@@ -38,8 +44,8 @@ func TestRateLimitedRetryTakesOverTheRefusedReservation(t *testing.T) {
 	current := initial
 	for retry := 1; retry <= MaxRateLimitRetries; retry++ {
 		outcome, reconciliation := rateLimitedAttempt(t, current, 7_000)
-		if _, err := NewRouteRetryAttemptAuthorization(current, outcome, reconciliation, mustRetryDecision(t, policy, current, outcome)); !errors.Is(err, ErrRouteAttemptInsufficientBudget) {
-			t.Fatalf("a second reservation fit the budget: %v", err)
+		if reconciliation.Status() != RouteCostWithinReservation || reconciliation.RemainingCostMicroUSD() != initial.RemainingCostBeforeMicroUSD() {
+			t.Fatalf("refusal settled %s with %d remaining", reconciliation.Status(), reconciliation.RemainingCostMicroUSD())
 		}
 		decision := mustRetryDecision(t, policy, current, outcome)
 		if !decision.ShouldRetry() || decision.MinimumDelayMilliseconds() != 7_000 || decision.MaximumDelayMilliseconds() != 7_000 {
@@ -105,7 +111,7 @@ func TestRateLimitedRetryRefusesEveryOtherFailure(t *testing.T) {
 	request, fixture, _ := newInitialAttemptFixture(t)
 	initial, _ := NewInitialRouteAttemptAuthorization(request, fixture.selection, fixture.ranking)
 	policy, _ := NewRateLimitRetryPolicy(1_000)
-	knownZero, _ := provider.NewRouteTokenUsage(0, 0, 0)
+	spent, _ := provider.NewRouteTokenUsage(1, 1, 0)
 	for name, outcome := range map[string]func() (RouteAttemptOutcome, error){
 		"server error": func() (RouteAttemptOutcome, error) {
 			return NewFailedRouteAttemptOutcome(initial, RouteFailureProviderServer, RouteReplayOutcomeUnknown, provider.NewUnknownRouteTokenUsage(), 0, 10)
@@ -113,8 +119,8 @@ func TestRateLimitedRetryRefusesEveryOtherFailure(t *testing.T) {
 		"transport": func() (RouteAttemptOutcome, error) {
 			return NewFailedRouteAttemptOutcome(initial, RouteFailureTransport, RouteReplayNoSideEffect, provider.NewUnknownRouteTokenUsage(), 0, 10)
 		},
-		"rate limit with usage": func() (RouteAttemptOutcome, error) {
-			return NewFailedRouteAttemptOutcome(initial, RouteFailureRateLimited, RouteReplayNoSideEffect, knownZero, 0, 10)
+		"rate limit with spent usage": func() (RouteAttemptOutcome, error) {
+			return NewFailedRouteAttemptOutcome(initial, RouteFailureRateLimited, RouteReplayNoSideEffect, spent, 0, 10)
 		},
 		"rate limit never sent": func() (RouteAttemptOutcome, error) {
 			return NewFailedRouteAttemptOutcome(initial, RouteFailureRateLimited, RouteReplayNotDispatched, provider.NewUnknownRouteTokenUsage(), 0, 10)
@@ -176,6 +182,26 @@ func TestIsSameReservationRetryOfRecognizesOnlyTakeoverRetries(t *testing.T) {
 	}
 	if IsSameReservationRetryOf(timeoutInitial, ordinary) {
 		t.Fatal("a retry whose balance moved was recognized")
+	}
+}
+
+// A refusal settled with unknown usage, as an adapter that records none
+// reports it, keeps its reservation held; the retry still holds the same
+// amount from the same balance, so the two settle forms grant one authorization.
+func TestRateLimitedRetryIsTheSameForHeldAndReleasedReservations(t *testing.T) {
+	request, fixture, _ := newInitialAttemptFixture(t)
+	initial, _ := NewInitialRouteAttemptAuthorization(request, fixture.selection, fixture.ranking)
+	policy, _ := NewRateLimitRetryPolicy(1_000)
+	held, heldCost := settledRateLimit(t, initial, 0, provider.NewUnknownRouteTokenUsage())
+	if heldCost.Status() != RouteCostUsageUnknown || heldCost.RemainingCostMicroUSD() != initial.RemainingCostAfterMicroUSD() {
+		t.Fatalf("unknown usage settled %s", heldCost.Status())
+	}
+	if _, err := NewRouteRetryAttemptAuthorization(initial, held, heldCost, mustRetryDecision(t, policy, initial, held)); !errors.Is(err, ErrRouteAttemptInsufficientBudget) {
+		t.Fatalf("a second reservation fit the budget: %v", err)
+	}
+	retry, err := NewRateLimitedRetryAttemptAuthorization(initial, held, heldCost, mustRetryDecision(t, policy, initial, held))
+	if err != nil || retry.RemainingCostBeforeMicroUSD() != initial.RemainingCostBeforeMicroUSD() || retry.RemainingCostAfterMicroUSD() != initial.RemainingCostAfterMicroUSD() || !IsSameReservationRetryOf(initial, retry) {
+		t.Fatalf("held reservation retry = %v", err)
 	}
 }
 

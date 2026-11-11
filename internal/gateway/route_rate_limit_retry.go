@@ -17,10 +17,12 @@ func NewRateLimitRetryPolicy(fixedDelayMilliseconds uint32) (RouteRetryPolicy, e
 
 // NewRateLimitedRetryAttemptAuthorization grants the same-route retry a bound
 // decision permits after the provider refused an attempt with a rate limit
-// before processing it: failure rate_limited, no side effect, no reported
-// usage, and its whole reservation still held. That attempt consumed nothing,
-// so the retry takes over its reservation instead of making another: it holds
-// the same amount from the same balance, and the total held never grows.
+// before processing it: failure rate_limited and no side effect, settled with
+// known zero usage (its reservation released) or, from an adapter that
+// records none, unknown usage (its reservation still held). That attempt
+// consumed nothing, so the retry holds the same amount from the same balance
+// either way instead of making another reservation, and the total held never
+// grows.
 func NewRateLimitedRetryAttemptAuthorization(previous RouteAttemptAuthorization, outcome RouteAttemptOutcome, reconciliation RouteCostReconciliation, decision RouteAttemptRetryDecision) (RouteAttemptAuthorization, error) {
 	if err := validateContinuationInputs(previous, outcome, reconciliation); err != nil {
 		return RouteAttemptAuthorization{}, err
@@ -31,8 +33,11 @@ func NewRateLimitedRetryAttemptAuthorization(previous RouteAttemptAuthorization,
 	if !retryDecisionMatches(previous, outcome, decision) {
 		return RouteAttemptAuthorization{}, ErrRouteAttemptContinuationMismatch
 	}
-	if outcome.Failure() != RouteFailureRateLimited || outcome.ReplaySafety() != RouteReplayNoSideEffect || outcome.Usage().IsKnown() ||
-		reconciliation.Status() != RouteCostUsageUnknown || reconciliation.RemainingCostMicroUSD() != previous.RemainingCostAfterMicroUSD() {
+	usage := outcome.Usage()
+	released := usage.IsKnown() && usage.InputTokens() == 0 && usage.OutputTokens() == 0 && usage.CachedInputTokens() == 0 &&
+		reconciliation.Status() == RouteCostWithinReservation && reconciliation.RemainingCostMicroUSD() == previous.RemainingCostBeforeMicroUSD()
+	held := !usage.IsKnown() && reconciliation.Status() == RouteCostUsageUnknown && reconciliation.RemainingCostMicroUSD() == previous.RemainingCostAfterMicroUSD()
+	if outcome.Failure() != RouteFailureRateLimited || outcome.ReplaySafety() != RouteReplayNoSideEffect || !released && !held {
 		return RouteAttemptAuthorization{}, ErrRouteAttemptContinuationDenied
 	}
 	if !decision.ShouldRetry() || previous.AttemptOrdinal() == maxRouteAttemptOrdinal || previous.RouteAttemptOrdinal() == maxRouteRetryAttempts {
