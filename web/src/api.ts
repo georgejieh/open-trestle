@@ -49,6 +49,7 @@ const providerFailureReasons = new Map<FailureReason, Failure>([
   ["provider_authentication_failed", "policy"],
   ["provider_authorization_denied", "policy"],
   ["provider_rate_limited", "transient"],
+  ["provider_response_invalid", "internal"],
 ]);
 const contextFailureReasons = new Set<FailureReason>([
   "route_context_insufficient",

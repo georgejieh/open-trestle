@@ -83,6 +83,8 @@ const failureReasonLabels: Record<FailureReason, string> = {
     "Provider authorization denied: the provider refused this account access to the model or endpoint",
   provider_rate_limited:
     "Provider rate limited: the provider rate-limited the request on its last attempt",
+  provider_response_invalid:
+    "Provider reply refused: the provider answered, but its reply did not match what Open Trestle accepts, for example malformed or truncated output, an unrecognized field or an unexpected HTTP status",
 };
 /** The fixed action for each provider refusal, as the local review prints it. */
 const failureReasonHints: Partial<Record<FailureReason, string>> = {
@@ -98,6 +100,8 @@ const failureReasonHints: Partial<Record<FailureReason, string>> = {
     "check the account's access, or choose another route",
   provider_rate_limited:
     "wait and run the review again, or choose another route",
+  provider_response_invalid:
+    "run the review again; if it repeats, choose another model or route and report it",
 };
 const emptyScope: Scope = { tenant: "", repository: "", run: "" };
 function rememberedScope(): Scope {

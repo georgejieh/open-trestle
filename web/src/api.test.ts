@@ -235,6 +235,7 @@ describe("API client", () => {
       ["provider_authentication_failed", "policy"],
       ["provider_authorization_denied", "policy"],
       ["provider_rate_limited", "transient"],
+      ["provider_response_invalid", "internal"],
     ] as const;
     for (const [reason, failure] of reasons) {
       for (const kind of ["generate_candidates", "verify_candidates"]) {
@@ -259,11 +260,9 @@ describe("API client", () => {
         for (const forged of [
           { ...refused, kind: "assemble_context" },
           { ...refused, kind: "acquire_source" },
-          { ...refused, failure: "internal" },
-          {
-            ...refused,
-            failure: failure === "policy" ? "transient" : "policy",
-          },
+          ...(["policy", "transient", "internal", "resource_limit"] as const)
+            .filter((other) => other !== failure)
+            .map((other) => ({ ...refused, failure: other })),
           { ...refused, status: "succeeded" },
           { ...refused, output_identity: digest },
           {
