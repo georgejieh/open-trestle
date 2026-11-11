@@ -107,6 +107,12 @@ func (w *initWizard) openRouterSummary() {
 			w.say("             %s", strings.TrimPrefix(limits, ", "))
 		}
 	}
+	for _, role := range []string{"generation", "verification"} {
+		if len(observation.facts(w.roleModel(role)).safetyExcluded) != 0 {
+			w.say("  Endpoints that may keep prompts for Safety Retention are left out.")
+			break
+		}
+	}
 }
 
 // openRouterChooseZDR decides whether every request requires zero data

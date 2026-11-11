@@ -105,7 +105,7 @@ func TestInitOpenRouterBothModelsWithZDRRequiresItByDefault(t *testing.T) {
 	}
 	initAssertOutput(t, result, "46 models listed; 2 have zero-data-retention endpoints", "same model as the finder",
 		"zero data retention on 2 endpoints (fixture-cloud, fixture-cloud/us)", "zero data retention on 1 endpoint (fixture-host/fp8)",
-		"Limits: context 128000 and output 16000 tokens", "Prices: up to $3.3 input and $16.5 output", "[0.49]",
+		"Limits: context 128000 and output 16000 tokens", "Prices: up to $3.3 input and $16.5 output", "[0.49]", "Endpoints that may keep prompts for Safety Retention are left out.",
 		"Zero data retention is required on every request", "Review finished: 1 confirmed finding",
 		"A review sends the selected source to OpenRouter (https://openrouter.ai/api/v1), zero data retention required on every request")
 	if strings.Contains(result.stdout, "openrouter_zero_data_retention_not_required") {
