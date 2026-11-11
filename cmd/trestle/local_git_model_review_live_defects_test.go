@@ -154,6 +154,75 @@ func TestLocalModelReviewReportsExhaustedVerifierOutput(t *testing.T) {
 	}
 }
 
+// Defect F: a provider that refused the request for billing (HTTP 402) or had
+// retired the model (HTTP 410) failed every run as a bare internal failure
+// with no detail or hint. Each provider refusal now names its class, the
+// failing task, a fixed detail and a fixed hint, and the provider's own
+// message text never reaches any output.
+func TestLocalModelReviewNamesProviderRefusals(t *testing.T) {
+	for _, test := range []struct {
+		name, generation, verification string
+		code                           int
+		failure, task, detail, hint    string
+	}{
+		{"payment required", "refuse_402", "", 4, "policy", "candidates", localreview.FailureDetailProviderPaymentRequired, "the provider refused the request for billing: add credit or a subscription to the provider account, or choose another route"},
+		{"model retired at verification", "", "refuse_410", 4, "policy", "verification", localreview.FailureDetailProviderModelRetired, "the provider no longer serves this model: choose a model the provider lists as available and re-run setup"},
+		{"model unavailable", "refuse_404", "", 4, "policy", "candidates", localreview.FailureDetailProviderModelUnavailable, "the provider does not serve this model at this endpoint"},
+		{"authentication", "refuse_401", "", 4, "policy", "candidates", localreview.FailureDetailProviderAuthenticationFailed, "the provider did not accept the credential"},
+		{"authorization", "refuse_403", "", 4, "policy", "candidates", localreview.FailureDetailProviderAuthorizationDenied, "the provider refused this account access"},
+		{"rate limited", "refuse_429", "", 1, "transient", "candidates", localreview.FailureDetailProviderRateLimited, "the provider rate-limited the request on its last attempt"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			options := localModelFixtureOptions{chatCompletions: true, generationMode: test.generation, verificationMode: test.verification}
+			f := newLocalModelFixture(t, options)
+			var stdout, stderr bytes.Buffer
+			if code := run(f.args, &stdout, &stderr); code != test.code {
+				t.Fatalf("exit=%d want=%d stdout=%s stderr=%q", code, test.code, stdout.String(), stderr.String())
+			}
+			var wire struct {
+				RunStatus     string `json:"run_status"`
+				Failure       string `json:"failure"`
+				FailureDetail string `json:"failure_detail"`
+			}
+			if err := json.Unmarshal(stdout.Bytes(), &wire); err != nil || wire.RunStatus != "failed" || wire.Failure != test.failure || wire.FailureDetail != test.detail {
+				t.Fatalf("result=%+v err=%v", wire, err)
+			}
+			assertNoProviderRefusalText(t, stdout.String()+stderr.String())
+			if test.failure == "policy" {
+				// A refusal the provider repeats on every replay is attempted once.
+				calls, _ := f.generation.snapshot()
+				if test.task == "verification" {
+					calls, _ = f.verification.snapshot()
+				}
+				if calls != 1 {
+					t.Fatalf("refused route was called %d times", calls)
+				}
+			}
+			text := runLocalModelText(t, newLocalModelFixture(t, options), test.code)
+			if want := "failure: " + test.failure + " (task " + test.task + "): " + test.detail + "\nhint: " + test.hint; !strings.Contains(text, want) {
+				t.Fatalf("text=%q want %q", text, want)
+			}
+			assertNoProviderRefusalText(t, text)
+		})
+	}
+	// A review set member carries the same detail and hint.
+	f := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, generationMode: "refuse_402"})
+	_, text := runLocalModelSet(t, f, []string{"--specialists", "auto", "--format", "text"}, 4)
+	if !strings.Contains(text, "member: general status=refused run=failed verified_findings=0 failure=policy (task candidates): provider_payment_required\nmember hint: general: the provider refused the request for billing") {
+		t.Fatalf("set text=%q", text)
+	}
+	assertNoProviderRefusalText(t, text)
+}
+
+func assertNoProviderRefusalText(t *testing.T, output string) {
+	t.Helper()
+	for _, forbidden := range []string{localModelRefusalText, "usage credits", "ollama.com/plans", "retired on", "glm-5.3-flash", "not found, try pulling"} {
+		if strings.Contains(output, forbidden) {
+			t.Fatalf("provider message text %q reached the output", forbidden)
+		}
+	}
+}
+
 // Defects B and E for review sets: a member's failure names its class and
 // task, and change features are reported from the recorded change even when
 // the general review failed after it (the live run printed languages=none).

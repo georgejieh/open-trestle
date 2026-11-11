@@ -242,6 +242,13 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 		}
 		return
 	}
+	if refusal, ok := localModelRefusals[m.mode]; ok {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Retry-After", "1")
+		w.WriteHeader(refusal.status)
+		_, _ = io.WriteString(w, refusal.body)
+		return
+	}
 
 	if m.removedOnly {
 		m.respond(t, w, packet, removedOnlyModelResult(t, m.model, packet))
@@ -321,6 +328,25 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 	}
 	m.respond(t, w, packet, result)
 
+}
+
+// localModelRefusalText is in every refusal body below; it is the provider's
+// own untrusted message text and must never reach any output.
+const localModelRefusalText = "PROVIDER_REFUSAL_TEXT_5521"
+
+// localModelRefusals are the refusal modes: the live Ollama answers for an
+// account without credit and a retired cloud model, and the other provider
+// refusal statuses, each with the provider's message in the body.
+var localModelRefusals = map[string]struct {
+	status int
+	body   string
+}{
+	"refuse_401": {http.StatusUnauthorized, `{"error":{"message":"unauthorized ` + localModelRefusalText + `","type":"api_error"}}`},
+	"refuse_402": {http.StatusPaymentRequired, `{"error":{"message":"Add usage credits or subscribe and save up to 66%: https://ollama.com/plans (ref: ` + localModelRefusalText + `)","type":"api_error","param":null,"code":null}}`},
+	"refuse_403": {http.StatusForbidden, `{"error":{"message":"forbidden ` + localModelRefusalText + `","type":"api_error"}}`},
+	"refuse_404": {http.StatusNotFound, `{"error":{"message":"model \"model-a\" not found, try pulling it first ` + localModelRefusalText + `","type":"api_error"}}`},
+	"refuse_410": {http.StatusGone, `{"error":{"message":"qwen3.5:397b was retired on September 25, 2026. Try glm-5.3-flash:cloud. (ref: ` + localModelRefusalText + `)","type":"api_error","param":null,"code":null}}`},
+	"refuse_429": {http.StatusTooManyRequests, `{"error":{"message":"rate limited ` + localModelRefusalText + `","type":"api_error"}}`},
 }
 
 // respond writes one structured model response in the endpoint's wire format.
