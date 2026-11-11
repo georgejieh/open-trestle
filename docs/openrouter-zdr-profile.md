@@ -209,9 +209,11 @@ The review classifies a refusal by its HTTP status alone and never reads the
 error body. For an OpenRouter route, HTTP 404 means OpenRouter served no
 endpoint for the request: the model ID is not served, or no endpoint the request
 may use can take it, for example because ZDR is required (by the request or by
-your account or key) and the model has no ZDR endpoint. Which status OpenRouter
-uses for the second case was not confirmed offline; if it is another status, the
-generic detail for that status applies. A 404 records `failure_detail`
+your account or key) and the model has no ZDR endpoint. A live probe on
+2026-11-11, a ZDR-required request for a model with no ZDR endpoint, was refused
+with HTTP 404 at OpenRouter's data-policy routing step, before any model ran; if
+OpenRouter changes that status, the generic detail for the new status applies.
+A 404 records `failure_detail`
 `provider_no_allowed_endpoint` and the hint "OpenRouter has no endpoint for
 this model that the request may use: if zero data retention is required (by
 this setup or by your OpenRouter account or key settings), choose a model with
