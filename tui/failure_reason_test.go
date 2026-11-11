@@ -15,39 +15,51 @@ import (
 	"github.com/georgejieh/open-trestle/internal/testsupport"
 )
 
-// A model task's recorded provider refusal shows its reason and the local
-// review's action, wrapped within the terminal width.
+// A model task's recorded provider refusal, or a provider reply the adapter
+// refused, shows its reason and the local review's action, wrapped within the
+// terminal width.
 func TestRunShowsProviderRefusalReasonAndHint(t *testing.T) {
 	ctx := context.Background()
 	scope, err := audit.NewReviewScope("tenant-a", "repo-a", "run-provider-refusal")
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, err := testsupport.ProviderRefusalReceipt(scope, controlplane.TaskFailureReasonProviderPaymentRequired)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var output bytes.Buffer
-	view, err := New(&fakeService{receipt: receipt, diagnosticErr: errors.New("not ready")}, strings.NewReader("q\n"), &output, Options{Scope: scope, RefreshInterval: time.Second, Width: 80, Plain: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := view.Run(ctx); err != nil {
-		t.Fatal(err)
-	}
-	rendered := output.String()
-	joined := regexp.MustCompile(`\n {12,}`).ReplaceAllString(rendered, " ")
-	for _, want := range []string{
-		"Reason      candidates: provider_payment_required (the provider refused the request for billing)\n",
-		"Hint        add credit or a subscription to the provider account, or choose another route\n",
+	for _, test := range []struct {
+		reason controlplane.TaskFailureReason
+		want   []string
+	}{
+		{controlplane.TaskFailureReasonProviderPaymentRequired, []string{
+			"Reason      candidates: provider_payment_required (the provider refused the request for billing)\n",
+			"Hint        add credit or a subscription to the provider account, or choose another route\n",
+		}},
+		{controlplane.TaskFailureReasonProviderResponseInvalid, []string{
+			"Reason      candidates: provider_response_invalid (the provider answered, but its reply did not match what Open Trestle accepts, for example malformed or truncated output, an unrecognized field or an unexpected HTTP status)\n",
+			"Hint        run the review again; if it repeats, choose another model or route and report it\n",
+		}},
 	} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("missing %q in:\n%s", want, rendered)
+		receipt, err := testsupport.ProviderRefusalReceipt(scope, test.reason)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	for _, line := range strings.Split(rendered, "\n") {
-		if len([]rune(line)) > 80 {
-			t.Errorf("line exceeds width: %q", line)
+		var output bytes.Buffer
+		view, err := New(&fakeService{receipt: receipt, diagnosticErr: errors.New("not ready")}, strings.NewReader("q\n"), &output, Options{Scope: scope, RefreshInterval: time.Second, Width: 80, Plain: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := view.Run(ctx); err != nil {
+			t.Fatal(err)
+		}
+		rendered := output.String()
+		joined := regexp.MustCompile(`\n {12,}`).ReplaceAllString(rendered, " ")
+		for _, want := range test.want {
+			if !strings.Contains(joined, want) {
+				t.Errorf("%s: missing %q in:\n%s", test.reason, want, rendered)
+			}
+		}
+		for _, line := range strings.Split(rendered, "\n") {
+			if len([]rune(line)) > 80 {
+				t.Errorf("line exceeds width: %q", line)
+			}
 		}
 	}
 }

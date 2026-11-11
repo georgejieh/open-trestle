@@ -115,7 +115,11 @@ func TestReceiptToolsDeclareEveryReceiptVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, receipt := range []controlplane.ReviewRunReceipt{mcpReceipt(t), failedReceiptWithReason(t), refused} {
+	unaccepted, err := testsupport.ProviderRefusalReceipt(scope, controlplane.TaskFailureReasonProviderResponseInvalid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, receipt := range []controlplane.ReviewRunReceipt{mcpReceipt(t), failedReceiptWithReason(t), refused, unaccepted} {
 		server, err := New(&readerStub{receipt: receipt})
 		if err != nil {
 			t.Fatal(err)
@@ -150,6 +154,9 @@ func TestReceiptToolsDeclareEveryReceiptVersion(t *testing.T) {
 		}
 		if receipt.Identity() == refused.Identity() && !bytes.Contains(lines[1], []byte(`"failure_reason":"provider_payment_required"`)) {
 			t.Errorf("the status tool dropped the provider refusal: %s", lines[1])
+		}
+		if receipt.Identity() == unaccepted.Identity() && !bytes.Contains(lines[1], []byte(`"failure_reason":"provider_response_invalid"`)) {
+			t.Errorf("the status tool dropped the refused provider reply: %s", lines[1])
 		}
 	}
 }

@@ -43,7 +43,7 @@ const (
 	TaskFailureReasonProviderRateLimited
 	// TaskFailureReasonProviderResponseInvalid records that the provider
 	// answered a model task's request but the adapter refused the reply:
-	// malformed, truncated, empty or oversized, with an unrecognised field, or
+	// malformed, truncated, empty or oversized, with an unrecognized field, or
 	// with an HTTP status it does not classify. It is an internal failure and
 	// names neither the reply nor any of its fields.
 	TaskFailureReasonProviderResponseInvalid

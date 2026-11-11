@@ -70,9 +70,10 @@ func recordConsoleFailures(t *testing.T, catalog gateway.RouteDispatcherCatalog)
 }
 
 // Each console HTTP failure is classified by its status alone, as for every
-// other profile: 402 is a payment refusal, not a spent local budget. Only a
-// 429, which the provider refused before processing, is retried, twice on the
-// same route; no provider body is persisted.
+// other profile: 402 is a payment refusal, not a spent local budget, and a
+// status no class names is a refused reply. Only a 429, which the provider
+// refused before processing, is retried, twice on the same route; no
+// provider body is persisted.
 func TestOpenCodeConsoleHandlerHTTPFailuresRetryOnlyRateLimitsAndPersistNoProviderBody(t *testing.T) {
 	for _, test := range []struct {
 		status  int
@@ -86,6 +87,7 @@ func TestOpenCodeConsoleHandlerHTTPFailuresRetryOnlyRateLimitsAndPersistNoProvid
 		{404, gateway.RouteFailureModelUnavailable, controlplane.RunFailurePolicy, controlplane.TaskFailureReasonProviderModelUnavailable},
 		{410, gateway.RouteFailureModelRetired, controlplane.RunFailurePolicy, controlplane.TaskFailureReasonProviderModelRetired},
 		{429, gateway.RouteFailureRateLimited, controlplane.RunFailureTransient, controlplane.TaskFailureReasonProviderRateLimited},
+		{400, gateway.RouteFailureInvalidResponse, controlplane.RunFailureInternal, controlplane.TaskFailureReasonProviderResponseInvalid},
 		{500, gateway.RouteFailureProviderServer, controlplane.RunFailureTransient, 0},
 	} {
 		status := test.status

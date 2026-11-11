@@ -106,18 +106,23 @@ func TestServerDistinguishesObservedZeroFromMissingFinalEvidence(t *testing.T) {
 	}
 }
 
-// A run whose model task recorded a provider refusal names it, with the local
-// review's action, after the receipt; any other run names none.
+// A run whose model task recorded a provider refusal, or a provider reply the
+// adapter refused, names it, with the local review's action, after the
+// receipt; any other run names none.
 func TestServerNamesProviderRefusal(t *testing.T) {
 	scope, plain, set := acpFixture(t)
-	receipt, err := testsupport.ProviderRefusalReceipt(scope, controlplane.TaskFailureReasonProviderModelRetired)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "Task failure: candidates: provider_model_retired (the provider no longer serves this model).\nHint: choose a model the provider lists as available and re-run setup"
-	messages := promptMessages(t, &serviceStub{receipt: receipt, set: set}, scope)
-	if !strings.Contains(string(messages[0]), jsonEscaped(t, want)) {
-		t.Fatalf("missing %q in %s", want, messages[0])
+	for reason, want := range map[controlplane.TaskFailureReason]string{
+		controlplane.TaskFailureReasonProviderModelRetired:    "Task failure: candidates: provider_model_retired (the provider no longer serves this model).\nHint: choose a model the provider lists as available and re-run setup",
+		controlplane.TaskFailureReasonProviderResponseInvalid: "Task failure: candidates: provider_response_invalid (the provider answered, but its reply did not match what Open Trestle accepts, for example malformed or truncated output, an unrecognized field or an unexpected HTTP status).\nHint: run the review again; if it repeats, choose another model or route and report it",
+	} {
+		receipt, err := testsupport.ProviderRefusalReceipt(scope, reason)
+		if err != nil {
+			t.Fatal(err)
+		}
+		messages := promptMessages(t, &serviceStub{receipt: receipt, set: set}, scope)
+		if !strings.Contains(string(messages[0]), jsonEscaped(t, want)) {
+			t.Fatalf("missing %q in %s", want, messages[0])
+		}
 	}
 	if messages := promptMessages(t, &serviceStub{receipt: plain, set: set}, scope); bytes.Contains(messages[0], []byte("Task failure:")) {
 		t.Fatalf("a run without a refusal named one: %s", messages[0])

@@ -338,8 +338,8 @@ func mapRouteFailure(failure gateway.RouteFailureClass) controlplane.RunFailure 
 	}
 }
 
-// providerRefusalReasons names each provider refusal class as the model
-// task's content-free failure reason.
+// providerRefusalReasons names each provider refusal class, and a provider
+// reply the adapter refused, as the model task's content-free failure reason.
 var providerRefusalReasons = map[gateway.RouteFailureClass]controlplane.TaskFailureReason{
 	gateway.RouteFailurePaymentRequired:  controlplane.TaskFailureReasonProviderPaymentRequired,
 	gateway.RouteFailureModelUnavailable: controlplane.TaskFailureReasonProviderModelUnavailable,
@@ -347,12 +347,14 @@ var providerRefusalReasons = map[gateway.RouteFailureClass]controlplane.TaskFail
 	gateway.RouteFailureAuthentication:   controlplane.TaskFailureReasonProviderAuthenticationFailed,
 	gateway.RouteFailureAuthorization:    controlplane.TaskFailureReasonProviderAuthorizationDenied,
 	gateway.RouteFailureRateLimited:      controlplane.TaskFailureReasonProviderRateLimited,
+	gateway.RouteFailureInvalidResponse:  controlplane.TaskFailureReasonProviderResponseInvalid,
 }
 
 // routeFailureCompletion fails a model task for a failed dispatch. A refusal
-// the provider answered records its content-free reason; any other failure,
-// or one before the request was sent, records only the run failure. A rate
-// limit reaches it only once its same-route retries are spent or not allowed.
+// the provider answered, or an answer whose reply the adapter refused,
+// records its content-free reason; any other failure, or one before the
+// request was sent, records only the run failure. A rate limit reaches it
+// only once its same-route retries are spent or not allowed.
 func routeFailureCompletion(task controlplane.TaskExecutionRequest, result gateway.RouteDispatchResult) controlplane.TaskCompletion {
 	failure := mapRouteFailure(result.Failure())
 	reason, refusal := providerRefusalReasons[result.Failure()]

@@ -54,8 +54,11 @@ func ProviderRefusalReceipt(scope audit.ReviewScope, reason controlplane.TaskFai
 		completion, err := controlplane.NewTaskSuccess(strings.Repeat("e", 64))
 		if task.Kind() == controlplane.TaskGenerateCandidates {
 			failure := controlplane.RunFailurePolicy
-			if reason == controlplane.TaskFailureReasonProviderRateLimited {
+			switch reason {
+			case controlplane.TaskFailureReasonProviderRateLimited:
 				failure = controlplane.RunFailureTransient
+			case controlplane.TaskFailureReasonProviderResponseInvalid:
+				failure = controlplane.RunFailureInternal
 			}
 			completion, err = controlplane.NewModelTaskFailureWithReason(failure, reason, plan, task)
 		}
