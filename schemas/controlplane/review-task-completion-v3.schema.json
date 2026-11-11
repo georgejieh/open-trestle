@@ -58,7 +58,8 @@
         "provider_model_retired",
         "provider_authentication_failed",
         "provider_authorization_denied",
-        "provider_rate_limited"
+        "provider_rate_limited",
+        "provider_response_invalid"
       ]
     },
     "plan_identity": {
@@ -146,7 +147,8 @@
               "provider_model_retired",
               "provider_authentication_failed",
               "provider_authorization_denied",
-              "provider_rate_limited"
+              "provider_rate_limited",
+              "provider_response_invalid"
             ]
           }
         }
@@ -169,9 +171,25 @@
               }
             },
             "else": {
-              "properties": {
-                "failure": {
-                  "const": "policy"
+              "if": {
+                "properties": {
+                  "failure_reason": {
+                    "const": "provider_response_invalid"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "failure": {
+                    "const": "internal"
+                  }
+                }
+              },
+              "else": {
+                "properties": {
+                  "failure": {
+                    "const": "policy"
+                  }
                 }
               }
             }

@@ -41,6 +41,12 @@ const (
 	TaskFailureReasonProviderAuthenticationFailed
 	TaskFailureReasonProviderAuthorizationDenied
 	TaskFailureReasonProviderRateLimited
+	// TaskFailureReasonProviderResponseInvalid records that the provider
+	// answered a model task's request but the adapter refused the reply:
+	// malformed, truncated, empty or oversized, with an unrecognised field, or
+	// with an HTTP status it does not classify. It is an internal failure and
+	// names neither the reply nor any of its fields.
+	TaskFailureReasonProviderResponseInvalid
 )
 
 // TaskFailureContextShortfall carries the counts of a
@@ -107,6 +113,8 @@ func (r TaskFailureReason) String() string {
 		return "provider_authorization_denied"
 	case TaskFailureReasonProviderRateLimited:
 		return "provider_rate_limited"
+	case TaskFailureReasonProviderResponseInvalid:
+		return "provider_response_invalid"
 	default:
 		return ""
 	}
@@ -124,7 +132,7 @@ func ParseTaskFailureReason(value string) (TaskFailureReason, error) {
 	if value == "" {
 		return 0, nil
 	}
-	for reason := TaskFailureReasonNoMergeBase; reason <= TaskFailureReasonProviderRateLimited; reason++ {
+	for reason := TaskFailureReasonNoMergeBase; reason <= TaskFailureReasonProviderResponseInvalid; reason++ {
 		if reason.String() == value {
 			return reason, nil
 		}
@@ -164,6 +172,8 @@ func providerRefusalFailure(reason TaskFailureReason) (RunFailure, bool) {
 		return RunFailurePolicy, true
 	case TaskFailureReasonProviderRateLimited:
 		return RunFailureTransient, true
+	case TaskFailureReasonProviderResponseInvalid:
+		return RunFailureInternal, true
 	}
 	return 0, false
 }

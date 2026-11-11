@@ -52,6 +52,7 @@ var providerRefusalReasons = []struct {
 	{TaskFailureReasonProviderAuthenticationFailed, "provider_authentication_failed", RunFailurePolicy},
 	{TaskFailureReasonProviderAuthorizationDenied, "provider_authorization_denied", RunFailurePolicy},
 	{TaskFailureReasonProviderRateLimited, "provider_rate_limited", RunFailureTransient},
+	{TaskFailureReasonProviderResponseInvalid, "provider_response_invalid", RunFailureInternal},
 }
 
 // A model task records the provider's refusal as a closed, content-free
@@ -161,7 +162,7 @@ func TestProviderRefusalReasonIsModelTaskOnly(t *testing.T) {
 			t.Fatalf("%s through the context constructor err=%v", test.token, err)
 		}
 	}
-	for _, reason := range []TaskFailureReason{0, TaskFailureReasonNoMergeBase, TaskFailureReasonNoEligibleRoute, TaskFailureReasonProviderRateLimited + 1} {
+	for _, reason := range []TaskFailureReason{0, TaskFailureReasonNoMergeBase, TaskFailureReasonNoEligibleRoute, TaskFailureReasonProviderResponseInvalid + 1} {
 		if _, err := NewModelTaskFailureWithReason(RunFailurePolicy, reason, plan, candidates); !errors.Is(err, ErrInvalidTaskCompletion) {
 			t.Fatalf("reason %d accepted on a model task err=%v", reason, err)
 		}
