@@ -155,7 +155,9 @@ the task's fixed delay, each retry taking over the refused attempt's
 reservation. Budgets are checked at request start, so
 already-running requests may exceed them slightly. Timeouts/transport loss/
 5xx/malformed post-effect replies remain outcome unknown; there is no other
-automatic retry, no fallback and no raw upstream error-body persistence.
+automatic retry, no fallback and no raw upstream error-body persistence. A
+malformed reply, or a status no class names, keeps the task's `internal`
+failure and records `provider_response_invalid`.
 
 ## Metadata and setup
 

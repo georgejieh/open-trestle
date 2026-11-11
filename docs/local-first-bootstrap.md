@@ -151,7 +151,11 @@ repeat `check`. When a model server refuses the probe with HTTP 401, 402, 403,
 failure detail and its fixed hint, for example
 `local_inference_validated: provider_model_unavailable: the provider does not
 serve this model at this endpoint: ...`, and `trestle init` shows the same
-reason; the server's own message is never shown. `messages` is absent
+reason; the server's own message is never shown. A probe the server answered
+with HTTP 200 and a reply the adapter refused, or with a status no failure
+class names (such as 400, but not a 5xx), names `provider_response_invalid`
+the same way, and `trestle init` says the server answered the test request
+with a reply not in the expected format. `messages` is absent
 otherwise, and `check` sends no request beyond the probe. Passed checks are historical receipts, not fresh liveness checks;
 repeat calls do not silently repeat a successful inference probe. `inspect` is
 read-only and never contacts models.

@@ -1089,6 +1089,7 @@ mapping:
 | 429 | `rate_limited` | `transient` | twice on the same route, inside the task attempt | `provider_rate_limited` |
 | 503 with a `Retry-After` in seconds | `rate_limited` | `transient` | as 429 | `provider_rate_limited` |
 | other 5xx | `provider_server` | `transient` | no | none |
+| 200 with a reply the adapter refuses, or a status no other class names (for example 400) | `invalid_response` | `internal` | no | `provider_response_invalid` |
 
 A `policy` run is `refused` with CI disposition `blocked` and exit code 4, so a
 refusal the provider repeats on every request is attempted once. A `transient`
@@ -1128,6 +1129,26 @@ failure: policy (task verification): provider_model_retired
 hint: the provider no longer serves this model: choose a model the provider lists as available and re-run setup
 ```
 
+A provider that answers HTTP 200 with a reply the adapter refuses (malformed
+or truncated JSON, an empty or oversized body, a Chat Completions reply with
+an unrecognized field, a model other than the route's, or another document the
+strict parser does not accept), or with a status no route failure class names
+(for example 400; see [OpenAI provider](openai-provider.md)), keeps the
+`internal` run failure it always had, so the run is `failed` with `error` and
+exit code 1, and records `failure_detail` `provider_response_invalid`. Before
+this detail the text output read only `failure: internal (task candidates)`
+with a hint that could not tell a refused reply from an internal bug. The
+detail names neither the reply nor any of its fields:
+
+```text
+failure: internal (task candidates): provider_response_invalid
+hint: the provider answered, but its reply did not match what Open Trestle accepts, for example malformed or truncated output, an unrecognized field or an unexpected HTTP status: run the review again; if it repeats, choose another model or route and report it
+```
+
+A reply the adapter accepted whose review document then fails its schema, a
+reply that stopped at the output limit (`model_output_exhausted`, above), and a
+request the adapter could not build or send record no such detail.
+
 A review set member carries the same `failure_detail` and `member hint:` line.
 The other hints are: 404 "the provider does not serve this model at this
 endpoint: check the model name and endpoint, choose a model the provider lists
@@ -1144,11 +1165,12 @@ by the setup or by the OpenRouter account or key (see
 A result whose policy has an OpenRouter route that does not require zero data
 retention lists the limitation `openrouter_zero_data_retention_not_required`.
 `failure_detail` takes these values in result schema version 6; a result
-without a provider refusal keeps its bytes.
+without a provider refusal or a refused reply keeps its bytes.
 A daemon run is classified the same way, and its generation or verification
 task records the detail as its content-free failure reason (the same
-`provider_*` token) in task completion v3, the v7 `task_failed` event and
-receipt v3. `trestle runs status` prints it on stderr, for example
+`provider_*` token, `provider_response_invalid` only with failure `internal`)
+in task completion v3, the v7 `task_failed` event and receipt v3.
+`trestle runs status` prints it on stderr, for example
 `runs status: task candidates failed: provider_payment_required (the provider
 refused the request for billing)` and a `hint:` line with the action; the TUI
 prints a `Reason` and a `Hint` line, the web console a labeled reason and hint,
