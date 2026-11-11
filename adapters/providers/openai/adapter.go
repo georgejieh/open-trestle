@@ -184,7 +184,7 @@ func New(config Config) (*Adapter, error) {
 	}
 	endpoint, err := provider.ParseServiceEndpoint(endpointValue)
 	locality, localityErr := provider.ClassifyServiceEndpoint(endpointValue)
-	zoneMatches := config.Zone == provider.ProviderZoneLocal && locality == provider.ServiceEndpointLoopback || config.Zone == provider.ProviderZonePrivateRemote && locality == provider.ServiceEndpointRemote || config.Zone == provider.ProviderZoneBrokeredRemote && (config.RequestProfile == RequestProfileOpenRouterZDRChatV1 && endpointValue == "https://openrouter.ai/api/v1" || config.RequestProfile == RequestProfileOpenCodeGoChatV1 && endpointValue == "https://opencode.ai/inference/go/openai/v1" || config.RequestProfile == RequestProfileOpenCodeConsoleChatV1 && endpointValue == "https://opencode.ai/inference/openai/v1")
+	zoneMatches := config.Zone == provider.ProviderZoneLocal && locality == provider.ServiceEndpointLoopback || config.Zone == provider.ProviderZonePrivateRemote && locality == provider.ServiceEndpointRemote || config.Zone == provider.ProviderZoneBrokeredRemote && ((config.RequestProfile == RequestProfileOpenRouterZDRChatV1 || config.RequestProfile == RequestProfileOpenRouterZDRChatV2) && endpointValue == openRouterEndpoint || config.RequestProfile == RequestProfileOpenCodeGoChatV1 && endpointValue == "https://opencode.ai/inference/go/openai/v1" || config.RequestProfile == RequestProfileOpenCodeConsoleChatV1 && endpointValue == "https://opencode.ai/inference/openai/v1")
 	// The one closed loopback exception for a non-local zone; validServiceProfile
 	// below enforces the rest of the Ollama sign-in profile.
 	zoneMatches = zoneMatches || config.Zone == provider.ProviderZonePrivateRemote && config.RequestProfile == RequestProfileOllamaSigninChatV1 && locality == provider.ServiceEndpointLoopback
@@ -383,7 +383,7 @@ func (a *Adapter) Validate() error {
 	}
 	_, err := provider.NewRouteReference(a.zone, a.providerID, a.adapterID, a.connectionID, "model", "")
 	locality, localityErr := provider.ClassifyServiceEndpoint(a.endpoint.String())
-	zoneMatches := a.zone == provider.ProviderZoneLocal && locality == provider.ServiceEndpointLoopback || a.zone == provider.ProviderZonePrivateRemote && locality == provider.ServiceEndpointRemote || a.zone == provider.ProviderZoneBrokeredRemote && (a.requestProfile == RequestProfileOpenRouterZDRChatV1 || a.requestProfile == RequestProfileOpenCodeGoChatV1 || a.requestProfile == RequestProfileOpenCodeConsoleChatV1)
+	zoneMatches := a.zone == provider.ProviderZoneLocal && locality == provider.ServiceEndpointLoopback || a.zone == provider.ProviderZonePrivateRemote && locality == provider.ServiceEndpointRemote || a.zone == provider.ProviderZoneBrokeredRemote && (a.openRouterProfile() || a.requestProfile == RequestProfileOpenCodeGoChatV1 || a.requestProfile == RequestProfileOpenCodeConsoleChatV1)
 	zoneMatches = zoneMatches || a.zone == provider.ProviderZonePrivateRemote && a.requestProfile == RequestProfileOllamaSigninChatV1 && locality == provider.ServiceEndpointLoopback
 	if err != nil || localityErr != nil || !zoneMatches || a.localStructuredOutput && (a.protocol != ProtocolChatCompletions || a.requestProfile != "" || a.zone != provider.ProviderZoneLocal || locality != provider.ServiceEndpointLoopback) || !validCredentialAuthority(a.credentialMode, a.credentials, a.credentialIdentity, a.zone, locality, a.requestProfile) || a.contentLoggingMode.Validate() != nil || a.httpClient.Timeout <= 0 || a.httpClient.Timeout > maximumRequestTimeout {
 		return ErrInvalidConfig
@@ -652,10 +652,10 @@ func (a *Adapter) newRequest(
 			Store:           false,
 		}
 	}
-	if a.requestProfile == RequestProfileOpenRouterZDRChatV1 {
+	if a.openRouterProfile() {
 		wire = openRouterChatRequestWire{
 			chatRequestWire: wire.(chatRequestWire),
-			Provider:        openRouterProviderPreferences{ZDR: true, Only: []string{a.openRouterAuthority.ProviderSlug}, Order: []string{a.openRouterAuthority.ProviderSlug}, AllowFallbacks: false, RequireParameters: true},
+			Provider:        a.openRouterPreferences(),
 		}
 	}
 	content, err := json.Marshal(wire)

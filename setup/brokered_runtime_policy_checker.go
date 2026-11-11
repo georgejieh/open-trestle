@@ -16,7 +16,7 @@ func setupConnectionEndpointMatchesZone(connection runtimeconfig.ProviderConnect
 		return false
 	}
 	switch connection.RequestProfile() {
-	case runtimeconfig.OpenRouterZDRChatProfile:
+	case runtimeconfig.OpenRouterZDRChatProfile, runtimeconfig.OpenRouterZDRChatV2Profile:
 		return connection.Endpoint() == "https://openrouter.ai/api/v1"
 	case runtimeconfig.OpenCodeGoChatProfile:
 		return connection.Endpoint() == "https://opencode.ai/inference/go/openai/v1"
@@ -51,7 +51,7 @@ func setupBrokeredRoutePairMatches(plan Plan, inventory runtimeconfig.RouteInven
 			switch pinned.ProviderID() {
 			case "openrouter":
 				authority := connection.BrokeredAuthority()
-				if connection.RequestProfile() != runtimeconfig.OpenRouterZDRChatProfile || !authority.Current(now) || authority.TenantID() != plan.TenantID() || authority.RepositoryID() != plan.RepositoryID() || authority.RouteRecordIdentity() != record.Identity() || authority.EvidenceManifestDigest() != record.EvidenceManifestDigest() {
+				if !connection.RequiresZeroDataRetention() || !authority.Current(now) || authority.TenantID() != plan.TenantID() || authority.RepositoryID() != plan.RepositoryID() || authority.RouteRecordIdentity() != record.Identity() || authority.EvidenceManifestDigest() != record.EvidenceManifestDigest() {
 					return false
 				}
 			case "opencode-go":

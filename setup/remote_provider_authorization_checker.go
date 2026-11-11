@@ -89,7 +89,7 @@ func hasAuthorizedRemoteProvider(inventory runtimeconfig.RouteInventory, policy 
 		if !found {
 			return false
 		}
-		brokered := reference.Zone() == provider.ProviderZoneBrokeredRemote && (reference.ProviderID() == "openrouter" && connection.RequestProfile() == runtimeconfig.OpenRouterZDRChatProfile || reference.ProviderID() == "opencode-go" && connection.RequestProfile() == runtimeconfig.OpenCodeGoChatProfile || reference.ProviderID() == "opencode-console" && connection.RequestProfile() == runtimeconfig.OpenCodeConsoleChatProfile)
+		brokered := reference.Zone() == provider.ProviderZoneBrokeredRemote && (reference.ProviderID() == "openrouter" && connection.RequiresZeroDataRetention() || reference.ProviderID() == "opencode-go" && connection.RequestProfile() == runtimeconfig.OpenCodeGoChatProfile || reference.ProviderID() == "opencode-console" && connection.RequestProfile() == runtimeconfig.OpenCodeConsoleChatProfile)
 		if reference.Zone() != provider.ProviderZonePrivateRemote && !brokered || !routeReadyForPolicy(observed, policy) {
 			continue
 		}

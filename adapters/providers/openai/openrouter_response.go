@@ -71,7 +71,9 @@ func (a *Adapter) normalizeProviderResponse(content []byte, route provider.Route
 	if a.protocol != ProtocolChatCompletions {
 		return normalizeResponse(content, route)
 	}
-	if a.requestProfile == RequestProfileOpenRouterZDRChatV1 {
+	// A generic connection to OpenRouter gets the same usage extension
+	// (cost, BYOK and tool counts) and the same checks as the profiles.
+	if a.openRouterProfile() || a.endpoint != nil && a.endpoint.String() == openRouterEndpoint {
 		return normalizeOpenRouterChatResponse(content, route)
 	}
 	return normalizeChatResponse(content, route)

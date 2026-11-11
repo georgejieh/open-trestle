@@ -122,6 +122,9 @@ func NewOpenAIRouteDispatcherCatalogWithOptions(inventory runtimeconfig.RouteInv
 			if !inventory.OpenCodeConsolePrivacyCurrent(connection.OpenCodeConsoleAuthority().RouteRecordIdentity(), options.Clock.Now()) {
 				return gateway.RouteDispatcherCatalog{}, ErrInvalidRouteAuthority
 			}
+		case runtimeconfig.OpenRouterZDRChatV2Profile:
+			// No time-bounded declaration: the policy already bound the API-observed
+			// witness, and every request requires zero data retention itself.
 		case runtimeconfig.OllamaSigninChatProfile:
 			// No time-bounded declaration: the policy already bound the loopback
 			// endpoint, anonymous mode and Ollama cloud model suffix.
@@ -146,7 +149,7 @@ func NewOpenAIRouteDispatcherCatalogWithOptions(inventory runtimeconfig.RouteInv
 		var goAuthority *openai.OpenCodeGoRouteAuthority
 		var consoleAuthority *openai.OpenCodeConsoleRouteAuthority
 		var profileClock artifact.Clock
-		if connection.RequestProfile() == runtimeconfig.OpenRouterZDRChatProfile {
+		if connection.RequestProfile() == runtimeconfig.OpenRouterZDRChatProfile || connection.RequestProfile() == runtimeconfig.OpenRouterZDRChatV2Profile {
 			authority := connection.BrokeredAuthority()
 			var route provider.RouteReference
 			for _, candidate := range inventory.Candidates() {
@@ -156,6 +159,9 @@ func NewOpenAIRouteDispatcherCatalogWithOptions(inventory runtimeconfig.RouteInv
 				}
 			}
 			profileAuthority = &openai.OpenRouterRouteAuthority{Route: route, RouteRecordIdentity: authority.RouteRecordIdentity(), EvidenceIdentity: authority.EvidenceManifestDigest(), AccountPolicyIdentity: authority.AccountPolicyIdentity(), CredentialIdentity: connection.CredentialIdentity(), TenantID: authority.TenantID(), RepositoryID: authority.RepositoryID(), ProviderSlug: authority.ProviderSlug(), ValidFrom: authority.ValidFrom(), ValidUntil: authority.ValidUntil()}
+			if authority.Observed() {
+				profileAuthority.ProviderSlugs = append([]string{}, authority.ProviderSlugs()...)
+			}
 			profileClock = options.Clock
 		}
 		if connection.RequestProfile() == runtimeconfig.OpenCodeGoChatProfile {
