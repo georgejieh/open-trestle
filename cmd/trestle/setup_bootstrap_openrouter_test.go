@@ -78,29 +78,47 @@ func TestSetupBootstrapOpenRouterRepeatIsIdempotentPerObservation(t *testing.T) 
 	}
 }
 
-// openRouterRefusingTransport answers every model request with HTTP 404, as
-// OpenRouter does when no endpoint may take the request.
-type openRouterRefusingTransport struct{ requests int }
+// openRouterRefusingTransport answers every model request with one HTTP
+// refusal: 404 is how OpenRouter refuses a request no allowed endpoint can
+// take ("No endpoints found matching your data policy"), and 400 how it
+// refuses an unknown model ID. Both bodies are synthetic and must never be
+// shown.
+type openRouterRefusingTransport struct {
+	status, requests int
+}
 
 func (r *openRouterRefusingTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	r.requests++
-	return &http.Response{StatusCode: http.StatusNotFound, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"error":{"message":"synthetic provider text that must never be shown"}}`)), Request: request}, nil
+	return &http.Response{StatusCode: r.status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"error":{"message":"synthetic provider text that must never be shown"}}`)), Request: request}, nil
 }
 
-func TestOpenRouterNotFoundNamesTheZDRSetting(t *testing.T) {
+func openRouterRefusedReview(t *testing.T, status int) (int, string, *openRouterRefusingTransport) {
+	t.Helper()
 	remoteScannerInstalled(t)
 	t.Setenv("OPEN_TRESTLE_PROVIDER_REMOTE_TEST", remoteTestKey)
 	args, _ := remoteBootstrapArgs(t, "openrouter-zdr")
 	ready, _ := remoteBootstrapInvoke(t, args, 0)
-	transport := &openRouterRefusingTransport{}
+	transport := &openRouterRefusingTransport{status: status}
 	localReviewModelHTTPClient = &http.Client{Transport: transport, Timeout: time.Minute}
 	localReviewModelHTTPClientIdentity = localModelDigest([]byte("offline refusing OpenRouter fixture"))
 	t.Cleanup(func() { localReviewModelHTTPClient, localReviewModelHTTPClientIdentity = nil, "" })
 	var stdout, stderr bytes.Buffer
 	code := run(ready.ReviewCommand[1:], &stdout, &stderr)
-	text := stdout.String() + stderr.String()
+	return code, stdout.String() + stderr.String(), transport
+}
+
+func TestOpenRouterNotFoundNamesTheZDRSetting(t *testing.T) {
+	code, text, transport := openRouterRefusedReview(t, http.StatusNotFound)
 	if code != 4 || transport.requests != 1 || !strings.Contains(text, "failure: policy (task candidates): provider_no_allowed_endpoint") || !strings.Contains(text, "OpenRouter account or key settings") || strings.Contains(text, "synthetic provider text") {
 		t.Fatalf("OpenRouter 404 exit=%d requests=%d:\n%s", code, transport.requests, text)
+	}
+}
+
+// An unknown model ID (HTTP 400) is an invalid request, not a ZDR refusal.
+func TestOpenRouterBadRequestIsNotAZDRRefusal(t *testing.T) {
+	code, text, transport := openRouterRefusedReview(t, http.StatusBadRequest)
+	if code == 0 || transport.requests == 0 || !strings.Contains(text, "failure: ") || strings.Contains(text, "provider_no_allowed_endpoint") || strings.Contains(text, "zero data retention") || strings.Contains(text, "provider_model_unavailable") || strings.Contains(text, "synthetic provider text") {
+		t.Fatalf("OpenRouter 400 exit=%d requests=%d:\n%s", code, transport.requests, text)
 	}
 }
 
