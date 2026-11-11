@@ -256,6 +256,17 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 		_, _ = io.WriteString(w, refusal.body)
 		return
 	}
+	// refuse_429_once rate-limits the first request it is sent and then
+	// answers as usual, so a same-route retry succeeds; refuse_429_twice
+	// rate-limits the first two, so the last allowed retry succeeds.
+	if m.mode == "refuse_429_once" && call == 1 || m.mode == "refuse_429_twice" && call <= 2 {
+		refusal := localModelRefusals["refuse_429"]
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Retry-After", "1")
+		w.WriteHeader(refusal.status)
+		_, _ = io.WriteString(w, refusal.body)
+		return
+	}
 
 	if m.removedOnly {
 		m.respond(t, w, packet, removedOnlyModelResult(t, m.model, packet))

@@ -214,6 +214,48 @@ func TestLocalModelReviewNamesProviderRefusals(t *testing.T) {
 	assertNoProviderRefusalText(t, text)
 }
 
+// A request the provider rate-limits once is retried on the same route after
+// its Retry-After, inside the task's one attempt, and the review completes;
+// three rate limits in a row fail it as transient after two retries.
+func TestLocalModelReviewRetriesARateLimitedRequest(t *testing.T) {
+	for _, test := range []struct {
+		name                     string
+		generation, verification string
+	}{
+		{"generation", "refuse_429_once", ""},
+		{"verification", "", "refuse_429_once"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, generationMode: test.generation, verificationMode: test.verification})
+			result, stdout := localModelExecute(t, f, f.args, 4)
+			gc, _ := f.generation.snapshot()
+			vc, _ := f.verification.snapshot()
+			if result.Status != "findings" || result.RunStatus != "succeeded" || len(result.Diagnostics.Findings) != 1 {
+				t.Fatalf("status=%s run=%s findings=%d", result.Status, result.RunStatus, len(result.Diagnostics.Findings))
+			}
+			// The rate-limited side was sent its request twice: refused, then retried.
+			want := map[string][2]int{"generation": {2, 1}, "verification": {1, 2}}[test.name]
+			if gc != want[0] || vc != want[1] {
+				t.Fatalf("requests generation=%d verification=%d, want %v", gc, vc, want)
+			}
+			assertNoProviderRefusalText(t, stdout)
+		})
+	}
+	// Both model tasks using both retries still read back as one result.
+	both := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, generationMode: "refuse_429_twice", verificationMode: "refuse_429_twice"})
+	if result, _ := localModelExecute(t, both, both.args, 4); result.RunStatus != "succeeded" || len(result.Diagnostics.Findings) != 1 {
+		t.Fatalf("two retries on each task: run=%s findings=%d", result.RunStatus, len(result.Diagnostics.Findings))
+	}
+	f := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, generationMode: "refuse_429"})
+	var stdout, stderr bytes.Buffer
+	if code := run(f.args, &stdout, &stderr); code != 1 || !strings.Contains(stdout.String(), `"failure_detail":"provider_rate_limited"`) {
+		t.Fatalf("exit=%d stdout=%s", code, stdout.String())
+	}
+	if calls, _ := f.generation.snapshot(); calls != 1+2 {
+		t.Fatalf("rate-limited route was sent %d requests, want 3", calls)
+	}
+}
+
 func assertNoProviderRefusalText(t *testing.T, output string) {
 	t.Helper()
 	for _, forbidden := range []string{localModelRefusalText, "usage credits", "ollama.com/plans", "retired on", "glm-5.3-flash", "not found, try pulling"} {
