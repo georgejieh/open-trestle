@@ -97,7 +97,8 @@ func TestDaemonLocalModelWorkersSettledRunsStartAfterRetention(t *testing.T) {
 			// where startup proves the tail from their bytes.
 			advances := []time.Duration{25 * time.Hour}
 			if strings.HasSuffix(mode, "after-rate-limits") {
-				advances = []time.Duration{time.Hour, 24 * time.Hour}
+				// The fixture retains a packet for an hour.
+				advances = []time.Duration{time.Minute, 25 * time.Hour}
 			}
 			for _, advance := range advances {
 				clock.mu.Lock()
