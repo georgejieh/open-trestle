@@ -180,6 +180,29 @@ identity, single slug or validity window. No v8 JSON Schema is published. The
 adapter configuration identity binds the slug list under adapter preimage
 version 3.
 
+## How a reply is read
+
+The answer part of a reply is decoded strictly: the identity, the one choice,
+its message and the usage. An unknown member there is refused, and so is a
+choice that reports an error, returns images, or whose reasoning ran a server
+tool. The message's `reasoning` text and `reasoning_details` summaries are
+bounded and dropped; they never become output. `native_finish_reason` is
+bounded and ignored. The usage must report prompt, completion and total
+tokens, no BYOK charge, no tool use and no deferred tool turns, and cached
+prompt tokens may not exceed prompt tokens. The completion breakdown
+(reasoning, audio, image and prediction counts) is checked as unsigned
+integers and dropped without being compared with the completion count, because
+upstream providers report it inconsistently and settlement does not use it.
+
+OpenRouter's routing metadata around the answer is not decoded strictly,
+because OpenRouter adds members there that its published schema does not list
+(live replies carry a top-level `provider`). The upstream `provider` name must be
+a short printable string. If `openrouter_metadata.pipeline` lists any stage
+other than an account `guardrail` (a plugin, server tool, response healing or
+context compression), something changed what the model saw or answered, and
+the reply is refused. Other envelope members, such as `alignment` and
+`safeguard_results`, are not read.
+
 ## When OpenRouter refuses a request
 
 The review classifies a refusal by its HTTP status alone and never reads the

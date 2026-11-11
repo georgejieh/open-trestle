@@ -9,9 +9,41 @@ import (
 	"github.com/georgejieh/open-trestle/internal/provider"
 )
 
+// openRouterChatResponseWire is the part of an OpenRouter reply that carries
+// the answer: its identity, the choice and the usage. It is decoded strictly;
+// an unknown member inside it is refused. OpenRouter's routing metadata around
+// it (provider, openrouter_metadata, alignment, safeguard_results and members
+// it adds later) is read only by validateOpenRouterEnvelope.
 type openRouterChatResponseWire struct {
 	chatResponseWire
-	Usage *openRouterChatUsageWire `json:"usage"`
+	Choices []openRouterChatChoiceWire `json:"choices"`
+	Usage   *openRouterChatUsageWire   `json:"usage"`
+}
+
+// openRouterCoreMembers are the top-level members decoded strictly.
+var openRouterCoreMembers = []string{"id", "object", "created", "model", "choices", "usage", "system_fingerprint", "service_tier", "timings"}
+
+type openRouterChatChoiceWire struct {
+	chatChoiceWire
+	Message            openRouterChatMessageWire `json:"message"`
+	NativeFinishReason *string                   `json:"native_finish_reason"`
+	Error              json.RawMessage           `json:"error"`
+}
+
+type openRouterChatMessageWire struct {
+	chatMessageWire
+	Reasoning        *string           `json:"reasoning"`
+	ReasoningDetails []json.RawMessage `json:"reasoning_details"`
+	Images           []json.RawMessage `json:"images"`
+	Model            *string           `json:"model"`
+	Name             *string           `json:"name"`
+}
+
+type openRouterDeferredToolsWire struct {
+	Turns            *uint64 `json:"turns"`
+	PromptTokens     *uint64 `json:"prompt_tokens"`
+	CompletionTokens *uint64 `json:"completion_tokens"`
+	TotalTokens      *uint64 `json:"total_tokens"`
 }
 
 type openRouterChatUsageWire struct {
@@ -24,6 +56,7 @@ type openRouterChatUsageWire struct {
 	CostDetails             *openRouterCostDetailsWire          `json:"cost_details"`
 	IsBYOK                  json.RawMessage                     `json:"is_byok"`
 	ServerToolUseDetails    *openRouterServerToolUseDetailsWire `json:"server_tool_use_details"`
+	DeferredToolsDetails    *openRouterDeferredToolsWire        `json:"deferred_tools_details"`
 }
 
 type openRouterPromptDetailsWire struct {
@@ -50,6 +83,7 @@ func (c *openRouterPromptCount) UnmarshalJSON(raw []byte) error {
 type openRouterCompletionDetailsWire struct {
 	ReasoningTokens          *uint64 `json:"reasoning_tokens"`
 	AudioTokens              *uint64 `json:"audio_tokens"`
+	ImageTokens              *uint64 `json:"image_tokens"`
 	AcceptedPredictionTokens *uint64 `json:"accepted_prediction_tokens"`
 	RejectedPredictionTokens *uint64 `json:"rejected_prediction_tokens"`
 }
@@ -85,7 +119,21 @@ func normalizeOpenRouterChatResponse(content []byte, route provider.RouteReferen
 	if len(content) == 0 || len(content) > maximumResponseBytes || !utf8.Valid(content) || validateChatJSONShape(content) != nil {
 		return provider.Response{}, ErrInvalidConfig
 	}
-	decoder := json.NewDecoder(bytes.NewReader(content))
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(content, &envelope) != nil || envelope == nil || validateOpenRouterEnvelope(envelope) != nil {
+		return provider.Response{}, ErrInvalidConfig
+	}
+	core := make(map[string]json.RawMessage, len(openRouterCoreMembers))
+	for _, member := range openRouterCoreMembers {
+		if raw, ok := envelope[member]; ok {
+			core[member] = raw
+		}
+	}
+	coreBody, err := json.Marshal(core)
+	if err != nil {
+		return provider.Response{}, ErrInvalidConfig
+	}
+	decoder := json.NewDecoder(bytes.NewReader(coreBody))
 	decoder.DisallowUnknownFields()
 	var wire openRouterChatResponseWire
 	if decoder.Decode(&wire) != nil || requireJSONEOF(decoder) != nil {
@@ -96,12 +144,97 @@ func normalizeOpenRouterChatResponse(content []byte, route provider.RouteReferen
 		return provider.Response{}, err
 	}
 	wire.chatResponseWire.Usage = usage
+	wire.chatResponseWire.Choices = make([]chatChoiceWire, len(wire.Choices))
+	for i, choice := range wire.Choices {
+		if !validOpenRouterChoice(choice) {
+			return provider.Response{}, ErrInvalidConfig
+		}
+		// The reasoning trace and OpenRouter's choice metadata are validated
+		// and discarded, never treated as output.
+		choice.chatChoiceWire.Message = choice.Message.chatMessageWire
+		wire.chatResponseWire.Choices[i] = choice.chatChoiceWire
+	}
 	// Reuse the unchanged generic response/content and integer-usage checks.
 	generic, err := json.Marshal(wire.chatResponseWire)
 	if err != nil {
 		return provider.Response{}, ErrInvalidConfig
 	}
 	return normalizeChatResponse(generic, route)
+}
+
+// validateOpenRouterEnvelope checks the routing metadata OpenRouter puts
+// around the answer. The upstream provider's name must be a short printable
+// string. A request pipeline stage other than an account guardrail (a plugin,
+// server tool, response healing or context compression) changed what the
+// model saw or what it answered, so the reply is refused. Other envelope
+// members carry no answer and are not read.
+func validateOpenRouterEnvelope(envelope map[string]json.RawMessage) error {
+	if raw, ok := envelope["provider"]; ok && !nullOrAbsent(raw) {
+		var name string
+		if json.Unmarshal(raw, &name) != nil || !validOpenRouterLabel(name, 128) {
+			return ErrInvalidConfig
+		}
+	}
+	if raw, ok := envelope["openrouter_metadata"]; ok && !nullOrAbsent(raw) {
+		var metadata struct {
+			Pipeline []struct {
+				Type string `json:"type"`
+			} `json:"pipeline"`
+		}
+		if json.Unmarshal(raw, &metadata) != nil {
+			return ErrInvalidConfig
+		}
+		for _, stage := range metadata.Pipeline {
+			if stage.Type != "guardrail" {
+				return ErrInvalidConfig
+			}
+		}
+	}
+	return nil
+}
+
+// validOpenRouterChoice checks OpenRouter's additions to a choice and its
+// message. A choice that reports a provider error, returns images or ran a
+// server tool during reasoning is refused; reasoning text and summaries are
+// bounded and dropped.
+func validOpenRouterChoice(choice openRouterChatChoiceWire) bool {
+	if !nullOrAbsent(choice.Error) || choice.NativeFinishReason != nil && !validOpenRouterLabel(*choice.NativeFinishReason, 64) {
+		return false
+	}
+	message := choice.Message
+	if message.Reasoning != nil && len(*message.Reasoning) > maximumResponseBytes || len(message.Images) != 0 ||
+		message.Model != nil && !validOpenRouterLabel(*message.Model, 512) || message.Name != nil && !validOpenRouterLabel(*message.Name, 512) ||
+		len(message.ReasoningDetails) > maximumOutputItems {
+		return false
+	}
+	for _, raw := range message.ReasoningDetails {
+		var detail struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(raw, &detail) != nil {
+			return false
+		}
+		switch detail.Type {
+		case "reasoning.summary", "reasoning.encrypted", "reasoning.text":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// validOpenRouterLabel accepts a non-empty printable ASCII label of at most
+// limit bytes.
+func validOpenRouterLabel(value string, limit int) bool {
+	if value == "" || len(value) > limit {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		if value[i] < 0x20 || value[i] > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 func normalizeOpenRouterChatUsage(wire *openRouterChatUsageWire) (*chatUsageWire, error) {
@@ -114,6 +247,13 @@ func normalizeOpenRouterChatUsage(wire *openRouterChatUsageWire) (*chatUsageWire
 	if details := wire.CostDetails; details != nil {
 		if !validOpenRouterCost(details.UpstreamInferencePromptCost, true, false) || !validOpenRouterCost(details.UpstreamInferenceCompletionsCost, true, false) || !validOpenRouterCost(details.UpstreamInferenceCost, false, false) || !validOpenRouterCost(details.ServerToolCost, false, true) {
 			return nil, ErrInvalidConfig
+		}
+	}
+	if deferred := wire.DeferredToolsDetails; deferred != nil {
+		for _, count := range []*uint64{deferred.Turns, deferred.PromptTokens, deferred.CompletionTokens, deferred.TotalTokens} {
+			if count != nil && *count != 0 {
+				return nil, ErrInvalidConfig
+			}
 		}
 	}
 	if tools := wire.ServerToolUseDetails; tools != nil {
@@ -132,14 +272,12 @@ func normalizeOpenRouterChatUsage(wire *openRouterChatUsageWire) (*chatUsageWire
 		}
 		generic.PromptTokensDetails = &chatPromptDetailsWire{CachedTokens: uint64(details.CachedTokens), AudioTokens: uint64(details.AudioTokens)}
 	}
-	if details := wire.CompletionTokensDetails; details != nil {
-		counts := []*uint64{details.ReasoningTokens, details.AudioTokens, details.AcceptedPredictionTokens, details.RejectedPredictionTokens}
-		for _, count := range counts {
-			if count != nil && *count > *wire.CompletionTokens {
-				return nil, ErrInvalidConfig
-			}
-		}
-	}
+	// The completion breakdown (reasoning, audio, image and prediction counts)
+	// is decoded as unsigned integers and then dropped: settlement uses only
+	// the prompt, completion and total counts. It is not compared with the
+	// completion count, because upstream providers report it inconsistently
+	// (on 2026-11-11 a reply billed for 95 completion tokens reported 99
+	// reasoning tokens), and a breakdown nothing reads must not void an answer.
 	return generic, nil
 }
 
