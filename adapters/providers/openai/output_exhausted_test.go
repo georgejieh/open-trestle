@@ -33,7 +33,9 @@ func TestChatLengthFinishClassification(t *testing.T) {
 		{"empty", `""`, true},
 		{"whitespace", `" \n\t"`, true},
 		{"null", `null`, true},
-		{"truncated answer", `"{\"schema_version\":1,\"verdicts\":["`, false},
+		// An answer the model did not finish also spent the allowance.
+		{"truncated answer", `"{\"schema_version\":1,\"verdicts\":["`, true},
+		{"complete answer", `"{\"schema_version\":1,\"verdicts\":[]}"`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			body := `{"id":"chatcmpl-1","object":"chat.completion","model":"model-a","choices":[{"index":0,"finish_reason":"length","message":{"role":"assistant","content":` + tc.content + `}}],"usage":{"prompt_tokens":1,"completion_tokens":4096,"total_tokens":4097}}`
@@ -41,10 +43,10 @@ func TestChatLengthFinishClassification(t *testing.T) {
 			if tc.exhausted != errors.Is(err, errModelOutputExhausted) {
 				t.Fatalf("exhausted=%v err=%v", tc.exhausted, err)
 			}
-			// Partial output is still a length-finished response for the
-			// strict document parser to refuse, not an exhausted allowance.
+			// A complete JSON answer is still a length-finished response for
+			// the strict document parser to refuse, not an exhausted allowance.
 			if !tc.exhausted && (err != nil || response.FinishReason() != provider.ResponseFinishLength) {
-				t.Fatalf("truncated answer err=%v finish=%v", err, response.FinishReason())
+				t.Fatalf("complete answer err=%v finish=%v", err, response.FinishReason())
 			}
 		})
 	}

@@ -129,7 +129,9 @@ func TestChatCompletionsPreservesLengthAndRefusal(t *testing.T) {
 		want                           provider.ResponseFinishReason
 		kind                           provider.ResponsePartKind
 	}{
-		{"length", "partial", "", "length", provider.ResponseFinishLength, provider.ResponsePartAssistantText},
+		// Partial text at a length stop is an exhausted allowance
+		// (length_stop_partial_test.go); a complete JSON answer keeps it.
+		{"length", `{"ok":true}`, "", "length", provider.ResponseFinishLength, provider.ResponsePartStructuredData},
 		{"refusal", "", "blocked", "stop", provider.ResponseFinishStop, provider.ResponsePartRefusal},
 		{"filter", "", "blocked", "content_filter", provider.ResponseFinishContentFilter, provider.ResponsePartRefusal},
 	} {

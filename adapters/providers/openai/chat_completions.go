@@ -131,7 +131,9 @@ func normalizeChatResponse(content []byte, route provider.RouteReference) (provi
 	if message.Role != "assistant" || message.ReasoningContent != nil && (!utf8.ValidString(*message.ReasoningContent) || len(*message.ReasoningContent) > maximumResponseBytes) || len(message.Annotations) != 0 || len(message.ToolCalls) != 0 || !nullOrAbsent(message.FunctionCall) || !nullOrAbsent(message.Audio) {
 		return provider.Response{}, ErrInvalidConfig
 	}
-	if finish == provider.ResponseFinishLength && (message.Refusal == nil || *message.Refusal == "") && (message.Content == nil || strings.TrimSpace(*message.Content) == "") {
+	// A length stop without a complete JSON answer (none, or one the model
+	// did not finish) spent the output allowance before the answer was done.
+	if finish == provider.ResponseFinishLength && (message.Refusal == nil || *message.Refusal == "") && (message.Content == nil || !completeJSONAnswer(*message.Content)) {
 		return provider.Response{}, exhaustedWithUsage(normalizeChatUsage(wire.Usage))
 	}
 	item := messageContentWire{Type: "output_text"}
@@ -151,6 +153,12 @@ func normalizeChatResponse(content []byte, route provider.RouteReference) (provi
 		return provider.Response{}, err
 	}
 	return provider.NewResponse(provider.CapabilityReviewV1, finish, []provider.ResponsePart{part}, usage)
+}
+
+// completeJSONAnswer reports whether text is one complete JSON value, the
+// form normalizeContent records as structured data.
+func completeJSONAnswer(text string) bool {
+	return strings.TrimSpace(text) != "" && json.Valid([]byte(text))
 }
 
 func normalizeChatUsage(wire *chatUsageWire) (provider.RouteTokenUsage, error) {

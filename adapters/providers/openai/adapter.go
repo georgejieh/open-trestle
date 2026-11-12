@@ -729,11 +729,12 @@ func retryAfterMilliseconds(value string) uint32 {
 var errInvalidResponseBody = errors.New("invalid OpenAI response body")
 
 // errModelOutputExhausted is a completed response that stopped at the output
-// token limit with no answer text, typically because a reasoning model spent
-// the whole allowance on its trace. It is classified apart from malformed
+// token limit with no answer text, or with answer text that is not a complete
+// JSON value, typically because a reasoning model spent most or all of the
+// allowance on its trace. It is classified apart from malformed
 // output so operators can see that the output allowance, not the model's
 // document shape, ended the request.
-var errModelOutputExhausted = errors.New("model output allowance exhausted before an answer")
+var errModelOutputExhausted = errors.New("model output allowance exhausted before the answer was finished")
 
 // outputExhaustedError is errModelOutputExhausted with the usage the provider
 // reported on the exhausted response. The usage passed the same checks as a
@@ -761,6 +762,22 @@ func exhaustedUsage(err error) provider.RouteTokenUsage {
 		return exhausted.usage
 	}
 	return provider.NewUnknownRouteTokenUsage()
+}
+
+// unfinishedAnswer reports whether the answer parts of a length-stopped
+// response hold text that is not a complete JSON value and no refusal: an
+// answer the model did not finish before the output limit.
+func unfinishedAnswer(parts []provider.ResponsePart) bool {
+	text := false
+	for _, part := range parts {
+		switch part.Kind() {
+		case provider.ResponsePartRefusal:
+			return false
+		case provider.ResponsePartAssistantText:
+			text = true
+		}
+	}
+	return text
 }
 
 // errNoOutputParts is a response with no answer part (for example only a
@@ -881,7 +898,7 @@ func normalizeResponse(content []byte, route provider.RouteReference) (provider.
 		return provider.Response{}, err
 	}
 	parts, err := normalizeOutput(wire.Output, wire.Status)
-	if errors.Is(err, errNoOutputParts) && finish == provider.ResponseFinishLength {
+	if finish == provider.ResponseFinishLength && (errors.Is(err, errNoOutputParts) || err == nil && unfinishedAnswer(parts)) {
 		return provider.Response{}, exhaustedWithUsage(normalizeUsage(wire.Usage))
 	}
 	if errors.Is(err, errNoOutputParts) {
