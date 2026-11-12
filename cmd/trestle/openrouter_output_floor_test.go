@@ -139,10 +139,11 @@ func TestSetupBootstrapOpenRouterRecordsTheOutputFloor(t *testing.T) {
 		output         string
 		generation     []string
 		excluded       []string
+		timeout        string
 	}{
-		{"default target", "fixture/glm", nil, 16384, `"max_output_tokens":32768`, []string{"fx-a", "fx-b"}, []string{"fx-sf", "fx-do"}},
-		{"flag wins", "fixture/glm", []string{"--max-output-tokens", "8192"}, 8192, `"max_output_tokens":8192`, []string{"fx-a", "fx-b", "fx-sf"}, []string{"fx-do"}},
-		{"fallback", "fixture/short", nil, 4096, `"max_output_tokens":4096`, []string{"fx-a", "fx-b", "fx-sf", "fx-do"}, nil},
+		{"default target", "fixture/glm", nil, 16384, `"max_output_tokens":32768`, []string{"fx-a", "fx-b"}, []string{"fx-sf", "fx-do"}, "12m"},
+		{"flag wins", "fixture/glm", []string{"--max-output-tokens", "8192"}, 8192, `"max_output_tokens":8192`, []string{"fx-a", "fx-b", "fx-sf"}, []string{"fx-do"}, "10m"},
+		{"fallback", "fixture/short", nil, 4096, `"max_output_tokens":4096`, []string{"fx-a", "fx-b", "fx-sf", "fx-do"}, nil, "10m"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			args, dir := floorBootstrapArgs(t, "openrouter-zdr", test.verifier, test.extra...)
@@ -163,6 +164,15 @@ func TestSetupBootstrapOpenRouterRecordsTheOutputFloor(t *testing.T) {
 			}
 			if !slices.Equal(slugs, test.generation) || !slices.Equal(excluded, append([]string{}, test.excluded...)) || len(observation["zdr_endpoints"].([]any)) != len(test.generation) {
 				t.Fatalf("pinned %v, recorded as left out %v", slugs, excluded)
+			}
+			// The review command leaves room for two requests that each run to
+			// the deadline their allowance gives them.
+			command := []string{}
+			for _, argument := range saved.bootstrap["review_command"].([]any) {
+				command = append(command, argument.(string))
+			}
+			if index := slices.Index(command, "--timeout"); index < 0 || command[index+1] != test.timeout {
+				t.Fatalf("review command %v, want --timeout %s", command, test.timeout)
 			}
 		})
 	}
@@ -224,4 +234,12 @@ func TestInitOpenRouterSaysWhichEndpointsTheOutputFloorLeavesOut(t *testing.T) {
 		t.Fatalf("an unreachable flag: exit=%d %s", result.code, result.stderr)
 	}
 	initAssertAbsent(t, dir)
+}
+
+func TestRemoteReviewTimeoutCoversTwoRequestsAtTheirDeadline(t *testing.T) {
+	for allowance, want := range map[uint64]string{4096: "10m", 8192: "10m", 9000: "11m", 10240: "12m", 16384: "12m", 1 << 40: "12m"} {
+		if got := remoteReviewTimeout(allowance); got != want {
+			t.Fatalf("remoteReviewTimeout(%d) = %s, want %s", allowance, got, want)
+		}
+	}
 }

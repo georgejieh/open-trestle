@@ -15,10 +15,12 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
 
+	"github.com/georgejieh/open-trestle/adapters/providers/openai"
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/internal/fileauthority"
 	"github.com/georgejieh/open-trestle/internal/gateway"
@@ -207,6 +209,16 @@ func remoteDataRetention(policy runtimeconfig.RuntimePolicy) string {
 		value = "required_per_request"
 	}
 	return value
+}
+
+// remoteReviewTimeout is the --timeout of the review command: ten minutes,
+// or room for two model requests that each run to the deadline the default
+// HTTP client gives their output allowance plus two minutes for the rest of
+// the review, within the command's fifteen-minute bound.
+func remoteReviewTimeout(allowance uint64) string {
+	request := openai.DefaultClientRequestTimeout(uint32(min(allowance, 1<<31)))
+	timeout := max(10*time.Minute, min(15*time.Minute, 2*request+2*time.Minute))
+	return strconv.FormatInt(int64((timeout+time.Minute-1)/time.Minute), 10) + "m"
 }
 
 func writeRemoteBootstrapRefusal(stdout, stderr io.Writer, reason string) int {
@@ -712,7 +724,7 @@ func initializeRemoteSetupBootstrap(ctx context.Context, dir string, values map[
 		}
 		observed["generation"], observed["verification"] = tags[0], tags[1]
 	}
-	reviewArgs := []string{"--checkout", checkout, "--base", source.base, "--head", source.head, "--repository-authority", value("repository-authority"), "--repository-namespace", value("repository-namespace"), "--repository-name", value("repository-name"), "--tenant", value("tenant"), "--repository", value("repository"), "--route-inventory", filepath.Join(dir, "routes.json"), "--runtime-policy", filepath.Join(dir, "policy.json"), "--egress", string(localreview.EgressPolicyApproved), "--timeout", "10m", "--format", "text"}
+	reviewArgs := []string{"--checkout", checkout, "--base", source.base, "--head", source.head, "--repository-authority", value("repository-authority"), "--repository-namespace", value("repository-namespace"), "--repository-name", value("repository-name"), "--tenant", value("tenant"), "--repository", value("repository"), "--route-inventory", filepath.Join(dir, "routes.json"), "--runtime-policy", filepath.Join(dir, "policy.json"), "--egress", string(localreview.EgressPolicyApproved), "--timeout", remoteReviewTimeout(reviewOutputTokens), "--format", "text"}
 	if _, _, _, _, err := parseLocalModelReview(reviewArgs); err != nil {
 		return errors.New("invalid --tenant, --repository or repository labels for local-git model-review")
 	}

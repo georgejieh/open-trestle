@@ -202,7 +202,7 @@ func TestLocalStructuredOutputFalsePreservesLocalIdentityPreimages(t *testing.T)
 			Credential string `json:"credential"`
 			HTTPClient string `json:"http_client"`
 			Timeout    int64  `json:"timeout_milliseconds"`
-		}{"open-trestle/openai-chat-completions-adapter", 1, config.AdapterID, config.ProviderID, config.ConnectionID, config.Zone.String(), config.ContentLoggingMode.String(), config.Endpoint, config.CredentialIdentity, defaultHTTPClientIdentity(), defaultRequestTimeout.Milliseconds()})
+		}{"open-trestle/openai-chat-completions-adapter", 1, config.AdapterID, config.ProviderID, config.ConnectionID, config.Zone.String(), config.ContentLoggingMode.String(), config.Endpoint, config.CredentialIdentity, defaultHTTPClientIdentity(), maximumRequestTimeout.Milliseconds()})
 		if noAuth {
 			preimage, _ = json.Marshal(struct {
 				Contract      string          `json:"contract"`

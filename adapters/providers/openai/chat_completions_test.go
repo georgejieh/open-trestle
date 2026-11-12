@@ -89,7 +89,7 @@ func TestChatCompletionsProtocolIdentityAndResponsesCompatibility(t *testing.T) 
 		Credential          string `json:"credential"`
 		HTTPClient          string `json:"http_client"`
 		TimeoutMilliseconds int64  `json:"timeout_milliseconds"`
-	}{"open-trestle/openai-responses-adapter", 4, config.AdapterID, config.ProviderID, config.ConnectionID, config.Zone.String(), config.ContentLoggingMode.String(), config.Endpoint, config.CredentialIdentity, defaultHTTPClientIdentity(), defaultRequestTimeout.Milliseconds()})
+	}{"open-trestle/openai-responses-adapter", 4, config.AdapterID, config.ProviderID, config.ConnectionID, config.Zone.String(), config.ContentLoggingMode.String(), config.Endpoint, config.CredentialIdentity, defaultHTTPClientIdentity(), maximumRequestTimeout.Milliseconds()})
 	digest := sha256.Sum256(encoded)
 	if a.ConfigurationIdentity() != hex.EncodeToString(digest[:]) {
 		t.Fatal("Responses identity changed")

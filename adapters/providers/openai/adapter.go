@@ -28,14 +28,19 @@ import (
 )
 
 const (
-	defaultEndpoint       = "https://api.openai.com/v1"
-	defaultRequestTimeout = 2 * time.Minute
-	maximumRequestTimeout = 5 * time.Minute
-	maximumResponseBytes  = 8 << 20
-	maximumErrorBodyBytes = 4096
-	maximumAPIKeyBytes    = 4096
-	maximumHeaderBytes    = 64 << 10
-	maximumOutputItems    = 64
+	defaultEndpoint = "https://api.openai.com/v1"
+	// defaultRequestTimeout is the timeout a configured client that sets none
+	// gets. The default client gives one request this much per
+	// requestTimeoutOutputTokens of its output allowance, and at least this
+	// much, up to maximumRequestTimeout.
+	defaultRequestTimeout      = 2 * time.Minute
+	requestTimeoutOutputTokens = 4096
+	maximumRequestTimeout      = 5 * time.Minute
+	maximumResponseBytes       = 8 << 20
+	maximumErrorBodyBytes      = 4096
+	maximumAPIKeyBytes         = 4096
+	maximumHeaderBytes         = 64 << 10
+	maximumOutputItems         = 64
 )
 
 var (
@@ -163,6 +168,9 @@ type Adapter struct {
 	httpClientIdentity       string
 	configurationIdentity    string
 	httpClient               *http.Client
+	// scaledTimeout reports the default client, whose per-request deadline
+	// grows with the request's output allowance (DefaultClientRequestTimeout).
+	scaledTimeout bool
 }
 
 // New validates configuration without retrieving credentials or making a request.
@@ -217,6 +225,11 @@ func New(config Config) (*Adapter, error) {
 	if err != nil {
 		return nil, err
 	}
+	if config.HTTPClient == nil {
+		// The default client's own timeout is only the outer bound; each
+		// request gets the deadline its output allowance needs.
+		client.Timeout = maximumRequestTimeout
+	}
 	endpointCopy := *endpoint
 	endpointCopy.Path = strings.TrimSuffix(endpointCopy.Path, "/")
 	adapter := &Adapter{
@@ -238,6 +251,7 @@ func New(config Config) (*Adapter, error) {
 		credentialIdentity:       strings.Clone(config.CredentialIdentity),
 		httpClientIdentity:       strings.Clone(httpClientIdentity),
 		httpClient:               client,
+		scaledTimeout:            config.HTTPClient == nil,
 	}
 	if !adapter.validServiceProfile() || !adapter.serviceProfileCurrent() {
 		return nil, ErrInvalidConfig
@@ -343,16 +357,32 @@ func deriveConfigurationIdentity(a *Adapter) string {
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }
+
+// defaultHTTPClientIdentity binds the default client: its outer timeout, the
+// per-request deadline rule of DefaultClientRequestTimeout, the header bound
+// and the minimum TLS version. Version 2 bound a fixed two-minute timeout.
 func defaultHTTPClientIdentity() string {
 	encoded, _ := json.Marshal(struct {
-		Contract       string `json:"contract"`
-		Version        int    `json:"version"`
-		Timeout        int64  `json:"timeout_milliseconds"`
-		MaximumHeaders int64  `json:"maximum_header_bytes"`
-		MinimumTLS     uint16 `json:"minimum_tls_version"`
-	}{"open-trestle/openai-default-http-client", 2, defaultRequestTimeout.Milliseconds(), maximumHeaderBytes, tls.VersionTLS12})
+		Contract              string `json:"contract"`
+		Version               int    `json:"version"`
+		Timeout               int64  `json:"timeout_milliseconds"`
+		RequestTimeout        int64  `json:"request_timeout_milliseconds"`
+		RequestTimeoutTokens  int64  `json:"request_timeout_output_tokens"`
+		MinimumRequestTimeout int64  `json:"minimum_request_timeout_milliseconds"`
+		MaximumHeaders        int64  `json:"maximum_header_bytes"`
+		MinimumTLS            uint16 `json:"minimum_tls_version"`
+	}{"open-trestle/openai-default-http-client", 3, maximumRequestTimeout.Milliseconds(), defaultRequestTimeout.Milliseconds(), requestTimeoutOutputTokens, defaultRequestTimeout.Milliseconds(), maximumHeaderBytes, tls.VersionTLS12})
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
+}
+
+// DefaultClientRequestTimeout is the deadline the default client gives one
+// request whose output allowance is maxOutputTokens: two minutes per 4096
+// tokens of allowance, at least two minutes and at most five. A configured
+// client keeps its own timeout.
+func DefaultClientRequestTimeout(maxOutputTokens uint32) time.Duration {
+	scaled := time.Duration(uint64(defaultRequestTimeout/time.Millisecond)*uint64(maxOutputTokens)/requestTimeoutOutputTokens) * time.Millisecond
+	return min(max(scaled, defaultRequestTimeout), maximumRequestTimeout)
 }
 
 // validSanitizedReceiptReference checks only the closed identity format. Trusted handlers own receipt lineage validation.
@@ -537,7 +567,13 @@ func (a *Adapter) executeWithDispatchProof(
 			return failed(gateway.RouteFailureAuthentication, gateway.RouteReplayNotDispatched, 0)
 		}
 	}
-	request, err := a.newRequest(ctx, credentials, modelSelector(route), maxOutputTokens, instructions, payload)
+	requestContext := ctx
+	if a.scaledTimeout {
+		var cancel context.CancelFunc
+		requestContext, cancel = context.WithTimeout(ctx, DefaultClientRequestTimeout(maxOutputTokens))
+		defer cancel()
+	}
+	request, err := a.newRequest(requestContext, credentials, modelSelector(route), maxOutputTokens, instructions, payload)
 	if err != nil {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
 	}
