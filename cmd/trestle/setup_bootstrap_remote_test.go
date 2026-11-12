@@ -37,6 +37,9 @@ type remoteModelTransport struct {
 	models map[string]string
 	// anonymous expects no Authorization header at all (the Ollama sign-in route).
 	anonymous bool
+	// maxTokens is the review output allowance every request must send; zero
+	// means the default 4096.
+	maxTokens uint32
 	mu        sync.Mutex
 	requests  []string                     // "task:model"
 	providers []map[string]json.RawMessage // each request's provider object, nil when absent
@@ -62,7 +65,11 @@ func (r *remoteModelTransport) RoundTrip(request *http.Request) (*http.Response,
 		Messages  []struct{ Role, Content string } `json:"messages"`
 		Provider  map[string]json.RawMessage       `json:"provider"`
 	}
-	if json.Unmarshal(body, &wire) != nil || wire.MaxTokens != 4096 || wire.Stream || len(wire.Messages) != 2 || wire.Messages[0].Role != "system" || wire.Messages[1].Role != "user" {
+	allowance := r.maxTokens
+	if allowance == 0 {
+		allowance = 4096
+	}
+	if json.Unmarshal(body, &wire) != nil || wire.MaxTokens != allowance || wire.Stream || len(wire.Messages) != 2 || wire.Messages[0].Role != "system" || wire.Messages[1].Role != "user" {
 		return nil, errors.New("remote request lost the bounded Chat Completions wire")
 	}
 	slugs, known := r.models[wire.Model]
@@ -225,14 +232,18 @@ func remoteModelClient(t *testing.T, transport *remoteModelTransport) {
 // `local-git model-review --egress policy-approved` through the production session,
 // fixed sanitizer seam and remote adapters to distinct generation and verifier models.
 func TestSetupBootstrapRemoteDirectPolicyApprovedReview(t *testing.T) {
+	// OpenRouter's allowance is the smallest output a pinned or listed
+	// endpoint of the fixture checker allows (16000, under the 16384 target);
+	// the other providers keep 4096.
 	for _, test := range []struct {
 		provider, target, generator, verifier string
 		models                                map[string]string
+		maxTokens                             uint32
 	}{
-		{"openrouter-zdr", "https://openrouter.ai/api/v1/chat/completions", "vendor/generator", "other/verifier", map[string]string{"vendor/generator": `["fixture-cloud","fixture-cloud/us"]`, "other/verifier": `["fixture-host/fp8"]`}},
-		{"openrouter", "https://openrouter.ai/api/v1/chat/completions", "vendor/generator", "other/verifier", map[string]string{"vendor/generator": "", "other/verifier": ""}},
-		{"ollama-cloud", "https://ollama.com/v1/chat/completions", "gemma4:31b", "qwen3.5:397b", map[string]string{"gemma4:31b": "", "qwen3.5:397b": ""}},
-		{"opencode-go", "https://opencode.ai/inference/go/openai/v1/chat/completions", "vendor/generator", "other/verifier", map[string]string{"vendor/generator": "", "other/verifier": ""}},
+		{"openrouter-zdr", "https://openrouter.ai/api/v1/chat/completions", "vendor/generator", "other/verifier", map[string]string{"vendor/generator": `["fixture-cloud","fixture-cloud/us"]`, "other/verifier": `["fixture-host/fp8"]`}, 16000},
+		{"openrouter", "https://openrouter.ai/api/v1/chat/completions", "vendor/generator", "other/verifier", map[string]string{"vendor/generator": "", "other/verifier": ""}, 16000},
+		{"ollama-cloud", "https://ollama.com/v1/chat/completions", "gemma4:31b", "qwen3.5:397b", map[string]string{"gemma4:31b": "", "qwen3.5:397b": ""}, 0},
+		{"opencode-go", "https://opencode.ai/inference/go/openai/v1/chat/completions", "vendor/generator", "other/verifier", map[string]string{"vendor/generator": "", "other/verifier": ""}, 0},
 	} {
 		t.Run(test.provider, func(t *testing.T) {
 			remoteScannerInstalled(t)
@@ -265,7 +276,7 @@ func TestSetupBootstrapRemoteDirectPolicyApprovedReview(t *testing.T) {
 			if command[0] != "trestle" || !slices.Contains(command, "policy-approved") || slices.Contains(command, "local-only") {
 				t.Fatal("review command does not use the direct policy-approved path")
 			}
-			transport := &remoteModelTransport{t: t, target: test.target, models: test.models}
+			transport := &remoteModelTransport{t: t, target: test.target, models: test.models, maxTokens: test.maxTokens}
 			remoteModelClient(t, transport)
 			reviewArgs := replaceLocalGitChangeValue(command[1:], "--format", "json")
 			var stdout, stderr bytes.Buffer

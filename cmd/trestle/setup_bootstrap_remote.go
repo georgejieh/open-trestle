@@ -641,11 +641,15 @@ func initializeRemoteSetupBootstrap(ctx context.Context, dir string, values map[
 		return errors.New("--context-tokens must be at least 8192 and --output-tokens at least 4096 and no more than the context")
 	}
 	// --max-output-tokens is the per-request review output allowance written to
-	// the runtime policy. It defaults to 4096 and may be raised up to the
-	// declared --output-tokens capacity, for example for reasoning models that
-	// spend part of the allowance before answering. The cost reservation below
-	// uses the same allowance.
+	// the runtime policy. It defaults to 4096, or for OpenRouter to the
+	// allowance planOpenRouter chose for the pinned endpoints, and may be
+	// raised up to the declared --output-tokens capacity, for example for
+	// reasoning models that spend part of the allowance before answering. The
+	// cost reservation below uses the same allowance.
 	reviewOutputTokens := uint64(remoteReviewMaxOutputTokens)
+	if openRouter {
+		reviewOutputTokens = detected.allowance
+	}
 	if set["max-output-tokens"] {
 		reviewOutputTokens = *numbers["max-output-tokens"]
 		if reviewOutputTokens < remoteReviewMaxOutputTokens || reviewOutputTokens > outputTokens {

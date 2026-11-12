@@ -83,7 +83,9 @@ func TestInitOpenRouterBothModelsWithZDRRequiresItByDefault(t *testing.T) {
 	remoteScannerInstalled(t)
 	t.Setenv("OPEN_TRESTLE_PROVIDER_OPENROUTER", remoteTestKey)
 	api := fakeOpenRouter(t, initOpenRouterModels()...)
-	transport := &remoteModelTransport{t: t, target: "https://openrouter.ai/api/v1/chat/completions", models: map[string]string{"vendor/generator": `["fixture-cloud","fixture-cloud/us"]`, "other/verifier": `["fixture-host/fp8"]`}}
+	// The checker's only endpoint allows 16000 output tokens, under the 16384
+	// target, so it is pinned anyway and the allowance is 16000.
+	transport := &remoteModelTransport{t: t, target: "https://openrouter.ai/api/v1/chat/completions", models: map[string]string{"vendor/generator": `["fixture-cloud","fixture-cloud/us"]`, "other/verifier": `["fixture-host/fp8"]`}, maxTokens: 16000}
 	remoteModelClient(t, transport)
 	checkout := remoteBootstrapCheckout(t)
 	dir := filepath.Join(t.TempDir(), "setup")
@@ -104,9 +106,11 @@ func TestInitOpenRouterBothModelsWithZDRRequiresItByDefault(t *testing.T) {
 	}
 	initAssertOutput(t, result, "46 models listed; 2 have zero-data-retention endpoints", "same model as the finder",
 		"zero data retention on 2 endpoints (fixture-cloud, fixture-cloud/us)", "zero data retention on 1 endpoint (fixture-host/fp8)",
-		"Limits: context 128000 and output 16000 tokens, the smallest that any pinned endpoint of either model allows", "Prices: up to $3.30 input and $16.50 output", "[0.49]", "Endpoints that may keep prompts for Safety Retention are left out.",
+		"Limits: context 128000 and output 16000 tokens, the smallest that any pinned endpoint of either model allows",
+		"other/verifier has no zero-data-retention endpoint that allows 16384 output tokens, so its usable endpoints are pinned and each model request may write up to 16000 tokens.",
+		"Prices: up to $3.30 input and $16.50 output", "[0.69]", "Endpoints that may keep prompts for Safety Retention are left out.",
 		"The limit applies to each model request. A review sends two, one to each model, so it costs at most twice the limit", "Most one model request may cost, in USD",
-		"most $0.49 a request ($0.98 a review)",
+		"most $0.69 a request ($1.38 a review)",
 		"Zero data retention is required on every request", "Review finished: 1 confirmed finding",
 		"A review sends the selected source to OpenRouter (https://openrouter.ai/api/v1), zero data retention required on every request")
 	if initHas(result.stdout, "openrouter_zero_data_retention_not_required") {
@@ -129,7 +133,7 @@ func TestInitOpenRouterBothModelsWithZDRRequiresItByDefault(t *testing.T) {
 		}
 	}
 	saved := initReadOpenRouterSetup(t, dir)
-	if saved.policy["schema_version"] != float64(8) || saved.bootstrap["provider"] != "openrouter-zdr" || strings.Contains(saved.raw, remoteTestKey) {
+	if saved.policy["schema_version"] != float64(8) || saved.policy["max_output_tokens"] != float64(16000) || saved.bootstrap["provider"] != "openrouter-zdr" || strings.Contains(saved.raw, remoteTestKey) {
 		t.Fatalf("saved setup is not the ZDR route: %v %v", saved.policy["schema_version"], saved.bootstrap["provider"])
 	}
 	for _, manifest := range saved.manifests {
@@ -198,7 +202,9 @@ func TestInitOpenRouterModelWithoutZDRContinuesOnlyWithConsent(t *testing.T) {
 	remoteScannerInstalled(t)
 	t.Setenv("OPEN_TRESTLE_PROVIDER_OPENROUTER", remoteTestKey)
 	fakeOpenRouter(t, initOpenRouterModels()...)
-	transport := &remoteModelTransport{t: t, target: "https://openrouter.ai/api/v1/chat/completions", models: map[string]string{"vendor/generator": "", "plain/verifier": ""}}
+	// Without zero data retention the allowance is the 16384 target within
+	// the smaller listed output of the two models (8192).
+	transport := &remoteModelTransport{t: t, target: "https://openrouter.ai/api/v1/chat/completions", models: map[string]string{"vendor/generator": "", "plain/verifier": ""}, maxTokens: 8192}
 	remoteModelClient(t, transport)
 	checkout := remoteBootstrapCheckout(t)
 	// Declining to continue writes nothing.
@@ -305,7 +311,8 @@ func TestInitOpenRouterUnreachableAPIFallsBackToTypedAnswers(t *testing.T) {
 	t.Setenv("OPEN_TRESTLE_PROVIDER_OPENROUTER", remoteTestKey)
 	api := fakeOpenRouter(t, initOpenRouterModels()...)
 	api.zdr = ""
-	transport := &remoteModelTransport{t: t, target: "https://openrouter.ai/api/v1/chat/completions", models: map[string]string{"vendor/generator": "[]", "other/verifier": "[]"}}
+	// The typed output limit (8192) bounds the 16384 target.
+	transport := &remoteModelTransport{t: t, target: "https://openrouter.ai/api/v1/chat/completions", models: map[string]string{"vendor/generator": "[]", "other/verifier": "[]"}, maxTokens: 8192}
 	remoteModelClient(t, transport)
 	checkout := remoteBootstrapCheckout(t)
 	dir := filepath.Join(t.TempDir(), "setup")

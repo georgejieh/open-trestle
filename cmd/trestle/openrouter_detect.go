@@ -32,6 +32,13 @@ const (
 	// A review needs at least this much context and output.
 	openRouterMinContext = 8192
 	openRouterMinOutput  = remoteReviewMaxOutputTokens
+	// openRouterReviewOutputTokens is the review output allowance an
+	// OpenRouter setup aims for unless a flag sets one: room for a reasoning
+	// model to finish its answer after it reasons.
+	openRouterReviewOutputTokens = 16384
+	// maxOpenRouterOutputExclusions bounds the endpoints a witness lists as
+	// left out for their output limit.
+	maxOpenRouterOutputExclusions = 64
 )
 
 type openRouterSource struct {
@@ -95,8 +102,15 @@ type openRouterModelFacts struct {
 	// safetyExcluded are ZDR endpoints left out because they may keep
 	// prompts for Safety Retention (or do not say).
 	safetyExcluded []string
-	listed         bool
-	listedFacts    openRouterListedModel
+	// outputExcluded are usable ZDR endpoints left out because they allow
+	// fewer output tokens than the floor the endpoints were chosen with.
+	outputExcluded []openRouterEndpoint
+	// operator reports that the operator named the pinned slugs; incomplete
+	// that one of them is not a usable ZDR endpoint the API lists for the
+	// model, so the facts of the pinned set are not known.
+	operator, incomplete bool
+	listed               bool
+	listedFacts          openRouterListedModel
 }
 
 func (f openRouterModelFacts) hasZDR() bool { return len(f.zdr) != 0 }
@@ -115,7 +129,7 @@ func (f openRouterModelFacts) capacity(zdr bool) (uint64, uint64, bool) {
 	if !zdr {
 		return f.listedFacts.context, f.listedFacts.maxCompletion, f.listed && f.listedFacts.context > 0 && f.listedFacts.maxCompletion > 0
 	}
-	if !f.hasZDR() {
+	if !f.hasZDR() || f.incomplete {
 		return 0, 0, false
 	}
 	context, output := uint64(1<<63), uint64(1<<63)
@@ -134,7 +148,7 @@ func (f openRouterModelFacts) prices(zdr bool) (uint64, uint64, bool) {
 		for _, endpoint := range f.zdr {
 			input, output = max(input, endpoint.promptMicro), max(output, endpoint.completionMicro)
 		}
-		return input, output, f.hasZDR()
+		return input, output, f.hasZDR() && !f.incomplete
 	}
 	if !f.listed || !f.listedFacts.pricesKnown {
 		return 0, 0, false
@@ -356,26 +370,35 @@ func parseOpenRouterModels(body []byte) (map[string]openRouterListedModel, []mod
 	return listed, catalog, nil
 }
 
-// facts returns what the observation says about one model. Pinned endpoints
-// are the usable ZDR endpoints, cheapest first, at most
-// runtimeconfig.MaxOpenRouterProviderSlugs.
+// facts returns what the observation says about one model with every usable
+// ZDR endpoint, cheapest first, at most runtimeconfig.MaxOpenRouterProviderSlugs.
 func (o *openRouterObservation) facts(model string) openRouterModelFacts {
+	return o.pinnedFacts(model, openRouterMinOutput, nil)
+}
+
+// pinnedFacts returns what the observation says about one model with the
+// endpoints a setup pins: the operator's slugs, in their order, when given;
+// otherwise the usable ZDR endpoints that allow at least floor output tokens,
+// cheapest first, at most runtimeconfig.MaxOpenRouterProviderSlugs. A usable
+// endpoint below the floor is left out and recorded as such.
+func (o *openRouterObservation) pinnedFacts(model string, floor uint64, operator []string) openRouterModelFacts {
 	facts := openRouterModelFacts{model: model}
 	if o == nil || o.err != nil {
 		return facts
 	}
 	facts.listedFacts, facts.listed = o.listed[model]
+	usable := []openRouterEndpoint{}
 	for _, endpoint := range o.endpoints[model] {
 		switch {
 		case endpoint.usable():
-			facts.zdr = append(facts.zdr, endpoint)
+			usable = append(usable, endpoint)
 		case !endpoint.safetyRetentionKnown || endpoint.safetyRetention:
 			if len(facts.safetyExcluded) < 64 {
 				facts.safetyExcluded = append(facts.safetyExcluded, endpoint.tag)
 			}
 		}
 	}
-	slices.SortFunc(facts.zdr, func(a, b openRouterEndpoint) int {
+	slices.SortFunc(usable, func(a, b openRouterEndpoint) int {
 		if cost := (a.promptMicro + a.completionMicro); cost != b.promptMicro+b.completionMicro {
 			if cost < b.promptMicro+b.completionMicro {
 				return -1
@@ -384,11 +407,123 @@ func (o *openRouterObservation) facts(model string) openRouterModelFacts {
 		}
 		return strings.Compare(a.tag, b.tag)
 	})
-	if len(facts.zdr) > runtimeconfig.MaxOpenRouterProviderSlugs {
-		facts.zdr = facts.zdr[:runtimeconfig.MaxOpenRouterProviderSlugs]
-	}
 	slices.Sort(facts.safetyExcluded)
+	if operator != nil {
+		facts.operator = true
+		for _, slug := range operator {
+			index := slices.IndexFunc(usable, func(endpoint openRouterEndpoint) bool { return endpoint.tag == slug })
+			if index < 0 {
+				facts.incomplete = true
+				continue
+			}
+			facts.zdr = append(facts.zdr, usable[index])
+		}
+		return facts
+	}
+	for _, endpoint := range usable {
+		switch {
+		case endpoint.maxCompletion < floor:
+			if len(facts.outputExcluded) < maxOpenRouterOutputExclusions {
+				facts.outputExcluded = append(facts.outputExcluded, endpoint)
+			}
+		case len(facts.zdr) < runtimeconfig.MaxOpenRouterProviderSlugs:
+			facts.zdr = append(facts.zdr, endpoint)
+		}
+	}
 	return facts
+}
+
+// mostOutput is the largest output any usable ZDR endpoint of the model
+// allows, or zero.
+func (o *openRouterObservation) mostOutput(model string) uint64 {
+	most := uint64(0)
+	if o == nil || o.err != nil {
+		return most
+	}
+	for _, endpoint := range o.endpoints[model] {
+		if endpoint.usable() {
+			most = max(most, endpoint.maxCompletion)
+		}
+	}
+	return most
+}
+
+// openRouterRoute is the endpoint set a setup pins for both models, by role,
+// and the output floor it was chosen with. Every limit and price a setup
+// records derives from these facts alone.
+type openRouterRoute struct {
+	facts map[string]openRouterModelFacts
+	// floor is the output every endpoint chosen from the API allows: the
+	// target allowance, or less when a model has no usable ZDR endpoint that
+	// reaches it or the operator pinned endpoints that allow less.
+	floor uint64
+	// short names, by role, the models none of whose usable ZDR endpoints
+	// allows the target.
+	short []string
+}
+
+// excluded counts the endpoints of both models left out for the floor.
+func (r openRouterRoute) excluded() int {
+	return len(r.facts["generation"].outputExcluded) + len(r.facts["verification"].outputExcluded)
+}
+
+// route chooses the endpoints of both models for a review output allowance
+// of target tokens. With zero data retention it pins, for each model, the
+// usable endpoints that allow at least target. A model with no such endpoint
+// keeps all its usable endpoints and lowers the floor to the least output
+// they allow (the minimum rule), and operator slugs lower it to the least
+// output of their endpoints; every model is then pinned with that one floor,
+// so the allowance fits every pinned endpoint. An explicit target (from
+// --max-output-tokens) is never lowered; a model short of it is named in
+// short and pins nothing. Without zero data retention nothing is pinned and
+// the facts are the model's listed ones.
+func (o *openRouterObservation) route(zdr bool, models map[string]string, operator map[string][]string, target uint64, explicit bool) openRouterRoute {
+	r := openRouterRoute{facts: map[string]openRouterModelFacts{}, floor: target}
+	roles := []string{"generation", "verification"}
+	if !zdr {
+		for _, role := range roles {
+			r.facts[role] = o.facts(models[role])
+		}
+		return r
+	}
+	for _, role := range roles {
+		reach := o.pinnedFacts(models[role], target, operator[role])
+		switch {
+		case reach.operator:
+			if _, output, known := reach.capacity(true); known && !explicit {
+				r.floor = min(r.floor, output)
+			}
+		case !reach.hasZDR() && len(reach.outputExcluded) != 0:
+			r.short = append(r.short, role)
+			if _, output, known := o.facts(models[role]).capacity(true); known && !explicit {
+				r.floor = min(r.floor, output)
+			}
+		}
+	}
+	for _, role := range roles {
+		r.facts[role] = o.pinnedFacts(models[role], r.floor, operator[role])
+	}
+	return r
+}
+
+// openRouterTarget is the review output allowance an OpenRouter setup aims
+// for and whether a flag fixed it: --max-output-tokens when given, otherwise
+// openRouterReviewOutputTokens within a given --output-tokens.
+func openRouterTarget(maxOutput, output uint64, maxGiven, outputGiven bool) (uint64, bool) {
+	if maxGiven {
+		return maxOutput, true
+	}
+	target := uint64(openRouterReviewOutputTokens)
+	if outputGiven {
+		target = max(min(target, output), openRouterMinOutput)
+	}
+	return target, false
+}
+
+// openRouterShortError names a model none of whose ZDR endpoints allows the
+// review output allowance a flag fixed.
+func openRouterShortError(model string, target, most uint64, at string) error {
+	return fmt.Errorf("--max-output-tokens %d is more than any zero-data-retention endpoint of %s that Open Trestle can use allows (at most %d output tokens%s); pass a smaller --max-output-tokens, or omit it to use the most both models allow", target, model, most, at)
 }
 
 // label is the fixed wording every record and surface uses for these facts.
@@ -403,7 +538,11 @@ func (o *openRouterObservation) witnessObservation(facts openRouterModelFacts) m
 		endpoints = append(endpoints, map[string]any{"tag": endpoint.tag, "provider_name": endpoint.providerName, "context_length": endpoint.context, "max_prompt_tokens": endpoint.maxPrompt, "max_completion_tokens": endpoint.maxCompletion, "prompt_micro_usd_per_million_tokens": endpoint.promptMicro, "completion_micro_usd_per_million_tokens": endpoint.completionMicro, "structured_outputs": endpoint.structured})
 	}
 	excluded := append([]string{}, facts.safetyExcluded...)
-	return map[string]any{"authority_label": o.label(), "retrieved_at": o.retrievedAt.Format(time.RFC3339Nano), "sources": []remoteEvidence{o.zdr.evidence(), o.models.evidence()}, "zdr_endpoints": endpoints, "safety_retention_endpoints_excluded": excluded, "output_limit_endpoints_excluded": []any{}}
+	outputExcluded := []map[string]any{}
+	for _, endpoint := range facts.outputExcluded {
+		outputExcluded = append(outputExcluded, map[string]any{"tag": endpoint.tag, "max_completion_tokens": endpoint.maxCompletion})
+	}
+	return map[string]any{"authority_label": o.label(), "retrieved_at": o.retrievedAt.Format(time.RFC3339Nano), "sources": []remoteEvidence{o.zdr.evidence(), o.models.evidence()}, "zdr_endpoints": endpoints, "safety_retention_endpoints_excluded": excluded, "output_limit_endpoints_excluded": outputExcluded}
 }
 
 // initPrintable returns value when it is a short printable label, else fallback.
@@ -418,9 +557,12 @@ func initPrintable(value, fallback string) string {
 type openRouterPlan struct {
 	zdr         bool
 	observation *openRouterObservation
+	route       openRouterRoute
 	facts       map[string]openRouterModelFacts // by role
 	slugs       map[string][]string             // by role; with ZDR only
 	slugSource  map[string]string               // by role; with ZDR only
+	// allowance is the review output allowance the policy records.
+	allowance uint64
 }
 
 func (p openRouterPlan) observed() bool { return p.observation != nil && p.observation.err == nil }
@@ -442,18 +584,34 @@ func parseOpenRouterSlugs(flagName, value string) ([]string, error) {
 }
 
 // planOpenRouter fills every route fact the operator did not give as a flag
-// from the observation, and decides the slugs a ZDR route pins. It never
-// invents a fact: a value the API did not report and no flag gave is an error
-// that names the flag.
+// from the observation, decides the slugs a ZDR route pins, and the review
+// output allowance. The declared context and output, the prices, the slugs
+// and the allowance all derive from the one pinned set. It never invents a
+// fact: a value the API did not report and no flag gave is an error that
+// names the flag.
 func planOpenRouter(observation *openRouterObservation, zdr bool, models, slugFlags map[string]string, given map[string]bool, numbers map[string]*uint64) (openRouterPlan, error) {
 	plan := openRouterPlan{zdr: zdr, observation: observation, facts: map[string]openRouterModelFacts{}, slugs: map[string][]string{}, slugSource: map[string]string{}}
 	at := ""
 	if plan.observed() {
 		at = " (" + observation.label() + ")"
 	}
+	roles := []string{"generation", "verification"}
+	operator := map[string][]string{}
+	for _, role := range roles {
+		if !zdr || slugFlags[role] == "" {
+			continue
+		}
+		slugs, err := parseOpenRouterSlugs(role+"-provider-slug", slugFlags[role])
+		if err != nil {
+			return plan, err
+		}
+		operator[role] = slugs
+	}
+	target, explicit := openRouterTarget(*numbers["max-output-tokens"], *numbers["output-tokens"], given["max-output-tokens"], given["output-tokens"])
+	plan.route = observation.route(zdr, models, operator, target, explicit)
 	allGiven := given["context-tokens"] && given["output-tokens"] && given["input-micro-usd-per-million-tokens"] && given["output-micro-usd-per-million-tokens"]
-	for _, role := range []string{"generation", "verification"} {
-		facts := observation.facts(models[role])
+	for _, role := range roles {
+		facts := plan.route.facts[role]
 		plan.facts[role] = facts
 		if plan.observed() && !allGiven && !facts.listed && len(observation.endpoints[models[role]]) == 0 {
 			return plan, fmt.Errorf("OpenRouter's API does not list the model %s%s; copy the exact ID from https://openrouter.ai/models", models[role], at)
@@ -462,16 +620,14 @@ func planOpenRouter(observation *openRouterObservation, zdr bool, models, slugFl
 			continue
 		}
 		switch {
-		case slugFlags[role] != "":
-			slugs, err := parseOpenRouterSlugs(role+"-provider-slug", slugFlags[role])
-			if err != nil {
-				return plan, err
-			}
-			plan.slugs[role], plan.slugSource[role] = slugs, "operator"
+		case operator[role] != nil:
+			plan.slugs[role], plan.slugSource[role] = operator[role], "operator"
 		case !plan.observed():
 			plan.slugs[role], plan.slugSource[role] = []string{}, "none"
 		case facts.hasZDR():
 			plan.slugs[role], plan.slugSource[role] = facts.slugs(), "openrouter_api"
+		case slices.Contains(plan.route.short, role):
+			return plan, openRouterShortError(models[role], target, observation.mostOutput(models[role]), at)
 		default:
 			return plan, fmt.Errorf("the model %s has no zero-data-retention endpoint Open Trestle can use%s; choose a model that lists one, or use --provider openrouter to set it up without zero data retention", models[role], at)
 		}
@@ -502,6 +658,10 @@ func planOpenRouter(observation *openRouterObservation, zdr bool, models, slugFl
 	}
 	if !given["output-tokens"] && *numbers["output-tokens"] > *numbers["context-tokens"] {
 		*numbers["output-tokens"] = *numbers["context-tokens"]
+	}
+	plan.allowance = target
+	if !explicit {
+		plan.allowance = min(plan.route.floor, *numbers["output-tokens"])
 	}
 	return plan, nil
 }

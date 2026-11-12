@@ -66,16 +66,54 @@ func (w *initWizard) roleModel(role string) string {
 	return w.a.verificationModel
 }
 
+// openRouterRoute chooses the endpoints both models pin for the review output
+// allowance the flags ask for, as the bootstrap does: it returns the route,
+// the target allowance and whether --max-output-tokens fixed it.
+func (w *initWizard) openRouterRoute(zdr bool) (openRouterRoute, uint64, bool) {
+	number := func(name string) (uint64, bool) {
+		raw, given := w.flags[name]
+		value, err := strconv.ParseUint(strings.ReplaceAll(raw, ",", ""), 10, 64)
+		return value, given && err == nil
+	}
+	maxOutput, maxGiven := number("max-output-tokens")
+	output, outputGiven := number("output-tokens")
+	target, explicit := openRouterTarget(maxOutput, output, maxGiven, outputGiven)
+	operator := map[string][]string{}
+	for _, role := range []string{"generation", "verification"} {
+		if raw, given := w.flags[role+"-provider-slug"]; given && zdr {
+			if slugs, err := parseOpenRouterSlugs(role+"-provider-slug", raw); err == nil {
+				operator[role] = slugs
+			}
+		}
+	}
+	models := map[string]string{"generation": w.a.generationModel, "verification": w.a.verificationModel}
+	return w.openRouter.route(zdr, models, operator, target, explicit), target, explicit
+}
+
+// openRouterExcludedLine says how many endpoints were left out for allowing
+// fewer output tokens than floor.
+func openRouterExcludedLine(count int, floor uint64) string {
+	if count == 1 {
+		return fmt.Sprintf("1 endpoint that allows less than %d output tokens is left out.", floor)
+	}
+	return fmt.Sprintf("%d endpoints that allow less than %d output tokens are left out.", count, floor)
+}
+
 // openRouterSummary shows what the API reported for both models, in two
-// lines each.
+// lines each, with the endpoints a zero-data-retention route would pin.
 func (w *initWizard) openRouterSummary() {
 	observation := w.openRouter
 	if observation.err != nil {
 		return
 	}
+	route, _, explicit := w.openRouterRoute(true)
 	w.say("\n  From OpenRouter's API (as reported at %s; not checked by you):", observation.retrievedAt.Format(time.RFC3339))
 	for _, role := range []string{"generation", "verification"} {
-		facts := observation.facts(w.roleModel(role))
+		facts := route.facts[role]
+		if explicit && slices.Contains(route.short, role) {
+			// None reaches the flag's allowance; the limits step says so.
+			facts = observation.facts(w.roleModel(role))
+		}
 		w.say("    %-8s %s", initRoleName(role)+":", facts.model)
 		zdr := "no zero-data-retention endpoint"
 		if facts.hasZDR() {
@@ -111,6 +149,9 @@ func (w *initWizard) openRouterSummary() {
 			w.say("  Endpoints that may keep prompts for Safety Retention are left out.")
 			break
 		}
+	}
+	if count := route.excluded(); count != 0 {
+		w.say("  %s", openRouterExcludedLine(count, route.floor))
 	}
 }
 
@@ -251,10 +292,23 @@ func (w *initWizard) declineZDR() error {
 	return nil
 }
 
-// openRouterLimits fills the context, output and prices from the API (flags
-// win), asks for any the API did not report, and then the cost limit.
+// openRouterLimits fills the context, output and prices from the endpoints
+// the route pins (flags win), asks for any the API did not report, chooses
+// the review output allowance, and then asks the cost limit.
 func (w *initWizard) openRouterLimits() error {
-	facts := map[string]openRouterModelFacts{"generation": w.openRouter.facts(w.a.generationModel), "verification": w.openRouter.facts(w.a.verificationModel)}
+	if raw, given := w.flags["max-output-tokens"]; given {
+		if _, err := initTokens(remoteReviewMaxOutputTokens, 1<<31, "")(raw); err != nil {
+			return initStopf(initExitUsage, "--max-output-tokens must be a whole number of at least %d tokens.", remoteReviewMaxOutputTokens)
+		}
+	}
+	route, target, explicit := w.openRouterRoute(w.zdr)
+	if w.zdr && explicit && w.openRouter.err == nil {
+		for _, role := range route.short {
+			model := w.roleModel(role)
+			return initStopf(initExitUsage, "%v.", openRouterShortError(model, target, w.openRouter.mostOutput(model), " ("+w.openRouter.label()+")"))
+		}
+	}
+	facts := route.facts
 	context, output, capacityKnown := uint64(1<<63), uint64(1<<63), true
 	input, outputPrice, pricesKnown := uint64(0), uint64(0), true
 	for _, role := range []string{"generation", "verification"} {
@@ -298,6 +352,9 @@ func (w *initWizard) openRouterLimits() error {
 	} else if err := w.capacities(); err != nil || w.a.contextTokens == "" {
 		return err
 	}
+	if err := w.openRouterAllowance(route, target, explicit); err != nil {
+		return err
+	}
 	flagged := false
 	for _, name := range []string{"input-micro-usd-per-million-tokens", "output-micro-usd-per-million-tokens"} {
 		_, given := w.flags[name]
@@ -309,6 +366,31 @@ func (w *initWizard) openRouterLimits() error {
 	w.a.inputPrice, w.a.outputPrice = strconv.FormatUint(input, 10), strconv.FormatUint(outputPrice, 10)
 	w.say("  Prices: up to %s input and %s output per million tokens, the higher of the two models.", initFormatUSD(input), initFormatUSD(outputPrice))
 	return w.costLimit(true)
+}
+
+// openRouterAllowance chooses the review output allowance of an OpenRouter
+// setup and says what it is: --max-output-tokens when given, otherwise the
+// target within the declared output and the floor of the pinned endpoints.
+func (w *initWizard) openRouterAllowance(route openRouterRoute, target uint64, explicit bool) error {
+	output, _ := strconv.ParseUint(w.a.outputTokens, 10, 64)
+	if explicit {
+		if target > output {
+			return initStopf(initExitUsage, "--max-output-tokens %d is more than the output limit of %d tokens; pass at most %d.", target, output, output)
+		}
+		w.say("  Each model request may write up to %d tokens (--max-output-tokens).", target)
+		return nil
+	}
+	w.a.reviewOutput = min(route.floor, output)
+	if w.zdr && w.openRouter.err == nil {
+		for _, role := range route.short {
+			w.say("  %s has no zero-data-retention endpoint that allows %d output tokens, so its usable endpoints are pinned and each model request may write up to %d tokens.", w.roleModel(role), target, w.a.reviewOutput)
+		}
+		if len(route.short) != 0 {
+			return nil
+		}
+	}
+	w.say("  Each model request may write up to %d tokens.", w.a.reviewOutput)
+	return nil
 }
 
 // openRouterConsent is the single consent of an OpenRouter setup: the facts

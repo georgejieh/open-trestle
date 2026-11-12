@@ -259,6 +259,10 @@ func (w *initWizard) changeLimits() error {
 		return err
 	}
 	w.a.contextTokens, w.a.outputTokens = context, output
+	if written, _ := strconv.ParseUint(output, 10, 64); w.a.reviewOutput > written {
+		// The allowance never exceeds the output limit it is written within.
+		w.a.reviewOutput = written
+	}
 	if w.a.provider.key == "local" {
 		return nil
 	}

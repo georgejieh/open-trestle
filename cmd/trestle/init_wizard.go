@@ -96,6 +96,7 @@ type initAnswers struct {
 	generationModel, verificationModel       string
 	credentialEnv                            string
 	contextTokens, outputTokens              string
+	reviewOutput                             uint64 // the review output allowance an OpenRouter setup chose, or 0
 	inputPrice, outputPrice, maxCost         string
 	owner, tenant, repository                string
 	authority, namespace, name               string

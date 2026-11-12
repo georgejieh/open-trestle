@@ -114,21 +114,33 @@ func TestPlanOpenRouterFillsFactsAndPinsDetectedSlugs(t *testing.T) {
 	if *numbers["context-tokens"] != 128000 || *numbers["output-tokens"] != 16000 || *numbers["input-micro-usd-per-million-tokens"] != 3_300_000 || *numbers["output-micro-usd-per-million-tokens"] != 16_500_000 {
 		t.Fatalf("facts: %d %d %d %d", *numbers["context-tokens"], *numbers["output-tokens"], *numbers["input-micro-usd-per-million-tokens"], *numbers["output-micro-usd-per-million-tokens"])
 	}
-	if !slices.Equal(plan.slugs["verification"], []string{"fixture-host/fp8"}) || plan.slugSource["generation"] != "openrouter_api" {
-		t.Fatalf("slugs: %v %v", plan.slugs, plan.slugSource)
+	if !slices.Equal(plan.slugs["verification"], []string{"fixture-host/fp8"}) || plan.slugSource["generation"] != "openrouter_api" || plan.allowance != 16000 {
+		t.Fatalf("slugs: %v %v allowance %d", plan.slugs, plan.slugSource, plan.allowance)
 	}
-	// Flags override detection.
+	// Flags override detection; the facts of operator slugs are those of
+	// the endpoints they name.
 	numbers = openRouterPlanNumbers()
 	*numbers["context-tokens"] = 9000
-	plan, err = planOpenRouter(observation, true, models, map[string]string{"verification": "fixture-host/fp8,another"}, map[string]bool{"context-tokens": true}, numbers)
-	if err != nil || *numbers["context-tokens"] != 9000 || plan.slugSource["verification"] != "operator" || !slices.Equal(plan.slugs["verification"], []string{"fixture-host/fp8", "another"}) {
+	plan, err = planOpenRouter(observation, true, models, map[string]string{"generation": "fixture-cloud/us"}, map[string]bool{"context-tokens": true}, numbers)
+	if err != nil || *numbers["context-tokens"] != 9000 || plan.slugSource["generation"] != "operator" || !slices.Equal(plan.slugs["generation"], []string{"fixture-cloud/us"}) || *numbers["input-micro-usd-per-million-tokens"] != 3_300_000 {
 		t.Fatalf("override: %v %v %d", err, plan.slugs, *numbers["context-tokens"])
+	}
+	// A slug the API does not list for the model has no known facts.
+	numbers = openRouterPlanNumbers()
+	if _, err := planOpenRouter(observation, true, models, map[string]string{"verification": "fixture-host/fp8,another"}, map[string]bool{}, numbers); err == nil || !strings.Contains(err.Error(), "pass --context-tokens, --output-tokens, --input-micro-usd-per-million-tokens, --output-micro-usd-per-million-tokens") {
+		t.Fatalf("an unlisted operator slug borrowed detected facts: %v", err)
+	}
+	numbers = openRouterPlanNumbers()
+	*numbers["context-tokens"], *numbers["output-tokens"], *numbers["input-micro-usd-per-million-tokens"], *numbers["output-micro-usd-per-million-tokens"] = 9000, 8192, 1, 1
+	plan, err = planOpenRouter(observation, true, models, map[string]string{"verification": "fixture-host/fp8,another"}, map[string]bool{"context-tokens": true, "output-tokens": true, "input-micro-usd-per-million-tokens": true, "output-micro-usd-per-million-tokens": true}, numbers)
+	if err != nil || plan.slugSource["verification"] != "operator" || !slices.Equal(plan.slugs["verification"], []string{"fixture-host/fp8", "another"}) || plan.allowance != 8192 {
+		t.Fatalf("operator slugs with typed facts: %v %v %d", err, plan.slugs, plan.allowance)
 	}
 	// Without zero data retention the listed and ZDR prices both bound the cost.
 	numbers = openRouterPlanNumbers()
 	models["verification"] = "plain/verifier"
-	if _, err := planOpenRouter(observation, false, models, map[string]string{}, map[string]bool{}, numbers); err != nil || *numbers["context-tokens"] != 64000 || *numbers["output-tokens"] != 8192 || *numbers["input-micro-usd-per-million-tokens"] != 3_300_000 {
-		t.Fatalf("non-ZDR facts: %v %d %d %d", err, *numbers["context-tokens"], *numbers["output-tokens"], *numbers["input-micro-usd-per-million-tokens"])
+	if plan, err := planOpenRouter(observation, false, models, map[string]string{}, map[string]bool{}, numbers); err != nil || *numbers["context-tokens"] != 64000 || *numbers["output-tokens"] != 8192 || *numbers["input-micro-usd-per-million-tokens"] != 3_300_000 || plan.allowance != 8192 {
+		t.Fatalf("non-ZDR facts: %v %d %d %d allowance %d", err, *numbers["context-tokens"], *numbers["output-tokens"], *numbers["input-micro-usd-per-million-tokens"], plan.allowance)
 	}
 }
 

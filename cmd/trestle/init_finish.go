@@ -192,23 +192,32 @@ func (w *initWizard) resume() (int, error) {
 
 // --- Step 8: save and check -------------------------------------------------------
 
-// reviewOutputTokens is the per-request review output allowance: 4096 unless
-// --max-output-tokens was given. Bootstrap validates it against the declared
-// output capacity.
+// reviewOutputTokens is the per-request review output allowance: the
+// --max-output-tokens flag, else the allowance an OpenRouter setup chose for
+// its pinned endpoints, else 4096. Bootstrap validates it against the
+// declared output capacity.
 func (w *initWizard) reviewOutputTokens() uint64 {
 	if raw, ok := w.flags["max-output-tokens"]; ok {
 		if parsed, err := strconv.ParseUint(raw, 10, 64); err == nil {
 			return parsed
 		}
 	}
+	if w.a.reviewOutput != 0 {
+		return w.a.reviewOutput
+	}
 	return remoteReviewMaxOutputTokens
 }
 
-// reviewOutputArgs passes --max-output-tokens through only when it was given,
-// so the default bootstrap arguments are unchanged.
+// reviewOutputArgs passes --max-output-tokens through when it was given, and
+// the allowance an OpenRouter setup chose, so the bootstrap pins exactly the
+// endpoints the wizard showed. Other default bootstrap arguments are
+// unchanged.
 func (w *initWizard) reviewOutputArgs() []string {
 	if raw, ok := w.flags["max-output-tokens"]; ok {
 		return []string{"--max-output-tokens", raw}
+	}
+	if w.a.reviewOutput != 0 {
+		return []string{"--max-output-tokens", strconv.FormatUint(w.a.reviewOutput, 10)}
 	}
 	return nil
 }
