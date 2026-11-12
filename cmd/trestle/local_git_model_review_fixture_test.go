@@ -397,6 +397,15 @@ func (m *localModelEndpoint) respond(t *testing.T, w http.ResponseWriter, packet
 	if m.mode == "malformed" || m.mode == "malformed_specialist" && len(packet.Specialist) > 0 && string(packet.Specialist) != "null" {
 		text = []byte(`{"schema_version":2,"candidates":[`)
 	}
+	// template_tokens wraps a valid answer in raw chat-template tokens, and
+	// control_character puts a raw control character in a JSON string: both
+	// stop normally and are refused, never unwrapped or repaired.
+	if m.mode == "template_tokens" {
+		text = []byte("<|start|>assistant<|channel|>final <|constrain|>json<|message|>" + string(text) + "<|return|>")
+	}
+	if m.mode == "control_character" {
+		text = bytes.Replace(text, []byte(`"schema_version"`), []byte("\"schema\x01_version\""), 1)
+	}
 	response := map[string]any{
 		"id": "response-" + m.model, "object": "response", "status": "completed", "model": m.model,
 		"output": []any{map[string]any{"id": "message-" + m.model, "type": "message", "role": "assistant", "status": "completed", "content": []any{map[string]any{"type": "output_text", "text": string(text)}}}},

@@ -361,13 +361,14 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 	w.RunStatus = state.Status().String()
 	w.Output = state.OutputIdentity()
 	w.Failure = state.Failure().String()
-	sourceFailed := false
+	sourceFailed, answerInvalid := false, false
 	for _, definition := range p.Plan().Tasks() {
 		task, ok := state.Task(definition.Key())
 		if !ok {
 			return Result{}, ErrInvalidResult
 		}
 		w.Tasks = append(w.Tasks, taskResult{task.Key(), task.Status().String(), task.Attempts(), definition.MaxAttempts(), task.OutputIdentity()})
+		answerInvalid = answerInvalid || task.Status() == controlplane.TaskRuntimeFailed && task.FailureReason() == controlplane.TaskFailureReasonModelOutputInvalid
 		if definition.Kind() == controlplane.TaskAcquireSource && task.Status() == controlplane.TaskRuntimeFailed {
 			sourceFailed = true
 		}
@@ -400,6 +401,11 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 		if detail, ok := s.routeFailures.providerRefusal(state.Failure()); ok {
 			w.FailureDetail = detail
 		}
+	}
+	// The model task recorded that the accepted answer was not a valid review
+	// document; the reason names the answer's form and never its text.
+	if state.Status() == controlplane.ReviewRunFailed && state.Failure() == controlplane.RunFailureInternal && w.FailureDetail == "" && answerInvalid {
+		w.FailureDetail = FailureDetailModelOutputInvalid
 	}
 	if state.Status() == controlplane.ReviewRunCanceled {
 		w.Status = "canceled"

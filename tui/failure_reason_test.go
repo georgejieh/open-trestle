@@ -36,6 +36,10 @@ func TestRunShowsProviderRefusalReasonAndHint(t *testing.T) {
 			"Reason      candidates: provider_response_invalid (the provider answered, but its reply did not match what Open Trestle accepts, for example malformed or truncated output, an unrecognized field or an unexpected HTTP status)\n",
 			"Hint        run the review again; if it repeats, choose another model or route and report it\n",
 		}},
+		{controlplane.TaskFailureReasonModelOutputInvalid, []string{
+			"Reason      candidates: model_output_invalid (the model's answer was not a valid review document (for example malformed JSON, the wrong shape or a refusal))\n",
+			"Hint        run the review again; if it repeats, choose another model\n",
+		}},
 	} {
 		receipt, err := testsupport.ProviderRefusalReceipt(scope, test.reason)
 		if err != nil {

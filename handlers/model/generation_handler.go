@@ -245,7 +245,7 @@ func (h *GenerationHandler) Execute(ctx context.Context, task controlplane.TaskE
 			// Failure to persist the witness remains an unproven internal failure.
 			_ = h.recordDocumentShapeRejection(ctx, task, inputArtifact, contextArtifact, input, authorization, outcome, reconciliation)
 		}
-		return generationFailure(controlplane.RunFailureInternal)
+		return answerFailureCompletion(task, dispatchResult.Response(), err)
 	}
 	outputReceipt, err := gateway.NewSuccessfulRouteOutputReceipt(
 		gateway.RouteOutputCandidateBatch, input.ContextIdentity(), candidates.Identity(),
@@ -364,6 +364,22 @@ func routeFailureCompletion(task controlplane.TaskExecutionRequest, result gatew
 	completion, err := controlplane.NewModelTaskFailureWithReason(failure, reason, task.Plan(), task.Task())
 	if err != nil {
 		return generationFailure(failure)
+	}
+	return completion
+}
+
+// answerFailureCompletion fails a model task whose accepted reply the review
+// parser refused. A reply that stopped normally and whose answer caused the
+// refusal records model_output_invalid; a host input check, or a reply that
+// stopped at the output limit or a content filter, records only the internal
+// failure. The answer itself is never recorded.
+func answerFailureCompletion(task controlplane.TaskExecutionRequest, response provider.Response, err error) controlplane.TaskCompletion {
+	if !errors.Is(err, review.ErrModelOutputInvalid) || response.FinishReason() != provider.ResponseFinishStop {
+		return generationFailure(controlplane.RunFailureInternal)
+	}
+	completion, err := controlplane.NewModelTaskFailureWithReason(controlplane.RunFailureInternal, controlplane.TaskFailureReasonModelOutputInvalid, task.Plan(), task.Task())
+	if err != nil {
+		return generationFailure(controlplane.RunFailureInternal)
 	}
 	return completion
 }

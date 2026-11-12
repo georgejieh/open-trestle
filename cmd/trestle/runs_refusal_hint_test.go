@@ -121,6 +121,7 @@ func TestRunStatusNamesProviderRefusal(t *testing.T) {
 		{controlplane.TaskFailureReasonProviderModelRetired, "runs status: task candidates failed: provider_model_retired (the provider no longer serves this model)\nhint: choose a model the provider lists as available and re-run setup\n"},
 		{controlplane.TaskFailureReasonProviderRateLimited, "runs status: task candidates failed: provider_rate_limited (the provider rate-limited the request on its last attempt)\nhint: wait and run the review again, or choose another route\n"},
 		{controlplane.TaskFailureReasonProviderResponseInvalid, "runs status: task candidates failed: provider_response_invalid (the provider answered, but its reply did not match what Open Trestle accepts, for example malformed or truncated output, an unrecognized field or an unexpected HTTP status)\nhint: run the review again; if it repeats, choose another model or route and report it\n"},
+		{controlplane.TaskFailureReasonModelOutputInvalid, "runs status: task candidates failed: model_output_invalid (the model's answer was not a valid review document (for example malformed JSON, the wrong shape or a refusal))\nhint: run the review again; if it repeats, choose another model\n"},
 	} {
 		receipt, err := testsupport.ProviderRefusalReceipt(scope, test.reason)
 		if err != nil {

@@ -99,3 +99,20 @@ func TestProviderResponseInvalidNamesTheRefusedReply(t *testing.T) {
 		}
 	}
 }
+
+// An answer that was not a valid review document is named as the model's
+// answer, with an action, and is not a route failure class.
+func TestModelOutputInvalidNamesTheAnswer(t *testing.T) {
+	label, text, action, ok := ProviderRefusalWords(ModelOutputInvalid)
+	if !ok || label != "Model answer not a review document" || text != "the model's answer was not a valid review document (for example malformed JSON, the wrong shape or a refusal)" || action != "run the review again; if it repeats, choose another model" {
+		t.Fatalf("words = (%q, %q, %q, %t)", label, text, action, ok)
+	}
+	if hint := ProviderRefusalHint(ModelOutputInvalid); hint != text+": "+action {
+		t.Fatalf("hint = %q", hint)
+	}
+	for class := gateway.RouteFailureTransport; class.Validate() == nil; class++ {
+		if detail, _, _ := ProviderRefusal(class); detail == ModelOutputInvalid {
+			t.Fatalf("%s names the model answer", class)
+		}
+	}
+}

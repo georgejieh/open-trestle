@@ -114,6 +114,7 @@ func TestServerNamesProviderRefusal(t *testing.T) {
 	for reason, want := range map[controlplane.TaskFailureReason]string{
 		controlplane.TaskFailureReasonProviderModelRetired:    "Task failure: candidates: provider_model_retired (the provider no longer serves this model).\nHint: choose a model the provider lists as available and re-run setup",
 		controlplane.TaskFailureReasonProviderResponseInvalid: "Task failure: candidates: provider_response_invalid (the provider answered, but its reply did not match what Open Trestle accepts, for example malformed or truncated output, an unrecognized field or an unexpected HTTP status).\nHint: run the review again; if it repeats, choose another model or route and report it",
+		controlplane.TaskFailureReasonModelOutputInvalid:      "Task failure: candidates: model_output_invalid (the model's answer was not a valid review document (for example malformed JSON, the wrong shape or a refusal)).\nHint: run the review again; if it repeats, choose another model",
 	} {
 		receipt, err := testsupport.ProviderRefusalReceipt(scope, reason)
 		if err != nil {

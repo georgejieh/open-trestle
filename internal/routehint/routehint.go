@@ -43,6 +43,15 @@ var providerRefusals = map[gateway.RouteFailureClass]providerRefusal{
 	gateway.RouteFailureInvalidResponse:  {"provider_response_invalid", "Provider reply refused", "the provider answered, but its reply did not match what Open Trestle accepts, for example malformed or truncated output, an unrecognized field or an unexpected HTTP status", "run the review again; if it repeats, choose another model or route and report it"},
 }
 
+// ModelOutputInvalid is the failure detail, and the model task's failure
+// reason token, of a reply that stopped normally but whose answer was not a
+// valid review document.
+const ModelOutputInvalid = "model_output_invalid"
+
+// modelOutputInvalid has the fixed words of ModelOutputInvalid. They describe
+// the answer's form only and never quote it.
+var modelOutputInvalid = providerRefusal{ModelOutputInvalid, "Model answer not a review document", "the model's answer was not a valid review document (for example malformed JSON, the wrong shape or a refusal)", "run the review again; if it repeats, choose another model"}
+
 // ProviderRefusal returns the failure detail and one-line hint for a route
 // attempt the provider refused, or whose reply the adapter refused
 // (invalid_response), from its closed failure class alone. Any other class
@@ -66,9 +75,13 @@ func ProviderRefusalHint(detail string) string {
 }
 
 // ProviderRefusalWords returns the console label, the explanation and the
-// operator action of a provider refusal detail or task failure reason token.
-// Its hint is the explanation, a colon and the action.
+// operator action of a provider refusal detail, of ModelOutputInvalid, or of
+// the task failure reason token of either. Its hint is the explanation, a
+// colon and the action.
 func ProviderRefusalWords(detail string) (label, text, action string, ok bool) {
+	if detail == modelOutputInvalid.detail {
+		return modelOutputInvalid.label, modelOutputInvalid.text, modelOutputInvalid.action, true
+	}
 	for _, refusal := range providerRefusals {
 		if refusal.detail == detail {
 			return refusal.label, refusal.text, refusal.action, true

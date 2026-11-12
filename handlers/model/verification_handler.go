@@ -228,7 +228,7 @@ func (h *VerificationHandler) Execute(ctx context.Context, task controlplane.Tas
 	}
 	verification, err := review.ParseContextVerificationBatch(dispatch.Response(), generation.Candidates(), verificationContext)
 	if err != nil {
-		return generationFailure(controlplane.RunFailureInternal)
+		return answerFailureCompletion(task, dispatch.Response(), err)
 	}
 	output, err := gateway.NewSuccessfulRouteOutputReceipt(gateway.RouteOutputVerificationBatch, verificationContext.Identity(), verification.Identity(), dispatchRequest, authorization, outcome)
 	if err != nil {

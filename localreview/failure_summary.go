@@ -29,6 +29,15 @@ const (
 // It never carries the reply or names any of its fields.
 const FailureDetailProviderResponseInvalid = "provider_response_invalid"
 
+// FailureDetailModelOutputInvalid records that the provider's reply was
+// accepted and stopped normally, but the model's answer was not a valid review
+// document: malformed JSON (for example wrapped in chat-template tokens or
+// with a raw control character in a string), the wrong shape, a refusal, or
+// a document the review rules refuse. The run failure stays internal; the
+// detail tells the operator that the model's answer, not an internal check,
+// ended the run. It never carries the answer or names any of its fields.
+const FailureDetailModelOutputInvalid = routehint.ModelOutputInvalid
+
 // FailureDetailProviderNoAllowedEndpoint records that OpenRouter answered the
 // last request with HTTP 404: it serves no endpoint for the model that the
 // request may use. With zero data retention required, by Open Trestle on

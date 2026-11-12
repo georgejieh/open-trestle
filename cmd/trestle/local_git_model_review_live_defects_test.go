@@ -99,7 +99,7 @@ func TestLocalModelReviewReviewsAChangeThatOnlyRemovesAFile(t *testing.T) {
 func TestLocalModelReviewTextNamesFailureClassTaskAndHint(t *testing.T) {
 	f := newLocalModelFixture(t, localModelFixtureOptions{generationMode: "malformed"})
 	text := runLocalModelText(t, f, 1)
-	if !strings.Contains(text, "run: failed\nfailure: internal (task candidates)\nhint: a model response could not be accepted") {
+	if !strings.Contains(text, "run: failed\nfailure: internal (task candidates): model_output_invalid\nhint: the model's answer was not a valid review document") {
 		t.Fatalf("failure line missing: %q", text)
 	}
 	succeeded := runLocalModelText(t, newLocalModelFixture(t, localModelFixtureOptions{}), 4)
@@ -146,11 +146,11 @@ func TestLocalModelReviewReportsExhaustedVerifierOutput(t *testing.T) {
 	if !strings.Contains(text, "\ntokens: input=200 output=200 cached_input=0 over 2 route attempts\n") {
 		t.Fatalf("exhausted text lacks the token line: %q", text)
 	}
-	// Any other failure keeps the field absent, so other results keep their bytes.
+	// An answer that stopped normally is never reported as an exhausted allowance.
 	other := newLocalModelFixture(t, localModelFixtureOptions{generationMode: "malformed"})
 	stdout.Reset()
-	if code := run(other.args, &stdout, &stderr); code != 1 || bytes.Contains(stdout.Bytes(), []byte("failure_detail")) {
-		t.Fatalf("unrelated failure carried failure_detail: %s", stdout.String())
+	if code := run(other.args, &stdout, &stderr); code != 1 || bytes.Contains(stdout.Bytes(), []byte("model_output_exhausted")) {
+		t.Fatalf("unrelated failure carried the exhausted detail: %s", stdout.String())
 	}
 }
 
@@ -171,6 +171,47 @@ func TestLocalModelReviewReportsAPartialAnswerAtTheOutputLimit(t *testing.T) {
 	text := runLocalModelText(t, newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, verificationMode: "exhausted_partial"}), 1)
 	if !strings.Contains(text, "failure: internal (task verification): model_output_exhausted\nhint: the model used its whole output allowance, usually on reasoning, before finishing its answer") {
 		t.Fatalf("partial answer text: %q", text)
+	}
+}
+
+// A reply that stopped normally but whose answer was not a valid review
+// document (raw chat-template tokens around the JSON, a raw control character
+// in a JSON string, a document cut short, or a verdict for a candidate the
+// request did not name) failed the review as a bare internal failure that read
+// like an internal bug. It names the model's answer, with a fixed hint, and
+// the answer's text never reaches any output.
+func TestLocalModelReviewNamesAnAnswerThatIsNotAReviewDocument(t *testing.T) {
+	const hint = "the model's answer was not a valid review document (for example malformed JSON, the wrong shape or a refusal): run the review again; if it repeats, choose another model"
+	for _, test := range []struct {
+		name    string
+		options localModelFixtureOptions
+		task    string
+	}{
+		{"chat-template tokens", localModelFixtureOptions{chatCompletions: true, generationMode: "template_tokens"}, "candidates"},
+		{"control character at verification", localModelFixtureOptions{chatCompletions: true, verificationMode: "control_character"}, "verification"},
+		{"document cut short", localModelFixtureOptions{generationMode: "malformed"}, "candidates"},
+		{"verdict for another candidate", localModelFixtureOptions{verificationMode: "wrong_candidate"}, "verification"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newLocalModelFixture(t, test.options)
+			var stdout, stderr bytes.Buffer
+			if code := run(f.args, &stdout, &stderr); code != 1 {
+				t.Fatalf("exit=%d stdout=%s stderr=%q", code, stdout.String(), stderr.String())
+			}
+			if !strings.Contains(stdout.String(), `"failure":"internal","failure_detail":"model_output_invalid"`) || strings.Contains(stdout.String()+stderr.String(), "<|") || strings.Contains(stdout.String(), "\\u0001") {
+				t.Fatalf("result=%s", stdout.String())
+			}
+			text := runLocalModelText(t, newLocalModelFixture(t, test.options), 1)
+			if want := "failure: internal (task " + test.task + "): model_output_invalid\nhint: " + hint; !strings.Contains(text, want) || strings.Contains(text, "<|") {
+				t.Fatalf("text=%q want %q", text, want)
+			}
+		})
+	}
+	// A review set member carries the same detail and hint.
+	f := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, generationMode: "template_tokens"})
+	_, text := runLocalModelSet(t, f, []string{"--specialists", "auto", "--format", "text"}, 1)
+	if !strings.Contains(text, "member: general status=failed run=failed verified_findings=0 failure=internal (task candidates): model_output_invalid\nmember hint: general: "+hint) || strings.Contains(text, "<|") {
+		t.Fatalf("set text=%q", text)
 	}
 }
 
@@ -318,7 +359,7 @@ func assertNoProviderRefusalText(t *testing.T, output string) {
 func TestLocalModelReviewSetNamesMemberFailureAndKeepsFeatures(t *testing.T) {
 	f := newLocalModelFixture(t, localModelFixtureOptions{generationMode: "malformed_specialist"})
 	_, text := runLocalModelSet(t, f, []string{"--specialists", "bug_hunter,backend", "--format", "text"}, 4)
-	if !strings.Contains(text, "member: bug_hunter status=failed run=failed verified_findings=0 failure=internal (task candidates)\nmember hint: bug_hunter: a model response could not be accepted") {
+	if !strings.Contains(text, "member: bug_hunter status=failed run=failed verified_findings=0 failure=internal (task candidates): model_output_invalid\nmember hint: bug_hunter: the model's answer was not a valid review document") {
 		t.Fatalf("member failure line missing: %q", text)
 	}
 	general := newLocalModelFixture(t, localModelFixtureOptions{generationMode: "malformed"})
