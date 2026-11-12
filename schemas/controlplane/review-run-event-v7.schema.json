@@ -138,7 +138,8 @@
         "provider_authentication_failed",
         "provider_authorization_denied",
         "provider_rate_limited",
-        "provider_response_invalid"
+        "provider_response_invalid",
+        "model_output_invalid"
       ]
     },
     "retry_at_milliseconds": {
@@ -223,7 +224,8 @@
               "provider_authentication_failed",
               "provider_authorization_denied",
               "provider_rate_limited",
-              "provider_response_invalid"
+              "provider_response_invalid",
+              "model_output_invalid"
             ]
           }
         }
@@ -249,7 +251,10 @@
               "if": {
                 "properties": {
                   "failure_reason": {
-                    "const": "provider_response_invalid"
+                    "enum": [
+                      "provider_response_invalid",
+                      "model_output_invalid"
+                    ]
                   }
                 }
               },

@@ -47,6 +47,12 @@ const (
 	// with an HTTP status it does not classify. It is an internal failure and
 	// names neither the reply nor any of its fields.
 	TaskFailureReasonProviderResponseInvalid
+	// TaskFailureReasonModelOutputInvalid records that the provider's reply
+	// was accepted and stopped normally, but the model's answer in it was not
+	// a valid review document: malformed JSON, the wrong shape, a refusal, or
+	// a document the review rules refuse. It is an internal failure and names
+	// neither the answer nor any of its fields.
+	TaskFailureReasonModelOutputInvalid
 )
 
 // TaskFailureContextShortfall carries the counts of a
@@ -115,6 +121,8 @@ func (r TaskFailureReason) String() string {
 		return "provider_rate_limited"
 	case TaskFailureReasonProviderResponseInvalid:
 		return "provider_response_invalid"
+	case TaskFailureReasonModelOutputInvalid:
+		return "model_output_invalid"
 	default:
 		return ""
 	}
@@ -132,7 +140,7 @@ func ParseTaskFailureReason(value string) (TaskFailureReason, error) {
 	if value == "" {
 		return 0, nil
 	}
-	for reason := TaskFailureReasonNoMergeBase; reason <= TaskFailureReasonProviderResponseInvalid; reason++ {
+	for reason := TaskFailureReasonNoMergeBase; reason <= TaskFailureReasonModelOutputInvalid; reason++ {
 		if reason.String() == value {
 			return reason, nil
 		}
@@ -163,8 +171,9 @@ func taskFailureReasonAllowed(kind TaskKind, reason TaskFailureReason, shortfall
 	return false
 }
 
-// providerRefusalFailure returns the one run failure a provider refusal
-// reason is recorded with, and whether reason is a provider refusal.
+// providerRefusalFailure returns the one run failure a model task reason (a
+// provider refusal, a refused reply or an invalid model answer) is recorded
+// with, and whether reason is one.
 func providerRefusalFailure(reason TaskFailureReason) (RunFailure, bool) {
 	switch reason {
 	case TaskFailureReasonProviderPaymentRequired, TaskFailureReasonProviderModelUnavailable, TaskFailureReasonProviderModelRetired,
@@ -172,7 +181,7 @@ func providerRefusalFailure(reason TaskFailureReason) (RunFailure, bool) {
 		return RunFailurePolicy, true
 	case TaskFailureReasonProviderRateLimited:
 		return RunFailureTransient, true
-	case TaskFailureReasonProviderResponseInvalid:
+	case TaskFailureReasonProviderResponseInvalid, TaskFailureReasonModelOutputInvalid:
 		return RunFailureInternal, true
 	}
 	return 0, false
@@ -189,8 +198,8 @@ func taskFailureReasonFailureAllowed(reason TaskFailureReason, failure RunFailur
 }
 
 // NewModelTaskFailureWithReason binds a failed candidate generation or
-// verification attempt and the provider refusal that ended it to one plan
-// and task. The failure must be the one the reason names.
+// verification attempt and the provider refusal, refused reply or invalid
+// model answer that ended it to one plan and task. The failure must be the one the reason names.
 func NewModelTaskFailureWithReason(failure RunFailure, reason TaskFailureReason, plan ReviewRunPlan, task TaskDefinition) (TaskCompletion, error) {
 	expected, provider := providerRefusalFailure(reason)
 	if !provider || failure != expected || plan.Validate() != nil || task.Validate() != nil || !taskFailureReasonAllowed(task.Kind(), reason, TaskFailureContextShortfall{}) {
