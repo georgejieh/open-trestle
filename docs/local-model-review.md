@@ -1150,9 +1150,26 @@ failure: internal (task candidates): provider_response_invalid
 hint: the provider answered, but its reply did not match what Open Trestle accepts, for example malformed or truncated output, an unrecognized field or an unexpected HTTP status: run the review again; if it repeats, choose another model or route and report it
 ```
 
-A reply the adapter accepted whose review document then fails its schema, a
-reply that stopped at the output limit (`model_output_exhausted`, above), and a
-request the adapter could not build or send record no such detail.
+A reply that stopped at the output limit (`model_output_exhausted`, above),
+and a request the adapter could not build or send, record no such detail.
+
+A reply the adapter accepted that stopped normally, but whose answer the review
+then refuses, records `failure_detail` `model_output_invalid` with the same
+`internal` run failure. That covers an answer that is not one JSON document
+(for example JSON wrapped in raw chat-template tokens such as `<|channel|>`, or
+with a raw control character inside a string), a refusal, a document of the
+wrong shape, and one the review rules refuse (for example a location or
+evidence the request does not allow, or a verdict for a candidate it did not
+name). Nothing is stripped, unwrapped or repaired, and the detail names neither
+the answer nor any of its fields:
+
+```text
+failure: internal (task candidates): model_output_invalid
+hint: the model's answer was not a valid review document (for example malformed JSON, the wrong shape or a refusal): run the review again; if it repeats, choose another model
+```
+
+A complete document in a reply that stopped at the output limit or at a content
+filter, and a host input that fails its own check, record no detail.
 
 A review set member carries the same `failure_detail` and `member hint:` line.
 The other hints are: 404 "the provider does not serve this model at this
@@ -1170,10 +1187,12 @@ by the setup or by the OpenRouter account or key (see
 A result whose policy has an OpenRouter route that does not require zero data
 retention lists the limitation `openrouter_zero_data_retention_not_required`.
 `failure_detail` takes these values in result schema version 6; a result
-without a provider refusal or a refused reply keeps its bytes.
+without a provider refusal, a refused reply or an invalid answer keeps its
+bytes.
 A daemon run is classified the same way, and its generation or verification
 task records the detail as its content-free failure reason (the same
-`provider_*` token, `provider_response_invalid` only with failure `internal`)
+`provider_*` token, `provider_response_invalid` only with failure `internal`,
+and `model_output_invalid`, also only with `internal`)
 in task completion v3, the v7 `task_failed` event and receipt v3.
 `trestle runs status` prints it on stderr, for example
 `runs status: task candidates failed: provider_payment_required (the provider
