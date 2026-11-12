@@ -124,7 +124,11 @@ runs in six steps:
    first, and models that look like 7B parameters or fewer are flagged as weak.
    - **OpenRouter** reads its public model and zero-data-retention lists (no key
      or code is sent), shows what the API reported for each model and fills in
-     the routing, limits and prices. It then asks "Require zero data retention on
+     the routing, limits and prices. It pins only the zero-data-retention
+     endpoints that allow 16384 output tokens, says how many it left out, and
+     lets each request write up to 16384 tokens; when no endpoint of a model
+     allows that much, it keeps that model's endpoints, says so, and uses the
+     smallest output they allow. It then asks "Require zero data retention on
      every request (recommended)?", where Enter means yes. A model without a ZDR
      endpoint is warned about, because an account or key with ZDR enforced will
      refuse it, and can be replaced; keeping it, or answering no, continues after
@@ -160,7 +164,7 @@ runs in six steps:
    │ Checker  other/checker-model                             │
    │ Limits   context 128000 · output 16000 tokens            │
    │ Cost     $3.30 in · $16.50 out per million tokens · at   │
-   │          most $0.49 a request ($0.98 a review)           │
+   │          most $0.69 a request ($1.38 a review)           │
    │ Key      OPEN_TRESTLE_PROVIDER_OPENROUTER (set; never    │
    │          stored)                                         │
    │ Source   github.com/owner/project                        │
@@ -304,7 +308,7 @@ and a flag overrides it; facts you must declare are not filled in. A complete
 | Local server | `--endpoint URL`, optional `--verification-endpoint URL`, `--transport openai_chat_completions\|openai_responses` (for `ollama-signin`, `--endpoint http://127.0.0.1:PORT/v1` names the local Ollama) |
 | Models | `--generation-model ID`, `--verification-model ID` |
 | Capacity | `--context-tokens N`, `--output-tokens N` (OpenRouter: detected unless given) |
-| Review output allowance (optional, no question) | `--max-output-tokens N`, from the default 4096 up to `--output-tokens` |
+| Review output allowance (optional, no question) | `--max-output-tokens N`, from 4096 up to `--output-tokens` (default 4096; OpenRouter: 16384 or the most every pinned endpoint allows) |
 | Prices (remote) | `--input-micro-usd-per-million-tokens N`, `--output-micro-usd-per-million-tokens N` (OpenRouter: detected unless given), `--max-cost-micro-usd N` (1 USD = 1000000) |
 | Key variable (default: the provider's usual name) | `--credential-env OPEN_TRESTLE_PROVIDER_NAME` |
 | Names (default: from `origin`, the folder and `$USER`) | `--owner`, `--tenant`, `--repository`, `--repository-authority`, `--repository-namespace`, `--repository-name` |

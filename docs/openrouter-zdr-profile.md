@@ -29,10 +29,33 @@ Retention (or do not say) are left out and listed as excluded: OpenRouter
 documents that a ZDR request may still be routed to Safety Retention endpoints,
 depending on account settings, and pinning the others keeps them out.
 
-From those endpoints it fills in the facts the configuration needs: the routing
-slugs, the smaller context and output limit of the two models, the higher input
-and output price in micro-USD per million tokens (rounded up), and whether
-structured output is reported. Any flag you pass overrides the detected value.
+Setup then chooses the review output allowance, the most a model may write in
+one request (the runtime policy's `max_output_tokens`), and pins only the usable
+endpoints that allow at least that much output. The allowance it aims for is
+16384 tokens, so a reasoning model has room to finish its answer after it
+reasons; `--max-output-tokens N` sets it instead, and `--output-tokens N` caps
+it at `N`. One endpoint with a small output limit therefore no longer sets the
+limit for every pinned endpoint of both models. For example, a model with 25
+ZDR endpoints of which one allows 4096 output tokens and one 8192 pins the
+other 23, and setup says "2 endpoints that allow less than 16384 output tokens
+are left out".
+
+If no usable endpoint of a model allows the target, setup keeps all of that
+model's usable endpoints, as before, and the allowance becomes the smallest
+output they allow (never below 4096); the wizard says so in one line. Both
+models are pinned with that one floor, so the allowance fits every pinned
+endpoint. An allowance you set with `--max-output-tokens` is never lowered: if
+no usable endpoint of a model allows it, setup stops and names the most that
+model's endpoints allow.
+
+From the pinned endpoints alone it fills in the facts the configuration needs:
+the routing slugs, the smallest context and output limit any pinned endpoint of
+either model allows, the highest input and output price of any pinned endpoint
+in micro-USD per million tokens (rounded up), and whether structured output is
+reported. Any flag you pass overrides the detected value. With
+`--*-provider-slug`, the facts are those of the endpoints you name; a slug the
+API does not list as a usable ZDR endpoint of that model leaves the facts
+unknown, so pass the four capacity and price flags.
 
 The API cannot tell Open Trestle whether your OpenRouter account or key enforces
 ZDR, so setup does not claim either way. If a chosen model has no ZDR endpoint,
@@ -108,7 +131,12 @@ reported, or `null` when the API could not be read:
   time and the SHA-256 of the exact response bytes;
 - `zdr_endpoints`: for each pinned endpoint its tag, provider name, context,
   prompt and output limits, prices and structured-output support;
-- `safety_retention_endpoints_excluded`: the ZDR endpoints left out.
+- `safety_retention_endpoints_excluded`: the ZDR endpoints left out because they
+  report Safety Retention or do not say;
+- `output_limit_endpoints_excluded`: the usable ZDR endpoints left out because
+  they allow fewer output tokens than the review output allowance, each with its
+  `tag` and reported `max_completion_tokens` (empty when the slugs came from
+  flags, or no endpoint was left out).
 
 The witness records what the API reported at one time. It is not evidence that
 an endpoint retains nothing, and the operator does not review or vouch for it.
@@ -156,7 +184,10 @@ Setup writes the real one; do not copy this.
         {"tag": "fixture-cloud", "provider_name": "Fixture Cloud", "context_length": 200000, "max_prompt_tokens": 0, "max_completion_tokens": 64000, "prompt_micro_usd_per_million_tokens": 3000000, "completion_micro_usd_per_million_tokens": 15000000, "structured_outputs": true},
         {"tag": "fixture-cloud/us", "provider_name": "Fixture Cloud", "context_length": 200000, "max_prompt_tokens": 0, "max_completion_tokens": 64000, "prompt_micro_usd_per_million_tokens": 3300000, "completion_micro_usd_per_million_tokens": 16500000, "structured_outputs": true}
       ],
-      "safety_retention_endpoints_excluded": ["fixture-safety/global"]
+      "safety_retention_endpoints_excluded": ["fixture-safety/global"],
+      "output_limit_endpoints_excluded": [
+        {"tag": "fixture-small/fp4", "max_completion_tokens": 4096}
+      ]
     }
   }
 }
@@ -166,8 +197,13 @@ Every member is required and closed; only `observation` may be `null`. Slugs are
 lowercase letters, digits, `-`, `_`, `.` and `/`, at most 256 bytes, distinct,
 at most 32. With `openrouter_api` the slugs are exactly the observed endpoint
 tags in order; `operator` needs at least one slug and `none` none. An excluded
-tag is never pinned. Each source time is no earlier than `retrieved_at`, and
-the label names that time.
+tag is never pinned. An endpoint left out for its output limit allows at least
+4096 output tokens and fewer than every pinned endpoint, is listed once, is not
+also left out for Safety Retention, and appears only with `openrouter_api`;
+at most 64 are listed. Each source time is no earlier than `retrieved_at`, and
+the label names that time. The output-limit member was added in place: witness
+version 3 and runtime policy version 8 exist only in this development
+candidate.
 
 ### Runtime policy version 8
 

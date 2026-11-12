@@ -102,7 +102,10 @@ When `check` returns `ready` (exit 0), run its `review_command` array exactly
 as printed. It is
 `trestle local-git model-review --checkout ... --egress policy-approved --timeout 10m --format text`
 with the pinned base and head commit digests and this directory's `routes.json`
-and `policy.json`. `inspect` is the same read-only report as `check`.
+and `policy.json`. When each request's output allowance gives it more than four
+minutes (see [OpenAI provider](openai-provider.md)), the timeout leaves room for
+two such requests plus two minutes, at most 15 minutes: an OpenRouter setup with
+the 16384-token allowance uses `--timeout 12m`. `inspect` is the same read-only report as `check`.
 
 Results: `ready` (exit 0), `pending` (exit 3), `refused` (exit 4); usage errors
 exit 2. Every refusal prints a reason on stderr and in `messages`. An input that
@@ -139,8 +142,9 @@ per-million-token prices, and are currently available. Without it, init refuses
 rather than inventing those facts. For OpenRouter those facts come from its API,
 so the flag is your consent that each review sends the selected source to
 OpenRouter and your statement that prompt logging is off for the key. Reviews
-reserve the 4096-token output cap plus the actual request size against
-`--max-cost-micro-usd`. Init refuses a cap that cannot cover the output
+reserve the review output allowance (4096 tokens unless `--max-output-tokens`
+sets it, or for OpenRouter the allowance setup chose) plus the actual request
+size against `--max-cost-micro-usd`. Init refuses a cap that cannot cover the output
 reservation. Set the prices to the higher of the two models. Declare `0` prices
 only if your plan has no per-token charge. `--declared-by` names the operator
 recorded in each evidence manifest.
@@ -152,13 +156,21 @@ profiles are fixed, so `--endpoint` is refused for them.
 
 Bootstrap reads `https://openrouter.ai/api/v1/endpoints/zdr` and
 `https://openrouter.ai/api/v1/models` once each, with no key, and records the
-exact SHA-256 and time of each response. For each model it fills in the
-zero-data-retention (ZDR) endpoints it can pin and their routing slugs, the
-smaller context and output limit of the two models, and the higher input and
-output price. Any `--context-tokens`, `--output-tokens`,
+exact SHA-256 and time of each response. For each model it pins the
+zero-data-retention (ZDR) endpoints that allow the review output allowance,
+16384 tokens unless `--max-output-tokens` sets it or `--output-tokens` caps it,
+and leaves out, and records, those that allow less. When no endpoint of a model
+allows it, that model keeps all its usable endpoints and the allowance becomes
+the smallest output they allow. From the pinned endpoints alone it fills in
+their routing slugs, the smallest context and output limit, the highest input
+and output price, and the policy's `max_output_tokens`. Any `--context-tokens`,
+`--output-tokens`, `--max-output-tokens`,
 `--input-micro-usd-per-million-tokens`, `--output-micro-usd-per-million-tokens`
 or `--*-provider-slug SLUG[,SLUG]` flag overrides the detected value. These facts
-are recorded as reported by OpenRouter's API, not verified.
+are recorded as reported by OpenRouter's API, not verified. Without ZDR
+(`--provider openrouter`) nothing is pinned, and the allowance is 16384 within
+the smaller output the two models list. See [what setup
+reads](openrouter-zdr-profile.md#what-setup-reads).
 
 - `--provider openrouter-zdr` requires ZDR on every request (`provider.zdr`),
   limited to the pinned endpoints. A model without a ZDR endpoint is refused

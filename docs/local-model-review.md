@@ -1046,8 +1046,10 @@ A response that stops at the limit with a refusal, or with one complete JSON
 value, is returned unchanged; the strict document parser then refuses any
 answer that did not stop normally, and the run fails `internal` without this
 detail. The per-request output allowance is the runtime
-policy's `max_output_tokens`, which bootstrap writes as 4096. It is separate from
-each route's declared output capacity (`--output-tokens`). `trestle setup
+policy's `max_output_tokens`, which bootstrap writes as 4096, or for OpenRouter
+as 16384 within what every pinned endpoint allows ([what setup
+reads](openrouter-zdr-profile.md#what-setup-reads)). It is separate from each
+route's declared output capacity (`--output-tokens`). `trestle setup
 bootstrap init --max-output-tokens N` (local and remote providers, and the `trestle
 init` wizard as a flag) writes a larger allowance, from 4096 up to the declared
 `--output-tokens`; for priced routes the per-request cost reservation uses the
