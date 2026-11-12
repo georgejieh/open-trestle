@@ -367,8 +367,11 @@ func parseVerificationBatch(response provider.Response, candidates CandidateBatc
 		return VerificationBatch{}, err
 	}
 	parts := response.Parts()
-	if response.Capability() != provider.CapabilityReviewV1 || response.FinishReason() != provider.ResponseFinishStop || len(parts) != 1 || parts[0].Kind() != provider.ResponsePartStructuredData {
+	if response.Capability() != provider.CapabilityReviewV1 {
 		return VerificationBatch{}, ErrInvalidVerificationResponseEnvelope
+	}
+	if response.FinishReason() != provider.ResponseFinishStop || len(parts) != 1 || parts[0].Kind() != provider.ResponsePartStructuredData {
+		return VerificationBatch{}, modelOutputFailure(ErrInvalidVerificationResponseEnvelope)
 	}
 	if err := candidates.Validate(); err != nil {
 		return VerificationBatch{}, err
@@ -377,11 +380,22 @@ func parseVerificationBatch(response provider.Response, candidates CandidateBatc
 	if err != nil {
 		return VerificationBatch{}, err
 	}
-	if err := ValidateVerificationDocumentSyntax(parts[0].Payload()); err != nil {
+	batch, err := parseVerificationDocument(response, parts[0].Payload(), candidates, allowedEvidence, baseLines)
+	if err != nil {
+		return VerificationBatch{}, modelOutputFailure(err)
+	}
+	return batch, nil
+}
+
+// parseVerificationDocument admits the verifier's document against host
+// inputs parseVerificationBatch has already validated, so every error it
+// returns was caused by the document.
+func parseVerificationDocument(response provider.Response, payload []byte, candidates CandidateBatch, allowedEvidence map[string]evidence.EvidenceItem, baseLines map[string]struct{}) (VerificationBatch, error) {
+	if err := ValidateVerificationDocumentSyntax(payload); err != nil {
 		return VerificationBatch{}, err
 	}
 	var document verificationDocument
-	if err := json.Unmarshal(parts[0].Payload(), &document); err != nil {
+	if err := json.Unmarshal(payload, &document); err != nil {
 		return VerificationBatch{}, ErrInvalidVerificationDocumentJSON
 	}
 	candidateValues := candidates.Findings()

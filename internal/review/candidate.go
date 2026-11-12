@@ -609,8 +609,11 @@ func parseCandidateBatch(response provider.Response, snapshot ReviewSnapshot, ev
 		return CandidateBatch{}, err
 	}
 	parts := response.Parts()
-	if response.Capability() != provider.CapabilityReviewV1 || response.FinishReason() != provider.ResponseFinishStop || len(parts) != 1 || parts[0].Kind() != provider.ResponsePartStructuredData {
+	if response.Capability() != provider.CapabilityReviewV1 {
 		return CandidateBatch{}, ErrInvalidCandidateResponseEnvelope
+	}
+	if response.FinishReason() != provider.ResponseFinishStop || len(parts) != 1 || parts[0].Kind() != provider.ResponsePartStructuredData {
+		return CandidateBatch{}, modelOutputFailure(ErrInvalidCandidateResponseEnvelope)
 	}
 	if err := snapshot.Validate(); err != nil {
 		return CandidateBatch{}, err
@@ -619,7 +622,17 @@ func parseCandidateBatch(response provider.Response, snapshot ReviewSnapshot, ev
 	if err != nil {
 		return CandidateBatch{}, err
 	}
-	payload := parts[0].Payload()
+	batch, err := parseCandidateDocument(response, parts[0].Payload(), snapshot, allowedEvidence, version, rules)
+	if err != nil {
+		return CandidateBatch{}, modelOutputFailure(err)
+	}
+	return batch, nil
+}
+
+// parseCandidateDocument admits the model's document against host inputs
+// parseCandidateBatch has already validated, so every error it returns was
+// caused by the document.
+func parseCandidateDocument(response provider.Response, payload []byte, snapshot ReviewSnapshot, allowedEvidence map[string]evidence.EvidenceItem, version int, rules candidateAnchorRules) (CandidateBatch, error) {
 	if err := validateCandidateDocumentSyntax(payload, version); err != nil {
 		return CandidateBatch{}, err
 	}
