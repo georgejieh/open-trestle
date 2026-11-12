@@ -403,7 +403,7 @@ func (o *openRouterObservation) witnessObservation(facts openRouterModelFacts) m
 		endpoints = append(endpoints, map[string]any{"tag": endpoint.tag, "provider_name": endpoint.providerName, "context_length": endpoint.context, "max_prompt_tokens": endpoint.maxPrompt, "max_completion_tokens": endpoint.maxCompletion, "prompt_micro_usd_per_million_tokens": endpoint.promptMicro, "completion_micro_usd_per_million_tokens": endpoint.completionMicro, "structured_outputs": endpoint.structured})
 	}
 	excluded := append([]string{}, facts.safetyExcluded...)
-	return map[string]any{"authority_label": o.label(), "retrieved_at": o.retrievedAt.Format(time.RFC3339Nano), "sources": []remoteEvidence{o.zdr.evidence(), o.models.evidence()}, "zdr_endpoints": endpoints, "safety_retention_endpoints_excluded": excluded}
+	return map[string]any{"authority_label": o.label(), "retrieved_at": o.retrievedAt.Format(time.RFC3339Nano), "sources": []remoteEvidence{o.zdr.evidence(), o.models.evidence()}, "zdr_endpoints": endpoints, "safety_retention_endpoints_excluded": excluded, "output_limit_endpoints_excluded": []any{}}
 }
 
 // initPrintable returns value when it is a short printable label, else fallback.

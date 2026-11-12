@@ -60,12 +60,21 @@ type openRouterObservedEndpoint struct {
 	StructuredOutputs   bool   `json:"structured_outputs"`
 }
 
+// openRouterOutputExcludedEndpoint is a ZDR endpoint setup could otherwise
+// pin but left out because it allows fewer output tokens than the review
+// output allowance setup chose.
+type openRouterOutputExcludedEndpoint struct {
+	Tag                 string `json:"tag"`
+	MaxCompletionTokens uint64 `json:"max_completion_tokens"`
+}
+
 type openRouterObservation struct {
-	AuthorityLabel          string                       `json:"authority_label"`
-	RetrievedAt             string                       `json:"retrieved_at"`
-	Sources                 []openRouterPrivacySource    `json:"sources"`
-	ZDREndpoints            []openRouterObservedEndpoint `json:"zdr_endpoints"`
-	SafetyRetentionExcluded []string                     `json:"safety_retention_endpoints_excluded"`
+	AuthorityLabel          string                             `json:"authority_label"`
+	RetrievedAt             string                             `json:"retrieved_at"`
+	Sources                 []openRouterPrivacySource          `json:"sources"`
+	ZDREndpoints            []openRouterObservedEndpoint       `json:"zdr_endpoints"`
+	SafetyRetentionExcluded []string                           `json:"safety_retention_endpoints_excluded"`
+	OutputLimitExcluded     []openRouterOutputExcludedEndpoint `json:"output_limit_endpoints_excluded"`
 }
 
 type openRouterObservedWitness struct {
@@ -90,12 +99,13 @@ type openRouterObservedWitness struct {
 type openRouterObservedProjection struct {
 	record, evidence, credential, tenant, repository, slugs string
 	slugSource, observedAt, label                           string
+	outputExcluded                                          int
 	route                                                   provider.RouteReference
 }
 
 var openRouterObservedWitnessKeys = []string{"contract", "schema_version", "route", "endpoint", "request_profile", "protocol", "credential_mode", "credential_reference_identity", "tenant_id", "repository_id", "zero_data_retention", "provider_slugs", "provider_slug_source", "observation"}
 
-var openRouterObservationKeys = []string{"authority_label", "retrieved_at", "sources", "zdr_endpoints", "safety_retention_endpoints_excluded"}
+var openRouterObservationKeys = []string{"authority_label", "retrieved_at", "sources", "zdr_endpoints", "safety_retention_endpoints_excluded", "output_limit_endpoints_excluded"}
 
 // requireExactKeys reports whether encoded is a JSON object with exactly the
 // named members, none of them null except those in nullable.
@@ -169,15 +179,17 @@ func (o openRouterObservation) valid() bool {
 			return false
 		}
 	}
-	if len(o.ZDREndpoints) > MaxOpenRouterProviderSlugs || len(o.SafetyRetentionExcluded) > maxOpenRouterSafetyExclusions {
+	if len(o.ZDREndpoints) > MaxOpenRouterProviderSlugs || len(o.SafetyRetentionExcluded) > maxOpenRouterSafetyExclusions || o.OutputLimitExcluded == nil || len(o.OutputLimitExcluded) > maxOpenRouterSafetyExclusions {
 		return false
 	}
 	tags := map[string]bool{}
+	leastPinnedOutput := uint64(1 << 63)
 	for _, endpoint := range o.ZDREndpoints {
 		if !endpoint.valid() || tags[endpoint.Tag] {
 			return false
 		}
 		tags[endpoint.Tag] = true
+		leastPinnedOutput = min(leastPinnedOutput, endpoint.MaxCompletionTokens)
 	}
 	excluded := map[string]bool{}
 	for _, tag := range o.SafetyRetentionExcluded {
@@ -185,6 +197,17 @@ func (o openRouterObservation) valid() bool {
 			return false
 		}
 		excluded[tag] = true
+	}
+	// An endpoint left out for its output limit allows less than every pinned
+	// endpoint, and is neither pinned nor left out for Safety Retention.
+	if len(o.OutputLimitExcluded) != 0 && len(o.ZDREndpoints) == 0 {
+		return false
+	}
+	for _, endpoint := range o.OutputLimitExcluded {
+		if !validBrokeredSlug(endpoint.Tag) || excluded[endpoint.Tag] || tags[endpoint.Tag] || endpoint.MaxCompletionTokens < 4096 || endpoint.MaxCompletionTokens >= leastPinnedOutput {
+			return false
+		}
+		excluded[endpoint.Tag] = true
 	}
 	return true
 }
@@ -200,6 +223,10 @@ func (w openRouterObservedWitness) valid() bool {
 		return false
 	}
 	if w.Observation != nil && !w.Observation.valid() {
+		return false
+	}
+	// Only endpoints setup chose from the API are chosen by output limit.
+	if w.Observation != nil && len(w.Observation.OutputLimitExcluded) != 0 && w.ProviderSlugSource != openRouterSlugSourceAPI {
 		return false
 	}
 	switch w.ProviderSlugSource {
@@ -264,6 +291,15 @@ func extractOpenRouterObserved(member json.RawMessage, record provider.RouteRegi
 				return openRouterObservedProjection{}
 			}
 		}
+		var outputExcluded []json.RawMessage
+		if json.Unmarshal(parts["output_limit_endpoints_excluded"], &outputExcluded) != nil {
+			return openRouterObservedProjection{}
+		}
+		for _, endpoint := range outputExcluded {
+			if !requireExactKeys(endpoint, []string{"tag", "max_completion_tokens"}) {
+				return openRouterObservedProjection{}
+			}
+		}
 	}
 	var witness openRouterObservedWitness
 	if decodeOpenRouterPrivacyJSON(member, &witness) != nil || !witness.valid() {
@@ -272,7 +308,7 @@ func extractOpenRouterObserved(member json.RawMessage, record provider.RouteRegi
 	route, _ := witness.Route.reference()
 	projection := openRouterObservedProjection{record: record.Identity(), evidence: record.EvidenceManifestDigest(), credential: witness.CredentialReferenceIdentity, tenant: witness.TenantID, repository: witness.RepositoryID, slugs: joinOpenRouterSlugs(witness.ProviderSlugs), slugSource: witness.ProviderSlugSource, route: route}
 	if witness.Observation != nil {
-		projection.observedAt, projection.label = witness.Observation.RetrievedAt, witness.Observation.AuthorityLabel
+		projection.observedAt, projection.label, projection.outputExcluded = witness.Observation.RetrievedAt, witness.Observation.AuthorityLabel, len(witness.Observation.OutputLimitExcluded)
 	}
 	if !projection.matchesRecord(record) {
 		return openRouterObservedProjection{}
@@ -378,6 +414,9 @@ type OpenRouterObservedWitnessFields struct {
 	Observed           bool
 	ObservedAt         time.Time
 	AuthorityLabel     string
+	// OutputLimitExcluded counts the ZDR endpoints left out because they
+	// allow fewer output tokens than the review output allowance.
+	OutputLimitExcluded int
 }
 
 // OpenRouterObservedWitness returns the version 3 witness facts of a record,
@@ -391,7 +430,7 @@ func (i RouteInventory) OpenRouterObservedWitness(recordIdentity string) (OpenRo
 		if candidate.ResolvedRecord().RouteRegistryRecord().Identity() != recordIdentity || projection == (openRouterObservedProjection{}) {
 			continue
 		}
-		fields := OpenRouterObservedWitnessFields{ProviderSlugs: splitOpenRouterSlugs(projection.slugs), ProviderSlugSource: projection.slugSource, AuthorityLabel: projection.label}
+		fields := OpenRouterObservedWitnessFields{ProviderSlugs: splitOpenRouterSlugs(projection.slugs), ProviderSlugSource: projection.slugSource, AuthorityLabel: projection.label, OutputLimitExcluded: projection.outputExcluded}
 		if projection.observedAt != "" {
 			fields.Observed = true
 			fields.ObservedAt, _ = canonicalPrivacyTime(projection.observedAt)

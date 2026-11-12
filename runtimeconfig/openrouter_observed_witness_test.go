@@ -34,7 +34,10 @@ func observedWitnessFixture(slugs []string, source string, observed bool) map[st
 				map[string]any{"url": OpenRouterZDREndpointsURL, "retrieved_at": "2026-11-10T21:00:00Z", "content_sha256": strings.Repeat("ab", 32)},
 				map[string]any{"url": OpenRouterModelsURL, "retrieved_at": "2026-11-10T21:00:01Z", "content_sha256": strings.Repeat("cd", 32)},
 			},
-			"zdr_endpoints": endpoints, "safety_retention_endpoints_excluded": []string{"fixture-safety"},
+			"zdr_endpoints": endpoints, "safety_retention_endpoints_excluded": []string{"fixture-safety"}, "output_limit_endpoints_excluded": []any{},
+		}
+		if source == "openrouter_api" && len(slugs) != 0 {
+			witness["observation"].(map[string]any)["output_limit_endpoints_excluded"] = []any{map[string]any{"tag": "fixture-small/fp4", "max_completion_tokens": 4096}}
 		}
 	}
 	return witness
@@ -128,6 +131,9 @@ func TestRuntimePolicyV8BindsObservedOpenRouterWitness(t *testing.T) {
 			if !ok || fields.Observed != form.observed || fields.ProviderSlugSource != form.source || form.observed && (fields.ObservedAt.IsZero() || !strings.Contains(fields.AuthorityLabel, "as reported by OpenRouter's API")) {
 				t.Fatalf("witness facts not readable: %#v %v", fields, ok)
 			}
+			if wantExcluded := form.name == "detected"; (fields.OutputLimitExcluded == 1) != wantExcluded {
+				t.Fatalf("output-limit exclusions read back as %d", fields.OutputLimitExcluded)
+			}
 			if inventory.OpenRouterPrivacyCurrent(authority.RouteRecordIdentity(), authority.ValidFrom()) {
 				t.Fatal("a version 3 witness was treated as a reviewed version 2 witness")
 			}
@@ -136,7 +142,7 @@ func TestRuntimePolicyV8BindsObservedOpenRouterWitness(t *testing.T) {
 }
 
 func TestRuntimePolicyV8RefusesUnboundOrMixedForms(t *testing.T) {
-	for _, name := range []string{"slug mismatch", "extra authority member", "reviewed member", "missing slugs", "null slugs", "wrong profile", "v3 version", "v1 profile", "tenant mismatch", "duplicate slug", "too many slugs", "credential mismatch", "api source without observation", "api slugs differ from endpoints", "operator source empty", "none source with slugs", "safety endpoint pinned", "unknown witness member", "observation missing member", "label without time", "wrong source url", "small output endpoint", "local structured output"} {
+	for _, name := range []string{"slug mismatch", "extra authority member", "reviewed member", "missing slugs", "null slugs", "wrong profile", "v3 version", "v1 profile", "tenant mismatch", "duplicate slug", "too many slugs", "credential mismatch", "api source without observation", "api slugs differ from endpoints", "operator source empty", "none source with slugs", "safety endpoint pinned", "unknown witness member", "observation missing member", "label without time", "wrong source url", "small output endpoint", "local structured output", "observation missing output exclusions", "output exclusion pinned", "output exclusion also safety excluded", "output exclusion allows a pinned limit", "output exclusion below a review", "duplicate output exclusion", "output exclusion with operator slugs", "output exclusion member unknown", "output exclusion as a tag"} {
 		t.Run(name, func(t *testing.T) {
 			witness := observedWitnessFixture([]string{"fixture-a", "fixture-b"}, "openrouter_api", true)
 			observation := witness["observation"].(map[string]any)
@@ -171,6 +177,25 @@ func TestRuntimePolicyV8RefusesUnboundOrMixedForms(t *testing.T) {
 				observation["sources"].([]any)[1].(map[string]any)["url"] = "https://openrouter.ai/api/v1/models/vendor"
 			case "small output endpoint":
 				observation["zdr_endpoints"].([]any)[0].(map[string]any)["max_completion_tokens"] = 1024
+			case "observation missing output exclusions":
+				delete(observation, "output_limit_endpoints_excluded")
+			case "output exclusion pinned":
+				observation["output_limit_endpoints_excluded"] = []any{map[string]any{"tag": "fixture-a", "max_completion_tokens": 4096}}
+			case "output exclusion also safety excluded":
+				observation["output_limit_endpoints_excluded"] = []any{map[string]any{"tag": "fixture-safety", "max_completion_tokens": 4096}}
+			case "output exclusion allows a pinned limit":
+				observation["output_limit_endpoints_excluded"] = []any{map[string]any{"tag": "fixture-small/fp4", "max_completion_tokens": 64000}}
+			case "output exclusion below a review":
+				observation["output_limit_endpoints_excluded"] = []any{map[string]any{"tag": "fixture-small/fp4", "max_completion_tokens": 2048}}
+			case "duplicate output exclusion":
+				small := map[string]any{"tag": "fixture-small/fp4", "max_completion_tokens": 4096}
+				observation["output_limit_endpoints_excluded"] = []any{small, small}
+			case "output exclusion with operator slugs":
+				witness["provider_slug_source"] = "operator"
+			case "output exclusion member unknown":
+				observation["output_limit_endpoints_excluded"] = []any{map[string]any{"tag": "fixture-small/fp4", "max_completion_tokens": 4096, "context_length": 8192}}
+			case "output exclusion as a tag":
+				observation["output_limit_endpoints_excluded"] = []string{"fixture-small/fp4"}
 			}
 			inventory, wire := observedPolicyDocument(t, witness)
 			connection := wire["connections"].([]any)[0].(map[string]any)
