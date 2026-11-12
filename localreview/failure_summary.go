@@ -3,8 +3,9 @@ package localreview
 import "github.com/georgejieh/open-trestle/internal/routehint"
 
 // FailureDetailModelOutputExhausted records that a model route finished with
-// a length stop and no answer: the model spent its whole output allowance,
-// typically on reasoning, before writing the requested document.
+// a length stop and no complete answer: the model spent its whole output
+// allowance, typically on reasoning, before it finished the requested
+// document.
 const FailureDetailModelOutputExhausted = "model_output_exhausted"
 
 // Provider refusal details record that the last model request a provider
@@ -59,7 +60,7 @@ var taskFailureHints = map[[2]string]string{
 }
 
 var failureDetailHints = map[string]string{
-	FailureDetailModelOutputExhausted:      "the model used its whole output allowance (reasoning) before answering; choose a non-reasoning model for this role or raise the review output allowance (setup bootstrap init --max-output-tokens)",
+	FailureDetailModelOutputExhausted:      "the model used its whole output allowance, usually on reasoning, before finishing its answer; choose a non-reasoning model for this role or raise the review output allowance (setup bootstrap init --max-output-tokens)",
 	FailureDetailProviderNoAllowedEndpoint: "OpenRouter has no endpoint for this model that the request may use: if zero data retention is required (by this setup or by your OpenRouter account or key settings), choose a model with zero-data-retention endpoints and run trestle init again (https://openrouter.ai/docs/guides/features/zdr); otherwise check the model ID",
 }
 

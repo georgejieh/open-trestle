@@ -1021,10 +1021,12 @@ see [named local runtimes](named-local-runtimes.md#context-length).
 ### Exhausted model output
 
 A model response that stops at the output token limit (`finish_reason: length`,
-or a Responses `incomplete` result for `max_output_tokens`) without any answer
-text is classified by the adapter as the route failure `output_exhausted`, not as
-a malformed response. Reasoning models do this when they spend the whole output
-allowance on their reasoning trace. The run failure stays `internal` (the run
+or a Responses `incomplete` result for `max_output_tokens`) without a complete
+answer is classified by the adapter as the route failure `output_exhausted`, not
+as a malformed response: either it has no answer text, or its answer text is not
+one complete JSON value (the model had not finished its document). Reasoning
+models do this when they spend all or most of the output allowance on their
+reasoning trace. The run failure stays `internal` (the run
 failure set is closed), and the JSON result adds
 `"failure_detail": "model_output_exhausted"`; the field is absent otherwise.
 Such a reply is a completed provider response, so the failed attempt keeps the
@@ -1037,11 +1039,13 @@ failure classification is unchanged. Text output reads:
 
 ```text
 failure: internal (task verification): model_output_exhausted
-hint: the model used its whole output allowance (reasoning) before answering; choose a non-reasoning model for this role or raise the review output allowance (setup bootstrap init --max-output-tokens)
+hint: the model used its whole output allowance, usually on reasoning, before finishing its answer; choose a non-reasoning model for this role or raise the review output allowance (setup bootstrap init --max-output-tokens)
 ```
 
-A response that stops at the limit with partial text is still refused by the
-strict document parser as before. The per-request output allowance is the runtime
+A response that stops at the limit with a refusal, or with one complete JSON
+value, is returned unchanged; the strict document parser then refuses any
+answer that did not stop normally, and the run fails `internal` without this
+detail. The per-request output allowance is the runtime
 policy's `max_output_tokens`, which bootstrap writes as 4096. It is separate from
 each route's declared output capacity (`--output-tokens`). `trestle setup
 bootstrap init --max-output-tokens N` (local and remote providers, and the `trestle

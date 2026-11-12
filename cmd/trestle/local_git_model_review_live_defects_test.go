@@ -140,7 +140,7 @@ func TestLocalModelReviewReportsExhaustedVerifierOutput(t *testing.T) {
 		t.Fatalf("unreported exhausted reply: %s", stdout.String())
 	}
 	text := runLocalModelText(t, newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, verificationMode: "exhausted"}), 1)
-	if !strings.Contains(text, "failure: internal (task verification): model_output_exhausted\nhint: the model used its whole output allowance (reasoning) before answering") || !strings.Contains(text, "--max-output-tokens") {
+	if !strings.Contains(text, "failure: internal (task verification): model_output_exhausted\nhint: the model used its whole output allowance, usually on reasoning, before finishing its answer") || !strings.Contains(text, "--max-output-tokens") {
 		t.Fatalf("exhausted output not reported: %q", text)
 	}
 	if !strings.Contains(text, "\ntokens: input=200 output=200 cached_input=0 over 2 route attempts\n") {
@@ -151,6 +151,26 @@ func TestLocalModelReviewReportsExhaustedVerifierOutput(t *testing.T) {
 	stdout.Reset()
 	if code := run(other.args, &stdout, &stderr); code != 1 || bytes.Contains(stdout.Bytes(), []byte("failure_detail")) {
 		t.Fatalf("unrelated failure carried failure_detail: %s", stdout.String())
+	}
+}
+
+// A verifier that stopped at the output limit part way through its answer
+// failed as a bare internal failure with no detail, because the partial
+// answer then failed the strict document parse. It is an exhausted output
+// allowance, with the usage the reply reported.
+func TestLocalModelReviewReportsAPartialAnswerAtTheOutputLimit(t *testing.T) {
+	f := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, verificationMode: "exhausted_partial"})
+	var stdout, stderr bytes.Buffer
+	if code := run(f.args, &stdout, &stderr); code != 1 {
+		t.Fatalf("exit=%d stderr=%q", code, stderr.String())
+	}
+	const stage = `{"known":true,"route_attempts":1,"input_tokens":100,"output_tokens":100,"cached_input_tokens":0}`
+	if !strings.Contains(stdout.String(), `"failure":"internal","failure_detail":"model_output_exhausted"`) || !strings.Contains(stdout.String(), `"verification":`+stage) {
+		t.Fatalf("partial answer at the limit: %s", stdout.String())
+	}
+	text := runLocalModelText(t, newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, verificationMode: "exhausted_partial"}), 1)
+	if !strings.Contains(text, "failure: internal (task verification): model_output_exhausted\nhint: the model used its whole output allowance, usually on reasoning, before finishing its answer") {
+		t.Fatalf("partial answer text: %q", text)
 	}
 }
 

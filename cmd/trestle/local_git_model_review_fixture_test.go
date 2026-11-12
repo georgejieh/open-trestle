@@ -414,6 +414,10 @@ func (m *localModelEndpoint) respond(t *testing.T, w http.ResponseWriter, packet
 		if m.mode == "exhausted" || m.mode == "exhausted_unreported" {
 			finish, message["content"] = "length", ""
 		}
+		// exhausted_partial stopped at the limit part way through its answer.
+		if m.mode == "exhausted_partial" {
+			finish, message["content"] = "length", string(text[:len(text)/2])
+		}
 		response = map[string]any{
 			"id": "chatcmpl-" + m.model, "object": "chat.completion", "model": m.model,
 			"choices": []any{map[string]any{"index": 0, "finish_reason": finish, "message": message}},
