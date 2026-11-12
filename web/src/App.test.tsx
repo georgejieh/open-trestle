@@ -683,6 +683,13 @@ describe("console", () => {
         /Provider reply refused: the provider answered, but its reply did not match what Open Trestle accepts/,
       hint: "run the review again; if it repeats, choose another model or route and report it",
     },
+    {
+      failure: "internal" as const,
+      reason: "model_output_invalid" as const,
+      label:
+        /Model answer not a review document: the model's answer was not a valid review document/,
+      hint: "run the review again; if it repeats, choose another model",
+    },
   ])(
     "names a provider refusal ($reason) and its hint beside the failure",
     async ({ failure, reason, label, hint }) => {

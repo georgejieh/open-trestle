@@ -236,6 +236,7 @@ describe("API client", () => {
       ["provider_authorization_denied", "policy"],
       ["provider_rate_limited", "transient"],
       ["provider_response_invalid", "internal"],
+      ["model_output_invalid", "internal"],
     ] as const;
     for (const [reason, failure] of reasons) {
       for (const kind of ["generate_candidates", "verify_candidates"]) {

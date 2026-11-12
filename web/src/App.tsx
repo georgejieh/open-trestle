@@ -85,6 +85,8 @@ const failureReasonLabels: Record<FailureReason, string> = {
     "Provider rate limited: the provider rate-limited the request on its last attempt",
   provider_response_invalid:
     "Provider reply refused: the provider answered, but its reply did not match what Open Trestle accepts, for example malformed or truncated output, an unrecognized field or an unexpected HTTP status",
+  model_output_invalid:
+    "Model answer not a review document: the model's answer was not a valid review document (for example malformed JSON, the wrong shape or a refusal)",
 };
 /** The fixed action for each provider refusal, as the local review prints it. */
 const failureReasonHints: Partial<Record<FailureReason, string>> = {
@@ -102,6 +104,8 @@ const failureReasonHints: Partial<Record<FailureReason, string>> = {
     "wait and run the review again, or choose another route",
   provider_response_invalid:
     "run the review again; if it repeats, choose another model or route and report it",
+  model_output_invalid:
+    "run the review again; if it repeats, choose another model",
 };
 const emptyScope: Scope = { tenant: "", repository: "", run: "" };
 function rememberedScope(): Scope {
