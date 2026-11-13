@@ -79,11 +79,17 @@ Retention endpoints depending on your account settings.
 Every request sets the same provider controls:
 
 ```json
-{"provider":{"zdr":true,"only":["<slug>","..."],"order":["<slug>","..."],"allow_fallbacks":false,"require_parameters":true}}
+{"provider":{"zdr":true,"only":["<slug>","..."],"allow_fallbacks":false,"require_parameters":true}}
 ```
 
-`only` and `order` are the recorded slugs, so OpenRouter may use only those
-endpoints, in that order. A route with no recorded slugs sends neither list.
+`only` is the recorded slugs, so OpenRouter may use only those endpoints. No
+`order` is sent: OpenRouter balances requests across the pinned endpoints. With
+the recorded order (cheapest first), every live request went to the first
+endpoint, and its serving faults (chat-template tokens around the answer,
+malformed JSON) decided every result. A route with no recorded slugs sends no
+list. The recorded slugs are still chosen cheapest first when more than 32
+qualify, and the cost limit uses the highest price among them, so balancing
+never exceeds it.
 Because the request itself requires ZDR, OpenRouter refuses it rather than
 sending it to an endpoint outside its ZDR list; there is no review window to
 expire. The exact model selector, output bound, host instructions, sanitized
@@ -222,7 +228,11 @@ The answer part of a reply is decoded strictly: the identity, the one choice,
 its message and the usage. An unknown member there is refused, and so is a
 choice that reports an error, returns images, or whose reasoning ran a server
 tool. The message's `reasoning` text and `reasoning_details` summaries are
-bounded and dropped; they never become output. `native_finish_reason` is
+bounded and dropped; they never become output. An answer wrapped in exactly
+one outer Markdown fence (with no language or `json`) is unwrapped before the
+same strict validation, because some endpoints that list structured output
+support still fence their JSON; any other wrapping is refused.
+`native_finish_reason` is
 bounded and ignored. The usage must report prompt, completion and total
 tokens, no BYOK charge, no tool use and no deferred tool turns, and cached
 prompt tokens may not exceed prompt tokens. The completion breakdown

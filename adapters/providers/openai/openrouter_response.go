@@ -150,8 +150,14 @@ func normalizeOpenRouterChatResponse(content []byte, route provider.RouteReferen
 			return provider.Response{}, ErrInvalidConfig
 		}
 		// The reasoning trace and OpenRouter's choice metadata are validated
-		// and discarded, never treated as output.
-		choice.chatChoiceWire.Message = choice.Message.chatMessageWire
+		// and discarded, never treated as output. One outer JSON fence is
+		// removed before the same strict validation.
+		message := choice.Message.chatMessageWire
+		if message.Content != nil {
+			unfenced := unwrapOneJSONFence(*message.Content)
+			message.Content = &unfenced
+		}
+		choice.chatChoiceWire.Message = message
 		wire.chatResponseWire.Choices[i] = choice.chatChoiceWire
 	}
 	// Reuse the unchanged generic response/content and integer-usage checks.

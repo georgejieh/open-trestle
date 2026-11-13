@@ -271,3 +271,27 @@ func mustNormalizeOpenRouter(t *testing.T, body string) provider.Response {
 	}
 	return response
 }
+
+func TestOpenRouterResponseUnwrapsOneOuterJSONFence(t *testing.T) {
+	valid := string(openRouterDocumentedChatResponse("model"))
+	base := mustNormalizeOpenRouter(t, valid)
+	answer := `{\"summary\":\"ok\",\"findings\":[]}`
+	for _, fence := range []string{"```json\\n%s\\n```", "```\\n%s\\n```", "\\n```json\\n%s\\n```\\n"} {
+		body := strings.Replace(valid, `"content":"`+answer+`"`, `"content":"`+strings.Replace(fence, "%s", answer, 1)+`"`, 1)
+		if body == valid {
+			t.Fatal("fixture replacement did not apply")
+		}
+		response := mustNormalizeOpenRouter(t, body)
+		if !bytes.Equal(response.Parts()[0].Payload(), base.Parts()[0].Payload()) || response.Parts()[0].Kind() != provider.ResponsePartStructuredData {
+			t.Fatalf("fenced answer %q was not read as the same document", fence)
+		}
+	}
+	for _, fence := range []string{"```go\\n%s\\n```", "```json\\n```json\\n%s\\n```\\n```", "Here it is:\\n```json\\n%s\\n```", "```json\\n%s"} {
+		body := strings.Replace(valid, `"content":"`+answer+`"`, `"content":"`+strings.Replace(fence, "%s", answer, 1)+`"`, 1)
+		a := &Adapter{protocol: ProtocolChatCompletions, requestProfile: RequestProfileOpenRouterZDRChatV2}
+		response, err := a.normalizeProviderResponse([]byte(body), testRoute(t, "model", ""))
+		if err == nil && response.Parts()[0].Kind() == provider.ResponsePartStructuredData {
+			t.Fatalf("%q was read as a structured document", fence)
+		}
+	}
+}

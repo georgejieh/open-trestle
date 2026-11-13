@@ -150,11 +150,12 @@ func (a *Adapter) profileIdentityPreimage(configuration []byte) []byte {
 			Repository        string          `json:"repository_id"`
 			ProviderSlugs     []string        `json:"provider_slugs"`
 			ZDR               bool            `json:"zdr"`
+			PinnedOrder       bool            `json:"pinned_order"`
 			AllowFallbacks    bool            `json:"allow_fallbacks"`
 			RequireParameters bool            `json:"require_parameters"`
-		}{"open-trestle/openrouter-zdr-chat-adapter", 3, configuration, a.requestProfile, a.protocol, a.credentialMode,
+		}{"open-trestle/openrouter-zdr-chat-adapter", 4, configuration, a.requestProfile, a.protocol, a.credentialMode,
 			[]string{authority.Route.Zone().String(), authority.Route.ProviderID(), authority.Route.AdapterID(), authority.Route.ConnectionID(), authority.Route.ModelID(), authority.Route.ModelVersion()}, authority.RouteRecordIdentity, authority.EvidenceIdentity,
-			authority.TenantID, authority.RepositoryID, append([]string{}, authority.ProviderSlugs...), true, false, true})
+			authority.TenantID, authority.RepositoryID, append([]string{}, authority.ProviderSlugs...), true, false, false, true})
 		return encoded
 	}
 	encoded, _ := json.Marshal(struct {
@@ -194,12 +195,16 @@ type openRouterProviderPreferences struct {
 
 // openRouterPreferences returns the fixed provider controls of both OpenRouter
 // profiles: zero data retention, no fallback outside the pinned slugs, and
-// only endpoints that accept every request parameter.
+// only endpoints that accept every request parameter. V1 pins its one slug
+// with only and order. V2 sends only, without order, so OpenRouter balances
+// requests across the pinned ZDR endpoints instead of sending every request
+// to the first one: a fixed cheapest-first order sent every live request to
+// one endpoint, whose serving faults then decided every result.
 func (a *Adapter) openRouterPreferences() openRouterProviderPreferences {
-	slugs := []string{a.openRouterAuthority.ProviderSlug}
 	if a.requestProfile == RequestProfileOpenRouterZDRChatV2 {
-		slugs = slices.Clone(a.openRouterAuthority.ProviderSlugs)
+		return openRouterProviderPreferences{ZDR: true, Only: slices.Clone(a.openRouterAuthority.ProviderSlugs), AllowFallbacks: false, RequireParameters: true}
 	}
+	slugs := []string{a.openRouterAuthority.ProviderSlug}
 	return openRouterProviderPreferences{ZDR: true, Only: slugs, Order: slices.Clone(slugs), AllowFallbacks: false, RequireParameters: true}
 }
 

@@ -51,8 +51,8 @@ func TestUnwrapOllamaJSONFence(t *testing.T) {
 		"text ```json\n{}\n```":              "text ```json\n{}\n```",
 	}
 	for input, want := range cases {
-		if got := unwrapOllamaJSONFence(input); got != want {
-			t.Errorf("unwrapOllamaJSONFence(%q) = %q, want %q", input, got, want)
+		if got := unwrapOneJSONFence(input); got != want {
+			t.Errorf("unwrapOneJSONFence(%q) = %q, want %q", input, got, want)
 		}
 	}
 }

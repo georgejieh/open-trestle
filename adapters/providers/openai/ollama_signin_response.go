@@ -49,7 +49,7 @@ func normalizeOllamaSigninResponse(content []byte, route provider.RouteReference
 		}
 		message := choice.Message.chatMessageWire
 		if message.Content != nil {
-			unfenced := unwrapOllamaJSONFence(*message.Content)
+			unfenced := unwrapOneJSONFence(*message.Content)
 			message.Content = &unfenced
 		}
 		choice.chatChoiceWire.Message = message
@@ -62,12 +62,13 @@ func normalizeOllamaSigninResponse(content []byte, route provider.RouteReference
 	return normalizeChatResponse(generic, route)
 }
 
-// unwrapOllamaJSONFence removes exactly one outer Markdown code fence. Ollama
-// ignores response_format for relayed cloud models, and some of them fence
-// their JSON despite the contract. The unwrapped text still goes through the
-// same strict output validation; anything other than a single outer fence is
-// returned unchanged and refused there.
-func unwrapOllamaJSONFence(content string) string {
+// unwrapOneJSONFence removes exactly one outer Markdown code fence. Ollama
+// ignores response_format for relayed cloud models, and some OpenRouter
+// endpoints that list structured output support still fence their JSON (live,
+// 2026-11-11). The unwrapped text still goes through the same strict output
+// validation; anything other than a single outer fence, with no language or
+// json, is returned unchanged and refused there.
+func unwrapOneJSONFence(content string) string {
 	trimmed := strings.TrimSpace(content)
 	body, found := strings.CutPrefix(trimmed, "```")
 	if !found {

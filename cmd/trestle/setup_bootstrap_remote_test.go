@@ -80,11 +80,13 @@ func (r *remoteModelTransport) RoundTrip(request *http.Request) (*http.Response,
 		return nil, errors.New("direct remote request carried provider routing controls")
 	}
 	if slugs != "" {
-		expected := map[string]string{"zdr": "true", "only": slugs, "order": slugs, "allow_fallbacks": "false", "require_parameters": "true"}
+		expected := map[string]string{"zdr": "true", "only": slugs, "allow_fallbacks": "false", "require_parameters": "true"}
+		if _, ordered := wire.Provider["order"]; ordered {
+			return nil, errors.New("an OpenRouter request fixed the endpoint order")
+		}
 		if slugs == "[]" {
 			delete(expected, "only")
-			delete(expected, "order")
-			if _, pinned := wire.Provider["only"]; pinned || wire.Provider["order"] != nil {
+			if _, pinned := wire.Provider["only"]; pinned {
 				return nil, errors.New("an unpinned OpenRouter request sent a slug list")
 			}
 		}

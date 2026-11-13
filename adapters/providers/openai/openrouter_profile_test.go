@@ -54,8 +54,10 @@ func TestOpenRouterV2ProfileRequiresZDRAndPinsObservedSlugs(t *testing.T) {
 			if _, pinned := controls["only"]; pinned || controls["order"] != nil {
 				t.Fatalf("an unpinned route sent a slug list: %v", controls)
 			}
-		} else if string(controls["only"]) != string(encoded) || string(controls["order"]) != string(encoded) {
+		} else if string(controls["only"]) != string(encoded) {
 			t.Fatalf("slugs not pinned: %v", controls)
+		} else if _, ordered := controls["order"]; ordered {
+			t.Fatalf("a V2 request fixed the endpoint order: %v", controls)
 		}
 	}
 	pinned, _ := New(openRouterV2Config(t, []string{"fixture-a"}))
