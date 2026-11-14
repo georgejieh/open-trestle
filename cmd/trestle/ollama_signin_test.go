@@ -33,6 +33,9 @@ func TestMain(m *testing.M) {
 	}
 	ollamaLookPath = func() (string, error) { return "", errors.New("ollama is not installed in tests") }
 	ollamaRunSigninChild = func(context.Context) error { return errors.New("ollama signin is not run in tests") }
+	// OpenRouter's key report is never read over the network in tests; a test
+	// that needs it installs a fake.
+	usageOpenRouterTransport = offlineKeyTransport{}
 	// Reviews record their spend in the usage folder under XDG_STATE_HOME, so
 	// every test of this package writes to a private temporary folder, never
 	// to the operator's ~/.local/state. A test that inspects the ledger sets

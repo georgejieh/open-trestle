@@ -143,6 +143,31 @@ func (s Status) Summary() string {
 	return fmt.Sprintf("%s of your %s for %s %s (%d%%), alerts at %s", FormatUSD(s.Spend.MicroUSD), s.Limit.Describe(), s.Limit.Scope.CredentialEnvironment, s.Limit.Period.Current(), s.Percent(), AlertList(s.Limit.AlertPercents))
 }
 
+// Brief is the status without the key's name: "$0.60 of your $10.00 monthly
+// limit this month (6%), alerts at 80% and 100%", noting reviews counted at
+// their reservation.
+func (s Status) Brief() string {
+	text := fmt.Sprintf("%s of your %s %s (%d%%), alerts at %s", FormatUSD(s.Spend.MicroUSD), s.Limit.Describe(), s.Limit.Period.Current(), s.Percent(), AlertList(s.Limit.AlertPercents))
+	return text + s.Spend.upperBoundNote()
+}
+
+// upperBoundNote names reviews whose usage was unknown, so they count at
+// their reservation.
+func (s Spend) upperBoundNote() string {
+	switch s.UpperBound {
+	case 0:
+		return ""
+	case 1:
+		return "; 1 review counts at its reservation because its usage was not reported"
+	}
+	return fmt.Sprintf("; %d reviews count at their reservation because their usage was not reported", s.UpperBound)
+}
+
+// Unlimited describes spend recorded against a key without a limit.
+func (s Spend) Unlimited(period Period) string {
+	return fmt.Sprintf("%s recorded %s; no limit set", FormatUSD(s.MicroUSD), period.Current()) + s.upperBoundNote()
+}
+
 // AlertLine is printed once when a review's spend crosses an alert
 // percentage.
 func (s Status) AlertLine() string {

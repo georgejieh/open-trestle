@@ -85,6 +85,9 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	if len(args) >= 1 && args[0] == "profiles" {
 		return runProfiles(args[1:], stdout, stderr)
 	}
+	if len(args) >= 1 && args[0] == "usage" {
+		return runUsage(ctx, args[1:], stdout, stderr)
+	}
 	if len(args) >= 2 && args[0] == "local-git" {
 		switch args[1] {
 		case "model-review":
@@ -189,6 +192,7 @@ func runReview(fixturePath string, stdout, stderr io.Writer) int {
 
 func writeUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "usage: trestle init [--no-input] [answer flags]   (start here: guided setup and first review; see docs/getting-started.md)")
+	writeUsageUsage(stderr)
 	fmt.Fprintln(stderr, "       trestle validate-fixture <path>")
 	fmt.Fprintln(stderr, "       trestle build-info")
 	fmt.Fprintln(stderr, "       trestle review <path>")

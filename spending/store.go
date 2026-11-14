@@ -417,10 +417,11 @@ func (s *Store) Spent(scope Scope, start, end time.Time) (Spend, error) {
 	if err != nil {
 		return Spend{}, err
 	}
-	return sumSpend(entries, scope), nil
+	return SumSpend(entries, scope), nil
 }
 
-func sumSpend(entries []Entry, scope Scope) Spend {
+// SumSpend sums the entries charged to scope.
+func SumSpend(entries []Entry, scope Scope) Spend {
 	var spend Spend
 	for _, entry := range entries {
 		if !entry.Charges(scope) {
