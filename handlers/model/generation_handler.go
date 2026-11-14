@@ -320,9 +320,10 @@ func mapRouteFailure(failure gateway.RouteFailureClass) controlplane.RunFailure 
 	case gateway.RouteFailureAuthentication, gateway.RouteFailureAuthorization,
 		gateway.RouteFailurePolicyDenied, gateway.RouteFailureBudgetExhausted,
 		gateway.RouteFailurePaymentRequired, gateway.RouteFailureModelUnavailable,
-		gateway.RouteFailureModelRetired:
-		// A provider refusal of the account, credential or model repeats on
-		// every replay; it is refused, not retried as an internal failure.
+		gateway.RouteFailureModelRetired, gateway.RouteFailureRequestRejected:
+		// A provider refusal of the account, credential, model or request
+		// repeats on every replay; it is refused, not retried as an internal
+		// failure.
 		return controlplane.RunFailurePolicy
 	case gateway.RouteFailureCancelled:
 		return controlplane.RunFailureCanceled

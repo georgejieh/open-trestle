@@ -678,6 +678,7 @@ func TestMapRouteFailureCoversEveryClass(t *testing.T) {
 		gateway.RouteFailurePaymentRequired:  controlplane.RunFailurePolicy,
 		gateway.RouteFailureModelUnavailable: controlplane.RunFailurePolicy,
 		gateway.RouteFailureModelRetired:     controlplane.RunFailurePolicy,
+		gateway.RouteFailureRequestRejected:  controlplane.RunFailurePolicy,
 	}
 	for class := gateway.RouteFailureTransport; class.Validate() == nil; class++ {
 		expected, ok := want[class]
