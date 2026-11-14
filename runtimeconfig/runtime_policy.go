@@ -494,6 +494,23 @@ func credentialEnvironmentIdentity(value string) string {
 	sum := sha256.Sum256([]byte("open-trestle/provider-credential-environment/" + value))
 	return hex.EncodeToString(sum[:])
 }
+
+// ValidCredentialEnvironment reports whether name is an admissible credential
+// variable name: OPEN_TRESTLE_PROVIDER_ followed by capital letters, digits
+// and underscores, at most 128 bytes. It never reads the variable.
+func ValidCredentialEnvironment(name string) bool { return validCredentialEnvironment(name) }
+
+// CredentialReferenceIdentity is the credential reference identity a runtime
+// policy connection, and every setup privacy witness, records for the
+// credential variable name: the SHA-256 of a fixed prefix and the name. It
+// identifies the variable, never the key it holds, and ok is false for a name
+// ValidCredentialEnvironment refuses.
+func CredentialReferenceIdentity(name string) (identity string, ok bool) {
+	if !validCredentialEnvironment(name) {
+		return "", false
+	}
+	return credentialEnvironmentIdentity(name), true
+}
 func nonzeroDigest(value string) bool {
 	if len(value) != 64 || value != strings.ToLower(value) {
 		return false

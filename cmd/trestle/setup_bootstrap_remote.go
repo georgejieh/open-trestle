@@ -737,7 +737,11 @@ func initializeRemoteSetupBootstrap(ctx context.Context, dir string, values map[
 		adapter := family.providerID + "-" + role
 		connectionID := family.providerID + "/" + role
 		model := value(role + "-model")
-		credentialIdentity := remoteDigest([]byte("open-trestle/provider-credential-environment/" + environments[role]))
+		// The same derivation the runtime policy connection records, so every
+		// setup that names this key variable shares one credential reference.
+		// Only the OpenRouter ZDR and OpenCode Go witnesses use it, and both
+		// require a valid key variable (checked above).
+		credentialIdentity, _ := runtimeconfig.CredentialReferenceIdentity(environments[role])
 		route := remoteWitnessRoute{Zone: family.zone.String(), ProviderID: family.providerID, AdapterID: adapter, ConnectionID: connectionID, ModelID: model, ModelVersion: "", EffectiveSelector: model}
 		declaration := map[string]any{"contract": "open-trestle/operator-remote-bootstrap-declaration", "schema_version": 1, "declared_by": declaredBy, "provider": name, "endpoint": endpoint, "role": role, "model": model, "limitations": "operator declaration, not measured health, provider privacy, account state or service conformance"}
 		manifest := map[string]any{"open_trestle_bootstrap_declaration": declaration}
