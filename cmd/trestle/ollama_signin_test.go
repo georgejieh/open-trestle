@@ -33,7 +33,22 @@ func TestMain(m *testing.M) {
 	}
 	ollamaLookPath = func() (string, error) { return "", errors.New("ollama is not installed in tests") }
 	ollamaRunSigninChild = func(context.Context) error { return errors.New("ollama signin is not run in tests") }
-	os.Exit(m.Run())
+	// Reviews record their spend in the usage folder under XDG_STATE_HOME, so
+	// every test of this package writes to a private temporary folder, never
+	// to the operator's ~/.local/state. A test that inspects the ledger sets
+	// its own folder with t.Setenv. Child processes of this test binary
+	// inherit the folder instead of making their own.
+	const marker = "OPEN_TRESTLE_TEST_STATE_FOLDER"
+	if os.Getenv(marker) != "" {
+		os.Exit(m.Run())
+	}
+	state, err := os.MkdirTemp("", "trestle-test-state-")
+	if err != nil || os.Setenv("XDG_STATE_HOME", state) != nil || os.Setenv(marker, state) != nil {
+		os.Exit(1)
+	}
+	code := m.Run()
+	_ = os.RemoveAll(state)
+	os.Exit(code)
 }
 
 func useRealOllamaTags(t *testing.T) {

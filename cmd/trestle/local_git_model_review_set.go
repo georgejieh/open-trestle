@@ -512,6 +512,7 @@ func runLocalModelReviewSet(ctx, execution context.Context, options localModelRe
 		}
 	}
 	set := buildModelReviewSet(selection, members, notLaunched, options)
+	inputs.spending.finish()
 	return writeModelReviewSet(options.format, options.exitPolicy, set, stdout, stderr)
 }
 

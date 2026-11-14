@@ -40,9 +40,12 @@ type remoteModelTransport struct {
 	// maxTokens is the review output allowance every request must send; zero
 	// means the default 4096.
 	maxTokens uint32
-	mu        sync.Mutex
-	requests  []string                     // "task:model"
-	providers []map[string]json.RawMessage // each request's provider object, nil when absent
+	// verificationStatus, when set, answers every verification request with
+	// that HTTP status and no usage.
+	verificationStatus int
+	mu                 sync.Mutex
+	requests           []string                     // "task:model"
+	providers          []map[string]json.RawMessage // each request's provider object, nil when absent
 }
 
 func (r *remoteModelTransport) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -145,6 +148,9 @@ func (r *remoteModelTransport) RoundTrip(request *http.Request) (*http.Response,
 	r.requests = append(r.requests, packet.Task+":"+wire.Model)
 	r.providers = append(r.providers, wire.Provider)
 	r.mu.Unlock()
+	if packet.Task == "candidate_verification" && r.verificationStatus != 0 {
+		return &http.Response{StatusCode: r.verificationStatus, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("")), Request: request}, nil
+	}
 	text, _ := json.Marshal(output)
 	usage := map[string]any{"prompt_tokens": 120, "completion_tokens": 80, "total_tokens": 200}
 	if strings.HasPrefix(r.target, "https://openrouter.ai/") {

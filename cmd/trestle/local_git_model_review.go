@@ -220,6 +220,9 @@ func runLocalGitModelReview(ctx context.Context, args []string, stdout, stderr i
 	execution, cancel := context.WithTimeout(ctx, options.timeout)
 	defer cancel()
 	inputs, status := prepareLocalModelReview(execution, &options, repository, base, head, stderr)
+	if status == "" {
+		inputs.spending = newReviewSpending(inputs, options, stderr)
+	}
 	if options.specialists.active() {
 		return runLocalModelReviewSet(ctx, execution, options, inputs, status, stdout, stderr)
 	}
@@ -233,6 +236,7 @@ func runLocalGitModelReview(ctx context.Context, args []string, stdout, stderr i
 	if member.partialCheckout {
 		fmt.Fprintln(stderr, partialCheckoutHint)
 	}
+	inputs.spending.finish()
 	return writeLocalModelResultWithPolicy(options.format, options.exitPolicy, member.result, stdout, stderr)
 }
 
@@ -245,6 +249,9 @@ type localModelReviewInputs struct {
 	retainedInput       *runtimeconfig.RetainedMemoryInput
 	repository          evidence.RepositoryIdentity
 	base, head          evidence.RevisionIdentity
+	// spending checks and records the spend of each member run; nil when no
+	// route uses an API key.
+	spending *reviewSpending
 }
 
 // prepareLocalModelReview loads protected configuration and resolves the source
@@ -344,12 +351,22 @@ func runLocalModelReviewMember(ctx, execution context.Context, options localMode
 		member.result = result
 		return member, true
 	}
+	// A key at or over its spending limit refuses the run here, before the
+	// objects root is opened, any credential is read or any request is sent.
+	if inputs.spending.refuse() {
+		result, err := localreview.NewSpendingLimitRefusalResult(options.objectStoreProfile, specialist)
+		if err != nil {
+			return member, false
+		}
+		member.result = result
+		return member, true
+	}
 	base, head := inputs.base, inputs.head
 	objects, err := os.OpenRoot(options.objects)
 	if err != nil {
 		return unstarted("incomplete")
 	}
-	credentials, err := runtimecatalog.NewEnvironmentOpenAICredentialResolver(os.Getenv)
+	credentials, err := runtimecatalog.NewEnvironmentOpenAICredentialResolver(localReviewCredentialLookup)
 	if err != nil {
 		_ = objects.Close()
 		return unstarted("failed")
@@ -423,9 +440,12 @@ func runLocalModelReviewMember(ctx, execution context.Context, options localMode
 	}
 	if runErr != nil || closeErr != nil {
 		member.result = session.FailureResult()
-		return member, true
+	} else {
+		member.result = result
 	}
-	member.result = result
+	// The ledger entry uses the result's settled cost when its usage is known,
+	// and otherwise the requests the session saw sent, at their reservation.
+	inputs.spending.record(scope.ReviewRunID(), member.result, session.SpendObservation())
 	return member, true
 }
 func localModelCleanupTimeout(configured time.Duration) time.Duration {
