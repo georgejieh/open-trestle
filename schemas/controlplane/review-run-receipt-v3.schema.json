@@ -240,7 +240,8 @@
               "provider_authorization_denied",
               "provider_rate_limited",
               "provider_response_invalid",
-              "model_output_invalid"
+              "model_output_invalid",
+              "provider_request_rejected"
             ]
           },
           "retry_at_milliseconds": {
@@ -437,7 +438,8 @@
                     "provider_authorization_denied",
                     "provider_rate_limited",
                     "provider_response_invalid",
-                    "model_output_invalid"
+                    "model_output_invalid",
+                    "provider_request_rejected"
                   ]
                 }
               }
@@ -521,7 +523,8 @@
               "provider_authorization_denied",
               "provider_rate_limited",
               "provider_response_invalid",
-              "model_output_invalid"
+              "model_output_invalid",
+              "provider_request_rejected"
             ]
           }
         },

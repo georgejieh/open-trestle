@@ -60,7 +60,8 @@
         "provider_authorization_denied",
         "provider_rate_limited",
         "provider_response_invalid",
-        "model_output_invalid"
+        "model_output_invalid",
+        "provider_request_rejected"
       ]
     },
     "plan_identity": {
@@ -150,7 +151,8 @@
               "provider_authorization_denied",
               "provider_rate_limited",
               "provider_response_invalid",
-              "model_output_invalid"
+              "model_output_invalid",
+              "provider_request_rejected"
             ]
           }
         }

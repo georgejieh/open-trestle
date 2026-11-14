@@ -53,6 +53,13 @@ const (
 	// a document the review rules refuse. It is an internal failure and names
 	// neither the answer nor any of its fields.
 	TaskFailureReasonModelOutputInvalid
+	// TaskFailureReasonProviderRequestRejected records that the provider
+	// answered a model task's request by rejecting the request itself as
+	// invalid (HTTP 400, 405, 415 or 422), for example an unknown model ID or
+	// a parameter the model or endpoint does not accept. It is a policy
+	// failure, like the other refusals of the request, and names nothing the
+	// provider said.
+	TaskFailureReasonProviderRequestRejected
 )
 
 // TaskFailureContextShortfall carries the counts of a
@@ -123,6 +130,8 @@ func (r TaskFailureReason) String() string {
 		return "provider_response_invalid"
 	case TaskFailureReasonModelOutputInvalid:
 		return "model_output_invalid"
+	case TaskFailureReasonProviderRequestRejected:
+		return "provider_request_rejected"
 	default:
 		return ""
 	}
@@ -140,7 +149,7 @@ func ParseTaskFailureReason(value string) (TaskFailureReason, error) {
 	if value == "" {
 		return 0, nil
 	}
-	for reason := TaskFailureReasonNoMergeBase; reason <= TaskFailureReasonModelOutputInvalid; reason++ {
+	for reason := TaskFailureReasonNoMergeBase; reason <= TaskFailureReasonProviderRequestRejected; reason++ {
 		if reason.String() == value {
 			return reason, nil
 		}
@@ -177,7 +186,7 @@ func taskFailureReasonAllowed(kind TaskKind, reason TaskFailureReason, shortfall
 func providerRefusalFailure(reason TaskFailureReason) (RunFailure, bool) {
 	switch reason {
 	case TaskFailureReasonProviderPaymentRequired, TaskFailureReasonProviderModelUnavailable, TaskFailureReasonProviderModelRetired,
-		TaskFailureReasonProviderAuthenticationFailed, TaskFailureReasonProviderAuthorizationDenied:
+		TaskFailureReasonProviderAuthenticationFailed, TaskFailureReasonProviderAuthorizationDenied, TaskFailureReasonProviderRequestRejected:
 		return RunFailurePolicy, true
 	case TaskFailureReasonProviderRateLimited:
 		return RunFailureTransient, true
