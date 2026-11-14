@@ -46,7 +46,7 @@ func TestOpenRouterV2ProfileRequiresZDRAndPinsObservedSlugs(t *testing.T) {
 			t.Fatalf("observed authority refused: %v", err)
 		}
 		controls := openRouterRequestProvider(t, adapter)
-		if string(controls["zdr"]) != "true" || string(controls["allow_fallbacks"]) != "false" || string(controls["require_parameters"]) != "true" {
+		if string(controls["zdr"]) != "true" || string(controls["allow_fallbacks"]) != "true" || string(controls["require_parameters"]) != "true" {
 			t.Fatalf("provider controls lost: %v", controls)
 		}
 		encoded, _ := json.Marshal(slugs)

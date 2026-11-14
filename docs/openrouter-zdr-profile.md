@@ -79,7 +79,7 @@ Retention endpoints depending on your account settings.
 Every request sets the same provider controls:
 
 ```json
-{"provider":{"zdr":true,"only":["<slug>","..."],"allow_fallbacks":false,"require_parameters":true}}
+{"provider":{"zdr":true,"only":["<slug>","..."],"allow_fallbacks":true,"require_parameters":true}}
 ```
 
 `only` is the recorded slugs, so OpenRouter may use only those endpoints. No
@@ -94,8 +94,14 @@ Because the request itself requires ZDR, OpenRouter refuses it rather than
 sending it to an endpoint outside its ZDR list; there is no review window to
 expire. The exact model selector, output bound, host instructions, sanitized
 context, strict response parser, usage reconciliation and bounded transport
-still apply. There is no request overlay, tool execution, model array or
-provider fallback.
+still apply. There is no request overlay, tool execution or model array.
+`allow_fallbacks` is true so that OpenRouter may retry a request on another
+pinned endpoint when the one it picked fails; without it OpenRouter serves a
+request only from its top-ranked endpoint, and that endpoint's errors failed
+live runs. Fallback never leaves `only`: on 2026-11-13 a request whose `only`
+listed no endpoint serving the model was refused with HTTP 404 although
+`allow_fallbacks` was true, and every endpoint in `only` is a pinned ZDR
+endpoint whose price the cost limit already covers.
 
 The setup summary, `bootstrap check` (`data_retention: required_per_request`)
 and the wizard all say that ZDR is required on every request. That is a fact
