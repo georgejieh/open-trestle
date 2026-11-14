@@ -45,6 +45,13 @@ const FailureDetailModelOutputInvalid = routehint.ModelOutputInvalid
 // zero-data-retention endpoint is refused this way.
 const FailureDetailProviderNoAllowedEndpoint = "provider_no_allowed_endpoint"
 
+// FailureDetailSpendingLimitReached records that a review was refused before
+// it started, before any credential was read for model dispatch, because the
+// local usage ledger records spend at or over a spending limit of an API key
+// the review's routes use. The ledger is an upper-bound estimate, not a bill,
+// and the limit is best effort; the provider's own limit is the guarantee.
+const FailureDetailSpendingLimitReached = "spending_limit_reached"
+
 // LimitationOpenRouterZDRNotRequired marks a result whose policy has an
 // OpenRouter route that does not require zero data retention. It claims
 // neither that a provider retains prompts nor that it does not.
@@ -71,6 +78,7 @@ var taskFailureHints = map[[2]string]string{
 var failureDetailHints = map[string]string{
 	FailureDetailModelOutputExhausted:      "the model used its whole output allowance, usually on reasoning, before finishing its answer; choose a non-reasoning model for this role or raise the review output allowance (setup bootstrap init --max-output-tokens)",
 	FailureDetailProviderNoAllowedEndpoint: "OpenRouter has no endpoint for this model that the request may use: if zero data retention is required (by this setup or by your OpenRouter account or key settings), choose a model with zero-data-retention endpoints and run trestle init again (https://openrouter.ai/docs/guides/features/zdr); otherwise check the model ID",
+	FailureDetailSpendingLimitReached:      "the spend recorded for an API key this review uses has reached its spending limit for the current period, so the review was not started and nothing was sent: run trestle usage to see it, then raise or clear the limit (trestle usage set, trestle usage clear) or wait for the next period; the figures are Open Trestle's upper-bound estimate at the highest pinned price, not a bill, and the limit is best effort, so your provider's own limit is the guarantee",
 }
 
 // failureTask returns the key of the first task, in plan order, that failed.

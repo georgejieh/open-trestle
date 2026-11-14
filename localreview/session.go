@@ -370,6 +370,17 @@ func newSession(o SessionOptions, investigationPolicy *review.InvestigationPolic
 	constructed = true
 	return session, nil
 }
+
+// SpendObservation reports the model requests the session's latest run sent
+// and what they may have cost, for the local usage ledger. It reads only the
+// dispatch results the session already observed and carries no content.
+func (s *Session) SpendObservation() SpendObservation {
+	if s == nil {
+		return SpendObservation{}
+	}
+	return s.routeFailures.spent()
+}
+
 func (s *Session) RenewalInterval() time.Duration {
 	if s == nil {
 		return 0

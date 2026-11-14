@@ -33,6 +33,56 @@ type routeFailureObserver struct {
 	last gateway.RouteFailureClass
 	// lastOpenRouter reports that last came from an OpenRouter route.
 	lastOpenRouter bool
+	// spend counts the requests that reached a provider and their
+	// upper-bound cost.
+	spend SpendObservation
+}
+
+// SpendObservation is what one run's model requests may have cost, for the
+// local usage ledger. RequestsSent counts every dispatch that may have reached
+// the provider: a success, or a failure after the request was sent. Each
+// counts at the actual cost its settlement derives from the reported usage,
+// or, when that is unknown, at the cost reserved for it. UpperBoundMicroUSD is
+// their sum, saturating, and AllKnown reports that no request needed its
+// reservation. It is an estimate at the route's declared price, not a bill.
+type SpendObservation struct {
+	RequestsSent       uint32
+	UpperBoundMicroUSD uint64
+	AllKnown           bool
+}
+
+// recordSent adds one dispatch to the spend when it may have reached the
+// provider. It runs after record, whose observed cost it reuses.
+func (o *routeFailureObserver) recordSent(authorization string, reservedMicroUSD uint64, result gateway.RouteDispatchResult) {
+	if result.Status() == gateway.RouteDispatchFailed && result.ReplaySafety() == gateway.RouteReplayNotDispatched {
+		return
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.spend.RequestsSent == 0 {
+		o.spend.AllKnown = true
+	}
+	cost := reservedMicroUSD
+	if attempt, ok := o.attempts[authorization]; ok && attempt.cost.IsKnown() {
+		cost = attempt.cost.TotalCostMicroUSD()
+	} else {
+		o.spend.AllKnown = false
+	}
+	o.spend.RequestsSent++
+	if o.spend.UpperBoundMicroUSD > ^uint64(0)-cost {
+		o.spend.UpperBoundMicroUSD = ^uint64(0)
+		return
+	}
+	o.spend.UpperBoundMicroUSD += cost
+}
+
+func (o *routeFailureObserver) spent() SpendObservation {
+	if o == nil {
+		return SpendObservation{}
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.spend
 }
 
 // observedAttempt is one dispatch's reported usage and the actual cost that
@@ -104,6 +154,7 @@ func (o *routeFailureObserver) reset() {
 	o.shortfall = nil
 	o.last = 0
 	o.lastOpenRouter = false
+	o.spend = SpendObservation{}
 }
 
 // recordRoute notes whether the dispatch record just saw went to OpenRouter.
@@ -159,6 +210,7 @@ type observedRouteDispatcher struct {
 func (d observedRouteDispatcher) DispatchRoute(ctx context.Context, request gateway.RouteDispatchRequest) gateway.RouteDispatchResult {
 	result := d.RouteDispatcher.DispatchRoute(ctx, request)
 	d.observer.record(request.Authorization().Identity(), request.Request().Capability(), request.Authorization().Pricing(), result)
+	d.observer.recordSent(request.Authorization().Identity(), request.Authorization().ReservedCostMicroUSD(), result)
 	d.observer.recordRoute(request.Authorization().RouteReference())
 	return result
 }
@@ -174,6 +226,7 @@ type observedSanitizedRouteDispatcher struct {
 func (d observedSanitizedRouteDispatcher) DispatchSanitizedRoute(ctx context.Context, request gateway.RouteDispatchRequest, proof modelhandler.SanitizedDispatchProof) gateway.RouteDispatchResult {
 	result := d.sanitized.DispatchSanitizedRoute(ctx, request, proof)
 	d.observer.record(request.Authorization().Identity(), request.Request().Capability(), request.Authorization().Pricing(), result)
+	d.observer.recordSent(request.Authorization().Identity(), request.Authorization().ReservedCostMicroUSD(), result)
 	d.observer.recordRoute(request.Authorization().RouteReference())
 	return result
 }

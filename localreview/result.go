@@ -325,6 +325,27 @@ func NewUnstartedSpecialistResult(status string, profile scm.LocalGitObjectStore
 	}
 	return withSpecialist(result, specialist), nil
 }
+
+// NewSpendingLimitRefusalResult describes a review the host refused before it
+// opened a run, because a spending limit of a key its routes use is reached:
+// status refused, CI blocked (exit 4), run not_opened, failure policy and
+// failure_detail spending_limit_reached. It is schema version 6, where
+// failure_detail exists, without token_usage, because no run opened and no
+// request was sent. A non-zero specialist keeps its block.
+func NewSpendingLimitRefusalResult(profile scm.LocalGitObjectStoreProfile, specialist review.ContextSpecialist) (Result, error) {
+	result, err := NewUnstartedSpecialistResult("refused", profile, specialist)
+	if err != nil {
+		return Result{}, err
+	}
+	result.wire.Version = tokenUsageResultVersion
+	result.wire.Failure = controlplane.RunFailurePolicy.String()
+	result.wire.FailureDetail = FailureDetailSpendingLimitReached
+	if _, err := EncodeResult(result); err != nil {
+		return Result{}, err
+	}
+	return result, nil
+}
+
 func (s *Session) unstarted(p runtimecatalog.PreparedReviewRun, status string) Result {
 	result := s.emptyResult(status)
 	w := &result.wire
