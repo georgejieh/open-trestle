@@ -74,10 +74,10 @@ when you agree to run a review.
 ## What the wizard asks
 
 The wizard asks only what you alone can answer: where the models run, which
-two models, whether to require zero data retention on OpenRouter, a cost limit,
-and your consent. Everything it can work out itself is filled in and shown in a
-settings panel before you consent; Enter accepts each recommended default. It
-runs in six steps:
+two models, whether to require zero data retention on OpenRouter, an optional
+spending limit for the API key, and your consent. Everything it can work out
+itself is filled in and shown in a settings panel before you consent; Enter
+accepts each recommended default. It runs in six steps:
 
 ```text
    |X|\            /|X|
@@ -149,28 +149,38 @@ runs in six steps:
    - **Ollama Cloud and OpenCode Go** ask for the limits when the model list does
      not state them, and whether your plan charges per token.
 
-   Every remote provider then asks for the most one model request may cost,
-   proposing the cost of a request that fills the whole context. The limit
-   applies to each request, and a review sends two (one to each model), so a
-   review costs at most twice the limit.
+   The most one model request may cost is not asked: setup uses the cost of a
+   request that fills the whole context and writes the whole output allowance,
+   rounded up to a cent, and the settings panel shows it with what a review of
+   two requests can cost (`--max-cost-micro-usd` sets another bound). For a
+   provider that charges per token, the wizard then asks one optional
+   question, "Spending limit for this key, USD per month (optional) [none]",
+   and, if you give one, "Alert at percent [80]". Enter means no limit. For
+   OpenRouter it first shows OpenRouter's own figures for the key when the
+   key variable is set. The limit is checked before each review and counts
+   Open Trestle's upper-bound estimate, not a bill; it is best effort, and your
+   provider's own limit is the guarantee. A key that already has a limit keeps
+   it. See [spending limits](spending-limits.md).
 4. **Your settings.** One panel shows everything, asked or filled in:
 
    ```text
    ┌─ Setup summary ──────────────────────────────────────────┐
-   │ Review   1a2b3c4d5e6f → 7f8e9d0c1b2a                     │
-   │ Runs on  OpenRouter, zero data retention required on     │
-   │          every request                                   │
-   │ Finder   vendor/finder-model                             │
-   │ Checker  other/checker-model                             │
-   │ Limits   context 128000 · output 16000 tokens            │
-   │ Cost     $3.30 in · $16.50 out per million tokens · at   │
-   │          most $0.69 a request ($1.38 a review)           │
-   │ Key      OPEN_TRESTLE_PROVIDER_OPENROUTER (set; never    │
-   │          stored)                                         │
-   │ Source   github.com/owner/project                        │
-   │ Names    tenant personal · repository project · owner    │
-   │          you                                             │
-   │ Folder   ~/.local/state/open-trestle/project-1a2b3c4d    │
+   │ Review    1a2b3c4d5e6f → 7f8e9d0c1b2a                    │
+   │ Runs on   OpenRouter, zero data retention required on    │
+   │           every request                                  │
+   │ Finder    vendor/finder-model                            │
+   │ Checker   other/checker-model                            │
+   │ Limits    context 128000 · output 16000 tokens           │
+   │ Cost      $3.30 in · $16.50 out per million tokens · up  │
+   │           to $0.69 a request, $1.38 a review             │
+   │ Spending  $10.00 a month for this key · alerts at 80%    │
+   │           and 100%                                       │
+   │ Key       OPEN_TRESTLE_PROVIDER_OPENROUTER (set; never   │
+   │           stored)                                        │
+   │ Source    github.com/owner/project                       │
+   │ Names     tenant personal · repository project · owner   │
+   │           you                                            │
+   │ Folder    ~/.local/state/open-trestle/project-1a2b3c4d   │
    └──────────────────────────────────────────────────────────┘
      Use these settings? (Y/n):
    ```
@@ -181,6 +191,8 @@ runs in six steps:
    and the owner from `$USER`. Answering `n` offers to change the commits, the
    names, the key variable, or the limits and prices, then shows the panel
    again. Every value also has a flag (see [non-interactive use](#non-interactive-use)).
+   The spending limit is saved after the setup, in the usage folder every
+   setup shares; `trestle usage` shows and changes it.
 5. **Your consent.** Each fact the bootstrap needs is shown in plain words with a
    link, and you must type `yes`. Typing `no` stops with nothing written.
    - OpenRouter: that each review sends the selected source, after secret
@@ -309,7 +321,9 @@ and a flag overrides it; facts you must declare are not filled in. A complete
 | Models | `--generation-model ID`, `--verification-model ID` |
 | Capacity | `--context-tokens N`, `--output-tokens N` (OpenRouter: detected unless given) |
 | Review output allowance (optional, no question) | `--max-output-tokens N`, from 4096 up to `--output-tokens` (default 4096; OpenRouter: 16384 or the most every pinned endpoint allows) |
-| Prices (remote) | `--input-micro-usd-per-million-tokens N`, `--output-micro-usd-per-million-tokens N` (OpenRouter: detected unless given), `--max-cost-micro-usd N` (1 USD = 1000000) |
+| Prices (remote) | `--input-micro-usd-per-million-tokens N`, `--output-micro-usd-per-million-tokens N` (OpenRouter: detected unless given) |
+| Per-request cost bound (optional, no question) | `--max-cost-micro-usd N` (1 USD = 1000000; default: the cost of a request that fills the whole context, rounded up to a cent) |
+| Spending limit for the key (optional) | `--spending-limit USD`, `--spending-alert PERCENT` (default 80; alerts also at the limit). Only for a remote provider that charges per token; without it there is no limit. See [spending limits](spending-limits.md) |
 | Key variable (default: the provider's usual name) | `--credential-env OPEN_TRESTLE_PROVIDER_NAME` |
 | Names (default: from `origin`, the folder and `$USER`) | `--owner`, `--tenant`, `--repository`, `--repository-authority`, `--repository-namespace`, `--repository-name` |
 | OpenRouter | `--without-zdr` (continue without zero data retention), `--generation-provider-slug SLUG[,SLUG]` and `--verification-provider-slug SLUG[,SLUG]` (override the detected ZDR endpoints) |
@@ -329,7 +343,6 @@ trestle init --no-input --provider ollama-cloud \
   --verification-model YOUR_DIFFERENT_OLLAMA_MODEL \
   --context-tokens 128000 --output-tokens 8192 \
   --input-micro-usd-per-million-tokens 0 --output-micro-usd-per-million-tokens 0 \
-  --max-cost-micro-usd 0 \
   --credential-env OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD \
   --declare-remote-route
 ```
@@ -340,7 +353,7 @@ For OpenRouter, the model facts come from its API:
 trestle init --no-input --provider openrouter \
   --generation-model YOUR_OPENROUTER_GENERATION_MODEL \
   --verification-model YOUR_DIFFERENT_OPENROUTER_MODEL \
-  --max-cost-micro-usd 500000 \
+  --spending-limit 10 \
   --credential-env OPEN_TRESTLE_PROVIDER_OPENROUTER \
   --declare-remote-route
 ```
@@ -374,6 +387,9 @@ writing anything if setup was not yet saved.
   the wizard never claims it does or does not.
 - It never installs software, downloads models, starts servers, provisions keys
   or changes repository permissions.
+- A spending limit is Open Trestle's own, best-effort check of its upper-bound
+  estimate, not your provider's bill or limit; set a limit with your provider
+  too. See [spending limits](spending-limits.md).
 - The local model list and remote catalogs are availability observations, not
   approvals. A loopback address does not prove that a model runs locally; an
   Ollama `:cloud` model is flagged because it would send source to Ollama's cloud.

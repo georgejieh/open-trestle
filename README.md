@@ -158,6 +158,14 @@ selected source. Every answer also has a flag for `--no-input` use. Remote
 providers still need the packaged scanner-bound binary. See
 [getting started](docs/getting-started.md).
 
+For a provider that charges per token, it also offers an optional monthly
+spending limit for the API key. Every review records what it may have cost,
+alerts as the total nears the limit and is refused once it reaches it;
+`trestle usage` shows and changes limits, and for OpenRouter adds OpenRouter's
+own figures. The total is Open Trestle's upper-bound estimate at the highest
+pinned price, not a bill, and the limit is best effort, so set your provider's
+own limit too. See [spending limits](docs/spending-limits.md).
+
 ### Evaluation path
 
 There is no supported runtime package. The following clean-checkout procedure reproduces
@@ -400,7 +408,7 @@ detection, and none of it is released or supported for production. See the
 | Runtime | [review-run runtime](docs/review-run-runtime.md) · [daemon API](docs/daemon-api.md) · [remote workers](docs/remote-workers.md) · [task notifications](docs/task-notifications.md) · [automatic finalization](docs/automatic-finalization.md) · [handler catalogs](docs/runtime-handler-catalogs.md) |
 | Review pipeline | [source acquisition](docs/source-acquisition-handler.md) · [change model](docs/change-model-handler.md) · [evidence](docs/deterministic-evidence-handler.md) · [semantic impact](docs/semantic-impact.md) · [memory retrieval](docs/memory-retrieval-handler.md) · [context assembly](docs/context-assembly-handler.md) · [candidate generation](docs/model-generation-handler.md) · [verification](docs/model-verification-handler.md) · [OpenAI provider](docs/openai-provider.md) · [publication readiness](docs/publication-readiness-handler.md) · [publication](docs/publication-handler.md) |
 | Provider profiles | [OpenRouter ZDR](docs/openrouter-zdr-profile.md) · [OpenCode Go](docs/opencode-go-profile.md) · [OpenCode Console](docs/opencode-console-profile.md) · [Codex ChatGPT session status](docs/codex-chatgpt-session.md) · [local inference without bearer authentication](docs/local-provider-no-auth.md) |
-| Getting started | [`trestle init`](docs/getting-started.md) · [local-first bootstrap](docs/local-first-bootstrap.md) · [remote model review](docs/remote-model-review.md) · [setup](docs/setup.md) · [named local runtimes](docs/named-local-runtimes.md) · [model catalog](docs/model-catalog.md) |
+| Getting started | [`trestle init`](docs/getting-started.md) · [spending limits](docs/spending-limits.md) · [local-first bootstrap](docs/local-first-bootstrap.md) · [remote model review](docs/remote-model-review.md) · [setup](docs/setup.md) · [named local runtimes](docs/named-local-runtimes.md) · [model catalog](docs/model-catalog.md) |
 | Local Git | [inspect](docs/local-git-inspect.md) · [change evidence](docs/local-git-change.md) · [review](docs/local-git-review.md) · [model review](docs/local-model-review.md) · [feedback](docs/local-feedback.md) |
 | Specialist profiles | [agent profiles](docs/agent-profiles.md) |
 | Security | [prompt-injection boundary](docs/prompt-injection-boundary.md) |

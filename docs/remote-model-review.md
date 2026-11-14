@@ -145,7 +145,10 @@ OpenRouter and your statement that prompt logging is off for the key. Reviews
 reserve the review output allowance (4096 tokens unless `--max-output-tokens`
 sets it, or for OpenRouter the allowance setup chose) plus the actual request
 size against `--max-cost-micro-usd`. Init refuses a cap that cannot cover the output
-reservation. Set the prices to the higher of the two models. Declare `0` prices
+reservation (`trestle init` computes it as the cost of a request that fills the
+whole context, rounded up to a cent). The cap bounds each request; to limit
+spending over a week, month or year, set a per-key
+[spending limit](spending-limits.md). Set the prices to the higher of the two models. Declare `0` prices
 only if your plan has no per-token charge. `--declared-by` names the operator
 recorded in each evidence manifest.
 

@@ -119,7 +119,8 @@ Capture stdout as one terminal JSON receipt and retain the process exit status.
 The receipt uses `open-trestle/local-git-model-review-result`, schema version 6
 for every run that opened, which adds [token usage](#token-usage) to the fields
 of versions 1 to 5, and version 1 for a request that never opened a run (see
-[Results and limits](#results-and-limits)); inspect `status`, `ci_disposition`,
+[Results and limits](#results-and-limits)), except a
+[spending-limit refusal](#spending-limits), which is version 6; inspect `status`, `ci_disposition`,
 `run_status`, `limitations` and `diagnostics` together. A succeeded run means the pipeline finished, not that the repository
 is clear. Verified findings use `ci_disposition: blocked`; no candidates,
 incomplete evidence or abstention remain `inconclusive`. Refusal and failure
@@ -1061,7 +1062,9 @@ writes schema version 6, which keeps every field of versions 1 to 5 and adds
 [`token_usage`](#token-usage), except the investigation fallback that
 [Token usage](#token-usage) names. A result that reports no opened run
 (`run_status` `not_opened` or `unknown`) carries no token usage and keeps
-version 1 (version 2 with `--investigation-policy`, version 3 with `--profile`). Earlier builds wrote
+version 1 (version 2 with `--investigation-policy`, version 3 with `--profile`),
+except a [spending-limit refusal](#spending-limits), which is version 6 because
+`failure_detail` exists only there. Earlier builds wrote
 an opened run as version 1, version 2 with `--investigation-policy`, version 3
 with `--profile`, version 4 with finding guidance or version 5 with
 [style recommendations](#style-recommendations); those bytes read back
@@ -1210,6 +1213,36 @@ claim naming the selection, the refused outcome and its retry decision. While
 the run's artifacts are retained, each retry claim must also carry the identity
 the gateway grants for that lineage from the input's authorization. Any other
 audit shape stays quarantined at startup.
+
+### Spending limits
+
+When an API key that a remote route uses has a [spending limit](spending-limits.md)
+and the spend recorded in the current period is at or over it, the review is
+refused before it starts: before the objects folder is opened, before any
+credential is read for model dispatch and before any request is sent. The
+result is version 6 with `status` `refused`, `ci_disposition` `blocked`,
+`run_status` `not_opened`, `failure` `policy` and `failure_detail`
+`spending_limit_reached`, without `token_usage`, and the exit code is 4. Text
+output reads:
+
+```text
+failure: policy: spending_limit_reached
+hint: the spend recorded for an API key this review uses has reached its spending limit for the current period, so the review was not started and nothing was sent: run trestle usage to see it, then raise or clear the limit (trestle usage set, trestle usage clear) or wait for the next period; the figures are Open Trestle's upper-bound estimate at the highest pinned price, not a bill, and the limit is best effort, so your provider's own limit is the guarantee
+```
+
+A review whose worst case could pass a limit runs with a warning, and after a
+run that sent at least one request one entry is appended to the local usage
+ledger: the settled `actual_cost_micro_usd` when `usage_known` is true, and
+otherwise every request the session saw sent at its settled cost or, when its
+usage is unknown, at the cost reserved for it. A crossed alert percentage
+prints one line. These lines go to standard error with a note that the figures
+are an upper-bound estimate at the highest pinned price, not a bill, and that
+the limit is best effort; text output also ends with each limited key's state.
+A review set member refused at the limit carries the same detail and
+`member hint:` line and stops the set. `failure_detail` and result version 6
+exist only on this branch, so they take the value in place; a result without
+it keeps its bytes. Results themselves never carry spending figures. See
+[spending limits](spending-limits.md).
 
 ### Token usage
 
