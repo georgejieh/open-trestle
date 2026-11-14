@@ -11,7 +11,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from typing import NamedTuple
 from unittest.mock import patch
 
 import linux_distribution_runtime as runtime
@@ -362,7 +363,59 @@ class RecoveryStateTest(unittest.TestCase):
                 self.assertEqual(after, before)
 
 
+class _Generation(NamedTuple):
+    installed: str | None
+    slot: str | None
+    absent: tuple[str, ...] = ()
+
+
+class _Scenario(NamedTuple):
+    name: str
+    action: str
+    archive: str
+    setup: tuple[tuple[str, str], ...]
+    old: _Generation
+    new: _Generation
+    discards: bool = False
+
+
 class CrashMatrixTest(unittest.TestCase):
+    # Each scenario names the worker action and archive, the lifecycle that builds its
+    # starting root, and the exact pre-commit and post-commit generations: the archive
+    # verify-installed must accept, the archive the rollback slot must hold, and the
+    # archives whose bytes must be gone.
+    SCENARIOS = (
+        _Scenario(
+            "install", "install", "first", (),
+            old=_Generation(None, None, ("first",)),
+            new=_Generation("first", None),
+        ),
+        _Scenario(
+            "upgrade", "upgrade", "second", (("install", "first"),),
+            old=_Generation("first", None, ("second",)),
+            new=_Generation("second", "first"),
+        ),
+        _Scenario(
+            "rollback-version", "rollback-version", "second",
+            (("install", "first"), ("upgrade", "second")),
+            old=_Generation("second", "first"),
+            new=_Generation("first", None, ("second",)),
+        ),
+        _Scenario(
+            "upgrade-replacing-slot", "upgrade", "third",
+            (("install", "first"), ("upgrade", "second")),
+            old=_Generation("second", "first", ("third",)),
+            new=_Generation("third", "second", ("first",)),
+            discards=True,
+        ),
+        _Scenario(
+            "rollback-version-after-replacement", "rollback-version", "third",
+            (("install", "first"), ("upgrade", "second"), ("upgrade", "third")),
+            old=_Generation("third", "second", ("first",)),
+            new=_Generation("second", None, ("first", "third")),
+        ),
+    )
+
     @unittest.skipUnless(
         os.environ.get("OPEN_TRESTLE_RUN_CRASH_MATRIX") == "1",
         "set OPEN_TRESTLE_RUN_CRASH_MATRIX=1 for SIGKILL coverage",
@@ -370,18 +423,23 @@ class CrashMatrixTest(unittest.TestCase):
     def test_sigkill_after_every_fsync_and_rename_for_lifecycle_and_recovery(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            first, _ = _build(root / "first", b"first", "1.0.0")
-            second, _ = _build(root / "second", b"second", "1.1.0")
+            archives = {
+                "first": _build(root / "first", b"first", "1.0.0")[0],
+                "second": _build(root / "second", b"second", "1.1.0")[0],
+                "third": _build(root / "third", b"third", "1.2.0")[0],
+            }
             script = Path(__file__).resolve()
-            for action in ("install", "upgrade", "rollback-version"):
-                with self.subTest(action=action):
+            for scenario in self.SCENARIOS:
+                action = scenario.name
+                worker_action = scenario.action
+                with self.subTest(scenario=action):
                     template = root / f"{action}-template"
-                    self._prepare(template, action, first, second)
+                    self._prepare(template, scenario.setup, archives)
                     trace_root = root / f"{action}-trace-root"
                     shutil.copytree(template, trace_root)
                     trace = root / f"{action}-trace"
-                    archive = first if action == "install" else second
-                    completed = self._worker(script, action, archive, trace_root, 0, trace)
+                    archive = archives[scenario.archive]
+                    completed = self._worker(script, worker_action, archive, trace_root, 0, trace)
                     self.assertEqual(completed.returncode, 0, completed.stderr)
                     events = _trace_events(trace)
                     self.assertTrue(events)
@@ -393,7 +451,7 @@ class CrashMatrixTest(unittest.TestCase):
                         case_root = root / f"{action}-kill-{kill_at}"
                         shutil.copytree(template, case_root)
                         case_trace = root / f"{action}-kill-{kill_at}.trace"
-                        killed = self._worker(script, action, archive, case_root, kill_at, case_trace)
+                        killed = self._worker(script, worker_action, archive, case_root, kill_at, case_trace)
                         self.assertEqual(
                             killed.returncode,
                             -signal.SIGKILL,
@@ -406,11 +464,14 @@ class CrashMatrixTest(unittest.TestCase):
                         expected_new = state == runtime.COMMITTED_ANCHOR or (
                             state is None and kill_at > commit_index
                         )
-                        self._assert_generation(case_root, action, first, second, expected_new)
+                        self._assert_generation(
+                            case_root, archives, scenario.new if expected_new else scenario.old
+                        )
                         self._assert_clean(case_root)
                         shutil.rmtree(case_root)
                         case_trace.unlink()
 
+                    recovery_kills: dict[str, int] = {}
                     for state_name, operation_kill in (
                         ("pending", commit_index - 1),
                         ("committed", commit_index + 1),
@@ -419,7 +480,7 @@ class CrashMatrixTest(unittest.TestCase):
                         shutil.copytree(template, recovery_template)
                         operation_trace = root / f"{action}-{state_name}-operation.trace"
                         killed = self._worker(
-                            script, action, archive, recovery_template, operation_kill, operation_trace
+                            script, worker_action, archive, recovery_template, operation_kill, operation_trace
                         )
                         self.assertEqual(
                             killed.returncode,
@@ -430,6 +491,15 @@ class CrashMatrixTest(unittest.TestCase):
                             runtime.PENDING_ANCHOR if state_name == "pending" else runtime.COMMITTED_ANCHOR
                         )
                         self.assertEqual(runtime._active_transaction(recovery_template)[0], expected_anchor)
+                        if scenario.discards and state_name == "committed":
+                            # Every removal of the discarded predecessor's archive, sidecar and
+                            # control copies is still ahead, so the kills below cover each one.
+                            slot_parent = recovery_template / PurePosixPath(runtime.PREVIOUS_ARCHIVE_PATH).parent
+                            quarantined = sorted(
+                                path.name for path in slot_parent.iterdir()
+                                if path.name.startswith(".previous") and ".open-trestle-old-" in path.name
+                            )
+                            self.assertEqual(len(quarantined), 4, quarantined)
                         discovery = root / f"{action}-{state_name}-recovery-discovery"
                         shutil.copytree(recovery_template, discovery)
                         recovery_trace = root / f"{action}-{state_name}-recovery.trace"
@@ -437,6 +507,7 @@ class CrashMatrixTest(unittest.TestCase):
                         self.assertEqual(finished.returncode, 0, finished.stderr)
                         recovery_events = _trace_events(recovery_trace)
                         self.assertTrue(recovery_events)
+                        recovery_kills[state_name] = len(recovery_events)
                         shutil.rmtree(discovery)
                         recovery_trace.unlink()
                         for recover_kill in range(1, len(recovery_events) + 1):
@@ -454,13 +525,20 @@ class CrashMatrixTest(unittest.TestCase):
                             runtime.recover(case_root)
                             runtime.recover(case_root)
                             self._assert_generation(
-                                case_root, action, first, second, state_name == "committed"
+                                case_root, archives,
+                                scenario.new if state_name == "committed" else scenario.old,
                             )
                             self._assert_clean(case_root)
                             shutil.rmtree(case_root)
                             case_trace.unlink()
                         shutil.rmtree(recovery_template)
                     shutil.rmtree(template)
+                    print(
+                        f"crash matrix {action}: {len(events)} operation kills, "
+                        f"{recovery_kills['pending']} pending-recovery kills, "
+                        f"{recovery_kills['committed']} committed-recovery kills",
+                        file=sys.stderr,
+                    )
 
     def _worker(
         self,
@@ -478,7 +556,7 @@ class CrashMatrixTest(unittest.TestCase):
             check=False,
         )
 
-    def _prepare(self, destdir: Path, action: str, first: Path, second: Path) -> None:
+    def _prepare(self, destdir: Path, setup: tuple[tuple[str, str], ...], archives: dict[str, Path]) -> None:
         destdir.mkdir()
         for relative in (
             "etc/open-trestle/config.json",
@@ -488,28 +566,25 @@ class CrashMatrixTest(unittest.TestCase):
             path = destdir / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("operator\n")
-        if action != "install":
-            runtime.install(first, destdir)
-        if action == "rollback-version":
-            runtime.upgrade(second, destdir)
+        for command, name in setup:
+            {"install": runtime.install, "upgrade": runtime.upgrade}[command](archives[name], destdir)
 
-    def _assert_generation(
-        self,
-        destdir: Path,
-        action: str,
-        first: Path,
-        second: Path,
-        expected_new: bool,
-    ) -> None:
-        if action == "install":
-            if expected_new:
-                runtime.verify_installed(first, destdir)
-            else:
-                self.assertFalse((destdir / runtime.RECEIPT_PATH).exists())
-        elif action == "upgrade":
-            runtime.verify_installed(second if expected_new else first, destdir)
+    def _assert_generation(self, destdir: Path, archives: dict[str, Path], expected: _Generation) -> None:
+        if expected.installed is None:
+            self.assertFalse((destdir / runtime.RECEIPT_PATH).exists())
         else:
-            runtime.verify_installed(first if expected_new else second, destdir)
+            runtime.verify_installed(archives[expected.installed], destdir)
+        slot = destdir / runtime.PREVIOUS_ARCHIVE_PATH
+        if expected.slot is None:
+            self.assertFalse(slot.exists())
+        else:
+            self.assertEqual(slot.read_bytes(), archives[expected.slot].read_bytes())
+        present = {
+            hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in destdir.rglob("*") if path.is_file()
+        }
+        for name in expected.absent:
+            self.assertNotIn(hashlib.sha256(archives[name].read_bytes()).hexdigest(), present, name)
         for relative in (
             "etc/open-trestle/config.json",
             "var/lib/open-trestle/state",
