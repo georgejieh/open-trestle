@@ -358,11 +358,14 @@ external `sha256sum -c` before execution. Neither check authenticates a publishe
 Production install requires root and targets `/usr/local`. `--destdir` is an explicit
 non-production CI mode. The candidate supports only an exact verified installation to a
 strictly newer same-target archive, plus one immediate-predecessor `rollback-version`.
-Another upgrade is refused until that rollback slot is consumed. It never configures or starts a service and never creates application configuration or
+Each upgrade keeps only the generation it replaced in that rollback slot and discards an
+older one in the same transaction, so upgrades can repeat without a rollback in between.
+It never configures or starts a service and never creates application configuration or
 state. A fixed root transaction record makes `recover` restore the pre-commit generation
 or verify the post-commit generation before bounded cleanup. On Ubuntu 24.04, the opt-in
 non-production destdir matrix sends SIGKILL after every successful fsync and rename
-boundary for install, upgrade, `rollback-version`, and recovery itself. This is not
+boundary for install, upgrade into an empty or occupied rollback slot, `rollback-version`,
+and recovery itself. This is not
 power-loss, production-root, or filesystem qualification. See
 [operations](docs/operations.md) for the exact state machine, retained rescue-candidate
 requirement, inventory, lifecycle commands, and removal guarantees.

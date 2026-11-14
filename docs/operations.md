@@ -108,8 +108,8 @@ python3 /usr/local/share/open-trestle/scripts/model_catalog.py \
 The wrapper delegates to the explicit installed CLI and does not download or run models.
 The current lifecycle validator still accepts exact manifest-version-1 archives without
 the wrapper, so a new candidate can validate and restore its older predecessor. Use the
-new candidate for upgrade; an older embedded lifecycle cannot parse version 2. Receipt,
-transaction and smoke schemas are unchanged. The CA bundle, empty data directory, source, tests,
+new candidate for upgrade; an older embedded lifecycle cannot parse version 2. Manifest
+version 2 changed no receipt, transaction or smoke schema. The CA bundle, empty data directory, source, tests,
 private references and build tools are not included. Unexpected, missing, symlinked,
 wrong-mode, changing, non-amd64 or dynamically linked inputs stop the build. Existing
 output or sidecar paths are never replaced. Build into a directory under the exclusive
@@ -139,10 +139,11 @@ sudo ./open-trestle-linux-amd64.pyz install
 sudo ./open-trestle-linux-amd64.pyz verify-installed
 sudo ./open-trestle-linux-amd64.pyz smoke --output "$(pwd)/open-trestle-linux-smoke.json"
 
-# a separately verified, strictly newer same-target candidate
+# each separately verified, strictly newer same-target candidate, as often as needed
 sudo ./open-trestle-linux-amd64-new.pyz upgrade
 sudo /usr/local/libexec/open-trestle/open-trestle-distribution.pyz verify-installed
-# consume the one immediate-predecessor rollback slot, if needed
+
+# only to return to the generation that the latest upgrade replaced
 sudo /usr/local/libexec/open-trestle/open-trestle-distribution.pyz rollback-version
 
 # retain the transaction-starting candidate outside the install root; use it after interruption
@@ -166,13 +167,24 @@ unbounded replacement option.
 accepts only a strictly newer SemVer generation for the same fixed target. It stages and
 validates the full replacement before changing live files, retains exactly the immediate
 predecessor archive and sidecar, and binds the old and new versions, archives, manifests,
-transaction and action in protected canonical receipt and journal files. New-only path
+transaction and action in protected canonical receipt and journal files. When the rollback
+slot already holds a predecessor, the same transaction moves the generation it supersedes
+into the slot and discards the older predecessor's archive, sidecar, receipt and journal
+copies. They are verified like every owned file first, so a tampered, missing, symlinked,
+wrong-mode or unsafely parented slot stops the upgrade. The transaction plan names the
+discarded generation and binds all four copies before anything moves. They are quarantined
+like any replaced file and removed only after the commit decision. New-only path
 collisions, same or lower versions, tampered controls or owned files, unsafe ancestors,
 wrong modes or ownership, and rollback-slot inconsistencies fail before mutation.
 `rollback-version` runs only from the exact installed generation, restores only that
-bound predecessor and its exact protected receipt and journal bytes, and consumes the slot. It cannot select an arbitrary older archive or
-run twice. A second upgrade is refused while the rollback slot is pending. Upgrade and
-version rollback preserve operator configuration, state and all unowned files.
+bound predecessor, and consumes the slot. A predecessor that was installed or reached by
+`rollback-version` gets its exact protected receipt and journal bytes back. A predecessor
+that was itself an upgrade names its own predecessor, which was discarded, so it instead
+gets a new `rollback-version` receipt and journal, with no predecessor, in its own control
+schema. Every earlier lifecycle that can upgrade accepts that receipt. `rollback-version` cannot
+select an arbitrary older archive or run twice. Only the generation that the latest
+upgrade replaced can be restored. Upgrade and version rollback preserve operator
+configuration, state and all unowned files.
 
 The candidate reserves three mutually exclusive canonical records at the destination
 root:
@@ -189,6 +201,12 @@ quarantine files. It never reconstructs a missing committed file. The pending-to
 rename followed by destination-root fsync is the sole commit decision. Generation and plan
 identities use separate SHA-256 domains. Plans bind exact old and new descriptors, control
 digests, deterministic staging and quarantine names, and bounded directory inventories.
+Transaction records are version 2. Version 2 adds the discarded predecessor, and only an
+upgrade may name one. The slot it frees must hold exactly that generation, older than the
+one being superseded. The slot it refills must hold exactly the superseded generation and
+its controls. This candidate still recovers version 1 records left by an earlier lifecycle.
+A lifecycle that reads only version 1 records refuses a version 2 record without changing
+anything, so recover with the transaction-starting candidate.
 Persisted inode or device numbers are not restart authority; those values are used only for
 live race checks. Restart classification uses safe paths, regular-file type, mode, size,
 SHA-256 and the applicable ownership policy.
@@ -206,9 +224,11 @@ an interrupted transition.
 
 On Ubuntu 24.04, a separate opt-in destdir matrix sends SIGKILL immediately after every
 successful file or directory fsync and every successful `renameat2` boundary for install,
-upgrade, `rollback-version`, and recovery itself. Every case converges to the exact
-pre-commit generation or verified post-commit generation, preserves operator sentinels,
-removes recorded debris, and remains idempotent. This evidence is conditional on atomic
+upgrade into an empty and into an occupied rollback slot, `rollback-version` before and
+after such a slot replacement, and recovery itself. Every case converges to the exact
+pre-commit generation or verified post-commit generation, with the matching rollback-slot
+archive and no bytes of a discarded generation, preserves operator sentinels, removes
+recorded debris, and remains idempotent. This evidence is conditional on atomic
 rename plus successful file-fsync and directory-fsync semantics. It does not test loss of
 unflushed writes, torn writes, kernel panic, controller caches, reboot, production `/`,
 root ownership enforcement, any declared filesystem or mount profile, network or overlay
