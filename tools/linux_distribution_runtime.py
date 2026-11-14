@@ -1472,6 +1472,10 @@ def _validate_created_directories(raw: object, files: tuple[InstalledFile, ...])
 def _load_control(root: Path) -> tuple[dict[str, object], dict[str, object], tuple[InstalledFile, ...]]:
     receipt_raw = _read_control_file(root, RECEIPT_PATH)
     journal_raw = _read_control_file(root, JOURNAL_PATH)
+    return _parse_control(receipt_raw, journal_raw)
+
+
+def _parse_control(receipt_raw: bytes, journal_raw: bytes) -> tuple[dict[str, object], dict[str, object], tuple[InstalledFile, ...]]:
     receipt = _json_loads(receipt_raw, "receipt")
     journal = _json_loads(journal_raw, "journal")
     if _canonical_json(receipt) != receipt_raw or _canonical_json(journal) != journal_raw:
