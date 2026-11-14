@@ -11,6 +11,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import linux_distribution_runtime as runtime
 from test_linux_distribution import _build, _rewrite_controls_as_legacy
@@ -92,7 +93,30 @@ def _synthetic_install_plan(transaction: str) -> dict[str, object]:
         created_directories=[],
         obsolete_directories=[],
         paths=entries,
+        discarded_previous=None,
     )
+
+
+def _schema_1_envelope(plan: dict[str, object]) -> bytes:
+    """Re-express a plan with no discarded predecessor as an earlier lifecycle wrote it."""
+    if plan["discarded_previous"] is not None:
+        raise ValueError("schema 1 plans cannot discard a predecessor")
+    legacy = {key: value for key, value in plan.items() if key != "discarded_previous"}
+    return runtime._canonical_json({
+        "plan": legacy,
+        "plan_sha256": hashlib.sha256(runtime.TRANSACTION_DOMAIN + runtime._canonical_json(legacy)).hexdigest(),
+        "schema_version": 1,
+    })
+
+
+def _tree(destdir: Path) -> dict[str, object]:
+    return {
+        str(path.relative_to(destdir)): (
+            os.readlink(path) if path.is_symlink()
+            else (stat.S_IMODE(path.lstat().st_mode), path.read_bytes() if path.is_file() else None)
+        )
+        for path in destdir.rglob("*")
+    }
 
 
 class RecoveryIdentityTest(unittest.TestCase):
@@ -124,6 +148,40 @@ class RecoveryIdentityTest(unittest.TestCase):
         unsafe_directories["created_directories"] = ["etc/open-trestle"]
         with self.assertRaises(ValueError):
             runtime._transaction_envelope(unsafe_directories)
+
+    def test_schema_1_plan_envelope_still_parses_without_a_discarded_predecessor(self):
+        plan = _synthetic_install_plan("f" * 32)
+        self.assertEqual(json.loads(runtime._transaction_envelope(plan))["schema_version"], 2)
+        legacy = _schema_1_envelope(plan)
+        self.assertEqual(runtime._parse_transaction_envelope(legacy), plan)
+
+        document = json.loads(legacy)
+        document["plan"]["discarded_previous"] = None
+        document["plan_sha256"] = hashlib.sha256(
+            runtime.TRANSACTION_DOMAIN + runtime._canonical_json(document["plan"])
+        ).hexdigest()
+        with self.assertRaisesRegex(ValueError, "plan fields"):
+            runtime._parse_transaction_envelope(runtime._canonical_json(document))
+        for version in (3, True, "2"):
+            document = json.loads(runtime._transaction_envelope(plan))
+            document["schema_version"] = version
+            with self.subTest(version=version), self.assertRaisesRegex(ValueError, "schema"):
+                runtime._parse_transaction_envelope(runtime._canonical_json(document))
+
+    def test_only_an_upgrade_plan_may_discard_a_predecessor(self):
+        plan = _synthetic_install_plan("9" * 32)
+        generation = runtime._generation_core("6" * 64, "7" * 64, "0.9.0", ())
+        plan["discarded_previous"] = {
+            "generation": generation,
+            "generation_id": runtime._generation_identity(generation),
+            "journal_sha256": "8" * 64,
+            "receipt_sha256": "9" * 64,
+        }
+        with self.assertRaisesRegex(ValueError, "only an upgrade"):
+            runtime._transaction_envelope(plan)
+        plan["discarded_previous"]["generation_id"] = "0" * 64
+        with self.assertRaisesRegex(ValueError, "identity"):
+            runtime._transaction_envelope(plan)
 
     def test_legacy_controls_receive_the_same_canonical_generation_identity(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -166,6 +224,33 @@ class RecoveryStateTest(unittest.TestCase):
             runtime.recover(destdir)
             self.assertFalse(anchor.exists())
             self.assertEqual(operator.read_text(), "operator\n")
+
+    def test_pending_schema_1_record_from_an_earlier_lifecycle_restores_the_old_generation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first, _ = _build(root / "first", b"first", "1.0.0")
+            second, _ = _build(root / "second", b"second", "1.1.0")
+            destdir = root / "root"
+            destdir.mkdir()
+            runtime.install(first, destdir)
+            before = _tree(destdir)
+            # Stop after every live file was replaced but before the commit decision,
+            # and keep the failure path from recovering, so the pending record stays.
+            with patch.object(runtime, "_commit_transaction", side_effect=KeyboardInterrupt("stop before commit")), \
+                    patch.object(runtime, "recover", return_value=None):
+                with self.assertRaises(KeyboardInterrupt):
+                    runtime.upgrade(second, destdir)
+            anchor = destdir / runtime.PENDING_ANCHOR
+            _, plan = runtime._read_transaction_anchor(destdir, runtime.PENDING_ANCHOR)
+            self.assertTrue((destdir / runtime.PREVIOUS_ARCHIVE_PATH).exists())
+            anchor.chmod(0o644)
+            anchor.write_bytes(_schema_1_envelope(plan))
+            anchor.chmod(0o444)
+
+            runtime.recover(destdir)
+            runtime.recover(destdir)
+            self.assertEqual(_tree(destdir), before)
+            runtime.verify_installed(first, destdir)
 
     def test_mutation_gate_rejects_unanchored_transaction_debris(self):
         with tempfile.TemporaryDirectory() as directory:

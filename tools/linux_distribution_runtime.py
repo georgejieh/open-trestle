@@ -23,7 +23,9 @@ from typing import BinaryIO, Callable
 SCHEMA_VERSION = 1
 MANIFEST_SCHEMA_VERSION = 2
 CONTROL_SCHEMA_VERSION = 3
-TRANSACTION_SCHEMA_VERSION = 1
+TRANSACTION_SCHEMA_VERSION = 2
+# Version 1 plans have no discarded_previous field; they read as if it were null.
+LEGACY_TRANSACTION_SCHEMA_VERSION = 1
 TARGET = "linux-amd64"
 BOOTSTRAP_ANCHOR = ".open-trestle-linux-amd64.transaction.bootstrap.json"
 PENDING_ANCHOR = ".open-trestle-linux-amd64.transaction.pending.json"
@@ -214,10 +216,12 @@ def _transaction_plan(
     created_directories: list[str],
     obsolete_directories: list[str],
     paths: list[dict[str, object]],
+    discarded_previous: dict[str, object] | None,
 ) -> dict[str, object]:
     return {
         "action": action,
         "created_directories": sorted(created_directories, key=lambda value: (value.count("/"), value)),
+        "discarded_previous": discarded_previous,
         "new_generation": new_generation,
         "new_generation_id": _generation_identity(new_generation),
         "new_journal_sha256": new_journal_sha256,
@@ -242,11 +246,65 @@ def _transaction_envelope(plan: dict[str, object]) -> bytes:
     })
 
 
+def _discarded_predecessor(receipt: dict[str, object]) -> dict[str, object]:
+    """Describe the rollback-slot generation an upgrade of this receipt discards."""
+    previous = receipt["previous"]
+    if receipt["action"] != "upgrade" or not isinstance(previous, dict):
+        raise ValueError("no immediate predecessor is retained")
+    files = _parse_receipt_files(previous["files"])
+    generation = _generation_core(previous["archive_sha256"], previous["manifest_sha256"], previous["version"], files)
+    return {
+        "generation": generation,
+        "generation_id": _generation_identity(generation),
+        "journal_sha256": previous["journal_sha256"],
+        "receipt_sha256": previous["receipt_sha256"],
+    }
+
+
+def _validate_discarded_predecessor(value: object) -> dict[str, object]:
+    if not isinstance(value, dict) or set(value) != {"generation", "generation_id", "journal_sha256", "receipt_sha256"}:
+        raise ValueError("transaction discarded predecessor fields are invalid")
+    generation = _validate_generation_core(value["generation"])
+    if value["generation_id"] != _generation_identity(generation):
+        raise ValueError("transaction discarded predecessor identity does not match")
+    for key in ("journal_sha256", "receipt_sha256"):
+        if not isinstance(value[key], str) or not re.fullmatch(r"[0-9a-f]{64}", value[key]):
+            raise ValueError("transaction discarded predecessor control digest is invalid")
+    return value
+
+
+def _slot_descriptors_match(
+    entry_by_final: dict[str, dict[str, object]],
+    side: str,
+    generation: dict[str, object],
+    receipt_sha256: str,
+    journal_sha256: str,
+) -> bool:
+    """Whether one side of the four rollback-slot entries holds exactly this generation."""
+    lifecycle = [item for item in generation["files"] if item["path"] == LIFECYCLE_PATH]
+    if len(lifecycle) != 1 or lifecycle[0]["sha256"] != generation["archive_sha256"]:
+        return False
+    sidecar_body = f"{generation['archive_sha256']}  {PurePosixPath(PREVIOUS_ARCHIVE_PATH).name}\n".encode("ascii")
+    expected = {
+        PREVIOUS_ARCHIVE_PATH: (0o555, lifecycle[0]["size"], generation["archive_sha256"]),
+        PREVIOUS_SIDECAR_PATH: (0o444, len(sidecar_body), hashlib.sha256(sidecar_body).hexdigest()),
+        PREVIOUS_RECEIPT_PATH: (0o444, None, receipt_sha256),
+        PREVIOUS_JOURNAL_PATH: (0o444, None, journal_sha256),
+    }
+    for path, (mode, size, digest) in expected.items():
+        descriptor = entry_by_final[path][side]
+        if descriptor is None or descriptor["elf"] or descriptor["mode"] != mode or descriptor["sha256"] != digest:
+            return False
+        if size is not None and descriptor["size"] != size:
+            return False
+    return True
+
+
 def _validate_transaction_plan(plan: object) -> dict[str, object]:
     fields = {
-        "action", "created_directories", "new_generation", "new_generation_id", "new_journal_sha256",
-        "new_receipt_sha256", "obsolete_directories", "old_generation", "old_generation_id",
-        "old_journal_sha256", "old_receipt_sha256", "paths", "target", "transaction",
+        "action", "created_directories", "discarded_previous", "new_generation", "new_generation_id",
+        "new_journal_sha256", "new_receipt_sha256", "obsolete_directories", "old_generation",
+        "old_generation_id", "old_journal_sha256", "old_receipt_sha256", "paths", "target", "transaction",
     }
     if not isinstance(plan, dict) or set(plan) != fields:
         raise ValueError("transaction plan fields are invalid")
@@ -361,9 +419,30 @@ def _validate_transaction_plan(plan: object) -> dict[str, object]:
                 raise ValueError("transaction old controls are inconsistent")
         elif receipt_descriptor is None or journal_descriptor is None or receipt_descriptor["sha256"] != expected_receipt or journal_descriptor["sha256"] != expected_journal:
             raise ValueError("transaction control descriptors do not match")
+    discarded = plan["discarded_previous"]
+    if discarded is not None:
+        _validate_discarded_predecessor(discarded)
+        if plan["action"] != "upgrade":
+            raise ValueError("only an upgrade transaction may discard a predecessor")
     if plan["action"] == "upgrade":
-        if any(entry_by_final[path]["old"] is not None or entry_by_final[path]["new"] is None for path in previous_paths):
+        # The slot is refilled with exactly the generation this upgrade supersedes.
+        if not _slot_descriptors_match(
+            entry_by_final, "new", old_generation, plan["old_receipt_sha256"], plan["old_journal_sha256"]
+        ):
             raise ValueError("upgrade predecessor-slot descriptors are invalid")
+        if discarded is None:
+            if any(entry_by_final[path]["old"] is not None for path in previous_paths):
+                raise ValueError("upgrade predecessor-slot descriptors are invalid")
+        else:
+            # An occupied slot may only hold the recorded older predecessor, which this
+            # transaction quarantines with every other replaced file and removes after commit.
+            if _version_precedence(discarded["generation"]["version"]) >= _version_precedence(old_generation["version"]):
+                raise ValueError("transaction discarded predecessor is not older than the superseded generation")
+            if not _slot_descriptors_match(
+                entry_by_final, "old", discarded["generation"],
+                discarded["receipt_sha256"], discarded["journal_sha256"],
+            ):
+                raise ValueError("transaction discarded predecessor descriptors do not match")
     if plan["action"] == "rollback-version":
         if any(entry_by_final[path]["old"] is None or entry_by_final[path]["new"] is not None for path in previous_paths):
             raise ValueError("rollback predecessor-slot descriptors are invalid")
@@ -378,10 +457,18 @@ def _parse_transaction_envelope(raw: bytes) -> dict[str, object]:
         raise ValueError("transaction record is not canonical")
     if not isinstance(document, dict) or set(document) != {"plan", "plan_sha256", "schema_version"}:
         raise ValueError("transaction record fields are invalid")
-    if document["schema_version"] != TRANSACTION_SCHEMA_VERSION:
+    schema_version = document["schema_version"]
+    if type(schema_version) is not int or schema_version not in {LEGACY_TRANSACTION_SCHEMA_VERSION, TRANSACTION_SCHEMA_VERSION}:
         raise ValueError("transaction record schema is invalid")
-    plan = _validate_transaction_plan(document["plan"])
-    expected = hashlib.sha256(TRANSACTION_DOMAIN + _canonical_json(plan)).hexdigest()
+    stored = document["plan"]
+    if schema_version == LEGACY_TRANSACTION_SCHEMA_VERSION:
+        # An interrupted transaction started by an earlier lifecycle stays recoverable.
+        if not isinstance(stored, dict) or "discarded_previous" in stored:
+            raise ValueError("transaction plan fields are invalid")
+        plan = _validate_transaction_plan({**stored, "discarded_previous": None})
+    else:
+        plan = _validate_transaction_plan(stored)
+    expected = hashlib.sha256(TRANSACTION_DOMAIN + _canonical_json(stored)).hexdigest()
     if document["plan_sha256"] != expected:
         raise ValueError("transaction plan digest does not match")
     return plan
@@ -1358,6 +1445,7 @@ def install(archive_path: Path, destdir: Path | None = None) -> None:
         created_directories=created_directories,
         obsolete_directories=[],
         paths=paths,
+        discarded_previous=None,
     )
     generated_paths = tuple(
         value for entry in paths for value in (entry["staged"], entry["quarantine"])
@@ -2102,6 +2190,7 @@ def _transition(archive_path: Path, destdir: Path | None, *, rollback_to_previou
         created_directories=transaction_created,
         obsolete_directories=obsolete_directories,
         paths=paths,
+        discarded_previous=None,
     )
     generated_paths = tuple(
         value for entry in paths for value in (entry["staged"], entry["quarantine"])
