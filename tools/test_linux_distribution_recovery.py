@@ -1,5 +1,6 @@
 """Crash-recovery contracts for the Linux amd64 candidate lifecycle."""
 
+import copy
 import hashlib
 import json
 import os
@@ -14,7 +15,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import linux_distribution_runtime as runtime
-from test_linux_distribution import _build, _rewrite_controls_as_legacy
+from test_linux_distribution import _build, _rewrite_controls_as_legacy, _tree
 
 
 def _crash_worker(arguments: list[str]) -> int:
@@ -109,16 +110,6 @@ def _schema_1_envelope(plan: dict[str, object]) -> bytes:
     })
 
 
-def _tree(destdir: Path) -> dict[str, object]:
-    return {
-        str(path.relative_to(destdir)): (
-            os.readlink(path) if path.is_symlink()
-            else (stat.S_IMODE(path.lstat().st_mode), path.read_bytes() if path.is_file() else None)
-        )
-        for path in destdir.rglob("*")
-    }
-
-
 class RecoveryIdentityTest(unittest.TestCase):
     def test_generation_identity_is_canonical_and_domain_separated(self):
         files = (
@@ -182,6 +173,61 @@ class RecoveryIdentityTest(unittest.TestCase):
         plan["discarded_previous"]["generation_id"] = "0" * 64
         with self.assertRaisesRegex(ValueError, "identity"):
             runtime._transaction_envelope(plan)
+
+    def test_slot_replacement_plan_binds_the_discarded_and_the_retained_predecessor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first, _ = _build(root / "first", b"first", "1.0.0")
+            second, _ = _build(root / "second", b"second", "1.1.0")
+            third, _ = _build(root / "third", b"third", "1.2.0")
+            destdir = root / "root"
+            destdir.mkdir()
+            runtime.install(first, destdir)
+            runtime.upgrade(second, destdir)
+            plans = []
+            original = runtime._start_transaction
+
+            def capture(start_root, plan):
+                plans.append(copy.deepcopy(plan))
+                return original(start_root, plan)
+
+            with patch.object(runtime, "_start_transaction", side_effect=capture):
+                runtime.upgrade(third, destdir)
+            first_sha256 = hashlib.sha256(first.read_bytes()).hexdigest()
+        plan = plans[0]
+        discarded = plan["discarded_previous"]
+        self.assertEqual(discarded["generation"]["version"], "1.0.0")
+        self.assertEqual(discarded["generation"]["archive_sha256"], first_sha256)
+        archive_entry = next(entry for entry in plan["paths"] if entry["final"] == runtime.PREVIOUS_ARCHIVE_PATH)
+        self.assertEqual(archive_entry["old"]["sha256"], discarded["generation"]["archive_sha256"])
+        self.assertEqual(archive_entry["new"]["sha256"], plan["old_generation"]["archive_sha256"])
+        self.assertEqual(runtime._parse_transaction_envelope(runtime._transaction_envelope(plan)), plan)
+
+        def without_discard(value):
+            value["discarded_previous"] = None
+
+        def other_discarded_receipt(value):
+            value["discarded_previous"]["receipt_sha256"] = "0" * 64
+
+        def newer_discarded(value):
+            generation = value["discarded_previous"]["generation"]
+            generation["version"] = "1.1.0"
+            value["discarded_previous"]["generation_id"] = runtime._generation_identity(generation)
+
+        def other_retained_archive(value):
+            entry = next(item for item in value["paths"] if item["final"] == runtime.PREVIOUS_ARCHIVE_PATH)
+            entry["new"]["sha256"] = "0" * 64
+
+        for mutate, message in (
+            (without_discard, "predecessor-slot descriptors are invalid"),
+            (other_discarded_receipt, "discarded predecessor descriptors do not match"),
+            (newer_discarded, "not older"),
+            (other_retained_archive, "predecessor-slot descriptors are invalid"),
+        ):
+            altered = copy.deepcopy(plan)
+            mutate(altered)
+            with self.subTest(mutation=mutate.__name__), self.assertRaisesRegex(ValueError, message):
+                runtime._transaction_envelope(altered)
 
     def test_legacy_controls_receive_the_same_canonical_generation_identity(self):
         with tempfile.TemporaryDirectory() as directory:

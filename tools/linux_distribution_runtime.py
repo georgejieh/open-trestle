@@ -2009,6 +2009,79 @@ def _transition_documents(
     return receipt_body, _canonical_json(journal)
 
 
+def _restored_controls(
+    *,
+    receipt_body: bytes,
+    journal_body: bytes,
+    restored_archive: ValidatedArchive,
+    restored_files: tuple[InstalledFile, ...],
+    superseded: dict[str, object],
+    transaction: str,
+) -> tuple[bytes, bytes]:
+    """Return the receipt and journal that rollback-version publishes for the predecessor.
+
+    A predecessor that was installed or rolled back to gets its exact retained bytes
+    back. A predecessor that was itself an upgrade names its own predecessor, which was
+    discarded when this slot was filled, so its embedded lifecycle could no longer
+    verify that receipt. It instead gets a rollback-version receipt, with no predecessor,
+    in its own control schema: the receipt shape the schema-2 and schema-3 parsers have
+    accepted since rollback-version was added, although none of them wrote it.
+    """
+    restored, _, files = _parse_control(receipt_body, journal_body)
+    restored_manifest_sha256 = hashlib.sha256(_canonical_json(restored_archive.manifest)).hexdigest()
+    if (
+        restored["archive_sha256"] != restored_archive.sha256
+        or restored["manifest_sha256"] != restored_manifest_sha256
+        or files != restored_files
+    ):
+        raise ValueError("immediate predecessor controls do not describe its archive")
+    if restored["action"] != "upgrade":
+        return receipt_body, journal_body
+    schema_version = restored["schema_version"]
+    if schema_version not in {2, CONTROL_SCHEMA_VERSION}:
+        raise ValueError("immediate predecessor control schema is invalid")
+    receipt: dict[str, object] = {
+        "action": "rollback-version",
+        "archive_sha256": restored["archive_sha256"],
+        "created_directories": restored["created_directories"],
+        "files": restored["files"],
+        "manifest_sha256": restored["manifest_sha256"],
+        "new_archive_sha256": restored["archive_sha256"],
+        "new_manifest_sha256": restored["manifest_sha256"],
+        "new_version": restored["version"],
+        "old_archive_sha256": superseded["archive_sha256"],
+        "old_manifest_sha256": superseded["manifest_sha256"],
+        "old_version": superseded["version"],
+        "previous": None,
+        "schema_version": schema_version,
+        "target": TARGET,
+        "transaction": transaction,
+        "version": restored["version"],
+    }
+    identities: dict[str, object] = {}
+    if schema_version == CONTROL_SCHEMA_VERSION:
+        identities = {
+            "new_generation_id": restored["generation_id"],
+            "old_generation_id": superseded["generation_id"],
+        }
+        receipt.update(identities, generation_id=restored["generation_id"])
+    rollback_receipt = _canonical_json(receipt)
+    journal = {
+        key: receipt[key]
+        for key in (
+            "action", "new_archive_sha256", "new_manifest_sha256", "new_version",
+            "old_archive_sha256", "old_manifest_sha256", "old_version",
+            "schema_version", "target", "transaction",
+        )
+    }
+    journal.update(identities, receipt_sha256=hashlib.sha256(rollback_receipt).hexdigest())
+    rollback_journal = _canonical_json(journal)
+    parsed, _, parsed_files = _parse_control(rollback_receipt, rollback_journal)
+    if parsed_files != restored_files or parsed["generation_id"] != restored["generation_id"]:
+        raise ValueError("rollback-version receipt does not describe the predecessor")
+    return rollback_receipt, rollback_journal
+
+
 def _apply_transition(
     root: Path,
     staged: list[tuple[Path, str, str, InstalledFile, tuple[int, int]]],
@@ -2092,6 +2165,7 @@ def _transition(archive_path: Path, destdir: Path | None, *, rollback_to_previou
             status = _validate_installed_file(root, item)
             old_items[item.path] = (item, (status.st_dev, status.st_ino))
     transaction = uuid.uuid4().hex
+    discarded_previous: dict[str, object] | None = None
     if rollback_to_previous:
         action = "rollback-version"
         candidate, candidate_files, previous_receipt_body, previous_journal_body, _ = _validate_previous_generation(root, current_receipt)
@@ -2103,12 +2177,21 @@ def _transition(archive_path: Path, destdir: Path | None, *, rollback_to_previou
             if value not in created_directories
         ]
         assert previous_receipt_body is not None and previous_journal_body is not None
-        receipt_body, journal_body = previous_receipt_body, previous_journal_body
+        receipt_body, journal_body = _restored_controls(
+            receipt_body=previous_receipt_body,
+            journal_body=previous_journal_body,
+            restored_archive=candidate,
+            restored_files=candidate_files,
+            superseded=current_receipt,
+            transaction=transaction,
+        )
         slot_items: tuple[InstalledFile, ...] = ()
     else:
         action = "upgrade"
         if current_receipt["action"] == "upgrade":
-            raise ValueError("upgrade rollback slot must be consumed before another upgrade")
+            # Exactly one predecessor is retained: the generation this upgrade
+            # supersedes replaces the slot, and the older one is discarded with it.
+            discarded_previous = _discarded_predecessor(current_receipt)
         candidate = validate_archive(archive_path)
         if _version_precedence(candidate.manifest["version"]) <= _version_precedence(current_archive.manifest["version"]):
             raise ValueError("upgrade candidate must be strictly newer than the installed version")
@@ -2190,7 +2273,7 @@ def _transition(archive_path: Path, destdir: Path | None, *, rollback_to_previou
         created_directories=transaction_created,
         obsolete_directories=obsolete_directories,
         paths=paths,
-        discarded_previous=None,
+        discarded_previous=discarded_previous,
     )
     generated_paths = tuple(
         value for entry in paths for value in (entry["staged"], entry["quarantine"])

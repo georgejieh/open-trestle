@@ -116,6 +116,41 @@ def _rewrite_controls_as_legacy(destdir: Path) -> tuple[bytes, bytes]:
     journal_path.chmod(0o444)
     return receipt_body, journal_body
 
+
+def _rewrite_controls_as_schema_2(destdir: Path) -> tuple[bytes, bytes]:
+    """Rewrite the live controls in the schema-2 form, which predates generation identities."""
+    receipt_path = destdir / linux_distribution_runtime.RECEIPT_PATH
+    journal_path = destdir / linux_distribution_runtime.JOURNAL_PATH
+    receipt = json.loads(receipt_path.read_bytes())
+    journal = json.loads(journal_path.read_bytes())
+    for key in ("generation_id", "new_generation_id", "old_generation_id"):
+        del receipt[key]
+    for key in ("new_generation_id", "old_generation_id"):
+        del journal[key]
+    if isinstance(receipt["previous"], dict):
+        del receipt["previous"]["generation_id"]
+    receipt["schema_version"] = journal["schema_version"] = 2
+    receipt_body = linux_distribution_runtime._canonical_json(receipt)
+    journal["receipt_sha256"] = hashlib.sha256(receipt_body).hexdigest()
+    journal_body = linux_distribution_runtime._canonical_json(journal)
+    for path, body in ((receipt_path, receipt_body), (journal_path, journal_body)):
+        path.chmod(0o644)
+        path.write_bytes(body)
+        path.chmod(0o444)
+    return receipt_body, journal_body
+
+
+def _tree(destdir: Path) -> dict[str, object]:
+    """Every path below destdir with its mode and bytes, or its symlink target."""
+    return {
+        str(path.relative_to(destdir)): (
+            os.readlink(path) if path.is_symlink()
+            else (stat.S_IMODE(path.lstat().st_mode), path.read_bytes() if path.is_file() else None)
+        )
+        for path in destdir.rglob("*")
+    }
+
+
 def _run(archive: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(archive), *arguments],
@@ -882,6 +917,87 @@ class LifecycleTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(list(destdir.iterdir()), [])
 
+    def test_repeated_upgrade_replaces_the_rollback_slot_with_the_superseded_generation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first, _ = _build(root / "first", b"first", "1.0.0")
+            second, _ = _build(root / "second", b"second", "1.1.0")
+            third, _ = _build(root / "third", b"third", "1.2.0")
+            destdir = root / "root"
+            sentinels = {
+                "etc/open-trestle/config.json": b"operator config\n",
+                "var/lib/open-trestle/state": b"operator state\n",
+                "usr/local/share/open-trestle/operator-note": b"operator note\n",
+            }
+            for relative, body in sentinels.items():
+                _write(destdir / relative, body, 0o600)
+            installed = destdir / linux_distribution_runtime.LIFECYCLE_PATH
+            distribution = destdir / "usr/local/share/open-trestle/distribution"
+
+            def run(archive: Path, *arguments: str) -> None:
+                result = _run(archive, *arguments, "--destdir", str(destdir))
+                self.assertEqual(result.returncode, 0, f"{arguments}: {result.stderr}")
+
+            def assert_slot_holds(archive: Path, receipt_body: bytes, journal_body: bytes) -> None:
+                self.assertEqual(
+                    sorted(path.name for path in distribution.iterdir()),
+                    sorted([
+                        "journal.json", "previous-journal.json", "previous-receipt.json",
+                        "previous.pyz", "previous.pyz.sha256", "receipt.json",
+                    ]),
+                )
+                self.assertEqual((destdir / linux_distribution_runtime.PREVIOUS_ARCHIVE_PATH).read_bytes(), archive.read_bytes())
+                self.assertEqual((destdir / linux_distribution_runtime.PREVIOUS_RECEIPT_PATH).read_bytes(), receipt_body)
+                self.assertEqual((destdir / linux_distribution_runtime.PREVIOUS_JOURNAL_PATH).read_bytes(), journal_body)
+
+            run(first, "install")
+            run(second, "upgrade")
+            second_receipt = (destdir / linux_distribution_runtime.RECEIPT_PATH).read_bytes()
+            second_journal = (destdir / linux_distribution_runtime.JOURNAL_PATH).read_bytes()
+            run(third, "upgrade")
+            run(installed, "verify-installed")
+            self.assertEqual(installed.read_bytes(), third.read_bytes())
+            assert_slot_holds(second, second_receipt, second_journal)
+            receipt = json.loads((destdir / linux_distribution_runtime.RECEIPT_PATH).read_bytes())
+            self.assertEqual((receipt["action"], receipt["old_version"], receipt["version"]), ("upgrade", "1.1.0", "1.2.0"))
+            self.assertEqual(receipt["previous"]["version"], "1.1.0")
+            self.assertEqual(receipt["previous"]["receipt_sha256"], hashlib.sha256(second_receipt).hexdigest())
+            first_digest = hashlib.sha256(first.read_bytes()).hexdigest()
+            self.assertFalse(any(
+                hashlib.sha256(path.read_bytes()).hexdigest() == first_digest
+                for path in destdir.rglob("*") if path.is_file()
+            ))
+
+            run(installed, "rollback-version")
+            run(installed, "verify-installed")
+            self.assertEqual(installed.read_bytes(), second.read_bytes())
+            self.assertEqual((destdir / "usr/local/bin/trestle").read_bytes(), _elf(b"trestle-second"))
+            self.assertEqual(
+                sorted(path.name for path in distribution.iterdir()),
+                ["journal.json", "receipt.json"],
+            )
+            restored = json.loads((destdir / linux_distribution_runtime.RECEIPT_PATH).read_bytes())
+            self.assertEqual(
+                (restored["action"], restored["old_version"], restored["version"], restored["previous"]),
+                ("rollback-version", "1.2.0", "1.1.0", None),
+            )
+            refused = _run(installed, "rollback-version", "--destdir", str(destdir))
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn("immediate predecessor", refused.stderr)
+
+            run(third, "upgrade")
+            run(installed, "verify-installed")
+            self.assertEqual(
+                json.loads((destdir / linux_distribution_runtime.PREVIOUS_RECEIPT_PATH).read_bytes())["action"],
+                "rollback-version",
+            )
+            run(installed, "uninstall")
+            self.assertEqual(
+                {str(path.relative_to(destdir)): path.read_bytes() for path in destdir.rglob("*") if path.is_file()},
+                sentinels,
+            )
+            self.assertEqual([path for path in destdir.rglob("*") if ".open-trestle-" in path.name], [])
+
     def test_upgrade_accepts_legacy_controls_and_rollback_restores_them_byte_for_byte(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -894,10 +1010,6 @@ class LifecycleTest(unittest.TestCase):
             linux_distribution_runtime.verify_installed(first, destdir)
 
             linux_distribution_runtime.upgrade(second, destdir)
-            with self.assertRaisesRegex(ValueError, "rollback slot"):
-                linux_distribution_runtime.upgrade(
-                    _build(root / "third", b"third", "1.2.0")[0], destdir
-                )
             linux_distribution_runtime.rollback_version(second, destdir)
 
             self.assertEqual(
@@ -915,6 +1027,127 @@ class LifecycleTest(unittest.TestCase):
             self.assertFalse(
                 (destdir / linux_distribution_runtime.PREVIOUS_RECEIPT_PATH).exists()
             )
+
+    def test_repeated_upgrade_and_rollback_accept_legacy_controls_in_and_out_of_the_slot(self):
+        # schema-1: the discarded predecessor's controls are pre-upgrade legacy.
+        # schema-2: the retained predecessor's controls predate generation identities,
+        # so its rollback receipt must stay in the schema its own lifecycle reads.
+        for form, rollback_schema in (("schema-1", 3), ("schema-2", 2)):
+            with self.subTest(form=form), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                first, _ = _build(root / "first", b"first", "1.0.0")
+                second, _ = _build(root / "second", b"second", "1.1.0")
+                third, _ = _build(root / "third", b"third", "1.2.0")
+                destdir = root / "root"
+                destdir.mkdir()
+                linux_distribution_runtime.install(first, destdir)
+                if form == "schema-1":
+                    legacy_receipt, _ = _rewrite_controls_as_legacy(destdir)
+                    linux_distribution_runtime.upgrade(second, destdir)
+                    self.assertEqual(
+                        (destdir / linux_distribution_runtime.PREVIOUS_RECEIPT_PATH).read_bytes(),
+                        legacy_receipt,
+                    )
+                else:
+                    linux_distribution_runtime.upgrade(second, destdir)
+                    _rewrite_controls_as_schema_2(destdir)
+                linux_distribution_runtime.verify_installed(second, destdir)
+                retained_receipt = (destdir / linux_distribution_runtime.RECEIPT_PATH).read_bytes()
+
+                linux_distribution_runtime.upgrade(third, destdir)
+                linux_distribution_runtime.verify_installed(third, destdir)
+                self.assertEqual(
+                    (destdir / linux_distribution_runtime.PREVIOUS_ARCHIVE_PATH).read_bytes(),
+                    second.read_bytes(),
+                )
+                self.assertEqual(
+                    (destdir / linux_distribution_runtime.PREVIOUS_RECEIPT_PATH).read_bytes(),
+                    retained_receipt,
+                )
+
+                linux_distribution_runtime.rollback_version(third, destdir)
+                self.assertEqual(linux_distribution_runtime.verify_installed(second, destdir)["version"], "1.1.0")
+                receipt = json.loads((destdir / linux_distribution_runtime.RECEIPT_PATH).read_bytes())
+                journal = json.loads((destdir / linux_distribution_runtime.JOURNAL_PATH).read_bytes())
+                for document in (receipt, journal):
+                    self.assertEqual(document["schema_version"], rollback_schema)
+                    self.assertEqual(document["action"], "rollback-version")
+                    self.assertEqual((document["old_version"], document["new_version"]), ("1.2.0", "1.1.0"))
+                    self.assertEqual("old_generation_id" in document, rollback_schema == 3)
+                self.assertIsNone(receipt["previous"])
+                self.assertFalse((destdir / linux_distribution_runtime.PREVIOUS_ARCHIVE_PATH).exists())
+                with self.assertRaisesRegex(ValueError, "immediate predecessor"):
+                    linux_distribution_runtime.rollback_version(second, destdir)
+
+                linux_distribution_runtime.upgrade(third, destdir)
+                linux_distribution_runtime.verify_installed(third, destdir)
+                linux_distribution_runtime.uninstall(third, destdir)
+                self.assertEqual(list(destdir.iterdir()), [])
+
+    def test_upgrade_refuses_a_tampered_or_unsafe_rollback_slot_without_mutation(self):
+        slot = {
+            "archive": linux_distribution_runtime.PREVIOUS_ARCHIVE_PATH,
+            "sidecar": linux_distribution_runtime.PREVIOUS_SIDECAR_PATH,
+            "receipt": linux_distribution_runtime.PREVIOUS_RECEIPT_PATH,
+            "journal": linux_distribution_runtime.PREVIOUS_JOURNAL_PATH,
+        }
+        faults = (
+            ("archive", "bytes", "checksum sidecar does not match"),
+            ("archive", "substituted", "predecessor archive does not match the receipt"),
+            ("sidecar", "bytes", "checksum sidecar does not match"),
+            ("receipt", "bytes", "predecessor controls do not match the receipt"),
+            ("journal", "bytes", "predecessor controls do not match the receipt"),
+            ("receipt", "mode", "receipt or journal is not protected"),
+            ("archive", "mode", "archive is not a protected regular file"),
+            ("journal", "symlink", "receipt or journal is not protected"),
+            ("sidecar", "missing", "checksum sidecar is unavailable"),
+            ("journal", "ancestor", "ancestor is not trusted"),
+        )
+        for name, fault, message in faults:
+            with self.subTest(name=name, fault=fault), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                first, _ = _build(root / "first", b"first", "1.0.0")
+                second, _ = _build(root / "second", b"second", "1.1.0")
+                third, _ = _build(root / "third", b"third", "1.2.0")
+                destdir = root / "root"
+                _write(destdir / "etc/open-trestle/config.json", b"operator config\n", 0o600)
+                linux_distribution_runtime.install(first, destdir)
+                linux_distribution_runtime.upgrade(second, destdir)
+                path = destdir / slot[name]
+                mode = stat.S_IMODE(path.stat().st_mode)
+                if fault == "bytes":
+                    body = path.read_bytes()
+                    path.chmod(0o644)
+                    path.write_bytes(body[:-1] + bytes([body[-1] ^ 1]))
+                    path.chmod(mode)
+                elif fault == "substituted":
+                    # A valid archive, sealed by its own sidecar, that is not the bound predecessor.
+                    sidecar = destdir / linux_distribution_runtime.PREVIOUS_SIDECAR_PATH
+                    path.chmod(0o755)
+                    path.write_bytes(third.read_bytes())
+                    path.chmod(mode)
+                    sidecar.chmod(0o644)
+                    sidecar.write_text(f"{hashlib.sha256(third.read_bytes()).hexdigest()}  {path.name}\n")
+                    sidecar.chmod(0o444)
+                elif fault == "mode":
+                    path.chmod(0o755 if mode == 0o555 else 0o644)
+                elif fault == "symlink":
+                    copy = root / "outside-copy"
+                    copy.write_bytes(path.read_bytes())
+                    copy.chmod(0o444)
+                    path.unlink()
+                    path.symlink_to(copy)
+                elif fault == "missing":
+                    path.unlink()
+                else:
+                    path.parent.chmod(0o775)
+                before = _tree(destdir)
+                with self.assertRaisesRegex(ValueError, message):
+                    linux_distribution_runtime.upgrade(third, destdir)
+                self.assertEqual(_tree(destdir), before)
+                self.assertIsNone(linux_distribution_runtime._active_transaction(destdir))
+                if fault == "ancestor":
+                    path.parent.chmod(0o755)
 
     def test_upgrade_and_immediate_version_rollback_are_exact_and_one_use(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -983,6 +1216,36 @@ class LifecycleTest(unittest.TestCase):
                 linux_distribution_runtime.rollback_version(installed, None)
                 self.assertEqual(linux_distribution_runtime.verify_installed(first, None)["version"], "1.0.0")
                 linux_distribution_runtime.upgrade(second, None)
+                linux_distribution_runtime.uninstall(installed, None)
+            self.assertEqual(list(sandbox.iterdir()), [])
+
+    def test_production_repeated_upgrade_replaces_the_slot_without_reparsing_the_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first, _ = _build(root / "first", b"first", "1.0.0")
+            second, _ = _build(root / "second", b"second", "1.1.0")
+            third, _ = _build(root / "third", b"third", "1.2.0")
+            sandbox = root / "root"
+            sandbox.mkdir()
+
+            def production_root(destdir):
+                if destdir is not None:
+                    raise AssertionError(f"resolved root {destdir} re-entered the --destdir parser")
+                return sandbox
+
+            installed = sandbox / linux_distribution_runtime.LIFECYCLE_PATH
+            previous = sandbox / linux_distribution_runtime.PREVIOUS_ARCHIVE_PATH
+            with patch.object(linux_distribution_runtime, "_installation_root", production_root):
+                linux_distribution_runtime.install(first, None)
+                linux_distribution_runtime.upgrade(second, None)
+                linux_distribution_runtime.upgrade(third, None)
+                self.assertEqual(linux_distribution_runtime.verify_installed(third, None)["version"], "1.2.0")
+                self.assertEqual(previous.read_bytes(), second.read_bytes())
+                linux_distribution_runtime.rollback_version(installed, None)
+                self.assertEqual(linux_distribution_runtime.verify_installed(second, None)["version"], "1.1.0")
+                self.assertFalse(previous.exists())
+                linux_distribution_runtime.upgrade(third, None)
+                self.assertEqual(previous.read_bytes(), second.read_bytes())
                 linux_distribution_runtime.uninstall(installed, None)
             self.assertEqual(list(sandbox.iterdir()), [])
 
