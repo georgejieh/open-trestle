@@ -45,6 +45,14 @@ func TestPublishedProtocolSchemasHaveUniqueBoundedObjectContracts(t *testing.T) 
 	if count != 140 {
 		t.Fatalf("published schema count=%d, want 140", count)
 	}
+	// The protocol contracts page states the same count, so it cannot drift.
+	contracts, err := os.ReadFile(filepath.Join("..", "..", "docs", "protocol-contracts.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := fmt.Sprintf("The schema inventory contains %d documents.", count); !strings.Contains(string(contracts), want) {
+		t.Fatalf("docs/protocol-contracts.md does not say %q", want)
+	}
 }
 
 // This inventory check is structural, not a JSON Schema validator. Each root

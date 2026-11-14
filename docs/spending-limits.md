@@ -130,8 +130,9 @@ one, for CI and advanced use.
 
 ## Seeing the state
 
-`trestle usage` lists every limited key and every key with spend recorded this
-month:
+`trestle usage` lists every limited key, every key with spend recorded this
+month, and `OPEN_TRESTLE_PROVIDER_OPENROUTER` when that variable is set in the
+shell, even with no limit or spend yet, so OpenRouter's own figures show:
 
 ```text
 Spending recorded by Open Trestle (usage folder ~/.local/state/open-trestle/usage):

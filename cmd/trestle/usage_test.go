@@ -65,6 +65,7 @@ func runUsageCommand(t *testing.T, args ...string) (int, string, string) {
 
 func TestUsageSetsShowsAndClearsALimit(t *testing.T) {
 	store := spendingTestStore(t)
+	t.Setenv("OPEN_TRESTLE_PROVIDER_OPENROUTER", "")
 	code, out, _ := runUsageCommand(t)
 	if code != 0 || !strings.Contains(out, "No spending limit is set and no spend is recorded this month.") || !strings.Contains(out, spending.Note) {
 		t.Fatalf("empty status exit=%d:\n%s", code, out)
@@ -181,5 +182,24 @@ func TestUsageRefusesUnusableAnswers(t *testing.T) {
 	}
 	if code, out, _ := runUsageCommand(t, "--help"); code != 0 || !strings.Contains(out, "trestle usage set --credential-env OPEN_TRESTLE_PROVIDER_NAME --limit USD") {
 		t.Fatalf("help exit=%d %s", code, out)
+	}
+}
+
+func TestUsageShowsOpenRouterFiguresForASetKeyWithoutALimit(t *testing.T) {
+	spendingTestStore(t)
+	t.Setenv("OPEN_TRESTLE_PROVIDER_OPENROUTER", remoteTestKey)
+	useFakeKeyReport(t, http.StatusOK, fakeKeyReportBody)
+	code, out, _ := runUsageCommand(t)
+	for _, want := range []string{
+		"  OPEN_TRESTLE_PROVIDER_OPENROUTER (openrouter): $0.00 recorded this month; no limit set\n",
+		"    OpenRouter reports ",
+		spending.Note,
+	} {
+		if code != 0 || !strings.Contains(out, want) {
+			t.Fatalf("status lacks %q (exit %d):\n%s", want, code, out)
+		}
+	}
+	if strings.Contains(out, "No spending limit is set and no spend is recorded this month.") {
+		t.Fatalf("a set OpenRouter key was reported as nothing to show:\n%s", out)
 	}
 }

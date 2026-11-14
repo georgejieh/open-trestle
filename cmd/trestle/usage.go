@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/georgejieh/open-trestle/runtimeconfig"
@@ -227,11 +228,21 @@ func usageStatusLines(ctx context.Context, store *spending.Store) ([]string, err
 		lines = append(lines, "  "+usageKeyLabel(scope)+": "+spending.SumSpend(entries, scope).Unlimited(spending.PeriodMonth))
 		lines = append(lines, usageProviderLines(ctx, scope)...)
 	}
+	// An OpenRouter key in this shell with no limit and no spend yet still
+	// gets OpenRouter's own figures, which need no limit to be useful.
+	if scope, err := spending.NewScope("openrouter", usageOpenRouterKeyVariable); err == nil && !shown[scope] && os.Getenv(usageOpenRouterKeyVariable) != "" && !slices.Contains(spending.Scopes(entries), scope) {
+		lines = append(lines, "  "+usageKeyLabel(scope)+": "+spending.SumSpend(entries, scope).Unlimited(spending.PeriodMonth))
+		lines = append(lines, usageProviderLines(ctx, scope)...)
+	}
 	if len(lines) == 1 {
 		lines = append(lines, "  No spending limit is set and no spend is recorded this month.", "  Set one: trestle usage set --credential-env OPEN_TRESTLE_PROVIDER_NAME --limit USD [--period week|month|year]")
 	}
 	return append(lines, spending.Note), nil
 }
+
+// usageOpenRouterKeyVariable is the key variable `trestle init` names for
+// OpenRouter.
+const usageOpenRouterKeyVariable = "OPEN_TRESTLE_PROVIDER_OPENROUTER"
 
 func usageKeyLabel(scope spending.Scope) string {
 	return scope.CredentialEnvironment + " (" + scope.ProviderID + ")"
