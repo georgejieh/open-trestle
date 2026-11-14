@@ -75,8 +75,9 @@ func TestInitAsksOnlyWhatOnlyTheUserKnows(t *testing.T) {
 		t.Setenv("OPEN_TRESTLE_PROVIDER_OPENROUTER", remoteTestKey)
 		fakeOpenRouter(t, initOpenRouterModels()...)
 		result := initQuestionCount(t, remoteBootstrapCheckout(t), []string{"--base", "refs/heads/base", "--head", "refs/heads/review", "--generation-model", "vendor/generator", "--verification-model", "other/verifier"},
-			"1", "", "", "", "yes", "n") // provider, ZDR, cost cap, settings, consent, review
-		for _, unasked := range []string{"Review these changes?", "Environment variable that holds the key", "Keep these names?", "Context window", "provider slug"} {
+			"1", "", "", "", "yes", "n") // provider, ZDR, optional spending limit, settings, consent, review
+		// The per-request cost bound is computed, so it is not a question.
+		for _, unasked := range []string{"Review these changes?", "Environment variable that holds the key", "Keep these names?", "Context window", "provider slug", "Most one model request may cost"} {
 			if initHas(result.stdout, unasked) {
 				t.Fatalf("asked %q:\n%s", unasked, result.stdout)
 			}

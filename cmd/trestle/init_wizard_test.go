@@ -428,12 +428,14 @@ func TestInitNoInputListsMissingAnswersAndWritesNothing(t *testing.T) {
 	if result.code != initExitUsage {
 		t.Fatalf("exit=%d stderr=%s", result.code, result.stderr)
 	}
-	for _, want := range []string{"--verification-model", "--context-tokens", "--output-tokens", "--max-cost-micro-usd", "--declare-remote-route"} {
+	for _, want := range []string{"--verification-model", "--context-tokens", "--output-tokens", "--declare-remote-route"} {
 		if !initHas(result.stderr, "\n  "+want+"\n") && !strings.HasSuffix(strings.SplitN(result.stderr, "\nSee", 2)[0], "\n  "+want) {
 			t.Fatalf("missing answer %s not listed:\n%s", want, result.stderr)
 		}
 	}
-	for _, unwanted := range []string{"--generation-model\n", "--yes", "slug", "evidence", "reviewed-at", "valid-until", "declare-openrouter-zdr-account"} {
+	// The per-request cost bound is computed and the spending limit is
+	// optional, so neither is a missing answer.
+	for _, unwanted := range []string{"--generation-model\n", "--yes", "slug", "evidence", "reviewed-at", "valid-until", "declare-openrouter-zdr-account", "--max-cost-micro-usd", "--spending-limit"} {
 		if initHas(result.stderr, unwanted) {
 			t.Fatalf("listed %q, which is given, detected or no longer asked:\n%s", unwanted, result.stderr)
 		}

@@ -161,6 +161,7 @@ func (w *initWizard) resume() (int, error) {
 	w.say("  Folder:   %s", initDisplayPath(w.a.directory))
 	w.say("  Models:   finder %s, checker %s", setup.generationModel, setup.verificationModel)
 	w.say("  Runs on:  %s", setup.destination())
+	w.spendingStatus(setup)
 	w.say("  To set up something different, run trestle init --directory NEW_FOLDER.")
 	review := w.prompt == nil
 	if w.prompt != nil {
@@ -294,6 +295,7 @@ func (w *initWizard) stepWrite() (int, error) {
 	}
 	w.saved = true
 	w.say("  %s Saved protected configuration in %s", w.ok, initDisplayPath(dir))
+	w.saveSpendingLimit()
 	setup, err := w.loadSetup()
 	if err != nil {
 		return 0, err
@@ -679,7 +681,12 @@ func (w *initWizard) review(command []string) int {
 		}
 	}
 	if text := strings.TrimSpace(errOut.String()); text != "" {
-		w.say("  │ %s", text)
+		// Each line of standard error (hints, spending lines) stays in the box.
+		for _, line := range strings.Split(text, "\n") {
+			for _, part := range initHangingWrap(line, initWidth-4) {
+				w.sayVerbatim("  │ " + part)
+			}
+		}
 	}
 	w.say("")
 	switch status {
@@ -696,6 +703,10 @@ func (w *initWizard) review(command []string) int {
 		w.say("  %s The review was stopped before it finished.", w.wait)
 		return initExitPending
 	case "refused":
+		if strings.Contains(out.String(), "failure: policy: "+localreview.FailureDetailSpendingLimitReached+"\n") {
+			w.say("  %s The review was refused before it started: a spending limit for this key is reached, so nothing was sent. Run trestle usage to see it.", w.bad)
+			return initExitRefused
+		}
 		w.say("  %s The review was refused before it started. Run `trestle init` again to re-check the setup, and check that the selected commits still exist.", w.bad)
 		return initExitRefused
 	}

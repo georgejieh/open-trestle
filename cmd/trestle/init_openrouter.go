@@ -13,8 +13,8 @@ import (
 // The OpenRouter part of `trestle init`. Setup reads OpenRouter's public model
 // list and zero-data-retention (ZDR) endpoint list once and fills in every
 // model fact from them. It asks only what the operator alone can decide: the
-// two models, whether to require ZDR (recommended, the default), a cost limit
-// and consent to send source. Nothing asked here is evidence, a timestamp or a
+// two models, whether to require ZDR (recommended, the default), an optional
+// spending limit for the key and consent to send source. Nothing asked here is evidence, a timestamp or a
 // provider slug.
 
 func (w *initWizard) openRouterModels() error {
@@ -27,9 +27,10 @@ func (w *initWizard) openRouterModels() error {
 	}
 	if w.a.generationModel == "" || w.a.verificationModel == "" {
 		// --no-input without both models: name what the facts cannot supply.
-		needed := []string{"max-cost-micro-usd"}
+		// The per-request cost bound is computed, never asked.
+		needed := []string{}
 		if w.openRouter.err != nil {
-			needed = append(slices.Clone(remoteBootstrapOpenRouterDetected), needed...)
+			needed = slices.Clone(remoteBootstrapOpenRouterDetected)
 		}
 		for _, name := range needed {
 			if _, given := w.flags[name]; !given {
@@ -294,7 +295,7 @@ func (w *initWizard) declineZDR() error {
 
 // openRouterLimits fills the context, output and prices from the endpoints
 // the route pins (flags win), asks for any the API did not report, chooses
-// the review output allowance, and then asks the cost limit.
+// the review output allowance, and then sets the per-request cost bound.
 func (w *initWizard) openRouterLimits() error {
 	if raw, given := w.flags["max-output-tokens"]; given {
 		if _, err := initTokens(remoteReviewMaxOutputTokens, 1<<31, "")(raw); err != nil {
@@ -365,7 +366,7 @@ func (w *initWizard) openRouterLimits() error {
 	}
 	w.a.inputPrice, w.a.outputPrice = strconv.FormatUint(input, 10), strconv.FormatUint(outputPrice, 10)
 	w.say("  Prices: up to %s input and %s output per million tokens, the higher of the two models.", initFormatUSD(input), initFormatUSD(outputPrice))
-	return w.costLimit(true)
+	return w.costLimit()
 }
 
 // openRouterAllowance chooses the review output allowance of an OpenRouter

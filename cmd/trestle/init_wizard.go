@@ -23,6 +23,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/secretscan"
 	"github.com/georgejieh/open-trestle/modelcatalog"
+	"github.com/georgejieh/open-trestle/spending"
 )
 
 // `trestle init` is a guided front end over the existing bootstrap. It collects
@@ -71,7 +72,7 @@ var initLocalServers = []struct{ name, endpoint string }{
 	{"vLLM", "http://127.0.0.1:8000/v1"},
 }
 
-var initStringFlags = []string{"directory", "base", "head", "provider", "endpoint", "verification-endpoint", "transport", "generation-model", "verification-model", "credential-env", "owner", "tenant", "repository", "repository-authority", "repository-namespace", "repository-name", "context-tokens", "output-tokens", "max-output-tokens", "input-micro-usd-per-million-tokens", "output-micro-usd-per-million-tokens", "max-cost-micro-usd", "generation-provider-slug", "verification-provider-slug", "generation-model-evidence", "verification-model-evidence", "broker-evidence", "account-evidence", "evidence-retrieved-at", "reviewed-at", "valid-from", "valid-until"}
+var initStringFlags = []string{"directory", "base", "head", "provider", "endpoint", "verification-endpoint", "transport", "generation-model", "verification-model", "credential-env", "owner", "tenant", "repository", "repository-authority", "repository-namespace", "repository-name", "context-tokens", "output-tokens", "max-output-tokens", "input-micro-usd-per-million-tokens", "output-micro-usd-per-million-tokens", "max-cost-micro-usd", "spending-limit", "spending-alert", "generation-provider-slug", "verification-provider-slug", "generation-model-evidence", "verification-model-evidence", "broker-evidence", "account-evidence", "evidence-retrieved-at", "reviewed-at", "valid-from", "valid-until"}
 var initBoolFlags = []string{"no-input", "run-review", "allow-local-probe", "declare-local-capabilities", "declare-remote-route", "without-zdr", "declare-opencode-go-account", "declare-ollama-cloud-signin"}
 
 // initStop ends the wizard with a plain-language reason and exit code.
@@ -98,10 +99,16 @@ type initAnswers struct {
 	contextTokens, outputTokens              string
 	reviewOutput                             uint64 // the review output allowance an OpenRouter setup chose, or 0
 	inputPrice, outputPrice, maxCost         string
-	owner, tenant, repository                string
-	authority, namespace, name               string
-	extra                                    []string // provider-specific bootstrap arguments
-	declarations                             []string
+	// spendingLimit is the chosen monthly limit for the key in micro-USD, 0
+	// for none, alerting at spendingAlert percent and at the limit.
+	// spendingExisting is a limit the key already has, which is kept.
+	spendingLimit              uint64
+	spendingAlert              int
+	spendingExisting           *spending.Limit
+	owner, tenant, repository  string
+	authority, namespace, name string
+	extra                      []string // provider-specific bootstrap arguments
+	declarations               []string
 }
 
 type initWizard struct {
@@ -217,6 +224,7 @@ var initFlagValues = map[string]string{
 	"repository-authority": "LABEL", "repository-namespace": "LABEL", "repository-name": "LABEL",
 	"context-tokens": "N", "output-tokens": "N", "max-output-tokens": "N",
 	"input-micro-usd-per-million-tokens": "N", "output-micro-usd-per-million-tokens": "N", "max-cost-micro-usd": "N",
+	"spending-limit": "USD", "spending-alert": "PERCENT",
 	"generation-provider-slug": "SLUG[,SLUG]", "verification-provider-slug": "SLUG[,SLUG]",
 	"evidence-retrieved-at": "UTC_TIME", "reviewed-at": "UTC_TIME", "valid-from": "UTC_TIME", "valid-until": "UTC_TIME",
 }
@@ -1256,73 +1264,40 @@ func (w *initWizard) prices() error {
 		return err
 	}
 	if w.a.outputPrice, err = w.answer(initQuestion{flag: "output-micro-usd-per-million-tokens", question: "Output price, USD per million tokens", validate: initUSD, validateFlag: initMicro}); err != nil || w.a.outputPrice == "" || w.a.inputPrice == "" {
-		if w.prompt == nil && err == nil {
-			w.missing = append(w.missing, "--max-cost-micro-usd")
-		}
 		return err
 	}
-	return w.costLimit(true)
+	return w.costLimit()
 }
 
-// costLimit asks for the most one model request may cost. Each request has
-// its own budget and a review sends two (the finder's and the checker's), so
-// a review costs at most twice the limit. With propose set, the cost of a
-// request that fills the whole context is offered as the default.
-func (w *initWizard) costLimit(propose bool) error {
-
+// costLimit sets the per-request cost bound, max_cost_micro_usd: every model
+// request reserves its worst case against it, and a review sends two (the
+// finder's and the checker's), so a review costs at most twice the bound. It
+// is not asked: setup writes the cost of one request that fills the whole
+// context and writes the full output allowance, rounded up to a cent, and
+// the summary shows it. --max-cost-micro-usd sets another bound, for CI and
+// advanced use. Spending over time is limited per key instead (spendingLimit).
+func (w *initWizard) costLimit() error {
 	input, _ := strconv.ParseUint(w.a.inputPrice, 10, 64)
 	output, _ := strconv.ParseUint(w.a.outputPrice, 10, 64)
 	contextTokens, _ := strconv.ParseUint(w.a.contextTokens, 10, 64)
 	reviewOutput := w.reviewOutputTokens()
 	reservation := (reviewOutput*output + 999_999) / 1_000_000
 	full := reservation + (contextTokens*input+999_999)/1_000_000
-	if _, given := w.flags["max-cost-micro-usd"]; !given && w.prompt != nil {
-		w.say("\n  The limit applies to each model request. A review sends two, one to each model, so it costs at most twice the limit; a request that could cost more is refused. A request that fills the whole context costs about %s.", initFormatUSD(full))
-	}
-	limit := func(parse func(string) (string, error)) func(string) (string, error) {
-		return func(value string) (string, error) {
-			micro, err := parse(value)
-			if err != nil {
-				return "", err
-			}
-			n, _ := strconv.ParseUint(micro, 10, 64)
-			if n < reservation || input+output > 0 && n == 0 {
-				return "", fmt.Errorf("The limit must be at least %s to cover the %d-token answer.", initFormatUSD(max(reservation, 1)), reviewOutput)
-			}
-			return micro, nil
-		}
-	}
-	proposal := ""
-	if propose {
-		cents := (full + 9_999) / 10_000 * 10_000
-		proposal = strings.TrimPrefix(initFormatUSD(max(cents, reservation)), "$")
-	}
-	var err error
-	w.a.maxCost, err = w.answer(initQuestion{flag: "max-cost-micro-usd", question: "Most one model request may cost, in USD", proposed: proposal, validate: limit(initUSD), validateFlag: limit(initMicro)})
-	return err
-}
-
-// costLimitWith asks the cost limit again, proposing the current value.
-func (w *initWizard) costLimitWith(proposal string) error {
-	output, _ := strconv.ParseUint(w.a.outputPrice, 10, 64)
-	input, _ := strconv.ParseUint(w.a.inputPrice, 10, 64)
-	reviewOutput := w.reviewOutputTokens()
-	reservation := (reviewOutput*output + 999_999) / 1_000_000
-	value, err := w.prompt.ask("Most one model request may cost, in USD", proposal, func(value string) (string, error) {
-		micro, err := initUSD(value)
+	if raw, given := w.flags["max-cost-micro-usd"]; given {
+		micro, err := initMicro(raw)
 		if err != nil {
-			return "", err
+			return initStopf(initExitUsage, "--max-cost-micro-usd: %v", err)
 		}
 		n, _ := strconv.ParseUint(micro, 10, 64)
 		if n < reservation || input+output > 0 && n == 0 {
-			return "", fmt.Errorf("The limit must be at least %s to cover the %d-token answer.", initFormatUSD(max(reservation, 1)), reviewOutput)
+			return initStopf(initExitUsage, "--max-cost-micro-usd: the bound must be at least %s to cover the %d-token answer.", initFormatUSD(max(reservation, 1)), reviewOutput)
 		}
-		return micro, nil
-	})
-	if err == nil {
-		w.a.maxCost = value
+		w.a.maxCost = micro
+		return nil
 	}
-	return err
+	cents := (full + 9_999) / 10_000 * 10_000
+	w.a.maxCost = strconv.FormatUint(max(cents, reservation), 10)
+	return nil
 }
 
 func initMicro(value string) (string, error) {
@@ -1413,7 +1388,7 @@ func (w *initWizard) stepCredentials() error {
 		}
 		w.a.credentialEnv = name
 	}
-	return nil
+	return w.spendingLimit()
 }
 
 // --- Step 6: declarations ---------------------------------------------------------

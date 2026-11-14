@@ -96,7 +96,7 @@ func TestInitOpenRouterBothModelsWithZDRRequiresItByDefault(t *testing.T) {
 		"vendor/generator", // same model: must re-prompt
 		"other/verifier",
 		"",    // require zero data retention (the default)
-		"",    // accept the proposed cost limit
+		"",    // no spending limit (the optional question; Enter means none)
 		"",    // use the settings shown
 		"yes", // consent
 		"y",   // run the review
@@ -108,13 +108,22 @@ func TestInitOpenRouterBothModelsWithZDRRequiresItByDefault(t *testing.T) {
 		"zero data retention on 2 endpoints (fixture-cloud, fixture-cloud/us)", "zero data retention on 1 endpoint (fixture-host/fp8)",
 		"Limits: context 128000 and output 16000 tokens, the smallest that any pinned endpoint of either model allows",
 		"other/verifier has no zero-data-retention endpoint that allows 16384 output tokens, so its usable endpoints are pinned and each model request may write up to 16000 tokens.",
-		"Prices: up to $3.30 input and $16.50 output", "[0.69]", "Endpoints that may keep prompts for Safety Retention are left out.",
-		"The limit applies to each model request. A review sends two, one to each model, so it costs at most twice the limit", "Most one model request may cost, in USD",
-		"most $0.69 a request ($1.38 a review)",
+		"Prices: up to $3.30 input and $16.50 output", "Endpoints that may keep prompts for Safety Retention are left out.",
+		// The per-request bound is set for the full context and shown in the
+		// panel; the only cost question is the optional spending limit.
+		"Optional: a spending limit for this key.", "The total is an upper-bound estimate at the highest pinned price, not a bill, and the limit is best effort",
+		"OpenRouter's usage could not be read: OpenRouter could not be reached",
+		"Spending limit for this key, USD per month (optional) [none]:",
+		"$16.50 out per million tokens · up", "to $0.69 a request, $1.38 a review", "Spending no limit (optional; trestle usage set adds",
 		"Zero data retention is required on every request", "Review finished: 1 confirmed finding",
 		"A review sends the selected source to OpenRouter (https://openrouter.ai/api/v1), zero data retention required on every request")
 	if initHas(result.stdout, "openrouter_zero_data_retention_not_required") {
 		t.Fatal("a ZDR review was labelled as not requiring zero data retention")
+	}
+	for _, retired := range []string{"Most one model request may cost", "The limit applies to each model request", "[0.69]"} {
+		if initHas(result.stdout, retired) {
+			t.Fatalf("the wizard still asked the per-request cost question (%q):\n%s", retired, result.stdout)
+		}
 	}
 	for _, asked := range []string{"provider slug for", "Evidence:", "How many days", "review window", "SHA-256 of the copy"} {
 		if initHas(result.stdout, asked) {
@@ -161,7 +170,7 @@ func TestInitOpenRouterFilterRanksExactIDFirstAndCountsOnlyMatches(t *testing.T)
 		"vendor/generator", "1", // the exact ID is listed first, ahead of a longer name
 		"model", "other/verifier", // 43 fillers match; 40 are listed
 		"",    // require zero data retention
-		"",    // accept the proposed cost limit
+		"",    // no spending limit
 		"",    // use the settings shown
 		"yes", // consent
 		"n",   // no review
@@ -320,7 +329,8 @@ func TestInitOpenRouterUnreachableAPIFallsBackToTypedAnswers(t *testing.T) {
 		"1", "vendor/generator", "other/verifier",
 		"",               // require zero data retention
 		"128000", "8192", // typed limits
-		"3", "15", "1", // typed prices and cost limit
+		"3", "15", // typed prices; the per-request bound is computed from them
+		"", // no spending limit
 		"", "yes", "y",
 	)
 	if result.code != initExitDone {
@@ -351,7 +361,8 @@ func TestInitOpenRouterZDRProviderDoesNotAskAgain(t *testing.T) {
 		script := []string{"generator", "1", "", "other/verifier", "", "", "yes", "n"}
 		if !reachable {
 			api.zdr = ""
-			script = []string{"vendor/generator", "other/verifier", "128000", "8192", "3", "15", "1", "", "yes", "n"}
+			// Typed limits and prices, then Enter for no spending limit.
+			script = []string{"vendor/generator", "other/verifier", "128000", "8192", "3", "15", "", "", "yes", "n"}
 		}
 		dir := filepath.Join(t.TempDir(), "setup")
 		result := runInitScript(t, checkout, []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review", "--provider", "openrouter-zdr"}, script...)

@@ -154,7 +154,11 @@ func (w *initWizard) summaryRows() [][2]string {
 		if input+output == 0 {
 			prices = "no per-token charge"
 		}
-		rows = append(rows, [2]string{"Cost", prices + " · at most " + initFormatUSD(limit) + " a request (" + initFormatUSD(2*limit) + " a review)"})
+		// The per-request bound is set for you; it is shown, not asked.
+		rows = append(rows, [2]string{"Cost", prices + " · up to " + initFormatUSD(limit) + " a request, " + initFormatUSD(2*limit) + " a review"})
+	}
+	if row, ok := w.spendingRow(); ok {
+		rows = append(rows, [2]string{"Spending", row})
 	}
 	switch {
 	case a.credentialEnv == "":
@@ -276,5 +280,5 @@ func (w *initWizard) changeLimits() error {
 	if w.a.outputPrice, err = w.prompt.ask("Output price, USD per million tokens", dollars(w.a.outputPrice), initUSD); err != nil {
 		return err
 	}
-	return w.costLimitWith(dollars(w.a.maxCost))
+	return w.costLimit()
 }
