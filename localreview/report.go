@@ -100,6 +100,10 @@ type ReportFinding struct {
 	// when none remains, such as for a removed file.
 	Side     diagnostics.LineSide
 	HeadLine uint32
+	// PreExisting marks a finding located only on unchanged lines that the
+	// change did not touch (see the result's pre_existing list). It never
+	// blocks CI.
+	PreExisting bool
 }
 
 // SourceText renders a finding location for text output. Removed base lines
