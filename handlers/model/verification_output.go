@@ -85,8 +85,14 @@ func (r VerificationResult) IndependentReceipt() review.IndependentVerificationR
 	return r.independentReceipt
 }
 func (r VerificationResult) VerifiedFindings() review.VerifiedFindingSet { return r.verifiedFindings }
-func (r VerificationResult) String() string                              { return "model verification result" }
-func (r VerificationResult) GoString() string                            { return "model.VerificationResult{<redacted>}" }
+
+// SanitizedEgressReceiptArtifactIdentity names the stored secret-scan receipt of
+// the verification request; it is empty when the request was not sanitized.
+func (r VerificationResult) SanitizedEgressReceiptArtifactIdentity() string {
+	return r.egress.receiptArtifactIdentity
+}
+func (r VerificationResult) String() string   { return "model verification result" }
+func (r VerificationResult) GoString() string { return "model.VerificationResult{<redacted>}" }
 func (r VerificationResult) Format(state fmt.State, verb rune) {
 	writeModelRedacted(state, verb, "model verification result", "model.VerificationResult{<redacted>}")
 }

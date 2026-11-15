@@ -198,7 +198,7 @@ func TestUnstartedResultsReportNoTokenUsage(t *testing.T) {
 }
 
 // earlierVersion removes the version 6 members of a version 6 result (token
-// usage and the recorded judgement, rank and pre_existing) and labels it
+// usage, the recorded judgement and the walkthrough) and labels it
 // version, as an earlier build recorded it.
 func earlierVersion(t *testing.T, result Result, encoded []byte, version string) []byte {
 	t.Helper()
@@ -212,7 +212,7 @@ func earlierVersion(t *testing.T, result Result, encoded []byte, version string)
 	if err := json.Unmarshal(earlier, &wire); err != nil {
 		t.Fatal(err)
 	}
-	wire.Rank, wire.PreExisting = nil, nil
+	wire.Rank, wire.PreExisting, wire.Walkthrough = nil, nil, nil
 	stripped, err := json.Marshal(wire)
 	if err != nil {
 		t.Fatal(err)

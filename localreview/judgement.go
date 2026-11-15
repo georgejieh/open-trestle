@@ -133,8 +133,11 @@ func contributorOf(finding ReportFinding, origin string) FindingContributor {
 func validRecordedJudgement(result Result) bool {
 	wire := result.wire
 	if wire.Version != tokenUsageResultVersion {
-		// Only version 6 records a judgement.
-		return wire.Rank == nil && wire.PreExisting == nil
+		// Only version 6 records a judgement or a walkthrough.
+		return wire.Rank == nil && wire.PreExisting == nil && wire.Walkthrough == nil
+	}
+	if wire.Walkthrough.validate() != nil {
+		return false
 	}
 	findings := result.diagnostics.Findings()
 	if len(findings) == 0 {

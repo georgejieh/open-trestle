@@ -140,7 +140,7 @@ func TestLocalGitFeedbackReviewAcceptsVersion5StyleAdviceShapes(t *testing.T) {
 				}
 				reviewOut = strings.TrimSuffix(reviewOut, recommended+"\n") + test.advice + "\n"
 			}
-			if !strings.Contains(reviewOut, `"schema_version":5,`) || !strings.HasSuffix(reviewOut, test.want+"\n") || strings.Count(reviewOut, `"style_`) != strings.Count(test.want, `"style_`) {
+			if !strings.Contains(reviewOut, `"schema_version":5,`) || !strings.HasSuffix(reviewOut, test.want+"\n") || strings.Count(reviewOut, `"style_`)-strings.Count(reviewOut, `"style_detection"`) != strings.Count(test.want, `"style_`) {
 				t.Fatalf("review result does not carry only the %s advice: %s", test.name, reviewOut)
 			}
 			feedback := rmiFeedbackFile(t, map[string]string{"a.go": "preference"})

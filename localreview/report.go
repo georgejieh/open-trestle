@@ -184,6 +184,8 @@ type Report struct {
 	AgentConfigurationSources, InstructionLikeSources int
 	// StyleAdvice is the result's style advice; it is never a finding.
 	StyleAdvice StyleAdvice
+	// Walkthrough is a direct run's walkthrough, or nil.
+	Walkthrough *Walkthrough
 }
 
 // Report projects the result for an exporter such as SARIF. It fails for an
@@ -216,6 +218,9 @@ func (r Result) Report() (Report, error) {
 	if r.wire.TokenUsage != nil {
 		usage := r.wire.TokenUsage.clone()
 		report.TokenUsage = &usage
+	}
+	if r.wire.Walkthrough != nil {
+		report.Walkthrough = r.wire.Walkthrough.clone()
 	}
 	set := r.diagnostics
 	if set.Identity() != "" {

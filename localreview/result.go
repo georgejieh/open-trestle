@@ -105,6 +105,9 @@ type resultWire struct {
 	// omitted when there are no verified findings.
 	Rank        []rankWire `json:"rank,omitempty"`
 	PreExisting []string   `json:"pre_existing,omitempty"`
+	// Walkthrough is a direct version 6 run's verification-led walkthrough
+	// (see walkthrough.go), present once the change model was recorded.
+	Walkthrough *Walkthrough `json:"walkthrough,omitempty"`
 	// StyleAdvice is the optional style advice of schema version 5, encoded
 	// inline as the last members.
 	StyleAdvice
@@ -410,6 +413,10 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 	// findings; nil when the change model cannot be read back, which
 	// classifies none.
 	var lines changeLines
+	// walk holds what the walkthrough of a direct run reads; hasWalk is set
+	// once the change model was read back.
+	var walk walkthroughInputs
+	hasWalk := false
 	if task, ok := state.Task("change"); ok && task.Status() == controlplane.TaskRuntimeSucceeded {
 		analysisID := ""
 		if analysis, ok := state.Task("analysis"); ok && analysis.Status() == controlplane.TaskRuntimeSucceeded {
@@ -419,6 +426,12 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 		if recorded, err := s.readRecordedChange(ctx, p.Plan().Scope(), task.OutputIdentity(), s.options.Clock.Now()); err == nil {
 			if accounted, err := s.changeLineAccounting(ctx, p.Plan().Scope(), recorded, s.options.Clock.Now()); err == nil {
 				lines = accounted
+			}
+			walk, hasWalk = walkthroughInputs{recorded: recorded, style: style}, true
+			if analysisID != "" {
+				if analysis, err := s.readAnalysis(ctx, p.Plan().Scope(), recorded, analysisID, s.options.Clock.Now()); err == nil {
+					walk.analysis = &analysis
+				}
 			}
 		}
 	}
@@ -619,6 +632,9 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 			w.GenerationRequest = input.Authorization().RequestIdentity()
 			w.GenerationRoute = input.Authorization().RouteRecordIdentity()
 			generationAuthorization = input.Authorization().Identity()
+			if input.IsSanitized() {
+				walk.receipts = append(walk.receipts, input.SanitizedEgressReceiptArtifactIdentity())
+			}
 		}
 		generationArtifact, hasGeneration, err := taskOutput("candidates")
 		if err != nil {
@@ -660,6 +676,9 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 			w.VerificationRequest = verification.RouteExecution().Authorization().RequestIdentity()
 			w.VerificationRoute = verification.RouteExecution().Authorization().RouteRecordIdentity()
 			w.Independence = verification.RouteIndependence().Level().String()
+			if id := verification.SanitizedEgressReceiptArtifactIdentity(); id != "" {
+				walk.receipts = append(walk.receipts, id)
+			}
 			execution := verification.RouteExecution()
 			recorded[execution.Authorization().Identity()] = recordedAttempt{execution.Outcome().Usage(), execution.Reconciliation().ActualCost(), tokenStageVerification}
 		}
@@ -773,6 +792,8 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 	result = withTokenUsage(result, tokens)
 	if s.investigation != nil {
 		result = fitInvestigationDiagnostics(result)
+	} else if hasWalk {
+		result = s.withWalkthrough(ctx, p.Plan().Scope(), result, walk, lines)
 	}
 	if _, err := EncodeResult(result); err != nil {
 		return Result{}, err

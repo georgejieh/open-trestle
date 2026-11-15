@@ -37,7 +37,7 @@ func TestRunLocalGitModelReviewSetCarriesGeneralStyleAdviceOnce(t *testing.T) {
 				if !strings.HasSuffix(encoded, jsonAdvice) || strings.Count(encoded, "style_recommendations") != 1 || strings.Contains(encoded, "style_configuration_unread") {
 					t.Fatalf("set JSON does not carry the general advice exactly once:\n%s", encoded)
 				}
-			} else if strings.Contains(encoded, "style_") || !strings.HasSuffix(encoded, `"comprehensive_clearance":false}`+"\n") {
+			} else if hasStyleAdviceJSON(encoded) || !strings.HasSuffix(encoded, `"comprehensive_clearance":false}`+"\n") {
 				t.Fatalf("set JSON without advice changed shape:\n%s", encoded)
 			}
 			_, text := runLocalModelSet(t, f, []string{"--specialists", "bug_hunter,backend", "--format", "text"}, 4)
@@ -186,7 +186,7 @@ func TestRunLocalGitModelReviewRecommendsStyleWithoutBlocking(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			f := newLocalModelFixture(t, test.options)
 			result, encoded := localModelExecute(t, f, f.args, 4)
-			if result.Version != test.version || result.Status != "findings" || result.CI != "blocked" || strings.HasSuffix(encoded, jsonAdvice) != test.advising || strings.Contains(encoded, "style_") != test.advising {
+			if result.Version != test.version || result.Status != "findings" || result.CI != "blocked" || strings.HasSuffix(encoded, jsonAdvice) != test.advising || hasStyleAdviceJSON(encoded) != test.advising {
 				t.Fatalf("JSON version=%d status=%s advice=%t: %s", result.Version, result.Status, strings.HasSuffix(encoded, jsonAdvice), encoded)
 			}
 			var stdout, stderr bytes.Buffer
@@ -204,4 +204,15 @@ func TestRunLocalGitModelReviewRecommendsStyleWithoutBlocking(t *testing.T) {
 			}
 		})
 	}
+}
+
+// hasStyleAdviceJSON reports a style advice member in a JSON result or set;
+// the walkthrough's style_detection entry is not advice.
+func hasStyleAdviceJSON(encoded string) bool {
+	for _, key := range []string{`"style_recommendations"`, `"style_withheld"`, `"style_configuration_unread"`, `"style_advice_unavailable"`} {
+		if strings.Contains(encoded, key) {
+			return true
+		}
+	}
+	return false
 }
