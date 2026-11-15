@@ -426,8 +426,11 @@ func loadRemoteSetupBootstrap(ctx context.Context, dir string) (remoteBootstrapM
 	if err != nil || options.inventory != routes || options.policy != policyPath || options.egress != localreview.EgressPolicyApproved || !filepath.IsAbs(options.checkout) {
 		return fail("bootstrap.json review command does not use this directory's protected configuration")
 	}
-	if _, err := resolveLocalCheckout(ctx, options.checkout, options.baseSelection, options.headSelection); err != nil {
-		return fail("the checkout or its selected commits are no longer available")
+	// The commits in review_command are the change at setup time; a review
+	// picks its own (trestle review), so the setup stays usable after they
+	// are rewritten or garbage-collected. Only the checkout must remain.
+	if _, _, err := resolveLocalCheckoutObjects(ctx, options.checkout); err != nil {
+		return fail("the checkout is no longer a readable Git checkout")
 	}
 	expected := remoteCredentialEnvironments(policy)
 	if !slices.Equal(expected, manifest.CredentialEnvironments) {

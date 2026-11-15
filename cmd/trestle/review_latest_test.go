@@ -275,3 +275,35 @@ func TestLatestChangeBaseUsesTheNewerOfTheLocalAndOriginDefaultBranch(t *testing
 		t.Fatalf("origin/main alone: %s %q", base, label)
 	}
 }
+
+// A setup outlives the commits it was made with: after the setup-time head is
+// rewritten and garbage-collected, re-running trestle init still checks the
+// setup and reviews the latest change.
+func TestInitRerunWorksAfterTheSetupTimeCommitsAreGone(t *testing.T) {
+	checkout := latestChangeCheckout(t)
+	dir := latestChangeSetup(t, checkout)
+	pinned := checkoutGit(t, checkout, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(checkout, "b.go"), []byte("package p\nfunc Later() int { return 1 }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	checkoutGit(t, checkout, "add", "b.go")
+	checkoutGit(t, checkout, "commit", "-q", "--amend", "-m", "change, amended")
+	checkoutGit(t, checkout, "reflog", "expire", "--expire=now", "--all")
+	checkoutGit(t, checkout, "gc", "-q", "--prune=now")
+	if _, _, err := initGit(t.Context(), checkout, "cat-file", "-e", pinned); err == nil {
+		t.Fatalf("the setup-time head %s is still stored", pinned)
+	}
+	checks := runInitScript(t, checkout, nil, "2")
+	if checks.code != initExitDone || !initHas(checks.stdout, "Review the latest change any time with: trestle review") {
+		t.Fatalf("checks after the pinned commits are gone: exit=%d\n%s\n%s", checks.code, checks.stdout, checks.stderr)
+	}
+	transport := latestFixtureTransport(t)
+	reviewed := runInitScript(t, checkout, nil, "1")
+	head := checkoutGit(t, checkout, "rev-parse", "HEAD")
+	if reviewed.code != initExitDone || len(transport.requests) != 2 {
+		t.Fatalf("review after the pinned commits are gone: exit=%d requests=%v\n%s\n%s", reviewed.code, transport.requests, reviewed.stdout, reviewed.stderr)
+	}
+	if review, ok := readLastReview(dir); !ok || review.Head != head {
+		t.Fatalf("last review %+v, want head %s", review, head)
+	}
+}

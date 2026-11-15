@@ -604,6 +604,17 @@ func loadSetupBootstrap(ctx context.Context, dir string) (setupBootstrapManifest
 	if !filepath.IsAbs(options.checkout) || strings.HasPrefix(options.baseSelection, "refs/") || options.baseSelection == "HEAD" || strings.HasPrefix(options.headSelection, "refs/") || options.headSelection == "HEAD" {
 		return fail()
 	}
+	// A direct-review setup keeps working after its setup-time commits are
+	// rewritten or collected: every review picks its own commits, so only the
+	// checkout's objects folder and format must still match. The daemon's
+	// submit command binds those commits, so a daemon setup still needs them.
+	if manifest.Scope == setupBootstrapDirectReviewScope {
+		objects, algorithm, err := resolveLocalCheckoutObjects(ctx, options.checkout)
+		if err != nil || objects != manifest.Objects || algorithm != manifest.Algorithm {
+			return fail()
+		}
+		return manifest, plan, inventory, policy, nil
+	}
 	resolved, err := resolveLocalCheckout(ctx, options.checkout, options.baseSelection, options.headSelection)
 	if err != nil || resolved.objects != manifest.Objects || resolved.algorithm != manifest.Algorithm {
 		return fail()

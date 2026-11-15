@@ -90,6 +90,35 @@ func checkoutIsPartialClone(ctx context.Context, directory string) bool {
 	return err == nil && strings.Contains(value, "true")
 }
 
+// resolveLocalCheckoutObjects is a checkout's objects folder and object
+// format, without selecting any commit. A setup check uses it: the commits a
+// setup was made with are only that moment's change, and every review picks
+// its own.
+func resolveLocalCheckoutObjects(ctx context.Context, directory string) (objects, algorithm string, err error) {
+	if ctx == nil || ctx.Err() != nil || directory == "" || len(directory) > 4096 {
+		return "", "", errors.New("checkout unavailable")
+	}
+	execution, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	run, _, err := newCheckoutGit(execution, directory)
+	if err != nil {
+		return "", "", errors.New("checkout unavailable")
+	}
+	return checkoutObjects(run)
+}
+
+func checkoutObjects(run checkoutGitRunner) (objects, algorithm string, err error) {
+	algorithm, err = run("rev-parse", "--show-object-format")
+	if err != nil || algorithm != "sha1" && algorithm != "sha256" {
+		return "", "", errors.New("checkout unavailable")
+	}
+	objects, err = run("rev-parse", "--path-format=absolute", "--git-path", "objects")
+	if err != nil || !filepath.IsAbs(objects) {
+		return "", "", errors.New("checkout unavailable")
+	}
+	return filepath.Clean(objects), algorithm, nil
+}
+
 func resolveLocalCheckout(ctx context.Context, directory, base, head string) (localCheckoutSource, error) {
 	fail := func() (localCheckoutSource, error) {
 		return localCheckoutSource{}, errors.New("checkout selection unavailable")
@@ -103,12 +132,8 @@ func resolveLocalCheckout(ctx context.Context, directory, base, head string) (lo
 	if err != nil {
 		return fail()
 	}
-	algorithm, err := run("rev-parse", "--show-object-format")
-	if err != nil || algorithm != "sha1" && algorithm != "sha256" {
-		return fail()
-	}
-	objects, err := run("rev-parse", "--path-format=absolute", "--git-path", "objects")
-	if err != nil || !filepath.IsAbs(objects) {
+	objects, algorithm, err := checkoutObjects(run)
+	if err != nil {
 		return fail()
 	}
 	resolve := func(selection string) (string, error) {
@@ -147,7 +172,7 @@ func resolveLocalCheckout(ctx context.Context, directory, base, head string) (lo
 	if baseID == headID || execution.Err() != nil {
 		return fail()
 	}
-	return localCheckoutSource{objects: filepath.Clean(objects), algorithm: algorithm, base: baseID, head: headID}, nil
+	return localCheckoutSource{objects: objects, algorithm: algorithm, base: baseID, head: headID}, nil
 }
 
 type checkoutOutput struct {
