@@ -404,8 +404,8 @@ func TestInitMissingCredentialThenRerunRechecks(t *testing.T) {
 		before[name] = stringMustRead(t, filepath.Join(dir, name))
 	}
 	t.Setenv("OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD", remoteTestKey)
-	again := runInitScript(t, checkout, []string{"--directory", dir}, "1")
-	if again.code != initExitDone || !initHas(again.stdout, "already has an Open Trestle setup") || !initHas(again.stdout, "✓ API key variable OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD is set") || !initHas(again.stdout, "--egress policy-approved") {
+	again := runInitScript(t, checkout, []string{"--directory", dir}, "2")
+	if again.code != initExitDone || !initHas(again.stdout, "already has an Open Trestle setup") || !initHas(again.stdout, "1) Review the latest change (sends it to Ollama Cloud)") || !initHas(again.stdout, "✓ API key variable OPEN_TRESTLE_PROVIDER_OLLAMA_CLOUD is set (from the environment)") || !initHas(again.stdout, "Review the latest change any time with: trestle review --directory") || initHas(again.stdout, "--egress policy-approved") {
 		t.Fatalf("rerun did not re-check the existing setup: exit=%d\n%s\n%s", again.code, again.stdout, again.stderr)
 	}
 	quit := runInitScript(t, checkout, []string{"--directory", dir}, "3")
@@ -453,7 +453,7 @@ func TestInitNoInputCompleteSetupRunsReviewOnlyWithFlag(t *testing.T) {
 	t.Setenv("OPEN_TRESTLE_PROVIDER_REMOTE_TEST", remoteTestKey)
 	transport := &remoteModelTransport{t: t, target: "https://ollama.com/v1/chat/completions", models: map[string]string{"gemma4:31b": "", "qwen3.5:397b": ""}}
 	remoteModelClient(t, transport)
-	checkout := remoteBootstrapCheckout(t)
+	checkout := latestChangeCheckout(t)
 	dir := filepath.Join(t.TempDir(), "setup")
 	args := []string{"--no-input", "--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review", "--provider", "ollama-cloud", "--generation-model", "gemma4:31b", "--verification-model", "qwen3.5:397b", "--context-tokens", "128000", "--output-tokens", "8192", "--input-micro-usd-per-million-tokens", "0", "--output-micro-usd-per-million-tokens", "0", "--max-cost-micro-usd", "0", "--credential-env", "OPEN_TRESTLE_PROVIDER_REMOTE_TEST", "--declare-remote-route"}
 	setup := runInitScript(t, checkout, args)

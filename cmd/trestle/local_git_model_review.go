@@ -189,6 +189,30 @@ func parseLocalModelReview(args []string) (localModelReviewOptions, evidence.Rep
 	return o, repository, base, head, nil
 }
 func runLocalGitModelReview(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	return runLocalGitModelReviewObserved(ctx, args, stdout, stderr, nil)
+}
+
+// modelReviewOutcome is what a finished review tells an in-process caller,
+// such as `trestle review`: the result status and the number of confirmed
+// findings. It carries no source, prompt or model reply.
+type modelReviewOutcome struct {
+	status   string
+	findings int
+}
+
+// observeModelResult reports a single run's result to observe, when set.
+func observeModelResult(observe func(modelReviewOutcome), result localreview.Result) {
+	if observe == nil {
+		return
+	}
+	if report, err := result.Report(); err == nil {
+		observe(modelReviewOutcome{status: report.Status, findings: len(report.Findings)})
+	}
+}
+
+// runLocalGitModelReviewObserved is `trestle local-git model-review`; observe,
+// when set, receives the outcome just before the result is written.
+func runLocalGitModelReviewObserved(ctx context.Context, args []string, stdout, stderr io.Writer, observe func(modelReviewOutcome)) int {
 	options, repository, base, head, err := parseLocalModelReview(args)
 	if err != nil {
 		var unknownProfile errUnknownModelReviewProfile
@@ -203,17 +227,18 @@ func runLocalGitModelReview(ctx context.Context, args []string, stdout, stderr i
 		if err != nil {
 			return 1
 		}
+		observeModelResult(observe, result)
 		return writeLocalModelResultWithPolicy(options.format, options.exitPolicy, result, stdout, stderr)
 	}
 	if ctx == nil {
 		if options.specialists.active() {
-			return runLocalModelReviewSet(nil, nil, options, localModelReviewInputs{}, "failed", stdout, stderr)
+			return runLocalModelReviewSet(nil, nil, options, localModelReviewInputs{}, "failed", stdout, stderr, observe)
 		}
 		return unstarted("failed")
 	}
 	if ctx.Err() != nil {
 		if options.specialists.active() {
-			return runLocalModelReviewSet(ctx, ctx, options, localModelReviewInputs{}, "canceled", stdout, stderr)
+			return runLocalModelReviewSet(ctx, ctx, options, localModelReviewInputs{}, "canceled", stdout, stderr, observe)
 		}
 		return unstarted("canceled")
 	}
@@ -224,7 +249,7 @@ func runLocalGitModelReview(ctx context.Context, args []string, stdout, stderr i
 		inputs.spending = newReviewSpending(inputs, options, stderr)
 	}
 	if options.specialists.active() {
-		return runLocalModelReviewSet(ctx, execution, options, inputs, status, stdout, stderr)
+		return runLocalModelReviewSet(ctx, execution, options, inputs, status, stdout, stderr, observe)
 	}
 	if status != "" {
 		return unstarted(status)
@@ -237,6 +262,7 @@ func runLocalGitModelReview(ctx context.Context, args []string, stdout, stderr i
 		fmt.Fprintln(stderr, partialCheckoutHint)
 	}
 	inputs.spending.finish()
+	observeModelResult(observe, member.result)
 	return writeLocalModelResultWithPolicy(options.format, options.exitPolicy, member.result, stdout, stderr)
 }
 

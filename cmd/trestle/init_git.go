@@ -82,19 +82,60 @@ func initDefaultBase(ctx context.Context, directory string) string {
 	return ""
 }
 
-// initDefaultMergeBase proposes the merge base of the default branch and HEAD,
-// the commit a pull request is reviewed against, with a label naming it. It
-// runs only the read-only `git merge-base`. Without a default branch it returns
-// nothing; when Git finds no merge base it falls back to the branch itself.
+// initDefaultBranchName is the default branch's name: the branch origin/HEAD
+// names, else main, else master, whichever exists here or as a
+// remote-tracking branch of origin.
+func initDefaultBranchName(ctx context.Context, directory string) string {
+	candidates := []string{}
+	if target, _, err := initGit(ctx, directory, "symbolic-ref", "-q", "refs/remotes/origin/HEAD"); err == nil {
+		if branch, ok := strings.CutPrefix(target, "refs/remotes/origin/"); ok && branch != "" {
+			candidates = append(candidates, branch)
+		}
+	}
+	for _, name := range append(candidates, "main", "master") {
+		if !checkoutSelection.MatchString("refs/heads/" + name) {
+			continue
+		}
+		if initGitRefExists(ctx, directory, "refs/heads/"+name) || initGitRefExists(ctx, directory, "refs/remotes/origin/"+name) {
+			return name
+		}
+	}
+	return ""
+}
+
+// initDefaultMergeBase proposes the base a pull request is compared against:
+// the newest commit HEAD shares with the default branch, as this repository
+// has it or as origin has it, whichever is newer. It runs only the read-only
+// `git merge-base HEAD BRANCH [origin/BRANCH]`, which finds the merge base of
+// HEAD and both copies at once, so a local branch that is behind origin (or
+// ahead of it) does not pull commits that are already on the other into the
+// review. On the default branch itself only origin's copy counts, so commits
+// not yet pushed are the change. Without a default branch it returns
+// nothing; when Git finds no merge base it falls back to the local branch
+// itself.
 func initDefaultMergeBase(ctx context.Context, directory string) (base, label string) {
-	branch := initDefaultBase(ctx, directory)
-	if branch == "" {
+	name := initDefaultBranchName(ctx, directory)
+	if name == "" {
 		return "", ""
 	}
-	if commit, _, err := initGit(ctx, directory, "merge-base", branch, "HEAD"); err == nil && checkoutSelection.MatchString(commit) && commit != "HEAD" {
-		return commit, "merge base with " + strings.TrimPrefix(branch, "refs/heads/")
+	refs := []string{}
+	for _, ref := range []string{"refs/heads/" + name, "refs/remotes/origin/" + name} {
+		if initGitRefExists(ctx, directory, ref) {
+			refs = append(refs, ref)
+		}
 	}
-	return branch, ""
+	// On the default branch itself, its own commits not yet on origin are
+	// the change, so only origin's copy is the base.
+	if current, _, err := initGit(ctx, directory, "symbolic-ref", "-q", "HEAD"); err == nil && current == "refs/heads/"+name && len(refs) == 2 {
+		refs = refs[1:]
+	}
+	if commit, _, err := initGit(ctx, directory, append([]string{"merge-base", "HEAD"}, refs...)...); err == nil && checkoutSelection.MatchString(commit) && commit != "HEAD" {
+		return commit, "merge base with " + name
+	}
+	if refs[0] == "refs/heads/"+name {
+		return refs[0], ""
+	}
+	return "", ""
 }
 
 // initNormalizeSelection turns a friendly answer (a branch name, tag or short
@@ -133,7 +174,7 @@ func initSummarizeChange(ctx context.Context, directory, base, head string) init
 	if stat, _, err := initGit(ctx, directory, "diff", "--shortstat", "--no-ext-diff", "--no-textconv", base, head, "--"); err == nil {
 		summary.shortstat = strings.TrimSpace(stat)
 	}
-	if status, truncated, err := initGit(ctx, directory, "status", "--porcelain", "--untracked-files=no"); err == nil {
+	if status, truncated, err := initGit(ctx, directory, "status", "--porcelain", "--untracked-files=normal"); err == nil {
 		summary.uncommitted = status != "" || truncated
 	}
 	if branch, _, err := initGit(ctx, directory, "symbolic-ref", "-q", "--short", "HEAD"); err == nil {

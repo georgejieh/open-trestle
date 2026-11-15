@@ -484,14 +484,7 @@ func (w *initWizard) run() (int, error) {
 	return w.stepWrite()
 }
 
-func (w *initWizard) defaultDirectory() string {
-	home, err := os.UserHomeDir()
-	if err != nil || !filepath.IsAbs(home) {
-		return ""
-	}
-	sum := sha256.Sum256([]byte(w.checkout))
-	return filepath.Join(home, ".local", "state", "open-trestle", w.repoName+"-"+hex.EncodeToString(sum[:])[:8])
-}
+func (w *initWizard) defaultDirectory() string { return defaultSetupDirectory(w.checkout) }
 
 func initValidateDirectory(value string) (string, error) {
 	if strings.HasPrefix(value, "~/") {
@@ -606,7 +599,7 @@ func (w *initWizard) printSelection(base, baseLabel, head string, source localCh
 	w.say("  Changes:    %s", changes)
 	w.say("  Open Trestle compares exactly these two commits; it does not fetch.")
 	if summary.uncommitted {
-		w.say("  Note: you have uncommitted changes. Only committed work is reviewed.")
+		w.say("  Note: you have uncommitted changes, and they are not included: only committed work is reviewed. To include them, commit them first.")
 	}
 }
 

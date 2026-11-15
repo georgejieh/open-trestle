@@ -435,7 +435,7 @@ type modelReviewSetWire struct {
 // not succeed (refused, failed, canceled, or source unreadable); it never
 // retries. preparedStatus is a non-empty unstarted status when configuration
 // or source preparation already failed, in which case no session starts.
-func runLocalModelReviewSet(ctx, execution context.Context, options localModelReviewOptions, inputs localModelReviewInputs, preparedStatus string, stdout, stderr io.Writer) int {
+func runLocalModelReviewSet(ctx, execution context.Context, options localModelReviewOptions, inputs localModelReviewInputs, preparedStatus string, stdout, stderr io.Writer, observe func(modelReviewOutcome)) int {
 	request := options.specialists
 	selection := specialistSelectionWire{Mode: request.mode, MaxSpecialists: request.max, Selected: []selectedSpecialistWire{}, Dropped: []droppedSpecialistWire{}, Inactive: []string{}, RouteAssignment: routeAssignmentNotApplied}
 	var general localModelReviewMember
@@ -513,6 +513,9 @@ func runLocalModelReviewSet(ctx, execution context.Context, options localModelRe
 	}
 	set := buildModelReviewSet(selection, members, notLaunched, options)
 	inputs.spending.finish()
+	if observe != nil {
+		observe(modelReviewOutcome{status: set.Status, findings: len(set.Findings)})
+	}
 	return writeModelReviewSet(options.format, options.exitPolicy, set, stdout, stderr)
 }
 

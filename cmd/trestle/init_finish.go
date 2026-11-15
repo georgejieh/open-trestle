@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -69,8 +71,18 @@ func (w *initWizard) existingSetup() (bool, error) {
 
 func (w *initWizard) loadSetup() (initSetup, error) {
 	dir := w.a.directory
+	setup, err := loadInitSetup(w.ctx, dir)
+	if err != nil {
+		return initSetup{}, initStopf(initExitRefused, "%s holds an Open Trestle setup that could not be read (%s). Nothing was changed. Run `trestle setup bootstrap inspect --directory %s` for details, or pass --directory with a new folder.", dir, err.Error(), initShellQuote(dir))
+	}
+	return setup, nil
+}
+
+// loadInitSetup reads a saved bootstrap folder in the terms the wizard, the
+// home screen and `trestle review` show. The error is a short reason.
+func loadInitSetup(ctx context.Context, dir string) (initSetup, error) {
 	fail := func(reason string) (initSetup, error) {
-		return initSetup{}, initStopf(initExitRefused, "%s holds an Open Trestle setup that could not be read (%s). Nothing was changed. Run `trestle setup bootstrap inspect --directory %s` for details, or pass --directory with a new folder.", dir, reason, initShellQuote(dir))
+		return initSetup{}, errors.New(reason)
 	}
 	content, err := readSetupBootstrapFile(filepath.Join(dir, "bootstrap.json"))
 	if err != nil {
@@ -98,7 +110,7 @@ func (w *initWizard) loadSetup() (initSetup, error) {
 		setup.remote, setup.provider = true, initProviders[index]
 	case "open-trestle/local-first-bootstrap":
 		setup.provider = initProviders[slices.IndexFunc(initProviders, func(p initProviderInfo) bool { return p.key == "local" })]
-		plan, err := setupcore.InspectStateFile(w.ctx, filepath.Join(dir, "runs", "setup", "plan.json"))
+		plan, err := setupcore.InspectStateFile(ctx, filepath.Join(dir, "runs", "setup", "plan.json"))
 		if err != nil {
 			return fail("the setup plan cannot be inspected")
 		}
@@ -106,7 +118,7 @@ func (w *initWizard) loadSetup() (initSetup, error) {
 	default:
 		return fail("unknown setup kind")
 	}
-	_, policy, err := runtimeconfig.LoadProtectedConfiguration(w.ctx, filepath.Join(dir, "routes.json"), filepath.Join(dir, "policy.json"))
+	_, policy, err := runtimeconfig.LoadProtectedConfiguration(ctx, filepath.Join(dir, "routes.json"), filepath.Join(dir, "policy.json"))
 	if err != nil {
 		return fail("routes.json or policy.json is unprotected or invalid")
 	}
@@ -163,9 +175,12 @@ func (w *initWizard) resume() (int, error) {
 	w.say("  Runs on:  %s", setup.destination())
 	w.spendingStatus(setup)
 	w.say("  To set up something different, run trestle init --directory NEW_FOLDER.")
-	review := w.prompt == nil
+	// With --no-input the checks run, and a review of the latest change only
+	// with --run-review. The commits saved at setup time are never reviewed
+	// again: every review picks the latest change.
+	latest := w.prompt == nil && w.bools["run-review"]
 	if w.prompt != nil {
-		choice, err := w.prompt.choose("What would you like to do?", []string{"Re-run the setup checks", "Re-run the checks, then offer to run a review", "Quit without changes"})
+		choice, err := w.prompt.choose("What would you like to do?", []string{"Review the latest change (sends it to " + setup.provider.short + ")", "Re-run the setup checks", "Quit without changes"})
 		if err != nil {
 			return 0, err
 		}
@@ -173,22 +188,72 @@ func (w *initWizard) resume() (int, error) {
 			w.say("  Nothing was changed.")
 			return initExitDone, nil
 		}
-		review = choice == 1
+		latest = choice == 0
+	}
+	if setup.remote {
+		for _, name := range setup.credentials {
+			if err := w.askProviderKey(name, setup.provider.key, setup.provider.short, true); err != nil {
+				return 0, err
+			}
+		}
 	}
 	outcome, err := w.check(setup)
 	if err != nil {
 		return 0, err
 	}
-	if !review {
-		w.writeNextSteps(setup, outcome)
-		if !outcome.ready {
-			return outcome.code, nil
-		}
-		w.say("\n  Review command:")
-		w.sayVerbatim(initRenderCommand(outcome.reviewCommand))
+	w.writeNextSteps(setup, outcome)
+	if !outcome.ready {
+		return w.notReady(setup, outcome), nil
+	}
+	if !latest {
+		w.say("\n  Setup checks: %s. Review the latest change any time with:", outcome.summary)
+		w.sayVerbatim("    " + w.latestCommand())
 		return initExitDone, nil
 	}
-	return w.finish(setup, outcome)
+	return w.reviewLatest(setup)
+}
+
+// latestCommand is the one command that reviews the latest change with this
+// setup, run in the repository.
+func (w *initWizard) latestCommand() string {
+	command := "trestle review"
+	if w.a.directory != w.defaultDirectory() {
+		command += " --directory " + initShellQuote(w.a.directory)
+	}
+	return command
+}
+
+// reviewLatest reviews HEAD against its merge base with the default branch,
+// picked now, with the saved setup.
+func (w *initWizard) reviewLatest(setup initSetup) (int, error) {
+	repo, err := loadRepositorySetup(w.ctx, w.checkout, w.a.directory)
+	if err != nil {
+		return 0, initStopf(initExitRefused, "the setup in %s cannot be used for a review (%s). Nothing was sent.", initDisplayPath(w.a.directory), err)
+	}
+	if !sameCheckout(repo.templateCheckout, w.checkout) {
+		return 0, initStopf(initExitUsage, "the setup in %s is for %s, not this repository. Run trestle init there, or trestle init --directory NEW_FOLDER here.", initDisplayPath(w.a.directory), initDisplayPath(repo.templateCheckout))
+	}
+	w.say("\n%s", w.style.paint(initToneHeading, "Review the latest change"))
+	w.say("%s", w.style.paint(initToneRule, strings.Repeat("─", 24)))
+	base, label, head, source, code, problem := latestChange(w.ctx, w, latestReviewOptions{})
+	if problem != "" {
+		w.say("  %s %s", w.wait, strings.ToUpper(problem[:1])+problem[1:])
+		return code, nil
+	}
+	w.printSelection(base, label, head, source, initSummarizeChange(w.ctx, w.checkout, source.base, source.head))
+	w.say("  A review sends the selected source to %s.", setup.destination())
+	return w.review(latestReviewCommand(repo.template, source.base, source.head, latestReviewOptions{})), nil
+}
+
+// notReady explains a setup whose checks did not all pass.
+func (w *initWizard) notReady(setup initSetup, outcome initOutcome) int {
+	w.say("\n  Setup checks: %s.", outcome.summary)
+	if block := initScannerBlock(); setup.remote && block != "" {
+		w.explainSavedWithoutScanner(setup, block)
+		return outcome.code
+	}
+	w.say("  Not ready for a review yet. Fix the items marked %s or %s above, then run `trestle init` again in this repository: it finds this setup and re-checks it.", w.wait, w.bad)
+	return outcome.code
 }
 
 // --- Step 8: save and check -------------------------------------------------------
@@ -634,18 +699,12 @@ func (w *initWizard) renderLocal(messages []string) string {
 func (w *initWizard) finish(setup initSetup, outcome initOutcome) (int, error) {
 	w.writeNextSteps(setup, outcome)
 	if !outcome.ready {
-		w.say("\n  Setup checks: %s.", outcome.summary)
-		if block := initScannerBlock(); setup.remote && block != "" {
-			w.explainSavedWithoutScanner(setup, block)
-			return outcome.code, nil
-		}
-		w.say("  Not ready for a review yet. Fix the items marked %s or %s above, then run `trestle init` again in this repository: it finds this setup and re-checks it.", w.wait, w.bad)
-		return outcome.code, nil
+		return w.notReady(setup, outcome), nil
 	}
 	w.say("\n%s", w.style.paint(initToneHeading, "Ready for the first review"))
 	w.say("%s", w.style.paint(initToneRule, strings.Repeat("─", 26)))
-	w.say("  Review command (each argument quoted for a POSIX shell; run it yourself any time):")
-	w.sayVerbatim(initRenderCommand(outcome.reviewCommand))
+	w.say("  From now on, review your latest change with one command, run in this repository (or run trestle on its own for status and next actions):")
+	w.sayVerbatim("    " + w.latestCommand())
 	run := w.bools["run-review"]
 	if w.prompt != nil && !run {
 		var err error
@@ -656,7 +715,7 @@ func (w *initWizard) finish(setup initSetup, outcome initOutcome) (int, error) {
 		}
 	}
 	if !run {
-		w.say("  No review was run. Run the command above when you are ready, or `trestle init` again.")
+		w.say("  No review was run. Run the command above when you are ready.")
 		return initExitDone, nil
 	}
 	return w.review(outcome.reviewCommand), nil
@@ -691,7 +750,15 @@ func (w *initWizard) review(command []string) int {
 	}
 	w.say("\n  Running the review. This can take several minutes; press Ctrl-C to stop.")
 	var out, errOut bytes.Buffer
-	code := runLocalGitModelReview(w.ctx, command[3:], &out, &errOut)
+	var outcome modelReviewOutcome
+	code := runLocalGitModelReviewObserved(w.ctx, command[3:], &out, &errOut, func(result modelReviewOutcome) { outcome = result })
+	if outcome.status != "" {
+		values := map[string]string{}
+		for i := 3; i+1 < len(command); i += 2 {
+			values[command[i]] = command[i+1]
+		}
+		recordLastReview(w.ctx, w.a.directory, lastReview{Status: outcome.status, Findings: outcome.findings, Base: values["--base"], Head: values["--head"]})
+	}
 	status, findings := "", 0
 	for _, line := range strings.Split(strings.TrimRight(out.String(), "\n"), "\n") {
 		for _, part := range initHangingWrap(line, initWidth-4) {
@@ -750,15 +817,14 @@ func (w *initWizard) writeNextSteps(setup initSetup, outcome initOutcome) {
 	if len(setup.credentials) != 0 {
 		fmt.Fprintf(&b, "API key variable: %s (export it in the shell that runs the review, or save it once with `trestle keys set NAME`; the key is never written to this folder)\n", strings.Join(setup.credentials, ", "))
 	}
+	fmt.Fprintf(&b, "\nReview the latest change (HEAD against its merge base with the default branch), run in the repository:\n    %s\nA review sends the selected source to %s.\n", w.latestCommand(), setup.destination())
+	fmt.Fprintf(&b, "\nStatus and next actions: run trestle with no arguments in the repository.\n")
 	fmt.Fprintf(&b, "\nRe-run the setup checks: run `trestle init` again in the repository, or\n")
 	check := []string{"trestle", "setup", "bootstrap", "check", "--directory", dir}
 	if !setup.remote {
 		check = append(check, "--approved-by", setup.owner, "--scope", setupBootstrapDirectReviewScope)
 	}
 	fmt.Fprintf(&b, "%s\n", initRenderCommand(check))
-	if len(outcome.reviewCommand) != 0 {
-		fmt.Fprintf(&b, "\nRun a review (sends the selected source to %s):\n%s\n", setup.destination(), initRenderCommand(outcome.reviewCommand))
-	}
 	fmt.Fprintf(&b, "\nGuide: docs/getting-started.md\n")
 	if err := fileauthority.WriteNewProtectedFile(w.ctx, path, []byte(b.String()), 65536); err != nil {
 		w.say("  (Could not save %s; the steps are shown here.)", initDisplayPath(path))
