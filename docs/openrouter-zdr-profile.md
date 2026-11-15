@@ -272,6 +272,10 @@ this setup or by your OpenRouter account or key settings), choose a model with
 zero-data-retention endpoints and run trestle init again
 (https://openrouter.ai/docs/guides/features/zdr); otherwise check the model
 ID". The daemon still records the generic `provider_model_unavailable` reason.
+OpenRouter answers an unknown model ID with HTTP 400 instead; that is a
+rejected request, not a ZDR refusal, and records `provider_request_rejected`
+with the hint to check the model ID (see
+[provider refusals](local-model-review.md#provider-refusals)).
 
 ## Earlier reviewed setups
 

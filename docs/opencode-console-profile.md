@@ -156,8 +156,12 @@ reservation. Budgets are checked at request start, so
 already-running requests may exceed them slightly. Timeouts/transport loss/
 5xx/malformed post-effect replies remain outcome unknown; there is no other
 automatic retry, no fallback and no raw upstream error-body persistence. A
-malformed reply, or a status no class names, keeps the task's `internal`
-failure and records `provider_response_invalid`.
+400, 405, 415 or 422, which rejects the request as invalid (for example an
+unknown model ID or an unsupported parameter), maps to `request_rejected` as
+for every profile: it is not retried, the task is refused as `policy`, and the
+local review reports `provider_request_rejected`. A malformed reply, or a
+status no class names (for example 409), keeps the task's `internal` failure
+and records `provider_response_invalid`.
 
 ## Metadata and setup
 

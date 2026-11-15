@@ -146,15 +146,19 @@ backup checks. The backup directory must be protected and outside the live
 bootstrap directory. Its snapshot name is derived automatically from the current
 plan. A missing permission, credential, unavailable model, invalid model output
 or unsupported backup location cannot become ready. Correct the dependency and
-repeat `check`. When a model server refuses the probe with HTTP 401, 402, 403,
-404, 410 or 429, the result adds `messages` naming the check, the review's
-failure detail and its fixed hint, for example
+repeat `check`. When a model server refuses the probe with HTTP 400, 401,
+402, 403, 404, 405, 410, 415, 422 or 429, the result adds `messages` naming
+the check, the review's failure detail and its fixed hint, for example
 `local_inference_validated: provider_model_unavailable: the provider does not
 serve this model at this endpoint: ...`, and `trestle init` shows the same
-reason; the server's own message is never shown. A probe the server answered
-with HTTP 200 and a reply the adapter refused, or with a status no failure
-class names (such as 400, but not a 5xx), names `provider_response_invalid`
-the same way, and `trestle init` says the server answered the test request
+reason; the server's own message is never shown. A probe rejected as an
+invalid request (400, 405, 415 or 422, for example an unknown model ID) names
+`provider_request_rejected`, and `trestle init` says the server refused the
+test request, with the hint to check the model ID, the endpoint and its
+transport, structured output support and the output allowance. A probe the
+server answered with HTTP 200 and a reply the adapter refused, or with a
+status no failure class names (such as 409, but not a 5xx), names
+`provider_response_invalid` the same way, and `trestle init` says the server answered the test request
 with a reply not in the expected format. `messages` is absent
 otherwise, and `check` sends no request beyond the probe. Passed checks are historical receipts, not fresh liveness checks;
 repeat calls do not silently repeat a successful inference probe. `inspect` is

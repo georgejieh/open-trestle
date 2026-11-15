@@ -51,21 +51,23 @@ Every request profile, the OpenCode console included, classifies a non-200 statu
 
 | Status | Class | Replay safety |
 |---|---|---|
+| 400, 422 | `request_rejected` (the request is invalid, for example an unknown model ID or a parameter the model or endpoint does not accept) | `no_side_effect` |
 | 401 | `authentication` | `no_side_effect` |
 | 402 | `payment_required` (billing or quota) | `no_side_effect` |
 | 403 | `authorization` | `no_side_effect` |
 | 404 | `model_unavailable` (model or endpoint not served) | `no_side_effect` |
+| 405, 415 | `request_rejected` (the endpoint does not take the method or media type) | `no_side_effect` |
 | 408, 504 | `timeout` | `outcome_unknown` |
 | 410 | `model_retired` | `no_side_effect` |
 | 413 | `budget_exhausted` | `no_side_effect` |
 | 429 | `rate_limited`, with a bounded `Retry-After` and known zero usage | `no_side_effect` |
 | 503 with a `Retry-After` in seconds | `rate_limited`, as 429 | `no_side_effect` |
 | other 5xx | `provider_server` | `outcome_unknown` |
-| any other | `invalid_response` | `no_side_effect` |
+| any other, for example 409 | `invalid_response` (an unexpected answer) | `no_side_effect` |
 
 A 200 whose reply the adapter refuses (malformed, truncated, empty or oversized, a Chat Completions reply with an unrecognized field (for OpenRouter, in the answer rather than its [routing metadata](openrouter-zdr-profile.md#how-a-reply-is-read)), or otherwise not the strict document above) is `invalid_response` too, with `outcome_unknown` replay safety.
 
-`payment_required`, `model_unavailable` and `model_retired` are not transient, so the gateway never retries them. A payment refusal is also not eligible for fallback to another route, like a spent budget; a model refusal leaves another route's model eligible. The model handlers fail the task as a `policy` refusal for each of them, as for `authentication` and `authorization`, and record the matching `provider_*` task failure reason when the provider answered (a rate limit is first retried on the same route at most twice inside the task attempt, after its bounded `Retry-After`, each retry taking over the refused attempt's reservation, and records `provider_rate_limited` only when every retry is rate-limited too); the local review reports them as failure details; see [local model review](local-model-review.md#provider-refusals). An `invalid_response` after the request was sent keeps the task's `internal` failure and records the `provider_response_invalid` reason and failure detail, so a refused reply is not reported as an internal bug; one before sending records none.
+`payment_required`, `model_unavailable`, `model_retired` and `request_rejected` are not transient, so the gateway never retries them, and none counts as a provider outage: the provider answered. A payment refusal is also not eligible for fallback to another route, like a spent budget; a model refusal leaves another route's model eligible, and so does a rejected request, because another route builds its own request for its own model ID, endpoint and parameters. The model handlers fail the task as a `policy` refusal for each of them, as for `authentication` and `authorization`, and record the matching `provider_*` task failure reason when the provider answered, `provider_request_rejected` for a rejected request (a rate limit is first retried on the same route at most twice inside the task attempt, after its bounded `Retry-After`, each retry taking over the refused attempt's reservation, and records `provider_rate_limited` only when every retry is rate-limited too); the local review reports them as failure details; see [local model review](local-model-review.md#provider-refusals). An `invalid_response` after the request was sent keeps the task's `internal` failure and records the `provider_response_invalid` reason and failure detail, so a refused reply is not reported as an internal bug; one before sending records none.
 
 The adapter performs no request during construction and has no background activity.
 

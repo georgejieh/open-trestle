@@ -1090,6 +1090,7 @@ mapping:
 
 | HTTP status | Route failure | Run failure | Retried | `failure_detail` |
 |---|---|---|---|---|
+| 400, 405, 415, 422 | `request_rejected` | `policy` | no | `provider_request_rejected` |
 | 401 | `authentication` | `policy` | no | `provider_authentication_failed` |
 | 402 | `payment_required` | `policy` | no | `provider_payment_required` |
 | 403 | `authorization` | `policy` | no | `provider_authorization_denied` |
@@ -1098,7 +1099,7 @@ mapping:
 | 429 | `rate_limited` | `transient` | twice on the same route, inside the task attempt | `provider_rate_limited` |
 | 503 with a `Retry-After` in seconds | `rate_limited` | `transient` | as 429 | `provider_rate_limited` |
 | other 5xx | `provider_server` | `transient` | no | none |
-| 200 with a reply the adapter refuses, or a status no other class names (for example 400) | `invalid_response` | `internal` | no | `provider_response_invalid` |
+| 200 with a reply the adapter refuses, or a status no other class names (for example 409) | `invalid_response` | `internal` | no | `provider_response_invalid` |
 
 A `policy` run is `refused` with CI disposition `blocked` and exit code 4, so a
 refusal the provider repeats on every request is attempted once. A `transient`
@@ -1138,12 +1139,28 @@ failure: policy (task verification): provider_model_retired
 hint: the provider no longer serves this model: choose a model the provider lists as available and re-run setup
 ```
 
+A provider that rejects the request itself as invalid, with HTTP 400 or 422
+(for example an unknown model ID, which OpenRouter answers with 400, or a
+parameter the model or endpoint does not accept, such as structured output
+or the requested output allowance) or with 405 or 415 (an endpoint that does
+not take the method or media type), records `provider_request_rejected`. The
+same request is rejected every time, so it is not retried and the run is
+refused with exit code 4. Before this detail a 400 or 422 was an
+`invalid_response`: the run failed `internal` with exit code 1, named a
+refused reply (`provider_response_invalid` below) and advised running the
+review again:
+
+```text
+failure: policy (task candidates): provider_request_rejected
+hint: the provider rejected the request as invalid, for example an unknown model ID or a parameter the model or endpoint does not accept: check the model ID, the endpoint and its transport, and that the model and endpoint accept structured output and the requested output allowance; then re-run setup
+```
+
 A provider that answers HTTP 200 with a reply the adapter refuses (malformed
 or truncated JSON, an empty or oversized body, a Chat Completions reply with
 an unrecognized field (for OpenRouter, in the answer rather than its routing
 metadata), a model other than the route's, or another document the
 strict parser does not accept), or with a status no route failure class names
-(for example 400; see [OpenAI provider](openai-provider.md)), keeps the
+(for example 409; see [OpenAI provider](openai-provider.md)), keeps the
 `internal` run failure it always had, so the run is `failed` with `error` and
 exit code 1, and records `failure_detail` `provider_response_invalid`. Before
 this detail the text output read only `failure: internal (task candidates)`
@@ -1196,8 +1213,9 @@ without a provider refusal, a refused reply or an invalid answer keeps its
 bytes.
 A daemon run is classified the same way, and its generation or verification
 task records the detail as its content-free failure reason (the same
-`provider_*` token, `provider_response_invalid` only with failure `internal`,
-and `model_output_invalid`, also only with `internal`)
+`provider_*` token, `provider_request_rejected` only with failure `policy`,
+`provider_response_invalid` only with failure `internal`, and
+`model_output_invalid`, also only with `internal`)
 in task completion v3, the v7 `task_failed` event and receipt v3.
 `trestle runs status` prints it on stderr, for example
 `runs status: task candidates failed: provider_payment_required (the provider
