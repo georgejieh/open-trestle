@@ -9,18 +9,20 @@ Open Trestle performs an initial review sweep, not final human approval. Its cap
 ## Canonical flow
 
 ```text
-source-control event, CI job, local Git, IDE, or agent host
-  -> authenticated transport adapter
-  -> versioned review envelope
+GitHub webhook, CLI daemon submission, MCP plan submission, or the CLI direct review
+  -> verified webhook ingress, authenticated daemon API, or in-process direct session
+  -> versioned review run plan
   -> immutable review snapshot
   -> repository and change-impact evidence
-  -> policy-approved analyzers and bounded model review
-  -> independent verification and deduplication
+  -> one built-in deterministic check and bounded model review
+  -> independent verification
   -> evidence-linked result or explicit abstention
   -> surface-specific rendering or provider-native publication
 ```
 
-Each integration submits the same canonical review request. The runtime, not the integration, owns authorization, policy, provider routing, execution safety, evidence retention, and audit receipts.
+There are two ways to run this flow. The direct path (`trestle local-git model-review`, which `trestle init` also runs) executes the review task graph inside the `trestle` process with process-private stores and keeps nothing afterwards. The daemon path executes the same handlers inside `trestled` with durable runs; the GitHub webhook planner, `trestle local-git submit-review`, `trestle runs submit` and the MCP `open_trestle.submit_run` tool submit to it. The TUI, `trestle lsp` and the VS Code extension, the web console and ACP observe one daemon run and cannot start a review. On both paths the runtime, not the surface, owns authorization, policy, provider routing, execution safety, evidence retention, and audit receipts.
+
+Today the deterministic evidence stage runs one built-in rule (`static_debug_output`) and the Go semantic-impact profile. Analyzer adapters admitted by policy, such as linters and static analysis, are planned (see the [roadmap](roadmap.md)). Verified findings are deduplicated only heuristically, when a direct review runs a `--specialists` set; a dedupe and rank stage is planned.
 
 ## Control boundaries
 
@@ -32,7 +34,7 @@ The canonical review ledger records immutable snapshot identity, source ranges, 
 
 The runtime derives snapshot-bound semantic impact profiles from approved language adapters. The bounded Go adapter and deterministic analysis handler record changed declarations, public API changes, name-based reference candidates, affected-test candidates, and explicit parser, language, source, and resource gaps. Profiles bind the exact base and head snapshots, change model, input file digests, adapter identity, graph schema, evidence grades, and declared coverage. Structural declaration differences may support verification. Syntactic reference candidates may only prioritize inspection.
 
-Each element carries an evidence grade. Compiler or language-server facts and validated structural parse results may support verification. Heuristics such as historical co-change identify review targets only; they cannot independently create, raise, or verify a finding. Text or regex fallback may discover candidates but cannot be represented as semantic proof. Unsupported languages, generated content, incomplete resolution, and adapter failure produce explicit coverage gaps or abstentions rather than a silent downgrade in confidence.
+Each element carries an evidence grade. Two grades exist: `structural`, for validated parse results such as declaration differences, which may support verification; and `syntactic_candidate`, for name-matched references and affected-test candidates, which may only prioritize inspection. Two further grades are planned design with no implementation: compiler or language-server facts from a type-aware adapter, which could support verification, and heuristics such as historical co-change, which would identify review targets only and could never independently create, raise, or verify a finding (see the [roadmap](roadmap.md)). Text or regex fallback may discover candidates but cannot be represented as semantic proof. Unsupported languages, generated content, incomplete resolution, and adapter failure produce explicit coverage gaps or abstentions rather than a silent downgrade in confidence.
 
 The runtime assembles a compact, content-addressed review context packet from the immutable snapshot, normalized changed symbols and ranges, relevant impact evidence, applicable policy, deterministic analyzer receipts, and known coverage limits. A model receives only the packet its approved route permits. The packet digest is retained with the candidate and verifier records so the basis of a conclusion is reproducible.
 
@@ -72,11 +74,13 @@ The setup core turns deployment posture and readiness checks into a versioned, r
 
 ## Integration model
 
-Open Trestle supports three integration paths:
+Open Trestle has three integration paths:
 
-1. **Event path:** authenticated provider webhooks and service hooks.
-2. **Command path:** local terminals, Git hooks, CI jobs, and scripts using a declared Git state or frozen input bundle.
-3. **Protocol path:** web, REST, gRPC, LSP, MCP, and ACP clients.
+1. **Event path:** authenticated GitHub webhooks. Other forges' webhooks and service hooks are planned.
+2. **Command path:** local terminals, CI jobs, and scripts using a declared Git state or a local fixture file. Git-hook integration is planned.
+3. **Protocol path:** web console, REST, LSP, MCP, and ACP clients. A gRPC API is planned.
+
+Planned items are listed in the [roadmap](roadmap.md); none of them has code in the tree.
 
 An integration is supported only after it passes common conformance checks for identity, immutable revision selection, cancellation, retry, deduplication, evidence parity, privacy behavior, and safe degradation.
 
@@ -88,7 +92,7 @@ The embedded web console is a read-only same-origin client of exact run receipts
 
 The first supported local-first v1 installation targets one trusted daemon running as the installing user. It may own writable local Git, journal, and artifact handles. Trusted in-process components are inside this boundary; model-generated code, repository scripts, and plug-ins are not trusted owner components. This profile does not isolate its stores from hostile code running with the installing user's privileges, authenticate individual function calls, or resist tampering by that code. A separately privileged owner may be considered as an optional later installation profile; it is not required for the first v1. The owner path is not yet implemented or accepted. This design choice does not authorize source-content scanning, model/provider calls, credential changes, push, deployment, publication, or release. Keep the historical-packet startup and prepared-to-success refusals until independently reviewed replacements prove exact owner binding, audited route authorization, live lease and source checks, admission/write fencing, safe handling of uncertain partial effects, and durable recovery. Recovery must include interruption after candidate persistence followed by restart without duplicate dispatch or unverified promotion.
 
-The broader deployment architecture uses a trusted control plane, PostgreSQL ledgers and content-free task notifications, S3-compatible artifact storage, a replaceable notification boundary, policy evaluation, OpenTelemetry observability, and isolated runners. The trusted CLI, snapshot, receipt, daemon, and control-plane boundaries are currently implemented in Go. Docker Compose supports a single operator. Helm and Kubernetes support larger installations. These are design decisions, not claims of a released deployment.
+The broader deployment architecture uses a trusted control plane, PostgreSQL ledgers and content-free task notifications, S3-compatible artifact storage, a replaceable notification boundary, policy evaluation, and scoped remote workers. The trusted CLI, snapshot, receipt, daemon, control-plane, PostgreSQL, S3-compatible storage, and remote-worker boundaries are implemented in Go. The following parts are planned design with no code, manifests, or charts in the tree: OpenTelemetry observability, isolated sandbox runners, a Docker Compose profile for a single operator, and Helm charts or Kubernetes manifests for larger installations (see the [roadmap](roadmap.md)). The setup planner names a `kubernetes_ha` profile and can probe two stores over one verified PostgreSQL database; that is a setup check, not a Kubernetes deployment. None of this is a released deployment.
 
 The current storage foundation includes a conditional S3-compatible backend and client-side envelope store. It requires versioned objects and an operator-supplied tenant-aware key provider. It is not a complete deployed storage profile without a production KMS provider, canonical metadata database, bucket policy, recovery tooling, and deployment conformance evidence.
 
