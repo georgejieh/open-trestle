@@ -180,6 +180,10 @@ section also gives `pep8`. `based_on_style` outside those sections, and in
 `tox.ini`, which yapf does not read, declares nothing.
 `.clang-format` gives `clang_format`, and `BasedOnStyle: Google` in it also gives
 `google_cpp`. `rustfmt.toml` and `.rubocop.yml` give `rustfmt` and `rubocop`.
+The `style_conformance` skill has guidance for gofmt and Effective Go, PEP 8 with
+Black and Google Python style, Google C++ with clang-format, and Prettier, ESLint
+and EditorConfig. It has no section for `rustfmt` or `rubocop`, so a review that
+activates it for those styles gets only its general rules.
 Detection never infers a style from source code.
 
 ### Declared style in local reviews
@@ -379,9 +383,9 @@ document binds those per tier. Abridged:
 ```
 PROFILE            MODEL     REVIEW     PURPOSE
 backend            required  --profile  Back-end review: API contracts, persistence, concurrency, resource lifetime, and error handling.
-knowledge_graph    gap_only  plan only  Builds and extends the repository symbol and dependency graph from deterministic analysis; ...
+knowledge_graph    gap_only  plan only  Plan only: routing plans include it, but no review run dispatches it, so it does not build or extend a graph yet. ...
 orchestrator       none      plan only  Deterministic router: activates profiles, scores difficulty, selects tiers and exact routes, ...
-9 profiles, catalog version 1, identity c210656e4d23254d84945b6c0f7acf321d7186602c5538c6a86b7d203672df9a
+9 profiles, catalog version 1, identity c5885eff8eb92698b30f0af9c238cb29cf16ed0191223fa6f0ec3f7137895abb
 ```
 
 `list --format json` prints the catalog as one JSON line: profiles, skills,

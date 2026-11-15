@@ -15,7 +15,7 @@ import (
 // catalog contract changed; bump CatalogVersion or the profile version and
 // update these deliberately.
 const (
-	goldenCatalogIdentity = "c210656e4d23254d84945b6c0f7acf321d7186602c5538c6a86b7d203672df9a"
+	goldenCatalogIdentity = "c5885eff8eb92698b30f0af9c238cb29cf16ed0191223fa6f0ec3f7137895abb"
 )
 
 func TestProfileDefaultCatalogValidatesAllNineProfiles(t *testing.T) {

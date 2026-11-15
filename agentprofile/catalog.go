@@ -208,8 +208,8 @@ func packagedProfileSpecs() ([]ProfileSpec, error) {
 			Activation: Activation{Conditions: []Condition{ConditionAlways}},
 		},
 		{
-			ID: ProfileKnowledgeGraph, Version: 1, Priority: 60, ModelCall: ModelCallGapOnly,
-			Purpose:          "Builds and extends the repository symbol and dependency graph from deterministic analysis; uses a model only for coverage gaps such as unsupported languages.",
+			ID: ProfileKnowledgeGraph, Version: 2, Priority: 60, ModelCall: ModelCallGapOnly,
+			Purpose:          "Plan only: routing plans include it, but no review run dispatches it, so it does not build or extend a graph yet. Intended to keep the repository symbol and dependency graph from deterministic analysis, using a model only for coverage gaps such as unsupported languages.",
 			Activation:       Activation{FileClasses: []FileClass{FileClassSource}},
 			RequiredFeatures: structuredOutput, Tiers: compactTiers,
 		},
@@ -248,8 +248,8 @@ func packagedProfileSpecs() ([]ProfileSpec, error) {
 			RequiredFeatures: structuredOutput, Tiers: reviewTiers,
 		},
 		{
-			ID: ProfileStyleConformance, Version: 1, Priority: 20, ModelCall: ModelCallRequired,
-			Purpose:          "Checks changed code against the repository's declared style intent (gofmt and Effective Go, PEP 8, Google style, Prettier, EditorConfig), detected from config files.",
+			ID: ProfileStyleConformance, Version: 2, Priority: 20, ModelCall: ModelCallRequired,
+			Purpose:          "Checks changed code against the repository's declared style intent, detected from config files. Its guidance covers gofmt and Effective Go, PEP 8 with Black and Google Python style, Google C++ with clang-format, and Prettier, ESLint and EditorConfig; other declared styles, such as rustfmt and RuboCop, get no style-specific guidance.",
 			Activation:       Activation{Conditions: []Condition{ConditionDeclaredStyleMatches}},
 			RequiredFeatures: structuredOutput, Tiers: compactTiers,
 		},
