@@ -402,18 +402,23 @@ type setBoundsWire struct {
 }
 
 type modelReviewSetWire struct {
-	Contract               string                  `json:"contract"`
-	Version                int                     `json:"schema_version"`
-	Status                 string                  `json:"status"`
-	CI                     string                  `json:"ci_disposition"`
-	Complete               bool                    `json:"complete"`
-	Selection              specialistSelectionWire `json:"selection"`
-	Members                []setMemberWire         `json:"members"`
-	Summary                setSummaryWire          `json:"summary"`
-	Findings               []setFindingWire        `json:"findings"`
-	Bounds                 setBoundsWire           `json:"bounds"`
-	Limitations            []string                `json:"limitations"`
-	ComprehensiveClearance bool                    `json:"comprehensive_clearance"`
+	Contract  string                  `json:"contract"`
+	Version   int                     `json:"schema_version"`
+	Status    string                  `json:"status"`
+	CI        string                  `json:"ci_disposition"`
+	Complete  bool                    `json:"complete"`
+	Selection specialistSelectionWire `json:"selection"`
+	Members   []setMemberWire         `json:"members"`
+	Summary   setSummaryWire          `json:"summary"`
+	// Walkthrough is the general member's walkthrough, once for the set: every
+	// member reviews the same change, so the per-file summary and missing
+	// verification are shared, and its verifier account is the general
+	// review's; each member's own counts are on its member entry.
+	Walkthrough            *localreview.Walkthrough `json:"walkthrough,omitempty"`
+	Findings               []setFindingWire         `json:"findings"`
+	Bounds                 setBoundsWire            `json:"bounds"`
+	Limitations            []string                 `json:"limitations"`
+	ComprehensiveClearance bool                     `json:"comprehensive_clearance"`
 	// StyleAdvice repeats the general member's style advice once for the set,
 	// inline. Its fields are omitted when it has none, so a set without advice
 	// keeps its version 1 bytes.
@@ -512,7 +517,7 @@ func runLocalModelReviewSet(ctx, execution context.Context, options localModelRe
 	if observe != nil {
 		observe(modelReviewOutcome{status: set.Status, findings: len(set.Findings)})
 	}
-	return writeModelReviewSet(options.format, options.exitPolicy, set, stdout, stderr)
+	return writeModelReviewSet(options.format, options.exitPolicy, localreview.RenderOptions{All: options.all}, set, stdout, stderr)
 }
 
 // featuresUnavailableReason explains why no change features were read from the
@@ -565,6 +570,9 @@ func buildModelReviewSet(selection specialistSelectionWire, members []localModel
 	// shares, so the set reports the general member's once, never per member.
 	if len(members) > 0 && members[0].specialist.IsZero() {
 		set.StyleAdvice = members[0].result.StyleAdvice()
+		if report, err := members[0].result.Report(); err == nil {
+			set.Walkthrough = report.Walkthrough
+		}
 	}
 	var memberFindings [][]localreview.ReportFinding
 	labels := make([]string, len(members))
@@ -658,12 +666,19 @@ func buildModelReviewSet(selection specialistSelectionWire, members []localModel
 			set.CI = "inconclusive"
 		}
 		// An incomplete set never demotes a verified high or critical finding
-		// from a completed member: it still blocks.
+		// that the change introduced from a completed member: it still blocks.
 		if hasErrorSeverityFinding(merged) {
 			set.CI = "blocked"
 		}
 	case len(merged) > 0:
-		set.Status, set.CI = "findings", "blocked"
+		// Pre-existing findings never block CI: a set whose every merged
+		// finding is pre-existing keeps status findings and is inconclusive.
+		set.Status, set.CI = "findings", "inconclusive"
+		for _, finding := range merged {
+			if !finding.PreExisting {
+				set.CI = "blocked"
+			}
+		}
 	default:
 		allClean := true
 		for _, member := range set.Members {
@@ -681,10 +696,10 @@ func buildModelReviewSet(selection specialistSelectionWire, members []localModel
 }
 
 // hasErrorSeverityFinding reports whether a merged finding is a verified high or
-// critical (error-severity) finding.
+// critical (error-severity) finding that is not pre-existing.
 func hasErrorSeverityFinding(findings []setFindingWire) bool {
 	for _, finding := range findings {
-		if finding.report.Severity == diagnostics.SeverityError {
+		if finding.report.Severity == diagnostics.SeverityError && !finding.PreExisting {
 			return true
 		}
 	}
@@ -812,20 +827,17 @@ func (s modelReviewSetWire) hasBlockingFinding() bool {
 			return true
 		}
 	}
-	for _, finding := range s.Findings {
-		if finding.report.Severity == diagnostics.SeverityError {
-			return true
-		}
-	}
-	return false
+	return hasErrorSeverityFinding(s.Findings)
 }
 
-func writeModelReviewSet(format string, policy localreview.ExitPolicy, set modelReviewSetWire, stdout, stderr io.Writer) int {
+func writeModelReviewSet(format string, policy localreview.ExitPolicy, options localreview.RenderOptions, set modelReviewSetWire, stdout, stderr io.Writer) int {
 	var encoded []byte
 	var err error
 	switch format {
 	case "text":
-		encoded, err = renderModelReviewSetText(set)
+		encoded, err = renderModelReviewSetText(set, options)
+	case "markdown":
+		encoded, err = renderModelReviewSetMarkdown(set, options)
 	case "sarif":
 		encoded, err = encodeModelReviewSetSARIF(set)
 	default:
@@ -851,7 +863,19 @@ func writeModelReviewSet(format string, policy localreview.ExitPolicy, set model
 	return set.exitCode(policy)
 }
 
-func renderModelReviewSetText(set modelReviewSetWire) ([]byte, error) {
+// rankedGroups returns the set's merged findings as ranked groups, in rank
+// order.
+func (s modelReviewSetWire) rankedGroups() []localreview.MergedFinding {
+	groups := make([]localreview.MergedFinding, 0, len(s.Findings))
+	for _, finding := range s.Findings {
+		groups = append(groups, finding.merged)
+	}
+	return groups
+}
+
+func setContributors(group localreview.MergedFinding) []string { return group.OriginLabels() }
+
+func renderModelReviewSetText(set modelReviewSetWire, options localreview.RenderOptions) ([]byte, error) {
 	var buffer bytes.Buffer
 	fmt.Fprintf(&buffer, "specialist review set: status=%s ci=%s complete=%t\n", set.Status, set.CI, set.Complete)
 	selectionStatus := set.Selection.Status
@@ -892,23 +916,52 @@ func renderModelReviewSetText(set modelReviewSetWire) ([]byte, error) {
 	if coverage := set.Summary.SourceCoverage; coverage != nil {
 		fmt.Fprintf(&buffer, "files covered: analyzed=%d selected=%d omitted=%d\n", coverage.Analyzed, coverage.Selected, coverage.Omitted)
 	}
-	for _, finding := range set.Findings {
-		fmt.Fprintf(&buffer, "finding: %s %s\nsource: %s\nmessage: %s\nevidence: %s\n", finding.Severity, finding.Title, localreview.SourceText(finding.Path, finding.report.Side, finding.StartLine, finding.EndLine, finding.HeadLine), finding.Claim, strings.Join(finding.EvidenceIDs, ", "))
-		if finding.Category != "" {
-			fmt.Fprintf(&buffer, "category: %s\n", finding.Category)
-		}
-		if finding.Fix != "" {
-			// Fix text is unverified model guidance; it is printed, never applied.
-			fmt.Fprintf(&buffer, "fix: %s\n", finding.Fix)
-		}
-		fmt.Fprintf(&buffer, "contributors: %s\n", strings.Join(finding.contributorLabels(), ", "))
+	for _, line := range localreview.WalkthroughText(set.Walkthrough) {
+		buffer.WriteString(line)
 	}
+	buffer.WriteString(localreview.FindingsText(set.rankedGroups(), options, setContributors))
 	for _, line := range set.StyleAdvice.Lines() {
 		buffer.WriteString(line)
 	}
 	fmt.Fprintf(&buffer, "limitations: %s\ncomprehensive clearance: false\n", strings.Join(set.Limitations, ", "))
 	if buffer.Len() > maxModelReviewSetTextBytes {
 		return nil, errors.New("model review set text exceeds output bound")
+	}
+	return buffer.Bytes(), nil
+}
+
+// renderModelReviewSetMarkdown renders the set as a pull request summary
+// comment: status, the reviewers that ran, the general review's walkthrough,
+// then the merged findings in rank order with the members that confirmed them.
+func renderModelReviewSetMarkdown(set modelReviewSetWire, options localreview.RenderOptions) ([]byte, error) {
+	var buffer bytes.Buffer
+	buffer.WriteString("## Open Trestle review\n\n")
+	fmt.Fprintf(&buffer, "**Status:** %s · **CI:** %s · **Complete:** %t\n", localreview.MarkdownText(set.Status), localreview.MarkdownText(set.CI), set.Complete)
+	reviewers := []string{}
+	for _, member := range set.Members {
+		if member.Launched {
+			reviewers = append(reviewers, localreview.MarkdownCode(member.Member))
+		}
+	}
+	fmt.Fprintf(&buffer, "\nReviewers: %s (%d of %d ran; specialists %s).\n", strings.Join(reviewers, ", "), set.Summary.MembersRun, set.Summary.MembersSelected, localreview.MarkdownText(set.Selection.Mode))
+	for _, member := range set.Members {
+		switch {
+		case !member.Launched:
+			fmt.Fprintf(&buffer, "\n- %s did not run (%s).\n", localreview.MarkdownCode(member.Member), localreview.MarkdownText(member.NotLaunchedReason))
+		case member.RunStatus != "succeeded":
+			fmt.Fprintf(&buffer, "\n- %s did not finish: %s.\n", localreview.MarkdownCode(member.Member), localreview.MarkdownText(localreview.FailureLine(member.Failure, member.FailureTask, member.FailureDetail)))
+		}
+	}
+	if set.Walkthrough != nil {
+		buffer.WriteString("\n" + localreview.WalkthroughMarkdown(set.Walkthrough))
+	}
+	buffer.WriteString(localreview.FindingsMarkdown(set.rankedGroups(), options, setContributors))
+	if !set.Complete {
+		buffer.WriteString("\nOne or more reviewers did not finish; the findings come only from those that did. This is not a clean result.\n")
+	}
+	buffer.WriteString(localreview.MarkdownFooter)
+	if buffer.Len() > maxModelReviewSetTextBytes {
+		return nil, errors.New("model review set Markdown exceeds output bound")
 	}
 	return buffer.Bytes(), nil
 }
@@ -944,7 +997,10 @@ func encodeModelReviewSetSARIF(set modelReviewSetWire) ([]byte, error) {
 	}
 	contributors := map[string][]string{}
 	for _, finding := range set.Findings {
-		report.Findings = append(report.Findings, finding.report)
+		// The set's merge decides rank, representative and pre-existing class.
+		value := finding.report
+		value.Rank, value.DuplicateOf, value.PreExisting = finding.Rank, "", finding.PreExisting
+		report.Findings = append(report.Findings, value)
 		contributors[finding.FindingIdentity] = finding.contributorLabels()
 	}
 	if set.Complete {

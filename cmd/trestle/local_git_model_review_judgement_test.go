@@ -149,3 +149,14 @@ func TestFindingCitingChangeEvidenceIsNotPreExisting(t *testing.T) {
 		t.Fatalf("ordinary finding: ci=%s pre_existing=%v rank=%+v", receipt.CI, receipt.PreExisting, receipt.Rank)
 	}
 }
+
+// A review set whose merged findings are all pre-existing keeps status
+// findings and is inconclusive, not blocked; the findings policy exits 0.
+func TestReviewSetPreExistingFindingsNeverBlock(t *testing.T) {
+	f := oldFunctionFixture(t, "pre_existing")
+	receipt, _ := runLocalModelSet(t, f, []string{"--specialists", "bug_hunter"}, 3)
+	if receipt.Status != "findings" || receipt.CI != "inconclusive" || !receipt.Complete || len(receipt.Findings) != 1 {
+		t.Fatalf("set status=%s ci=%s complete=%t findings=%d", receipt.Status, receipt.CI, receipt.Complete, len(receipt.Findings))
+	}
+	runLocalModelSet(t, f, []string{"--specialists", "bug_hunter", "--exit-code-policy", "findings"}, 0)
+}

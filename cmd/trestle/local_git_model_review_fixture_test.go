@@ -373,6 +373,9 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 			if m.mode == "medium" || m.mode == "medium_after_first" && call > 1 {
 				severity = "medium"
 			}
+			if m.mode == "low" {
+				severity = "low"
+			}
 			id := candidate.ID
 			if m.mode == "wrong_candidate" {
 				id = strings.Repeat("f", 64)

@@ -37,6 +37,13 @@ func buildModelReviewSARIF(report localreview.Report) (sarifLog, error) {
 func buildModelReviewSARIFWithContributors(report localreview.Report, contributors map[string][]string) (sarifLog, error) {
 	rules := map[string]sarifRule{}
 	results := make([]sarifResult, 0, len(report.Findings))
+	// order keeps each placed result's rank and whether it is a merged
+	// duplicate, for the rank ordering below.
+	type rankOrder struct {
+		rank      int
+		duplicate bool
+	}
+	order := make([]rankOrder, 0, len(report.Findings))
 	var unplaced []sarifNotification
 	for _, finding := range report.Findings {
 		level, err := diagnosticSARIFLevel(finding.Severity)
@@ -59,6 +66,7 @@ func buildModelReviewSARIFWithContributors(report localreview.Report, contributo
 		if labels := contributors[finding.Identity]; len(labels) > 0 {
 			properties.Contributors = append([]string(nil), labels...)
 		}
+		properties.Rank, properties.PreExisting = finding.Rank, finding.PreExisting
 		result, notification := placeVerifiedFinding(finding.Path, finding.Side, finding.StartLine, finding.EndLine, finding.HeadLine, finding.Title+": "+finding.Claim, sarifResult{
 			RuleID: ruleID, Level: level,
 			Fingerprints: map[string]string{"openTrestleVerifiedFindingId/v1": finding.Identity},
@@ -78,9 +86,23 @@ func buildModelReviewSARIFWithContributors(report localreview.Report, contributo
 		}
 		rules[ruleID] = sarifRule{ID: ruleID, ShortDescription: sarifMessage{Text: description}, DefaultConfiguration: sarifConfiguration{Level: "warning"}}
 		results = append(results, *result)
+		order = append(order, rankOrder{rank: finding.Rank, duplicate: finding.DuplicateOf != ""})
 	}
-	sort.SliceStable(results, func(i, j int) bool {
-		a, b := results[i], results[j]
+	// Results are in rank order, a merged duplicate after its representative;
+	// equal ranks keep the location order.
+	indices := make([]int, len(results))
+	for index := range indices {
+		indices[index] = index
+	}
+	sort.SliceStable(indices, func(i, j int) bool {
+		x, y := order[indices[i]], order[indices[j]]
+		if x.rank != y.rank {
+			return x.rank < y.rank
+		}
+		if x.duplicate != y.duplicate {
+			return !x.duplicate
+		}
+		a, b := results[indices[i]], results[indices[j]]
 		ap, bp := a.Locations[0].PhysicalLocation, b.Locations[0].PhysicalLocation
 		switch {
 		case ap.ArtifactLocation.URI != bp.ArtifactLocation.URI:
@@ -94,6 +116,11 @@ func buildModelReviewSARIFWithContributors(report localreview.Report, contributo
 		}
 		return a.Fingerprints["openTrestleVerifiedFindingId/v1"] < b.Fingerprints["openTrestleVerifiedFindingId/v1"]
 	})
+	ordered := make([]sarifResult, 0, len(results))
+	for _, index := range indices {
+		ordered = append(ordered, results[index])
+	}
+	results = ordered
 	ruleList := make([]sarifRule, 0, len(rules))
 	for _, rule := range rules {
 		ruleList = append(ruleList, rule)

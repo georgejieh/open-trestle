@@ -71,9 +71,11 @@ func TestRenderResultIncludesCoverageAndOmissionSummaries(t *testing.T) {
 }
 
 func TestRenderResultTextBoundDoesNotWritePartialResult(t *testing.T) {
+	// Distinct claims ("m0" to "m15" differ in a symbol), so deduplication
+	// keeps all sixteen findings and padding grows the text exactly.
 	messages := make([]string, 16)
 	for index := range messages {
-		messages[index] = "x"
+		messages[index] = fmt.Sprintf("m%d", index)
 	}
 	var baseline bytes.Buffer
 	if err := RenderResult(&baseline, resultTextFixture(t, messages...)); err != nil {
@@ -81,7 +83,7 @@ func TestRenderResultTextBoundDoesNotWritePartialResult(t *testing.T) {
 	}
 	remaining := MaxResultTextBytes - baseline.Len()
 	for index := range messages {
-		padding := min(remaining, 4095)
+		padding := min(remaining, 4096-len(messages[index]))
 		messages[index] += strings.Repeat("x", padding)
 		remaining -= padding
 	}

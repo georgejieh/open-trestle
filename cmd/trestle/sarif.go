@@ -185,6 +185,11 @@ type sarifResultProperties struct {
 	// Contributors names the review set members (general, or a specialist
 	// profile ID) whose verified findings were merged into this result.
 	Contributors []string `json:"trestleContributors,omitempty"`
+	// Rank is the finding's 1-based rank (results are listed in rank order,
+	// a merged duplicate after its representative); PreExisting marks a
+	// finding on unchanged lines that never blocks CI.
+	Rank        int  `json:"trestleRank,omitempty"`
+	PreExisting bool `json:"trestlePreExisting,omitempty"`
 	// Side is "base" for a finding on removed base lines. Its region is then
 	// the head line beside the deletion, and BaseStartLine and BaseEndLine
 	// name the removed base lines.

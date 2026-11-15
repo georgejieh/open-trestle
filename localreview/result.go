@@ -879,11 +879,21 @@ func EncodeResult(r Result) ([]byte, error) {
 	}
 	return append(value, '\n'), nil
 }
+
+// RenderResult writes the text form with the default options: confirmed high,
+// critical and medium findings listed, the rest counted.
 func RenderResult(writer io.Writer, r Result) error {
+	return RenderResultWithOptions(writer, r, RenderOptions{})
+}
+
+// RenderResultWithOptions writes the text form: the status, the walkthrough,
+// the confirmed findings in rank order, the pre-existing findings, the count
+// of findings not shown, then coverage and limitations.
+func RenderResultWithOptions(writer io.Writer, r Result, options RenderOptions) error {
 	if nilValue(writer) || !r.valid {
 		return ErrInvalidResult
 	}
-	if r.sealedText != nil {
+	if r.sealedText != nil && !options.All {
 		n, err := writer.Write(append([]byte(nil), r.sealedText...))
 		if err == nil && n != len(r.sealedText) {
 			err = io.ErrShortWrite
@@ -901,20 +911,14 @@ func RenderResult(writer io.Writer, r Result) error {
 	if r.wire.Specialist != nil {
 		fmt.Fprintf(&buffer, "specialist profile: %s\n", r.wire.Specialist.ProfileID)
 	}
-	guidance := make(map[string]findingGuidanceWire, len(r.wire.Guidance))
-	for _, value := range r.wire.Guidance {
-		guidance[value.FindingIdentity] = value
+	report, err := r.Report()
+	if err != nil {
+		return ErrInvalidResult
 	}
-	for _, finding := range r.diagnostics.Findings() {
-		fmt.Fprintf(&buffer, "finding: %s %s\nsource: %s\nmessage: %s\nevidence: %s\n", finding.Severity().String(), finding.Title(), SourceText(finding.Path(), finding.Side(), finding.StartLine(), finding.EndLine(), finding.HeadLine()), finding.Message(), strings.Join(finding.EvidenceIDs(), ", "))
-		if value, ok := guidance[finding.SourceIdentity()]; ok {
-			fmt.Fprintf(&buffer, "category: %s\n", value.Category)
-			if value.Fix != "" {
-				// Fix text is unverified model guidance; it is printed, never applied.
-				fmt.Fprintf(&buffer, "fix: %s\n", value.Fix)
-			}
-		}
+	for _, line := range WalkthroughText(report.Walkthrough) {
+		buffer.WriteString(line)
 	}
+	buffer.WriteString(FindingsText(report.Ranked, options, nil))
 	if r.diagnostics.VerifiedSetIdentity() != "" {
 		fmt.Fprintf(&buffer, "coverage: candidates=%d verified=%d rejected=%d inconclusive=%d\n", r.diagnostics.CandidateCount(), r.diagnostics.VerifiedCount(), r.diagnostics.RejectedCount(), r.diagnostics.InconclusiveCount())
 	}

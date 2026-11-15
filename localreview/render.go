@@ -1,0 +1,403 @@
+package localreview
+
+import (
+	"bytes"
+	"fmt"
+	"io"
+	"strings"
+
+	"github.com/georgejieh/open-trestle/diagnostics"
+)
+
+// Rendering of the walkthrough and the ranked findings, shared by the single
+// review and the specialist review set, in text and in Markdown for a pull
+// request summary comment. Text keeps the historical "finding:" block for each
+// finding. Titles, claims, fix text, paths and declaration names are
+// untrusted (model output or repository text): Markdown escapes them and never
+// lets them open a link, an HTML tag, a heading or a mention.
+
+// RenderOptions selects what text and Markdown output show.
+type RenderOptions struct {
+	// All lists every confirmed finding. By default only high, critical and
+	// medium findings are listed and the rest are counted.
+	All bool
+}
+
+// maxWalkthroughTextFiles bounds the files the text and Markdown walkthroughs
+// list; the JSON result lists up to its own bound.
+const maxWalkthroughTextFiles = 32
+
+// HiddenNote is the line that counts findings not shown by default.
+func HiddenNote(hidden int) string {
+	if hidden == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d lower-severity finding%s not shown; add --all to list every finding (the JSON output lists all)", hidden, plural(hidden))
+}
+
+func plural(count int) string {
+	if count == 1 {
+		return ""
+	}
+	return "s"
+}
+
+// declarationChange words a declaration change.
+func declarationChange(change string) string {
+	if change == "modified" {
+		return "changed"
+	}
+	return change
+}
+
+// walkthroughVerifiedTexts are the "what was verified" statements, in order.
+func walkthroughVerifiedTexts(w *Walkthrough, code func(string) string) []string {
+	verified := w.Verified
+	var lines []string
+	switch scan := verified.SecretScan; scan.State {
+	case SecretScanScanned:
+		text := fmt.Sprintf("secret scan: %d model request%s scanned before sending (%d bytes, %d secret match%s", scan.Requests, plural(scan.Requests), scan.ScannedBytes, scan.Matches, map[bool]string{true: "", false: "es"}[scan.Matches == 1])
+		if scan.RedactedBytes > 0 {
+			text += fmt.Sprintf(", %d bytes redacted", scan.RedactedBytes)
+		}
+		lines = append(lines, text+")")
+	case SecretScanNotRun:
+		lines = append(lines, "secret scan: no model request was prepared")
+	default:
+		lines = append(lines, "secret scan: a scan receipt could not be read")
+	}
+	for _, check := range verified.StaticChecks {
+		lines = append(lines, fmt.Sprintf("static check %s: %s (%d file%s checked, %d match%s)", code(check.Key), check.State, check.CheckedFiles, plural(int(check.CheckedFiles)), check.Matches, map[bool]string{true: "", false: "es"}[check.Matches == 1]))
+	}
+	if verified.StyleDetection.State == "ran" {
+		lines = append(lines, fmt.Sprintf("style detection: ran (%d recommendation%s, %d withheld)", verified.StyleDetection.Recommendations, plural(verified.StyleDetection.Recommendations), verified.StyleDetection.Withheld))
+	} else {
+		lines = append(lines, "style detection: unavailable")
+	}
+	if impact := verified.SemanticImpact; impact.State == "ran" {
+		lines = append(lines, fmt.Sprintf("semantic impact: %d changed declaration%s, %d public API change%s, %d reference%s (%d from tests), %d gap%s", impact.Declarations, plural(impact.Declarations), impact.PublicAPIChanges, plural(impact.PublicAPIChanges), impact.References, plural(impact.References), impact.TestReferences, impact.Gaps, plural(impact.Gaps)))
+	} else {
+		lines = append(lines, "semantic impact: unavailable (no analysis was recorded)")
+	}
+	if verifier := verified.Verifier; verifier != nil {
+		lines = append(lines, fmt.Sprintf("independent verifier (%s): %d of %d candidate%s confirmed, %d rejected, %d inconclusive", verifier.Independence, verifier.Verified, verifier.Candidates, plural(int(verifier.Candidates)), verifier.Rejected, verifier.Inconclusive))
+	} else {
+		lines = append(lines, "independent verifier: no verified set was recorded")
+	}
+	return lines
+}
+
+// walkthroughFileText describes one changed file.
+func walkthroughFileText(file WalkthroughFile, code func(string) string) string {
+	text := code(file.Path) + " " + file.Change
+	switch {
+	case file.Change == "renamed":
+		text += " from " + code(file.RenamedFrom) + " (content unchanged)"
+	case file.AddedLines != nil && file.RemovedLines != nil:
+		text += fmt.Sprintf(" +%d -%d", *file.AddedLines, *file.RemovedLines)
+	default:
+		text += " (lines not counted)"
+	}
+	var parts []string
+	for _, declaration := range file.Declarations {
+		part := declarationChange(declaration.Change) + " " + declaration.Kind + " " + code(declaration.Name)
+		if declaration.PublicAPIChange {
+			part += " (public API)"
+		}
+		parts = append(parts, part)
+	}
+	if file.DeclarationsNotListed > 0 {
+		parts = append(parts, fmt.Sprintf("%d more declaration%s", file.DeclarationsNotListed, plural(file.DeclarationsNotListed)))
+	}
+	if file.SemanticGap != "" {
+		parts = append(parts, "no structural summary ("+file.SemanticGap+")")
+	}
+	if len(parts) > 0 {
+		text += "; " + strings.Join(parts, ", ")
+	}
+	return text
+}
+
+func missingVerificationText(note MissingVerification, code func(string) string) string {
+	change := "changed"
+	if note.Change == "added" {
+		change = "new"
+	}
+	return fmt.Sprintf("no test file references the %s %s %s (%s)", change, note.Kind, code(note.Name), code(note.Path))
+}
+
+func missingIncompleteText() string {
+	return "the semantic-impact scan did not read every Go file, so a test it did not read may cover these"
+}
+
+// WalkthroughText renders the walkthrough as text lines.
+func WalkthroughText(w *Walkthrough) []string {
+	if w == nil {
+		return nil
+	}
+	plain := func(value string) string { return value }
+	lines := []string{"walkthrough:\n"}
+	for _, text := range walkthroughVerifiedTexts(w, plain) {
+		lines = append(lines, "verified: "+text+"\n")
+	}
+	notListed := w.FilesNotListed
+	for index, file := range w.Files {
+		if index == maxWalkthroughTextFiles {
+			notListed += len(w.Files) - index
+			break
+		}
+		lines = append(lines, "file: "+walkthroughFileText(file, plain)+"\n")
+	}
+	if notListed > 0 {
+		lines = append(lines, fmt.Sprintf("file: %d more changed file%s not listed\n", notListed, plural(notListed)))
+	}
+	for _, note := range w.MissingVerification {
+		lines = append(lines, "missing verification: "+missingVerificationText(note, plain)+"\n")
+	}
+	if w.MissingVerificationNotListed > 0 {
+		lines = append(lines, fmt.Sprintf("missing verification: %d more not listed\n", w.MissingVerificationNotListed))
+	}
+	if w.MissingVerificationIncomplete && (len(w.MissingVerification) > 0 || w.MissingVerificationNotListed > 0) {
+		lines = append(lines, "missing verification: "+missingIncompleteText()+"\n")
+	}
+	return lines
+}
+
+// FindingSections splits ranked findings into the shown confirmed findings,
+// the shown pre-existing ones and the hidden count.
+func FindingSections(ranked []MergedFinding, options RenderOptions) (confirmed, preExisting []MergedFinding, hidden int) {
+	for _, group := range ranked {
+		if !options.All && !group.ShownByDefault() {
+			hidden++
+			continue
+		}
+		if group.PreExisting() {
+			preExisting = append(preExisting, group)
+		} else {
+			confirmed = append(confirmed, group)
+		}
+	}
+	return confirmed, preExisting, hidden
+}
+
+// FindingText renders one ranked finding as its text block. contributors,
+// when not nil, adds the review set's contributors line.
+func FindingText(group MergedFinding, contributors []string) string {
+	finding := group.Finding
+	var buffer bytes.Buffer
+	fmt.Fprintf(&buffer, "finding: %s %s\nrank: %d\nsource: %s\nmessage: %s\nevidence: %s\n", finding.Severity.String(), finding.Title, group.Rank, SourceText(finding.Path, finding.Side, finding.StartLine, finding.EndLine, finding.HeadLine), finding.Claim, strings.Join(finding.EvidenceIDs, ", "))
+	if finding.Category != "" {
+		fmt.Fprintf(&buffer, "category: %s\n", finding.Category)
+	}
+	if finding.Fix != "" {
+		// Fix text is unverified model guidance; it is printed, never applied.
+		fmt.Fprintf(&buffer, "fix: %s\n", finding.Fix)
+	}
+	if contributors != nil {
+		fmt.Fprintf(&buffer, "contributors: %s\n", strings.Join(contributors, ", "))
+	} else if merged := len(group.Contributors) - 1; merged > 0 {
+		fmt.Fprintf(&buffer, "merged duplicates: %d\n", merged)
+	}
+	return buffer.String()
+}
+
+// FindingsText renders the ranked sections: confirmed findings, then
+// pre-existing ones, then the hidden count. contributorsOf, when not nil,
+// supplies a review set's contributor labels for a finding.
+func FindingsText(ranked []MergedFinding, options RenderOptions, contributorsOf func(MergedFinding) []string) string {
+	confirmed, preExisting, hidden := FindingSections(ranked, options)
+	var buffer bytes.Buffer
+	labels := func(group MergedFinding) []string {
+		if contributorsOf == nil {
+			return nil
+		}
+		return contributorsOf(group)
+	}
+	if len(confirmed) > 0 {
+		fmt.Fprintf(&buffer, "confirmed findings (ranked): %d\n", len(confirmed))
+		for _, group := range confirmed {
+			buffer.WriteString(FindingText(group, labels(group)))
+		}
+	}
+	if len(preExisting) > 0 {
+		fmt.Fprintf(&buffer, "pre-existing findings (on unchanged lines; they never block CI): %d\n", len(preExisting))
+		for _, group := range preExisting {
+			buffer.WriteString(FindingText(group, labels(group)))
+		}
+	}
+	if note := HiddenNote(hidden); note != "" {
+		buffer.WriteString("not shown: " + note + "\n")
+	}
+	return buffer.String()
+}
+
+// MarkdownText escapes untrusted text for a Markdown paragraph: it can never
+// open emphasis, a link, an image, a heading, a table cell, an HTML tag or an
+// @-mention, and line breaks become spaces.
+func MarkdownText(value string) string {
+	value = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(value)
+	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "@", "@​", "\\", "\\\\", "*", "\\*", "_", "\\_", "[", "\\[", "]", "\\]", "(", "\\(", ")", "\\)", "#", "\\#", "!", "\\!", "|", "\\|", "`", "\\`", "~", "\\~").Replace(value)
+}
+
+// MarkdownCode renders untrusted text as inline code. Text holding a backtick
+// or a line break is escaped as plain text instead, because it could close
+// the code span. A pipe is escaped so a table cell stays one cell.
+func MarkdownCode(value string) string {
+	if value == "" || strings.ContainsAny(value, "`\r\n") {
+		return MarkdownText(value)
+	}
+	return "`" + strings.ReplaceAll(value, "|", "\\|") + "`"
+}
+
+// markdownSeverity names a diagnostic severity for people.
+func markdownSeverity(severity diagnostics.Severity) string {
+	switch severity {
+	case diagnostics.SeverityError:
+		return "High or critical"
+	case diagnostics.SeverityWarning:
+		return "Medium"
+	case diagnostics.SeverityInformation:
+		return "Low"
+	}
+	return "Hint"
+}
+
+// WalkthroughMarkdown renders the walkthrough's Markdown sections.
+func WalkthroughMarkdown(w *Walkthrough) string {
+	if w == nil {
+		return ""
+	}
+	var buffer bytes.Buffer
+	buffer.WriteString("### What was verified\n\n")
+	for _, text := range walkthroughVerifiedTexts(w, MarkdownCode) {
+		buffer.WriteString("- " + strings.ToUpper(text[:1]) + text[1:] + ".\n")
+	}
+	if len(w.Files) > 0 || w.FilesNotListed > 0 {
+		buffer.WriteString("\n### Changes\n\n")
+		notListed := w.FilesNotListed
+		for index, file := range w.Files {
+			if index == maxWalkthroughTextFiles {
+				notListed += len(w.Files) - index
+				break
+			}
+			buffer.WriteString("- " + walkthroughFileText(file, MarkdownCode) + "\n")
+		}
+		if notListed > 0 {
+			fmt.Fprintf(&buffer, "- %d more changed file%s, listed in the JSON output.\n", notListed, plural(notListed))
+		}
+	}
+	if len(w.MissingVerification) > 0 || w.MissingVerificationNotListed > 0 {
+		buffer.WriteString("\n### Missing verification\n\nInformational, not a defect.\n\n")
+		for _, note := range w.MissingVerification {
+			text := missingVerificationText(note, MarkdownCode)
+			buffer.WriteString("- " + strings.ToUpper(text[:1]) + text[1:] + ".\n")
+		}
+		if w.MissingVerificationNotListed > 0 {
+			fmt.Fprintf(&buffer, "- %d more, listed in the JSON output.\n", w.MissingVerificationNotListed)
+		}
+		if w.MissingVerificationIncomplete {
+			buffer.WriteString("- Note: " + missingIncompleteText() + ".\n")
+		}
+	}
+	return buffer.String()
+}
+
+// findingMarkdown renders one ranked finding as a Markdown list item.
+func findingMarkdown(group MergedFinding, contributors []string) string {
+	finding := group.Finding
+	location := MarkdownCode(fmt.Sprintf("%s:%d-%d", finding.Path, finding.StartLine, finding.EndLine))
+	if finding.Side == diagnostics.LineSideBase {
+		location = MarkdownCode(finding.Path) + fmt.Sprintf(" removed base lines %d-%d", finding.StartLine, finding.EndLine)
+	}
+	var buffer bytes.Buffer
+	fmt.Fprintf(&buffer, "%d. **%s: %s** (%s", group.Rank, markdownSeverity(finding.Severity), MarkdownText(finding.Title), location)
+	if finding.Category != "" {
+		buffer.WriteString(", " + MarkdownText(finding.Category))
+	}
+	buffer.WriteString(")\n")
+	fmt.Fprintf(&buffer, "   %s\n", MarkdownText(finding.Claim))
+	if finding.Fix != "" {
+		fmt.Fprintf(&buffer, "   Fix (unverified model guidance): %s\n", MarkdownText(finding.Fix))
+	}
+	if len(contributors) > 0 {
+		escaped := make([]string, 0, len(contributors))
+		for _, label := range contributors {
+			escaped = append(escaped, MarkdownCode(label))
+		}
+		fmt.Fprintf(&buffer, "   Confirmed by: %s\n", strings.Join(escaped, ", "))
+	} else if merged := len(group.Contributors) - 1; merged > 0 && contributors == nil {
+		fmt.Fprintf(&buffer, "   Merged duplicates: %d\n", merged)
+	}
+	return buffer.String()
+}
+
+// FindingsMarkdown renders the ranked Markdown sections.
+func FindingsMarkdown(ranked []MergedFinding, options RenderOptions, contributorsOf func(MergedFinding) []string) string {
+	confirmed, preExisting, hidden := FindingSections(ranked, options)
+	labels := func(group MergedFinding) []string {
+		if contributorsOf == nil {
+			return nil
+		}
+		return contributorsOf(group)
+	}
+	var buffer bytes.Buffer
+	buffer.WriteString("\n### Confirmed findings\n\n")
+	if len(confirmed) == 0 {
+		buffer.WriteString("None listed.\n")
+	}
+	for _, group := range confirmed {
+		buffer.WriteString(findingMarkdown(group, labels(group)))
+	}
+	if len(preExisting) > 0 {
+		buffer.WriteString("\n### Pre-existing findings\n\nOn unchanged lines the change did not touch; they never block CI.\n\n")
+		for _, group := range preExisting {
+			buffer.WriteString(findingMarkdown(group, labels(group)))
+		}
+	}
+	if note := HiddenNote(hidden); note != "" {
+		buffer.WriteString("\n_" + strings.ToUpper(note[:1]) + MarkdownText(note[1:]) + "._\n")
+	}
+	return buffer.String()
+}
+
+// MarkdownFooter is the closing note of every Markdown summary.
+const MarkdownFooter = "\n<sub>Open Trestle. Comprehensive clearance: false. Each finding was proposed by the finder model and confirmed by an independent checker; titles, claims and fix text are untrusted model output, and nothing applies the fix text.</sub>\n"
+
+// RenderResultMarkdown writes a result as Markdown for a pull request summary
+// comment: the status, the walkthrough, then the ranked sections.
+func RenderResultMarkdown(writer io.Writer, r Result, options RenderOptions) error {
+	if nilValue(writer) || !r.valid {
+		return ErrInvalidResult
+	}
+	report, err := r.Report()
+	if err != nil {
+		return err
+	}
+	var buffer bytes.Buffer
+	buffer.WriteString("## Open Trestle review\n\n")
+	fmt.Fprintf(&buffer, "**Status:** %s · **CI:** %s · **Run:** %s\n", MarkdownText(report.Status), MarkdownText(report.CIDisposition), MarkdownText(report.RunStatus))
+	if class, task, detail, hint := r.failureSummary(); class != "" {
+		fmt.Fprintf(&buffer, "\n**Failure:** %s\n", MarkdownText(FailureLine(class, task, detail)))
+		if hint != "" {
+			fmt.Fprintf(&buffer, "\n%s\n", MarkdownText(hint))
+		}
+	}
+	if report.SpecialistProfileID != "" {
+		fmt.Fprintf(&buffer, "\nSpecialist profile: %s\n", MarkdownCode(report.SpecialistProfileID))
+	}
+	if report.Walkthrough != nil {
+		buffer.WriteString("\n" + WalkthroughMarkdown(report.Walkthrough))
+	}
+	if len(report.Ranked) > 0 || report.Status == "findings" {
+		buffer.WriteString(FindingsMarkdown(report.Ranked, options, nil))
+	}
+	buffer.WriteString(MarkdownFooter)
+	if buffer.Len() > MaxResultTextBytes {
+		return ErrInvalidResult
+	}
+	n, err := writer.Write(buffer.Bytes())
+	if err == nil && n != buffer.Len() {
+		err = io.ErrShortWrite
+	}
+	return err
+}

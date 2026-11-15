@@ -192,6 +192,8 @@ type latestReviewOptions struct {
 	profile, specialists  string
 	maxSpecialists        string
 	exitPolicy            string
+	// all lists every confirmed finding in text and Markdown output.
+	all bool
 }
 
 // latestReviewCommand is the saved review command with fresh commits and the
@@ -219,15 +221,29 @@ func latestReviewCommand(template []string, base, head string, options latestRev
 		}
 	}
 	for _, extra := range [][2]string{{"--profile", options.profile}, {"--specialists", options.specialists}, {"--max-specialists", options.maxSpecialists}, {"--exit-code-policy", options.exitPolicy}} {
-		if extra[1] != "" {
+		if extra[1] == "" {
+			continue
+		}
+		// A pass-through flag replaces the saved one, such as a saved
+		// --specialists auto replaced by --specialists none.
+		replaced := false
+		for i := 0; i+1 < len(args); i += 2 {
+			if args[i] == extra[0] {
+				args[i+1], replaced = extra[1], true
+			}
+		}
+		if !replaced {
 			args = append(args, extra[0], extra[1])
 		}
+	}
+	if options.all {
+		args = append(args, "--all")
 	}
 	return append([]string{"trestle", "local-git", "model-review"}, args...)
 }
 
 func writeLatestReviewUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: trestle review [--format text|json|sarif] [--timeout DURATION] [--profile ID | --specialists auto|none|ID[,ID...] [--max-specialists N]] [--exit-code-policy default|findings|strict|always-zero] [--base REF] [--head REF] [--directory PATH]")
+	fmt.Fprintln(w, "usage: trestle review [--format text|json|sarif|markdown] [--all] [--timeout DURATION] [--profile ID | --specialists auto|none|ID[,ID...] [--max-specialists N]] [--exit-code-policy default|findings|strict|always-zero] [--base REF] [--head REF] [--directory PATH]")
 	fmt.Fprintln(w, "       review the latest change (HEAD against its merge base with the default branch) with the setup trestle init made; see docs/getting-started.md")
 	fmt.Fprintln(w, "       trestle review <path>   (review a local fixture file)")
 }
@@ -240,6 +256,7 @@ func parseLatestReviewFlags(args []string, stdout, stderr io.Writer) (latestRevi
 	for name, target := range map[string]*string{"directory": &options.directory, "base": &options.base, "head": &options.head, "format": &options.format, "timeout": &options.timeout, "profile": &options.profile, "specialists": &options.specialists, "max-specialists": &options.maxSpecialists, "exit-code-policy": &options.exitPolicy} {
 		flags.StringVar(target, name, "", name)
 	}
+	flags.BoolVar(&options.all, "all", false, "all")
 	seen := map[string]bool{}
 	for _, argument := range args {
 		if name := strings.TrimLeft(strings.SplitN(argument, "=", 2)[0], "-"); strings.HasPrefix(argument, "-") && name != "" {
@@ -264,8 +281,8 @@ func parseLatestReviewFlags(args []string, stdout, stderr io.Writer) (latestRevi
 		writeLatestReviewUsage(stderr)
 		return options, 2, true
 	}
-	if options.format != "" && options.format != "text" && options.format != "json" && options.format != "sarif" {
-		fmt.Fprintln(stderr, "trestle review: --format must be text, json or sarif.")
+	if options.format != "" && options.format != "text" && options.format != "json" && options.format != "sarif" && options.format != "markdown" {
+		fmt.Fprintln(stderr, "trestle review: --format must be text, json, sarif or markdown.")
 		return options, 2, true
 	}
 	return options, 0, false

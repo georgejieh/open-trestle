@@ -391,7 +391,7 @@ func TestSummarizeSpecialistFeaturesWithoutPlan(t *testing.T) {
 		t.Fatalf("reason=%q", reason)
 	}
 	set := modelReviewSetWire{Selection: specialistSelectionWire{Mode: "auto", Status: "features_unavailable", Reason: "general review failed at context", MaxSpecialists: 3}}
-	rendered, err := renderModelReviewSetText(set)
+	rendered, err := renderModelReviewSetText(set, localreview.RenderOptions{})
 	if err != nil || !strings.Contains(string(rendered), "selection: mode=auto status=features_unavailable (general review failed at context) max=3\n") {
 		t.Fatalf("rendered=%q err=%v", rendered, err)
 	}
