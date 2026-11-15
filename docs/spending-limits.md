@@ -131,8 +131,9 @@ one, for CI and advanced use.
 ## Seeing the state
 
 `trestle usage` lists every limited key, every key with spend recorded this
-month, and `OPEN_TRESTLE_PROVIDER_OPENROUTER` when that variable is set in the
-shell, even with no limit or spend yet, so OpenRouter's own figures show:
+month, and `OPEN_TRESTLE_PROVIDER_OPENROUTER` when a key for it is set in the
+shell or saved with [`trestle keys`](keys.md), even with no limit or spend yet,
+so OpenRouter's own figures show:
 
 ```text
 Spending recorded by Open Trestle (usage folder ~/.local/state/open-trestle/usage):
@@ -144,8 +145,9 @@ Spending figures are Open Trestle's upper-bound estimate at the highest pinned p
 A review whose usage was not reported is noted as counted at its reservation.
 Running `trestle init` again in a configured repository shows the same state.
 
-For an OpenRouter key whose variable is set, `trestle usage` and `trestle init`
-also read OpenRouter's own figures with one `GET
+For an OpenRouter key that is set in the shell or saved (the environment
+wins), `trestle usage` and `trestle init` also read OpenRouter's own figures
+with one `GET
 https://openrouter.ai/api/v1/key`, sending the key as the bearer credential.
 That read costs nothing and sends no source. It follows no redirect, reads at
 most 64 KiB and waits at most ten seconds. Only the numeric fields `limit`,

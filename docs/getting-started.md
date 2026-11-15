@@ -81,8 +81,9 @@ when you agree to run a review.
 ## What the wizard asks
 
 The wizard asks only what you alone can answer: where the models run, which
-two models, whether to require zero data retention on OpenRouter, an optional
-spending limit for the API key, and your consent. Everything it can work out
+two models, the API key when none is set yet (with hidden input), whether to
+require zero data retention on OpenRouter, an optional spending limit for the
+API key, and your consent. Everything it can work out
 itself is filled in and shown in a settings panel before you consent; Enter
 accepts each recommended default. It runs in six steps:
 
@@ -117,8 +118,10 @@ accepts each recommended default. It runs in six steps:
   Choose (1-5):
 ```
 
-1. **What will be reviewed.** The merge base of your default branch (`origin/HEAD`'s
-   branch when it exists locally, otherwise `main` or `master`) and `HEAD`. It
+1. **What will be reviewed.** The merge base of your default branch and `HEAD`.
+   The default branch is the one `origin/HEAD` names, otherwise `main` or
+   `master`, as your repository has it or as `origin` has it; when both exist,
+   the newer merge base counts (see [which commits](#running-it-again)). It
    runs only read-only Git queries; the commit count and change summary come
    from those same two commits. Nothing is asked unless no default branch is
    found. To review other commits, pass `--base` and `--head`, or change them
@@ -156,6 +159,12 @@ accepts each recommended default. It runs in six steps:
    - **Ollama Cloud and OpenCode Go** ask for the limits when the model list does
      not state them, and whether your plan charges per token.
 
+   When the provider's key variable has no key yet, in the environment or
+   saved, and the wizard runs in a terminal, it then asks for the key with
+   hidden input, checks an OpenRouter key with one free call, and offers to
+   save it once the setup is saved; Enter skips. Without a terminal, or with
+   `--no-input`, it never asks. See [API keys](keys.md).
+
    The most one model request may cost is not asked: setup uses the cost of a
    request that fills the whole context and writes the whole output allowance,
    rounded up to a cent, and the settings panel shows it with what a review of
@@ -182,8 +191,8 @@ accepts each recommended default. It runs in six steps:
    │           to $0.69 a request, $1.38 a review             │
    │ Spending  $10.00 a month for this key · alerts at 80%    │
    │           and 100%                                       │
-   │ Key       OPEN_TRESTLE_PROVIDER_OPENROUTER (set; never   │
-   │           stored)                                        │
+   │ Key       OPEN_TRESTLE_PROVIDER_OPENROUTER (from the     │
+   │           environment)                                   │
    │ Source    github.com/owner/project                       │
    │ Names     tenant personal · repository project · owner   │
    │           you                                            │
@@ -192,8 +201,11 @@ accepts each recommended default. It runs in six steps:
      Use these settings? (Y/n):
    ```
 
-   The key variable is the provider's usual name; the key itself is never asked
-   for, stored or printed. The names come from `origin`'s URL (its host,
+   The key variable is the provider's usual name. The `Key` row says where its
+   key comes from: from the environment, saved in
+   `~/.config/open-trestle/credentials`, to be saved with the setup, entered
+   for this session only, or not set yet. The key itself is never printed or
+   written to the setup folder. The names come from `origin`'s URL (its host,
    namespace and name; a credential in the URL is ignored) or the folder name,
    and the owner from `$USER`. Answering `n` offers to change the commits, the
    names, the key variable, or the limits and prices, then shows the panel
@@ -219,10 +231,11 @@ accepts each recommended default. It runs in six steps:
    - Local server: the [local capability declaration](local-first-bootstrap.md#choose-the-repository-and-model-pair).
 6. **Save and check.** The configuration goes into a new private folder,
    `~/.local/state/open-trestle/<repository>-<8 hex characters>` by default
-   (mode `0700`, files `0600`). Existing files are never overwritten. If the key
-   variable is not set, the check says so and shows the command that sets it
-   without echoing the key (`read -rs NAME && export NAME`); export it and run
-   `trestle init` again.
+   (mode `0700`, files `0600`). Existing files are never overwritten. A key you
+   chose to save is saved now, after the setup. If no key is found for the key
+   variable, the check says so and shows two commands: `trestle keys set NAME`,
+   which saves it with hidden input, and `read -rs NAME && export NAME`, which
+   exports it without echoing it. Then run `trestle init` again.
 
 ### How it looks
 
@@ -251,8 +264,9 @@ With `TERM=dumb` the marks are `[ok]`, `[..]`, `[x]` and `[--]`, the step
 indicator is `#` and `.`, and frames are ASCII.
 
 Remote checks: the review window is current (OpenCode Go, and OpenRouter setups
-made before ZDR was detected), the saved configuration loads, the API key
-variable is set, and the secret scanner is installed. For OpenRouter a last line
+made before ZDR was detected), the saved configuration loads, a key is found
+for the API key variable (the line says where: from the environment or saved),
+and the secret scanner is installed. For OpenRouter a last line
 says whether zero data retention is required on every request or not required
 by Open Trestle. For the Ollama Cloud sign-in option, the key check is replaced
 by a check that your local Ollama lists both models as Ollama Cloud models. A
@@ -271,9 +285,10 @@ must be fixed before a review is offered.
 
 ## The first review
 
-The wizard shows the exact review command, each argument quoted for a POSIX
-shell, and saves it with the check command in `NEXT-STEPS.txt` in the setup
-folder. It then asks:
+The first review compares the two commits from step 1. The wizard then shows
+the one command that reviews your latest change from now on, `trestle review`
+(see [running it again](#running-it-again)), and saves it with the check
+command in `NEXT-STEPS.txt` in the setup folder. It then asks:
 
 ```text
   A review sends the selected source to OpenRouter (https://openrouter.ai/api/v1), zero data retention required on every request.
@@ -303,18 +318,98 @@ See [local model review](local-model-review.md) for the full result format.
 
 ## Running it again
 
-Run `trestle init` again in the same repository (with the same `--directory`, if
-you chose one). It finds the saved setup and offers to re-run the checks, or the
-checks and then a review. It never re-initializes or changes the saved files.
+After setup, reviewing your latest change is one command, run anywhere in the
+repository:
 
-That review is of the same two commits setup pinned, not of your latest change:
-the saved review command names the base and head commit IDs chosen at setup,
-and new commits are not picked up. To review newer commits, set up again in a
-new folder: `trestle init --directory NEW_FOLDER` proposes the current merge
-base and `HEAD`. A `trestle review` command that always reviews your latest
-change with the saved setup is planned; see
-[the roadmap](roadmap.md#wave-1-the-everyday-loop-and-onboarding). Use a new
-folder the same way to set up something different.
+```sh
+trestle review
+```
+
+It finds the setup the way `trestle init` does (the folder from step 6, or the
+one you name with `--directory PATH`), picks the two commits again, says what
+it compares and where the source goes, and runs the same review with the
+setup's routes, policy, names and egress. The commits saved at setup time are
+never reused, and a setup keeps working after they are rewritten or
+garbage-collected.
+
+- **Which commits.** The head is `HEAD`, the commit checked out now. The base
+  is the newest commit `HEAD` shares with the default branch, as your
+  repository has it or as `origin` has it, whichever is newer: one
+  `git merge-base HEAD main origin/main`. A local `main` that is behind
+  `origin` therefore does not pull commits that are already upstream into the
+  review. On the default branch itself the base is `origin`'s copy, so your
+  unpushed commits are the change. The default branch is the one `origin/HEAD`
+  names, otherwise `main`, otherwise `master`. `--base REF` and `--head REF`
+  pick commits exactly, as in `trestle init`.
+- **Uncommitted changes are not included.** Only committed work is reviewed.
+  When you have uncommitted changes or untracked files, the review says they
+  are not included and that committing them includes them. It writes nothing
+  into your repository and never fetches.
+- **Output.** The result goes to standard output in the setup's text format;
+  `--format json` or `--format sarif` prints one JSON or SARIF document there.
+  Every other line goes to standard error, including the egress,
+  secret-scanning and spending messages, which are exactly those of
+  `trestle local-git model-review`. `--timeout`, `--profile`, `--specialists`,
+  `--max-specialists` and `--exit-code-policy` pass through to that command,
+  and so do its [exit codes](local-model-review.md) (for example `4` when a
+  confirmed high or critical finding blocks).
+- **Nothing is sent** when the repository has no setup (run `trestle init`),
+  when there is no committed change to review, or when no API key is found
+  (`trestle keys set NAME`); `trestle review` says so and exits `3`.
+
+`trestle` on its own, in a terminal, shows a status card and numbered next
+actions, each two steps away (`trestle`, then the number):
+
+```text
+┌─ project ────────────────────────────────────────────────┐
+│ Repository  ~/src/project (on branch feature)            │
+│ Setup       ~/.local/state/open-trestle/project-1a2b3c4d │
+│ Models      finder vendor/finder-model · checker         │
+│             other/checker-model                          │
+│ Runs on     OpenRouter (https://openrouter.ai/api/v1),   │
+│             zero data retention required on every        │
+│             request                                      │
+│ Key         OPEN_TRESTLE_PROVIDER_OPENROUTER (saved in   │
+│             ~/.config/open-trestle/credentials)          │
+│ Spending    $0.60 of your $10.00 monthly limit this      │
+│             month (6%), alerts at 80% and 100% (an       │
+│             upper-bound estimate, not a bill)            │
+│ Last run    1 confirmed finding · 14 Nov 10:32 UTC ·     │
+│             1a2b3c4d5e6f → 7f8e9d0c1b2a                  │
+└──────────────────────────────────────────────────────────┘
+
+  1) Review the latest change  trestle review
+  2) See spending              trestle usage
+  3) Change the API key        trestle keys
+  4) Re-run setup              trestle init
+  5) Read the guides           docs/getting-started.md
+  Choose 1-5, or Enter to quit:
+```
+
+The card reads only local files: the setup folder, the usage folder and the
+credential store; it sends nothing. `Last run` comes from `last-review.json`
+in the setup folder, a small record (time, status, number of confirmed
+findings and the two commits, nothing else) that `trestle review`, the home
+screen and `trestle init` write after each review; a review run directly with
+`trestle local-git model-review` is not recorded. In a repository without a
+setup the only action is `trestle init`. Without a terminal on both sides, or
+with `NO_COLOR` set or `TERM=dumb`, `trestle` prints the usage text and exits
+`2`, as before.
+
+Run `trestle init` again in the same repository (with the same `--directory`, if
+you chose one) to re-check the setup. It offers:
+
+```text
+    1) Review the latest change (sends it to OpenRouter)
+    2) Re-run the setup checks
+    3) Quit without changes
+```
+
+The first re-runs the checks, then reviews the latest change exactly as
+`trestle review` does; with `--no-input`, `--run-review` does the same. If the
+setup's key is missing, it asks for it first (see [API keys](keys.md)). It
+never re-initializes or changes the saved files. To set up something
+different, use a new folder: `trestle init --directory NEW_FOLDER`.
 
 ## Non-interactive use
 

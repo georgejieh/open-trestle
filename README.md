@@ -181,7 +181,10 @@ retention by default; Ollama Cloud; OpenCode Go; a model server on this machine;
 or Ollama on this machine signed in to Ollama Cloud), which model finds problems
 and which different model double-checks them. It fills in the rest (the names
 from the Git remote, the key variable name, and limits and prices a provider
-reports), shows every setting in one panel, and never asks for the key itself.
+reports) and shows every setting in one panel. When the API key is not set, it
+asks for it with hidden input, checks it where the provider has a free check,
+and offers to save it in an owner-only file; `trestle keys` manages saved keys
+(see [API keys](docs/keys.md)).
 It shows every privacy or capability declaration in plain words and requires a
 typed `yes`,
 writes a protected configuration, runs the setup checks with a one-line fix for
@@ -189,6 +192,18 @@ anything missing, and runs the first review only after you agree to send the
 selected source. Every answer also has a flag for `--no-input` use. Remote
 providers still need the packaged scanner-bound binary. See
 [getting started](docs/getting-started.md).
+
+After setup, one command reviews your latest change, `HEAD` against its merge
+base with the default branch, with the saved setup:
+
+```sh
+trestle review
+```
+
+Uncommitted changes are not included; commit them to review them. `trestle` on
+its own, in a terminal, shows the repository's setup, models, key, spending
+and last review, with numbered next actions. Running `trestle init` again
+offers the same review of the latest change, or a re-check of the setup.
 
 For a provider that charges per token, it also offers an optional monthly
 spending limit for the API key. Every review records what it may have cost,
@@ -440,7 +455,7 @@ detection, and none of it is released or supported for production. See the
 | Runtime | [review-run runtime](docs/review-run-runtime.md) · [daemon API](docs/daemon-api.md) · [remote workers](docs/remote-workers.md) · [task notifications](docs/task-notifications.md) · [automatic finalization](docs/automatic-finalization.md) · [handler catalogs](docs/runtime-handler-catalogs.md) |
 | Review pipeline | [source acquisition](docs/source-acquisition-handler.md) · [change model](docs/change-model-handler.md) · [evidence](docs/deterministic-evidence-handler.md) · [semantic impact](docs/semantic-impact.md) · [memory retrieval](docs/memory-retrieval-handler.md) · [context assembly](docs/context-assembly-handler.md) · [candidate generation](docs/model-generation-handler.md) · [verification](docs/model-verification-handler.md) · [OpenAI provider](docs/openai-provider.md) · [publication readiness](docs/publication-readiness-handler.md) · [publication](docs/publication-handler.md) |
 | Provider profiles | [OpenRouter ZDR](docs/openrouter-zdr-profile.md) · [OpenCode Go](docs/opencode-go-profile.md) · [OpenCode Console](docs/opencode-console-profile.md) · [Codex ChatGPT session status](docs/codex-chatgpt-session.md) · [local inference without bearer authentication](docs/local-provider-no-auth.md) |
-| Getting started | [`trestle init`](docs/getting-started.md) · [spending limits](docs/spending-limits.md) · [local-first bootstrap](docs/local-first-bootstrap.md) · [remote model review](docs/remote-model-review.md) · [setup](docs/setup.md) · [named local runtimes](docs/named-local-runtimes.md) · [model catalog](docs/model-catalog.md) |
+| Getting started | [`trestle init`](docs/getting-started.md) · [`trestle review`](docs/getting-started.md#running-it-again) · [API keys](docs/keys.md) · [spending limits](docs/spending-limits.md) · [local-first bootstrap](docs/local-first-bootstrap.md) · [remote model review](docs/remote-model-review.md) · [setup](docs/setup.md) · [named local runtimes](docs/named-local-runtimes.md) · [model catalog](docs/model-catalog.md) |
 | Local Git | [inspect](docs/local-git-inspect.md) · [change evidence](docs/local-git-change.md) · [review](docs/local-git-review.md) · [model review](docs/local-model-review.md) · [feedback](docs/local-feedback.md) |
 | Specialist profiles | [agent profiles](docs/agent-profiles.md) |
 | Security | [prompt-injection boundary](docs/prompt-injection-boundary.md) |

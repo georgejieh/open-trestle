@@ -67,8 +67,10 @@ approved secret store in the shell that runs `check` and the review:
 export OPEN_TRESTLE_PROVIDER_OPENROUTER="$(your-secret-tool read openrouter-key)"
 ```
 
-`check` reports `credential_environment_present` as pending until each named
-variable is non-empty. It never prints or stores the value. Use
+`check` reports `credential_environment_present` as pending until a key is
+found for each named variable: in the environment first, then in the
+credential store that `trestle init` and `trestle keys set` write (see
+[API keys](keys.md)). It never prints or stores the value. Use
 `--verification-credential-environment` only if the verifier uses a different key.
 
 ## The journey
@@ -101,8 +103,11 @@ OpenRouter's API (see [OpenRouter](#openrouter)). Other providers also need
 When `check` returns `ready` (exit 0), run its `review_command` array exactly
 as printed. It is
 `trestle local-git model-review --checkout ... --egress policy-approved --timeout 10m --format text`
-with the pinned base and head commit digests and this directory's `routes.json`
-and `policy.json`. When each request's output allowance gives it more than four
+with the base and head commit digests of the moment of setup and this
+directory's `routes.json` and `policy.json`. Those commits are only that
+moment's change: `check` no longer needs them to exist, and in the repository,
+`trestle review` reviews the latest change with the same configuration and
+fresh commits (see [getting started](getting-started.md#running-it-again)). When each request's output allowance gives it more than four
 minutes (see [OpenAI provider](openai-provider.md)), the timeout leaves room for
 two such requests plus two minutes, at most 15 minutes: an OpenRouter setup with
 the 16384-token allowance uses `--timeout 12m`. `inspect` is the same read-only report as `check`.
