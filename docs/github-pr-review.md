@@ -6,15 +6,17 @@ are different products with different trust and maturity.
 | | GitHub Actions path | Daemon and GitHub App path |
 | --- | --- | --- |
 | What runs | `trestle local-git model-review` inside a workflow job | `trestled` with webhook ingress, source acquisition and the publication gate |
-| Who posts | existing tools: `github/codeql-action/upload-sarif` and `reviewdog`, using the job's own `GITHUB_TOKEN` | the Open Trestle publication adapter, as a GitHub App |
+| Who posts | existing tools: `github/codeql-action/upload-sarif` and `reviewdog`, using the job's own `GITHUB_TOKEN` | the Open Trestle publication adapter, with a static token that `trestled` reads from `OPEN_TRESTLE_GITHUB_PUBLICATION_TOKEN` when a publication dispatches; the token needs pull-request `write`. The GitHub App does not post: the installation permissions setup admits are read-only |
 | State | none; one foreground, ephemeral run per job | durable runs, journals, idempotent publication |
-| Setup | a workflow file, a provider secret and a packaged `trestle` binary | a GitHub App, webhook endpoint, storage and operator approvals |
+| Setup | a workflow file, a provider secret and a packaged `trestle` binary | a GitHub App for webhooks and read-only source access, a separate publication token, a webhook endpoint, storage and operator approvals |
 | Output | SARIF (code scanning alerts), inline review comments, job summary | a `COMMENT` review pinned to the reviewed head |
 | Fork pull requests | not supported (no secrets, read-only token) | depends on the App installation |
 
 Use the Actions path to try Open Trestle on a repository you control with no
 server. Use the daemon path when you need durable runs, a fresh-head fence and
-idempotent publication. See [GitHub publication](github-publication.md),
+idempotent publication. On the daemon path the App installation is admitted
+only with `metadata`, `contents` and `pull_requests` read; posting as the App,
+with an installation token, is not implemented. See [GitHub publication](github-publication.md),
 [webhook ingress](webhook-ingress.md), [source acquisition](github-source-acquisition.md)
 and [integration permissions](github-integration-permissions.md) for that path.
 
