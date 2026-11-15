@@ -672,7 +672,7 @@ class ReleaseContractTest(unittest.TestCase):
         self.assertTrue(dockerfile.startswith("FROM scratch\n"))
         self.assertEqual(
             [line for line in dockerfile.splitlines() if line.startswith("EXPOSE ")],
-            ["EXPOSE 8080"],
+            ["EXPOSE 8741"],
         )
         self.assertIn("USER 65532:65532", dockerfile)
         self.assertNotIn("RUN ", dockerfile)

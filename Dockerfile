@@ -11,5 +11,9 @@ COPY .container/release /licenses/open-trestle/release
 COPY --chown=65532:65532 .container/data /var/lib/open-trestle
 USER 65532:65532
 WORKDIR /var/lib/open-trestle
-EXPOSE 8080
+# trestled listens on 127.0.0.1:8741 by default, reachable only inside the
+# container. Publishing the port needs --listen 0.0.0.0:8741 with --tls-cert and
+# --tls-key (a non-loopback address requires TLS); local review mode
+# (--local-full-review) requires a loopback address.
+EXPOSE 8741
 ENTRYPOINT ["/usr/local/bin/trestled"]
