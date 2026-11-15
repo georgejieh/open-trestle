@@ -6,6 +6,13 @@ one panel, saves a protected configuration, runs the setup checks, and offers
 to run your first review. If something is missing,
 it says what is missing and what to do, then stops without guessing.
 
+Remote providers (OpenRouter, Ollama Cloud, OpenCode Go, and Ollama signed in
+to Ollama Cloud) work only with the packaged Linux amd64 install, which places
+its secret scanner under `/usr/local` as root. A plain `go build`, and any
+platform other than Linux, refuses to send source to them. A model server on
+this machine works with a development build. See
+[prerequisite 1](remote-model-review.md#prerequisite-1-a-scanner-bound-binary-and-installed-scanner).
+
 ```sh
 cd path/to/your-repository
 trestle init
@@ -39,7 +46,7 @@ shown before you consent, and every declaration is still your explicit answer.
   `go build -o trestle ./cmd/trestle` builds a development binary; run it by its
   path or put it on your `PATH`. That build works with a model server on this
   machine.
-- **For remote providers: the packaged `trestle` binary and its secret scanner.**
+- **For remote providers: the packaged Linux amd64 `trestle` install and its secret scanner.**
   Every request is scanned for secrets in a sandboxed scanner before it leaves
   the machine. A plain `go build` has no scanner fingerprints and refuses to send
   source. The wizard detects such a development build before you choose a
@@ -298,8 +305,16 @@ See [local model review](local-model-review.md) for the full result format.
 
 Run `trestle init` again in the same repository (with the same `--directory`, if
 you chose one). It finds the saved setup and offers to re-run the checks, or the
-checks and then a review. It never re-initializes or changes the saved files. To
-set up something different, use a new folder: `trestle init --directory NEW_FOLDER`.
+checks and then a review. It never re-initializes or changes the saved files.
+
+That review is of the same two commits setup pinned, not of your latest change:
+the saved review command names the base and head commit IDs chosen at setup,
+and new commits are not picked up. To review newer commits, set up again in a
+new folder: `trestle init --directory NEW_FOLDER` proposes the current merge
+base and `HEAD`. A `trestle review` command that always reviews your latest
+change with the saved setup is planned; see
+[the roadmap](roadmap.md#wave-1-the-everyday-loop-and-onboarding). Use a new
+folder the same way to set up something different.
 
 ## Non-interactive use
 
