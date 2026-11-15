@@ -27,7 +27,8 @@ type CompletedResultMetadata struct {
 // ParseCompletedResult reads the canonical emitted v1 result, a v4 result that
 // differs only by finding_guidance, a v5 result that adds style advice (and
 // may carry finding_guidance), or a v6 result that adds token_usage to any of
-// them, not candidate or diagnostic JSON.
+// them and may carry the recorded judgement (rank and pre_existing, checked
+// against its own diagnostics), not candidate or diagnostic JSON.
 // Structural consistency and a capture hash do not authenticate its producer.
 func ParseCompletedResult(encoded []byte) (Result, error) {
 	if len(encoded) == 0 || len(encoded) > MaxResultJSONBytes || encoded[len(encoded)-1] != '\n' {
@@ -68,7 +69,7 @@ func ParseCompletedResult(encoded []byte) (Result, error) {
 		return Result{}, ErrInvalidResult
 	}
 	status, ci := localReadinessDisposition(uint32(set.VerifiedCount()), set.SourceOmittedCount(), uint32(set.InconclusiveCount()), uint32(set.CandidateCount()))
-	if wire.Status != status || wire.CI != ci || !wire.UsageKnown && wire.ActualCostMicroUSD != 0 {
+	if wire.Status != status || wire.CI != expectedCompletedCI(set, wire.PreExisting, ci) || !wire.UsageKnown && wire.ActualCostMicroUSD != 0 {
 		return Result{}, ErrInvalidResult
 	}
 	if wire.TokenUsage != nil && !validCompletedTokenUsage(*wire.TokenUsage, wire.UsageKnown) {
@@ -114,7 +115,11 @@ func ParseCompletedResult(encoded []byte) (Result, error) {
 			return Result{}, ErrInvalidResult
 		}
 	}
-	return Result{wire: wire, diagnostics: set, valid: true, sealedJSON: append([]byte(nil), encoded...)}, nil
+	result := Result{wire: wire, diagnostics: set, valid: true, sealedJSON: append([]byte(nil), encoded...)}
+	if !validRecordedJudgement(result) {
+		return Result{}, ErrInvalidResult
+	}
+	return result, nil
 }
 
 func (r Result) CompletedMetadata() (CompletedResultMetadata, error) {

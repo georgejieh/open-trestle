@@ -98,8 +98,15 @@ type resultWire struct {
 	// reviewed as code and the flags never suppress review. Omitted when zero.
 	AgentConfigurationSources int `json:"agent_configuration_sources,omitempty"`
 	InstructionLikeSources    int `json:"instruction_like_sources,omitempty"`
+	// Rank and PreExisting are the deterministic judgement of a completed
+	// version 6 run (see judgement.go): every distinct verified finding in
+	// rank order with the duplicates merged into it, and the diagnostic
+	// findings located only on lines the change did not touch. Both are
+	// omitted when there are no verified findings.
+	Rank        []rankWire `json:"rank,omitempty"`
+	PreExisting []string   `json:"pre_existing,omitempty"`
 	// StyleAdvice is the optional style advice of schema version 5, encoded
-	// inline.
+	// inline as the last members.
 	StyleAdvice
 }
 
@@ -399,12 +406,21 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 	// takes the advice now, so every retained diagnostic carries it; a direct
 	// result takes it last, after finding guidance chose version 4.
 	var style StyleAdvice
+	// lines is the change-line accounting that classifies pre-existing
+	// findings; nil when the change model cannot be read back, which
+	// classifies none.
+	var lines changeLines
 	if task, ok := state.Task("change"); ok && task.Status() == controlplane.TaskRuntimeSucceeded {
 		analysisID := ""
 		if analysis, ok := state.Task("analysis"); ok && analysis.Status() == controlplane.TaskRuntimeSucceeded {
 			analysisID = analysis.OutputIdentity()
 		}
 		style = s.styleAdvice(ctx, p.Plan().Scope(), task.OutputIdentity(), analysisID)
+		if recorded, err := s.readRecordedChange(ctx, p.Plan().Scope(), task.OutputIdentity(), s.options.Clock.Now()); err == nil {
+			if accounted, err := s.changeLineAccounting(ctx, p.Plan().Scope(), recorded, s.options.Clock.Now()); err == nil {
+				lines = accounted
+			}
+		}
 	}
 	if s.investigation != nil {
 		result = withStyleAdvice(result, style)
@@ -596,6 +612,9 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 				return Result{}, ErrInvalidResult
 			}
 			w.AgentConfigurationSources, w.InstructionLikeSources = agentConfiguration, instructionLike
+			// Only a direct run knows its sources' stages, so only a direct run
+			// classifies pre-existing findings.
+			lines = lines.withContextEvidence(contextArtifact.Payload())
 			w.Context = input.ContextIdentity()
 			w.GenerationRequest = input.Authorization().RequestIdentity()
 			w.GenerationRoute = input.Authorization().RouteRecordIdentity()
@@ -740,6 +759,10 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 			return Result{}, ErrInvalidResult
 		}
 		w.Status, w.CI = localReadinessDisposition(uint32(set.VerifiedCount()), set.SourceOmittedCount(), uint32(set.InconclusiveCount()), uint32(set.CandidateCount()))
+		if result, err = judgeResult(result, lines); err != nil {
+			return Result{}, err
+		}
+		w = &result.wire
 	}
 	if state.Status() == controlplane.ReviewRunSucceeded && !hasReadiness {
 		return Result{}, ErrInvalidResult

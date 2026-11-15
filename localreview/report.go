@@ -2,6 +2,7 @@ package localreview
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/georgejieh/open-trestle/diagnostics"
 )
@@ -58,9 +59,10 @@ func (r Result) ExitCodeFor(policy ExitPolicy) int {
 	return r.ExitCode()
 }
 
-// hasBlockingFinding reports a verified high or critical finding. Diagnostics map
-// both to the error severity. A findings status whose diagnostics are unavailable
-// is treated as blocking rather than guessed to be minor.
+// hasBlockingFinding reports a verified high or critical finding that the
+// change introduced. Diagnostics map both to the error severity. A
+// pre-existing finding never blocks. A findings status whose diagnostics are
+// unavailable is treated as blocking rather than guessed to be minor.
 func (r Result) hasBlockingFinding() bool {
 	if r.wire.Status != "findings" {
 		return false
@@ -70,7 +72,7 @@ func (r Result) hasBlockingFinding() bool {
 		return true
 	}
 	for _, finding := range findings {
-		if finding.Severity() == diagnostics.SeverityError {
+		if finding.Severity() == diagnostics.SeverityError && !slices.Contains(r.wire.PreExisting, finding.Identity()) {
 			return true
 		}
 	}
@@ -104,6 +106,11 @@ type ReportFinding struct {
 	// change did not touch (see the result's pre_existing list). It never
 	// blocks CI.
 	PreExisting bool
+	// Rank is the 1-based rank of the distinct finding this finding is or was
+	// merged into. DuplicateOf names that finding's representative when this
+	// finding was merged into it, and is empty for a representative.
+	Rank        int
+	DuplicateOf string
 }
 
 // SourceText renders a finding location for text output. Removed base lines
@@ -158,6 +165,9 @@ type Report struct {
 	ContextShortfall *ReportContextShortfall
 
 	Findings []ReportFinding
+	// Ranked holds the distinct findings in rank order, each with the
+	// duplicates merged into it.
+	Ranked []MergedFinding
 
 	HasVerifiedSet                                bool
 	Candidates, Verified, Rejected, Inconclusive  uint16
@@ -233,6 +243,9 @@ func (r Result) Report() (Report, error) {
 	}
 	if len(guidance) != 0 {
 		return Report{}, fmt.Errorf("%w: guidance does not bind a diagnostic finding", ErrInvalidResult)
+	}
+	if err := report.applyJudgement(r.wire); err != nil {
+		return Report{}, fmt.Errorf("%w: rank or pre_existing does not cover the diagnostic findings", ErrInvalidResult)
 	}
 	if set.VerifiedSetIdentity() != "" {
 		report.HasVerifiedSet = true

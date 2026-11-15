@@ -321,6 +321,21 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 	if callerMissing {
 		evidenceIDs = []string{changed.ID}
 	}
+	// pre_existing reports a defect on the unchanged caller line (the
+	// direct_reference source caller.go:2), citing only that source;
+	// pre_existing_cited_change also cites a.go's changed hunk.
+	preExistingMode := strings.HasPrefix(m.mode, "pre_existing")
+	if preExistingMode {
+		if callerMissing {
+			t.Error("the unchanged caller did not reach the model as a direct reference")
+			http.Error(w, "missing source", http.StatusBadRequest)
+			return
+		}
+		evidenceIDs = []string{caller.ID}
+		if m.mode == "pre_existing_cited_change" {
+			evidenceIDs = append(evidenceIDs, changed.ID)
+		}
+	}
 	var result any
 	switch packet.Task {
 	case "candidate_generation":
@@ -328,7 +343,13 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 			t.Error("generation did not use its pinned independent route")
 		}
 		candidates := []any{}
-		if m.mode != "empty" {
+		if preExistingMode {
+			candidates = append(candidates, map[string]any{
+				"title": "Consume always passes a literal zero", "claim": "Consume calls Changed with the constant 0, so its result never depends on any input.", "severity_hint": "high",
+				"category": "correctness", "fix": "Pass the caller's value instead of a constant.",
+				"source_range": map[string]any{"source_id": caller.ID, "start_line": 2, "end_line": 2}, "evidence_ids": evidenceIDs,
+			})
+		} else if m.mode != "empty" {
 			candidates = append(candidates, map[string]any{
 				"title": "Zero-valued caller now panics", "claim": "Consume passes zero to Changed after removal of the division guard.", "severity_hint": "high",
 				"category": "correctness", "fix": "Restore the zero guard before dividing.",
@@ -342,7 +363,7 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 		}
 		verdicts := []any{}
 		for _, candidate := range packet.Candidates {
-			if candidate.ID == "" || !slices.Contains(candidate.Evidence, changed.ID) || !callerMissing && !slices.Contains(candidate.Evidence, caller.ID) {
+			if candidate.ID == "" || !preExistingMode && (!slices.Contains(candidate.Evidence, changed.ID) || !callerMissing && !slices.Contains(candidate.Evidence, caller.ID)) {
 				t.Error("verification did not receive actual candidate/evidence identities")
 			}
 			outcome, severity := "verified", "high"

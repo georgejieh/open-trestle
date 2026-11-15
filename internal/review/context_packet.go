@@ -1140,6 +1140,28 @@ func ContextRiskSourceCounts(payload []byte) (agentConfiguration, instructionLik
 	return agentConfiguration, instructionLike, nil
 }
 
+// ContextChangeEvidence reads a recorded generation context and returns the
+// IDs of its sources that are evidence of the change itself: changed hunks
+// (including the unchanged head lines bound around a deletion point) and
+// removed base lines. Direct references and repository context are unchanged
+// code. It never returns source content.
+func ContextChangeEvidence(payload []byte) (map[string]bool, error) {
+	if len(payload) == 0 || len(payload) > maxProviderContextPacketBytes {
+		return nil, ErrInvalidContextPacketRequest
+	}
+	wire, err := decodeGenerationContextWire(payload)
+	if err != nil || wire.Contract != "open-trestle/review-context-packet" {
+		return nil, ErrInvalidContextPacketRequest
+	}
+	ids := map[string]bool{}
+	for _, source := range wire.Sources {
+		if source.Stage == ContextStageChangedHunk.String() || source.Stage == ContextStageRemovedLines.String() {
+			ids[source.SourceID] = true
+		}
+	}
+	return ids, nil
+}
+
 func sourceOmissionCount(values []ContextSourceOmission) int {
 	total := 0
 	for _, value := range values {

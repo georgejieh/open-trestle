@@ -171,6 +171,7 @@ func fitInvestigationDiagnostics(result Result) Result {
 	if jsonErr != nil || textErr != nil {
 		result.wire.Diagnostics = []byte("null")
 		result.diagnostics = diagnostics.Set{}
+		result.wire.Rank, result.wire.PreExisting = nil, nil
 		result.diagnosticOnly = false
 		result.wire.Limitations = append(append([]string{}, result.wire.Limitations...), "diagnostics_omitted_output_limit")
 	}
