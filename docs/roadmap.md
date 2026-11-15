@@ -1,48 +1,194 @@
 # Delivery roadmap
 
+Open Trestle aims to be the best open-source code-review agent, one that runs
+wherever you work: the command line, a terminal UI, your editor, a GitHub
+Action and a desktop app. The goal is a review that steers its models with
+specialist skills and system prompts, and that finds, verifies and ranks
+findings with memory of past reviews and a map of the codebase. Security and
+evidence come first: every finding must point to the source that supports it.
+
 ## Status language
 
-This roadmap distinguishes **planned** work from released capability. Nothing in a planned workstream is available until the project publishes release evidence.
+**Shipped on this branch** means the code and its tests exist at this commit.
+It is not a release. Nothing is released yet, and nothing counts as released
+until its release evidence exists (see [release gates](#release-gates)).
+**Planned** means not built. Waves are listed in their intended order and carry
+no dates. Each planned item ships with tests, documentation and a CHANGELOG
+entry.
 
-## Planned workstreams
+## Shipped on this branch
 
-### Foundation
+- **Guided setup.** `trestle init`, run inside a repository, asks where the two
+  models run and which model finds problems and which different model
+  double-checks them. It fills in everything else it can, shows one settings
+  panel, writes a protected configuration, runs the setup checks and runs the
+  first review only after consent. It asks for the name of the API key's
+  environment variable, never the key. A re-run reviews the two commits pinned
+  at setup, not the latest change. See [getting started](getting-started.md).
+- **Direct model review.** `trestle local-git model-review` runs the review in
+  the `trestle` process: a finder model proposes candidates and an independent
+  verifier on a different model checks them, over the same nine-task graph the
+  daemon uses. Output is JSON, text or SARIF, with opt-in CI exit-code policies.
+  Opt-in investigation tools (list, read and search the snapshot) are
+  local-only. The memory index is empty unless a retained-memory input file is
+  supplied. See [local model review](local-model-review.md).
+- **Provider profiles.** OpenRouter (zero data retention required on every
+  request by default, or generic), Ollama Cloud, OpenCode Go, Ollama on this
+  machine signed in to Ollama Cloud, and any OpenAI-compatible server on
+  loopback without a key. Remote providers work only with the packaged Linux
+  amd64 install and its secret scanner. Each is tested offline with synthetic
+  transports; none is qualified against a live account. The OpenCode Console
+  profile is offline protocol support only, and the Codex ChatGPT session
+  profile is a disabled status report. See
+  [remote model review](remote-model-review.md).
+- **Spending limits.** Per-key limits with a local usage ledger, alerts and
+  refusal at the limit, `trestle usage`, and OpenRouter's own figures for an
+  OpenRouter key. The total is an upper-bound estimate at the highest pinned
+  price, not a bill, and the limit is best effort. The daemon does not record
+  or enforce spending. See [spending limits](spending-limits.md).
+- **Specialists.** Nine packaged specialist profiles, `trestle profiles
+  list|plan`, `--profile` for one profile, and `--specialists auto|LIST`, which
+  runs the general review plus selected specialists one after another as
+  separately verified runs and merges their verified findings with a heuristic
+  duplicate check. Specialists are off by default, and the daemon does not
+  dispatch profiles. See [agent profiles](agent-profiles.md).
+- **Model evaluation corpus.** 23 synthetic Go cases (12 defects, 3 deletion
+  defects, 3 near misses, 3 clean changes, 2 abstentions), with a run driver, a
+  scorer and a pinned human-adjudication record format. The labels are the
+  fixture author's and await independent human adjudication. No model quality
+  has been measured. See [quality evaluation](quality-evaluation.md).
+- **GitHub Actions example.** `examples/github-actions/open-trestle-review.yml`
+  runs the direct review in a workflow, uploads SARIF and posts inline comments
+  with reviewdog. It is tested offline only and **has not run on GitHub**.
+  There is no packaged `action.yml`. See
+  [GitHub pull-request review](github-pr-review.md).
+- **Daemon and observers.** `trestled` keeps durable runs, a hash-chained task
+  journal and an authenticated API, with scoped remote workers, verified GitHub
+  webhook intake, source acquisition, and required-mode publication of one
+  `COMMENT` review with a static publication token. Live GitHub publication is
+  unverified. The TUI, `trestle lsp` with the VS Code extension, the web console
+  and ACP observe one daemon run; MCP reads run status and submits a pre-built
+  plan. None of them starts a review.
+- **Security and evidence.** Only the system channel carries instructions;
+  repository text, including the base tree's instruction files, is data. Every
+  request to a remote route passes two sandboxed Betterleaks scans, with a
+  reviewed recall of 11 of 14 expected occurrences. Findings bind to exact
+  source slices, and publication is fenced by a fresh-head check and
+  idempotency. See the [prompt-injection boundary](prompt-injection-boundary.md).
+- **Packaging and release evidence.** An unsigned Linux amd64 candidate with
+  install, upgrade, one-step rollback and recovery; SPDX SBOMs; a passive
+  vulnerability gate; and a static-debug evaluation over eight built-in cases.
+  Nothing is signed. See [operations](operations.md).
 
-Establish versioned public contracts, repository layout, contribution policy, release policy, and a local-first evidence model.
+## Planned work
 
-### Intake and evidence
+### Wave 1: the everyday loop and onboarding
 
-Build immutable review snapshots, normalized changes, line mapping, repository profiles, source-control event handling, and durable receipts. Define the review outcome contract: the capability target is a comprehensive initial review that remains useful when a real-time human safeguard is unavailable, while external quality claims remain gated on versioned evaluation evidence. A failed required gate is a credible stop signal for human approval, while a pass is only visible coverage of the checks that ran and never a substitute for recommended human review.
+- **W1.1 `trestle review`.** Review the working tree's changes against the
+  merge base with the default branch, using the setup found for the
+  repository: no flags and no stored commit pair, so a re-run always reviews
+  the latest change. One step once set up. Today `trestle review PATH` reviews
+  one local fixture file only.
+- **W1.2 Masked API key entry in `trestle init`.** Hidden input, checked with a
+  free provider call, kept in an owner-only credential store, with the
+  environment variable winning when set. The key is never echoed, logged or
+  placed in model context.
+- **W1.3 A `trestle` home screen.** With no arguments in a configured
+  repository, show status, the last review, spending and the next actions
+  (review, usage, settings, docs), so every goal is within two steps.
+- **W1.4 Documentation truth and this roadmap.** The documentation side is done
+  on this branch. Three mismatches need a code change and remain: the
+  `knowledge_graph` profile's purpose text says it builds and extends a
+  repository symbol and dependency graph, but the profile is plan-only and the
+  only graph is the per-change Go semantic-impact profile; the `trestle` usage
+  text omits `local-git submit-review`; and the Dockerfile exposes port 8080
+  while `trestled` listens on `127.0.0.1:8741` by default.
 
-The shared change model now admits nonempty, valid, within-budget added text against a canonical empty base, so added Go declarations and exact deterministic findings enter review; empty, binary, removed, and over-limit inputs remain explicit gaps. Model reviews also bind the removed base lines of deletion points and of emptied and removed text files as bounded base-side evidence, so a deletion-only change is reviewed and a finding about removed code can be located on removed base lines; emptied and removed files keep their whole-entry gap. Expand the bounded semantic impact profile beyond the integrated Go AST adapter and direct-reference context selection. The profile records changed declarations, public API changes, syntactic reference and affected-test candidates, exact base/head and change identities, adapter and graph-schema versions, evidence grades, and coverage gaps. Structural facts may support a verifier; syntactic candidates may prioritize inspection but cannot establish a finding. Expand the approved adapter set deliberately, with explicit abstention for unsupported cases.
+### Wave 2: review quality core
 
-### Policy and analysis
+- **W2.1 Rank and summarise.** Deduplicate across the finder, the specialists
+  and repeated runs (today only a heuristic merge within one `--specialists`
+  set exists). Apply severity discipline: high-priority findings by default,
+  with pre-existing issues kept separate. Rank deterministically. Produce a
+  human-readable walkthrough, a per-file change summary plus confirmed
+  findings, in text, Markdown, the pull-request summary and the console.
+- **W2.2 Context.** Enclosing definitions for changed hunks; a
+  language-agnostic repository map of symbol tags with personalised ranking
+  within a token budget; and caller and usage lookups. Go already uses its AST;
+  other languages begin with lexical tags, and tree-sitter is a later upgrade.
+- **W2.3 Commit and pull-request context.** Commit messages, the pull-request
+  title and body, and linked issue text, all as untrusted data with risk flags,
+  so that the drift auditor can run.
+- **W2.4 Specialists by default.** `trestle init` turns on `auto` specialists,
+  run in parallel where the routes allow. Today they are opt-in and run one
+  after another.
 
-Add repository-scoped policy packs, static-analysis adapters, deterministic CI planning, and a provider-neutral model gateway. Build content-addressed review context packets that bind the immutable snapshot, normalized changed symbols and ranges, semantic impact profile, applicable policy, deterministic receipts, and declared limits before model candidate generation. Route only the packet permitted by the request's privacy policy and retain its digest with every candidate and verification result.
+### Wave 3: memory and learning
 
-Add explicit evidence grades and outcome semantics: verified structural evidence, candidate-only heuristic evidence, incomplete coverage, and abstention. A regex or text fallback may generate a lead but cannot silently claim semantic certainty or support a blocking disposition.
+- **W3.1 Outcome memory.** Record findings and whether a later commit addressed
+  them; record explicit feedback (`trestle feedback`, the IDE, pull-request
+  reactions); recall similar past outcomes as advisory context; suppress
+  categories by their history, never security. Today the memory index is empty
+  unless a manually authored retained-memory file is supplied.
+- **W3.2 Metrics.** Address rate and outdated rate in `trestle usage` or a
+  stats view and in the console.
 
-The unreleased candidate now sanitizes standard generation and independent-verification requests before approved private-remote dispatch. A fixed root-owned launcher and one-shot worker run Betterleaks v1.8.1 for an initial scan and a fresh zero-finding residual scan. Handler-sealed dispatch proofs bind the authorized request to receipts that carry content-free spans, scanner profile, and exact binary digests. Investigation stays local-only. The reviewed corpus baseline is 11/14 expected occurrences; bearer, AWS secret key, and AWS session token are named misses, and one `generic-api-key` near miss at `[7,51)` is redacted. This control reduces known egress risk but does not claim comprehensive secret detection or make the candidate production-ready.
+### Wave 4: runs anywhere
 
-### Review and publication
+- **W4.1 A GitHub Action** (`action.yml`), verified live on a test repository.
+  This needs maintainer approval to push to one.
+- **W4.2 VS Code.** Start a review from the command palette through the CLI
+  direct path, show findings as diagnostics, and offer quick-fix code actions
+  for suggestions. Today the extension shows the verified diagnostics of one
+  daemon run.
+- **W4.3 TUI.** Start a review and browse findings interactively. Today the TUI
+  observes, and can cancel, one daemon run.
+- **W4.4 Pull-request interaction.** Suggestion blocks, check runs and replies
+  to the bot. Today the daemon can post one `COMMENT` review.
+- **W4.5 Desktop app (last).** Reuse the web console in a native shell.
 
-Typed candidate findings, independent verification, route separation, and duplicate control precede review dispositions and idempotent source-control publication. Publication work must bind the acquired base and head, exact physical source slices, advisory readiness, explicit effect authorization, exclusive claim, fresh head observation, bounded attempt, and terminal result. Retry must retain one operation key, use closed failure classes and delay limits, reacquire the current head, and stop rather than publish against a stale change. Separate inexpensive read-only evidence scouts from bounded candidate generation and independent verification; workers exchange immutable evidence artifacts rather than conversational assertions. Add restartable execution records for intake, snapshot capture, evidence acquisition, analysis, candidate generation, verification, and publication.
+### Wave 5: tests and execution
 
-Render review results as a human-review queue: verified blocking findings, verified non-blocking findings, cleared gates, incomplete checks, and explicit abstentions. Diagnostic-set version 2 preserves exact verified, rejected, and inconclusive candidate counts. Version 3 binds the validated verification context and carries bounded analyzed, selected, and omitted source counts. Version 4 adds sorted content-free aggregate omission reasons with exact accounting while versions 1 through 3 remain compatible. The retry-safe readiness step materializes that set from durable change and independent-verification lineage with the exact source head revision. Diagnostic-set version 5 now publishes the narrowly scoped static-debug check with exact source-check, analysis-result, change, state, coverage, and match bindings. Web and terminal review queues render its four states as a cleared gate, failed check, incomplete check, or explicit abstention. Only its fully covered zero-match `passed` state is presented as cleared, and never as approval or correctness. Web finding rows now expose their exact diagnostic, source-finding, fingerprint, and evidence-reference lineage through a read-only disclosure without fetching payloads. Gate policy may require a blocking finding to be resolved or explicitly overridden, but a clean run must state that it accelerates human review rather than approving a change.
+This wave needs a security design, reviewed before any code.
 
-### Runtime surfaces
+- **W5.1 A sandboxed executor** for configured linters and tests, with no
+  network and a read-only checkout. Linter and static-analysis findings come
+  first, as hints the model must confirm; then test selection and runs as
+  evidence; then generated tests, kept only if they build, pass and add
+  coverage. Dynamic validation stays separately authorized and off by default.
 
-The standalone daemon, authenticated HTTP API and client, CLI run operations, foreground terminal interface, headless CI JSON and SARIF, MCP, read-only ACP, and read-only LSP diagnostics share the canonical run and diagnostic contracts. Durable task notifications reduce remote-worker polling, and replay-based supervision closes settled runs automatically. The daemon now embeds an authenticated read-only web console for exact run, task, identity, verified-diagnostic, and content-free runtime inspection. A separate repository-scoped capability gates storage posture, non-secret configuration identities, handler authority, publication-fence state, and supervisor readiness. Repository onboarding, policy administration, provider administration, streaming subscriptions, and production distribution remain planned. The packaged VS Code extension now provides the existing read-only LSP diagnostics with machine-scoped process authority and SecretStorage credentials.
+### Wave 6: measured quality
 
-The shared secret-free setup plan defines safe deployment profiles, approved check receipts, and protected CLI initialization and inspection. Receipt-driven checks cover private local storage, PostgreSQL database authority, envelope-encrypted S3 conformance, KMS tenant-key authority, remote-provider authorization, GitHub integration-permission and local webhook-conformance validation, PostgreSQL shared API rate-limit validation, bounded two-instance replica reconciliation, opaque Ed25519-signed offline bundle validation, exact setup backup, local-administrator approval, distinct observer credentials, runtime policy, bounded local inference, and a non-publishing dry run. The local web setup service and keyboard-first terminal use the same protected plan, checker, receipt, and recovery contracts. Their explicit confirmations bind the current plan and keep credentials in request-time server capabilities. Requirements without a configured checker remain pending rather than appearing successful. The remaining guided roadmap covers additional forge adapters, external delivery reachability, broader replica and failover coordination, no-egress enforcement, and governed bundle import. The current signed-bundle check verifies only an opaque file and does not claim archive, SBOM, provenance, or installation validation.
+- An independent human reviewer adjudicates the 23 corpus cases.
+- Score the sealed run bundle against the adjudicated labels.
+- Add public benchmarks (SWR-Bench, AACR-Bench, c-CRAB) to the evaluation
+  driver.
 
-### Governed execution
+### Other planned work
 
-Add sandboxed, policy-approved verification runners. Dynamic validation remains separately authorized and disabled by default.
+These items are planned but not yet assigned to a wave.
 
-### Operations and release
-
-Add supported installation profiles, backups, restore drills, in-place upgrades and version rollback, signed release artifacts, SBOM and provenance, accessibility, observability, air-gapped distribution, and formal quality evaluation. The deterministic local release-evidence tool now inventories exact artifact bytes, embedded Go runtime modules, and non-development npm lockfile components as a SHA-256 checksum list and SPDX 2.3 JSON with SHA-1 and SHA-256 file checksums. Its atomic evidence directory also includes deterministic candidate release notes from the validated `## Unreleased` changelog entries, bound to the declared version, revision, and creation time with an explicit non-support warning. CI validates both generated SBOMs with the official SPDX Workgroup `spdx-tools` 0.8.5 semantic validator installed from a fully pinned, hash-checked test-only lock. Secret-scanner packaging separately builds the static launcher and Go worker twice, verifies identical bytes, records the fixed Betterleaks profile and complete linked license closure, and injects both binary digests into the Go 1.26.11 daemon. The separate worker module also pins Go 1.26.11; the launcher uses the pinned Zig 0.14.1 musl closure. CI now builds a deterministic stdlib-only Linux amd64 pyz after the vulnerability gate, compares two independent builds, and runs a real destdir v1 install, v2 upgrade and verification, immediate v1 version rollback and verification, second v2 upgrade, bounded CLI smoke probe, and ownership-preserving uninstall. It binds the pyz, detached SHA-256 file, smoke JSON and canonical content-free lifecycle evidence into the wider release evidence. The candidate upgrade accepts only an exact verified installation and a strictly newer same-target archive; `rollback-version` consumes only the bound immediate predecessor. Each upgrade keeps only the generation it replaced in that one rollback slot and discards an older predecessor in the same transaction, so upgrades repeat without a rollback in between. A fixed-root two-decision record now restores the exact pre-commit generation or verifies and cleans the post-commit generation. A separate Ubuntu 24.04 opt-in destdir matrix sends SIGKILL after every successful fsync and rename boundary for install, upgrade into an empty or occupied rollback slot, immediate version rollback, and recovery itself. This is conditional process-termination evidence only, not power-loss, production-root, filesystem, mount-profile, or supported deployment qualification. This is an unsigned evaluation candidate, not a supported installation profile. It has no signer identity or published provenance, does not execute the scanner launcher in destdir smoke mode, and does not establish container-image identity, a SLSA level, deployment qualification or production readiness. CI now runs a bounded passive vulnerability gate over both Go source modules, the staged Go binaries, and full plus omit-development npm lockfile scopes. A successful run adds deterministic content-free status evidence to release staging. This point-in-time advisory check is not comprehensive vulnerability reporting or active target testing. Signing, attestation publication and verification, supported multi-platform release packaging, supported production upgrade and crash-recovery guarantees, and deployment qualification remain planned. A first runnable versioned evaluation covers only the exact static-debug changed-range rule over eight built-in cases. Its canonical content-free report is retained publicly and reproduced through the real CLI in CI. Separate pending candidate tooling now embeds six synthetic repository cases across that one finding rule and structural analyzer targets, reports exact set scores and coverage, and records environment-scoped latency and RSS observations. Its labels still require independent human review, it has no golden report, and it is not release evidence. Broader user-visible rules, realistic adjudicated data, model evaluation, calibration, cost, and supported-deployment latency evidence remain planned.
+- **Policy and analysis:** repository-scoped policy packs, deterministic CI
+  planning, broader user-visible deterministic rules, and inexpensive read-only
+  evidence scouts kept separate from candidate generation and verification.
+- **Semantic evidence:** type-aware language adapters whose compiler or
+  language-server facts could support verification, and heuristics such as
+  historical co-change that may only point at review targets. Only the
+  `structural` and `syntactic_candidate` grades exist today.
+- **Surfaces and integration:** additional forge adapters, Git-hook
+  integration, a gRPC API, streaming subscriptions, and policy and provider
+  administration.
+- **Setup:** external delivery reachability, broader replica and failover
+  coordination, no-egress enforcement, and governed bundle import.
+- **Deployment:** supported installation profiles, OpenTelemetry observability,
+  a Docker Compose profile for a single operator, Helm charts or Kubernetes
+  manifests for larger installations, restore drills, and air-gapped
+  distribution. The setup planner's `kubernetes_ha` profile and its
+  shared-store probe are setup checks, not a deployment.
+- **Release:** signing, attestation publication and verification, supported
+  multi-platform packaging, supported production upgrade and crash-recovery
+  guarantees, deployment qualification, accessibility evidence, and realistic
+  adjudicated evaluation data with calibration, cost and latency evidence.
 
 ## Release gates
 
