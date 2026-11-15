@@ -102,6 +102,14 @@ func TestDeduplicateFindingsMergesParaphrasesInOneDeclaration(t *testing.T) {
 	if markdown := findingMarkdown(group, group.OriginLabels()); !strings.Contains(markdown, "   Also reported as: Avg panics on empty slice (`backend`)\n") {
 		t.Fatalf("Markdown lacks the other wording:\n%s", markdown)
 	}
+	// A single review names no reviewer: it counts the merge and lists the
+	// other wording.
+	if single := FindingText(group, nil); !strings.Contains(single, "merged duplicates: 1\nalso reported as: "+panicTitle+"\n") {
+		t.Fatalf("single-review text lacks the other wording:\n%s", single)
+	}
+	if markdown := findingMarkdown(group, nil); !strings.Contains(markdown, "   Merged duplicates: 1\n   Also reported as: Avg panics on empty slice\n") {
+		t.Fatalf("single-review Markdown lacks the other wording:\n%s", markdown)
+	}
 	// Without a profile, the same paraphrases within five lines merge by the
 	// narrow-range rule.
 	divide.Anchor, panics.Anchor = FindingAnchor{}, FindingAnchor{}
