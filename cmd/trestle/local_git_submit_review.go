@@ -14,6 +14,10 @@ import (
 	"github.com/georgejieh/open-trestle/runtimecatalog"
 )
 
+func writeLocalGitSubmitReviewUsage(stderr io.Writer) {
+	fmt.Fprintln(stderr, "usage: trestle local-git submit-review --objects-root PATH --repository-authority AUTHORITY --repository-namespace SEGMENT[/SEGMENT...] --repository-name NAME --revision-algorithm sha1|sha256 --base-revision-digest FULL_LOWERCASE_HEX --head-revision-digest FULL_LOWERCASE_HEX --server LOOPBACK_URL --tenant ID --repository ID --run ID --review-policy-identity HEX --inventory-identity HEX --runtime-policy-identity HEX [--created-at-unix-milliseconds N]   (submit a full review to the local daemon)")
+}
+
 func runLocalGitSubmitReview(args []string, stdout, stderr io.Writer) int {
 	return runLocalGitSubmitReviewWithOpener(args, stdout, stderr, openLocalGitRoot)
 }

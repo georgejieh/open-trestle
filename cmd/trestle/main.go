@@ -15,6 +15,12 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 1 {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		code := runHome(ctx, os.Stdin, os.Stdout, os.Stderr)
+		stop()
+		os.Exit(code)
+	}
 	if len(os.Args) >= 2 && os.Args[1] == "keys" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		code := runKeys(ctx, os.Args[2:], os.Stdin, os.Stdout, os.Stderr)
@@ -212,10 +218,12 @@ func runReview(fixturePath string, stdout, stderr io.Writer) int {
 
 func writeUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "usage: trestle init [--no-input] [answer flags]   (start here: guided setup and first review; see docs/getting-started.md)")
+	fmt.Fprintln(stderr, "       trestle   (in a terminal: this repository's status and next actions)")
+	writeLatestReviewUsage(stderr)
+	writeKeysUsage(stderr)
 	writeUsageUsage(stderr)
 	fmt.Fprintln(stderr, "       trestle validate-fixture <path>")
 	fmt.Fprintln(stderr, "       trestle build-info")
-	fmt.Fprintln(stderr, "       trestle review <path>")
 	fmt.Fprintln(stderr, "       trestle ci --format=json <path>")
 	fmt.Fprintln(stderr, "       trestle ci --format=sarif <path>")
 	writeSetupUsage(stderr)
@@ -232,5 +240,6 @@ func writeUsage(stderr io.Writer) {
 	writeLocalGitChangeUsage(stderr)
 	writeLocalGitReviewUsage(stderr)
 	writeLocalGitModelReviewUsage(stderr)
+	writeLocalGitSubmitReviewUsage(stderr)
 	writeLocalGitRetainedMemoryInputUsage(stderr)
 }
