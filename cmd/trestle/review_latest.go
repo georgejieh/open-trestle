@@ -257,6 +257,9 @@ func latestChange(ctx context.Context, w *initWizard, options latestReviewOption
 		return base, label, head, source, 0, ""
 	}
 	if options.base == "" && options.head == "" && strings.Contains(problem, "same commit") {
+		if label == "" {
+			label = "tip of the default branch"
+		}
 		return "", "", "", source, 3, fmt.Sprintf("nothing to review: HEAD (%s) is already the %s, so there is no committed change on it. Commit your change and run trestle review again, or pass --base REF.", initShort(strings.TrimSpace(gitRevParse(ctx, w.checkout, "HEAD"))), label)
 	}
 	code = 2
