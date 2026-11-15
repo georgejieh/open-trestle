@@ -27,12 +27,19 @@ var homeInteractive = func(stdin io.Reader, stdout io.Writer) bool {
 	if _, noColor := os.LookupEnv("NO_COLOR"); noColor || os.Getenv("TERM") == "dumb" {
 		return false
 	}
-	file, ok := stdin.(*os.File)
-	if !ok {
+	in, inFile := stdin.(*os.File)
+	out, outFile := stdout.(*os.File)
+	return inFile && outFile && isTerminal(in) && isTerminal(out)
+}
+
+// isTerminal reports a real terminal: one whose terminal settings can be
+// read, which /dev/null and other character devices are not.
+func isTerminal(file *os.File) bool {
+	if info, err := file.Stat(); err != nil || info.Mode()&os.ModeCharDevice == 0 {
 		return false
 	}
-	info, err := file.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0 && initTerminal(stdout)
+	_, ok := platformEchoTerminal(file)
+	return ok
 }
 
 // homeDocs is where the guides are, in the repository and online.
