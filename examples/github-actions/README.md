@@ -60,7 +60,19 @@ the logs of your first run. See [GitHub pull-request review](../../docs/github-p
   failures fail the job and appear as an unsuccessful invocation in the SARIF.
 - The job summary is rendered from the SARIF with `jq`. One review is a paid model
   run that yields one output format, so the example does not run a second time for
-  `--format text`.
+  `--format text` or `--format markdown`.
+- Finding text, fix guidance and paths are untrusted (model output and repository
+  text), and both the job summary and reviewdog's pull-request comments are GitHub
+  Markdown. A step first writes a small `jq` module, `trestle-markdown.jq`, that
+  escapes such text with the rules of Open Trestle's own Markdown renderer
+  (`localreview.MarkdownText` and `MarkdownCode`): it cannot open emphasis, a link,
+  an image, a heading, a table cell or an HTML tag, cannot @-mention anyone, and no
+  URL, `www.` host or email address becomes an autolink. The summary is rendered
+  through it, and reviewdog reads an escaped copy of the SARIF
+  (`open-trestle.reviewdog.sarif`); the SARIF for code scanning keeps the raw text.
+  The repository test runs the module with `jq` against crafted SARIF and compares
+  it byte for byte with the Go renderer. If you edit the summary, keep every
+  untrusted value behind `trestle_md` or `trestle_md_code`.
 
 ## Limits worth knowing
 

@@ -140,6 +140,45 @@ jobs:
             --max-cost-micro-usd 0 \
             --declare-remote-route
 
+      # ---- Markdown escaping ------------------------------------------------
+      # Untrusted text (model output in SARIF message.text and fix guidance,
+      # and repository paths) reaches GitHub Markdown twice: in the job summary
+      # and in reviewdog's pull-request comments. This jq module escapes it
+      # with the rules of MarkdownText and MarkdownCode in localreview/render.go,
+      # the renderer behind `--format markdown`: no emphasis, link, image,
+      # heading, table cell, HTML tag or @-mention survives, and no URL, www.
+      # host or email address becomes an autolink (a zero-width space breaks
+      # each scheme colon, www. dot and @). SARIF itself keeps the raw text for
+      # code scanning, which does not render message.text as Markdown. The
+      # repository test TestExampleWorkflowEscapesUntrustedText runs this module
+      # with jq against crafted SARIF and checks it byte for byte against the Go
+      # renderer.
+      - name: Write the Markdown escaping filter
+        run: |
+          cat > "$RUNNER_TEMP/trestle-markdown.jq" <<'JQ'
+          def trestle_md_escapes: {"&": "&amp;", "<": "&lt;", ">": "&gt;", "@": "​@​", "\\": "\\\\", "*": "\\*", "_": "\\_", "[": "\\[", "]": "\\]", "(": "\\(", ")": "\\)", "#": "\\#", "!": "\\!", "|": "\\|", "`": "\\`", "~": "\\~"};
+          def trestle_md:
+            tostring
+            | gsub("\r\n|\n|\r"; " ")
+            | gsub("(?<c>[&<>@\\\\*_\\[\\]()#!|`~])"; trestle_md_escapes[.c])
+            | gsub("(?<=[A-Za-z0-9]):(?=[^ ])"; "​:")
+            | gsub("(?<![A-Za-z0-9])(?<w>[Ww][Ww][Ww])\\."; "\(.w)​.");
+          def trestle_md_code:
+            tostring
+            | if . == "" or test("[`\r\n]") then trestle_md else "`" + gsub("\\|"; "\\|") + "`" end;
+          def trestle_reviewdog:
+            (.runs[]?.results[]?.message.text) |= (if type == "string" then trestle_md else . end)
+            | del(.runs[]?.results[]?.message.markdown);
+          def trestle_summary:
+            .runs[0] as $r
+            | "## Open Trestle review\n\n"
+              + "Status: **\($r.properties.trestleModelReviewStatus | trestle_md)** (run: \($r.properties.trestleRunStatus | trestle_md), CI disposition: \($r.properties.trestleCiDisposition | trestle_md)); verified findings: \($r.results | length).\n\n"
+              + ([$r.invocations[]?.toolExecutionNotifications[]? | "> \(.level | trestle_md): \(.message.text | trestle_md)\n"] | join(""))
+              + "\n"
+              + ([$r.results[]? | "- **\(.level | trestle_md)** \("\(.locations[0].physicalLocation.artifactLocation.uri):\(.locations[0].physicalLocation.region.startLine)" | trestle_md_code) \(.message.text | trestle_md)\(if .properties.trestleFixGuidance then "\n  - Unverified model guidance: \(.properties.trestleFixGuidance | trestle_md)" else "" end)\n"] | join(""))
+              + "\n_The review is bounded and is not a clearance. Fix guidance is model text the verifier did not check._\n";
+          JQ
+
       # ---- Review -----------------------------------------------------------
       # Exit policy `findings`: exit 0 means the review completed and found no
       # verified high or critical issue; it is not a clearance of the change.
@@ -206,6 +245,8 @@ jobs:
       # comments on lines inside the pull request diff; other findings remain in
       # code scanning and in the job summary. Findings carry the verifier's claim;
       # fix guidance is in the SARIF properties and is unverified model text.
+      # GitHub renders the comments as Markdown, so reviewdog reads a copy of the
+      # SARIF whose message text is escaped by the filter above.
       - name: Set up reviewdog
         if: ${{ always() && steps.review.outputs.sarif == 'true' }}
         uses: reviewdog/action-setup@v1 # Pin to a full commit SHA in your repository.
@@ -215,24 +256,17 @@ jobs:
         env:
           REVIEWDOG_GITHUB_API_TOKEN: ${{ github.token }}
         run: |
+          jq -L "$RUNNER_TEMP" 'include "trestle-markdown"; trestle_reviewdog' "$RUNNER_TEMP/open-trestle.sarif" > "$RUNNER_TEMP/open-trestle.reviewdog.sarif"
           reviewdog -f=sarif -name=open-trestle -reporter=github-pr-review \
-            -filter-mode=added -fail-level=none < "$RUNNER_TEMP/open-trestle.sarif"
+            -filter-mode=added -fail-level=none < "$RUNNER_TEMP/open-trestle.reviewdog.sarif"
 
       # Job summary. One paid model run yields one output format, so the summary
-      # is rendered from the SARIF rather than from a second text run.
+      # is rendered from the SARIF rather than from a second `--format markdown`
+      # run, with the same escaping rules as that renderer.
       - name: Write the job summary
         if: ${{ always() && steps.review.outputs.sarif == 'true' }}
         run: |
-          {
-            echo "## Open Trestle review"
-            jq -r '.runs[0] as $r | "Status: **\($r.properties.trestleModelReviewStatus)** (run: \($r.properties.trestleRunStatus), CI disposition: \($r.properties.trestleCiDisposition)); verified findings: \($r.results | length)."' "$RUNNER_TEMP/open-trestle.sarif"
-            echo
-            jq -r '.runs[0].invocations[].toolExecutionNotifications[]? | "> \(.level): \(.message.text)"' "$RUNNER_TEMP/open-trestle.sarif"
-            echo
-            jq -r '.runs[0].results[] | "- **\(.level)** `\(.locations[0].physicalLocation.artifactLocation.uri):\(.locations[0].physicalLocation.region.startLine)` \(.message.text)\(if .properties.trestleFixGuidance then "\n  - Unverified model guidance: \(.properties.trestleFixGuidance)" else "" end)"' "$RUNNER_TEMP/open-trestle.sarif"
-            echo
-            echo "_The review is bounded and is not a clearance. Fix guidance is model text the verifier did not check._"
-          } >> "$GITHUB_STEP_SUMMARY"
+          jq -r -L "$RUNNER_TEMP" 'include "trestle-markdown"; trestle_summary' "$RUNNER_TEMP/open-trestle.sarif" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Fail the job from the review status
         if: ${{ always() }}

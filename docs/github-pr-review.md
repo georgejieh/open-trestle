@@ -54,7 +54,10 @@ it fails with `merge_base_unavailable`. It never falls back to reviewing
    `github.sha`, the temporary merge commit. These inputs follow the
    `upload-sarif` documentation and are unverified live. Then post inline
    comments with reviewdog, write a job summary, and fail the job from the
-   recorded exit status.
+   recorded exit status. Both the comments and the summary are GitHub Markdown,
+   so the example first escapes the untrusted finding text, fix guidance and
+   paths with a small `jq` module that follows the rules of `--format markdown`
+   (no link, image, heading, HTML, mention or autolink can open).
 
 The step-by-step workflow, with its placeholders and caveats, is
 [`examples/github-actions/open-trestle-review.yml`](../examples/github-actions/open-trestle-review.yml)
@@ -74,8 +77,12 @@ run the review (refused, unreadable change, missing secret, provider failure) fa
 Honest status of the Actions path:
 
 - Verified offline: the SARIF projection, fingerprints, exit policy, shallow and
-  partial checkout diagnostics, and that the example workflow parses as YAML. These
-  run against synthetic model transports in the repository tests.
+  partial checkout diagnostics, that the example workflow parses as YAML, and that
+  its `jq` module escapes untrusted text (finding text, fix guidance and paths)
+  for the job summary and for reviewdog's input exactly as Open Trestle's
+  Markdown renderer does, run with `jq` against crafted SARIF that carries
+  Markdown, HTML, @-mentions and bare URLs. These run against synthetic model
+  transports and inputs in the repository tests.
 - Not verified: any run on GitHub. The workflow has not executed on a hosted
   runner. The `upload-sarif`, `reviewdog`, `setup-go` and checkout steps, the
   source build of the packaged binary on a runner, the `jq` extraction of the
