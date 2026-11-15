@@ -90,7 +90,7 @@ func TestInitKeepsAnExistingLimitAndTakesTheLimitAsFlags(t *testing.T) {
 	if result.code != initExitDone || initHas(result.stdout, "Spending limit for this key") {
 		t.Fatalf("an existing limit was asked again: exit=%d\n%s", result.code, result.stdout)
 	}
-	initAssertOutput(t, result, "OPEN_TRESTLE_PROVIDER_OPENROUTER already has a $3.00 weekly limit, alerts at 50% and 100%. trestle usage set changes it.", "Spending $3.00 weekly limit (set earlier) · alerts at")
+	initAssertOutput(t, result, "OPEN_TRESTLE_PROVIDER_OPENROUTER already has a $3.00 weekly limit, alerts at 50% and 100%. trestle usage set changes it.", "Spending $3.00 weekly limit (set earlier) ·", "alerts at")
 	if limit, _, _ := store.Limit(openRouterSpendingScope(t)); limit.Period != spending.PeriodWeek || limit.AmountMicroUSD != 3_000_000 {
 		t.Fatalf("the existing limit was changed: %+v", limit)
 	}

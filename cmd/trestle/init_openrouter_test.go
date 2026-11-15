@@ -114,7 +114,7 @@ func TestInitOpenRouterBothModelsWithZDRRequiresItByDefault(t *testing.T) {
 		"Optional: a spending limit for this key.", "The total is an upper-bound estimate at the highest pinned price, not a bill, and the limit is best effort",
 		"OpenRouter's usage could not be read: OpenRouter could not be reached",
 		"Spending limit for this key, USD per month (optional) [none]:",
-		"$16.50 out per million tokens · up", "to $0.69 a request, $1.38 a review", "Spending no limit (optional; trestle usage set adds",
+		"$16.50 out per million tokens ·", "up to $0.69 a request, $1.38 a review", "Spending no limit (optional; trestle usage set adds",
 		"Zero data retention is required on every request", "Review finished: 1 confirmed finding",
 		"A review sends the selected source to OpenRouter (https://openrouter.ai/api/v1), zero data retention required on every request")
 	if initHas(result.stdout, "openrouter_zero_data_retention_not_required") {

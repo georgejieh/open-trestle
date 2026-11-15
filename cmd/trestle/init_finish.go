@@ -300,6 +300,7 @@ func (w *initWizard) bootstrapArgs() []string {
 			args = append(args, "--generation-credential-environment", a.credentialEnv, "--verification-credential-environment", a.credentialEnv)
 		}
 		args = append(args, w.reviewOutputArgs()...)
+		args = append(args, "--specialists", w.specialists())
 		return append(args, a.declarations...)
 	}
 	providerName := a.provider.key
@@ -317,6 +318,7 @@ func (w *initWizard) bootstrapArgs() []string {
 	}
 	args = append(args, "--declared-by", a.owner, "--input-micro-usd-per-million-tokens", a.inputPrice, "--output-micro-usd-per-million-tokens", a.outputPrice, "--max-cost-micro-usd", a.maxCost)
 	args = append(args, w.reviewOutputArgs()...)
+	args = append(args, "--specialists", w.specialists())
 	args = append(args, a.extra...)
 	return append(args, a.declarations...)
 }
@@ -780,6 +782,11 @@ func (w *initWizard) review(command []string) int {
 		}
 	}
 	w.say("")
+	// The observed outcome covers a single review and a specialist review set
+	// alike (a set prints no "status:" line); the text is only a fallback.
+	if outcome.status != "" {
+		status, findings = outcome.status, outcome.findings
+	}
 	switch status {
 	case "findings":
 		w.say("  %s Review finished: %d confirmed finding%s above. Each was proposed by the finder and confirmed by the checker. Treat them like a colleague's comments; the review is not a complete audit (comprehensive clearance: false).", w.ok, findings, initPlural(findings))
@@ -794,7 +801,7 @@ func (w *initWizard) review(command []string) int {
 		w.say("  %s The review was stopped before it finished.", w.wait)
 		return initExitPending
 	case "refused":
-		if strings.Contains(out.String(), "failure: policy: "+localreview.FailureDetailSpendingLimitReached+"\n") {
+		if strings.Contains(out.String(), "policy: "+localreview.FailureDetailSpendingLimitReached+"\n") {
 			w.say("  %s The review was refused before it started: a spending limit for this key is reached, so nothing was sent. Run trestle usage to see it.", w.bad)
 			return initExitRefused
 		}

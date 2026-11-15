@@ -104,7 +104,7 @@ func TestInitAsksForAMissingKeyHiddenChecksItAndSavesItAfterTheSetup(t *testing.
 		"✓ OpenRouter accepted the key (one GET /api/v1/key, which costs nothing and sends no source).",
 		"It will be saved in",
 		"OpenRouter reports $0.08 used this month",
-		"Key OPEN_TRESTLE_PROVIDER_OPENROUTER (to be saved",
+		"Key OPEN_TRESTLE_PROVIDER_OPENROUTER (to be", "saved in",
 		"✓ Saved the key for OPEN_TRESTLE_PROVIDER_OPENROUTER in",
 		"✓ API key variable OPEN_TRESTLE_PROVIDER_OPENROUTER is set (saved in",
 	)

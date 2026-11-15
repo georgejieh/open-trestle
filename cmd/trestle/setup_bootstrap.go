@@ -123,13 +123,14 @@ func runSetupBootstrapWithContext(ctx context.Context, args []string, stdout, st
 	for _, name := range []string{"tenant", "repository", "recovery-owner", "checkout", "base", "head", "repository-authority", "repository-namespace", "repository-name", "generation-endpoint", "generation-model", "generation-credential-environment", "verification-endpoint", "verification-model", "verification-credential-environment", "transport", "approved-by", "backup-directory"} {
 		values[name] = flags.String(name, "", name)
 	}
+	specialists := flags.String("specialists", "", "auto (default) or none: whether the saved review runs specialist reviews")
 	contextTokens := flags.Uint64("context-tokens", 0, "declared capacity of both models")
 	outputTokens := flags.Uint64("output-tokens", 0, "declared output capacity of both models")
 	reviewOutputTokens := flags.Uint64("max-output-tokens", 4096, "per-request review output allowance, from 4096 to --output-tokens")
 	declare := flags.Bool("declare-local-capabilities", false, "declare local models, structured output, no logging, zero inference price and current availability")
 	probe := flags.Bool("allow-local-probe", false, "permit two bounded synthetic local model requests, not repository source")
 	scope := flags.String("scope", "", "daemon (default) or direct-review")
-	if flags.Parse(args[1:]) != nil || flags.NArg() != 0 || *directory == "" || *scope != "" && *scope != "daemon" && *scope != setupBootstrapDirectReviewScope {
+	if flags.Parse(args[1:]) != nil || flags.NArg() != 0 || *directory == "" || *scope != "" && *scope != "daemon" && *scope != setupBootstrapDirectReviewScope || !validSetupSpecialists(*specialists) {
 		writeSetupBootstrapUsage(stderr)
 		return 2
 	}
@@ -140,7 +141,7 @@ func runSetupBootstrapWithContext(ctx context.Context, args []string, stdout, st
 			allowed[name] = name != "approved-by" && name != "backup-directory"
 		}
 		allowed["context-tokens"], allowed["output-tokens"], allowed["declare-local-capabilities"], allowed["scope"] = true, true, true, true
-		allowed["max-output-tokens"] = true
+		allowed["max-output-tokens"], allowed["specialists"] = true, true
 	case "check":
 		allowed["approved-by"], allowed["backup-directory"], allowed["allow-local-probe"], allowed["scope"] = true, true, true, true
 	case "inspect", "prepare-review":
@@ -191,6 +192,9 @@ func runSetupBootstrapWithContext(ctx context.Context, args []string, stdout, st
 				return writeSetupBootstrapRefusal(stdout)
 			}
 		}
+		// --specialists is optional (absent is auto), so it joins the values
+		// only after the required ones were checked.
+		values["specialists"] = specialists
 		if err := initializeSetupBootstrap(ctx, directoryAbs, values, *contextTokens, *outputTokens, *reviewOutputTokens, *scope == setupBootstrapDirectReviewScope, clock); err != nil {
 			return writeSetupBootstrapRefusal(stdout)
 		}
@@ -313,8 +317,29 @@ func writeSetupBootstrapRefusal(stdout io.Writer) int {
 	return 4
 }
 
+// validSetupSpecialists accepts the --specialists values setup takes: auto
+// (the default when absent) or none.
+func validSetupSpecialists(value string) bool {
+	return value == "" || value == specialistModeAuto || value == specialistModeNone
+}
+
+// setupSpecialistsArgs is what a new setup saves in its review command: a
+// specialist review set (--specialists auto, the default) unless the operator
+// chose none, which saves the single general review. Setups saved before
+// specialists were the default have neither and keep the single review.
+func setupSpecialistsArgs(value string) []string {
+	if value == specialistModeNone {
+		return nil
+	}
+	return []string{"--specialists", specialistModeAuto}
+}
+
 func initializeSetupBootstrap(ctx context.Context, dir string, values map[string]*string, contextTokens, outputTokens, reviewOutputTokens uint64, direct bool, clock setupClock) error {
 	value := func(name string) string { return *values[name] }
+	specialists := ""
+	if values["specialists"] != nil {
+		specialists = *values["specialists"]
+	}
 	for _, name := range []string{"generation-endpoint", "verification-endpoint"} {
 		locality, err := provider.ClassifyServiceEndpoint(value(name))
 		if err != nil || locality != provider.ServiceEndpointLoopback {
@@ -338,6 +363,7 @@ func initializeSetupBootstrap(ctx context.Context, dir string, values map[string
 	}
 	// Validate scope and repository labels before writing any configuration.
 	reviewArgs := []string{"--checkout", checkout, "--base", source.base, "--head", source.head, "--repository-authority", value("repository-authority"), "--repository-namespace", value("repository-namespace"), "--repository-name", value("repository-name"), "--tenant", value("tenant"), "--repository", value("repository"), "--route-inventory", filepath.Join(dir, "routes.json"), "--runtime-policy", filepath.Join(dir, "policy.json"), "--egress", "local-only", "--timeout", "5m", "--format", "text"}
+	reviewArgs = append(reviewArgs, setupSpecialistsArgs(specialists)...)
 	if _, _, _, _, err := parseLocalModelReview(reviewArgs); err != nil {
 		return err
 	}

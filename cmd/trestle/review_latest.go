@@ -209,6 +209,11 @@ func latestReviewCommand(template []string, base, head string, options latestRev
 	args := []string{}
 	for i := 0; i+1 < len(template); i += 2 {
 		flag, value := template[i], template[i+1]
+		// --profile is the single-specialist form, so it replaces a saved
+		// specialist set.
+		if options.profile != "" && (flag == "--specialists" || flag == "--max-specialists") {
+			continue
+		}
 		if replacement, ok := replace[flag]; ok {
 			value = replacement
 			delete(replace, flag)

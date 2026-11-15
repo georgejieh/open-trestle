@@ -39,7 +39,18 @@ func (initOfflineTransport) RoundTrip(*http.Request) (*http.Response, error) {
 	return nil, io.ErrUnexpectedEOF
 }
 
+// runInitScript runs the wizard for a test of the single general review: it
+// adds --specialists none unless the test chose specialists itself.
+// runInitScriptAsIs keeps the wizard's own default.
 func runInitScript(t *testing.T, checkout string, args []string, script ...string) initRun {
+	t.Helper()
+	if !slices.Contains(args, "--specialists") {
+		args = append(append([]string(nil), args...), "--specialists", "none")
+	}
+	return runInitScriptAsIs(t, checkout, args, script...)
+}
+
+func runInitScriptAsIs(t *testing.T, checkout string, args []string, script ...string) initRun {
 	t.Helper()
 	t.Chdir(checkout)
 	if initEvidenceTransport == nil {

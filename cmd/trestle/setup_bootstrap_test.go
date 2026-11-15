@@ -73,7 +73,10 @@ func bootstrapFixture(t *testing.T) ([]string, string, *localModelFixture, *atom
 	}
 	directory := t.TempDir()
 	_ = os.Chmod(directory, 0700)
-	args := []string{"init", "--directory", directory, "--tenant", "tenant-local", "--repository", "repository-local", "--recovery-owner", "owner", "--checkout", checkout, "--base", "refs/heads/base", "--head", "refs/heads/review", "--repository-authority", "example.test", "--repository-namespace", "private/team", "--repository-name", "sample", "--generation-endpoint", endpoints[0], "--generation-model", "model-a", "--verification-endpoint", endpoints[1], "--verification-model", "model-b", "--transport", "openai_responses", "--context-tokens", "128000", "--output-tokens", "8192", "--declare-local-capabilities"}
+	args := []string{"init", "--directory", directory, "--tenant", "tenant-local", "--repository", "repository-local", "--recovery-owner", "owner", "--checkout", checkout, "--base", "refs/heads/base", "--head", "refs/heads/review", "--repository-authority", "example.test", "--repository-namespace", "private/team", "--repository-name", "sample", "--generation-endpoint", endpoints[0], "--generation-model", "model-a", "--verification-endpoint", endpoints[1], "--verification-model", "model-b", "--transport", "openai_responses", "--context-tokens", "128000", "--output-tokens", "8192", "--declare-local-capabilities",
+		// These tests cover the single general review; specialists by default
+		// have their own tests.
+		"--specialists", "none"}
 	return args, directory, f, probes
 }
 

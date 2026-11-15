@@ -101,7 +101,7 @@ type remoteBootstrapResult struct {
 	DataRetention string `json:"data_retention,omitempty"`
 }
 
-var remoteBootstrapStringFlags = []string{"provider", "tenant", "repository", "checkout", "base", "head", "repository-authority", "repository-namespace", "repository-name", "generation-model", "verification-model", "generation-credential-environment", "verification-credential-environment", "endpoint", "declared-by", "valid-from", "valid-until", "reviewed-at", "evidence-retrieved-at", "generation-provider-slug", "verification-provider-slug", "generation-upstream-evidence", "verification-upstream-evidence", "generation-slug-evidence", "verification-slug-evidence", "generation-model-evidence", "verification-model-evidence", "broker-evidence", "account-evidence"}
+var remoteBootstrapStringFlags = []string{"provider", "specialists", "tenant", "repository", "checkout", "base", "head", "repository-authority", "repository-namespace", "repository-name", "generation-model", "verification-model", "generation-credential-environment", "verification-credential-environment", "endpoint", "declared-by", "valid-from", "valid-until", "reviewed-at", "evidence-retrieved-at", "generation-provider-slug", "verification-provider-slug", "generation-upstream-evidence", "verification-upstream-evidence", "generation-slug-evidence", "verification-slug-evidence", "generation-model-evidence", "verification-model-evidence", "broker-evidence", "account-evidence"}
 var remoteBootstrapUintFlags = []string{"context-tokens", "output-tokens", "max-output-tokens", "input-micro-usd-per-million-tokens", "output-micro-usd-per-million-tokens", "max-cost-micro-usd"}
 var remoteBootstrapBoolFlags = []string{"declare-remote-route", "declare-openrouter-zdr-account", "declare-opencode-go-account", "declare-ollama-cloud-signin"}
 
@@ -731,7 +731,11 @@ func initializeRemoteSetupBootstrap(ctx context.Context, dir string, values map[
 		}
 		observed["generation"], observed["verification"] = tags[0], tags[1]
 	}
+	if !validSetupSpecialists(value("specialists")) {
+		return errors.New("--specialists must be auto or none")
+	}
 	reviewArgs := []string{"--checkout", checkout, "--base", source.base, "--head", source.head, "--repository-authority", value("repository-authority"), "--repository-namespace", value("repository-namespace"), "--repository-name", value("repository-name"), "--tenant", value("tenant"), "--repository", value("repository"), "--route-inventory", filepath.Join(dir, "routes.json"), "--runtime-policy", filepath.Join(dir, "policy.json"), "--egress", string(localreview.EgressPolicyApproved), "--timeout", remoteReviewTimeout(reviewOutputTokens), "--format", "text"}
+	reviewArgs = append(reviewArgs, setupSpecialistsArgs(value("specialists"))...)
 	if _, _, _, _, err := parseLocalModelReview(reviewArgs); err != nil {
 		return errors.New("invalid --tenant, --repository or repository labels for local-git model-review")
 	}

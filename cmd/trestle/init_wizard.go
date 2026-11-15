@@ -72,7 +72,7 @@ var initLocalServers = []struct{ name, endpoint string }{
 	{"vLLM", "http://127.0.0.1:8000/v1"},
 }
 
-var initStringFlags = []string{"directory", "base", "head", "provider", "endpoint", "verification-endpoint", "transport", "generation-model", "verification-model", "credential-env", "owner", "tenant", "repository", "repository-authority", "repository-namespace", "repository-name", "context-tokens", "output-tokens", "max-output-tokens", "input-micro-usd-per-million-tokens", "output-micro-usd-per-million-tokens", "max-cost-micro-usd", "spending-limit", "spending-alert", "generation-provider-slug", "verification-provider-slug", "generation-model-evidence", "verification-model-evidence", "broker-evidence", "account-evidence", "evidence-retrieved-at", "reviewed-at", "valid-from", "valid-until"}
+var initStringFlags = []string{"directory", "base", "head", "provider", "endpoint", "verification-endpoint", "transport", "generation-model", "verification-model", "credential-env", "owner", "tenant", "repository", "repository-authority", "repository-namespace", "repository-name", "context-tokens", "output-tokens", "max-output-tokens", "input-micro-usd-per-million-tokens", "output-micro-usd-per-million-tokens", "max-cost-micro-usd", "spending-limit", "spending-alert", "specialists", "generation-provider-slug", "verification-provider-slug", "generation-model-evidence", "verification-model-evidence", "broker-evidence", "account-evidence", "evidence-retrieved-at", "reviewed-at", "valid-from", "valid-until"}
 var initBoolFlags = []string{"no-input", "run-review", "allow-local-probe", "declare-local-capabilities", "declare-remote-route", "without-zdr", "declare-opencode-go-account", "declare-ollama-cloud-signin"}
 
 // initStop ends the wizard with a plain-language reason and exit code.
@@ -232,7 +232,7 @@ var initFlagValues = map[string]string{
 	"repository-authority": "LABEL", "repository-namespace": "LABEL", "repository-name": "LABEL",
 	"context-tokens": "N", "output-tokens": "N", "max-output-tokens": "N",
 	"input-micro-usd-per-million-tokens": "N", "output-micro-usd-per-million-tokens": "N", "max-cost-micro-usd": "N",
-	"spending-limit": "USD", "spending-alert": "PERCENT",
+	"spending-limit": "USD", "spending-alert": "PERCENT", "specialists": "auto|none",
 	"generation-provider-slug": "SLUG[,SLUG]", "verification-provider-slug": "SLUG[,SLUG]",
 	"evidence-retrieved-at": "UTC_TIME", "reviewed-at": "UTC_TIME", "valid-from": "UTC_TIME", "valid-until": "UTC_TIME",
 }
@@ -314,7 +314,21 @@ func (w *initWizard) parseFlags(args []string) (int, bool) {
 			w.bools[f.Name] = *bools[f.Name]
 		}
 	})
+	if value, given := w.flags["specialists"]; given && !validSetupSpecialists(value) || given && value == "" {
+		fmt.Fprintln(w.errOut, "trestle init: --specialists must be auto (the default: the general review, then specialist reviews picked from the change) or none (the general review only).")
+		return initExitUsage, true
+	}
 	return 0, false
+}
+
+// specialists is the specialist choice the setup saves: auto unless
+// --specialists none was given. It is never asked: the default runs them,
+// and the flag turns them off.
+func (w *initWizard) specialists() string {
+	if value := w.flags["specialists"]; value == specialistModeNone {
+		return specialistModeNone
+	}
+	return specialistModeAuto
 }
 
 // say prints text, each line wrapped to initWidth columns.

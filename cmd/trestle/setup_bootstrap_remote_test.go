@@ -187,7 +187,10 @@ func remoteBootstrapArgs(t *testing.T, providerName string) ([]string, string) {
 	}
 	now := time.Now().UTC().Truncate(time.Second)
 	reviewed := now.Add(-2 * time.Hour).Format(time.RFC3339)
-	args := []string{"init", "--provider", providerName, "--directory", directory, "--tenant", "tenant-remote", "--repository", "repository-remote", "--checkout", remoteBootstrapCheckout(t), "--base", "refs/heads/base", "--head", "refs/heads/review", "--repository-authority", "example.test", "--repository-namespace", "private/team", "--repository-name", "sample", "--generation-model", "vendor/generator", "--verification-model", "other/verifier", "--generation-credential-environment", "OPEN_TRESTLE_PROVIDER_REMOTE_TEST", "--declared-by", "fixture-operator", "--context-tokens", "128000", "--output-tokens", "8192", "--input-micro-usd-per-million-tokens", "1000000", "--output-micro-usd-per-million-tokens", "2000000", "--max-cost-micro-usd", "1000000", "--declare-remote-route"}
+	args := []string{"init", "--provider", providerName, "--directory", directory, "--tenant", "tenant-remote", "--repository", "repository-remote", "--checkout", remoteBootstrapCheckout(t), "--base", "refs/heads/base", "--head", "refs/heads/review", "--repository-authority", "example.test", "--repository-namespace", "private/team", "--repository-name", "sample", "--generation-model", "vendor/generator", "--verification-model", "other/verifier", "--generation-credential-environment", "OPEN_TRESTLE_PROVIDER_REMOTE_TEST", "--declared-by", "fixture-operator", "--context-tokens", "128000", "--output-tokens", "8192", "--input-micro-usd-per-million-tokens", "1000000", "--output-micro-usd-per-million-tokens", "2000000", "--max-cost-micro-usd", "1000000", "--declare-remote-route",
+		// These tests cover the single general review; specialists by default
+		// have their own tests.
+		"--specialists", "none"}
 	witness := []string{"--evidence-retrieved-at", reviewed, "--reviewed-at", reviewed, "--valid-from", now.Add(-time.Hour).Format(time.RFC3339), "--valid-until", now.Add(24 * time.Hour).Format(time.RFC3339), "--broker-evidence", "https://evidence.fixture.invalid/broker," + remoteTestDigest, "--account-evidence", "https://evidence.fixture.invalid/account," + remoteTestDigest}
 	switch providerName {
 	case "openrouter-zdr", "openrouter":

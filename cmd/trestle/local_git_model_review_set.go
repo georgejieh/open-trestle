@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/georgejieh/open-trestle/agentprofile"
 	"github.com/georgejieh/open-trestle/diagnostics"
@@ -399,6 +400,10 @@ type setBoundsWire struct {
 	MaxModelWallTimeMillis   int64  `json:"max_model_wall_time_milliseconds"`
 	MemberCleanupBoundMillis int64  `json:"member_cleanup_bound_milliseconds"`
 	Execution                string `json:"execution"`
+	// Concurrency is how many specialist members could run at once (1 when
+	// they ran one by one); SequentialReason names why they ran one by one.
+	Concurrency      int    `json:"specialist_concurrency"`
+	SequentialReason string `json:"sequential_reason,omitempty"`
 }
 
 type modelReviewSetWire struct {
@@ -483,36 +488,62 @@ func runLocalModelReviewSet(ctx, execution context.Context, options localModelRe
 	if report, err := general.result.Report(); err != nil || report.RunStatus != "succeeded" {
 		stopReason = "general_review_did_not_complete"
 	}
-	for index, specialist := range selected {
+	// Specialists run in waves of up to concurrency members at once (one
+	// member per wave when they must run one by one). A wave starts only when
+	// the invocation is not canceled and every launched member succeeded.
+	concurrency, sequentialReason := 1, ""
+	if stopReason == "" {
+		concurrency, sequentialReason = specialistConcurrency(inputs, len(selected))
+	}
+	for start := 0; start < len(selected); start += concurrency {
+		end := min(start+concurrency, len(selected))
 		if stopReason == "" && ctx != nil && ctx.Err() != nil {
 			stopReason = "canceled"
 		}
 		if stopReason != "" {
-			result, err := localreview.NewUnstartedSpecialistResult(unlaunchedStatus(stopReason), options.objectStoreProfile, specialist)
-			if err != nil {
-				return 1
+			for index := start; index < end; index++ {
+				result, err := localreview.NewUnstartedSpecialistResult(unlaunchedStatus(stopReason), options.objectStoreProfile, selected[index])
+				if err != nil {
+					return 1
+				}
+				notLaunched[index+1] = stopReason
+				members = append(members, localModelReviewMember{specialist: selected[index], result: result})
 			}
-			notLaunched[index+1] = stopReason
-			members = append(members, localModelReviewMember{specialist: specialist, result: result})
 			continue
 		}
-		memberExecution, cancel := context.WithTimeout(ctx, options.timeout)
-		member, ok := runLocalModelReviewMember(ctx, memberExecution, options, inputs, specialist, false)
-		cancel()
-		if !ok {
-			return 1
+		wave := make([]localModelReviewMember, end-start)
+		launched := make([]bool, end-start)
+		var group sync.WaitGroup
+		for index := start; index < end; index++ {
+			group.Add(1)
+			go func(slot int, specialist review.ContextSpecialist) {
+				defer group.Done()
+				memberExecution, cancel := context.WithTimeout(ctx, options.timeout)
+				defer cancel()
+				wave[slot], launched[slot] = runLocalModelReviewMember(ctx, memberExecution, options, inputs, specialist, false)
+			}(index-start, selected[index])
 		}
-		if member.partialCheckout {
-			fmt.Fprintln(stderr, partialCheckoutHint)
-		}
-		members = append(members, member)
-		if report, err := member.result.Report(); err != nil {
-			stopReason = "stopped_after_" + specialist.ProfileID() + "_unreadable"
-		} else if report.RunStatus != "succeeded" {
-			stopReason = "stopped_after_" + specialist.ProfileID() + "_" + report.Status
+		group.Wait()
+		// Members are recorded in selection order, whichever finished first.
+		for slot, member := range wave {
+			if !launched[slot] {
+				return 1
+			}
+			if member.partialCheckout {
+				fmt.Fprintln(stderr, partialCheckoutHint)
+			}
+			members = append(members, member)
+			if stopReason != "" {
+				continue
+			}
+			if report, err := member.result.Report(); err != nil {
+				stopReason = "stopped_after_" + member.specialist.ProfileID() + "_unreadable"
+			} else if report.RunStatus != "succeeded" {
+				stopReason = "stopped_after_" + member.specialist.ProfileID() + "_" + report.Status
+			}
 		}
 	}
-	set := buildModelReviewSet(selection, members, notLaunched, options)
+	set := buildModelReviewSet(selection, members, notLaunched, options, concurrency, sequentialReason)
 	inputs.spending.finish()
 	if observe != nil {
 		observe(modelReviewOutcome{status: set.Status, findings: len(set.Findings)})
@@ -550,21 +581,75 @@ func memberLabel(specialist review.ContextSpecialist) string {
 }
 
 // buildModelReviewSet summarizes members and merges their verified findings.
-func buildModelReviewSet(selection specialistSelectionWire, members []localModelReviewMember, notLaunched map[int]string, options localModelReviewOptions) modelReviewSetWire {
+// maxConcurrentSpecialists bounds the specialist members that run at once.
+const maxConcurrentSpecialists = 3
+
+// Reasons specialist members run one by one.
+const (
+	sequentialOneSpecialist   = "at_most_one_specialist"
+	sequentialLocalRoute      = "local_model_route"
+	sequentialLoopbackService = "loopback_model_service"
+	sequentialSpendingLimit   = "spending_limit_could_be_passed"
+)
+
+// specialistConcurrency decides how many of count specialist members may run
+// at once, and otherwise why they run one by one. Members are independent
+// sessions with their own run, objects root, gateway and route state, and the
+// spending record is serialized, so the code allows concurrency. It is used
+// only where the routes allow it: never for a model on this machine or a
+// loopback service (such as a local Ollama, which serializes requests, so
+// concurrent members would only share one member's timeout), and never when a
+// limited key's recorded spend plus the wave's worst case could reach its
+// limit, so the one-by-one limit check is never defeated.
+func specialistConcurrency(inputs localModelReviewInputs, count int) (int, string) {
+	if count <= 1 {
+		return 1, sequentialOneSpecialist
+	}
+	for _, candidate := range inputs.inventory.Candidates() {
+		if candidate.ResolvedRecord().RouteRegistryRecord().RouteCandidateDeclaration().RouteCapabilityDeclaration().RouteReference().Zone() == provider.ProviderZoneLocal {
+			return 1, sequentialLocalRoute
+		}
+	}
+	for _, connection := range inputs.policy.Connections() {
+		if locality, err := provider.ClassifyServiceEndpoint(connection.Endpoint()); err != nil || locality == provider.ServiceEndpointLoopback {
+			return 1, sequentialLoopbackService
+		}
+	}
+	concurrency := min(count, maxConcurrentSpecialists)
+	if !inputs.spending.batchWithinLimits(concurrency) {
+		return 1, sequentialSpendingLimit
+	}
+	return concurrency, ""
+}
+
+func buildModelReviewSet(selection specialistSelectionWire, members []localModelReviewMember, notLaunched map[int]string, options localModelReviewOptions, concurrency int, sequentialReason string) modelReviewSetWire {
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	execution := "sequential: general review first, then selected specialists in priority order; each member has its own timeout and independent verification"
+	parallelism := "sequential_members_no_parallelism"
+	if concurrency > 1 {
+		execution = fmt.Sprintf("concurrent: general review first, then selected specialists up to %d at a time, in priority order; each member has its own timeout and independent verification", concurrency)
+		parallelism = "specialists_concurrent_bounded"
+	}
+	specialists := max(len(members)-1, 0)
+	waves := (specialists + concurrency - 1) / concurrency
 	set := modelReviewSetWire{
 		Contract: modelReviewSetContract, Version: modelReviewSetVersion, Selection: selection, Members: []setMemberWire{}, Findings: []setFindingWire{},
 		Summary: setSummaryWire{BySeverity: map[string]int{}, ByCategory: map[string]int{}, MembersSelected: len(members)},
 		Limitations: []string{
-			"per_profile_route_assignment_not_applied", "sequential_members_no_parallelism", "deduplication_is_heuristic",
+			"per_profile_route_assignment_not_applied", parallelism, "deduplication_is_heuristic",
 			"merged_findings_only_from_completed_members", "no_publication",
 		},
 	}
 	cleanup := localModelCleanupTimeout(options.timeout)
 	set.Bounds = setBoundsWire{
 		MaxSpecialists: selection.MaxSpecialists, MemberTimeoutMillis: options.timeout.Milliseconds(),
-		MaxModelWallTimeMillis:   int64(len(members)) * options.timeout.Milliseconds(),
+		MaxModelWallTimeMillis:   int64(1+waves) * options.timeout.Milliseconds(),
 		MemberCleanupBoundMillis: cleanup.Milliseconds(),
-		Execution:                "sequential: general review first, then selected specialists in priority order; each member has its own timeout and independent verification",
+		Execution:                execution,
+		Concurrency:              concurrency,
+		SequentialReason:         map[bool]string{true: "", false: sequentialReason}[concurrency > 1],
 	}
 	// Style advice derives from the change and base tree that every member
 	// shares, so the set reports the general member's once, never per member.

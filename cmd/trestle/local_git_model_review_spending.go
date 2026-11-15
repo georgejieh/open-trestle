@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/georgejieh/open-trestle/internal/provider"
@@ -44,11 +45,42 @@ type reviewSpending struct {
 	policy string
 	// worst is the most one review run may cost: the per-request bound for
 	// each of its two requests, or an investigation policy's run budget.
-	worst  uint64
+	worst uint64
+	// runs is how many review runs the invocation may start: 1, or for a
+	// specialist review set the general review plus every specialist it may
+	// select. The first check warns for all of them.
+	runs   int
 	text   bool
 	stderr io.Writer
 	// shown records keys whose status was already printed this invocation.
 	shown map[spending.Scope]bool
+	// mu serializes checks, ledger appends and messages: specialist members
+	// may run concurrently.
+	mu sync.Mutex
+	// warned is set once the invocation's worst case was checked.
+	warned bool
+}
+
+// invocationRuns is how many review runs an invocation may start.
+func invocationRuns(options localModelReviewOptions) int {
+	switch request := options.specialists; request.mode {
+	case specialistModeExplicit:
+		return 1 + len(request.explicit)
+	case specialistModeAuto:
+		return 1 + request.max
+	}
+	return 1
+}
+
+// timesRuns multiplies a per-run bound by runs, saturating.
+func timesRuns(bound uint64, runs int) uint64 {
+	if runs <= 1 {
+		return bound
+	}
+	if bound > ^uint64(0)/uint64(runs) {
+		return ^uint64(0)
+	}
+	return bound * uint64(runs)
 }
 
 // newReviewSpending returns nil when no remote route uses an API key: the
@@ -89,7 +121,7 @@ func newReviewSpending(inputs localModelReviewInputs, options localModelReviewOp
 	if options.investigation != "" {
 		worst = inputs.investigationPolicy.MaxCostMicroUSD()
 	}
-	s := &reviewSpending{scopes: scopes, models: models, policy: inputs.policy.Identity(), worst: worst, text: options.format == "text", stderr: stderr, shown: map[spending.Scope]bool{}}
+	s := &reviewSpending{scopes: scopes, models: models, policy: inputs.policy.Identity(), worst: worst, runs: invocationRuns(options), text: options.format == "text", stderr: stderr, shown: map[spending.Scope]bool{}}
 	dir, err := spending.DefaultDirectory(os.Getenv)
 	if err == nil {
 		s.store, err = spending.NewStore(dir)
@@ -110,10 +142,18 @@ func (s *reviewSpending) say(lines ...string) {
 
 // refuse checks every limited key before a run. It reports true when a key is
 // at or over its limit; the caller then returns the refusal result without
-// opening a session, reading a credential or sending a request.
+// opening a session, reading a credential or sending a request. The first
+// check of an invocation also warns when its worst case, every run it may
+// start, could pass a limit; later checks of a review set only refuse.
 func (s *reviewSpending) refuse() bool {
 	if s == nil || s.store == nil {
 		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	worst := uint64(0)
+	if !s.warned {
+		worst, s.warned = timesRuns(s.worst, s.runs), true
 	}
 	now := spendingNow()
 	refused := false
@@ -135,8 +175,11 @@ func (s *reviewSpending) refuse() bool {
 		case status.Reached():
 			refused = true
 			lines = append(lines, status.ReachedLine())
-		case status.WouldCross(s.worst):
-			lines = append(lines, status.WarningLine(s.worst))
+		case status.WouldCross(worst):
+			lines = append(lines, status.WarningLine(worst))
+			if s.runs > 1 {
+				lines = append(lines, fmt.Sprintf("That counts every review this command may run: the general review and up to %d specialist review%s, each up to %s.", s.runs-1, map[bool]string{true: "", false: "s"}[s.runs == 2], spending.FormatUSD(s.worst)))
+			}
 		}
 	}
 	if len(lines) != 0 {
@@ -156,6 +199,8 @@ func (s *reviewSpending) record(runID string, result localreview.Result, observe
 	if s.store == nil {
 		return
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	cost, known := observed.UpperBoundMicroUSD, false
 	if report, err := result.Report(); err == nil && report.UsageKnown {
 		cost, known = report.ActualCostMicroUSD, true
@@ -204,6 +249,8 @@ func (s *reviewSpending) finish() {
 	if s == nil || s.store == nil || !s.text {
 		return
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	now := spendingNow()
 	var lines []string
 	for _, scope := range s.scopes {
@@ -224,4 +271,32 @@ func (s *reviewSpending) finish() {
 	if len(lines) != 0 {
 		s.say(lines...)
 	}
+}
+
+// batchWithinLimits reports whether runs more review runs could start at once
+// without any limited key's recorded spend plus their worst case reaching its
+// limit. Specialist members run concurrently only then, so concurrency never
+// defeats the one-by-one limit check. Without a usage folder no limit is
+// enforced, so nothing is defeated.
+func (s *reviewSpending) batchWithinLimits(runs int) bool {
+	if s == nil || s.store == nil {
+		return true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := spendingNow()
+	for _, scope := range s.scopes {
+		limit, found, err := s.store.Limit(scope)
+		if err == nil && !found {
+			continue
+		}
+		if err != nil {
+			return false
+		}
+		status, err := s.store.CurrentStatus(limit, now)
+		if err != nil || status.Reached() || status.WouldCross(timesRuns(s.worst, runs)) {
+			return false
+		}
+	}
+	return true
 }

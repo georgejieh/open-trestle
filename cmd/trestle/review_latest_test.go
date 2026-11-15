@@ -40,7 +40,16 @@ func latestChangeCheckout(t *testing.T) string {
 
 // latestChangeSetup saves a ready Ollama Cloud setup for the checkout in the
 // folder trestle init proposes, under a private HOME, and returns the folder.
+// latestChangeSetup saves the setup for the single general review, which
+// these tests cover; latestChangeSetupWith keeps trestle init's default
+// (specialists on) unless extra flags choose.
 func latestChangeSetup(t *testing.T, checkout string) string {
+	t.Helper()
+	return latestChangeSetupWith(t, checkout, "--specialists", "none")
+}
+
+// latestChangeSetupWith is latestChangeSetup with extra trestle init flags.
+func latestChangeSetupWith(t *testing.T, checkout string, extra ...string) string {
 	t.Helper()
 	keyStoreForTest(t)
 	clearSessionKeys(t)
@@ -49,7 +58,7 @@ func latestChangeSetup(t *testing.T, checkout string) string {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("OPEN_TRESTLE_PROVIDER_REMOTE_TEST", remoteTestKey)
 	args := []string{"--no-input", "--provider", "ollama-cloud", "--generation-model", "gemma4:31b", "--verification-model", "qwen3.5:397b", "--context-tokens", "128000", "--output-tokens", "8192", "--input-micro-usd-per-million-tokens", "0", "--output-micro-usd-per-million-tokens", "0", "--max-cost-micro-usd", "0", "--credential-env", "OPEN_TRESTLE_PROVIDER_REMOTE_TEST", "--declare-remote-route"}
-	setup := runInitScript(t, checkout, args)
+	setup := runInitScriptAsIs(t, checkout, append(args, extra...))
 	if setup.code != initExitDone {
 		t.Fatalf("setup: exit=%d\n%s\n%s", setup.code, setup.stdout, setup.stderr)
 	}

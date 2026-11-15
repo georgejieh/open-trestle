@@ -144,6 +144,11 @@ func (w *initWizard) summaryRows() [][2]string {
 		runsOn += ", zero data retention not required by Open Trestle"
 	}
 	rows := [][2]string{{"Review", commits}, {"Runs on", runsOn}, {"Finder", a.generationModel}, {"Checker", a.verificationModel}}
+	if w.specialists() == specialistModeNone {
+		rows = append(rows, [2]string{"Specialists", "off: the general review only (--specialists auto turns them on)"})
+	} else {
+		rows = append(rows, [2]string{"Specialists", fmt.Sprintf("on: the general review, then up to %d specialist reviews picked from the change, each a full review (--specialists none turns them off)", defaultMaxSpecialists)})
+	}
 	if a.contextTokens != "" {
 		rows = append(rows, [2]string{"Limits", "context " + a.contextTokens + " · output " + a.outputTokens + " tokens"})
 	}
