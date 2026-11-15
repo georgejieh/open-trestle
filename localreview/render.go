@@ -226,7 +226,7 @@ func FindingsText(ranked []MergedFinding, options RenderOptions, contributorsOf 
 		}
 	}
 	if note := HiddenNote(hidden); note != "" {
-		buffer.WriteString("not shown: " + note + "\n")
+		buffer.WriteString("hidden: " + note + "\n")
 	}
 	return buffer.String()
 }

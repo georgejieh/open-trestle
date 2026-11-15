@@ -65,7 +65,7 @@ func TestModelReviewTextShowsWalkthroughThenRankedFindings(t *testing.T) {
 		"finding: error Zero-valued caller now panics\nrank: 1\nsource: a.go:2-2\n",
 		"coverage: candidates=1 verified=1 rejected=0 inconclusive=0\n",
 		"limitations: ", "comprehensive clearance: false\n")
-	if strings.Contains(text, "not shown:") || strings.Contains(text, "pre-existing findings") {
+	if strings.Contains(text, "hidden:") || strings.Contains(text, "pre-existing findings") {
 		t.Fatalf("text shows sections it has no findings for:\n%s", text)
 	}
 }
@@ -75,12 +75,12 @@ func TestModelReviewTextShowsWalkthroughThenRankedFindings(t *testing.T) {
 func TestModelReviewTextHidesLowSeverityUnlessAll(t *testing.T) {
 	f := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, verificationMode: "low"})
 	text := runModelReviewOutput(t, f, []string{"--format", "text"}, 4)
-	if strings.Contains(text, "finding: information") || !strings.Contains(text, "not shown: 1 lower-severity finding not shown; add --all to list every finding (the JSON output lists all)\n") || strings.Contains(text, "confirmed findings (ranked)") {
+	if strings.Contains(text, "finding: information") || !strings.Contains(text, "hidden: 1 lower-severity finding not shown; add --all to list every finding (the JSON output lists all)\n") || strings.Contains(text, "confirmed findings (ranked)") {
 		t.Fatalf("default text did not count the low finding:\n%s", text)
 	}
 	all := runModelReviewOutput(t, f, []string{"--format", "text", "--all"}, 4)
 	requireInOrder(t, all, "confirmed findings (ranked): 1\n", "finding: information Zero-valued caller now panics\nrank: 1\n")
-	if strings.Contains(all, "not shown:") {
+	if strings.Contains(all, "hidden:") {
 		t.Fatalf("--all still hid a finding:\n%s", all)
 	}
 	var receipt judgementReceipt
