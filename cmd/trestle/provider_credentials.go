@@ -5,7 +5,6 @@ import (
 	"sync"
 
 	"github.com/georgejieh/open-trestle/internal/credentialstore"
-	"github.com/georgejieh/open-trestle/spending"
 )
 
 // Provider API keys (the OPEN_TRESTLE_PROVIDER_* variables) are found in this
@@ -123,11 +122,11 @@ func (s providerKeyState) where() string {
 }
 
 // providerCredentialDisplayDirectory is the credential folder as shown on
-// screen, with ~ for the home folder.
+// screen: ~ for the home folder, and a long path shortened in the middle.
 func providerCredentialDisplayDirectory() string {
 	dir, err := providerCredentialDirectory()
 	if err != nil {
 		return "~/.config/open-trestle/credentials"
 	}
-	return spending.DisplayDirectory(dir)
+	return initDisplayPath(dir)
 }

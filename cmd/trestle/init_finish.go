@@ -296,6 +296,7 @@ func (w *initWizard) stepWrite() (int, error) {
 	w.saved = true
 	w.say("  %s Saved protected configuration in %s", w.ok, initDisplayPath(dir))
 	w.saveSpendingLimit()
+	w.saveEnteredKey()
 	setup, err := w.loadSetup()
 	if err != nil {
 		return 0, err

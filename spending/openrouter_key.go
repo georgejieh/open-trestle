@@ -30,6 +30,22 @@ const (
 // never carries the key or the response body.
 var ErrOpenRouterKeyUnreadable = errors.New("OpenRouter's usage could not be read")
 
+// OpenRouterKeyStatusError is a report request that OpenRouter answered with
+// a status other than 200. It is an ErrOpenRouterKeyUnreadable; 401 and 403
+// mean OpenRouter does not accept the key.
+type OpenRouterKeyStatusError struct{ StatusCode int }
+
+func (e OpenRouterKeyStatusError) Error() string {
+	return fmt.Sprintf("%s: OpenRouter answered with HTTP status %d", ErrOpenRouterKeyUnreadable, e.StatusCode)
+}
+
+func (e OpenRouterKeyStatusError) Unwrap() error { return ErrOpenRouterKeyUnreadable }
+
+// KeyRefused reports a 401 or 403 answer: OpenRouter does not accept the key.
+func (e OpenRouterKeyStatusError) KeyRefused() bool {
+	return e.StatusCode == http.StatusUnauthorized || e.StatusCode == http.StatusForbidden
+}
+
 // OpenRouterKeyUsage is the bounded numeric part of OpenRouter's report for
 // one key, in micro-US-dollars, and the word that names when its limit
 // resets. Nothing else is read: in particular the label, which holds a masked
@@ -191,7 +207,7 @@ func ReadOpenRouterKeyUsage(ctx context.Context, transport http.RoundTripper, ke
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return OpenRouterKeyUsage{}, fmt.Errorf("%w: OpenRouter answered with HTTP status %d", ErrOpenRouterKeyUnreadable, response.StatusCode)
+		return OpenRouterKeyUsage{}, OpenRouterKeyStatusError{StatusCode: response.StatusCode}
 	}
 	if response.ContentLength > openRouterKeyMaxBytes {
 		return OpenRouterKeyUsage{}, fmt.Errorf("%w: the report is larger than 64 KiB", ErrOpenRouterKeyUnreadable)

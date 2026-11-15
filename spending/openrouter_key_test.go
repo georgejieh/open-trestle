@@ -117,8 +117,19 @@ func TestOpenRouterKeyUsageRefusesMalformedMissingAndOversizedReports(t *testing
 	}
 	// A refusal names only the status; the body is never read into the error.
 	denied := &fakeKeyAPI{status: http.StatusUnauthorized, body: `{"error":{"message":"No auth credentials found for ` + testOpenRouterKey + `"}}`}
-	if _, err := ReadOpenRouterKeyUsage(context.Background(), denied, testOpenRouterKey); err == nil || err.Error() != "OpenRouter's usage could not be read: OpenRouter answered with HTTP status 401" {
+	_, err := ReadOpenRouterKeyUsage(context.Background(), denied, testOpenRouterKey)
+	if err == nil || err.Error() != "OpenRouter's usage could not be read: OpenRouter answered with HTTP status 401" {
 		t.Fatalf("a refused read: %v", err)
+	}
+	// The status is available to a caller that checks whether the key itself
+	// was refused, as setup does when a key is typed in.
+	var status OpenRouterKeyStatusError
+	if !errors.As(err, &status) || !status.KeyRefused() || !errors.Is(err, ErrOpenRouterKeyUnreadable) {
+		t.Fatalf("a 401 is not a refused key: %#v", err)
+	}
+	unavailable := &fakeKeyAPI{status: http.StatusServiceUnavailable}
+	if _, err := ReadOpenRouterKeyUsage(context.Background(), unavailable, testOpenRouterKey); !errors.As(err, &status) || status.KeyRefused() || status.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("a 503 was reported as a refused key: %v", err)
 	}
 	// A redirect is never followed, so the key never goes to another address.
 	moved := &fakeKeyAPI{status: http.StatusFound, header: http.Header{"Location": []string{"https://example.test/key"}}}

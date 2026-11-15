@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os"
 	"os/user"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -163,6 +164,8 @@ func (w *initWizard) summaryRows() [][2]string {
 	switch state := providerKeyStatus(a.credentialEnv); {
 	case a.credentialEnv == "":
 		rows = append(rows, [2]string{"Key", "none"})
+	case state.source == providerKeyFromSession && slices.Contains(w.enteredKeys, a.credentialEnv):
+		rows = append(rows, [2]string{"Key", a.credentialEnv + " (to be saved in " + providerCredentialDisplayDirectory() + " with the setup)"})
 	case state.available():
 		rows = append(rows, [2]string{"Key", a.credentialEnv + " (" + state.where() + ")"})
 	default:

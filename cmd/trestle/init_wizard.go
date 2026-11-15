@@ -135,6 +135,11 @@ type initWizard struct {
 	openRouter              *openRouterObservation
 	zdr                     bool // every OpenRouter request requires zero data retention
 	style                   initStyle
+	// terminal is standard input's terminal when its echo can be turned off
+	// for typing an API key; nil otherwise, and then no key is asked for.
+	terminal echoTerminal
+	// enteredKeys names typed keys to save once the setup is saved.
+	enteredKeys []string
 }
 
 func runInit(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -151,6 +156,9 @@ func runInitWithClock(ctx context.Context, args []string, stdin io.Reader, stdou
 	if !w.bools["no-input"] {
 		w.prompt = newInitPrompter(ctx, stdin, stdout, w.style, func(line string) { w.say("%s", line) })
 		defer w.prompt.close()
+		if terminal, ok := openEchoTerminal(stdin); ok {
+			w.terminal = terminal
+		}
 	}
 	code, err := w.run()
 	if err != nil {
@@ -1351,9 +1359,11 @@ func initCredentialName(value string) (string, error) {
 }
 
 // stepCredentials names the key variable. The provider's usual name is used
-// unless --credential-env names another; the key itself is never asked for,
-// stored or shown. A local server needs no key when both model lists were
-// read without one; otherwise the operator says whether it does.
+// unless --credential-env names another. When that variable has no key yet
+// and standard input is a terminal, the key is asked for with hidden input
+// (askProviderKey); it is never shown. A local server needs no key when both
+// model lists were read without one; otherwise the operator says whether it
+// does.
 func (w *initWizard) stepCredentials() error {
 	if w.a.provider.key == ollamaSigninProvider {
 		w.say("  No API key: your local Ollama sends requests to Ollama Cloud with the account it is signed in to (`ollama signin`). Open Trestle stores and sends no key.")
@@ -1387,6 +1397,9 @@ func (w *initWizard) stepCredentials() error {
 			return initStopf(initExitUsage, "--credential-env: %v", err)
 		}
 		w.a.credentialEnv = name
+	}
+	if err := w.askProviderKey(w.a.credentialEnv, w.a.provider.key, w.a.provider.short, false); err != nil {
+		return err
 	}
 	return w.spendingLimit()
 }
