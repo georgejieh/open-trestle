@@ -352,6 +352,11 @@ the reviews that confirmed it (`contributors: general, bug_hunter`).
 - `pre-existing findings`: confirmed problems on unchanged lines that cite
   nothing the change touched. They are listed separately and never make the
   review blocking.
+- `ci: inconclusive` with `status: findings`: an advisory review. Every
+  confirmed finding is low severity or pre-existing, so none blocks CI (exit
+  `3` by default, `0` with `--exit-code-policy findings`), and the closing line
+  says so. Only a medium, high or critical finding the change introduced makes
+  a review `ci: blocked` (exit `4`).
 - `no_candidates`: nothing was found and confirmed. That is not proof the change
   is correct.
 - `incomplete`: part of the change was not covered; see the coverage and
@@ -400,7 +405,9 @@ garbage-collected.
   `trestle local-git model-review`. `--timeout`, `--profile`, `--specialists`,
   `--max-specialists` and `--exit-code-policy` pass through to that command,
   and so do its [exit codes](local-model-review.md) (for example `4` when a
-  confirmed high or critical finding blocks).
+  confirmed medium, high or critical finding blocks, and `3` for an
+  [advisory](local-model-review.md#advisory-results) review whose findings are
+  all low severity or pre-existing).
 - **Nothing is sent** when the repository has no setup (run `trestle init`),
   when there is no committed change to review, or when no API key is found
   (`trestle keys set NAME`); `trestle review` says so and exits `3`.

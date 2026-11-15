@@ -2,6 +2,8 @@ package localreview
 
 import (
 	"slices"
+
+	"github.com/georgejieh/open-trestle/diagnostics"
 )
 
 // The deterministic judgement of a completed review: after independent
@@ -27,14 +29,30 @@ func singleRunOrigin(wire resultWire) string {
 	return "general"
 }
 
+// BlocksCI reports whether a verified finding makes a completed review
+// blocking: a medium, high or critical finding that the change introduced. A
+// low-severity finding (diagnostic information, or a hint) and a pre-existing
+// finding are advisory and never block CI.
+func BlocksCI(severity diagnostics.Severity, preExisting bool) bool {
+	return !preExisting && severityRank(severity) >= severityRank(diagnostics.SeverityWarning)
+}
+
+// Blocking reports whether the merged finding blocks CI (see BlocksCI): its
+// representative's severity is medium or higher and at least one contributor
+// is on lines the change touched.
+func (m MergedFinding) Blocking() bool {
+	return BlocksCI(m.Finding.Severity, m.PreExisting())
+}
+
 // judgeResult records the judgement of a completed run that has diagnostics.
 // A verified finding is pre-existing when lines classify it so (see
 // changeLines.preExisting); lines without change evidence classify none. When
-// every verified finding is pre-existing, the result keeps status findings
-// and its CI disposition becomes inconclusive: a pre-existing finding never
-// blocks CI. Only this function marks a result judged, so only a
-// classification this process made from the run's own artifacts relaxes
-// anything; a parsed result's pre_existing list stays advisory.
+// no verified finding blocks CI (each is low severity or pre-existing, see
+// BlocksCI), the result keeps status findings and its CI disposition becomes
+// inconclusive: the run is advisory. Only this function marks a result
+// judged, so only a classification this process made from the run's own
+// artifacts relaxes anything; a parsed result's pre_existing list stays
+// advisory.
 func judgeResult(result Result, lines changeLines) (Result, error) {
 	result.judged = true
 	report, err := result.Report()
@@ -51,10 +69,30 @@ func judgeResult(result Result, lines changeLines) (Result, error) {
 	}
 	result.wire.PreExisting = preExisting
 	result.wire.Rank = rankEntries(report.Findings, singleRunOrigin(result.wire), report.Independence)
-	if result.wire.Status == "findings" && len(report.Findings) > 0 && len(preExisting) == len(report.Findings) {
+	if result.wire.Status == "findings" && len(report.Findings) > 0 && !slices.ContainsFunc(report.Findings, func(finding ReportFinding) bool { return BlocksCI(finding.Severity, finding.PreExisting) }) {
 		result.wire.CI = "inconclusive"
 	}
 	return result, nil
+}
+
+// expectedImportedCI is the CI disposition a parsed completed result must
+// carry, re-derived from what the result records: the readiness disposition,
+// except that a version 6 result with verified findings that are all low
+// severity is advisory (inconclusive). The pre-existing class cannot be
+// re-derived without the change, so it never relaxes the disposition here,
+// and a result whose disposition it relaxed is refused. Results before
+// version 6 were written before low-severity runs became advisory and keep
+// the readiness disposition.
+func expectedImportedCI(version int, findings []diagnostics.Finding, readinessCI string) string {
+	if version != tokenUsageResultVersion || readinessCI != "blocked" || len(findings) == 0 {
+		return readinessCI
+	}
+	for _, finding := range findings {
+		if BlocksCI(finding.Severity(), false) {
+			return readinessCI
+		}
+	}
+	return "inconclusive"
 }
 
 // rankEntries merges and ranks one run's findings into rank wire entries.

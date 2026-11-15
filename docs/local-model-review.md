@@ -122,11 +122,13 @@ of versions 1 to 5, and version 1 for a request that never opened a run (see
 [Results and limits](#results-and-limits)), except a
 [spending-limit refusal](#spending-limits), which is version 6; inspect `status`, `ci_disposition`,
 `run_status`, `limitations` and `diagnostics` together. A succeeded run means the pipeline finished, not that the repository
-is clear. Verified findings use `ci_disposition: blocked`; no candidates,
+is clear. Verified findings use `ci_disposition: blocked`, except an
+[advisory](#advisory-results) run whose confirmed findings are all low severity
+or pre-existing, which is `inconclusive`; no candidates,
 incomplete evidence or abstention remain `inconclusive`. Refusal and failure
 remain distinct terminal statuses. The [exit table](#results-and-limits) below
-is authoritative: exit 4 covers findings or policy/resource refusal, 3 covers
-no-candidate/incomplete/canceled outcomes, 2 is invalid intent, and 1 is failure.
+is authoritative: exit 4 covers blocking findings or policy/resource refusal, 3 covers
+advisory findings and no-candidate/incomplete/canceled outcomes, 2 is invalid intent, and 1 is failure.
 By default there is no exit-0 branch, and no policy yields a comprehensive-clearance
 result. The opt-in [exit-code policy](#exit-code-policy) can map a completed review
 to 0 for CI.
@@ -190,7 +192,7 @@ any policy is a pipeline decision, not a statement that the change is clear.
 | --- | --- | --- |
 | `default` (the behavior when the flag is absent) | never | 4, 3, 2 or 1 as in the table |
 | `findings` | the run succeeded and no verified finding has high or critical severity (including no candidates, medium or low findings only, and a completed run with coverage gaps) | the default code: 4 for a verified high or critical finding or a policy/resource refusal, 3 when the change could not be read or finished or was canceled, 1 for an internal failure |
-| `strict` | the run succeeded with no candidates at all, so no finding of any severity and no verification gap | the default code, so any verified finding is 4 and any coverage gap is 3 |
+| `strict` | the run succeeded with no candidates at all, so no finding of any severity and no verification gap | the default code, so any verified finding fails the step: 4 when it blocks, 3 when the run is [advisory](#advisory-results), and any coverage gap is 3 |
 | `always-zero` | a valid result was written, including a refused or failed run | 1 only if the result could not be written; 2 for invalid usage |
 
 Results are listed in [rank order](#rank), a merged duplicate after the finding it
@@ -723,8 +725,8 @@ Set status and CI disposition:
 |---|---|---|---|
 | A member did not complete and an introduced merged finding is error severity (verified high or critical) | most serious member status (`failed`, `refused`, `canceled`, `incomplete`) | `blocked` | 4 |
 | A member did not complete, no error-severity merged finding | most serious member status | `failed` → `error`, `refused` → `blocked`, otherwise `inconclusive` | 1, 4 or 3 |
-| Every member completed, merged findings not empty, one of them introduced | `findings` | `blocked` | 4 |
-| Every member completed, every merged finding [pre-existing](#pre-existing-findings) | `findings` | `inconclusive` | 3 |
+| Every member completed, merged findings not empty, one of them introduced and medium, high or critical | `findings` | `blocked` | 4 |
+| Every member completed, every merged finding low severity or [pre-existing](#pre-existing-findings) ([advisory](#advisory-results)) | `findings` | `inconclusive` | 3 |
 | Every member completed with no candidates | `no_candidates` | `inconclusive` | 3 |
 | Every member completed, otherwise | `incomplete` | `inconclusive` | 3 |
 
@@ -751,7 +753,8 @@ says that source coverage counts are unavailable.
 Exit policy on the merged set: `default` maps `blocked` to 4, `inconclusive` to
 3 and `error` to 1. `findings` exits 0 only when every member completed and no
 introduced merged finding is error severity (verified high or critical). `strict` exits 0
-only when every member completed with no candidates. `always-zero` exits 0 when
+only when every member completed with no candidates, so an advisory set exits 3
+under it. `always-zero` exits 0 when
 the general review completed, even if a specialist was refused or failed; when the
 general review itself did not complete it returns the default code (for example 4
 for a refused general review).
@@ -1087,30 +1090,52 @@ pre-existing, so an uncertain finding keeps blocking. Only a direct run
 classifies findings; an investigation run classifies none.
 
 Pre-existing findings get their own text and Markdown section and never block
-CI. A result whose every verified finding is pre-existing keeps `status`
-`findings` and has `ci_disposition` `inconclusive`. When at least one finding is
-introduced, the result is `blocked` as before. The exit-code policies keep their
-meaning:
-
-| Policy | Every finding pre-existing | At least one introduced high or critical finding |
-| --- | --- | --- |
-| `default` | 3 (inconclusive) | 4 |
-| `findings` | 0 (no introduced high or critical finding) | 4 |
-| `strict` | 3 (there were candidates) | 4 |
-| `always-zero` | 0 | 0 |
-
-A review set follows the same rule: a set whose merged findings are all
-pre-existing (every contributor pre-existing) is `findings` and `inconclusive`,
-and an incomplete set never demotes an introduced high or critical finding.
+CI (see [advisory results](#advisory-results)).
 
 The class is derived from the run's own change model and context, which a
 result does not carry. `localreview.ParseCompletedResult`, used by the
 model-result evaluation import, therefore treats a recorded `pre_existing` list
 as advisory: it checks that the list names distinct diagnostic findings in
-order and recomputes `rank` from the result's findings, but it requires the
-readiness `ci_disposition` (`blocked` when a finding was verified) and refuses a
-result whose disposition the class relaxed. No exit policy applies a parsed
-result's list.
+order and recomputes `rank` from the result's findings, but it never lets the
+list relax the `ci_disposition` and refuses a result whose disposition the
+class relaxed. No exit policy applies a parsed result's list.
+
+### Advisory results
+
+Only a medium, high or critical finding that the change introduced blocks CI.
+A completed review whose confirmed findings are all low severity (diagnostic
+severity `information`), all pre-existing, or a mix of the two is advisory: it
+keeps `status` `findings` and has `ci_disposition` `inconclusive`, like a run
+that could not reach a verdict, and its findings are still listed. One
+introduced medium, high or critical finding makes the result `blocked` as
+before. SARIF keeps
+each result's level (`note` for low), and `trestleCiDisposition` reports the
+disposition. The exit-code policies keep their meaning:
+
+| Policy | Advisory (every finding low severity or pre-existing) | An introduced medium finding, none higher | An introduced high or critical finding |
+| --- | --- | --- | --- |
+| `default` | 3 (inconclusive) | 4 | 4 |
+| `findings` | 0 (no introduced high or critical finding) | 0 | 4 |
+| `strict` | 3 (there were candidates) | 4 | 4 |
+| `always-zero` | 0 | 0 | 0 |
+
+`strict` still fails the step on every finding of any severity: it exits 0 only
+when there were no candidates at all.
+
+A review set follows the same rule over its merged findings: a set whose
+merged findings are all low severity or pre-existing (a merged finding is
+pre-existing only when every contributor is, and has its representative's
+severity) is `findings` and `inconclusive`, and an incomplete set never demotes
+an introduced high or critical finding.
+
+`localreview.ParseCompletedResult` re-derives the disposition from the
+severities a result records and refuses any other: a version 6 result whose
+verified findings are all low severity must be `inconclusive`, and one with a
+medium, high or critical finding must be `blocked`, whatever its `pre_existing`
+list says, because that class cannot be re-derived. Results of versions 1, 4 and
+5 were written before low-severity runs became advisory and must carry the
+readiness disposition (`blocked` when a finding was verified). A self-asserted
+relaxation therefore never imports.
 
 ### Walkthrough
 
@@ -1667,8 +1692,8 @@ fail the command rather than silently truncating a finding set.
 | Exit | Meaning |
 | --- | --- |
 | 2 | Invalid command intent or usage |
-| 4 | Verified policy-selected findings, or policy/resource refusal |
-| 3 | No candidates, incomplete evidence, unsupported source, or cancellation |
+| 4 | Verified policy-selected findings that block (an introduced medium, high or critical finding), or policy/resource refusal |
+| 3 | [Advisory](#advisory-results) findings only, no candidates, incomplete evidence, unsupported source, or cancellation |
 | 1 | Internal/malformed result, unsafe drain/close, or output failure |
 
 By default there is no exit-0 branch; `--exit-code-policy` is the explicit opt-in

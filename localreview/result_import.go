@@ -70,11 +70,15 @@ func ParseCompletedResult(encoded []byte) (Result, error) {
 		return Result{}, ErrInvalidResult
 	}
 	status, ci := localReadinessDisposition(uint32(set.VerifiedCount()), set.SourceOmittedCount(), uint32(set.InconclusiveCount()), uint32(set.CandidateCount()))
-	// The CI disposition must be the readiness disposition. A recorded
-	// pre_existing list is advisory: the reader cannot re-derive it without the
-	// change, so a result that relaxed its disposition by it (every verified
-	// finding pre-existing, inconclusive instead of blocked) is refused.
-	if wire.Status != status || wire.CI != ci || !wire.UsageKnown && wire.ActualCostMicroUSD != 0 {
+	// The CI disposition must be the one the recorded findings re-derive: the
+	// readiness disposition, or inconclusive for a version 6 result whose
+	// verified findings are all low severity (expectedImportedCI). Any other
+	// disposition is refused, so a self-asserted relaxation never imports. A
+	// recorded pre_existing list is advisory: the reader cannot re-derive it
+	// without the change, so a result that relaxed its disposition by it
+	// (inconclusive although a medium, high or critical finding is recorded)
+	// is refused.
+	if wire.Status != status || wire.CI != expectedImportedCI(wire.Version, set.Findings(), ci) || !wire.UsageKnown && wire.ActualCostMicroUSD != 0 {
 		return Result{}, ErrInvalidResult
 	}
 	if wire.TokenUsage != nil && !validCompletedTokenUsage(*wire.TokenUsage, wire.UsageKnown) {

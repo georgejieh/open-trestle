@@ -220,7 +220,13 @@ func runLocalGitModelReview(ctx context.Context, args []string, stdout, stderr i
 type modelReviewOutcome struct {
 	status   string
 	findings int
+	// advisory is set for a review with findings none of which blocks CI:
+	// each is low severity or pre-existing (ci_disposition inconclusive).
+	advisory bool
 }
+
+// advisoryOutcomeNote follows the finished-review line of an advisory review.
+const advisoryOutcomeNote = " None of them blocks CI: each is low severity or on lines the change did not touch."
 
 // observeModelResult reports a single run's result to observe, when set.
 func observeModelResult(observe func(modelReviewOutcome), result localreview.Result) {
@@ -228,7 +234,7 @@ func observeModelResult(observe func(modelReviewOutcome), result localreview.Res
 		return
 	}
 	if report, err := result.Report(); err == nil {
-		observe(modelReviewOutcome{status: report.Status, findings: len(report.Findings)})
+		observe(modelReviewOutcome{status: report.Status, findings: len(report.Findings), advisory: report.Status == "findings" && report.CIDisposition == "inconclusive"})
 	}
 }
 

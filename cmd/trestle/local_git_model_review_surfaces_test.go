@@ -75,25 +75,25 @@ func TestModelReviewTextShowsWalkthroughThenRankedFindings(t *testing.T) {
 // either way, with its rank.
 func TestModelReviewListsLowSeverityWhenNothingOutranksIt(t *testing.T) {
 	f := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, verificationMode: "low"})
-	text := runModelReviewOutput(t, f, []string{"--format", "text"}, 4)
+	text := runModelReviewOutput(t, f, []string{"--format", "text"}, 3)
 	requireInOrder(t, text, "walkthrough:\n", "confirmed findings (ranked): 1\n", "finding: information Zero-valued caller now panics\nrank: 1\n")
 	if strings.Contains(text, "hidden:") {
 		t.Fatalf("default text hid the only finding:\n%s", text)
 	}
-	markdown := runModelReviewOutput(t, f, []string{"--format", "markdown"}, 4)
+	markdown := runModelReviewOutput(t, f, []string{"--format", "markdown"}, 3)
 	requireInOrder(t, markdown, "### Confirmed findings\n\n1. **Low: Zero-valued caller now panics**")
 	if strings.Contains(markdown, "None listed.") || strings.Contains(markdown, "not shown") {
 		t.Fatalf("default Markdown hid the only finding:\n%s", markdown)
 	}
-	set := runModelReviewOutput(t, f, []string{"--specialists", "bug_hunter", "--format", "text"}, 4)
+	set := runModelReviewOutput(t, f, []string{"--specialists", "bug_hunter", "--format", "text"}, 3)
 	requireInOrder(t, set, "confirmed findings (ranked): 1\n", "finding: information Zero-valued caller now panics\n")
 	if strings.Contains(set, "hidden:") {
 		t.Fatalf("default set text hid the only finding:\n%s", set)
 	}
-	all := runModelReviewOutput(t, f, []string{"--format", "text", "--all"}, 4)
+	all := runModelReviewOutput(t, f, []string{"--format", "text", "--all"}, 3)
 	requireInOrder(t, all, "confirmed findings (ranked): 1\n", "finding: information Zero-valued caller now panics\nrank: 1\n")
 	var receipt judgementReceipt
-	if err := json.Unmarshal([]byte(runModelReviewOutput(t, f, nil, 4)), &receipt); err != nil || len(receipt.Rank) != 1 || len(receipt.Diagnostics.Findings) != 1 {
+	if err := json.Unmarshal([]byte(runModelReviewOutput(t, f, nil, 3)), &receipt); err != nil || len(receipt.Rank) != 1 || len(receipt.Diagnostics.Findings) != 1 {
 		t.Fatalf("JSON lost the low finding or its rank: %+v %v", receipt, err)
 	}
 	// --all is a bare flag and may be given once.

@@ -51,6 +51,7 @@ type localModelSetReceipt struct {
 		Launched          bool   `json:"launched"`
 		NotLaunchedReason string `json:"not_launched_reason"`
 		Status            string `json:"status"`
+		CI                string `json:"ci_disposition"`
 		RunStatus         string `json:"run_status"`
 		ReviewRunID       string `json:"review_run_id"`
 		ContextIdentity   string `json:"context_identity"`

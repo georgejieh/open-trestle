@@ -255,4 +255,23 @@ func TestInitFirstReviewListsLowSeverityFindings(t *testing.T) {
 	if !initHas(output, "│ confirmed findings (ranked): 1") || !initHas(output, "│ finding: information Zero-valued caller now panics") || initHas(output, "lower-severity finding not shown") {
 		t.Fatalf("the first review box hid the only (low-severity) finding:\n%s", output)
 	}
+	// The review is advisory, and the closing line says so.
+	if !initHas(strings.Join(strings.Fields(output), " "), "None of them blocks CI: each is low severity or on lines the change did not touch.") {
+		t.Fatalf("the first review did not say the low-severity review is advisory:\n%s", output)
+	}
+}
+
+// trestle review says when a finished review is advisory.
+func TestLatestReviewSaysWhenTheReviewIsAdvisory(t *testing.T) {
+	checkout := latestChangeCheckout(t)
+	latestChangeSetupWith(t, checkout)
+	transport := latestFixtureTransport(t)
+	transport.verificationSeverity = "low"
+	code, stdout, stderr := runReviewCommand(t, checkout, "--format", "json")
+	if code != 3 || setReceiptOf(t, stdout).CI != "inconclusive" {
+		t.Fatalf("an advisory trestle review exit=%d\nstderr:\n%s", code, stderr)
+	}
+	if !initHas(strings.Join(strings.Fields(stderr), " "), "None of them blocks CI") {
+		t.Fatalf("trestle review did not say the review is advisory:\n%s", stderr)
+	}
 }

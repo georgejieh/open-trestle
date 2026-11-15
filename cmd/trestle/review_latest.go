@@ -445,7 +445,11 @@ func reviewLatestChange(ctx context.Context, w *initWizard, repo repositorySetup
 func latestOutcomeLine(w *initWizard, outcome modelReviewOutcome) string {
 	switch outcome.status {
 	case "findings":
-		return fmt.Sprintf("  %s Review finished: %d confirmed finding%s. Each was proposed by the finder and confirmed by the checker; the review is not a complete audit (comprehensive clearance: false).", w.ok, outcome.findings, initPlural(outcome.findings))
+		note := ""
+		if outcome.advisory {
+			note = advisoryOutcomeNote
+		}
+		return fmt.Sprintf("  %s Review finished: %d confirmed finding%s. Each was proposed by the finder and confirmed by the checker; the review is not a complete audit (comprehensive clearance: false).%s", w.ok, outcome.findings, initPlural(outcome.findings), note)
 	case "no_candidates":
 		return fmt.Sprintf("  %s Review finished: no problems were found and confirmed for this change. That is not proof the change is correct; it is not a complete audit.", w.ok)
 	case "incomplete":

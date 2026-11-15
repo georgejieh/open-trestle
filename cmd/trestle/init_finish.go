@@ -761,7 +761,7 @@ func (w *initWizard) review(command []string) int {
 		}
 		recordLastReview(w.ctx, w.a.directory, lastReview{Status: outcome.status, Findings: outcome.findings, Base: values["--base"], Head: values["--head"]})
 	}
-	status, findings := "", 0
+	status, findings, advisory := "", 0, false
 	for _, line := range strings.Split(strings.TrimRight(out.String(), "\n"), "\n") {
 		for _, part := range initHangingWrap(line, initWidth-4) {
 			w.sayVerbatim("  │ " + part)
@@ -785,11 +785,15 @@ func (w *initWizard) review(command []string) int {
 	// The observed outcome covers a single review and a specialist review set
 	// alike (a set prints no "status:" line); the text is only a fallback.
 	if outcome.status != "" {
-		status, findings = outcome.status, outcome.findings
+		status, findings, advisory = outcome.status, outcome.findings, outcome.advisory
 	}
 	switch status {
 	case "findings":
-		w.say("  %s Review finished: %d confirmed finding%s above. Each was proposed by the finder and confirmed by the checker. Treat them like a colleague's comments; the review is not a complete audit (comprehensive clearance: false).", w.ok, findings, initPlural(findings))
+		note := ""
+		if advisory {
+			note = advisoryOutcomeNote
+		}
+		w.say("  %s Review finished: %d confirmed finding%s above. Each was proposed by the finder and confirmed by the checker.%s Treat them like a colleague's comments; the review is not a complete audit (comprehensive clearance: false).", w.ok, findings, initPlural(findings), note)
 		return initExitDone
 	case "no_candidates":
 		w.say("  %s Review finished: no problems were found and confirmed for this change. That is not proof the change is correct; it is not a complete audit.", w.ok)

@@ -546,7 +546,7 @@ func runLocalModelReviewSet(ctx, execution context.Context, options localModelRe
 	set := buildModelReviewSet(selection, members, notLaunched, options, concurrency, sequentialReason)
 	inputs.spending.finish()
 	if observe != nil {
-		observe(modelReviewOutcome{status: set.Status, findings: len(set.Findings)})
+		observe(modelReviewOutcome{status: set.Status, findings: len(set.Findings), advisory: set.Status == "findings" && set.CI == "inconclusive"})
 	}
 	return writeModelReviewSet(options.format, options.exitPolicy, localreview.RenderOptions{All: options.all}, set, stdout, stderr)
 }
@@ -756,11 +756,13 @@ func buildModelReviewSet(selection specialistSelectionWire, members []localModel
 			set.CI = "blocked"
 		}
 	case len(merged) > 0:
-		// Pre-existing findings never block CI: a set whose every merged
-		// finding is pre-existing keeps status findings and is inconclusive.
+		// Low-severity and pre-existing findings never block CI: a set whose
+		// merged findings are all advisory keeps status findings and is
+		// inconclusive. A medium, high or critical finding the change
+		// introduced blocks (localreview.BlocksCI).
 		set.Status, set.CI = "findings", "inconclusive"
 		for _, finding := range merged {
-			if !finding.PreExisting {
+			if finding.merged.Blocking() {
 				set.CI = "blocked"
 			}
 		}
@@ -874,7 +876,9 @@ func (f setFindingWire) contributorLabels() []string {
 }
 
 // exitCode applies the exit policy to the merged set:
-//   - default: 4 blocked (findings or a refused member), 3 inconclusive, 1 error.
+//   - default: 4 blocked (a blocking finding or a refused member), 3
+//     inconclusive (including an advisory set whose findings are all low
+//     severity or pre-existing), 1 error.
 //   - findings: 0 when every member completed and no merged finding is error
 //     severity (verified high/critical); otherwise the default code.
 //   - strict: 0 only when every member completed with no candidates.
