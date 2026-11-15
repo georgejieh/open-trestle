@@ -135,6 +135,24 @@ func TestMarkdownEscapesUntrustedText(t *testing.T) {
 	if strings.Contains(strings.ReplaceAll(escaped, "\\|", ""), "|") || strings.Contains(strings.ReplaceAll(escaped, "\\#", ""), "#") {
 		t.Fatalf("MarkdownText left an unescaped table or heading mark in %q", escaped)
 	}
+	// GitHub-flavoured Markdown autolinks bare URLs, www. hosts and email
+	// addresses; none may survive in untrusted text.
+	for _, value := range []string{
+		"see https://evil.example/x now", "http://evil.example", "ftp://evil.example/f", "HTTPS://EVIL.EXAMPLE",
+		"www.evil.example/path", "WWW.Evil.example", "mailto:admin@evil.example", "mailto:nobody", "write to admin@evil.example today",
+		"xmpp:user@evil.example", "javascript:alert(1)",
+	} {
+		escaped := strings.ToLower(localreview.MarkdownText(value))
+		for _, autolink := range []string{"https://", "http://", "ftp://", "www.", "mailto:", "xmpp:", "javascript:", "@evil", "admin@"} {
+			if strings.Contains(escaped, autolink) {
+				t.Fatalf("MarkdownText(%q) = %q keeps the autolink %q", value, escaped, autolink)
+			}
+		}
+	}
+	// A value with a backtick falls back to escaped text, so it is defused too.
+	if code := strings.ToLower(localreview.MarkdownCode("https://evil.example/`x")); strings.Contains(code, "https://") {
+		t.Fatalf("MarkdownCode fallback kept an autolink: %q", code)
+	}
 	if code := localreview.MarkdownCode("dir/a_b|c.go"); code != "`dir/a_b\\|c.go`" {
 		t.Fatalf("MarkdownCode = %q", code)
 	}

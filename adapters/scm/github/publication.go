@@ -502,8 +502,34 @@ func inlineReviewComment(finding locatedFinding, body string) (reviewCommentWire
 	return comment, nil
 }
 func escapeMarkdown(value string) string {
-	replacer := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "@", "@\u200b", "\\", "\\\\", "*", "\\*", "_", "\\_", "[", "\\[", "]", "\\]", "(", "\\(", ")", "\\)", "#", "\\#", "!", "\\!", "|", "\\|", "`", "\\`", "~", "\\~")
-	return replacer.Replace(value)
+	replacer := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "@", "\u200b@\u200b", "\\", "\\\\", "*", "\\*", "_", "\\_", "[", "\\[", "]", "\\]", "(", "\\(", ")", "\\)", "#", "\\#", "!", "\\!", "|", "\\|", "`", "\\`", "~", "\\~")
+	return defuseAutolinks(replacer.Replace(value))
+}
+
+// defuseAutolinks breaks what GitHub would link by itself in untrusted text: a
+// scheme such as https:, http:, ftp:, mailto: or xmpp: (a zero-width space
+// goes before a colon that follows a letter or digit and precedes a non-space
+// character) and a www. host (one goes before its dot). Email addresses are
+// already broken at their @. A zero-width space is used, not an entity,
+// because the autolink pass reads text after entities are decoded. The
+// publisher emits no links of its own.
+func defuseAutolinks(value string) string {
+	alphanumeric := func(character byte) bool {
+		return character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9'
+	}
+	var builder strings.Builder
+	builder.Grow(len(value))
+	for index := 0; index < len(value); index++ {
+		character := value[index]
+		if character == ':' && index > 0 && alphanumeric(value[index-1]) && index+1 < len(value) && value[index+1] != ' ' {
+			builder.WriteString("\u200b")
+		}
+		if character == '.' && index >= 3 && strings.EqualFold(value[index-3:index], "www") && (index == 3 || !alphanumeric(value[index-4])) {
+			builder.WriteString("\u200b")
+		}
+		builder.WriteByte(character)
+	}
+	return builder.String()
 }
 func classifyHeadTransport(ctx context.Context, err error) review.PublicationHeadFailure {
 	if ctx.Err() != nil || errors.Is(err, context.Canceled) {

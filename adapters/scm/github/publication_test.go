@@ -125,6 +125,16 @@ func TestPublicationMarkdownEscapesUntrustedEffects(t *testing.T) {
 			t.Fatalf("unsafe %q in %q", unsafe, value)
 		}
 	}
+	// GitHub autolinks bare URLs, www. hosts and email addresses in review
+	// bodies; untrusted model text must never become a link.
+	for _, raw := range []string{"see https://evil.example/x", "http://evil.example", "ftp://evil.example", "www.evil.example", "mailto:admin@evil.example", "admin@evil.example", "xmpp:user@evil.example"} {
+		value := strings.ToLower(escapeMarkdown(raw))
+		for _, autolink := range []string{"https://", "http://", "ftp://", "www.", "mailto:", "xmpp:", "admin@", "@evil"} {
+			if strings.Contains(value, autolink) {
+				t.Fatalf("escapeMarkdown(%q) = %q keeps the autolink %q", raw, value, autolink)
+			}
+		}
+	}
 }
 func TestStaticPublicationTokenProviderRequiresExactScopeAndTarget(t *testing.T) {
 	scope, target := githubPublicationTarget(t)

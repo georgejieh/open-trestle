@@ -233,10 +233,41 @@ func FindingsText(ranked []MergedFinding, options RenderOptions, contributorsOf 
 
 // MarkdownText escapes untrusted text for a Markdown paragraph: it can never
 // open emphasis, a link, an image, a heading, a table cell, an HTML tag or an
-// @-mention, and line breaks become spaces.
+// @-mention, never becomes an autolink, and line breaks become spaces.
 func MarkdownText(value string) string {
 	value = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(value)
-	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "@", "@​", "\\", "\\\\", "*", "\\*", "_", "\\_", "[", "\\[", "]", "\\]", "(", "\\(", ")", "\\)", "#", "\\#", "!", "\\!", "|", "\\|", "`", "\\`", "~", "\\~").Replace(value)
+	value = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "@", zeroWidthSpace+"@"+zeroWidthSpace, "\\", "\\\\", "*", "\\*", "_", "\\_", "[", "\\[", "]", "\\]", "(", "\\(", ")", "\\)", "#", "\\#", "!", "\\!", "|", "\\|", "`", "\\`", "~", "\\~").Replace(value)
+	return defuseAutolinks(value)
+}
+
+const zeroWidthSpace = "​"
+
+// defuseAutolinks breaks every sequence GitHub-flavoured Markdown would turn
+// into a link by itself: a scheme such as https:, http:, ftp:, mailto:, xmpp:
+// or javascript: (a zero-width space goes before a colon that follows a letter
+// or digit and precedes a non-space character), and a www. host (one goes
+// before its dot). Email addresses are already broken at their @. The space
+// is used rather than an HTML entity because the autolink pass reads text
+// after entities are decoded. Only untrusted text goes through this; the
+// renderers emit no links of their own.
+func defuseAutolinks(value string) string {
+	var builder strings.Builder
+	builder.Grow(len(value))
+	for index := 0; index < len(value); index++ {
+		character := value[index]
+		if character == ':' && index > 0 && isASCIIAlphanumeric(value[index-1]) && index+1 < len(value) && value[index+1] != ' ' {
+			builder.WriteString(zeroWidthSpace)
+		}
+		if character == '.' && index >= 3 && strings.EqualFold(value[index-3:index], "www") && (index == 3 || !isASCIIAlphanumeric(value[index-4])) {
+			builder.WriteString(zeroWidthSpace)
+		}
+		builder.WriteByte(character)
+	}
+	return builder.String()
+}
+
+func isASCIIAlphanumeric(character byte) bool {
+	return character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9'
 }
 
 // MarkdownCode renders untrusted text as inline code. Text holding a backtick
