@@ -349,6 +349,7 @@ var providerRefusalReasons = map[gateway.RouteFailureClass]controlplane.TaskFail
 	gateway.RouteFailureAuthorization:    controlplane.TaskFailureReasonProviderAuthorizationDenied,
 	gateway.RouteFailureRateLimited:      controlplane.TaskFailureReasonProviderRateLimited,
 	gateway.RouteFailureInvalidResponse:  controlplane.TaskFailureReasonProviderResponseInvalid,
+	gateway.RouteFailureRequestRejected:  controlplane.TaskFailureReasonProviderRequestRejected,
 }
 
 // routeFailureCompletion fails a model task for a failed dispatch. A refusal

@@ -602,8 +602,10 @@ func TestGenerationHandlerAuditsTypedProviderFailureWithoutOutput(t *testing.T) 
 // not retry, as an authentication refusal does. The completion names the
 // refusal with its content-free reason; a rate limit also carries the
 // provider's Retry-After; a reply the adapter refused keeps its internal
-// failure and names provider_response_invalid; a credential that was never
-// sent, or a request that was never built, names none.
+// failure and names provider_response_invalid; a request the provider
+// rejected as invalid is a policy refusal named provider_request_rejected; a
+// credential that was never sent, or a request that was never built, names
+// none.
 func TestGenerationHandlerRefusesProviderRefusalAsPolicy(t *testing.T) {
 	for _, test := range []struct {
 		failure    gateway.RouteFailureClass
@@ -621,8 +623,10 @@ func TestGenerationHandlerRefusesProviderRefusalAsPolicy(t *testing.T) {
 		{gateway.RouteFailureRateLimited, gateway.RouteReplayNoSideEffect, 0, controlplane.RunFailureTransient, controlplane.TaskFailureReasonProviderRateLimited},
 		{gateway.RouteFailureInvalidResponse, gateway.RouteReplayOutcomeUnknown, 0, controlplane.RunFailureInternal, controlplane.TaskFailureReasonProviderResponseInvalid},
 		{gateway.RouteFailureInvalidResponse, gateway.RouteReplayNoSideEffect, 0, controlplane.RunFailureInternal, controlplane.TaskFailureReasonProviderResponseInvalid},
+		{gateway.RouteFailureRequestRejected, gateway.RouteReplayNoSideEffect, 0, controlplane.RunFailurePolicy, controlplane.TaskFailureReasonProviderRequestRejected},
 		{gateway.RouteFailureAuthentication, gateway.RouteReplayNotDispatched, 0, controlplane.RunFailurePolicy, 0},
 		{gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0, controlplane.RunFailureInternal, 0},
+		{gateway.RouteFailureRequestRejected, gateway.RouteReplayNotDispatched, 0, controlplane.RunFailurePolicy, 0},
 		{gateway.RouteFailureOutputExhausted, gateway.RouteReplayOutcomeUnknown, 0, controlplane.RunFailureInternal, 0},
 		{gateway.RouteFailureProviderServer, gateway.RouteReplayOutcomeUnknown, 0, controlplane.RunFailureTransient, 0},
 	} {

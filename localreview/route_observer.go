@@ -181,6 +181,7 @@ var providerRefusalRunFailure = map[gateway.RouteFailureClass]controlplane.RunFa
 	gateway.RouteFailureAuthorization:    controlplane.RunFailurePolicy,
 	gateway.RouteFailureRateLimited:      controlplane.RunFailureTransient,
 	gateway.RouteFailureInvalidResponse:  controlplane.RunFailureInternal,
+	gateway.RouteFailureRequestRejected:  controlplane.RunFailurePolicy,
 }
 
 // providerRefusal returns the failure detail of a run that failed with

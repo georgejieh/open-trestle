@@ -20,6 +20,7 @@ func TestProviderRefusalNamesEachRefusalClass(t *testing.T) {
 		gateway.RouteFailureAuthorization:    "provider_authorization_denied",
 		gateway.RouteFailureRateLimited:      "provider_rate_limited",
 		gateway.RouteFailureInvalidResponse:  "provider_response_invalid",
+		gateway.RouteFailureRequestRejected:  "provider_request_rejected",
 	}
 	hints := map[string]bool{}
 	for class := gateway.RouteFailureTransport; class.Validate() == nil; class++ {
@@ -114,5 +115,21 @@ func TestModelOutputInvalidNamesTheAnswer(t *testing.T) {
 		if detail, _, _ := ProviderRefusal(class); detail == ModelOutputInvalid {
 			t.Fatalf("%s names the model answer", class)
 		}
+	}
+}
+
+// A request the provider rejected as invalid is named as a rejection of the
+// request, not as a refused reply, with the checks an operator can make; the
+// words repeat nothing the provider said.
+func TestProviderRequestRejectedNamesTheRejectedRequest(t *testing.T) {
+	detail, hint, ok := ProviderRefusal(gateway.RouteFailureRequestRejected)
+	if !ok || detail != "provider_request_rejected" || hint != "the provider rejected the request as invalid, for example an unknown model ID or a parameter the model or endpoint does not accept: check the model ID, the endpoint and its transport, and that the model and endpoint accept structured output and the requested output allowance; then re-run setup" {
+		t.Fatalf("request rejected = (%q, %q, %t)", detail, hint, ok)
+	}
+	if label, _, _, found := ProviderRefusalWords(detail); !found || label != "Provider request rejected" {
+		t.Fatalf("label = %q", label)
+	}
+	if _, reply, _ := ProviderRefusal(gateway.RouteFailureInvalidResponse); reply == hint || strings.Contains(hint, "reply") {
+		t.Fatal("a rejected request reads as a refused reply")
 	}
 }

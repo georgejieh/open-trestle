@@ -40,6 +40,10 @@ func TestRunShowsProviderRefusalReasonAndHint(t *testing.T) {
 			"Reason      candidates: model_output_invalid (the model's answer was not a valid review document (for example malformed JSON, the wrong shape or a refusal))\n",
 			"Hint        run the review again; if it repeats, choose another model\n",
 		}},
+		{controlplane.TaskFailureReasonProviderRequestRejected, []string{
+			"Reason      candidates: provider_request_rejected (the provider rejected the request as invalid, for example an unknown model ID or a parameter the model or endpoint does not accept)\n",
+			"Hint        check the model ID, the endpoint and its transport, and that the model and endpoint accept structured output and the requested output allowance; then re-run setup\n",
+		}},
 	} {
 		receipt, err := testsupport.ProviderRefusalReceipt(scope, test.reason)
 		if err != nil {

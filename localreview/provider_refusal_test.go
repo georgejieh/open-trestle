@@ -30,6 +30,7 @@ func TestProviderRefusalDetailsMatchTheSharedHints(t *testing.T) {
 		gateway.RouteFailureAuthorization:    FailureDetailProviderAuthorizationDenied,
 		gateway.RouteFailureRateLimited:      FailureDetailProviderRateLimited,
 		gateway.RouteFailureInvalidResponse:  FailureDetailProviderResponseInvalid,
+		gateway.RouteFailureRequestRejected:  FailureDetailProviderRequestRejected,
 	} {
 		if detail, hint, ok := routehint.ProviderRefusal(class); !ok || detail != want || hint == "" {
 			t.Fatalf("%s = (%q, %q, %t), want %q", class, detail, hint, ok, want)
@@ -57,6 +58,12 @@ func TestRouteObserverNamesOnlyTheRefusalThatEndedTheRun(t *testing.T) {
 		// A reply the adapter refused after a 200, and an unclassified status.
 		{"reply refused", []gateway.RouteDispatchResult{observedRefusal(t, gateway.RouteFailureInvalidResponse, gateway.RouteReplayOutcomeUnknown)}, controlplane.RunFailureInternal, FailureDetailProviderResponseInvalid},
 		{"unclassified status", []gateway.RouteDispatchResult{observedRefusal(t, gateway.RouteFailureInvalidResponse, gateway.RouteReplayNoSideEffect)}, controlplane.RunFailureInternal, FailureDetailProviderResponseInvalid},
+		// A request the provider rejected as invalid (for example HTTP 400 for
+		// an unknown model ID) is a policy refusal of the request, not a
+		// refused reply.
+		{"request rejected", []gateway.RouteDispatchResult{observedRefusal(t, gateway.RouteFailureRequestRejected, gateway.RouteReplayNoSideEffect)}, controlplane.RunFailurePolicy, FailureDetailProviderRequestRejected},
+		{"request rejected under an internal failure", []gateway.RouteDispatchResult{observedRefusal(t, gateway.RouteFailureRequestRejected, gateway.RouteReplayNoSideEffect)}, controlplane.RunFailureInternal, ""},
+		{"request rejected then outlived", []gateway.RouteDispatchResult{observedRefusal(t, gateway.RouteFailureRequestRejected, gateway.RouteReplayNoSideEffect), observerSuccess(t, observerUsage(t, 1, 1, 0))}, controlplane.RunFailurePolicy, ""},
 		// A credential that could not be read never reached the provider.
 		{"credential unavailable", []gateway.RouteDispatchResult{observedRefusal(t, gateway.RouteFailureAuthentication, gateway.RouteReplayNotDispatched)}, controlplane.RunFailurePolicy, ""},
 		// A request the adapter could not build was never sent.
@@ -102,6 +109,7 @@ func TestRenderResultNamesTheProviderRefusalAndItsHint(t *testing.T) {
 		{"policy", FailureDetailProviderModelRetired, "failure: policy (task candidates): provider_model_retired\nhint: the provider no longer serves this model: choose a model the provider lists as available and re-run setup\n"},
 		{"transient", FailureDetailProviderRateLimited, "failure: transient (task candidates): provider_rate_limited\nhint: the provider rate-limited the request on its last attempt: wait and run the review again, or choose another route\n"},
 		{"internal", FailureDetailProviderResponseInvalid, "failure: internal (task candidates): provider_response_invalid\nhint: the provider answered, but its reply did not match what Open Trestle accepts, for example malformed or truncated output, an unrecognized field or an unexpected HTTP status: run the review again; if it repeats, choose another model or route and report it\n"},
+		{"policy", FailureDetailProviderRequestRejected, "failure: policy (task candidates): provider_request_rejected\nhint: the provider rejected the request as invalid, for example an unknown model ID or a parameter the model or endpoint does not accept: check the model ID, the endpoint and its transport, and that the model and endpoint accept structured output and the requested output allowance; then re-run setup\n"},
 	} {
 		result := Result{valid: true, wire: resultWire{Status: "refused", CI: "blocked", RunStatus: "failed", Failure: test.failure, FailureDetail: test.detail, Tasks: []taskResult{{Key: "context", Status: "succeeded"}, {Key: "candidates", Status: "failed"}, {Key: "verification", Status: "skipped"}}}}
 		var buffer bytes.Buffer
