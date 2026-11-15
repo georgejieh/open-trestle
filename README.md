@@ -40,8 +40,9 @@ supported deployment.
 
 Model-backed review is also runnable against two operator-selected local models:
 `trestle setup bootstrap` prepares a protected same-user setup and the exact daemon,
-submit, and status commands for a durable nine-stage review of one pinned base/head
-pair (see [first local model review](#first-local-model-review)), and
+submit, and status commands for a durable review of one pinned base/head pair, run
+as nine tasks over eight stage kinds because source is acquired once for the base and
+once for the head (see [first local model review](#first-local-model-review)), and
 `trestle local-git model-review` runs a direct, non-durable review of a checkout.
 Both report findings together with their coverage, omissions, and abstentions; neither
 is a quality claim. `trestle profiles` lists the packaged specialist review profiles
@@ -91,45 +92,76 @@ The design rules that follow from that:
 
 ## Architecture
 
-One review engine, many entrypoints. A canonical request flows through immutable
-snapshot capture, deterministic repository evidence, policy-approved analyzers,
-bounded candidate generation, independent verification, and an idempotent
-publication gate.
+One review engine, two ways to run it. The **direct path** runs a model review
+inside the `trestle` process and keeps nothing afterwards; `trestle init` and
+`trestle local-git model-review` use it. The **daemon path** runs the same task
+graph inside `trestled`, with durable runs, a task journal and an authenticated
+API. A model review on either path runs nine tasks over eight stage kinds:
+source acquisition (once for the base, once for the head), change construction,
+deterministic evidence (source slices, one built-in check and a Go
+semantic-impact profile), memory retrieval, context assembly, bounded candidate
+generation, independent verification and publication readiness. Only a daemon
+run in required mode adds a tenth task, publication, behind the idempotent
+publication gate. The TUI, VS Code, the web console and ACP observe one daemon
+run; they do not start a review.
 
 ```
-                    ┌─────────────────────────────────────────┐
-                    │              entrypoints                │
-                    │  CLI · TUI · CI · IDE · MCP · ACP · web │
-                    └────────────────────┬────────────────────┘
-                                         │
-                    ┌────────────────────▼────────────────────┐
-                    │        trestled: review daemon          │
-                    │   durable runs · task journal · auth    │
-                    └────────────────────┬────────────────────┘
-             ┌───────────────┬───────────┼────────────┬──────────────┐
-             ▼               ▼           ▼            ▼              ▼
-        snapshot         evidence     policy      candidate      independent
-        capture          pipeline    analyzers   generation      verification
-             │               │           │            │              │
-             └───────────────┴─────┬─────┴────────────┴──────────────┘
-                                   ▼
-                      idempotent publication gate
+  direct path: in the trestle process      daemon path: durable, in trestled
+  ───────────────────────────────────      ────────────────────────────────
+  trestle init                             trestle local-git submit-review
+  trestle local-git model-review           trestle runs submit
+  (the GitHub Actions example runs it)     MCP open_trestle.submit_run (a pre-built plan)
+                                           verified GitHub webhook
+                │                                         │
+                ▼                                         ▼
+  process-private session                  trestled: durable runs · journal · auth
+                │                                         │
+                └────────────────────┬────────────────────┘
+                                     ▼
+                       source (base)   source (head)
+                              └───────┬───────┘
+                                      ▼
+                                    change
+                              ┌───────┴───────┐
+                              ▼               ▼
+                deterministic evidence    memory retrieval
+                              └───────┬───────┘
+                                      ▼
+          context ─► candidate generation ─► independent verification ─► readiness
+                                      │
+                ┌─────────────────────┴───────────────────┐
+                ▼                                         ▼
+  JSON, text or SARIF output               publication gate (required mode only)
+
+  Observers of one daemon run: trestle runs status · trestle tui · VS Code through
+  trestle lsp · web console · ACP · MCP open_trestle.run_status. They are read-only,
+  except that trestle runs cancel and the TUI can cancel the run.
 ```
+
+The provider-free local evaluation run on the daemon stops after deterministic
+evidence (four tasks). The fixture commands (`trestle ci`, `trestle review
+FIXTURE`) and the `local-git` inspect, change and deterministic review commands
+run in the `trestle` process without a model or a daemon.
 
 | Interface | Purpose |
 |---|---|
-| `trestled` | Local or server review daemon |
+| `trestled` | Local or server review daemon: durable runs, task journal and authenticated API |
 | `trestle` | CLI and terminal user interface |
+| `trestle init` | Guided setup in the current repository; runs the first review on the direct path |
 | `trestle ci` | Deterministic review of local fixture files, not arbitrary checkouts |
-| `trestle local-git model-review` | Direct, non-durable model-backed review of an explicit checkout base/head pair |
+| `trestle local-git model-review` | Direct, non-durable model-backed review of an explicit checkout base/head pair, in the `trestle` process |
+| `trestle local-git submit-review`, `trestle runs` | Submit a review to `trestled`, then read its status or cancel it |
 | `trestle setup bootstrap` | Protected local setup and exact commands for a durable first model review |
 | `trestle profiles` | Packaged specialist profiles and deterministic routing plans; the direct review runs them via `--profile` and `--specialists`, the daemon does not |
-| `trestle lsp` | Read-only editor diagnostics |
-| `trestle mcp` | Scoped Model Context Protocol server |
-| `trestle acp` | Agent Client Protocol endpoint |
+| `trestle lsp` | Read-only editor diagnostics from one daemon run or an offline export |
+| `trestle mcp` | Scoped Model Context Protocol server: reads one run's status and submits a plan an authorized planner already built |
+| `trestle acp` | Read-only Agent Client Protocol endpoint for one daemon run |
 | VS Code extension | Packaged read-only verified findings over the LSP boundary; deterministic observations remain outside LSP findings |
-| Web console | Read-only run, diagnostic, and runtime inspection |
+| Web console | Read-only run, diagnostic, and runtime inspection, served by `trestled` |
 | Forge adapters | Verified webhook intake; governed publication behind an explicit effect gate |
+
+A packaged GitHub Action (`action.yml`), starting a review from the TUI or VS
+Code, and a desktop app are planned; see the [roadmap](docs/roadmap.md).
 
 For noninteractive model-backed review of an explicit checkout base/head pair, use
 [`trestle local-git model-review`](docs/local-model-review.md#headless-ci-use).

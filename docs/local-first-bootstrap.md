@@ -216,8 +216,10 @@ bind `http://127.0.0.1:8741` rather than inheriting another API URL.
 
 Only after approving source use, execute `review_command` with the operator
 token in its environment. This is the separate repository-source-to-model effect
-boundary. It requests the nine-stage review pipeline on the pinned commits. The
-ordinary checkout is a local source authority, not forge-origin authentication.
+boundary. It requests the review pipeline on the pinned commits: nine tasks over
+eight stage kinds, because source is acquired once for the base and once for the
+head. The ordinary checkout is a local source authority, not forge-origin
+authentication.
 No publication task or forge credentials are enabled. The runtime still needs
 its existing pinned scanner binaries and host confinement support; bootstrap
 does not install or weaken those dependencies. Startup refusal is not readiness.
