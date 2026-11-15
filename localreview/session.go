@@ -317,6 +317,12 @@ func newSession(o SessionOptions, investigationPolicy *review.InvestigationPolic
 		if err != nil {
 			return nil, ErrInvalidSession
 		}
+		// The finder and the verifier see the range's commit messages as
+		// untrusted stated intent, read from the same verified objects.
+		assembly, err = assembly.WithChangeIntent(commitIntentSource{objects: objects, repository: o.Repository})
+		if err != nil {
+			return nil, ErrInvalidSession
+		}
 		generation, err := modelhandler.NewGenerationHandler(store, dispatchers, ledger, o.Clock, sanitizer.ExpectedBinaryDigests())
 		if err != nil {
 			return nil, ErrInvalidSession

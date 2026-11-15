@@ -114,8 +114,8 @@ func requireRemovedLinesSource(t *testing.T, name string, payload []byte, remove
 
 func TestRemovedLinesReachTheGenerationRequestAsBaseEvidence(t *testing.T) {
 	packet, snapshot, payload, window, removed := removedGuardPacket(t, removedGuardText)
-	if string(modelContractFields(t, payload)["schema_version"]) != "8" {
-		t.Fatal("removed_lines packet is not generation context version 8")
+	if string(modelContractFields(t, payload)["schema_version"]) != "9" {
+		t.Fatal("removed_lines packet is not generation context version 9")
 	}
 	requireRemovedLinesSource(t, "generation", payload, removed, []string{})
 	if !strings.Contains(string(removed.Content()), "b == 0") || bytes.Contains(window.Content(), []byte("b == 0")) {
@@ -135,7 +135,7 @@ func TestRemovedLinesReachTheGenerationRequestAsBaseEvidence(t *testing.T) {
 	if _, err := parseSanitizableRequest(request, packet.ReviewScopeIdentity()); err != nil {
 		t.Fatalf("removed_lines context is not sanitizable: %v", err)
 	}
-	if system, err := TrustedModelRequestInstructions(payload); err != nil || system != candidateOutputInstructionsV8 || !strings.Contains(system, removedLinesGenerationSentence) {
+	if system, err := TrustedModelRequestInstructions(payload); err != nil || system != candidateOutputInstructionsV9 || !strings.Contains(system, removedLinesGenerationSentence) {
 		t.Fatal("generation system channel does not explain removed_lines")
 	}
 	// A recorded version 7 context never carried removed_lines.
@@ -210,11 +210,11 @@ func TestVerifierReceivesRemovedLinesAtADeletionPoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	verifier := request.Payload()
-	if string(modelContractFields(t, verifier)["schema_version"]) != "7" {
-		t.Fatal("verifier request for a removed_lines context is not version 7")
+	if string(modelContractFields(t, verifier)["schema_version"]) != "8" {
+		t.Fatal("verifier request for a removed_lines context is not version 8")
 	}
 	requireRemovedLinesSource(t, "verification", verifier, removed, []string{})
-	if system, err := TrustedModelRequestInstructions(verifier); err != nil || system != verificationOutputInstructionsV7 || !strings.Contains(system, removedLinesVerificationSentence) {
+	if system, err := TrustedModelRequestInstructions(verifier); err != nil || system != verificationOutputInstructionsV8 || !strings.Contains(system, removedLinesVerificationSentence) {
 		t.Fatal("verifier system channel does not explain removed_lines")
 	}
 	var wire verificationContextWire

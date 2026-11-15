@@ -217,7 +217,8 @@
               "memory_text",
               "candidate_title",
               "candidate_claim",
-              "candidate_path"
+              "candidate_path",
+              "stated_intent_text"
             ]
           },
           "ordinal": {

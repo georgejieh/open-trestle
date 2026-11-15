@@ -551,6 +551,8 @@ type ContextPacket struct {
 	sourceOmissions      []ContextSourceOmission
 	limits               ContextLimits
 	specialist           ContextSpecialist
+	statedIntent         StatedIntent
+	patternHygiene       ContextPatternHygiene
 }
 
 // NewContextPacket assembles a deterministic provider-neutral packet after hard scope filtering.
@@ -681,7 +683,7 @@ func (p ContextPacket) EvidenceItems() []evidence.EvidenceItem {
 func (p ContextPacket) Specialist() ContextSpecialist { return p.specialist }
 
 // WithSpecialist returns a copy that binds one packaged specialist profile. The
-// copy encodes the optional specialist block of context schema version 8; the
+// copy encodes the optional specialist block of context schema version 9; the
 // receiver is unchanged.
 func (p ContextPacket) WithSpecialist(specialist ContextSpecialist) (ContextPacket, error) {
 	if err := p.Validate(); err != nil {
@@ -695,6 +697,47 @@ func (p ContextPacket) WithSpecialist(specialist ContextSpecialist) (ContextPack
 	value.additionalRetrievals = append([]memory.LexicalRetrieval(nil), p.additionalRetrievals...)
 	value.sourceOmissions = append([]ContextSourceOmission(nil), p.sourceOmissions...)
 	value.specialist = specialist
+	value.identity = deriveContextPacketIdentity(value)
+	if err := value.Validate(); err != nil {
+		return ContextPacket{}, err
+	}
+	return value, nil
+}
+
+// StatedIntent returns the bound commit intent; the zero value means none.
+func (p ContextPacket) StatedIntent() StatedIntent { return p.statedIntent }
+
+// WithStatedIntent returns a copy that carries the change author's commit
+// messages as the stated_intent object of context version 9. The text counts
+// toward the source byte budget: the caller fits it to the budget the
+// selected sources left, and a copy that would exceed it is refused.
+func (p ContextPacket) WithStatedIntent(intent StatedIntent) (ContextPacket, error) {
+	if err := p.Validate(); err != nil {
+		return ContextPacket{}, err
+	}
+	if !p.statedIntent.IsZero() || intent.IsZero() {
+		return ContextPacket{}, ErrInvalidStatedIntent
+	}
+	value := p
+	value.statedIntent = intent
+	value.identity = deriveContextPacketIdentity(value)
+	if err := value.Validate(); err != nil {
+		return ContextPacket{}, err
+	}
+	return value, nil
+}
+
+// WithPatternHygiene returns a copy that carries deterministic pattern-hygiene
+// evidence placed on this packet's sources (see NewContextPatternHygiene).
+func (p ContextPacket) WithPatternHygiene(hygiene ContextPatternHygiene) (ContextPacket, error) {
+	if err := p.Validate(); err != nil {
+		return ContextPacket{}, err
+	}
+	if !p.patternHygiene.IsZero() || hygiene.IsZero() {
+		return ContextPacket{}, ErrInvalidContextSource
+	}
+	value := p
+	value.patternHygiene = hygiene
 	value.identity = deriveContextPacketIdentity(value)
 	if err := value.Validate(); err != nil {
 		return ContextPacket{}, err
@@ -772,8 +815,11 @@ func (p ContextPacket) validateFields() error {
 		previousStage, previousReference = source.Stage(), source.ReferenceID()
 		totalBytes += source.SizeBytes()
 	}
-	if totalBytes > int(p.limits.MaxSourceBytes()) {
+	if totalBytes+p.statedIntent.TextBytes() > int(p.limits.MaxSourceBytes()) {
 		return ErrContextSourceBudgetExceeded
+	}
+	if !validStatedIntentWire(p.statedIntent.wire()) || !validPatternHygieneWire(p.patternHygiene.wire(), contextSourceWireValues(p.sources)) {
+		return ErrInvalidContextSource
 	}
 	previousOmission := ContextSourceOmission{}
 	for index, omission := range p.sourceOmissions {
@@ -836,6 +882,10 @@ type contextPacketWire struct {
 	SourceOmissions         []contextSourceOmissionWire `json:"source_omissions,omitempty"`
 	Memory                  contextMemoryWire           `json:"memory"`
 	AdditionalMemory        []contextMemoryWire         `json:"additional_memory,omitempty"`
+	// StatedIntent and PatternHygiene exist only from version 9. Absent, they
+	// leave earlier versions' bytes unchanged.
+	StatedIntent   *statedIntentWire   `json:"stated_intent,omitempty"`
+	PatternHygiene *patternHygieneWire `json:"pattern_hygiene,omitempty"`
 }
 
 type contextSourceCoverageWire struct {
@@ -906,7 +956,7 @@ type contextMemoryItemWire struct {
 }
 
 func encodeContextPacket(packet ContextPacket) ([]byte, error) {
-	// Every new generation context is version 8. The specialist block is present
+	// Every new generation context is version 9. The specialist block is present
 	// only when a packaged profile is bound. Instruction prose never enters the
 	// payload: the model receives it only through the trusted system channel,
 	// and the payload binds it by instructions_identity.
@@ -933,6 +983,7 @@ func encodeContextPacket(packet ContextPacket) ([]byte, error) {
 		SourceAuthority: "evidence_data_not_instructions", MemoryAuthority: "advisory_only", ToolCalls: "proposals_only",
 		Limits:  contextLimitsWire{MaxSourceBytes: packet.limits.MaxSourceBytes(), MaxMemoryItems: packet.limits.MaxMemoryItems()},
 		Sources: contextSourceWireValues(packet.sources), SourceOmissions: contextSourceOmissionWireValues(packet.sourceOmissions), Memory: contextMemoryWireValue(packet.retrieval), AdditionalMemory: contextMemoryWireValues(packet.additionalRetrievals),
+		StatedIntent: packet.statedIntent.wire(), PatternHygiene: packet.patternHygiene.wire(),
 	}
 	return json.Marshal(wire)
 }
@@ -954,8 +1005,8 @@ func ValidateContextPacketRequest(
 	return nil
 }
 
-// ValidateRecordedContextPacketRequest verifies exact v2, v3, v5, v7 or v8 bytes for readback.
-// A v7 or v8 specialist block must re-derive exactly from the embedded profile catalog.
+// ValidateRecordedContextPacketRequest verifies exact v2, v3, v5, v7, v8 or v9 bytes for readback.
+// A v7, v8 or v9 specialist block must re-derive exactly from the embedded profile catalog.
 // It does not admit a legacy context for a new model attempt.
 func ValidateRecordedContextPacketRequest(
 	payload []byte,
@@ -1018,6 +1069,11 @@ func ValidateRecordedContextPacketRequest(
 	if !validSourceHeadLines(wire.Sources) {
 		return ErrInvalidContextPacketRequest
 	}
+	// Stated intent and pattern hygiene exist only in version 9.
+	if (wire.StatedIntent != nil || wire.PatternHygiene != nil) && wire.SchemaVersion != modelGenerationContextVersion ||
+		!validStatedIntentWire(wire.StatedIntent) || !validPatternHygieneWire(wire.PatternHygiene, wire.Sources) {
+		return ErrInvalidContextPacketRequest
+	}
 	var sourceBytes uint32
 	seenEvidence := make(map[string]struct{}, len(evidenceItems))
 	for index, source := range wire.Sources {
@@ -1032,7 +1088,7 @@ func ValidateRecordedContextPacketRequest(
 		if source.SourceID != item.ID() || source.EvidenceDigest != item.Digest() ||
 			source.Path != rangeValue.Path() || source.StartLine != rangeValue.StartLine() ||
 			source.EndLine != rangeValue.EndLine() || !utf8.ValidString(source.Content) ||
-			!validContextStageToken(source.Stage, wire.SchemaVersion == modelGenerationContextVersion) || !validContextTaintToken(source.Taint) ||
+			!validContextStageToken(source.Stage, removedLinesGenerationVersion(wire.SchemaVersion)) || !validContextTaintToken(source.Taint) ||
 			removed && source.Taint != memory.TaintRepositoryControlled.String() {
 			return ErrInvalidContextPacketRequest
 		}
@@ -1045,7 +1101,7 @@ func ValidateRecordedContextPacketRequest(
 		}
 		sourceBytes += uint32(len(source.Content))
 	}
-	if sourceBytes != wire.SourceCoverage.SelectedBytes || sourceBytes > wire.Limits.MaxSourceBytes {
+	if sourceBytes != wire.SourceCoverage.SelectedBytes || uint64(sourceBytes)+uint64(statedIntentWireBytes(wire.StatedIntent)) > uint64(wire.Limits.MaxSourceBytes) {
 		return ErrInvalidContextPacketRequest
 	}
 	return nil

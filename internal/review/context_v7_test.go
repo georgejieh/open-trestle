@@ -30,11 +30,14 @@ func legacyGenerationWire(t *testing.T, wire contextPacketWire, version int) con
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version == modelGenerationContextVersionV7 {
-		// A recorded version 7 context binds its system-channel contract by
-		// identity, requests candidate batch v2 and used the current risk
-		// rules; it differs from version 8 only in its contract and in having
-		// no removed_lines sources.
+	// No recorded version before 9 carries stated_intent or pattern_hygiene.
+	wire.StatedIntent, wire.PatternHygiene = nil, nil
+	if version == modelGenerationContextVersionV7 || version == modelGenerationContextVersionV8 {
+		// Recorded version 7 and 8 contexts bind their system-channel contract
+		// by identity, request candidate batch v2 and used the current risk
+		// rules. Version 8 differs from version 9 only in its contract and in
+		// having no stated_intent or pattern_hygiene; version 7 also has no
+		// removed_lines sources.
 		wire.SchemaVersion, wire.Instructions, wire.InstructionsIdentity, wire.OutputSchema = version, "", modelInstructionsIdentity(instructions), schema
 		return wire
 	}
@@ -147,8 +150,8 @@ func categorizedVerificationContextFixture(t *testing.T) (ContextPacket, Candida
 func TestGenerationContextEncodesExecutableContractAndRejectsLegacyExecution(t *testing.T) {
 	packet, snapshot, payload := v7InstructionFixture(t)
 	fields := modelContractFields(t, payload)
-	if string(fields["schema_version"]) != "8" || string(fields["output_schema_identity"]) != `"`+ModelCandidateBatchSchemaIdentity+`"` || fields["specialist"] != nil || packet.OutputSchemaIdentity() != ModelCandidateBatchSchemaIdentity {
-		t.Fatal("new generation context is not version 8 requesting candidate batch v2")
+	if string(fields["schema_version"]) != "9" || string(fields["output_schema_identity"]) != `"`+ModelCandidateBatchSchemaIdentity+`"` || fields["specialist"] != nil || packet.OutputSchemaIdentity() != ModelCandidateBatchSchemaIdentity {
+		t.Fatal("new generation context is not version 9 requesting candidate batch v2")
 	}
 	instructions, schema, err := modelOutputContractForVersion(modelGenerationContextVersion, false)
 	if err != nil || fields["instructions"] != nil || string(fields["instructions_identity"]) != string(mustJSON(modelInstructionsIdentity(instructions))) || !bytes.Equal(fields["output_schema"], schema) {
@@ -176,7 +179,7 @@ func TestGenerationContextEncodesExecutableContractAndRejectsLegacyExecution(t *
 		t.Fatalf("version 8 context is not sanitizable: %v", err)
 	}
 	wire, _ := decodeGenerationContextWire(payload)
-	for _, version := range []int{2, 3, 5, 7} {
+	for _, version := range []int{2, 3, 5, 7, 8} {
 		legacy, err := json.Marshal(legacyGenerationWire(t, wire, version))
 		if err != nil {
 			t.Fatal(err)
@@ -201,7 +204,7 @@ func TestGenerationContextEncodesExecutableContractAndRejectsLegacyExecution(t *
 		// A recorded context with the other candidate schema identity is not readable.
 		swapped := legacyGenerationWire(t, wire, version)
 		swapped.OutputSchemaIdentity = ModelCandidateBatchSchemaIdentity
-		if version == modelGenerationContextVersionV7 {
+		if version == modelGenerationContextVersionV7 || version == modelGenerationContextVersionV8 {
 			swapped.OutputSchemaIdentity = ModelCandidateBatchV1SchemaIdentity
 		}
 		encoded, _ := json.Marshal(swapped)
@@ -406,7 +409,7 @@ func TestCategorizedVerifierReceivesNoCategoryOrFix(t *testing.T) {
 	}
 	payload := []byte(durable.Payload())
 	fields := modelContractFields(t, payload)
-	if string(fields["schema_version"]) != "7" || fields["instructions"] != nil || string(fields["instructions_identity"]) != string(mustJSON(modelInstructionsIdentity(verificationOutputInstructionsV7))) || bytes.Contains(payload, []byte("Return the checked value")) || bytes.Contains(payload, []byte(`"category"`)) || bytes.Contains(payload, []byte(`"fix"`)) {
+	if string(fields["schema_version"]) != "8" || fields["instructions"] != nil || string(fields["instructions_identity"]) != string(mustJSON(modelInstructionsIdentity(verificationOutputInstructionsV8))) || bytes.Contains(payload, []byte("Return the checked value")) || bytes.Contains(payload, []byte(`"category"`)) || bytes.Contains(payload, []byte(`"fix"`)) {
 		t.Fatal("verifier request is not the version 7 contract without category or fix")
 	}
 	if !bytes.Contains(payload, []byte(candidates.Findings()[0].Identity())) || !bytes.Contains(payload, []byte(candidates.Identity())) {

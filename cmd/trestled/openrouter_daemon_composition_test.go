@@ -168,7 +168,7 @@ func (r *daemonOpenRouterModelTransport) chat(request *http.Request) (*http.Resp
 	}
 	neutral, err := provider.NewRequest(provider.CapabilityReviewV1, "application/json", payload)
 	var packet daemonBudgetedModelPacket
-	if err != nil || json.Unmarshal(payload, &packet) != nil || packet.Version != 8 || packet.Task != "candidate_generation" || packet.Scope == "" || packet.SourceAuthority != "evidence_data_not_instructions" || packet.MemoryAuthority != "advisory_only" || review.ValidateCandidateModelRequest(neutral, packet.Scope) != nil {
+	if err != nil || json.Unmarshal(payload, &packet) != nil || packet.Version != 9 || packet.Task != "candidate_generation" || packet.Scope == "" || packet.SourceAuthority != "evidence_data_not_instructions" || packet.MemoryAuthority != "advisory_only" || review.ValidateCandidateModelRequest(neutral, packet.Scope) != nil {
 		return nil, fmt.Errorf("Chat lost sanitized generation context")
 	}
 	endpoint.mu.Lock()

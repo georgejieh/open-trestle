@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/georgejieh/open-trestle/diagnostics"
+	"github.com/georgejieh/open-trestle/internal/patternhygiene"
 )
 
 // Rendering of the walkthrough and the ranked findings, shared by the single
@@ -97,6 +99,7 @@ func walkthroughVerifiedTexts(w *Walkthrough, code func(string) string, set *set
 	for _, check := range verified.StaticChecks {
 		lines = append(lines, fmt.Sprintf("static check %s: %s (%d file%s checked, %d match%s)", code(check.Key), check.State, check.CheckedFiles, plural(int(check.CheckedFiles)), check.Matches, map[bool]string{true: "", false: "es"}[check.Matches == 1]))
 	}
+	lines = append(lines, patternHygieneTexts(verified.PatternHygiene, code)...)
 	if verified.StyleDetection.State == "ran" {
 		lines = append(lines, fmt.Sprintf("style detection: ran (%d recommendation%s, %d withheld)", verified.StyleDetection.Recommendations, plural(verified.StyleDetection.Recommendations), verified.StyleDetection.Withheld))
 	} else {
@@ -120,6 +123,71 @@ func walkthroughVerifiedTexts(w *Walkthrough, code func(string) string, set *set
 		lines = append(lines, "independent verifier: no verified set was recorded")
 	}
 	return lines
+}
+
+// patternHygieneTexts words the deterministic pattern-hygiene evidence: one
+// summary line, then each listed anti-pattern increase and root-cause note.
+func patternHygieneTexts(hygiene *WalkthroughPatternHygiene, code func(string) string) []string {
+	if hygiene == nil {
+		return nil
+	}
+	if hygiene.State != "ran" {
+		return []string{"pattern hygiene: unavailable (no version 9 generation context was recorded)"}
+	}
+	text := fmt.Sprintf("pattern hygiene: %d added suppression%s, %d added workaround comment%s, %d spreading anti-pattern%s",
+		hygiene.Suppressions, plural(hygiene.Suppressions), hygiene.WorkaroundComments, plural(hygiene.WorkaroundComments), hygiene.SpreadingAntiPatterns, plural(hygiene.SpreadingAntiPatterns))
+	if fresh := hygiene.IncreasedAntiPatterns - hygiene.SpreadingAntiPatterns; fresh > 0 {
+		text += fmt.Sprintf(", %d new anti-pattern%s", fresh, plural(fresh))
+	}
+	if hygiene.UnreferencedTODOs > 0 {
+		text += fmt.Sprintf(", %d TODO%s without an issue reference", hygiene.UnreferencedTODOs, plural(hygiene.UnreferencedTODOs))
+	}
+	if hygiene.AbsoluteDirectives > 0 {
+		text += fmt.Sprintf(", %d absolute rule%s added to agent instruction files", hygiene.AbsoluteDirectives, plural(hygiene.AbsoluteDirectives))
+	}
+	if hygiene.UnreadDirectories > 0 {
+		text += fmt.Sprintf(" (%d director%s not compared)", hygiene.UnreadDirectories, map[bool]string{true: "y", false: "ies"}[hygiene.UnreadDirectories == 1])
+	}
+	lines := []string{text}
+	for _, item := range hygiene.Items {
+		switch patternhygiene.Kind(item.Kind) {
+		case patternhygiene.KindAntiPattern:
+			what := item.Rule
+			if rule, ok := patternhygiene.RuleByID(item.Rule); ok {
+				what = rule.Pattern
+			}
+			spread := "new in its directory"
+			if item.BaseCount > 0 {
+				spread = fmt.Sprintf("its directory had %d, now %d", item.BaseCount, item.HeadCount)
+			}
+			lines = append(lines, fmt.Sprintf("pattern hygiene: %s line %d adds %s (%s; %s)", code(item.Path), item.Line, code(item.Rule), what, spread))
+		case patternhygiene.KindRootCauseNotFixed:
+			lines = append(lines, fmt.Sprintf("pattern hygiene note (deterministic, low): %s line %d adds a suppression beside a workaround comment; the root cause is not fixed", code(item.Path), item.Line))
+		}
+	}
+	return lines
+}
+
+// statedIntentText words the author-stated, unverified commit subjects.
+func statedIntentText(intent *WalkthroughStatedIntent, quote func(string) string) string {
+	parts := make([]string, len(intent.Subjects))
+	for index, subject := range intent.Subjects {
+		parts[index] = quote(subject)
+	}
+	text := "stated intent (author-stated, unverified): " + strings.Join(parts, "; ")
+	if len(parts) == 0 {
+		text = "stated intent (author-stated, unverified): no commit subject could be shown"
+	}
+	if intent.SubjectsNotListed > 0 {
+		text += fmt.Sprintf("; %d more commit%s not listed", intent.SubjectsNotListed, plural(intent.SubjectsNotListed))
+	}
+	if intent.RangeIncomplete {
+		text += "; older commits of the range could not be read"
+	}
+	if intent.InstructionLike > 0 {
+		text += fmt.Sprintf(" (%d flagged as instruction-like text, treated as data)", intent.InstructionLike)
+	}
+	return text
 }
 
 // walkthroughFileText describes one changed file.
@@ -188,6 +256,9 @@ func walkthroughText(w *Walkthrough, set *setScanCounts) []string {
 	lines := []string{"walkthrough:\n"}
 	for _, text := range walkthroughVerifiedTexts(w, plain, set) {
 		lines = append(lines, "verified: "+text+"\n")
+	}
+	if w.StatedIntent != nil {
+		lines = append(lines, statedIntentText(w.StatedIntent, strconv.Quote)+"\n")
 	}
 	notListed := w.FilesNotListed
 	for index, file := range w.Files {
@@ -399,6 +470,21 @@ func walkthroughMarkdown(w *Walkthrough, set *setScanCounts) string {
 	buffer.WriteString("### What was verified\n\n")
 	for _, text := range walkthroughVerifiedTexts(w, MarkdownCode, set) {
 		buffer.WriteString("- " + strings.ToUpper(text[:1]) + text[1:] + ".\n")
+	}
+	if intent := w.StatedIntent; intent != nil {
+		buffer.WriteString("\n### Stated intent\n\nAuthor-stated and unverified: what the commit messages say the change does, not evidence.\n\n")
+		for _, subject := range intent.Subjects {
+			buffer.WriteString("- " + MarkdownCode(subject) + "\n")
+		}
+		if intent.SubjectsNotListed > 0 {
+			fmt.Fprintf(&buffer, "- %d more commit%s, not listed.\n", intent.SubjectsNotListed, plural(intent.SubjectsNotListed))
+		}
+		if intent.RangeIncomplete {
+			buffer.WriteString("- Older commits of the range could not be read.\n")
+		}
+		if intent.InstructionLike > 0 {
+			fmt.Fprintf(&buffer, "- %d flagged as instruction-like text and treated as data.\n", intent.InstructionLike)
+		}
 	}
 	if len(w.Files) > 0 || w.FilesNotListed > 0 {
 		buffer.WriteString("\n### Changes\n\n")

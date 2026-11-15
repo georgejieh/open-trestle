@@ -465,7 +465,7 @@ func validCandidateFix(value string) bool {
 
 // candidateBatchMatchesContextVersion reports whether a candidate batch can be the
 // output of a generation context version. A categorized v2 batch requires a
-// version 7 or 8 context. An uncategorized v1 batch is accepted for every version so
+// version 7, 8 or 9 context. An uncategorized v1 batch is accepted for every version so
 // that recorded readback and investigation projections keep their v1 candidates.
 func candidateBatchMatchesContextVersion(version int, batch CandidateBatch) bool {
 	return !batch.categorized || systemChannelGenerationVersion(version)
@@ -537,7 +537,7 @@ func ParseCandidateBatch(response provider.Response, snapshot ReviewSnapshot, ev
 }
 
 // ParseContextCandidateBatch strictly decodes one response against the output
-// contract of the exact generation context bytes it answers. A version 7 or 8
+// contract of the exact generation context bytes it answers. A version 7, 8 or 9
 // context requires model-candidate-batch-v2 and drops, and counts, each
 // candidate whose source_range names a repository_context source: repository
 // instruction files are advisory preferences, not reviewed code, and changed

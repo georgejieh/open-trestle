@@ -36,6 +36,13 @@ type textFallbackResult struct {
 // handlers over in-memory base and head trees and assembles the context packet.
 func assembleTextFallback(t *testing.T, baseFiles, headFiles map[string][]byte, prefixes ...string) textFallbackResult {
 	t.Helper()
+	return assembleTextFallbackWithIntent(t, baseFiles, headFiles, nil, prefixes...)
+}
+
+// assembleTextFallbackWithIntent also reads the stated intent from intent
+// when it is not nil.
+func assembleTextFallbackWithIntent(t *testing.T, baseFiles, headFiles map[string][]byte, intent ChangeIntentSource, prefixes ...string) textFallbackResult {
+	t.Helper()
 	if len(prefixes) == 0 {
 		prefixes = []string{"."}
 	}
@@ -106,7 +113,7 @@ func assembleTextFallback(t *testing.T, baseFiles, headFiles map[string][]byte, 
 	run(memoryTask, memoryTaskHandler, time.UnixMilli(109))
 	contextRequest := run(contextTask, nil, time.UnixMilli(111))
 	at := time.UnixMilli(230)
-	assembly, providerRequest, abstention, failure := (&Handler{store: store, clock: contextTestClock{at}, packetOnly: true}).assembleAt(context.Background(), contextRequest, at, at)
+	assembly, providerRequest, abstention, failure := (&Handler{store: store, clock: contextTestClock{at}, packetOnly: true, intent: intent}).assembleAt(context.Background(), contextRequest, at, at)
 	result := textFallbackResult{assembly: assembly.InvestigationAssembly, request: providerRequest, abstention: abstention, failure: failure, sources: map[string]review.ContextSource{}, omissionSet: map[string]bool{}}
 	if failure == 0 {
 		for _, source := range assembly.Packet.Sources() {

@@ -636,6 +636,14 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 				return Result{}, ErrInvalidResult
 			}
 			w.AgentConfigurationSources, w.InstructionLikeSources = agentConfiguration, instructionLike
+			// The walkthrough shows the stated intent and pattern hygiene the
+			// generation context actually carried, read from its exact bytes.
+			if walk.intent, err = review.ContextStatedIntent(contextArtifact.Payload()); err != nil {
+				return Result{}, ErrInvalidResult
+			}
+			if walk.hygiene, err = review.ContextPatternHygieneSummary(contextArtifact.Payload()); err != nil {
+				return Result{}, ErrInvalidResult
+			}
 			// Only a direct run knows its sources' stages, so only a direct run
 			// classifies pre-existing findings.
 			lines = lines.withContextEvidence(contextArtifact.Payload())

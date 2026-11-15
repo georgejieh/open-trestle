@@ -8,11 +8,13 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/georgejieh/open-trestle/audit"
 	analysishandler "github.com/georgejieh/open-trestle/handlers/analysis"
 	"github.com/georgejieh/open-trestle/internal/evidence"
+	"github.com/georgejieh/open-trestle/internal/patternhygiene"
 	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/semanticimpact"
 )
@@ -59,6 +61,68 @@ type Walkthrough struct {
 	// not read every Go file, so a test it did not read may reference a
 	// listed function.
 	MissingVerificationIncomplete bool `json:"missing_verification_incomplete,omitempty"`
+	// StatedIntent is what the change's author says it does: the subjects of
+	// its commit messages. It is author-stated and unverified, never evidence;
+	// absent when the run recorded no stated intent.
+	StatedIntent *WalkthroughStatedIntent `json:"stated_intent,omitempty"`
+}
+
+// Stated-intent and pattern-hygiene listing bounds.
+const (
+	maxWalkthroughIntentSubjects   = 8
+	maxWalkthroughIntentSubjectRun = 120
+	maxWalkthroughHygieneItems     = 16
+)
+
+// WalkthroughStatedIntent lists commit subjects, oldest first. Subjects are
+// untrusted text: control and format characters are replaced, each is cut
+// at 120 characters, and renderers escape them.
+type WalkthroughStatedIntent struct {
+	Source    string   `json:"source"`
+	Authority string   `json:"authority"`
+	Subjects  []string `json:"subjects"`
+	// Commits counts every commit of the range the context carried or
+	// counted; SubjectsNotListed is the part of it the subjects omit.
+	Commits           int `json:"commits"`
+	SubjectsNotListed int `json:"subjects_not_listed,omitempty"`
+	// Truncated counts messages the context carried cut, InstructionLike
+	// those flagged instruction_like_text, and RangeIncomplete marks a range
+	// the host could not read completely.
+	Truncated       int  `json:"truncated,omitempty"`
+	InstructionLike int  `json:"instruction_like,omitempty"`
+	RangeIncomplete bool `json:"range_incomplete,omitempty"`
+}
+
+// WalkthroughPatternHygiene is the deterministic pattern-hygiene evidence of
+// the run's generation context: complete counts and the items placed on its
+// changed sources. A root_cause_not_fixed item is a deterministic low-severity
+// note, labelled as such; it never changes status or CI disposition.
+type WalkthroughPatternHygiene struct {
+	State                 string                   `json:"state"`
+	IncreasedAntiPatterns int                      `json:"increased_anti_patterns"`
+	SpreadingAntiPatterns int                      `json:"spreading_anti_patterns"`
+	Suppressions          int                      `json:"suppressions"`
+	WorkaroundComments    int                      `json:"workaround_comments"`
+	UnreferencedTODOs     int                      `json:"unreferenced_todos"`
+	AbsoluteDirectives    int                      `json:"absolute_directives"`
+	RootCauseNotes        int                      `json:"root_cause_notes"`
+	UnreadDirectories     int                      `json:"unread_directories,omitempty"`
+	Items                 []WalkthroughPatternItem `json:"items"`
+	ItemsNotListed        int                      `json:"items_not_listed,omitempty"`
+}
+
+// WalkthroughPatternItem is one placed pattern-hygiene item.
+type WalkthroughPatternItem struct {
+	Kind      string `json:"kind"`
+	Rule      string `json:"rule,omitempty"`
+	Path      string `json:"path"`
+	Line      int    `json:"line"`
+	BaseCount int    `json:"base_count,omitempty"`
+	HeadCount int    `json:"head_count,omitempty"`
+	// Origin is always deterministic; Severity is low for a root-cause note
+	// and absent for evidence.
+	Origin   string `json:"origin"`
+	Severity string `json:"severity,omitempty"`
 }
 
 // WalkthroughVerified is what the review verified.
@@ -67,6 +131,9 @@ type WalkthroughVerified struct {
 	StaticChecks   []WalkthroughStaticCheck  `json:"static_checks"`
 	StyleDetection WalkthroughStyleDetection `json:"style_detection"`
 	SemanticImpact WalkthroughSemanticImpact `json:"semantic_impact"`
+	// PatternHygiene is absent only in walkthroughs recorded before it
+	// existed; a run without a version 9 context reports it unavailable.
+	PatternHygiene *WalkthroughPatternHygiene `json:"pattern_hygiene,omitempty"`
 	// Verifier is the independent verifier's account; absent when the run
 	// recorded no verified set.
 	Verifier *WalkthroughVerifier `json:"verifier,omitempty"`
@@ -157,6 +224,71 @@ type walkthroughInputs struct {
 	receipts     []string // sanitized egress receipt artifact identities
 	verifier     *WalkthroughVerifier
 	receiptError bool
+	// intent and hygiene are read from the recorded generation context.
+	intent  review.StatedIntentSummary
+	hygiene review.PatternHygieneSummary
+}
+
+// statedIntentWalkthrough lists a recorded stated intent's subjects.
+func statedIntentWalkthrough(summary review.StatedIntentSummary) *WalkthroughStatedIntent {
+	if !summary.Present {
+		return nil
+	}
+	value := &WalkthroughStatedIntent{Source: "commit_messages", Authority: "author_stated_unverified", Subjects: []string{},
+		Commits: summary.Commits + summary.CommitsOmitted, Truncated: summary.Truncated, InstructionLike: summary.InstructionLike, RangeIncomplete: summary.RangeIncomplete}
+	for _, subject := range summary.Subjects {
+		if len(value.Subjects) == maxWalkthroughIntentSubjects {
+			break
+		}
+		if subject = displaySubject(subject); subject != "" {
+			value.Subjects = append(value.Subjects, subject)
+		}
+	}
+	value.SubjectsNotListed = value.Commits - len(value.Subjects)
+	return value
+}
+
+// displaySubject replaces control and format characters, which could move a
+// terminal cursor or hide text, and cuts the subject at 120 characters.
+func displaySubject(subject string) string {
+	var builder strings.Builder
+	runes := 0
+	for _, character := range subject {
+		if runes == maxWalkthroughIntentSubjectRun {
+			builder.WriteString("…")
+			break
+		}
+		if unicode.IsControl(character) || unicode.In(character, unicode.Cf) {
+			character = utf8.RuneError
+		}
+		builder.WriteRune(character)
+		runes++
+	}
+	return strings.TrimSpace(builder.String())
+}
+
+// patternHygieneWalkthrough reports a recorded context's pattern hygiene.
+func patternHygieneWalkthrough(summary review.PatternHygieneSummary) *WalkthroughPatternHygiene {
+	if !summary.Present {
+		return &WalkthroughPatternHygiene{State: "unavailable", Items: []WalkthroughPatternItem{}}
+	}
+	counts := summary.Counts
+	value := &WalkthroughPatternHygiene{State: "ran", IncreasedAntiPatterns: counts.IncreasedAntiPatterns, SpreadingAntiPatterns: counts.SpreadingAntiPatterns,
+		Suppressions: counts.Suppressions, WorkaroundComments: counts.WorkaroundComments, UnreferencedTODOs: counts.UnreferencedTODOs,
+		AbsoluteDirectives: counts.AbsoluteDirectives, RootCauseNotes: counts.RootCauseNotes, UnreadDirectories: summary.Unread,
+		Items: []WalkthroughPatternItem{}, ItemsNotListed: summary.ItemsNotListed}
+	for _, item := range summary.Items {
+		if len(value.Items) == maxWalkthroughHygieneItems {
+			value.ItemsNotListed++
+			continue
+		}
+		entry := WalkthroughPatternItem{Kind: item.Kind, Rule: item.Rule, Path: item.Path, Line: item.Line, BaseCount: item.BaseCount, HeadCount: item.HeadCount, Origin: "deterministic"}
+		if item.Kind == string(patternhygiene.KindRootCauseNotFixed) {
+			entry.Severity = "low"
+		}
+		value.Items = append(value.Items, entry)
+	}
+	return value
 }
 
 // buildWalkthrough assembles the walkthrough from recorded artifacts. readReceipt
@@ -189,6 +321,8 @@ func buildWalkthrough(in walkthroughInputs, readReceipt func(string) (review.Sca
 	if in.analysis != nil {
 		w.MissingVerification, w.MissingVerificationNotListed, w.MissingVerificationIncomplete = missingVerification(profile)
 	}
+	w.Verified.PatternHygiene = patternHygieneWalkthrough(in.hygiene)
+	w.StatedIntent = statedIntentWalkthrough(in.intent)
 	return w
 }
 
@@ -406,6 +540,16 @@ func (w *Walkthrough) clone() *Walkthrough {
 		value.Files = append(value.Files, file)
 	}
 	value.MissingVerification = append([]MissingVerification{}, w.MissingVerification...)
+	if w.Verified.PatternHygiene != nil {
+		hygiene := *w.Verified.PatternHygiene
+		hygiene.Items = append([]WalkthroughPatternItem{}, hygiene.Items...)
+		value.Verified.PatternHygiene = &hygiene
+	}
+	if w.StatedIntent != nil {
+		intent := *w.StatedIntent
+		intent.Subjects = append([]string{}, intent.Subjects...)
+		value.StatedIntent = &intent
+	}
 	return &value
 }
 
@@ -450,10 +594,52 @@ func (w *Walkthrough) validate() error {
 			return errInvalidWalkthrough
 		}
 	}
-	if declarations > maxWalkthroughDeclarations {
+	if declarations > maxWalkthroughDeclarations || !validHygieneWalkthrough(w.Verified.PatternHygiene, text) || !validIntentWalkthrough(w.StatedIntent) {
 		return errInvalidWalkthrough
 	}
 	return nil
+}
+
+func validHygieneWalkthrough(value *WalkthroughPatternHygiene, text func(string, int) bool) bool {
+	if value == nil {
+		return true
+	}
+	if value.State != "ran" && value.State != "unavailable" || value.Items == nil || len(value.Items) > maxWalkthroughHygieneItems || value.ItemsNotListed < 0 || value.UnreadDirectories < 0 {
+		return false
+	}
+	for _, count := range []int{value.IncreasedAntiPatterns, value.SpreadingAntiPatterns, value.Suppressions, value.WorkaroundComments, value.UnreferencedTODOs, value.AbsoluteDirectives, value.RootCauseNotes} {
+		if count < 0 || value.State == "unavailable" && count != 0 {
+			return false
+		}
+	}
+	for _, item := range value.Items {
+		note := item.Kind == string(patternhygiene.KindRootCauseNotFixed)
+		if !text(item.Path, maxWalkthroughPathBytes) || item.Line < 1 || item.Origin != "deterministic" || note != (item.Severity == "low") || !note && item.Severity != "" {
+			return false
+		}
+		switch patternhygiene.Kind(item.Kind) {
+		case patternhygiene.KindAntiPattern, patternhygiene.KindSuppression, patternhygiene.KindWorkaroundComment, patternhygiene.KindUnreferencedTODO, patternhygiene.KindAbsoluteDirective, patternhygiene.KindRootCauseNotFixed:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func validIntentWalkthrough(value *WalkthroughStatedIntent) bool {
+	if value == nil {
+		return true
+	}
+	if value.Source != "commit_messages" || value.Authority != "author_stated_unverified" || value.Subjects == nil || len(value.Subjects) > maxWalkthroughIntentSubjects ||
+		value.Commits < len(value.Subjects) || value.SubjectsNotListed != value.Commits-len(value.Subjects) || value.Truncated < 0 || value.InstructionLike < 0 {
+		return false
+	}
+	for _, subject := range value.Subjects {
+		if subject == "" || !utf8.ValidString(subject) || utf8.RuneCountInString(subject) > maxWalkthroughIntentSubjectRun+1 || displaySubject(subject) != subject {
+			return false
+		}
+	}
+	return true
 }
 
 func validDeclarationKind(kind string) bool {

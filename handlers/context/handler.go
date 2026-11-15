@@ -57,6 +57,7 @@ type Handler struct {
 	packetOnly bool
 	preparer   ContextAbstentionPreparer
 	specialist review.ContextSpecialist
+	intent     ChangeIntentSource
 }
 
 func NewHandler(store artifact.Store, clock artifact.Clock, authorizer GenerationAuthorizer, sanitizer review.GenerationRequestSanitizer) (*Handler, error) {
@@ -65,8 +66,22 @@ func NewHandler(store artifact.Store, clock artifact.Clock, authorizer Generatio
 	}
 	h := &Handler{store: store, clock: clock, authorizer: authorizer, sanitizer: sanitizer}
 	sanitizerIdentity := sanitizer.Identity()
-	h.identity = deriveHandlerIdentity(authorizer.Identity(), sanitizerIdentity, review.ContextSpecialist{})
+	h.identity = deriveHandlerIdentity(authorizer.Identity(), sanitizerIdentity, review.ContextSpecialist{}, "")
 	return h, nil
+}
+
+// WithChangeIntent returns a copy of a route-granting handler that also reads
+// the change's author-stated intent from source and carries it in the
+// packet's stated_intent object, fitted to the source byte budget the selected
+// sources leave. The source's identity is bound into the handler identity.
+func (h *Handler) WithChangeIntent(source ChangeIntentSource) (*Handler, error) {
+	if h == nil || h.Validate() != nil || h.packetOnly || h.pipeline != nil || h.intent != nil || nilInterface(source) || !validDigest(source.Identity()) {
+		return nil, ErrInvalidHandler
+	}
+	value := *h
+	value.intent = source
+	value.identity = deriveHandlerIdentity(h.authorizer.Identity(), h.sanitizer.Identity(), h.specialist, source.Identity())
+	return &value, nil
 }
 
 // NewSpecialistHandler is NewHandler for one packaged specialist profile. Its
@@ -81,7 +96,7 @@ func NewSpecialistHandler(store artifact.Store, clock artifact.Clock, authorizer
 		return nil, err
 	}
 	h.specialist = specialist
-	h.identity = deriveHandlerIdentity(authorizer.Identity(), sanitizer.Identity(), specialist)
+	h.identity = deriveHandlerIdentity(authorizer.Identity(), sanitizer.Identity(), specialist, "")
 	return h, nil
 }
 
@@ -147,14 +162,14 @@ func (h *Handler) Validate() error {
 	if h.packetOnly {
 		legacy := h.identity == packetOnlyHandlerIdentity() && nilInterface(h.preparer)
 		journaled := h.identity == journaledPacketOnlyHandlerIdentity() && !nilInterface(h.preparer)
-		if (!legacy && !journaled) || !nilInterface(h.authorizer) || !nilInterface(h.sanitizer) || h.pipeline != nil || !h.specialist.IsZero() {
+		if (!legacy && !journaled) || !nilInterface(h.authorizer) || !nilInterface(h.sanitizer) || h.pipeline != nil || !h.specialist.IsZero() || !nilInterface(h.intent) {
 			return ErrInvalidHandler
 		}
 		return nil
 	}
 	if h.pipeline != nil {
 		identity, err := h.pipeline.HandlerIdentity(controlplane.TaskAssembleContext)
-		if h.pipeline.Validate() != nil || err != nil || !validDigest(identity) || h.identity != identity || !nilInterface(h.authorizer) || !nilInterface(h.sanitizer) || !h.specialist.IsZero() {
+		if h.pipeline.Validate() != nil || err != nil || !validDigest(identity) || h.identity != identity || !nilInterface(h.authorizer) || !nilInterface(h.sanitizer) || !h.specialist.IsZero() || !nilInterface(h.intent) {
 			return ErrInvalidHandler
 		}
 		return nil
@@ -162,7 +177,13 @@ func (h *Handler) Validate() error {
 	if nilInterface(h.authorizer) || !validDigest(h.authorizer.Identity()) {
 		return ErrInvalidHandler
 	}
-	if nilInterface(h.sanitizer) || !validDigest(h.sanitizer.Identity()) || h.identity != deriveHandlerIdentity(h.authorizer.Identity(), h.sanitizer.Identity(), h.specialist) {
+	intentIdentity := ""
+	if !nilInterface(h.intent) {
+		if intentIdentity = h.intent.Identity(); !validDigest(intentIdentity) {
+			return ErrInvalidHandler
+		}
+	}
+	if nilInterface(h.sanitizer) || !validDigest(h.sanitizer.Identity()) || h.identity != deriveHandlerIdentity(h.authorizer.Identity(), h.sanitizer.Identity(), h.specialist, intentIdentity) {
 		return ErrInvalidHandler
 	}
 	if !h.specialist.IsZero() && h.specialist.Validate() != nil {
@@ -179,11 +200,14 @@ func (h *Handler) Validate() error {
 // recorded an earlier identity is not executed by this handler, so a run that
 // straddles an upgrade fails closed instead of rebuilding different packet
 // bytes; its recorded artifacts stay readable through the recorded-readback
-// validators.
-const contextAssemblyHandlerVersion = 7
+// validators. Version 8 assembles version 9 generation contexts, with
+// deterministic pattern hygiene and, when a change intent source is bound,
+// the stated intent.
+const contextAssemblyHandlerVersion = 8
 
-// deriveHandlerIdentity omits the specialist fields when no specialist is bound.
-func deriveHandlerIdentity(authorizer, sanitizer string, specialist review.ContextSpecialist) string {
+// deriveHandlerIdentity omits the specialist and intent-source fields when
+// none is bound.
+func deriveHandlerIdentity(authorizer, sanitizer string, specialist review.ContextSpecialist, intent string) string {
 	encoded, _ := json.Marshal(struct {
 		Contract          string `json:"contract"`
 		Version           int    `json:"version"`
@@ -191,7 +215,8 @@ func deriveHandlerIdentity(authorizer, sanitizer string, specialist review.Conte
 		Sanitizer         string `json:"sanitizer,omitempty"`
 		SpecialistProfile string `json:"specialist_profile_identity,omitempty"`
 		SpecialistCatalog string `json:"specialist_catalog_identity,omitempty"`
-	}{"open-trestle/context-assembly-handler", contextAssemblyHandlerVersion, authorizer, sanitizer, specialist.ProfileIdentity(), specialist.CatalogIdentity()})
+		ChangeIntent      string `json:"change_intent_source_identity,omitempty"`
+	}{"open-trestle/context-assembly-handler", contextAssemblyHandlerVersion, authorizer, sanitizer, specialist.ProfileIdentity(), specialist.CatalogIdentity(), intent})
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }
@@ -632,6 +657,37 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 		packet, err = packet.WithSpecialist(h.specialist)
 		if err != nil {
 			return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+		}
+	}
+	// Deterministic evidence first: pattern hygiene and the stated intent are
+	// data in the packet, never instructions, and neither changes the selected
+	// sources. The investigation pipeline builds its own context and gets
+	// neither.
+	if h.pipeline == nil {
+		report, hygieneFailure := h.patternHygieneReport(ctx, request.Plan().Scope(), readAt, base, change, contents, &expires)
+		if hygieneFailure != 0 {
+			return contextAssembly{}, provider.Request{}, nil, hygieneFailure
+		}
+		packet, err = packet.WithPatternHygiene(review.NewContextPatternHygiene(report, packet.Sources()))
+		if err != nil {
+			return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+		}
+	}
+	if !nilInterface(h.intent) {
+		intent, err := h.intent.StatedIntent(ctx, change.Repository(), change.BaseRevision(), change.HeadRevision())
+		if err != nil {
+			if ctx.Err() != nil {
+				return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureCanceled
+			}
+			return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+		}
+		// The stated intent fills the source budget the selected sources left:
+		// changed code keeps priority, and a cut is marked, never silent.
+		if fitted := intent.Fit(int(limits.MaxSourceBytes()) - int(packet.SourceSelection().SelectedBytes())); !fitted.IsZero() {
+			packet, err = packet.WithStatedIntent(fitted)
+			if err != nil {
+				return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+			}
 		}
 	}
 	providerRequest, err := packet.ProviderRequest()

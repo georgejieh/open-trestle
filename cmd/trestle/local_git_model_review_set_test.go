@@ -355,7 +355,9 @@ func TestRunLocalGitModelReviewAutoSpecialistsRunsAndMerges(t *testing.T) {
 	if receipt.Status != "findings" || receipt.CI != "blocked" || !receipt.Complete || receipt.Selection.Mode != "auto" || receipt.Selection.Status != "planned" {
 		t.Fatalf("receipt=%+v", receipt)
 	}
-	if got := strings.Join(selectedIDs(receipt), ","); got != "bug_hunter,backend" {
+	// The commit messages are declared intent, so the drift auditor joins the
+	// Go profiles.
+	if got := strings.Join(selectedIDs(receipt), ","); got != "bug_hunter,backend,drift_auditor" {
 		t.Fatalf("auto selected %q for a Go change", got)
 	}
 	if droppedReason(receipt, "test_author") != dropReasonNotApplicable || receipt.Selection.Plan == nil || receipt.Selection.Plan.AssignmentsBasis != "synthesized_single_route_pair_from_general_review" {
@@ -364,12 +366,12 @@ func TestRunLocalGitModelReviewAutoSpecialistsRunsAndMerges(t *testing.T) {
 	if features := receipt.Selection.Features; features == nil || features.ChangedFiles != 1 || strings.Join(features.Languages, ",") != "go" {
 		t.Fatal("selection trace did not summarize the recorded change features")
 	}
-	if len(receipt.Members) != 3 || receipt.Summary.MembersRun != 3 || receipt.Bounds.MaxModelWallTimeMillis != 3*receipt.Bounds.MemberTimeoutMillis {
-		t.Fatal("review set did not run general plus two specialists within the stated bound")
+	if len(receipt.Members) != 4 || receipt.Summary.MembersRun != 4 || receipt.Bounds.MaxModelWallTimeMillis != 4*receipt.Bounds.MemberTimeoutMillis {
+		t.Fatal("review set did not run general plus three specialists within the stated bound")
 	}
 	runs := map[string]bool{}
 	for index, member := range receipt.Members {
-		want := []string{"general", "bug_hunter", "backend"}[index]
+		want := []string{"general", "bug_hunter", "backend", "drift_auditor"}[index]
 		if member.Member != want || !member.Launched || member.RunStatus != "succeeded" || member.Status != "findings" || runs[member.ReviewRunID] || member.ReviewRunID == "" {
 			t.Fatalf("member %d=%+v", index, member)
 		}
@@ -381,23 +383,23 @@ func TestRunLocalGitModelReviewAutoSpecialistsRunsAndMerges(t *testing.T) {
 		}
 		runs[member.ReviewRunID] = true
 	}
-	if len(receipt.Findings) != 1 || receipt.Summary.DuplicatesMerged != 2 || receipt.Summary.BySeverity["error"] != 1 || receipt.Summary.ByCategory["correctness"] != 1 {
+	if len(receipt.Findings) != 1 || receipt.Summary.DuplicatesMerged != 3 || receipt.Summary.BySeverity["error"] != 1 || receipt.Summary.ByCategory["correctness"] != 1 {
 		t.Fatalf("merged findings=%+v summary=%+v", receipt.Findings, receipt.Summary)
 	}
 	merged := receipt.Findings[0]
-	if merged.Severity != "error" || len(merged.Contributors) != 3 || merged.Contributors[0].Member != "general" || merged.FindingIdentity != merged.Contributors[0].FindingIdentity || merged.Contributors[1].Severity != "warning" {
+	if merged.Severity != "error" || len(merged.Contributors) != 4 || merged.Contributors[0].Member != "general" || merged.FindingIdentity != merged.Contributors[0].FindingIdentity || merged.Contributors[1].Severity != "warning" {
 		t.Fatal("dedup did not keep the highest-severity verified finding with every contributor")
 	}
 
 	generationCalls, generated := f.generation.snapshot()
 	verificationCalls, verified := f.verification.snapshot()
-	if generationCalls != 3 || verificationCalls != 3 || len(generated) != 3 || len(verified) != 3 {
+	if generationCalls != 4 || verificationCalls != 4 || len(generated) != 4 || len(verified) != 4 {
 		t.Fatalf("model calls=%d/%d", generationCalls, verificationCalls)
 	}
 	if len(generated[0].Packet.Specialist) != 0 && string(generated[0].Packet.Specialist) != "null" {
 		t.Fatal("general review generation carried a specialist block")
 	}
-	for index, id := range []string{"bug_hunter", "backend"} {
+	for index, id := range []string{"bug_hunter", "backend", "drift_auditor"} {
 		specialist, err := review.NewContextSpecialist(id)
 		if err != nil {
 			t.Fatal(err)
@@ -604,7 +606,7 @@ func TestRunLocalGitModelReviewSetSARIFAndExitPolicy(t *testing.T) {
 		_, text := runLocalModelSet(t, f, []string{"--specialists", "auto", "--format", "sarif"}, 4)
 		log := decode(t, text)
 		results := log.Runs[0].Results
-		if len(results) != 1 || strings.Join(results[0].Properties.Contributors, ",") != "general,bug_hunter,backend" || results[0].Level != "error" {
+		if len(results) != 1 || strings.Join(results[0].Properties.Contributors, ",") != "general,bug_hunter,backend,drift_auditor" || results[0].Level != "error" {
 			t.Fatalf("SARIF results=%+v", results)
 		}
 		if !log.Runs[0].Invocations[0].ExecutionSuccessful || log.Runs[0].Properties.ModelReviewStatus != "findings" {

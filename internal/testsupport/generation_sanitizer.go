@@ -52,7 +52,12 @@ func cleanSanitizedRequest(raw provider.Request, scopeIdentity string, expected 
 		} `json:"source_omissions"`
 		Memory           memoryWire   `json:"memory"`
 		AdditionalMemory []memoryWire `json:"additional_memory"`
-		Candidates       []struct {
+		StatedIntent     *struct {
+			Commits []struct {
+				Text string `json:"text"`
+			} `json:"commits"`
+		} `json:"stated_intent"`
+		Candidates []struct {
 			Title string `json:"title"`
 			Claim string `json:"claim"`
 			Path  string `json:"path"`
@@ -84,6 +89,13 @@ func cleanSanitizedRequest(raw provider.Request, scopeIdentity string, expected 
 	appendMemory(wire.Memory)
 	for _, memoryValue := range wire.AdditionalMemory {
 		appendMemory(memoryValue)
+	}
+	if wire.StatedIntent != nil {
+		for _, commit := range wire.StatedIntent.Commits {
+			if commit.Text != "" {
+				appendField(review.FieldRoleStatedIntentText, commit.Text)
+			}
+		}
 	}
 	for _, candidate := range wire.Candidates {
 		appendField(review.FieldRoleCandidateTitle, candidate.Title)

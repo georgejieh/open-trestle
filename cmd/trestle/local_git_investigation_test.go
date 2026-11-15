@@ -102,7 +102,7 @@ func (e *investigationEndpoint) serve(t *testing.T, w http.ResponseWriter, r *ht
 	if e.mode == "removed file" {
 		output = investigationRemovedFileResult(t, wire.Model, p)
 	} else if p.Task == "candidate_verification" {
-		if wire.Model != "model-b" || p.Version != 7 || len(p.Candidates) != 1 || p.GenerationContext == "" {
+		if wire.Model != "model-b" || p.Version != 8 || len(p.Candidates) != 1 || p.GenerationContext == "" {
 			t.Error("independent verifier lost candidate lineage")
 		}
 		ids := []string{}
@@ -289,7 +289,7 @@ func investigationRemovedFileResult(t *testing.T, model string, p investigationP
 		return map[string]any{}
 	}
 	if p.Task == "candidate_verification" {
-		if model != "model-b" || p.Version != 7 || len(p.Candidates) != 1 {
+		if model != "model-b" || p.Version != 8 || len(p.Candidates) != 1 {
 			t.Error("independent verifier lost the removed-file candidate")
 		}
 		return map[string]any{"schema_version": 1, "verdicts": []any{map[string]any{"candidate_id": p.Candidates[0].ID, "outcome": "verified", "severity": "high", "rationale": "The removed lines define Helper.", "evidence_ids": []string{gone.ID}}}}

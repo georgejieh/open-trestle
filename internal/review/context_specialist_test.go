@@ -68,7 +68,7 @@ func TestContextSpecialistEncodesVersionEightAndRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fields := modelContractFields(t, baseRequest.Payload()); string(fields["schema_version"]) != "8" || fields["specialist"] != nil || !base.Specialist().IsZero() {
+	if fields := modelContractFields(t, baseRequest.Payload()); string(fields["schema_version"]) != "9" || fields["specialist"] != nil || !base.Specialist().IsZero() {
 		t.Fatal("packet without a specialist changed version or gained a specialist block")
 	}
 	if packet.Identity() == base.Identity() || packet.Specialist().ProfileID() != "bug_hunter" {
@@ -84,8 +84,8 @@ func TestContextSpecialistEncodesVersionEightAndRoundTrips(t *testing.T) {
 	}
 	fields := modelContractFields(t, payload)
 	var specialist contextSpecialistWire
-	if string(fields["schema_version"]) != "8" || json.Unmarshal(fields["specialist"], &specialist) != nil {
-		t.Fatal("specialist packet is not schema version 8 with a specialist block")
+	if string(fields["schema_version"]) != "9" || json.Unmarshal(fields["specialist"], &specialist) != nil {
+		t.Fatal("specialist packet is not schema version 9 with a specialist block")
 	}
 	if specialist.ProfileID != "bug_hunter" || specialist.ProfileIdentity != packet.Specialist().ProfileIdentity() || specialist.CatalogIdentity != packet.Specialist().CatalogIdentity() {
 		t.Fatal("specialist block does not carry the exact packaged profile identity")
@@ -105,11 +105,11 @@ func TestContextSpecialistEncodesVersionEightAndRoundTrips(t *testing.T) {
 		t.Fatal(err)
 	}
 	instructions, err := TrustedModelRequestInstructions(payload)
-	wantInstructions := candidateOutputInstructionsV8 + "\n\nSpecialist review guidance (operator-packaged profile bug_hunter, shipped with Open Trestle):\n" + packet.Specialist().Instructions()
-	if baseInstructions, baseErr := TrustedModelRequestInstructions(baseRequest.Payload()); err != nil || baseErr != nil || instructions != wantInstructions || baseInstructions != candidateOutputInstructionsV8 {
+	wantInstructions := candidateOutputInstructionsV9 + "\n\nSpecialist review guidance (operator-packaged profile bug_hunter, shipped with Open Trestle):\n" + packet.Specialist().Instructions()
+	if baseInstructions, baseErr := TrustedModelRequestInstructions(baseRequest.Payload()); err != nil || baseErr != nil || instructions != wantInstructions || baseInstructions != candidateOutputInstructionsV9 {
 		t.Fatal("version 7 system channel is not the host contract plus the catalog-exact skill text")
 	}
-	if string(fields["instructions_identity"]) != `"`+modelInstructionsIdentity(candidateOutputInstructionsV8)+`"` {
+	if string(fields["instructions_identity"]) != `"`+modelInstructionsIdentity(candidateOutputInstructionsV9)+`"` {
 		t.Fatal("version 7 payload does not bind the host contract by instructions_identity")
 	}
 	if schema, err := TrustedModelRequestOutputSchema(payload); err != nil || !bytes.Equal(schema, fields["output_schema"]) {
@@ -174,7 +174,7 @@ func TestContextSpecialistReadbackRejectsTamperedBlocks(t *testing.T) {
 			mustJSON(candidateOutputInstructions)),
 		"version seven instructions on version six":  replaceModelContractField(t, payload, "schema_version", json.RawMessage("6")),
 		"version five instructions on version seven": replaceModelContractField(t, payload, "instructions", mustJSON(candidateOutputInstructions)),
-		"host prose copied into version eight":       replaceModelContractField(t, payload, "instructions", mustJSON(candidateOutputInstructionsV8)),
+		"host prose copied into version eight":       replaceModelContractField(t, payload, "instructions", mustJSON(candidateOutputInstructionsV9)),
 		"altered instructions identity":              replaceModelContractField(t, payload, "instructions_identity", mustJSON(strings.Repeat("a", 64))),
 		"missing instructions identity":              replaceModelContractField(t, payload, "instructions_identity", nil),
 		"plain version seven as version six":         replaceModelContractField(t, baseRequest.Payload(), "schema_version", json.RawMessage("6")),
@@ -236,8 +236,8 @@ func TestVerificationOfSpecialistContextIsVersionSevenWithoutSpecialist(t *testi
 		t.Fatal(err)
 	}
 	fields := modelContractFields(t, verification.Payload())
-	if string(fields["schema_version"]) != "7" || fields["specialist"] != nil || fields["instructions"] != nil || string(fields["generation_context_identity"]) != `"`+packet.Identity()+`"` {
-		t.Fatal("verifier request is not version 7 bound to the specialist generation context")
+	if string(fields["schema_version"]) != "8" || fields["specialist"] != nil || fields["instructions"] != nil || string(fields["generation_context_identity"]) != `"`+packet.Identity()+`"` {
+		t.Fatal("verifier request is not version 8 bound to the specialist generation context")
 	}
 	if bytes.Contains(verification.Payload(), []byte(specialist.Instructions())) || bytes.Contains(verification.Payload(), []byte("Bug hunter profile")) || bytes.Contains(verification.Payload(), []byte(specialist.ProfileIdentity())) {
 		t.Fatal("verifier request received specialist instructions")
@@ -249,7 +249,7 @@ func TestVerificationOfSpecialistContextIsVersionSevenWithoutSpecialist(t *testi
 		t.Fatal("version 8 verification contract exists")
 	}
 	instructions, err := TrustedModelRequestInstructions(verification.Payload())
-	if err != nil || instructions != verificationOutputInstructionsV7 {
+	if err != nil || instructions != verificationOutputInstructionsV8 {
 		t.Fatal("verifier instructions changed for a specialist generation")
 	}
 }

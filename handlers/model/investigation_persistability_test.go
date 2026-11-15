@@ -101,7 +101,7 @@ func (m *persistModel) DispatchRoute(ctx context.Context, request gateway.RouteD
 	}
 	var response any
 	if packet.Task == "candidate_verification" {
-		if m.adapter != "adapter-b" || packet.Schema != 7 || len(packet.Candidates) != 1 {
+		if m.adapter != "adapter-b" || packet.Schema != 8 || len(packet.Candidates) != 1 {
 			m.t.Fatal("independent verifier fixture changed")
 		}
 		response = map[string]any{"schema_version": 1, "verdicts": []any{map[string]any{"candidate_id": packet.Candidates[0].ID, "outcome": "verified", "severity": "high", "rationale": "The fixture verifier accepts the cited selected source.", "evidence_ids": []string{packet.Sources[0].ID}}}}

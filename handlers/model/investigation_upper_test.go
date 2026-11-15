@@ -198,7 +198,7 @@ func (m *upperModel) DispatchRoute(ctx context.Context, r gateway.RouteDispatchR
 	m.mu.Unlock()
 	var result any
 	if p.Task == "candidate_verification" {
-		if m.adapter != "adapter-b" || p.Schema != 7 || len(p.Candidates) != 1 {
+		if m.adapter != "adapter-b" || p.Schema != 8 || len(p.Candidates) != 1 {
 			m.t.Fatal("verifier lost exact independent final candidate")
 		}
 		ids := []string{}

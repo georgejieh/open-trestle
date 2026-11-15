@@ -15,10 +15,13 @@ import (
 
 // The sanitizable wire shapes are frozen: a field added to either context wire
 // must be classified for scanning first. A removed_lines source's head_line is
-// a number, not text, so it carries nothing to scan.
+// a number, not text, so it carries nothing to scan. Each stated_intent commit
+// text is scanned as stated_intent_text; its commit ID, sizes and markers are
+// host-derived. pattern_hygiene carries only kinds, curated rule IDs,
+// host-issued source IDs and numbers, so it adds no scanned field.
 const (
-	generationSanitizableWireShapeIdentity   = "15244791f3a861aa4c4a4cc79c085d0547c35bf650c53c7c6c87087e613d3f58"
-	verificationSanitizableWireShapeIdentity = "728216c25480db666223b965ca7734f7ec82ddb70fa42f6de5875dbd1fd1f467"
+	generationSanitizableWireShapeIdentity   = "60a4e8278407acfb1211c7f143178dd055049be775ab5fdba1426c6c627d481a"
+	verificationSanitizableWireShapeIdentity = "6963ac0ac4ea03569d0144a0f1586c598aaa01d01292d197ac39110b8df0789d"
 )
 
 func wireShapeIdentity(root reflect.Type) string {
@@ -68,8 +71,8 @@ func parseSanitizableRequest(request provider.Request, reviewScopeIdentity strin
 		Contract      string `json:"contract"`
 		SchemaVersion int    `json:"schema_version"`
 	}
-	// Generation admits only the executable context version 7; verification
-	// admits only version 6. Each contract is checked against its own version
+	// Generation admits only the executable context version 9; verification
+	// admits only version 8. Each contract is checked against its own version
 	// below too.
 	if json.Unmarshal(request.Payload(), &header) != nil ||
 		header.Contract == "open-trestle/review-context-packet" && !executableGenerationContextVersion(header.SchemaVersion) ||
@@ -92,6 +95,7 @@ func parseSanitizableRequest(request provider.Request, reviewScopeIdentity strin
 		}
 		document := sanitizedRequestDocument{generation: &wire}
 		document.fields = appendContextFieldReferences(document.fields, &wire.Sources, &wire.SourceOmissions, &wire.Memory, wire.AdditionalMemory)
+		document.fields = appendStatedIntentFieldReferences(document.fields, wire.StatedIntent)
 		return document, nil
 	case "open-trestle/verification-context-packet":
 		if verificationWireShapeIdentity() != verificationSanitizableWireShapeIdentity || ValidateVerificationModelRequest(request, reviewScopeIdentity) != nil {
@@ -103,6 +107,7 @@ func parseSanitizableRequest(request provider.Request, reviewScopeIdentity strin
 		}
 		document := sanitizedRequestDocument{verification: &wire}
 		document.fields = appendContextFieldReferences(document.fields, &wire.Sources, &wire.SourceOmissions, &wire.Memory, wire.AdditionalMemory)
+		document.fields = appendStatedIntentFieldReferences(document.fields, wire.StatedIntent)
 		for index := range wire.Candidates {
 			candidate := &wire.Candidates[index]
 			document.fields = append(document.fields,
@@ -131,6 +136,21 @@ func appendContextFieldReferences(fields []sanitizedFieldReference, sources *[]c
 	fields = appendMemoryFieldReferences(fields, memoryValue)
 	for index := range additional {
 		fields = appendMemoryFieldReferences(fields, &additional[index])
+	}
+	return fields
+}
+
+// appendStatedIntentFieldReferences adds one field per commit that has text.
+// Scanning can redact part of a message; the redacted text then no longer
+// matches its recorded risk flags, which name what the host saw before egress.
+func appendStatedIntentFieldReferences(fields []sanitizedFieldReference, intent *statedIntentWire) []sanitizedFieldReference {
+	if intent == nil {
+		return fields
+	}
+	for index := range intent.Commits {
+		if intent.Commits[index].Text != "" {
+			fields = append(fields, sanitizedFieldReference{FieldRoleStatedIntentText, &intent.Commits[index].Text})
+		}
 	}
 	return fields
 }

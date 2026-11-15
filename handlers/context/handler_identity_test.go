@@ -28,26 +28,34 @@ func contextAssemblyIdentityPreimage(t *testing.T, version int, authorizer, sani
 	return hex.EncodeToString(digest[:])
 }
 
-// The version 8 context (removed_lines sources and their contract sentence)
-// alters the packet bytes this handler builds, so its identity moves to
-// version 7, as the text-fallback, instruction-file, and version 7 context
-// changes moved it to version 6. A plan that recorded an earlier identity is
-// not served by this handler.
-func TestContextAssemblyHandlerIdentityIsVersionSeven(t *testing.T) {
+// The version 9 context (pattern hygiene, the optional stated intent and their
+// contract sentences) alters the packet bytes this handler builds, so its
+// identity moves to version 8, as the version 8 context moved it to version 7
+// and the text-fallback, instruction-file, and version 7 context changes moved
+// it to version 6. A plan that recorded an earlier identity is not served by
+// this handler.
+func TestContextAssemblyHandlerIdentityIsVersionEight(t *testing.T) {
 	authorizer, sanitizer := strings.Repeat("5", 64), contextTestSanitizer{}.Identity()
-	current := deriveHandlerIdentity(authorizer, sanitizer, review.ContextSpecialist{})
-	if current != contextAssemblyIdentityPreimage(t, 7, authorizer, sanitizer) {
-		t.Fatal("route-granting context handler identity is not the version 7 preimage")
+	current := deriveHandlerIdentity(authorizer, sanitizer, review.ContextSpecialist{}, "")
+	if current != contextAssemblyIdentityPreimage(t, 8, authorizer, sanitizer) {
+		t.Fatal("route-granting context handler identity is not the version 8 preimage")
 	}
-	if current == contextAssemblyIdentityPreimage(t, 6, authorizer, sanitizer) || current == contextAssemblyIdentityPreimage(t, 5, authorizer, sanitizer) {
-		t.Fatal("context handler identity did not change with its packet bytes")
+	for _, earlier := range []int{5, 6, 7} {
+		if current == contextAssemblyIdentityPreimage(t, earlier, authorizer, sanitizer) {
+			t.Fatalf("context handler identity did not change with its packet bytes (version %d)", earlier)
+		}
 	}
 	specialist, err := review.NewContextSpecialist("bug_hunter")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bound := deriveHandlerIdentity(authorizer, sanitizer, specialist); bound == current || bound == contextAssemblyIdentityPreimage(t, 5, authorizer, sanitizer) {
+	if bound := deriveHandlerIdentity(authorizer, sanitizer, specialist, ""); bound == current || bound == contextAssemblyIdentityPreimage(t, 5, authorizer, sanitizer) {
 		t.Fatal("specialist handler identity collides with an unbound identity")
+	}
+	intent := strings.Repeat("6", 64)
+	withIntent := deriveHandlerIdentity(authorizer, sanitizer, review.ContextSpecialist{}, intent)
+	if withIntent == current || withIntent == deriveHandlerIdentity(authorizer, sanitizer, specialist, intent) || withIntent == deriveHandlerIdentity(authorizer, sanitizer, review.ContextSpecialist{}, strings.Repeat("7", 64)) {
+		t.Fatal("the change intent source is not bound into the handler identity")
 	}
 }
 
@@ -62,6 +70,7 @@ func TestRecordedEarlierPacketsAreReadbackOnly(t *testing.T) {
 	}{
 		{"testdata/v5_packet_candidate_envelope.json", 5, review.ModelCandidateBatchV1SchemaIdentity},
 		{"testdata/v7_packet_candidate_envelope.json", 7, review.ModelCandidateBatchSchemaIdentity},
+		{"testdata/v8_packet_candidate_envelope.json", 8, review.ModelCandidateBatchSchemaIdentity},
 	} {
 		encoded, err := os.ReadFile(recorded.path)
 		if err != nil {

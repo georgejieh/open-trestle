@@ -93,6 +93,9 @@ var Rules = []Rule{
 		match: func(l lineContext) bool { return noqa(l.comment) && !noqaHasCode(l.comment) }},
 }
 
+// SuppressionRules are the rule IDs a suppression observation may name.
+var SuppressionRules = []string{"go.nolint", "js.eslint_disable", "js.ts_ignore", "py.type_ignore", "py.noqa"}
+
 // suppressionRule names the lint or type suppression in a line's comment, or
 // returns "" when it has none. Suppressions are reported whether or not they
 // give a reason.

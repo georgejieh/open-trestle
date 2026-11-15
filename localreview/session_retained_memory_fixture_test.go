@@ -61,6 +61,8 @@ type rmModelPacket struct {
 	Task              string          `json:"task"`
 	GenerationContext string          `json:"generation_context_identity"`
 	CandidateBatch    string          `json:"candidate_batch_identity"`
+	StatedIntent      json.RawMessage `json:"stated_intent"`
+	PatternHygiene    json.RawMessage `json:"pattern_hygiene"`
 	Sources           []rmModelSource `json:"sources"`
 	Candidates        []struct {
 		ID       string   `json:"candidate_id"`
@@ -173,8 +175,8 @@ func (m *rmModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.Req
 	payload := []byte(wire.Input[0].Content[0].Text)
 	var packet rmModelPacket
 	request, requestErr := provider.NewRequest(provider.CapabilityReviewV1, "application/json", payload)
-	if json.Unmarshal(payload, &packet) != nil || requestErr != nil || packet.Task == "candidate_generation" && packet.Version != 8 || packet.Task != "candidate_generation" && packet.Version != 7 {
-		t.Error("model did not receive the actual v8 generation or v7 verification context")
+	if json.Unmarshal(payload, &packet) != nil || requestErr != nil || packet.Task == "candidate_generation" && packet.Version != 9 || packet.Task != "candidate_generation" && packet.Version != 8 {
+		t.Error("model did not receive the actual v9 generation or v8 verification context")
 		http.Error(w, "invalid context", http.StatusBadRequest)
 		return
 	}
@@ -296,6 +298,10 @@ type rmModelFixtureOptions struct {
 	// extraBase and extraHead add root-level files to the base and head trees;
 	// a nil content removes the fixture's file of that name.
 	extraBase, extraHead map[string][]byte
+	// headMessages, when set, replaces the single unrelated head commit with
+	// a chain of commits on top of the base, one per message, oldest first;
+	// the last one carries the head tree.
+	headMessages []string
 }
 
 func newRmModelFixture(t *testing.T, options rmModelFixtureOptions) *rmModelFixture {
@@ -341,6 +347,15 @@ func newRmModelFixture(t *testing.T, options rmModelFixtureOptions) *rmModelFixt
 	apply(base, options.extraBase)
 	apply(head, options.extraHead)
 	f.objects, f.base, f.head = rmWriteGit(t, evidence.RevisionAlgorithmSHA1, base, head)
+	if len(options.headMessages) > 0 {
+		headTree := rmWriteTree(t, f.objects, evidence.RevisionAlgorithmSHA1, head)
+		parent := f.base
+		for index, message := range options.headMessages {
+			at := fmt.Sprint(index + 1)
+			parent = rmWriteObject(t, f.objects, evidence.RevisionAlgorithmSHA1, "commit", []byte("tree "+headTree+"\nparent "+parent+"\nauthor A <a@example.com> "+at+" +0000\ncommitter A <a@example.com> "+at+" +0000\n\n"+message))
+		}
+		f.head = parent
+	}
 	zone := provider.ProviderZoneLocal
 	if options.remote {
 		zone = provider.ProviderZonePrivateRemote

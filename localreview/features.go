@@ -14,8 +14,10 @@ import (
 	"github.com/georgejieh/open-trestle/controlplane"
 	analysishandler "github.com/georgejieh/open-trestle/handlers/analysis"
 	changehandler "github.com/georgejieh/open-trestle/handlers/change"
+	modelhandler "github.com/georgejieh/open-trestle/handlers/model"
 	sourcehandler "github.com/georgejieh/open-trestle/handlers/source"
 	"github.com/georgejieh/open-trestle/internal/evidence"
+	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/runtimecatalog"
 	"github.com/georgejieh/open-trestle/semanticimpact"
 )
@@ -38,8 +40,9 @@ var ErrChangeFeaturesUnavailable = errors.New("local review change features unav
 // change-features document stays within agentprofile.MaxChangeFeaturesBytes; a
 // file that does not fit is skipped whole. unreadStyleConfig lists, in path
 // order, every recognized base style configuration file that was not supplied:
-// over a file bound, not valid UTF-8, or beyond the document bound. No change
-// description is inspected.
+// over a file bound, not valid UTF-8, or beyond the document bound. Intent is
+// declared when the run's generation context carried commit messages; only
+// that presence is recorded, never their text.
 func (s *Session) ChangeFeatures(ctx context.Context, prepared runtimecatalog.PreparedReviewRun) (features agentprofile.ChangeFeatures, unreadStyleConfig []string, err error) {
 	if s == nil || ctx == nil || ctx.Err() != nil || prepared.Validate() != nil {
 		return agentprofile.ChangeFeatures{}, nil, ErrChangeFeaturesUnavailable
@@ -76,6 +79,9 @@ func (s *Session) ChangeFeatures(ctx context.Context, prepared runtimecatalog.Pr
 	if err != nil {
 		return agentprofile.ChangeFeatures{}, nil, ErrChangeFeaturesUnavailable
 	}
+	if contextID, hasContext := output("context"); hasContext {
+		input.intent = s.recordedIntent(ctx, scope, contextID, now)
+	}
 	configFiles, unread, err := s.baseStyleConfigFiles(ctx, scope, recorded.base, now)
 	if err != nil {
 		return agentprofile.ChangeFeatures{}, nil, ErrChangeFeaturesUnavailable
@@ -97,6 +103,8 @@ type routingInput struct {
 	changeIdentity string
 	files          []agentprofile.ChangedFileSpec
 	impact         semanticimpact.Profile
+	// intent is whether the run's context carried commit messages.
+	intent agentprofile.IntentSpec
 }
 
 // readRoutingInput reads the recorded analysis for a recorded change.
@@ -132,7 +140,31 @@ func (s *Session) readRoutingInput(ctx context.Context, scope audit.ReviewScope,
 }
 
 func (r routingInput) features(configFiles []agentprofile.ConfigFile) (agentprofile.ChangeFeatures, error) {
-	return agentprofile.ChangeFeaturesFromFileSpecs(r.changeIdentity, r.files, r.impact, agentprofile.AnalysisHints{ConfigFiles: configFiles})
+	return agentprofile.ChangeFeaturesFromFileSpecs(r.changeIdentity, r.files, r.impact, agentprofile.AnalysisHints{ConfigFiles: configFiles, Intent: r.intent})
+}
+
+// recordedIntent reports whether the run's recorded generation context carried
+// a stated intent with at least one commit: declared change intent for the
+// drift_auditor's intent condition. It reads presence, never the text, and
+// reports none when the context task did not succeed.
+func (s *Session) recordedIntent(ctx context.Context, scope audit.ReviewScope, contextOutput string, at time.Time) agentprofile.IntentSpec {
+	inputArtifact, err := s.store.Get(ctx, scope, contextOutput, at)
+	if err != nil {
+		return agentprofile.IntentSpec{}
+	}
+	input, err := modelhandler.ParseGenerationInput(inputArtifact.Payload())
+	if err != nil {
+		return agentprofile.IntentSpec{}
+	}
+	contextArtifact, err := s.store.Get(ctx, scope, input.ContextArtifactIdentity(), at)
+	if err != nil || contextArtifact.Kind() != artifact.KindContextPacket || contextArtifact.PayloadDigest() != input.ContextIdentity() {
+		return agentprofile.IntentSpec{}
+	}
+	summary, err := review.ContextStatedIntent(contextArtifact.Payload())
+	if err != nil || !summary.Present || summary.Commits+summary.CommitsOmitted == 0 {
+		return agentprofile.IntentSpec{}
+	}
+	return agentprofile.IntentSpec{DescriptionPresent: true}
 }
 
 // fitConfigFiles returns the configuration files routing's change-features

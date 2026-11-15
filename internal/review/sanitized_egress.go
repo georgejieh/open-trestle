@@ -40,13 +40,17 @@ const (
 	FieldRoleCandidateTitle     FieldRole = "candidate_title"
 	FieldRoleCandidateClaim     FieldRole = "candidate_claim"
 	FieldRoleCandidatePath      FieldRole = "candidate_path"
+	// FieldRoleStatedIntentText is one commit message of a stated_intent
+	// object (generation version 9, verification version 8).
+	FieldRoleStatedIntentText FieldRole = "stated_intent_text"
 )
 
 func (role FieldRole) valid() bool {
 	switch role {
 	case FieldRoleSourcePath, FieldRoleSourceContent, FieldRoleSourceOmissionPath,
 		FieldRoleMemoryPath, FieldRoleMemorySymbol, FieldRoleMemoryText,
-		FieldRoleCandidateTitle, FieldRoleCandidateClaim, FieldRoleCandidatePath:
+		FieldRoleCandidateTitle, FieldRoleCandidateClaim, FieldRoleCandidatePath,
+		FieldRoleStatedIntentText:
 		return true
 	default:
 		return false

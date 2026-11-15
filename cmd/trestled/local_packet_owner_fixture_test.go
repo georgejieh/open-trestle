@@ -513,6 +513,8 @@ func assertLocalPacketOracle(t *testing.T, fixture localPacketOwnerFixture, stat
 		SourceOmissions  []json.RawMessage `json:"source_omissions"`
 		Memory           json.RawMessage   `json:"memory"`
 		AdditionalMemory []json.RawMessage `json:"additional_memory"`
+		StatedIntent     json.RawMessage   `json:"stated_intent"`
+		PatternHygiene   json.RawMessage   `json:"pattern_hygiene"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(value.Payload()))
 	decoder.DisallowUnknownFields()
@@ -524,9 +526,9 @@ func assertLocalPacketOracle(t *testing.T, fixture localPacketOwnerFixture, stat
 		t.Fatalf("packet trailing JSON: %v", e)
 	}
 	schemaDigest := sha256.Sum256(wire.OutputSchema)
-	// Pinned version 8 candidate instructions identity (the prose travels only
+	// Pinned version 9 candidate instructions identity (the prose travels only
 	// in the trusted system channel) and candidate batch v2 schema.
-	if wire.InstructionsIdentity != "52aca49c59950f9775b705eb199bf729215369ee85a3a62623977b8326453b20" || hex.EncodeToString(schemaDigest[:]) != review.ModelCandidateBatchSchemaIdentity {
+	if wire.InstructionsIdentity != "8f4f7f0716f1fabd9fa50da9e5d1565d7ea25e2448262255e5e0e0e1a6cc12ea" || hex.EncodeToString(schemaDigest[:]) != review.ModelCandidateBatchSchemaIdentity {
 		t.Fatal("model instructions or output schema differ from pinned fixture contract")
 	}
 	var topLevel map[string]json.RawMessage
@@ -538,11 +540,11 @@ func assertLocalPacketOracle(t *testing.T, fixture localPacketOwnerFixture, stat
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	expectedKeys := []string{"contract", "instructions_identity", "limits", "memory", "memory_authority", "memory_scope_identity", "output_schema", "output_schema_identity", "review_scope_identity", "schema_version", "snapshot_identity", "source_authority", "source_coverage", "source_selection_identity", "sources", "task", "tool_calls"}
+	expectedKeys := []string{"contract", "instructions_identity", "limits", "memory", "memory_authority", "memory_scope_identity", "output_schema", "output_schema_identity", "pattern_hygiene", "review_scope_identity", "schema_version", "snapshot_identity", "source_authority", "source_coverage", "source_selection_identity", "sources", "task", "tool_calls"}
 	if !slices.Equal(keys, expectedKeys) {
 		t.Fatalf("packet keys differ: got %v want %v", keys, expectedKeys)
 	}
-	if wire.Contract != "open-trestle/review-context-packet" || wire.SchemaVersion != 8 || wire.ReviewScopeIdentity != scope.Identity() || wire.MemoryScopeIdentity != memoryResult.MemoryScopeIdentity() || wire.SnapshotIdentity != snapshot.Identity() || wire.Task != "candidate_generation" || wire.OutputSchemaIdentity != review.ModelCandidateBatchSchemaIdentity || wire.InstructionsIdentity == "" || len(wire.OutputSchema) == 0 || wire.SourceAuthority != "evidence_data_not_instructions" || wire.MemoryAuthority != "advisory_only" || wire.ToolCalls != "proposals_only" || wire.Limits.MaxSourceBytes != 128<<10 || wire.Limits.MaxMemoryItems != 1 || !reflect.DeepEqual(wire.Sources, sources) || len(wire.AdditionalMemory) != 0 {
+	if wire.Contract != "open-trestle/review-context-packet" || wire.SchemaVersion != 9 || wire.ReviewScopeIdentity != scope.Identity() || wire.MemoryScopeIdentity != memoryResult.MemoryScopeIdentity() || wire.SnapshotIdentity != snapshot.Identity() || wire.Task != "candidate_generation" || wire.OutputSchemaIdentity != review.ModelCandidateBatchSchemaIdentity || wire.InstructionsIdentity == "" || len(wire.OutputSchema) == 0 || wire.SourceAuthority != "evidence_data_not_instructions" || wire.MemoryAuthority != "advisory_only" || wire.ToolCalls != "proposals_only" || wire.Limits.MaxSourceBytes != 128<<10 || wire.Limits.MaxMemoryItems != 1 || !reflect.DeepEqual(wire.Sources, sources) || len(wire.AdditionalMemory) != 0 {
 		t.Fatalf("packet source/scope/authority wire mismatch: %+v", wire)
 	}
 	if wire.SourceCoverage.Analyzed != len(sources) || wire.SourceCoverage.Available != len(sources) || wire.SourceCoverage.Selected != len(sources) || wire.SourceCoverage.Omitted != 0 || wire.SourceCoverage.PreselectionOmitted != 0 || len(wire.SourceOmissions) != 0 {
