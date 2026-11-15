@@ -43,6 +43,32 @@ instructions.
 - **Contract drift in callers**: a changed function's callers (from the
   supplied references) relying on the old behaviour.
 
+## Nuance traps
+
+These APIs are easy to use almost correctly. Give changed uses of them extra
+scrutiny, and look first at any line `pattern_hygiene` cites.
+
+- **Go goroutines and channels**: a goroutine blocked on a send or receive
+  that nothing completes leaks. Check that each has an exit path (context
+  cancellation, a closed channel, a buffered result) and that only the sender
+  closes a channel.
+- **Go `defer` in a loop**: deferred calls run when the function returns, not
+  per iteration, so files, locks and rows stay held until then.
+- **Go loop variables before 1.22**: when `go.mod` declares a Go version below
+  1.22, a closure or goroutine that captures the loop variable sees its last
+  value; from 1.22 each iteration has its own.
+- **Go `time.Sleep` and library `panic`**: a fixed sleep usually stands in for
+  missing synchronization; a panic in a library takes the error from the
+  caller.
+- **Python mutable defaults**: `def f(items=[])` creates the list once and
+  shares it across calls; the fix is a `None` default and a fresh value.
+- **Python bare `except:`**: it also catches `KeyboardInterrupt` and
+  `SystemExit` and hides the real failure.
+
+A new suppression (`//nolint`, `# noqa`, `# type: ignore`, `eslint-disable`,
+`@ts-ignore`) or a comment that justifies a workaround is a sign the root cause
+was not fixed. A candidate about one names that root cause.
+
 ## Evidence bar
 
 Each candidate names the input or interleaving that triggers the defect, the

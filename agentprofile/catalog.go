@@ -224,7 +224,7 @@ func packagedProfileSpecs() ([]ProfileSpec, error) {
 			RequiredFeatures: structuredOutput, Tiers: reviewTiers,
 		},
 		{
-			ID: ProfileFrontend, Version: 1, Priority: 70, ModelCall: ModelCallRequired,
+			ID: ProfileFrontend, Version: 2, Priority: 70, ModelCall: ModelCallRequired,
 			Purpose: "Front-end review: interface design, accessibility, motion and reduced motion, web layout, and JavaScript, TypeScript, and React correctness.",
 			Activation: Activation{Languages: []Language{
 				LanguageCSS, LanguageHTML, LanguageJavaScript, LanguageSvelte, LanguageTypeScript, LanguageVue,
@@ -254,7 +254,7 @@ func packagedProfileSpecs() ([]ProfileSpec, error) {
 			RequiredFeatures: structuredOutput, Tiers: compactTiers,
 		},
 		{
-			ID: ProfileBugHunter, Version: 1, Priority: 80, ModelCall: ModelCallRequired,
+			ID: ProfileBugHunter, Version: 2, Priority: 80, ModelCall: ModelCallRequired,
 			Purpose:          "Hunts logic and edge-case defects in changed code: boundaries, nil and empty values, error paths, state, and arithmetic.",
 			Activation:       Activation{FileClasses: []FileClass{FileClassSource}},
 			RequiredFeatures: structuredOutput, Tiers: reviewTiers,
