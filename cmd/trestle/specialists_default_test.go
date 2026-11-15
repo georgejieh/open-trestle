@@ -93,8 +93,14 @@ func TestInitFirstReviewRunsSpecialistsAndShowsTheWalkthrough(t *testing.T) {
 		t.Fatalf("first review: exit=%d requests=%d\n%s", setup.code, len(transport.requests), output)
 	}
 	walkthrough, findings := strings.Index(output, "walkthrough:\n"), strings.Index(output, "confirmed findings (ranked):")
-	if walkthrough < 0 || findings < walkthrough || !strings.Contains(output, "specialist review set: status=findings") {
+	if walkthrough < 0 || findings < walkthrough || !strings.Contains(output, "│ status: findings\n") || !strings.Contains(output, "│ reviewers: general, ") {
 		t.Fatalf("the first review did not show the set's walkthrough before its findings:\n%s", output)
+	}
+	// The box is for people: no selection trace or limitation tokens.
+	for _, internal := range []string{"│ selection:", "│ route assignment:", "│ member: ", "│ limitations:"} {
+		if strings.Contains(output, internal) {
+			t.Fatalf("the first review box shows the internal %q:\n%s", internal, output)
+		}
 	}
 }
 
@@ -258,6 +264,22 @@ func TestInitFirstReviewListsLowSeverityFindings(t *testing.T) {
 	// The review is advisory, and the closing line says so.
 	if !initHas(strings.Join(strings.Fields(output), " "), "None of them blocks CI: each is low severity or on lines the change did not touch.") {
 		t.Fatalf("the first review did not say the low-severity review is advisory:\n%s", output)
+	}
+}
+
+// trestle review passes --verbose through: its text adds the set's
+// internals, which the default text leaves out.
+func TestLatestReviewPassesVerboseThrough(t *testing.T) {
+	checkout := latestChangeCheckout(t)
+	latestChangeSetupWith(t, checkout)
+	latestFixtureTransport(t)
+	code, concise, stderr := runReviewCommand(t, checkout, "--format", "text")
+	if code != 4 || !strings.Contains(concise, "reviewers: general, ") || strings.Contains(concise, "selection: ") || strings.Contains(concise, "limitations: ") {
+		t.Fatalf("default trestle review text exit=%d:\n%s\n%s", code, concise, stderr)
+	}
+	code, verbose, stderr := runReviewCommand(t, checkout, "--format", "text", "--verbose")
+	if code != 4 || !strings.Contains(verbose, "selection: mode=auto ") || !strings.Contains(verbose, "limitations: ") || !strings.Contains(verbose, "member: general status=findings") {
+		t.Fatalf("trestle review --verbose text exit=%d:\n%s\n%s", code, verbose, stderr)
 	}
 }
 

@@ -55,6 +55,35 @@ func (c TokenCount) validate() bool {
 	return c.Known && present || !c.Known && absent
 }
 
+// TotalTokensLine is the text line of the token use summed over several runs,
+// such as the members of a review set; nil entries (runs that report none)
+// are skipped. The total is known only when every summed run's total is, and
+// the line is empty when no run reports usage.
+func TotalTokensLine(usages []*TokenUsage) string {
+	total := TokenCount{Known: true}
+	var input, output, cached uint64
+	counted := false
+	for _, usage := range usages {
+		if usage == nil {
+			continue
+		}
+		counted = true
+		total.RouteAttempts += usage.RouteAttempts
+		if !usage.Known || usage.InputTokens == nil || usage.OutputTokens == nil || usage.CachedInputTokens == nil {
+			total.Known = false
+			continue
+		}
+		input, output, cached = input+*usage.InputTokens, output+*usage.OutputTokens, cached+*usage.CachedInputTokens
+	}
+	if !counted {
+		return ""
+	}
+	if total.Known {
+		total.InputTokens, total.OutputTokens, total.CachedInputTokens = &input, &output, &cached
+	}
+	return total.line()
+}
+
 // line is the text form of the total.
 func (c TokenCount) line() string {
 	attempts := fmt.Sprintf("%d route attempts", c.RouteAttempts)

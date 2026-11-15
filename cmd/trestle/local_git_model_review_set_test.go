@@ -91,10 +91,17 @@ type localModelSetReceipt struct {
 func runLocalModelSet(t *testing.T, f *localModelFixture, extra []string, wantCode int) (localModelSetReceipt, string) {
 	t.Helper()
 	args := append([]string(nil), f.args...)
-	for index := 0; index+1 < len(extra); index += 2 {
-		if extra[index] == "--format" {
+	for index := 0; index < len(extra); index += 2 {
+		switch {
+		case extra[index] == "--all" || extra[index] == "--verbose":
+			// The bare flags take no value.
+			args = append(args, extra[index])
+			index--
+		case index+1 == len(extra):
+			t.Fatalf("flag %s has no value", extra[index])
+		case extra[index] == "--format":
 			args = replaceLocalGitChangeValue(args, "--format", extra[index+1])
-		} else {
+		default:
 			args = append(args, extra[index], extra[index+1])
 		}
 	}
@@ -493,10 +500,20 @@ func TestRunLocalGitModelReviewMaxSpecialistsAndExplicitList(t *testing.T) {
 	})
 	t.Run("text", func(t *testing.T) {
 		f := newLocalModelFixture(t, localModelFixtureOptions{})
+		// The default text is for people: status, reviewers, the walkthrough
+		// and the findings with the members that confirmed each.
 		_, text := runLocalModelSet(t, f, []string{"--specialists", "backend", "--format", "text"}, 4)
-		for _, want := range []string{"specialist review set: status=findings ci=blocked complete=true\n", "members run: 2 of 2\n", "selected: backend\n", "findings: 1 (merged duplicates: 1) severity: error=1 category: correctness=1\n", "contributors: general, backend\n", "comprehensive clearance: false\n"} {
-			if !strings.Contains(text, want) {
-				t.Fatalf("text output missing %q: %q", want, text)
+		requireInOrder(t, text, "status: findings\nci: blocked\nreviewers: general, backend (2 of 2 ran)\nwalkthrough:\n", "confirmed findings (ranked): 1\n", "confirmed by: general, backend\n", "comprehensive clearance: false\n")
+		for _, internal := range []string{"specialist review set:", "selection:", "selected:", "route assignment:", "members run:", "member: ", "status=", "findings: 1 (merged", "limitations:", "contributors:"} {
+			if strings.Contains(text, internal) {
+				t.Fatalf("default text shows the internal %q: %q", internal, text)
+			}
+		}
+		// --verbose keeps every internal line.
+		_, verbose := runLocalModelSet(t, f, []string{"--specialists", "backend", "--format", "text", "--verbose"}, 4)
+		for _, want := range []string{"status: findings\nci: blocked\nreviewers: general, backend (2 of 2 ran)\ncomplete: true\n", "members run: 2 of 2\n", "selected: backend\n", "route assignment: not_applied: ", "member: general status=findings run=succeeded verified_findings=1\n", "findings: 1 (merged duplicates: 1) severity: error=1 category: correctness=1\n", "files covered: analyzed=2 selected=2 omitted=0\n", "confirmed by: general, backend\n", "limitations: per_profile_route_assignment_not_applied, ", "comprehensive clearance: false\n"} {
+			if !strings.Contains(verbose, want) {
+				t.Fatalf("verbose text output missing %q: %q", want, verbose)
 			}
 		}
 	})

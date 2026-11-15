@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -47,7 +48,7 @@ func requireInOrder(t *testing.T, text string, wants ...string) {
 }
 
 // Text output leads with the walkthrough, then the ranked confirmed findings,
-// then coverage and limitations.
+// then coverage and tokens; the limitations list is only in --verbose text.
 func TestModelReviewTextShowsWalkthroughThenRankedFindings(t *testing.T) {
 	f := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true})
 	text := runModelReviewOutput(t, f, []string{"--format", "text"}, 4)
@@ -64,9 +65,36 @@ func TestModelReviewTextShowsWalkthroughThenRankedFindings(t *testing.T) {
 		"confirmed findings (ranked): 1\n",
 		"finding: error Zero-valued caller now panics\nrank: 1\nsource: a.go:2-2\n",
 		"coverage: candidates=1 verified=1 rejected=0 inconclusive=0\n",
-		"limitations: ", "comprehensive clearance: false\n")
-	if strings.Contains(text, "hidden:") || strings.Contains(text, "pre-existing findings") {
-		t.Fatalf("text shows sections it has no findings for:\n%s", text)
+		"source coverage: analyzed=2 selected=2 omitted=0\n",
+		"tokens: input=200 output=200 cached_input=0 over 2 route attempts\n",
+		"comprehensive clearance: false\n")
+	if strings.Contains(text, "hidden:") || strings.Contains(text, "pre-existing findings") || strings.Contains(text, "limitations:") {
+		t.Fatalf("text shows sections it has no findings for, or internal tokens:\n%s", text)
+	}
+	verbose := runModelReviewOutput(t, f, []string{"--format", "text", "--verbose"}, 4)
+	requireInOrder(t, verbose, "tokens: input=200 output=200 cached_input=0 over 2 route attempts\n", "limitations: loose_git_objects_only, empty_memory_index, bounded_source_context, no_publication, ephemeral_state_no_resume\ncomprehensive clearance: false\n")
+	if strings.TrimSuffix(verbose, "limitations: loose_git_objects_only, empty_memory_index, bounded_source_context, no_publication, ephemeral_state_no_resume\ncomprehensive clearance: false\n") != strings.TrimSuffix(text, "comprehensive clearance: false\n") {
+		t.Fatalf("--verbose changed more than the limitations line:\n%s\n---\n%s", text, verbose)
+	}
+	// --verbose is a bare flag and may be given once; it changes no other format.
+	var stdout, stderr bytes.Buffer
+	if code := run(append(append([]string(nil), f.args...), "--verbose", "--verbose"), &stdout, &stderr); code != 2 {
+		t.Fatalf("a repeated --verbose was accepted: exit %d", code)
+	}
+	keys := func(encoded string) string {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(encoded), &fields); err != nil {
+			t.Fatal(err)
+		}
+		names := make([]string, 0, len(fields))
+		for name := range fields {
+			names = append(names, name)
+		}
+		slices.Sort(names)
+		return strings.Join(names, ",")
+	}
+	if plain, verboseJSON := keys(runModelReviewOutput(t, f, nil, 4)), keys(runModelReviewOutput(t, f, []string{"--verbose"}, 4)); plain != verboseJSON || !strings.Contains(plain, "limitations") {
+		t.Fatalf("--verbose changed the JSON fields: %s vs %s", plain, verboseJSON)
 	}
 }
 

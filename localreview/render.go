@@ -23,7 +23,16 @@ type RenderOptions struct {
 	// medium findings are listed and the rest are counted, unless there are
 	// none of those (see FindingSections).
 	All bool
+	// Verbose adds the internal tokens text output leaves out by default,
+	// such as the limitations list and a review set's selection trace and
+	// per-member key-value lines. It changes text only; JSON, SARIF and
+	// Markdown carry the same fields either way.
+	Verbose bool
 }
+
+// maximalText is the largest text rendering, which output bounds are checked
+// against so that every option fits.
+var maximalText = RenderOptions{All: true, Verbose: true}
 
 // maxWalkthroughTextFiles bounds the files the text and Markdown walkthroughs
 // list; the JSON result lists up to its own bound.
@@ -235,7 +244,8 @@ func FindingSections(ranked []MergedFinding, options RenderOptions) (confirmed, 
 }
 
 // FindingText renders one ranked finding as its text block. contributors,
-// when not nil, adds the review set's contributors line.
+// when not nil, adds the review set's "confirmed by" line: the members whose
+// verifier confirmed the defect.
 func FindingText(group MergedFinding, contributors []string) string {
 	finding := group.Finding
 	var buffer bytes.Buffer
@@ -248,7 +258,7 @@ func FindingText(group MergedFinding, contributors []string) string {
 		fmt.Fprintf(&buffer, "fix: %s\n", finding.Fix)
 	}
 	if contributors != nil {
-		fmt.Fprintf(&buffer, "contributors: %s\n", strings.Join(contributors, ", "))
+		fmt.Fprintf(&buffer, "confirmed by: %s\n", strings.Join(contributors, ", "))
 	} else if merged := len(group.Contributors) - 1; merged > 0 {
 		fmt.Fprintf(&buffer, "merged duplicates: %d\n", merged)
 	}

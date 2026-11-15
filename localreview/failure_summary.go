@@ -61,6 +61,11 @@ const FailureDetailSpendingLimitReached = "spending_limit_reached"
 // neither that a provider retains prompts nor that it does not.
 const LimitationOpenRouterZDRNotRequired = "openrouter_zero_data_retention_not_required"
 
+// ZeroDataRetentionNotRequiredText is the text line, shown by default, of a
+// result that carries LimitationOpenRouterZDRNotRequired: a privacy fact a
+// person needs even when the limitations list is left out.
+const ZeroDataRetentionNotRequiredText = "zero data retention: not required on an OpenRouter route this review used (no claim either way about what the provider keeps)\n"
+
 // failureHints are plain-language explanations of each run failure class.
 // They describe what the class usually means; they are not diagnoses.
 var failureHints = map[string]string{

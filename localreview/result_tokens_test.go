@@ -168,8 +168,8 @@ func TestResultReportsTokensOfTheDispatchedRouteAttempts(t *testing.T) {
 			if err := RenderResult(&text, result); err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(text.String(), test.text+"limitations: ") {
-				t.Fatalf("text result lacks %q before limitations:\n%s", test.text, text.String())
+			if !strings.Contains(text.String(), test.text+"comprehensive clearance: false\n") {
+				t.Fatalf("text result lacks %q before the clearance line:\n%s", test.text, text.String())
 			}
 			report, err := result.Report()
 			if err != nil || report.TokenUsage == nil || tokenUsageJSON(t, *report.TokenUsage) != strings.TrimPrefix(test.json, `"token_usage":`) {

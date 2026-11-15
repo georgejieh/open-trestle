@@ -167,7 +167,7 @@ func fitInvestigationDiagnostics(result Result) Result {
 	}
 	_, jsonErr := EncodeResult(result)
 	var text bytes.Buffer
-	textErr := RenderResult(&text, result)
+	textErr := RenderResultWithOptions(&text, result, maximalText)
 	if jsonErr != nil || textErr != nil {
 		result.wire.Diagnostics = []byte("null")
 		result.diagnostics = diagnostics.Set{}

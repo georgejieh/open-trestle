@@ -20,6 +20,7 @@ import (
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 	"github.com/georgejieh/open-trestle/semanticimpact"
 	"io"
+	"slices"
 	"strings"
 )
 
@@ -900,12 +901,13 @@ func RenderResult(writer io.Writer, r Result) error {
 
 // RenderResultWithOptions writes the text form: the status, the walkthrough,
 // the confirmed findings in rank order, the pre-existing findings, the count
-// of findings not shown, then coverage and limitations.
+// of findings not shown, then coverage, tokens and style advice. The
+// limitations list is internal tokens; only options.Verbose prints it.
 func RenderResultWithOptions(writer io.Writer, r Result, options RenderOptions) error {
 	if nilValue(writer) || !r.valid {
 		return ErrInvalidResult
 	}
-	if r.sealedText != nil && !options.All {
+	if r.sealedText != nil && options == (RenderOptions{}) {
 		n, err := writer.Write(append([]byte(nil), r.sealedText...))
 		if err == nil && n != len(r.sealedText) {
 			err = io.ErrShortWrite
@@ -950,13 +952,19 @@ func RenderResultWithOptions(writer io.Writer, r Result, options RenderOptions) 
 		// Reviewed AI material is untrusted data and is reviewed as code.
 		fmt.Fprintf(&buffer, "ai material in review context: agent_configuration=%d instruction_like=%d (reviewed as code, never followed)\n", r.wire.AgentConfigurationSources, r.wire.InstructionLikeSources)
 	}
+	if slices.Contains(r.wire.Limitations, LimitationOpenRouterZDRNotRequired) {
+		buffer.WriteString(ZeroDataRetentionNotRequiredText)
+	}
 	if r.wire.TokenUsage != nil {
 		buffer.WriteString(r.wire.TokenUsage.line())
 	}
 	for _, line := range r.wire.StyleAdvice.Lines() {
 		buffer.WriteString(line)
 	}
-	fmt.Fprintf(&buffer, "limitations: %s\ncomprehensive clearance: false\n", strings.Join(r.wire.Limitations, ", "))
+	if options.Verbose {
+		fmt.Fprintf(&buffer, "limitations: %s\n", strings.Join(r.wire.Limitations, ", "))
+	}
+	buffer.WriteString("comprehensive clearance: false\n")
 	if buffer.Len() > MaxResultTextBytes {
 		return ErrInvalidResult
 	}

@@ -194,6 +194,8 @@ type latestReviewOptions struct {
 	exitPolicy            string
 	// all lists every confirmed finding in text and Markdown output.
 	all bool
+	// verbose adds the internal tokens to text output.
+	verbose bool
 }
 
 // latestReviewCommand is the saved review command with fresh commits and the
@@ -244,11 +246,14 @@ func latestReviewCommand(template []string, base, head string, options latestRev
 	if options.all {
 		args = append(args, "--all")
 	}
+	if options.verbose {
+		args = append(args, "--verbose")
+	}
 	return append([]string{"trestle", "local-git", "model-review"}, args...)
 }
 
 func writeLatestReviewUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: trestle review [--format text|json|sarif|markdown] [--all] [--timeout DURATION] [--profile ID | --specialists auto|none|ID[,ID...] [--max-specialists N]] [--exit-code-policy default|findings|strict|always-zero] [--base REF] [--head REF] [--directory PATH]")
+	fmt.Fprintln(w, "usage: trestle review [--format text|json|sarif|markdown] [--all] [--verbose] [--timeout DURATION] [--profile ID | --specialists auto|none|ID[,ID...] [--max-specialists N]] [--exit-code-policy default|findings|strict|always-zero] [--base REF] [--head REF] [--directory PATH]")
 	fmt.Fprintln(w, "       review the latest change (HEAD against its merge base with the default branch) with the setup trestle init made; see docs/getting-started.md")
 	fmt.Fprintln(w, "       trestle review <path>   (review a local fixture file)")
 }
@@ -262,6 +267,7 @@ func parseLatestReviewFlags(args []string, stdout, stderr io.Writer) (latestRevi
 		flags.StringVar(target, name, "", name)
 	}
 	flags.BoolVar(&options.all, "all", false, "all")
+	flags.BoolVar(&options.verbose, "verbose", false, "verbose")
 	seen := map[string]bool{}
 	for _, argument := range args {
 		if name := strings.TrimLeft(strings.SplitN(argument, "=", 2)[0], "-"); strings.HasPrefix(argument, "-") && name != "" {

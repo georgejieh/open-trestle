@@ -47,8 +47,10 @@ What exists today:
   each selected profile as its own independently verified run, concurrently (at
   most three at a time) on remote routes when no spending limit could be passed
   and one by one otherwise, and merges the verified findings with the shared
-  duplicate rule. The selection trace records the plan identity and every
-  dropped profile with its reason. See
+  duplicate rule (near-identical statements, then paraphrases at one place in
+  one changed declaration). The selection trace records the plan identity and
+  every dropped profile with its reason; it is in the JSON output and in
+  `--verbose` text, while the default text names the reviewers that ran. See
   [local model review](local-model-review.md#specialist-review-set-opt-in).
 - **Specialists by default.** A new setup (`trestle init`, or
   `trestle setup bootstrap init`) saves `--specialists auto` in its review

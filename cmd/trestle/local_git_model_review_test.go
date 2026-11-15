@@ -434,7 +434,8 @@ func TestRunLocalGitModelReviewRequiresExplicitCanonicalIntent(t *testing.T) {
 func TestRunLocalGitModelReviewTextAndOutputFailure(t *testing.T) {
 	f := newLocalModelFixture(t, localModelFixtureOptions{})
 	var stdout, stderr bytes.Buffer
-	args := replaceLocalGitChangeValue(f.args, "--format", "text")
+	// The limitations list is internal tokens: --verbose text carries it.
+	args := append(replaceLocalGitChangeValue(f.args, "--format", "text"), "--verbose")
 	if code := run(args, &stdout, &stderr); code != 4 || stdout.Len() > 64<<10 || !strings.Contains(stdout.String(), "status: findings") || !strings.Contains(stdout.String(), "ci: blocked") || !strings.Contains(stdout.String(), "a.go:2-2") || !strings.Contains(stdout.String(), "empty_memory_index") || strings.Contains(stdout.String()+stderr.String(), localModelKey) || strings.Contains(stdout.String(), localModelSecret) {
 		t.Fatal("text result lost bounded finding, CI status, limitation, or privacy")
 	}

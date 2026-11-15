@@ -460,7 +460,7 @@ func TestLocalGitRetainedMemoryKeepsSourceModelBudgetAndOutputGuards(t *testing.
 				return
 			}
 			if kind == "text" {
-				args = replaceLocalGitChangeValue(args, "--format", "text")
+				args = append(replaceLocalGitChangeValue(args, "--format", "text"), "--verbose")
 			}
 			code := runWithContext(context.Background(), args, &out, &errout)
 			if errout.Len() != 0 || strings.Contains(out.String(), rmAdvice) || strings.Contains(out.String(), path) || strings.Contains(out.String(), localModelKey) {

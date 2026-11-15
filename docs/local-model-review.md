@@ -138,7 +138,9 @@ Do not mask a nonzero status or treat an empty finding list as CI approval.
 summary comment; see [ranked findings and the walkthrough](#ranked-findings-and-the-walkthrough)).
 Text and Markdown list confirmed high, critical and medium findings and count
 the rest (when there are none, up to 10 lower-severity findings, so a finding is
-never hidden behind nothing); `--all` lists every finding. For a separately admitted
+never hidden behind nothing); `--all` lists every finding. `--verbose` adds the
+limitations list and, for a review set, the selection trace and per-member
+details to text output; JSON, SARIF and Markdown are unchanged by it. For a separately admitted
 daemon run, `runs status --format json|sarif` retrieves the canonical result;
 successful retrieval is not a review-pass decision. No export creates publication
 permission. This headless example remains ephemeral and cannot resume an older
@@ -715,7 +717,7 @@ not the single-review result:
   and never per member, because every member reviews the same change against
   the same base tree. The fields are absent when the general review has no
   advice, so such a set keeps its earlier bytes. Text output adds the same `style:` lines
-  before `limitations:`, and set SARIF the same run property and notes as a
+  before the clearance line, and set SARIF the same run property and notes as a
   single review. The advice never changes the set's status, CI disposition or
   exit code.
 
@@ -733,15 +735,62 @@ Set status and CI disposition:
 `complete` is false whenever a member did not complete. An incomplete set never
 demotes a completed member's verified high or critical finding.
 
-Text output starts with a summary (status, selection, dropped profiles, members
-run, findings by severity and category, files analyzed/selected/omitted by the
-general review), then the walkthrough, the merged confirmed findings in rank
-order with a `contributors:` line, the pre-existing findings and the hidden
-count. `--format markdown` renders the set as a pull request summary with the
-members that ran and, for each finding, the members that confirmed it. A member
-whose run did not succeed shows its failure on its line, for example
-`member: bug_hunter status=failed run=failed verified_findings=0 failure=internal
-(task candidates)`, followed by `member hint: bug_hunter: ...`. SARIF
+Text output is written for people. It starts with `status:` and `ci:`, then
+the reviewers that ran (`reviewers: general, bug_hunter, backend (3 of 3 ran)`),
+a `not finished:` line with the failure and a `hint:` line for each member whose
+run did not succeed, and a `not run:` line, with the reason, for each selected
+member that was not started. Then come the walkthrough of the whole set, the
+merged confirmed findings in rank order, each with a `confirmed by:` line
+naming the members whose verifier confirmed it and, when other wordings were
+merged into it, an `also reported as:` line; then the pre-existing findings,
+the hidden count, an `incomplete:` line when a member did not finish, the
+source coverage when source was omitted, the token total over the members, the
+style advice and `comprehensive clearance: false`. From the offline fixture
+used in the tests:
+
+```text
+status: findings
+ci: blocked
+reviewers: general, bug_hunter, backend (3 of 3 ran)
+walkthrough:
+verified: secret scan: 6 model requests from 3 reviewers scanned before sending (876 bytes, 0 secret matches)
+verified: static check static_debug_output: passed (1 file checked, 0 matches)
+verified: style detection: ran (1 recommendation, 0 withheld)
+verified: semantic impact: 1 changed declaration, 0 public API changes, 1 reference (0 from tests), 0 gaps
+verified: independent verifier (distinct_provider): 3 of 3 candidates from 3 reviewers confirmed, 0 rejected, 0 inconclusive
+file: a.go modified +1 -1; changed function Changed
+missing verification: no test file references the changed function Changed (a.go)
+confirmed findings (ranked): 1
+finding: error Zero-valued caller now panics
+rank: 1
+source: a.go:2-2
+message: Consume passes zero to Changed after removal of the division guard.
+evidence: 8d0ff8ec..., f84bfca8...
+category: correctness
+fix: Restore the zero guard before dividing.
+confirmed by: general, bug_hunter, backend
+tokens: input=600 output=600 cached_input=0 over 6 route attempts (3 reviewers)
+style: no declared Go style for 1 changed file; consider gofmt and Effective Go, and commit its configuration
+comprehensive clearance: false
+```
+
+A member that did not finish reads, for example:
+
+```text
+not finished: bug_hunter (failed: internal (task candidates): model_output_invalid)
+hint: bug_hunter: the model's answer was not a valid review document (...)
+not run: backend (stopped after bug_hunter did not finish (failed))
+```
+
+`--verbose` (text only) adds the internals after the reviewers line: `complete:`,
+the selection trace (`selection:`, `change features:`, `selected:`, `dropped:`,
+`route assignment:`), `members run:`, one `member: NAME status=... run=...
+verified_findings=N` line for each member (with `failure=` and a
+`member hint:` line for one that did not succeed), the `findings:` summary by
+severity and category and `files covered:`; and the `limitations:` list before
+the clearance line. The JSON output carries every one of these fields with or
+without the flag. `--format markdown` renders the set as a pull request summary with the
+members that ran and, for each finding, the members that confirmed it. SARIF
 output is one run whose results are the merged findings in rank order, each
 with a `trestleContributors` property; when some members did not complete, the results
 still list the completed members' verified findings and an error notification
@@ -1233,8 +1282,8 @@ verified: independent verifier (distinct_provider): 3 of 3 candidates from 3 rev
 ```
 
 Text output shows the walkthrough, then the confirmed findings in rank order,
-then the pre-existing findings, then the hidden count, then coverage and
-limitations. From the offline fixture used in the tests:
+then the pre-existing findings, then the hidden count, then coverage, tokens
+and style advice. From the offline fixture used in the tests:
 
 ```text
 status: findings
@@ -1257,9 +1306,18 @@ evidence: 8d0ff8ec..., f84bfca8...
 category: correctness
 fix: Restore the zero guard before dividing.
 coverage: candidates=1 verified=1 rejected=0 inconclusive=0
-...
+source coverage: analyzed=2 selected=2 omitted=0
+tokens: input=200 output=200 cached_input=0 over 2 route attempts
+style: no declared Go style for 1 changed file; consider gofmt and Effective Go, and commit its configuration
 comprehensive clearance: false
 ```
+
+The `limitations:` list of tokens is internal; `--verbose` (text only) prints it
+before the clearance line, and the JSON and SARIF output always carry it. A
+result whose policy did not require zero data retention on an OpenRouter route
+shows that fact by default on a `zero data retention:` line. A merged finding
+shows `merged duplicates: N` and, when the merged wordings differ, `also
+reported as:` with their titles.
 
 ### Markdown output
 
@@ -1663,7 +1721,7 @@ removed files or the dependency lock files package managers generate
 (`package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`,
 `bun.lock`, `Cargo.lock`, `Gemfile.lock`, `poetry.lock`, `uv.lock`,
 `Pipfile.lock`, `composer.lock` and `go.sum`). Text output adds one line per
-language before `limitations:`, for example:
+language before the `comprehensive clearance: false` line, for example:
 
 ```text
 style: no declared Python style for 3 changed files; consider PEP 8, enforced with Ruff or Black, and commit its configuration

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -562,7 +563,7 @@ func runLocalModelReviewSet(ctx, execution context.Context, options localModelRe
 	if observe != nil {
 		observe(modelReviewOutcome{status: set.Status, findings: len(set.Findings), advisory: set.Status == "findings" && set.CI == "inconclusive"})
 	}
-	return writeModelReviewSet(options.format, options.exitPolicy, localreview.RenderOptions{All: options.all}, set, stdout, stderr)
+	return writeModelReviewSet(options.format, options.exitPolicy, options.renderOptions(), set, stdout, stderr)
 }
 
 // featuresUnavailableReason explains why no change features were read from the
@@ -992,59 +993,139 @@ func (s modelReviewSetWire) rankedGroups() []localreview.MergedFinding {
 
 func setContributors(group localreview.MergedFinding) []string { return group.OriginLabels() }
 
+// renderModelReviewSetText writes the set for people: the status, the
+// reviewers that ran and any that did not finish (with the failure and hint),
+// the walkthrough of the whole set, the merged findings in rank order with the
+// members that confirmed each and their other wordings, the pre-existing
+// findings, the hidden count, style advice, the total tokens and the
+// clearance line. options.Verbose adds the internals: the selection trace,
+// change features, dropped profiles, the route assignment note, per-member
+// key-value lines, the finding summary and the limitations.
 func renderModelReviewSetText(set modelReviewSetWire, options localreview.RenderOptions) ([]byte, error) {
 	var buffer bytes.Buffer
-	fmt.Fprintf(&buffer, "specialist review set: status=%s ci=%s complete=%t\n", set.Status, set.CI, set.Complete)
-	selectionStatus := set.Selection.Status
-	if set.Selection.Reason != "" {
-		selectionStatus += " (" + set.Selection.Reason + ")"
-	}
-	fmt.Fprintf(&buffer, "selection: mode=%s status=%s max=%d\n", set.Selection.Mode, selectionStatus, set.Selection.MaxSpecialists)
-	if features := set.Selection.Features; features != nil {
-		fmt.Fprintf(&buffer, "change features: files=%d languages=%s classes=%s security=%s\n", features.ChangedFiles, joinOrNone(features.Languages), joinOrNone(features.FileClasses), joinOrNone(features.SecuritySignals))
-	}
-	selected := []string{}
-	for _, value := range set.Selection.Selected {
-		selected = append(selected, value.ProfileID)
-	}
-	fmt.Fprintf(&buffer, "selected: %s\n", joinOrNone(selected))
-	for _, value := range set.Selection.Dropped {
-		fmt.Fprintf(&buffer, "dropped: %s (%s)\n", value.ProfileID, value.Reason)
-	}
-	fmt.Fprintf(&buffer, "route assignment: %s\n", set.Selection.RouteAssignment)
-	fmt.Fprintf(&buffer, "members run: %d of %d\n", set.Summary.MembersRun, set.Summary.MembersSelected)
+	fmt.Fprintf(&buffer, "status: %s\nci: %s\n", set.Status, set.CI)
+	reviewers := []string{}
 	for _, member := range set.Members {
-		if !member.Launched {
-			fmt.Fprintf(&buffer, "member: %s not run (%s)\n", member.Member, member.NotLaunchedReason)
-			continue
+		if member.Launched {
+			reviewers = append(reviewers, member.Member)
 		}
-		if member.RunStatus != "succeeded" && member.Failure != "" {
-			fmt.Fprintf(&buffer, "member: %s status=%s run=%s verified_findings=%d failure=%s\n", member.Member, member.Status, member.RunStatus, member.VerifiedFindings, localreview.FailureLine(member.Failure, member.FailureTask, member.FailureDetail))
-			if member.failureHint != "" {
-				fmt.Fprintf(&buffer, "member hint: %s: %s\n", member.Member, member.failureHint)
-			}
-			continue
-		}
-		fmt.Fprintf(&buffer, "member: %s status=%s run=%s verified_findings=%d\n", member.Member, member.Status, member.RunStatus, member.VerifiedFindings)
 	}
-	severities := sortedCounts(set.Summary.BySeverity)
-	categories := sortedCounts(set.Summary.ByCategory)
-	fmt.Fprintf(&buffer, "findings: %d (merged duplicates: %d) severity: %s category: %s\n", set.Summary.Findings, set.Summary.DuplicatesMerged, joinOrNone(severities), joinOrNone(categories))
-	if coverage := set.Summary.SourceCoverage; coverage != nil {
-		fmt.Fprintf(&buffer, "files covered: analyzed=%d selected=%d omitted=%d\n", coverage.Analyzed, coverage.Selected, coverage.Omitted)
+	fmt.Fprintf(&buffer, "reviewers: %s (%d of %d ran)\n", joinOrNone(reviewers), set.Summary.MembersRun, set.Summary.MembersSelected)
+	for _, member := range set.Members {
+		switch {
+		case !member.Launched:
+			fmt.Fprintf(&buffer, "not run: %s (%s)\n", member.Member, notLaunchedText(member.NotLaunchedReason))
+		case member.RunStatus != "succeeded":
+			text := member.Status
+			if member.Failure != "" {
+				text += ": " + localreview.FailureLine(member.Failure, member.FailureTask, member.FailureDetail)
+			}
+			fmt.Fprintf(&buffer, "not finished: %s (%s)\n", member.Member, text)
+			if member.failureHint != "" {
+				fmt.Fprintf(&buffer, "hint: %s: %s\n", member.Member, member.failureHint)
+			}
+		}
+	}
+	if options.Verbose {
+		writeModelReviewSetDetails(&buffer, set)
 	}
 	for _, line := range localreview.SetWalkthroughText(set.Walkthrough) {
 		buffer.WriteString(line)
 	}
 	buffer.WriteString(localreview.FindingsText(set.rankedGroups(), options, setContributors))
+	if !set.Complete {
+		buffer.WriteString("incomplete: one or more reviewers did not finish; the findings come only from those that did, so this is not a clean result\n")
+	}
+	// A coverage gap is a fact a person needs; full coverage is only detail.
+	if coverage := set.Summary.SourceCoverage; coverage != nil && coverage.Omitted > 0 && !options.Verbose {
+		fmt.Fprintf(&buffer, "source coverage: analyzed=%d selected=%d omitted=%d\n", coverage.Analyzed, coverage.Selected, coverage.Omitted)
+	}
+	usages := make([]*localreview.TokenUsage, 0, len(set.Members))
+	zeroDataRetentionNotRequired := false
+	for _, member := range set.Members {
+		usages = append(usages, member.TokenUsage)
+		zeroDataRetentionNotRequired = zeroDataRetentionNotRequired || slices.Contains(member.Limitations, localreview.LimitationOpenRouterZDRNotRequired)
+	}
+	if zeroDataRetentionNotRequired {
+		buffer.WriteString(localreview.ZeroDataRetentionNotRequiredText)
+	}
+	if line := localreview.TotalTokensLine(usages); line != "" {
+		buffer.WriteString(strings.Replace(line, "\n", fmt.Sprintf(" (%d reviewer%s)\n", len(reviewers), map[bool]string{true: "", false: "s"}[len(reviewers) == 1]), 1))
+	}
 	for _, line := range set.StyleAdvice.Lines() {
 		buffer.WriteString(line)
 	}
-	fmt.Fprintf(&buffer, "limitations: %s\ncomprehensive clearance: false\n", strings.Join(set.Limitations, ", "))
+	if options.Verbose {
+		fmt.Fprintf(&buffer, "limitations: %s\n", strings.Join(set.Limitations, ", "))
+	}
+	buffer.WriteString("comprehensive clearance: false\n")
 	if buffer.Len() > maxModelReviewSetTextBytes {
 		return nil, errors.New("model review set text exceeds output bound")
 	}
 	return buffer.Bytes(), nil
+}
+
+// notLaunchedText words why a selected member was not run.
+func notLaunchedText(reason string) string {
+	switch {
+	case reason == "general_review_did_not_complete":
+		return "the general review did not finish"
+	case reason == "canceled":
+		return "the review was canceled"
+	case strings.HasPrefix(reason, "stopped_after_"):
+		rest := strings.TrimPrefix(reason, "stopped_after_")
+		if member, ok := strings.CutSuffix(rest, "_unreadable"); ok && member != "" {
+			return "stopped after the result of " + member + " could not be read"
+		}
+		if index := strings.LastIndex(rest, "_"); index > 0 {
+			return "stopped after " + rest[:index] + " did not finish (" + rest[index+1:] + ")"
+		}
+	}
+	return reason
+}
+
+// writeModelReviewSetDetails writes the --verbose internals of a set: the
+// selection trace, the per-member key-value lines and the finding summary.
+func writeModelReviewSetDetails(buffer *bytes.Buffer, set modelReviewSetWire) {
+	fmt.Fprintf(buffer, "complete: %t\n", set.Complete)
+	selectionStatus := set.Selection.Status
+	if set.Selection.Reason != "" {
+		selectionStatus += " (" + set.Selection.Reason + ")"
+	}
+	fmt.Fprintf(buffer, "selection: mode=%s status=%s max=%d\n", set.Selection.Mode, selectionStatus, set.Selection.MaxSpecialists)
+	if features := set.Selection.Features; features != nil {
+		fmt.Fprintf(buffer, "change features: files=%d languages=%s classes=%s security=%s\n", features.ChangedFiles, joinOrNone(features.Languages), joinOrNone(features.FileClasses), joinOrNone(features.SecuritySignals))
+	}
+	selected := []string{}
+	for _, value := range set.Selection.Selected {
+		selected = append(selected, value.ProfileID)
+	}
+	fmt.Fprintf(buffer, "selected: %s\n", joinOrNone(selected))
+	for _, value := range set.Selection.Dropped {
+		fmt.Fprintf(buffer, "dropped: %s (%s)\n", value.ProfileID, value.Reason)
+	}
+	fmt.Fprintf(buffer, "route assignment: %s\n", set.Selection.RouteAssignment)
+	fmt.Fprintf(buffer, "members run: %d of %d\n", set.Summary.MembersRun, set.Summary.MembersSelected)
+	for _, member := range set.Members {
+		if !member.Launched {
+			fmt.Fprintf(buffer, "member: %s not run (%s)\n", member.Member, member.NotLaunchedReason)
+			continue
+		}
+		if member.RunStatus != "succeeded" && member.Failure != "" {
+			fmt.Fprintf(buffer, "member: %s status=%s run=%s verified_findings=%d failure=%s\n", member.Member, member.Status, member.RunStatus, member.VerifiedFindings, localreview.FailureLine(member.Failure, member.FailureTask, member.FailureDetail))
+			if member.failureHint != "" {
+				fmt.Fprintf(buffer, "member hint: %s: %s\n", member.Member, member.failureHint)
+			}
+			continue
+		}
+		fmt.Fprintf(buffer, "member: %s status=%s run=%s verified_findings=%d\n", member.Member, member.Status, member.RunStatus, member.VerifiedFindings)
+	}
+	severities := sortedCounts(set.Summary.BySeverity)
+	categories := sortedCounts(set.Summary.ByCategory)
+	fmt.Fprintf(buffer, "findings: %d (merged duplicates: %d) severity: %s category: %s\n", set.Summary.Findings, set.Summary.DuplicatesMerged, joinOrNone(severities), joinOrNone(categories))
+	if coverage := set.Summary.SourceCoverage; coverage != nil {
+		fmt.Fprintf(buffer, "files covered: analyzed=%d selected=%d omitted=%d\n", coverage.Analyzed, coverage.Selected, coverage.Omitted)
+	}
 }
 
 // renderModelReviewSetMarkdown renders the set as a pull request summary

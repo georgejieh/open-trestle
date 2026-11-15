@@ -309,16 +309,21 @@ review only, give `trestle init --specialists none` (the panel then says
 spending warning counts every review the command may run. See
 [specialist review set](local-model-review.md#specialist-review-set-opt-in).
 
-The result starts with a walkthrough of what was checked, then the confirmed
-findings, most important first:
+The result starts with the status and the reviews that ran, then a walkthrough
+of what was checked across all of them, then the confirmed findings, most
+important first, each with the reviews that confirmed it. From the offline test
+fixture, with the general review and two specialists:
 
 ```text
+status: findings
+ci: blocked
+reviewers: general, bug_hunter, backend (3 of 3 ran)
 walkthrough:
-verified: secret scan: 2 model requests scanned before sending (292 bytes, 0 secret matches)
+verified: secret scan: 6 model requests from 3 reviewers scanned before sending (876 bytes, 0 secret matches)
 verified: static check static_debug_output: passed (1 file checked, 0 matches)
 verified: style detection: ran (1 recommendation, 0 withheld)
 verified: semantic impact: 1 changed declaration, 0 public API changes, 1 reference (0 from tests), 0 gaps
-verified: independent verifier (distinct_provider): 1 of 1 candidate confirmed, 0 rejected, 0 inconclusive
+verified: independent verifier (distinct_provider): 3 of 3 candidates from 3 reviewers confirmed, 0 rejected, 0 inconclusive
 file: a.go modified +1 -1; changed function Changed
 missing verification: no test file references the changed function Changed (a.go)
 confirmed findings (ranked): 1
@@ -326,11 +331,20 @@ finding: error Zero-valued caller now panics
 rank: 1
 source: a.go:2-2
 message: Consume passes zero to Changed after removal of the division guard.
+evidence: 8d0ff8ec..., f84bfca8...
+category: correctness
+fix: Restore the zero guard before dividing.
+confirmed by: general, bug_hunter, backend
+tokens: input=600 output=600 cached_input=0 over 6 route attempts (3 reviewers)
+style: no declared Go style for 1 changed file; consider gofmt and Effective Go, and commit its configuration
+comprehensive clearance: false
 ```
 
-A specialist review set first summarizes which reviews ran (`specialist review
-set: status=findings ...`, `members run: ...`) and lists, under each finding,
-the reviews that confirmed it (`contributors: general, bug_hunter`).
+When two reviews describe one problem in different words at the same place,
+it is listed once, with the other wording on an `also reported as:` line. A
+review that did not finish gets a `not finished:` line with a `hint:`.
+`trestle review --verbose` adds the details behind the summary: how the
+specialists were picked, each review's status and the list of limitations.
 
 ### Reading the result
 
@@ -403,7 +417,7 @@ garbage-collected.
   Every other line goes to standard error, including the egress,
   secret-scanning and spending messages, which are exactly those of
   `trestle local-git model-review`. `--timeout`, `--profile`, `--specialists`,
-  `--max-specialists` and `--exit-code-policy` pass through to that command,
+  `--max-specialists`, `--exit-code-policy`, `--all` and `--verbose` pass through to that command,
   and so do its [exit codes](local-model-review.md) (for example `4` when a
   confirmed medium, high or critical finding blocks, and `3` for an
   [advisory](local-model-review.md#advisory-results) review whose findings are

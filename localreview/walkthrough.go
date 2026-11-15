@@ -372,7 +372,7 @@ func (s *Session) withWalkthrough(ctx context.Context, scope audit.ReviewScope, 
 	with := result
 	with.wire.Walkthrough = buildWalkthrough(walk, readReceipt)
 	var text bytes.Buffer
-	if _, err := EncodeResult(with); err == nil && RenderResult(&text, with) == nil {
+	if _, err := EncodeResult(with); err == nil && RenderResultWithOptions(&text, with, maximalText) == nil {
 		return with
 	}
 	result.wire.Limitations = append(append([]string{}, result.wire.Limitations...), walkthroughOmittedLimitation)

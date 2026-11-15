@@ -18,7 +18,7 @@ import (
 func TestRunLocalGitModelReviewSetCarriesGeneralStyleAdviceOnce(t *testing.T) {
 	goModule := map[string][]byte{"go.mod": []byte("module example.test/p\n")}
 	const jsonAdvice = `,"style_recommendations":[{"language":"go","changed_files":1,"recommendation":"gofmt and Effective Go"}]}` + "\n"
-	const textAdvice = "style: no declared Go style for 1 changed file; consider gofmt and Effective Go, and commit its configuration\nlimitations: "
+	const textAdvice = "style: no declared Go style for 1 changed file; consider gofmt and Effective Go, and commit its configuration\ncomprehensive clearance: false\n"
 	for _, test := range []struct {
 		name     string
 		options  localModelFixtureOptions

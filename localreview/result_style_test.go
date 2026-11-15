@@ -124,8 +124,8 @@ func TestStyleAdviceJSONAndTextForms(t *testing.T) {
 			t.Fatal(err)
 		}
 		rendered := text.String()
-		if style, limitations := strings.Index(rendered, pythonStyleLine), strings.Index(rendered, "\nlimitations: "); style < 0 || limitations < style || strings.Count(rendered, "style: ") != 1 {
-			t.Fatalf("text result lacks one style line before limitations:\n%s", rendered)
+		if style, clearance := strings.Index(rendered, pythonStyleLine), strings.Index(rendered, "\ncomprehensive clearance: false\n"); style < 0 || clearance < style || strings.Count(rendered, "style: ") != 1 {
+			t.Fatalf("text result lacks one style line before the clearance line:\n%s", rendered)
 		}
 	})
 	t.Run("plural", func(t *testing.T) {
@@ -156,7 +156,7 @@ func TestStyleAdviceJSONAndTextForms(t *testing.T) {
 		want := "style: no declared TypeScript style for 1 changed file; consider Prettier with ESLint, and commit its configuration\n" +
 			"style: declared Python style unknown for 1 changed file; a base style configuration file that may declare it was not read, so no recommendation is made\n" +
 			"style: 1 base style configuration file was not read (over 64 KiB, not valid UTF-8, beyond 256 files, or past the 1 MiB change-features bound)\n" +
-			"limitations: "
+			"comprehensive clearance: false\n"
 		if !strings.Contains(text.String(), want) {
 			t.Fatalf("unread configuration text:\n%s", text.String())
 		}
@@ -243,7 +243,7 @@ func TestStyleAdviceIsExplicitlyUnavailableWhenTheChangeCannotBeReadBack(t *test
 		t.Fatalf("unavailable advice JSON: %v\n%s", err, encoded)
 	}
 	var text bytes.Buffer
-	if err := RenderResult(&text, marked); err != nil || !strings.Contains(text.String(), "style: advice unavailable; the recorded change or base style configuration could not be read back\nlimitations: ") || strings.Count(text.String(), "style: ") != 1 {
+	if err := RenderResult(&text, marked); err != nil || !strings.Contains(text.String(), "style: advice unavailable; the recorded change or base style configuration could not be read back\ncomprehensive clearance: false\n") || strings.Count(text.String(), "style: ") != 1 {
 		t.Fatalf("unavailable advice text:\n%s", text.String())
 	}
 	if _, err := ParseCompletedResult(encoded); err != nil {

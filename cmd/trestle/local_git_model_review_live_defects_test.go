@@ -210,8 +210,12 @@ func TestLocalModelReviewNamesAnAnswerThatIsNotAReviewDocument(t *testing.T) {
 	// A review set member carries the same detail and hint.
 	f := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, generationMode: "template_tokens"})
 	_, text := runLocalModelSet(t, f, []string{"--specialists", "auto", "--format", "text"}, 1)
-	if !strings.Contains(text, "member: general status=failed run=failed verified_findings=0 failure=internal (task candidates): model_output_invalid\nmember hint: general: "+hint) || strings.Contains(text, "<|") {
+	if !strings.Contains(text, "not finished: general (failed: internal (task candidates): model_output_invalid)\nhint: general: "+hint) || strings.Contains(text, "<|") {
 		t.Fatalf("set text=%q", text)
+	}
+	_, verbose := runLocalModelSet(t, f, []string{"--specialists", "auto", "--format", "text", "--verbose"}, 1)
+	if !strings.Contains(verbose, "member: general status=failed run=failed verified_findings=0 failure=internal (task candidates): model_output_invalid\nmember hint: general: "+hint) || strings.Contains(verbose, "<|") {
+		t.Fatalf("verbose set text=%q", verbose)
 	}
 }
 
@@ -280,13 +284,18 @@ func TestLocalModelReviewNamesProviderRefusals(t *testing.T) {
 	// A review set member carries the same detail and hint.
 	f := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, generationMode: "refuse_402"})
 	_, text := runLocalModelSet(t, f, []string{"--specialists", "auto", "--format", "text"}, 4)
-	if !strings.Contains(text, "member: general status=refused run=failed verified_findings=0 failure=policy (task candidates): provider_payment_required\nmember hint: general: the provider refused the request for billing") {
+	if !strings.Contains(text, "not finished: general (refused: policy (task candidates): provider_payment_required)\nhint: general: the provider refused the request for billing") {
 		t.Fatalf("set text=%q", text)
 	}
 	assertNoProviderRefusalText(t, text)
+	_, verbose := runLocalModelSet(t, f, []string{"--specialists", "auto", "--format", "text", "--verbose"}, 4)
+	if !strings.Contains(verbose, "member: general status=refused run=failed verified_findings=0 failure=policy (task candidates): provider_payment_required\nmember hint: general: the provider refused the request for billing") {
+		t.Fatalf("verbose set text=%q", verbose)
+	}
+	assertNoProviderRefusalText(t, verbose)
 	unaccepted := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, generationMode: "reply_unknown_field"})
 	_, text = runLocalModelSet(t, unaccepted, []string{"--specialists", "auto", "--format", "text"}, 1)
-	if !strings.Contains(text, "member: general status=failed run=failed verified_findings=0 failure=internal (task candidates): provider_response_invalid\nmember hint: general: the provider answered, but its reply did not match") {
+	if !strings.Contains(text, "not finished: general (failed: internal (task candidates): provider_response_invalid)\nhint: general: the provider answered, but its reply did not match") {
 		t.Fatalf("set text=%q", text)
 	}
 	assertNoProviderRefusalText(t, text)
@@ -364,11 +373,18 @@ func assertNoProviderRefusalText(t *testing.T, output string) {
 func TestLocalModelReviewSetNamesMemberFailureAndKeepsFeatures(t *testing.T) {
 	f := newLocalModelFixture(t, localModelFixtureOptions{generationMode: "malformed_specialist"})
 	_, text := runLocalModelSet(t, f, []string{"--specialists", "bug_hunter,backend", "--format", "text"}, 4)
-	if !strings.Contains(text, "member: bug_hunter status=failed run=failed verified_findings=0 failure=internal (task candidates): model_output_invalid\nmember hint: bug_hunter: the model's answer was not a valid review document") {
+	if !strings.Contains(text, "not finished: bug_hunter (failed: internal (task candidates): model_output_invalid)\nhint: bug_hunter: the model's answer was not a valid review document") {
 		t.Fatalf("member failure line missing: %q", text)
 	}
+	// The member after the failed one was not run, and says why.
+	if !strings.Contains(text, "not run: backend (stopped after bug_hunter did not finish (failed))\n") || !strings.Contains(text, "reviewers: general, bug_hunter (2 of 3 ran)\n") {
+		t.Fatalf("not-run member line missing: %q", text)
+	}
+	if !strings.Contains(text, "incomplete: one or more reviewers did not finish; the findings come only from those that did, so this is not a clean result\n") || strings.Contains(text, "member: ") {
+		t.Fatalf("an incomplete set does not say so, or shows member internals: %q", text)
+	}
 	general := newLocalModelFixture(t, localModelFixtureOptions{generationMode: "malformed"})
-	_, generalText := runLocalModelSet(t, general, []string{"--specialists", "auto", "--format", "text"}, 1)
+	_, generalText := runLocalModelSet(t, general, []string{"--specialists", "auto", "--format", "text", "--verbose"}, 1)
 	if !strings.Contains(generalText, "languages=go") || strings.Contains(generalText, "languages=none") || !strings.Contains(generalText, "member: general status=failed run=failed verified_findings=0 failure=internal (task candidates)") {
 		t.Fatalf("general failure set text=%q", generalText)
 	}
@@ -391,7 +407,7 @@ func TestSummarizeSpecialistFeaturesWithoutPlan(t *testing.T) {
 		t.Fatalf("reason=%q", reason)
 	}
 	set := modelReviewSetWire{Selection: specialistSelectionWire{Mode: "auto", Status: "features_unavailable", Reason: "general review failed at context", MaxSpecialists: 3}}
-	rendered, err := renderModelReviewSetText(set, localreview.RenderOptions{})
+	rendered, err := renderModelReviewSetText(set, localreview.RenderOptions{Verbose: true})
 	if err != nil || !strings.Contains(string(rendered), "selection: mode=auto status=features_unavailable (general review failed at context) max=3\n") {
 		t.Fatalf("rendered=%q err=%v", rendered, err)
 	}

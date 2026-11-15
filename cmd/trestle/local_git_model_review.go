@@ -37,6 +37,13 @@ type localModelReviewOptions struct {
 	// all lists every confirmed finding in text and Markdown output (--all);
 	// by default only high, critical and medium findings are listed.
 	all bool
+	// verbose adds the internal tokens to text output (--verbose).
+	verbose bool
+}
+
+// renderOptions are the text and Markdown options the flags select.
+func (o localModelReviewOptions) renderOptions() localreview.RenderOptions {
+	return localreview.RenderOptions{All: o.all, Verbose: o.verbose}
 }
 
 // errUnknownModelReviewProfile is a usage error for a --profile (or --specialists)
@@ -67,16 +74,20 @@ func parseLocalModelReview(args []string) (localModelReviewOptions, evidence.Rep
 	fail := func() (localModelReviewOptions, evidence.RepositoryIdentity, evidence.RevisionIdentity, evidence.RevisionIdentity, error) {
 		return o, evidence.RepositoryIdentity{}, evidence.RevisionIdentity{}, evidence.RevisionIdentity{}, fmt.Errorf("invalid explicit model review intent")
 	}
-	// --all is the one flag without a value. It is recognized only where a
-	// flag is expected, so a flag's value is never taken for it.
-	all := false
+	// --all and --verbose are the flags without a value. They are recognized
+	// only where a flag is expected, so a flag's value is never taken for one.
+	all, verbose := false, false
 	pairs := make([]string, 0, len(args))
 	for index := 0; index < len(args); {
-		if args[index] == "--all" {
-			if all {
+		if args[index] == "--all" || args[index] == "--verbose" {
+			seen := &all
+			if args[index] == "--verbose" {
+				seen = &verbose
+			}
+			if *seen {
 				return fail()
 			}
-			all, index = true, index+1
+			*seen, index = true, index+1
 			continue
 		}
 		if index+1 >= len(args) {
@@ -204,7 +215,7 @@ func parseLocalModelReview(args []string) (localModelReviewOptions, evidence.Rep
 	}
 	o = localModelReviewOptions{objects: source.objectsRoot, inventory: values["--route-inventory"], policy: values["--runtime-policy"], tenant: values["--tenant"], repository: values["--repository"], format: format, investigation: values["--investigation-policy"], retainedMemory: values["--retained-memory-input"], egress: egress, objectStoreProfile: objectStoreProfile, timeout: timeout, specialist: specialist, exitPolicy: exitPolicy, specialists: specialists}
 	o.checkout, o.baseSelection, o.headSelection = values["--checkout"], values["--base"], values["--head"]
-	o.all = all
+	o.all, o.verbose = all, verbose
 	if checkout {
 		o.objectStoreProfile = scm.LocalGitObjectStoreProfileLooseAndPackIndexV1
 	}
@@ -256,7 +267,7 @@ func runLocalGitModelReviewObserved(ctx context.Context, args []string, stdout, 
 			return 1
 		}
 		observeModelResult(observe, result)
-		return writeLocalModelResultWithOptions(options.format, options.exitPolicy, localreview.RenderOptions{All: options.all}, result, stdout, stderr)
+		return writeLocalModelResultWithOptions(options.format, options.exitPolicy, options.renderOptions(), result, stdout, stderr)
 	}
 	if ctx == nil {
 		if options.specialists.active() {
@@ -291,7 +302,7 @@ func runLocalGitModelReviewObserved(ctx context.Context, args []string, stdout, 
 	}
 	inputs.spending.finish()
 	observeModelResult(observe, member.result)
-	return writeLocalModelResultWithOptions(options.format, options.exitPolicy, localreview.RenderOptions{All: options.all}, member.result, stdout, stderr)
+	return writeLocalModelResultWithOptions(options.format, options.exitPolicy, options.renderOptions(), member.result, stdout, stderr)
 }
 
 // localModelReviewInputs is the protected configuration and pinned revisions
@@ -545,6 +556,6 @@ func writeLocalModelResultWithOptions(format string, policy localreview.ExitPoli
 	return result.ExitCodeFor(policy)
 }
 func writeLocalGitModelReviewUsage(stderr io.Writer) {
-	fmt.Fprintln(stderr, "usage: trestle local-git model-review --objects-root PATH --repository-authority AUTHORITY --repository-namespace SEGMENT[/SEGMENT...] --repository-name NAME --revision-algorithm sha1|sha256 --base-revision-digest HEX --head-revision-digest HEX --tenant ID --repository ID --route-inventory PATH --runtime-policy PATH --egress local-only|policy-approved --timeout DURATION [--object-store loose-only|loose-and-pack-index-v1] [--format json|text|sarif|markdown] [--all] [--exit-code-policy default|findings|strict|always-zero] [--investigation-policy PATH | --retained-memory-input PATH] [--profile PROFILE_ID | --specialists auto|none|ID[,ID...] [--max-specialists N]]")
+	fmt.Fprintln(stderr, "usage: trestle local-git model-review --objects-root PATH --repository-authority AUTHORITY --repository-namespace SEGMENT[/SEGMENT...] --repository-name NAME --revision-algorithm sha1|sha256 --base-revision-digest HEX --head-revision-digest HEX --tenant ID --repository ID --route-inventory PATH --runtime-policy PATH --egress local-only|policy-approved --timeout DURATION [--object-store loose-only|loose-and-pack-index-v1] [--format json|text|sarif|markdown] [--all] [--verbose] [--exit-code-policy default|findings|strict|always-zero] [--investigation-policy PATH | --retained-memory-input PATH] [--profile PROFILE_ID | --specialists auto|none|ID[,ID...] [--max-specialists N]]")
 	fmt.Fprintln(stderr, "       checkout source alternative: --checkout PATH --base FULL_REF_OR_COMMIT --head FULL_REF_OR_COMMIT (replaces --objects-root and revision flags)")
 }
