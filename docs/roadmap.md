@@ -22,9 +22,16 @@ entry.
   models run and which model finds problems and which different model
   double-checks them. It fills in everything else it can, shows one settings
   panel, writes a protected configuration, runs the setup checks and runs the
-  first review only after consent. It asks for the name of the API key's
-  environment variable, never the key. A re-run reviews the two commits pinned
-  at setup, not the latest change. See [getting started](getting-started.md).
+  first review only after consent. When the provider's key is not set, it asks
+  for the key with hidden input, checks it with a free call where the provider
+  has one, and can save it in an owner-only credential store; `trestle keys`
+  lists, saves and removes saved keys. See [getting started](getting-started.md)
+  and [API keys](keys.md).
+- **Everyday loop.** `trestle review` reviews the latest committed change (the
+  current branch against its merge base with the default branch) with the
+  saved setup, in one step; a `trestle init` re-run offers the same. `trestle`
+  on its own, in a terminal, shows a home screen with the setup, key source,
+  spending and last review, and numbered next actions, each within two steps.
 - **Direct model review.** `trestle local-git model-review` runs the review in
   the `trestle` process: a finder model proposes candidates and an independent
   verifier on a different model checks them, over the same nine-task graph the
@@ -84,25 +91,14 @@ entry.
 
 ### Wave 1: the everyday loop and onboarding
 
-- **W1.1 `trestle review`.** Review the working tree's changes against the
-  merge base with the default branch, using the setup found for the
-  repository: no flags and no stored commit pair, so a re-run always reviews
-  the latest change. One step once set up. Today `trestle review PATH` reviews
-  one local fixture file only.
-- **W1.2 Masked API key entry in `trestle init`.** Hidden input, checked with a
-  free provider call, kept in an owner-only credential store, with the
-  environment variable winning when set. The key is never echoed, logged or
-  placed in model context.
-- **W1.3 A `trestle` home screen.** With no arguments in a configured
-  repository, show status, the last review, spending and the next actions
-  (review, usage, settings, docs), so every goal is within two steps.
-- **W1.4 Documentation truth and this roadmap.** The documentation side is done
-  on this branch. Three mismatches need a code change and remain: the
-  `knowledge_graph` profile's purpose text says it builds and extends a
-  repository symbol and dependency graph, but the profile is plan-only and the
-  only graph is the per-change Go semantic-impact profile; the `trestle` usage
-  text omits `local-git submit-review`; and the Dockerfile exposes port 8080
-  while `trestled` listens on `127.0.0.1:8741` by default.
+Shipped on this branch (see above): `trestle review`, hidden API key entry with
+an owner-only credential store and `trestle keys`, the `trestle` home screen,
+and the documentation truth pass, including the three code-side mismatches
+(the `knowledge_graph` and `style_conformance` purpose text, the usage text,
+and the Dockerfile port). Remaining:
+
+- Review uncommitted changes without writing objects into the repository.
+- An OS keyring as an optional backend for saved keys.
 
 ### Wave 2: review quality core
 
