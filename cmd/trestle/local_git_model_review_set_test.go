@@ -313,7 +313,7 @@ func TestPlanAutoSpecialistsSelectsByChangeKind(t *testing.T) {
 
 func TestMergeVerifiedFindingsDeduplicatesOverlappingDuplicates(t *testing.T) {
 	finding := func(id, title, category string, severity diagnostics.Severity, start, end uint32) localreview.ReportFinding {
-		return localreview.ReportFinding{Identity: id, Title: title, Claim: "claim " + id, Severity: severity, Path: "a.go", StartLine: start, EndLine: end, Category: category}
+		return localreview.ReportFinding{Identity: id, Title: title, Claim: "A zero-valued caller now reaches the division and panics.", Severity: severity, Path: "a.go", StartLine: start, EndLine: end, Category: category}
 	}
 	merged, duplicates := mergeVerifiedFindings([]string{"general", "bug_hunter", "backend"}, [][]localreview.ReportFinding{
 		{finding("g1", "Zero-valued caller now panics", "correctness", diagnostics.SeverityWarning, 2, 2)},
@@ -328,9 +328,9 @@ func TestMergeVerifiedFindingsDeduplicatesOverlappingDuplicates(t *testing.T) {
 		t.Fatalf("merged=%d duplicates=%d", len(merged), duplicates)
 	}
 	first := merged[0]
-	// The representative is the most severe finding; the reported range is the
-	// narrowest contributing range (g1 at line 2).
-	if first.FindingIdentity != "b1" || first.Severity != "error" || first.StartLine != 2 || first.EndLine != 2 || first.Category != "correctness" {
+	// The representative is the strongest verified finding (the most severe),
+	// reported at its own range; findings are in rank order.
+	if first.FindingIdentity != "b1" || first.Severity != "error" || first.StartLine != 1 || first.EndLine != 3 || first.Category != "correctness" || first.Rank != 1 {
 		t.Fatalf("representative=%+v", first)
 	}
 	if got := strings.Join(first.contributorLabels(), ","); got != "general,bug_hunter,backend" || len(first.Contributors) != 3 || first.Contributors[0].FindingIdentity != "g1" {

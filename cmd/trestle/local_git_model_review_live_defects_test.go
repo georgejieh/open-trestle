@@ -399,23 +399,27 @@ func TestSummarizeSpecialistFeaturesWithoutPlan(t *testing.T) {
 
 // Defect D: the live set reported "Avg may divide by zero" (general) and "Avg
 // panics on empty slice" (bug_hunter) as two findings. They share path,
-// category, an overlapping range and the cited evidence.
-func TestMergeVerifiedFindingsMergesLiveDuplicate(t *testing.T) {
+// category, an overlapping range and the cited evidence, but their statements
+// are paraphrases, not near-identical, so the shared deterministic rule keeps
+// them as two ranked findings: the more severe one ranks first. The earlier
+// heuristic merged them on a 0.3 word overlap; the near-identical rule trades
+// that merge for never hiding a distinct defect behind another's statement.
+func TestMergeVerifiedFindingsKeepsLiveParaphrasesApartAndRanked(t *testing.T) {
 	const evidence = "76a14b86b8e4bfef0306da257cc6b99fa1f3d8057b992b0aa74b2d50f4424e45"
 	general := localreview.ReportFinding{Identity: "g1", Title: "Avg function may divide by zero", Claim: "The Avg function returns sum / len(xs) without checking if xs is empty, which can cause a runtime panic due to division by zero.", Severity: diagnostics.SeverityWarning, Path: "calc.go", StartLine: 10, EndLine: 18, EvidenceIDs: []string{evidence}, Category: "correctness"}
 	bugHunter := localreview.ReportFinding{Identity: "b1", Title: "Avg panics on empty slice", Claim: "Calling Avg with an empty slice triggers a runtime panic because it divides by zero (len(xs) == 0).", Severity: diagnostics.SeverityError, Path: "calc.go", StartLine: 16, EndLine: 16, EvidenceIDs: []string{evidence}, Category: "correctness"}
 	merged, duplicates := mergeVerifiedFindings([]string{"general", "bug_hunter"}, [][]localreview.ReportFinding{{general}, {bugHunter}})
-	if len(merged) != 1 || duplicates != 1 {
+	if len(merged) != 2 || duplicates != 0 {
 		t.Fatalf("merged=%d duplicates=%d", len(merged), duplicates)
 	}
-	got := merged[0]
-	if got.FindingIdentity != "b1" || got.Severity != "error" || got.StartLine != 16 || got.EndLine != 16 || strings.Join(got.contributorLabels(), ",") != "general,bug_hunter" {
-		t.Fatalf("merged finding=%+v", got)
+	if merged[0].FindingIdentity != "b1" || merged[0].Rank != 1 || merged[1].FindingIdentity != "g1" || merged[1].Rank != 2 {
+		t.Fatalf("paraphrases are not in rank order: %+v", merged)
 	}
-	// Word overlap alone (no shared evidence) also identifies the duplicate.
-	general.EvidenceIDs, bugHunter.EvidenceIDs = []string{"e1"}, []string{"e2"}
-	if merged, _ := mergeVerifiedFindings([]string{"general", "bug_hunter"}, [][]localreview.ReportFinding{{general}, {bugHunter}}); len(merged) != 1 {
-		t.Fatalf("token-overlap duplicate kept apart: %d", len(merged))
+	// The same defect worded the same way by both members merges.
+	bugHunter.Title, bugHunter.Claim = general.Title, general.Claim
+	merged, duplicates = mergeVerifiedFindings([]string{"general", "bug_hunter"}, [][]localreview.ReportFinding{{general}, {bugHunter}})
+	if len(merged) != 1 || duplicates != 1 || merged[0].FindingIdentity != "b1" || merged[0].Severity != "error" || strings.Join(merged[0].contributorLabels(), ",") != "general,bug_hunter" {
+		t.Fatalf("near-identical live duplicate kept apart: %+v", merged)
 	}
 }
 

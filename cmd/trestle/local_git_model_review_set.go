@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/georgejieh/open-trestle/agentprofile"
 	"github.com/georgejieh/open-trestle/diagnostics"
@@ -370,17 +369,14 @@ type setFindingWire struct {
 	FixAuthority string               `json:"fix_authority,omitempty"`
 	EvidenceIDs  []string             `json:"evidence_ids"`
 	Contributors []setContributorWire `json:"contributors"`
-	report       localreview.ReportFinding
-	coveredStart uint32
-	coveredEnd   uint32
-	narrowStart  uint32
-	narrowEnd    uint32
-	// representativeMember and representativeTokens identify the one finding
-	// whose claims decide whether a later finding is the same issue. They are
-	// the group's first finding, replaced when a more severe member becomes
-	// the reported representative.
-	representativeMember int
-	representativeTokens map[string]bool
+	// Rank is the finding's 1-based position (localreview.RankFindings);
+	// findings are listed in rank order.
+	Rank int `json:"rank"`
+	// PreExisting is set when every contributor is located only on unchanged
+	// lines the change did not touch. Such a finding never blocks CI.
+	PreExisting bool `json:"pre_existing,omitempty"`
+	report      localreview.ReportFinding
+	merged      localreview.MergedFinding
 }
 
 type setSummaryWire struct {
@@ -638,7 +634,11 @@ func buildModelReviewSet(selection specialistSelectionWire, members []localModel
 		}
 		set.Members = append(set.Members, wire)
 	}
-	merged, duplicates := mergeVerifiedFindings(labels, memberFindings)
+	independence := make([]string, len(set.Members))
+	for index, member := range set.Members {
+		independence[index] = member.Independence
+	}
+	merged, duplicates := mergeVerifiedFindingsWithIndependence(labels, independence, memberFindings)
 	set.Findings = merged
 	set.Summary.Findings, set.Summary.DuplicatesMerged = len(merged), duplicates
 	for _, finding := range merged {
@@ -706,196 +706,38 @@ func setStatusRank(status string) int {
 	return 1
 }
 
-// severityRank orders diagnostic severities; higher is more severe.
-func severityRank(severity diagnostics.Severity) int {
-	switch severity {
-	case diagnostics.SeverityError:
-		return 4
-	case diagnostics.SeverityWarning:
-		return 3
-	case diagnostics.SeverityInformation:
-		return 2
-	case diagnostics.SeverityHint:
-		return 1
-	}
-	return 0
-}
-
-// normalizeFindingTitle lowercases a title and collapses every run of
-// non-letter, non-digit characters to one space.
-func normalizeFindingTitle(title string) string {
-	var builder strings.Builder
-	space := false
-	for _, character := range strings.ToLower(title) {
-		if unicode.IsLetter(character) || unicode.IsDigit(character) {
-			if space && builder.Len() > 0 {
-				builder.WriteByte(' ')
-			}
-			builder.WriteRune(character)
-			space = false
-		} else {
-			space = true
-		}
-	}
-	return builder.String()
-}
-
-// findingDuplicateOverlapNumerator / findingDuplicateOverlapDenominator is the
-// minimum Jaccard overlap (0.3) of two findings' word sets for them to count as
-// the same issue. Integer arithmetic keeps the comparison exact.
-const (
-	findingDuplicateOverlapNumerator   = 3
-	findingDuplicateOverlapDenominator = 10
-)
-
-// findingStopwords are frequent English words that carry no defect identity.
-var findingStopwords = map[string]bool{
-	"the": true, "and": true, "for": true, "with": true, "that": true, "this": true, "from": true, "into": true, "when": true,
-	"without": true, "which": true, "may": true, "can": true, "could": true, "will": true, "would": true, "not": true, "its": true,
-	"are": true, "was": true, "were": true, "has": true, "have": true, "been": true, "being": true, "than": true, "then": true,
-	"because": true, "due": true, "also": true, "does": true, "any": true, "all": true, "but": true, "only": true, "there": true,
-	"their": true, "they": true, "should": true, "must": true, "such": true, "other": true, "some": true, "more": true,
-}
-
-// findingTokens is the set of lowercase words of at least three letters or
-// digits in a finding's title and claim, without stopwords.
-func findingTokens(title, claim string) map[string]bool {
-	tokens := map[string]bool{}
-	for _, word := range strings.Fields(normalizeFindingTitle(title + " " + claim)) {
-		if len(word) >= 3 && !findingStopwords[word] {
-			tokens[word] = true
-		}
-	}
-	return tokens
-}
-
-// tokensOverlap reports a Jaccard overlap of at least 0.3.
-func tokensOverlap(a, b map[string]bool) bool {
-	shared := 0
-	for word := range a {
-		if b[word] {
-			shared++
-		}
-	}
-	union := len(a) + len(b) - shared
-	return union > 0 && shared*findingDuplicateOverlapDenominator >= union*findingDuplicateOverlapNumerator
-}
-
-// related reports whether a finding describes the same issue as the group's
-// representative finding. Only the representative's own claim tokens count:
-// letting an absorbed finding's tokens qualify a later merge would chain
-// findings together and can collapse a distinct defect into another defect's
-// title and severity.
-//
-// The representative is the group's first finding in run order, so member
-// order still decides which finding anchors a group. When a more severe
-// member replaces it, the group's tokens are replaced with that member's
-// tokens so the comparison always uses one finding's claims.
-func (g *setFindingWire) related(member int, tokens map[string]bool) bool {
-	if g.representativeMember == member {
-		return false
-	}
-	return tokensOverlap(g.representativeTokens, tokens)
-}
-
-// mergeVerifiedFindings de-duplicates verified findings across members. Two
-// findings are duplicates when they share path and category, the finding's
-// line range overlaps the representative's range, and it describes the same
-// issue as the representative (see related). Only the representative's range
-// and claims decide a match, so a finding cannot join a group through a
-// finding the group already absorbed. Wording overlap is still a heuristic:
-// it can merge or keep apart findings that a person would judge differently.
-//
-// The group keeps the most severe finding as its representative; ties keep the
-// earliest member in run order. The reported range is the narrowest
-// contributing range (ties keep the earliest). Every contributing member is
-// listed. Matching is deterministic: members in run order, findings sorted by
-// path, range and identity. Output is sorted by path, line range, category
-// and identity.
+// mergeVerifiedFindings de-duplicates the members' verified findings with the
+// shared rule (localreview.DeduplicateFindings) and orders them by rank
+// (localreview.RankFindings). Each group reports its representative, the
+// strongest verified finding, at its own location, and lists every
+// contributor with its own finding identity, severity and range. Members are
+// origins in run order. independence holds each member's recorded
+// verification independence, aligned with labels; it may be nil.
 func mergeVerifiedFindings(labels []string, findings [][]localreview.ReportFinding) ([]setFindingWire, int) {
-	var groups []*setFindingWire
-	duplicates := 0
+	return mergeVerifiedFindingsWithIndependence(labels, nil, findings)
+}
+
+func mergeVerifiedFindingsWithIndependence(labels, independence []string, findings [][]localreview.ReportFinding) ([]setFindingWire, int) {
+	origins := make([]localreview.FindingOrigin, 0, len(findings))
 	for index, memberFindings := range findings {
-		ordered := append([]localreview.ReportFinding(nil), memberFindings...)
-		sort.SliceStable(ordered, func(i, j int) bool {
-			a, b := ordered[i], ordered[j]
-			if a.Path != b.Path {
-				return a.Path < b.Path
-			}
-			if a.Side != b.Side {
-				return a.Side < b.Side
-			}
-			if a.StartLine != b.StartLine {
-				return a.StartLine < b.StartLine
-			}
-			if a.EndLine != b.EndLine {
-				return a.EndLine < b.EndLine
-			}
-			return a.Identity < b.Identity
-		})
-		for _, finding := range ordered {
-			tokens := findingTokens(finding.Title, finding.Claim)
-			contributor := setContributorWire{Member: labels[index], FindingIdentity: finding.Identity, Severity: finding.Severity.String(), StartLine: finding.StartLine, EndLine: finding.EndLine, Side: recordedSetSide(finding.Side)}
-			var group *setFindingWire
-			for _, candidate := range groups {
-				// Base and head line numbers are different coordinates: findings
-				// on different sides never merge, even with overlapping numbers.
-				if candidate.Path == finding.Path && candidate.report.Side == finding.Side && candidate.Category == finding.Category &&
-					finding.StartLine <= candidate.coveredEnd && candidate.coveredStart <= finding.EndLine &&
-					candidate.related(index, tokens) {
-					group = candidate
-					break
-				}
-			}
-			if group == nil {
-				value := setFindingFromReport(finding)
-				value.Contributors = []setContributorWire{contributor}
-				value.narrowStart, value.narrowEnd = finding.StartLine, finding.EndLine
-				value.coveredStart, value.coveredEnd = finding.StartLine, finding.EndLine
-				value.representativeMember, value.representativeTokens = index, tokens
-				groups = append(groups, &value)
-				continue
-			}
-			duplicates++
-			group.Contributors = append(group.Contributors, contributor)
-			if finding.EndLine-finding.StartLine < group.narrowEnd-group.narrowStart {
-				group.narrowStart, group.narrowEnd = finding.StartLine, finding.EndLine
-			}
-			if severityRank(finding.Severity) > severityRank(group.report.Severity) {
-				replacement := setFindingFromReport(finding)
-				replacement.Contributors = group.Contributors
-				// The reported representative also decides later merges, so its
-				// range and claims become the group's comparison basis.
-				replacement.coveredStart, replacement.coveredEnd = finding.StartLine, finding.EndLine
-				replacement.narrowStart, replacement.narrowEnd = group.narrowStart, group.narrowEnd
-				replacement.representativeMember, replacement.representativeTokens = index, tokens
-				*group = replacement
-			}
+		origin := localreview.FindingOrigin{Label: labels[index], Findings: memberFindings}
+		if index < len(independence) {
+			origin.Independence = independence[index]
 		}
+		origins = append(origins, origin)
 	}
-	out := make([]setFindingWire, 0, len(groups))
-	for _, group := range groups {
-		value := *group
-		value.StartLine, value.EndLine = value.narrowStart, value.narrowEnd
+	ranked := localreview.RankFindings(localreview.DeduplicateFindings(origins))
+	out := make([]setFindingWire, 0, len(ranked))
+	for _, group := range ranked {
+		value := setFindingFromReport(group.Finding)
+		value.Rank, value.PreExisting, value.merged = group.Rank, group.PreExisting(), group
+		value.Contributors = make([]setContributorWire, 0, len(group.Contributors))
+		for _, contributor := range group.Contributors {
+			value.Contributors = append(value.Contributors, setContributorWire{Member: contributor.Origin, FindingIdentity: contributor.Identity, Severity: contributor.Severity.String(), StartLine: contributor.StartLine, EndLine: contributor.EndLine, Side: recordedSetSide(contributor.Side)})
+		}
 		out = append(out, value)
 	}
-	sort.SliceStable(out, func(i, j int) bool {
-		a, b := out[i], out[j]
-		switch {
-		case a.Path != b.Path:
-			return a.Path < b.Path
-		case a.report.Side != b.report.Side:
-			return a.report.Side < b.report.Side
-		case a.StartLine != b.StartLine:
-			return a.StartLine < b.StartLine
-		case a.EndLine != b.EndLine:
-			return a.EndLine < b.EndLine
-		case a.Category != b.Category:
-			return a.Category < b.Category
-		}
-		return a.FindingIdentity < b.FindingIdentity
-	})
-	return out, duplicates
+	return out, localreview.MergedDuplicates(ranked)
 }
 
 // recordedSetSide is the omitempty set token of a side: head is absent.
@@ -912,7 +754,6 @@ func setFindingFromReport(finding localreview.ReportFinding) setFindingWire {
 		StartLine: finding.StartLine, EndLine: finding.EndLine, Side: recordedSetSide(finding.Side), HeadLine: finding.HeadLine,
 		Category: finding.Category, Fix: finding.Fix,
 		EvidenceIDs: append([]string{}, finding.EvidenceIDs...), report: finding,
-		coveredStart: finding.StartLine, coveredEnd: finding.EndLine,
 	}
 	if value.Fix != "" {
 		value.FixAuthority = localreview.FixAuthority
