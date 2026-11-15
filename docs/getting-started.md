@@ -298,12 +298,58 @@ command in `NEXT-STEPS.txt` in the setup folder. It then asks:
 Only `y` runs it. The review runs in the foreground and keeps nothing for
 resume; it can take several minutes.
 
+A new setup runs specialist reviews by default: the general review first, then
+up to three specialist reviews (such as `bug_hunter` or `security_probe`)
+picked from the change without a model call, each a full review with its own
+independent check. The settings panel shows it as `Specialists on: ...`. On
+remote models the specialists run at the same time, up to three at once; on a
+model on this machine they run one after another. To review with the general
+review only, give `trestle init --specialists none` (the panel then says
+`Specialists off`), or run `trestle review --specialists none` once. The
+spending warning counts every review the command may run. See
+[specialist review set](local-model-review.md#specialist-review-set-opt-in).
+
+The result starts with a walkthrough of what was checked, then the confirmed
+findings, most important first:
+
+```text
+walkthrough:
+verified: secret scan: 2 model requests scanned before sending (292 bytes, 0 secret matches)
+verified: static check static_debug_output: passed (1 file checked, 0 matches)
+verified: style detection: ran (1 recommendation, 0 withheld)
+verified: semantic impact: 1 changed declaration, 0 public API changes, 1 reference (0 from tests), 0 gaps
+verified: independent verifier (distinct_provider): 1 of 1 candidate confirmed, 0 rejected, 0 inconclusive
+file: a.go modified +1 -1; changed function Changed
+missing verification: no test file references the changed function Changed (a.go)
+confirmed findings (ranked): 1
+finding: error Zero-valued caller now panics
+rank: 1
+source: a.go:2-2
+message: Consume passes zero to Changed after removal of the division guard.
+```
+
+A specialist review set first summarizes which reviews ran (`specialist review
+set: status=findings ...`, `members run: ...`) and lists, under each finding,
+the reviews that confirmed it (`contributors: general, bug_hunter`).
+
 ### Reading the result
 
 - `findings`: each listed finding was proposed by the finder and confirmed by
   the checker. Read them like a colleague's review comments. A finding about
   code the change removed is located on the removed lines of the base commit
   (`path removed base lines a-b`), not on head lines.
+- `walkthrough:` lines: what was verified (the secret scan of the model
+  requests, the deterministic checks, style detection, the semantic-impact
+  analysis and the checker's confirmed, rejected and inconclusive counts), each
+  changed file with its line counts and changed Go declarations, and
+  `missing verification:` notes for changed functions no test file references.
+  These notes are information, not defects.
+- `confirmed findings (ranked)`: high, critical and medium findings, most
+  important first. Findings that repeat one another are merged. Lower-severity
+  findings are counted on a `hidden:` line; `trestle review --all` lists them.
+- `pre-existing findings`: confirmed problems on unchanged lines that cite
+  nothing the change touched. They are listed separately and never make the
+  review blocking.
 - `no_candidates`: nothing was found and confirmed. That is not proof the change
   is correct.
 - `incomplete`: part of the change was not covered; see the coverage and
@@ -437,6 +483,7 @@ and a flag overrides it; facts you must declare are not filled in. A complete
 | Review output allowance (optional, no question) | `--max-output-tokens N`, from 4096 up to `--output-tokens` (default 4096; OpenRouter: 16384 or the most every pinned endpoint allows) |
 | Prices (remote) | `--input-micro-usd-per-million-tokens N`, `--output-micro-usd-per-million-tokens N` (OpenRouter: detected unless given) |
 | Per-request cost bound (optional, no question) | `--max-cost-micro-usd N` (1 USD = 1000000; default: the cost of a request that fills the whole context, rounded up to a cent) |
+| Specialist reviews (optional, no question) | `--specialists auto\|none` (default `auto`: the saved review runs the general review, then up to three specialist reviews picked from the change; `none` saves the general review only). `trestle setup bootstrap init` takes the same flag |
 | Spending limit for the key (optional) | `--spending-limit USD`, `--spending-alert PERCENT` (default 80; alerts also at the limit). Only for a remote provider that charges per token; without it there is no limit. See [spending limits](spending-limits.md) |
 | Key variable (default: the provider's usual name) | `--credential-env OPEN_TRESTLE_PROVIDER_NAME` |
 | Names (default: from `origin`, the folder and `$USER`) | `--owner`, `--tenant`, `--repository`, `--repository-authority`, `--repository-namespace`, `--repository-name` |

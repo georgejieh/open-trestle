@@ -102,12 +102,20 @@ and the Dockerfile port). Remaining:
 
 ### Wave 2: review quality core
 
-- **W2.1 Rank and summarise.** Deduplicate across the finder, the specialists
-  and repeated runs (today only a heuristic merge within one `--specialists`
-  set exists). Apply severity discipline: high-priority findings by default,
-  with pre-existing issues kept separate. Rank deterministically. Produce a
-  human-readable walkthrough, a per-file change summary plus confirmed
-  findings, in text, Markdown, the pull-request summary and the console.
+- **W2.1 Rank and summarise.** Shipped on this branch: one deterministic
+  duplicate rule for a run, the specialists and repeated runs; deterministic
+  ranking; confirmed high and medium findings by default with `--all`; a
+  pre-existing class that never blocks CI; a verification-led walkthrough
+  (what was verified, a per-file change summary, missing verification); and
+  text, `--format markdown` and rank-ordered SARIF. See
+  [ranked findings and the walkthrough](local-model-review.md#ranked-findings-and-the-walkthrough).
+  Remaining: the optional one-paragraph model summary (a separate structured
+  request on the verifier route under the same egress, scanning and spending
+  rules, labelled with its model and off for local setups); the daemon
+  publisher's summary body and the web console, which keep their own rendering;
+  the pre-existing class and the walkthrough for investigation runs; the
+  optional model-drawn state or sequence diagram; and the evaluation scorer
+  reading ranked output.
 - **W2.2 Context.** Enclosing definitions for changed hunks; a
   language-agnostic repository map of symbol tags with personalised ranking
   within a token budget; and caller and usage lookups. Go already uses its AST;
@@ -115,9 +123,12 @@ and the Dockerfile port). Remaining:
 - **W2.3 Commit and pull-request context.** Commit messages, the pull-request
   title and body, and linked issue text, all as untrusted data with risk flags,
   so that the drift auditor can run.
-- **W2.4 Specialists by default.** `trestle init` turns on `auto` specialists,
-  run in parallel where the routes allow. Today they are opt-in and run one
-  after another.
+- **W2.4 Specialists by default.** Shipped on this branch: new setups save
+  `--specialists auto` and `trestle review` uses it; specialists run up to
+  three at a time on remote routes when no spending limit could be passed, and
+  one by one otherwise; the spending warning counts every member;
+  `--specialists none` turns them off. Remaining: per-profile route
+  assignment.
 
 ### Wave 3: memory and learning
 

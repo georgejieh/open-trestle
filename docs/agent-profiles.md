@@ -44,10 +44,18 @@ What exists today:
   `Plan`, and keeps the
   activated, planned direct-review profiles in priority order, cut to
   `--max-specialists` (default 3, at most 6). It then runs the general review and
-  each selected profile as its own sequential, independently verified run and
-  merges the verified findings. The selection trace records the plan identity and
-  every dropped profile with its reason. See
+  each selected profile as its own independently verified run, concurrently (at
+  most three at a time) on remote routes when no spending limit could be passed
+  and one by one otherwise, and merges the verified findings with the shared
+  duplicate rule. The selection trace records the plan identity and every
+  dropped profile with its reason. See
   [local model review](local-model-review.md#specialist-review-set-opt-in).
+- **Specialists by default.** A new setup (`trestle init`, or
+  `trestle setup bootstrap init`) saves `--specialists auto` in its review
+  command, so `trestle review` runs the set. `--specialists none` at setup, or
+  `trestle review --specialists none` for one run, keeps the single general
+  review; the wizard does not ask. Setups saved before this default keep the
+  single review.
 
 What does **not** exist yet:
 

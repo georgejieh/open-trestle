@@ -92,7 +92,14 @@ its remote routes use with the usage ledger:
 - When the review's worst case could take the recorded spend past a limit, it
   runs with a warning. The worst case is two requests (one to each model) at
   the per-request bound, `max_cost_micro_usd`, or an `--investigation-policy`
-  run's budget.
+  run's budget. A specialist review set (the default of a new setup) may run
+  the general review and up to `--max-specialists` specialists (default 3),
+  each a full review, so its one warning, printed before the first member, counts
+  all of them and adds a line such as "That counts every review this command
+  may run: the general review and up to 3 specialist reviews, each up to
+  $1.38." Each member is still checked before it starts and refused at the
+  limit. Specialists run concurrently only when no limited key could reach its
+  limit during the concurrent wave, so concurrency never skips that check.
 - After a run that sent at least one request, one ledger entry is appended.
   When that crosses an alert percentage, one line says so.
 

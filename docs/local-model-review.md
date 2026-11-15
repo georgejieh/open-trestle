@@ -132,7 +132,10 @@ result. The opt-in [exit-code policy](#exit-code-policy) can map a completed rev
 to 0 for CI.
 Do not mask a nonzero status or treat an empty finding list as CI approval.
 
-`--format` selects `json` (default), `text` or `sarif`. For a separately admitted
+`--format` selects `json` (default), `text`, `sarif` or `markdown` (a pull request
+summary comment; see [ranked findings and the walkthrough](#ranked-findings-and-the-walkthrough)).
+Text and Markdown list confirmed high, critical and medium findings and count
+the rest; `--all` lists every finding. For a separately admitted
 daemon run, `runs status --format json|sarif` retrieves the canonical result;
 successful retrieval is not a review-pass decision. No export creates publication
 permission. This headless example remains ephemeral and cannot resume an older
@@ -152,7 +155,7 @@ other Open Trestle exports. It carries only independently verified findings:
 | `locations[0].physicalLocation` | repository-relative path and start/end line |
 | `fingerprints` | `openTrestleVerifiedFindingId/v1`, the run-specific finding identity |
 | `partialFingerprints` | `openTrestleFindingFingerprint/v1` (bound to the reviewed snapshot) and `openTrestleContentHash/v1` (path, category, title and claim only) |
-| `properties` | `trestleCategory`, `trestleSeverity` (`error`, `warning` or `information`; the diagnostic severity, so high and critical are not distinguished), `trestleVerificationIndependence`, evidence IDs |
+| `properties` | `trestleCategory`, `trestleSeverity` (`error`, `warning` or `information`; the diagnostic severity, so high and critical are not distinguished), `trestleVerificationIndependence`, evidence IDs, `trestleRank` (the finding's rank) and `trestlePreExisting` (present and true for a [pre-existing](#pre-existing-findings) finding) |
 | `properties.trestleFixGuidance` | the generator's fix text, with `trestleFixAuthority: unverified_model_guidance` |
 | run `properties` | `trestleModelReviewStatus`, `trestleCiDisposition`, `trestleRunStatus`, `trestleFailure`, sorted `trestleLimitations`, candidate/verified/rejected/inconclusive counts, source coverage and omissions, and `trestleComprehensiveClearance: false` |
 | run `properties.trestleStyleAdvice` | the [style advice](#style-recommendations): `recommendations` (`language`, `changedFiles`, `recommendation`), `withheld`, `configurationUnread` and `unavailable`, absent when there is none; each advice line is also a `note` in `invocations[0].toolExecutionNotifications`, never a result |
@@ -188,6 +191,9 @@ any policy is a pipeline decision, not a statement that the change is clear.
 | `findings` | the run succeeded and no verified finding has high or critical severity (including no candidates, medium or low findings only, and a completed run with coverage gaps) | the default code: 4 for a verified high or critical finding or a policy/resource refusal, 3 when the change could not be read or finished or was canceled, 1 for an internal failure |
 | `strict` | the run succeeded with no candidates at all, so no finding of any severity and no verification gap | the default code, so any verified finding is 4 and any coverage gap is 3 |
 | `always-zero` | a valid result was written, including a refused or failed run | 1 only if the result could not be written; 2 for invalid usage |
+
+Results are listed in [rank order](#rank), a merged duplicate after the finding it
+was merged into.
 
 A `findings` run whose diagnostics cannot be read back but whose status is
 `findings` is treated as blocking. `always-zero` is advisory-only: pair it with
@@ -598,7 +604,12 @@ import refuse every result that carries a `specialist` object, at any version.
 Add `--specialists auto` (or `--specialists ID[,ID...]`) to run the general review
 plus several packaged specialist profiles and merge their verified findings.
 `--specialists none`, or no flag, is the ordinary single review with unchanged
-output. `--profile` remains the single-specialist form and cannot be combined with
+output. A setup made by `trestle init` or `trestle setup bootstrap init` saves
+`--specialists auto` in its review command unless it was given
+`--specialists none`, so `trestle review` runs the set; `trestle review
+--specialists none` runs the single review once, and `--profile ID` replaces the
+saved set with one specialist. Setups saved earlier have no `--specialists` flag
+and keep the single review. `--profile` remains the single-specialist form and cannot be combined with
 `--specialists`; neither can `--investigation-policy`. IDs are the ones `--profile`
 accepts. An unknown ID is a usage error (exit 2) that lists the valid IDs.
 
@@ -642,18 +653,32 @@ records that basis in `selection.plan`. If the general review recorded no route
 pair, `selection.status` is `plan_unavailable` and no specialist runs. The plan's
 tier and route choice is informational.
 
-Execution is sequential: the general review first, then each selected specialist
-as its own session and run with its own run identity, the same specialist
-generation request as `--profile`, and its own independent verification (the
-verifier never receives the profile instructions). The general review shares the
-`--timeout` window with configuration loading, and each specialist gets a fresh
-`--timeout` window, so model work is bounded by members × `--timeout`
+The general review runs first. Each selected specialist then runs as its own
+session and run with its own run identity, the same specialist generation
+request as `--profile`, and its own independent verification (the verifier never
+receives the profile instructions). Specialists run concurrently, at most three
+at a time, when every route is remote: no route in this machine's zone and no
+loopback model service (a local server such as Ollama serializes requests, so
+concurrent members would only share one member's time), and no limited API key's
+recorded spend plus the wave's worst case could reach its limit. Otherwise they
+run one by one and `bounds.sequential_reason` says why (`local_model_route`,
+`loopback_model_service`, `spending_limit_could_be_passed` or
+`at_most_one_specialist`); `bounds.specialist_concurrency` is the number that
+could run at once, and the limitations name `specialists_concurrent_bounded` or
+`sequential_members_no_parallelism`. Members are independent sessions with
+their own objects root, gateway and route state; their spending checks and
+ledger entries are serialized. A provider's own rate limits still apply to
+concurrent requests, and a member refused by them fails like any other member.
+The general review shares the `--timeout` window with configuration loading, and
+each specialist gets a fresh `--timeout` window, so model work is bounded by
+(1 + the number of specialist waves) × `--timeout`
 (`bounds.max_model_wall_time_milliseconds`), plus at most
 `bounds.member_cleanup_bound_milliseconds` of bounded close and readback per
-member. No further member starts once the invocation is canceled or a launched
-member's run did not succeed (refused, failed, canceled, or the source could not
-be read); such members appear with `launched: false` and a `not_launched_reason`.
-Nothing is retried.
+member. Members are listed in selection order whichever finishes first. No
+further wave starts once the invocation is canceled or a launched member's run
+did not succeed (refused, failed, canceled, or the source could not be read);
+members already running in that wave finish. Members that did not start appear
+with `launched: false` and a `not_launched_reason`. Nothing is retried.
 
 Output is the `open-trestle/local-git-model-review-set` schema version 1 (JSON),
 not the single-review result:
@@ -671,20 +696,14 @@ not the single-review result:
   the member result's [`token_usage`](#token-usage) (absent when the member's
   result reports none, as for a member that never ran), verification counts and
   limitations.
-- `findings`: merged verified findings. Each group has one representative: its
-  first finding in run order, replaced by a later member's finding of higher
-  severity. A finding joins a group when it comes from a different member than
-  the representative, has the same path and category, its line range overlaps
-  the representative's range, and the words of its title and claim overlap the
-  representative's by at least 0.3 (Jaccard over the words of at least three
-  letters or digits, without common stopwords). Only the representative's range
-  and words count, so a finding cannot join a group through a finding the group
-  already absorbed, and a member's own findings are never compared with each
-  other, because one member may report two distinct issues in one changed hunk.
-  The group reports the representative (the most severe finding; ties: the
-  earliest member), the narrowest contributing range, and every contributor
-  with its own finding identity, severity and range. Matching is deterministic.
-  Only members whose run succeeded contribute. The rule is a heuristic
+- `walkthrough`: the general member's [walkthrough](#walkthrough), once for the
+  set.
+- `findings`: merged verified findings in [rank order](#rank), merged with the
+  shared [duplicate rule](#duplicates) (members are the origins), each with its
+  `rank`, `pre_existing` (when every contributor is pre-existing), the
+  representative's own location, and every contributor with its own finding
+  identity, severity and range. Only members whose run succeeded contribute.
+  The wording comparison can still keep apart findings a person would merge
   (`deduplication_is_heuristic`).
 - `summary`, `bounds`, `limitations` and `comprehensive_clearance: false`.
 - `style_recommendations`, `style_withheld`, `style_configuration_unread` and
@@ -701,9 +720,10 @@ Set status and CI disposition:
 
 | Set | `status` | `ci_disposition` | Default exit |
 |---|---|---|---|
-| A member did not complete and a merged finding is error severity (verified high or critical) | most serious member status (`failed`, `refused`, `canceled`, `incomplete`) | `blocked` | 4 |
+| A member did not complete and an introduced merged finding is error severity (verified high or critical) | most serious member status (`failed`, `refused`, `canceled`, `incomplete`) | `blocked` | 4 |
 | A member did not complete, no error-severity merged finding | most serious member status | `failed` → `error`, `refused` → `blocked`, otherwise `inconclusive` | 1, 4 or 3 |
-| Every member completed, merged findings not empty | `findings` | `blocked` | 4 |
+| Every member completed, merged findings not empty, one of them introduced | `findings` | `blocked` | 4 |
+| Every member completed, every merged finding [pre-existing](#pre-existing-findings) | `findings` | `inconclusive` | 3 |
 | Every member completed with no candidates | `no_candidates` | `inconclusive` | 3 |
 | Every member completed, otherwise | `incomplete` | `inconclusive` | 3 |
 
@@ -712,12 +732,15 @@ demotes a completed member's verified high or critical finding.
 
 Text output starts with a summary (status, selection, dropped profiles, members
 run, findings by severity and category, files analyzed/selected/omitted by the
-general review), then the merged findings with a `contributors:` line. A member
+general review), then the walkthrough, the merged confirmed findings in rank
+order with a `contributors:` line, the pre-existing findings and the hidden
+count. `--format markdown` renders the set as a pull request summary with the
+members that ran and, for each finding, the members that confirmed it. A member
 whose run did not succeed shows its failure on its line, for example
 `member: bug_hunter status=failed run=failed verified_findings=0 failure=internal
 (task candidates)`, followed by `member hint: bug_hunter: ...`. SARIF
-output is one run whose results are the merged findings, each with a
-`trestleContributors` property; when some members did not complete, the results
+output is one run whose results are the merged findings in rank order, each
+with a `trestleContributors` property; when some members did not complete, the results
 still list the completed members' verified findings and an error notification
 says the set is not a clean result, even when it lists no finding. If the
 general member's report could not be read, the set records the limitation
@@ -726,7 +749,7 @@ says that source coverage counts are unavailable.
 
 Exit policy on the merged set: `default` maps `blocked` to 4, `inconclusive` to
 3 and `error` to 1. `findings` exits 0 only when every member completed and no
-merged finding is error severity (verified high or critical). `strict` exits 0
+introduced merged finding is error severity (verified high or critical). `strict` exits 0
 only when every member completed with no candidates. `always-zero` exits 0 when
 the general review completed, even if a specialist was refused or failed; when the
 general review itself did not complete it returns the default code (for example 4
@@ -975,6 +998,200 @@ Investigation mode reviews such a change the same way: its first turn holds the
 removed text alone, with no head range, and its snapshot tools can still list
 and read the head snapshot. Its generation input then records only `removed_lines` evidence, as
 model-generation-input version 5.
+
+## Ranked findings and the walkthrough
+
+Which findings survive is decided deterministically after independent
+verification; no model ranks, merges or classifies findings. A completed direct
+run's result (schema version 6, in place) adds three members:
+
+- `rank`: every distinct verified finding in rank order, as
+  `{"rank": N, "finding_identity": ID, "merged_finding_identities": [ID, ...]}`,
+  where the identities are diagnostic finding identities and the merged list
+  (absent when empty) names the duplicates merged into the finding. Every
+  diagnostic finding appears exactly once. The JSON result still carries every
+  finding in `diagnostics`.
+- `pre_existing`: the diagnostic finding identities classified
+  [pre-existing](#pre-existing-findings), in diagnostic order, absent when there
+  are none.
+- `walkthrough`: the [walkthrough](#walkthrough), present once the change model
+  was recorded.
+
+Results without verified findings carry no `rank` or `pre_existing`, so their
+bytes are unchanged apart from the walkthrough.
+
+### Duplicates
+
+One function decides duplicates everywhere several verified findings can
+describe one defect: within one run (including an investigation run), across
+the members of a [specialist review set](#specialist-review-set-opt-in), and
+across repeated runs of the same change (`localreview.DeduplicateFindings`). Two
+findings are duplicates when all of these hold:
+
+- the same path and side (base and head line numbers never merge);
+- the finding's line range overlaps the group representative's range;
+- the same or a compatible category. Compatible categories are one family:
+  correctness, concurrency, performance and reliability; security alone;
+  maintainability, style, documentation and testing. A finding without a
+  category is compatible with any;
+- near-identical defect statements. The title and claim are lowercased into
+  runs of letters, digits and underscores, function words are dropped, and a
+  plural `s` or `ies` is reduced. At least four fifths of the two statements'
+  combined words must be shared, and neither may hold a symbol the other lacks:
+  a word of at most two characters, one with a digit or underscore, or one with
+  a capital after its first character. So `a / b` and `a / c`, or `limit 10` and
+  `limit 100`, stay apart.
+
+Only the representative's own range and statement decide a match, so a finding
+never joins through a finding the group already absorbed. The representative is
+the strongest verified finding: the most severe, then the one citing the most
+distinct evidence, then one on changed lines over a pre-existing one, then the
+narrowest range, then the earliest. It is reported at its own location. Two
+paraphrases of one defect (for example "Avg may divide by zero" and "Avg panics
+on empty slice") are not near-identical and stay two ranked findings; the rule
+never hides one defect behind another's statement.
+
+### Rank
+
+Distinct findings are ordered by final severity (verified high and critical,
+then medium, then low, then hints), then verification confidence (the number of
+origins whose verifier confirmed the defect, then the strongest verification
+independence: distinct provider, distinct model, distinct route), then evidence
+strength (distinct evidence items, then a narrower range), then location,
+category and identity. Text and Markdown list confirmed high, critical and
+medium findings; the rest are counted, for example
+`hidden: 1 lower-severity finding not shown; add --all to list every finding (the JSON output lists all)`.
+`--all` lists every finding. JSON and SARIF always carry every finding.
+
+### Pre-existing findings
+
+A verified finding is pre-existing when it is anchored only on unchanged context
+lines and cites no evidence of the change:
+
+- it is on head lines, in an unchanged file (such as a direct reference, a
+  caller of a changed function) or in a modified file whose lines are known, and
+  it overlaps no changed line and no deletion window: the 8 unchanged head lines
+  on each side of a block of removed lines, from a fresh bounded diff of the
+  recorded base and head files;
+- none of its cited evidence is a changed hunk (including the context bound
+  around a deletion) or removed lines.
+
+A finding on removed base lines, in an added file, or in a file the diff cannot
+represent (binary or non-UTF-8 content, or past the diff's bounds) is never
+pre-existing, so an uncertain finding keeps blocking. Only a direct run
+classifies findings; an investigation run classifies none.
+
+Pre-existing findings get their own text and Markdown section and never block
+CI. A result whose every verified finding is pre-existing keeps `status`
+`findings` and has `ci_disposition` `inconclusive`. When at least one finding is
+introduced, the result is `blocked` as before. The exit-code policies keep their
+meaning:
+
+| Policy | Every finding pre-existing | At least one introduced high or critical finding |
+| --- | --- | --- |
+| `default` | 3 (inconclusive) | 4 |
+| `findings` | 0 (no introduced high or critical finding) | 4 |
+| `strict` | 3 (there were candidates) | 4 |
+| `always-zero` | 0 | 0 |
+
+A review set follows the same rule: a set whose merged findings are all
+pre-existing (every contributor pre-existing) is `findings` and `inconclusive`,
+and an incomplete set never demotes an introduced high or critical finding.
+
+The class is derived from the run's own change model and context, which a
+result does not carry. `localreview.ParseCompletedResult`, used by the
+model-result evaluation import, therefore treats a recorded `pre_existing` list
+as advisory: it checks that the list names distinct diagnostic findings in
+order and recomputes `rank` from the result's findings, but it requires the
+readiness `ci_disposition` (`blocked` when a finding was verified) and refuses a
+result whose disposition the class relaxed. No exit policy applies a parsed
+result's list.
+
+### Walkthrough
+
+The walkthrough is built from the run's recorded artifacts, in this order:
+
+1. **What was verified** (`walkthrough.verified`): `secret_scan` (`scanned` with
+   the receipts' request count, scanned bytes, matches and redacted bytes;
+   `not_run` when no model request was prepared; `unavailable` when a receipt
+   could not be read; local-only requests are scanned too), `static_checks` (each
+   deterministic check's key, state, checked files and matches),
+   `style_detection` (`ran` with recommendation and withheld counts, or
+   `unavailable`), `semantic_impact` (changed declarations, public API changes,
+   references, references from tests and gaps, or `unavailable`) and `verifier`
+   (candidates, verified, rejected, inconclusive and independence; absent when
+   no verified set was recorded).
+2. **Per-file change summary** (`walkthrough.files`): each changed file's path
+   and change (`added`, `modified`, `removed`, or `renamed` with `renamed_from`
+   for a removed file whose exact content is an added file), `added_lines` and
+   `removed_lines` from a fresh bounded diff (absent when the diff cannot count
+   them), and for Go files the added, removed and changed declarations with
+   their kind (method names carry their receiver, such as `(*Calc).Divide`) and
+   any `semantic_gap`.
+3. **Missing verification** (`walkthrough.missing_verification`): added or
+   changed functions and methods outside test files that no test file
+   references, from the semantic-impact profile's affected-test candidates.
+   It is an informational class, never a defect, and never changes status, CI
+   disposition or exit code. References are identifier matches, so an unlisted
+   function may be referenced only by a test of another function with the same
+   name. `missing_verification_incomplete` is set when the profile did not read
+   every Go file.
+
+The JSON lists at most 64 files, 16 declarations a file (128 in all) and 32
+missing-verification notes, and counts the rest (`files_not_listed`,
+`declarations_not_listed`, `missing_verification_not_listed`); text and Markdown
+list at most 32 files. When the result would exceed its output bound with the
+walkthrough, it is left out and the result records
+`walkthrough_omitted_output_limit`; it is never truncated. A review set reports
+the general member's walkthrough once; each member's own verifier counts are on
+its member entry. An investigation run has no walkthrough.
+
+Text output shows the walkthrough, then the confirmed findings in rank order,
+then the pre-existing findings, then the hidden count, then coverage and
+limitations. From the offline fixture used in the tests:
+
+```text
+status: findings
+ci: blocked
+run: succeeded
+walkthrough:
+verified: secret scan: 2 model requests scanned before sending (292 bytes, 0 secret matches)
+verified: static check static_debug_output: passed (1 file checked, 0 matches)
+verified: style detection: ran (1 recommendation, 0 withheld)
+verified: semantic impact: 1 changed declaration, 0 public API changes, 1 reference (0 from tests), 0 gaps
+verified: independent verifier (distinct_provider): 1 of 1 candidate confirmed, 0 rejected, 0 inconclusive
+file: a.go modified +1 -1; changed function Changed
+missing verification: no test file references the changed function Changed (a.go)
+confirmed findings (ranked): 1
+finding: error Zero-valued caller now panics
+rank: 1
+source: a.go:2-2
+message: Consume passes zero to Changed after removal of the division guard.
+evidence: 8d0ff8ec..., f84bfca8...
+category: correctness
+fix: Restore the zero guard before dividing.
+coverage: candidates=1 verified=1 rejected=0 inconclusive=0
+...
+comprehensive clearance: false
+```
+
+### Markdown output
+
+`--format markdown` writes a pull request summary comment: a `## Open Trestle
+review` heading with status, CI disposition and run status, then
+`### What was verified`, `### Changes`, `### Missing verification` (marked
+informational), `### Confirmed findings` as a numbered list in rank order (a
+review set adds the members that confirmed each finding),
+`### Pre-existing findings`, the hidden count, and a footer stating that
+comprehensive clearance is false and that titles, claims and fix text are
+untrusted model output. Titles, claims, fix text, paths and declaration names
+are escaped: they cannot open emphasis, a link, an image, a heading, a table
+cell or an HTML tag, cannot mention anyone, and never become an autolink (a
+zero-width space breaks every scheme colon such as `https:` or `mailto:`, every
+`www.` host and every `@`). The renderer emits no links of its own. The
+daemon's GitHub publisher builds its own review body from the content-scanned
+publication plan; it does not use this renderer, and applies the same autolink
+defusal to the text it renders.
 
 ## Results and limits
 
@@ -1256,8 +1473,11 @@ usage is unknown, at the cost reserved for it. A crossed alert percentage
 prints one line. These lines go to standard error with a note that the figures
 are an upper-bound estimate at the highest pinned price, not a bill, and that
 the limit is best effort; text output also ends with each limited key's state.
-A review set member refused at the limit carries the same detail and
-`member hint:` line and stops the set. `failure_detail` and result version 6
+A review set warns once, before its first member, for every review it may run
+(the general review and up to `--max-specialists` specialists), checks each
+member before it starts, and runs specialists concurrently only when no limited
+key could reach its limit during the wave. A review set member refused at the
+limit carries the same detail and `member hint:` line and stops the set. `failure_detail` and result version 6
 exist only on this branch, so they take the value in place; a result without
 it keeps its bytes. Results themselves never carry spending figures. See
 [spending limits](spending-limits.md).
