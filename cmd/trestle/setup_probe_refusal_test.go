@@ -35,6 +35,7 @@ func TestSetupBootstrapCheckNamesTheProbeRefusal(t *testing.T) {
 	_, retired, _ := routehint.ProviderRefusal(gateway.RouteFailureModelRetired)
 	_, missing, _ := routehint.ProviderRefusal(gateway.RouteFailureModelUnavailable)
 	_, invalid, _ := routehint.ProviderRefusal(gateway.RouteFailureInvalidResponse)
+	_, rejected, _ := routehint.ProviderRefusal(gateway.RouteFailureRequestRejected)
 	for _, test := range []struct {
 		mode, want string
 	}{
@@ -44,7 +45,11 @@ func TestSetupBootstrapCheckNamesTheProbeRefusal(t *testing.T) {
 		// A 200 reply the adapter refuses, and a status it does not classify,
 		// used to be refused with no reason at all.
 		{"probe_reply_unknown_field", "local_inference_validated: provider_response_invalid: " + invalid},
-		{"probe_refuse_400", "local_inference_validated: provider_response_invalid: " + invalid},
+		{"probe_refuse_409", "local_inference_validated: provider_response_invalid: " + invalid},
+		// A probe the server rejects as an invalid request (for example an
+		// unknown model ID) used to be named a refused reply.
+		{"probe_refuse_400", "local_inference_validated: provider_request_rejected: " + rejected},
+		{"probe_refuse_422", "local_inference_validated: provider_request_rejected: " + rejected},
 	} {
 		t.Run(test.mode, func(t *testing.T) {
 			dir, args := setupProbeRefusalArgs(t, test.mode)
@@ -124,5 +129,33 @@ func TestInitLocalNamesARefusedProbeReply(t *testing.T) {
 	}
 	if initHas(result.stdout+result.stderr, localModelRefusalText) || initHas(result.stdout+result.stderr, localModelReplyField) {
 		t.Fatal("the wizard repeated the server's reply")
+	}
+}
+
+// A test request a model server rejected as invalid is a refused request: the
+// wizard names the detail and the review's hint, which says what to check,
+// and never the server's message.
+func TestInitLocalNamesARejectedProbeRequest(t *testing.T) {
+	t.Setenv("OPEN_TRESTLE_API_TOKEN", "")
+	t.Setenv("OPEN_TRESTLE_OBSERVER_TOKEN", "")
+	checkout, generation, verification, _ := initLocalModelServers(t, false, "probe_refuse_400")
+	dir := filepath.Join(t.TempDir(), "setup")
+	result := runInitScript(t, checkout, []string{"--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review"},
+		"4",             // a model server on this machine
+		"5", generation, // another address
+		"1",
+		"5", verification,
+		"1",
+		"",    // use the settings shown
+		"yes", // local capabilities
+		"y",   // send the synthetic test requests
+	)
+	output := strings.Join(strings.Fields(result.stdout), " ")
+	_, rejected, _ := routehint.ProviderRefusal(gateway.RouteFailureRequestRejected)
+	if result.code != 4 || !strings.Contains(output, "A model server refused the test request (provider_request_rejected): "+rejected+".") || strings.Contains(output, "provider_response_invalid") || strings.Contains(output, "in the expected format. Check that both servers") {
+		t.Fatalf("init exit=%d\nstdout:\n%s\nstderr:\n%s", result.code, result.stdout, result.stderr)
+	}
+	if initHas(result.stdout+result.stderr, localModelRefusalText) {
+		t.Fatal("the wizard repeated the server's message")
 	}
 }

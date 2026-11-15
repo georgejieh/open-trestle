@@ -714,13 +714,19 @@ func (a *Adapter) newRequest(
 
 // classifyHTTPFailure maps a non-200 answer of every request profile to one
 // closed class by its status alone. The body is discarded unread: provider
-// error text is untrusted and never reaches a result, record or log.
+// error text is untrusted and never reaches a result, record or log. A status
+// that rejects the request as sent (400 and 422 for its content, such as an
+// unknown model ID or an unsupported parameter, 405 and 415 for a method or
+// media type the endpoint does not take) is request_rejected; a status no
+// class names stays invalid_response, an unexpected answer.
 func classifyHTTPFailure(response *http.Response) gateway.RouteDispatchResult {
 	if response == nil {
 		return failed(gateway.RouteFailureTransport, gateway.RouteReplayOutcomeUnknown, 0)
 	}
 	drainAndClose(response.Body)
 	switch response.StatusCode {
+	case http.StatusBadRequest, http.StatusMethodNotAllowed, http.StatusUnsupportedMediaType, http.StatusUnprocessableEntity:
+		return failed(gateway.RouteFailureRequestRejected, gateway.RouteReplayNoSideEffect, 0)
 	case http.StatusUnauthorized:
 		return failed(gateway.RouteFailureAuthentication, gateway.RouteReplayNoSideEffect, 0)
 	case http.StatusPaymentRequired:

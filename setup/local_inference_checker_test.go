@@ -252,7 +252,7 @@ func TestLocalInferenceCheckerSeparatesTransientAndInvalidResponses(t *testing.T
 	for _, test := range []struct {
 		failure gateway.RouteFailureClass
 		want    CheckState
-	}{{gateway.RouteFailureTimeout, CheckUnavailable}, {gateway.RouteFailureRateLimited, CheckUnavailable}, {gateway.RouteFailureInvalidResponse, CheckBlocked}, {gateway.RouteFailureAuthentication, CheckBlocked}} {
+	}{{gateway.RouteFailureTimeout, CheckUnavailable}, {gateway.RouteFailureRateLimited, CheckUnavailable}, {gateway.RouteFailureInvalidResponse, CheckBlocked}, {gateway.RouteFailureAuthentication, CheckBlocked}, {gateway.RouteFailureRequestRejected, CheckBlocked}} {
 		factory := &localInferenceFixtureFactory{failure: test.failure}
 		checker, _ := NewLocalInferenceChecker(policyChecker, factory)
 		if result := checker.Check(context.Background(), plan); result.State() != test.want {
@@ -279,6 +279,8 @@ func TestLocalInferenceCheckerReportsTheProviderAnsweredFailure(t *testing.T) {
 		{gateway.RouteFailurePaymentRequired, gateway.RouteReplayNoSideEffect, CheckBlocked, true},
 		{gateway.RouteFailureModelUnavailable, gateway.RouteReplayNoSideEffect, CheckBlocked, true},
 		{gateway.RouteFailureModelRetired, gateway.RouteReplayNoSideEffect, CheckBlocked, true},
+		// A rejected request is refused, not an unavailable server.
+		{gateway.RouteFailureRequestRejected, gateway.RouteReplayNoSideEffect, CheckBlocked, true},
 		{gateway.RouteFailureRateLimited, gateway.RouteReplayNoSideEffect, CheckUnavailable, true},
 		{gateway.RouteFailureAuthentication, gateway.RouteReplayNotDispatched, CheckBlocked, false},
 	} {

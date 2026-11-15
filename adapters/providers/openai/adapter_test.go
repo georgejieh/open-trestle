@@ -246,7 +246,9 @@ func TestExecuteClassifiesHTTPFailuresWithoutVendorText(t *testing.T) {
 		{"timeout", http.StatusRequestTimeout, "", gateway.RouteFailureTimeout, gateway.RouteReplayOutcomeUnknown, 0},
 		{"server", http.StatusBadGateway, "", gateway.RouteFailureProviderServer, gateway.RouteReplayOutcomeUnknown, 0},
 		{"budget", http.StatusRequestEntityTooLarge, "", gateway.RouteFailureBudgetExhausted, gateway.RouteReplayNoSideEffect, 0},
-		{"invalid", http.StatusBadRequest, "", gateway.RouteFailureInvalidResponse, gateway.RouteReplayNoSideEffect, 0},
+		{"rejected", http.StatusBadRequest, "", gateway.RouteFailureRequestRejected, gateway.RouteReplayNoSideEffect, 0},
+		{"unprocessable", http.StatusUnprocessableEntity, "", gateway.RouteFailureRequestRejected, gateway.RouteReplayNoSideEffect, 0},
+		{"unclassified", http.StatusConflict, "", gateway.RouteFailureInvalidResponse, gateway.RouteReplayNoSideEffect, 0},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

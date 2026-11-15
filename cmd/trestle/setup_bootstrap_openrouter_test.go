@@ -114,10 +114,12 @@ func TestOpenRouterNotFoundNamesTheZDRSetting(t *testing.T) {
 	}
 }
 
-// An unknown model ID (HTTP 400) is an invalid request, not a ZDR refusal.
+// An unknown model ID (HTTP 400) is a rejected request, not a ZDR refusal and
+// not a refused reply: it is refused once, with the hint to check the model
+// ID, and never retried.
 func TestOpenRouterBadRequestIsNotAZDRRefusal(t *testing.T) {
 	code, text, transport := openRouterRefusedReview(t, http.StatusBadRequest)
-	if code == 0 || transport.requests == 0 || !strings.Contains(text, "failure: ") || strings.Contains(text, "provider_no_allowed_endpoint") || strings.Contains(text, "zero data retention") || strings.Contains(text, "provider_model_unavailable") || strings.Contains(text, "synthetic provider text") {
+	if code != 4 || transport.requests != 1 || !strings.Contains(text, "failure: policy (task candidates): provider_request_rejected\nhint: the provider rejected the request as invalid, for example an unknown model ID") || strings.Contains(text, "provider_no_allowed_endpoint") || strings.Contains(text, "zero data retention") || strings.Contains(text, "provider_model_unavailable") || strings.Contains(text, "provider_response_invalid") || strings.Contains(text, "synthetic provider text") {
 		t.Fatalf("OpenRouter 400 exit=%d requests=%d:\n%s", code, transport.requests, text)
 	}
 }

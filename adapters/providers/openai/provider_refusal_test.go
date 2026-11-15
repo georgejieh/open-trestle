@@ -19,14 +19,18 @@ const (
 	providerPaymentBody = `{"error":{"message":"Add usage credits or subscribe and save up to 66%: https://ollama.com/plans (ref: 0b6d)","type":"api_error","param":null,"code":null}}`
 	providerRetiredBody = `{"error":{"message":"qwen3.5:397b was retired on September 25, 2026. Try glm-5.3-flash:cloud. (ref: 4c1e)","type":"api_error","param":null,"code":null}}`
 	providerMissingBody = `{"error":{"message":"model \"qwen3.5:397b\" not found, try pulling it first","type":"api_error","param":null,"code":null}}`
+	// providerRejectedBody is a synthetic body in the shape OpenRouter returns
+	// for an unknown model ID with HTTP 400.
+	providerRejectedBody = `{"error":{"message":"vendor/no-such-model is not a valid model ID","code":400}}`
 )
 
-var providerRefusalCanaries = []string{"usage credits", "ollama.com/plans", "retired on", "glm-5.3-flash", "not found", "pulling", "ref:"}
+var providerRefusalCanaries = []string{"usage credits", "ollama.com/plans", "retired on", "glm-5.3-flash", "not found", "pulling", "ref:", "no-such-model", "valid model ID"}
 
 // TestExecuteClassifiesProviderRefusalsWithoutProviderText requires HTTP 402,
-// 404 and 410 to become the closed refusal classes over both protocols, with
-// no replay side effect, no usage and no Retry-After, and requires that none
-// of the provider's message text appears in the result or its outcome.
+// 404 and 410, and a request rejected as invalid (400 and 422), to become the
+// closed refusal classes over both protocols, with no replay side effect, no
+// usage and no Retry-After, and requires that none of the provider's message
+// text appears in the result or its outcome.
 func TestExecuteClassifiesProviderRefusalsWithoutProviderText(t *testing.T) {
 	for _, protocol := range []Protocol{ProtocolResponses, ProtocolChatCompletions} {
 		for _, test := range []struct {
@@ -38,6 +42,8 @@ func TestExecuteClassifiesProviderRefusalsWithoutProviderText(t *testing.T) {
 			{"payment required", http.StatusPaymentRequired, providerPaymentBody, gateway.RouteFailurePaymentRequired},
 			{"model unavailable", http.StatusNotFound, providerMissingBody, gateway.RouteFailureModelUnavailable},
 			{"model retired", http.StatusGone, providerRetiredBody, gateway.RouteFailureModelRetired},
+			{"request rejected", http.StatusBadRequest, providerRejectedBody, gateway.RouteFailureRequestRejected},
+			{"request unprocessable", http.StatusUnprocessableEntity, providerRejectedBody, gateway.RouteFailureRequestRejected},
 		} {
 			t.Run(string(protocol)+"/"+test.name, func(t *testing.T) {
 				calls := 0
@@ -89,7 +95,18 @@ func TestHTTPFailureClassificationNamesEachProviderStatus(t *testing.T) {
 		{http.StatusServiceUnavailable, "", gateway.RouteFailureProviderServer, gateway.RouteReplayOutcomeUnknown, 0, false},
 		{http.StatusServiceUnavailable, "Wed, 21 Oct 2026 07:28:00 GMT", gateway.RouteFailureProviderServer, gateway.RouteReplayOutcomeUnknown, 0, false},
 		{http.StatusServiceUnavailable, "0", gateway.RouteFailureProviderServer, gateway.RouteReplayOutcomeUnknown, 0, false},
-		{http.StatusBadRequest, "7", gateway.RouteFailureInvalidResponse, gateway.RouteReplayNoSideEffect, 0, false},
+		// A request the provider rejects as invalid: malformed or with an
+		// unknown model ID or parameter (400, 422), or a method or media type
+		// the endpoint does not take (405, 415).
+		{http.StatusBadRequest, "7", gateway.RouteFailureRequestRejected, gateway.RouteReplayNoSideEffect, 0, false},
+		{http.StatusMethodNotAllowed, "7", gateway.RouteFailureRequestRejected, gateway.RouteReplayNoSideEffect, 0, false},
+		{http.StatusUnsupportedMediaType, "7", gateway.RouteFailureRequestRejected, gateway.RouteReplayNoSideEffect, 0, false},
+		{http.StatusUnprocessableEntity, "7", gateway.RouteFailureRequestRejected, gateway.RouteReplayNoSideEffect, 0, false},
+		// A status no class names, such as a conflict with resource state, is
+		// still an unexpected answer, not a rejection of the request.
+		{http.StatusConflict, "7", gateway.RouteFailureInvalidResponse, gateway.RouteReplayNoSideEffect, 0, false},
+		{http.StatusNotAcceptable, "7", gateway.RouteFailureInvalidResponse, gateway.RouteReplayNoSideEffect, 0, false},
+		{http.StatusTeapot, "7", gateway.RouteFailureInvalidResponse, gateway.RouteReplayNoSideEffect, 0, false},
 	} {
 		t.Run(http.StatusText(test.status)+"/"+test.retryAfter, func(t *testing.T) {
 			body := &closeRecorder{Reader: strings.NewReader(providerPaymentBody)}

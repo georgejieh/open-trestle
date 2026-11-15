@@ -370,8 +370,9 @@ const localModelRefusalText = "PROVIDER_REFUSAL_TEXT_5521"
 
 // localModelRefusals are the refusal modes: the live Ollama answers for an
 // account without credit and a retired cloud model, the other provider
-// refusal statuses, and a plain bad request, each with the provider's message
-// in the body.
+// refusal statuses, a plain bad request and an unprocessable one (rejections
+// of the request), and a conflict no class names, each with the provider's
+// message in the body.
 var localModelRefusals = map[string]struct {
 	status int
 	body   string
@@ -383,6 +384,8 @@ var localModelRefusals = map[string]struct {
 	"refuse_404": {http.StatusNotFound, `{"error":{"message":"model \"model-a\" not found, try pulling it first ` + localModelRefusalText + `","type":"api_error"}}`},
 	"refuse_410": {http.StatusGone, `{"error":{"message":"qwen3.5:397b was retired on September 25, 2026. Try glm-5.3-flash:cloud. (ref: ` + localModelRefusalText + `)","type":"api_error","param":null,"code":null}}`},
 	"refuse_429": {http.StatusTooManyRequests, `{"error":{"message":"rate limited ` + localModelRefusalText + `","type":"api_error"}}`},
+	"refuse_422": {http.StatusUnprocessableEntity, `{"error":{"message":"unprocessable ` + localModelRefusalText + `","type":"invalid_request_error"}}`},
+	"refuse_409": {http.StatusConflict, `{"error":{"message":"conflict ` + localModelRefusalText + `","type":"api_error"}}`},
 }
 
 // respond writes one structured model response in the endpoint's wire format.

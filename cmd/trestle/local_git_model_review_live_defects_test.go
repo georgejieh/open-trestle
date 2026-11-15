@@ -237,7 +237,12 @@ func TestLocalModelReviewNamesProviderRefusals(t *testing.T) {
 		// a bare internal failure that read like an internal bug.
 		{"reply with an unknown field", "reply_unknown_field", "", 1, "internal", "candidates", localreview.FailureDetailProviderResponseInvalid, "the provider answered, but its reply did not match what Open Trestle accepts, for example malformed or truncated output, an unrecognized field or an unexpected HTTP status: run the review again; if it repeats, choose another model or route and report it"},
 		{"truncated reply at verification", "", "reply_truncated", 1, "internal", "verification", localreview.FailureDetailProviderResponseInvalid, "the provider answered, but its reply did not match"},
-		{"unclassified status", "refuse_400", "", 1, "internal", "candidates", localreview.FailureDetailProviderResponseInvalid, "the provider answered, but its reply did not match"},
+		{"unclassified status", "refuse_409", "", 1, "internal", "candidates", localreview.FailureDetailProviderResponseInvalid, "the provider answered, but its reply did not match"},
+		// A provider that rejects the request itself as invalid (OpenRouter
+		// answers an unknown model ID with HTTP 400) used to be named a
+		// refused reply with advice to run the review again.
+		{"request rejected", "refuse_400", "", 4, "policy", "candidates", localreview.FailureDetailProviderRequestRejected, "the provider rejected the request as invalid, for example an unknown model ID or a parameter the model or endpoint does not accept: check the model ID, the endpoint and its transport, and that the model and endpoint accept structured output and the requested output allowance; then re-run setup"},
+		{"request unprocessable at verification", "", "refuse_422", 4, "policy", "verification", localreview.FailureDetailProviderRequestRejected, "the provider rejected the request as invalid"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			options := localModelFixtureOptions{chatCompletions: true, generationMode: test.generation, verificationMode: test.verification}
