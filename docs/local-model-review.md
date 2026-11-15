@@ -1468,7 +1468,10 @@ own instruction files. Non-Go hunks that are valid UTF-8 are sent as changed
 hunks, with semantic analysis recorded as unsupported for them; lock, vendored,
 minified, and binary files are omitted with a named reason. The root
 `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, and
-`.trestle/review-instructions.md` of the reviewed head tree are added as
-bounded advisory context (8 KiB per file, 16 KiB total, truncation recorded).
-They are untrusted repository data that cannot override the review
-instructions. The exact rules are in `docs/context-assembly-handler.md`.
+`.trestle/review-instructions.md` of the base tree are added as bounded
+advisory context (8 KiB per file, 16 KiB total, truncation recorded), and only
+when the head holds a byte-identical copy. The head tree is never their source:
+a head edit to one of these files is reviewed as a changed hunk, and the base
+copy is then omitted as `repository_instruction_changed`. A file absent from
+the base adds nothing. They are untrusted repository data that cannot override
+the review instructions. The exact rules are in `docs/context-assembly-handler.md`.
