@@ -2,8 +2,6 @@ package localreview
 
 import (
 	"slices"
-
-	"github.com/georgejieh/open-trestle/diagnostics"
 )
 
 // The deterministic judgement of a completed review: after independent
@@ -31,10 +29,14 @@ func singleRunOrigin(wire resultWire) string {
 
 // judgeResult records the judgement of a completed run that has diagnostics.
 // A verified finding is pre-existing when lines classify it so (see
-// changeLines.preExisting); lines without change evidence classify none. When every verified
-// finding is pre-existing, the result keeps status findings and its CI
-// disposition becomes inconclusive: a pre-existing finding never blocks CI.
+// changeLines.preExisting); lines without change evidence classify none. When
+// every verified finding is pre-existing, the result keeps status findings
+// and its CI disposition becomes inconclusive: a pre-existing finding never
+// blocks CI. Only this function marks a result judged, so only a
+// classification this process made from the run's own artifacts relaxes
+// anything; a parsed result's pre_existing list stays advisory.
 func judgeResult(result Result, lines changeLines) (Result, error) {
+	result.judged = true
 	report, err := result.Report()
 	if err != nil {
 		return Result{}, err
@@ -72,22 +74,26 @@ func rankEntries(findings []ReportFinding, origin, independence string) []rankWi
 	return entries
 }
 
-// applyJudgement sets each report finding's pre-existing class, rank and
-// duplicate link from the recorded judgement and builds the ranked groups. A
-// result written without a recorded rank is ranked now, with no pre-existing
-// class. It fails when the recorded judgement does not cover the findings
-// exactly once.
-func (report *Report) applyJudgement(wire resultWire) error {
+// applyJudgement sets each report finding's rank and duplicate link from the
+// recorded judgement and builds the ranked groups; it sets the pre-existing
+// class only when trusted, that is when this process judged the result. An
+// untrusted pre_existing list is checked to name distinct findings and is
+// otherwise ignored. A result written without a recorded rank is ranked now.
+// It fails when the recorded judgement does not cover the findings exactly
+// once.
+func (report *Report) applyJudgement(wire resultWire, trusted bool) error {
 	byIdentity := make(map[string]int, len(report.Findings))
 	for index, finding := range report.Findings {
 		byIdentity[finding.Identity] = index
 	}
+	listed := make(map[string]bool, len(wire.PreExisting))
 	for _, identity := range wire.PreExisting {
 		index, ok := byIdentity[identity]
-		if !ok || report.Findings[index].PreExisting {
+		if !ok || listed[identity] {
 			return ErrInvalidResult
 		}
-		report.Findings[index].PreExisting = true
+		listed[identity] = true
+		report.Findings[index].PreExisting = trusted
 	}
 	entries := wire.Rank
 	if len(entries) == 0 {
@@ -129,7 +135,10 @@ func contributorOf(finding ReportFinding, origin string) FindingContributor {
 // validRecordedJudgement checks a parsed version 6 result's rank and
 // pre_existing against the judgement its own diagnostics and guidance
 // produce: pre_existing lists distinct diagnostic findings in diagnostic
-// order, and rank is exactly the merge and rank of those findings.
+// order, and rank is exactly the merge and rank of those findings, with the
+// recorded list as the only pre-existing input. The list itself cannot be
+// re-derived without the change, so it stays advisory: the parsed result is
+// not judged, and the reader requires the readiness CI disposition.
 func validRecordedJudgement(result Result) bool {
 	wire := result.wire
 	if wire.Version != tokenUsageResultVersion {
@@ -159,21 +168,15 @@ func validRecordedJudgement(result Result) bool {
 		}
 		previous = index
 	}
-	report, err := result.Report()
+	// The recorded rank was computed with the recorded classification as its
+	// tie-break input, so it is recomputed the same way.
+	recomputed := result
+	recomputed.judged = true
+	report, err := recomputed.Report()
 	if err != nil {
 		return false
 	}
 	return slices.EqualFunc(wire.Rank, rankEntries(report.Findings, singleRunOrigin(wire), report.Independence), func(a, b rankWire) bool {
 		return a.Rank == b.Rank && a.FindingIdentity == b.FindingIdentity && slices.Equal(a.Merged, b.Merged)
 	})
-}
-
-// expectedCompletedCI is the CI disposition of a completed result: the
-// readiness disposition, except that a result whose every verified finding is
-// pre-existing is inconclusive rather than blocked.
-func expectedCompletedCI(set diagnostics.Set, preExisting []string, readinessCI string) string {
-	if readinessCI == "blocked" && set.VerifiedCount() > 0 && len(preExisting) == len(set.Findings()) {
-		return "inconclusive"
-	}
-	return readinessCI
 }

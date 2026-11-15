@@ -57,15 +57,21 @@ func TestRunLocalGitModelReviewClassifiesPreExistingFinding(t *testing.T) {
 	if len(receipt.PreExisting) != 1 || receipt.PreExisting[0] != identity || len(receipt.Rank) != 1 || receipt.Rank[0].Rank != 1 || receipt.Rank[0].FindingIdentity != identity {
 		t.Fatalf("pre_existing=%v rank=%+v", receipt.PreExisting, receipt.Rank)
 	}
-	// The strict reader accepts the recorded judgement and the non-blocking
-	// disposition, and refuses a judgement its own findings do not produce.
-	if _, err := localreview.ParseCompletedResult(stdout); err != nil {
-		t.Fatalf("ParseCompletedResult refused a pre-existing result: %v", err)
+	// The strict reader cannot re-derive the class without the change, so it
+	// refuses a result whose CI disposition the class relaxed. With the
+	// readiness disposition the list is advisory and the result imports; a
+	// rank its own findings do not produce is refused.
+	if _, err := localreview.ParseCompletedResult(stdout); err == nil {
+		t.Fatal("ParseCompletedResult accepted a CI disposition relaxed by an unverifiable pre-existing class")
+	}
+	readiness := bytes.Replace(stdout, []byte(`"ci_disposition":"inconclusive"`), []byte(`"ci_disposition":"blocked"`), 1)
+	if _, err := localreview.ParseCompletedResult(readiness); err != nil {
+		t.Fatalf("ParseCompletedResult refused an advisory pre_existing list: %v", err)
 	}
 	for _, tampered := range [][]byte{
-		bytes.Replace(stdout, []byte(`"ci_disposition":"inconclusive"`), []byte(`"ci_disposition":"blocked"`), 1),
-		bytes.Replace(stdout, []byte(`,"pre_existing":["`+identity+`"]`), nil, 1),
-		bytes.Replace(stdout, []byte(`"rank":1,`), []byte(`"rank":2,`), 1),
+		bytes.Replace(readiness, []byte(`"rank":1,`), []byte(`"rank":2,`), 1),
+		bytes.Replace(readiness, []byte(`"pre_existing":["`+identity+`"]`), []byte(`"pre_existing":["`+identity+`","`+identity+`"]`), 1),
+		bytes.Replace(readiness, []byte(`"pre_existing":["`+identity+`"]`), []byte(`"pre_existing":["`+strings.Repeat("a", 64)+`"]`), 1),
 	} {
 		if bytes.Equal(tampered, stdout) {
 			t.Fatal("tampering did not change the result")
@@ -73,6 +79,41 @@ func TestRunLocalGitModelReviewClassifiesPreExistingFinding(t *testing.T) {
 		if _, err := localreview.ParseCompletedResult(tampered); err == nil {
 			t.Fatal("ParseCompletedResult accepted an inconsistent judgement")
 		}
+	}
+}
+
+// An imported result is untrusted: the importer cannot re-derive the
+// pre-existing class without the change, so a crafted result that marks its
+// blocking finding pre-existing and claims a non-blocking CI disposition is
+// refused.
+func TestParseCompletedResultRefusesSelfAssertedPreExistingRelaxation(t *testing.T) {
+	f := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true})
+	receipt, stdout := runJudgement(t, f, nil, 4)
+	if receipt.CI != "blocked" || len(receipt.Rank) != 1 || len(receipt.PreExisting) != 0 {
+		t.Fatalf("fixture: ci=%s rank=%+v pre_existing=%v", receipt.CI, receipt.Rank, receipt.PreExisting)
+	}
+	if _, err := localreview.ParseCompletedResult(stdout); err != nil {
+		t.Fatalf("the honest result does not import: %v", err)
+	}
+	identity := receipt.Rank[0].FindingIdentity
+	rank := []byte(`"rank":[{"rank":1,"finding_identity":"` + identity + `"}]`)
+	crafted := bytes.Replace(stdout, rank, append(append([]byte(nil), rank...), []byte(`,"pre_existing":["`+identity+`"]`)...), 1)
+	crafted = bytes.Replace(crafted, []byte(`"ci_disposition":"blocked"`), []byte(`"ci_disposition":"inconclusive"`), 1)
+	if bytes.Equal(crafted, stdout) || !bytes.Contains(crafted, []byte(`"pre_existing":["`+identity+`"]`)) || !bytes.Contains(crafted, []byte(`"ci_disposition":"inconclusive"`)) {
+		t.Fatal("the crafted result was not built")
+	}
+	if _, err := localreview.ParseCompletedResult(crafted); err == nil {
+		t.Fatal("ParseCompletedResult accepted a self-asserted pre-existing relaxation of a blocking finding")
+	}
+	// With the readiness disposition kept, the recorded class is advisory: the
+	// result imports, and no exit policy trusts it.
+	advisory := bytes.Replace(crafted, []byte(`"ci_disposition":"inconclusive"`), []byte(`"ci_disposition":"blocked"`), 1)
+	imported, err := localreview.ParseCompletedResult(advisory)
+	if err != nil {
+		t.Fatalf("an advisory pre_existing list with the readiness disposition does not import: %v", err)
+	}
+	if code := imported.ExitCodeFor(localreview.ExitPolicyFindings); code != 4 {
+		t.Fatalf("an imported pre_existing list relaxed the findings policy: exit %d", code)
 	}
 }
 

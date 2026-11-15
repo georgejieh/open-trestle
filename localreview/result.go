@@ -237,6 +237,11 @@ type Result struct {
 	sealedJSON     []byte
 	sealedText     []byte
 	diagnosticOnly bool
+	// judged is set only when this process classified the findings (see
+	// judgeResult). A parsed result's pre_existing list is untrusted, because
+	// the reader cannot re-derive it without the change: it is never applied
+	// to findings, exit policies or the CI disposition.
+	judged bool
 }
 
 func emptyResult(status string) Result {

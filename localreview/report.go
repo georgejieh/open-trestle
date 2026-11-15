@@ -60,9 +60,11 @@ func (r Result) ExitCodeFor(policy ExitPolicy) int {
 }
 
 // hasBlockingFinding reports a verified high or critical finding that the
-// change introduced. Diagnostics map both to the error severity. A
-// pre-existing finding never blocks. A findings status whose diagnostics are
-// unavailable is treated as blocking rather than guessed to be minor.
+// change introduced. Diagnostics map both to the error severity. A finding
+// this process classified pre-existing never blocks; a parsed result's
+// pre_existing list is untrusted and never relaxes this. A findings status
+// whose diagnostics are unavailable is treated as blocking rather than
+// guessed to be minor.
 func (r Result) hasBlockingFinding() bool {
 	if r.wire.Status != "findings" {
 		return false
@@ -72,7 +74,7 @@ func (r Result) hasBlockingFinding() bool {
 		return true
 	}
 	for _, finding := range findings {
-		if finding.Severity() == diagnostics.SeverityError && !slices.Contains(r.wire.PreExisting, finding.Identity()) {
+		if finding.Severity() == diagnostics.SeverityError && !(r.judged && slices.Contains(r.wire.PreExisting, finding.Identity())) {
 			return true
 		}
 	}
@@ -249,7 +251,7 @@ func (r Result) Report() (Report, error) {
 	if len(guidance) != 0 {
 		return Report{}, fmt.Errorf("%w: guidance does not bind a diagnostic finding", ErrInvalidResult)
 	}
-	if err := report.applyJudgement(r.wire); err != nil {
+	if err := report.applyJudgement(r.wire, r.judged); err != nil {
 		return Report{}, fmt.Errorf("%w: rank or pre_existing does not cover the diagnostic findings", ErrInvalidResult)
 	}
 	if set.VerifiedSetIdentity() != "" {

@@ -27,8 +27,9 @@ type CompletedResultMetadata struct {
 // ParseCompletedResult reads the canonical emitted v1 result, a v4 result that
 // differs only by finding_guidance, a v5 result that adds style advice (and
 // may carry finding_guidance), or a v6 result that adds token_usage to any of
-// them and may carry the recorded judgement (rank and pre_existing, checked
-// against its own diagnostics), not candidate or diagnostic JSON.
+// them and may carry the recorded judgement (rank, checked against its own
+// diagnostics, and an advisory pre_existing list) and a walkthrough, not
+// candidate or diagnostic JSON.
 // Structural consistency and a capture hash do not authenticate its producer.
 func ParseCompletedResult(encoded []byte) (Result, error) {
 	if len(encoded) == 0 || len(encoded) > MaxResultJSONBytes || encoded[len(encoded)-1] != '\n' {
@@ -69,7 +70,11 @@ func ParseCompletedResult(encoded []byte) (Result, error) {
 		return Result{}, ErrInvalidResult
 	}
 	status, ci := localReadinessDisposition(uint32(set.VerifiedCount()), set.SourceOmittedCount(), uint32(set.InconclusiveCount()), uint32(set.CandidateCount()))
-	if wire.Status != status || wire.CI != expectedCompletedCI(set, wire.PreExisting, ci) || !wire.UsageKnown && wire.ActualCostMicroUSD != 0 {
+	// The CI disposition must be the readiness disposition. A recorded
+	// pre_existing list is advisory: the reader cannot re-derive it without the
+	// change, so a result that relaxed its disposition by it (every verified
+	// finding pre-existing, inconclusive instead of blocked) is refused.
+	if wire.Status != status || wire.CI != ci || !wire.UsageKnown && wire.ActualCostMicroUSD != 0 {
 		return Result{}, ErrInvalidResult
 	}
 	if wire.TokenUsage != nil && !validCompletedTokenUsage(*wire.TokenUsage, wire.UsageKnown) {
