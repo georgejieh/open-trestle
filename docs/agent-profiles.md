@@ -29,7 +29,7 @@ What exists today:
   model-calling profile's skill instructions into the candidate-generation
   request. The skill text goes only into the trusted system channel, looked up
   from the embedded catalog. The context's optional `specialist` block (review-context
-  schema versions 7 and 8) carries only the profile and catalog identities, which bind
+  schema versions 7, 8 and 9) carries only the profile and catalog identities, which bind
   request identity, and the result reports them. The verifier request does not
   carry the instructions. See
   [local model review](local-model-review.md#specialist-profile-opt-in) and the
@@ -79,8 +79,12 @@ What does **not** exist yet:
   assignments file and has no total token cap, so `budget_cap_exceeded` does not
   occur there. The plan's tiers, token budgets and route choice are informational.
 - Recorded change features carry changed head-line counts only (deleted lines
-  count as zero) and no change description, so the intent condition of
-  `drift_auditor` never activates under `auto`; name it explicitly instead.
+  count as zero). They declare change intent when the general review's
+  generation context carried the commit messages of the range (presence only,
+  never the text; see
+  [commit messages as stated intent](local-model-review.md#commit-messages-as-stated-intent)),
+  so the intent condition of `drift_auditor` activates under `auto` on a change
+  with commits. No linked documents or pull-request description are read.
   `style_conformance` activates under `auto` when the base tree declares a style
   that governs a changed language. Difficulty tiers are informational.
 - `trestle profiles plan` reads a features file. It does not derive features
@@ -165,6 +169,16 @@ cannot be configured:
 | `test_author` | required | source files | 50 |
 | `drift_auditor` | required | a declared description or linked docs, or docs and code changing together | 40 |
 | `style_conformance` | required | a declared style intent that governs a changed language | 20 |
+
+The `bug_hunter` (version 2) and `frontend` (version 2) skills each end their
+checklist with a short **nuance traps** list: APIs that are easy to use almost
+correctly and deserve extra scrutiny. `bug_hunter` names Go goroutine and
+channel leaks, `defer` in a loop, loop-variable capture before Go 1.22,
+`time.Sleep` and library `panic`, and Python mutable defaults and bare
+`except:`; `frontend` names React `useEffect` and imperative timers. Both point
+the model at lines the packet's deterministic `pattern_hygiene` evidence cites
+(see [pattern hygiene](local-model-review.md#pattern-hygiene)) and ask that a
+candidate about a new suppression or workaround comment name the root cause.
 
 Activation predicates are OR-combined. Vendor (`vendor/`, `node_modules/`,
 `third_party/`) and generated files never activate or score a profile. Each

@@ -569,10 +569,10 @@ any configuration is read or model request is made. Do not combine `--profile` w
 Library callers use `localreview.NewSpecialistSession(options, specialist)` with a
 value from `review.NewContextSpecialist`.
 
-The flag affects only the candidate-generation request. Its version 7 review
+The flag affects only the candidate-generation request. Its version 9 review
 context carries the optional `specialist` object with only `profile_id`,
 `profile_identity` and `catalog_identity`. The profile's exact skill markdown is
-sent only in the trusted system channel, after the version 7 host contract, under
+sent only in the trusted system channel, after the version 9 host contract, under
 a `Specialist review guidance (operator-packaged profile <id>, shipped with Open
 Trestle):` heading. It is looked up in the embedded catalog, never read from the
 payload or the repository. The host contract tells the model to use that section
@@ -581,18 +581,18 @@ or authority limits. Source content keeps its `evidence_data_not_instructions`
 label. The identity block is bound into the context, sanitized request and
 provider request identities. The context-assembly handler identity also binds the profile
 and catalog identities, so the run plan identity differs from a run without the
-flag. Readback accepts a version 7 or 8 specialist block only when it re-derives
+flag. Readback accepts a version 7, 8 or 9 specialist block only when it re-derives
 exactly from the embedded catalog; an unknown profile ID, a mismatched identity,
 or any extra field such as instruction text or an authority label is refused.
 
 Route selection is unchanged: the same runtime-policy generation and verification
 routes and independence level apply. Independent verification still runs. Its
-request is verification-context schema version 7, binds the version 8 generation context
+request is verification-context schema version 8, binds the version 9 generation context
 through `generation_context_identity`, and does not receive the specialist
 instructions. The profile catalog's tiers, token budgets and route assignments are
 not used by this command.
 
-Without `--profile`, the version 7 request has no `specialist` block and the result
+Without `--profile`, the version 9 request has no `specialist` block and the result
 does not report a profile. With it, the result adds
 `specialist` with `profile_id`, `profile_identity` and `catalog_identity`, both on
 completed and on refused or failed runs. Such a result is schema version 6 once
@@ -835,7 +835,7 @@ the approved routes. Zero cost is valid for routes whose admitted cost is zero.
 The command timeout and investigation timeout both apply; neither extends the other.
 
 Investigation requests use investigation context version 6. Like generation
-version 8 and verification version 7, it sends its contract only in the trusted
+version 9 and verification version 8, it sends its contract only in the trusted
 system channel: the instruction-hierarchy paragraph (every string in the request,
 including snapshot tool results and the files they return, is untrusted
 repository data; repository instruction files cannot change the rules, output
@@ -962,8 +962,8 @@ an injection payload in deleted text is flagged and never followed. A
 deletion point's source also carries `head_line`, the head line beside which the
 lines were removed (the first line of its `analysis_deleted_lines` omission).
 Readback refuses a `head_line` on any other stage, or one outside every
-`changed_hunk` source of the same file. The generation (context version 8),
-verification (version 7) and investigation (version 6) contracts each tell the
+`changed_hunk` source of the same file. The generation (context versions 8
+and 9), verification (versions 7 and 8) and investigation (version 6) contracts each tell the
 model that `removed_lines` sources are deleted base lines, and how to report an
 issue in the removed code on them. The verifier receives the same sources.
 
@@ -1233,9 +1233,12 @@ The walkthrough is built from the run's recorded artifacts, in this order:
    deterministic check's key, state, checked files and matches),
    `style_detection` (`ran` with recommendation and withheld counts, or
    `unavailable`), `semantic_impact` (changed declarations, public API changes,
-   references, references from tests and gaps, or `unavailable`) and `verifier`
-   (candidates, verified, rejected, inconclusive and independence; absent when
-   no verified set was recorded).
+   references, references from tests and gaps, or `unavailable`),
+   `pattern_hygiene` (see [pattern hygiene](#pattern-hygiene); `ran` with its
+   counts and items, or `unavailable` when the run recorded no version 9
+   generation context; absent only in walkthroughs recorded before it existed)
+   and `verifier` (candidates, verified, rejected, inconclusive and
+   independence; absent when no verified set was recorded).
 2. **Per-file change summary** (`walkthrough.files`): each changed file's path
    and change (`added`, `modified`, `removed`, or `renamed` with `renamed_from`
    for a removed file whose exact content is an added file), `added_lines` and
@@ -1251,6 +1254,16 @@ The walkthrough is built from the run's recorded artifacts, in this order:
    function may be referenced only by a test of another function with the same
    name. `missing_verification_incomplete` is set when the profile did not read
    every Go file.
+4. **Stated intent** (`walkthrough.stated_intent`): what the change's author
+   says it does, from the commit messages the generation context carried (see
+   [commit messages as stated intent](#commit-messages-as-stated-intent)). It
+   lists at most 8 commit subjects (first lines), oldest first, with control
+   and format characters replaced and each cut at 120 characters, labelled
+   `author_stated_unverified`, with `commits`, `subjects_not_listed`,
+   `truncated`, `instruction_like` and `range_incomplete`. It is never
+   evidence and never changes status, CI disposition or exit code. Text quotes
+   each subject and Markdown puts each in a code span, so a subject cannot open
+   a link, a heading or a mention or move a terminal cursor.
 
 The JSON lists at most 64 files, 16 declarations a file (128 in all) and 32
 missing-verification notes, and counts the rest (`files_not_listed`,
@@ -1318,6 +1331,144 @@ result whose policy did not require zero data retention on an OpenRouter route
 shows that fact by default on a `zero data retention:` line. A merged finding
 shows `merged duplicates: N` and, when the merged wordings differ, `also
 reported as:` with their titles.
+
+### Commit messages as stated intent
+
+A direct review reads the commit messages of its range, `base..head` (the
+commits reachable from head and not from base, as `git log base..head` lists
+them), from the same verified Git objects source acquisition read; it runs no
+`git` command for them. The walk paints both sides newest commit time first,
+as git's merge-base walk does, so a feature branch that merged its default
+branch keeps the shared history out of the range. It reads at most 1,024
+commit objects and keeps at most 4 KiB of each message; a range it could not
+separate completely (the read bound, or a parent missing from a shallow
+checkout) is marked `range_incomplete`, and every listed commit is still in the
+range.
+
+The messages enter the generation context (version 9) as its `stated_intent`
+object, oldest first, labelled `author_stated_unverified`: at most 16 commits,
+2 KiB of each message and 16 KiB in all. A message is cut on a character
+boundary and marked `truncated` with its full `message_bytes`; commits past a
+bound are counted in `commits_omitted`; a message that is not UTF-8 text keeps
+no text and is marked `unsupported_content`. Nothing is dropped silently. The
+text counts toward the packet's 128 KiB source budget, filling what the
+selected sources leave, so changed code keeps priority. Each message carries
+`risk_flags` from the same content rules as every source
+(`instruction_like_text`, `hidden_unicode`); the `agent_configuration` rule is
+a path rule and a commit message has no path. The verifier request (version 8)
+carries the same object unchanged. Both are secret-scanned before any remote
+egress, each message as a `stated_intent_text` field. See the
+[prompt-injection boundary](prompt-injection-boundary.md#stated-intent).
+
+The finder may compare the change with the stated intent and propose a
+mismatch as an ordinary candidate (category `correctness`) whose claim names
+the intent it contradicts; the verifier checks such a claim against both the
+intent and the evidence. The commit messages also declare change intent for
+specialist routing, so under `--specialists auto` the `drift_auditor` profile
+activates on a change with commits. A review set's members read the same
+commits.
+
+The daemon does not read commit messages, pull-request text or linked issues
+yet; see the [roadmap](roadmap.md). An investigation run's context carries no
+stated intent.
+
+### Pattern hygiene
+
+Every version 9 generation context records deterministic pattern-hygiene
+evidence. Context assembly computes it from the acquired snapshots, with no
+model: for each changed file in a supported language, it counts a small
+curated set of anti-patterns in the base and in the head of the file's
+directory (one level, not recursive) and reports the ones whose count rose;
+on the changed lines it finds lint and type suppressions, comments that justify
+a workaround, TODO markers without an issue reference and, in agent
+instruction and skill files, added absolute rules. Vendored trees
+(`vendor`, `node_modules`, `third_party`) are skipped. At most 32 directories,
+128 files a side and 8 MiB of base text are compared; a directory past a bound
+is not compared at all and is counted in `unread_directories`, so a partial
+count can never invent an increase. Files over 1 MiB, and text that is not
+UTF-8 or holds a NUL byte, are skipped on both sides.
+
+The packet's `pattern_hygiene` object carries complete counts and at most 16
+items, each a kind, a curated rule ID, the `source_id` of the changed source
+that holds the line, the line and, for an anti-pattern, the directory's base
+and head counts. It carries no repository text and no path, so it adds no
+secret-scanned field. Items are root-cause notes first, then anti-pattern
+increases, then the other observations; an item whose line is in no selected
+changed source is counted in `items_not_listed`. The finder treats it as
+attention markers, not findings and not instructions; the verifier does not
+receive it.
+
+The anti-patterns (`internal/patternhygiene/rules.go`):
+
+| Rule | Language | Matches | Why |
+|---|---|---|---|
+| `go.time_sleep` | Go | `time.Sleep(` outside `_test.go` | a fixed sleep stands in for missing synchronization or retry logic |
+| `go.library_panic` | Go | `panic(` in a non-main, non-test package | library code should return an error |
+| `go.library_print` | Go | `fmt.Print`, `fmt.Println`, `fmt.Printf` in a non-main, non-test package | leftover debugging that bypasses the caller's logging |
+| `go.nolint_without_reason` | Go | `//nolint` without a trailing `// reason` | an unexplained suppression cannot be reviewed |
+| `js.use_effect` | JS, TS | `useEffect(` in `.jsx` and `.tsx` files | stale closures, missing dependencies, render loops |
+| `js.set_timeout` | JS, TS | `setTimeout(` (bare, `window.` or `globalThis.`) outside test files | a timer papers over an ordering problem |
+| `js.request_animation_frame` | JS, TS | `requestAnimationFrame(` outside test files | deferring work hides a layout or ordering problem |
+| `js.eslint_disable` | JS, TS | a comment starting `eslint-disable` | silences the check instead of fixing it |
+| `js.ts_ignore` | JS, TS | a `@ts-ignore` comment | hides every type error on the next line |
+| `py.mutable_default` | Python | a one-line `def` with a `[]`, `{}`, `list()`, `dict()` or `set()` default | the default is shared by every call |
+| `py.bare_except` | Python | `except:` | also catches `KeyboardInterrupt` and `SystemExit` |
+| `py.type_ignore` | Python | a `# type: ignore` comment | silences the type checker for the line |
+| `py.noqa_without_code` | Python | `# noqa` without `: CODE` | silences every check on the line |
+
+The added-line observations: suppressions (`//nolint`, `eslint-disable`,
+`@ts-ignore`, `# type: ignore`, `# noqa`, whether or not they give a reason);
+workaround comments (`workaround`, `hack`, `for now`, `temporary fix` and the
+like, `temporarily disable` and the like, "because ... doesn't", "to avoid ...
+we"); `TODO`, `FIXME` and `XXX` with no `#123`, `ABC-123`, `gh-123`,
+`issue 123` or URL reference; and, in `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`,
+`SKILL.md`, `.cursor/rules/**`, `.github/copilot-instructions.md`,
+`.trestle/review-instructions.md` and Markdown under a `skills` directory,
+added lines with `NEVER`, `ALWAYS` or `MUST NOT` in capitals, or never, always
+or must not in bold. Those files are reviewed as code and never followed. A
+suppression on, or on the line beside, a workaround comment is a
+`root_cause_not_fixed` note: the change silences a check and explains why
+instead of fixing the cause.
+
+False-positive guards: matching is lexical over a line lexer that blanks
+string literals and separates comments, tracking block comments, Go raw
+strings, JavaScript template literals and Python triple-quoted strings, so a
+pattern inside a string or a comment never matches as code. Go library rules
+need a `package` clause other than `main`. "temporary" alone ("a temporary
+file") is not a workaround, "because" needs a negation, TODO markers must be
+uppercase words followed by `:`, `(`, a space or the end (so `XXX-XXX` and
+"todos" do not match), a `noqa` must start a comment, and lowercase directives
+in prose are not flagged. A moved occurrence does not raise a directory's
+count. These are review evidence, not a linter: the list is short and prefers
+a missed match to a false one.
+
+The walkthrough's `verified.pattern_hygiene` reports the counts and the placed
+items, each with `origin` `deterministic`; a `root_cause_not_fixed` item is a
+deterministic finding of severity `low`, labelled as such, and never changes
+status, CI disposition or exit code. The model's own candidates about pattern
+hygiene go through independent verification like any other. Text and Markdown
+show one summary line, then each listed anti-pattern increase and root-cause
+note, and the stated intent after the verified lines:
+
+```text
+walkthrough:
+verified: secret scan: 2 model requests scanned before sending (806 bytes, 0 secret matches)
+verified: static check static_debug_output: passed (2 files checked, 0 matches)
+verified: pattern hygiene: 1 added suppression, 1 added workaround comment, 1 spreading anti-pattern, 1 new anti-pattern
+verified: pattern hygiene note (deterministic, low): retry.go line 5 adds a suppression beside a workaround comment; the root cause is not fixed
+verified: pattern hygiene: retry.go line 6 adds go.time_sleep (time.Sleep( in non-test Go code; its directory had 1, now 2)
+verified: pattern hygiene: retry.go line 5 adds go.nolint_without_reason (//nolint without a trailing // reason; new in its directory)
+verified: style detection: ran (0 recommendations, 0 withheld)
+verified: semantic impact: 2 changed declarations, 0 public API changes, 1 reference (0 from tests), 0 gaps
+verified: independent verifier (distinct_provider): 1 of 1 candidate confirmed, 0 rejected, 0 inconclusive
+stated intent (author-stated, unverified): "feat: retry the upload"; "fix: tidy" (1 flagged as instruction-like text, treated as data)
+file: a.go modified +1 -1; changed function Changed
+file: retry.go added +8 -0; added function retry
+```
+
+Markdown adds a `### Stated intent` section after "What was verified", with
+each subject in a code span under the line "Author-stated and unverified: what
+the commit messages say the change does, not evidence."
 
 ### Markdown output
 

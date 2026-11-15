@@ -120,15 +120,45 @@ and the Dockerfile port). Remaining:
   language-agnostic repository map of symbol tags with personalised ranking
   within a token budget; and caller and usage lookups. Go already uses its AST;
   other languages begin with lexical tags, and tree-sitter is a later upgrade.
-- **W2.3 Commit and pull-request context.** Commit messages, the pull-request
-  title and body, and linked issue text, all as untrusted data with risk flags,
-  so that the drift auditor can run.
+- **W2.3 Commit and pull-request context.** Shipped on this branch for the
+  direct path: `trestle review` and `trestle local-git model-review` read the
+  commit messages of `base..head` from the verified Git objects and give them
+  to the finder and the verifier as bounded, risk-flagged, secret-scanned
+  stated-intent data (generation context 9, verification context 8), never
+  instructions; the walkthrough shows the subjects as author-stated and
+  unverified; and the drift auditor's intent condition fires under
+  `--specialists auto`. See
+  [commit messages as stated intent](local-model-review.md#commit-messages-as-stated-intent).
+  Remaining: the daemon and webhook path. The `pull_request` webhook payload
+  already carries the title and body under the admitted event, so no new
+  permission or call is needed, but the webhook planner keeps neither and the
+  daemon's run has no bound artifact for them; the daemon also reads no commit
+  messages. Linked issue text needs `issues: read`, which is not admitted, so
+  it waits for a permission decision. A distinct `intent_mismatch` candidate
+  category needs candidate batch v3 (v2 bytes are pinned in every recorded
+  context); today a mismatch is a `correctness` candidate.
 - **W2.4 Specialists by default.** Shipped on this branch: new setups save
   `--specialists auto` and `trestle review` uses it; specialists run up to
   three at a time on remote routes when no spending limit could be passed, and
   one by one otherwise; the spending warning counts every member;
   `--specialists none` turns them off. Remaining: per-profile route
   assignment.
+- **W2.5 Checks from findings.** Planned: when a finding category recurs or is
+  accepted, draft a deterministic rule (ast-grep, Semgrep, golangci-lint or
+  ESLint) with a failing and a passing fixture, offered as a patch and never
+  applied silently.
+- **W2.6 Pattern hygiene.** Shipped on this branch, deterministic part: every
+  generation context records curated anti-patterns whose count a change raised
+  in a directory (base against head), added lint and type suppressions,
+  workaround comments, TODO markers without an issue reference and absolute
+  rules added to agent instruction and skill files, with a deterministic
+  low-severity root-cause note for a suppression beside a workaround comment;
+  the walkthrough reports it in text, Markdown and JSON; and the bug hunter and
+  frontend skills name per-language nuance traps. See
+  [pattern hygiene](local-model-review.md#pattern-hygiene). Remaining: a
+  pattern-hygiene specialist profile, deprecated-API detection, more languages
+  than Go, JavaScript, TypeScript and Python, and multi-line Python
+  signatures.
 
 ### Wave 3: memory and learning
 
