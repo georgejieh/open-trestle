@@ -252,7 +252,26 @@ func FindingText(group MergedFinding, contributors []string) string {
 	} else if merged := len(group.Contributors) - 1; merged > 0 {
 		fmt.Fprintf(&buffer, "merged duplicates: %d\n", merged)
 	}
+	plain := func(value string) string { return value }
+	if also := alsoReportedAs(group, contributors != nil, plain, plain); also != "" {
+		fmt.Fprintf(&buffer, "also reported as: %s\n", also)
+	}
 	return buffer.String()
+}
+
+// alsoReportedAs joins the other wordings of a merged defect, each title
+// once; withOrigins adds the reviewer that reported each (a review set).
+// text renders a title and code an origin label.
+func alsoReportedAs(group MergedFinding, withOrigins bool, text, code func(string) string) string {
+	parts := []string{}
+	for _, contributor := range group.AlsoReportedAs() {
+		part := text(contributor.Title)
+		if withOrigins {
+			part += " (" + code(contributor.Origin) + ")"
+		}
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, "; ")
 }
 
 // FindingsText renders the ranked sections: confirmed findings, then
@@ -426,6 +445,9 @@ func findingMarkdown(group MergedFinding, contributors []string) string {
 		fmt.Fprintf(&buffer, "   Confirmed by: %s\n", strings.Join(escaped, ", "))
 	} else if merged := len(group.Contributors) - 1; merged > 0 && contributors == nil {
 		fmt.Fprintf(&buffer, "   Merged duplicates: %d\n", merged)
+	}
+	if also := alsoReportedAs(group, len(contributors) > 0, MarkdownText, MarkdownCode); also != "" {
+		fmt.Fprintf(&buffer, "   Also reported as: %s\n", also)
 	}
 	return buffer.String()
 }

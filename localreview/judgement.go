@@ -4,6 +4,7 @@ import (
 	"slices"
 
 	"github.com/georgejieh/open-trestle/diagnostics"
+	"github.com/georgejieh/open-trestle/semanticimpact"
 )
 
 // The deterministic judgement of a completed review: after independent
@@ -19,6 +20,40 @@ type rankWire struct {
 	Rank            int      `json:"rank"`
 	FindingIdentity string   `json:"finding_identity"`
 	Merged          []string `json:"merged_finding_identities,omitempty"`
+}
+
+// anchorWire records that one verified finding lies inside a changed
+// declaration of the run's semantic-impact profile: the declaration's first
+// and last line on the finding's side. A parsed result's anchors cannot be
+// re-derived without the profile; they are checked to name distinct findings
+// in diagnostic order and to contain each finding's lines, and they only
+// decide which findings merge into one ranked defect, which never changes the
+// CI disposition or an exit code.
+type anchorWire struct {
+	FindingIdentity string `json:"finding_identity"`
+	StartLine       uint32 `json:"start_line"`
+	EndLine         uint32 `json:"end_line"`
+}
+
+// declarationAnchor is the narrowest changed declaration on the finding's
+// path that holds all of its lines: an added or changed declaration for head
+// lines, a removed one for removed base lines. Ties go to the earlier start.
+func declarationAnchor(finding ReportFinding, declarations []semanticimpact.Declaration) FindingAnchor {
+	var anchor FindingAnchor
+	for _, declaration := range declarations {
+		removed := declaration.Change() == semanticimpact.ChangeRemoved
+		if declaration.Path() != finding.Path || removed != (finding.Side == diagnostics.LineSideBase) || declaration.StartLine() < 1 || declaration.EndLine() < declaration.StartLine() {
+			continue
+		}
+		start, end := uint32(declaration.StartLine()), uint32(declaration.EndLine())
+		if start > finding.StartLine || finding.EndLine > end {
+			continue
+		}
+		if !anchor.set() || end-start < anchor.EndLine-anchor.StartLine || end-start == anchor.EndLine-anchor.StartLine && start < anchor.StartLine {
+			anchor = FindingAnchor{StartLine: start, EndLine: end}
+		}
+	}
+	return anchor
 }
 
 // singleRunOrigin labels the findings of one review run.
@@ -53,21 +88,30 @@ func (m MergedFinding) Blocking() bool {
 // judged, so only a classification this process made from the run's own
 // artifacts relaxes anything; a parsed result's pre_existing list stays
 // advisory.
-func judgeResult(result Result, lines changeLines) (Result, error) {
+//
+// declarations are the changed declarations of the run's semantic-impact
+// profile (nil without one); each finding a changed declaration holds is
+// anchored to it (declarationAnchor), recorded in declaration_anchors, and the
+// merge rule reads the anchors.
+func judgeResult(result Result, lines changeLines, declarations []semanticimpact.Declaration) (Result, error) {
 	result.judged = true
 	report, err := result.Report()
 	if err != nil {
 		return Result{}, err
 	}
 	var preExisting []string
+	var anchors []anchorWire
 	for index := range report.Findings {
 		finding := &report.Findings[index]
 		finding.PreExisting = lines.preExisting(*finding)
 		if finding.PreExisting {
 			preExisting = append(preExisting, finding.Identity)
 		}
+		if finding.Anchor = declarationAnchor(*finding, declarations); finding.Anchor.set() {
+			anchors = append(anchors, anchorWire{FindingIdentity: finding.Identity, StartLine: finding.Anchor.StartLine, EndLine: finding.Anchor.EndLine})
+		}
 	}
-	result.wire.PreExisting = preExisting
+	result.wire.PreExisting, result.wire.Anchors = preExisting, anchors
 	result.wire.Rank = rankEntries(report.Findings, singleRunOrigin(result.wire), report.Independence)
 	if result.wire.Status == "findings" && len(report.Findings) > 0 && !slices.ContainsFunc(report.Findings, func(finding ReportFinding) bool { return BlocksCI(finding.Severity, finding.PreExisting) }) {
 		result.wire.CI = "inconclusive"
@@ -133,6 +177,19 @@ func (report *Report) applyJudgement(wire resultWire, trusted bool) error {
 		listed[identity] = true
 		report.Findings[index].PreExisting = trusted
 	}
+	anchored := make(map[string]bool, len(wire.Anchors))
+	for _, anchor := range wire.Anchors {
+		index, ok := byIdentity[anchor.FindingIdentity]
+		if !ok || anchored[anchor.FindingIdentity] {
+			return ErrInvalidResult
+		}
+		finding := &report.Findings[index]
+		if anchor.StartLine < 1 || anchor.StartLine > finding.StartLine || finding.EndLine > anchor.EndLine {
+			return ErrInvalidResult
+		}
+		anchored[anchor.FindingIdentity] = true
+		finding.Anchor = FindingAnchor{StartLine: anchor.StartLine, EndLine: anchor.EndLine}
+	}
 	entries := wire.Rank
 	if len(entries) == 0 {
 		entries = rankEntries(report.Findings, singleRunOrigin(wire), report.Independence)
@@ -167,47 +224,58 @@ func (report *Report) applyJudgement(wire resultWire, trusted bool) error {
 }
 
 func contributorOf(finding ReportFinding, origin string) FindingContributor {
-	return FindingContributor{Origin: origin, Identity: finding.Identity, Severity: finding.Severity, StartLine: finding.StartLine, EndLine: finding.EndLine, Side: finding.Side, PreExisting: finding.PreExisting}
+	return FindingContributor{Origin: origin, Identity: finding.Identity, Severity: finding.Severity, StartLine: finding.StartLine, EndLine: finding.EndLine, Side: finding.Side, PreExisting: finding.PreExisting, Title: finding.Title, Claim: finding.Claim}
 }
 
-// validRecordedJudgement checks a parsed version 6 result's rank and
-// pre_existing against the judgement its own diagnostics and guidance
-// produce: pre_existing lists distinct diagnostic findings in diagnostic
-// order, and rank is exactly the merge and rank of those findings, with the
-// recorded list as the only pre-existing input. The list itself cannot be
-// re-derived without the change, so it stays advisory: the parsed result is
-// not judged, and the reader requires the readiness CI disposition.
+// validRecordedJudgement checks a parsed version 6 result's rank,
+// pre_existing and declaration_anchors against the judgement its own
+// diagnostics and guidance produce: pre_existing and the anchors list
+// distinct diagnostic findings in diagnostic order, and rank is exactly the
+// merge and rank of those findings, with the recorded list and anchors as the
+// only pre-existing and declaration inputs. Neither can be re-derived without
+// the change, so both stay advisory: the parsed result is not judged, the
+// list never relaxes the CI disposition, and the anchors only decide merges.
 func validRecordedJudgement(result Result) bool {
 	wire := result.wire
 	if wire.Version != tokenUsageResultVersion {
 		// Only version 6 records a judgement or a walkthrough.
-		return wire.Rank == nil && wire.PreExisting == nil && wire.Walkthrough == nil
+		return wire.Rank == nil && wire.PreExisting == nil && wire.Anchors == nil && wire.Walkthrough == nil
 	}
 	if wire.Walkthrough.validate() != nil {
 		return false
 	}
 	findings := result.diagnostics.Findings()
 	if len(findings) == 0 {
-		return wire.Rank == nil && wire.PreExisting == nil
+		return wire.Rank == nil && wire.PreExisting == nil && wire.Anchors == nil
 	}
 	if len(wire.Rank) == 0 {
 		// A version 6 result written before ranking was recorded.
-		return wire.PreExisting == nil
+		return wire.PreExisting == nil && wire.Anchors == nil
 	}
 	order := make(map[string]int, len(findings))
 	for index, finding := range findings {
 		order[finding.Identity()] = index
 	}
-	previous := -1
-	for _, identity := range wire.PreExisting {
-		index, ok := order[identity]
-		if !ok || index <= previous {
-			return false
+	inOrder := func(identities []string) bool {
+		previous := -1
+		for _, identity := range identities {
+			index, ok := order[identity]
+			if !ok || index <= previous {
+				return false
+			}
+			previous = index
 		}
-		previous = index
+		return true
 	}
-	// The recorded rank was computed with the recorded classification as its
-	// tie-break input, so it is recomputed the same way.
+	anchored := make([]string, 0, len(wire.Anchors))
+	for _, anchor := range wire.Anchors {
+		anchored = append(anchored, anchor.FindingIdentity)
+	}
+	if !inOrder(wire.PreExisting) || !inOrder(anchored) {
+		return false
+	}
+	// The recorded rank was computed with the recorded classification and
+	// anchors as its inputs, so it is recomputed the same way.
 	recomputed := result
 	recomputed.judged = true
 	report, err := recomputed.Report()

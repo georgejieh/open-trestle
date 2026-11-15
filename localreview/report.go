@@ -108,6 +108,10 @@ type ReportFinding struct {
 	// change did not touch (see the result's pre_existing list). It never
 	// blocks CI.
 	PreExisting bool
+	// Anchor is the changed declaration of the run's semantic-impact profile
+	// that holds the finding (the result's declaration_anchors), or zero. It
+	// only lets DeduplicateFindings merge paraphrases of one defect.
+	Anchor FindingAnchor
 	// Rank is the 1-based rank of the distinct finding this finding is or was
 	// merged into. DuplicateOf names that finding's representative when this
 	// finding was merged into it, and is empty for a representative.

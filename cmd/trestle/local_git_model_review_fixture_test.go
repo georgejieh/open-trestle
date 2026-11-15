@@ -350,9 +350,16 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 				"source_range": map[string]any{"source_id": caller.ID, "start_line": 2, "end_line": 2}, "evidence_ids": evidenceIDs,
 			})
 		} else if m.mode != "empty" {
+			title, claim, category := "Zero-valued caller now panics", "Consume passes zero to Changed after removal of the division guard.", "correctness"
+			// paraphrase_specialist words the same defect differently in a
+			// specialist's request: another title, claim and category of the
+			// same family, at the same lines.
+			if m.mode == "paraphrase_specialist" && len(packet.Specialist) > 0 && string(packet.Specialist) != "null" {
+				title, claim, category = "Changed panics on a zero divisor", "Changed divides 10 by x without a zero check, so the call with 0 in Consume crashes.", "reliability"
+			}
 			candidates = append(candidates, map[string]any{
-				"title": "Zero-valued caller now panics", "claim": "Consume passes zero to Changed after removal of the division guard.", "severity_hint": "high",
-				"category": "correctness", "fix": "Restore the zero guard before dividing.",
+				"title": title, "claim": claim, "severity_hint": "high",
+				"category": category, "fix": "Restore the zero guard before dividing.",
 				"source_range": map[string]any{"source_id": changed.ID, "start_line": 2, "end_line": 2}, "evidence_ids": evidenceIDs,
 			})
 		}

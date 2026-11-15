@@ -37,7 +37,48 @@ type FindingContributor struct {
 	EndLine     uint32
 	Side        diagnostics.LineSide
 	PreExisting bool
+	// Title and Claim are the contributor's own verified statement, so a
+	// merged paraphrase stays readable ("also reported as").
+	Title, Claim string
+	// MergedBy names the rule that merged the contributor into the defect
+	// (MergeRuleNearIdentical, MergeRuleSameDeclaration or MergeRuleSameLines);
+	// it is empty for the representative, and for a contributor of a recorded
+	// rank, which does not record rules.
+	MergedBy string
+
+	// stage is the index of the near-identical group the contributor joined
+	// first, and order its position among all findings, which keeps
+	// contributors in origin and finding order across both passes.
+	stage, order int
 }
+
+// Merge rules, in the order DeduplicateFindings applies them.
+const (
+	// MergeRuleNearIdentical merges near-identical statements (the strict
+	// first pass).
+	MergeRuleNearIdentical = "near_identical"
+	// MergeRuleSameDeclaration merges findings inside one changed declaration
+	// of the semantic-impact profile.
+	MergeRuleSameDeclaration = "same_declaration"
+	// MergeRuleSameLines merges findings within one range of at most
+	// maxSameLinesSpan lines when no changed declaration holds them.
+	MergeRuleSameLines = "same_lines"
+)
+
+// maxSameLinesSpan is the widest range, in lines, that two findings outside
+// any changed declaration may share and still describe one defect.
+const maxSameLinesSpan = 5
+
+// FindingAnchor is the changed declaration of the semantic-impact profile
+// that holds a finding: the declaration's first and last line on the
+// finding's side (head lines for an added or changed declaration, base lines
+// for a removed one). The zero value means no changed declaration holds it.
+type FindingAnchor struct {
+	StartLine, EndLine uint32
+}
+
+// set reports an anchor.
+func (a FindingAnchor) set() bool { return a.StartLine != 0 }
 
 // MergedFinding is one distinct defect after deduplication.
 type MergedFinding struct {
@@ -58,6 +99,24 @@ type MergedFinding struct {
 	origin int
 	tokens defectStatement
 	labels map[string]bool
+	// stage is the near-identical group of the representative.
+	stage int
+}
+
+// AlsoReportedAs returns the other contributors whose title differs from the
+// representative's, each title once, in contributor order: the other
+// wordings of one merged defect.
+func (m MergedFinding) AlsoReportedAs() []FindingContributor {
+	out := []FindingContributor{}
+	seen := map[string]bool{m.Finding.Title: true}
+	for _, contributor := range m.Contributors {
+		if contributor.Identity == m.Finding.Identity || contributor.Title == "" || seen[contributor.Title] {
+			continue
+		}
+		seen[contributor.Title] = true
+		out = append(out, contributor)
+	}
+	return out
 }
 
 // MergedIdentities returns the identities of the findings merged into the
@@ -113,8 +172,11 @@ func MergedDuplicates(findings []MergedFinding) int {
 	return duplicates
 }
 
-// DeduplicateFindings merges verified findings that describe the same defect.
-// Two findings are duplicates when all of these hold:
+// DeduplicateFindings merges verified findings that describe the same defect,
+// in two passes.
+//
+// The first, strict pass merges near-identical statements. Two findings are
+// duplicates when all of these hold:
 //
 //   - they have the same path and side (base and head line numbers are
 //     different coordinates and never merge);
@@ -124,25 +186,37 @@ func MergedDuplicates(findings []MergedFinding) int {
 //     normalized: at least four fifths of their combined distinctive words are
 //     shared (see defectStatementTokens).
 //
-// Only the representative's own range and statement decide a match, so a
-// finding never joins a group through a finding the group already absorbed.
+// The second pass merges the groups of the first whose representatives are
+// one defect at one place, whatever their wording (sameDefectLocation): the
+// same path and side, overlapping ranges, categories of the same family that
+// is not security, and either the same changed declaration of the
+// semantic-impact profile (ReportFinding.Anchor) or, when no changed
+// declaration holds either, one range of at most five lines. Two paraphrases
+// of one bug ("Avg may divide by zero", "Avg panics on empty slice") merge;
+// security findings merge only by the strict rule.
+//
+// Only a representative's own range, statement and anchor decide a match, so
+// a finding never joins a group through a finding the group already absorbed.
 // The representative is the strongest verified finding of the group; when a
 // stronger finding joins, it becomes the representative and the comparison
 // basis. Findings of one origin can merge too: one run may report a defect
-// twice, and two distinct defects in one hunk are not near-identical.
+// twice.
 //
 // Matching is deterministic: origins in the given order, each origin's
 // findings sorted by path, side, range and identity, each finding joining the
-// first matching group. Groups are returned in creation order; RankFindings
-// orders them.
+// first matching group, then each group in creation order joining the first
+// earlier group it matches. Contributors stay in origin and finding order.
+// Groups are returned in creation order; RankFindings orders them.
 func DeduplicateFindings(origins []FindingOrigin) []MergedFinding {
 	var groups []*MergedFinding
+	order := 0
 	for index, origin := range origins {
 		ordered := append([]ReportFinding(nil), origin.Findings...)
 		sort.SliceStable(ordered, func(i, j int) bool { return locationLess(ordered[i], ordered[j]) })
 		for _, finding := range ordered {
 			tokens := defectStatementTokens(finding.Title, finding.Claim)
-			contributor := FindingContributor{Origin: origin.Label, Identity: finding.Identity, Severity: finding.Severity, StartLine: finding.StartLine, EndLine: finding.EndLine, Side: finding.Side, PreExisting: finding.PreExisting}
+			contributor := FindingContributor{Origin: origin.Label, Identity: finding.Identity, Severity: finding.Severity, StartLine: finding.StartLine, EndLine: finding.EndLine, Side: finding.Side, PreExisting: finding.PreExisting, Title: finding.Title, Claim: finding.Claim, order: order}
+			order++
 			var group *MergedFinding
 			for _, candidate := range groups {
 				representative := candidate.Finding
@@ -154,9 +228,11 @@ func DeduplicateFindings(origins []FindingOrigin) []MergedFinding {
 				}
 			}
 			if group == nil {
-				groups = append(groups, &MergedFinding{Finding: finding, Contributors: []FindingContributor{contributor}, Origins: 1, Independence: origin.Independence, origin: index, tokens: tokens, labels: map[string]bool{origin.Label: true}})
+				contributor.stage = len(groups)
+				groups = append(groups, &MergedFinding{Finding: finding, Contributors: []FindingContributor{contributor}, Origins: 1, Independence: origin.Independence, origin: index, tokens: tokens, labels: map[string]bool{origin.Label: true}, stage: len(groups)})
 				continue
 			}
+			contributor.stage = group.stage
 			group.Contributors = append(group.Contributors, contributor)
 			if !group.labels[origin.Label] {
 				group.labels[origin.Label] = true
@@ -170,11 +246,84 @@ func DeduplicateFindings(origins []FindingOrigin) []MergedFinding {
 			}
 		}
 	}
-	out := make([]MergedFinding, 0, len(groups))
+	// The second pass: one defect at one place, whatever the wording. stageRule
+	// records, for each first-pass group that joined another, the rule by
+	// which it joined.
+	stageRule := map[int]string{}
+	var kept []*MergedFinding
 	for _, group := range groups {
+		var target *MergedFinding
+		rule := ""
+		for _, candidate := range kept {
+			if matched, ok := sameDefectLocation(candidate.Finding, group.Finding); ok {
+				target, rule = candidate, matched
+				break
+			}
+		}
+		if target == nil {
+			kept = append(kept, group)
+			continue
+		}
+		stageRule[group.stage] = rule
+		target.Contributors = append(target.Contributors, group.Contributors...)
+		for label := range group.labels {
+			target.labels[label] = true
+		}
+		target.Origins = len(target.labels)
+		if independenceRank(group.Independence) > independenceRank(target.Independence) {
+			target.Independence = group.Independence
+		}
+		if strongerFinding(group.Finding, group.origin, target.Finding, target.origin) {
+			// The displaced representative's group is now joined to the new
+			// one by the same rule.
+			stageRule[target.stage] = rule
+			delete(stageRule, group.stage)
+			target.Finding, target.origin, target.tokens, target.stage = group.Finding, group.origin, group.tokens, group.stage
+		}
+	}
+	out := make([]MergedFinding, 0, len(kept))
+	for _, group := range kept {
+		sort.SliceStable(group.Contributors, func(i, j int) bool { return group.Contributors[i].order < group.Contributors[j].order })
+		for index := range group.Contributors {
+			contributor := &group.Contributors[index]
+			switch {
+			case contributor.Identity == group.Finding.Identity && contributor.stage == group.stage:
+				contributor.MergedBy = ""
+			case contributor.stage == group.stage:
+				contributor.MergedBy = MergeRuleNearIdentical
+			default:
+				contributor.MergedBy = stageRule[contributor.stage]
+			}
+		}
 		out = append(out, *group)
 	}
 	return out
+}
+
+// sameDefectLocation reports whether two findings are one defect at one
+// place whatever their wording, and by which rule: the same path and side,
+// overlapping ranges, categories of one family that is not security (an
+// uncategorized finding never merges this way), and either the same changed
+// declaration (both anchored to it) or, when neither is anchored, one range
+// of at most maxSameLinesSpan lines.
+func sameDefectLocation(a, b ReportFinding) (string, bool) {
+	if a.Path != b.Path || a.Side != b.Side || a.StartLine > b.EndLine || b.StartLine > a.EndLine {
+		return "", false
+	}
+	family := categoryFamilies[a.Category]
+	if family == 0 || family == securityFamily || family != categoryFamilies[b.Category] {
+		return "", false
+	}
+	if a.Anchor.set() || b.Anchor.set() {
+		if a.Anchor != b.Anchor {
+			return "", false
+		}
+		return MergeRuleSameDeclaration, true
+	}
+	if max(a.EndLine, b.EndLine)-min(a.StartLine, b.StartLine) < maxSameLinesSpan {
+		return MergeRuleSameLines, true
+	}
+	return "", false
 }
 
 // RankFindings orders merged findings and numbers them from 1:
@@ -307,9 +456,13 @@ func independenceRank(level string) int {
 // a finding of another category.
 var categoryFamilies = map[string]int{
 	"correctness": 1, "concurrency": 1, "performance": 1, "reliability": 1,
-	"security":        2,
+	"security":        securityFamily,
 	"maintainability": 3, "style": 3, "documentation": 3, "testing": 3,
 }
+
+// securityFamily is the family of the security category, which only the
+// strict near-identical rule merges.
+const securityFamily = 2
 
 // compatibleCategories reports equal categories, categories of one family, or
 // an uncategorized finding (a result without finding guidance), which is

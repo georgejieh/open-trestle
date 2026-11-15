@@ -212,7 +212,7 @@ func earlierVersion(t *testing.T, result Result, encoded []byte, version string)
 	if err := json.Unmarshal(earlier, &wire); err != nil {
 		t.Fatal(err)
 	}
-	wire.Rank, wire.PreExisting, wire.Walkthrough = nil, nil, nil
+	wire.Rank, wire.PreExisting, wire.Anchors, wire.Walkthrough = nil, nil, nil, nil
 	stripped, err := json.Marshal(wire)
 	if err != nil {
 		t.Fatal(err)

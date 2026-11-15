@@ -376,8 +376,22 @@ type setFindingWire struct {
 	// PreExisting is set when every contributor is located only on unchanged
 	// lines the change did not touch. Such a finding never blocks CI.
 	PreExisting bool `json:"pre_existing,omitempty"`
-	report      localreview.ReportFinding
-	merged      localreview.MergedFinding
+	// Merged lists every contributor other than the representative with its
+	// own verified statement and the rule that merged it (near_identical,
+	// same_declaration or same_lines), in contributor order; omitted when
+	// nothing was merged.
+	Merged []setMergedWire `json:"merged,omitempty"`
+	report localreview.ReportFinding
+	merged localreview.MergedFinding
+}
+
+// setMergedWire is one wording merged into a set finding.
+type setMergedWire struct {
+	Member          string `json:"member"`
+	FindingIdentity string `json:"finding_identity"`
+	Title           string `json:"title"`
+	Claim           string `json:"claim"`
+	Rule            string `json:"rule"`
 }
 
 type setSummaryWire struct {
@@ -847,6 +861,9 @@ func mergeVerifiedFindingsWithIndependence(labels, independence []string, findin
 		value.Contributors = make([]setContributorWire, 0, len(group.Contributors))
 		for _, contributor := range group.Contributors {
 			value.Contributors = append(value.Contributors, setContributorWire{Member: contributor.Origin, FindingIdentity: contributor.Identity, Severity: contributor.Severity.String(), StartLine: contributor.StartLine, EndLine: contributor.EndLine, Side: recordedSetSide(contributor.Side)})
+			if contributor.Identity != group.Finding.Identity {
+				value.Merged = append(value.Merged, setMergedWire{Member: contributor.Origin, FindingIdentity: contributor.Identity, Title: contributor.Title, Claim: contributor.Claim, Rule: contributor.MergedBy})
+			}
 		}
 		out = append(out, value)
 	}

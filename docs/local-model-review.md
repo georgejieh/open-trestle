@@ -1018,19 +1018,25 @@ run's result (schema version 6, in place) adds three members:
 - `pre_existing`: the diagnostic finding identities classified
   [pre-existing](#pre-existing-findings), in diagnostic order, absent when there
   are none.
+- `declaration_anchors`: for each finding that a changed Go declaration of the
+  run's semantic-impact profile holds, in diagnostic order,
+  `{"finding_identity": ID, "start_line": N, "end_line": M}`: the
+  declaration's lines on the finding's side (see [duplicates](#duplicates)).
+  Absent when no finding is anchored.
 - `walkthrough`: the [walkthrough](#walkthrough), present once the change model
   was recorded.
 
-Results without verified findings carry no `rank` or `pre_existing`, so their
-bytes are unchanged apart from the walkthrough.
+Results without verified findings carry no `rank`, `pre_existing` or
+`declaration_anchors`, so their bytes are unchanged apart from the walkthrough.
 
 ### Duplicates
 
 One function decides duplicates everywhere several verified findings can
 describe one defect: within one run (including an investigation run), across
 the members of a [specialist review set](#specialist-review-set-opt-in), and
-across repeated runs of the same change (`localreview.DeduplicateFindings`). Two
-findings are duplicates when all of these hold:
+across repeated runs of the same change (`localreview.DeduplicateFindings`). It
+runs two passes. The first, strict pass merges two findings when all of these
+hold:
 
 - the same path and side (base and head line numbers never merge);
 - the finding's line range overlaps the group representative's range;
@@ -1046,14 +1052,44 @@ findings are duplicates when all of these hold:
   a capital after its first character. So `a / b` and `a / c`, or `limit 10` and
   `limit 100`, stay apart.
 
+Two paraphrases of one defect (for example "Avg may divide by zero" and "Avg
+panics on empty slice") are not near-identical, so a second, location-anchored
+pass merges the first pass's groups whose representatives are one defect at one
+place, whatever their wording, when all of these hold:
+
+- the same path and side;
+- overlapping line ranges;
+- categories of the same family, and not security. Security findings merge only
+  by the strict rule, and a finding without a category merges only by it;
+- both inside the same changed declaration: the narrowest added or changed Go
+  declaration of the run's semantic-impact profile that holds all of a head
+  finding's lines, or the removed declaration that holds a base finding's
+  lines (`declaration_anchors`). When no changed declaration holds either
+  finding, both must lie within one range of at most 5 lines instead. An
+  anchored finding never merges this way with an unanchored one or with one in
+  another declaration.
+
+So two distinct bugs on one line merge when their categories share a family,
+and stay apart otherwise (for example a correctness and a documentation
+finding). Groups are compared in creation order, each joining the first earlier
+group it matches; only representatives decide.
+
 Only the representative's own range and statement decide a match, so a finding
 never joins through a finding the group already absorbed. The representative is
 the strongest verified finding: the most severe, then the one citing the most
 distinct evidence, then one on changed lines over a pre-existing one, then the
-narrowest range, then the earliest. It is reported at its own location. Two
-paraphrases of one defect (for example "Avg may divide by zero" and "Avg panics
-on empty slice") are not near-identical and stay two ranked findings; the rule
-never hides one defect behind another's statement.
+narrowest range, then the earliest. It is reported at its own location. A
+merged finding never hides another wording: text and Markdown list the other
+titles on an `also reported as:` line (a review set names the member that
+reported each), and a set finding's JSON `merged[]` lists every other
+contributor with its `member`, `finding_identity`, `title`, `claim` and the
+`rule` that merged it (`near_identical`, `same_declaration` or `same_lines`).
+The anchors cannot be re-derived from a result without its profile, so
+`localreview.ParseCompletedResult` checks that each names a distinct finding in
+diagnostic order and contains its lines, and recomputes `rank` with them. A
+merge never relaxes a CI disposition or an exit code: a single review decides
+them from every finding, and a merged set finding blocks whenever one of its
+contributors would.
 
 ### Rank
 

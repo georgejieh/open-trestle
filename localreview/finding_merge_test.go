@@ -66,6 +66,8 @@ func TestDeduplicateFindingsMergesCompatibleCategories(t *testing.T) {
 
 // A finding stays separate when any key differs: path, side, line overlap,
 // category family, or a statement that is only similar, not near-identical.
+// The statement cases span more than five lines together and hold no
+// declaration anchor, so only the strict rule could merge them.
 func TestDeduplicateFindingsKeepsNonDuplicatesApart(t *testing.T) {
 	base := mergeFixture("a", zeroGuardTitle, zeroGuardClaim, diagnostics.SeverityError, "calc.go", 4, 6, "correctness")
 	cases := map[string]ReportFinding{
@@ -73,12 +75,12 @@ func TestDeduplicateFindingsKeepsNonDuplicatesApart(t *testing.T) {
 		"no line overlap":     mergeFixture("b", zeroGuardTitle, zeroGuardClaim, diagnostics.SeverityError, "calc.go", 7, 9, "correctness"),
 		"incompatible family": mergeFixture("b", zeroGuardTitle, zeroGuardClaim, diagnostics.SeverityError, "calc.go", 4, 6, "documentation"),
 		"security apart":      mergeFixture("b", zeroGuardTitle, zeroGuardClaim, diagnostics.SeverityError, "calc.go", 4, 6, "security"),
-		"paraphrase":          mergeFixture("b", "Zero divisor crashes Divide", "Calling Divide with b equal to 0 panics at runtime because the guard is missing.", diagnostics.SeverityError, "calc.go", 4, 6, "correctness"),
-		"other identifier":    mergeFixture("b", "Division by zero when the divisor is zero", "Divide returns a / c without checking that c is not zero, so a zero divisor panics.", diagnostics.SeverityError, "calc.go", 4, 6, "correctness"),
-		"other camelCase":     mergeFixture("b", zeroGuardTitle, "Divide returns a / b without checking that maxDivisor is not zero, so a zero divisor panics.", diagnostics.SeverityError, "calc.go", 4, 6, "correctness"),
+		"paraphrase":          mergeFixture("b", "Zero divisor crashes Divide", "Calling Divide with b equal to 0 panics at runtime because the guard is missing.", diagnostics.SeverityError, "calc.go", 4, 12, "correctness"),
+		"other identifier":    mergeFixture("b", "Division by zero when the divisor is zero", "Divide returns a / c without checking that c is not zero, so a zero divisor panics.", diagnostics.SeverityError, "calc.go", 4, 12, "correctness"),
+		"other camelCase":     mergeFixture("b", zeroGuardTitle, "Divide returns a / b without checking that maxDivisor is not zero, so a zero divisor panics.", diagnostics.SeverityError, "calc.go", 4, 12, "correctness"),
 	}
 	limit := mergeFixture("c", "Retry limit is too low", "The client stops after 10 retries and drops queued writes when the limit is reached.", diagnostics.SeverityWarning, "calc.go", 4, 6, "reliability")
-	otherLimit := mergeFixture("d", "Retry limit is too low", "The client stops after 100 retries and drops queued writes when the limit is reached.", diagnostics.SeverityWarning, "calc.go", 4, 6, "reliability")
+	otherLimit := mergeFixture("d", "Retry limit is too low", "The client stops after 100 retries and drops queued writes when the limit is reached.", diagnostics.SeverityWarning, "calc.go", 4, 12, "reliability")
 	if merged := DeduplicateFindings([]FindingOrigin{{Label: "m0", Findings: []ReportFinding{limit}}, {Label: "m1", Findings: []ReportFinding{otherLimit}}}); len(merged) != 2 {
 		t.Fatal("statements that differ only in a number merged")
 	}
@@ -94,11 +96,11 @@ func TestDeduplicateFindingsKeepsNonDuplicatesApart(t *testing.T) {
 }
 
 // One run may repeat a defect; near-identical findings of one origin merge.
-// Two distinct defects of one origin in one hunk stay apart.
+// Two distinct defects of one origin in one wide hunk stay apart.
 func TestDeduplicateFindingsWithinOneOrigin(t *testing.T) {
 	first := mergeFixture("a", zeroGuardTitle, zeroGuardClaim, diagnostics.SeverityError, "calc.go", 4, 6, "correctness")
 	repeat := mergeFixture("b", zeroGuardTitle, zeroGuardClaim, diagnostics.SeverityWarning, "calc.go", 5, 5, "correctness")
-	distinct := mergeFixture("c", "Overflow when adding large totals", "Sum adds two int32 totals and can overflow for large values.", diagnostics.SeverityWarning, "calc.go", 4, 6, "correctness")
+	distinct := mergeFixture("c", "Overflow when adding large totals", "Sum adds two int32 totals and can overflow for large values.", diagnostics.SeverityWarning, "calc.go", 4, 14, "correctness")
 	merged := DeduplicateFindings([]FindingOrigin{{Label: "general", Findings: []ReportFinding{first, repeat, distinct}}})
 	if len(merged) != 2 || MergedDuplicates(merged) != 1 {
 		t.Fatalf("within one origin: %d groups, %d duplicates", len(merged), MergedDuplicates(merged))

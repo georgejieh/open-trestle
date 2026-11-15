@@ -18,6 +18,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/scm"
 	"github.com/georgejieh/open-trestle/runtimecatalog"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
+	"github.com/georgejieh/open-trestle/semanticimpact"
 	"io"
 	"strings"
 )
@@ -105,6 +106,10 @@ type resultWire struct {
 	// omitted when there are no verified findings.
 	Rank        []rankWire `json:"rank,omitempty"`
 	PreExisting []string   `json:"pre_existing,omitempty"`
+	// Anchors places verified findings inside the changed declarations of the
+	// run's semantic-impact profile, in diagnostic order; the merge rule reads
+	// them (see anchorWire). Omitted when no finding is anchored.
+	Anchors []anchorWire `json:"declaration_anchors,omitempty"`
 	// Walkthrough is a direct version 6 run's verification-led walkthrough
 	// (see walkthrough.go), present once the change model was recorded.
 	Walkthrough *Walkthrough `json:"walkthrough,omitempty"`
@@ -783,7 +788,14 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 			return Result{}, ErrInvalidResult
 		}
 		w.Status, w.CI = localReadinessDisposition(uint32(set.VerifiedCount()), set.SourceOmittedCount(), uint32(set.InconclusiveCount()), uint32(set.CandidateCount()))
-		if result, err = judgeResult(result, lines); err != nil {
+		// A direct run anchors findings to the changed declarations of its
+		// semantic-impact profile; an investigation run has no walkthrough
+		// and anchors none.
+		var declarations []semanticimpact.Declaration
+		if s.investigation == nil && walk.analysis != nil {
+			declarations = walk.analysis.SemanticImpact().Declarations()
+		}
+		if result, err = judgeResult(result, lines, declarations); err != nil {
 			return Result{}, err
 		}
 		w = &result.wire
