@@ -484,7 +484,7 @@ func (w *initWizard) run() (int, error) {
 	return w.stepWrite()
 }
 
-func (w *initWizard) defaultDirectory() string { return defaultSetupDirectory(w.checkout) }
+func (w *initWizard) defaultDirectory() string { return discoverSetupDirectory(w.ctx, w.checkout) }
 
 func initValidateDirectory(value string) (string, error) {
 	if strings.HasPrefix(value, "~/") {

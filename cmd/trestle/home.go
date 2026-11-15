@@ -111,7 +111,7 @@ func runHomeScreen(ctx context.Context, stdin io.Reader, stdout, stderr io.Write
 		return 0
 	}
 	w.checkout = checkout
-	dir := defaultSetupDirectory(checkout)
+	dir := discoverSetupDirectory(ctx, checkout)
 	actions := []homeAction{}
 	if !setupExists(dir) {
 		w.say("\n  %s has no Open Trestle setup yet. Setup asks a few questions, sends no source, and can run the first review.", initDisplayPath(checkout))

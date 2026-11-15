@@ -396,8 +396,12 @@ setup the only action is `trestle init`. Without a terminal on both sides, or
 with `NO_COLOR` set or `TERM=dumb`, `trestle` prints the usage text and exits
 `2`, as before.
 
-Run `trestle init` again in the same repository (with the same `--directory`, if
-you chose one) to re-check the setup. It offers:
+Run `trestle init` again in the same repository to re-check the setup. `trestle
+init`, `trestle review` and the home screen find the setup in the folder setup
+proposes or, failing that, the most recently saved setup for this repository in
+another folder of `~/.local/state/open-trestle`, so a setup made with
+`--directory` there needs no flag later. A setup saved anywhere else needs the
+same `--directory` again. It offers:
 
 ```text
     1) Review the latest change (sends it to OpenRouter)

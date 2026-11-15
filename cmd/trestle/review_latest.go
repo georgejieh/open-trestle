@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/georgejieh/open-trestle/localreview"
 )
@@ -46,6 +47,55 @@ func defaultSetupDirectory(checkout string) string {
 	sum := sha256.Sum256([]byte(checkout))
 	return filepath.Join(home, ".local", "state", "open-trestle", initLabel(filepath.Base(checkout), "repository")+"-"+hex.EncodeToString(sum[:])[:8])
 }
+
+// discoverSetupDirectory is the setup folder for a checkout: the folder
+// `trestle init` proposes when it holds a setup, else the most recently saved
+// readable setup in the same parent folder (~/.local/state/open-trestle) whose
+// saved review command names this checkout, so a setup made with
+// --directory NAME there is found without the flag. A setup only counts when
+// it loads as a protected setup. With none, it is the proposed folder.
+func discoverSetupDirectory(ctx context.Context, checkout string) string {
+	proposed := defaultSetupDirectory(checkout)
+	if proposed == "" || setupExists(proposed) {
+		return proposed
+	}
+	parent := filepath.Dir(proposed)
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return proposed
+	}
+	best, newest := "", time.Time{}
+	for i, entry := range entries {
+		if i >= maxDiscoveredSetups {
+			break
+		}
+		if !entry.IsDir() {
+			continue
+		}
+		dir := filepath.Join(parent, entry.Name())
+		if !setupExists(dir) {
+			continue
+		}
+		repo, err := loadRepositorySetup(ctx, checkout, dir)
+		if err != nil || !sameCheckout(repo.templateCheckout, checkout) {
+			continue
+		}
+		info, err := os.Lstat(filepath.Join(dir, "bootstrap.json"))
+		if err != nil {
+			continue
+		}
+		if best == "" || info.ModTime().After(newest) {
+			best, newest = dir, info.ModTime()
+		}
+	}
+	if best == "" {
+		return proposed
+	}
+	return best
+}
+
+// maxDiscoveredSetups bounds how many setup folders discovery reads.
+const maxDiscoveredSetups = 256
 
 // findRepositoryCheckout is the top folder of the Git checkout that holds the
 // current directory.
@@ -117,7 +167,7 @@ func currentRepositorySetup(ctx context.Context) (initSetup, bool) {
 	if err != nil {
 		return initSetup{}, false
 	}
-	dir := defaultSetupDirectory(checkout)
+	dir := discoverSetupDirectory(ctx, checkout)
 	if !setupExists(dir) {
 		return initSetup{}, false
 	}
@@ -303,7 +353,7 @@ func runLatestReview(ctx context.Context, args []string, stdout, stderr io.Write
 		fmt.Fprintln(stderr, "trestle review: this folder is not inside a Git checkout (or git is not installed). Change into your repository and run trestle review again. To review a fixture file, run trestle review <path>.")
 		return 2
 	}
-	dir := defaultSetupDirectory(checkout)
+	dir := discoverSetupDirectory(ctx, checkout)
 	if options.directory != "" {
 		if dir, err = initValidateDirectory(options.directory); err != nil {
 			fmt.Fprintln(stderr, "trestle review: --directory: "+err.Error())

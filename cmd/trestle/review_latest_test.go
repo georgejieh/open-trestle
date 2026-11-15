@@ -307,3 +307,57 @@ func TestInitRerunWorksAfterTheSetupTimeCommitsAreGone(t *testing.T) {
 		t.Fatalf("last review %+v, want head %s", review, head)
 	}
 }
+
+// A setup saved with --directory under ~/.local/state/open-trestle is found by
+// trestle review, the home screen and trestle init without the flag; a setup
+// for another checkout in the same parent is never picked.
+func TestReviewFindsASetupSavedUnderAnotherFolderName(t *testing.T) {
+	checkout := latestChangeCheckout(t)
+	dir := latestChangeSetup(t, checkout)
+	resolved, err := filepath.EvalSymlinks(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	renamed := filepath.Join(filepath.Dir(dir), "my-custom-setup")
+	if err := os.Rename(dir, renamed); err != nil {
+		t.Fatal(err)
+	}
+	// The saved commands name the old folder; re-run setup into the custom folder instead.
+	if err := os.RemoveAll(renamed); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"--no-input", "--directory", renamed, "--provider", "ollama-cloud", "--generation-model", "gemma4:31b", "--verification-model", "qwen3.5:397b", "--context-tokens", "128000", "--output-tokens", "8192", "--input-micro-usd-per-million-tokens", "0", "--output-micro-usd-per-million-tokens", "0", "--max-cost-micro-usd", "0", "--credential-env", "OPEN_TRESTLE_PROVIDER_REMOTE_TEST", "--declare-remote-route"}
+	if setup := runInitScript(t, checkout, args); setup.code != initExitDone {
+		t.Fatalf("setup: exit=%d\n%s\n%s", setup.code, setup.stdout, setup.stderr)
+	}
+	if setupExists(defaultSetupDirectory(resolved)) {
+		t.Fatal("the default folder should be empty for this test")
+	}
+	if got := discoverSetupDirectory(t.Context(), resolved); got != renamed {
+		t.Fatalf("discovered %q, want %q", got, renamed)
+	}
+	// A setup for a different checkout in the same parent folder is ignored.
+	other := latestChangeCheckout(t)
+	otherDir := filepath.Join(filepath.Dir(renamed), "zz-other-repository")
+	otherArgs := append([]string{}, args...)
+	otherArgs[2] = otherDir
+	if setup := runInitScript(t, other, otherArgs); setup.code != initExitDone {
+		t.Fatalf("other setup: exit=%d\n%s\n%s", setup.code, setup.stdout, setup.stderr)
+	}
+	if got := discoverSetupDirectory(t.Context(), resolved); got != renamed {
+		t.Fatalf("after another repository's setup, discovered %q, want %q", got, renamed)
+	}
+	if err := os.WriteFile(filepath.Join(checkout, "c.go"), []byte("package p\nfunc Again() int { return 2 }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	checkoutGit(t, checkout, "add", "c.go")
+	checkoutGit(t, checkout, "commit", "-q", "-m", "again")
+	transport := latestFixtureTransport(t)
+	code, stdout, stderr := runReviewCommand(t, checkout)
+	if code != 4 || len(transport.requests) != 2 || !strings.HasPrefix(stdout, "status: findings\n") || initHas(stderr, "no Open Trestle setup yet") {
+		t.Fatalf("trestle review with a renamed setup folder: exit=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if _, ok := readLastReview(renamed); !ok {
+		t.Fatal("the review was not recorded in the discovered setup folder")
+	}
+}
