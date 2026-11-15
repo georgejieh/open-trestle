@@ -690,6 +690,13 @@ describe("console", () => {
         /Model answer not a review document: the model's answer was not a valid review document/,
       hint: "run the review again; if it repeats, choose another model",
     },
+    {
+      failure: "policy" as const,
+      reason: "provider_request_rejected" as const,
+      label:
+        /Provider request rejected: the provider rejected the request as invalid, for example an unknown model ID or a parameter the model or endpoint does not accept/,
+      hint: "check the model ID, the endpoint and its transport, and that the model and endpoint accept structured output and the requested output allowance; then re-run setup",
+    },
   ])(
     "names a provider refusal ($reason) and its hint beside the failure",
     async ({ failure, reason, label, hint }) => {

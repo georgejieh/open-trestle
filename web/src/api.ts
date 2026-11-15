@@ -51,6 +51,7 @@ const providerFailureReasons = new Map<FailureReason, Failure>([
   ["provider_rate_limited", "transient"],
   ["provider_response_invalid", "internal"],
   ["model_output_invalid", "internal"],
+  ["provider_request_rejected", "policy"],
 ]);
 const contextFailureReasons = new Set<FailureReason>([
   "route_context_insufficient",

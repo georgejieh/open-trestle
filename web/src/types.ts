@@ -20,7 +20,8 @@ export type SourceFailureReason =
 export type ContextFailureReason =
   "route_context_insufficient" | "no_eligible_route";
 /**
- * A model task's provider refusal, named from the HTTP status alone, a
+ * A model task's provider refusal, named from the HTTP status alone (a
+ * request the provider rejected as invalid is provider_request_rejected), a
  * provider reply the adapter refused (provider_response_invalid), or an
  * accepted answer that was not a valid review document (model_output_invalid).
  */
@@ -32,7 +33,8 @@ export type ProviderFailureReason =
   | "provider_authorization_denied"
   | "provider_rate_limited"
   | "provider_response_invalid"
-  | "model_output_invalid";
+  | "model_output_invalid"
+  | "provider_request_rejected";
 export type FailureReason =
   SourceFailureReason | ContextFailureReason | ProviderFailureReason;
 /** The counts of a route_context_insufficient refusal. */

@@ -87,6 +87,8 @@ const failureReasonLabels: Record<FailureReason, string> = {
     "Provider reply refused: the provider answered, but its reply did not match what Open Trestle accepts, for example malformed or truncated output, an unrecognized field or an unexpected HTTP status",
   model_output_invalid:
     "Model answer not a review document: the model's answer was not a valid review document (for example malformed JSON, the wrong shape or a refusal)",
+  provider_request_rejected:
+    "Provider request rejected: the provider rejected the request as invalid, for example an unknown model ID or a parameter the model or endpoint does not accept",
 };
 /** The fixed action for each provider refusal, as the local review prints it. */
 const failureReasonHints: Partial<Record<FailureReason, string>> = {
@@ -106,6 +108,8 @@ const failureReasonHints: Partial<Record<FailureReason, string>> = {
     "run the review again; if it repeats, choose another model or route and report it",
   model_output_invalid:
     "run the review again; if it repeats, choose another model",
+  provider_request_rejected:
+    "check the model ID, the endpoint and its transport, and that the model and endpoint accept structured output and the requested output allowance; then re-run setup",
 };
 const emptyScope: Scope = { tenant: "", repository: "", run: "" };
 function rememberedScope(): Scope {
