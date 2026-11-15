@@ -52,21 +52,38 @@ func declarationChange(change string) string {
 	return change
 }
 
+// scanTotals words a secret scan's totals.
+func scanTotals(scan WalkthroughSecretScan) string {
+	text := fmt.Sprintf("(%d bytes, %d secret match%s", scan.ScannedBytes, scan.Matches, map[bool]string{true: "", false: "es"}[scan.Matches == 1])
+	if scan.RedactedBytes > 0 {
+		text += fmt.Sprintf(", %d bytes redacted", scan.RedactedBytes)
+	}
+	return text + ")"
+}
+
 // walkthroughVerifiedTexts are the "what was verified" statements, in order.
-func walkthroughVerifiedTexts(w *Walkthrough, code func(string) string) []string {
+// set, when not nil, counts the review set members whose secret scans and
+// verifier accounts the totals sum.
+func walkthroughVerifiedTexts(w *Walkthrough, code func(string) string, set *setScanCounts) []string {
 	verified := w.Verified
 	var lines []string
-	switch scan := verified.SecretScan; scan.State {
-	case SecretScanScanned:
-		text := fmt.Sprintf("secret scan: %d model request%s scanned before sending (%d bytes, %d secret match%s", scan.Requests, plural(scan.Requests), scan.ScannedBytes, scan.Matches, map[bool]string{true: "", false: "es"}[scan.Matches == 1])
-		if scan.RedactedBytes > 0 {
-			text += fmt.Sprintf(", %d bytes redacted", scan.RedactedBytes)
-		}
-		lines = append(lines, text+")")
-	case SecretScanNotRun:
+	from := ""
+	if set != nil {
+		from = fmt.Sprintf(" from %d reviewer%s", set.reviewers-set.scanUnavailable, plural(set.reviewers-set.scanUnavailable))
+	}
+	switch scan := verified.SecretScan; {
+	case scan.State == SecretScanScanned:
+		lines = append(lines, fmt.Sprintf("secret scan: %d model request%s%s scanned before sending %s", scan.Requests, plural(scan.Requests), from, scanTotals(scan)))
+	case scan.State == SecretScanNotRun:
 		lines = append(lines, "secret scan: no model request was prepared")
-	default:
+	case set == nil:
 		lines = append(lines, "secret scan: a scan receipt could not be read")
+	default:
+		text := fmt.Sprintf("secret scan: the scan account of %d of %d reviewers could not be read", set.scanUnavailable, set.reviewers)
+		if scan.Requests > 0 {
+			text += fmt.Sprintf("; %d model request%s%s scanned before sending %s", scan.Requests, plural(scan.Requests), from, scanTotals(scan))
+		}
+		lines = append(lines, text)
 	}
 	for _, check := range verified.StaticChecks {
 		lines = append(lines, fmt.Sprintf("static check %s: %s (%d file%s checked, %d match%s)", code(check.Key), check.State, check.CheckedFiles, plural(int(check.CheckedFiles)), check.Matches, map[bool]string{true: "", false: "es"}[check.Matches == 1]))
@@ -82,7 +99,14 @@ func walkthroughVerifiedTexts(w *Walkthrough, code func(string) string) []string
 		lines = append(lines, "semantic impact: unavailable (no analysis was recorded)")
 	}
 	if verifier := verified.Verifier; verifier != nil {
-		lines = append(lines, fmt.Sprintf("independent verifier (%s): %d of %d candidate%s confirmed, %d rejected, %d inconclusive", verifier.Independence, verifier.Verified, verifier.Candidates, plural(int(verifier.Candidates)), verifier.Rejected, verifier.Inconclusive))
+		of := ""
+		if set != nil {
+			of = fmt.Sprintf(" from %d reviewer%s", set.verified, plural(set.verified))
+			if set.verified != set.reviewers {
+				of = fmt.Sprintf(" from %d of %d reviewers", set.verified, set.reviewers)
+			}
+		}
+		lines = append(lines, fmt.Sprintf("independent verifier (%s): %d of %d candidate%s%s confirmed, %d rejected, %d inconclusive", verifier.Independence, verifier.Verified, verifier.Candidates, plural(int(verifier.Candidates)), of, verifier.Rejected, verifier.Inconclusive))
 	} else {
 		lines = append(lines, "independent verifier: no verified set was recorded")
 	}
@@ -137,9 +161,23 @@ func WalkthroughText(w *Walkthrough) []string {
 	if w == nil {
 		return nil
 	}
+	return walkthroughText(w, nil)
+}
+
+// SetWalkthroughText renders a review set's walkthrough as text lines: the
+// secret scan and verifier lines name how many reviewers they total.
+func SetWalkthroughText(w *SetWalkthrough) []string {
+	if w == nil {
+		return nil
+	}
+	counts := w.counts()
+	return walkthroughText(&w.Walkthrough, &counts)
+}
+
+func walkthroughText(w *Walkthrough, set *setScanCounts) []string {
 	plain := func(value string) string { return value }
 	lines := []string{"walkthrough:\n"}
-	for _, text := range walkthroughVerifiedTexts(w, plain) {
+	for _, text := range walkthroughVerifiedTexts(w, plain, set) {
 		lines = append(lines, "verified: "+text+"\n")
 	}
 	notListed := w.FilesNotListed
@@ -314,9 +352,23 @@ func WalkthroughMarkdown(w *Walkthrough) string {
 	if w == nil {
 		return ""
 	}
+	return walkthroughMarkdown(w, nil)
+}
+
+// SetWalkthroughMarkdown renders a review set's walkthrough's Markdown
+// sections, with the totals over its reviewers.
+func SetWalkthroughMarkdown(w *SetWalkthrough) string {
+	if w == nil {
+		return ""
+	}
+	counts := w.counts()
+	return walkthroughMarkdown(&w.Walkthrough, &counts)
+}
+
+func walkthroughMarkdown(w *Walkthrough, set *setScanCounts) string {
 	var buffer bytes.Buffer
 	buffer.WriteString("### What was verified\n\n")
-	for _, text := range walkthroughVerifiedTexts(w, MarkdownCode) {
+	for _, text := range walkthroughVerifiedTexts(w, MarkdownCode, set) {
 		buffer.WriteString("- " + strings.ToUpper(text[:1]) + text[1:] + ".\n")
 	}
 	if len(w.Files) > 0 || w.FilesNotListed > 0 {

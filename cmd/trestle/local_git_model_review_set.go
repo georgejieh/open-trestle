@@ -415,15 +415,15 @@ type modelReviewSetWire struct {
 	Selection specialistSelectionWire `json:"selection"`
 	Members   []setMemberWire         `json:"members"`
 	Summary   setSummaryWire          `json:"summary"`
-	// Walkthrough is the general member's walkthrough, once for the set: every
-	// member reviews the same change, so the per-file summary and missing
-	// verification are shared, and its verifier account is the general
-	// review's; each member's own counts are on its member entry.
-	Walkthrough            *localreview.Walkthrough `json:"walkthrough,omitempty"`
-	Findings               []setFindingWire         `json:"findings"`
-	Bounds                 setBoundsWire            `json:"bounds"`
-	Limitations            []string                 `json:"limitations"`
-	ComprehensiveClearance bool                     `json:"comprehensive_clearance"`
+	// Walkthrough describes the whole set (localreview.AggregateWalkthroughs):
+	// the secret scan and verifier totals over the completed members, with
+	// each one's own account in verified_by_member, and the shared per-file
+	// summary and deduplicated missing-verification notes.
+	Walkthrough            *localreview.SetWalkthrough `json:"walkthrough,omitempty"`
+	Findings               []setFindingWire            `json:"findings"`
+	Bounds                 setBoundsWire               `json:"bounds"`
+	Limitations            []string                    `json:"limitations"`
+	ComprehensiveClearance bool                        `json:"comprehensive_clearance"`
 	// StyleAdvice repeats the general member's style advice once for the set,
 	// inline. Its fields are omitted when it has none, so a set without advice
 	// keeps its version 1 bytes.
@@ -655,10 +655,13 @@ func buildModelReviewSet(selection specialistSelectionWire, members []localModel
 	// shares, so the set reports the general member's once, never per member.
 	if len(members) > 0 && members[0].specialist.IsZero() {
 		set.StyleAdvice = members[0].result.StyleAdvice()
-		if report, err := members[0].result.Report(); err == nil {
-			set.Walkthrough = report.Walkthrough
-		}
 	}
+	// The walkthrough totals every completed member, in member order. When no
+	// member completed, the first member with a walkthrough (a general review
+	// that failed after recording the change) describes the set alone, so its
+	// per-file summary is kept.
+	var walks []localreview.MemberWalkthrough
+	var firstWalk *localreview.MemberWalkthrough
 	var memberFindings [][]localreview.ReportFinding
 	labels := make([]string, len(members))
 	complete := true
@@ -699,8 +702,12 @@ func buildModelReviewSet(selection specialistSelectionWire, members []localModel
 			}
 			if report.RunStatus == "succeeded" {
 				memberFindings = append(memberFindings, report.Findings)
+				walks = append(walks, localreview.MemberWalkthrough{Member: labels[index], Walkthrough: report.Walkthrough})
 			} else {
 				memberFindings = append(memberFindings, nil)
+				if firstWalk == nil && report.Walkthrough != nil {
+					firstWalk = &localreview.MemberWalkthrough{Member: labels[index], Walkthrough: report.Walkthrough}
+				}
 			}
 			if index == 0 {
 				set.headRevision, set.independence = report.HeadRevision, report.Independence
@@ -727,6 +734,10 @@ func buildModelReviewSet(selection specialistSelectionWire, members []localModel
 		}
 		set.Members = append(set.Members, wire)
 	}
+	if len(walks) == 0 && firstWalk != nil {
+		walks = append(walks, *firstWalk)
+	}
+	set.Walkthrough = localreview.AggregateWalkthroughs(walks)
 	independence := make([]string, len(set.Members))
 	for index, member := range set.Members {
 		independence[index] = member.Independence
@@ -1005,7 +1016,7 @@ func renderModelReviewSetText(set modelReviewSetWire, options localreview.Render
 	if coverage := set.Summary.SourceCoverage; coverage != nil {
 		fmt.Fprintf(&buffer, "files covered: analyzed=%d selected=%d omitted=%d\n", coverage.Analyzed, coverage.Selected, coverage.Omitted)
 	}
-	for _, line := range localreview.WalkthroughText(set.Walkthrough) {
+	for _, line := range localreview.SetWalkthroughText(set.Walkthrough) {
 		buffer.WriteString(line)
 	}
 	buffer.WriteString(localreview.FindingsText(set.rankedGroups(), options, setContributors))
@@ -1042,7 +1053,7 @@ func renderModelReviewSetMarkdown(set modelReviewSetWire, options localreview.Re
 		}
 	}
 	if set.Walkthrough != nil {
-		buffer.WriteString("\n" + localreview.WalkthroughMarkdown(set.Walkthrough))
+		buffer.WriteString("\n" + localreview.SetWalkthroughMarkdown(set.Walkthrough))
 	}
 	buffer.WriteString(localreview.FindingsMarkdown(set.rankedGroups(), options, setContributors))
 	if !set.Complete {

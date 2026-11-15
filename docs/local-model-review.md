@@ -1172,9 +1172,29 @@ missing-verification notes, and counts the rest (`files_not_listed`,
 `declarations_not_listed`, `missing_verification_not_listed`); text and Markdown
 list at most 32 files. When the result would exceed its output bound with the
 walkthrough, it is left out and the result records
-`walkthrough_omitted_output_limit`; it is never truncated. A review set reports
-the general member's walkthrough once; each member's own verifier counts are on
-its member entry. An investigation run has no walkthrough.
+`walkthrough_omitted_output_limit`; it is never truncated. An investigation run
+has no walkthrough.
+
+A review set's `walkthrough` describes the whole set. Every member reviews the
+same change, so the per-file summary, the deterministic checks, style detection
+and the semantic-impact summary are shared and come from the first completed
+member (the general review), and the missing-verification notes are the
+completed members' notes, deduplicated. The secret scan and the independent
+verifier ran once per member, so `verified.secret_scan` is the total over the
+completed members (requests, scanned bytes, matches and redacted bytes;
+`scanned` when every member scanned or prepared no request, `unavailable` when a
+member's account could not be read, with the totals then covering the members
+that scanned) and `verified.verifier` totals their candidates, confirmed,
+rejected and inconclusive counts, before duplicates are merged, with the weakest
+independence among them. `walkthrough.verified_by_member` lists each completed
+member's own `secret_scan` and `verifier`, in member order. When no member
+completed, the first member with a walkthrough describes the set alone. Text
+and Markdown name the reviewers the totals cover:
+
+```text
+verified: secret scan: 6 model requests from 3 reviewers scanned before sending (876 bytes, 0 secret matches)
+verified: independent verifier (distinct_provider): 3 of 3 candidates from 3 reviewers confirmed, 0 rejected, 0 inconclusive
+```
 
 Text output shows the walkthrough, then the confirmed findings in rank order,
 then the pre-existing findings, then the hidden count, then coverage and
