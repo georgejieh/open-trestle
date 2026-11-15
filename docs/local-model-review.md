@@ -135,7 +135,8 @@ Do not mask a nonzero status or treat an empty finding list as CI approval.
 `--format` selects `json` (default), `text`, `sarif` or `markdown` (a pull request
 summary comment; see [ranked findings and the walkthrough](#ranked-findings-and-the-walkthrough)).
 Text and Markdown list confirmed high, critical and medium findings and count
-the rest; `--all` lists every finding. For a separately admitted
+the rest (when there are none, up to 10 lower-severity findings, so a finding is
+never hidden behind nothing); `--all` lists every finding. For a separately admitted
 daemon run, `runs status --format json|sarif` retrieves the canonical result;
 successful retrieval is not a review-pass decision. No export creates publication
 permission. This headless example remains ephemeral and cannot resume an older
@@ -1061,7 +1062,11 @@ strength (distinct evidence items, then a narrower range), then location,
 category and identity. Text and Markdown list confirmed high, critical and
 medium findings; the rest are counted, for example
 `hidden: 1 lower-severity finding not shown; add --all to list every finding (the JSON output lists all)`.
-`--all` lists every finding. JSON and SARIF always carry every finding.
+When no confirmed finding is high, critical or medium, the output never hides
+every finding: it lists the lower-severity findings instead, at most 10 in rank
+order, and counts the rest the same way. The first review in `trestle init`
+shows the same lists. `--all` lists every finding. JSON and SARIF always carry
+every finding.
 
 ### Pre-existing findings
 

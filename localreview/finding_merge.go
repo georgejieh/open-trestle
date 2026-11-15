@@ -98,7 +98,8 @@ func (m MergedFinding) PreExisting() bool {
 }
 
 // ShownByDefault reports a confirmed high, critical or medium finding: text
-// and Markdown output list these and count the rest unless --all is given.
+// and Markdown output list these and count the rest unless --all is given or
+// none of them exists (see FindingSections).
 func (m MergedFinding) ShownByDefault() bool {
 	return severityRank(m.Finding.Severity) >= severityRank(diagnostics.SeverityWarning)
 }

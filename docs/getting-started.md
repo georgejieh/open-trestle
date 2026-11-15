@@ -347,6 +347,8 @@ the reviews that confirmed it (`contributors: general, bug_hunter`).
 - `confirmed findings (ranked)`: high, critical and medium findings, most
   important first. Findings that repeat one another are merged. Lower-severity
   findings are counted on a `hidden:` line; `trestle review --all` lists them.
+  When every confirmed finding is low severity, up to ten of them are listed,
+  so the result never hides them all.
 - `pre-existing findings`: confirmed problems on unchanged lines that cite
   nothing the change touched. They are listed separately and never make the
   review blocking.

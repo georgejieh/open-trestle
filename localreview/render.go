@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/georgejieh/open-trestle/diagnostics"
@@ -19,7 +20,8 @@ import (
 // RenderOptions selects what text and Markdown output show.
 type RenderOptions struct {
 	// All lists every confirmed finding. By default only high, critical and
-	// medium findings are listed and the rest are counted.
+	// medium findings are listed and the rest are counted, unless there are
+	// none of those (see FindingSections).
 	All bool
 }
 
@@ -163,11 +165,25 @@ func WalkthroughText(w *Walkthrough) []string {
 	return lines
 }
 
+// MaxLowerSeverityShown caps the lower-severity findings text and Markdown
+// list by default when no confirmed finding is high, critical or medium.
+const MaxLowerSeverityShown = 10
+
 // FindingSections splits ranked findings into the shown confirmed findings,
-// the shown pre-existing ones and the hidden count.
+// the shown pre-existing ones and the hidden count. By default it shows the
+// high, critical and medium findings and counts the rest; when there is none
+// of those, it never hides everything: it shows the first
+// MaxLowerSeverityShown lower-severity findings in rank order and counts the
+// rest. options.All shows every finding.
 func FindingSections(ranked []MergedFinding, options RenderOptions) (confirmed, preExisting []MergedFinding, hidden int) {
+	lowerOnly := !slices.ContainsFunc(ranked, MergedFinding.ShownByDefault)
+	lowerShown := 0
 	for _, group := range ranked {
-		if !options.All && !group.ShownByDefault() {
+		switch {
+		case options.All || group.ShownByDefault():
+		case lowerOnly && lowerShown < MaxLowerSeverityShown:
+			lowerShown++
+		default:
 			hidden++
 			continue
 		}

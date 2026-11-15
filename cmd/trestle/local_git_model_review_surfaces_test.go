@@ -70,19 +70,28 @@ func TestModelReviewTextShowsWalkthroughThenRankedFindings(t *testing.T) {
 	}
 }
 
-// By default a low-severity finding is counted, not listed, with a note on
-// --all; --all lists it. JSON carries it either way, with its rank.
-func TestModelReviewTextHidesLowSeverityUnlessAll(t *testing.T) {
+// A low-severity finding is listed when no confirmed finding outranks it:
+// text, Markdown and a review set never hide every finding. JSON carries it
+// either way, with its rank.
+func TestModelReviewListsLowSeverityWhenNothingOutranksIt(t *testing.T) {
 	f := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, verificationMode: "low"})
 	text := runModelReviewOutput(t, f, []string{"--format", "text"}, 4)
-	if strings.Contains(text, "finding: information") || !strings.Contains(text, "hidden: 1 lower-severity finding not shown; add --all to list every finding (the JSON output lists all)\n") || strings.Contains(text, "confirmed findings (ranked)") {
-		t.Fatalf("default text did not count the low finding:\n%s", text)
+	requireInOrder(t, text, "walkthrough:\n", "confirmed findings (ranked): 1\n", "finding: information Zero-valued caller now panics\nrank: 1\n")
+	if strings.Contains(text, "hidden:") {
+		t.Fatalf("default text hid the only finding:\n%s", text)
+	}
+	markdown := runModelReviewOutput(t, f, []string{"--format", "markdown"}, 4)
+	requireInOrder(t, markdown, "### Confirmed findings\n\n1. **Low: Zero-valued caller now panics**")
+	if strings.Contains(markdown, "None listed.") || strings.Contains(markdown, "not shown") {
+		t.Fatalf("default Markdown hid the only finding:\n%s", markdown)
+	}
+	set := runModelReviewOutput(t, f, []string{"--specialists", "bug_hunter", "--format", "text"}, 4)
+	requireInOrder(t, set, "confirmed findings (ranked): 1\n", "finding: information Zero-valued caller now panics\n")
+	if strings.Contains(set, "hidden:") {
+		t.Fatalf("default set text hid the only finding:\n%s", set)
 	}
 	all := runModelReviewOutput(t, f, []string{"--format", "text", "--all"}, 4)
 	requireInOrder(t, all, "confirmed findings (ranked): 1\n", "finding: information Zero-valued caller now panics\nrank: 1\n")
-	if strings.Contains(all, "hidden:") {
-		t.Fatalf("--all still hid a finding:\n%s", all)
-	}
 	var receipt judgementReceipt
 	if err := json.Unmarshal([]byte(runModelReviewOutput(t, f, nil, 4)), &receipt); err != nil || len(receipt.Rank) != 1 || len(receipt.Diagnostics.Findings) != 1 {
 		t.Fatalf("JSON lost the low finding or its rank: %+v %v", receipt, err)

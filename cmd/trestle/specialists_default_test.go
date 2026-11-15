@@ -236,3 +236,23 @@ func TestSpendingWarningCountsEveryMember(t *testing.T) {
 		t.Fatalf("a set near its limit ran members concurrently:\n%s", stdout.String())
 	}
 }
+
+// The first review's box never hides every finding: a review whose confirmed
+// findings are all low severity lists them.
+func TestInitFirstReviewListsLowSeverityFindings(t *testing.T) {
+	remoteScannerInstalled(t)
+	t.Setenv("OPEN_TRESTLE_PROVIDER_REMOTE_TEST", remoteTestKey)
+	transport := &remoteModelTransport{t: t, target: "https://ollama.com/v1/chat/completions", models: map[string]string{"gemma4:31b": "", "qwen3.5:397b": ""}, verificationSeverity: "low"}
+	remoteModelClient(t, transport)
+	checkout := latestChangeCheckout(t)
+	dir := filepath.Join(t.TempDir(), "setup")
+	args := []string{"--no-input", "--run-review", "--directory", dir, "--base", "refs/heads/base", "--head", "refs/heads/review", "--provider", "ollama-cloud", "--generation-model", "gemma4:31b", "--verification-model", "qwen3.5:397b", "--context-tokens", "128000", "--output-tokens", "8192", "--input-micro-usd-per-million-tokens", "0", "--output-micro-usd-per-million-tokens", "0", "--max-cost-micro-usd", "0", "--credential-env", "OPEN_TRESTLE_PROVIDER_REMOTE_TEST", "--declare-remote-route"}
+	setup := runInitScriptAsIs(t, checkout, args)
+	output := setup.stdout + setup.stderr
+	if setup.code != initExitDone || !initHas(output, "Review finished: 1 confirmed finding") {
+		t.Fatalf("first review: exit=%d\n%s", setup.code, output)
+	}
+	if !initHas(output, "│ confirmed findings (ranked): 1") || !initHas(output, "│ finding: information Zero-valued caller now panics") || initHas(output, "lower-severity finding not shown") {
+		t.Fatalf("the first review box hid the only (low-severity) finding:\n%s", output)
+	}
+}

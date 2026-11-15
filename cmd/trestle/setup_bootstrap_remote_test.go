@@ -43,9 +43,12 @@ type remoteModelTransport struct {
 	// verificationStatus, when set, answers every verification request with
 	// that HTTP status and no usage.
 	verificationStatus int
-	mu                 sync.Mutex
-	requests           []string                     // "task:model"
-	providers          []map[string]json.RawMessage // each request's provider object, nil when absent
+	// verificationSeverity, when set, is the severity every verdict reports
+	// instead of high.
+	verificationSeverity string
+	mu                   sync.Mutex
+	requests             []string                     // "task:model"
+	providers            []map[string]json.RawMessage // each request's provider object, nil when absent
 }
 
 func (r *remoteModelTransport) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -137,8 +140,12 @@ func (r *remoteModelTransport) RoundTrip(request *http.Request) (*http.Response,
 			return nil, errors.New("invalid verification request")
 		}
 		verdicts := []any{}
+		severity := "high"
+		if r.verificationSeverity != "" {
+			severity = r.verificationSeverity
+		}
 		for _, candidate := range packet.Candidates {
-			verdicts = append(verdicts, map[string]any{"candidate_id": candidate.ID, "outcome": "verified", "severity": "high", "rationale": "The cited caller passes zero to the unguarded integer division.", "evidence_ids": evidenceIDs})
+			verdicts = append(verdicts, map[string]any{"candidate_id": candidate.ID, "outcome": "verified", "severity": severity, "rationale": "The cited caller passes zero to the unguarded integer division.", "evidence_ids": evidenceIDs})
 		}
 		output = map[string]any{"schema_version": 1, "verdicts": verdicts}
 	default:
