@@ -160,11 +160,11 @@ func (w *initWizard) summaryRows() [][2]string {
 	if row, ok := w.spendingRow(); ok {
 		rows = append(rows, [2]string{"Spending", row})
 	}
-	switch {
+	switch state := providerKeyStatus(a.credentialEnv); {
 	case a.credentialEnv == "":
 		rows = append(rows, [2]string{"Key", "none"})
-	case os.Getenv(a.credentialEnv) != "":
-		rows = append(rows, [2]string{"Key", a.credentialEnv + " (set; never stored)"})
+	case state.available():
+		rows = append(rows, [2]string{"Key", a.credentialEnv + " (" + state.where() + ")"})
 	default:
 		rows = append(rows, [2]string{"Key", a.credentialEnv + " (not set yet)"})
 	}

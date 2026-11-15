@@ -665,7 +665,7 @@ func checkSetupBootstrap(ctx context.Context, dir, backupDir, owner string, allo
 	}
 	var inference *setupcore.LocalInferenceChecker
 	if allowProbe {
-		factory, err := newSetupLocalInferenceFactory(os.Getenv)
+		factory, err := newSetupLocalInferenceFactory(providerCredentialLookup)
 		if err != nil {
 			return nil, err
 		}

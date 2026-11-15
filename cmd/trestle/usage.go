@@ -228,9 +228,10 @@ func usageStatusLines(ctx context.Context, store *spending.Store) ([]string, err
 		lines = append(lines, "  "+usageKeyLabel(scope)+": "+spending.SumSpend(entries, scope).Unlimited(spending.PeriodMonth))
 		lines = append(lines, usageProviderLines(ctx, scope)...)
 	}
-	// An OpenRouter key in this shell with no limit and no spend yet still
-	// gets OpenRouter's own figures, which need no limit to be useful.
-	if scope, err := spending.NewScope("openrouter", usageOpenRouterKeyVariable); err == nil && !shown[scope] && os.Getenv(usageOpenRouterKeyVariable) != "" && !slices.Contains(spending.Scopes(entries), scope) {
+	// An OpenRouter key in this shell or the credential store with no limit
+	// and no spend yet still gets OpenRouter's own figures, which need no
+	// limit to be useful.
+	if scope, err := spending.NewScope("openrouter", usageOpenRouterKeyVariable); err == nil && !shown[scope] && providerKeyStatus(usageOpenRouterKeyVariable).available() && !slices.Contains(spending.Scopes(entries), scope) {
 		lines = append(lines, "  "+usageKeyLabel(scope)+": "+spending.SumSpend(entries, scope).Unlimited(spending.PeriodMonth))
 		lines = append(lines, usageProviderLines(ctx, scope)...)
 	}
@@ -248,15 +249,20 @@ func usageKeyLabel(scope spending.Scope) string {
 	return scope.CredentialEnvironment + " (" + scope.ProviderID + ")"
 }
 
-// usageProviderLines reads OpenRouter's report for an OpenRouter key whose
-// variable is set. A failure only says the report could not be read.
+// usageProviderLines reads OpenRouter's report for an OpenRouter key that is
+// set in the environment or saved in the credential store. A failure only
+// says the report could not be read.
 func usageProviderLines(ctx context.Context, scope spending.Scope) []string {
 	if scope.ProviderID != "openrouter" {
 		return nil
 	}
-	key := os.Getenv(scope.CredentialEnvironment)
+	key, state := providerKey(scope.CredentialEnvironment)
 	if key == "" {
-		return []string{"    OpenRouter's own figures are not read: " + scope.CredentialEnvironment + " is not set in this shell."}
+		reason := " is not set in this shell and no key is saved for it."
+		if state.problem != nil {
+			reason = " is not set in this shell, and " + state.where() + "."
+		}
+		return []string{"    OpenRouter's own figures are not read: " + scope.CredentialEnvironment + reason}
 	}
 	usage, err := spending.ReadOpenRouterKeyUsage(ctx, usageOpenRouterTransport, key)
 	if err != nil {

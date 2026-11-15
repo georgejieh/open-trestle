@@ -21,7 +21,7 @@ func runSetup(args []string, stdout, stderr io.Writer) int {
 	return runSetupWithClock(args, stdout, stderr, systemSetupClock{})
 }
 func runSetupWithClock(args []string, stdout, stderr io.Writer, clock setupClock) int {
-	factory, err := newSetupLocalInferenceFactory(os.Getenv)
+	factory, err := newSetupLocalInferenceFactory(providerCredentialLookup)
 	if err != nil {
 		writeSetupUsage(stderr)
 		return 2

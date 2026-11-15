@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 
@@ -205,7 +204,7 @@ func (w *initWizard) spendingStatus(setup initSetup) {
 		}
 		w.say("  Spending: %s.", status.Summary())
 		shown = true
-		if os.Getenv(name) != "" {
+		if providerKeyStatus(name).available() {
 			for _, line := range usageProviderLines(w.ctx, scope) {
 				w.say("  %s", strings.TrimSpace(line))
 			}

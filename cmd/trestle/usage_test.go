@@ -98,7 +98,7 @@ func TestUsageSetsShowsAndClearsALimit(t *testing.T) {
 	code, out, _ = runUsageCommand(t)
 	for _, want := range []string{
 		"  OPEN_TRESTLE_PROVIDER_OPENROUTER (openrouter): $0.74 of your $10.00 monthly limit this month (7%), alerts at 80% and 100%; 1 review counts at its reservation because its usage was not reported\n",
-		"    OpenRouter's own figures are not read: OPEN_TRESTLE_PROVIDER_OPENROUTER is not set in this shell.\n",
+		"    OpenRouter's own figures are not read: OPEN_TRESTLE_PROVIDER_OPENROUTER is not set in this shell and no key is saved for it.\n",
 		"  OPEN_TRESTLE_PROVIDER_REMOTE_TEST (ollama-cloud): $0.07 recorded this month; no limit set\n",
 		spending.Note,
 	} {

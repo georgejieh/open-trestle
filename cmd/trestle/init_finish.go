@@ -452,11 +452,10 @@ func (w *initWizard) renderRemote(result remoteBootstrapResult, setup initSetup)
 		keys = append(keys, "credential_environment_present")
 	}
 	keys = append(keys, "sanitized_egress_scanner")
-	names := strings.Join(setup.credentials, ", ")
 	labels := map[string]string{
 		"privacy_declaration_current":    "Your declared privacy review window is current",
 		"dispatch_catalog_validated":     "The saved configuration loads into the model dispatcher",
-		"credential_environment_present": "API key variable " + names + " is set",
+		"credential_environment_present": initKeyCheckLabel(setup.credentials),
 		"ollama_cloud_models_listed":     "Your local Ollama lists both models as Ollama Cloud models",
 		"sanitized_egress_scanner":       "The secret scanner is installed (it checks every request before it leaves)",
 	}
@@ -484,7 +483,7 @@ func (w *initWizard) renderRemote(result remoteBootstrapResult, setup initSetup)
 		"privacy_declaration_current/refused":    "Your declared review window has ended. Review the provider terms and your account again, then run trestle init --directory NEW_FOLDER.",
 		"dispatch_catalog_validated/refused":     "The saved files could not be prepared for sending. Set up again with trestle init --directory NEW_FOLDER.",
 		"dispatch_catalog_validated/skipped":     "Checked once the review window is current.",
-		"credential_environment_present/pending": "Export the key in this shell without showing it, then run `trestle init` again in this repository:",
+		"credential_environment_present/pending": "Save the key once (the input is hidden), or export it in this shell without showing it, then run `trestle init` again in this repository:",
 		"ollama_cloud_models_listed/pending":     "Start Ollama on this machine (`ollama serve`, or the Ollama app), then run `trestle init` again in this repository.",
 		"ollama_cloud_models_listed/refused":     "A chosen model is no longer listed as an Ollama Cloud model by your local Ollama. Set up again with trestle init --directory NEW_FOLDER.",
 		"sanitized_egress_scanner/pending":       "Install the scanner from a packaged release: sudo ./open-trestle-linux-amd64.pyz install (docs/remote-model-review.md#prerequisite-1-a-scanner-bound-binary-and-installed-scanner).",
@@ -499,7 +498,11 @@ func (w *initWizard) renderRemote(result remoteBootstrapResult, setup initSetup)
 		}
 		if key == "credential_environment_present" && current == "pending" {
 			for _, name := range setup.credentials {
-				if os.Getenv(name) == "" {
+				if state := providerKeyStatus(name); !state.available() {
+					if state.problem != nil {
+						w.hint("        " + name + ": " + state.where() + ".")
+					}
+					w.sayVerbatim("          trestle keys set " + name)
 					w.sayVerbatim("          read -rs " + name + " && export " + name)
 				}
 			}
@@ -519,6 +522,26 @@ func (w *initWizard) renderRemote(result remoteBootstrapResult, setup initSetup)
 		w.say("    %s Zero data retention is not required by Open Trestle (your OpenRouter account or key settings may still enforce it); a model provider may keep prompts under its own terms", w.optional)
 	}
 	return tally.String()
+}
+
+// initKeyCheckLabel names the key check and, once every key is available,
+// where each was found: "API key variable NAME is set (from the
+// environment)".
+func initKeyCheckLabel(names []string) string {
+	parts := make([]string, 0, len(names))
+	found := true
+	for _, name := range names {
+		state := providerKeyStatus(name)
+		found = found && state.available()
+		parts = append(parts, name+" ("+state.where()+")")
+	}
+	switch {
+	case !found || len(names) == 0:
+		return "API key variable " + strings.Join(names, ", ") + " is set"
+	case len(names) == 1:
+		return "API key variable " + names[0] + " is set (" + providerKeyStatus(names[0]).where() + ")"
+	}
+	return "API key variables " + strings.Join(parts, ", ") + " are set"
 }
 
 func state0(result remoteBootstrapResult, key string) string {
@@ -724,7 +747,7 @@ func (w *initWizard) writeNextSteps(setup initSetup, outcome initOutcome) {
 	fmt.Fprintf(&b, "Open Trestle next steps\n\nRepository: %s\nSetup folder: %s\n", w.checkout, dir)
 	fmt.Fprintf(&b, "Models: finder %s, checker %s\nRuns on: %s\n", setup.generationModel, setup.verificationModel, setup.destination())
 	if len(setup.credentials) != 0 {
-		fmt.Fprintf(&b, "API key variable: %s (export it in the shell that runs the review; the value is never stored)\n", strings.Join(setup.credentials, ", "))
+		fmt.Fprintf(&b, "API key variable: %s (export it in the shell that runs the review, or save it once with `trestle keys set NAME`; the key is never written to this folder)\n", strings.Join(setup.credentials, ", "))
 	}
 	fmt.Fprintf(&b, "\nRe-run the setup checks: run `trestle init` again in the repository, or\n")
 	check := []string{"trestle", "setup", "bootstrap", "check", "--directory", dir}

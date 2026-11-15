@@ -25,10 +25,11 @@ import (
 // guarantee.
 
 // Tests replace the clock and the credential lookup; production reads the
-// system clock and the process environment.
+// system clock and each provider key from the environment, then the
+// credential store (providerCredentialLookup).
 var (
 	spendingNow                 = func() time.Time { return time.Now().UTC() }
-	localReviewCredentialLookup = os.Getenv
+	localReviewCredentialLookup = providerCredentialLookup
 )
 
 // spendingRecordTimeout bounds the ledger append after a run, which uses its

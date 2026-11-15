@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/georgejieh/open-trestle/runtimecatalog"
 
@@ -37,7 +36,7 @@ func runConfigModels(args []string, stdout, stderr io.Writer) int {
 	}
 	var result any
 	if args[0] == "refresh" {
-		resolver, _ := runtimecatalog.NewEnvironmentOpenAICredentialResolver(os.Getenv)
+		resolver, _ := runtimecatalog.NewEnvironmentOpenAICredentialResolver(providerCredentialLookup)
 		review, err := modelcatalog.RefreshWithCredentials(context.Background(), *sources, *current, *proposal, remote, resolver)
 		if err != nil {
 			fmt.Fprintf(stderr, "model catalog refresh: %v\n", err)

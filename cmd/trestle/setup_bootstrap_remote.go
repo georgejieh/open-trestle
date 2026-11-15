@@ -354,7 +354,7 @@ func checkRemoteSetupBootstrap(ctx context.Context, manifest remoteBootstrapMani
 		}
 	}
 	if current {
-		resolver, err := runtimecatalog.NewEnvironmentOpenAICredentialResolver(os.Getenv)
+		resolver, err := runtimecatalog.NewEnvironmentOpenAICredentialResolver(providerCredentialLookup)
 		if err == nil {
 			// Construction resolves only credential references and performs no request.
 			_, err = runtimecatalog.NewOpenAIRouteDispatcherCatalogFromRuntimePolicy(inventory, policy, resolver)
@@ -367,8 +367,12 @@ func checkRemoteSetupBootstrap(ctx context.Context, manifest remoteBootstrapMani
 		checkOllamaSigninBootstrap(ctx, inventory, policy, pending, refused)
 	}
 	for _, name := range manifest.CredentialEnvironments {
-		if os.Getenv(name) == "" {
-			pending("credential_environment_present", "export "+name+" with the provider key in the shell that runs review_command; setup never stores or prints its value")
+		if state := providerKeyStatus(name); !state.available() {
+			message := "export " + name + " with the provider key in the shell that runs review_command, or save it once with `trestle keys set " + name + "`; setup bootstrap never stores or prints its value"
+			if state.problem != nil {
+				message += " (" + state.where() + ")"
+			}
+			pending("credential_environment_present", message)
 		}
 	}
 	switch err := setupBootstrapScannerPrerequisite(); {

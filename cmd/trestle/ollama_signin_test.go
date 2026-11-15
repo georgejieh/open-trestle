@@ -41,6 +41,8 @@ func TestMain(m *testing.M) {
 	// to the operator's ~/.local/state. A test that inspects the ledger sets
 	// its own folder with t.Setenv. Child processes of this test binary
 	// inherit the folder instead of making their own.
+	// Saved provider keys live under XDG_CONFIG_HOME, so no test reads or
+	// writes the operator's ~/.config/open-trestle/credentials either.
 	const marker = "OPEN_TRESTLE_TEST_STATE_FOLDER"
 	if os.Getenv(marker) != "" {
 		os.Exit(m.Run())
@@ -49,8 +51,13 @@ func TestMain(m *testing.M) {
 	if err != nil || os.Setenv("XDG_STATE_HOME", state) != nil || os.Setenv(marker, state) != nil {
 		os.Exit(1)
 	}
+	config, err := os.MkdirTemp("", "trestle-test-config-")
+	if err != nil || os.Setenv("XDG_CONFIG_HOME", config) != nil {
+		os.Exit(1)
+	}
 	code := m.Run()
 	_ = os.RemoveAll(state)
+	_ = os.RemoveAll(config)
 	os.Exit(code)
 }
 
