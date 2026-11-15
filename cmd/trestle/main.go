@@ -15,6 +15,12 @@ import (
 )
 
 func main() {
+	if len(os.Args) >= 2 && os.Args[1] == "keys" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		code := runKeys(ctx, os.Args[2:], os.Stdin, os.Stdout, os.Stderr)
+		stop()
+		os.Exit(code)
+	}
 	if len(os.Args) >= 2 && os.Args[1] == "review" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		code := runWithContext(ctx, os.Args[1:], os.Stdout, os.Stderr)
@@ -93,6 +99,9 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	}
 	if len(args) >= 1 && args[0] == "usage" {
 		return runUsage(ctx, args[1:], stdout, stderr)
+	}
+	if len(args) >= 1 && args[0] == "keys" {
+		return runKeys(ctx, args[1:], os.Stdin, stdout, stderr)
 	}
 	// `trestle review <path>` reviews a fixture file, as before; any other
 	// form reviews the latest change with the repository's setup.
