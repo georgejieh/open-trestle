@@ -7,7 +7,11 @@ existing generic and OpenRouter connections. This document describes its
 operator contract, not a live-service qualification or a ready configuration.
 The setup checker supports an exact approved Go generation route and a distinct
 private direct verifier. Setup support does not prove live service qualification.
-No command here issues approval, creates credentials or activates a route. Do not
+`trestle init --provider opencode-go` and `trestle setup bootstrap init
+--provider opencode-go` write this profile's policy and inventory from the
+evidence and declarations you supply (see
+[remote model review](remote-model-review.md#opencode-go)). No command
+creates credentials, issues the approval or activates a route on its own. Do not
 use a schema-valid document, metadata refresh or setup receipt as dispatch authority.
 The daemon consumes protected runtime policy and inventory.
 
@@ -308,8 +312,7 @@ Model catalog metadata does not approve privacy or entitlement, activate routes
 or discover dispatch endpoints. Ordinary local-only composition still refuses
 brokered routes. Setup Go authority, separate direct verification eligibility,
 protected configuration admission, scanner proof, publication authority and live
-qualification are independent requirements. No setup or activation command is
-introduced by this document. OpenCode pay-as-you-go and Ollama Cloud remain
+qualification are independent requirements. OpenCode pay-as-you-go and Ollama Cloud remain
 separate named conformance work.
 
 Official-source basis: the retained public OpenCode Go, Console inference and

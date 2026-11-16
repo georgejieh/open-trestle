@@ -6,6 +6,8 @@ Runtime policy v5 adds the finite `opencode_console_chat_v1` profile. It is
 inactive without protected policy/inventory and exact reviewed authority. This
 is offline protocol and admission support, not live service qualification,
 account approval, private-source egress consent or permission to spend.
+`trestle init` and `trestle setup bootstrap init` do not write this profile;
+the operator prepares the protected policy and inventory.
 Historical v1-v4 schema identities stay unchanged. Go and OpenRouter remain
 separate named contracts. The ordinary local-only composition refuses this route.
 
@@ -132,8 +134,7 @@ completion records retain the bound even if output admission later fails.
 Billed counters are still discarded, and the bound is never substituted for
 `RouteActualCost`. Actual cost remains UNKNOWN and the full reservation remains
 held. Native-token tariffs do not express Console billing or cached prices.
-Accurate billed usage and cost settlement are unsupported; V1-04 remains
-incomplete. This is not service qualification or proof of a conservative
+Accurate billed usage and cost settlement are unsupported. This is not service qualification or proof of a conservative
 pre-dispatch all-billed quantity/rate bound. The upstream says reported charge
 may exceed final debit when balance runs out, never be lower.
 Neither parse failure nor cancellation reverses spend. Retaining a reservation
@@ -144,7 +145,7 @@ Credit purchases incur 4.6% + $0.31; do not add that fee to every inference.
 
 401/403 use existing authentication/authorization failures. Console 402 maps to
 `payment_required` with no replay side effect, the class every profile uses for
-402 (it was `budget_exhausted` before); like a spent budget it is neither retried
+402; like a spent budget it is neither retried
 nor eligible for fallback, the task is refused as `policy`, and the local review
 reports `provider_payment_required`. 404 and 410 map to `model_unavailable` and
 `model_retired` as for every profile. 429 includes policy-budget refusal;
