@@ -1,27 +1,79 @@
 # Runtime handler catalogs
 
-The public `runtimecatalog` package assembles one exact executable review pipeline from approved task implementations. It accepts exactly one handler for every task kind required by the selected run mode. Advisory and local catalogs end at publication readiness. Required catalogs must also contain one publication handler.
+A review run is split into tasks, and a handler is the code that executes one kind of task, such as acquiring source or generating findings. A catalog is the set of handlers a run uses. This page is for contributors who wire handlers together, and for operators who configure which model routes a run may use.
 
-Catalog construction rejects missing kinds, duplicate kinds, malformed handler identities, extra handlers, and publication capability inconsistent with the run mode. The content-derived catalog identity binds the mode, task kinds, and implementation identities. Callers can use the generic bindings to build a transport-specific plan without accepting arbitrary in-process plugins.
+The public `runtimecatalog` package builds a catalog from approved task implementations. The catalog must contain exactly one handler for every task kind that the selected run mode requires. Advisory and local catalogs end at publication readiness. Required catalogs must also contain one publication handler.
 
-A `controlplane.TaskHandlerCatalog` returned by this package is suitable for `worker.RepositorySupervisor` or a scoped remote `worker.Runner`. Source and model credentials remain inside their configured adapters; the catalog stores only handler interfaces and identities.
+Building a catalog fails if a task kind is missing or duplicated, if a handler identity is malformed, if there are extra handlers, or if the publication handler does not match the run mode. A handler identity identifies one implementation, and the plan records it so that a run is only executed by the handlers it was planned with. The catalog identity is a digest computed from the catalog's content. It covers the run mode, the task kinds, and the handler identities. Callers can use the generic bindings (the records that tie a task kind to its handler) to build a plan for a particular transport without accepting arbitrary in-process plugins.
+
+A `controlplane.TaskHandlerCatalog` returned by this package works with `worker.RepositorySupervisor` or with a scoped remote `worker.Runner`. Source and model credentials stay inside their configured adapters. The catalog holds only handler interfaces and identities.
 
 ## Route inventory
 
-`runtimeconfig.DecodeRouteInventory` accepts a bounded JSON document conforming to `schemas/runtime/runtime-route-inventory-v1.schema.json`. Each entry contains an exact route reference, capability and logging declarations, fixed or unknown pricing, quality evidence tier, registry revision and lifecycle status, an inline immutable evidence manifest, current health and quota observations, and known or unknown sampled P95 latency. All records in one document must share the registry and performance revisions.
+A route is one way to reach a model. The route inventory is the operator's list of routes, with the facts needed to choose between them.
 
-The decoder limits the document to 8 MiB and 64 routes. It rejects unknown fields, duplicate or noncanonical keys, trailing values, ambiguous known/unknown values, malformed base64, duplicate record identities, invalid evidence digests, and mixed snapshot revisions. It resolves every record through the same registry and evidence verification boundary used by dynamic registries. The resulting inventory retains no evidence content. Its identity binds immutable record identities and every operational or performance observation.
+`runtimeconfig.DecodeRouteInventory` accepts a JSON document that conforms to `schemas/runtime/runtime-route-inventory-v1.schema.json`. Each entry contains:
 
-`runtimecatalog.NewGenerationPolicyAuthorizer` and `runtimecatalog.NewVerificationPolicyAuthorizer` consume the same validated inventory. This keeps privacy filtering, cost eligibility, deterministic ranking, and verifier independence anchored to one operator-selected snapshot. A static verification inventory still validates each review scope before issuing a snapshot.
+- an exact route reference;
+- capability and logging declarations;
+- pricing, either fixed or unknown;
+- a quality evidence tier;
+- a registry revision and lifecycle status;
+- an inline evidence manifest that cannot change after it is written;
+- current health and quota observations; and
+- a sampled P95 latency, either known or unknown.
 
-Registry status is data, not an approval shortcut. Routes whose resolved record is not `approved` remain visible in the inventory but fail eligibility. Operators should distribute the inventory as an immutable, access-controlled configuration artifact and update its revisions whenever registry or performance data changes.
+All records in one document must share the same registry and performance revisions.
+
+The decoder limits the document to 8 MiB and 64 routes. It rejects:
+
+- unknown fields;
+- duplicate or noncanonical keys;
+- trailing values;
+- values that are ambiguously both known and unknown;
+- malformed base64;
+- duplicate record identities;
+- invalid evidence digests; and
+- mixed snapshot revisions.
+
+Every record is resolved through the same registry and evidence verification that dynamic registries use. The resulting inventory keeps no evidence content. Its identity covers the identities of the immutable records and every operational and performance observation.
+
+`runtimecatalog.NewGenerationPolicyAuthorizer` and `runtimecatalog.NewVerificationPolicyAuthorizer` use the same validated inventory. As a result, privacy filtering, cost eligibility, deterministic ranking and verifier independence all rely on one snapshot that the operator selected. A static verification inventory still validates each review scope before it issues a snapshot.
+
+Registry status is data, and it does not approve a route by itself. A route whose resolved record is not `approved` stays visible in the inventory but fails the eligibility check. Operators should distribute the inventory as an immutable configuration artifact with restricted access, and update its revisions whenever the registry or performance data changes.
 
 ## Provider dispatch configuration
 
-Route dispatcher catalogs bind `ConfigurationIdentity()` for every registered adapter, not only its public adapter ID. Production adapters must include all non-secret connection authority in that identity. The OpenAI factory requires complete coverage of the adapter namespaces present in its route inventory and constructs no network request during validation. Credential providers remain request-time capabilities.
+Route dispatcher catalogs bind `ConfigurationIdentity()` for every registered adapter, not only its public adapter ID. Production adapters must include all non-secret connection authority in that identity. The OpenAI factory requires coverage of every adapter namespace in its route inventory, and it makes no network request during validation. Credential providers are capabilities that are used only when a request is sent.
 
 ## Runtime policy configuration
 
-`runtimeconfig.DecodeRuntimePolicy` loads a versioned runtime policy against one exact route-inventory identity. Version 1 describes Responses connections; version 2 adds exact verifier grants, Chat connections and explicit local no-auth mode. Version 3 adds the closed [OpenRouter ZDR Chat profile](openrouter-zdr-profile.md), with its brokered route and operator-declared scope/account window. Those declarations are not proof of provider privacy or account ownership. The policy binds an external review-policy identity, model requirements, data classification and allowed zones, content-logging permission, pessimistic token and micro-USD budgets, an optional generation pin and ordered record preferences, verifier independence, and provider connection authorities. Preferred and pinned routes are resolved from registry-record identities rather than repeated route declarations. The pin selects generation only. Verification retains the ordered preferences without that generation pin and first excludes routes that fail the required independence level. It does not relax independence to reuse the pinned generation route; if no independent eligible route remains, verification fails closed.
+`runtimeconfig.DecodeRuntimePolicy` loads a versioned runtime policy against one exact route-inventory identity. The policy versions differ in what they add:
 
-Provider connections contain an implementation token, adapter ID, endpoint, and credential environment reference. They never contain a secret. Credential references must use the reserved `OPEN_TRESTLE_PROVIDER_` namespace, so routing configuration cannot name API, webhook, storage, or other daemon secrets. The credential-authority identity is derived from the environment variable name. The supported OpenAI Responses connection requires canonical HTTPS, or HTTP on a canonical numeric loopback address. User information, query strings, fragments, encoded or unclean paths, repeated path separators, noncanonical hostnames and ports, and remote plaintext are rejected during policy decoding, CLI validation, and adapter construction. Unknown fields, duplicate keys, noncanonical keys, cross-inventory records, duplicate preferences or connections, malformed credential references, and all-zero authority identities are rejected. `runtimecatalog` converts the result into generation, verification, and exact OpenAI dispatcher authorities. Credential resolvers return request-time providers and need not read secret values during configuration validation.
+- Version 1 describes Responses connections.
+- Version 2 adds exact verifier grants, Chat connections and an explicit local no-auth mode.
+- Version 3 adds the closed [OpenRouter ZDR Chat profile](openrouter-zdr-profile.md), with its brokered route and an operator-declared scope and account window. These declarations are not proof of provider privacy or account ownership.
+
+A policy binds the following:
+
+- an external review-policy identity;
+- model requirements;
+- data classification and allowed zones;
+- whether content logging is permitted;
+- pessimistic token and micro-USD budgets;
+- an optional generation pin and an ordered list of record preferences;
+- verifier independence; and
+- provider connection authorities.
+
+Preferred and pinned routes are resolved from registry-record identities rather than from repeated route declarations. The pin applies to generation only. For verification, the policy keeps the ordered preferences without the generation pin and first excludes routes that fail the required independence level. It does not relax independence to reuse the pinned generation route. If no independent eligible route remains, verification fails closed, which means it stops with an error instead of continuing without independence.
+
+A provider connection contains an implementation token, an adapter ID, an endpoint, and a credential environment reference. It never contains a secret. Credential references must use the reserved `OPEN_TRESTLE_PROVIDER_` namespace, so routing configuration cannot name API, webhook, storage or other daemon secrets. The credential-authority identity is derived from the environment variable name.
+
+The supported OpenAI Responses connection requires canonical HTTPS, or HTTP on a canonical numeric loopback address. Policy decoding, CLI validation and adapter construction all reject:
+
+- user information, query strings and fragments;
+- encoded or unclean paths and repeated path separators;
+- noncanonical hostnames and ports; and
+- remote plaintext.
+
+Policy decoding also rejects unknown fields, duplicate keys, noncanonical keys, records from a different inventory, duplicate preferences or connections, malformed credential references, and all-zero authority identities. `runtimecatalog` converts the decoded policy into generation, verification and exact OpenAI dispatcher authorities. Credential resolvers return providers that are used at request time, and they do not need to read secret values during configuration validation.
