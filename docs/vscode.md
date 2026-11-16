@@ -1,8 +1,12 @@
 # VS Code extension
 
-Use the Node version in `.node-version` for reproducible packaging. `extensions/vscode` packages a read-only Open Trestle diagnostic client. It starts the existing `trestle lsp` process and does not implement a second review engine. It observes one run that a `trestled` daemon already holds. It cannot start a review, and it is not how you review the change you are editing: use `trestle review` for that. It is not in any release or marketplace.
+The Open Trestle VS Code extension shows the diagnostics of an existing review run inside the editor. It is read-only. It observes one run that a `trestled` daemon already holds. It cannot start a review, and it is not how you review the change you are editing: use `trestle review` for that. It is not in any release or marketplace.
+
+The extension lives in `extensions/vscode`. It starts the existing `trestle lsp` process and does not contain a second review engine. Use the Node version in `.node-version` so that the packaged output is reproducible.
 
 ## Install from a local build
+
+Build and check the package, then install it into VS Code:
 
 ```sh
 npm ci --prefix extensions/vscode
@@ -13,53 +17,65 @@ npm run package --prefix extensions/vscode
 npm run dist:check --prefix extensions/vscode
 ```
 
-Install `extensions/vscode/dist/open-trestle.vsix` through VS Code's **Install from VSIX** command. The packaging step uses locale-independent filename order and fixes ZIP calendar timestamps to UTC. The checker reads raw DOS date/time fields rather than converting them through the caller's timezone. Two packages from the same source and toolchain are byte-identical across host timezones.
+Install `extensions/vscode/dist/open-trestle.vsix` with VS Code's **Install from VSIX** command.
 
-The `package` script delegates its single build to VSCE's standard `vscode:prepublish` hook before normalization. `@vscode/vsce` and its transitive packaging modules are development tools only; `--no-dependencies` and the explicit extension file list keep them out of the VSIX.
+The packaging step sorts filenames in a way that does not depend on the locale, and it sets ZIP calendar timestamps to UTC. The checker reads the raw DOS date and time fields instead of converting them through the caller's timezone. Two packages built from the same source and toolchain are therefore byte-identical on hosts in different timezones.
 
-The committed distribution consists only of `extension.js`, `bundle-meta.json`, and `open-trestle.vsix`; transient raw packages stay ignored. CI snapshots the checked-out directory before packaging, builds under UTC and America/Los_Angeles to check cross-timezone reproducibility, then compares the generated directory directly with the snapshot. This check remains effective even if a local checkout has not yet tracked the files.
+The `package` script runs a single build, through VSCE's standard `vscode:prepublish` hook, before it normalizes the package. `@vscode/vsce` and its transitive packaging modules are development tools only. The `--no-dependencies` flag and the explicit extension file list keep them out of the VSIX.
 
-The extension is not published to a marketplace by this repository workflow.
+The committed distribution consists only of `extension.js`, `bundle-meta.json` and `open-trestle.vsix`. Raw packages that are only intermediate output stay ignored. In CI, the checked-out directory is first snapshotted. CI then builds the package under UTC and under America/Los_Angeles to check that the result does not depend on the timezone, and compares the generated directory directly with the snapshot. This check works even if a local checkout does not yet track the files.
 
-## Configure
+This repository's workflow does not publish the extension to a marketplace.
 
-Install the `trestle` CLI on the extension host. In machine settings, configure:
+## Configure the extension
 
-- `openTrestle.executable`: an absolute path or a bare executable name, never a shell command or workspace-relative path. This operator-selected executable remains part of the host trust boundary;
-- `openTrestle.server`: an HTTPS URL or canonical loopback-IP HTTP URL with no credentials, query, fragment, or path;
-- `openTrestle.tenant`;
-- `openTrestle.repository`;
-- `openTrestle.run`; and
+Install the `trestle` CLI on the extension host. Then set these values in your machine settings:
+
+- `openTrestle.executable`: an absolute path or a bare executable name, never a shell command or a path relative to the workspace. The executable you choose is part of the host's trust boundary.
+- `openTrestle.server`: an HTTPS URL, or an HTTP URL that uses a canonical loopback IP address. It must have no credentials, query, fragment or path.
+- `openTrestle.tenant`.
+- `openTrestle.repository`.
+- `openTrestle.run`.
 - `openTrestle.autoStart`, which defaults to false.
 
-All settings use VS Code's machine scope so repository settings cannot become process or connection authority. Open a trusted local workspace at the reviewed repository root. Run **Open Trestle: Set API Token**, then **Open Trestle: Connect to Review Run**.
+All settings use VS Code's machine scope, so settings in a repository cannot decide which process runs or which server the extension connects to. Open a trusted local workspace at the root of the reviewed repository. Then run **Open Trestle: Set API Token**, followed by **Open Trestle: Connect to Review Run**.
 
-The token is stored in VS Code SecretStorage. It is passed to the child only as `OPEN_TRESTLE_API_TOKEN`. The child environment allowlist contains path, home, temporary-directory, certificate, and HTTP proxy settings needed to start the CLI and reach an operator-configured daemon. Unrelated provider, cloud, forge, and application credentials are not forwarded.
+VS Code SecretStorage holds the token. The extension passes it to the child process only as `OPEN_TRESTLE_API_TOKEN`. The environment of the child process is limited to an allowlist: path, home, temporary directory, certificate and HTTP proxy settings. These are what the process needs to start the CLI and reach a daemon that you configured. Unrelated provider, cloud, forge and application credentials are not passed on.
 
-## Capability boundary
+## What the extension can do
 
-The extension strips initialization capabilities down to pull diagnostics and applies a second client-side protocol gate. Push-diagnostic capability is removed and any `textDocument/publishDiagnostics` notification is discarded. It discards document synchronization, dynamic registrations, code actions, completions, code lenses, links, color presentations, inline suggestions, formatting, rename, and execute-command behavior. It rejects `workspace/applyEdit` and `window/showDocument` requests without invoking VS Code.
+The extension strips the capabilities offered during initialization down to pull diagnostics, and it adds a second protocol gate on the client side. The gate removes the push-diagnostic capability and discards any `textDocument/publishDiagnostics` notification. It also discards document synchronization, dynamic registrations, code actions, completions, code lenses, links, color presentations, inline suggestions, formatting, rename and execute-command behavior. It rejects `workspace/applyEdit` and `window/showDocument` requests without calling VS Code.
 
-The extension:
+Within that boundary, the extension does the following:
 
-- requests standard pull diagnostics for eligible visible file documents under the exact initialized workspace;
-- displays only independently verified diagnostic sets returned by the daemon, so it does not show run failures, failure reasons such as a context route refusal, or their hints (use `trestle runs status`, the TUI, or the web console for those);
-- has no document synchronization, code action, edit, terminal, repository command, model, worker, policy, or publication capability;
-- refuses to start without workspace trust, a workspace folder, safe machine-scoped configuration, and a SecretStorage token; and
-- invalidates diagnostics before changing credentials and blocks replacement until owned-child closure is observed.
+- It requests standard pull diagnostics for eligible visible file documents under the exact initialized workspace.
+- It displays only independently verified diagnostic sets that the daemon returns. It therefore does not show run failures, failure reasons such as a context route refusal, or their hints. Use `trestle runs status`, the TUI or the web console for those.
+- It has no document synchronization, code action, edit, terminal, repository command, model, worker, policy or publication capability.
+- It refuses to start without workspace trust, a workspace folder, safe machine-scoped configuration and a token in SecretStorage.
+- Before it changes credentials, it invalidates its diagnostics. It blocks a replacement until it has seen the child process it started close.
 
-The LSP server independently rejects requests outside its initialized file root and binds every response to the exact tenant, repository, run, snapshot, head revision, verified set, finding, and evidence identities.
+The LSP server separately rejects requests outside the file root it was initialized with. It ties every response to the exact tenant, repository, run, snapshot, head revision, verified set, finding and evidence identities.
 
-## Distribution boundary
+## Distribution
 
-esbuild produces one CommonJS extension-host bundle with `vscode` left external. Source maps and build-host paths are rejected. The build metadata inventories every bundled npm package and the distribution check fails if that set changes without a matching license review. The VSIX is limited to 1 MiB and contains exactly the manifest, bundle, icon, project license, notice, changelog, README, and complete license texts for the Microsoft protocol/JSON-RPC family. The current bundle does not use telemetry or a network library other than the spawned Open Trestle LSP process.
+esbuild produces one CommonJS bundle for the extension host, with `vscode` left external. The build rejects source maps and build-host paths. The build metadata lists every bundled npm package, and the distribution check fails if that set changes without a matching license review.
 
-## Adapter limits and refresh
+The VSIX is limited to 1 MiB. It contains exactly the manifest, the bundle, the icon, the project license, a notice, the changelog, the README and the complete license texts for the Microsoft protocol and JSON-RPC packages. The current bundle uses no telemetry and no network library, other than the spawned Open Trestle LSP process.
 
-The extension deliberately uses the maintained Microsoft protocol/JSON-RPC packages, not a full language client or a custom framing parser. It pulls currently visible files after initialization and when they become visible. Explicit Restart refreshes the current files. It does not poll, scan the workspace, refresh on edits/saves, or restart automatically after failure. Hidden findings remain until document close or session retirement. Empty findings are not clearance.
+## Limits and refresh behavior
 
-The fixed limits are 128 tracked URIs, one request in flight, 1,000 diagnostics per report, 16 KiB UTF-8 per message, and 8 MiB lifetime stdout admission before the Microsoft reader. Exceeding a limit retires the whole session without partial publication. The lifetime byte budget is not a per-message or peak-heap guarantee and can require Restart during a long valid session. Other roots and separately selected nested workspace folders are excluded; diagnostic payload fields cannot open or execute anything.
+The extension uses the maintained Microsoft protocol and JSON-RPC packages deliberately, instead of a full language client or a custom framing parser. After initialization, and whenever a file becomes visible, it pulls diagnostics for the files that are currently visible. The Restart command refreshes the current files. The extension does not poll, scan the workspace, refresh on edits or saves, or restart automatically after a failure. Findings for a hidden document remain until the document closes or the session ends. An empty list of findings is not a clean result.
 
-Initialize/pull deadlines are 35 seconds. Stop invalidates publication synchronously, then permits one second for graceful shutdown and one second each for SIGTERM and SIGKILL. Only the owned direct-child `close` event proves closure for successor admission. Failed stop stays in attention status and keeps the owner; explicit Restart may recheck later closure. This does not guarantee termination of arbitrary descendants. No raw stderr or protocol error text is logged.
+The fixed limits are:
 
-The bundle targets Node 20 APIs for the declared minimum VS Code 1.95 host; the build toolchain remains the repository-pinned Node version. Actual extension-host qualification records the tested application and platform separately from mock/unit tests.
+- 128 tracked URIs.
+- One request in flight.
+- 1,000 diagnostics per report.
+- 16 KiB of UTF-8 per message.
+- 8 MiB of standard output accepted over the lifetime of the session, before the Microsoft reader sees it.
+
+If any limit is exceeded, the whole session ends and no partial diagnostics are published. The lifetime byte budget is not a limit per message or on peak heap use, and a long but valid session may need a Restart. The extension excludes other roots and separately selected nested workspace folders. Fields in a diagnostic payload cannot open or execute anything.
+
+Initialization and pull requests each have a 35-second deadline. When the extension stops the child process, it first invalidates publication synchronously. It then allows one second for graceful shutdown, and one second each for SIGTERM and SIGKILL. Only the `close` event of the directly owned child proves that it has closed, and only then can a successor start. If the stop fails, the extension stays in an attention status and keeps the owner, and an explicit Restart can check again later whether the child closed. This does not guarantee that arbitrary descendant processes end. The extension logs no raw stderr and no protocol error text.
+
+The bundle targets Node 20 APIs for the declared minimum, VS Code 1.95. The build toolchain remains the Node version pinned in the repository. Qualification in a real extension host records the tested application and platform separately from the mock and unit tests.

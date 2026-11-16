@@ -1,23 +1,31 @@
 # Read-only LSP diagnostics
 
-`trestle lsp` exposes independently verified findings from diagnostic-set versions 1 through 5 and the verified portion of final version 7 through the Language Server Protocol 3.17 pull-diagnostic interface. Version 6 deterministic observations are not verified findings and therefore produce an empty LSP item list with the exact diagnostic-set result identity. A final version 7 without verified findings also returns an empty list, not repository clearance. Candidate model output cannot enter this interface directly.
+`trestle lsp` is a Language Server Protocol 3.17 server that shows Open Trestle's verified review findings as diagnostics in an editor. It is read-only: it cannot start a review, edit files or publish anything. It serves the findings of reviews that already exist, through the pull-diagnostic interface of the protocol.
 
-For live daemon-backed retrieval:
+Candidate model output never reaches this interface directly. The server returns findings only if they were independently verified, and it handles each diagnostic-set version as follows:
+
+- Versions 1 through 5 return their independently verified findings.
+- Version 6 holds deterministic observations, which are not verified findings. They produce an empty list of items, with the exact result identity of the diagnostic set.
+- Final version 7 returns the verified portion of its findings. A final version 7 with no verified findings also returns an empty list. That is not a clean bill of health for the repository.
+
+To fetch diagnostics from a running daemon:
 
 ```sh
 export OPEN_TRESTLE_API_TOKEN="replace-with-the-daemon-credential"
 trestle lsp --server http://127.0.0.1:8741
 ```
 
-For an immutable offline export:
+To read an exported, unchanging file instead, with no daemon:
 
 ```sh
 trestle lsp --diagnostics verified-diagnostics.json
 ```
 
-The server uses standard `Content-Length` framing and writes only protocol messages to standard output. Headers are bounded to 8 KiB and message bodies to 1 MiB. It advertises UTF-16 positions, no document synchronization, no workspace diagnostics, and no code actions or write operations.
+## Protocol behavior
 
-Initialization options bind the process to one exact review scope:
+The server uses standard `Content-Length` framing and writes only protocol messages to standard output. Headers are limited to 8 KiB and message bodies to 1 MiB. It advertises UTF-16 positions. It advertises no document synchronization, no workspace diagnostics, no code actions and no write operations.
+
+The client's initialization options tie the process to one review scope:
 
 ```json
 {
@@ -27,16 +35,48 @@ Initialization options bind the process to one exact review scope:
 }
 ```
 
-The `rootUri` must be a file URI. Diagnostic requests outside that root are rejected. Findings use one-based physical review lines converted to zero-based whole-line LSP ranges. Each diagnostic contains its stable fingerprint, verified finding identity, evidence references, diagnostic-set identity, reviewed snapshot identity, and exact head revision. For final version 7 findings, `data.snapshot_identity` is the selected review snapshot, not the separate physical-head snapshot. The result identity remains the final diagnostic-set identity. Messages explicitly label review output as untrusted and require verification before editing.
+The `rootUri` must be a file URI, and the server rejects diagnostic requests for files outside that root. Findings use one-based physical review lines, which the server converts to zero-based LSP ranges that cover whole lines. Each diagnostic carries these values:
 
-Clients can send `previousResultId`. An exact set identity returns an unchanged report. A new identity returns a complete report, including an empty list when the verified set has no findings.
+- Its stable fingerprint.
+- The verified finding identity.
+- The evidence references.
+- The diagnostic-set identity.
+- The reviewed snapshot identity.
+- The exact head revision.
 
-The public transport contracts are `schemas/diagnostics/verified-diagnostic-set-v1.schema.json` through `schemas/diagnostics/verified-diagnostic-set-v5.schema.json` plus `schemas/diagnostics/deterministic-diagnostic-set-v6.schema.json` and `schemas/diagnostics/full-review-diagnostic-set-v7.schema.json`. Version 2 adds exact candidate outcomes. Version 3 adds the validated verification-context identity and bounded source counts. Version 4 adds sorted content-free aggregate omission reasons. Version 5 adds one exact deterministic check bound to its source check, analysis result, and change. Version 6 replaces the verified-finding fields with an analysis-result identity and exact deterministic observations. The internal review adapter creates versions 1 through 5 only when the independent verification receipt, verified finding set, snapshot, and review scope all match. The deterministic analysis path creates version 6 without independent-verification authority. Final version 7 preserves the terminal outcome and any exact verified portion; the LSP item list contains only that portion. The server surfaces no run-level information: it does not report the terminal outcome, a context route refusal, or a result recorded after its evidence expired (`evidence_expired`, which has no verified portion and so yields an empty item list). An empty list therefore does not mean a clean review; use `trestle runs status`, the TUI, ACP or the web console for the run-level result. Version 8 (`schemas/diagnostics/verified-diagnostic-set-v8.schema.json`) is version 5 plus a finding on removed base lines, marked `"side":"base"` with an optional `head_line`; it is used exactly when such a finding exists, and final version 7 may embed it in place of version 5. The open document holds head lines, so the server never places base lines on it: a base-side finding is a file-level diagnostic (range 0:0) whose message starts `Base lines a-b (removed code):`, keeps the untrusted-output warning last, and carries `side`, `base_start_line` and `base_end_line` in its data. A removed file has no open head document, so its findings appear in the other outputs only.
+For final version 7 findings, `data.snapshot_identity` is the selected review snapshot, not the separate snapshot of the physical head. The result identity remains the identity of the final diagnostic set. Each message says that review output is untrusted and must be verified before you edit anything.
 
-The daemon keeps one immutable diagnostic set per exact review scope in a private crash-safe store. The authenticated API exposes only retrieval. It has no public diagnostic upload endpoint, so unverified callers cannot place arbitrary findings into editor output. The local export mode remains available for air-gapped use. Push refresh notifications remain separate work; editors obtain updates through standard pull requests and result identities.
+A client can send `previousResultId`. If it matches the current set identity exactly, the server returns an unchanged report. A new identity returns a complete report, which is an empty list when the verified set has no findings.
 
-Primary reference:
+## Diagnostic-set versions
 
-- https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_diagnostic
+The public transport contracts are the schemas `schemas/diagnostics/verified-diagnostic-set-v1.schema.json` through `schemas/diagnostics/verified-diagnostic-set-v5.schema.json`, plus `schemas/diagnostics/deterministic-diagnostic-set-v6.schema.json` and `schemas/diagnostics/full-review-diagnostic-set-v7.schema.json`.
 
-The packaged [VS Code extension](vscode.md) uses this live daemon-backed mode, machine-scoped settings, SecretStorage, a bounded child environment, and a client-side pull-only diagnostic gate.
+- Version 2 adds exact candidate outcomes.
+- Version 3 adds the validated verification-context identity and bounded source counts.
+- Version 4 adds sorted aggregate omission reasons that contain no content.
+- Version 5 adds one exact deterministic check, tied to its source check, its analysis result and the change.
+- Version 6 replaces the verified-finding fields with an analysis-result identity and the exact deterministic observations.
+- Version 7 is the final result. It keeps the terminal outcome and any exact verified portion.
+
+The internal review adapter creates versions 1 through 5 only when the independent verification receipt, the verified finding set, the snapshot and the review scope all match. The deterministic analysis path creates version 6 without any independent verification. The LSP item list for version 7 contains only the verified portion.
+
+The server shows nothing about the run as a whole. It does not report the terminal outcome, a refusal to route context, or a result recorded after its evidence expired (`evidence_expired`, which has no verified portion and so gives an empty item list). An empty list therefore does not mean the review was clean. Use `trestle runs status`, the TUI, ACP or the web console to see the run-level result.
+
+Version 8 (`schemas/diagnostics/verified-diagnostic-set-v8.schema.json`) is version 5 plus findings on removed base lines. Such a finding is marked `"side":"base"` and has an optional `head_line`. Open Trestle uses version 8 exactly when a finding on removed base lines exists, and final version 7 may embed it in place of version 5. The open document in the editor holds head lines, so the server never places base lines on it. A finding on the base side becomes a file-level diagnostic (range 0:0) with these properties:
+
+- Its message starts with `Base lines a-b (removed code):`.
+- The untrusted-output warning stays last in the message.
+- Its data carries `side`, `base_start_line` and `base_end_line`.
+
+A removed file has no open head document, so its findings appear in the other outputs only.
+
+## Storage and updates
+
+The daemon keeps one immutable diagnostic set for each exact review scope, in a private store that survives crashes. The authenticated API can only retrieve diagnostics. It has no public endpoint for uploading them, so callers whose findings were never verified cannot put arbitrary findings into editor output. The local export mode remains available for air-gapped use.
+
+The server cannot push refresh notifications yet, and that work is separate. Editors get updates by sending ordinary pull requests and comparing result identities.
+
+The packaged [VS Code extension](vscode.md) uses the daemon-backed mode. It also uses machine-scoped settings, SecretStorage, a bounded child process environment and a client-side gate that allows only pull diagnostics.
+
+Primary reference: <https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_diagnostic>

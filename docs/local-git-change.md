@@ -1,6 +1,6 @@
 # Local Git change evidence
 
-`trestle local-git change` compares two caller-selected loose Git commits and emits compact change evidence.
+`trestle local-git change` compares two loose Git commits that you name and prints a compact JSON record of what changed between them. Use it to see which files a review of the same two commits would cover. It reads loose objects only.
 
 ```text
 trestle local-git change \
@@ -13,36 +13,48 @@ trestle local-git change \
   --head-revision-digest FULL_LOWERCASE_HEX
 ```
 
-All seven flags are required exactly once. `PATH` is the exact loose-object directory, normally `.git/objects`. Base and head are ordered caller selections. The command does not infer a merge base, resolve refs or `HEAD`, inspect an index or working tree, discover `.git`, append path components, run Git, read Git configuration, use credentials, or access a network. Packs and alternates are not supported.
+You must pass all seven flags, each exactly once. `PATH` is the loose-object directory itself, normally `.git/objects`. The base and head revisions are the two commits you choose, in that order. The command does not infer a merge base, resolve refs or `HEAD`, read the index or working tree, look for `.git`, add path components, run Git, read Git configuration, use credentials, or use the network. It does not support packs or alternates.
 
-Repository authority, namespace, and name are caller-supplied scope labels. They do not establish the origin, owner, or authorization of the object directory.
+The repository authority, namespace and name are labels that you supply to describe the scope. They do not establish where the object directory came from, who owns it, or whether anyone is authorized to use it.
 
 ## Output
 
-The command buffers one `open-trestle/local-git-change-result` version 2 JSON object with strict public shape `schemas/review/local-git-change-result-v2.schema.json` and writes it followed by one newline after the object root closes successfully. Version 1 remains published for the earlier modified-only supported-entry behavior. The object contains only compact identities, counts, documented repository-relative changed paths, change kinds, supported or unsupported states, unsupported reasons, and optional file-change and line-map identities. It does not contain the object-root path, repository label text, raw commit digest, source content, unified patch, timestamps, host data, environment data, credentials, or command output.
+The command builds one `open-trestle/local-git-change-result` version 2 JSON object in memory. After it has closed the object root successfully, it writes the object followed by one newline. The strict public shape is `schemas/review/local-git-change-result-v2.schema.json`. Version 1 stays published for the earlier behavior, which supported modified files only.
 
-Entry order is the canonical manifest-delta path order. A nonempty, valid, within-budget added text file is supported against a canonical empty base and covers its complete head range. Empty, invalid-UTF-8 or NUL-bearing, diff-over-budget, and removed files remain explicit unsupported outcomes. A supported entry carries authenticated `FileChange` and `LineMap` identities. The aggregate `change` identity includes supported entries only; counts and the complete entry array make partial coverage explicit.
+The object contains only:
+
+- compact identities (digests that stand for the commits, manifests and changes involved) and counts;
+- the repository-relative path of each changed file, as documented;
+- the kind of change and whether the file is supported or unsupported;
+- the reason for each unsupported file;
+- for supported files, optional file-change and line-map identities.
+
+It does not contain the object-root path, the repository label text, the raw commit digest, source content, a unified patch, timestamps, host data, environment data, credentials or command output.
+
+Entries follow the canonical path order of the manifest delta. An added text file counts as supported when it is not empty, is valid UTF-8, and is within the size budget. The command compares it against an empty base, so its whole head content is covered. These files remain unsupported, and the record says so: empty files, files with invalid UTF-8 or NUL bytes, files over the diff budget, and removed files.
+
+A supported entry carries authenticated `FileChange` and `LineMap` identities. The aggregate `change` identity covers supported entries only, so the counts and the full entry array are what show partial coverage.
 
 The status is one of:
 
-- `complete`: every changed path produced supported text-file evidence;
-- `no_change`: the two accepted manifests are equal;
-- `partial`: at least one path is supported and at least one is unsupported;
-- `unsupported`: changed paths exist, but none produced supported evidence.
+- `complete`: every changed path produced supported text-file evidence.
+- `no_change`: the two accepted manifests are equal.
+- `partial`: at least one path is supported and at least one is unsupported.
+- `unsupported`: paths changed, but none produced supported evidence.
 
-Repository-relative paths can be sensitive. The command intentionally emits them so a local caller can identify accounted changes. Callers must govern storage and forwarding of the JSON record.
+Repository-relative paths can be sensitive. The command prints them on purpose, so that a local caller can see which changes it accounted for. Decide where the JSON record may be stored and sent.
 
 ## Exit codes
 
-- `0`: a complete or no-change record was fully written;
-- `1`: root, acquisition, graph, resource, encoding, close, or output failure;
-- `2`: command grammar or canonical input failure;
-- `3`: a partial or unsupported record was fully written.
+- `0`: the command wrote a complete or no-change record in full.
+- `1`: a root, acquisition, graph, resource, encoding, close or output failure.
+- `2`: a command grammar failure or an invalid canonical input.
+- `3`: the command wrote a partial or unsupported record in full.
 
-Operational and usage failures emit no success JSON. The output is prepared in memory and written once, but a low-level output failure can still produce a truncated stream.
+Operational and usage failures print no success JSON. The command prepares the output in memory and writes it once, but a low-level output failure can still truncate the stream.
 
-## Evidence boundary
+## What the command proves
 
-The command confines reads beneath one exact opened directory handle. Each distinct requested revision is acquired once through the same local adapter; equal requests are acquired once. Accepted object graphs produce structural bindings and profiles. At most 64 changed paths are processed. Every accepted delta entry produces one opaque supported or unsupported execution, and source maps are discarded before return.
+The command reads only inside the one directory handle it opens. It reads each distinct requested revision once through the same local adapter, so two equal requests cause one read. Each accepted object graph produces a structural binding and a profile. The command processes at most 64 changed paths. Every accepted delta entry produces one opaque supported or unsupported execution, and the source maps are discarded before the command returns.
 
-This does not prove that the directory belongs to the repository label. It does not prove ownership, authorization, ref reachability, ancestry, merge-base correctness, temporal order, atomic snapshot stability, working-tree or index state, adapter provenance, tenant isolation, or sandboxing. It does not infer renames or copies, report mode-only changes, retain source, produce Go impact analysis, perform review, or publish findings.
+It does not prove that the directory belongs to the repository named by your labels. It also does not prove ownership, authorization, ref reachability, ancestry, merge-base correctness, temporal order, atomic snapshot stability, the state of the working tree or index, adapter provenance, tenant isolation or sandboxing. It does not infer renames or copies, report mode-only changes, keep source, produce Go impact analysis, review anything, or publish findings.

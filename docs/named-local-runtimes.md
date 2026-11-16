@@ -1,15 +1,10 @@
 # Named local runtimes
 
-These maintained templates use the existing protected inventory, policy binding,
-setup checker and shared OpenAI-compatible Chat adapter. There is no separate
-runtime registry. Choose one explicitly; none is a default. LM Studio is the
-selected Mac server: its official requirements cover Apple Silicon on macOS 14+
-(not Intel Macs). This selection is not a claim of Mac-host qualification.
+This page covers four maintained configuration templates for running both review models on your own machine: llama.cpp, Ollama, vLLM and LM Studio. The templates use the existing protected inventory, the policy binding, the setup checker and the shared OpenAI-compatible Chat adapter. There is no separate runtime registry.
 
-`trestle init` does not use these templates. It looks for a server at the
-default ports in the table below (Ollama 11434, LM Studio 1234, llama.cpp 8080,
-vLLM 8000), offers what answers, and writes its own setup folder. Use the
-templates when you bind and check the configuration by hand.
+Choose one template explicitly. None of them is a default. LM Studio is the selected Mac server, and its official requirements cover Apple Silicon on macOS 14 or later (not Intel Macs). That choice does not mean any Mac host has been qualified.
+
+`trestle init` does not use these templates. It looks for a server at the default ports (Ollama 11434, LM Studio 1234, llama.cpp 8080, vLLM 8000), offers whatever answers, and writes its own setup folder. Use the templates when you bind and check the configuration by hand.
 
 | Directory under `examples/named-local-runtimes/` | Generation API base | Verification API base | Exact model selectors |
 | --- | --- | --- | --- |
@@ -18,75 +13,46 @@ templates when you bind and check the configuration by hand.
 | `vllm` | `http://127.0.0.1:8000/v1` | `http://127.0.0.1:8001/v1` | `trestle-generation`, `trestle-verification` |
 | `lm-studio` | `http://127.0.0.1:1234/v1` | same | `trestle-generation`, `trestle-verification` |
 
-All connections select `implementation:openai_chat_completions` and
-`credential_mode:none`. No dummy key is necessary. For an authenticated local
-server, explicitly change the connection to `bearer` with a protected credential
-environment reference using the existing policy contract. Do not put keys in JSON.
-These templates require two different underlying models, not two aliases for one
-model. Different aliases alone do not prove model independence. The policy uses
-`distinct_model`, not `distinct_provider`; choose a stronger independent pair if
-your review requirements demand one.
+All connections select `implementation:openai_chat_completions` and `credential_mode:none`, so no dummy key is necessary. For a local server that requires authentication, change the connection to `bearer` explicitly, with a protected credential environment reference from the existing policy contract. Do not put keys in JSON.
+
+The templates need two different underlying models, not two aliases for one model. Different aliases alone do not prove that the models are independent. The policy uses `distinct_model`, not `distinct_provider`. If your review requirements demand it, choose a stronger, independent pair.
 
 ## Server preparation
 
-The following commands are recipes for an operator who has already installed the
-server and obtained approved local model files. They were not executed to qualify
-these templates. Do not download a model, start a server, or send a probe without
-permission. Replace uppercase paths/keys with your selected local artifacts.
-Record the server build, exact model file digests, configuration, template,
-capacity and logging posture in your route evidence before approval. Load chat
-models whose ordinary assistant output follows the required review JSON schema.
-No tool calling, remote URLs, MCP, or model download is part of this path.
+The commands below are recipes for an operator who has already installed the server and obtained approved local model files. They were not executed to qualify these templates. Do not download a model, start a server or send a probe without permission. Replace the uppercase paths and keys with the local artifacts you selected.
+
+Before you approve the route, record these in your route evidence: the server build, the exact model file digests, the configuration, the chat template, the capacity and the logging posture. Load chat models whose ordinary assistant output follows the required review JSON schema. Tool calling, remote URLs, MCP and model downloads are not part of this path.
 
 ### Context length
 
-Each template route declares `max_context_tokens: 32768`, and each recipe below
-starts its server with the same context length: llama.cpp `--ctx-size`, Ollama
-`OLLAMA_CONTEXT_LENGTH`, vLLM `--max-model-len` and LM Studio
-`lms load --context-length`. Keep the declaration and the server setting equal;
-lower both together only for a model that cannot hold 32768 tokens. Open Trestle
-reserves every request as a byte-based upper bound on its input tokens (a token
-never covers less than one byte) plus the output allowance, and refuses a route
-whose declared context is smaller, rather than risk a server silently
-truncating an over-long prompt, which could drop the trusted system message.
-Even the fixed setup probe reserves about 9,700 tokens, and a review request is
-larger, so an 8192-token context cannot run any review. When a route is too
-small, the refusal names the tokens the review needs, the context the route
-declares and what to raise (see
-[Local model review](local-model-review.md#route-context-too-small)).
+Each template route declares `max_context_tokens: 32768`, and each recipe below starts its server with the same context length. The setting is `--ctx-size` for llama.cpp, `OLLAMA_CONTEXT_LENGTH` for Ollama, `--max-model-len` for vLLM and `lms load --context-length` for LM Studio. Keep the declaration and the server setting equal. Lower both together only for a model that cannot hold 32768 tokens.
+
+Open Trestle reserves every request as a byte-based upper bound on its input tokens (a token never covers less than one byte) plus the output allowance. It refuses a route whose declared context is smaller, because otherwise a server could silently truncate an over-long prompt and drop the trusted system message. Even the fixed setup probe reserves about 9,700 tokens, and a review request is larger, so an 8192-token context cannot run any review.
+
+When a route is too small, the refusal names the tokens the review needs, the context the route declares and what to raise (see [Local model review](local-model-review.md#route-context-too-small)).
 
 ### llama.cpp
 
-Run two foreground servers in separate terminals with distinct GGUF files:
+Run two foreground servers in separate terminals, with distinct GGUF files:
 
 ```sh
 llama-server -m /APPROVED/GENERATION.gguf --alias trestle-generation --host 127.0.0.1 --port 8080 --ctx-size 32768
 llama-server -m /APPROVED/VERIFICATION.gguf --alias trestle-verification --host 127.0.0.1 --port 8081 --ctx-size 32768
 ```
 
-The alias is the API selector. Keep the route `model_version` empty, since a
-nonempty value overrides `model_id` on the wire. Use a supported chat template.
-The shared adapter accepts the documented inert `timings` fields and optional
-`message.reasoning_content`; neither becomes review output or authoritative
-usage. Unsupported fields still refuse. Avoid reasoning-only or tool-only
-responses. This path does not request streaming or llama.cpp control APIs.
+The alias is the API selector. Keep the route `model_version` empty, because a nonempty value overrides `model_id` on the wire. Use a supported chat template.
+
+The shared adapter accepts the documented inert `timings` fields and the optional `message.reasoning_content`. Neither becomes review output or authoritative usage. Unsupported fields are still refused. Avoid responses that contain only reasoning or only tool calls. This path does not request streaming or the llama.cpp control APIs.
 
 ### Ollama local
 
-A loopback Ollama endpoint can relay cloud models. Loopback alone does **not**
-prove local inference. Start the server with cloud features disabled and inspect
-the documented `Ollama cloud disabled: true` log after restart:
+A loopback Ollama endpoint can relay cloud models, so loopback alone does **not** prove that inference is local. Start the server with cloud features disabled, restart, and check the log for the documented line `Ollama cloud disabled: true`:
 
 ```sh
 OLLAMA_NO_CLOUD=1 OLLAMA_HOST=127.0.0.1:11434 OLLAMA_CONTEXT_LENGTH=32768 ollama serve
 ```
 
-Use only locally present `qwen3:8b` and `gemma3:4b` artifacts, or replace both
-selectors with your explicit local choices and rebind. Inspect `ollama list` and
-local artifact evidence; do not use `:cloud` selectors, sign in, or implicitly
-pull missing models. The template cannot attest the server environment or inspect
-its routing. Host egress restrictions provide an additional boundary when needed.
-Any returned selector must equal the configured string, including the tag.
+Use only the `qwen3:8b` and `gemma3:4b` artifacts that are already present locally, or replace both selectors with your own explicit local choices and rebind. Check `ollama list` and the local artifact evidence. Do not use `:cloud` selectors, sign in, or pull missing models implicitly. The template cannot attest the server environment or inspect its routing. Restrictions on host egress give an additional boundary when you need one. Any selector the server returns must equal the configured string, including the tag.
 
 > **Warning: `:cloud` models do not run on this machine.** A model whose name
 > ends in `:cloud` or `-cloud` (for example `gpt-oss:120b-cloud`), or whose
@@ -101,31 +67,22 @@ Any returned selector must equal the configured string, including the tag.
 > secret scanner, see
 > [Ollama signed in to Ollama Cloud](remote-model-review.md#ollama-signed-in-to-ollama-cloud).
 
-A thinking model whose response adds unsupported fields will refuse; qualify the
-exact model/server combination rather than weakening response admission.
+A thinking model whose response adds unsupported fields is refused. Qualify the exact model and server combination instead of weakening how responses are accepted.
 
 ### vLLM
 
-Run two servers on the same host with distinct already-present local model
-folders. Select the intended device/resources separately for each process:
+Run two servers on the same host, each with its own, already-present local model folder. Select the device and resources separately for each process:
 
 ```sh
 HF_HUB_OFFLINE=1 VLLM_NO_USAGE_STATS=1 vllm serve /APPROVED/GENERATION --host 127.0.0.1 --port 8000 --served-model-name trestle-generation --max-model-len 32768
 HF_HUB_OFFLINE=1 VLLM_NO_USAGE_STATS=1 vllm serve /APPROVED/VERIFICATION --host 127.0.0.1 --port 8001 --served-model-name trestle-verification --max-model-len 32768
 ```
 
-Use one served name per process. vLLM documents that the response uses the first
-served name when multiple names are supplied; aliases are not interchangeable
-under exact selector admission. Chat models need a chat template. Do not enable
-remote model code or development/weight-update APIs for this path. Inspect and
-disable prompt/content logging before declaring it disabled in route evidence.
-Usage-stat opt-out is not proof of no other egress. vLLM is not the selected Mac
-server; use a supported vLLM host/runtime.
+Use one served name per process. vLLM documents that, when you supply several names, the response uses the first one. Aliases are therefore not interchangeable under exact selector matching. Chat models need a chat template. Do not enable remote model code or development and weight-update APIs for this path. Before you declare content logging disabled in the route evidence, inspect prompt and content logging and disable it. Opting out of usage statistics does not prove that no other egress happens. vLLM is not the selected Mac server, so use a supported vLLM host and runtime.
 
 ### LM Studio on Mac
 
-Use two different already-downloaded local models from `lms ls`, not LM Link
-remote devices. In an explicitly authorized running local LM Studio instance:
+Use two different local models that are already downloaded (see `lms ls`), not remote devices from LM Link. Run these commands in a local LM Studio instance that you have explicitly authorized:
 
 ```sh
 lms load GENERATION_MODEL_KEY --identifier trestle-generation --context-length 32768
@@ -133,27 +90,15 @@ lms load VERIFICATION_MODEL_KEY --identifier trestle-verification --context-leng
 lms server start --bind 127.0.0.1 --port 1234
 ```
 
-The identifiers are the selectors in the templates, not model names to download.
-Keep serving on loopback, do not enable CORS, MCP or LM Link, and inspect local
-logging and just-in-time model loading settings. The recipe uses preloaded
-artifacts only. LM Studio documents offline local serving once models exist;
-that is not a measurement of this host or an assurance about unrelated features.
-If server authentication is enabled, use explicit bearer credentials instead.
+The identifiers are the selectors in the templates, not model names to download. Keep serving on loopback and do not enable CORS, MCP or LM Link. Inspect the local logging settings and the just-in-time model loading settings. The recipe uses preloaded artifacts only.
+
+LM Studio documents offline local serving once the models exist. That is not a measurement of this host, and it gives no assurance about unrelated features. If you enable server authentication, use explicit bearer credentials instead.
 
 ## Use the existing configuration and setup caller
 
-1. Copy your selected directory's `routes.json` and
-   `runtime-policy.template.json` into a private directory owned by you or root.
-   Use mode `0600` for files and `0700` for the directory. Do not bind repository
-   files as protected production configuration.
-2. Replace the illustrative review-policy identity, model/capability declarations
-   and base64 evidence manifest with your reviewed inputs. The examples use
-   `pending`, unknown health/quota/logging/pricing and unmeasured latency on
-   purpose. The named templates are not readiness evidence. Never promote these
-   placeholders merely to make a check pass. After qualification, record approved
-   registry status, measured health/quota, content logging disabled and known
-   local pricing (zero provider charge does not mean zero hardware cost).
-3. Bind the protected copies through the existing offline command:
+1. Copy `routes.json` and `runtime-policy.template.json` from your selected directory into a private directory that you or root own. Use mode `0600` for the files and `0700` for the directory. Do not bind repository files as protected production configuration.
+2. Replace the illustrative review-policy identity, the model and capability declarations and the base64 evidence manifest with your reviewed inputs. The examples deliberately use `pending` and unknown health, quota, logging and pricing, with unmeasured latency. The named templates are not readiness evidence, and you should never promote these placeholders only to make a check pass. After qualification, record the approved registry status, the measured health and quota, content logging disabled, and the known local pricing. A zero provider charge does not mean zero hardware cost.
+3. Bind the protected copies with the existing offline command:
 
 ```sh
 trestle config bind \
@@ -163,84 +108,41 @@ trestle config bind \
   --verification-adapter local-verification
 ```
 
-Save stdout as a new protected `runtime-policy.json`. Binding creates identities,
-not approval or model calls. Run `trestle config validate` with the same inventory
-and bound policy. Follow [Setup planning](setup.md#runtime-policy-approval-and-dry-run)
-to initialize the local plan, record the returned identities and recovery-owner
-approval, run `setup check policy`, and only with explicit probe consent run
-`setup check inference`. That existing caller builds the shared local catalog
-from these exact connections. The probe uses a fixed tiny synthetic source
-function through the existing candidate and verification request builders, not
-repository/private source. It permits two requests at most, 256 output tokens
-per request, reported input up to each request's own byte-based reservation,
-one 90-second deadline and no fallback.
-No server startup, model download or credential discovery is implicit.
+Save stdout as a new protected `runtime-policy.json`. Binding creates identities. It is not approval and makes no model calls. Run `trestle config validate` with the same inventory and the bound policy.
 
-These files also feed the existing local model-review and opt-in full-review
-runtime paths. See [Local model review](local-model-review.md) for source selection
-and [Setup planning](setup.md) for durable setup. A successful probe is not a
-finding-quality evaluation or publication permission.
+Then follow [Setup planning](setup.md#runtime-policy-approval-and-dry-run) to initialize the local plan, record the returned identities and the recovery-owner approval, and run `setup check policy`. Only with your explicit consent to a probe, run `setup check inference`. That existing caller builds the shared local catalog from these exact connections.
+
+The probe sends a fixed, tiny, synthetic source function through the existing candidate and verification request builders. It does not send repository or private source. It allows at most two requests, 256 output tokens per request, reported input up to each request's own byte-based reservation, one 90-second deadline and no fallback. Nothing starts a server, downloads a model or discovers a credential implicitly.
+
+These files also feed the existing local model-review and opt-in full-review runtime paths. See [Local model review](local-model-review.md) for source selection and [Setup planning](setup.md) for durable setup. A successful probe is not an evaluation of finding quality and not permission to publish.
 
 ## Offline fixtures and limits
 
-Each named directory ships `generation.response.json`,
-`verification.response.json` and `refusal.response.json`. These are synthetic
-protocol fixtures derived from the documented Chat contract, **not recorded live
-service responses**. The selectors match the templates. llama.cpp includes its
-documented timings extension. The refusal is deliberately synthetic: local
-models may express refusal as ordinary text, which is not magically converted to
-a structured refusal. Such text cannot pass candidate/verifier JSON admission.
+Each named directory ships `generation.response.json`, `verification.response.json` and `refusal.response.json`. These are synthetic protocol fixtures derived from the documented Chat contract, **not recorded live service responses**. The selectors match the templates, and the llama.cpp fixtures include its documented timings extension. The refusal is synthetic on purpose: local models may express a refusal as ordinary text, and Open Trestle does not convert that text into a structured refusal. Such text cannot pass candidate or verifier JSON admission.
 
-`setup/named_local_runtimes_test.go` copies and binds these exact templates into
-owned temporary files. Only those temporary test copies receive synthetic
-approved/healthy declarations and ephemeral fixture endpoints. Tests cover:
+`setup/named_local_runtimes_test.go` copies and binds these exact templates into temporary files that the test owns. Only those temporary copies receive synthetic approved and healthy declarations and ephemeral fixture endpoints. The tests cover these cases:
 
 - Pending templates bind but cannot pass setup readiness.
-- Exact selector, POST path, trusted system/user messages, no authentication,
-  `max_tokens` and `stream:false` through the shared confined local transport.
-- Known prompt/completion usage; absent usage stays unknown; inconsistent totals
-  and mismatched returned selectors refuse.
-- Refusal remains refusal rather than a finding; setup requires valid empty
-  candidate/verifier objects and known bounded usage.
-- Cancellation before dispatch sends nothing; in-flight cancellation stops the
-  client and the owned fake server observes cancellation. This is not proof that
-  a real engine has reclaimed memory or stopped GPU work. No server cancel or
-  administrative abort endpoint is called.
-- The actual setup inference checker reaches both shared adapters, parses the
-  fixed contracts and passes for an owned synthetic pair for every template.
+- The shared confined local transport sends the exact selector, the POST path, trusted system and user messages, no authentication, `max_tokens` and `stream:false`.
+- Known prompt and completion usage is accepted. Absent usage stays unknown. Inconsistent totals and mismatched returned selectors are refused.
+- A refusal stays a refusal rather than becoming a finding. Setup requires valid empty candidate and verifier objects and known, bounded usage.
+- Cancellation before dispatch sends nothing. In-flight cancellation stops the client, and the fake server that the test owns observes it. This is not proof that a real engine has reclaimed memory or stopped GPU work, and no server cancel or administrative abort endpoint is called.
+- The actual setup inference checker reaches both shared adapters, parses the fixed contracts and passes for an owned synthetic pair, for every template.
 
-The decoder keeps an 8 MiB response-body bound and rejects unknown fields.
-Timings do not fill missing usage. Separate adapter tests reject malformed,
-negative, overflowing or unknown timings, invalid reasoning types and oversize
-bodies, and prove reasoning text does not become review content. No fixture
-establishes live service conformance, no-cloud operation, intended-host/Mac
-qualification, model quality or privacy approval. Those remain explicit operator
-qualification inputs.
+The decoder keeps an 8 MiB response-body bound and rejects unknown fields. Timings do not fill in missing usage. Separate adapter tests reject malformed, negative, overflowing or unknown timings, invalid reasoning types and oversize bodies, and they show that reasoning text does not become review content.
+
+No fixture establishes conformance of a live service, operation without cloud, qualification of the intended host or Mac, model quality or privacy approval. Those remain explicit inputs from the operator's own qualification.
 
 ## Official references
 
-Read on 2026-10-31. These are current moving documentation URLs, not a pinned
-server version. Recheck them against the installed version before qualification.
+These were read on 2026-10-31. They are current, moving documentation URLs, not a pinned server version. Check them again against the installed version before you qualify a setup.
 
-- [llama.cpp server](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md):
-  alias/host/port/context flags; Chat endpoint; standard usage, timings and
-  reasoning content. llama.cpp explicitly does not make a strong universal
-  OpenAI compatibility claim.
-- [Ollama OpenAI compatibility](https://docs.ollama.com/api/openai-compatibility):
-  local `/v1/chat/completions`, model selectors, supported subset and cloud relay.
-- [Ollama FAQ](https://docs.ollama.com/faq): `OLLAMA_NO_CLOUD`, loopback binding,
-  restart/log confirmation, context length and local-only mode.
-- [vLLM online serving](https://docs.vllm.ai/en/latest/serving/online_serving/):
-  Chat route and chat-template requirement.
-- [vLLM serve arguments](https://docs.vllm.ai/en/stable/cli/serve/):
-  local model path, binding, context length and first served-name response rule.
-- [vLLM usage statistics](https://docs.vllm.ai/en/stable/usage/usage_stats/):
-  explicit metadata collection opt-out.
-- [LM Studio Chat](https://lmstudio.ai/docs/developer/openai-compat/chat-completions):
-  Chat endpoint, supported `messages`, `max_tokens`, `stream` and model fields.
-- [LM Studio load](https://lmstudio.ai/docs/cli/local-models/load) and
-  [server start](https://lmstudio.ai/docs/cli/serve/server-start):
-  local keys, exact custom identifiers, context length and explicit loopback bind.
-- [LM Studio offline operation](https://lmstudio.ai/docs/app/offline) and
-  [system requirements](https://lmstudio.ai/docs/app/system-requirements):
-  downloaded local model serving and the selected Mac host requirements.
+- [llama.cpp server](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md): alias, host, port and context flags, the Chat endpoint, and standard usage, timings and reasoning content. llama.cpp explicitly makes no strong, universal claim of OpenAI compatibility.
+- [Ollama OpenAI compatibility](https://docs.ollama.com/api/openai-compatibility): local `/v1/chat/completions`, model selectors, the supported subset and the cloud relay.
+- [Ollama FAQ](https://docs.ollama.com/faq): `OLLAMA_NO_CLOUD`, loopback binding, confirmation by restart and log, context length and local-only mode.
+- [vLLM online serving](https://docs.vllm.ai/en/latest/serving/online_serving/): the Chat route and the chat-template requirement.
+- [vLLM serve arguments](https://docs.vllm.ai/en/stable/cli/serve/): the local model path, binding, context length and the rule that the response uses the first served name.
+- [vLLM usage statistics](https://docs.vllm.ai/en/stable/usage/usage_stats/): the explicit opt-out from metadata collection.
+- [LM Studio Chat](https://lmstudio.ai/docs/developer/openai-compat/chat-completions): the Chat endpoint and the supported `messages`, `max_tokens`, `stream` and model fields.
+- [LM Studio load](https://lmstudio.ai/docs/cli/local-models/load) and [server start](https://lmstudio.ai/docs/cli/serve/server-start): local keys, exact custom identifiers, context length and an explicit loopback bind.
+- [LM Studio offline operation](https://lmstudio.ai/docs/app/offline) and [system requirements](https://lmstudio.ai/docs/app/system-requirements): serving of downloaded local models and the requirements of the selected Mac host.

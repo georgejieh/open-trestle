@@ -156,8 +156,12 @@ func TestLocalModelReviewDocsTeachBootstrapWithoutReadinessClaims(t *testing.T) 
 	if !strings.Contains(setupDoc, "trestle config inventory-identity --route-inventory") || !strings.Contains(setupDoc, "trestle config validate --route-inventory") {
 		t.Fatal("docs/setup.md does not link the inventory identity bootstrap to existing config validate")
 	}
-	if !strings.Contains(readme, "docs/local-model-review.md") || !strings.Contains(readme, "The static `local-git inspect`, `local-git change`, and deterministic `local-git review` commands support verified loose objects only.") {
-		t.Fatal("README.md does not keep the model-review link and explicit static-command loose-only scope")
+	if !strings.Contains(readme, "docs/local-model-review.md") {
+		t.Fatal("README.md does not link the model-review guide")
+	}
+	gitReviewDoc := strings.ToLower(strings.Join(strings.Fields(string(mustReadBootstrapFile(t, filepath.Join("..", "..", "docs", "local-git-review.md")))), " "))
+	if !strings.Contains(gitReviewDoc, "loose objects only") {
+		t.Fatal("docs/local-git-review.md does not state that the static commands read loose objects only")
 	}
 }
 

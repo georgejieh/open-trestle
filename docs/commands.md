@@ -1,28 +1,32 @@
 # Commands
 
-Every `trestle` command, grouped as `trestle --help` groups them. `trestle
---help`, `trestle -h` and `trestle help` print the usage to standard output and
-exit `0`. A command line it does not recognise, and a bare `trestle` without a
-terminal, print the same usage to standard error and exit `2`. Each command
-also prints its own usage when its arguments are wrong. Exit codes are in
-[exit codes](exit-codes.md), variables and paths in
+This page lists every `trestle` command and its flags, grouped as `trestle --help`
+groups them. Use it to look up a flag; for a first walkthrough, start with
+[getting started](getting-started.md).
+
+`trestle --help`, `trestle -h` and `trestle help` print the usage to standard
+output and exit `0`. A command line that Open Trestle does not recognise, and a
+bare `trestle` without a terminal, print the same usage to standard error and
+exit `2`. Each command also prints its own usage when its arguments are wrong.
+Exit codes are in [exit codes](exit-codes.md), and variables and paths are in
 [environment variables and files](environment-and-files.md).
 
 `--flag=value` and `--flag value` both work. `init`, `review`, `update` and
-`usage` reject a flag given twice.
+`usage` reject a flag that you give twice.
 
 ## Everyday
 
 ### `trestle`
 
-In a terminal, shows this repository's setup, key, spending and last review,
-with numbered next actions. See [getting started](getting-started.md#running-it-again).
-Outside a Git repository it says so and exits `0`. Without a terminal on both
-sides, or with `NO_COLOR` set or `TERM=dumb`, it prints the usage and exits `2`.
+In a terminal, `trestle` shows this repository's setup, key, spending and last
+review, with numbered next actions. See
+[getting started](getting-started.md#running-it-again). Outside a Git
+repository, it says so and exits `0`. Without a terminal on both sides, or with
+`NO_COLOR` set or `TERM=dumb`, it prints the usage and exits `2`.
 
 ### `trestle review`
 
-Reviews the latest committed change with the setup `trestle init` made.
+Reviews the latest committed change with the setup that `trestle init` made.
 
 | Flag | Meaning |
 | --- | --- |
@@ -37,12 +41,12 @@ Reviews the latest committed change with the setup `trestle init` made.
 | `--max-specialists N` | Cap the specialists a set runs. |
 | `--exit-code-policy default\|findings\|strict\|always-zero` | Map a completed review to an exit status. See [exit codes](exit-codes.md#exit-code-policy). |
 
-`--profile` and `--specialists` exclude each other. `trestle review PATH`
+You cannot combine `--profile` and `--specialists`. `trestle review PATH`
 reviews a local fixture file instead.
 
 ### `trestle update`
 
-Installs a newer verified build of the packaged Linux install. See
+Installs a newer, verified build of the packaged Linux install. See
 [updates](updates.md).
 
 | Flag | Meaning |
@@ -54,7 +58,7 @@ Installs a newer verified build of the packaged Linux install. See
 
 ### `trestle usage`
 
-Shows the spending recorded this period against each key's limit. See
+Shows the spending recorded in this period against each key's limit. See
 [spending limits](spending-limits.md).
 
 | Command | Meaning |
@@ -75,7 +79,7 @@ Shows the spending recorded this period against each key's limit. See
 ### `trestle init`
 
 Guided setup and first review for the Git repository in the current directory.
-Every answer has a flag; `--no-input` never prompts. See
+Every answer has a flag, and `--no-input` never prompts. See
 [getting started](getting-started.md#non-interactive-use).
 
 | Group | Flags |
@@ -106,17 +110,18 @@ See [API keys](keys.md).
 
 ### `trestle local-git model-review`
 
-The direct review the CI example runs and `trestle review` wraps. See
+The direct review that the CI example runs and that `trestle review` wraps. See
 [local model review](local-model-review.md).
 
-Source, by objects folder: `--objects-root PATH`, `--repository-authority`,
-`--repository-namespace`, `--repository-name`, `--revision-algorithm
-sha1|sha256`, `--base-revision-digest`, `--head-revision-digest`, and
-optionally `--object-store loose-only|loose-and-pack-index-v1`. Source, by
-checkout: `--checkout PATH --base REF --head REF`, which replaces the objects
-and revision flags.
+You name the source in one of two ways. With an objects folder, use
+`--objects-root PATH`, `--repository-authority`, `--repository-namespace`,
+`--repository-name`, `--revision-algorithm sha1|sha256`,
+`--base-revision-digest` and `--head-revision-digest`, and optionally
+`--object-store loose-only|loose-and-pack-index-v1`. With a checkout, use
+`--checkout PATH --base REF --head REF`, which replaces the objects and revision
+flags.
 
-Also: `--tenant`, `--repository`, `--route-inventory PATH`, `--runtime-policy
+The other flags are `--tenant`, `--repository`, `--route-inventory PATH`, `--runtime-policy
 PATH`, `--egress local-only|policy-approved`, `--timeout DURATION`, `--format
 json|text|sarif|markdown`, `--all`, `--verbose`, `--exit-code-policy`,
 `--investigation-policy PATH` or `--retained-memory-input PATH`, and `--profile`
@@ -124,15 +129,15 @@ or `--specialists` with `--max-specialists`.
 
 ### `trestle local-git submit-review`
 
-Submits a full review to the local daemon: the objects-folder source flags,
+Submits a full review to the local daemon. It takes the objects-folder source flags,
 `--server LOOPBACK_URL`, `--tenant`, `--repository`, `--run`,
 `--review-policy-identity`, `--inventory-identity`, `--runtime-policy-identity`
 and optionally `--created-at-unix-milliseconds`.
 
 ### `trestle runs`
 
-Clients of a running daemon. See [daemon API](daemon-api.md). The daemon is
-`trestled`, a separate binary.
+These commands are clients of a running daemon. See [daemon API](daemon-api.md).
+The daemon is `trestled`, a separate binary.
 
 | Command | Flags |
 | --- | --- |
@@ -154,7 +159,7 @@ Clients of a running daemon. See [daemon API](daemon-api.md). The daemon is
 
 ## Operators
 
-These commands set up and check a daemon deployment or print identities. They
+These commands set up and check a daemon deployment, or print identities. They
 are documented in [setup](setup.md), [operations](operations.md) and
 [configuration validation](configuration-validation.md).
 
@@ -185,7 +190,7 @@ are documented in [setup](setup.md), [operations](operations.md) and
 ### `trestle setup bootstrap`
 
 Writes the protected configuration for a local or remote first review.
-`trestle init` calls the same code.
+`trestle init` runs the same code.
 
 | Command | Flags |
 | --- | --- |
@@ -224,7 +229,8 @@ Writes the protected configuration for a local or remote first review.
 
 ### Static local Git commands
 
-Read loose objects only, make no model call and do not publish. See
+These commands read loose objects only, make no model call and do not publish.
+See
 [inspect](local-git-inspect.md), [change](local-git-change.md) and
 [review](local-git-review.md).
 

@@ -1,26 +1,44 @@
 # Memory retrieval task handler
 
-`handlers/memory` performs bounded advisory retrieval for the exact protected `change_model` dependency. Memory never establishes a finding.
+The memory retrieval handler looks up stored memory records that relate to the files a change touches. It runs in a review run after the change model task, takes the protected `change_model` artifact as its input, and does bounded, advisory retrieval. Memory never establishes a finding. The handler lives in `handlers/memory`.
 
 ## Authority
 
-A handler installation binds one approved review policy, memory backend identity, actor, canonical path-prefix allowlist, query bound, and total result bound into its handler identity. At execution it requires the plan's exact policy identity and creates a fresh memory scope from:
+Authority here means what the handler is allowed to read. A handler installation binds the following into its handler identity, the digest that identifies this implementation:
 
-- the run tenant and repository
-- the configured actor and path authorization
-- `exact` ref visibility
-- the acquired head revision as the ref-set identity
+- one approved review policy;
+- the memory backend identity;
+- the actor;
+- a canonical allowlist of path prefixes;
+- a bound on the number of queries; and
+- a bound on the total number of results.
 
-Scope filtering therefore occurs before scoring. A record from another tenant, repository, actor, revision set, or path partition is not queried.
+At execution, the handler requires the plan's exact policy identity. It then creates a fresh memory scope from:
+
+- the run's tenant and repository;
+- the configured actor and path authorization;
+- `exact` ref visibility; and
+- the acquired head revision, used as the ref-set identity.
+
+The scope is applied before any scoring. A record from another tenant, repository, actor, revision set or path partition is never queried.
 
 ## Retrieval
 
-The handler validates the change artifact and both source snapshots, then issues path-only lexical queries for changed paths. It performs at most 64 queries and retains at most 50 ranked records across the task. Every changed path is represented by a query or an explicit `path_not_authorized`, `query_limit`, or `result_limit` omission.
+The handler validates the change artifact and both source snapshots. It then runs path-only lexical queries for the changed paths, making at most 64 queries and keeping at most 50 ranked records across the whole task. Every changed path is either covered by a query or recorded with an explicit omission: `path_not_authorized`, `query_limit` or `result_limit`.
 
-The output preserves each query identity, index revision, retrieval identity, rank, score components, record identity, kind, taint, path, text, evidence, derivation, counterevidence, producer, validity interval, freshness watermark, and confidence basis. Parsing reconstructs every memory scope, query, record, retrieval-item identity, and retrieval identity. Expired or stale records cannot pass reconstruction.
+For each retrieved item, the output keeps:
+
+- the query identity, the index revision and the retrieval identity;
+- the rank and the score components;
+- the record identity, kind, taint, path and text;
+- the evidence, derivation and counterevidence;
+- the producer, the validity interval and the freshness watermark; and
+- the confidence basis.
+
+Parsing the output rebuilds every memory scope, query, record, retrieval-item identity and retrieval identity. Expired or stale records fail that reconstruction.
 
 ## Output
 
-The protected `retrieval_result` artifact uses the `memory` origin. Its payload and artifact provenance bind the change, review policy, exact memory scope, and backend identity. Its expiry is capped at one hour and shortened by source expiry and selected record validity or staleness boundaries.
+The protected `retrieval_result` artifact has the `memory` origin. Its payload and its artifact provenance bind the change, the review policy, the exact memory scope and the backend identity. Its expiry is capped at one hour, and it is shortened further by the source expiry and by the validity or staleness boundaries of the selected records.
 
-Published schema: `schemas/artifact/memory-retrieval-result-v1.schema.json`.
+The published schema is `schemas/artifact/memory-retrieval-result-v1.schema.json`.

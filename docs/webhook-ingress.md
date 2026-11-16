@@ -1,20 +1,26 @@
 # Verified webhook ingress
 
-Webhook input crosses a separate authentication boundary from the daemon API. A forge delivery is not a review request until its unchanged bytes pass the source-specific signature verifier, event and action filters, repository scope checks, durable deduplication, and deterministic run planning.
+Webhook ingress is how a GitHub pull-request event becomes a review run in the daemon. A webhook delivery has its own authentication, separate from the daemon API. A delivery from a forge does not become a review request until its unchanged bytes have passed all of these steps:
+
+- The signature check for that source.
+- The event and action filters.
+- The repository scope checks.
+- Durable deduplication.
+- Deterministic run planning.
 
 ## GitHub boundary
 
-The GitHub adapter implements the current GitHub guidance:
+The GitHub adapter follows GitHub's current guidance:
 
 - It accepts only `X-Hub-Signature-256` using HMAC-SHA-256.
 - It compares signatures in constant time.
-- It verifies the unchanged bounded payload before inspecting event content.
-- It uses `X-GitHub-Delivery` with tenant and repository scope as the deduplication key. GitHub redelivery keeps this identifier.
-- It applies an exact configured event/action allowlist. Authenticated but unwanted events are acknowledged without storage so they do not create retry storms.
-- It rejects duplicate critical JSON keys before pull-request planning.
-- Its HTTP handler bounds payloads to 1 MiB and uses a bounded nonblocking concurrency gate.
+- It verifies the unchanged, size-limited payload before it looks at the event content.
+- It uses `X-GitHub-Delivery`, together with the tenant and repository scope, as the deduplication key. GitHub keeps this identifier when it redelivers.
+- It applies an exact, configured allowlist of events and actions. An event that is authenticated but not wanted is acknowledged without being stored, so it does not cause a storm of retries.
+- It rejects duplicate critical JSON keys before it plans a pull-request review.
+- Its HTTP handler limits payloads to 1 MiB and uses a bounded, nonblocking concurrency gate.
 
-GitHub requires a 2xx response within 10 seconds. The handler responds only after the verified delivery has reached its durable inbox file and directory synchronization boundary. It does not fetch source, invoke a model, or publish output on the request path.
+GitHub requires a 2xx response within 10 seconds. The handler responds only after the verified delivery has reached its durable inbox file and the directory has been synchronized. It does not fetch source, call a model or publish output while it handles the request.
 
 Primary references:
 
@@ -23,57 +29,188 @@ Primary references:
 
 ## Setup conformance
 
-`trestle admin github webhook identity` derives the exact non-secret runtime verifier and setup conformance authority from the tenant, repository, key ID, and fixed handler contract. `trestle setup check webhook` is available only to controlled-hybrid and Kubernetes HA plans after `integration_permissions_validated` has a passing receipt. It reads `OPEN_TRESTLE_GITHUB_WEBHOOK_SECRET` only after plan, dependency, actor, scope, and authority checks. The runtime secret must be a canonical 64-character lowercase hexadecimal encoding of 32 CSPRNG bytes. Structural validation rejects malformed, low-diversity, and repeated values but does not claim to prove entropy provenance.
+`trestle admin github webhook identity` derives two non-secret values from the tenant, repository, key ID and the fixed handler contract: the exact runtime verifier and the authority for the setup conformance check. `trestle setup check webhook` is available only to controlled-hybrid and Kubernetes HA plans, and only after `integration_permissions_validated` has a passing receipt. It reads `OPEN_TRESTLE_GITHUB_WEBHOOK_SECRET` only after it has checked the plan, the dependencies, the actor, the scope and the authority.
 
-The check runs five direct in-process requests against the production handler without a socket: an invalid signature, one accepted public fixture, its exact duplicate, a validly signed conflicting body with the same delivery ID, and a validly signed ignored action. A pass requires status and response-header parity, exactly one crash-safe `FileStore` record, stable duplicate identity, conflict preservation, ignored-action non-persistence, clearing of owned verifier and executor byte slices, and bounded nonrecursive deletion of the disposable private directory. Unexpected entries or replacement of that directory fail without recursive deletion. The check does not claim GitHub reachability or validate the configured PostgreSQL and encrypted artifact stores; those are separate setup authorities.
+The runtime secret must be a canonical, 64-character, lowercase hexadecimal encoding of 32 bytes from a cryptographically secure random generator. Structural validation rejects malformed values, values with low diversity and repeated values. It does not claim to prove where the entropy came from.
 
-## Immutable delivery
+The check sends five requests directly to the production handler inside the process, without a socket:
 
-A `VerifiedDelivery` binds:
+1. A request with an invalid signature.
+2. One accepted public fixture.
+3. The exact duplicate of that fixture.
+4. A validly signed body that conflicts with the fixture because it has the same delivery ID.
+5. A validly signed delivery with an ignored action.
 
-- tenant and repository scope;
-- source protocol and forge delivery identifier;
-- event and action;
-- exact verifier configuration identity;
-- SHA-256 digest of the unchanged body; and
-- receipt time.
+A pass requires all of the following:
 
-The delivery identity includes the body digest and local receipt time. The deduplication key intentionally includes neither. Redelivery equivalence binds the same tenant and repository scope, source, delivery identifier, event, action, verifier identity, and body digest, but not a later local receipt time. Reuse of one scoped delivery identifier with different content or verifier authority is a hard conflict rather than a second event. Payload-bearing values redact their formatting.
+- Matching status and response headers.
+- Exactly one record in the crash-safe `FileStore`.
+- A stable identity for the duplicate.
+- The conflicting body leaves the stored record untouched.
+- The ignored action is not stored.
+- The verifier and executor byte slices that the check owns are cleared.
+- The disposable private directory is deleted without recursion, within bounds.
 
-The forge signature covers the body, not the `X-GitHub-Delivery` header, so a holder of one validly signed body could otherwise resend it under a fresh delivery ID and start a new review run. Every store therefore also keeps a replay key over the scope, source, event type, action, and body digest, and refuses a second delivery with the same replay key under a different delivery ID with `webhook.ErrDeliveryReplayed`. The GitHub handler returns `409 delivery_replayed` with a content-free body, creates no delivery or run, and sends no processing wake. Same-ID redelivery is unchanged (`200`, `duplicate: true`). The refusal outlives retention: the memory store holds the key for the life of the process, `FileStore` rebuilds it from its persisted deliveries on the first write after open and fails closed if one cannot be read, and PostgreSQL migration `0016_webhook_replay_key.sql` adds a replay key with a partial unique index. Existing PostgreSQL rows can retain unknown keys, but new-ID admissions for their repository and source fail closed as unavailable until trusted backfill is complete. A constraint prevents old writers from introducing further unknown keys. See [PostgreSQL replay-key upgrades](postgresql-storage.md#webhook-replay-key-upgrades). The delivery identity and deduplication key are unchanged.
+Unexpected entries in that directory, or a replacement of it, fail the check without any recursive deletion. The check does not claim that GitHub can reach the endpoint. It also does not validate the configured PostgreSQL and encrypted artifact stores, which have their own separate setup authorities.
+
+## Verified deliveries
+
+A `VerifiedDelivery` ties together these values:
+
+- The tenant and repository scope.
+- The source protocol and the forge's delivery identifier.
+- The event and the action.
+- The identity of the exact verifier configuration.
+- The SHA-256 digest of the unchanged body.
+- The time Open Trestle received it.
+
+The delivery identity includes the body digest and the local receipt time. The deduplication key deliberately includes neither. Two deliveries count as the same redelivery when they have the same tenant and repository scope, source, delivery identifier, event, action, verifier identity and body digest. A later local receipt time does not matter. If a scoped delivery identifier is reused with different content or a different verifier authority, that is a hard conflict, not a second event. Values that carry payload data redact themselves when formatted.
+
+### Replay protection
+
+The forge's signature covers the body but not the `X-GitHub-Delivery` header. Someone who holds one validly signed body could therefore resend it under a new delivery ID and start a new review run. To prevent this, every store also keeps a replay key made from the scope, source, event type, action and body digest. A second delivery with the same replay key but a different delivery ID is refused with `webhook.ErrDeliveryReplayed`.
+
+For such a delivery, the GitHub handler returns `409 delivery_replayed` with a body that has no content. It creates no delivery or run and sends no wake-up to processing. Redelivery under the same ID is unchanged: it returns `200` with `duplicate: true`. The delivery identity and the deduplication key are unchanged.
+
+The refusal lasts longer than retention, and each store keeps the replay key differently:
+
+- The memory store holds the key for the life of the process.
+- `FileStore` rebuilds the keys from its saved deliveries on the first write after it opens. If it cannot read one, it fails closed.
+- PostgreSQL migration `0016_webhook_replay_key.sql` adds a replay key with a partial unique index. Existing PostgreSQL rows can lack their keys. Until a trusted backfill completes, admission of a delivery with a new ID for their repository and source fails closed as unavailable. A constraint stops old writers from adding more unknown keys.
+
+See [PostgreSQL replay-key upgrades](postgresql-storage.md#webhook-replay-key-upgrades).
 
 ## Durable inbox
 
-The local `FileStore` provides one exclusive writer, private permissions, bounded canonical records, atomic rename, file synchronization, directory synchronization, cursor listing, restart recovery, and corruption detection. Its root holds at most 10,000 files besides refusal and retry files (the deliveries and the writer lock). Retry files are bounded apart from them at 10,000, one per delivery. Refusal records are bounded apart from them at 10,000 too, one per delivery whichever planner identity recorded it; listing ignores both kinds of sidecar. Sidecars therefore never take a delivery's place, and the root holds at most three files per delivery however often the planner identity changes. If the retry bound is ever full (possible only with files the store did not write), a delivery whose retry state cannot be recorded is refused with `retry_capacity_exhausted`, which is visible and terminal, while the other deliveries keep flowing; its refusal record has its own bound and fits. A full refusal bound is possible only with refusal files the store did not write, and is a global failure like any other inconsistent root. Equivalent redelivery returns the original acceptance receipt and preserves the first stored delivery identity, receipt time, and canonical bytes. The GitHub HTTP handler returns 202 for first acceptance and 200 with the same acceptance identity and `duplicate: true` for equivalent redelivery. The receipt is created only after verifier authority is matched to the exact tenant, repository, and source.
+The local `FileStore` is the durable inbox. It provides these properties:
 
-A payload is retained because asynchronous processing must survive a crash. Operators must place the inbox on protected storage and apply a retention policy after run admission evidence is retained. The inbox never stores webhook secrets or signature headers.
+- One exclusive writer.
+- Private permissions.
+- Bounded canonical records.
+- Atomic rename, file synchronization and directory synchronization.
+- Cursor listing.
+- Recovery after a restart.
+- Detection of corruption.
 
-## Replay-safe run admission
+Its root directory holds at most 10,000 files, not counting refusal and retry files. Those files are the deliveries and the writer lock. Retry files have their own bound of 10,000, one per delivery. Refusal records also have their own bound of 10,000, one per delivery, whichever planner identity recorded it. Listing ignores both kinds of sidecar file. Sidecar files therefore never take a delivery's place, and the root holds at most three files per delivery however often the planner identity changes.
 
-The pull-request planner creates one deterministic review-run ID from the scoped delivery key. The review plan request identity must equal the verified delivery identity. Its tenant and repository must equal the inbox scope. The executable planner creates separate `source-base` and `source-head` root tasks. Their canonical protected input artifacts bind the GitHub repository identity, full Git object IDs, built-in source adapter identity, delivery identity, classification, protection mode, and retention time. The `source-head` input (source input v1) names `pull_request.head.sha`. The `source-base` input (source input v3) names `pull_request.base.sha` as the requested base and `pull_request.head.sha` as the head, and authorizes acquisition of their merge base, because GitHub presents a pull request as `merge-base...head` and `base.sha` is the base branch tip when the event fired. The source task resolves and records that merge base; see [source acquisition](source-acquisition-handler.md#merge-base-inputs). Base and head must use one object format. Equal base and head commits are planned rather than refused at planning, so the run records `nothing_to_review` as the source task's reason. The prepared planner identity is `open-trestle/prepared-github-pull-request-planner` version 2; version 1 plans are no longer produced. A run opened under version 1 before an upgrade is resumed as that delivery's run and continues under its recorded version 1 plan, whose `source-base` task names `pull_request.base.sha` directly, but only when that plan is exactly the one version 1 produces for the delivery with this daemon's task handlers: the planner rebuilds it (`SupersededPlanIdentities`) and the processor compares plan identities. Handler identities are bound into a plan, and a daemon whose handler differs from the one that opened a run cannot run that run's tasks. Such a run, with this planner's task graph, policy and mode for the delivery's request but a task handler this daemon does not run, is refused as `run_opened_by_incompatible_release` and is not advanced; its explanation says to push a new commit or reopen the pull request, which delivers a new event and opens a fresh run. A same-ID redelivery does not, since it is a duplicate of the same delivery. The `change` task depends on both successful source snapshots. Later task recipes bind the payload digest, pull-request number, exact base and head object IDs, task kind, and dependency task identities.
+If the retry bound ever fills, a delivery whose retry state cannot be recorded is refused with `retry_capacity_exhausted`. This is visible and terminal, and the other deliveries keep flowing. The refusal record has its own bound, so it still fits. The retry bound can fill only with files that the store did not write. The same is true of the refusal bound. A full refusal bound is a global failure, like any other inconsistent root.
 
-The prepared processor writes every exact root input artifact before opening the run. A crash after the immutable write but before journal open is safe: durable delivery reconciliation recreates the same artifact and plan identities. Extra, missing, expired, cross-scope, non-host, or non-root inputs are rejected.
+Redelivery that is equivalent returns the original acceptance receipt and keeps the first stored delivery identity, receipt time and canonical bytes. The GitHub HTTP handler returns 202 for first acceptance. For equivalent redelivery it returns 200 with the same acceptance identity and `duplicate: true`. Open Trestle creates the receipt only after the verifier authority matches the exact tenant, repository and source.
 
-Context assembly, candidate generation, independent verification, and publication each have one orchestration attempt. Source acquisition, change construction, deterministic analysis, memory retrieval, and readiness evaluation retain three bounded attempts. The version-4 pull-request planner identity binds this behavior; the prepared planner also binds that base identity. Stored plans retain their original identities and attempt limits. A planner upgrade does not rewrite journals or repair an incompatible stored plan, and redelivery is not a migration mechanism.
+Open Trestle keeps a payload because asynchronous processing must survive a crash. Operators must place the inbox on protected storage. They must also apply a retention policy, but only after the evidence of run admission has been kept. The inbox never stores webhook secrets or signature headers.
 
-Processing does not need a second mutable delivery lease. Repeating plan creation after a crash produces the same plan, while the run journal makes open and advancement idempotent. Concurrent work is serialized later by the existing task leases. This keeps ingestion replayable and places side-effect fencing at the actual effect boundary. Publication remains a one-attempt orchestration task whose publisher uses the separately authorized stable operation key and bounded publication retry contract.
+## Run admission that is safe to replay
+
+The pull-request planner creates one deterministic review-run ID from the scoped delivery key. The review plan request identity must equal the verified delivery identity, and its tenant and repository must equal the inbox scope.
+
+The executable planner creates two separate root tasks, `source-base` and `source-head`. Their canonical, protected input artifacts record the following:
+
+- The GitHub repository identity.
+- The full Git object IDs.
+- The identity of the built-in source adapter.
+- The delivery identity.
+- The classification.
+- The protection mode.
+- The retention time.
+
+The `source-head` input (source input v1) names `pull_request.head.sha`. The `source-base` input (source input v3) names `pull_request.base.sha` as the requested base and `pull_request.head.sha` as the head, and it authorizes acquisition of their merge base. GitHub presents a pull request as `merge-base...head`, and `base.sha` is the tip of the base branch when the event fired. The source task resolves and records the merge base; see [source acquisition](source-acquisition-handler.md#merge-base-inputs). Base and head must use one object format. If the base and head commits are equal, the planner still plans the run, and the run records `nothing_to_review` as the source task's reason. The `change` task depends on both source snapshots succeeding. The recipes of later tasks bind the payload digest, the pull-request number, the exact base and head object IDs, the task kind and the identities of the tasks they depend on.
+
+### Planner versions
+
+The prepared planner identity is `open-trestle/prepared-github-pull-request-planner` version 2. Open Trestle no longer produces version 1 plans. A run that was opened under version 1 before an upgrade is resumed as that delivery's run and continues under its recorded version 1 plan. In that plan, the `source-base` task names `pull_request.base.sha` directly. This happens only when the plan is exactly the one that version 1 produces for the delivery with this daemon's task handlers. The planner rebuilds that plan (`SupersededPlanIdentities`) and the processor compares the plan identities.
+
+Task handler identities are part of a plan. A daemon whose handler differs from the one that opened a run cannot run that run's tasks. Such a run is refused as `run_opened_by_incompatible_release` and is not advanced. It qualifies when it has this planner's task graph, policy and mode for the delivery's request, but uses a task handler that this daemon does not run. The explanation tells you to push a new commit or reopen the pull request, which delivers a new event and opens a new run. A redelivery with the same ID does not do this, because it duplicates the same delivery.
+
+### Writing inputs and attempt limits
+
+The prepared processor writes every exact root input artifact before it opens the run. A crash after the immutable write but before the journal opens is safe. Durable delivery reconciliation recreates the same artifact and plan identities. The processor rejects inputs that are extra, missing, expired, from another scope, not from the host or not root inputs.
+
+The attempt limits differ by stage:
+
+- Context assembly, candidate generation, independent verification and publication each get one orchestration attempt.
+- Source acquisition, change construction, deterministic analysis, memory retrieval and readiness evaluation each get three bounded attempts.
+
+The version-4 pull-request planner identity binds this behavior, and the prepared planner also binds that base identity. Stored plans keep their original identities and attempt limits. A planner upgrade does not rewrite journals or repair a stored plan that is incompatible, and redelivery is not a way to migrate.
+
+Processing does not need a second mutable lease on a delivery. If plan creation is repeated after a crash, it produces the same plan, and the run journal makes opening and advancing the run idempotent. The existing task leases serialize concurrent work later. This keeps ingestion replayable and puts the fencing of side effects at the point where the effect happens. Publication remains a task with one orchestration attempt. Its publisher uses the separately authorized, stable operation key and the bounded publication retry contract.
 
 ## PostgreSQL metadata profile
 
-The PostgreSQL webhook store never places a delivery body in a database row. It encodes the verified delivery and acceptance receipt into a protected `webhook_delivery` artifact under the delivery's deterministic review-run scope. PostgreSQL retains only scoped identities and retention times. Production use requires an envelope-encrypted shared artifact store; a process-private file store is suitable only for one local daemon. A failed database insert can leave an unreachable encrypted artifact, which remains governed by its immutable expiry and retention sweep.
+The PostgreSQL webhook store never puts a delivery body in a database row. It encodes the verified delivery and the acceptance receipt into a protected `webhook_delivery` artifact, under the delivery's deterministic review-run scope. PostgreSQL keeps only the scoped identities and the retention times.
+
+Production use requires a shared artifact store with envelope encryption. A file store that is private to the process suits only a single local daemon. If a database insert fails, an encrypted artifact that nothing refers to can remain. Its immutable expiry and the retention sweep still govern it.
 
 ## Durable run supervision
 
-`webhook.Supervisor` converts durable inbox records into idempotent review runs through the repository's exact planner and the shared coordinator. Startup performs a bounded reconciliation of the durable inbox. After acceptance, the HTTP handler sends a content-free, non-blocking delivery notice. If the bounded notice queue is full, it records an overflow wake-up and the supervisor reconciles the durable store instead of dropping authority or accepting an unbounded in-memory queue.
+`webhook.Supervisor` turns durable inbox records into idempotent review runs. It uses the repository's exact planner and the shared coordinator. At startup it reconciles the durable inbox, within bounds.
 
-Planning performs no I/O, so a planning error other than cancellation is a deterministic refusal: processing the same delivery again fails the same way. The processor returns it as `webhook.ErrDeliveryRefused` with a content-free reason: the planner's named reason (the GitHub planner names `invalid_pull_request_payload`), `planning_refused` for any other planning error, `run_plan_not_bound` for a plan or prepared inputs outside the delivery's lineage, `run_plan_conflict` when the delivery's run scope already holds a plan the planner did not produce for this delivery, or `run_opened_by_incompatible_release` when that plan is one an earlier release opened with task handlers this daemon does not run. A run whose plan is exactly the plan this planner, or an earlier version of it (`webhook.SupersedingPlanner`), produces for the delivery is that delivery's run: reprocessing resumes and advances it under its recorded plan and writes no new inputs. Any other plan in the scope is refused, even one that names the delivery's request, as `run_opened_by_incompatible_release` when it is an earlier release's plan with other task handlers and as `run_plan_conflict` otherwise, and is neither adopted nor advanced; the daemon API also refuses caller-submitted run IDs that begin with `webhook-`. The supervisor records the refusal once in the inbox, one record per delivery naming the planner identity that recorded it (`RefusalStore`; a `open-trestle/webhook-delivery-refusal` v1 file beside the delivery in the file inbox, a row in `open_trestle_webhook_refusals`, keyed by delivery, in PostgreSQL), and skips the delivery. A record a superseded planner identity left is kept until the current planner has its own outcome for the delivery: it is pruned once the current planner admits the delivery, and replaced once the current planner refuses it. A refusal is terminal for its delivery and planner identity: the supervisor reads it before processing, so a refused delivery is never processed again, starts no new retry cycle, and never has its run opened later. Recording the same refusal again keeps the first record, and so does a different reason for the same delivery and planner (for example one recorded concurrently): the delivery stays refused under its first record, is skipped, and never fails the pass. A refused delivery never blocks the others. Any other failure is classified by a probe: the supervisor reads the run journal (an unopened probe run scope) and, for prepared processing, the artifact store (an identity that names no artifact). When either does not answer, the failure is global: the pass fails and is retried with bounded, capped delay, and it never counts against a delivery, so an outage cannot refuse deliveries. When both answer, the failure is the delivery's own. That delivery backs off on its own capped exponential schedule (the configured retry delay doubled per failure), a timer wakes reconciliation when its retry is due, and every other delivery keeps flowing; the pass does not fail. A delivery that fails the configured maximum number of times this way is recorded as refused with `retries_exhausted`, so it is visible and not retried forever, and one whose retry state the inbox has no room for is refused with `retry_capacity_exhausted`. Per-delivery retry state (failure count and next-attempt time) is durable in the inbox beside the delivery: an `open-trestle/webhook-delivery-retry` v1 file in the file inbox, a row in the tenant-isolated `open_trestle_webhook_retries` table (migration 0018, keyed by delivery and deleted with it) in PostgreSQL. A restart therefore neither resets a delivery's bound nor retries it before its recorded time. A delivery has one retry state, naming the planner identity that recorded it: state a superseded planner identity left neither holds the delivery back nor counts against it, is replaced when the current planner records its own, and is pruned once the delivery is admitted or refused, so it never accumulates. The state is cleared when the delivery is admitted or refused (including state an interrupted pass left beside a refusal), and a failure to read or write it is global, except a full file-inbox retry bound (above), which refuses the delivery. Only global failures (inbox store reads or refusal writes, the probe) exhaust the supervisor's retries and stop it, so the daemon can shut down and rely on its service manager to restart from durable state. Inbox deduplication, replay refusal, and run idempotency are unchanged. Reprocessing is safe: the deterministic run scope, plan identity, coordinator open, and task availability transitions are idempotent. A matching existing run resumes before prepared inputs are touched. If a valid accepted delivery was never opened before every exact prepared root input expired, the processor returns the typed `ErrPreparedInputsExpired` outcome. Supervision treats only that fully validated outcome as a terminal skip, so a stale inbox record cannot poison readiness. All root identities, scope, media type, origin, creation time, provenance, uniqueness, and coverage are checked before expiry can cause a skip. No webhook payload enters the notice queue. PostgreSQL insertion serializes each repository and source at a 10,000-delivery bound, which matches the supervisor reconciliation limit.
+After the handler accepts a delivery, it sends a delivery notice that has no content and does not block. If the bounded notice queue is full, the handler records an overflow wake-up, and the supervisor reconciles the durable store. This way Open Trestle neither drops a delivery nor allows an unbounded in-memory queue. No webhook payload enters the notice queue.
 
-The built-in GitHub planner currently accepts same-repository pull requests only. The top-level repository and both `pull_request.base.repo.full_name` and `pull_request.head.repo.full_name` must match the configured repository. Fork pull requests are rejected instead of assigning their head commit to false repository lineage.
+### Refused deliveries
 
-`trestled --github-open-runs` enables this path only when an exact lowercase GitHub repository name, review policy identity, review mode, and every required task-handler identity are supplied. Ingress can remain enabled without automatic run opening. This separation permits an operator to validate signatures and durable intake before enabling work creation. The supervisor opens work; it does not claim tasks, invoke models, read source, or publish results.
+Planning does no I/O. A planning error other than cancellation is therefore a deterministic refusal: processing the same delivery again fails the same way. The processor returns it as `webhook.ErrDeliveryRefused` with a reason that has no content:
 
-Required-mode GitHub planning also prepares an exact protected publication input for the downstream publication task. Prepared processing admits task inputs for downstream tasks only when their artifact identity is the exact immutable input identity in the plan; complete root-input coverage remains mandatory.
+- The planner's own named reason. The GitHub planner names `invalid_pull_request_payload`.
+- `planning_refused` for any other planning error.
+- `run_plan_not_bound` for a plan, or prepared inputs, outside the delivery's lineage.
+- `run_plan_conflict` when the delivery's run scope already holds a plan that the planner did not produce for this delivery.
+- `run_opened_by_incompatible_release` when that plan is one that an earlier release opened with task handlers this daemon does not run.
+
+A run whose plan is exactly the plan that this planner produces for the delivery, or that an earlier version of it produces (`webhook.SupersedingPlanner`), is that delivery's run. Reprocessing resumes and advances it under its recorded plan and writes no new inputs.
+
+Any other plan in the scope is refused, even one that names the delivery's request. It is refused as `run_opened_by_incompatible_release` when it is an earlier release's plan with other task handlers, and as `run_plan_conflict` otherwise. Open Trestle neither adopts nor advances it. The daemon API also refuses run IDs that a caller submits if they begin with `webhook-`.
+
+The supervisor records the refusal once in the inbox, as one record per delivery that names the planner identity that recorded it, and then skips the delivery. The record is stored in these places (`RefusalStore`):
+
+- In the file inbox, an `open-trestle/webhook-delivery-refusal` v1 file beside the delivery.
+- In PostgreSQL, a row in `open_trestle_webhook_refusals`, keyed by delivery.
+
+A refusal is terminal for its delivery and planner identity. The supervisor reads it before it processes a delivery, so a refused delivery is never processed again. It starts no new retry cycle, and its run is never opened later. Recording the same refusal again keeps the first record. A different reason for the same delivery and planner, for example one recorded concurrently, also keeps the first record. The delivery stays refused under that record and is skipped, and the pass does not fail. A refused delivery never blocks other deliveries.
+
+A refusal that a superseded planner identity left is kept until the current planner has its own outcome for the delivery. When the current planner admits the delivery, Open Trestle removes the old record. When the current planner refuses it, the new record replaces the old one.
+
+### Failures and retries
+
+For any other failure, the supervisor runs a probe. It reads the run journal, using a probe run scope that was never opened. For prepared processing it also reads the artifact store, using an identity that names no artifact.
+
+- If either does not answer, the failure is global. The pass fails and is retried with a bounded, capped delay. It never counts against a delivery, so an outage cannot cause deliveries to be refused.
+- If both answer, the failure belongs to the delivery. That delivery backs off on its own capped exponential schedule: the configured retry delay, doubled for each failure. A timer wakes reconciliation when its retry is due. Every other delivery keeps flowing, and the pass does not fail.
+
+A delivery that fails the configured maximum number of times in this way is recorded as refused with `retries_exhausted`, so it is visible and is not retried forever. A delivery whose retry state the inbox has no room for is refused with `retry_capacity_exhausted`.
+
+The retry state for each delivery (failure count and time of the next attempt) is stored durably in the inbox beside the delivery:
+
+- In the file inbox, an `open-trestle/webhook-delivery-retry` v1 file.
+- In PostgreSQL, a row in the tenant-isolated `open_trestle_webhook_retries` table (migration 0018, keyed by delivery and deleted with it).
+
+A restart therefore neither resets a delivery's bound nor retries it before its recorded time. A delivery has one retry state, which names the planner identity that recorded it. State that a superseded planner identity left neither holds the delivery back nor counts against it. The current planner's own state replaces it when it records one, and Open Trestle removes it once the delivery is admitted or refused, so old state never builds up. Open Trestle also clears the state when the delivery is admitted or refused, including state that an interrupted pass left beside a refusal.
+
+A failure to read or write the retry state is global, with one exception: a full retry bound in the file inbox (described above) refuses the delivery. Only global failures stop the supervisor, namely inbox store reads, refusal writes and the probe. They exhaust the supervisor's retries, so the daemon can shut down and rely on its service manager to restart it from durable state. Inbox deduplication, replay refusal and run idempotency are unchanged.
+
+### Reprocessing and expired inputs
+
+Reprocessing is safe. The deterministic run scope, the plan identity, the coordinator's open step and the task availability transitions are all idempotent. A matching run that already exists is resumed before prepared inputs are touched.
+
+If a valid accepted delivery was never opened before every exact prepared root input expired, the processor returns the typed `ErrPreparedInputsExpired` outcome. Supervision treats only that fully validated outcome as a terminal skip, so a stale inbox record cannot prevent the supervisor from becoming ready. Before expiry can cause a skip, the processor checks every root identity and the scope, media type, origin, creation time, provenance, uniqueness and coverage.
+
+PostgreSQL insertion serializes each repository and source at a bound of 10,000 deliveries, which matches the supervisor's reconciliation limit.
+
+## Which pull requests are planned
+
+The built-in GitHub planner currently accepts pull requests from the same repository only. The top-level repository, `pull_request.base.repo.full_name` and `pull_request.head.repo.full_name` must all match the configured repository. Open Trestle rejects fork pull requests, so that it never assigns a fork's head commit to the wrong repository lineage.
+
+`trestled --github-open-runs` turns on this path, but only when you supply all of these:
+
+- An exact lowercase GitHub repository name.
+- A review policy identity.
+- A review mode.
+- Every required task-handler identity.
+
+Ingress can stay enabled without opening runs automatically. This lets an operator validate signatures and durable intake before work creation is enabled. The supervisor opens work. It does not claim tasks, call models, read source or publish results.
+
+In required mode, GitHub planning also prepares an exact protected publication input for the downstream publication task. Prepared processing accepts task inputs for downstream tasks only when their artifact identity is the exact immutable input identity in the plan. Coverage of all root inputs remains mandatory.
 
 ## Retained delivery history
 
-For PostgreSQL-backed intake, expired delivery bodies are excluded from reconciliation and active-capacity accounting before body retrieval. Their immutable metadata remains for deduplication. A signed redelivery of a retired ID returns `410 delivery_expired`, without an acceptance receipt or a new processing wake. Stale queued hints for explicitly expired deliveries are ignored; other store failures still block and surface through the normal retry path. This is a retention disposition, not physical-erasure evidence.
+For intake that PostgreSQL backs, expired delivery bodies are left out of reconciliation and of the count of active capacity, before any body is fetched. Their immutable metadata remains, for deduplication. A signed redelivery of a retired ID returns `410 delivery_expired`, with no acceptance receipt and no new wake-up for processing. Queued hints that are stale, for deliveries that were explicitly expired, are ignored. Other store failures still block and surface through the normal retry path. This is a retention rule, not evidence that the data was physically erased.
