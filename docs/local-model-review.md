@@ -34,6 +34,28 @@ JSON is the default; `--format text` selects a short human-readable summary.
 loose-object-only behavior. There are no publish, resume, state, or existing-run
 identity flags.
 
+## Reviewing the latest change with `trestle review`
+
+After `trestle init` (see [getting started](getting-started.md)), `trestle review`
+runs this same command for you. It finds the saved setup, takes the saved review
+command's route inventory, runtime policy, scope labels, egress and timeout, and
+replaces only the two commits, which it picks again on every run: `HEAD`, and the
+newest commit `HEAD` shares with the default branch (`--base REF` and `--head REF`
+pick them exactly). Only committed work is reviewed. A new setup saves `--format
+text` and, unless it was set up with `--specialists none`, `--specialists auto`.
+
+The result goes to standard output as one document, in the saved format or the one
+you pass with `--format text|json|sarif|markdown`. Every other line, including the
+commits, where the source is sent, and the spending and scanning messages, goes to
+standard error. `--timeout`, `--profile`, `--specialists`, `--max-specialists`,
+`--exit-code-policy`, `--all` and `--verbose` pass through, and the exit code is
+this page's [exit table](#results-and-limits). Nothing is sent, and the exit code is
+`3`, when the repository has no setup, there is no committed change to review, or
+the setup's API key is missing (`trestle keys set NAME`). Outside a Git checkout,
+or with flags the saved setup cannot combine, it exits `2`. `trestle review PATH`
+instead reviews a local fixture file. The rest of this page describes the
+underlying command and its output, which `trestle review` shares.
+
 ## Ordinary checkout source selection
 
 Instead of the object-root and three revision flags, select two immutable commits
@@ -276,7 +298,10 @@ proof. A binary without injected scanner digests, or without the installed
 scanner, therefore refuses remote requests before credential retrieval. Use the
 packaged binary and installed scanner described in
 [remote model review](remote-model-review.md), whose bootstrap writes the protected
-remote configuration. Investigation and retained-memory requests remain local-only. Route approval, data classification,
+remote configuration. Remote routes work only on the packaged Linux amd64 install
+today; macOS and Windows are planned for the next release (see
+[platforms](platforms.md)). Investigation and retained-memory requests remain
+local-only. Route approval, data classification,
 logging restrictions, provider independence, capacity, and per-request cost budgets
 remain in force. Provider credentials use only explicit protected-policy environment
 references, through the existing credential resolver.
@@ -548,7 +573,7 @@ separate authoring command described in [Manual review feedback](local-feedback.
 
 Successfully constructed opted-in Session results replace `empty_memory_index`
 with `retained_input_advisory_not_all_records_selected` and
-`retained_input_read_only`. Ordinary result schema version 1, output bounds,
+`retained_input_read_only`. The result's schema version, output bounds,
 independent verification, and nonzero dispositions remain unchanged. A protected
 input refusal produces `refused` with exit 4; cancellation produces exit 3. Later
 Run or Close errors keep the existing conservative failure handling. Input reuse
@@ -755,6 +780,7 @@ reviewers: general, bug_hunter, backend (3 of 3 ran)
 walkthrough:
 verified: secret scan: 6 model requests from 3 reviewers scanned before sending (876 bytes, 0 secret matches)
 verified: static check static_debug_output: passed (1 file checked, 0 matches)
+verified: pattern hygiene: 0 added suppressions, 0 added workaround comments, 0 spreading anti-patterns
 verified: style detection: ran (1 recommendation, 0 withheld)
 verified: semantic impact: 1 changed declaration, 0 public API changes, 1 reference (0 from tests), 0 gaps
 verified: independent verifier (distinct_provider): 3 of 3 candidates from 3 reviewers confirmed, 0 rejected, 0 inconclusive
@@ -1056,7 +1082,7 @@ model-generation-input version 5.
 
 Which findings survive is decided deterministically after independent
 verification; no model ranks, merges or classifies findings. A completed direct
-run's result (schema version 6, in place) adds three members:
+run's result (schema version 6, in place) adds four members:
 
 - `rank`: every distinct verified finding in rank order, as
   `{"rank": N, "finding_identity": ID, "merged_finding_identities": [ID, ...]}`,
@@ -1305,6 +1331,7 @@ run: succeeded
 walkthrough:
 verified: secret scan: 2 model requests scanned before sending (292 bytes, 0 secret matches)
 verified: static check static_debug_output: passed (1 file checked, 0 matches)
+verified: pattern hygiene: 0 added suppressions, 0 added workaround comments, 0 spreading anti-patterns
 verified: style detection: ran (1 recommendation, 0 withheld)
 verified: semantic impact: 1 changed declaration, 0 public API changes, 1 reference (0 from tests), 0 gaps
 verified: independent verifier (distinct_provider): 1 of 1 candidate confirmed, 0 rejected, 0 inconclusive
@@ -1569,6 +1596,11 @@ init` wizard as a flag) writes a larger allowance, from 4096 up to the declared
 same allowance and must fit `--max-cost-micro-usd`. Without the flag, the policy
 bytes are unchanged.
 
+The built-in HTTP client gives each request a deadline of two minutes per 4096
+tokens of its output allowance, at least two and at most five minutes, so a
+16384-token allowance gets five minutes; the review's `--timeout` still ends it
+earlier. See [OpenAI provider](openai-provider.md).
+
 JSON uses `open-trestle/local-git-model-review-result`. Every run that opened
 writes schema version 6, which keeps every field of versions 1 to 5 and adds
 [`token_usage`](#token-usage), except the investigation fallback that
@@ -1610,6 +1642,8 @@ mapping:
 | 410 | `model_retired` | `policy` | no | `provider_model_retired` |
 | 429 | `rate_limited` | `transient` | twice on the same route, inside the task attempt | `provider_rate_limited` |
 | 503 with a `Retry-After` in seconds | `rate_limited` | `transient` | as 429 | `provider_rate_limited` |
+| 408, 504 | `timeout` | `transient` | no | none |
+| 413 | `budget_exhausted` | `policy` | no | none |
 | other 5xx | `provider_server` | `transient` | no | none |
 | 200 with a reply the adapter refuses, or a status no other class names (for example 409) | `invalid_response` | `internal` | no | `provider_response_invalid` |
 
@@ -1694,7 +1728,11 @@ then refuses, records `failure_detail` `model_output_invalid` with the same
 with a raw control character inside a string), a refusal, a document of the
 wrong shape, and one the review rules refuse (for example a location or
 evidence the request does not allow, or a verdict for a candidate it did not
-name). Nothing is stripped, unwrapped or repaired, and the detail names neither
+name). Nothing is repaired. The one exception is a single outer Markdown code
+fence (with no language or `json`) around the whole answer on an OpenRouter or
+Ollama Cloud sign-in route, which is removed before the same strict checks, because
+some endpoints that list structured output still fence their JSON; any other
+wrapper, such as raw chat-template tokens, is refused. The detail names neither
 the answer nor any of its fields:
 
 ```text
