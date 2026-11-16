@@ -124,13 +124,16 @@ func TestUsageNamesTheEverydayCommands(t *testing.T) {
 		"       trestle keys set OPEN_TRESTLE_PROVIDER_NAME",
 		"       trestle keys remove OPEN_TRESTLE_PROVIDER_NAME",
 		"usage: trestle usage ",
+		"usage: trestle update [--check] [--yes]",
 		"usage: trestle local-git submit-review --objects-root PATH",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("usage lacks %q:\n%s", want, text)
 		}
 	}
-	if strings.Index(text, "trestle review [") > strings.Index(text, "trestle validate-fixture") {
-		t.Fatal("trestle review is not near the top of the usage text")
+	for _, everyday := range []string{"trestle review [", "trestle update ["} {
+		if strings.Index(text, everyday) > strings.Index(text, "trestle validate-fixture") {
+			t.Fatalf("%s is not near the top of the usage text", everyday)
+		}
 	}
 }

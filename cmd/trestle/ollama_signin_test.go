@@ -17,6 +17,7 @@ import (
 
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/routehint"
+	"github.com/georgejieh/open-trestle/internal/update"
 )
 
 // All Ollama daemons below are in-process loopback httptest servers with
@@ -36,6 +37,16 @@ func TestMain(m *testing.M) {
 	// OpenRouter's key report is never read over the network in tests; a test
 	// that needs it installs a fake.
 	usageOpenRouterTransport = offlineKeyTransport{}
+	// No test reads this machine's package receipt, reaches GitHub, or runs
+	// sudo, the installed trestle or a candidate archive; update tests install
+	// fakes for each.
+	updateReceiptPath = filepath.Join(os.TempDir(), "open-trestle-test-no-receipt", "receipt.json")
+	updateTransport = offlineKeyTransport{}
+	updateKeys = func() (update.KeyRing, error) { return nil, nil }
+	updateRun = func(context.Context, updateCommand) (int, error) { return -1, errors.New("no program runs in tests") }
+	updateSudoPaths = []string{filepath.Join(os.TempDir(), "open-trestle-test-no-sudo")}
+	updateTrestlePath = filepath.Join(os.TempDir(), "open-trestle-test-no-trestle")
+	updateDaemonRunning = func() bool { return false }
 	// Reviews record their spend in the usage folder under XDG_STATE_HOME, so
 	// every test of this package writes to a private temporary folder, never
 	// to the operator's ~/.local/state. A test that inspects the ledger sets
@@ -55,9 +66,15 @@ func TestMain(m *testing.M) {
 	if err != nil || os.Setenv("XDG_CONFIG_HOME", config) != nil {
 		os.Exit(1)
 	}
+	// The local update folder lives under XDG_DATA_HOME.
+	data, err := os.MkdirTemp("", "trestle-test-data-")
+	if err != nil || os.Setenv("XDG_DATA_HOME", data) != nil {
+		os.Exit(1)
+	}
 	code := m.Run()
 	_ = os.RemoveAll(state)
 	_ = os.RemoveAll(config)
+	_ = os.RemoveAll(data)
 	os.Exit(code)
 }
 

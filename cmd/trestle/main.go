@@ -27,6 +27,12 @@ func main() {
 		stop()
 		os.Exit(code)
 	}
+	if len(os.Args) >= 2 && os.Args[1] == "update" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		code := runUpdate(ctx, os.Args[2:], os.Stdin, os.Stdout, os.Stderr)
+		stop()
+		os.Exit(code)
+	}
 	if len(os.Args) >= 2 && os.Args[1] == "review" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		code := runWithContext(ctx, os.Args[1:], os.Stdout, os.Stderr)
@@ -108,6 +114,9 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	}
 	if len(args) >= 1 && args[0] == "keys" {
 		return runKeys(ctx, args[1:], os.Stdin, stdout, stderr)
+	}
+	if len(args) >= 1 && args[0] == "update" {
+		return runUpdate(ctx, args[1:], os.Stdin, stdout, stderr)
 	}
 	// `trestle review <path>` reviews a fixture file, as before; any other
 	// form reviews the latest change with the repository's setup.
@@ -222,6 +231,7 @@ func writeUsage(stderr io.Writer) {
 	writeLatestReviewUsage(stderr)
 	writeKeysUsage(stderr)
 	writeUsageUsage(stderr)
+	writeUpdateUsage(stderr)
 	fmt.Fprintln(stderr, "       trestle validate-fixture <path>")
 	fmt.Fprintln(stderr, "       trestle build-info")
 	fmt.Fprintln(stderr, "       trestle ci --format=json <path>")
