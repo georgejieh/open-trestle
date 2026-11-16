@@ -1,0 +1,39 @@
+{
+  "contract": "open-trestle/model-corpus-labels",
+  "schema_version": 1,
+  "case_id": "defect_nil_map_write",
+  "case_kind": "defect",
+  "review_state": "pending",
+  "reviewer_identifier": null,
+  "review_date": null,
+  "fixture_author_identifier": "open-trestle-maintainers",
+  "go_version": "1.22",
+  "go_semantics": "Both trees declare go 1.22 in go.mod. The labels assume Go 1.22 language semantics and standard library, built by a Go 1.22 or later toolchain with this module as the main module.",
+  "expected_outcome": "findings",
+  "expected_findings": [
+    {
+      "id": "f1",
+      "path": "metrics.go",
+      "side": "head",
+      "start_line": 24,
+      "end_line": 24,
+      "also_accept_locations": [
+        {
+          "path": "metrics.go",
+          "side": "head",
+          "start_line": 14,
+          "end_line": 14
+        }
+      ],
+      "category": "correctness",
+      "also_compatible_categories": [
+        "reliability"
+      ],
+      "severity_hint": "high",
+      "defect": "`NewRecorder` never initializes the new `failures` map, so the first `AddFailure` call panics with an assignment to an entry in a nil map.",
+      "rationale": "A map field of a struct literal that omits it is nil. Reading a nil map is allowed, but `r.failures[name]++` writes to it, which panics at run time."
+    }
+  ],
+  "false_positive_traps": [],
+  "abstention_reason": null
+}

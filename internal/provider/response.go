@@ -223,21 +223,27 @@ func (r ResponseFinishReason) Validate() error {
 
 // Response is one immutable content-addressed provider-neutral result.
 type Response struct {
-	identity     string
-	capability   Capability
-	finishReason ResponseFinishReason
-	parts        []ResponsePart
-	usage        RouteTokenUsage
+	identity                string
+	capability              Capability
+	finishReason            ResponseFinishReason
+	parts                   []ResponsePart
+	usage                   RouteTokenUsage
+	reportedDebitUpperBound RouteReportedDebitUpperBound
 }
 
 // NewResponse copies and validates a complete normalized provider response.
 func NewResponse(capability Capability, finishReason ResponseFinishReason, parts []ResponsePart, usage RouteTokenUsage) (Response, error) {
+	return NewResponseWithReportedDebitUpperBound(capability, finishReason, parts, usage, RouteReportedDebitUpperBound{})
+}
+
+// NewResponseWithReportedDebitUpperBound copies a response with qualified debit evidence.
+func NewResponseWithReportedDebitUpperBound(capability Capability, finishReason ResponseFinishReason, parts []ResponsePart, usage RouteTokenUsage, bound RouteReportedDebitUpperBound) (Response, error) {
 	if len(parts) > maxProviderResponseParts {
 		return Response{}, ErrTooManyProviderResponseParts
 	}
 	response := Response{
 		capability: capability, finishReason: finishReason,
-		parts: append([]ResponsePart(nil), parts...), usage: usage,
+		parts: append([]ResponsePart(nil), parts...), usage: usage, reportedDebitUpperBound: bound,
 	}
 	if err := response.validateFields(); err != nil {
 		return Response{}, err
@@ -251,6 +257,9 @@ func (r Response) Capability() Capability             { return r.capability }
 func (r Response) FinishReason() ResponseFinishReason { return r.finishReason }
 func (r Response) PartCount() int                     { return len(r.parts) }
 func (r Response) Usage() RouteTokenUsage             { return r.usage }
+func (r Response) ReportedDebitUpperBound() RouteReportedDebitUpperBound {
+	return r.reportedDebitUpperBound
+}
 
 // Parts returns a defensive copy of the immutable response parts.
 func (r Response) Parts() []ResponsePart { return append([]ResponsePart(nil), r.parts...) }
@@ -291,6 +300,9 @@ func (r Response) validateFields() error {
 	if len(r.parts) > maxProviderResponseParts {
 		return ErrTooManyProviderResponseParts
 	}
+	if err := r.reportedDebitUpperBound.Validate(); err != nil {
+		return err
+	}
 	if err := r.usage.Validate(); err != nil {
 		return err
 	}
@@ -328,20 +340,22 @@ func deriveProviderResponseIdentity(response Response) string {
 		}
 	}
 	preimage := struct {
-		Contract      string         `json:"contract"`
-		SchemaVersion int            `json:"schema_version"`
-		Capability    string         `json:"capability"`
-		FinishReason  string         `json:"finish_reason"`
-		Parts         []partIdentity `json:"parts"`
-		UsageKnown    bool           `json:"usage_known"`
-		InputTokens   uint32         `json:"input_tokens"`
-		OutputTokens  uint32         `json:"output_tokens"`
-		CachedTokens  uint32         `json:"cached_tokens"`
+		Contract                string                           `json:"contract"`
+		SchemaVersion           int                              `json:"schema_version"`
+		Capability              string                           `json:"capability"`
+		FinishReason            string                           `json:"finish_reason"`
+		Parts                   []partIdentity                   `json:"parts"`
+		UsageKnown              bool                             `json:"usage_known"`
+		InputTokens             uint32                           `json:"input_tokens"`
+		OutputTokens            uint32                           `json:"output_tokens"`
+		CachedTokens            uint32                           `json:"cached_tokens"`
+		ReportedDebitUpperBound *reportedDebitUpperBoundIdentity `json:"reported_debit_upper_bound,omitempty"`
 	}{
 		Contract: "open-trestle/provider-response", SchemaVersion: 1,
 		Capability: response.capability.String(), FinishReason: response.finishReason.String(), Parts: parts,
 		UsageKnown: response.usage.IsKnown(), InputTokens: response.usage.InputTokens(),
 		OutputTokens: response.usage.OutputTokens(), CachedTokens: response.usage.CachedInputTokens(),
+		ReportedDebitUpperBound: reportedDebitUpperBoundIdentityValue(response.reportedDebitUpperBound),
 	}
 	encoded, err := json.Marshal(preimage)
 	if err != nil {

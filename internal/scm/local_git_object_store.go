@@ -468,15 +468,6 @@ func verifyGitObjectPayloadDigest(algorithm evidence.RevisionAlgorithm, expected
 	return nil
 }
 
-func bytesIndexByteOrEnd(buffer []byte, target byte) int {
-	for i, b := range buffer {
-		if b == target {
-			return i
-		}
-	}
-	return len(buffer)
-}
-
 func repositoryIdentityValuesEqual(first, second evidence.RepositoryIdentity) bool {
 	return first.Identity() == second.Identity() && first.Authority() == second.Authority() && slices.Equal(first.Namespace(), second.Namespace()) && first.Name() == second.Name()
 }

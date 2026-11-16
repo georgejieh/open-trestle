@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "routes": [
+    {
+      "zone": "local",
+      "provider_id": "ollama-local",
+      "adapter_id": "local-generation",
+      "connection_id": "ollama-local/generation",
+      "model_id": "qwen3:8b",
+      "model_version": "",
+      "max_context_tokens": 32768,
+      "max_output_tokens": 1024,
+      "features": [
+        "structured_output"
+      ],
+      "content_logging": "unknown",
+      "pricing_known": false,
+      "input_micro_usd_per_million_tokens": 0,
+      "output_micro_usd_per_million_tokens": 0,
+      "quality": "tier_1",
+      "registry_revision": 1,
+      "registry_status": "pending",
+      "evidence_manifest_base64": "eyJjb250cmFjdCI6Im9wZW4tdHJlc3RsZS9uYW1lZC1sb2NhbC1ydW50aW1lLWV4YW1wbGUiLCJzY2hlbWFfdmVyc2lvbiI6MSwicnVudGltZSI6Im9sbGFtYS1sb2NhbCIsInJvbGUiOiJnZW5lcmF0aW9uIiwiZGVjbGFyYXRpb24iOiJVbnF1YWxpZmllZCBvcGVyYXRvciB0ZW1wbGF0ZTsgbm90IGVtcGlyaWNhbCBjb25mb3JtYW5jZSBvciBwcml2YWN5IGV2aWRlbmNlIiwibW9kZWxfc2VsZWN0b3IiOiJxd2VuMzo4YiIsIm9wZXJhdG9yX211c3RfcmVwbGFjZV9mb3JfcHJvZHVjdGlvbiI6dHJ1ZX0=",
+      "operational_revision": 1,
+      "health": "unknown",
+      "quota": "unknown",
+      "performance_revision": 1,
+      "latency_known": false,
+      "p95_latency_milliseconds": 0,
+      "latency_sample_count": 0
+    },
+    {
+      "zone": "local",
+      "provider_id": "ollama-local",
+      "adapter_id": "local-verification",
+      "connection_id": "ollama-local/verification",
+      "model_id": "gemma3:4b",
+      "model_version": "",
+      "max_context_tokens": 32768,
+      "max_output_tokens": 1024,
+      "features": [
+        "structured_output"
+      ],
+      "content_logging": "unknown",
+      "pricing_known": false,
+      "input_micro_usd_per_million_tokens": 0,
+      "output_micro_usd_per_million_tokens": 0,
+      "quality": "tier_1",
+      "registry_revision": 1,
+      "registry_status": "pending",
+      "evidence_manifest_base64": "eyJjb250cmFjdCI6Im9wZW4tdHJlc3RsZS9uYW1lZC1sb2NhbC1ydW50aW1lLWV4YW1wbGUiLCJzY2hlbWFfdmVyc2lvbiI6MSwicnVudGltZSI6Im9sbGFtYS1sb2NhbCIsInJvbGUiOiJ2ZXJpZmljYXRpb24iLCJkZWNsYXJhdGlvbiI6IlVucXVhbGlmaWVkIG9wZXJhdG9yIHRlbXBsYXRlOyBub3QgZW1waXJpY2FsIGNvbmZvcm1hbmNlIG9yIHByaXZhY3kgZXZpZGVuY2UiLCJtb2RlbF9zZWxlY3RvciI6ImdlbW1hMzo0YiIsIm9wZXJhdG9yX211c3RfcmVwbGFjZV9mb3JfcHJvZHVjdGlvbiI6dHJ1ZX0=",
+      "operational_revision": 1,
+      "health": "unknown",
+      "quota": "unknown",
+      "performance_revision": 1,
+      "latency_known": false,
+      "p95_latency_milliseconds": 0,
+      "latency_sample_count": 0
+    }
+  ]
+}

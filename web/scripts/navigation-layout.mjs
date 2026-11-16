@@ -39,7 +39,7 @@ export async function checkTabletNavigation(page) {
     name: "Console",
     exact: true,
   });
-  for (const destination of ["Overview", "Tasks", "Findings", "Runtime"]) {
+  for (const destination of ["Overview", "Tasks", "Review", "Runtime"]) {
     await checkVisibleControl(
       navigation.getByRole("button", {
         name: new RegExp(`^${destination}(?: |$)`),
@@ -57,6 +57,39 @@ export async function checkMobileSetupNavigation(page) {
   const link = page.getByRole("link", { name: "Review console", exact: true });
   assert.equal(await link.getAttribute("href"), "/console/");
   await checkVisibleControl(link, "Review console");
+  const layout = await page.locator(".setup-layout").evaluate((container) => {
+    const progress = container.querySelector(".setup-progress");
+    const detail = container.querySelector(".setup-detail");
+    return {
+      progressTop: progress.getBoundingClientRect().top,
+      detailTop: detail.getBoundingClientRect().top,
+    };
+  });
+  assert.ok(
+    layout.progressTop < layout.detailTop,
+    "mobile readiness navigation precedes the detail it controls",
+  );
+}
+
+export async function checkReviewActionTargets(page, expectedSelectors) {
+  for (const selector of expectedSelectors) {
+    const controls = page.locator(selector);
+    let checked = 0;
+    for (let index = 0; index < (await controls.count()); index += 1) {
+      const control = controls.nth(index);
+      if (!(await control.isVisible())) continue;
+      const bounds = await control.evaluate((element) => {
+        const box = element.getBoundingClientRect();
+        return { width: box.width, height: box.height };
+      });
+      assert.ok(
+        bounds.width >= 44 && bounds.height >= 44,
+        `${selector} action ${index} has a 44px touch target`,
+      );
+      checked += 1;
+    }
+    assert.ok(checked > 0, `${selector} exercised a visible control`);
+  }
 }
 
 export async function checkMobileBrandContrast(page) {

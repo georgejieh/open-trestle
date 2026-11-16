@@ -27,7 +27,8 @@ import (
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 )
 
-const persistTurnRequestBoundary = 3488139
+// The retained-turn cap minus worst-case metadata and response base64 leaves request capacity.
+const persistTurnRequestBoundary = ((16 << 20) - 941490 - 11185064) / 4 * 3
 const persistBudget = uint64(1 << 40)
 
 type persistStore struct {
@@ -86,20 +87,26 @@ func (m *persistModel) DispatchRoute(ctx context.Context, request gateway.RouteD
 	if !claimed {
 		m.t.Fatal("fake external model preceded actual owner claim")
 	}
+	payload := request.Request().Payload()
+	if sanitized, err := review.SanitizedVerificationPayload(request.Request(), request.Authorization().ReviewScopeIdentity()); err == nil {
+		payload = sanitized
+	} else if local, err := review.LocalVerificationPayload(request.Request(), request.Authorization().ReviewScopeIdentity(), request.Authorization().RouteReference().Zone()); err == nil {
+		payload = local
+	}
 	var packet upperPacket
-	upperCheck(m.t, json.Unmarshal(request.Request().Payload(), &packet))
+	upperCheck(m.t, json.Unmarshal(payload, &packet))
 	m.calls = append(m.calls, request)
 	if len(packet.Sources) == 0 {
 		m.t.Fatal("fixture has no selected source")
 	}
 	var response any
 	if packet.Task == "candidate_verification" {
-		if m.adapter != "adapter-b" || packet.Schema != 3 || len(packet.Candidates) != 1 {
+		if m.adapter != "adapter-b" || packet.Schema != 8 || len(packet.Candidates) != 1 {
 			m.t.Fatal("independent verifier fixture changed")
 		}
 		response = map[string]any{"schema_version": 1, "verdicts": []any{map[string]any{"candidate_id": packet.Candidates[0].ID, "outcome": "verified", "severity": "high", "rationale": "The fixture verifier accepts the cited selected source.", "evidence_ids": []string{packet.Sources[0].ID}}}}
 	} else {
-		if packet.Schema != 4 || packet.Investigation.Mode != "fixed_generation_route_v1" || packet.Investigation.Pin != request.Authorization().RouteRecordIdentity() {
+		if packet.Schema != 6 || packet.Investigation.Mode != "fixed_generation_route_v1" || packet.Investigation.Pin != request.Authorization().RouteRecordIdentity() {
 			m.t.Fatal("actual generation request lost its fixed route")
 		}
 		if m.mode != "terminal" && packet.Investigation.Turn == 1 {
@@ -358,7 +365,7 @@ func (f *persistFixtureData) rebuild() {
 
 func (f *persistFixtureData) preflight() {
 	t, o := f.t, f.options
-	budget, err := provider.NewModelCostBudget(uint64(len(f.request.Payload()))+256, 4096, o.Routing.Budget.MaxCostMicroUSD())
+	budget, err := gateway.InvestigationTurnCostBudget(o.Routing.Budget, f.request, review.ModelRequestSystemChannelBytes(f.request), 0, o.Routing.Budget.MaxCostMicroUSD())
 	upperCheck(t, err)
 	input, err := gateway.NewReviewRoutingInput(o.Scope, f.request, o.Routing.Requirements, o.Routing.Constraints)
 	upperCheck(t, err)
@@ -437,6 +444,11 @@ func TestInvestigationPersistabilityInitialTurnGateUsesActualRequest(t *testing.
 		if f.bootstrap != uint64(16*2*(2*(wantAngles+1)+512*2)) {
 			t.Fatal("initial ranges lost repeated full-file scan accounting")
 		}
+	}
+	measuredSmall, smallErr := gateway.EstimateInvestigationTurnPayloadBytes(uint64(small))
+	measuredLarge, largeErr := gateway.EstimateInvestigationTurnPayloadBytes(uint64(large))
+	if smallErr != nil || largeErr != nil || measuredSmall > 16<<20 || measuredLarge <= 16<<20 {
+		t.Fatalf("actual requests do not straddle conservative turn admission: small=%d bound=%d err=%v large=%d bound=%d err=%v", small, measuredSmall, smallErr, large, measuredLarge, largeErr)
 	}
 	admitted, err := model.NewInvestigation(context.Background(), positive.options)
 	upperCheck(t, err)
@@ -541,7 +553,7 @@ func (f *persistFixtureData) calibrate() persistSizing {
 	}
 	pin, err := gateway.NewPinnedRouteRankingPolicy(o.Routing.Generation.ResolvedRecord().RouteRegistryRecord().RouteCandidateDeclaration().RouteCapabilityDeclaration().RouteReference(), nil)
 	upperCheck(t, err)
-	owner, err := gateway.NewInvestigationRouteOwner(gateway.InvestigationRouteOwnerOptions{Scope: o.Scope, SessionIdentity: f.binding.Identity(), PolicyIdentity: o.Policy.Identity(), Deadline: o.Deadline, MaxTurns: uint8(o.Policy.MaxModelTurns()), Budget: o.Routing.Budget, Requirements: o.Routing.Requirements, Constraints: o.Routing.Constraints, Generation: makePlan([]gateway.ObservedRouteCandidate{o.Routing.Generation}, pin), Verification: makePlan(o.Routing.Verification, o.Routing.VerificationRanking), Catalog: catalog, Ledger: ledger, Clock: o.Clock})
+	owner, err := gateway.NewInvestigationRouteOwner(gateway.InvestigationRouteOwnerOptions{Scope: o.Scope, SessionIdentity: f.binding.Identity(), PolicyIdentity: o.Policy.Identity(), Deadline: o.Deadline, MaxTurns: uint8(o.Policy.MaxModelTurns()), Budget: o.Routing.Budget, Requirements: o.Routing.Requirements, Constraints: o.Routing.Constraints, Generation: makePlan([]gateway.ObservedRouteCandidate{o.Routing.Generation}, pin), Verification: makePlan(o.Routing.Verification, o.Routing.VerificationRanking), Catalog: catalog, Ledger: ledger, Clock: o.Clock, SystemChannelBytes: review.ModelRequestSystemChannelBytes})
 	upperCheck(t, err)
 	turn, err := owner.Dispatch(context.Background(), gateway.InvestigationGenerationTurn, f.request)
 	upperCheck(t, err)

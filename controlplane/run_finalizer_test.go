@@ -121,3 +121,52 @@ func TestRunFinalizerPreservesEarliestRequiredFailureAcrossDependencySkips(t *te
 		t.Fatalf("final=(%#v,%v,%v)", state, changed, err)
 	}
 }
+
+func TestRunFinalizerWaitsForOptionalRetryBeforeSuccess(t *testing.T) {
+	scope, _ := audit.NewReviewScope("tenant", "repository", "run-optional-retry")
+	source, _ := NewTaskDefinition("source", TaskAcquireSource, strings.Repeat("a", 64), strings.Repeat("d", 64), nil, 1, 100, 1000, true)
+	change, _ := NewTaskDefinition("change", TaskBuildChange, strings.Repeat("a", 64), strings.Repeat("e", 64), []string{"source"}, 1, 100, 1000, true)
+	inspect, _ := NewTaskDefinition("inspect", TaskInspectDeterministic, strings.Repeat("a", 64), strings.Repeat("f", 64), []string{"change"}, 2, 100, 1000, false)
+	plan, err := NewReviewRunPlan(scope, strings.Repeat("b", 64), strings.Repeat("c", 64), ReviewRunAdvisory, []TaskDefinition{source, change, inspect})
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal := NewMemoryRunJournal()
+	coordinator, _ := newCoordinator(journal, strings.NewReader(strings.Repeat("a", 512)))
+	if _, err := coordinator.Open(context.Background(), plan, time.UnixMilli(100)); err != nil {
+		t.Fatal(err)
+	}
+	complete := func(task TaskDefinition, at int64, completion TaskCompletion) {
+		t.Helper()
+		lease, acquired, err := coordinator.ClaimTask(context.Background(), plan, task.Key(), task.HandlerIdentity(), "worker", time.UnixMilli(at))
+		if err != nil || !acquired {
+			t.Fatalf("claim %s=(%v,%v)", task.Key(), acquired, err)
+		}
+		if _, err := coordinator.CompleteTask(context.Background(), plan, lease, completion, time.UnixMilli(at+1)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	success, _ := NewTaskSuccess(strings.Repeat("9", 64))
+	transient, _ := NewTaskFailure(RunFailureTransient)
+	complete(source, 101, success)
+	complete(change, 103, success)
+	complete(inspect, 105, transient)
+	finalizer, _ := NewRunFinalizer(journal)
+	// The optional task still has an attempt and its retry is not yet due.
+	state, changed, err := finalizer.ReconcileRun(context.Background(), plan.Scope(), time.UnixMilli(110))
+	if err != nil || changed || state.Status() != ReviewRunActive {
+		t.Fatalf("optional retry finalized=(%v,%v,%v)", state.Status(), changed, err)
+	}
+	if _, ready, err := state.TerminalCompletion(); err != nil || ready {
+		t.Fatalf("terminal completion ready=(%v,%v)", ready, err)
+	}
+	if _, err := coordinator.SucceedRun(context.Background(), plan, strings.Repeat("9", 64), time.UnixMilli(110)); err != ErrRunTransitionInvalid {
+		t.Fatalf("succeed with optional retry pending: %v", err)
+	}
+	// Once the optional retry is exhausted the run may succeed.
+	complete(inspect, 300, transient)
+	state, changed, err = finalizer.ReconcileRun(context.Background(), plan.Scope(), time.UnixMilli(310))
+	if err != nil || !changed || state.Status() != ReviewRunSucceeded || state.OutputIdentity() != strings.Repeat("9", 64) {
+		t.Fatalf("exhausted optional=(%v,%v,%v)", state.Status(), changed, err)
+	}
+}

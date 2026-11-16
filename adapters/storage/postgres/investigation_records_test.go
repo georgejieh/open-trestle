@@ -41,7 +41,7 @@ func investigationMetadataRows(value artifact.Artifact, kind string) *sqlmock.Ro
 }
 
 func TestInvestigationArtifactMetadataRegistersAndReadsExactKinds(t *testing.T) {
-	for _, token := range []string{"investigation_turn", "investigation_tool_result"} {
+	for _, token := range []string{"investigation_turn", "investigation_tool_result", "generation_rejection"} {
 		t.Run(token, func(t *testing.T) {
 			value := investigationMetadataFixture(t, token)
 			scope := value.Scope()
@@ -95,7 +95,7 @@ func TestInvestigationArtifactMetadataRegistersAndReadsExactKinds(t *testing.T) 
 }
 
 func TestInvestigationArtifactMetadataKindsPreserveOldValuesAndRefuseAliases(t *testing.T) {
-	tokens := []string{"source_snapshot", "change_model", "deterministic_evidence", "retrieval_result", "context_packet", "candidate_batch", "verification_batch", "verified_finding_set", "publication_plan", "run_export", "task_input", "webhook_delivery", "source_file", "publication_receipt", "investigation_turn", "investigation_tool_result"}
+	tokens := []string{"source_snapshot", "change_model", "deterministic_evidence", "retrieval_result", "context_packet", "candidate_batch", "verification_batch", "verified_finding_set", "publication_plan", "run_export", "task_input", "webhook_delivery", "source_file", "publication_receipt", "investigation_turn", "investigation_tool_result", "sanitized_model_request", "sanitized_egress_receipt", "generation_rejection"}
 	for i, token := range tokens {
 		if kind := parseArtifactKind(token); kind != artifact.Kind(i+1) || kind.String() != token {
 			t.Fatal("metadata decoder changed an enum value or omitted appended kind")

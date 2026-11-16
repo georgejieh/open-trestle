@@ -1,38 +1,27 @@
 import type {
+  ContextRefusal,
+  ContextShortfall,
   Diagnostic,
   DiagnosticSet,
+  DeliveryRefusal,
+  DeterministicObservation,
   Failure,
+  FailureReason,
   RunReceipt,
+  RunProgress,
   RunTask,
   RuntimeStatus,
   Scope,
-  SetupCheckInput,
-  SetupCheckKey,
-  SetupCheckResult,
-  SetupInitInput,
-  SetupPlan,
-  SetupProfile,
-  SetupReceipt,
-  SetupRequirement,
-  SetupSession,
-  SetupSource,
-  SetupState,
   TaskKind,
   TaskStatus,
 } from "./types";
-// Display/action diagnostic only. Server approval and native grants remain independent.
-export const CURRENT_INTEGRATION_PERMISSION_CHECKER_IDENTITY =
-  "8308da20feae56a9f00344d5ac0824bf5133f1eff42d2ab31bce83b172daf3e9";
-export function hasCurrentIntegrationPermissionAuthority(
-  plan: SetupPlan,
-): boolean {
-  return plan.checker_authorities.some(
-    (entry) =>
-      entry.key === "integration_permissions_validated" &&
-      entry.checker_identity ===
-        CURRENT_INTEGRATION_PERMISSION_CHECKER_IDENTITY,
-  );
-}
+import {
+  canonicalRuntimeConfiguration,
+  runtimeConfigurationIdentity,
+  runtimeStatusIdentity,
+  type RuntimeComponentWire,
+  type RuntimeHandlerWire,
+} from "./runtimeIdentity";
 const maximumResponseBytes = (1 << 20) + (4 << 10);
 const identifier = /^[a-z0-9](?:[a-z0-9._:-]*[a-z0-9])?$/;
 const digest = /^[0-9a-f]{64}$/;
@@ -47,6 +36,60 @@ const failures = new Set<Failure>([
   "dependency",
   "internal",
 ]);
+const sourceFailureReasons = new Set<FailureReason>([
+  "no_merge_base",
+  "nothing_to_review",
+  "merge_base_unavailable",
+]);
+/** Each provider refusal reason and the run failure it is recorded with. */
+const providerFailureReasons = new Map<FailureReason, Failure>([
+  ["provider_payment_required", "policy"],
+  ["provider_model_unavailable", "policy"],
+  ["provider_model_retired", "policy"],
+  ["provider_authentication_failed", "policy"],
+  ["provider_authorization_denied", "policy"],
+  ["provider_rate_limited", "transient"],
+  ["provider_response_invalid", "internal"],
+  ["model_output_invalid", "internal"],
+  ["provider_request_rejected", "policy"],
+]);
+const contextFailureReasons = new Set<FailureReason>([
+  "route_context_insufficient",
+  "no_eligible_route",
+]);
+const maxUint32 = 4294967295;
+/** Reports a route_context_insufficient count set with its host invariants. */
+function validContextShortfall(value: unknown): value is ContextShortfall {
+  return (
+    record(value) &&
+    exact(value, [
+      "required_tokens",
+      "estimated_input_tokens",
+      "max_output_tokens",
+      "declared_context_tokens",
+    ]) &&
+    integer(value.estimated_input_tokens, 1, maxUint32) &&
+    integer(value.max_output_tokens, 1, maxUint32) &&
+    integer(value.declared_context_tokens, 1, maxUint32) &&
+    value.required_tokens ===
+      value.estimated_input_tokens + value.max_output_tokens &&
+    value.declared_context_tokens < value.required_tokens
+  );
+}
+/** The daemon's fixed hint for a route_context_insufficient refusal. */
+export function contextShortfallHint(s: ContextShortfall): string {
+  return `the review needs up to ${s.required_tokens} tokens (a byte-based upper bound: ${s.estimated_input_tokens} input plus ${s.max_output_tokens} output) but the route declares max_context_tokens ${s.declared_context_tokens}; raise max_context_tokens on the route and the model server's context length to at least ${s.required_tokens} (docs/named-local-runtimes.md#context-length)`;
+}
+/** Reports a v7 refusal copy: a context reason and counts exactly with it. */
+function validContextRefusal(value: unknown): value is ContextRefusal {
+  if (!record(value) || typeof value.reason !== "string") return false;
+  const counted = value.reason === "route_context_insufficient";
+  return (
+    contextFailureReasons.has(value.reason as FailureReason) &&
+    exact(value, counted ? ["reason", "context_shortfall"] : ["reason"]) &&
+    (!counted || validContextShortfall(value.context_shortfall))
+  );
+}
 const taskStatuses = new Set<TaskStatus>([
   "pending",
   "available",
@@ -106,10 +149,10 @@ function publicMessage(code: string): string {
       return "The daemon returned a response the console could not verify.";
   }
 }
-function record(value: unknown): value is Record<string, unknown> {
+export function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-function exact(
+export function exact(
   value: Record<string, unknown>,
   keys: readonly string[],
 ): boolean {
@@ -120,10 +163,13 @@ function exact(
     actual.every((key, index) => key === expected[index])
   );
 }
-function string(value: unknown, max: number): value is string {
+export function string(value: unknown, max: number): value is string {
   return typeof value === "string" && value.length <= max;
 }
-function integer(
+export function nonemptyString(value: unknown, max: number): value is string {
+  return string(value, max) && value.length > 0;
+}
+export function integer(
   value: unknown,
   min = 0,
   max = Number.MAX_SAFE_INTEGER,
@@ -132,13 +178,33 @@ function integer(
     Number.isSafeInteger(value) && Number(value) >= min && Number(value) <= max
   );
 }
-function validDigest(value: unknown, allowEmpty = false): value is string {
+export function validDigest(
+  value: unknown,
+  allowEmpty = false,
+): value is string {
   return (
     (allowEmpty && value === "") ||
     (typeof value === "string" &&
       digest.test(value) &&
       value !== "0".repeat(64))
   );
+}
+export function invalidResponse(): never {
+  throw new ApiError("invalid_response");
+}
+function parseAPIError(value: Record<string, unknown>): never {
+  if (
+    !exact(value, ["contract", "schema_version", "request_id", "error"]) ||
+    value.contract !== "open-trestle/api-response" ||
+    value.schema_version !== 1 ||
+    !nonemptyString(value.request_id, 128) ||
+    !record(value.error) ||
+    !exact(value.error, ["code", "message"]) ||
+    !nonemptyString(value.error.code, 64) ||
+    !nonemptyString(value.error.message, 512)
+  )
+    invalidResponse();
+  throw new ApiError(value.error.code);
 }
 export function validAccessToken(token: string): boolean {
   return (
@@ -166,10 +232,15 @@ function parseTask(value: unknown): RunTask {
     "output_identity",
     "failure",
     "retry_at_milliseconds",
-  ] as const;
+  ];
+  const optional = record(value)
+    ? ["output_kind", "failure_reason", "context_shortfall"].filter(
+        (key) => key in value,
+      )
+    : [];
   if (
     !record(value) ||
-    !exact(value, keys) ||
+    !exact(value, [...keys, ...optional]) ||
     !string(value.key, 64) ||
     !taskKey.test(value.key) ||
     !validDigest(value.task_identity) ||
@@ -188,7 +259,47 @@ function parseTask(value: unknown): RunTask {
     !failures.has(value.failure as Failure) ||
     !integer(value.retry_at_milliseconds, 0, 253402300799999)
   ) {
-    throw new ApiError("invalid_response");
+    invalidResponse();
+  }
+  // A failed task carries an output only as a context abstention, and a
+  // content-free reason only without output: a source reason on source
+  // acquisition, a route refusal on context assembly, a provider refusal on
+  // a model task with its fixed failure, and counts exactly with
+  // route_context_insufficient.
+  const linkedOutput =
+    value.status === "failed" && value.output_identity !== "";
+  const reason = value.failure_reason;
+  const providerFailure =
+    typeof reason === "string"
+      ? providerFailureReasons.get(reason as FailureReason)
+      : undefined;
+  const reasonKinds: readonly string[] =
+    typeof reason !== "string"
+      ? []
+      : sourceFailureReasons.has(reason as FailureReason)
+        ? ["acquire_source"]
+        : contextFailureReasons.has(reason as FailureReason)
+          ? ["assemble_context"]
+          : providerFailure !== undefined
+            ? ["generate_candidates", "verify_candidates"]
+            : [];
+  if (
+    "output_kind" in value !== linkedOutput ||
+    (linkedOutput &&
+      (value.output_kind !== "context_abstention" ||
+        value.kind !== "assemble_context")) ||
+    ("failure_reason" in value &&
+      (!reasonKinds.includes(value.kind as string) ||
+        value.status !== "failed" ||
+        value.output_identity !== "" ||
+        (providerFailure !== undefined &&
+          value.failure !== providerFailure))) ||
+    "context_shortfall" in value !==
+      (reason === "route_context_insufficient") ||
+    ("context_shortfall" in value &&
+      !validContextShortfall(value.context_shortfall))
+  ) {
+    invalidResponse();
   }
   return value as unknown as RunTask;
 }
@@ -213,7 +324,7 @@ function parseRun(value: unknown): RunReceipt {
     !record(value) ||
     !exact(value, keys) ||
     value.contract !== "open-trestle/review-run-receipt" ||
-    value.schema_version !== 1 ||
+    ![1, 2, 3].includes(value.schema_version as number) ||
     !validDigest(value.identity) ||
     !validDigest(value.plan_identity) ||
     !string(value.tenant_id, 128) ||
@@ -236,45 +347,33 @@ function parseRun(value: unknown): RunReceipt {
     value.tasks.length < 1 ||
     value.tasks.length > 64
   ) {
-    throw new ApiError("invalid_response");
+    invalidResponse();
   }
   const tasks = value.tasks.map(parseTask);
+  const version = tasks.some((task) => task.failure_reason)
+    ? 3
+    : tasks.some((task) => task.output_kind)
+      ? 2
+      : 1;
   if (
+    value.schema_version !== version ||
     new Set(tasks.map((task) => task.key)).size !== tasks.length ||
     new Set(tasks.map((task) => task.task_identity)).size !== tasks.length
   ) {
-    throw new ApiError("invalid_response");
+    invalidResponse();
   }
   return { ...value, tasks } as RunReceipt;
 }
 export function parseRunEnvelope(value: unknown, scope?: Scope): RunReceipt {
-  if (!record(value)) throw new ApiError("invalid_response");
-  if ("error" in value) {
-    if (
-      !exact(value, ["contract", "schema_version", "request_id", "error"]) ||
-      value.contract !== "open-trestle/api-response" ||
-      value.schema_version !== 1 ||
-      !string(value.request_id, 128) ||
-      value.request_id.length === 0 ||
-      !record(value.error) ||
-      !exact(value.error, ["code", "message"]) ||
-      !string(value.error.code, 64) ||
-      value.error.code.length === 0 ||
-      !string(value.error.message, 512) ||
-      value.error.message.length === 0
-    ) {
-      throw new ApiError("invalid_response");
-    }
-    throw new ApiError(value.error.code);
-  }
+  if (!record(value)) invalidResponse();
+  if ("error" in value) parseAPIError(value);
   if (
     !exact(value, ["contract", "schema_version", "request_id", "run"]) ||
     value.contract !== "open-trestle/api-response" ||
     value.schema_version !== 1 ||
-    !string(value.request_id, 128) ||
-    value.request_id.length === 0
+    !nonemptyString(value.request_id, 128)
   ) {
-    throw new ApiError("invalid_response");
+    invalidResponse();
   }
   const run = parseRun(value.run);
   if (
@@ -283,69 +382,309 @@ export function parseRunEnvelope(value: unknown, scope?: Scope): RunReceipt {
       run.repository_id !== scope.repository ||
       run.review_run_id !== scope.run)
   )
-    throw new ApiError("invalid_response");
+    invalidResponse();
   return run;
 }
-function parseDiagnostic(value: unknown): Diagnostic {
+export function parseRunProgressEnvelope(
+  value: unknown,
+  scope: Scope,
+  expected: RunReceipt,
+): RunProgress {
+  if (!record(value)) invalidResponse();
+  if ("error" in value) {
+    parseRunEnvelope(value, scope);
+    invalidResponse();
+  }
+  if (
+    !exact(value, [
+      "contract",
+      "schema_version",
+      "request_id",
+      "run",
+      "progress",
+    ]) ||
+    value.contract !== "open-trestle/run-progress-response" ||
+    value.schema_version !== 1 ||
+    !nonemptyString(value.request_id, 128) ||
+    !record(value.progress)
+  )
+    invalidResponse();
+  const run = parseRunEnvelope(
+    {
+      contract: "open-trestle/api-response",
+      schema_version: 1,
+      request_id: value.request_id,
+      run: value.run,
+    },
+    scope,
+  );
+  if (
+    run.identity !== expected.identity ||
+    run.head_identity !== expected.head_identity ||
+    run.plan_identity !== expected.plan_identity ||
+    run.revision !== expected.revision ||
+    run.tenant_id !== expected.tenant_id ||
+    run.repository_id !== expected.repository_id ||
+    run.review_run_id !== expected.review_run_id ||
+    run.status !== expected.status ||
+    run.failure !== expected.failure ||
+    run.output_identity !== expected.output_identity ||
+    run.last_occurred_at_milliseconds !==
+      expected.last_occurred_at_milliseconds ||
+    run.tasks.length !== expected.tasks.length ||
+    run.tasks.some((task, index) =>
+      Object.entries(task).some(
+        ([key, entry]) =>
+          entry !== expected.tasks[index]?.[key as keyof RunTask],
+      ),
+    ) ||
+    !exact(value.progress, [
+      "change",
+      "deterministic",
+      "context",
+      "verification",
+    ])
+  )
+    invalidResponse();
+  const fields = {
+    change: ["files", "ranges"],
+    deterministic: [
+      "applicable_files",
+      "applicable_ranges",
+      "checked_files",
+      "checked_ranges",
+      "observations",
+    ],
+    context: ["analyzed", "selected", "omitted"],
+    verification: ["candidates", "verified", "rejected", "inconclusive"],
+  } as const;
+  const kinds = {
+    change: "build_change",
+    deterministic: "inspect_deterministic",
+    context: "assemble_context",
+    verification: "verify_candidates",
+  } as const;
+  for (const name of Object.keys(fields) as (keyof typeof fields)[]) {
+    const axis = value.progress[name];
+    if (
+      !record(axis) ||
+      !exact(axis, [
+        "state",
+        ...(Object.hasOwn(axis, "artifact_identity")
+          ? ["artifact_identity"]
+          : []),
+        ...fields[name].filter((key) => Object.hasOwn(axis, key)),
+      ]) ||
+      !["not_run", "available", "partial", "unavailable"].includes(
+        axis.state as string,
+      )
+    )
+      invalidResponse();
+    const available = axis.state === "available" || axis.state === "partial";
+    const tasks = run.tasks.filter((task) => task.kind === kinds[name]);
+    const completed = tasks.length === 1 && tasks[0]!.status === "succeeded";
+    const hasArtifact = Object.hasOwn(axis, "artifact_identity");
+    if (
+      (hasArtifact &&
+        (!validDigest(axis.artifact_identity) ||
+          !completed ||
+          (name !== "context" &&
+            axis.artifact_identity !== tasks[0]!.output_identity))) ||
+      (axis.state === "partial" && name !== "deterministic") ||
+      (available && (!hasArtifact || !completed)) ||
+      (axis.state === "not_run" &&
+        tasks.some((task) => task.status === "succeeded")) ||
+      fields[name].some(
+        (key) =>
+          Object.hasOwn(axis, key) &&
+          (!available || !integer(axis[key], 0, 1 << 30)),
+      )
+    )
+      invalidResponse();
+    if (
+      available &&
+      name !== "deterministic" &&
+      fields[name].some((key) => !Object.hasOwn(axis, key))
+    )
+      invalidResponse();
+  }
+  const progress = value.progress as unknown as RunProgress["progress"];
+  const c = progress.change,
+    d = progress.deterministic,
+    x = progress.context,
+    v = progress.verification;
+  const checkCounts = [
+    d.applicable_files,
+    d.applicable_ranges,
+    d.checked_files,
+    d.checked_ranges,
+  ];
+  const checkCount = checkCounts.filter((count) => count !== undefined).length;
+  if (
+    (c.files !== undefined && c.files > 4096) ||
+    (c.ranges !== undefined && c.ranges > 1_000_000) ||
+    (d.state === "partial" && checkCount !== 4) ||
+    (checkCount !== 0 && checkCount !== 4) ||
+    (checkCount === 4 &&
+      (d.applicable_files! > 4096 ||
+        d.applicable_ranges! > 1_000_000 ||
+        d.checked_files! > d.applicable_files! ||
+        d.checked_ranges! > d.applicable_ranges! ||
+        d.applicable_files! > d.applicable_ranges! ||
+        d.checked_files! > d.checked_ranges!)) ||
+    (d.observations !== undefined && d.observations > 8192) ||
+    (x.analyzed !== undefined &&
+      (x.analyzed > 65664 ||
+        x.selected! > 32 ||
+        x.analyzed !== x.selected! + x.omitted!)) ||
+    (v.candidates !== undefined &&
+      (v.candidates > 16 ||
+        v.candidates !== v.verified! + v.rejected! + v.inconclusive!))
+  )
+    invalidResponse();
+  return { run, progress };
+}
+// sided admits the version 8 "side" field: present only as "base", for
+// removed lines of the base revision; absent means head lines.
+function parseDiagnostic(
+  value: unknown,
+  observation = false,
+  sided = false,
+): Diagnostic {
   const keys = [
     "identity",
     "source_identity",
     "fingerprint",
+    ...(observation ? ["analysis_result_identity", "check_identity"] : []),
     "title",
     "message",
     "severity",
     "path",
     "start_line",
     "end_line",
+    ...(sided && record(value) && Object.hasOwn(value, "side") ? ["side"] : []),
+    ...(sided && record(value) && Object.hasOwn(value, "head_line")
+      ? ["head_line"]
+      : []),
     "evidence_ids",
   ] as const;
   if (
     !record(value) ||
     !exact(value, keys) ||
+    (Object.hasOwn(value, "side") && value.side !== "base") ||
+    (Object.hasOwn(value, "head_line") &&
+      (value.side !== "base" || !integer(value.head_line, 1, 10000000))) ||
     !validDigest(value.identity) ||
     !validDigest(value.source_identity) ||
     !validDigest(value.fingerprint) ||
-    !string(value.title, 256) ||
-    value.title.length === 0 ||
-    !string(value.message, 4096) ||
-    value.message.length === 0 ||
+    (observation &&
+      (!validDigest(value.analysis_result_identity) ||
+        !validDigest(value.check_identity))) ||
+    !nonemptyString(value.title, 256) ||
+    !nonemptyString(value.message, 4096) ||
     typeof value.severity !== "string" ||
     !["error", "warning", "information", "hint"].includes(value.severity) ||
-    !string(value.path, 1024) ||
-    value.path.length === 0 ||
+    !nonemptyString(value.path, 1024) ||
     !integer(value.start_line, 1, 10000000) ||
     !integer(value.end_line, value.start_line as number, 10000000) ||
     !Array.isArray(value.evidence_ids) ||
     value.evidence_ids.length < 1 ||
     value.evidence_ids.length > 16 ||
-    !value.evidence_ids.every((v) => string(v, 128) && v.length > 0) ||
+    !value.evidence_ids.every((v) => nonemptyString(v, 128)) ||
     new Set(value.evidence_ids).size !== value.evidence_ids.length
   )
-    throw new ApiError("invalid_response");
+    invalidResponse();
   return value as unknown as Diagnostic;
 }
+function parseDeterministicCheck(value: unknown) {
+  const keys = [
+    "identity",
+    "source_check_identity",
+    "analysis_result_identity",
+    "change_identity",
+    "key",
+    "rule_version",
+    "state",
+    "applicable_files",
+    "applicable_ranges",
+    "checked_files",
+    "checked_ranges",
+    "matches",
+  ] as const;
+  if (
+    !record(value) ||
+    !exact(value, keys) ||
+    !validDigest(value.identity) ||
+    !validDigest(value.source_check_identity) ||
+    !validDigest(value.analysis_result_identity) ||
+    !validDigest(value.change_identity) ||
+    value.key !== "static_debug_output" ||
+    value.rule_version !== 1 ||
+    !integer(value.applicable_files, 0, 4096) ||
+    !integer(value.applicable_ranges, 0, 1_000_000) ||
+    !integer(value.checked_files, 0, 4096) ||
+    !integer(value.checked_ranges, 0, 1_000_000) ||
+    !integer(value.matches, 0, 1 << 24) ||
+    value.applicable_files > value.applicable_ranges ||
+    value.checked_files > value.applicable_files ||
+    value.checked_files > value.checked_ranges ||
+    value.checked_ranges > value.applicable_ranges ||
+    (value.applicable_files === 0) !== (value.applicable_ranges === 0) ||
+    (value.checked_files === 0) !== (value.checked_ranges === 0)
+  )
+    invalidResponse();
+  const complete =
+    value.checked_files === value.applicable_files &&
+    value.checked_ranges === value.applicable_ranges;
+  const validState =
+    (value.state === "passed" &&
+      value.applicable_ranges > 0 &&
+      complete &&
+      value.matches === 0) ||
+    (value.state === "failed" &&
+      value.applicable_ranges > 0 &&
+      value.checked_ranges > 0 &&
+      value.matches > 0) ||
+    (value.state === "incomplete" &&
+      value.applicable_ranges > 0 &&
+      !complete &&
+      value.matches === 0) ||
+    (value.state === "not_applicable" &&
+      value.applicable_ranges === 0 &&
+      value.matches === 0);
+  if (!validState) invalidResponse();
+  return {
+    ...value,
+  } as unknown as import("./types").DiagnosticDeterministicCheck;
+}
+function parseDeterministicObservation(
+  value: unknown,
+): DeterministicObservation {
+  const parsed = parseDiagnostic(value, true) as DeterministicObservation;
+  return { ...parsed, evidence_ids: [...parsed.evidence_ids] };
+}
+function validDiagnosticSetCommon(
+  value: Record<string, unknown>,
+  scope: Scope,
+): boolean {
+  return (
+    value.contract === "open-trestle/review-diagnostic-set" &&
+    validDigest(value.identity) &&
+    value.tenant_id === scope.tenant &&
+    value.repository_id === scope.repository &&
+    value.review_run_id === scope.run &&
+    validDigest(value.snapshot_identity) &&
+    typeof value.head_revision === "string" &&
+    /^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(value.head_revision)
+  );
+}
+
 export function parseDiagnosticEnvelope(
   value: unknown,
   scope: Scope,
 ): DiagnosticSet {
-  if (!record(value)) throw new ApiError("invalid_response");
-  if ("error" in value) {
-    if (
-      exact(value, ["contract", "schema_version", "request_id", "error"]) &&
-      value.contract === "open-trestle/api-response" &&
-      value.schema_version === 1 &&
-      string(value.request_id, 128) &&
-      value.request_id.length > 0 &&
-      record(value.error) &&
-      exact(value.error, ["code", "message"]) &&
-      string(value.error.code, 64) &&
-      value.error.code.length > 0 &&
-      string(value.error.message, 512) &&
-      value.error.message.length > 0
-    )
-      throw new ApiError(value.error.code);
-    throw new ApiError("invalid_response");
-  }
+  if (!record(value)) invalidResponse();
+  if ("error" in value) parseAPIError(value);
   if (
     !exact(value, [
       "contract",
@@ -355,12 +694,144 @@ export function parseDiagnosticEnvelope(
     ]) ||
     value.contract !== "open-trestle/api-response" ||
     value.schema_version !== 1 ||
-    !string(value.request_id, 128) ||
-    value.request_id.length === 0 ||
+    !nonemptyString(value.request_id, 128) ||
     !record(value.diagnostics)
   )
-    throw new ApiError("invalid_response");
+    invalidResponse();
   const d = value.diagnostics;
+  if (d.schema_version === 7) {
+    const keys = [
+      "contract",
+      "schema_version",
+      "identity",
+      "tenant_id",
+      "repository_id",
+      "review_run_id",
+      "snapshot_identity",
+      "head_revision",
+      "outcome",
+      ...(Object.hasOwn(d, "deterministic") ? ["deterministic"] : []),
+      ...(Object.hasOwn(d, "verified") ? ["verified"] : []),
+      ...(Object.hasOwn(d, "context_refusal") ? ["context_refusal"] : []),
+      ...(Object.hasOwn(d, "evidence_expired") ? ["evidence_expired"] : []),
+    ];
+    const emptySource = d.snapshot_identity === "" && d.head_revision === "";
+    const completeSource =
+      validDigest(d.snapshot_identity) &&
+      typeof d.head_revision === "string" &&
+      /^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(d.head_revision);
+    if (
+      !exact(d, keys) ||
+      d.contract !== "open-trestle/review-diagnostic-set" ||
+      !validDigest(d.identity) ||
+      d.tenant_id !== scope.tenant ||
+      d.repository_id !== scope.repository ||
+      d.review_run_id !== scope.run ||
+      !(emptySource || completeSource) ||
+      ![
+        "completed",
+        "failed",
+        "canceled",
+        "abstained",
+        "inconclusive",
+      ].includes(d.outcome as string) ||
+      (d.outcome === "completed" && !Object.hasOwn(d, "verified")) ||
+      (Object.hasOwn(d, "verified") && !Object.hasOwn(d, "deterministic")) ||
+      (Object.hasOwn(d, "context_refusal") &&
+        (d.outcome !== "failed" ||
+          Object.hasOwn(d, "verified") ||
+          !validContextRefusal(d.context_refusal))) ||
+      // An expired-evidence result has no evidence part and is never completed.
+      (Object.hasOwn(d, "evidence_expired") &&
+        (d.evidence_expired !== true ||
+          d.outcome === "completed" ||
+          !emptySource ||
+          Object.hasOwn(d, "deterministic") ||
+          Object.hasOwn(d, "verified")))
+    )
+      invalidResponse();
+    const parsePart = (part: unknown, ...versions: number[]) => {
+      const parsed = parseDiagnosticEnvelope(
+        {
+          contract: "open-trestle/api-response",
+          schema_version: 1,
+          request_id: value.request_id,
+          diagnostics: part,
+        },
+        scope,
+      );
+      if (
+        !versions.includes(parsed.schema_version) ||
+        (parsed.schema_version === 6 &&
+          parsed.snapshot_identity !== d.snapshot_identity) ||
+        parsed.head_revision !== d.head_revision
+      )
+        invalidResponse();
+      return parsed;
+    };
+    const deterministic = Object.hasOwn(d, "deterministic")
+      ? (parsePart(d.deterministic, 6) as Extract<
+          DiagnosticSet,
+          { schema_version: 6 }
+        >)
+      : undefined;
+    const verified = Object.hasOwn(d, "verified")
+      ? (parsePart(d.verified, 5, 8) as Extract<
+          DiagnosticSet,
+          { schema_version: 5 | 8 }
+        >)
+      : undefined;
+    if (
+      verified &&
+      verified.checks[0].identity !== deterministic?.checks[0].identity
+    )
+      invalidResponse();
+    return {
+      ...d,
+      ...(deterministic ? { deterministic } : {}),
+      ...(verified ? { verified } : {}),
+    } as DiagnosticSet;
+  }
+  if (d.schema_version === 6) {
+    const keys = [
+      "contract",
+      "schema_version",
+      "identity",
+      "tenant_id",
+      "repository_id",
+      "review_run_id",
+      "snapshot_identity",
+      "head_revision",
+      "analysis_result_identity",
+      "checks",
+      "observations",
+    ] as const;
+    if (
+      !exact(d, keys) ||
+      !validDiagnosticSetCommon(d, scope) ||
+      !validDigest(d.analysis_result_identity) ||
+      !Array.isArray(d.checks) ||
+      d.checks.length !== 1 ||
+      !Array.isArray(d.observations) ||
+      d.observations.length > 8192
+    )
+      invalidResponse();
+    const check = parseDeterministicCheck(d.checks[0]);
+    const observations = d.observations.map(parseDeterministicObservation);
+    if (
+      check.analysis_result_identity !== d.analysis_result_identity ||
+      check.matches !== observations.length ||
+      new Set(observations.map((entry) => entry.identity)).size !==
+        observations.length ||
+      observations.some(
+        (entry) =>
+          entry.analysis_result_identity !== d.analysis_result_identity ||
+          entry.check_identity !== check.identity,
+      )
+    )
+      invalidResponse();
+    return { ...d, checks: [check], observations } as unknown as DiagnosticSet;
+  }
   const baseKeys = [
     "contract",
     "schema_version",
@@ -377,7 +848,7 @@ export function parseDiagnosticEnvelope(
       ? [...baseKeys, "findings"]
       : d.schema_version === 2
         ? [...baseKeys, "coverage", "findings"]
-        : d.schema_version === 5
+        : d.schema_version === 5 || d.schema_version === 8
           ? [...baseKeys, "coverage", "source_coverage", "checks", "findings"]
           : [...baseKeys, "coverage", "source_coverage", "findings"];
   if (
@@ -387,7 +858,8 @@ export function parseDiagnosticEnvelope(
       d.schema_version !== 2 &&
       d.schema_version !== 3 &&
       d.schema_version !== 4 &&
-      d.schema_version !== 5) ||
+      d.schema_version !== 5 &&
+      d.schema_version !== 8) ||
     !validDigest(d.identity) ||
     d.tenant_id !== scope.tenant ||
     d.repository_id !== scope.repository ||
@@ -399,13 +871,18 @@ export function parseDiagnosticEnvelope(
     !Array.isArray(d.findings) ||
     d.findings.length > 100
   )
-    throw new ApiError("invalid_response");
-  const findings = d.findings.map(parseDiagnostic);
+    invalidResponse();
+  const findings = d.findings.map((finding) =>
+    parseDiagnostic(finding, false, d.schema_version === 8),
+  );
   if (
     new Set(findings.map((finding) => finding.identity)).size !==
-    findings.length
+      findings.length ||
+    // Version 8 is used exactly when a finding is on removed base lines.
+    (d.schema_version === 8) !==
+      findings.some((finding) => finding.side === "base")
   ) {
-    throw new ApiError("invalid_response");
+    invalidResponse();
   }
   if (d.schema_version === 1) return { ...d, findings } as DiagnosticSet;
   if (
@@ -426,7 +903,7 @@ export function parseDiagnosticEnvelope(
       d.coverage.inconclusive_count !==
       d.coverage.candidate_count
   )
-    throw new ApiError("invalid_response");
+    invalidResponse();
   if (d.schema_version === 2)
     return {
       ...d,
@@ -437,7 +914,7 @@ export function parseDiagnosticEnvelope(
     !record(d.source_coverage) ||
     !exact(
       d.source_coverage,
-      d.schema_version === 4 || d.schema_version === 5
+      d.schema_version === 4 || d.schema_version === 5 || d.schema_version === 8
         ? [
             "verification_context_identity",
             "analyzed_count",
@@ -459,7 +936,7 @@ export function parseDiagnosticEnvelope(
     d.source_coverage.selected_count + d.source_coverage.omitted_count !==
       d.source_coverage.analyzed_count
   )
-    throw new ApiError("invalid_response");
+    invalidResponse();
   if (d.schema_version === 3)
     return {
       ...d,
@@ -471,7 +948,7 @@ export function parseDiagnosticEnvelope(
     !Array.isArray(d.source_coverage.omissions) ||
     d.source_coverage.omissions.length > 6
   )
-    throw new ApiError("invalid_response");
+    invalidResponse();
   const reasons = new Set([
     "authorization",
     "resource_limit",
@@ -491,7 +968,7 @@ export function parseDiagnosticEnvelope(
       summary.reason <= previous ||
       !integer(summary.count, 1, 65664)
     )
-      throw new ApiError("invalid_response");
+      invalidResponse();
     previous = summary.reason;
     omitted += summary.count;
     return { ...summary };
@@ -500,7 +977,7 @@ export function parseDiagnosticEnvelope(
     omitted !== d.source_coverage.omitted_count ||
     (omitted === 0) !== (omissions.length === 0)
   )
-    throw new ApiError("invalid_response");
+    invalidResponse();
   if (d.schema_version === 4)
     return {
       ...d,
@@ -508,51 +985,8 @@ export function parseDiagnosticEnvelope(
       source_coverage: { ...d.source_coverage, omissions },
       findings,
     } as unknown as DiagnosticSet;
-  if (!Array.isArray(d.checks) || d.checks.length !== 1)
-    throw new ApiError("invalid_response");
-  const check = d.checks[0];
-  if (!record(check)) throw new ApiError("invalid_response");
-  if (
-    Object.keys(check).length !== 12 ||
-    !validDigest(check.identity) ||
-    !validDigest(check.source_check_identity) ||
-    !validDigest(check.analysis_result_identity) ||
-    !validDigest(check.change_identity) ||
-    check.key !== "static_debug_output" ||
-    check.rule_version !== 1 ||
-    !integer(check.applicable_files, 0, 4096) ||
-    !integer(check.applicable_ranges, 0, 1_000_000) ||
-    !integer(check.checked_files, 0, 4096) ||
-    !integer(check.checked_ranges, 0, 1_000_000) ||
-    !integer(check.matches, 0, 1 << 24) ||
-    check.applicable_files > check.applicable_ranges ||
-    check.checked_files > check.applicable_files ||
-    check.checked_files > check.checked_ranges ||
-    check.checked_ranges > check.applicable_ranges ||
-    (check.applicable_files === 0) !== (check.applicable_ranges === 0) ||
-    (check.checked_files === 0) !== (check.checked_ranges === 0)
-  )
-    throw new ApiError("invalid_response");
-  const complete =
-    check.checked_files === check.applicable_files &&
-    check.checked_ranges === check.applicable_ranges;
-  const validState =
-    (check.state === "passed" &&
-      check.applicable_ranges > 0 &&
-      complete &&
-      check.matches === 0) ||
-    (check.state === "failed" &&
-      check.applicable_ranges > 0 &&
-      check.checked_ranges > 0 &&
-      check.matches > 0) ||
-    (check.state === "incomplete" &&
-      check.applicable_ranges > 0 &&
-      !complete &&
-      check.matches === 0) ||
-    (check.state === "not_applicable" &&
-      check.applicable_ranges === 0 &&
-      check.matches === 0);
-  if (!validState) throw new ApiError("invalid_response");
+  if (!Array.isArray(d.checks) || d.checks.length !== 1) invalidResponse();
+  const check = parseDeterministicCheck(d.checks[0]);
   return {
     ...d,
     coverage: { ...d.coverage },
@@ -561,7 +995,7 @@ export function parseDiagnosticEnvelope(
     findings,
   } as unknown as DiagnosticSet;
 }
-function validRuntimeObservedAt(value: unknown): value is string {
+export function validRuntimeObservedAt(value: unknown): value is string {
   if (typeof value !== "string") return false;
   const match =
     /^(\d{4})-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.(\d{1,3}))?Z$/.exec(
@@ -576,37 +1010,21 @@ function validRuntimeObservedAt(value: unknown): value is string {
   return new Date(milliseconds).toISOString() === normalized;
 }
 
-export function parseRuntimeStatusEnvelope(
+export async function parseRuntimeStatusEnvelope(
   value: unknown,
   scope: Pick<Scope, "tenant" | "repository">,
-): RuntimeStatus {
-  if (!record(value)) throw new ApiError("invalid_response");
-  if ("error" in value) {
-    if (
-      exact(value, ["contract", "schema_version", "request_id", "error"]) &&
-      value.contract === "open-trestle/api-response" &&
-      value.schema_version === 1 &&
-      string(value.request_id, 128) &&
-      value.request_id.length > 0 &&
-      record(value.error) &&
-      exact(value.error, ["code", "message"]) &&
-      string(value.error.code, 64) &&
-      value.error.code.length > 0 &&
-      string(value.error.message, 512) &&
-      value.error.message.length > 0
-    )
-      throw new ApiError(value.error.code);
-    throw new ApiError("invalid_response");
-  }
+): Promise<RuntimeStatus> {
+  if (!validRuntimeScope(scope)) throw new ApiError("invalid_scope");
+  if (!record(value)) invalidResponse();
+  if ("error" in value) parseAPIError(value);
   if (
     !exact(value, ["contract", "schema_version", "request_id", "status"]) ||
     value.contract !== "open-trestle/runtime-status-response" ||
     value.schema_version !== 1 ||
-    !string(value.request_id, 128) ||
-    value.request_id.length === 0 ||
+    !nonemptyString(value.request_id, 128) ||
     !record(value.status)
   )
-    throw new ApiError("invalid_response");
+    invalidResponse();
   const status = value.status;
   if (
     !exact(status, [
@@ -633,35 +1051,35 @@ export function parseRuntimeStatusEnvelope(
     !Array.isArray(status.components) ||
     status.components.length > 64
   )
-    throw new ApiError("invalid_response");
+    invalidResponse();
   const configuration = status.configuration;
-  const baseKeys = [
-    "tenant_id",
-    "repository_ids",
-    "metadata_backend",
-    "artifact_backend",
-    "artifact_protection",
-    "notification_backend",
-    "rate_limit_backend",
-    "review_mode",
-    "webhook_ingress",
-    "local_workers",
-    "publication_enabled",
-    "publication_fence_verified",
-    "route_count",
-    "handlers",
-  ];
+  const rawHandlers = configuration.handlers;
+  const handlers: unknown[] = Array.isArray(rawHandlers) ? rawHandlers : [];
   const hasRoutes =
     "route_inventory_identity" in configuration ||
     "runtime_policy_identity" in configuration;
   const hasDatabaseAuthority = "database_authority_identity" in configuration;
   const hasRateLimitAuthority =
     "rate_limit_authority_identity" in configuration;
-  let expected = [...baseKeys];
+  const expected = ["tenant_id", "repository_ids", "metadata_backend"];
   if (hasDatabaseAuthority) expected.push("database_authority_identity");
+  expected.push(
+    "artifact_backend",
+    "artifact_protection",
+    "notification_backend",
+    "rate_limit_backend",
+  );
   if (hasRateLimitAuthority) expected.push("rate_limit_authority_identity");
+  expected.push(
+    "review_mode",
+    "webhook_ingress",
+    "local_workers",
+    "publication_enabled",
+    "publication_fence_verified",
+  );
   if (hasRoutes)
     expected.push("route_inventory_identity", "runtime_policy_identity");
+  expected.push("route_count", "handlers");
   if (
     !exact(configuration, expected) ||
     configuration.tenant_id !== scope.tenant ||
@@ -687,10 +1105,10 @@ export function parseRuntimeStatusEnvelope(
     typeof configuration.publication_enabled !== "boolean" ||
     typeof configuration.publication_fence_verified !== "boolean" ||
     !integer(configuration.route_count, 0, 64) ||
-    !Array.isArray(configuration.handlers) ||
-    configuration.handlers.length > 64
+    (!Array.isArray(rawHandlers) && rawHandlers !== null) ||
+    handlers.length > 64
   )
-    throw new ApiError("invalid_response");
+    invalidResponse();
   const routeConfigured = Number(configuration.route_count) > 0;
   if (
     hasRoutes !== routeConfigured ||
@@ -708,10 +1126,10 @@ export function parseRuntimeStatusEnvelope(
     (configuration.review_mode === "disabled" &&
       (configuration.local_workers ||
         routeConfigured ||
-        configuration.handlers.length > 0)) ||
-    (configuration.local_workers && configuration.handlers.length === 0)
+        handlers.length > 0)) ||
+    (configuration.local_workers && handlers.length === 0)
   )
-    throw new ApiError("invalid_response");
+    invalidResponse();
   if (
     (configuration.review_mode === "required") !==
       configuration.publication_enabled ||
@@ -736,10 +1154,11 @@ export function parseRuntimeStatusEnvelope(
       (configuration.metadata_backend !== "postgres" ||
         configuration.artifact_protection !== "envelope_encrypted"))
   )
-    throw new ApiError("invalid_response");
-  const handlers = configuration.handlers as unknown[];
+    invalidResponse();
+  const runtimeHandlers = handlers as unknown[];
+  const canonicalHandlers: RuntimeHandlerWire[] = [];
   let previousHandlerKind = "";
-  for (const handler of handlers) {
+  for (const handler of runtimeHandlers) {
     if (
       !record(handler) ||
       !exact(handler, ["kind", "identity"]) ||
@@ -748,9 +1167,14 @@ export function parseRuntimeStatusEnvelope(
       !validDigest(handler.identity) ||
       handler.kind <= previousHandlerKind
     )
-      throw new ApiError("invalid_response");
+      invalidResponse();
     previousHandlerKind = handler.kind;
+    canonicalHandlers.push({
+      kind: handler.kind,
+      identity: handler.identity as string,
+    });
   }
+  const canonicalComponents: RuntimeComponentWire[] = [];
   let allReady = true,
     previousComponent = "";
   for (const component of status.components) {
@@ -762,624 +1186,41 @@ export function parseRuntimeStatusEnvelope(
       component.name <= previousComponent ||
       (component.state !== "starting" && component.state !== "ready")
     )
-      throw new ApiError("invalid_response");
+      invalidResponse();
     previousComponent = component.name;
     allReady = allReady && component.state === "ready";
+    canonicalComponents.push({
+      name: component.name,
+      state: component.state as "starting" | "ready",
+    });
   }
-  if (status.ready !== allReady) throw new ApiError("invalid_response");
-  return status as unknown as RuntimeStatus;
+  if (status.ready !== allReady) invalidResponse();
+  const wireConfiguration = canonicalRuntimeConfiguration(
+    configuration,
+    rawHandlers === null ? null : canonicalHandlers,
+    expected,
+  );
+  const configurationIdentity =
+    await runtimeConfigurationIdentity(wireConfiguration);
+  if (status.configuration_identity !== configurationIdentity)
+    invalidResponse();
+  const statusIdentity = await runtimeStatusIdentity({
+    configuration_identity: configurationIdentity,
+    tenant_id: status.tenant_id as string,
+    repository_id: status.repository_id as string,
+    observed_at: status.observed_at as string,
+    ready: status.ready as boolean,
+    configuration: wireConfiguration,
+    components: canonicalComponents,
+  });
+  if (status.identity !== statusIdentity) invalidResponse();
+  return {
+    ...status,
+    configuration: { ...configuration, handlers: runtimeHandlers },
+  } as unknown as RuntimeStatus;
 }
 
-const setupProfiles = new Set<SetupProfile>([
-  "local_single_node",
-  "controlled_hybrid",
-  "kubernetes_ha",
-  "air_gapped",
-]);
-const setupStates = new Set<SetupState>([
-  "pending",
-  "passed",
-  "blocked",
-  "unavailable",
-]);
-const setupSources = new Set<SetupSource>([
-  "deterministic",
-  "probe",
-  "authorization",
-  "dry_run",
-]);
-const setupKeys = new Set<SetupCheckKey>([
-  "profile_selected",
-  "scope_valid",
-  "effect_posture_locked",
-  "recovery_owner_named",
-  "local_administrator_validated",
-  "state_storage_posture_validated",
-  "postgres_storage_validated",
-  "envelope_storage_validated",
-  "backup_validated",
-  "observer_credential_posture_validated",
-  "secret_backend_validated",
-  "local_inference_validated",
-  "remote_provider_authorized",
-  "integration_permissions_validated",
-  "webhook_validated",
-  "shared_rate_limit_validated",
-  "replica_reconciliation_validated",
-  "signed_bundle_validated",
-  "no_egress_validated",
-  "policy_validated",
-  "dry_run_validated",
-]);
-const setupErrorCodes = new Set([
-  "invalid_request",
-  "unauthorized",
-  "not_found",
-  "method_not_allowed",
-  "state_unavailable",
-  "state_invalid",
-  "state_conflict",
-  "stale_plan",
-  "check_unavailable",
-  "check_failed",
-  "request_too_large",
-  "unsupported_media_type",
-  "encode_failed",
-]);
-const setupErrorStatus: Record<string, number> = {
-  invalid_request: 400,
-  unauthorized: 401,
-  not_found: 404,
-  method_not_allowed: 405,
-  state_unavailable: 503,
-  state_invalid: 409,
-  state_conflict: 409,
-  stale_plan: 409,
-  check_unavailable: 422,
-  check_failed: 422,
-  request_too_large: 413,
-  unsupported_media_type: 415,
-  encode_failed: 500,
-};
-function parseSetupError(value: unknown): string {
-  if (
-    !record(value) ||
-    !exact(value, ["contract", "schema_version", "code"]) ||
-    value.contract !== "open-trestle/setup-error" ||
-    value.schema_version !== 1 ||
-    typeof value.code !== "string" ||
-    !setupErrorCodes.has(value.code)
-  )
-    throw new ApiError("invalid_response");
-  return value.code;
-}
-function parseSetupHTTP<T>(
-  response: { status: number; body: unknown },
-  successStatus: number,
-  parser: (value: unknown) => T,
-): T {
-  if (response.status === successStatus) {
-    if (
-      record(response.body) &&
-      response.body.contract === "open-trestle/setup-error"
-    )
-      throw new ApiError("invalid_response");
-    return parser(response.body);
-  }
-  const code = parseSetupError(response.body);
-  if (setupErrorStatus[code] !== response.status)
-    throw new ApiError("invalid_response");
-  throw new ApiError(code);
-}
-const setupRecoveries = new Set([
-  "",
-  "configure_dependency",
-  "provide_backup",
-  "configure_observer_authority",
-  "configure_identity",
-  "approve_provider",
-  "correct_permissions",
-  "verify_webhook",
-  "import_signed_bundle",
-  "restore_no_egress",
-  "run_dry_run",
-  "correct_policy",
-]);
-const setupProfileKeys: Record<SetupProfile, SetupCheckKey[]> = {
-  local_single_node: [
-    "profile_selected",
-    "scope_valid",
-    "effect_posture_locked",
-    "recovery_owner_named",
-    "state_storage_posture_validated",
-    "backup_validated",
-    "local_administrator_validated",
-    "observer_credential_posture_validated",
-    "policy_validated",
-    "local_inference_validated",
-    "dry_run_validated",
-  ],
-  controlled_hybrid: [
-    "profile_selected",
-    "scope_valid",
-    "effect_posture_locked",
-    "recovery_owner_named",
-    "postgres_storage_validated",
-    "envelope_storage_validated",
-    "backup_validated",
-    "secret_backend_validated",
-    "local_administrator_validated",
-    "observer_credential_posture_validated",
-    "remote_provider_authorized",
-    "integration_permissions_validated",
-    "webhook_validated",
-    "policy_validated",
-    "dry_run_validated",
-  ],
-  kubernetes_ha: [
-    "profile_selected",
-    "scope_valid",
-    "effect_posture_locked",
-    "recovery_owner_named",
-    "postgres_storage_validated",
-    "envelope_storage_validated",
-    "backup_validated",
-    "secret_backend_validated",
-    "shared_rate_limit_validated",
-    "replica_reconciliation_validated",
-    "local_administrator_validated",
-    "observer_credential_posture_validated",
-    "remote_provider_authorized",
-    "integration_permissions_validated",
-    "webhook_validated",
-    "policy_validated",
-    "dry_run_validated",
-  ],
-  air_gapped: [
-    "profile_selected",
-    "scope_valid",
-    "effect_posture_locked",
-    "recovery_owner_named",
-    "state_storage_posture_validated",
-    "backup_validated",
-    "local_administrator_validated",
-    "observer_credential_posture_validated",
-    "signed_bundle_validated",
-    "no_egress_validated",
-    "policy_validated",
-    "local_inference_validated",
-    "dry_run_validated",
-  ],
-};
-function setupRecoveryFor(key: SetupCheckKey): string {
-  const values: Partial<Record<SetupCheckKey, string>> = {
-    local_administrator_validated: "configure_identity",
-    state_storage_posture_validated: "configure_dependency",
-    postgres_storage_validated: "configure_dependency",
-    envelope_storage_validated: "configure_dependency",
-    backup_validated: "provide_backup",
-    observer_credential_posture_validated: "configure_observer_authority",
-    secret_backend_validated: "configure_dependency",
-    local_inference_validated: "configure_dependency",
-    remote_provider_authorized: "approve_provider",
-    integration_permissions_validated: "correct_permissions",
-    webhook_validated: "verify_webhook",
-    shared_rate_limit_validated: "configure_dependency",
-    replica_reconciliation_validated: "configure_dependency",
-    signed_bundle_validated: "import_signed_bundle",
-    no_egress_validated: "restore_no_egress",
-    policy_validated: "correct_policy",
-    dry_run_validated: "run_dry_run",
-  };
-  return values[key] ?? "";
-}
-function setupSourceFor(key: SetupCheckKey): SetupSource {
-  if (
-    [
-      "profile_selected",
-      "scope_valid",
-      "effect_posture_locked",
-      "recovery_owner_named",
-    ].includes(key)
-  )
-    return "deterministic";
-  if (
-    [
-      "local_administrator_validated",
-      "remote_provider_authorized",
-      "integration_permissions_validated",
-      "policy_validated",
-    ].includes(key)
-  )
-    return "authorization";
-  if (key === "dry_run_validated") return "dry_run";
-  return "probe";
-}
-function setupTimestamp(value: unknown): value is string {
-  return validRuntimeObservedAt(value);
-}
-function parseSetupRequirement(value: unknown): SetupRequirement {
-  const keys = [
-    "key",
-    "source",
-    "state",
-    "checker_identity",
-    "evidence_identity",
-    "receipt_identity",
-    "recovery_action",
-    "checked_at",
-  ] as const;
-  if (
-    !record(value) ||
-    !exact(value, keys) ||
-    typeof value.key !== "string" ||
-    !setupKeys.has(value.key as SetupCheckKey) ||
-    typeof value.source !== "string" ||
-    !setupSources.has(value.source as SetupSource) ||
-    value.source !== setupSourceFor(value.key as SetupCheckKey) ||
-    typeof value.state !== "string" ||
-    !setupStates.has(value.state as SetupState) ||
-    !validDigest(value.checker_identity, true) ||
-    !validDigest(value.evidence_identity, true) ||
-    !validDigest(value.receipt_identity, true) ||
-    typeof value.recovery_action !== "string" ||
-    !setupRecoveries.has(value.recovery_action) ||
-    typeof value.checked_at !== "string"
-  )
-    throw new ApiError("invalid_response");
-  const deterministic = value.source === "deterministic",
-    pending = value.state === "pending",
-    passed = value.state === "passed";
-  if (
-    (deterministic &&
-      (value.state !== "passed" ||
-        value.checker_identity !== "" ||
-        value.evidence_identity !== "" ||
-        value.receipt_identity !== "" ||
-        value.recovery_action !== "" ||
-        value.checked_at !== "")) ||
-    (pending &&
-      (value.checker_identity !== "" ||
-        value.evidence_identity !== "" ||
-        value.receipt_identity !== "" ||
-        value.recovery_action !== "" ||
-        value.checked_at !== "")) ||
-    (!deterministic &&
-      !pending &&
-      (!validDigest(value.checker_identity) ||
-        !validDigest(value.evidence_identity) ||
-        !validDigest(value.receipt_identity) ||
-        !setupTimestamp(value.checked_at))) ||
-    (passed && value.recovery_action !== "") ||
-    ((value.state === "blocked" || value.state === "unavailable") &&
-      value.recovery_action !== setupRecoveryFor(value.key as SetupCheckKey))
-  )
-    throw new ApiError("invalid_response");
-  return value as unknown as SetupRequirement;
-}
-function parseSetupReceipt(value: unknown): SetupReceipt {
-  const keys = [
-    "contract",
-    "schema_version",
-    "identity",
-    "plan_identity",
-    "key",
-    "checker_identity",
-    "state",
-    "evidence_identity",
-    "recovery_action",
-    "checked_at",
-  ] as const;
-  if (
-    !record(value) ||
-    !exact(value, keys) ||
-    value.contract !== "open-trestle/setup-check-receipt" ||
-    value.schema_version !== 1 ||
-    !validDigest(value.identity) ||
-    !validDigest(value.plan_identity) ||
-    typeof value.key !== "string" ||
-    !setupKeys.has(value.key as SetupCheckKey) ||
-    setupSourceFor(value.key as SetupCheckKey) === "deterministic" ||
-    !validDigest(value.checker_identity) ||
-    typeof value.state !== "string" ||
-    !(["passed", "blocked", "unavailable"] as string[]).includes(value.state) ||
-    !validDigest(value.evidence_identity) ||
-    typeof value.recovery_action !== "string" ||
-    !setupRecoveries.has(value.recovery_action) ||
-    !setupTimestamp(value.checked_at) ||
-    (value.state === "passed" && value.recovery_action !== "") ||
-    (value.state !== "passed" &&
-      value.recovery_action !== setupRecoveryFor(value.key as SetupCheckKey))
-  )
-    throw new ApiError("invalid_response");
-  return value as unknown as SetupReceipt;
-}
-function parseSetupPlan(value: unknown): SetupPlan {
-  const keys = [
-    "contract",
-    "schema_version",
-    "identity",
-    "previous_identity",
-    "checker_catalog_identity",
-    "checker_authorities",
-    "revision",
-    "tenant_id",
-    "repository_id",
-    "recovery_owner",
-    "profile",
-    "posture",
-    "requirements",
-    "receipts",
-    "status",
-    "ready",
-    "created_at",
-    "updated_at",
-  ] as const;
-  if (
-    !record(value) ||
-    !exact(value, keys) ||
-    value.contract !== "open-trestle/setup-plan" ||
-    value.schema_version !== 1 ||
-    !validDigest(value.identity) ||
-    !validDigest(value.previous_identity, true) ||
-    !validDigest(value.checker_catalog_identity) ||
-    !integer(value.revision, 1, 257) ||
-    typeof value.tenant_id !== "string" ||
-    typeof value.repository_id !== "string" ||
-    !validScope({
-      tenant: value.tenant_id,
-      repository: value.repository_id,
-      run: "setup",
-    }) ||
-    typeof value.recovery_owner !== "string" ||
-    !/^[A-Za-z0-9_.:@-]{1,128}$/.test(value.recovery_owner) ||
-    typeof value.profile !== "string" ||
-    !setupProfiles.has(value.profile as SetupProfile) ||
-    !record(value.posture) ||
-    !Array.isArray(value.requirements) ||
-    !Array.isArray(value.receipts) ||
-    !Array.isArray(value.checker_authorities) ||
-    typeof value.status !== "string" ||
-    !["incomplete", "blocked", "ready"].includes(value.status) ||
-    typeof value.ready !== "boolean" ||
-    !setupTimestamp(value.created_at) ||
-    !setupTimestamp(value.updated_at)
-  )
-    throw new ApiError("invalid_response");
-  const posture = value.posture;
-  const postureKeys = [
-    "metadata_backend",
-    "artifact_backend",
-    "artifact_protection",
-    "notification_backend",
-    "inference",
-    "egress",
-    "integration",
-    "max_model_request_cost_micro_usd",
-    "retention_days",
-    "provider_fallback_enabled",
-    "content_logging_allowed",
-    "publication_enabled",
-    "dynamic_validation_enabled",
-  ] as const;
-  if (
-    !exact(posture, postureKeys) ||
-    posture.retention_days !== 30 ||
-    posture.provider_fallback_enabled !== false ||
-    posture.content_logging_allowed !== false ||
-    posture.publication_enabled !== false ||
-    posture.dynamic_validation_enabled !== false ||
-    !integer(posture.max_model_request_cost_micro_usd, 0, 1000000000)
-  )
-    throw new ApiError("invalid_response");
-  const profile = value.profile as SetupProfile;
-  const local = profile === "local_single_node" || profile === "air_gapped";
-  if (
-    (local &&
-      (posture.metadata_backend !== "local" ||
-        posture.artifact_backend !== "local" ||
-        posture.artifact_protection !== "process_private" ||
-        posture.notification_backend !== "process_local" ||
-        posture.inference !== "local_only" ||
-        posture.egress !== "denied" ||
-        posture.max_model_request_cost_micro_usd !== 0)) ||
-    (!local &&
-      (posture.metadata_backend !== "postgres" ||
-        posture.artifact_backend !== "s3" ||
-        posture.artifact_protection !== "envelope_encrypted" ||
-        posture.notification_backend !== "postgres" ||
-        posture.inference !== "approved_remote" ||
-        posture.egress !== "allowlisted" ||
-        posture.max_model_request_cost_micro_usd !== 100000)) ||
-    posture.integration !==
-      (profile === "air_gapped"
-        ? "offline_bundle"
-        : local
-          ? "local"
-          : "least_privilege_scm")
-  )
-    throw new ApiError("invalid_response");
-  const requirements = value.requirements.map(parseSetupRequirement);
-  const expectedKeys = setupProfileKeys[profile];
-  if (
-    requirements.length !== expectedKeys.length ||
-    requirements.some(
-      (requirement, index) => requirement.key !== expectedKeys[index],
-    )
-  )
-    throw new ApiError("invalid_response");
-  const authorities = value.checker_authorities as unknown[];
-  const authorityMap = new Map<SetupCheckKey, string>();
-  let previous = "";
-  for (const authority of authorities) {
-    if (
-      !record(authority) ||
-      !exact(authority, ["key", "checker_identity"]) ||
-      typeof authority.key !== "string" ||
-      !setupKeys.has(authority.key as SetupCheckKey) ||
-      setupSourceFor(authority.key as SetupCheckKey) === "deterministic" ||
-      !validDigest(authority.checker_identity) ||
-      authority.key <= previous ||
-      authorityMap.has(authority.key as SetupCheckKey)
-    )
-      throw new ApiError("invalid_response");
-    authorityMap.set(
-      authority.key as SetupCheckKey,
-      authority.checker_identity as string,
-    );
-    previous = authority.key;
-  }
-  if (
-    new Set(authorityMap.values()).size !== authorityMap.size ||
-    authorityMap.size !==
-      requirements.filter((r) => r.source !== "deterministic").length ||
-    requirements.some(
-      (r) => r.source !== "deterministic" && !authorityMap.has(r.key),
-    )
-  )
-    throw new ApiError("invalid_response");
-  const receipts = value.receipts.map(parseSetupReceipt);
-  if (
-    receipts.length > 256 ||
-    value.revision !== receipts.length + 1 ||
-    new Set(receipts.map((r) => r.identity)).size !== receipts.length ||
-    new Set(receipts.map((r) => r.checked_at)).size !== receipts.length
-  )
-    throw new ApiError("invalid_response");
-  let previousReceipt: SetupReceipt | undefined;
-  for (const receipt of receipts) {
-    if (
-      authorityMap.get(receipt.key) !== receipt.checker_identity ||
-      (previousReceipt !== undefined &&
-        Date.parse(receipt.checked_at) <=
-          Date.parse(previousReceipt.checked_at))
-    )
-      throw new ApiError("invalid_response");
-    previousReceipt = receipt;
-  }
-  const dependents: Partial<Record<SetupCheckKey, SetupCheckKey[]>> = {
-    policy_validated: ["local_inference_validated", "dry_run_validated"],
-    postgres_storage_validated: [
-      "shared_rate_limit_validated",
-      "replica_reconciliation_validated",
-    ],
-    integration_permissions_validated: ["webhook_validated"],
-  };
-  const latest = new Map<SetupCheckKey, SetupReceipt>();
-  for (const receipt of receipts) {
-    if (latest.has(receipt.key)) {
-      for (const key of dependents[receipt.key] ?? []) latest.delete(key);
-    }
-    latest.set(receipt.key, receipt);
-  }
-  for (const requirement of requirements) {
-    const receipt = latest.get(requirement.key);
-    if (
-      receipt &&
-      (requirement.state !== receipt.state ||
-        requirement.receipt_identity !== receipt.identity ||
-        requirement.checker_identity !== receipt.checker_identity ||
-        requirement.evidence_identity !== receipt.evidence_identity ||
-        requirement.recovery_action !== receipt.recovery_action ||
-        requirement.checked_at !== receipt.checked_at)
-    )
-      throw new ApiError("invalid_response");
-    if (
-      !receipt &&
-      requirement.source !== "deterministic" &&
-      requirement.state !== "pending"
-    )
-      throw new ApiError("invalid_response");
-  }
-  const all = requirements.every((r) => r.state === "passed"),
-    blocked = requirements.some(
-      (r) => r.state === "blocked" || r.state === "unavailable",
-    ),
-    derived = blocked ? "blocked" : all ? "ready" : "incomplete";
-  if (
-    Date.parse(value.updated_at as string) <
-      Date.parse(value.created_at as string) ||
-    (receipts.length > 0 &&
-      Date.parse(receipts[0]!.checked_at) <=
-        Date.parse(value.created_at as string)) ||
-    value.status !== derived ||
-    value.ready !== (derived === "ready") ||
-    (receipts.length === 0
-      ? value.previous_identity !== "" || value.updated_at !== value.created_at
-      : value.previous_identity !== receipts.at(-1)?.plan_identity ||
-        value.updated_at !== receipts.at(-1)?.checked_at)
-  )
-    throw new ApiError("invalid_response");
-  return {
-    ...value,
-    posture,
-    requirements,
-    receipts,
-    checker_authorities: authorities,
-  } as unknown as SetupPlan;
-}
-export function parseSetupSession(value: unknown): SetupSession {
-  if (
-    !record(value) ||
-    value.contract !== "open-trestle/setup-session" ||
-    value.schema_version !== 1 ||
-    typeof value.initialized !== "boolean"
-  )
-    throw new ApiError("invalid_response");
-  if (value.initialized) {
-    if (!exact(value, ["contract", "schema_version", "initialized", "plan"]))
-      throw new ApiError("invalid_response");
-    return { ...value, plan: parseSetupPlan(value.plan) } as SetupSession;
-  }
-  if (!exact(value, ["contract", "schema_version", "initialized"]))
-    throw new ApiError("invalid_response");
-  return value as unknown as SetupSession;
-}
-export function parseSetupCheckResult(value: unknown): SetupCheckResult {
-  if (!record(value)) {
-    throw new ApiError("invalid_response");
-  }
-  if (value.contract === "open-trestle/setup-error") {
-    if (
-      !exact(value, ["contract", "schema_version", "code"]) ||
-      value.schema_version !== 1 ||
-      typeof value.code !== "string" ||
-      !setupErrorCodes.has(value.code)
-    )
-      throw new ApiError("invalid_response");
-    throw new ApiError(value.code);
-  }
-  if (
-    !exact(value, ["contract", "schema_version", "plan", "receipt"]) ||
-    value.contract !== "open-trestle/setup-check-result" ||
-    value.schema_version !== 1
-  )
-    throw new ApiError("invalid_response");
-  const plan = parseSetupPlan(value.plan),
-    receipt = parseSetupReceipt(value.receipt);
-  const latest = plan.receipts.at(-1);
-  if (
-    latest === undefined ||
-    latest.identity !== receipt.identity ||
-    latest.plan_identity !== receipt.plan_identity ||
-    latest.key !== receipt.key ||
-    latest.checker_identity !== receipt.checker_identity ||
-    latest.state !== receipt.state ||
-    latest.evidence_identity !== receipt.evidence_identity ||
-    latest.recovery_action !== receipt.recovery_action ||
-    latest.checked_at !== receipt.checked_at ||
-    plan.previous_identity !== receipt.plan_identity
-  )
-    throw new ApiError("invalid_response");
-  return {
-    contract: "open-trestle/setup-check-result",
-    schema_version: 1,
-    plan,
-    receipt,
-  };
-}
-
-type Fetcher = (input: string, init: RequestInit) => Promise<Response>;
+export type Fetcher = (input: string, init: RequestInit) => Promise<Response>;
 function assertUniqueJSONKeys(text: string): void {
   let index = 0;
   const whitespace = () => {
@@ -1387,7 +1228,7 @@ function assertUniqueJSONKeys(text: string): void {
   };
   const stringValue = (): string => {
     const start = index;
-    if (text[index] !== '"') throw new ApiError("invalid_response");
+    if (text[index] !== '"') invalidResponse();
     index++;
     for (; index < text.length; index++) {
       const character = text[index]!;
@@ -1396,7 +1237,7 @@ function assertUniqueJSONKeys(text: string): void {
         try {
           return JSON.parse(text.slice(start, index)) as string;
         } catch {
-          throw new ApiError("invalid_response");
+          invalidResponse();
         }
       }
       if (character === "\\") {
@@ -1406,16 +1247,15 @@ function assertUniqueJSONKeys(text: string): void {
           for (let count = 0; count < 4; count++) {
             index++;
             if (index >= text.length || !/[0-9a-f]/i.test(text[index]!))
-              throw new ApiError("invalid_response");
+              invalidResponse();
           }
         }
-      } else if (character.charCodeAt(0) < 0x20)
-        throw new ApiError("invalid_response");
+      } else if (character.charCodeAt(0) < 0x20) invalidResponse();
     }
-    throw new ApiError("invalid_response");
+    invalidResponse();
   };
   const value = (depth: number): void => {
-    if (depth > 128) throw new ApiError("invalid_response");
+    if (depth > 128) invalidResponse();
     whitespace();
     const character = text[index];
     if (character === "{") {
@@ -1429,10 +1269,10 @@ function assertUniqueJSONKeys(text: string): void {
       for (;;) {
         whitespace();
         const key = stringValue();
-        if (keys.has(key)) throw new ApiError("invalid_response");
+        if (keys.has(key)) invalidResponse();
         keys.add(key);
         whitespace();
-        if (text[index] !== ":") throw new ApiError("invalid_response");
+        if (text[index] !== ":") invalidResponse();
         index++;
         value(depth + 1);
         whitespace();
@@ -1440,7 +1280,7 @@ function assertUniqueJSONKeys(text: string): void {
           index++;
           return;
         }
-        if (text[index] !== ",") throw new ApiError("invalid_response");
+        if (text[index] !== ",") invalidResponse();
         index++;
       }
     } else if (character === "[") {
@@ -1457,7 +1297,7 @@ function assertUniqueJSONKeys(text: string): void {
           index++;
           return;
         }
-        if (text[index] !== ",") throw new ApiError("invalid_response");
+        if (text[index] !== ",") invalidResponse();
         index++;
       }
     } else if (character === '"') {
@@ -1466,17 +1306,17 @@ function assertUniqueJSONKeys(text: string): void {
       const start = index;
       while (index < text.length && !/[\t\n\r ,\]}]/.test(text[index]!))
         index++;
-      if (start === index) throw new ApiError("invalid_response");
+      if (start === index) invalidResponse();
       try {
         JSON.parse(text.slice(start, index));
       } catch {
-        throw new ApiError("invalid_response");
+        invalidResponse();
       }
     }
   };
   value(0);
   whitespace();
-  if (index !== text.length) throw new ApiError("invalid_response");
+  if (index !== text.length) invalidResponse();
 }
 function validJSONMediaType(value: string | null): boolean {
   return (
@@ -1496,9 +1336,9 @@ async function readBoundedJSONBody(
     (!/^\d+$/.test(announced) || Number(announced) > maximumBytes)
   ) {
     controller.abort();
-    throw new ApiError("invalid_response");
+    invalidResponse();
   }
-  if (response.body === null) throw new ApiError("invalid_response");
+  if (response.body === null) invalidResponse();
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -1513,7 +1353,7 @@ async function readBoundedJSONBody(
             await reader.cancel();
           } catch {}
           controller.abort();
-          throw new ApiError("invalid_response");
+          invalidResponse();
         }
         chunks.push(value);
       }
@@ -1531,16 +1371,16 @@ async function readBoundedJSONBody(
   try {
     text = new TextDecoder("utf-8", { fatal: true }).decode(encoded);
   } catch {
-    throw new ApiError("invalid_response");
+    invalidResponse();
   }
   try {
     assertUniqueJSONKeys(text);
     return JSON.parse(text) as unknown;
   } catch {
-    throw new ApiError("invalid_response");
+    invalidResponse();
   }
 }
-async function request(
+export async function request(
   path: string,
   token: string,
   fetcher: Fetcher,
@@ -1548,10 +1388,14 @@ async function request(
   body?: unknown,
   maximumBytes = maximumResponseBytes,
   timeoutMilliseconds = 15000,
+  signal?: AbortSignal,
 ): Promise<{ status: number; body: unknown }> {
   if (!validAccessToken(token)) throw new ApiError("unauthenticated");
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMilliseconds);
+  const abort = () => controller.abort();
+  signal?.addEventListener("abort", abort, { once: true });
+  if (signal?.aborted) controller.abort();
   try {
     const headers = new Headers({
       Accept: "application/json",
@@ -1573,7 +1417,7 @@ async function request(
       referrerPolicy: "no-referrer",
     });
     if (!validJSONMediaType(response.headers.get("content-type")))
-      throw new ApiError("invalid_response");
+      invalidResponse();
     return {
       status: response.status,
       body: await readBoundedJSONBody(response, controller, maximumBytes),
@@ -1584,6 +1428,7 @@ async function request(
     throw new ApiError("unavailable");
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
   }
 }
 function scopePath(scope: Scope): string {
@@ -1594,25 +1439,133 @@ export async function fetchRun(
   scope: Scope,
   token: string,
   fetcher: Fetcher = fetch,
+  signal?: AbortSignal,
 ): Promise<RunReceipt> {
-  const response = await request(scopePath(scope), token, fetcher);
+  const response = await request(
+    scopePath(scope),
+    token,
+    fetcher,
+    "GET",
+    undefined,
+    maximumResponseBytes,
+    15000,
+    signal,
+  );
   const run = parseRunEnvelope(response.body, scope);
-  if (response.status !== 200) throw new ApiError("invalid_response");
+  if (response.status !== 200) invalidResponse();
   return run;
+}
+const refusalReasonPattern = /^[a-z][a-z0-9_]{0,63}$/;
+export function parseDeliveryRefusalEnvelope(
+  value: unknown,
+  scope: Scope,
+): DeliveryRefusal {
+  if (!record(value)) invalidResponse();
+  if ("error" in value) parseAPIError(value);
+  if (
+    !exact(value, ["contract", "schema_version", "request_id", "refusal"]) ||
+    value.contract !== "open-trestle/delivery-refusal-response" ||
+    value.schema_version !== 1 ||
+    !nonemptyString(value.request_id, 128)
+  )
+    invalidResponse();
+  const refusal = value.refusal;
+  if (
+    !record(refusal) ||
+    !exact(refusal, [
+      "contract",
+      "schema_version",
+      "identity",
+      "tenant_id",
+      "repository_id",
+      "source",
+      "deduplication_key",
+      "delivery_identity",
+      "planner_identity",
+      "reason",
+      "refused_at_milliseconds",
+    ]) ||
+    refusal.contract !== "open-trestle/webhook-delivery-refusal" ||
+    refusal.schema_version !== 1 ||
+    !validDigest(refusal.identity) ||
+    refusal.tenant_id !== scope.tenant ||
+    refusal.repository_id !== scope.repository ||
+    typeof refusal.source !== "string" ||
+    !["github", "gitlab", "bitbucket_cloud", "gitea", "forgejo"].includes(
+      refusal.source,
+    ) ||
+    !validDigest(refusal.deduplication_key) ||
+    `webhook-${refusal.deduplication_key as string}` !== scope.run ||
+    !validDigest(refusal.delivery_identity) ||
+    !validDigest(refusal.planner_identity) ||
+    typeof refusal.reason !== "string" ||
+    !refusalReasonPattern.test(refusal.reason) ||
+    !integer(refusal.refused_at_milliseconds, 1, 253402300799999)
+  )
+    invalidResponse();
+  return refusal as unknown as DeliveryRefusal;
+}
+export async function fetchDeliveryRefusal(
+  scope: Scope,
+  token: string,
+  fetcher: Fetcher = fetch,
+  signal?: AbortSignal,
+): Promise<DeliveryRefusal> {
+  const response = await request(
+    `${scopePath(scope)}/refusal`,
+    token,
+    fetcher,
+    "GET",
+    undefined,
+    maximumResponseBytes,
+    15000,
+    signal,
+  );
+  const refusal = parseDeliveryRefusalEnvelope(response.body, scope);
+  if (response.status !== 200) invalidResponse();
+  return refusal;
 }
 export async function fetchDiagnostics(
   scope: Scope,
   token: string,
   fetcher: Fetcher = fetch,
+  signal?: AbortSignal,
 ): Promise<DiagnosticSet> {
   const response = await request(
     `${scopePath(scope)}/diagnostics`,
     token,
     fetcher,
+    "GET",
+    undefined,
+    maximumResponseBytes,
+    15000,
+    signal,
   );
   const diagnostics = parseDiagnosticEnvelope(response.body, scope);
-  if (response.status !== 200) throw new ApiError("invalid_response");
+  if (response.status !== 200) invalidResponse();
   return diagnostics;
+}
+
+export async function fetchRunProgress(
+  scope: Scope,
+  token: string,
+  expected: RunReceipt,
+  fetcher: Fetcher = fetch,
+  signal?: AbortSignal,
+): Promise<RunProgress> {
+  const response = await request(
+    `${scopePath(scope)}/progress`,
+    token,
+    fetcher,
+    "GET",
+    undefined,
+    maximumResponseBytes,
+    15000,
+    signal,
+  );
+  const progress = parseRunProgressEnvelope(response.body, scope, expected);
+  if (response.status !== 200) invalidResponse();
+  return progress;
 }
 
 function validRuntimeScope(
@@ -1627,390 +1580,21 @@ export async function fetchRuntimeStatus(
   scope: Pick<Scope, "tenant" | "repository">,
   token: string,
   fetcher: Fetcher = fetch,
+  signal?: AbortSignal,
 ): Promise<RuntimeStatus> {
   if (!validRuntimeScope(scope)) throw new ApiError("invalid_scope");
   const path = `/api/v1/tenants/${encodeURIComponent(scope.tenant)}/repositories/${encodeURIComponent(scope.repository)}/runtime`;
-  const response = await request(path, token, fetcher);
-  const status = parseRuntimeStatusEnvelope(response.body, scope);
-  if (response.status !== 200) throw new ApiError("invalid_response");
-  return status;
-}
-
-const maximumSetupResponseBytes = 2 << 20;
-function validSetupPath(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    value.length >= 1 &&
-    value.length <= 4096 &&
-    !/[\u0000\r\n]/.test(value)
-  );
-}
-export function validSetupBundlePath(value: unknown): value is string {
-  if (!validSetupPath(value)) return false;
-  const validSegments = (segments: string[]) =>
-    segments.every(
-      (segment) => segment !== "" && segment !== "." && segment !== "..",
-    );
-  if (value.startsWith("/")) {
-    return (
-      value === "/" ||
-      (!value.endsWith("/") && validSegments(value.slice(1).split("/")))
-    );
-  }
-  if (/^[A-Za-z]:\\/.test(value)) {
-    if (value.includes("/")) return false;
-    const rest = value.slice(3);
-    return (
-      rest === "" || (!value.endsWith("\\") && validSegments(rest.split("\\")))
-    );
-  }
-  if (value.startsWith("\\\\")) {
-    if (value.includes("/") || value.endsWith("\\")) return false;
-    const segments = value.slice(2).split("\\");
-    return segments.length >= 2 && validSegments(segments);
-  }
-  return false;
-}
-
-function validSetupSecretValue(
-  value: unknown,
-  maximum: number,
-): value is string {
-  return (
-    typeof value === "string" &&
-    value.length >= 1 &&
-    value.length <= maximum &&
-    !/[\u0000-\u0020\u007f]/.test(value)
-  );
-}
-function validSetupLabel(value: unknown): value is string {
-  return typeof value === "string" && /^[A-Za-z0-9_.:@-]{1,128}$/.test(value);
-}
-
-export async function fetchSetupSession(
-  token: string,
-  fetcher: Fetcher = fetch,
-): Promise<SetupSession> {
   const response = await request(
-    "/api/v1/setup",
+    path,
     token,
     fetcher,
     "GET",
     undefined,
-    maximumSetupResponseBytes,
+    maximumResponseBytes,
+    15000,
+    signal,
   );
-  return parseSetupHTTP(response, 200, parseSetupSession);
-}
-export async function initializeSetup(
-  input: SetupInitInput,
-  token: string,
-  fetcher: Fetcher = fetch,
-): Promise<SetupSession> {
-  if (
-    !setupProfiles.has(input.profile) ||
-    !validScope({
-      tenant: input.tenant_id,
-      repository: input.repository_id,
-      run: "setup",
-    }) ||
-    !/^[A-Za-z0-9_.:@-]{1,128}$/.test(input.recovery_owner)
-  )
-    throw new ApiError("invalid_scope");
-  const body = {
-    contract: "open-trestle/setup-init-request",
-    schema_version: 1,
-    ...input,
-    confirmation: "create setup plan",
-  };
-  const response = await request(
-    "/api/v1/setup/init",
-    token,
-    fetcher,
-    "POST",
-    body,
-    maximumSetupResponseBytes,
-  );
-  const session = parseSetupHTTP(response, 201, parseSetupSession);
-  const plan = session.plan;
-  if (
-    !session.initialized ||
-    plan === undefined ||
-    plan.profile !== input.profile ||
-    plan.tenant_id !== input.tenant_id ||
-    plan.repository_id !== input.repository_id ||
-    plan.recovery_owner !== input.recovery_owner
-  )
-    throw new ApiError("invalid_response");
-  return session;
-}
-export async function runSetupCheck(
-  input: SetupCheckInput,
-  token: string,
-  fetcher: Fetcher = fetch,
-): Promise<SetupCheckResult> {
-  const supported = new Set<SetupCheckKey>([
-    "postgres_storage_validated",
-    "integration_permissions_validated",
-    "webhook_validated",
-    "shared_rate_limit_validated",
-    "replica_reconciliation_validated",
-    "signed_bundle_validated",
-    "remote_provider_authorized",
-    "envelope_storage_validated",
-    "secret_backend_validated",
-    "local_administrator_validated",
-    "backup_validated",
-    "state_storage_posture_validated",
-    "observer_credential_posture_validated",
-    "local_inference_validated",
-    "policy_validated",
-    "dry_run_validated",
-  ]);
-  if (
-    !supported.has(input.key) ||
-    !validDigest(input.plan_identity) ||
-    (input.key !== "integration_permissions_validated" &&
-      ("approve_github_source_broker_authority_identity" in input ||
-        "allow_github_installation_token_creation" in input))
-  )
-    throw new ApiError("invalid_scope");
-  const base = {
-    contract: "open-trestle/setup-check-request",
-    schema_version: 1,
-    plan_identity: input.plan_identity,
-    key: input.key,
-    confirmation: `run ${input.key}`,
-  };
-  let body: Record<string, unknown> = { ...base };
-  if (input.key === "state_storage_posture_validated") {
-    if (!validSetupPath(input.storage_root))
-      throw new ApiError("invalid_scope");
-    body = { ...body, storage_root: input.storage_root };
-  } else if (input.key === "backup_validated") {
-    if (!validSetupPath(input.backup_snapshot_path))
-      throw new ApiError("invalid_scope");
-    body = { ...body, backup_snapshot_path: input.backup_snapshot_path };
-  } else if (input.key === "postgres_storage_validated") {
-    if (
-      !validDigest(input.approve_postgres_authority_identity) ||
-      !validSetupLabel(input.approved_by)
-    )
-      throw new ApiError("invalid_scope");
-    body = {
-      ...body,
-      approve_postgres_authority_identity:
-        input.approve_postgres_authority_identity,
-      approved_by: input.approved_by,
-    };
-  } else if (input.key === "shared_rate_limit_validated") {
-    if (
-      !validDigest(input.approve_shared_rate_limit_authority_identity) ||
-      !validDigest(input.postgres_database_authority_identity) ||
-      !validSetupLabel(input.approved_by)
-    )
-      throw new ApiError("invalid_scope");
-    body = {
-      ...body,
-      approve_shared_rate_limit_authority_identity:
-        input.approve_shared_rate_limit_authority_identity,
-      postgres_database_authority_identity:
-        input.postgres_database_authority_identity,
-      approved_by: input.approved_by,
-    };
-  } else if (input.key === "replica_reconciliation_validated") {
-    if (
-      !validDigest(input.approve_replica_reconciliation_authority_identity) ||
-      !validDigest(input.postgres_database_authority_identity) ||
-      !validSetupLabel(input.approved_by)
-    )
-      throw new ApiError("invalid_scope");
-    body = {
-      ...body,
-      approve_replica_reconciliation_authority_identity:
-        input.approve_replica_reconciliation_authority_identity,
-      postgres_database_authority_identity:
-        input.postgres_database_authority_identity,
-      approved_by: input.approved_by,
-    };
-  } else if (input.key === "signed_bundle_validated") {
-    if (
-      !validDigest(input.approve_signed_bundle_authority_identity) ||
-      !validSetupBundlePath(input.bundle_path) ||
-      !validDigest(input.bundle_sha256) ||
-      !Number.isSafeInteger(input.bundle_bytes) ||
-      Number(input.bundle_bytes) <= 0 ||
-      Number(input.bundle_bytes) > 1073741824 ||
-      !validDigest(input.public_key) ||
-      typeof input.signature !== "string" ||
-      !/^[0-9a-f]{128}$/.test(input.signature) ||
-      input.signature === "0".repeat(128) ||
-      !validSetupLabel(input.approved_by)
-    )
-      throw new ApiError("invalid_scope");
-    body = {
-      ...body,
-      approve_signed_bundle_authority_identity:
-        input.approve_signed_bundle_authority_identity,
-      bundle_path: input.bundle_path,
-      bundle_sha256: input.bundle_sha256,
-      bundle_bytes: input.bundle_bytes,
-      public_key: input.public_key,
-      signature: input.signature,
-      approved_by: input.approved_by,
-    };
-  } else if (input.key === "integration_permissions_validated") {
-    if (
-      !validDigest(input.approve_integration_permission_authority_identity) ||
-      !validDigest(input.approve_github_source_broker_authority_identity) ||
-      input.allow_github_installation_token_creation !== true ||
-      !validSetupLabel(input.approved_by) ||
-      Object.keys(input).some(
-        (key) =>
-          ![
-            "plan_identity",
-            "key",
-            "approve_integration_permission_authority_identity",
-            "approve_github_source_broker_authority_identity",
-            "allow_github_installation_token_creation",
-            "approved_by",
-          ].includes(key),
-      )
-    )
-      throw new ApiError("invalid_scope");
-    body = {
-      ...base,
-      schema_version: 2,
-      confirmation:
-        "create GitHub installation token and run integration_permissions_validated",
-      approve_integration_permission_authority_identity:
-        input.approve_integration_permission_authority_identity,
-      approve_github_source_broker_authority_identity:
-        input.approve_github_source_broker_authority_identity,
-      allow_github_installation_token_creation: true,
-      approved_by: input.approved_by,
-    };
-  } else if (input.key === "webhook_validated") {
-    if (
-      !validDigest(input.approve_webhook_authority_identity) ||
-      !validSetupSecretValue(input.github_webhook_key_id, 128) ||
-      !validSetupLabel(input.approved_by)
-    )
-      throw new ApiError("invalid_scope");
-    body = {
-      ...body,
-      approve_webhook_authority_identity:
-        input.approve_webhook_authority_identity,
-      github_webhook_key_id: input.github_webhook_key_id,
-      approved_by: input.approved_by,
-    };
-  } else if (input.key === "envelope_storage_validated") {
-    if (
-      !validDigest(input.approve_envelope_storage_authority_identity) ||
-      !validSetupSecretValue(input.s3_endpoint, 2048) ||
-      !validSetupSecretValue(input.s3_region, 128) ||
-      !validSetupSecretValue(input.s3_bucket, 128) ||
-      !validSetupSecretValue(input.s3_prefix, 1024) ||
-      !validSetupSecretValue(input.kms_region, 128) ||
-      !validSetupSecretValue(input.kms_key_arn, 2048) ||
-      (input.kms_endpoint !== undefined &&
-        !validSetupSecretValue(input.kms_endpoint, 2048)) ||
-      !validSetupLabel(input.approved_by)
-    )
-      throw new ApiError("invalid_scope");
-    body = {
-      ...body,
-      approve_envelope_storage_authority_identity:
-        input.approve_envelope_storage_authority_identity,
-      s3_endpoint: input.s3_endpoint,
-      s3_region: input.s3_region,
-      s3_bucket: input.s3_bucket,
-      s3_prefix: input.s3_prefix,
-      kms_region: input.kms_region,
-      kms_key_arn: input.kms_key_arn,
-      ...(input.kms_endpoint === undefined
-        ? {}
-        : { kms_endpoint: input.kms_endpoint }),
-      approved_by: input.approved_by,
-    };
-  } else if (input.key === "secret_backend_validated") {
-    if (
-      !validDigest(input.approve_kms_authority_identity) ||
-      !validSetupSecretValue(input.kms_region, 128) ||
-      !validSetupSecretValue(input.kms_key_arn, 2048) ||
-      (input.kms_endpoint !== undefined &&
-        !validSetupSecretValue(input.kms_endpoint, 2048)) ||
-      !validSetupLabel(input.approved_by)
-    )
-      throw new ApiError("invalid_scope");
-    body = {
-      ...body,
-      approve_kms_authority_identity: input.approve_kms_authority_identity,
-      kms_region: input.kms_region,
-      kms_key_arn: input.kms_key_arn,
-      ...(input.kms_endpoint === undefined
-        ? {}
-        : { kms_endpoint: input.kms_endpoint }),
-      approved_by: input.approved_by,
-    };
-  } else if (input.key === "local_administrator_validated") {
-    if (!validSetupLabel(input.approved_by))
-      throw new ApiError("invalid_scope");
-    body = { ...body, approved_by: input.approved_by };
-  } else if (
-    input.key === "remote_provider_authorized" ||
-    input.key === "policy_validated" ||
-    input.key === "dry_run_validated" ||
-    input.key === "local_inference_validated"
-  ) {
-    if (
-      !validSetupPath(input.route_inventory_path) ||
-      !validSetupPath(input.runtime_policy_path) ||
-      !validDigest(input.approve_inventory_identity) ||
-      !validDigest(input.approve_runtime_policy_identity) ||
-      !validDigest(input.approve_review_policy_identity) ||
-      !validSetupLabel(input.approved_by)
-    )
-      throw new ApiError("invalid_scope");
-    body = {
-      ...body,
-      route_inventory_path: input.route_inventory_path,
-      runtime_policy_path: input.runtime_policy_path,
-      approve_inventory_identity: input.approve_inventory_identity,
-      approve_runtime_policy_identity: input.approve_runtime_policy_identity,
-      approve_review_policy_identity: input.approve_review_policy_identity,
-      approved_by: input.approved_by,
-    };
-  }
-  const response = await request(
-    "/api/v1/setup/check",
-    token,
-    fetcher,
-    "POST",
-    body,
-    maximumSetupResponseBytes,
-    input.key === "local_inference_validated" ||
-      input.key === "signed_bundle_validated"
-      ? 100000
-      : input.key === "integration_permissions_validated"
-        ? 70000
-        : input.key === "shared_rate_limit_validated" ||
-            input.key === "replica_reconciliation_validated"
-          ? 70000
-          : input.key === "webhook_validated"
-            ? 40000
-            : input.key === "envelope_storage_validated"
-              ? 100000
-              : input.key === "secret_backend_validated"
-                ? 70000
-                : input.key === "postgres_storage_validated"
-                  ? 40000
-                  : 15000,
-  );
-  const result = parseSetupHTTP(response, 200, parseSetupCheckResult);
-  if (
-    result.receipt.plan_identity !== input.plan_identity ||
-    result.receipt.key !== input.key
-  )
-    throw new ApiError("invalid_response");
-  return result;
+  const status = await parseRuntimeStatusEnvelope(response.body, scope);
+  if (response.status !== 200) invalidResponse();
+  return status;
 }

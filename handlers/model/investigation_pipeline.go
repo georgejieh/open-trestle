@@ -16,10 +16,10 @@ import (
 	"github.com/georgejieh/open-trestle/controlplane"
 	analysis "github.com/georgejieh/open-trestle/handlers/analysis"
 	change "github.com/georgejieh/open-trestle/handlers/change"
-	memoryhandler "github.com/georgejieh/open-trestle/handlers/memory"
 	source "github.com/georgejieh/open-trestle/handlers/source"
+	"github.com/georgejieh/open-trestle/internal/contextpacket"
 	"github.com/georgejieh/open-trestle/internal/gateway"
-	"github.com/georgejieh/open-trestle/internal/memory"
+	memorycodec "github.com/georgejieh/open-trestle/internal/memorycodec"
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/internal/scm"
@@ -68,7 +68,7 @@ func NewInvestigationPipelineProfile(o InvestigationPipelineProfileOptions) (Inv
 	if o.PublicationPolicy.Validate() != nil || o.PublicationPolicy.Identity() != o.PublicationPolicyIdentity {
 		return InvestigationPipelineProfile{}, ErrInvestigationPipeline
 	}
-	if o.Policy.ValidateRuntimeBudget(r.Budget) != nil || r.Budget.MaxCostMicroUSD() != o.Policy.MaxCostMicroUSD() || r.Generation.Validate() != nil || r.Requirements.Validate() != nil || r.Constraints.Validate() != nil || r.Independence.Validate() != nil || r.VerificationRanking.Validate() != nil || len(r.Verification) == 0 || len(r.Verification) > 64 {
+	if o.Policy.ValidateRuntimeBudget(r.Budget) != nil || r.Budget.MaxCostMicroUSD() != o.Policy.MaxCostMicroUSD() || r.GenerationTransport.Validate() != nil || r.VerificationTransport.Validate() != nil || r.Generation.Validate() != nil || r.Requirements.Validate() != nil || r.Constraints.Validate() != nil || r.Independence.Validate() != nil || r.VerificationRanking.Validate() != nil || len(r.Verification) == 0 || len(r.Verification) > 64 {
 		return InvestigationPipelineProfile{}, ErrInvestigationPipeline
 	}
 	pin, err := gateway.NewPinnedRouteRankingPolicy(r.Generation.ResolvedRecord().RouteRegistryRecord().RouteCandidateDeclaration().RouteCapabilityDeclaration().RouteReference(), nil)
@@ -112,7 +112,14 @@ func NewInvestigationPipelineProfile(o InvestigationPipelineProfileOptions) (Inv
 			zones = append(zones, z.String())
 		}
 	}
-	id := toolRecordIdentity([]any{"open-trestle/investigation-pipeline-profile", 1, o.RuntimePolicyIdentity, o.InventoryIdentity, o.ReviewPolicyIdentity, o.PublicationPolicyIdentity, o.Policy.Identity(), o.DispatcherCatalogIdentity, gp.Identity(), vp.Identity(), []any{r.Requirements.MinContextTokens(), r.Requirements.MinOutputTokens(), features}, []any{string(r.Constraints.Classification()), zones, r.Constraints.ContentLoggingAllowed()}, []any{r.Budget.EstimatedInputTokens(), r.Budget.MaxOutputTokens(), r.Budget.MaxCostMicroUSD()}, r.Independence.Identity(), "fixed_generation_route_v1", "foreground_single_runner_v1", "initial_selected_only_v1", "full_then_half_raw_overflow_v1", "live_journal_custody_v1"})
+	preimage := []any{"open-trestle/investigation-pipeline-profile", 1, o.RuntimePolicyIdentity, o.InventoryIdentity, o.ReviewPolicyIdentity, o.PublicationPolicyIdentity, o.Policy.Identity(), o.DispatcherCatalogIdentity, gp.Identity(), vp.Identity(), []any{r.Requirements.MinContextTokens(), r.Requirements.MinOutputTokens(), features}, []any{string(r.Constraints.Classification()), zones, r.Constraints.ContentLoggingAllowed()}, []any{r.Budget.EstimatedInputTokens(), r.Budget.MaxOutputTokens(), r.Budget.MaxCostMicroUSD()}, r.Independence.Identity(), "fixed_generation_route_v1", "foreground_single_runner_v1", "initial_selected_only_v1", "full_then_half_raw_overflow_v1", "live_journal_custody_v1"}
+	// A profile whose roles reserve structured-output framing binds both role
+	// transports under version 2; version 1 identities are unchanged.
+	if r.GenerationTransport != review.ModelRequestTransportStandard || r.VerificationTransport != review.ModelRequestTransportStandard {
+		preimage[1] = 2
+		preimage = append(preimage, []string{r.GenerationTransport.String(), r.VerificationTransport.String()})
+	}
+	id := toolRecordIdentity(preimage)
 	o.Routing = pipelineRoutingCopy(r)
 	return InvestigationPipelineProfile{id, o}, nil
 }
@@ -141,7 +148,7 @@ func (p InvestigationPipelineProfile) DispatcherCatalogIdentity() string {
 	return p.options.DispatcherCatalogIdentity
 }
 
-type InvestigationSupportBindings struct{ Change, Analysis, Memory string }
+type InvestigationSupportBindings struct{ Change, Analysis, Memory, PublicationScanner string }
 type InvestigationPipelineOptions struct {
 	Profile InvestigationPipelineProfile
 	Store   artifact.Store
@@ -151,15 +158,11 @@ type InvestigationPipelineOptions struct {
 	Catalog gateway.RouteDispatcherCatalog
 	Source  scm.SourceAdapter
 	Support InvestigationSupportBindings
+	// PlanningRefusals, when set, observes each investigation's turn planning
+	// refusals (see InvestigationOptions.PlanningRefusals).
+	PlanningRefusals func(error)
 }
-type InvestigationAssembly struct {
-	Packet                                           review.ContextPacket
-	Snapshot                                         review.ReviewSnapshot
-	MemoryScope                                      memory.Scope
-	InitialContextArtifact                           artifact.Artifact
-	AnalysisArtifact, MemoryArtifact, ChangeArtifact artifact.Artifact
-	BaseSnapshotArtifact, HeadSnapshotArtifact       artifact.Artifact
-}
+type InvestigationAssembly = contextpacket.Assembly
 type pipelineOperationKey struct{}
 type pipelineOperation struct {
 	owner *InvestigationPipeline
@@ -202,7 +205,7 @@ func NewInvestigationPipeline(o InvestigationPipelineOptions) (*InvestigationPip
 	if o.Profile.Validate() != nil || nilInterface(o.Store) || nilInterface(o.Ledger) || nilInterface(o.Journal) || nilInterface(o.Clock) || nilInterface(o.Source) || o.Catalog.Validate() != nil || o.Catalog.Identity() != o.Profile.DispatcherCatalogIdentity() {
 		return nil, ErrInvestigationPipeline
 	}
-	for _, id := range []string{o.Support.Change, o.Support.Analysis, o.Support.Memory} {
+	for _, id := range []string{o.Support.Change, o.Support.Analysis, o.Support.Memory, o.Support.PublicationScanner} {
 		if !validDigest(id) {
 			return nil, ErrInvestigationPipeline
 		}
@@ -211,7 +214,7 @@ func NewInvestigationPipeline(o InvestigationPipelineOptions) (*InvestigationPip
 	if err != nil {
 		return nil, ErrInvestigationPipeline
 	}
-	p := &InvestigationPipeline{options: o, coordinator: co, identity: toolRecordIdentity([]any{"open-trestle/investigation-pipeline", 1, o.Profile.Identity()}), captures: map[string]*pipelineCaptureEntry{}}
+	p := &InvestigationPipeline{options: o, coordinator: co, identity: toolRecordIdentity([]any{"open-trestle/investigation-pipeline", 2, o.Profile.Identity(), o.Support.PublicationScanner}), captures: map[string]*pipelineCaptureEntry{}}
 	p.capture = &pipelineCaptureStore{p}
 	p.acquisition, err = NewInvestigationAcquisitionHandler(p.capture, o.Source, o.Clock)
 	if err != nil {
@@ -231,8 +234,14 @@ func (p *InvestigationPipeline) Profile() InvestigationPipelineProfile {
 	}
 	return p.options.Profile
 }
+func (p *InvestigationPipeline) PublicationScannerIdentity() string {
+	if p == nil {
+		return ""
+	}
+	return p.options.Support.PublicationScanner
+}
 func (p *InvestigationPipeline) Validate() error {
-	if p == nil || p.options.Profile.Validate() != nil || p.acquisition == nil || p.acquisition.Validate() != nil || p.capture == nil || p.capture.owner != p || p.identity != toolRecordIdentity([]any{"open-trestle/investigation-pipeline", 1, p.options.Profile.Identity()}) || nilInterface(p.options.Store) || nilInterface(p.options.Ledger) || nilInterface(p.options.Journal) || nilInterface(p.options.Clock) || p.options.Catalog.Validate() != nil {
+	if p == nil || p.options.Profile.Validate() != nil || p.acquisition == nil || p.acquisition.Validate() != nil || p.capture == nil || p.capture.owner != p || p.identity != toolRecordIdentity([]any{"open-trestle/investigation-pipeline", 2, p.options.Profile.Identity(), p.options.Support.PublicationScanner}) || nilInterface(p.options.Store) || nilInterface(p.options.Ledger) || nilInterface(p.options.Journal) || nilInterface(p.options.Clock) || p.options.Catalog.Validate() != nil {
 		return ErrInvestigationPipeline
 	}
 	return nil
@@ -258,7 +267,7 @@ func (p *InvestigationPipeline) HandlerIdentity(kind controlplane.TaskKind) (str
 	case controlplane.TaskVerifyCandidates:
 		return toolRecordIdentity([]any{"open-trestle/investigation-verification-task-handler", 1, profile.Identity()}), nil
 	case controlplane.TaskEvaluatePublication:
-		return toolRecordIdentity([]any{"open-trestle/investigation-readiness-task-handler", 1, profile.Identity(), profile.ReviewPolicyIdentity(), profile.PublicationPolicyIdentity()}), nil
+		return toolRecordIdentity([]any{"open-trestle/investigation-readiness-task-handler", 2, p.Identity(), p.options.Support.PublicationScanner}), nil
 	}
 	return "", ErrInvestigationPipeline
 }
@@ -790,7 +799,7 @@ func (p *InvestigationPipeline) validateAssembly(ctx context.Context, s controlp
 	if err != nil || analyzed.ChangeIdentity() != changed.Identity() {
 		return nil, ErrInvestigationPipeline
 	}
-	mem, err := memoryhandler.ParseResultArtifact(a.MemoryArtifact, a.ChangeArtifact, a.BaseSnapshotArtifact, a.HeadSnapshotArtifact)
+	mem, err := memorycodec.ParseResultArtifact(a.MemoryArtifact, a.ChangeArtifact, a.BaseSnapshotArtifact, a.HeadSnapshotArtifact)
 	if err != nil || mem.PolicyIdentity() != p.plan.PolicyIdentity() {
 		return nil, ErrInvestigationPipeline
 	}
@@ -853,20 +862,59 @@ func (p *InvestigationPipeline) validateAssembly(ctx context.Context, s controlp
 		if !src.HasSliceBinding() || !scope.AllowsPath(src.EvidenceItem().SourceRange().Path()) {
 			return nil, ErrInvestigationPipeline
 		}
-		if src.Stage() == review.ContextStageChangedHunk {
-			found := false
-			for _, item := range analyzed.Items() {
-				if src.ReferenceID() == item.EvidenceID() && src.SliceBindingIdentity() == item.BindingIdentity() {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return nil, ErrInvestigationPipeline
-			}
-		}
+	}
+	items := make([]analysisRecord, 0, len(analyzed.Items()))
+	for _, item := range analyzed.Items() {
+		items = append(items, item)
+	}
+	removed := make([]analysisRecord, 0, len(analyzed.RemovedLines()))
+	for _, item := range analyzed.RemovedLines() {
+		removed = append(removed, item)
+	}
+	if !sourcesMatchAnalysis(a.Packet.Sources(), items, removed) {
+		return nil, ErrInvestigationPipeline
 	}
 	return handle, nil
+}
+
+// analysisRecord is the part of a deterministic evidence record that binds a
+// context source.
+type analysisRecord interface {
+	EvidenceID() string
+	BindingIdentity() string
+	FileIdentity() string
+	HeadLine() int
+}
+
+// sourcesMatchAnalysis reports whether every changed_hunk source is an
+// evidence item of the analysis record, and every removed_lines source is a
+// removed-lines record bound to the same base file with the same head line.
+// Removed base lines are not in the head snapshot, so that record is their
+// only custody.
+func sourcesMatchAnalysis(sources []review.ContextSource, items, removed []analysisRecord) bool {
+	for _, src := range sources {
+		var records []analysisRecord
+		switch src.Stage() {
+		case review.ContextStageChangedHunk:
+			records = items
+		case review.ContextStageRemovedLines:
+			records = removed
+		default:
+			continue
+		}
+		found := false
+		for _, record := range records {
+			if src.ReferenceID() == record.EvidenceID() && src.SliceBindingIdentity() == record.BindingIdentity() &&
+				(src.Stage() != review.ContextStageRemovedLines || src.SliceBinding().RepositoryFileIdentity() == record.FileIdentity() && src.HeadLine() == record.HeadLine()) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 func (p *InvestigationPipeline) intentPayload(a InvestigationAssembly) ([]byte, error) {
 	task := func(key string) string { v, _ := p.plan.Task(key); return v.Identity() }
@@ -984,7 +1032,7 @@ func (p *InvestigationPipeline) generate(ctx context.Context, r controlplane.Tas
 	constructorCtx := context.WithValue(p.root, pipelineOperationKey{}, op)
 	stop := context.AfterFunc(ctx, p.fail)
 	defer stop()
-	c, err := NewInvestigation(constructorCtx, InvestigationOptions{Scope: p.plan.Scope(), MemoryScope: p.assembly.MemoryScope, SessionIdentity: host, Policy: p.options.Profile.Policy(), Routing: p.options.Profile.Routing(), Catalog: p.options.Catalog, Ledger: p.options.Ledger, Clock: p.options.Clock, Deadline: p.deadline, Store: p.capture, Acquisition: p.headHandle, HeadSnapshotArtifactIdentity: p.assembly.HeadSnapshotArtifact.Identity(), InitialContext: p.assembly.Packet, InitialSnapshot: p.assembly.Snapshot})
+	c, err := NewInvestigation(constructorCtx, InvestigationOptions{Scope: p.plan.Scope(), MemoryScope: p.assembly.MemoryScope, SessionIdentity: host, Policy: p.options.Profile.Policy(), Routing: p.options.Profile.Routing(), Catalog: p.options.Catalog, Ledger: p.options.Ledger, Clock: p.options.Clock, Deadline: p.deadline, Store: p.capture, Acquisition: p.headHandle, HeadSnapshotArtifactIdentity: p.assembly.HeadSnapshotArtifact.Identity(), InitialContext: p.assembly.Packet, InitialSnapshot: p.assembly.Snapshot, PlanningRefusals: p.options.PlanningRefusals})
 	if err != nil {
 		return artifact.Artifact{}, err
 	}
@@ -1157,7 +1205,7 @@ func (p *InvestigationPipeline) history(ctx context.Context, events []audit.Even
 			return nil, false, ErrInvestigationPipeline
 		}
 		payload := actual.Payload()
-		record, err := gateway.ParseInvestigationTurnRecord(payload)
+		record, err := parseRetainedInvestigationTurn(payload)
 		if err != nil || c == nil {
 			return nil, false, ErrInvestigationPipeline
 		}

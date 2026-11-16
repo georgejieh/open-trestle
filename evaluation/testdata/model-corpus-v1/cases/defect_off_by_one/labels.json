@@ -1,0 +1,32 @@
+{
+  "contract": "open-trestle/model-corpus-labels",
+  "schema_version": 1,
+  "case_id": "defect_off_by_one",
+  "case_kind": "defect",
+  "review_state": "pending",
+  "reviewer_identifier": null,
+  "review_date": null,
+  "fixture_author_identifier": "open-trestle-maintainers",
+  "go_version": "1.22",
+  "go_semantics": "Both trees declare go 1.22 in go.mod. The labels assume Go 1.22 language semantics and standard library, built by a Go 1.22 or later toolchain with this module as the main module.",
+  "expected_outcome": "findings",
+  "expected_findings": [
+    {
+      "id": "f1",
+      "path": "tail.go",
+      "side": "head",
+      "start_line": 24,
+      "end_line": 25,
+      "also_accept_locations": [],
+      "category": "correctness",
+      "also_compatible_categories": [
+        "reliability"
+      ],
+      "severity_hint": "high",
+      "defect": "The loop condition `i <= len(lines)` reads `lines[len(lines)]`, so `CountMatches` panics with an index out of range on every call, including when `Tail` returns nil.",
+      "rationale": "A slice of length k has valid indexes 0 to k-1. The loop runs k+1 times and the last iteration indexes one past the end; with nil lines the first iteration already indexes `lines[0]`."
+    }
+  ],
+  "false_positive_traps": [],
+  "abstention_reason": null
+}

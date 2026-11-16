@@ -117,10 +117,11 @@ func (r RouteReference) AdapterID() string { return r.adapterID }
 // ConnectionID returns the opaque connection label.
 func (r RouteReference) ConnectionID() string { return r.connectionID }
 
-// ModelID returns the exact model namespace label.
+// ModelID returns the exact model namespace label, including any final :tag.
 func (r RouteReference) ModelID() string { return r.modelID }
 
-// ModelVersion returns the exact version or tag selector, or an empty string when unbound.
+// ModelVersion returns the separate exact selector, or empty when unbound.
+// A ModelID containing a final :tag requires an empty ModelVersion.
 func (r RouteReference) ModelVersion() string { return r.modelVersion }
 
 // String returns a redacted route description.
@@ -150,7 +151,7 @@ func validateRouteReference(zone ProviderZone, providerID, adapterID, connection
 	if !validRouteModelID(modelID) {
 		return fmt.Errorf("validate model ID: %w", ErrInvalidModelID)
 	}
-	if !validRouteModelVersion(modelVersion) {
+	if strings.Contains(modelID, ":") && modelVersion != "" || !validRouteModelVersion(modelVersion) {
 		return fmt.Errorf("validate model version: %w", ErrInvalidModelVersion)
 	}
 	return nil
@@ -206,6 +207,17 @@ func validRouteModelID(value string) bool {
 	if len(value) == 0 || len(value) > maxProviderModelIDBytes {
 		return false
 	}
+	base, tag, tagged := strings.Cut(value, ":")
+	if tagged && !validRouteModelTag(tag) {
+		return false
+	}
+	return validRouteModelBase(base)
+}
+
+func validRouteModelBase(value string) bool {
+	if value == "" {
+		return false
+	}
 	segmentStart := true
 	for index := 0; index < len(value); index++ {
 		character := value[index]
@@ -234,7 +246,11 @@ func validRouteModelVersion(value string) bool {
 	if value == "" {
 		return true
 	}
-	if len(value) > maxProviderModelVersionBytes || !isRouteModelAlphaNumeric(value[0]) {
+	return len(value) <= maxProviderModelVersionBytes && validRouteModelTag(value)
+}
+
+func validRouteModelTag(value string) bool {
+	if value == "" || !isRouteModelAlphaNumeric(value[0]) {
 		return false
 	}
 	for index := 1; index < len(value); index++ {

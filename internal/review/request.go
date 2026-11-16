@@ -29,9 +29,9 @@ func NewReviewSnapshot(workspace, revision string, ranges []evidence.SourceRange
 	if _, err := hex.DecodeString(revision); err != nil {
 		return ReviewSnapshot{}, fmt.Errorf("invalid revision digest: %w", err)
 	}
-	if len(ranges) == 0 {
-		return ReviewSnapshot{}, fmt.Errorf("at least one source range is required")
-	}
+	// A snapshot with no source range belongs to a change that only removes
+	// files: only removed base lines, which are never snapshot ranges, can be
+	// reviewed, and each consumer requires the evidence it needs.
 	for i, sourceRange := range ranges {
 		if _, err := evidence.NewSourceRange(sourceRange.Path(), sourceRange.StartLine(), sourceRange.EndLine()); err != nil {
 			return ReviewSnapshot{}, fmt.Errorf("validate source range %d: %w", i, err)

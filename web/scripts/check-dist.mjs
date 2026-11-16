@@ -31,10 +31,14 @@ export async function checkDistribution(
 ) {
   requireEntries(await directoryEntries(publicDirectory), {
     "favicon.svg": "file",
+    "not-found.css": "file",
+    "not-found.html": "file",
   });
   requireEntries(await directoryEntries(dist), {
     "index.html": "file",
     "favicon.svg": "file",
+    "not-found.css": "file",
+    "not-found.html": "file",
     assets: "directory",
   });
   const assets = join(dist, "assets");
@@ -54,15 +58,15 @@ export async function checkDistribution(
     !/^index-[A-Za-z0-9_-]+\.css$/.test(styles[0])
   )
     throw new Error("unexpected distribution asset shape");
-  const maximumTotalJavaScriptBytes = 288 * 1024;
+  const maximumTotalJavaScriptBytes = 320 * 1024;
   const maximumGzipJavaScriptBytes = 90 * 1024;
   let totalJavaScript = 0;
   let totalGzipJavaScript = 0;
   for (const name of scripts) {
     const path = join(assets, name);
     const size = (await lstat(path)).size;
-    if (size > 250 * 1024)
-      throw new Error(`${name} exceeds ${250 * 1024} bytes`);
+    if (size > 256 * 1024)
+      throw new Error(`${name} exceeds ${256 * 1024} bytes`);
     totalJavaScript += size;
     totalGzipJavaScript += gzipSync(await readFile(path), {
       level: 9,

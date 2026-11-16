@@ -11,18 +11,27 @@ import (
 	"time"
 
 	"github.com/georgejieh/open-trestle/adapters/providers/openai"
+	"github.com/georgejieh/open-trestle/artifact"
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 )
 
 type OpenAIConnectionDefinition struct {
-	AdapterID          string
-	Endpoint           string
-	CredentialIdentity string
-	Credentials        openai.APIKeyProvider
-	HTTPClient         *http.Client
-	HTTPClientIdentity string
+	LocalStructuredOutput    bool
+	RequestProfile           openai.RequestProfile
+	OpenRouterAuthority      *openai.OpenRouterRouteAuthority
+	OpenCodeGoAuthority      *openai.OpenCodeGoRouteAuthority
+	OpenCodeConsoleAuthority *openai.OpenCodeConsoleRouteAuthority
+	Clock                    artifact.Clock
+	CredentialMode           openai.CredentialMode
+	Protocol                 openai.Protocol
+	AdapterID                string
+	Endpoint                 string
+	CredentialIdentity       string
+	Credentials              openai.APIKeyProvider
+	HTTPClient               *http.Client
+	HTTPClientIdentity       string
 }
 
 func NewOpenAIRouteDispatcherCatalog(inventory runtimeconfig.RouteInventory, connections []OpenAIConnectionDefinition) (gateway.RouteDispatcherCatalog, error) {
@@ -55,7 +64,7 @@ func NewOpenAIRouteDispatcherCatalog(inventory runtimeconfig.RouteInventory, con
 		}
 		seen[connection.AdapterID] = struct{}{}
 		route := candidate.RouteCapabilityDeclaration().RouteReference()
-		adapter, err := openai.New(openai.Config{AdapterID: connection.AdapterID, ProviderID: route.ProviderID(), ConnectionID: route.ConnectionID(), Zone: route.Zone(), ContentLoggingMode: candidate.ContentLoggingMode(), Endpoint: connection.Endpoint, Credentials: connection.Credentials, CredentialIdentity: connection.CredentialIdentity, HTTPClient: connection.HTTPClient, HTTPClientIdentity: connection.HTTPClientIdentity})
+		adapter, err := openai.New(openai.Config{LocalStructuredOutput: connection.LocalStructuredOutput, RequestProfile: connection.RequestProfile, OpenRouterAuthority: connection.OpenRouterAuthority, OpenCodeGoAuthority: connection.OpenCodeGoAuthority, OpenCodeConsoleAuthority: connection.OpenCodeConsoleAuthority, Clock: connection.Clock, CredentialMode: connection.CredentialMode, Protocol: connection.Protocol, AdapterID: connection.AdapterID, ProviderID: route.ProviderID(), ConnectionID: route.ConnectionID(), Zone: route.Zone(), ContentLoggingMode: candidate.ContentLoggingMode(), Endpoint: connection.Endpoint, Credentials: connection.Credentials, CredentialIdentity: connection.CredentialIdentity, HTTPClient: connection.HTTPClient, HTTPClientIdentity: connection.HTTPClientIdentity})
 		if err != nil {
 			return gateway.RouteDispatcherCatalog{}, ErrInvalidRouteAuthority
 		}
@@ -75,21 +84,111 @@ type OpenAICredentialResolver interface {
 	ResolveOpenAICredentials(string) (openai.APIKeyProvider, error)
 }
 
+type OpenAICatalogOptions struct {
+	Clock              artifact.Clock
+	HTTPClient         *http.Client
+	HTTPClientIdentity string
+}
+
+type catalogSystemClock struct{}
+
+func (catalogSystemClock) Now() time.Time { return time.Now().UTC() }
+
 func NewOpenAIRouteDispatcherCatalogFromRuntimePolicy(inventory runtimeconfig.RouteInventory, configuration runtimeconfig.RuntimePolicy, resolver OpenAICredentialResolver) (gateway.RouteDispatcherCatalog, error) {
+	return NewOpenAIRouteDispatcherCatalogWithOptions(inventory, configuration, resolver, OpenAICatalogOptions{})
+}
+
+func NewOpenAIRouteDispatcherCatalogWithOptions(inventory runtimeconfig.RouteInventory, configuration runtimeconfig.RuntimePolicy, resolver OpenAICredentialResolver, options OpenAICatalogOptions) (gateway.RouteDispatcherCatalog, error) {
 	if configuration.Validate() != nil || configuration.ValidateAgainstInventory(inventory) != nil || configuration.InventoryIdentity() != inventory.Identity() || resolver == nil {
 		return gateway.RouteDispatcherCatalog{}, ErrInvalidRouteAuthority
 	}
+	if options.Clock == nil {
+		options.Clock = catalogSystemClock{}
+	}
 	connections := configuration.Connections()
+	// Refuse every stale declaration before resolving any credential provider.
+	for _, connection := range connections {
+		switch connection.RequestProfile() {
+		case "":
+		case runtimeconfig.OpenRouterZDRChatProfile:
+			if !inventory.OpenRouterPrivacyCurrent(connection.BrokeredAuthority().RouteRecordIdentity(), options.Clock.Now()) {
+				return gateway.RouteDispatcherCatalog{}, ErrInvalidRouteAuthority
+			}
+		case runtimeconfig.OpenCodeGoChatProfile:
+			if !inventory.OpenCodeGoPrivacyCurrent(connection.OpenCodeGoAuthority().RouteRecordIdentity(), options.Clock.Now()) {
+				return gateway.RouteDispatcherCatalog{}, ErrInvalidRouteAuthority
+			}
+		case runtimeconfig.OpenCodeConsoleChatProfile:
+			if !inventory.OpenCodeConsolePrivacyCurrent(connection.OpenCodeConsoleAuthority().RouteRecordIdentity(), options.Clock.Now()) {
+				return gateway.RouteDispatcherCatalog{}, ErrInvalidRouteAuthority
+			}
+		case runtimeconfig.OpenRouterZDRChatV2Profile:
+			// No time-bounded declaration: the policy already bound the API-observed
+			// witness, and every request requires zero data retention itself.
+		case runtimeconfig.OllamaSigninChatProfile:
+			// No time-bounded declaration: the policy already bound the loopback
+			// endpoint, anonymous mode and Ollama cloud model suffix.
+		default:
+			return gateway.RouteDispatcherCatalog{}, ErrInvalidRouteAuthority
+		}
+	}
 	definitions := make([]OpenAIConnectionDefinition, len(connections))
 	for i, connection := range connections {
-		if connection.Implementation() != "openai_responses" {
+		if connection.Implementation() != string(openai.ProtocolResponses) && connection.Implementation() != string(openai.ProtocolChatCompletions) {
 			return gateway.RouteDispatcherCatalog{}, ErrInvalidRouteAuthority
 		}
-		credentials, err := resolver.ResolveOpenAICredentials(connection.CredentialEnvironment())
-		if err != nil || credentials == nil {
-			return gateway.RouteDispatcherCatalog{}, ErrInvalidRouteAuthority
+		var credentials openai.APIKeyProvider
+		if connection.CredentialMode() == "bearer" {
+			var err error
+			credentials, err = resolver.ResolveOpenAICredentials(connection.CredentialEnvironment())
+			if err != nil || credentials == nil {
+				return gateway.RouteDispatcherCatalog{}, ErrInvalidRouteAuthority
+			}
 		}
-		definitions[i] = OpenAIConnectionDefinition{AdapterID: connection.AdapterID(), Endpoint: connection.Endpoint(), CredentialIdentity: connection.CredentialIdentity(), Credentials: credentials}
+		var profileAuthority *openai.OpenRouterRouteAuthority
+		var goAuthority *openai.OpenCodeGoRouteAuthority
+		var consoleAuthority *openai.OpenCodeConsoleRouteAuthority
+		var profileClock artifact.Clock
+		if connection.RequestProfile() == runtimeconfig.OpenRouterZDRChatProfile || connection.RequestProfile() == runtimeconfig.OpenRouterZDRChatV2Profile {
+			authority := connection.BrokeredAuthority()
+			var route provider.RouteReference
+			for _, candidate := range inventory.Candidates() {
+				record := candidate.ResolvedRecord().RouteRegistryRecord()
+				if record.Identity() == authority.RouteRecordIdentity() {
+					route = record.RouteCandidateDeclaration().RouteCapabilityDeclaration().RouteReference()
+				}
+			}
+			profileAuthority = &openai.OpenRouterRouteAuthority{Route: route, RouteRecordIdentity: authority.RouteRecordIdentity(), EvidenceIdentity: authority.EvidenceManifestDigest(), AccountPolicyIdentity: authority.AccountPolicyIdentity(), CredentialIdentity: connection.CredentialIdentity(), TenantID: authority.TenantID(), RepositoryID: authority.RepositoryID(), ProviderSlug: authority.ProviderSlug(), ValidFrom: authority.ValidFrom(), ValidUntil: authority.ValidUntil()}
+			if authority.Observed() {
+				profileAuthority.ProviderSlugs = append([]string{}, authority.ProviderSlugs()...)
+			}
+			profileClock = options.Clock
+		}
+		if connection.RequestProfile() == runtimeconfig.OpenCodeGoChatProfile {
+			authority := connection.OpenCodeGoAuthority()
+			var route provider.RouteReference
+			for _, candidate := range inventory.Candidates() {
+				record := candidate.ResolvedRecord().RouteRegistryRecord()
+				if record.Identity() == authority.RouteRecordIdentity() {
+					route = record.RouteCandidateDeclaration().RouteCapabilityDeclaration().RouteReference()
+				}
+			}
+			goAuthority = &openai.OpenCodeGoRouteAuthority{Route: route, RouteRecordIdentity: authority.RouteRecordIdentity(), EvidenceIdentity: authority.EvidenceManifestDigest(), AccountPolicyIdentity: authority.AccountPolicyIdentity(), CredentialIdentity: connection.CredentialIdentity(), TenantID: authority.TenantID(), RepositoryID: authority.RepositoryID(), ValidFrom: authority.ValidFrom(), ValidUntil: authority.ValidUntil()}
+			profileClock = options.Clock
+		}
+		if connection.RequestProfile() == runtimeconfig.OpenCodeConsoleChatProfile {
+			authority := connection.OpenCodeConsoleAuthority()
+			var route provider.RouteReference
+			for _, candidate := range inventory.Candidates() {
+				record := candidate.ResolvedRecord().RouteRegistryRecord()
+				if record.Identity() == authority.RouteRecordIdentity() {
+					route = record.RouteCandidateDeclaration().RouteCapabilityDeclaration().RouteReference()
+				}
+			}
+			consoleAuthority = &openai.OpenCodeConsoleRouteAuthority{Route: route, RouteRecordIdentity: authority.RouteRecordIdentity(), EvidenceIdentity: authority.EvidenceManifestDigest(), AccountPolicyIdentity: authority.AccountPolicyIdentity(), CredentialIdentity: connection.CredentialIdentity(), TenantID: authority.TenantID(), RepositoryID: authority.RepositoryID(), ValidFrom: authority.ValidFrom(), ValidUntil: authority.ValidUntil()}
+			profileClock = options.Clock
+		}
+		definitions[i] = OpenAIConnectionDefinition{LocalStructuredOutput: connection.LocalStructuredOutput(), RequestProfile: openai.RequestProfile(connection.RequestProfile()), OpenRouterAuthority: profileAuthority, OpenCodeGoAuthority: goAuthority, OpenCodeConsoleAuthority: consoleAuthority, Clock: profileClock, HTTPClient: options.HTTPClient, HTTPClientIdentity: options.HTTPClientIdentity, CredentialMode: openai.CredentialMode(connection.CredentialMode()), Protocol: openai.Protocol(connection.Implementation()), AdapterID: connection.AdapterID(), Endpoint: connection.Endpoint(), CredentialIdentity: connection.CredentialIdentity(), Credentials: credentials}
 	}
 	return NewOpenAIRouteDispatcherCatalog(inventory, definitions)
 }
@@ -110,14 +209,18 @@ func NewLocalOpenAIRouteDispatcherCatalogFromRuntimePolicy(inventory runtimeconf
 	definitions := make([]OpenAIConnectionDefinition, len(connections))
 	for i, connection := range connections {
 		locality, err := provider.ClassifyServiceEndpoint(connection.Endpoint())
-		if err != nil || locality != provider.ServiceEndpointLoopback || connection.Implementation() != "openai_responses" {
+		if err != nil || locality != provider.ServiceEndpointLoopback || (connection.Implementation() != string(openai.ProtocolResponses) && connection.Implementation() != string(openai.ProtocolChatCompletions)) {
 			return gateway.RouteDispatcherCatalog{}, ErrInvalidRouteAuthority
 		}
-		credentials, err := resolver.ResolveOpenAICredentials(connection.CredentialEnvironment())
-		if err != nil || credentials == nil {
-			return gateway.RouteDispatcherCatalog{}, ErrInvalidRouteAuthority
+		var credentials openai.APIKeyProvider
+		if connection.CredentialMode() == "bearer" {
+			var err error
+			credentials, err = resolver.ResolveOpenAICredentials(connection.CredentialEnvironment())
+			if err != nil || credentials == nil {
+				return gateway.RouteDispatcherCatalog{}, ErrInvalidRouteAuthority
+			}
 		}
-		definitions[i] = OpenAIConnectionDefinition{AdapterID: connection.AdapterID(), Endpoint: connection.Endpoint(), CredentialIdentity: connection.CredentialIdentity(), Credentials: credentials, HTTPClient: client, HTTPClientIdentity: clientIdentity}
+		definitions[i] = OpenAIConnectionDefinition{LocalStructuredOutput: connection.LocalStructuredOutput(), CredentialMode: openai.CredentialMode(connection.CredentialMode()), Protocol: openai.Protocol(connection.Implementation()), AdapterID: connection.AdapterID(), Endpoint: connection.Endpoint(), CredentialIdentity: connection.CredentialIdentity(), Credentials: credentials, HTTPClient: client, HTTPClientIdentity: clientIdentity}
 	}
 	return NewOpenAIRouteDispatcherCatalog(inventory, definitions)
 }

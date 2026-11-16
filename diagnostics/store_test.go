@@ -3,6 +3,7 @@ package diagnostics
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -100,5 +101,57 @@ func TestFileStoreDetectsCorruptRecord(t *testing.T) {
 	}
 	if got, err := store.GetDiagnosticSet(context.Background(), set.Scope()); !errors.Is(err, ErrCorruptStoreRecord) || got.Identity() != "" {
 		t.Fatalf("get=(%#v,%v)", got, err)
+	}
+}
+
+func deterministicSetAtCount(t *testing.T, runID string, count int) (Set, error) {
+	t.Helper()
+	scope, _ := audit.NewReviewScope("tenant-a", "repo-a", runID)
+	analysisIdentity, changeIdentity := strings.Repeat("8", 64), strings.Repeat("7", 64)
+	source := DeterministicCheck{changeIdentity: changeIdentity, state: CheckFailed, applicableFiles: 1, applicableRanges: 1, checkedFiles: 1, checkedRanges: 1, matches: uint32(count)}
+	check, err := NewDeterministicCheck(deriveSourceDeterministicCheckIdentity(source), analysisIdentity, changeIdentity, CheckFailed, 1, 1, 1, 1, uint32(count))
+	if err != nil {
+		return Set{}, err
+	}
+	observations := make([]DeterministicObservation, count)
+	for index := range observations {
+		observations[index], err = NewDeterministicObservation(fmt.Sprintf("%064x", index+1), fmt.Sprintf("%064x", index+10000), analysisIdentity, check.Identity(), "Debug output left in source", "The deterministic static rule matched this exact changed range; human review is required.", SeverityWarning, fmt.Sprintf("path-%04d.go", index), 1, 1, []string{fmt.Sprintf("%064x", index+20000)})
+		if err != nil {
+			return Set{}, err
+		}
+	}
+	return NewSetWithDeterministicObservations(scope, strings.Repeat("d", 64), strings.Repeat("1", 40), analysisIdentity, []DeterministicCheck{check}, observations)
+}
+func TestFileStorePersistsBoundedDeterministicSetAndRejectsOversizedConstruction(t *testing.T) {
+	set, err := deterministicSetAtCount(t, "run-bounded", 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := EncodeSet(set)
+	if err != nil || len(encoded) >= MaxEncodedSetBytes {
+		t.Fatalf("bounded encoding=(%d,%v)", len(encoded), err)
+	}
+	store, err := NewFileStore(filepath.Join(t.TempDir(), "diagnostics"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := store.PutDiagnosticSet(context.Background(), set)
+	if err != nil || !created {
+		t.Fatalf("put=(%t,%v)", created, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := NewFileStore(store.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	loaded, err := reopened.GetDiagnosticSet(context.Background(), set.Scope())
+	if err != nil || loaded.Identity() != set.Identity() {
+		t.Fatalf("loaded=(%#v,%v)", loaded, err)
+	}
+	if oversized, err := deterministicSetAtCount(t, "run-oversized", 1500); !errors.Is(err, ErrSetResourceLimit) || oversized.Identity() != "" {
+		t.Fatalf("oversized=(%#v,%v)", oversized, err)
 	}
 }

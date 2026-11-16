@@ -9,14 +9,21 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: verify-runtime-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify:
+    name: Verify runtime
     runs-on: ubuntu-24.04
     steps:
       - name: Check out source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+      - name: Verify tracked public boundary
+        run: python3 -B tools/verify_public_tree.py --mode clean-checkout
       - name: Set up Node
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
@@ -37,6 +44,9 @@ jobs:
         run: |
           rm -rf "$RUNNER_TEMP/open-trestle-web-dist"
           cp -R web/dist "$RUNNER_TEMP/open-trestle-web-dist"
+          OPEN_TRESTLE_CHROMIUM_PATH="$(command -v chromium || command -v google-chrome || command -v google-chrome-stable)"
+          test -n "$OPEN_TRESTLE_CHROMIUM_PATH"
+          export OPEN_TRESTLE_CHROMIUM_PATH
           npm ci --prefix web
           npm run format:check --prefix web
           npm test --prefix web
@@ -63,27 +73,132 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Verify root module sums
+        run: GOWORK=off GOTOOLCHAIN=go1.26.11 go mod verify
       - name: Run tests
-        run: go test ./...
+        run: |
+          umask 022
+          GOWORK=off GOTOOLCHAIN=go1.26.11 go test -p=1 -timeout=30m ./...
       - name: Verify static-debug evaluation evidence
         run: |
-          go run ./cmd/trestle evaluate static-debug > "$RUNNER_TEMP/open-trestle-static-debug-evaluation.json"
+          GOWORK=off GOTOOLCHAIN=go1.26.11 go run ./cmd/trestle evaluate static-debug > "$RUNNER_TEMP/open-trestle-static-debug-evaluation.json"
           cmp evaluation/testdata/static-debug-report-v1.json "$RUNNER_TEMP/open-trestle-static-debug-evaluation.json"
-      - name: Run race tests
-        run: go test -race -p=1 -timeout=30m ./...
-      - name: Run vet
-        run: go vet ./...
-      - name: Build static binaries
-        env:
-          CGO_ENABLED: "0"
+      - name: Verify pending deterministic-corpus candidate tooling
         run: |
-          mkdir -p .container/data
-          go build -trimpath -buildvcs=false -ldflags="-s -w" -o .container/trestle ./cmd/trestle
-          go build -trimpath -buildvcs=false -ldflags="-s -w" -o .container/trestled ./cmd/trestled
-          cp /etc/ssl/certs/ca-certificates.crt .container/ca-certificates.crt
-          cp LICENSE .container/LICENSE
-          cp NOTICE .container/NOTICE
-          cp -R THIRD_PARTY_LICENSES .container/licenses
+          GOWORK=off GOTOOLCHAIN=go1.26.11 go build -o "$RUNNER_TEMP/trestle" ./cmd/trestle
+          set +e
+          "$RUNNER_TEMP/trestle" evaluate deterministic-corpus-candidate > "$RUNNER_TEMP/corpus-candidate-a.json"
+          FIRST_STATUS=$?
+          "$RUNNER_TEMP/trestle" evaluate deterministic-corpus-candidate > "$RUNNER_TEMP/corpus-candidate-b.json"
+          SECOND_STATUS=$?
+          set -e
+          test "$FIRST_STATUS" -eq 3
+          test "$SECOND_STATUS" -eq 3
+          cmp "$RUNNER_TEMP/corpus-candidate-a.json" "$RUNNER_TEMP/corpus-candidate-b.json"
+          PYTHONPATH=python/open_trestle_eval/src python3 -m open_trestle_eval.performance --warmups 1 --samples 10 --output "$RUNNER_TEMP/corpus-performance-observation.json" -- "$RUNNER_TEMP/trestle" evaluate deterministic-corpus-candidate
+      - name: Run evaluation-helper tests
+        run: PYTHONPATH=python/open_trestle_eval/src python3 -m unittest discover -s python/open_trestle_eval/tests -p "test_*.py"
+      - name: Run race tests
+        run: GOWORK=off GOTOOLCHAIN=go1.26.11 go test -race -p=1 -timeout=30m ./...
+      - name: Run vet
+        run: GOWORK=off GOTOOLCHAIN=go1.26.11 go vet ./...
+      - name: Cross-compile root packages
+        run: |
+          GOWORK=off GOTOOLCHAIN=go1.26.11 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -run='^$' -exec=true ./...
+          GOWORK=off GOTOOLCHAIN=go1.26.11 CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go test -run='^$' -exec=true ./...
+          GOWORK=off GOTOOLCHAIN=go1.26.11 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go test -run='^$' -exec=true ./...
+      - name: Run release-tool tests
+        run: python3 -m unittest discover -s tools -p "test_*.py"
+      - name: Verify Linux candidate SIGKILL recovery matrix
+        run: timeout 15m env OPEN_TRESTLE_RUN_CRASH_MATRIX=1 python3 -m unittest discover -s tools -p "test_linux_distribution_recovery.py" -v
+      - name: Set up secret-scanner Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: workers/secret-scanner/go.mod
+          cache: false
+      - name: Verify secret-scanner module sums
+        working-directory: workers/secret-scanner
+        run: GOWORK=off GOTOOLCHAIN=go1.26.11 go mod verify
+      - name: Run secret-scanner tests
+        working-directory: workers/secret-scanner
+        run: GOWORK=off GOTOOLCHAIN=go1.26.11 go test -timeout=15m ./...
+      - name: Run secret-scanner race tests
+        working-directory: workers/secret-scanner
+        run: GOWORK=off GOTOOLCHAIN=go1.26.11 go test -race -p=1 -timeout=30m ./...
+      - name: Run secret-scanner vet
+        working-directory: workers/secret-scanner
+        run: GOWORK=off GOTOOLCHAIN=go1.26.11 go vet ./...
+      - name: Provision pinned Zig musl builder and build deterministic release staging
+        run: |
+          python3 tools/package_secret_scanner.py
+          python3 tools/package_secret_scanner.py --verify .container
+      - name: Run passive dependency vulnerability gate
+        run: |
+          (cd tools/govulncheck && GOWORK=off GOTOOLCHAIN=go1.26.11 go mod verify)
+          python3 tools/vulnerability_gate.py --staging .container
+      - name: Verify deterministic Linux amd64 candidate lifecycle
+        env:
+          RELEASE_REVISION: ${{ github.sha }}
+        run: |
+          RELEASE_CREATED="$(date -u -d "$(git show -s --format=%cI "$RELEASE_REVISION")" +%Y-%m-%dT%H:%M:%SZ)"
+          mkdir -p open-trestle-linux-v1 open-trestle-linux-a open-trestle-linux-b
+          python3 tools/linux_distribution.py \
+            --staging .container \
+            --version 0.0.0-dev \
+            --revision "$RELEASE_REVISION" \
+            --created "$RELEASE_CREATED" \
+            --output "$GITHUB_WORKSPACE/open-trestle-linux-v1/open-trestle-linux-amd64.pyz"
+          python3 tools/linux_distribution.py \
+            --staging .container \
+            --version 0.1.0-dev \
+            --revision "$RELEASE_REVISION" \
+            --created "$RELEASE_CREATED" \
+            --output "$GITHUB_WORKSPACE/open-trestle-linux-a/open-trestle-linux-amd64.pyz"
+          python3 tools/linux_distribution.py \
+            --staging .container \
+            --version 0.1.0-dev \
+            --revision "$RELEASE_REVISION" \
+            --created "$RELEASE_CREATED" \
+            --output "$GITHUB_WORKSPACE/open-trestle-linux-b/open-trestle-linux-amd64.pyz"
+          cmp "$GITHUB_WORKSPACE/open-trestle-linux-a/open-trestle-linux-amd64.pyz" "$GITHUB_WORKSPACE/open-trestle-linux-b/open-trestle-linux-amd64.pyz"
+          cmp "$GITHUB_WORKSPACE/open-trestle-linux-a/open-trestle-linux-amd64.pyz.sha256" "$GITHUB_WORKSPACE/open-trestle-linux-b/open-trestle-linux-amd64.pyz.sha256"
+          (cd open-trestle-linux-a && sha256sum -c open-trestle-linux-amd64.pyz.sha256)
+          "$GITHUB_WORKSPACE/open-trestle-linux-a/open-trestle-linux-amd64.pyz" verify-archive
+          mkdir -p \
+            "$RUNNER_TEMP/open-trestle-linux-root/etc/open-trestle" \
+            "$RUNNER_TEMP/open-trestle-linux-root/var/lib/open-trestle" \
+            "$RUNNER_TEMP/open-trestle-linux-root/usr/local/share/open-trestle"
+          printf 'operator-config\n' > "$RUNNER_TEMP/open-trestle-linux-root/etc/open-trestle/sentinel"
+          printf 'operator-state\n' > "$RUNNER_TEMP/open-trestle-linux-root/var/lib/open-trestle/sentinel"
+          printf 'operator-owned\n' > "$RUNNER_TEMP/open-trestle-linux-root/usr/local/share/open-trestle/sentinel"
+          "$GITHUB_WORKSPACE/open-trestle-linux-v1/open-trestle-linux-amd64.pyz" install --destdir "$RUNNER_TEMP/open-trestle-linux-root"
+          "$RUNNER_TEMP/open-trestle-linux-root/usr/local/libexec/open-trestle/open-trestle-distribution.pyz" verify-installed --destdir "$RUNNER_TEMP/open-trestle-linux-root"
+          "$GITHUB_WORKSPACE/open-trestle-linux-a/open-trestle-linux-amd64.pyz" upgrade --destdir "$RUNNER_TEMP/open-trestle-linux-root"
+          "$RUNNER_TEMP/open-trestle-linux-root/usr/local/libexec/open-trestle/open-trestle-distribution.pyz" verify-installed --destdir "$RUNNER_TEMP/open-trestle-linux-root"
+          "$RUNNER_TEMP/open-trestle-linux-root/usr/local/libexec/open-trestle/open-trestle-distribution.pyz" rollback-version --destdir "$RUNNER_TEMP/open-trestle-linux-root"
+          "$RUNNER_TEMP/open-trestle-linux-root/usr/local/libexec/open-trestle/open-trestle-distribution.pyz" verify-installed --destdir "$RUNNER_TEMP/open-trestle-linux-root"
+          "$GITHUB_WORKSPACE/open-trestle-linux-a/open-trestle-linux-amd64.pyz" upgrade --destdir "$RUNNER_TEMP/open-trestle-linux-root"
+          "$RUNNER_TEMP/open-trestle-linux-root/usr/local/libexec/open-trestle/open-trestle-distribution.pyz" smoke \
+            --destdir "$RUNNER_TEMP/open-trestle-linux-root" \
+            --output "$GITHUB_WORKSPACE/open-trestle-linux-smoke.json"
+          "$RUNNER_TEMP/open-trestle-linux-root/usr/local/libexec/open-trestle/open-trestle-distribution.pyz" uninstall --destdir "$RUNNER_TEMP/open-trestle-linux-root"
+          test "$(cat "$RUNNER_TEMP/open-trestle-linux-root/etc/open-trestle/sentinel")" = operator-config
+          test "$(cat "$RUNNER_TEMP/open-trestle-linux-root/var/lib/open-trestle/sentinel")" = operator-state
+          test "$(cat "$RUNNER_TEMP/open-trestle-linux-root/usr/local/share/open-trestle/sentinel")" = operator-owned
+          test ! -e "$RUNNER_TEMP/open-trestle-linux-root/usr/local/bin/trestle"
+          test ! -e "$RUNNER_TEMP/open-trestle-linux-root/usr/local/bin/trestled"
+          test ! -e "$RUNNER_TEMP/open-trestle-linux-root/usr/local/libexec/open-trestle/open-trestle-secret-scanner"
+          test ! -e "$RUNNER_TEMP/open-trestle-linux-root/usr/local/libexec/open-trestle/open-trestle-secret-scanner-worker"
+          test ! -e "$RUNNER_TEMP/open-trestle-linux-root/usr/local/share/open-trestle/distribution/receipt.json"
+          test ! -e "$RUNNER_TEMP/open-trestle-linux-root/usr/local/share/open-trestle/distribution/journal.json"
+          test ! -e "$RUNNER_TEMP/open-trestle-linux-root/usr/local/share/open-trestle/distribution/previous.pyz"
+          test ! -e "$RUNNER_TEMP/open-trestle-linux-root/usr/local/share/open-trestle/distribution/previous.pyz.sha256"
+          test ! -e "$RUNNER_TEMP/open-trestle-linux-root/usr/local/share/open-trestle/distribution/previous-receipt.json"
+          test ! -e "$RUNNER_TEMP/open-trestle-linux-root/usr/local/share/open-trestle/distribution/previous-journal.json"
+          python3 -c 'import json,pathlib,sys; digest=lambda path:pathlib.Path(path).read_text(encoding="ascii").split()[0]; document={"actions":["install-v1","verify-v1","upgrade-v2","verify-v2","rollback-version-v1","verify-v1","upgrade-v2","smoke-v2","uninstall-v2"],"new_archive_sha256":digest(sys.argv[2]),"new_version":"0.1.0-dev","old_archive_sha256":digest(sys.argv[1]),"old_version":"0.0.0-dev","schema_version":1,"status":"passed","target":"linux-amd64"}; pathlib.Path(sys.argv[3]).write_text(json.dumps(document,sort_keys=True,separators=(",",":"),ensure_ascii=True)+"\n",encoding="ascii")' \
+            "$GITHUB_WORKSPACE/open-trestle-linux-v1/open-trestle-linux-amd64.pyz.sha256" \
+            "$GITHUB_WORKSPACE/open-trestle-linux-a/open-trestle-linux-amd64.pyz.sha256" \
+            "$GITHUB_WORKSPACE/open-trestle-linux-lifecycle.json"
       - name: Verify deterministic unsigned release evidence
         env:
           RELEASE_REVISION: ${{ github.sha }}
@@ -93,10 +208,16 @@ jobs:
             --artifact container=.container \
             --artifact web=web/dist \
             --artifact vscode=extensions/vscode/dist/open-trestle.vsix \
+            --artifact linux-amd64="$GITHUB_WORKSPACE/open-trestle-linux-a/open-trestle-linux-amd64.pyz" \
+            --artifact linux-amd64-sha256="$GITHUB_WORKSPACE/open-trestle-linux-a/open-trestle-linux-amd64.pyz.sha256" \
+            --artifact linux-amd64-smoke="$GITHUB_WORKSPACE/open-trestle-linux-smoke.json" \
+            --artifact linux-amd64-lifecycle="$GITHUB_WORKSPACE/open-trestle-linux-lifecycle.json" \
             --go-binary .container/trestle \
             --go-binary .container/trestled \
+            --go-binary .container/libexec/open-trestle/open-trestle-secret-scanner-worker \
             --npm-lock web/package-lock.json \
             --npm-lock extensions/vscode/package-lock.json \
+            --changelog CHANGELOG.md \
             --version 0.1.0-dev \
             --revision "$RELEASE_REVISION" \
             --created "$RELEASE_CREATED" \
@@ -105,14 +226,58 @@ jobs:
             --artifact container=.container \
             --artifact web=web/dist \
             --artifact vscode=extensions/vscode/dist/open-trestle.vsix \
+            --artifact linux-amd64="$GITHUB_WORKSPACE/open-trestle-linux-a/open-trestle-linux-amd64.pyz" \
+            --artifact linux-amd64-sha256="$GITHUB_WORKSPACE/open-trestle-linux-a/open-trestle-linux-amd64.pyz.sha256" \
+            --artifact linux-amd64-smoke="$GITHUB_WORKSPACE/open-trestle-linux-smoke.json" \
+            --artifact linux-amd64-lifecycle="$GITHUB_WORKSPACE/open-trestle-linux-lifecycle.json" \
             --go-binary .container/trestle \
             --go-binary .container/trestled \
+            --go-binary .container/libexec/open-trestle/open-trestle-secret-scanner-worker \
             --npm-lock web/package-lock.json \
             --npm-lock extensions/vscode/package-lock.json \
+            --changelog CHANGELOG.md \
             --version 0.1.0-dev \
             --revision "$RELEASE_REVISION" \
             --created "$RELEASE_CREATED" \
             --output "$RUNNER_TEMP/open-trestle-release-evidence-b"
           diff -r "$RUNNER_TEMP/open-trestle-release-evidence-a" "$RUNNER_TEMP/open-trestle-release-evidence-b"
+          python3 -m venv "$RUNNER_TEMP/open-trestle-spdx-validator"
+          "$RUNNER_TEMP/open-trestle-spdx-validator/bin/pip" install --no-cache-dir --require-hashes -r tools/spdx-validator-requirements.txt
+          "$RUNNER_TEMP/open-trestle-spdx-validator/bin/python" -m spdx_tools.spdx.clitools.pyspdxtools \
+            --infile .container/release/secret-scanner.spdx.json \
+            --version SPDX-2.3
+          "$RUNNER_TEMP/open-trestle-spdx-validator/bin/python" -m spdx_tools.spdx.clitools.pyspdxtools \
+            --infile "$RUNNER_TEMP/open-trestle-release-evidence-a/sbom.spdx.json" \
+            --version SPDX-2.3
+      - name: Verify packaged local single-node journey without a browser
+        run: |
+          rm -rf "$GITHUB_WORKSPACE/open-trestle-linux-v1"
+          rm -f "$GITHUB_WORKSPACE/open-trestle-linux-lifecycle.json"
+          rm -rf "$RUNNER_TEMP/open-trestle-local-alpha-system"
+          python3 tools/local_alpha_system.py \
+            --candidate "$GITHUB_WORKSPACE/open-trestle-linux-a/open-trestle-linux-amd64.pyz" \
+            --source-root "$GITHUB_WORKSPACE" \
+            --skip-browser \
+            --output "$RUNNER_TEMP/open-trestle-local-alpha-system"
+          python3 -c 'import json,pathlib,sys; r=json.loads(pathlib.Path(sys.argv[1]).read_text()); p=r["source_provenance"]; assert r["schema_version"]==3 and r["source_revision"]==sys.argv[2] and r["source_tree_clean"] is True and p["committed_tree"]["tree_oid"]==r["source_tree_identity"] and p["live_tracked_tree"]["matches_committed_head"] is True and p["index"]["stage_zero_matches_committed_head"] is True and p["index_flags"]["assume_unchanged"] is False and p["index_flags"]["skip_worktree"] is False and p["status"]["porcelain_empty"] is True and p["status"]["nonignored_untracked_count"]==0 and p["ignored_worktree"]["stable_during_run"] is True and r["candidate"]["manifest_revision"]==sys.argv[2] and r["candidate"]["archive_sha256"]==r["candidate"]["sha256"] and r["review"]["review_run_id"]=="local-alpha" and r["restart"]=={"diagnostics_set_stable":True,"json_bytes_stable":True,"sarif_bytes_stable":True,"status_identity_stable":True} and r["browser"]=={"reason":"explicit_nonvisual_verification","status":"not_run"} and r["runtime"]=={"reason":"explicit_nonvisual_verification","status":"not_run"} and all(r["cleanup"][key] is True for key in ("candidate_recovered","candidate_uninstalled","daemon_stopped","operator_state_preserved","process_group_quiescent","port_rebind_before_restart","port_rebind_after_cleanup","private_temporary_alias_removed"))' "$RUNNER_TEMP/open-trestle-local-alpha-system/receipt.json" "$GITHUB_SHA"
+      - name: Verify packaged console before and after daemon restart
+        env:
+          VISUAL_RECEIPT: ${{ runner.temp }}/open-trestle-local-alpha-system-visual/receipt.json
+        run: |
+          BROWSER_PATH="$(command -v chromium || command -v google-chrome || command -v google-chrome-stable)"
+          test -n "$BROWSER_PATH"
+          rm -rf "$RUNNER_TEMP/open-trestle-local-alpha-system-visual"
+          OPEN_TRESTLE_CHROMIUM_PATH="$BROWSER_PATH" python3 tools/local_alpha_system.py \
+            --candidate "$GITHUB_WORKSPACE/open-trestle-linux-a/open-trestle-linux-amd64.pyz" \
+            --source-root "$GITHUB_WORKSPACE" \
+            --browser-script web/scripts/daemon-visual-check.mjs \
+            --output "$RUNNER_TEMP/open-trestle-local-alpha-system-visual"
+          python3 -c 'import json,os,pathlib; receipt=json.loads(pathlib.Path(os.environ["VISUAL_RECEIPT"]).read_text()); b=receipt["browser"]; phases=b["phases"]; runtime=b["runtime"]; assert receipt["schema_version"]==3 and receipt["browser"]["status"]=="passed" and receipt["runtime"]==runtime and [p["phase"] for p in phases]==["before_restart","after_restart"] and len(phases)==2 and runtime["configuration_stable"] is True and runtime["components_stable"] is True and runtime["ready"] is True and len(runtime["components"])==2 and all(len(p["captures"])==5 and p["schema_version"]==3 and p["run_identity"]==receipt["review"]["run_receipt_identity"] and p["diagnostic_set_identity"]==receipt["review"]["diagnostic_set_identity"] and p["deterministic_check_state"]=="failed" and p["observation_count"]==1 and p["runtime"]["phase"]==p["phase"] and p["runtime"]["displayed"]["status"]["configuration_identity"]==runtime["configuration_identity"] and p["runtime"]["runtime_screenshot_sha256"]==next(c["sha256"] for c in p["captures"] if c["view"]=="runtime") for p in phases) and b["provenance"]["source_revision"]==receipt["source_revision"] and b["provenance"]["daemon-visual-check.mjs_head_blob"]==receipt["source_provenance"]["browser_modules"]["script_head_blob"]'
       - name: Build container image without a registry base
         run: docker build --network=none --tag open-trestle:verify .
+      - name: Verify packaged scanner sandbox
+        run: |
+          python3 -c 'import json,struct,sys; body=json.dumps({"schema_version":1,"request_id":"f"*64,"sources":[{"ordinal":0,"content_base64":"eg=="}]},separators=(",",":")).encode(); sys.stdout.buffer.write(struct.pack(">I",len(body))+body)' > "$RUNNER_TEMP/scanner-request"
+          docker run --rm --network=none --read-only --cap-drop=ALL --pids-limit=64 --memory=256m --security-opt=no-new-privileges=true -i --entrypoint /usr/local/libexec/open-trestle/open-trestle-secret-scanner open-trestle:verify --stdio-v1 < "$RUNNER_TEMP/scanner-request" > "$RUNNER_TEMP/scanner-response" 2> "$RUNNER_TEMP/scanner-stderr"
+          test ! -s "$RUNNER_TEMP/scanner-stderr"
+          python3 -c 'import json,struct,sys; data=open(sys.argv[1],"rb").read(); size=struct.unpack(">I",data[:4])[0]; doc=json.loads(data[4:]); assert size==len(data)-4 and doc["status"]=="complete" and doc["matches"]==[] and doc["scanner"]=="betterleaks" and doc["scanner_version"]=="v1.8.1" and doc["build_profile"]=="public_detect_run_re2_purego_go1.26.11_linux_amd64_v1"' "$RUNNER_TEMP/scanner-response"

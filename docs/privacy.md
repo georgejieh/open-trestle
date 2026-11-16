@@ -1,0 +1,92 @@
+# Privacy
+
+What leaves your machine, when, and where it goes. This page covers the
+command-line paths a person runs: `trestle init`, `trestle review`,
+`trestle update` and `trestle keys`. A deployed daemon, the GitHub webhook and
+publication make further requests, described in [operations](operations.md) and
+the GitHub pages linked from the [docs index](README.md#operate).
+
+## The short version
+
+- Your source goes to a model only when you run a review, and only to the
+  provider your setup names. `trestle init` asks before it runs the first one.
+- With a model server on your machine, nothing leaves it.
+- Before a request to a remote provider, Open Trestle scans it for secrets in a
+  sandboxed process. A request that fails the scan is not sent.
+- Open Trestle has no telemetry and no analytics. A search of the source finds
+  no code that reports usage anywhere.
+- The update check makes one unauthenticated request, at most once a day, and
+  sends nothing about you or your repository.
+- API keys go to their provider as a bearer credential and nowhere else.
+
+## What a review sends
+
+A review sends the model the review instructions, the changed code of the two
+commits you compare, bounded context drawn from the repository around the
+change (instruction files included, which are treated as data), and the commit
+messages of the compared range as stated intent. It sends no API key and no
+environment variable value. Commits are read from the repository's stored
+objects; uncommitted changes are never read.
+
+Where it goes depends on the route your setup saved:
+
+| Route | Where the source goes |
+| --- | --- |
+| A model server on this machine (`local`) | `127.0.0.1` only. Proxies are disabled and the connection is confined to the numeric loopback address. |
+| OpenRouter with zero data retention (the default when both models have such endpoints) | OpenRouter, with zero data retention required on every request. |
+| OpenRouter without it (`--without-zdr`) | OpenRouter, with zero data retention not required by Open Trestle. The text output says so on every review: your OpenRouter account settings decide. |
+| Ollama Cloud, OpenCode Go | The provider's endpoint, over HTTPS. |
+| Ollama on this machine, signed in to Ollama Cloud (`ollama-signin`) | Your local Ollama relays the request to Ollama Cloud. It is a remote provider. |
+
+Open Trestle makes no claim about what a provider keeps, beyond the
+zero-data-retention requirement it puts in the request. Read your provider's
+terms.
+
+The result, the setup folder and the usage ledger stay on your machine. The
+ledger holds amounts, never a key, source, prompt or reply.
+
+## Secret scanning
+
+Every request to a remote route passes two sandboxed Betterleaks scans:
+the request fields are scanned and any finding is redacted, and a second fresh
+process must find nothing left. A binary without the packaged scanner refuses to
+send to a remote route, so the check fails closed. The scanner is a pattern
+scanner, not a guarantee: on the reviewed corpus it found 11 of 14 expected
+occurrences, and it misses bearer credentials, AWS secret keys and AWS session
+tokens. Do not rely on it to make a secret safe to send. Details are in the
+[operations guide](operations.md#secret-scanner-runtime-boundary) and the
+[OpenAI provider boundary](openai-provider.md).
+
+## Zero data retention
+
+Zero data retention (ZDR) is an OpenRouter setting that restricts a request to
+endpoints that do not retain prompts. When both models have such endpoints,
+setup requires it: Open Trestle sends the requirement on every request and pins
+the endpoints that qualify. If you continue without it (`--without-zdr`), the result carries the limitation
+`openrouter_zero_data_retention_not_required` and the text output prints a line
+saying so. See [the OpenRouter profile](openrouter-zdr-profile.md).
+
+## Other network requests
+
+| When | Request | What it sends |
+| --- | --- | --- |
+| `trestle init`, OpenRouter | One GET of OpenRouter's public model list and one of its zero-data-retention endpoint list | Nothing about you or the repository; no key. |
+| `trestle init` and `trestle keys set`, OpenRouter | One GET `/api/v1/key` to check a new key | The key as a bearer credential. No source. It costs nothing. |
+| `trestle init`, if you give an evidence page | One HTTPS GET of the public page you name, after you confirm | No key, cookie, repository content or query string. Only its SHA-256 is kept. |
+| `trestle init`, Ollama | One GET `/api/tags` to your local Ollama, and with your agreement one fixed test message | Loopback only. |
+| The home screen and `trestle review`, packaged install | One GET `https://api.github.com/repos/georgejieh/open-trestle/releases?per_page=20`, at most once a day, cached in the state folder | No credential or identifier, and a fixed `User-Agent: open-trestle-update`. GitHub sees your address. Turn it off with `OPEN_TRESTLE_UPDATE_CHECK=off`. |
+| `trestle update` | The same release list, then the build you choose from GitHub's asset hosts | Nothing about you. |
+
+The update check runs only on the packaged install, and says nothing when it
+cannot tell. See [updates](updates.md).
+
+## What is not done
+
+- No repository code, test or build script is run by a review today. A planned
+  feature that runs generated checks will ask for consent first; see the
+  [roadmap](roadmap.md#generated-verification).
+- Repository text, including files that look like instructions, is data. Only
+  the system channel carries instructions. See the
+  [prompt-injection boundary](prompt-injection-boundary.md).
+- Keys are never shown, logged, put in a command line, a request body, a result
+  or a setup file. See [API keys](keys.md#what-never-happens).

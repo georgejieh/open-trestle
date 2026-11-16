@@ -28,6 +28,21 @@ func lspDiagnosticSet(t *testing.T) diagnostics.Set {
 	set, _ := diagnostics.NewSetWithSourceCoverage(scope, strings.Repeat("d", 64), strings.Repeat("1", 40), strings.Repeat("e", 64), strings.Repeat("f", 64), 1, 0, 0, 2, 1, 1, []diagnostics.Finding{finding})
 	return set
 }
+func lspDeterministicSet(t *testing.T) diagnostics.Set {
+	t.Helper()
+	scope, _ := audit.NewReviewScope("tenant-a", "repo-a", "run-a")
+	analysisIdentity := strings.Repeat("8", 64)
+	check, err := diagnostics.NewDeterministicCheck("3f01f93e51003eb3a0deca04719a3957d6e367c97c33bdfea105174d95698092", analysisIdentity, strings.Repeat("7", 64), diagnostics.CheckPassed, 1, 2, 1, 2, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	set, err := diagnostics.NewSetWithDeterministicObservations(scope, strings.Repeat("d", 64), strings.Repeat("1", 40), analysisIdentity, []diagnostics.DeterministicCheck{check}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return set
+}
+
 func lspFrame(value any) []byte {
 	body, _ := json.Marshal(value)
 	return []byte(fmt.Sprintf("Content-Length: %d\r\n\r\n%s", len(body), body))
@@ -80,6 +95,35 @@ func TestServerInitializesAndReturnsVerifiedPullDiagnostics(t *testing.T) {
 		t.Fatalf("item=%#v", item)
 	}
 }
+func TestServerDoesNotPromoteV6ObservationsToVerifiedLSPFindings(t *testing.T) {
+	reader := &diagnosticReaderStub{set: lspDeterministicSet(t)}
+	server, err := New(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var input bytes.Buffer
+	input.Write(lspFrame(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{"rootUri": "file:///workspace", "initializationOptions": map[string]any{"tenant_id": "tenant-a", "repository_id": "repo-a", "review_run_id": "run-a"}}}))
+	input.Write(lspFrame(map[string]any{"jsonrpc": "2.0", "method": "initialized", "params": map[string]any{}}))
+	input.Write(lspFrame(map[string]any{"jsonrpc": "2.0", "id": 2, "method": "textDocument/diagnostic", "params": map[string]any{"textDocument": map[string]any{"uri": "file:///workspace/internal/example.go"}}}))
+	input.Write(lspFrame(map[string]any{"jsonrpc": "2.0", "id": 3, "method": "shutdown", "params": nil}))
+	input.Write(lspFrame(map[string]any{"jsonrpc": "2.0", "method": "exit"}))
+	var output bytes.Buffer
+	if err := server.Serve(context.Background(), &input, &output); err != nil {
+		t.Fatal(err)
+	}
+	bodies := decodeLSPFrames(t, output.Bytes())
+	var diagnostic struct {
+		Result struct {
+			Kind     string            `json:"kind"`
+			ResultID string            `json:"resultId"`
+			Items    []json.RawMessage `json:"items"`
+		} `json:"result"`
+	}
+	if len(bodies) != 3 || json.Unmarshal(bodies[1], &diagnostic) != nil || diagnostic.Result.Kind != "full" || diagnostic.Result.ResultID != reader.set.Identity() || len(diagnostic.Result.Items) != 0 {
+		t.Fatalf("v6 LSP response=%s parsed=%#v", bodies[1], diagnostic)
+	}
+}
+
 func decodeLSPFrames(t *testing.T, encoded []byte) [][]byte {
 	t.Helper()
 	var bodies [][]byte

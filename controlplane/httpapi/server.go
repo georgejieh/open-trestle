@@ -16,11 +16,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/georgejieh/open-trestle/artifact"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/diagnostics"
 	"github.com/georgejieh/open-trestle/internal/apilimit"
 	"github.com/georgejieh/open-trestle/runtimeadmin"
+	"github.com/georgejieh/open-trestle/runtimecatalog"
+	"github.com/georgejieh/open-trestle/webhook"
 )
 
 const (
@@ -42,9 +45,19 @@ type SystemClock struct{}
 
 func (SystemClock) Now() time.Time { return time.Now().UTC() }
 
-// DiagnosticReader loads one canonical verified diagnostic set.
+// DiagnosticReader loads one canonical review diagnostic set.
 type DiagnosticReader interface {
 	GetDiagnosticSet(context.Context, audit.ReviewScope) (diagnostics.Set, error)
+}
+
+// LocalDeterministicReviewAdmitter opens one daemon-bound provider-free review.
+type LocalDeterministicReviewAdmitter interface {
+	Admit(context.Context, runtimecatalog.LocalDeterministicReviewIntent, time.Time) (controlplane.ReviewRunState, error)
+}
+
+// LocalFullReviewAdmitter opens a daemon-bound nine-task local review.
+type LocalFullReviewAdmitter interface {
+	Admit(context.Context, runtimecatalog.LocalFullReviewIntent, time.Time) (controlplane.ReviewRunState, error)
 }
 
 // Server serves the versioned review-run HTTP API.
@@ -54,17 +67,47 @@ type Server struct {
 	clock                 Clock
 	requestLimiter        RateLimiter
 	principalLimiter      RateLimiter
+	progressArtifacts     artifact.Reader
 	diagnosticReader      DiagnosticReader
 	notificationQueue     controlplane.TaskNotificationQueue
 	notificationScheduler *controlplane.TaskNotificationScheduler
 	runFinalizer          *controlplane.RunFinalizer
 	runtimeStatus         RuntimeStatusReader
+	localReviewAdmitter   LocalDeterministicReviewAdmitter
+	localFullAdmitter     LocalFullReviewAdmitter
+	refusalReader         DeliveryRefusalReader
 }
 
 func NewServer(coordinator *controlplane.Coordinator, authenticator Authenticator, clock Clock) (*Server, error) {
 	requestLimiter, _ := NewMemoryRateLimiter(apilimit.RequestLimit, apilimit.Window, apilimit.RequestMaximumKeys)
 	principalLimiter, _ := NewMemoryRateLimiter(apilimit.PrincipalLimit, apilimit.Window, apilimit.PrincipalMaximumKeys)
 	return newServer(coordinator, authenticator, clock, requestLimiter, principalLimiter, nil, nil, nil)
+}
+
+// NewServerWithLocalDeterministicReview adds bounded local intent admission to the existing runs endpoint.
+func NewServerWithLocalDeterministicReview(coordinator *controlplane.Coordinator, authenticator Authenticator, clock Clock, admitter LocalDeterministicReviewAdmitter) (*Server, error) {
+	if isNilLocalReviewAdmitter(admitter) {
+		return nil, ErrInvalidServer
+	}
+	server, err := NewServer(coordinator, authenticator, clock)
+	if err != nil {
+		return nil, err
+	}
+	server.localReviewAdmitter = admitter
+	return server, nil
+}
+
+// NewServerWithLocalFullReview admits canonical full local intents on the runs endpoint.
+func NewServerWithLocalFullReview(coordinator *controlplane.Coordinator, authenticator Authenticator, clock Clock, admitter LocalFullReviewAdmitter) (*Server, error) {
+	if isNilLocalFullAdmitter(admitter) {
+		return nil, ErrInvalidServer
+	}
+	server, err := NewServer(coordinator, authenticator, clock)
+	if err != nil {
+		return nil, err
+	}
+	server.localFullAdmitter = admitter
+	return server, nil
 }
 
 // RuntimeStatusReader returns one repository-scoped, content-free runtime snapshot.
@@ -121,7 +164,33 @@ func NewServerWithRuntimeAdministrationAndRateLimiters(journal controlplane.RunJ
 	return server, nil
 }
 
-// NewServerWithDiagnostics constructs a server with scoped verified diagnostic retrieval.
+// NewServerWithLocalDeterministicRuntimeAdministrationAndRateLimiters adds daemon-bound local review admission.
+func NewServerWithLocalDeterministicRuntimeAdministrationAndRateLimiters(journal controlplane.RunJournal, authenticator Authenticator, clock Clock, reader DiagnosticReader, queue controlplane.TaskNotificationQueue, status RuntimeStatusReader, requestLimiter, principalLimiter RateLimiter, admitter LocalDeterministicReviewAdmitter) (*Server, error) {
+	if isNilLocalReviewAdmitter(admitter) {
+		return nil, ErrInvalidServer
+	}
+	server, err := NewServerWithRuntimeAdministrationAndRateLimiters(journal, authenticator, clock, reader, queue, status, requestLimiter, principalLimiter)
+	if err != nil {
+		return nil, err
+	}
+	server.localReviewAdmitter = admitter
+	return server, nil
+}
+
+// NewServerWithLocalFullRuntimeAdministrationAndRateLimiters adds full local intent admission to runtime services.
+func NewServerWithLocalFullRuntimeAdministrationAndRateLimiters(journal controlplane.RunJournal, authenticator Authenticator, clock Clock, reader DiagnosticReader, queue controlplane.TaskNotificationQueue, status RuntimeStatusReader, requestLimiter, principalLimiter RateLimiter, admitter LocalFullReviewAdmitter) (*Server, error) {
+	if isNilLocalFullAdmitter(admitter) {
+		return nil, ErrInvalidServer
+	}
+	server, err := NewServerWithRuntimeAdministrationAndRateLimiters(journal, authenticator, clock, reader, queue, status, requestLimiter, principalLimiter)
+	if err != nil {
+		return nil, err
+	}
+	server.localFullAdmitter = admitter
+	return server, nil
+}
+
+// NewServerWithDiagnostics constructs a server with scoped diagnostic retrieval.
 func NewServerWithDiagnostics(coordinator *controlplane.Coordinator, authenticator Authenticator, clock Clock, reader DiagnosticReader) (*Server, error) {
 	if isNilDiagnosticReader(reader) {
 		return nil, ErrInvalidServer
@@ -249,6 +318,14 @@ func (s *Server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		s.submitRun(ctx, writer, request, requestID, principal, at)
 		return
 	}
+	if scope, matched := parseRunActionPath(path, "refusal"); matched {
+		s.handleRunRefusal(ctx, writer, request, requestID, principal, scope)
+		return
+	}
+	if scope, matched := parseRunActionPath(path, "progress"); matched {
+		s.handleRunProgress(ctx, writer, request, requestID, principal, scope, at)
+		return
+	}
 	planScope, planMatched := parseRunActionPath(path, "plan")
 	if planMatched {
 		if request.Method != http.MethodGet {
@@ -287,20 +364,20 @@ func (s *Server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			return
 		}
 		if isNilDiagnosticReader(s.diagnosticReader) {
-			writeAPIError(writer, http.StatusNotFound, requestID, "not_found", "Verified diagnostics are not available.")
+			writeAPIError(writer, http.StatusNotFound, requestID, "not_found", "Review diagnostics are not available.")
 			return
 		}
 		set, readErr := s.diagnosticReader.GetDiagnosticSet(ctx, diagnosticScope)
 		if readErr != nil {
 			if errors.Is(readErr, diagnostics.ErrSetNotFound) {
-				writeAPIError(writer, http.StatusNotFound, requestID, "not_found", "Verified diagnostics were not found.")
+				writeAPIError(writer, http.StatusNotFound, requestID, "not_found", "Review diagnostics were not found.")
 			} else {
-				writeAPIError(writer, http.StatusInternalServerError, requestID, "internal_error", "Verified diagnostics could not be read.")
+				writeAPIError(writer, http.StatusInternalServerError, requestID, "internal_error", "Review diagnostics could not be read.")
 			}
 			return
 		}
 		if set.Scope().Identity() != diagnosticScope.Identity() {
-			writeAPIError(writer, http.StatusInternalServerError, requestID, "internal_error", "Verified diagnostics could not be read.")
+			writeAPIError(writer, http.StatusInternalServerError, requestID, "internal_error", "Review diagnostics could not be read.")
 			return
 		}
 		writeAPIDiagnostics(writer, http.StatusOK, requestID, set)
@@ -428,11 +505,69 @@ func (s *Server) submitRun(ctx context.Context, writer http.ResponseWriter, requ
 	}
 	plan, parseErr := controlplane.ParseReviewRunPlan(encoded)
 	if parseErr != nil {
-		writeAPIError(writer, http.StatusBadRequest, requestID, "invalid_request", "The review run plan is invalid.")
+		fullIntent, fullErr := runtimecatalog.ParseLocalFullReviewIntent(encoded)
+		if fullErr == nil {
+			if isNilLocalFullAdmitter(s.localFullAdmitter) {
+				writeAPIError(writer, http.StatusBadRequest, requestID, "invalid_request", "The review run request is invalid.")
+				return
+			}
+			if !principalAllowsScope(principal, fullIntent.Scope()) {
+				writeForbidden(writer, requestID)
+				return
+			}
+			if reservedRunID(fullIntent.Scope()) {
+				writeReservedRunID(writer, requestID)
+				return
+			}
+			state, operationErr := s.localFullAdmitter.Admit(ctx, fullIntent, at)
+			if operationErr != nil {
+				s.writeLocalFullReviewAdmissionError(writer, requestID, operationErr)
+				return
+			}
+			receipt, receiptErr := controlplane.NewReviewRunReceipt(state)
+			if receiptErr != nil {
+				s.writeCoordinatorError(writer, requestID, receiptErr)
+				return
+			}
+			writeAPIReceipt(writer, http.StatusAccepted, requestID, receipt)
+			return
+		}
+		intent, intentErr := runtimecatalog.ParseLocalDeterministicReviewIntent(encoded)
+		if intentErr != nil || isNilLocalReviewAdmitter(s.localReviewAdmitter) {
+			writeAPIError(writer, http.StatusBadRequest, requestID, "invalid_request", "The review run request is invalid.")
+			return
+		}
+		if !principalAllowsScope(principal, intent.Scope()) {
+			writeForbidden(writer, requestID)
+			return
+		}
+		if reservedRunID(intent.Scope()) {
+			writeReservedRunID(writer, requestID)
+			return
+		}
+		state, operationErr := s.localReviewAdmitter.Admit(ctx, intent, at)
+		if operationErr != nil {
+			s.writeLocalReviewAdmissionError(writer, requestID, operationErr)
+			return
+		}
+		receipt, receiptErr := controlplane.NewReviewRunReceipt(state)
+		if receiptErr != nil {
+			s.writeCoordinatorError(writer, requestID, receiptErr)
+			return
+		}
+		writeAPIReceipt(writer, http.StatusAccepted, requestID, receipt)
+		return
+	}
+	if !isNilLocalFullAdmitter(s.localFullAdmitter) {
+		writeAPIError(writer, http.StatusBadRequest, requestID, "invalid_request", "This daemon admits full local review intents, not caller-authored plans.")
 		return
 	}
 	if !principalAllowsScope(principal, plan.Scope()) {
 		writeForbidden(writer, requestID)
+		return
+	}
+	if reservedRunID(plan.Scope()) {
+		writeReservedRunID(writer, requestID)
 		return
 	}
 	state, operationErr := s.coordinator.Open(ctx, plan, at)
@@ -452,6 +587,55 @@ func (s *Server) submitRun(ctx context.Context, writer http.ResponseWriter, requ
 	}
 	writeAPIReceipt(writer, http.StatusAccepted, requestID, receipt)
 }
+
+// reservedRunID reports a run ID in the webhook delivery namespace. Only
+// webhook intake opens those runs, so a caller cannot occupy a delivery's run
+// scope before intake opens it.
+func reservedRunID(scope audit.ReviewScope) bool {
+	return strings.HasPrefix(scope.ReviewRunID(), webhook.DeliveryRunIDPrefix)
+}
+func writeReservedRunID(writer http.ResponseWriter, requestID string) {
+	writeAPIError(writer, http.StatusBadRequest, requestID, "invalid_request", "Run IDs that begin with webhook- are reserved for webhook intake.")
+}
+func (s *Server) writeLocalReviewAdmissionError(writer http.ResponseWriter, requestID string, err error) {
+	switch {
+	case errors.Is(err, runtimecatalog.ErrInvalidLocalDeterministicReview):
+		writeAPIError(writer, http.StatusBadRequest, requestID, "invalid_request", "The local deterministic review request is invalid.")
+	case errors.Is(err, runtimecatalog.ErrLocalDeterministicReviewConflict):
+		writeAPIError(writer, http.StatusConflict, requestID, "conflict", "The review scope is already bound to another request.")
+	case errors.Is(err, runtimecatalog.ErrLocalDeterministicReviewExpired):
+		writeAPIError(writer, http.StatusConflict, requestID, "stale_request", "The local deterministic review request is stale.")
+	default:
+		writeAPIError(writer, http.StatusServiceUnavailable, requestID, "unavailable", "The local deterministic review could not be admitted.")
+	}
+}
+func (s *Server) writeLocalFullReviewAdmissionError(writer http.ResponseWriter, requestID string, err error) {
+	switch {
+	case errors.Is(err, runtimecatalog.ErrInvalidLocalFullReview):
+		writeAPIError(writer, http.StatusBadRequest, requestID, "invalid_request", "The local full review request is invalid.")
+	case errors.Is(err, runtimecatalog.ErrLocalFullReviewConflict):
+		writeAPIError(writer, http.StatusConflict, requestID, "conflict", "The review scope is already bound to another request.")
+	case errors.Is(err, runtimecatalog.ErrLocalFullReviewExpired):
+		writeAPIError(writer, http.StatusConflict, requestID, "stale_request", "The local full review request is stale.")
+	default:
+		writeAPIError(writer, http.StatusServiceUnavailable, requestID, "unavailable", "The local full review could not be admitted.")
+	}
+}
+func isNilLocalFullAdmitter(value LocalFullReviewAdmitter) bool {
+	if value == nil {
+		return true
+	}
+	reflected := reflect.ValueOf(value)
+	return reflected.Kind() == reflect.Pointer && reflected.IsNil()
+}
+func isNilLocalReviewAdmitter(value LocalDeterministicReviewAdmitter) bool {
+	if value == nil {
+		return true
+	}
+	reflected := reflect.ValueOf(value)
+	return reflected.Kind() == reflect.Pointer && reflected.IsNil()
+}
+
 func (s *Server) authenticate(ctx context.Context, request *http.Request) (Principal, error) {
 	values := request.Header.Values("Authorization")
 	if len(values) != 1 || !strings.HasPrefix(values[0], "Bearer ") {
@@ -514,6 +698,10 @@ func parseRunActionPath(escapedPath, action string) (audit.ReviewScope, bool) {
 	return scope, matched && !cancelRoute
 }
 func (s *Server) finalizeRun(ctx context.Context, writer http.ResponseWriter, request *http.Request, requestID string, scope audit.ReviewScope, at time.Time) {
+	if s.localFullAdmitter != nil {
+		writeForbidden(writer, requestID)
+		return
+	}
 	encoded, status, err := readJSONRequest(request, maxWorkerRequestBytes)
 	if err != nil {
 		writeAPIError(writer, status, requestID, "invalid_request", "The finalization request is invalid.")
@@ -664,6 +852,10 @@ func (s *Server) handleWorkerOperation(
 	action string,
 	at time.Time,
 ) {
+	if s.localFullAdmitter != nil {
+		writeForbidden(writer, requestID)
+		return
+	}
 	capability := CapabilityTaskClaim
 	if action == "complete" {
 		capability = CapabilityTaskComplete

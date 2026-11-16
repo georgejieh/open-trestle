@@ -23,6 +23,8 @@ import (
 const DefaultGitHubPublisherID = "github-review"
 
 // PreparedPullRequestPlanner creates a two-revision executable source boundary.
+// The base task acquires the merge base of pull_request.base.sha and
+// pull_request.head.sha, which is how GitHub presents a pull request diff.
 type PreparedPullRequestPlanner struct {
 	identity, repositoryAuthority, publisherID string
 	base                                       *PullRequestPlanner
@@ -59,10 +61,33 @@ func (p *PreparedPullRequestPlanner) Identity() string {
 	return p.identity
 }
 func (p *PreparedPullRequestPlanner) Prepare(ctx context.Context, stored webhook.StoredDelivery) (controlplane.ReviewRunPlan, []artifact.Artifact, error) {
+	return p.prepare(ctx, stored, 2)
+}
+
+// SupersededPlanIdentities returns the identity of the plan the version 1
+// prepared planner, configured as this one, produced for the delivery: its
+// base task named pull_request.base.sha directly, and it refused equal base
+// and head commits, so such a delivery has none. Like Prepare, it performs no
+// I/O.
+func (p *PreparedPullRequestPlanner) SupersededPlanIdentities(ctx context.Context, stored webhook.StoredDelivery) ([]string, error) {
+	plan, _, err := p.prepare(ctx, stored, 1)
+	if err != nil {
+		if ctx != nil && ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, nil
+	}
+	return []string{plan.Identity()}, nil
+}
+
+// prepare builds the plan and root inputs the given planner version produces.
+// Version 2 acquires the merge base in the source-base task; version 1
+// acquired pull_request.base.sha.
+func (p *PreparedPullRequestPlanner) prepare(ctx context.Context, stored webhook.StoredDelivery, version int) (controlplane.ReviewRunPlan, []artifact.Artifact, error) {
 	if p == nil || p.base == nil || p.identity != derivePreparedPlannerIdentity(p) {
 		return controlplane.ReviewRunPlan{}, nil, ErrInvalidPullRequestPlanner
 	}
-	scope, payload, err := p.base.parseDelivery(ctx, stored)
+	scope, payload, err := p.base.parseDelivery(ctx, stored, version >= 2)
 	if err != nil {
 		return controlplane.ReviewRunPlan{}, nil, err
 	}
@@ -81,8 +106,19 @@ func (p *PreparedPullRequestPlanner) Prepare(ctx context.Context, stored webhook
 	}
 	created := stored.Receipt().AcceptedAt()
 	expires := created.Add(p.retention)
-	baseInput, _ := sourcehandler.NewInput(repository, baseRevision, p.sourceAdapter)
-	headInput, _ := sourcehandler.NewInput(repository, headRevision, p.sourceAdapter)
+	var baseInput sourcehandler.Input
+	if version >= 2 {
+		baseInput, err = sourcehandler.NewMergeBaseInput(repository, baseRevision, headRevision, p.sourceAdapter)
+	} else {
+		baseInput, err = sourcehandler.NewInput(repository, baseRevision, p.sourceAdapter)
+	}
+	if err != nil {
+		return controlplane.ReviewRunPlan{}, nil, ErrInvalidPullRequestPayload
+	}
+	headInput, err := sourcehandler.NewInput(repository, headRevision, p.sourceAdapter)
+	if err != nil {
+		return controlplane.ReviewRunPlan{}, nil, ErrInvalidPullRequestPayload
+	}
 	baseArtifact, err := sourcehandler.NewInputArtifact(scope, baseInput, p.classification, p.protection, []string{stored.Delivery().Identity()}, created, expires)
 	if err != nil {
 		return controlplane.ReviewRunPlan{}, nil, err
@@ -116,11 +152,46 @@ func (p *PreparedPullRequestPlanner) Prepare(ctx context.Context, stored webhook
 	sort.Slice(inputs, func(i, j int) bool { return inputs[i].Identity() < inputs[j].Identity() })
 	return plan, inputs, nil
 }
-func (p *PreparedPullRequestPlanner) tasks(delivery webhook.VerifiedDelivery, number int64, base, head, baseInput, headInput, publicationInput string) ([]controlplane.TaskDefinition, error) {
+
+// taskSpecifications is the task graph every version of this planner plans.
+func (p *PreparedPullRequestPlanner) taskSpecifications() []taskSpecification {
 	specs := []taskSpecification{{"source-base", controlplane.TaskAcquireSource, nil}, {"source-head", controlplane.TaskAcquireSource, nil}, {"change", controlplane.TaskBuildChange, []string{"source-base", "source-head"}}, {"analysis", controlplane.TaskInspectDeterministic, []string{"change"}}, {"memory", controlplane.TaskRetrieveContext, []string{"change"}}, {"context", controlplane.TaskAssembleContext, []string{"analysis", "memory"}}, {"candidates", controlplane.TaskGenerateCandidates, []string{"context"}}, {"verification", controlplane.TaskVerifyCandidates, []string{"candidates"}}, {"readiness", controlplane.TaskEvaluatePublication, []string{"analysis", "change", "verification"}}}
 	if p.base.mode == controlplane.ReviewRunRequired {
 		specs = append(specs, taskSpecification{"publication", controlplane.TaskPublishResult, []string{"readiness"}})
 	}
+	return specs
+}
+
+// OpenedByIncompatibleRelease reports whether a plan for the delivery has this
+// planner's task graph, policy and mode but names a task handler this daemon
+// does not run, as a run an earlier release opened does: its handler
+// identities are bound into its plan, so it can neither be adopted nor make
+// progress here. Like planning, it performs no I/O.
+func (p *PreparedPullRequestPlanner) OpenedByIncompatibleRelease(stored webhook.StoredDelivery, plan controlplane.ReviewRunPlan) bool {
+	if p == nil || p.base == nil || stored.Validate() != nil || plan.Validate() != nil || plan.RequestIdentity() != stored.Delivery().Identity() || plan.PolicyIdentity() != p.base.policyIdentity || plan.Mode() != p.base.mode {
+		return false
+	}
+	specs := p.taskSpecifications()
+	if len(plan.Tasks()) != len(specs) {
+		return false
+	}
+	unserved := false
+	for _, spec := range specs {
+		task, exists := plan.Task(spec.key)
+		dependencies := task.Dependencies()
+		sort.Strings(dependencies)
+		expected := append([]string(nil), spec.dependencies...)
+		sort.Strings(expected)
+		if !exists || task.Kind() != spec.kind || strings.Join(dependencies, ",") != strings.Join(expected, ",") {
+			return false
+		}
+		unserved = unserved || task.HandlerIdentity() != p.base.handlers[spec.kind]
+	}
+	return unserved
+}
+
+func (p *PreparedPullRequestPlanner) tasks(delivery webhook.VerifiedDelivery, number int64, base, head, baseInput, headInput, publicationInput string) ([]controlplane.TaskDefinition, error) {
+	specs := p.taskSpecifications()
 	identities := make(map[string]string, len(specs))
 	tasks := make([]controlplane.TaskDefinition, 0, len(specs))
 	for _, spec := range specs {
@@ -183,7 +254,7 @@ func derivePreparedPlannerIdentity(p *PreparedPullRequestPlanner) string {
 		Classification string `json:"classification"`
 		Protection     string `json:"protection"`
 		Retention      int64  `json:"retention"`
-	}{"open-trestle/prepared-github-pull-request-planner", 1, p.base.Identity(), p.repositoryAuthority, p.publisherID, p.sourceAdapter.Identity(), p.classification.String(), p.protection.String(), p.retention.Milliseconds()})
+	}{"open-trestle/prepared-github-pull-request-planner", 2, p.base.Identity(), p.repositoryAuthority, p.publisherID, p.sourceAdapter.Identity(), p.classification.String(), p.protection.String(), p.retention.Milliseconds()})
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }

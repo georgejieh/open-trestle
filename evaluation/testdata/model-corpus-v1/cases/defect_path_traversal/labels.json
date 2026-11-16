@@ -1,0 +1,37 @@
+{
+  "contract": "open-trestle/model-corpus-labels",
+  "schema_version": 1,
+  "case_id": "defect_path_traversal",
+  "case_kind": "defect",
+  "review_state": "pending",
+  "reviewer_identifier": null,
+  "review_date": null,
+  "fixture_author_identifier": "open-trestle-maintainers",
+  "go_version": "1.22",
+  "go_semantics": "Both trees declare go 1.22 in go.mod. The labels assume Go 1.22 language semantics and standard library, built by a Go 1.22 or later toolchain with this module as the main module.",
+  "expected_outcome": "findings",
+  "expected_findings": [
+    {
+      "id": "f1",
+      "path": "server.go",
+      "side": "head",
+      "start_line": 53,
+      "end_line": 53,
+      "also_accept_locations": [
+        {
+          "path": "server.go",
+          "side": "head",
+          "start_line": 48,
+          "end_line": 48
+        }
+      ],
+      "category": "security",
+      "also_compatible_categories": [],
+      "severity_hint": "high",
+      "defect": "The `name` query parameter is joined to the export directory without validation, so a request such as `name=../../etc/passwd` reads any file the process can open.",
+      "rationale": "`filepath.Join` cleans `..` elements and can produce a path outside `exportDir`; nothing checks that the result stays inside the directory or that `name` is a single path element."
+    }
+  ],
+  "false_positive_traps": [],
+  "abstention_reason": null
+}

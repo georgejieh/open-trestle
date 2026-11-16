@@ -16,6 +16,21 @@ A caller creates a canonical `source-acquisition-input` with:
 
 Webhook, API, CI, and local planners use the same input contract. A planner must persist the input artifact before making its task available. The input artifact, not forge text or conversational state, is the authority released to the handler. Webhook-prepared plans create separate `source-base` and `source-head` root inputs, so the same handler acquires both immutable sides without reading a moving branch.
 
+## Merge-base inputs
+
+Schema version 3 of `source-acquisition-input` (`NewMergeBaseInput`) names a requested base in its revision fields and a head in `merge_base_head_revision_digest`, with `base_derivation: merge_base`. It authorizes acquisition of the merge base of the two, which is how a pull request diff presents a change. Both commits use one object algorithm. Versions 1 and 2 are unchanged and still name the exact revision to acquire.
+
+For such an input the handler asks its adapter, which must implement `scm.MergeBaseResolver`, for the forge's merge base and then acquires that commit like any other. A refusal is a failed completion with a recorded, content-free reason and no acquisition:
+
+| Condition | Run failure | Reason |
+|---|---|---|
+| the requested base equals the head, or the merge base is the head (the head is already contained in the base) | `policy` | `nothing_to_review` |
+| the adapter reports that both commits exist and share no history (the GitHub adapter never does; see [merge base](github-source-acquisition.md#merge-base)) | `policy` | `no_merge_base` |
+| the merge base could not be read | the acquisition mapping below (for example `transient` for a rate limit or server error, `policy` for missing authorization) | `merge_base_unavailable` |
+| the adapter cannot resolve merge bases, or returned a malformed result | `policy`, or `internal` for a malformed result | `merge_base_unavailable` |
+
+There is no fallback to the requested base. The resulting snapshot is `source-snapshot` schema version 2: its `revision_identity` is the merge base, and `revision_derivation` records `method: forge_merge_base`, the requested-base and head revision identities, and the merge-base revision. Version 1 snapshots keep their bytes and identities.
+
 ## Output layout
 
 A successful acquisition creates:
@@ -27,7 +42,7 @@ All output artifacts retain the input's scope, classification, protection mode, 
 
 `ParseSnapshotArtifact` verifies the scoped index. `ParseFileArtifact` then requires that verified snapshot and one exact listed reference. It checks scope, classification, protection, identity, canonical encoding, repository origin, provenance, content digest, byte count, and acquisition lineage before returning a defensive content copy. Downstream change-building handlers should resolve only file identities listed by the verified snapshot index.
 
-The handler can be wrapped in `artifact.ValidatedTaskHandler` with `task_input` as its input kind and `source_snapshot` as its output kind for an additional catalog boundary.
+The handler can be wrapped in `artifactvalidation.ValidatedTaskHandler` with `task_input` as its input kind and `source_snapshot` as its output kind for an additional catalog boundary.
 
 ## Terminal behavior
 
@@ -45,6 +60,6 @@ Provider error strings and repository content never enter task completions. The 
 
 Schemas are published as:
 
-- `schemas/artifact/source-acquisition-input-v1.schema.json`
+- `schemas/artifact/source-acquisition-input-v1.schema.json`, `schemas/artifact/source-acquisition-input-v2.schema.json` (binds a daemon-retained source-root identity) and `schemas/artifact/source-acquisition-input-v3.schema.json` (merge base)
 - `schemas/artifact/source-file-v1.schema.json`
-- `schemas/artifact/source-snapshot-v1.schema.json`
+- `schemas/artifact/source-snapshot-v1.schema.json` and `schemas/artifact/source-snapshot-v2.schema.json` (merge-base derivation)

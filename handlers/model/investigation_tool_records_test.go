@@ -368,7 +368,7 @@ func newToolRecordFixture(t *testing.T, label string, projectionCap bool) *toolR
 		toolRecordCheck(t, err)
 		return plan
 	}
-	f.owner, err = gateway.NewInvestigationRouteOwner(gateway.InvestigationRouteOwnerOptions{Scope: f.scope, SessionIdentity: f.binding.Identity(), PolicyIdentity: f.policy.Identity(), Deadline: options.Deadline, MaxTurns: uint8(f.policy.MaxModelTurns()), Budget: budget, Requirements: requirements, Constraints: constraints, Generation: makePlan(generation), Verification: makePlan(verification), Catalog: catalog, Ledger: f.ledger, Clock: f.clock})
+	f.owner, err = gateway.NewInvestigationRouteOwner(gateway.InvestigationRouteOwnerOptions{Scope: f.scope, SessionIdentity: f.binding.Identity(), PolicyIdentity: f.policy.Identity(), Deadline: options.Deadline, MaxTurns: uint8(f.policy.MaxModelTurns()), Budget: budget, Requirements: requirements, Constraints: constraints, Generation: makePlan(generation), Verification: makePlan(verification), Catalog: catalog, Ledger: f.ledger, Clock: f.clock, SystemChannelBytes: review.ModelRequestSystemChannelBytes})
 	toolRecordCheck(t, err)
 	f.state = review.InvestigationContextState{Turn: 1, ScannedBytes: initial.ScannedBytes()}
 	f.setContext(f.initial, f.selected)
@@ -824,7 +824,12 @@ func TestInvestigationToolRecordsListThenReadAddsPhysicalSourceToV4(t *testing.T
 	for i, stored := range []artifact.Artifact{listArtifact, readArtifact} {
 		var id string
 		toolRecordCheck(t, json.Unmarshal(wire.Investigation.Results[i]["artifact_identity"], &id))
+		// The request adds host-computed risk flags; the stored record has none.
+		if string(wire.Investigation.Results[i]["risk_flags"]) != "[]" {
+			t.Fatalf("clean tool result risk_flags=%s", wire.Investigation.Results[i]["risk_flags"])
+		}
 		delete(wire.Investigation.Results[i], "artifact_identity")
+		delete(wire.Investigation.Results[i], "risk_flags")
 		if id != stored.Identity() || !bytes.Equal(toolRecordJSON(t, wire.Investigation.Results[i]), stored.Payload()) {
 			t.Fatal("context-only annotation changed stored payload or made self-reference")
 		}

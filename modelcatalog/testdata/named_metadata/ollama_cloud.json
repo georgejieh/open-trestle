@@ -1,0 +1,24 @@
+{
+  "models": [
+    {
+      "name": "gemma4:31b",
+      "model": "gemma4:31b",
+      "digest": "221b330d11a8",
+      "size": 62546177752,
+      "details": {
+        "parent_model": "",
+        "format": "",
+        "family": "",
+        "families": null,
+        "parameter_size": "",
+        "quantization_level": ""
+      },
+      "capabilities": [
+        "completion",
+        "thinking",
+        "tools",
+        "vision"
+      ]
+    }
+  ]
+}

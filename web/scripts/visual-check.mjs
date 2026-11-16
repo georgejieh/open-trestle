@@ -6,6 +6,7 @@ import {
   checkTabletNavigation,
   checkMobileSetupNavigation,
   checkMobileBrandContrast,
+  checkReviewActionTargets,
 } from "./navigation-layout.mjs";
 import { chromium } from "playwright-core";
 const root = new URL("../dist/", import.meta.url);
@@ -136,8 +137,9 @@ const diagnostics = {
 const runtimeStatus = {
   contract: "open-trestle/runtime-status",
   schema_version: 1,
-  identity: "d".repeat(64),
-  configuration_identity: "e".repeat(64),
+  identity: "122a127e5ae939fa8d6582c6681945679653f5fc855721248f4a35e8e3353959",
+  configuration_identity:
+    "15e5f36c79b8c9cf9129ec34700067a406bf57f49086f0ffe5b39e4d965572f9",
   tenant_id: "tenant-a",
   repository_id: "payments-api",
   observed_at: "2026-09-03T19:00:00Z",
@@ -410,7 +412,7 @@ const currentPendingWire = `{"contract":"open-trestle/setup-plan","schema_versio
 const currentPermissionPassedWire = `{"contract":"open-trestle/setup-plan","schema_version":1,"identity":"afe02566f69710d5d7f7e7f55898d41be1001bbc9641cae81ce3b11a5a506d07","previous_identity":"13a7d1b6e3c8b103b33474b60abdc8c8ab4af95a75e578da58c4f98295222382","checker_catalog_identity":"b0b02c3a3259a984bd22e26527531e1194bc892ba3c30967135741c53e0e9037","checker_authorities":[{"key":"backup_validated","checker_identity":"03a4d428f289ba85dba8c4f1b7ddfafc74583d9309864f36cc6ef8926616b679"},{"key":"dry_run_validated","checker_identity":"10304a30edd798790388e923d73df4115b8526231641db5b13dee9d088f938df"},{"key":"envelope_storage_validated","checker_identity":"a7366f408e306dd70702319bfad8333f71e7e92b97604d69be936291a0b98ceb"},{"key":"integration_permissions_validated","checker_identity":"8308da20feae56a9f00344d5ac0824bf5133f1eff42d2ab31bce83b172daf3e9"},{"key":"local_administrator_validated","checker_identity":"f3832f5d85d7774290f8b6c88a634ec956e68ced3198fd6fca64a9b6f99ced89"},{"key":"observer_credential_posture_validated","checker_identity":"4af5a2fcecd69ec07da6ffb696215820c2b84a225340953f68f5a126e52cf542"},{"key":"policy_validated","checker_identity":"5694cd4de9ea61bc97b9cdcfa651678c23f55e9998e564fea4570585cc8386a4"},{"key":"postgres_storage_validated","checker_identity":"df68a8e3dbe159f168d8464410a5be817e53a0d6870517edde780d374fcb17f0"},{"key":"remote_provider_authorized","checker_identity":"1999eefcbe108499aeeded297b938cbb248e5a14552ebdc697b3e69d7985f4c1"},{"key":"secret_backend_validated","checker_identity":"2ce90162ea0586ca8db04cda4e7a1ee9fc6303e7e2cc77773d36c519785839df"},{"key":"webhook_validated","checker_identity":"94b83acc748c71e3d42ce06632b4abb370f35bbfc2262d2c1e98a223d29fc14e"}],"revision":2,"tenant_id":"tenant-a","repository_id":"repo-a","recovery_owner":"owner","profile":"controlled_hybrid","posture":{"metadata_backend":"postgres","artifact_backend":"s3","artifact_protection":"envelope_encrypted","notification_backend":"postgres","inference":"approved_remote","egress":"allowlisted","integration":"least_privilege_scm","max_model_request_cost_micro_usd":100000,"retention_days":30,"provider_fallback_enabled":false,"content_logging_allowed":false,"publication_enabled":false,"dynamic_validation_enabled":false},"requirements":[{"key":"profile_selected","source":"deterministic","state":"passed","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"scope_valid","source":"deterministic","state":"passed","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"effect_posture_locked","source":"deterministic","state":"passed","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"recovery_owner_named","source":"deterministic","state":"passed","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"postgres_storage_validated","source":"probe","state":"pending","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"envelope_storage_validated","source":"probe","state":"pending","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"backup_validated","source":"probe","state":"pending","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"secret_backend_validated","source":"probe","state":"pending","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"local_administrator_validated","source":"authorization","state":"pending","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"observer_credential_posture_validated","source":"probe","state":"pending","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"remote_provider_authorized","source":"authorization","state":"pending","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"integration_permissions_validated","source":"authorization","state":"passed","checker_identity":"8308da20feae56a9f00344d5ac0824bf5133f1eff42d2ab31bce83b172daf3e9","evidence_identity":"331e21772e9df49314d6b49093a67bdae04b091bbc9f49a18ecda64edaaddbdb","receipt_identity":"9faa2e5da98281f1460bde688dcfc881c18f69f65584cfe5e64811da5ebf8013","recovery_action":"","checked_at":"2026-09-03T12:00:01Z"},{"key":"webhook_validated","source":"probe","state":"pending","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"policy_validated","source":"authorization","state":"pending","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"dry_run_validated","source":"dry_run","state":"pending","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""}],"receipts":[{"contract":"open-trestle/setup-check-receipt","schema_version":1,"identity":"9faa2e5da98281f1460bde688dcfc881c18f69f65584cfe5e64811da5ebf8013","plan_identity":"13a7d1b6e3c8b103b33474b60abdc8c8ab4af95a75e578da58c4f98295222382","key":"integration_permissions_validated","checker_identity":"8308da20feae56a9f00344d5ac0824bf5133f1eff42d2ab31bce83b172daf3e9","state":"passed","evidence_identity":"331e21772e9df49314d6b49093a67bdae04b091bbc9f49a18ecda64edaaddbdb","recovery_action":"","checked_at":"2026-09-03T12:00:01Z"}],"status":"incomplete","ready":false,"created_at":"2026-09-03T12:00:00Z","updated_at":"2026-09-03T12:00:01Z"}`;
 // historical-ready.json SHA256 f51df1f3eab934c87bf0bd52274d5c5cbb1813bee7d1ae2b2e82262b37b477e4
 const historicalReadyWire = `{"contract":"open-trestle/setup-plan","schema_version":1,"identity":"477610992d01ff93ac5142d73969b135964efa02753db4ed203bdcdd9c852f37","previous_identity":"a75d020f83f3737c28bf47432183a5559a5498801f09dcf7e5f1886087a0559a","checker_catalog_identity":"3a88cb6db2d7a6b3b9eae8aa36e4ca2a0914e6ad5138bb9e5249607d12c49b1f","checker_authorities":[{"key":"backup_validated","checker_identity":"03a4d428f289ba85dba8c4f1b7ddfafc74583d9309864f36cc6ef8926616b679"},{"key":"dry_run_validated","checker_identity":"10304a30edd798790388e923d73df4115b8526231641db5b13dee9d088f938df"},{"key":"envelope_storage_validated","checker_identity":"a7366f408e306dd70702319bfad8333f71e7e92b97604d69be936291a0b98ceb"},{"key":"integration_permissions_validated","checker_identity":"cf33c90ab5e11af104ab7c7dc4fba5485bdcf15d99df8155628f0c84e574530b"},{"key":"local_administrator_validated","checker_identity":"f3832f5d85d7774290f8b6c88a634ec956e68ced3198fd6fca64a9b6f99ced89"},{"key":"observer_credential_posture_validated","checker_identity":"4af5a2fcecd69ec07da6ffb696215820c2b84a225340953f68f5a126e52cf542"},{"key":"policy_validated","checker_identity":"5694cd4de9ea61bc97b9cdcfa651678c23f55e9998e564fea4570585cc8386a4"},{"key":"postgres_storage_validated","checker_identity":"df68a8e3dbe159f168d8464410a5be817e53a0d6870517edde780d374fcb17f0"},{"key":"remote_provider_authorized","checker_identity":"1999eefcbe108499aeeded297b938cbb248e5a14552ebdc697b3e69d7985f4c1"},{"key":"secret_backend_validated","checker_identity":"2ce90162ea0586ca8db04cda4e7a1ee9fc6303e7e2cc77773d36c519785839df"},{"key":"webhook_validated","checker_identity":"94b83acc748c71e3d42ce06632b4abb370f35bbfc2262d2c1e98a223d29fc14e"}],"revision":12,"tenant_id":"pf1-tenant","repository_id":"pf1-repository","recovery_owner":"pf1-owner","profile":"controlled_hybrid","posture":{"metadata_backend":"postgres","artifact_backend":"s3","artifact_protection":"envelope_encrypted","notification_backend":"postgres","inference":"approved_remote","egress":"allowlisted","integration":"least_privilege_scm","max_model_request_cost_micro_usd":100000,"retention_days":30,"provider_fallback_enabled":false,"content_logging_allowed":false,"publication_enabled":false,"dynamic_validation_enabled":false},"requirements":[{"key":"profile_selected","source":"deterministic","state":"passed","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"scope_valid","source":"deterministic","state":"passed","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"effect_posture_locked","source":"deterministic","state":"passed","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"recovery_owner_named","source":"deterministic","state":"passed","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"postgres_storage_validated","source":"probe","state":"passed","checker_identity":"df68a8e3dbe159f168d8464410a5be817e53a0d6870517edde780d374fcb17f0","evidence_identity":"afdf43c9ce57573fb0831000ea91485b5788817460f415964cc862f144bcdbcd","receipt_identity":"e6ccc9cd6d623b492f70d8172bd57a34ca3b6541c5c57bb25276daaa3f8837d4","recovery_action":"","checked_at":"2026-09-06T12:00:01Z"},{"key":"envelope_storage_validated","source":"probe","state":"passed","checker_identity":"a7366f408e306dd70702319bfad8333f71e7e92b97604d69be936291a0b98ceb","evidence_identity":"97a973f85cb76a13eca66a95185da744ffa6da2e5bd2f3c4e0f8613d9e8bd1d8","receipt_identity":"bd17419c5716aeb1b5414cc8ec426491b278af538c6e6b43421ce0511b7b2cda","recovery_action":"","checked_at":"2026-09-06T12:00:01.001Z"},{"key":"backup_validated","source":"probe","state":"passed","checker_identity":"03a4d428f289ba85dba8c4f1b7ddfafc74583d9309864f36cc6ef8926616b679","evidence_identity":"60d78552e0d35c7dc13dd9cfd89e1ff76b76323f4829ab7e717277a7936082a5","receipt_identity":"f70d4f88408098e5aed8dcd3d508c89de0f659ef405f771bd9b25319d17d2d14","recovery_action":"","checked_at":"2026-09-06T12:00:01.002Z"},{"key":"secret_backend_validated","source":"probe","state":"passed","checker_identity":"2ce90162ea0586ca8db04cda4e7a1ee9fc6303e7e2cc77773d36c519785839df","evidence_identity":"82c9265bbda4030565eea12350c71c5604409cca19d50b24895de8da4a3346f2","receipt_identity":"168d52f394f9802792fe0cac82f61f085dbb279558b5793dacf36f90baa40f9a","recovery_action":"","checked_at":"2026-09-06T12:00:01.003Z"},{"key":"local_administrator_validated","source":"authorization","state":"passed","checker_identity":"f3832f5d85d7774290f8b6c88a634ec956e68ced3198fd6fca64a9b6f99ced89","evidence_identity":"0e09d600dc0b958727c51537c3d760e15fdd8f73322be300b5118342d565c9d9","receipt_identity":"080724ca251b744f12169dc9bb19445b2fa09798d9b6cb472e1b4ab69ff06fc2","recovery_action":"","checked_at":"2026-09-06T12:00:01.004Z"},{"key":"observer_credential_posture_validated","source":"probe","state":"passed","checker_identity":"4af5a2fcecd69ec07da6ffb696215820c2b84a225340953f68f5a126e52cf542","evidence_identity":"1bb95ae746cd621e886b1831c792e05977fd3dcc44c94ffb3ae44a66ca5c90af","receipt_identity":"31fe3119d38c1b0386480009334984ff588ef17cecc33ae6972c2c906b02bd01","recovery_action":"","checked_at":"2026-09-06T12:00:01.005Z"},{"key":"remote_provider_authorized","source":"authorization","state":"passed","checker_identity":"1999eefcbe108499aeeded297b938cbb248e5a14552ebdc697b3e69d7985f4c1","evidence_identity":"01db8e6c239d45b64dcc49dba8021a2f5ab7bcb5da37ce302743f3e65089b824","receipt_identity":"982fefeb83039ceaf3c64434d58a4dc443e6fa700c564590c38c14b85267a7cf","recovery_action":"","checked_at":"2026-09-06T12:00:01.006Z"},{"key":"integration_permissions_validated","source":"authorization","state":"passed","checker_identity":"cf33c90ab5e11af104ab7c7dc4fba5485bdcf15d99df8155628f0c84e574530b","evidence_identity":"764af3d0634054f2e3ab7fe1f7e748181dce796d9bc0e6f8fa64608795c18744","receipt_identity":"81ec1517b94e0a5df85a56251fe1048c243039b6e963ebd5a5b0a9358f5b35f3","recovery_action":"","checked_at":"2026-09-06T12:00:01.007Z"},{"key":"webhook_validated","source":"probe","state":"passed","checker_identity":"94b83acc748c71e3d42ce06632b4abb370f35bbfc2262d2c1e98a223d29fc14e","evidence_identity":"c80e12afbac08c60399042e84dd2fc53f95f4ca8e70eb24ff25cf4c3b3f01302","receipt_identity":"8d8c425303a6c5159eafa9588e648dbaf832bffedf0e6118c95e85f86725007e","recovery_action":"","checked_at":"2026-09-06T12:00:01.008Z"},{"key":"policy_validated","source":"authorization","state":"passed","checker_identity":"5694cd4de9ea61bc97b9cdcfa651678c23f55e9998e564fea4570585cc8386a4","evidence_identity":"53583fabf316124a6e15f929f1cfc2abd5614b35fd87b6b267dd217e477a0b64","receipt_identity":"4a884c2c4069219a5d4d6a108510c60e82402ab527f9e456cce87f6955eeea48","recovery_action":"","checked_at":"2026-09-06T12:00:01.009Z"},{"key":"dry_run_validated","source":"dry_run","state":"passed","checker_identity":"10304a30edd798790388e923d73df4115b8526231641db5b13dee9d088f938df","evidence_identity":"50a76f53896eb3cb0eed810e012cab4891dee773c6c63a31c50af6e68c61dbd0","receipt_identity":"ac91aee87a2546952f98a430df39f9b223b262b807fd2aad811e338e270dd9f0","recovery_action":"","checked_at":"2026-09-06T12:00:01.01Z"}],"receipts":[{"contract":"open-trestle/setup-check-receipt","schema_version":1,"identity":"e6ccc9cd6d623b492f70d8172bd57a34ca3b6541c5c57bb25276daaa3f8837d4","plan_identity":"f8ceacaddafd1bc9cbeabe52563974cf98797e47f67b3fcbf478b52830731c89","key":"postgres_storage_validated","checker_identity":"df68a8e3dbe159f168d8464410a5be817e53a0d6870517edde780d374fcb17f0","state":"passed","evidence_identity":"afdf43c9ce57573fb0831000ea91485b5788817460f415964cc862f144bcdbcd","recovery_action":"","checked_at":"2026-09-06T12:00:01Z"},{"contract":"open-trestle/setup-check-receipt","schema_version":1,"identity":"bd17419c5716aeb1b5414cc8ec426491b278af538c6e6b43421ce0511b7b2cda","plan_identity":"d481bdd10feda83553c2e2399fa5d826b44b01ac5a8506bbb6daa63138390254","key":"envelope_storage_validated","checker_identity":"a7366f408e306dd70702319bfad8333f71e7e92b97604d69be936291a0b98ceb","state":"passed","evidence_identity":"97a973f85cb76a13eca66a95185da744ffa6da2e5bd2f3c4e0f8613d9e8bd1d8","recovery_action":"","checked_at":"2026-09-06T12:00:01.001Z"},{"contract":"open-trestle/setup-check-receipt","schema_version":1,"identity":"f70d4f88408098e5aed8dcd3d508c89de0f659ef405f771bd9b25319d17d2d14","plan_identity":"2769d3661c6c5081c0992409965769b137100d76b830c6b429107502f8ccd492","key":"backup_validated","checker_identity":"03a4d428f289ba85dba8c4f1b7ddfafc74583d9309864f36cc6ef8926616b679","state":"passed","evidence_identity":"60d78552e0d35c7dc13dd9cfd89e1ff76b76323f4829ab7e717277a7936082a5","recovery_action":"","checked_at":"2026-09-06T12:00:01.002Z"},{"contract":"open-trestle/setup-check-receipt","schema_version":1,"identity":"168d52f394f9802792fe0cac82f61f085dbb279558b5793dacf36f90baa40f9a","plan_identity":"47b2a88dff5967bc151e88300c1bfa80a5f5b998d5bbb80c6f93f56f7d524122","key":"secret_backend_validated","checker_identity":"2ce90162ea0586ca8db04cda4e7a1ee9fc6303e7e2cc77773d36c519785839df","state":"passed","evidence_identity":"82c9265bbda4030565eea12350c71c5604409cca19d50b24895de8da4a3346f2","recovery_action":"","checked_at":"2026-09-06T12:00:01.003Z"},{"contract":"open-trestle/setup-check-receipt","schema_version":1,"identity":"080724ca251b744f12169dc9bb19445b2fa09798d9b6cb472e1b4ab69ff06fc2","plan_identity":"75b2d790e3e3b38a3e55b9cade48a58833571ab4279670b9f94d477127687317","key":"local_administrator_validated","checker_identity":"f3832f5d85d7774290f8b6c88a634ec956e68ced3198fd6fca64a9b6f99ced89","state":"passed","evidence_identity":"0e09d600dc0b958727c51537c3d760e15fdd8f73322be300b5118342d565c9d9","recovery_action":"","checked_at":"2026-09-06T12:00:01.004Z"},{"contract":"open-trestle/setup-check-receipt","schema_version":1,"identity":"31fe3119d38c1b0386480009334984ff588ef17cecc33ae6972c2c906b02bd01","plan_identity":"d6e0e5c9414dd479fd15befc8805bb75530bbafe8729d8e1ccbc852a1d489c73","key":"observer_credential_posture_validated","checker_identity":"4af5a2fcecd69ec07da6ffb696215820c2b84a225340953f68f5a126e52cf542","state":"passed","evidence_identity":"1bb95ae746cd621e886b1831c792e05977fd3dcc44c94ffb3ae44a66ca5c90af","recovery_action":"","checked_at":"2026-09-06T12:00:01.005Z"},{"contract":"open-trestle/setup-check-receipt","schema_version":1,"identity":"982fefeb83039ceaf3c64434d58a4dc443e6fa700c564590c38c14b85267a7cf","plan_identity":"aa4f045f2a6e955c2ce6930b3251408db81659e9758f6930a6b4eaef1bc08d7a","key":"remote_provider_authorized","checker_identity":"1999eefcbe108499aeeded297b938cbb248e5a14552ebdc697b3e69d7985f4c1","state":"passed","evidence_identity":"01db8e6c239d45b64dcc49dba8021a2f5ab7bcb5da37ce302743f3e65089b824","recovery_action":"","checked_at":"2026-09-06T12:00:01.006Z"},{"contract":"open-trestle/setup-check-receipt","schema_version":1,"identity":"81ec1517b94e0a5df85a56251fe1048c243039b6e963ebd5a5b0a9358f5b35f3","plan_identity":"4395e7b90fea4124a8256ca3c2ed599d447fa264807a848944172c4d6e7d8aab","key":"integration_permissions_validated","checker_identity":"cf33c90ab5e11af104ab7c7dc4fba5485bdcf15d99df8155628f0c84e574530b","state":"passed","evidence_identity":"764af3d0634054f2e3ab7fe1f7e748181dce796d9bc0e6f8fa64608795c18744","recovery_action":"","checked_at":"2026-09-06T12:00:01.007Z"},{"contract":"open-trestle/setup-check-receipt","schema_version":1,"identity":"8d8c425303a6c5159eafa9588e648dbaf832bffedf0e6118c95e85f86725007e","plan_identity":"96204a0eb0c85fe62f99d37e3d268b7869a7eff34ce1995aa9c1c368f7afd49a","key":"webhook_validated","checker_identity":"94b83acc748c71e3d42ce06632b4abb370f35bbfc2262d2c1e98a223d29fc14e","state":"passed","evidence_identity":"c80e12afbac08c60399042e84dd2fc53f95f4ca8e70eb24ff25cf4c3b3f01302","recovery_action":"","checked_at":"2026-09-06T12:00:01.008Z"},{"contract":"open-trestle/setup-check-receipt","schema_version":1,"identity":"4a884c2c4069219a5d4d6a108510c60e82402ab527f9e456cce87f6955eeea48","plan_identity":"a175e88e2983cddf6f38381c21f80a2793d711b143d55449e74941163eb2a2fc","key":"policy_validated","checker_identity":"5694cd4de9ea61bc97b9cdcfa651678c23f55e9998e564fea4570585cc8386a4","state":"passed","evidence_identity":"53583fabf316124a6e15f929f1cfc2abd5614b35fd87b6b267dd217e477a0b64","recovery_action":"","checked_at":"2026-09-06T12:00:01.009Z"},{"contract":"open-trestle/setup-check-receipt","schema_version":1,"identity":"ac91aee87a2546952f98a430df39f9b223b262b807fd2aad811e338e270dd9f0","plan_identity":"a75d020f83f3737c28bf47432183a5559a5498801f09dcf7e5f1886087a0559a","key":"dry_run_validated","checker_identity":"10304a30edd798790388e923d73df4115b8526231641db5b13dee9d088f938df","state":"passed","evidence_identity":"50a76f53896eb3cb0eed810e012cab4891dee773c6c63a31c50af6e68c61dbd0","recovery_action":"","checked_at":"2026-09-06T12:00:01.01Z"}],"status":"ready","ready":true,"created_at":"2026-09-06T12:00:00Z","updated_at":"2026-09-06T12:00:01.01Z"}`;
-// legacy-capture/manifest.json fixtures[2].plan.bytes SHA256 b0f09483ce6e7db0ac31c389ac4cb2d430408f7ec5b0d4dec550d67479aa5766
+// historical-pending-webhook.json SHA256 b0f09483ce6e7db0ac31c389ac4cb2d430408f7ec5b0d4dec550d67479aa5766
 const historicalPendingWebhookWire = `{"contract":"open-trestle/setup-plan","schema_version":1,"identity":"443a6272bcb6d541f6607834dbcbb718313f1d813f6ed0d15dcbd32a0228b0b8","previous_identity":"f8ceacaddafd1bc9cbeabe52563974cf98797e47f67b3fcbf478b52830731c89","checker_catalog_identity":"3a88cb6db2d7a6b3b9eae8aa36e4ca2a0914e6ad5138bb9e5249607d12c49b1f","checker_authorities":[{"key":"backup_validated","checker_identity":"03a4d428f289ba85dba8c4f1b7ddfafc74583d9309864f36cc6ef8926616b679"},{"key":"dry_run_validated","checker_identity":"10304a30edd798790388e923d73df4115b8526231641db5b13dee9d088f938df"},{"key":"envelope_storage_validated","checker_identity":"a7366f408e306dd70702319bfad8333f71e7e92b97604d69be936291a0b98ceb"},{"key":"integration_permissions_validated","checker_identity":"cf33c90ab5e11af104ab7c7dc4fba5485bdcf15d99df8155628f0c84e574530b"},{"key":"local_administrator_validated","checker_identity":"f3832f5d85d7774290f8b6c88a634ec956e68ced3198fd6fca64a9b6f99ced89"},{"key":"observer_credential_posture_validated","checker_identity":"4af5a2fcecd69ec07da6ffb696215820c2b84a225340953f68f5a126e52cf542"},{"key":"policy_validated","checker_identity":"5694cd4de9ea61bc97b9cdcfa651678c23f55e9998e564fea4570585cc8386a4"},{"key":"postgres_storage_validated","checker_identity":"df68a8e3dbe159f168d8464410a5be817e53a0d6870517edde780d374fcb17f0"},{"key":"remote_provider_authorized","checker_identity":"1999eefcbe108499aeeded297b938cbb248e5a14552ebdc697b3e69d7985f4c1"},{"key":"secret_backend_validated","checker_identity":"2ce90162ea0586ca8db04cda4e7a1ee9fc6303e7e2cc77773d36c519785839df"},{"key":"webhook_validated","checker_identity":"94b83acc748c71e3d42ce06632b4abb370f35bbfc2262d2c1e98a223d29fc14e"}],"revision":2,"tenant_id":"pf1-tenant","repository_id":"pf1-repository","recovery_owner":"pf1-owner","profile":"controlled_hybrid","posture":{"metadata_backend":"postgres","artifact_backend":"s3","artifact_protection":"envelope_encrypted","notification_backend":"postgres","inference":"approved_remote","egress":"allowlisted","integration":"least_privilege_scm","max_model_request_cost_micro_usd":100000,"retention_days":30,"provider_fallback_enabled":false,"content_logging_allowed":false,"publication_enabled":false,"dynamic_validation_enabled":false},"requirements":[{"key":"profile_selected","source":"deterministic","state":"passed","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"scope_valid","source":"deterministic","state":"passed","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"effect_posture_locked","source":"deterministic","state":"passed","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"recovery_owner_named","source":"deterministic","state":"passed","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"postgres_storage_validated","source":"probe","state":"pending","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"envelope_storage_validated","source":"probe","state":"pending","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"backup_validated","source":"probe","state":"pending","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"secret_backend_validated","source":"probe","state":"pending","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"local_administrator_validated","source":"authorization","state":"pending","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"observer_credential_posture_validated","source":"probe","state":"pending","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"remote_provider_authorized","source":"authorization","state":"pending","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"integration_permissions_validated","source":"authorization","state":"passed","checker_identity":"cf33c90ab5e11af104ab7c7dc4fba5485bdcf15d99df8155628f0c84e574530b","evidence_identity":"764af3d0634054f2e3ab7fe1f7e748181dce796d9bc0e6f8fa64608795c18744","receipt_identity":"732ca5ba0d984a50dbfcc4c15d38d1c7ab546115b9a811761a4a30cc6a6762ce","recovery_action":"","checked_at":"2026-09-06T12:00:01Z"},{"key":"webhook_validated","source":"probe","state":"pending","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"policy_validated","source":"authorization","state":"pending","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"dry_run_validated","source":"dry_run","state":"pending","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""}],"receipts":[{"contract":"open-trestle/setup-check-receipt","schema_version":1,"identity":"732ca5ba0d984a50dbfcc4c15d38d1c7ab546115b9a811761a4a30cc6a6762ce","plan_identity":"f8ceacaddafd1bc9cbeabe52563974cf98797e47f67b3fcbf478b52830731c89","key":"integration_permissions_validated","checker_identity":"cf33c90ab5e11af104ab7c7dc4fba5485bdcf15d99df8155628f0c84e574530b","state":"passed","evidence_identity":"764af3d0634054f2e3ab7fe1f7e748181dce796d9bc0e6f8fa64608795c18744","recovery_action":"","checked_at":"2026-09-06T12:00:01Z"}],"status":"incomplete","ready":false,"created_at":"2026-09-06T12:00:00Z","updated_at":"2026-09-06T12:00:01Z"}`;
 const pf1PlanWires = new Map([
   [`Bearer ${"n".repeat(32)}`, currentPendingWire],
@@ -639,8 +641,9 @@ const server = createServer(async (request, response) => {
   const relative = visualAssetPath(request.url, request.method, visualAssets);
   if (relative === null) {
     response.statusCode = 404;
-    response.setHeader("content-type", "text/plain; charset=utf-8");
-    response.end("Not found");
+    response.setHeader("content-type", "text/html; charset=utf-8");
+    const body = await readFile(new URL("not-found.html", root));
+    response.end(request.method === "HEAD" ? undefined : body);
     return;
   }
   try {
@@ -692,6 +695,7 @@ try {
   browser = await chromium.launch({
     headless: true,
     executablePath: "/usr/bin/chromium",
+    env: { ...process.env, TMPDIR: process.env.TMPDIR ?? "/tmp" },
     args: ["--no-sandbox"],
   });
   async function newLocalPage(options) {
@@ -720,7 +724,8 @@ try {
   const missingResponse = await proof.goto(base + "unknown-visual-route");
   if (missingResponse?.status() !== 404)
     throw new Error("unknown fixture route did not return 404");
-  await proof.getByText("Not found", { exact: true }).waitFor();
+  await proof.getByRole("heading", { name: "Page not found" }).waitFor();
+  await proof.getByRole("link", { name: "Return to review console" }).waitFor();
   await proof.screenshot({ path: join(output, "proof-404.png") });
   await proof.close();
 
@@ -731,7 +736,9 @@ try {
     await page.getByLabel("Run", { exact: true }).fill("pr-184");
     await page.getByLabel("Access token").fill("x".repeat(32));
     await page.getByRole("button", { name: "Connect to run" }).click();
-    await page.getByRole("heading", { name: "Run active" }).waitFor();
+    await page
+      .getByRole("heading", { name: "Execution in progress" })
+      .waitFor();
   }
   async function expectCopyFailure(page, name) {
     await page.evaluate(() => {
@@ -930,6 +937,7 @@ try {
       }
       await fillWebhook(page, "pf1-owner");
       await expectNoReview(page);
+      await checkSetupTypography(page);
       if (
         await page
           .getByRole("button", { name: "Run webhook validated", exact: true })
@@ -953,6 +961,191 @@ try {
       });
     }
   }
+  const exercisedSetupCompactSelectors = new Set();
+  async function checkSetupTypography(page) {
+    const result = await page.evaluate(() => {
+      const labelFloor = 13;
+      const bodyFloor = 15;
+      const compactSelectors = [
+        ".scope-line",
+        ".data-input",
+        ".identity-row dd",
+        ".setup-guidance code",
+        ".setup-requirements .depth-index",
+      ];
+      const bodySelectors = [
+        ".setup-guidance",
+        ".confirmation-panel p",
+        ".setup-unavailable p",
+        ".success-banner p",
+        ".setup-shell .note",
+        ".setup-shell .section-head p",
+        ".profile-option small",
+        ".setup-header p",
+      ];
+      const compact = compactSelectors.map((selector) => {
+        const element = document.querySelector(selector);
+        if (!(element instanceof HTMLElement))
+          return { selector, missing: true };
+        const style = getComputedStyle(element);
+        return {
+          selector,
+          missing: false,
+          monospace: /mono/i.test(style.fontFamily),
+          size: Number.parseFloat(style.fontSize),
+        };
+      });
+      const undersized = [];
+      let checkedText = 0;
+      for (const element of document.querySelectorAll(".setup-shell *")) {
+        if (!(element instanceof HTMLElement)) continue;
+        if (
+          element.closest(".sr-only") ||
+          element.matches("[aria-hidden=true]") ||
+          !Array.from(element.childNodes).some(
+            (node) =>
+              node.nodeType === Node.TEXT_NODE && node.textContent?.trim(),
+          )
+        )
+          continue;
+        const style = getComputedStyle(element);
+        if (style.display === "none" || style.visibility === "hidden") continue;
+        checkedText++;
+        const size = Number.parseFloat(style.fontSize);
+        if (size >= labelFloor) continue;
+        const compactSelector = compactSelectors.find((selector) =>
+          element.closest(selector),
+        );
+        if (compactSelector && /mono/i.test(style.fontFamily)) continue;
+        undersized.push({
+          element: element.tagName.toLowerCase(),
+          className: element.className,
+          size,
+          text: element.textContent?.trim().slice(0, 80),
+        });
+      }
+      const undersizedBody = [];
+      for (const selector of bodySelectors) {
+        for (const element of document.querySelectorAll(selector)) {
+          if (!(element instanceof HTMLElement)) continue;
+          const style = getComputedStyle(element);
+          if (
+            style.display !== "none" &&
+            style.visibility !== "hidden" &&
+            Number.parseFloat(style.fontSize) < bodyFloor
+          )
+            undersizedBody.push({
+              selector,
+              size: Number.parseFloat(style.fontSize),
+            });
+        }
+      }
+      return { checkedText, compact, undersized, undersizedBody };
+    });
+    if (
+      result.checkedText === 0 ||
+      result.undersized.length ||
+      result.undersizedBody.length
+    )
+      throw new Error(
+        `setup typography floor failed: ${JSON.stringify(result)}`,
+      );
+    for (const entry of result.compact) {
+      if (entry.missing) continue;
+      if (!entry.monospace)
+        throw new Error(
+          `compact setup data selector is not monospace: ${JSON.stringify(entry)}`,
+        );
+      exercisedSetupCompactSelectors.add(entry.selector);
+    }
+  }
+
+  async function checkStatusMarks(page) {
+    const marks = await page.locator(".state").evaluateAll((elements) =>
+      elements.map((element) => ({
+        label: element
+          .querySelector(":scope > span:last-child")
+          ?.textContent?.trim()
+          .toLowerCase(),
+        glyph: element.querySelector(".status-icon")?.textContent,
+        mark: element
+          .querySelector(".status-icon")
+          ?.getAttribute("data-status-icon"),
+      })),
+    );
+    for (const [label, mark] of [
+      ["active", "active"],
+      ["succeeded", "passed"],
+      ["leased", "leased"],
+      ["pending", "pending"],
+    ]) {
+      const entry = marks.find((value) => value.label === label);
+      if (!entry || entry.mark !== mark || !entry.glyph)
+        throw new Error(
+          `status mark mismatch: ${label} ${JSON.stringify(entry)}`,
+        );
+    }
+    const transientGlyphs = marks
+      .filter(({ label }) => ["active", "leased", "pending"].includes(label))
+      .map(({ glyph }) => glyph);
+    if (new Set(transientGlyphs).size !== transientGlyphs.length)
+      throw new Error("transient browser status marks are not distinct");
+  }
+
+  async function checkReducedMotion(page) {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const reducedMotionPreference = await page.evaluate(
+      () => matchMedia("(prefers-reduced-motion: reduce)").matches,
+    );
+    if (!reducedMotionPreference)
+      throw new Error("reduced-motion browser preference was not applied");
+    const motionStyles = await page.evaluate(() => {
+      const primaryButton = document.querySelector(".secondary-button");
+      const depthMarker = document.querySelector(".task-spine .depth-index");
+      if (
+        !(primaryButton instanceof HTMLElement) ||
+        !(depthMarker instanceof HTMLElement)
+      )
+        throw new Error("reduced-motion state fixtures are missing");
+      const buttonStyle = getComputedStyle(primaryButton);
+      const markerStyle = getComputedStyle(depthMarker);
+      return {
+        buttonTransition: buttonStyle.transitionDuration,
+        buttonAnimation: buttonStyle.animationName,
+        markerTransition: markerStyle.transitionDuration,
+        markerAnimation: markerStyle.animationName,
+        markerDisplay: markerStyle.display,
+        markerVisibility: markerStyle.visibility,
+        markerOpacity: markerStyle.opacity,
+      };
+    });
+    if (
+      motionStyles.buttonTransition !== "0s" ||
+      motionStyles.buttonAnimation !== "none" ||
+      motionStyles.markerTransition !== "0s" ||
+      motionStyles.markerAnimation !== "none"
+    )
+      throw new Error(
+        `reduced motion retained travel: ${JSON.stringify(motionStyles)}`,
+      );
+    if (
+      motionStyles.markerDisplay === "none" ||
+      motionStyles.markerVisibility === "hidden" ||
+      Number(motionStyles.markerOpacity) === 0
+    )
+      throw new Error("reduced motion hid the selected depth state");
+    await page.getByRole("button", { name: /Tasks 9/i }).click();
+    await page.getByRole("button", { name: /verification/i }).click();
+    const selectedState = await page
+      .getByRole("button", { name: /verification/i })
+      .getAttribute("aria-current");
+    if (selectedState !== "step")
+      throw new Error("reduced motion hid the updated selected task state");
+    await page.getByText("leased", { exact: true }).waitFor();
+    await page.getByRole("button", { name: /^Overview/ }).click();
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+  }
+
   const desktop = await newLocalPage({
     viewport: { width: 1440, height: 1000 },
     deviceScaleFactor: 1,
@@ -961,13 +1154,24 @@ try {
     if (message.type() === "error") errors.push(message.text());
   });
   await populate(desktop);
+  await checkStatusMarks(desktop);
+  await checkReducedMotion(desktop);
+  await checkReviewActionTargets(desktop, [
+    ".icon-button",
+    ".rail-foot button",
+    ".section-head button",
+  ]);
   await desktop.screenshot({
     path: join(output, "open-trestle-console-desktop.png"),
     fullPage: true,
   });
-  await desktop.getByRole("button", { name: /Findings 2/i }).click();
+  await desktop.getByRole("button", { name: /Review 2/i }).click();
   await desktop.getByRole("heading", { name: "Review coverage" }).waitFor();
   await expandFirstFinding(desktop);
+  await checkReviewActionTargets(desktop, [
+    ".icon-button",
+    ".rail-foot button",
+  ]);
   await desktop.screenshot({
     path: join(output, "open-trestle-console-findings-desktop.png"),
     fullPage: true,
@@ -987,7 +1191,9 @@ try {
   await checkTabletNavigation(desktop);
   await desktop.getByRole("button", { name: /^Overview/ }).focus();
   await desktop.keyboard.press("Enter");
-  await desktop.getByRole("heading", { name: "Run active" }).waitFor();
+  await desktop
+    .getByRole("heading", { name: "Execution in progress" })
+    .waitFor();
   await desktop.screenshot({
     path: join(output, "open-trestle-console-tablet.png"),
     fullPage: true,
@@ -1011,8 +1217,12 @@ try {
   });
   await populate(mobile);
   await checkMobileBrandContrast(mobile);
-  await mobile.getByRole("button", { name: "findings" }).click();
+  await mobile.getByRole("button", { name: "review" }).click();
   await expandFirstFinding(mobile);
+  await checkReviewActionTargets(mobile, [
+    ".icon-button",
+    ".mobile-head button",
+  ]);
   await mobile.screenshot({
     path: join(output, "open-trestle-console-mobile.png"),
     fullPage: true,
@@ -1033,6 +1243,7 @@ try {
   await populateSetup(setupDesktop, "controlled hybrid", "n".repeat(32));
   await prepareCurrentIntegration(setupDesktop);
   await expectCopyFailure(setupDesktop, /Copy Plan identity:/);
+  await checkSetupTypography(setupDesktop);
   await setupDesktop.screenshot({
     path: join(output, "open-trestle-setup-desktop.png"),
     fullPage: true,
@@ -1060,6 +1271,7 @@ try {
     .getByRole("textbox", { name: /Route inventory path/i })
     .waitFor();
   await expectCopyFailure(setupMobile, /Copy Plan identity:/);
+  await checkSetupTypography(setupMobile);
   await setupMobile.screenshot({
     path: join(output, "open-trestle-setup-mobile.png"),
     fullPage: true,
@@ -1091,6 +1303,7 @@ try {
     "n".repeat(32),
   );
   await prepareCurrentIntegration(setupIntegrationMobile);
+  await checkSetupTypography(setupIntegrationMobile);
   await setupIntegrationMobile.screenshot({
     path: join(output, "open-trestle-setup-integration-mobile.png"),
     fullPage: true,
@@ -1267,6 +1480,17 @@ try {
       document.documentElement.clientWidth,
   );
   await setupRateLimitMobile.close();
+  for (const selector of [
+    ".scope-line",
+    ".data-input",
+    ".identity-row dd",
+    ".setup-guidance code",
+    ".setup-requirements .depth-index",
+  ])
+    if (!exercisedSetupCompactSelectors.has(selector))
+      throw new Error(
+        `compact setup data selector was not exercised: ${selector}`,
+      );
 } finally {
   try {
     if (browser !== undefined) await browser.close();
@@ -1370,5 +1594,8 @@ console.log(
     unexpectedEgress: 0,
     consoleErrors: 0,
     horizontalOverflow: false,
+    reducedMotion: true,
+    setupTypography: true,
+    statusIcons: true,
   }),
 );

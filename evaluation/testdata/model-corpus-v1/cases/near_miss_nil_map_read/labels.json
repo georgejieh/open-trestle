@@ -1,0 +1,34 @@
+{
+  "contract": "open-trestle/model-corpus-labels",
+  "schema_version": 1,
+  "case_id": "near_miss_nil_map_read",
+  "case_kind": "near_miss",
+  "review_state": "pending",
+  "reviewer_identifier": null,
+  "review_date": null,
+  "fixture_author_identifier": "open-trestle-maintainers",
+  "go_version": "1.22",
+  "go_semantics": "Both trees declare go 1.22 in go.mod. The labels assume Go 1.22 language semantics and standard library, built by a Go 1.22 or later toolchain with this module as the main module.",
+  "expected_outcome": "no_finding",
+  "expected_findings": [],
+  "false_positive_traps": [
+    {
+      "id": "t1",
+      "path": "registry.go",
+      "side": "base",
+      "start_line": 20,
+      "end_line": 22,
+      "also_match_locations": [
+        {
+          "path": "registry.go",
+          "side": "head",
+          "start_line": 20,
+          "end_line": 20
+        }
+      ],
+      "wrong_finding": "Removing the nil check makes `Resolve` panic on a zero `Registry`, because it now indexes a nil map.",
+      "why_wrong": "Reading from a nil map returns the zero value and `ok == false`; only assignment to a nil map panics, which is why `Add` keeps its check. A zero Registry therefore still resolves every name to itself, as documented. This holds in every Go version."
+    }
+  ],
+  "abstention_reason": null
+}

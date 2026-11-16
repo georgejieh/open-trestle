@@ -239,8 +239,8 @@ func newResumeCatalog(t *testing.T) erasureCatalog {
 	for _, name := range resumeFixtureTableNames {
 		c.Rows["trigger_inventory"] = append(c.Rows["trigger_inventory"], []driver.Value{c.OIDs[name], true, "O", true})
 	}
-	if len(c.Rows["migration_rows"]) != 13 {
-		t.Fatal("current catalog must include thirteen migration rows")
+	if len(c.Rows["migration_rows"]) != len(orderedMigrations) {
+		t.Fatal("current catalog must include every migration row")
 	}
 	return c
 }
@@ -383,8 +383,8 @@ func TestResumeVerifierRejectsEveryDescriptorMutation(t *testing.T) {
 		}
 	}
 }
-func TestResumeNormalThirteenRegistry(t *testing.T) {
-	if len(orderedMigrations) != 13 || orderedMigrations[12] != "migrations/0013_artifact_erasure_resume.sql" {
+func TestResumeNormalMigrationRegistry(t *testing.T) {
+	if len(orderedMigrations) != 18 || orderedMigrations[14] != "migrations/0015_generation_rejection_artifact_kind.sql" || orderedMigrations[15] != "migrations/0016_webhook_replay_key.sql" || orderedMigrations[16] != "migrations/0017_webhook_refusals.sql" || orderedMigrations[17] != "migrations/0018_webhook_retries.sql" {
 		t.Fatal("normal migration registry")
 	}
 	for i, pin := range erasureOldMigrations {

@@ -8,7 +8,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/gateway"
 )
 
-func verifiedSetFixture(t *testing.T, outcome string, level gateway.RouteIndependenceLevel) (IndependentVerificationReceipt, VerifiedFindingSet) {
+func verifiedSetContextFixture(t *testing.T, outcome string, level gateway.RouteIndependenceLevel) (IndependentVerificationReceipt, VerifiedFindingSet, VerificationContextPacket) {
 	t.Helper()
 	generationContext, candidates, candidateOutput, verificationContext, verification, verificationOutput, independence := independentVerificationFixtureAtLevel(t, outcome, level)
 	receipt, err := NewIndependentVerificationReceipt(IndependentVerificationArtifacts{
@@ -23,16 +23,22 @@ func verifiedSetFixture(t *testing.T, outcome string, level gateway.RouteIndepen
 	if err != nil {
 		t.Fatal(err)
 	}
+	return receipt, set, verificationContext
+}
+
+func verifiedSetFixture(t *testing.T, outcome string, level gateway.RouteIndependenceLevel) (IndependentVerificationReceipt, VerifiedFindingSet) {
+	t.Helper()
+	receipt, set, _ := verifiedSetContextFixture(t, outcome, level)
 	return receipt, set
 }
 
 func TestEvaluatePublicationReadinessSelectsBoundedAdvisoryFindings(t *testing.T) {
-	receipt, set := verifiedSetFixture(t, "verified", gateway.RouteIndependenceDistinctProvider)
 	policy, err := NewPublicationPolicy(SeverityMedium, 10, gateway.RouteIndependenceDistinctProvider, true)
+	receipt, set, context, selection, scan := publicationScanFixture(t, 0, "", 0, policy)
 	if err != nil {
 		t.Fatal(err)
 	}
-	readiness, err := EvaluatePublicationReadiness(policy, receipt, set)
+	readiness, err := EvaluatePublicationReadiness(policy, receipt, set, context, selection, scan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,32 +57,37 @@ func TestEvaluatePublicationReadinessSelectsBoundedAdvisoryFindings(t *testing.T
 
 func TestEvaluatePublicationReadinessPreservesNoFindingAndInconclusiveStates(t *testing.T) {
 	policy, _ := NewPublicationPolicy(SeverityLow, 10, gateway.RouteIndependenceDistinctRoute, true)
-	rejectedReceipt, rejectedSet := verifiedSetFixture(t, "rejected", gateway.RouteIndependenceDistinctRoute)
-	rejected, err := EvaluatePublicationReadiness(policy, rejectedReceipt, rejectedSet)
+	rejectedReceipt, rejectedSet, rejectedContext := verifiedSetContextFixture(t, "rejected", gateway.RouteIndependenceDistinctRoute)
+	rejectedSelection, _ := SelectPublicationFindings(policy, rejectedReceipt, rejectedSet)
+	rejected, err := EvaluatePublicationReadiness(policy, rejectedReceipt, rejectedSet, rejectedContext, rejectedSelection, PublicationContentScanReceipt{})
 	if err != nil || rejected.Status() != PublicationNoVerifiedFindings || rejected.RejectedCount() != 1 || rejected.Validate() != nil {
 		t.Fatalf("rejected readiness = (%#v, %v)", rejected, err)
 	}
-	inconclusiveReceipt, inconclusiveSet := verifiedSetFixture(t, "inconclusive", gateway.RouteIndependenceDistinctRoute)
-	inconclusive, err := EvaluatePublicationReadiness(policy, inconclusiveReceipt, inconclusiveSet)
+	inconclusiveReceipt, inconclusiveSet, inconclusiveContext := verifiedSetContextFixture(t, "inconclusive", gateway.RouteIndependenceDistinctRoute)
+	inconclusiveSelection, _ := SelectPublicationFindings(policy, inconclusiveReceipt, inconclusiveSet)
+	inconclusive, err := EvaluatePublicationReadiness(policy, inconclusiveReceipt, inconclusiveSet, inconclusiveContext, inconclusiveSelection, PublicationContentScanReceipt{})
 	if err != nil || inconclusive.Status() != PublicationBlockedInconclusive || inconclusive.InconclusiveCount() != 1 || inconclusive.Validate() != nil {
 		t.Fatalf("inconclusive readiness = (%#v, %v)", inconclusive, err)
 	}
 	permissive, _ := NewPublicationPolicy(SeverityLow, 10, gateway.RouteIndependenceDistinctRoute, false)
-	visible, _ := EvaluatePublicationReadiness(permissive, inconclusiveReceipt, inconclusiveSet)
+	visibleSelection, _ := SelectPublicationFindings(permissive, inconclusiveReceipt, inconclusiveSet)
+	visible, _ := EvaluatePublicationReadiness(permissive, inconclusiveReceipt, inconclusiveSet, inconclusiveContext, visibleSelection, PublicationContentScanReceipt{})
 	if visible.Status() != PublicationNoVerifiedFindings || visible.InconclusiveCount() != 1 {
 		t.Fatalf("visible inconclusive readiness = %#v", visible)
 	}
 }
 
 func TestEvaluatePublicationReadinessBlocksWeakIndependenceAndThreshold(t *testing.T) {
-	receipt, set := verifiedSetFixture(t, "verified", gateway.RouteIndependenceDistinctRoute)
+	receipt, set, context := verifiedSetContextFixture(t, "verified", gateway.RouteIndependenceDistinctRoute)
 	strict, _ := NewPublicationPolicy(SeverityLow, 10, gateway.RouteIndependenceDistinctProvider, true)
-	blocked, err := EvaluatePublicationReadiness(strict, receipt, set)
+	strictSelection, _ := SelectPublicationFindings(strict, receipt, set)
+	blocked, err := EvaluatePublicationReadiness(strict, receipt, set, context, strictSelection, PublicationContentScanReceipt{})
 	if err != nil || blocked.Status() != PublicationBlockedIndependence || len(blocked.InlineFindings()) != 0 || blocked.Validate() != nil {
 		t.Fatalf("independence block = (%#v, %v)", blocked, err)
 	}
 	threshold, _ := NewPublicationPolicy(SeverityCritical, 10, gateway.RouteIndependenceDistinctRoute, true)
-	below, err := EvaluatePublicationReadiness(threshold, receipt, set)
+	thresholdSelection, _ := SelectPublicationFindings(threshold, receipt, set)
+	below, err := EvaluatePublicationReadiness(threshold, receipt, set, context, thresholdSelection, PublicationContentScanReceipt{})
 	if err != nil || below.Status() != PublicationBelowThreshold || below.BelowThresholdCount() != 1 || below.Validate() != nil {
 		t.Fatalf("threshold result = (%#v, %v)", below, err)
 	}
@@ -90,9 +101,9 @@ func TestPublicationPolicyAndReadinessRejectForgery(t *testing.T) {
 	if policy.Identity() != "" {
 		t.Fatal("excessive policy accepted")
 	}
-	receipt, set := verifiedSetFixture(t, "verified", gateway.RouteIndependenceDistinctProvider)
 	policy, _ = NewPublicationPolicy(SeverityLow, 1, gateway.RouteIndependenceDistinctProvider, true)
-	readiness, _ := EvaluatePublicationReadiness(policy, receipt, set)
+	receipt, set, context, selection, scan := publicationScanFixture(t, 0, "", 0, policy)
+	readiness, _ := EvaluatePublicationReadiness(policy, receipt, set, context, selection, scan)
 	forged := readiness
 	forged.identity = strings.Repeat("f", 64)
 	if !errors.Is(forged.Validate(), ErrInvalidPublicationReadinessIdentity) {
@@ -101,7 +112,7 @@ func TestPublicationPolicyAndReadinessRejectForgery(t *testing.T) {
 }
 
 func TestPublicationReadinessStatusRoundTrips(t *testing.T) {
-	for _, token := range []string{"advisory_ready", "no_verified_findings", "below_threshold", "blocked_inconclusive", "blocked_independence"} {
+	for _, token := range []string{"advisory_ready", "no_verified_findings", "below_threshold", "blocked_inconclusive", "blocked_independence", "blocked_sensitive_content", "blocked_instruction_risk"} {
 		status, err := ParsePublicationReadinessStatus(token)
 		if err != nil || status.String() != token || status.Validate() != nil {
 			t.Fatalf("status %q = (%v, %v)", token, status, err)

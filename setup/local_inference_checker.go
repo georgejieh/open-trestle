@@ -2,22 +2,28 @@ package setup
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/internal/gateway"
+	"github.com/georgejieh/open-trestle/internal/memory"
 	"github.com/georgejieh/open-trestle/internal/provider"
 	reviewcore "github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 )
 
 const (
-	setupLocalInferenceTimeout              = 90 * time.Second
+	setupLocalInferenceTimeout = 90 * time.Second
+	// setupLocalInferenceEstimatedInputTokens is the declared floor of each
+	// probe reservation; the reservation is the probe request's own estimate.
 	setupLocalInferenceEstimatedInputTokens = 512
-	setupLocalInferenceMaximumInputTokens   = 1024
+	setupLocalInferenceMinimumContextTokens = 1024
 	setupLocalInferenceMaximumOutputTokens  = 256
 )
 
@@ -34,6 +40,38 @@ type LocalInferenceChecker struct {
 	policy                                 *RuntimePolicyChecker
 	factory                                LocalInferenceDispatcherFactory
 	factoryIdentity, configurationIdentity string
+
+	mu           sync.Mutex
+	probeFailure gateway.RouteFailureClass
+}
+
+// localInferenceProbeFailure is a probe request that was sent and failed with
+// a closed class; it keeps the check outcome err selects.
+type localInferenceProbeFailure struct {
+	failure gateway.RouteFailureClass
+	err     error
+}
+
+func (e localInferenceProbeFailure) Error() string { return e.err.Error() }
+func (e localInferenceProbeFailure) Unwrap() error { return e.err }
+
+// ProbeFailure returns the closed route failure class of the probe request
+// that was sent and failed in the most recent Check, such as a provider's
+// billing or retired-model refusal, so setup can name the same reason a review
+// does. It is false when that Check sent no request that failed.
+func (c *LocalInferenceChecker) ProbeFailure() (gateway.RouteFailureClass, bool) {
+	if c == nil {
+		return 0, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.probeFailure, c.probeFailure != 0
+}
+
+func (c *LocalInferenceChecker) setProbeFailure(failure gateway.RouteFailureClass) {
+	c.mu.Lock()
+	c.probeFailure = failure
+	c.mu.Unlock()
 }
 
 // NewLocalInferenceChecker binds an exact policy authority and adapter factory without resolving credentials or contacting an endpoint.
@@ -55,6 +93,9 @@ func (c *LocalInferenceChecker) Check(ctx context.Context, plan Plan) CheckResul
 	if c != nil {
 		configurationIdentity = c.configurationIdentity
 	}
+	if c != nil {
+		c.setProbeFailure(0)
+	}
 	if c != nil && ctx != nil && ctx.Err() == nil && plan.Validate() == nil {
 		if c.factory.FactoryIdentity() != c.factoryIdentity {
 			evidenceIdentity := checkerEvidenceIdentity(plan.Identity(), builtInCheckerIdentity(CheckLocalInferenceValidated), configurationIdentity, "dispatcher_invalid")
@@ -70,7 +111,7 @@ func (c *LocalInferenceChecker) Check(ctx context.Context, plan Plan) CheckResul
 		case runtimePolicyLoadBlocked:
 			outcome = "configuration_invalid"
 		case runtimePolicyLoadValid:
-			if plan.Posture().Inference() != InferenceLocalOnly || !c.policy.approval.validate(plan, inventory, policy) || !runtimePolicyMatchesSetup(plan, inventory, policy) || !passedPolicyReceiptMatches(plan, loadedIdentity) {
+			if plan.Posture().Inference() != InferenceLocalOnly || !c.policy.approval.validate(plan, inventory, policy) || !c.policy.matchesSetup(plan, inventory, policy) || !passedPolicyReceiptMatches(plan, loadedIdentity) {
 				outcome = "policy_mismatch"
 				break
 			}
@@ -80,6 +121,10 @@ func (c *LocalInferenceChecker) Check(ctx context.Context, plan Plan) CheckResul
 				configurationIdentity = checkerConfigIdentity(CheckLocalInferenceValidated, loadedIdentity+"\x00"+c.policy.approval.Identity()+"\x00"+c.factoryIdentity+"\x00"+catalog.Identity())
 				var execution string
 				execution, err = executeSetupLocalInference(bounded, plan, inventory, policy, catalog)
+				var sent localInferenceProbeFailure
+				if errors.As(err, &sent) {
+					c.setProbeFailure(sent.failure)
+				}
 				if err == nil {
 					state, outcome = CheckPassed, "valid"
 					configurationIdentity = checkerConfigIdentity(CheckLocalInferenceValidated, configurationIdentity+"\x00"+execution)
@@ -138,21 +183,26 @@ func executeSetupLocalInference(ctx context.Context, plan Plan, inventory runtim
 	if err != nil {
 		return "", err
 	}
-	probeRequirements, err := provider.NewModelRequirements(setupLocalInferenceMaximumInputTokens, setupLocalInferenceMaximumOutputTokens, []provider.ModelFeature{provider.ModelFeatureStructuredOutput})
+	probeRequirements, err := provider.NewModelRequirements(setupLocalInferenceMinimumContextTokens, setupLocalInferenceMaximumOutputTokens, []provider.ModelFeature{provider.ModelFeatureStructuredOutput})
 	if err != nil {
 		return "", err
 	}
-	candidateRequest, err := provider.NewRequest(provider.CapabilityReviewV1, "application/json", []byte(`{"contract":"open-trestle/setup-local-inference-probe","schema_version":1,"task":"candidate_generation","instruction":"Return only this exact JSON object with no markdown or extra fields.","required_output":{"schema_version":1,"candidates":[]}}`))
+	packet, candidateRequest, err := setupLocalInferenceRequest(ctx, scope, snapshot, sourceRange)
 	if err != nil {
 		return "", err
 	}
-	candidateAuthorization, err := authorizeSetupRoute(scope, candidateRequest, inventory, policy, inventory.Candidates(), probeRequirements, probeBudget)
+	candidateAuthorization, err := authorizeSetupRoute(scope, candidateRequest, inventory, policy, policy.Ranking(), inventory.Candidates(), probeRequirements, probeBudget)
+	if err != nil {
+		return "", err
+	}
+	rawGeneration, err := packet.ProviderRequest()
 	if err != nil {
 		return "", err
 	}
 	var candidates reviewcore.CandidateBatch
 	generation, err := executeSetupLocalInferenceRoute(ctx, catalog, candidateRequest, candidateAuthorization, gateway.RouteOutputCandidateBatch, func(response provider.Response) (string, error) {
-		batch, parseErr := reviewcore.ParseCandidateBatch(response, snapshot, nil)
+		// The probe packet's context version selects the candidate schema.
+		batch, parseErr := reviewcore.ParseContextCandidateBatch(response, rawGeneration.Payload(), snapshot, packet.EvidenceItems())
 		if parseErr != nil || len(batch.Findings()) != 0 {
 			return "", ErrInvalidCheckerRuntime
 		}
@@ -162,17 +212,19 @@ func executeSetupLocalInference(ctx context.Context, plan Plan, inventory runtim
 	if err != nil {
 		return "", err
 	}
-	independent := make([]gateway.ObservedRouteCandidate, 0)
-	for _, candidate := range inventory.Candidates() {
-		if gateway.VerifyIndependentRouteCandidate(policy.Independence(), candidateAuthorization, candidate) == nil {
-			independent = append(independent, candidate)
-		}
-	}
-	verificationRequest, err := provider.NewRequest(provider.CapabilityReviewV1, "application/json", []byte(`{"contract":"open-trestle/setup-local-inference-probe","schema_version":1,"task":"independent_verification","instruction":"Return only this exact JSON object with no markdown or extra fields.","required_output":{"schema_version":1,"verdicts":[]}}`))
+	verificationContext, err := reviewcore.NewVerificationRequestContext(rawGeneration.Payload(), packet.Identity(), scope.Identity(), packet.MemoryScopeIdentity(), packet.MemoryIdentity(), snapshot, packet.EvidenceItems(), candidates)
 	if err != nil {
 		return "", err
 	}
-	verificationAuthorization, err := authorizeSetupRoute(scope, verificationRequest, inventory, policy, independent, probeRequirements, probeBudget)
+	rawVerification, err := verificationContext.ProviderRequest()
+	if err != nil {
+		return "", err
+	}
+	verificationRequest, err := reviewcore.NewLocalVerificationRequest(rawVerification, scope.Identity())
+	if err != nil {
+		return "", err
+	}
+	verificationAuthorization, err := authorizeSetupVerification(scope, verificationRequest, inventory, policy, candidateAuthorization, probeRequirements, probeBudget)
 	if err != nil {
 		return "", err
 	}
@@ -198,6 +250,49 @@ func executeSetupLocalInference(ctx context.Context, plan Plan, inventory runtim
 	return dryRunIdentity("local-inference-execution", plan.RootIdentity(), inventory.Identity(), policy.Identity(), catalog.Identity(), generation.Identity(), candidates.Identity(), verification.Identity(), verdicts.Identity(), independence.Identity(), "attempts:2", "fallbacks:0", "publication_attempts:0", "dynamic_validation_attempts:0"), nil
 }
 
+func setupLocalInferenceRequest(ctx context.Context, scope audit.ReviewScope, snapshot reviewcore.ReviewSnapshot, location evidence.SourceRange) (reviewcore.ContextPacket, provider.Request, error) {
+	memoryScope, err := memory.NewScope(scope.TenantID(), scope.RepositoryID(), "setup-local-inference", memory.RefVisibilityExact, dryRunIdentity("local-inference-ref", scope.Identity()), []string{location.Path()})
+	if err != nil {
+		return reviewcore.ContextPacket{}, provider.Request{}, err
+	}
+	content := []byte("func setupProbe() {}\n")
+	digest := sha256.Sum256(content)
+	item, err := evidence.NewEvidenceItem("setup-probe", evidence.EvidenceKindSource, hex.EncodeToString(digest[:]), location)
+	if err != nil {
+		return reviewcore.ContextPacket{}, provider.Request{}, err
+	}
+	source, err := reviewcore.NewContextSource(reviewcore.ContextStageChangedHunk, memory.TaintRepositoryControlled, item, content)
+	if err != nil {
+		return reviewcore.ContextPacket{}, provider.Request{}, err
+	}
+	query, err := memory.NewLexicalQuery(memoryScope, location.Path(), nil, nil, time.UnixMilli(1), 1)
+	if err != nil {
+		return reviewcore.ContextPacket{}, provider.Request{}, err
+	}
+	retrieval, err := memory.NewLexicalIndex().Search(ctx, memoryScope, query)
+	if err != nil {
+		return reviewcore.ContextPacket{}, provider.Request{}, err
+	}
+	limits, err := reviewcore.NewContextLimits(1024, 0)
+	if err != nil {
+		return reviewcore.ContextPacket{}, provider.Request{}, err
+	}
+	packet, err := reviewcore.NewContextPacket(scope, memoryScope, snapshot, reviewcore.ContextTaskCandidateGeneration, []reviewcore.ContextSource{source}, retrieval, limits)
+	if err != nil {
+		return reviewcore.ContextPacket{}, provider.Request{}, err
+	}
+	raw, err := packet.ProviderRequest()
+	if err != nil {
+		return reviewcore.ContextPacket{}, provider.Request{}, err
+	}
+	sanitized, err := reviewcore.NewSanitizedModelRequest(scope.Identity(), raw, raw)
+	if err != nil {
+		return reviewcore.ContextPacket{}, provider.Request{}, err
+	}
+	request, err := sanitized.ProviderRequest()
+	return packet, request, err
+}
+
 type localInferenceAdmission func(provider.Response) (string, error)
 
 func executeSetupLocalInferenceRoute(ctx context.Context, catalog gateway.RouteDispatcherCatalog, request provider.Request, authorization gateway.RouteAttemptAuthorization, kind gateway.RouteOutputKind, admit localInferenceAdmission) (gateway.RouteExecutionRecord, error) {
@@ -210,15 +305,20 @@ func executeSetupLocalInferenceRoute(ctx context.Context, catalog gateway.RouteD
 		return gateway.RouteExecutionRecord{}, err
 	}
 	if result.Status() == gateway.RouteDispatchFailed {
+		failure := ErrInvalidCheckerRuntime
 		switch result.Failure() {
 		case gateway.RouteFailureTransport, gateway.RouteFailureRateLimited, gateway.RouteFailureProviderServer, gateway.RouteFailureTimeout, gateway.RouteFailureConnection, gateway.RouteFailureCancelled:
-			return gateway.RouteExecutionRecord{}, errLocalInferenceUnavailable
-		default:
-			return gateway.RouteExecutionRecord{}, ErrInvalidCheckerRuntime
+			failure = errLocalInferenceUnavailable
 		}
+		if result.ReplaySafety() != gateway.RouteReplayNotDispatched {
+			return gateway.RouteExecutionRecord{}, localInferenceProbeFailure{failure: result.Failure(), err: failure}
+		}
+		return gateway.RouteExecutionRecord{}, failure
 	}
+	// Reported input may not exceed the probe's reservation, a byte-based upper
+	// bound on the tokens it sends.
 	usage := result.Usage()
-	if !usage.IsKnown() || usage.InputTokens() > setupLocalInferenceMaximumInputTokens || usage.OutputTokens() > authorization.MaxOutputTokens() {
+	if !usage.IsKnown() || usage.InputTokens() > authorization.CostBudget().EstimatedInputTokens() || usage.OutputTokens() > authorization.MaxOutputTokens() {
 		return gateway.RouteExecutionRecord{}, ErrInvalidCheckerRuntime
 	}
 	reconciliation, err := gateway.ReconcileAuthorizedRouteAttemptCost(authorization, outcome)

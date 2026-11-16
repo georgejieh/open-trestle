@@ -28,6 +28,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/internal/scm"
+	"github.com/georgejieh/open-trestle/internal/testsupport"
 	"github.com/georgejieh/open-trestle/runtimecatalog"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 	"github.com/georgejieh/open-trestle/webhook"
@@ -75,6 +76,15 @@ func (s *requiredSource) Acquire(ctx context.Context, request evidence.Repositor
 	return result
 }
 
+// ResolveMergeBase answers as the forge compare read would: the fixture base
+// commit is the head's branch point.
+func (s *requiredSource) ResolveMergeBase(ctx context.Context, request scm.MergeBaseRequest) scm.MergeBaseResult {
+	if ctx.Err() != nil {
+		s.t.Fatal("merge base resolved after cancellation")
+	}
+	return scm.MergeBaseResult{Outcome: scm.MergeBaseResolved, MergeBase: request.Base(), Reason: evidence.AcquisitionReasonNone}
+}
+
 type requiredRequestSource struct {
 	ID        string `json:"source_id"`
 	Stage     string `json:"stage"`
@@ -111,7 +121,13 @@ func (m *requiredModel) DispatchRoute(ctx context.Context, request gateway.Route
 			Evidence []string `json:"evidence_ids"`
 		} `json:"candidates"`
 	}
-	requiredCheck(m.t, json.Unmarshal(request.Request().Payload(), &packet))
+	payload := request.Request().Payload()
+	if sanitized, err := review.SanitizedCandidatePayload(request.Request(), request.Authorization().ReviewScopeIdentity()); err == nil {
+		payload = sanitized
+	} else if sanitized, err := review.SanitizedVerificationPayload(request.Request(), request.Authorization().ReviewScopeIdentity()); err == nil {
+		payload = sanitized
+	}
+	requiredCheck(m.t, json.Unmarshal(payload, &packet))
 	var changed, caller requiredRequestSource
 	for _, source := range packet.Sources {
 		switch source.Path {
@@ -131,8 +147,8 @@ func (m *requiredModel) DispatchRoute(ctx context.Context, request gateway.Route
 		if m.adapterID != "adapter-a" || len(packet.Candidates) != 0 {
 			m.t.Fatal("generation did not retain its pinned route")
 		}
-		document = map[string]any{"schema_version": 1, "candidates": []any{map[string]any{
-			"title": "Zero-valued caller now panics", "claim": "Consume calls Changed(0), but Changed now divides by x without the previous zero guard.", "severity_hint": "high",
+		document = map[string]any{"schema_version": 2, "candidates": []any{map[string]any{
+			"title": "Zero-valued caller now panics", "claim": "Consume calls Changed(0), but Changed now divides by x without the previous zero guard.", "severity_hint": "high", "category": "correctness",
 			"source_range": map[string]any{"source_id": changed.ID, "start_line": 2, "end_line": 2}, "evidence_ids": m.evidence,
 		}}}
 	case "candidate_verification":
@@ -157,6 +173,13 @@ func (m *requiredModel) DispatchRoute(ctx context.Context, request gateway.Route
 	result, err := gateway.NewSuccessfulRouteDispatchResult(response)
 	requiredCheck(m.t, err)
 	return result
+}
+
+func (m *requiredModel) DispatchSanitizedRoute(ctx context.Context, request gateway.RouteDispatchRequest, proof modelhandler.SanitizedDispatchProof) gateway.RouteDispatchResult {
+	if proof.ValidateRequest(request.Authorization().ReviewScopeIdentity(), request.Request().Identity()) != nil {
+		m.t.Fatal("model received an invalid sanitized dispatch proof")
+	}
+	return m.DispatchRoute(ctx, request)
 }
 
 type requiredPublisher struct {
@@ -265,6 +288,13 @@ func requiredRuntimePolicy(t *testing.T, approvedVerifier bool) (runtimeconfig.R
 
 func newRequiredPipeline(t *testing.T, approvedVerifier, staleHead bool) *requiredPipeline {
 	t.Helper()
+	return newRequiredPipelineWithShared(t, approvedVerifier, staleHead, nil)
+}
+
+// newRequiredPipelineWithShared adds the shared files, byte-identical, to both
+// the base and the head tree.
+func newRequiredPipelineWithShared(t *testing.T, approvedVerifier, staleHead bool, shared map[string]string) *requiredPipeline {
+	t.Helper()
 	ctx := context.Background()
 	clock := &requiredClock{at: time.UnixMilli(1000)}
 	store, err := artifact.NewMemoryStore(artifact.ProtectionProcessPrivate, 100)
@@ -285,8 +315,13 @@ func newRequiredPipeline(t *testing.T, approvedVerifier, staleHead bool) *requir
 	requiredCheck(t, err)
 	acquired := func(body string) scm.SourceAdapterResult {
 		contents := map[string][]byte{"a.go": []byte(body), "caller.go": []byte("package p\nfunc Consume() int { return Changed(0) }\n")}
+		paths := []string{"a.go", "caller.go"}
+		for path, content := range shared {
+			contents[path] = []byte(content)
+			paths = append(paths, path)
+		}
 		var sourceFiles []evidence.RepositoryFile
-		for _, path := range []string{"a.go", "caller.go"} {
+		for _, path := range paths {
 			file, err := evidence.NewRepositoryFile(path, contents[path])
 			requiredCheck(t, err)
 			sourceFiles = append(sourceFiles, file)
@@ -321,13 +356,14 @@ func newRequiredPipeline(t *testing.T, approvedVerifier, staleHead bool) *requir
 	requiredCheck(t, err)
 	memory, err := memoryhandler.NewHandler(store, clock, memorycore.NewLexicalIndex(), requiredDigest("memory-policy"), configuration.ReviewPolicyIdentity(), "reviewer", []string{"."}, 10, 20)
 	requiredCheck(t, err)
-	assembly, err := contexthandler.NewHandler(store, clock, generationAuthority)
+	sanitizer := testsupport.NewCleanGenerationSanitizer()
+	assembly, err := contexthandler.NewHandler(store, clock, generationAuthority, sanitizer)
 	requiredCheck(t, err)
-	generationHandler, err := modelhandler.NewGenerationHandler(store, dispatchers, ledger, clock)
+	generationHandler, err := modelhandler.NewGenerationHandler(store, dispatchers, ledger, clock, sanitizer.ExpectedBinaryDigests())
 	requiredCheck(t, err)
-	verificationHandler, err := modelhandler.NewVerificationHandler(store, dispatchers, ledger, verificationAuthority, clock)
+	verificationHandler, err := modelhandler.NewVerificationHandler(store, dispatchers, ledger, verificationAuthority, clock, testsupport.NewCleanVerificationSanitizer())
 	requiredCheck(t, err)
-	readiness, err := publicationhandler.NewReadinessHandler(store, diagnostics.NewMemoryStore(), clock, configuration.ReviewPolicyIdentity(), configuration.Publication())
+	readiness, err := publicationhandler.NewReadinessHandler(store, diagnostics.NewMemoryStore(), clock, configuration.ReviewPolicyIdentity(), configuration.Publication(), testsupport.NewCleanPublicationScanner())
 	requiredCheck(t, err)
 	publication, err := publicationhandler.NewHandler(store, clock, ledger, configuration.ReviewPolicyIdentity(), configuration.Publication(), effectAuthority, publishers, resolvers)
 	requiredCheck(t, err)

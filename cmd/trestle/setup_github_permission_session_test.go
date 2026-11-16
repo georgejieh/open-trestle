@@ -457,7 +457,6 @@ func TestSetupBrokerBoundarySessionCloseDuringRealInspect(t *testing.T) {
 			f.effects(t, 1, 0, 1)
 			closeStarted = true
 			go func() { defer close(closeDone); closeErr = s.Close() }()
-			// Observation only: no private phase/channel/owner mutation.
 			setupBrokerBoundaryWait(t, s.lifetime.Done(), "owner cancellation at Close admission")
 			if b, err := s.broker(owner, f.configuration.AuthorityIdentity()); b != nil || !errors.Is(err, githubadapter.ErrBrokerClosed) {
 				t.Fatal("Close left admission open")
@@ -536,9 +535,6 @@ func TestSetupBrokerBoundarySessionNativeOpenVersusClose(t *testing.T) {
 		t.Fatal("native race created repeated owner")
 	}
 	f.effects(t, 0, 0, 0)
-	// This bounded real race does NOT claim it deterministically visited the
-	// blocked-filesystem Opening window. That window has no admitted native
-	// control seam. Do not seed phase/openDone/runtime to manufacture evidence.
 }
 
 func TestSetupBrokerBoundaryCapturedHostDoesNotReloadDescriptor(t *testing.T) {
@@ -578,7 +574,7 @@ func TestSetupBrokerBoundaryFrozenProbePreimageArithmetic(t *testing.T) {
 	}
 	sum := sha256.Sum256(append([]byte("open-trestle/setup-github-permission/v2\x00"), data...))
 	if hex.EncodeToString(sum[:]) != "6c1b6bbd3874e1f42587370b40f1fc72cb617d1d8a876067d3d25c202592eb8b" {
-		t.Fatal("root-approved 15-element preimage arithmetic drift")
+		t.Fatal("frozen 15-element preimage arithmetic drift")
 	}
 }
 

@@ -1,0 +1,472 @@
+{
+  "manifest_version": "json-schema-cases-v1",
+  "target_schema": "../model-candidate-batch-v2.schema.json",
+  "cases": [
+    {
+      "name": "valid_minimal",
+      "expected_valid": true,
+      "note": "An empty candidate batch is a valid no-candidate response.",
+      "instance": {
+        "schema_version": 2,
+        "candidates": []
+      }
+    },
+    {
+      "name": "valid_without_fix",
+      "expected_valid": true,
+      "note": "Fix guidance is optional.",
+      "instance": {
+        "schema_version": 2,
+        "candidates": [
+          {
+            "title": "Unchecked write error",
+            "claim": "The write error is discarded.",
+            "category": "reliability",
+            "severity_hint": "high",
+            "source_range": {
+              "source_id": "evidence-1",
+              "start_line": 12,
+              "end_line": 13
+            },
+            "evidence_ids": [
+              "evidence-1"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "valid_with_fix",
+      "expected_valid": true,
+      "note": "Fix guidance is untrusted plain text.",
+      "instance": {
+        "schema_version": 2,
+        "candidates": [
+          {
+            "title": "Unchecked write error",
+            "claim": "The write error is discarded.",
+            "category": "reliability",
+            "severity_hint": "high",
+            "source_range": {
+              "source_id": "evidence-1",
+              "start_line": 12,
+              "end_line": 13
+            },
+            "evidence_ids": [
+              "evidence-1"
+            ],
+            "fix": "Return the error to the caller."
+          }
+        ]
+      }
+    },
+    {
+      "name": "valid_fix_boundary_exact",
+      "expected_valid": true,
+      "note": "Fix guidance at the 256-character schema bound.",
+      "instance": {
+        "schema_version": 2,
+        "candidates": [
+          {
+            "title": "Unchecked write error",
+            "claim": "The write error is discarded.",
+            "category": "reliability",
+            "severity_hint": "high",
+            "source_range": {
+              "source_id": "evidence-1",
+              "start_line": 12,
+              "end_line": 13
+            },
+            "evidence_ids": [
+              "evidence-1"
+            ],
+            "fix": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          }
+        ]
+      }
+    },
+    {
+      "name": "valid_fix_boundary_widest_characters",
+      "expected_valid": true,
+      "note": "256 four-byte characters: the character bound always fits the 1024-byte UTF-8 runtime bound.",
+      "instance": {
+        "schema_version": 2,
+        "candidates": [
+          {
+            "title": "Unchecked write error",
+            "claim": "The write error is discarded.",
+            "category": "reliability",
+            "severity_hint": "high",
+            "source_range": {
+              "source_id": "evidence-1",
+              "start_line": 12,
+              "end_line": 13
+            },
+            "evidence_ids": [
+              "evidence-1"
+            ],
+            "fix": "🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧"
+          }
+        ]
+      }
+    },
+    {
+      "name": "valid_every_category",
+      "expected_valid": true,
+      "note": "Every closed category value is accepted.",
+      "instance": {
+        "schema_version": 2,
+        "candidates": [
+          {
+            "title": "Issue correctness",
+            "claim": "The write error is discarded.",
+            "category": "correctness",
+            "severity_hint": "high",
+            "source_range": {
+              "source_id": "evidence-1",
+              "start_line": 12,
+              "end_line": 13
+            },
+            "evidence_ids": [
+              "evidence-1"
+            ]
+          },
+          {
+            "title": "Issue security",
+            "claim": "The write error is discarded.",
+            "category": "security",
+            "severity_hint": "high",
+            "source_range": {
+              "source_id": "evidence-1",
+              "start_line": 12,
+              "end_line": 13
+            },
+            "evidence_ids": [
+              "evidence-1"
+            ]
+          },
+          {
+            "title": "Issue concurrency",
+            "claim": "The write error is discarded.",
+            "category": "concurrency",
+            "severity_hint": "high",
+            "source_range": {
+              "source_id": "evidence-1",
+              "start_line": 12,
+              "end_line": 13
+            },
+            "evidence_ids": [
+              "evidence-1"
+            ]
+          },
+          {
+            "title": "Issue performance",
+            "claim": "The write error is discarded.",
+            "category": "performance",
+            "severity_hint": "high",
+            "source_range": {
+              "source_id": "evidence-1",
+              "start_line": 12,
+              "end_line": 13
+            },
+            "evidence_ids": [
+              "evidence-1"
+            ]
+          },
+          {
+            "title": "Issue reliability",
+            "claim": "The write error is discarded.",
+            "category": "reliability",
+            "severity_hint": "high",
+            "source_range": {
+              "source_id": "evidence-1",
+              "start_line": 12,
+              "end_line": 13
+            },
+            "evidence_ids": [
+              "evidence-1"
+            ]
+          },
+          {
+            "title": "Issue maintainability",
+            "claim": "The write error is discarded.",
+            "category": "maintainability",
+            "severity_hint": "high",
+            "source_range": {
+              "source_id": "evidence-1",
+              "start_line": 12,
+              "end_line": 13
+            },
+            "evidence_ids": [
+              "evidence-1"
+            ]
+          },
+          {
+            "title": "Issue style",
+            "claim": "The write error is discarded.",
+            "category": "style",
+            "severity_hint": "high",
+            "source_range": {
+              "source_id": "evidence-1",
+              "start_line": 12,
+              "end_line": 13
+            },
+            "evidence_ids": [
+              "evidence-1"
+            ]
+          },
+          {
+            "title": "Issue documentation",
+            "claim": "The write error is discarded.",
+            "category": "documentation",
+            "severity_hint": "high",
+            "source_range": {
+              "source_id": "evidence-1",
+              "start_line": 12,
+              "end_line": 13
+            },
+            "evidence_ids": [
+              "evidence-1"
+            ]
+          },
+          {
+            "title": "Issue testing",
+            "claim": "The write error is discarded.",
+            "category": "testing",
+            "severity_hint": "high",
+            "source_range": {
+              "source_id": "evidence-1",
+              "start_line": 12,
+              "end_line": 13
+            },
+            "evidence_ids": [
+              "evidence-1"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid_schema_version_one",
+      "expected_valid": false,
+      "note": "Version 2 output must declare schema_version 2.",
+      "instance": {
+        "schema_version": 1,
+        "candidates": [
+          {
+            "title": "Unchecked write error",
+            "claim": "The write error is discarded.",
+            "category": "reliability",
+            "severity_hint": "high",
+            "source_range": {
+              "source_id": "evidence-1",
+              "start_line": 12,
+              "end_line": 13
+            },
+            "evidence_ids": [
+              "evidence-1"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid_missing_category",
+      "expected_valid": false,
+      "note": "Category is required.",
+      "instance": {
+        "schema_version": 2,
+        "candidates": [
+          {
+            "title": "Unchecked write error",
+            "claim": "The write error is discarded.",
+            "severity_hint": "high",
+            "source_range": {
+              "source_id": "evidence-1",
+              "start_line": 12,
+              "end_line": 13
+            },
+            "evidence_ids": [
+              "evidence-1"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid_unknown_category",
+      "expected_valid": false,
+      "note": "Category is a closed enum.",
+      "instance": {
+        "schema_version": 2,
+        "candidates": [
+          {
+            "title": "Unchecked write error",
+            "claim": "The write error is discarded.",
+            "category": "bug",
+            "severity_hint": "high",
+            "source_range": {
+              "source_id": "evidence-1",
+              "start_line": 12,
+              "end_line": 13
+            },
+            "evidence_ids": [
+              "evidence-1"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid_null_category",
+      "expected_valid": false,
+      "note": "Category must be a string.",
+      "instance": {
+        "schema_version": 2,
+        "candidates": [
+          {
+            "title": "Unchecked write error",
+            "claim": "The write error is discarded.",
+            "severity_hint": "high",
+            "source_range": {
+              "source_id": "evidence-1",
+              "start_line": 12,
+              "end_line": 13
+            },
+            "evidence_ids": [
+              "evidence-1"
+            ],
+            "category": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid_empty_fix",
+      "expected_valid": false,
+      "note": "A present fix must be nonblank.",
+      "instance": {
+        "schema_version": 2,
+        "candidates": [
+          {
+            "title": "Unchecked write error",
+            "claim": "The write error is discarded.",
+            "category": "reliability",
+            "severity_hint": "high",
+            "source_range": {
+              "source_id": "evidence-1",
+              "start_line": 12,
+              "end_line": 13
+            },
+            "evidence_ids": [
+              "evidence-1"
+            ],
+            "fix": ""
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid_blank_fix",
+      "expected_valid": false,
+      "note": "ASCII whitespace alone is not guidance.",
+      "instance": {
+        "schema_version": 2,
+        "candidates": [
+          {
+            "title": "Unchecked write error",
+            "claim": "The write error is discarded.",
+            "category": "reliability",
+            "severity_hint": "high",
+            "source_range": {
+              "source_id": "evidence-1",
+              "start_line": 12,
+              "end_line": 13
+            },
+            "evidence_ids": [
+              "evidence-1"
+            ],
+            "fix": "   "
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid_fix_too_long",
+      "expected_valid": false,
+      "note": "Fix guidance is bounded to 256 characters.",
+      "instance": {
+        "schema_version": 2,
+        "candidates": [
+          {
+            "title": "Unchecked write error",
+            "claim": "The write error is discarded.",
+            "category": "reliability",
+            "severity_hint": "high",
+            "source_range": {
+              "source_id": "evidence-1",
+              "start_line": 12,
+              "end_line": 13
+            },
+            "evidence_ids": [
+              "evidence-1"
+            ],
+            "fix": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid_fix_object",
+      "expected_valid": false,
+      "note": "Fix guidance is text, never a structured patch.",
+      "instance": {
+        "schema_version": 2,
+        "candidates": [
+          {
+            "title": "Unchecked write error",
+            "claim": "The write error is discarded.",
+            "category": "reliability",
+            "severity_hint": "high",
+            "source_range": {
+              "source_id": "evidence-1",
+              "start_line": 12,
+              "end_line": 13
+            },
+            "evidence_ids": [
+              "evidence-1"
+            ],
+            "fix": {
+              "patch": "x"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid_unknown_candidate_member",
+      "expected_valid": false,
+      "note": "Candidates have no other members.",
+      "instance": {
+        "schema_version": 2,
+        "candidates": [
+          {
+            "title": "Unchecked write error",
+            "claim": "The write error is discarded.",
+            "category": "reliability",
+            "severity_hint": "high",
+            "source_range": {
+              "source_id": "evidence-1",
+              "start_line": 12,
+              "end_line": 13
+            },
+            "evidence_ids": [
+              "evidence-1"
+            ],
+            "patch": "diff"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"compress/zlib"
 	"context"
-	"encoding/binary"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -469,8 +468,4 @@ func localGitUndeltifiedTypeName(typeCode int) (string, bool) {
 	default:
 		return "", false
 	}
-}
-
-func uint32FromBytes(buffer []byte) uint32 {
-	return binary.BigEndian.Uint32(buffer)
 }

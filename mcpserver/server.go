@@ -74,6 +74,9 @@ func (s *Server) Serve(ctx context.Context, input io.Reader, output io.Writer) e
 	}
 }
 func (s *Server) handle(ctx context.Context, encoded []byte) any {
+	if !utf8.Valid(encoded) {
+		return errorResponse(json.RawMessage("null"), -32700, "Message must be valid UTF-8.", nil)
+	}
 	if notification, recognized := parseCancellationNotification(encoded); recognized {
 		_ = notification
 		return nil
@@ -83,7 +86,7 @@ func (s *Server) handle(ctx context.Context, encoded []byte) any {
 	}
 	request, err := parseRequest(encoded)
 	if err != nil {
-		return errorResponse(json.RawMessage("null"), -32700, "Invalid JSON-RPC request.", nil)
+		return invalidRequestResponse(encoded)
 	}
 	meta, metaErr := parseRequestMeta(request.Params)
 	if metaErr != nil {
@@ -131,6 +134,12 @@ func (s *Server) callTool(ctx context.Context, request mcpRequest) any {
 	}
 	receipt, err := s.service.GetRun(ctx, scope)
 	if err != nil || receipt.Scope().Identity() != scope.Identity() {
+		// Only a run that was never opened can stand for a refused delivery.
+		if errors.Is(err, controlplane.ErrRunNotOpened) {
+			if text, refused := refusalText(ctx, s.service, scope); refused {
+				return toolErrorResponse(request.ID, text)
+			}
+		}
 		return toolErrorResponse(request.ID, "The review run could not be read.")
 	}
 	return receiptToolResponse(request.ID, receipt)
@@ -149,10 +158,27 @@ type requestMetadata struct {
 
 func parseRequest(encoded []byte) (mcpRequest, error) {
 	var request mcpRequest
-	if decodeStrict(encoded, &request) != nil || request.JSONRPC != "2.0" || !validRequestID(request.ID) || request.Method == "" || len(request.Method) > 128 || len(request.Params) == 0 {
+	if decodeStrict(encoded, &request) != nil || request.JSONRPC != "2.0" || !validRequestID(request.ID) || request.Method == "" || len(request.Method) > 128 {
 		return mcpRequest{}, errors.New("invalid request")
 	}
 	return request, nil
+}
+
+// invalidRequestResponse classifies a message that is not a valid request. Text
+// that is not JSON is a parse error. Any other malformed request is an invalid
+// request, and it echoes a well-formed identifier so the client can correlate
+// the failure instead of waiting for a response that would carry a null id.
+func invalidRequestResponse(encoded []byte) any {
+	if !json.Valid(encoded) {
+		return errorResponse(json.RawMessage("null"), -32700, "Invalid JSON-RPC request.", nil)
+	}
+	var envelope struct {
+		ID json.RawMessage `json:"id"`
+	}
+	if json.Unmarshal(encoded, &envelope) == nil && validRequestID(envelope.ID) {
+		return errorResponse(envelope.ID, -32600, "Invalid JSON-RPC request.", nil)
+	}
+	return errorResponse(json.RawMessage("null"), -32600, "Invalid JSON-RPC request.", nil)
 }
 func parseRequestMeta(encoded []byte) (requestMetadata, error) {
 	var params map[string]json.RawMessage
@@ -260,7 +286,7 @@ func receiptOutputSchema() map[string]any {
 		"required": []string{"contract", "schema_version", "identity", "status"},
 		"properties": map[string]any{
 			"contract":       map[string]any{"const": "open-trestle/review-run-receipt"},
-			"schema_version": map[string]any{"const": 1},
+			"schema_version": map[string]any{"enum": []int{1, 2, 3}},
 			"identity":       map[string]any{"type": "string", "pattern": "^[0-9a-f]{64}$"},
 			"status":         map[string]any{"enum": []string{"active", "succeeded", "failed", "canceled"}},
 		},

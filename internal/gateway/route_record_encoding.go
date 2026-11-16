@@ -244,18 +244,37 @@ func deriveRouteExecutionRecordIdentity(record RouteExecutionRecord) string {
 	return hex.EncodeToString(digest[:])
 }
 
+type reportedDebitUpperBoundWire struct {
+	MicroUSD uint64 `json:"micro_usd"`
+}
+
+func reportedDebitUpperBoundWireValue(bound provider.RouteReportedDebitUpperBound) *reportedDebitUpperBoundWire {
+	if !bound.IsPresent() {
+		return nil
+	}
+	return &reportedDebitUpperBoundWire{MicroUSD: bound.MicroUSD()}
+}
+
+func parseReportedDebitUpperBoundWire(wire *reportedDebitUpperBoundWire) (provider.RouteReportedDebitUpperBound, error) {
+	if wire == nil {
+		return provider.RouteReportedDebitUpperBound{}, nil
+	}
+	return provider.NewRouteReportedDebitUpperBoundMicroUSD(wire.MicroUSD)
+}
+
 type routeOutcomeWire struct {
-	Identity               string `json:"identity"`
-	Status                 string `json:"status"`
-	ResponseIdentity       string `json:"response_identity"`
-	UsageKnown             bool   `json:"usage_known"`
-	InputTokens            uint32 `json:"input_tokens"`
-	OutputTokens           uint32 `json:"output_tokens"`
-	CachedInputTokens      uint32 `json:"cached_input_tokens"`
-	Failure                string `json:"failure"`
-	ReplaySafety           string `json:"replay_safety"`
-	RetryAfterMilliseconds uint32 `json:"retry_after_milliseconds"`
-	DurationMilliseconds   uint64 `json:"duration_milliseconds"`
+	Identity                string                       `json:"identity"`
+	Status                  string                       `json:"status"`
+	ResponseIdentity        string                       `json:"response_identity"`
+	UsageKnown              bool                         `json:"usage_known"`
+	InputTokens             uint32                       `json:"input_tokens"`
+	OutputTokens            uint32                       `json:"output_tokens"`
+	CachedInputTokens       uint32                       `json:"cached_input_tokens"`
+	Failure                 string                       `json:"failure"`
+	ReplaySafety            string                       `json:"replay_safety"`
+	RetryAfterMilliseconds  uint32                       `json:"retry_after_milliseconds"`
+	DurationMilliseconds    uint64                       `json:"duration_milliseconds"`
+	ReportedDebitUpperBound *reportedDebitUpperBoundWire `json:"reported_debit_upper_bound,omitempty"`
 }
 
 type routeReconciliationWire struct {
@@ -338,33 +357,41 @@ func ParseRouteExecutionRecord(encoded []byte) (RouteExecutionRecord, error) {
 }
 
 func routeExecutionWireValue(record RouteExecutionRecord) routeExecutionWire {
-	outcome := record.Outcome()
-	actual := record.Reconciliation().ActualCost()
 	output := record.Output()
 	return routeExecutionWire{
 		Contract: "open-trestle/route-execution-record", SchemaVersion: 1, Identity: record.Identity(),
-		Authorization: routeAuthorizationWireValue(record.Authorization()),
-		Outcome: routeOutcomeWire{
-			Identity: outcome.Identity(), Status: outcome.Status().String(),
-			ResponseIdentity: outcome.ResponseIdentity(), UsageKnown: outcome.Usage().IsKnown(),
-			InputTokens: outcome.Usage().InputTokens(), OutputTokens: outcome.Usage().OutputTokens(),
-			CachedInputTokens: outcome.Usage().CachedInputTokens(), Failure: outcome.Failure().String(),
-			ReplaySafety: outcome.ReplaySafety().String(), RetryAfterMilliseconds: outcome.RetryAfterMilliseconds(),
-			DurationMilliseconds: outcome.DurationMilliseconds(),
-		},
-		Reconciliation: routeReconciliationWire{
-			Identity: record.Reconciliation().Identity(), Status: record.Reconciliation().Status().String(),
-			ReservedCostMicroUSD: record.Reconciliation().ReservedCostMicroUSD(), ActualKnown: actual.IsKnown(),
-			ActualInputCostMicroUSD: actual.InputCostMicroUSD(), ActualOutputCostMicroUSD: actual.OutputCostMicroUSD(),
-			ActualTotalCostMicroUSD:           actual.TotalCostMicroUSD(),
-			RemainingAfterReservationMicroUSD: record.Reconciliation().RemainingAfterReservationMicroUSD(),
-			RemainingCostMicroUSD:             record.Reconciliation().RemainingCostMicroUSD(),
-			BudgetOverrunMicroUSD:             record.Reconciliation().BudgetOverrunMicroUSD(),
-		},
+		Authorization:  routeAuthorizationWireValue(record.Authorization()),
+		Outcome:        routeOutcomeWireValue(record.Outcome()),
+		Reconciliation: routeReconciliationWireValue(record.Reconciliation()),
 		Output: routeOutputWire{
 			Identity: output.Identity(), Kind: output.Kind().String(),
 			ContextIdentity: output.ContextIdentity(), ArtifactIdentity: output.ArtifactIdentity(),
 		},
+	}
+}
+
+func routeOutcomeWireValue(outcome RouteAttemptOutcome) routeOutcomeWire {
+	return routeOutcomeWire{
+		Identity: outcome.Identity(), Status: outcome.Status().String(),
+		ResponseIdentity: outcome.ResponseIdentity(), UsageKnown: outcome.Usage().IsKnown(),
+		InputTokens: outcome.Usage().InputTokens(), OutputTokens: outcome.Usage().OutputTokens(),
+		CachedInputTokens: outcome.Usage().CachedInputTokens(), Failure: outcome.Failure().String(),
+		ReplaySafety: outcome.ReplaySafety().String(), RetryAfterMilliseconds: outcome.RetryAfterMilliseconds(),
+		DurationMilliseconds:    outcome.DurationMilliseconds(),
+		ReportedDebitUpperBound: reportedDebitUpperBoundWireValue(outcome.ReportedDebitUpperBound()),
+	}
+}
+
+func routeReconciliationWireValue(value RouteCostReconciliation) routeReconciliationWire {
+	actual := value.ActualCost()
+	return routeReconciliationWire{
+		Identity: value.Identity(), Status: value.Status().String(),
+		ReservedCostMicroUSD: value.ReservedCostMicroUSD(), ActualKnown: actual.IsKnown(),
+		ActualInputCostMicroUSD: actual.InputCostMicroUSD(), ActualOutputCostMicroUSD: actual.OutputCostMicroUSD(),
+		ActualTotalCostMicroUSD:           actual.TotalCostMicroUSD(),
+		RemainingAfterReservationMicroUSD: value.RemainingAfterReservationMicroUSD(),
+		RemainingCostMicroUSD:             value.RemainingCostMicroUSD(),
+		BudgetOverrunMicroUSD:             value.BudgetOverrunMicroUSD(),
 	}
 }
 
@@ -389,15 +416,22 @@ func parseRouteOutcomeWire(
 	if err != nil {
 		return RouteAttemptOutcome{}, err
 	}
+	bound, err := parseReportedDebitUpperBoundWire(wire.ReportedDebitUpperBound)
+	if err != nil {
+		return RouteAttemptOutcome{}, err
+	}
 	var outcome RouteAttemptOutcome
 	if status == RouteAttemptSucceeded {
 		if wire.Failure != "" || wire.ReplaySafety != "" || wire.RetryAfterMilliseconds != 0 {
 			return RouteAttemptOutcome{}, ErrInvalidRouteExecutionRecordEncoding
 		}
-		outcome, err = NewSuccessfulRouteAttemptOutcome(
-			authorization, wire.ResponseIdentity, usage, wire.DurationMilliseconds,
+		outcome, err = NewSuccessfulRouteAttemptOutcomeWithReportedDebitUpperBound(
+			authorization, wire.ResponseIdentity, usage, wire.DurationMilliseconds, bound,
 		)
 	} else {
+		if bound.IsPresent() {
+			return RouteAttemptOutcome{}, ErrInvalidRouteExecutionRecordEncoding
+		}
 		failure, parseErr := ParseRouteFailureClass(wire.Failure)
 		if parseErr != nil {
 			return RouteAttemptOutcome{}, parseErr

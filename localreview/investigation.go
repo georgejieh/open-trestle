@@ -27,7 +27,7 @@ type investigationSession struct {
 
 // NewInvestigationSession transfers root ownership only after inert construction succeeds.
 func NewInvestigationSession(options SessionOptions, policy review.InvestigationPolicy) (*Session, error) {
-	return newSession(options, &policy)
+	return newSession(options, &policy, review.ContextSpecialist{})
 }
 
 func validateInvestigationSessionPolicy(o SessionOptions, policy review.InvestigationPolicy) error {
@@ -167,10 +167,11 @@ func fitInvestigationDiagnostics(result Result) Result {
 	}
 	_, jsonErr := EncodeResult(result)
 	var text bytes.Buffer
-	textErr := RenderResult(&text, result)
+	textErr := RenderResultWithOptions(&text, result, maximalText)
 	if jsonErr != nil || textErr != nil {
 		result.wire.Diagnostics = []byte("null")
 		result.diagnostics = diagnostics.Set{}
+		result.wire.Rank, result.wire.PreExisting, result.wire.Anchors = nil, nil, nil
 		result.diagnosticOnly = false
 		result.wire.Limitations = append(append([]string{}, result.wire.Limitations...), "diagnostics_omitted_output_limit")
 	}
@@ -277,16 +278,22 @@ func (s *Session) closeInvestigationResources(ctx context.Context) error {
 }
 
 type investigationTurnWire struct {
-	Identity           string   `json:"identity"`
-	Artifact           string   `json:"artifact_identity"`
-	Previous           string   `json:"previous_turn_identity"`
-	Request            string   `json:"request_identity"`
-	Authorization      string   `json:"authorization_identity"`
-	Outcome            string   `json:"outcome_identity"`
-	Reconciliation     string   `json:"reconciliation_identity"`
-	Route              string   `json:"route_record_identity"`
-	ActualCostMicroUSD uint64   `json:"actual_cost_micro_usd"`
-	ToolResults        []string `json:"tool_result_identities"`
+	Identity           string `json:"identity"`
+	Artifact           string `json:"artifact_identity"`
+	Previous           string `json:"previous_turn_identity"`
+	Request            string `json:"request_identity"`
+	Authorization      string `json:"authorization_identity"`
+	Outcome            string `json:"outcome_identity"`
+	Reconciliation     string `json:"reconciliation_identity"`
+	Route              string `json:"route_record_identity"`
+	ActualCostMicroUSD uint64 `json:"actual_cost_micro_usd"`
+	// The turn's provider-reported usage. A recorded turn always has known
+	// usage, because its cost is known. Every result that lists turns is now
+	// schema version 6; version 2 and 5 turns had no usage fields.
+	InputTokens       uint64   `json:"input_tokens"`
+	OutputTokens      uint64   `json:"output_tokens"`
+	CachedInputTokens uint64   `json:"cached_input_tokens"`
+	ToolResults       []string `json:"tool_result_identities"`
 }
 
 type investigationResultWire struct {
@@ -305,7 +312,33 @@ type investigationResultWire struct {
 	KnownCostMicroUSD uint64                  `json:"known_cost_micro_usd"`
 }
 
-func (s *Session) projectInvestigation(result *Result, prepared runtimecatalog.PreparedReviewRun, state controlplane.ReviewRunState, view modelhandler.InvestigationPipelineReadback, events []audit.Event) error {
+// projectInvestigation projects the investigation readback into result and
+// accounts the claimed route attempts: each recorded turn's usage and settled
+// cost under its role, and the observed adapter result of any claim without a
+// turn record, which has no known stage. It returns the token usage. The cost
+// is known when every claimed attempt has a known settlement and the sum is the
+// route owner's own settled total.
+func (s *Session) projectInvestigation(result *Result, prepared runtimecatalog.PreparedReviewRun, state controlplane.ReviewRunState, view modelhandler.InvestigationPipelineReadback, events []audit.Event, claims []string, settled func(string) bool) (TokenUsage, error) {
+	recorded, err := s.projectInvestigationTurns(result, prepared, state, view, events)
+	if err != nil {
+		return TokenUsage{}, err
+	}
+	unattributed := func(string) tokenStage { return tokenStageUnattributed }
+	account := accountRouteAttempts(claims, recorded, unattributed, s.routeFailures.dispatchedAttempt, settled)
+	w := &result.wire
+	w.UsageKnown = account.costKnown && account.costMicroUSD == w.Investigation.KnownCostMicroUSD
+	if w.UsageKnown {
+		w.ActualCostMicroUSD = account.costMicroUSD
+	} else {
+		w.Limitations = append(w.Limitations, "unknown_final_usage")
+	}
+	if state.Status() == controlplane.ReviewRunSucceeded && !w.UsageKnown {
+		return TokenUsage{}, ErrInvalidResult
+	}
+	return account.tokens, nil
+}
+
+func (s *Session) projectInvestigationTurns(result *Result, prepared runtimecatalog.PreparedReviewRun, state controlplane.ReviewRunState, view modelhandler.InvestigationPipelineReadback, events []audit.Event) (map[string]recordedAttempt, error) {
 	w := &result.wire
 	wire := w.Investigation
 	policy := s.investigation.profile.Policy()
@@ -317,8 +350,9 @@ func (s *Session) projectInvestigation(result *Result, prepared runtimecatalog.P
 	wire.KnownCostMicroUSD = view.KnownCostMicroUSD()
 	turns := view.Turns()
 	if uint64(len(turns)) > policy.MaxModelTurns() || uint64(wire.ToolCalls) > policy.MaxToolCalls() || wire.ScannedBytes > policy.MaxScannedBytes() || wire.ReturnedBytes > policy.MaxReturnedBytes() {
-		return ErrInvalidResult
+		return nil, ErrInvalidResult
 	}
+	recorded := make(map[string]recordedAttempt, len(turns))
 	claimed, completed, reconciled := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for _, event := range events {
 		var subjects map[string]bool
@@ -332,7 +366,7 @@ func (s *Session) projectInvestigation(result *Result, prepared runtimecatalog.P
 		}
 		if subjects != nil {
 			if subjects[event.SubjectIdentity()] {
-				return ErrInvalidResult
+				return nil, ErrInvalidResult
 			}
 			subjects[event.SubjectIdentity()] = true
 		}
@@ -342,11 +376,11 @@ func (s *Session) projectInvestigation(result *Result, prepared runtimecatalog.P
 	for _, turn := range turns {
 		record, value := turn.Record(), turn.Artifact()
 		if record.Validate() != nil || value.Validate() != nil || value.Kind() != artifact.KindInvestigationTurn || value.Scope().Identity() != w.Scope || value.Protection() != artifact.ProtectionProcessPrivate || value.Classification() != s.classification || record.Authorization().ReviewScopeIdentity() != w.Scope || record.PreviousTurnIdentity() != previous || requests[record.RequestIdentity()] {
-			return ErrInvalidResult
+			return nil, ErrInvalidResult
 		}
 		authorization, outcome, reconciliation := record.Authorization().Identity(), record.Outcome().Identity(), record.Reconciliation().Identity()
 		if !claimed[authorization] || !completed[outcome] || !reconciled[reconciliation] {
-			return ErrInvalidResult
+			return nil, ErrInvalidResult
 		}
 		delete(claimed, authorization)
 		delete(completed, outcome)
@@ -355,26 +389,29 @@ func (s *Session) projectInvestigation(result *Result, prepared runtimecatalog.P
 		previous = record.Identity()
 		cost := record.Reconciliation().ActualCost()
 		if !cost.IsKnown() || knownCost > ^uint64(0)-cost.TotalCostMicroUSD() {
-			return ErrInvalidResult
+			return nil, ErrInvalidResult
 		}
 		knownCost += cost.TotalCostMicroUSD()
+		usage := record.Outcome().Usage()
+		if !usage.IsKnown() {
+			return nil, ErrInvalidResult
+		}
+		stage := tokenStageGeneration
+		if record.Role() == gateway.InvestigationVerificationTurn {
+			stage = tokenStageVerification
+		}
+		recorded[authorization] = recordedAttempt{usage, cost, stage}
 		links := append([]string{}, turn.ToolResultArtifactIdentities()...)
 		for _, identity := range links {
 			if controlplane.ValidateHandlerIdentity(identity) != nil || toolResults[identity] {
-				return ErrInvalidResult
+				return nil, ErrInvalidResult
 			}
 			toolResults[identity] = true
 		}
-		wire.Turns = append(wire.Turns, investigationTurnWire{Identity: record.Identity(), Artifact: value.Identity(), Previous: record.PreviousTurnIdentity(), Request: record.RequestIdentity(), Authorization: authorization, Outcome: outcome, Reconciliation: reconciliation, Route: record.Authorization().RouteRecordIdentity(), ActualCostMicroUSD: cost.TotalCostMicroUSD(), ToolResults: links})
+		wire.Turns = append(wire.Turns, investigationTurnWire{Identity: record.Identity(), Artifact: value.Identity(), Previous: record.PreviousTurnIdentity(), Request: record.RequestIdentity(), Authorization: authorization, Outcome: outcome, Reconciliation: reconciliation, Route: record.Authorization().RouteRecordIdentity(), ActualCostMicroUSD: cost.TotalCostMicroUSD(), InputTokens: uint64(usage.InputTokens()), OutputTokens: uint64(usage.OutputTokens()), CachedInputTokens: uint64(usage.CachedInputTokens()), ToolResults: links})
 	}
 	if uint64(len(toolResults)) > policy.MaxToolCalls() {
-		return ErrInvalidResult
-	}
-	w.UsageKnown = view.UsageKnown() && len(claimed)+len(completed)+len(reconciled) == 0 && knownCost == wire.KnownCostMicroUSD
-	if w.UsageKnown {
-		w.ActualCostMicroUSD = knownCost
-	} else {
-		w.Limitations = append(w.Limitations, "unknown_final_usage")
+		return nil, ErrInvalidResult
 	}
 	generation, hasGeneration := view.Generation()
 	verification, hasVerification := view.Verification()
@@ -384,11 +421,11 @@ func (s *Session) projectInvestigation(result *Result, prepared runtimecatalog.P
 	}
 	if hasGeneration {
 		if !matchesOutput("context", wire.ContextIntent) || !matchesOutput("candidates", generation.ResultArtifact().Identity()) || !matchesOutput("analysis", view.AnalysisArtifactIdentity()) || !matchesOutput("change", view.ChangeArtifactIdentity()) || !matchesOutput("source-head", wire.HeadSnapshot) {
-			return ErrInvalidResult
+			return nil, ErrInvalidResult
 		}
 		head, ok := prepared.Plan().Task("source-head")
 		if !ok || head.Identity() != wire.SourceHeadTask || view.InitialContextArtifact().Kind() != artifact.KindContextPacket || view.ContextIntentArtifact().Kind() != artifact.KindTaskInput {
-			return ErrInvalidResult
+			return nil, ErrInvalidResult
 		}
 		w.Context = generation.ContextIdentity()
 		w.GenerationRequest = generation.RouteExecution().Authorization().RequestIdentity()
@@ -400,23 +437,25 @@ func (s *Session) projectInvestigation(result *Result, prepared runtimecatalog.P
 			w.CandidateIDs = append(w.CandidateIDs, candidate.Identity())
 		}
 		if !requests[w.GenerationRequest] {
-			return ErrInvalidResult
+			return nil, ErrInvalidResult
 		}
 	}
 	if hasVerification {
 		if !hasGeneration || !matchesOutput("verification", view.VerificationArtifact().Identity()) {
-			return ErrInvalidResult
+			return nil, ErrInvalidResult
 		}
 		w.VerificationContext = verification.VerificationContext().Identity()
 		w.VerificationRequest = verification.RouteExecution().Authorization().RequestIdentity()
 		w.VerificationRoute = verification.RouteExecution().Authorization().RouteRecordIdentity()
 		w.Independence = verification.RouteIndependence().Level().String()
 		if !requests[w.VerificationRequest] {
-			return ErrInvalidResult
+			return nil, ErrInvalidResult
 		}
 	}
-	if state.Status() == controlplane.ReviewRunSucceeded && (!hasVerification || !w.UsageKnown || len(toolResults) != int(wire.ToolCalls)) {
-		return ErrInvalidResult
+	// A succeeded run's turns are every claimed attempt, and the route owner
+	// agrees on their settled cost.
+	if state.Status() == controlplane.ReviewRunSucceeded && (!hasVerification || !view.UsageKnown() || len(claimed)+len(completed)+len(reconciled) != 0 || knownCost != wire.KnownCostMicroUSD || len(toolResults) != int(wire.ToolCalls)) {
+		return nil, ErrInvalidResult
 	}
-	return nil
+	return recorded, nil
 }

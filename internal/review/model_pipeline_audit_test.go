@@ -28,7 +28,9 @@ func modelPipelineArtifacts(t *testing.T) (audit.ReviewScope, ModelPipelineArtif
 		t.Fatal(err)
 	}
 	policy, _ := NewPublicationPolicy(SeverityLow, 10, gateway.RouteIndependenceDistinctProvider, true)
-	readiness, err := EvaluatePublicationReadiness(policy, independent, set)
+	selection, _ := SelectPublicationFindings(policy, independent, set)
+	contentScan := contentScanReceiptFixture(t, independent, set, verificationContext, selection, 0)
+	readiness, err := EvaluatePublicationReadiness(policy, independent, set, verificationContext, selection, contentScan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +39,7 @@ func modelPipelineArtifacts(t *testing.T) (audit.ReviewScope, ModelPipelineArtif
 		GenerationContext: generationContext, CandidateOutput: candidateOutput, Candidates: candidates,
 		VerificationContext: verificationContext, VerificationOutput: verificationOutput, Verification: verification,
 		RouteIndependence: independence, IndependentVerification: independent,
-		VerifiedFindings: set, PublicationReadiness: readiness,
+		VerifiedFindings: set, PublicationContentScan: contentScan, PublicationReadiness: readiness,
 	}
 }
 

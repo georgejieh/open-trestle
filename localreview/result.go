@@ -6,16 +6,21 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/georgejieh/open-trestle/agentprofile"
 	"github.com/georgejieh/open-trestle/artifact"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/diagnostics"
 	modelhandler "github.com/georgejieh/open-trestle/handlers/model"
 	sourcehandler "github.com/georgejieh/open-trestle/handlers/source"
+	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/internal/scm"
 	"github.com/georgejieh/open-trestle/runtimecatalog"
+	"github.com/georgejieh/open-trestle/runtimeconfig"
+	"github.com/georgejieh/open-trestle/semanticimpact"
 	"io"
+	"slices"
 	"strings"
 )
 
@@ -44,6 +49,8 @@ type resultWire struct {
 	CI                     string                   `json:"ci_disposition"`
 	RunStatus              string                   `json:"run_status"`
 	Failure                string                   `json:"failure"`
+	FailureDetail          string                   `json:"failure_detail,omitempty"`    // observed refinement of Failure; see failure_summary.go
+	ContextShortfall       *contextShortfallWire    `json:"context_shortfall,omitempty"` // only with FailureDetailRouteContextInsufficient
 	Run                    string                   `json:"review_run_id"`
 	Scope                  string                   `json:"scope_identity"`
 	Request                string                   `json:"request_identity"`
@@ -68,11 +75,164 @@ type resultWire struct {
 	ComprehensiveClearance bool                     `json:"comprehensive_clearance"`
 	UsageKnown             bool                     `json:"usage_known"`
 	ActualCostMicroUSD     uint64                   `json:"actual_cost_micro_usd"`
+	TokenUsage             *TokenUsage              `json:"token_usage,omitempty"` // schema version 6 only
 	LeaseRenewals          uint64                   `json:"lease_renewals"`
 	Tasks                  []taskResult             `json:"tasks"`
 	Audit                  []auditResult            `json:"audit"`
 	Diagnostics            json.RawMessage          `json:"diagnostics"`
 	Investigation          *investigationResultWire `json:"investigation,omitempty"`
+	Specialist             *specialistResultWire    `json:"specialist,omitempty"`
+	Guidance               []findingGuidanceWire    `json:"finding_guidance,omitempty"`
+	// InstructionContextOmitted counts repository instruction files not supplied
+	// as advisory context (changed in the head, truncated, oversized,
+	// unauthorized, or over budget). They are not changed sources and never make
+	// a review incomplete. Omitted when zero.
+	InstructionContextOmitted uint32 `json:"instruction_context_omitted,omitempty"`
+	// RepositoryContextAnchorOmitted counts model proposals dropped at admission
+	// because they were located in repository instruction context rather than
+	// reviewed code. Omitted when zero.
+	RepositoryContextAnchorOmitted int `json:"repository_context_anchor_candidates_omitted,omitempty"`
+	// AgentConfigurationSources counts generation-context sources whose path
+	// names repository AI material (agent instruction files, skills, prompts,
+	// agent tool configuration). InstructionLikeSources counts sources whose
+	// content looks like instructions to a model, such as role markers or
+	// override phrases. Both are attention signals for people: such material is
+	// reviewed as code and the flags never suppress review. Omitted when zero.
+	AgentConfigurationSources int `json:"agent_configuration_sources,omitempty"`
+	InstructionLikeSources    int `json:"instruction_like_sources,omitempty"`
+	// Rank and PreExisting are the deterministic judgement of a completed
+	// version 6 run (see judgement.go): every distinct verified finding in
+	// rank order with the duplicates merged into it, and the diagnostic
+	// findings located only on lines the change did not touch. Both are
+	// omitted when there are no verified findings.
+	Rank        []rankWire `json:"rank,omitempty"`
+	PreExisting []string   `json:"pre_existing,omitempty"`
+	// Anchors places verified findings inside the changed declarations of the
+	// run's semantic-impact profile, in diagnostic order; the merge rule reads
+	// them (see anchorWire). Omitted when no finding is anchored.
+	Anchors []anchorWire `json:"declaration_anchors,omitempty"`
+	// Walkthrough is a direct version 6 run's verification-led walkthrough
+	// (see walkthrough.go), present once the change model was recorded.
+	Walkthrough *Walkthrough `json:"walkthrough,omitempty"`
+	// StyleAdvice is the optional style advice of schema version 5, encoded
+	// inline as the last members.
+	StyleAdvice
+}
+
+// Limitations naming advisory-context accounting that does not affect status.
+const (
+	instructionContextOmittedLimitation      = "instruction_context_omitted"
+	repositoryContextAnchorOmittedLimitation = "repository_context_anchor_candidates_omitted"
+)
+
+// findingGuidanceWire carries one verified finding's advisory category and
+// optional fix guidance, keyed by the diagnostic finding's source identity (the
+// verified finding identity). It appears only in schema version 4 results. The
+// verifier checked the finding's claim, not this guidance: the category is the
+// generator's advisory label and the fix is unverified model text that nothing
+// applies.
+type findingGuidanceWire struct {
+	FindingIdentity string `json:"finding_identity"`
+	Category        string `json:"category"`
+	Fix             string `json:"fix,omitempty"`
+	FixAuthority    string `json:"fix_authority,omitempty"`
+}
+
+const guidanceResultVersion = 4
+
+// FixAuthority labels every model fix-guidance string: unverified model text
+// that nothing applies. Exporters reuse it rather than restating the label.
+const FixAuthority = "unverified_model_guidance"
+
+// withFindingGuidance adds the category and fix of every categorized verified
+// finding in diagnostic order. A result with guidance is schema version 4; it
+// keeps a specialist block when one is bound.
+func withFindingGuidance(result Result, findings review.VerifiedFindingSet) (Result, error) {
+	byIdentity := make(map[string]review.VerifiedFinding, len(findings.Findings()))
+	for _, finding := range findings.Findings() {
+		byIdentity[finding.Identity()] = finding
+	}
+	var guidance []findingGuidanceWire
+	for _, diagnostic := range result.diagnostics.Findings() {
+		finding, ok := byIdentity[diagnostic.SourceIdentity()]
+		if !ok {
+			return Result{}, ErrInvalidResult
+		}
+		if finding.Category() == "" {
+			continue
+		}
+		value := findingGuidanceWire{FindingIdentity: finding.Identity(), Category: finding.Category().String(), Fix: finding.Fix()}
+		if value.Fix != "" {
+			value.FixAuthority = FixAuthority
+		}
+		guidance = append(guidance, value)
+	}
+	if len(guidance) > 0 {
+		result.wire.Version = guidanceResultVersion
+		result.wire.Guidance = guidance
+	}
+	return result, nil
+}
+
+// StyleAdvice is the style advice of a result (schema version 5) or review set,
+// in the recorded form agentprofile defines and validates. Version 5 keeps a
+// specialist block and finding guidance.
+type (
+	StyleAdvice         = agentprofile.RecordedStyleAdvice
+	StyleRecommendation = agentprofile.RecordedStyleRecommendation
+	StyleWithheld       = agentprofile.RecordedStyleWithheld
+)
+
+const styleResultVersion = 5
+
+// withStyleAdvice adds style advice to a direct review result. A result with
+// advice is schema version 5; one without keeps its version.
+func withStyleAdvice(result Result, advice StyleAdvice) Result {
+	if advice.Empty() {
+		return result
+	}
+	result.wire.Version = styleResultVersion
+	result.wire.StyleAdvice = advice
+	return result
+}
+
+// StyleAdvice returns a copy of the style advice the result carries. It is empty
+// unless the result is schema version 5.
+func (r Result) StyleAdvice() StyleAdvice {
+	if !r.valid {
+		return StyleAdvice{}
+	}
+	advice := r.wire.StyleAdvice
+	advice.Recommendations = append([]StyleRecommendation(nil), advice.Recommendations...)
+	advice.Withheld = append([]StyleWithheld(nil), advice.Withheld...)
+	return advice
+}
+
+// withTokenUsage reports the token usage of an opened run. A result with it is
+// schema version 6, which keeps every field of the earlier versions.
+func withTokenUsage(result Result, usage TokenUsage) Result {
+	result.wire.Version = tokenUsageResultVersion
+	result.wire.TokenUsage = &usage
+	return result
+}
+
+// specialistResultWire identifies the packaged profile bound into generation.
+// It appears only in schema version 3 results.
+type specialistResultWire struct {
+	ProfileID       string `json:"profile_id"`
+	ProfileIdentity string `json:"profile_identity"`
+	CatalogIdentity string `json:"catalog_identity"`
+}
+
+const specialistResultVersion = 3
+
+func withSpecialist(result Result, specialist review.ContextSpecialist) Result {
+	if specialist.IsZero() {
+		return result
+	}
+	result.wire.Version = specialistResultVersion
+	result.wire.Specialist = &specialistResultWire{ProfileID: specialist.ProfileID(), ProfileIdentity: specialist.ProfileIdentity(), CatalogIdentity: specialist.CatalogIdentity()}
+	return result
 }
 
 // Result is a sealed, bounded projection, never source or provider configuration.
@@ -83,6 +243,11 @@ type Result struct {
 	sealedJSON     []byte
 	sealedText     []byte
 	diagnosticOnly bool
+	// judged is set only when this process classified the findings (see
+	// judgeResult). A parsed result's pre_existing list is untrusted, because
+	// the reader cannot re-derive it without the change: it is never applied
+	// to findings, exit policies or the CI disposition.
+	judged bool
 }
 
 func emptyResult(status string) Result {
@@ -122,6 +287,9 @@ func (s *Session) emptyResult(status string) Result {
 	if err != nil {
 		return Result{}
 	}
+	if s != nil && openRouterZDRNotRequired(s.options.Policy) {
+		result.wire.Limitations = append(result.wire.Limitations, LimitationOpenRouterZDRNotRequired)
+	}
 	if s != nil && s.options.RetainedMemoryInput != nil {
 		limitations := make([]string, 0, len(result.wire.Limitations)+1)
 		for _, limitation := range result.wire.Limitations {
@@ -134,6 +302,17 @@ func (s *Session) emptyResult(status string) Result {
 		result.wire.Limitations = limitations
 	}
 	return result
+}
+
+// openRouterZDRNotRequired reports a connection to OpenRouter whose requests
+// do not require zero data retention.
+func openRouterZDRNotRequired(policy runtimeconfig.RuntimePolicy) bool {
+	for _, connection := range policy.Connections() {
+		if connection.Endpoint() == "https://openrouter.ai/api/v1" && !connection.RequiresZeroDataRetention() {
+			return true
+		}
+	}
+	return false
 }
 
 // NewUnstartedResult describes only a refused/unavailable host operation. It
@@ -153,6 +332,41 @@ func NewUnstartedResultWithObjectStoreProfile(status string, profile scm.LocalGi
 	}
 	return Result{}, ErrInvalidResult
 }
+
+// NewUnstartedSpecialistResult is NewUnstartedResultWithObjectStoreProfile for a
+// request that selected a packaged specialist profile. A zero specialist yields
+// the same result as NewUnstartedResultWithObjectStoreProfile.
+func NewUnstartedSpecialistResult(status string, profile scm.LocalGitObjectStoreProfile, specialist review.ContextSpecialist) (Result, error) {
+	if !specialist.IsZero() && specialist.Validate() != nil {
+		return Result{}, ErrInvalidResult
+	}
+	result, err := NewUnstartedResultWithObjectStoreProfile(status, profile)
+	if err != nil {
+		return Result{}, err
+	}
+	return withSpecialist(result, specialist), nil
+}
+
+// NewSpendingLimitRefusalResult describes a review the host refused before it
+// opened a run, because a spending limit of a key its routes use is reached:
+// status refused, CI blocked (exit 4), run not_opened, failure policy and
+// failure_detail spending_limit_reached. It is schema version 6, where
+// failure_detail exists, without token_usage, because no run opened and no
+// request was sent. A non-zero specialist keeps its block.
+func NewSpendingLimitRefusalResult(profile scm.LocalGitObjectStoreProfile, specialist review.ContextSpecialist) (Result, error) {
+	result, err := NewUnstartedSpecialistResult("refused", profile, specialist)
+	if err != nil {
+		return Result{}, err
+	}
+	result.wire.Version = tokenUsageResultVersion
+	result.wire.Failure = controlplane.RunFailurePolicy.String()
+	result.wire.FailureDetail = FailureDetailSpendingLimitReached
+	if _, err := EncodeResult(result); err != nil {
+		return Result{}, err
+	}
+	return result, nil
+}
+
 func (s *Session) unstarted(p runtimecatalog.PreparedReviewRun, status string) Result {
 	result := s.emptyResult(status)
 	w := &result.wire
@@ -167,6 +381,8 @@ func (s *Session) unstarted(p runtimecatalog.PreparedReviewRun, status string) R
 		w.Version = 2
 		w.Investigation = &investigationResultWire{Profile: s.investigation.profile.Identity(), Policy: s.investigation.profile.Policy().Identity(), Turns: []investigationTurnWire{}}
 	}
+	result = withSpecialist(result, s.specialist)
+	w = &result.wire
 	inputs := p.Inputs()
 	if len(inputs) == 2 {
 		base, e1 := sourcehandler.ParseInput(inputs[0].Payload())
@@ -187,16 +403,70 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 	w.RunStatus = state.Status().String()
 	w.Output = state.OutputIdentity()
 	w.Failure = state.Failure().String()
-	sourceFailed := false
+	sourceFailed, answerInvalid := false, false
 	for _, definition := range p.Plan().Tasks() {
 		task, ok := state.Task(definition.Key())
 		if !ok {
 			return Result{}, ErrInvalidResult
 		}
 		w.Tasks = append(w.Tasks, taskResult{task.Key(), task.Status().String(), task.Attempts(), definition.MaxAttempts(), task.OutputIdentity()})
+		answerInvalid = answerInvalid || task.Status() == controlplane.TaskRuntimeFailed && task.FailureReason() == controlplane.TaskFailureReasonModelOutputInvalid
 		if definition.Kind() == controlplane.TaskAcquireSource && task.Status() == controlplane.TaskRuntimeFailed {
 			sourceFailed = true
 		}
+	}
+	// A run that failed before it recorded its change model reviewed nothing and
+	// carries no style advice, as it carries no findings. An investigation result
+	// takes the advice now, so every retained diagnostic carries it; a direct
+	// result takes it last, after finding guidance chose version 4.
+	var style StyleAdvice
+	// lines is the change-line accounting that classifies pre-existing
+	// findings; nil when the change model cannot be read back, which
+	// classifies none.
+	var lines changeLines
+	// walk holds what the walkthrough of a direct run reads; hasWalk is set
+	// once the change model was read back.
+	var walk walkthroughInputs
+	hasWalk := false
+	if task, ok := state.Task("change"); ok && task.Status() == controlplane.TaskRuntimeSucceeded {
+		analysisID := ""
+		if analysis, ok := state.Task("analysis"); ok && analysis.Status() == controlplane.TaskRuntimeSucceeded {
+			analysisID = analysis.OutputIdentity()
+		}
+		style = s.styleAdvice(ctx, p.Plan().Scope(), task.OutputIdentity(), analysisID)
+		if recorded, err := s.readRecordedChange(ctx, p.Plan().Scope(), task.OutputIdentity(), s.options.Clock.Now()); err == nil {
+			if accounted, err := s.changeLineAccounting(ctx, p.Plan().Scope(), recorded, s.options.Clock.Now()); err == nil {
+				lines = accounted
+			}
+			walk, hasWalk = walkthroughInputs{recorded: recorded, style: style}, true
+			if analysisID != "" {
+				if analysis, err := s.readAnalysis(ctx, p.Plan().Scope(), recorded, analysisID, s.options.Clock.Now()); err == nil {
+					walk.analysis = &analysis
+				}
+			}
+		}
+	}
+	if s.investigation != nil {
+		result = withStyleAdvice(result, style)
+	}
+	if state.Status() == controlplane.ReviewRunFailed && s.routeFailures != nil && s.routeFailures.saw(gateway.RouteFailureOutputExhausted) {
+		w.FailureDetail = FailureDetailModelOutputExhausted
+	}
+	if state.Status() == controlplane.ReviewRunFailed && s.routeFailures != nil && w.FailureDetail == "" {
+		if shortfall, ok := s.routeFailures.contextShortfall(); ok {
+			w.FailureDetail = FailureDetailRouteContextInsufficient
+			w.ContextShortfall = &contextShortfallWire{RequiredTokens: shortfall.RequiredTokens, EstimatedInputTokens: shortfall.EstimatedInputTokens, MaxOutputTokens: shortfall.MaxOutputTokens, DeclaredContextTokens: shortfall.DeclaredContextTokens}
+		}
+	}
+	if state.Status() == controlplane.ReviewRunFailed && s.routeFailures != nil && w.FailureDetail == "" {
+		if detail, ok := s.routeFailures.providerRefusal(state.Failure()); ok {
+			w.FailureDetail = detail
+		}
+	}
+	// The model task recorded that the accepted answer was not a valid review
+	// document; the reason names the answer's form and never its text.
+	if state.Status() == controlplane.ReviewRunFailed && state.Failure() == controlplane.RunFailureInternal && w.FailureDetail == "" && answerInvalid {
+		w.FailureDetail = FailureDetailModelOutputInvalid
 	}
 	if state.Status() == controlplane.ReviewRunCanceled {
 		w.Status = "canceled"
@@ -217,7 +487,10 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 		diagnostic.wire.Limitations = append(append([]string{}, w.Limitations...), "execution_readback_incomplete", "unknown_final_usage")
 		s.rememberInvestigationResult(diagnostic)
 	}
-	auditLimit, maximumAudit := uint16(32), 16
+	// A direct run records up to 16 events, and each same-route retry after a
+	// rate limit adds a claim, a completion and a settlement, at most
+	// gateway.MaxRateLimitRetries times for each of its two model tasks.
+	auditLimit, maximumAudit := uint16(32), 16+2*3*gateway.MaxRateLimitRetries
 	if s.investigation != nil {
 		auditLimit, maximumAudit = 1000, 1000
 	}
@@ -232,7 +505,11 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 	if s.investigation != nil && exists != (len(events) != 0) {
 		return Result{}, ErrInvalidResult
 	}
-	claims := 0
+	var claimed []string
+	// reconciled names the authorizations whose cost reconciliation the run
+	// recorded: the event's causal parents are the authorization and outcome.
+	reconciled := map[string]bool{}
+	settled := func(authorization string) bool { return reconciled[authorization] }
 	previousAudit := ""
 	for index, event := range events {
 		if s.investigation != nil && (event.Sequence() != uint64(index+1) || event.PreviousIdentity() != previousAudit) {
@@ -244,7 +521,12 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 		}
 		w.Audit = append(w.Audit, auditResult{event.Kind().String(), event.SubjectIdentity()})
 		if event.Kind() == audit.EventRouteAttemptClaimed {
-			claims++
+			claimed = append(claimed, event.SubjectIdentity())
+		}
+		if event.Kind() == audit.EventRouteCostReconciled {
+			for _, parent := range event.CausalParentIdentities() {
+				reconciled[parent] = true
+			}
 		}
 	}
 	if s.investigation != nil {
@@ -297,6 +579,7 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 	var verification modelhandler.VerificationResult
 	var verificationArtifact artifact.Artifact
 	var hasVerification bool
+	var tokens TokenUsage
 	if s.investigation != nil {
 		if state.Status() != controlplane.ReviewRunSucceeded {
 			s.retainInvestigationDiagnostics(ctx, p, &result)
@@ -308,12 +591,16 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 				w.Status, w.CI = "failed", "error"
 			}
 			w.Limitations = append(w.Limitations, "investigation_readback_unavailable", "unknown_final_usage")
-			return result, nil
+			// Without the turn records no attempt has a known stage; the
+			// observed adapter results can still give the total.
+			unattributed := func(string) tokenStage { return tokenStageUnattributed }
+			return withTokenUsage(result, accountRouteAttempts(claimed, nil, unattributed, s.routeFailures.dispatchedAttempt, settled).tokens), nil
 		}
 		if view.PlanIdentity() != w.Plan || view.ScopeIdentity() != w.Scope || view.RunStatus() != state.Status() || view.OutputIdentity() != w.Output {
 			return Result{}, ErrInvalidResult
 		}
-		if err := s.projectInvestigation(&result, p, state, view, events); err != nil {
+		var err error
+		if tokens, err = s.projectInvestigation(&result, p, state, view, events, claimed, settled); err != nil {
 			return Result{}, err
 		}
 		verification, hasVerification = view.Verification()
@@ -324,6 +611,8 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 			return Result{}, err
 		}
 		var contextArtifact artifact.Artifact
+		generationAuthorization := ""
+		recorded := map[string]recordedAttempt{}
 		if hasContext {
 			input, err := modelhandler.ParseGenerationInput(inputArtifact.Payload())
 			if err != nil {
@@ -336,17 +625,41 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 			if inputArtifact.Kind() != artifact.KindTaskInput || inputArtifact.Origin() != artifact.OriginHost || input.ReviewScopeIdentity() != w.Scope || contextArtifact.Kind() != artifact.KindContextPacket || contextArtifact.Origin() != artifact.OriginHost || contextArtifact.PayloadDigest() != input.ContextIdentity() {
 				return Result{}, ErrInvalidResult
 			}
+			// The reported specialist must be the one actually bound into the
+			// recorded generation context, not only the session option.
+			recorded, hasSpecialist, err := review.RecordedContextSpecialist(contextArtifact.Payload())
+			if err != nil || hasSpecialist == s.specialist.IsZero() || hasSpecialist && recorded != s.specialist {
+				return Result{}, ErrInvalidResult
+			}
+			agentConfiguration, instructionLike, err := review.ContextRiskSourceCounts(contextArtifact.Payload())
+			if err != nil {
+				return Result{}, ErrInvalidResult
+			}
+			w.AgentConfigurationSources, w.InstructionLikeSources = agentConfiguration, instructionLike
+			// The walkthrough shows the stated intent and pattern hygiene the
+			// generation context actually carried, read from its exact bytes.
+			if walk.intent, err = review.ContextStatedIntent(contextArtifact.Payload()); err != nil {
+				return Result{}, ErrInvalidResult
+			}
+			if walk.hygiene, err = review.ContextPatternHygieneSummary(contextArtifact.Payload()); err != nil {
+				return Result{}, ErrInvalidResult
+			}
+			// Only a direct run knows its sources' stages, so only a direct run
+			// classifies pre-existing findings.
+			lines = lines.withContextEvidence(contextArtifact.Payload())
 			w.Context = input.ContextIdentity()
 			w.GenerationRequest = input.Authorization().RequestIdentity()
 			w.GenerationRoute = input.Authorization().RouteRecordIdentity()
+			generationAuthorization = input.Authorization().Identity()
+			if input.IsSanitized() {
+				walk.receipts = append(walk.receipts, input.SanitizedEgressReceiptArtifactIdentity())
+			}
 		}
 		generationArtifact, hasGeneration, err := taskOutput("candidates")
 		if err != nil {
 			return Result{}, err
 		}
 		var generation modelhandler.GenerationResult
-		knownExecutions := 0
-		knownCost := uint64(0)
 		if hasGeneration {
 			if !hasContext {
 				return Result{}, ErrInvalidResult
@@ -359,14 +672,12 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 			for _, candidate := range generation.Candidates().Findings() {
 				w.CandidateIDs = append(w.CandidateIDs, candidate.Identity())
 			}
-			cost := generation.RouteExecution().Reconciliation().ActualCost()
-			if cost.IsKnown() {
-				if knownCost > ^uint64(0)-cost.TotalCostMicroUSD() {
-					return Result{}, ErrInvalidResult
-				}
-				knownExecutions++
-				knownCost += cost.TotalCostMicroUSD()
+			if dropped := generation.Candidates().RepositoryContextAnchorOmittedCount(); dropped > 0 {
+				w.RepositoryContextAnchorOmitted = dropped
+				w.Limitations = append(w.Limitations, repositoryContextAnchorOmittedLimitation)
 			}
+			execution := generation.RouteExecution()
+			recorded[execution.Authorization().Identity()] = recordedAttempt{execution.Outcome().Usage(), execution.Reconciliation().ActualCost(), tokenStageGeneration}
 		}
 		verificationArtifact, hasVerification, err = taskOutput("verification")
 		if err != nil {
@@ -376,7 +687,7 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 			if !hasGeneration {
 				return Result{}, ErrInvalidResult
 			}
-			verification, err = modelhandler.ParseVerificationResultArtifact(verificationArtifact, generationArtifact, inputArtifact, contextArtifact)
+			verification, err = modelhandler.ParseStoredVerificationResultArtifact(ctx, s.store, s.options.Clock.Now(), verificationArtifact, generationArtifact, inputArtifact, contextArtifact)
 			if err != nil {
 				return Result{}, ErrInvalidResult
 			}
@@ -384,20 +695,41 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 			w.VerificationRequest = verification.RouteExecution().Authorization().RequestIdentity()
 			w.VerificationRoute = verification.RouteExecution().Authorization().RouteRecordIdentity()
 			w.Independence = verification.RouteIndependence().Level().String()
-			cost := verification.RouteExecution().Reconciliation().ActualCost()
-			if cost.IsKnown() {
-				if knownCost > ^uint64(0)-cost.TotalCostMicroUSD() {
-					return Result{}, ErrInvalidResult
-				}
-				knownExecutions++
-				knownCost += cost.TotalCostMicroUSD()
+			if id := verification.SanitizedEgressReceiptArtifactIdentity(); id != "" {
+				walk.receipts = append(walk.receipts, id)
+			}
+			execution := verification.RouteExecution()
+			recorded[execution.Authorization().Identity()] = recordedAttempt{execution.Outcome().Usage(), execution.Reconciliation().ActualCost(), tokenStageVerification}
+		}
+		// A direct run claims at most the generation attempt, whose
+		// authorization its recorded input names, and then the verification
+		// attempt.
+		stageOf := func(authorization string) tokenStage {
+			switch {
+			case generationAuthorization == "":
+				return tokenStageUnattributed
+			case authorization == generationAuthorization:
+				return tokenStageGeneration
+			default:
+				return tokenStageVerification
 			}
 		}
-		w.UsageKnown = claims == knownExecutions
+		// Cost covers every claimed attempt, as token usage does: a recorded
+		// execution's reconciliation, or a settled failed attempt's observed
+		// usage priced as its reconciliation prices it.
+		account := accountRouteAttempts(claimed, recorded, stageOf, s.routeFailures.dispatchedAttempt, settled)
+		tokens = account.tokens
+		w.UsageKnown = account.costKnown
 		if w.UsageKnown {
-			w.ActualCostMicroUSD = knownCost
+			w.ActualCostMicroUSD = account.costMicroUSD
 		} else {
 			w.Limitations = append(w.Limitations, "unknown_final_usage")
+		}
+	}
+	if hasVerification {
+		if omitted := verification.VerificationContext().SourceCoverage().InstructionContextOmittedCount(); omitted > 0 {
+			w.InstructionContextOmitted = omitted
+			w.Limitations = append(append([]string{}, w.Limitations...), instructionContextOmittedLimitation)
 		}
 	}
 	readinessArtifact, hasReadiness, err := taskOutput("readiness")
@@ -408,22 +740,36 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 		if !hasVerification || readinessArtifact.Kind() != artifact.KindPublicationPlan || readinessArtifact.Origin() != artifact.OriginPolicy || readinessArtifact.Identity() != w.Output {
 			return Result{}, ErrInvalidResult
 		}
-		readiness, err := review.EvaluatePublicationReadiness(s.options.Policy.Publication(), verification.IndependentReceipt(), verification.VerifiedFindings())
-		if err != nil {
-			return Result{}, ErrInvalidResult
-		}
 		// Read only the actual readiness artifact and check against the same core
 		// contract. This does not create a second review or publication algorithm.
 		var recorded struct {
-			Contract             string `json:"contract"`
-			Version              int    `json:"schema_version"`
-			Readiness            string `json:"readiness_identity"`
-			VerificationArtifact string `json:"verification_artifact_identity"`
-			VerificationResult   string `json:"verification_result_identity"`
-			Policy               string `json:"publication_policy_identity"`
-			Status               string `json:"status"`
+			Contract             string          `json:"contract"`
+			Version              int             `json:"schema_version"`
+			Readiness            string          `json:"readiness_identity"`
+			VerificationArtifact string          `json:"verification_artifact_identity"`
+			VerificationResult   string          `json:"verification_result_identity"`
+			Policy               string          `json:"publication_policy_identity"`
+			Status               string          `json:"status"`
+			ContentScan          json.RawMessage `json:"content_scan"`
 		}
-		if json.Unmarshal(readinessArtifact.Payload(), &recorded) != nil || recorded.Contract != "open-trestle/publication-readiness-result" || recorded.Version != 1 || recorded.Readiness != readiness.Identity() || recorded.VerificationArtifact != verificationArtifact.Identity() || recorded.VerificationResult != verification.Identity() || recorded.Policy != s.options.Policy.Publication().Identity() || recorded.Status != readiness.Status().String() {
+		if json.Unmarshal(readinessArtifact.Payload(), &recorded) != nil || recorded.Contract != "open-trestle/publication-readiness-result" || recorded.Version != 2 {
+			return Result{}, ErrInvalidResult
+		}
+		selection, err := review.SelectPublicationFindings(s.options.Policy.Publication(), verification.IndependentReceipt(), verification.VerifiedFindings())
+		if err != nil {
+			return Result{}, ErrInvalidResult
+		}
+		var contentScan review.PublicationContentScanReceipt
+		if selection.Status() == review.PublicationAdvisoryReady {
+			contentScan, err = review.ParsePublicationContentScanReceipt(recorded.ContentScan)
+			if err != nil {
+				return Result{}, ErrInvalidResult
+			}
+		} else if !bytes.Equal(recorded.ContentScan, []byte("null")) {
+			return Result{}, ErrInvalidResult
+		}
+		readiness, err := review.EvaluatePublicationReadiness(s.options.Policy.Publication(), verification.IndependentReceipt(), verification.VerifiedFindings(), verification.VerificationContext(), selection, contentScan)
+		if err != nil || recorded.Readiness != readiness.Identity() || recorded.VerificationArtifact != verificationArtifact.Identity() || recorded.VerificationResult != verification.Identity() || recorded.Policy != s.options.Policy.Publication().Identity() || recorded.Status != readiness.Status().String() {
 			return Result{}, ErrInvalidResult
 		}
 		set, err := s.diagnostics.GetDiagnosticSet(ctx, p.Plan().Scope())
@@ -440,27 +786,40 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 		}
 		w.Diagnostics = encoded
 		result.diagnostics = set
+		if s.investigation == nil {
+			if result, err = withFindingGuidance(result, verification.VerifiedFindings()); err != nil {
+				return Result{}, err
+			}
+			w = &result.wire
+		}
 		w.Readiness = recorded.Readiness
 		if state.Status() != controlplane.ReviewRunSucceeded {
 			return Result{}, ErrInvalidResult
 		}
-		switch {
-		case len(readiness.InlineFindings())+readiness.SummaryOnlyCount() > 0:
-			w.Status = "findings"
-			w.CI = "blocked"
-		case set.SourceOmittedCount() > 0 || set.InconclusiveCount() > 0:
-			w.Status = "incomplete"
-		case set.CandidateCount() == 0:
-			w.Status = "no_candidates"
-		default:
-			w.Status = "incomplete"
+		w.Status, w.CI = localReadinessDisposition(uint32(set.VerifiedCount()), set.SourceOmittedCount(), uint32(set.InconclusiveCount()), uint32(set.CandidateCount()))
+		// A direct run anchors findings to the changed declarations of its
+		// semantic-impact profile; an investigation run has no walkthrough
+		// and anchors none.
+		var declarations []semanticimpact.Declaration
+		if s.investigation == nil && walk.analysis != nil {
+			declarations = walk.analysis.SemanticImpact().Declarations()
 		}
+		if result, err = judgeResult(result, lines, declarations); err != nil {
+			return Result{}, err
+		}
+		w = &result.wire
 	}
 	if state.Status() == controlplane.ReviewRunSucceeded && !hasReadiness {
 		return Result{}, ErrInvalidResult
 	}
+	if s.investigation == nil {
+		result = withStyleAdvice(result, style)
+	}
+	result = withTokenUsage(result, tokens)
 	if s.investigation != nil {
 		result = fitInvestigationDiagnostics(result)
+	} else if hasWalk {
+		result = s.withWalkthrough(ctx, p.Plan().Scope(), result, walk, lines)
 	}
 	if _, err := EncodeResult(result); err != nil {
 		return Result{}, err
@@ -489,10 +848,26 @@ func (s *Session) FailureResult() Result {
 		return result
 	}
 	result := s.emptyResult("failed")
+	if s != nil {
+		result = withSpecialist(result, s.specialist)
+	}
 	result.wire.RunStatus = "unknown"
 	result.wire.Limitations = append(result.wire.Limitations, "execution_state_unavailable", "unknown_final_usage")
 	return result
 }
+func localReadinessDisposition(verified, omitted, inconclusive, candidates uint32) (string, string) {
+	if verified > 0 {
+		return "findings", "blocked"
+	}
+	if omitted > 0 || inconclusive > 0 {
+		return "incomplete", "inconclusive"
+	}
+	if candidates == 0 {
+		return "no_candidates", "inconclusive"
+	}
+	return "incomplete", "inconclusive"
+}
+
 func (r Result) CIDisposition() string {
 	if !r.valid {
 		return "error"
@@ -525,11 +900,22 @@ func EncodeResult(r Result) ([]byte, error) {
 	}
 	return append(value, '\n'), nil
 }
+
+// RenderResult writes the text form with the default options: confirmed high,
+// critical and medium findings listed, the rest counted.
 func RenderResult(writer io.Writer, r Result) error {
+	return RenderResultWithOptions(writer, r, RenderOptions{})
+}
+
+// RenderResultWithOptions writes the text form: the status, the walkthrough,
+// the confirmed findings in rank order, the pre-existing findings, the count
+// of findings not shown, then coverage, tokens and style advice. The
+// limitations list is internal tokens; only options.Verbose prints it.
+func RenderResultWithOptions(writer io.Writer, r Result, options RenderOptions) error {
 	if nilValue(writer) || !r.valid {
 		return ErrInvalidResult
 	}
-	if r.sealedText != nil {
+	if r.sealedText != nil && options == (RenderOptions{}) {
 		n, err := writer.Write(append([]byte(nil), r.sealedText...))
 		if err == nil && n != len(r.sealedText) {
 			err = io.ErrShortWrite
@@ -538,10 +924,55 @@ func RenderResult(writer io.Writer, r Result) error {
 	}
 	var buffer bytes.Buffer
 	fmt.Fprintf(&buffer, "status: %s\nci: %s\nrun: %s\n", r.wire.Status, r.wire.CI, r.wire.RunStatus)
-	for _, finding := range r.diagnostics.Findings() {
-		fmt.Fprintf(&buffer, "finding: %s %s\nsource: %s:%d-%d\n", finding.Severity().String(), finding.Title(), finding.Path(), finding.StartLine(), finding.EndLine())
+	if class, task, detail, hint := r.failureSummary(); class != "" {
+		fmt.Fprintf(&buffer, "failure: %s\n", FailureLine(class, task, detail))
+		if hint != "" {
+			fmt.Fprintf(&buffer, "hint: %s\n", hint)
+		}
 	}
-	fmt.Fprintf(&buffer, "limitations: %s\ncomprehensive clearance: false\n", strings.Join(r.wire.Limitations, ", "))
+	if r.wire.Specialist != nil {
+		fmt.Fprintf(&buffer, "specialist profile: %s\n", r.wire.Specialist.ProfileID)
+	}
+	report, err := r.Report()
+	if err != nil {
+		return ErrInvalidResult
+	}
+	for _, line := range WalkthroughText(report.Walkthrough) {
+		buffer.WriteString(line)
+	}
+	buffer.WriteString(FindingsText(report.Ranked, options, nil))
+	if r.diagnostics.VerifiedSetIdentity() != "" {
+		fmt.Fprintf(&buffer, "coverage: candidates=%d verified=%d rejected=%d inconclusive=%d\n", r.diagnostics.CandidateCount(), r.diagnostics.VerifiedCount(), r.diagnostics.RejectedCount(), r.diagnostics.InconclusiveCount())
+	}
+	if r.diagnostics.VerificationContextIdentity() != "" {
+		fmt.Fprintf(&buffer, "source coverage: analyzed=%d selected=%d omitted=%d\n", r.diagnostics.SourceAnalyzedCount(), r.diagnostics.SourceSelectedCount(), r.diagnostics.SourceOmittedCount())
+		for _, omission := range r.diagnostics.OmissionSummaries() {
+			fmt.Fprintf(&buffer, "source omission: %s=%d\n", omission.Reason().String(), omission.Count())
+		}
+	}
+	if r.wire.InstructionContextOmitted > 0 {
+		fmt.Fprintf(&buffer, "instruction context omitted: %d (advisory repository instructions; not source coverage)\n", r.wire.InstructionContextOmitted)
+	}
+	if r.wire.RepositoryContextAnchorOmitted > 0 {
+		fmt.Fprintf(&buffer, "candidates omitted: %d located in repository instruction context\n", r.wire.RepositoryContextAnchorOmitted)
+	}
+	if r.wire.AgentConfigurationSources > 0 || r.wire.InstructionLikeSources > 0 {
+		// Reviewed AI material is untrusted data and is reviewed as code.
+		fmt.Fprintf(&buffer, "ai material in review context: agent_configuration=%d instruction_like=%d (reviewed as code, never followed)\n", r.wire.AgentConfigurationSources, r.wire.InstructionLikeSources)
+	}
+	if slices.Contains(r.wire.Limitations, LimitationOpenRouterZDRNotRequired) {
+		buffer.WriteString(ZeroDataRetentionNotRequiredText)
+	}
+	if r.wire.TokenUsage != nil {
+		buffer.WriteString(r.wire.TokenUsage.line())
+	}
+	for _, line := range r.wire.StyleAdvice.Lines() {
+		buffer.WriteString(line)
+	}
+	if options.Verbose {
+		fmt.Fprintf(&buffer, "limitations: %s\n", strings.Join(r.wire.Limitations, ", "))
+	}
+	buffer.WriteString("comprehensive clearance: false\n")
 	if buffer.Len() > MaxResultTextBytes {
 		return ErrInvalidResult
 	}

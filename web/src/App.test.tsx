@@ -10,23 +10,36 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import {
   ApiError,
+  fetchDeliveryRefusal,
   fetchDiagnostics,
   fetchRun,
+  fetchRunProgress,
   fetchRuntimeStatus,
+} from "./api";
+import {
   fetchSetupSession,
   initializeSetup,
   parseSetupSession,
   runSetupCheck,
-} from "./api";
+} from "./setupApi";
 import { setupTestPlan } from "./setup-test-data";
-import type { DiagnosticSet, SetupPlan } from "./types";
+import type { DiagnosticSet, RunReceipt, SetupPlan } from "./types";
 vi.mock("./api", async () => {
   const actual = await vi.importActual<typeof import("./api")>("./api");
   return {
     ...actual,
     fetchRun: vi.fn(),
+    fetchDeliveryRefusal: vi.fn(),
+    fetchRunProgress: vi.fn(),
     fetchDiagnostics: vi.fn(),
     fetchRuntimeStatus: vi.fn(),
+  };
+});
+vi.mock("./setupApi", async () => {
+  const actual =
+    await vi.importActual<typeof import("./setupApi")>("./setupApi");
+  return {
+    ...actual,
     fetchSetupSession: vi.fn(),
     initializeSetup: vi.fn(),
     runSetupCheck: vi.fn(),
@@ -128,6 +141,8 @@ describe("console", () => {
   beforeEach(() => {
     sessionStorage.clear();
     vi.mocked(fetchRun).mockReset();
+    vi.mocked(fetchRunProgress).mockReset();
+    vi.mocked(fetchRunProgress).mockRejectedValue(new Error("not available"));
     vi.mocked(fetchDiagnostics).mockReset();
     vi.mocked(fetchRuntimeStatus).mockReset();
     vi.mocked(fetchSetupSession).mockReset();
@@ -137,6 +152,386 @@ describe("console", () => {
     vi.mocked(fetchRuntimeStatus).mockRejectedValue(
       new Error("not authorized"),
     );
+  });
+  it("refreshes artifact counts without replacing diagnostics or treating unknown as zero", async () => {
+    vi.mocked(fetchRun).mockResolvedValue(receipt);
+    vi.mocked(fetchDiagnostics).mockRejectedValue(new Error("not ready"));
+    vi.mocked(fetchRunProgress)
+      .mockResolvedValueOnce({
+        run: receipt,
+        progress: {
+          change: { state: "available", files: 3, ranges: 8 },
+          deterministic: {
+            state: "partial",
+            applicable_files: 2,
+            applicable_ranges: 4,
+            checked_files: 1,
+            checked_ranges: 2,
+            observations: 0,
+          },
+          context: { state: "not_run" },
+          verification: { state: "unavailable" },
+        },
+      })
+      .mockRejectedValueOnce(new ApiError("progress_changed"));
+    render(<App />);
+    for (const [name, value] of [
+      ["Tenant", "tenant-a"],
+      ["Repository", "repo-a"],
+      ["Run", "run-a"],
+      ["Access token", "x".repeat(32)],
+    ])
+      fireEvent.change(screen.getByLabelText(name!), { target: { value } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
+    await screen.findByText("Changed files: 3");
+    expect(screen.getByText("Changed ranges: 8")).toBeInTheDocument();
+    expect(screen.getByText("Checked ranges: 2")).toBeInTheDocument();
+    expect(screen.getByText("Observations: 0")).toBeInTheDocument();
+    expect(screen.getByText("Selected sources: Unknown")).toBeInTheDocument();
+    expect(screen.getByText("Verified: Unknown")).toBeInTheDocument();
+    expect(screen.getByText(/These counts do not approve/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await screen.findByText(/run advanced while progress was read/i);
+    expect(screen.queryByText("Changed files: 3")).not.toBeInTheDocument();
+    expect(screen.getByText("Changed files: Unknown")).toBeInTheDocument();
+    expect(fetchRunProgress).toHaveBeenCalledTimes(2);
+    expect(fetchDiagnostics).toHaveBeenCalledTimes(2);
+  });
+  const twoTaskReceipt: RunReceipt = {
+    ...receipt,
+    tasks: [
+      receipt.tasks[0]!,
+      {
+        ...receipt.tasks[0]!,
+        key: "change",
+        kind: "build_change",
+        task_identity: "2".repeat(64),
+      },
+    ],
+  };
+  async function connectTwoTaskRun() {
+    vi.mocked(fetchDiagnostics).mockRejectedValue(new Error("not ready"));
+    vi.mocked(fetchRunProgress).mockRejectedValue(new Error("not ready"));
+    render(<App />);
+    for (const [name, value] of [
+      ["Tenant", "tenant-a"],
+      ["Repository", "repo-a"],
+      ["Run", "run-a"],
+      ["Access token", "x".repeat(32)],
+    ])
+      fireEvent.change(screen.getByLabelText(name!), { target: { value } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled(),
+    );
+  }
+  it("moves focus into the task view after a focused overview task is activated", async () => {
+    vi.mocked(fetchRun).mockResolvedValue(twoTaskReceipt);
+    await connectTwoTaskRun();
+    const overviewTask = screen.getByRole("button", { name: /^change/ });
+    overviewTask.focus();
+    expect(overviewTask).toHaveFocus();
+    fireEvent.click(overviewTask);
+    const selectedTask = await screen.findByRole("button", { name: /^change/ });
+    expect(selectedTask).toHaveFocus();
+    expect(
+      within(
+        screen.getByRole("complementary", { name: "Task evidence inspector" }),
+      ).getByRole("heading", { name: "change" }),
+    ).toBeInTheDocument();
+  });
+  it("keeps the session and selection when a refresh fails transiently", async () => {
+    vi.mocked(fetchRun)
+      .mockResolvedValueOnce(twoTaskReceipt)
+      .mockRejectedValueOnce(new ApiError("unavailable"));
+    await connectTwoTaskRun();
+    fireEvent.click(screen.getByRole("button", { name: /^change/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Refresh failed");
+    expect(alert).toHaveTextContent(
+      "Showing the last verified journal revision",
+    );
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled();
+    expect(
+      within(
+        screen.getByRole("complementary", { name: "Task evidence inspector" }),
+      ).getByRole("heading", { name: "change" }),
+    ).toBeInTheDocument();
+  });
+  it("keeps the access token after a timed-out refresh", async () => {
+    vi.mocked(fetchRun)
+      .mockResolvedValueOnce(twoTaskReceipt)
+      .mockRejectedValueOnce(new ApiError("timeout"))
+      .mockResolvedValueOnce(twoTaskReceipt);
+    await connectTwoTaskRun();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(fetchRun).toHaveBeenCalledTimes(3));
+    const expectedScope = {
+      tenant: "tenant-a",
+      repository: "repo-a",
+      run: "run-a",
+    };
+    expect(fetchRun).toHaveBeenNthCalledWith(
+      2,
+      expectedScope,
+      "x".repeat(32),
+      undefined,
+      expect.any(AbortSignal),
+    );
+    expect(fetchRun).toHaveBeenNthCalledWith(
+      3,
+      expectedScope,
+      "x".repeat(32),
+      undefined,
+      expect.any(AbortSignal),
+    );
+    expect(
+      screen.getByRole("heading", { name: "Execution in progress" }),
+    ).toBeInTheDocument();
+  });
+  it("ends the session when a refresh is no longer authenticated", async () => {
+    vi.mocked(fetchRun)
+      .mockResolvedValueOnce(twoTaskReceipt)
+      .mockRejectedValueOnce(new ApiError("unauthenticated"));
+    await connectTwoTaskRun();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await screen.findByRole("heading", { name: "Locate a review run" });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "The access token was not accepted",
+    );
+  });
+  it("aborts and ignores a late progress response after changing scope", async () => {
+    vi.mocked(fetchRun).mockResolvedValue(receipt);
+    let finish!: (value: import("./types").RunProgress) => void;
+    let signal: AbortSignal | undefined;
+    vi.mocked(fetchRunProgress).mockImplementation(
+      (_scope, _token, _receipt, _fetcher, requestSignal) => {
+        signal = requestSignal;
+        return new Promise((resolve) => {
+          finish = resolve;
+        });
+      },
+    );
+    render(<App />);
+    for (const [name, value] of [
+      ["Tenant", "tenant-a"],
+      ["Repository", "repo-a"],
+      ["Run", "run-a"],
+      ["Access token", "x".repeat(32)],
+    ])
+      fireEvent.change(screen.getByLabelText(name!), { target: { value } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
+    await screen.findByRole("heading", { name: "Artifact-backed progress" });
+    fireEvent.click(screen.getByRole("button", { name: "Change scope" }));
+    expect(signal?.aborted).toBe(true);
+    await act(async () =>
+      finish({
+        run: receipt,
+        progress: {
+          change: { state: "available", files: 999 },
+          deterministic: { state: "not_run" },
+          context: { state: "not_run" },
+          verification: { state: "not_run" },
+        },
+      }),
+    );
+    expect(screen.queryByText("Changed files: 999")).not.toBeInTheDocument();
+    expect(fetchDiagnostics).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("heading", { name: "Locate a review run" }),
+    ).toBeInTheDocument();
+  });
+  it("keeps V7 observations separate from findings and names missing terminal evidence", async () => {
+    const base = {
+      contract: "open-trestle/review-diagnostic-set" as const,
+      identity: digest,
+      tenant_id: "tenant-a",
+      repository_id: "repo-a",
+      review_run_id: "run-a",
+      snapshot_identity: "1".repeat(64),
+      head_revision: "2".repeat(40),
+    };
+    const check = {
+      identity: "3".repeat(64),
+      source_check_identity: "4".repeat(64),
+      analysis_result_identity: "5".repeat(64),
+      change_identity: "6".repeat(64),
+      key: "static_debug_output" as const,
+      rule_version: 1 as const,
+      state: "failed" as const,
+      applicable_files: 1,
+      applicable_ranges: 1,
+      checked_files: 1,
+      checked_ranges: 1,
+      matches: 1,
+    };
+    const deterministic: Extract<DiagnosticSet, { schema_version: 6 }> = {
+      ...base,
+      schema_version: 6,
+      analysis_result_identity: check.analysis_result_identity,
+      checks: [check],
+      observations: [
+        {
+          identity: "7".repeat(64),
+          source_identity: "8".repeat(64),
+          fingerprint: "9".repeat(64),
+          analysis_result_identity: check.analysis_result_identity,
+          check_identity: check.identity,
+          title: "Exact match",
+          message: "Observed in changed range",
+          severity: "warning",
+          path: "main.go",
+          start_line: 1,
+          end_line: 1,
+          evidence_ids: [digest],
+        },
+      ],
+    };
+    const verified: Extract<DiagnosticSet, { schema_version: 5 }> = {
+      ...base,
+      schema_version: 5,
+      verified_set_identity: "b".repeat(64),
+      coverage: {
+        candidate_count: 1,
+        verified_count: 1,
+        rejected_count: 0,
+        inconclusive_count: 0,
+      },
+      source_coverage: {
+        verification_context_identity: "c".repeat(64),
+        analyzed_count: 1,
+        selected_count: 1,
+        omitted_count: 0,
+        omissions: [],
+      },
+      checks: [check],
+      findings: [
+        {
+          identity: "d".repeat(64),
+          source_identity: "e".repeat(64),
+          fingerprint: "f".repeat(64),
+          title: "Verified issue",
+          message: "Independent confirmation",
+          severity: "error",
+          path: "other.go",
+          start_line: 2,
+          end_line: 2,
+          evidence_ids: [digest],
+        },
+      ],
+    };
+    vi.mocked(fetchRun).mockResolvedValue({
+      ...receipt,
+      status: "succeeded",
+      output_identity: digest,
+    });
+    vi.mocked(fetchDiagnostics)
+      .mockResolvedValueOnce({
+        ...base,
+        schema_version: 7,
+        outcome: "completed",
+        deterministic,
+        verified,
+      })
+      .mockResolvedValueOnce({
+        ...base,
+        schema_version: 7,
+        outcome: "inconclusive",
+        evidence_expired: true,
+      })
+      .mockResolvedValueOnce({
+        ...base,
+        schema_version: 7,
+        outcome: "completed",
+        deterministic: {
+          ...deterministic,
+          checks: [{ ...check, state: "passed", matches: 0 }],
+          observations: [],
+        },
+        verified: {
+          ...verified,
+          checks: [{ ...check, state: "passed", matches: 0 }],
+          coverage: {
+            candidate_count: 0,
+            verified_count: 0,
+            rejected_count: 0,
+            inconclusive_count: 0,
+          },
+          findings: [],
+        },
+      });
+    render(<App />);
+    for (const [name, value] of [
+      ["Tenant", "tenant-a"],
+      ["Repository", "repo-a"],
+      ["Run", "run-a"],
+      ["Access token", "x".repeat(32)],
+    ] as const)
+      fireEvent.change(screen.getByLabelText(name), { target: { value } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
+    await screen.findByRole("heading", {
+      name: "Execution complete, advisory review",
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Review 2/i }));
+    expect(
+      screen.getByRole("heading", { name: "Full review completed" }),
+    ).toBeInTheDocument();
+    expect(
+      within(
+        screen.getByRole("region", { name: "Deterministic observations" }),
+      ).getByText("Exact match"),
+    ).toBeInTheDocument();
+    expect(
+      within(
+        screen.getByRole("region", { name: "Verified findings" }),
+      ).getByText("Verified issue"),
+    ).toBeInTheDocument();
+    const coverageSections = [
+      screen.getByRole("region", { name: "Deterministic rule coverage" }),
+      screen.getByRole("region", { name: "Review coverage" }),
+    ];
+    const coverageIds = coverageSections.map((section) => {
+      const titleId = section.getAttribute("aria-labelledby");
+      expect(titleId).toBeTruthy();
+      expect(section.querySelector(`[id="${titleId}"]`)).toBeInTheDocument();
+      return titleId;
+    });
+    expect(new Set(coverageIds).size).toBe(coverageIds.length);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await screen.findByRole("heading", {
+      name: "Execution complete, review inconclusive",
+    });
+    expect(
+      screen.getByText(/Missing evidence was not run/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Verification is not available/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Evidence expired: this result was recorded after/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Verified issue")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await screen.findByRole("heading", {
+      name: "Execution complete, advisory review",
+    });
+    expect(
+      screen
+        .getByRole("heading", { name: "No verified findings" })
+        .closest("section"),
+    ).not.toHaveClass("verified");
+    expect(
+      screen.getByText(/empty final finding list is not a clear result/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "No deterministic observations" }),
+    ).toBeInTheDocument();
   });
   it("starts with a scoped connection form and does not persist tokens", () => {
     render(<App />);
@@ -168,7 +563,7 @@ describe("console", () => {
     fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { name: "Run active" }),
+        screen.getByRole("heading", { name: "Execution in progress" }),
       ).toBeInTheDocument(),
     );
     expect(screen.getByText("source")).toBeInTheDocument();
@@ -177,10 +572,207 @@ describe("console", () => {
       screen.getByRole("button", { name: `Copy Run receipt: ${digest}` }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /Findings n\/a/i }),
+      screen.getByRole("button", { name: /Review n\/a/i }),
     ).toBeInTheDocument();
     expect(sessionStorage.getItem("open-trestle-scope")).toContain("tenant-a");
     expect(sessionStorage.getItem("open-trestle-token")).toBeNull();
+  });
+
+  it("names a recorded source refusal reason beside the failure", async () => {
+    vi.mocked(fetchRun).mockResolvedValue({
+      ...receipt,
+      schema_version: 3,
+      status: "failed",
+      failure: "policy",
+      tasks: receipt.tasks.map((task) => ({
+        ...task,
+        status: "failed" as const,
+        output_identity: "",
+        failure: "policy" as const,
+        failure_reason: "no_merge_base" as const,
+      })),
+    });
+    vi.mocked(fetchDiagnostics).mockRejectedValue(new Error("not ready"));
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("Tenant"), {
+      target: { value: "tenant-a" },
+    });
+    fireEvent.change(screen.getByLabelText("Repository"), {
+      target: { value: "repo-a" },
+    });
+    fireEvent.change(screen.getByLabelText("Run"), {
+      target: { value: "run-a" },
+    });
+    fireEvent.change(screen.getByLabelText("Access token"), {
+      target: { value: "x".repeat(32) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
+    await waitFor(() =>
+      expect(
+        screen.getAllByText(
+          /No merge base: the requested base and the head share no history/,
+        ).length,
+      ).toBeGreaterThan(0),
+    );
+    expect(screen.getAllByText("policy").length).toBeGreaterThan(0);
+  });
+
+  it("names a context route refusal and its hint beside the failure", async () => {
+    const shortfall = {
+      required_tokens: 14282,
+      estimated_input_tokens: 10186,
+      max_output_tokens: 4096,
+      declared_context_tokens: 4097,
+    };
+    vi.mocked(fetchRun).mockResolvedValue({
+      ...receipt,
+      schema_version: 3,
+      status: "failed",
+      failure: "policy",
+      tasks: receipt.tasks.map((task) => ({
+        ...task,
+        kind: "assemble_context" as const,
+        status: "failed" as const,
+        output_identity: "",
+        failure: "policy" as const,
+        failure_reason: "route_context_insufficient" as const,
+        context_shortfall: shortfall,
+      })),
+    });
+    vi.mocked(fetchDiagnostics).mockRejectedValue(new Error("not ready"));
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("Tenant"), {
+      target: { value: "tenant-a" },
+    });
+    fireEvent.change(screen.getByLabelText("Repository"), {
+      target: { value: "repo-a" },
+    });
+    fireEvent.change(screen.getByLabelText("Run"), {
+      target: { value: "run-a" },
+    });
+    fireEvent.change(screen.getByLabelText("Access token"), {
+      target: { value: "x".repeat(32) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
+    await waitFor(() =>
+      expect(
+        screen.getAllByText(
+          /Route context insufficient: the review request needs more context than the route declares/,
+        ).length,
+      ).toBeGreaterThan(0),
+    );
+    expect(
+      screen.getAllByText(
+        /the review needs up to 14282 tokens \(a byte-based upper bound: 10186 input plus 4096 output\) but the route declares max_context_tokens 4097/,
+      ).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it.each([
+    {
+      failure: "policy" as const,
+      reason: "provider_payment_required" as const,
+      label:
+        /Provider payment required: the provider refused the request for billing/,
+      hint: "add credit or a subscription to the provider account, or choose another route",
+    },
+    {
+      failure: "internal" as const,
+      reason: "provider_response_invalid" as const,
+      label:
+        /Provider reply refused: the provider answered, but its reply did not match what Open Trestle accepts/,
+      hint: "run the review again; if it repeats, choose another model or route and report it",
+    },
+    {
+      failure: "internal" as const,
+      reason: "model_output_invalid" as const,
+      label:
+        /Model answer not a review document: the model's answer was not a valid review document/,
+      hint: "run the review again; if it repeats, choose another model",
+    },
+    {
+      failure: "policy" as const,
+      reason: "provider_request_rejected" as const,
+      label:
+        /Provider request rejected: the provider rejected the request as invalid, for example an unknown model ID or a parameter the model or endpoint does not accept/,
+      hint: "check the model ID, the endpoint and its transport, and that the model and endpoint accept structured output and the requested output allowance; then re-run setup",
+    },
+  ])(
+    "names a provider refusal ($reason) and its hint beside the failure",
+    async ({ failure, reason, label, hint }) => {
+      vi.mocked(fetchRun).mockResolvedValue({
+        ...receipt,
+        schema_version: 3,
+        status: "failed",
+        failure,
+        tasks: receipt.tasks.map((task) => ({
+          ...task,
+          kind: "generate_candidates" as const,
+          status: "failed" as const,
+          output_identity: "",
+          failure,
+          failure_reason: reason,
+        })),
+      });
+      vi.mocked(fetchDiagnostics).mockRejectedValue(new Error("not ready"));
+      render(<App />);
+      fireEvent.change(screen.getByLabelText("Tenant"), {
+        target: { value: "tenant-a" },
+      });
+      fireEvent.change(screen.getByLabelText("Repository"), {
+        target: { value: "repo-a" },
+      });
+      fireEvent.change(screen.getByLabelText("Run"), {
+        target: { value: "run-a" },
+      });
+      fireEvent.change(screen.getByLabelText("Access token"), {
+        target: { value: "x".repeat(32) },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
+      await waitFor(() =>
+        expect(screen.getAllByText(label).length).toBeGreaterThan(0),
+      );
+      expect(screen.getAllByText(hint).length).toBeGreaterThan(0);
+    },
+  );
+
+  it("names a recorded delivery refusal when no run was opened", async () => {
+    const key = "b".repeat(64);
+    vi.mocked(fetchRun).mockRejectedValue(new ApiError("not_found"));
+    vi.mocked(fetchDeliveryRefusal).mockResolvedValue({
+      contract: "open-trestle/webhook-delivery-refusal",
+      schema_version: 1,
+      identity: digest,
+      tenant_id: "tenant-a",
+      repository_id: "repo-a",
+      source: "github",
+      deduplication_key: key,
+      delivery_identity: digest,
+      planner_identity: digest,
+      reason: "invalid_pull_request_payload",
+      refused_at_milliseconds: 2000,
+    });
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("Tenant"), {
+      target: { value: "tenant-a" },
+    });
+    fireEvent.change(screen.getByLabelText("Repository"), {
+      target: { value: "repo-a" },
+    });
+    fireEvent.change(screen.getByLabelText("Run"), {
+      target: { value: `webhook-${key}` },
+    });
+    fireEvent.change(screen.getByLabelText("Access token"), {
+      target: { value: "x".repeat(32) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          /No run was opened: intake refused this delivery \(invalid_pull_request_payload: the pull request payload cannot be planned\)/,
+        ),
+      ).toBeInTheDocument(),
+    );
   });
 
   it("discloses exact verified finding evidence lineage", async () => {
@@ -223,8 +815,8 @@ describe("console", () => {
     ] as const)
       fireEvent.change(screen.getByLabelText(name), { target: { value } });
     fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
-    await screen.findByRole("heading", { name: "Run active" });
-    fireEvent.click(screen.getByRole("button", { name: /Findings 1/i }));
+    await screen.findByRole("heading", { name: "Execution in progress" });
+    fireEvent.click(screen.getByRole("button", { name: /Review 1/i }));
     const summary = await screen.findByText("Inspect evidence");
     const details = summary.closest("details");
     expect(details).not.toHaveAttribute("open");
@@ -270,6 +862,171 @@ describe("console", () => {
       configurable: true,
       value: originalClipboard,
     });
+  });
+
+  it("labels a finding on removed base lines instead of showing head lines", async () => {
+    vi.mocked(fetchRun).mockResolvedValue(receipt);
+    vi.mocked(fetchDiagnostics).mockResolvedValue({
+      contract: "open-trestle/review-diagnostic-set",
+      schema_version: 8,
+      identity: "b".repeat(64),
+      tenant_id: "tenant-a",
+      repository_id: "repo-a",
+      review_run_id: "run-a",
+      snapshot_identity: "1".repeat(64),
+      head_revision: "2".repeat(40),
+      verified_set_identity: "3".repeat(64),
+      coverage: {
+        candidate_count: 1,
+        verified_count: 1,
+        rejected_count: 0,
+        inconclusive_count: 0,
+      },
+      source_coverage: {
+        verification_context_identity: "4".repeat(64),
+        analyzed_count: 1,
+        selected_count: 1,
+        omitted_count: 0,
+        omissions: [],
+      },
+      checks: [
+        {
+          identity: "5".repeat(64),
+          source_check_identity: "6".repeat(64),
+          analysis_result_identity: "7".repeat(64),
+          change_identity: "8".repeat(64),
+          key: "static_debug_output",
+          rule_version: 1,
+          state: "passed",
+          applicable_files: 1,
+          applicable_ranges: 2,
+          checked_files: 1,
+          checked_ranges: 2,
+          matches: 0,
+        },
+      ],
+      findings: [
+        {
+          identity: "d".repeat(64),
+          source_identity: "e".repeat(64),
+          fingerprint: "f".repeat(64),
+          title: "Removed zero guard",
+          message: "Div no longer checks b before dividing.",
+          severity: "error",
+          path: "calc.go",
+          start_line: 4,
+          end_line: 6,
+          side: "base",
+          evidence_ids: ["evidence-removed-4"],
+        },
+      ],
+    });
+    render(<App />);
+    for (const [name, value] of [
+      ["Tenant", "tenant-a"],
+      ["Repository", "repo-a"],
+      ["Run", "run-a"],
+      ["Access token", "x".repeat(32)],
+    ] as const)
+      fireEvent.change(screen.getByLabelText(name), { target: { value } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
+    await screen.findByRole("heading", { name: "Execution in progress" });
+    fireEvent.click(screen.getByRole("button", { name: /Review 1/i }));
+    expect(
+      await screen.findByText("calc.go · removed base lines 4-6"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("calc.go:4-6")).not.toBeInTheDocument();
+  });
+
+  it("renders deterministic observations without calling them verified", async () => {
+    const analysis = "7".repeat(64),
+      checkIdentity = "5".repeat(64),
+      observationIdentity = "9".repeat(64);
+    vi.mocked(fetchRun).mockResolvedValue({
+      ...receipt,
+      status: "succeeded",
+      output_identity: digest,
+    });
+    vi.mocked(fetchDiagnostics).mockResolvedValue({
+      contract: "open-trestle/review-diagnostic-set",
+      schema_version: 6,
+      identity: "f".repeat(64),
+      tenant_id: "tenant-a",
+      repository_id: "repo-a",
+      review_run_id: "run-a",
+      snapshot_identity: "1".repeat(64),
+      head_revision: "2".repeat(40),
+      analysis_result_identity: analysis,
+      checks: [
+        {
+          identity: checkIdentity,
+          source_check_identity: "6".repeat(64),
+          analysis_result_identity: analysis,
+          change_identity: "8".repeat(64),
+          key: "static_debug_output",
+          rule_version: 1,
+          state: "failed",
+          applicable_files: 1,
+          applicable_ranges: 1,
+          checked_files: 1,
+          checked_ranges: 1,
+          matches: 1,
+        },
+      ],
+      observations: [
+        {
+          identity: observationIdentity,
+          source_identity: "a".repeat(64),
+          fingerprint: "b".repeat(64),
+          analysis_result_identity: analysis,
+          check_identity: checkIdentity,
+          title: "Debug output left in source",
+          message:
+            "The deterministic static rule matched this exact changed range; human review is required.",
+          severity: "warning",
+          path: "main.go",
+          start_line: 3,
+          end_line: 3,
+          evidence_ids: ["c".repeat(64)],
+        },
+      ],
+    });
+    render(<App />);
+    for (const [name, value] of [
+      ["Tenant", "tenant-a"],
+      ["Repository", "repo-a"],
+      ["Run", "run-a"],
+      ["Access token", "x".repeat(32)],
+    ] as const)
+      fireEvent.change(screen.getByLabelText(name), { target: { value } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
+    await screen.findByRole("heading", {
+      name: "Execution complete, review required",
+    });
+    expect(
+      screen.getByLabelText("Operational run status succeeded"),
+    ).toHaveTextContent(/succeeded/i);
+    expect(
+      screen.queryByRole("heading", { name: "Run succeeded" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Review 1/i }));
+    expect(
+      await screen.findByRole("heading", {
+        name: "Deterministic rule coverage",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/not independently verified findings/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText("warning · deterministic")).toBeInTheDocument();
+    expect(screen.getByText("main.go:3-3")).toBeInTheDocument();
+    expect(screen.queryByText(/1 verified/i)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("Inspect evidence"));
+    expect(
+      screen.getByRole("button", {
+        name: `Copy Observation identity: ${observationIdentity}`,
+      }),
+    ).toBeInTheDocument();
   });
 
   it("renders incomplete candidate and source coverage without implying approval", async () => {
@@ -327,8 +1084,8 @@ describe("console", () => {
     ] as const)
       fireEvent.change(screen.getByLabelText(name), { target: { value } });
     fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
-    await screen.findByRole("heading", { name: "Run active" });
-    fireEvent.click(screen.getByRole("button", { name: /Findings 0/i }));
+    await screen.findByRole("heading", { name: "Execution in progress" });
+    fireEvent.click(screen.getByRole("button", { name: /Review 0/i }));
     expect(
       await screen.findByRole("heading", { name: "Human review queue" }),
     ).toBeInTheDocument();
@@ -365,7 +1122,11 @@ describe("console", () => {
   });
 
   it("does not present a failed deterministic check as a clean empty state", async () => {
-    vi.mocked(fetchRun).mockResolvedValue(receipt);
+    vi.mocked(fetchRun).mockResolvedValue({
+      ...receipt,
+      status: "succeeded",
+      output_identity: digest,
+    });
     vi.mocked(fetchDiagnostics).mockResolvedValue({
       contract: "open-trestle/review-diagnostic-set",
       schema_version: 5,
@@ -416,8 +1177,10 @@ describe("console", () => {
     ] as const)
       fireEvent.change(screen.getByLabelText(name), { target: { value } });
     fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
-    await screen.findByRole("heading", { name: "Run active" });
-    fireEvent.click(screen.getByRole("button", { name: /Findings 0/i }));
+    await screen.findByRole("heading", {
+      name: "Execution complete, review required",
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Review 0/i }));
     expect(
       await screen.findByText(/Failed check: Static debug output failed/i),
     ).toBeInTheDocument();
@@ -459,7 +1222,7 @@ describe("console", () => {
       ] as const)
         fireEvent.change(screen.getByLabelText(name), { target: { value } });
       fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
-      await screen.findByRole("heading", { name: "Run active" });
+      await screen.findByRole("heading", { name: "Execution in progress" });
       expect(fetchDiagnostics).toHaveBeenCalledTimes(1);
       fireEvent.click(screen.getByRole("button", { name: "Change scope" }));
       if (reconnect) {
@@ -489,6 +1252,8 @@ describe("console", () => {
         expect(fetchRuntimeStatus).toHaveBeenCalledExactlyOnceWith(
           { tenant: "tenant-b", repository: "repo-b", run: "run-b" },
           "y".repeat(32),
+          undefined,
+          expect.any(AbortSignal),
         );
         expect(screen.getByText("run-b")).toBeInTheDocument();
       } else {
@@ -535,7 +1300,7 @@ describe("console", () => {
         expect(fetchDiagnostics).toHaveBeenCalledTimes(1);
         expect(fetchRuntimeStatus).toHaveBeenCalledTimes(1);
         expect(
-          screen.getByRole("button", { name: /Findings 0/i }),
+          screen.getByRole("button", { name: /Review 0/i }),
         ).toBeInTheDocument();
         expect(screen.queryByRole("alert")).not.toBeInTheDocument();
         expect(write).toHaveBeenCalledExactlyOnceWith(
@@ -632,7 +1397,7 @@ describe("console", () => {
       target: { value: "x".repeat(32) },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
-    await screen.findByRole("heading", { name: "Run active" });
+    await screen.findByRole("heading", { name: "Execution in progress" });
     fireEvent.click(screen.getByRole("button", { name: /Runtime ready/i }));
     expect(
       await screen.findByRole("heading", { name: "Runtime state" }),
@@ -643,6 +1408,41 @@ describe("console", () => {
         name: `Copy Configuration: ${"c".repeat(64)}`,
       }),
     ).toBeInTheDocument();
+  });
+
+  it("shows bounded Runtime unavailable state without stale identities", async () => {
+    vi.mocked(fetchRun).mockResolvedValue(receipt);
+    vi.mocked(fetchDiagnostics).mockRejectedValue(new Error("not ready"));
+    vi.mocked(fetchRuntimeStatus).mockRejectedValue(
+      new ApiError("invalid_response"),
+    );
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("Tenant"), {
+      target: { value: "tenant-a" },
+    });
+    fireEvent.change(screen.getByLabelText("Repository"), {
+      target: { value: "repo-a" },
+    });
+    fireEvent.change(screen.getByLabelText("Run"), {
+      target: { value: "run-a" },
+    });
+    fireEvent.change(screen.getByLabelText("Access token"), {
+      target: { value: "x".repeat(32) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect to run" }));
+    await screen.findByRole("heading", { name: "Execution in progress" });
+    fireEvent.click(screen.getByRole("button", { name: /Runtime n\/a/i }));
+    expect(
+      await screen.findByRole("heading", {
+        name: "Runtime status is not available",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Runtime status could not be loaded with this token."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Copy Status:/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("creates a safe setup plan only after explicit confirmation", async () => {
@@ -782,6 +1582,10 @@ describe("console", () => {
     expect(
       await screen.findByText("Check completed: passed."),
     ).toBeInTheDocument();
+
+    expect(
+      screen.getByText("This exact requirement has a passing receipt."),
+    ).toHaveTextContent("✓ This exact requirement has a passing receipt.");
     expect(runSetupCheck).toHaveBeenCalledWith(
       {
         plan_identity: initial.identity,
@@ -986,9 +1790,13 @@ describe("console", () => {
     );
     await screen.findByRole("heading", { name: "local inference validated" });
     expect(screen.getByText(/at most two fixed probes/i)).toBeInTheDocument();
-    expect(
-      screen.getByText(/Pass the exact policy validation check/i),
-    ).toBeInTheDocument();
+    const inferenceGuidance = screen.getByText(
+      /Pass the exact policy validation check/i,
+    );
+    expect(inferenceGuidance).toBeInTheDocument();
+    expect(inferenceGuidance).toHaveTextContent(
+      "! Pass the exact policy validation check",
+    );
     expect(
       screen.getByText(/no retry or remote fallback/i),
     ).toBeInTheDocument();
@@ -1406,6 +2214,15 @@ describe("console", () => {
       }),
     );
     await screen.findByText(/The setup plan changed. Inspect it again/i);
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveFocus();
+    const workspaceHeading = screen.getByRole("heading", {
+      name: /controlled hybrid/i,
+    });
+    expect(
+      alert.compareDocumentPosition(workspaceHeading) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(runSetupCheck).toHaveBeenCalledExactlyOnceWith(
       {
         plan_identity: plan.identity,
@@ -1727,8 +2544,8 @@ describe("console", () => {
   );
 
   it("blocks historical pending webhook despite a passed legacy permission receipt", async () => {
-    // Exact native pre-change fixtures[2].plan.bytes from legacy-capture/manifest.json.
-    // SHA256 b0f09483ce6e7db0ac31c389ac4cb2d430408f7ec5b0d4dec550d67479aa5766; no regeneration or relabeling.
+    // Exact bytes of a historical setup plan with a pending webhook check.
+    // SHA256 b0f09483ce6e7db0ac31c389ac4cb2d430408f7ec5b0d4dec550d67479aa5766; never regenerated or relabeled.
     const wire = `{"contract":"open-trestle/setup-plan","schema_version":1,"identity":"443a6272bcb6d541f6607834dbcbb718313f1d813f6ed0d15dcbd32a0228b0b8","previous_identity":"f8ceacaddafd1bc9cbeabe52563974cf98797e47f67b3fcbf478b52830731c89","checker_catalog_identity":"3a88cb6db2d7a6b3b9eae8aa36e4ca2a0914e6ad5138bb9e5249607d12c49b1f","checker_authorities":[{"key":"backup_validated","checker_identity":"03a4d428f289ba85dba8c4f1b7ddfafc74583d9309864f36cc6ef8926616b679"},{"key":"dry_run_validated","checker_identity":"10304a30edd798790388e923d73df4115b8526231641db5b13dee9d088f938df"},{"key":"envelope_storage_validated","checker_identity":"a7366f408e306dd70702319bfad8333f71e7e92b97604d69be936291a0b98ceb"},{"key":"integration_permissions_validated","checker_identity":"cf33c90ab5e11af104ab7c7dc4fba5485bdcf15d99df8155628f0c84e574530b"},{"key":"local_administrator_validated","checker_identity":"f3832f5d85d7774290f8b6c88a634ec956e68ced3198fd6fca64a9b6f99ced89"},{"key":"observer_credential_posture_validated","checker_identity":"4af5a2fcecd69ec07da6ffb696215820c2b84a225340953f68f5a126e52cf542"},{"key":"policy_validated","checker_identity":"5694cd4de9ea61bc97b9cdcfa651678c23f55e9998e564fea4570585cc8386a4"},{"key":"postgres_storage_validated","checker_identity":"df68a8e3dbe159f168d8464410a5be817e53a0d6870517edde780d374fcb17f0"},{"key":"remote_provider_authorized","checker_identity":"1999eefcbe108499aeeded297b938cbb248e5a14552ebdc697b3e69d7985f4c1"},{"key":"secret_backend_validated","checker_identity":"2ce90162ea0586ca8db04cda4e7a1ee9fc6303e7e2cc77773d36c519785839df"},{"key":"webhook_validated","checker_identity":"94b83acc748c71e3d42ce06632b4abb370f35bbfc2262d2c1e98a223d29fc14e"}],"revision":2,"tenant_id":"pf1-tenant","repository_id":"pf1-repository","recovery_owner":"pf1-owner","profile":"controlled_hybrid","posture":{"metadata_backend":"postgres","artifact_backend":"s3","artifact_protection":"envelope_encrypted","notification_backend":"postgres","inference":"approved_remote","egress":"allowlisted","integration":"least_privilege_scm","max_model_request_cost_micro_usd":100000,"retention_days":30,"provider_fallback_enabled":false,"content_logging_allowed":false,"publication_enabled":false,"dynamic_validation_enabled":false},"requirements":[{"key":"profile_selected","source":"deterministic","state":"passed","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"scope_valid","source":"deterministic","state":"passed","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"effect_posture_locked","source":"deterministic","state":"passed","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"recovery_owner_named","source":"deterministic","state":"passed","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"postgres_storage_validated","source":"probe","state":"pending","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"envelope_storage_validated","source":"probe","state":"pending","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"backup_validated","source":"probe","state":"pending","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"secret_backend_validated","source":"probe","state":"pending","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"local_administrator_validated","source":"authorization","state":"pending","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"observer_credential_posture_validated","source":"probe","state":"pending","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"remote_provider_authorized","source":"authorization","state":"pending","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"integration_permissions_validated","source":"authorization","state":"passed","checker_identity":"cf33c90ab5e11af104ab7c7dc4fba5485bdcf15d99df8155628f0c84e574530b","evidence_identity":"764af3d0634054f2e3ab7fe1f7e748181dce796d9bc0e6f8fa64608795c18744","receipt_identity":"732ca5ba0d984a50dbfcc4c15d38d1c7ab546115b9a811761a4a30cc6a6762ce","recovery_action":"","checked_at":"2026-09-06T12:00:01Z"},{"key":"webhook_validated","source":"probe","state":"pending","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"policy_validated","source":"authorization","state":"pending","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""},{"key":"dry_run_validated","source":"dry_run","state":"pending","checker_identity":"","evidence_identity":"","receipt_identity":"","recovery_action":"","checked_at":""}],"receipts":[{"contract":"open-trestle/setup-check-receipt","schema_version":1,"identity":"732ca5ba0d984a50dbfcc4c15d38d1c7ab546115b9a811761a4a30cc6a6762ce","plan_identity":"f8ceacaddafd1bc9cbeabe52563974cf98797e47f67b3fcbf478b52830731c89","key":"integration_permissions_validated","checker_identity":"cf33c90ab5e11af104ab7c7dc4fba5485bdcf15d99df8155628f0c84e574530b","state":"passed","evidence_identity":"764af3d0634054f2e3ab7fe1f7e748181dce796d9bc0e6f8fa64608795c18744","recovery_action":"","checked_at":"2026-09-06T12:00:01Z"}],"status":"incomplete","ready":false,"created_at":"2026-09-06T12:00:00Z","updated_at":"2026-09-06T12:00:01Z"}`;
     const plan = capturedPlan(wire);
     expect(JSON.stringify(plan)).toBe(wire);
@@ -1827,5 +2644,117 @@ describe("console", () => {
     expect(
       screen.getByText(/run the five-request local conformance cycle/i),
     ).toBeInTheDocument();
+  });
+  it("explains locator validation and links errors without exposing tokens", () => {
+    render(<App />);
+    expect(
+      screen.getAllByText(
+        /1-128 lowercase letters or numbers; \. _ : - are allowed/i,
+      ),
+    ).toHaveLength(3);
+    expect(
+      screen.getByText(/32-512 non-space characters.*hidden and never saved/i),
+    ).toBeInTheDocument();
+    const tenant = screen.getByLabelText("Tenant");
+    fireEvent.change(tenant, { target: { value: "Tenant A" } });
+    fireEvent.blur(tenant);
+    expect(tenant).toHaveAttribute("aria-invalid", "true");
+    expect(tenant).toHaveAccessibleDescription(
+      expect.stringMatching(/start and end with a lowercase letter or number/i),
+    );
+    const token = screen.getByLabelText("Access token");
+    fireEvent.change(token, { target: { value: "short secret" } });
+    fireEvent.blur(token);
+    expect(token).toHaveAttribute("aria-invalid", "true");
+    expect(token).toHaveAccessibleDescription(
+      expect.stringMatching(/32-512 non-space characters/i),
+    );
+    expect(screen.queryByText("short secret")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Connect to run" }),
+    ).toHaveAccessibleDescription(/correct fields to connect/i);
+  });
+
+  it("explains protected setup and plan field validation on blur", async () => {
+    window.history.replaceState({}, "", "/console/setup");
+    vi.mocked(fetchSetupSession).mockResolvedValue({
+      contract: "open-trestle/setup-session",
+      schema_version: 1,
+      initialized: false,
+    });
+    render(<App />);
+    const token = await screen.findByLabelText("Setup token");
+    expect(token).toHaveAccessibleDescription(
+      /32-512 characters without spaces.*value stays hidden and is never saved/i,
+    );
+    fireEvent.change(token, { target: { value: "short setup secret" } });
+    fireEvent.blur(token);
+    expect(token).toHaveAttribute("aria-invalid", "true");
+    expect(screen.queryByText("short setup secret")).not.toBeInTheDocument();
+    fireEvent.change(token, { target: { value: "s".repeat(32) } });
+    fireEvent.click(screen.getByRole("button", { name: "Inspect setup" }));
+    await screen.findByRole("heading", { name: "Choose a safe baseline" });
+    const tenant = screen.getByLabelText("Tenant");
+    fireEvent.change(tenant, { target: { value: "Tenant A" } });
+    fireEvent.blur(tenant);
+    expect(tenant).toHaveAttribute("aria-invalid", "true");
+    expect(tenant).toHaveAccessibleDescription(
+      expect.stringMatching(/start and end with a lowercase letter or number/i),
+    );
+    expect(screen.getByLabelText(/Recovery owner/)).toHaveAccessibleDescription(
+      expect.stringMatching(/1-128 letters, numbers/i),
+    );
+    expect(
+      screen.getByRole("button", { name: "Review plan creation" }),
+    ).toHaveAccessibleDescription(
+      /enter valid tenant, repository, and recovery owner values/i,
+    );
+  });
+
+  it("uses distinct semantic icons for setup states", async () => {
+    window.history.replaceState({}, "", "/console/setup");
+    const plan = setupTestPlan();
+    plan.requirements = plan.requirements.map((requirement, index) =>
+      index === 0
+        ? { ...requirement, state: "passed" }
+        : index === 1
+          ? { ...requirement, state: "blocked" }
+          : index === 2
+            ? { ...requirement, state: "unavailable" }
+            : requirement,
+    );
+    vi.mocked(fetchSetupSession).mockResolvedValue({
+      contract: "open-trestle/setup-session",
+      schema_version: 1,
+      initialized: true,
+      plan,
+    });
+    const { container } = render(<App />);
+    fireEvent.change(await screen.findByLabelText("Setup token"), {
+      target: { value: "s".repeat(32) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Inspect setup" }));
+    await screen.findByRole("heading", { name: "local single node" });
+    expect(
+      container.querySelector('.state-passed [data-status-icon="passed"]'),
+    ).toBeInTheDocument();
+    expect(
+      container.querySelector('.state-pending [data-status-icon="pending"]'),
+    ).toBeInTheDocument();
+    expect(
+      container.querySelector(
+        '.state-incomplete [data-status-icon="incomplete"]',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      container.querySelector('.state-blocked [data-status-icon="failed"]'),
+    ).toBeInTheDocument();
+    expect(
+      container.querySelector(
+        '.state-unavailable [data-status-icon="unavailable"]',
+      ),
+    ).toBeInTheDocument();
+    expect(container.querySelectorAll(".brand-mark svg")).toHaveLength(1);
+    expect(container.querySelectorAll(".state .brand-shield")).toHaveLength(0);
   });
 });

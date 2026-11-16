@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/georgejieh/open-trestle/audit"
+	"github.com/georgejieh/open-trestle/internal/fileauthority"
 	"github.com/georgejieh/open-trestle/internal/filelock"
 	"io"
 	"os"
@@ -151,16 +152,34 @@ func (s *MemoryStore) Delete(ctx context.Context, authorization DeletionAuthoriz
 	return receipt, nil
 }
 
-// FileStore is a private exclusive-writer local artifact store.
+// FileStore uses private paths and a cooperative exclusive writer lease.
+// Normal operations are path-based; startup root checks do not pin their lifetime.
 type FileStore struct {
-	mu       sync.Mutex
-	root     string
-	rootInfo os.FileInfo
-	lock     *filelock.Lock
-	closed   bool
+	mu                 sync.Mutex
+	root               string
+	rootInfo           os.FileInfo
+	lock               *filelock.Lock
+	closed             bool
+	afterPersistRename func() error
 }
 
-func NewFileStore(root string) (*FileStore, error) {
+// PendingFileStore holds an exclusive writer lock without running deletion recovery.
+// Activation does not validate ownership of historical artifacts.
+type PendingFileStore struct {
+	state *pendingFileStoreState
+}
+
+type pendingFileStoreState struct {
+	mu    sync.Mutex
+	store *FileStore
+	// Test-only observers are installed before concurrent use and never mutated.
+	onLeaseMethodContended func()
+	onOwnedRootPostcheck   func(pinErr, openedErr, leafErr error)
+}
+
+// OpenPendingFileStore prepares a root and locks it without recovering deletions.
+// Root creation, permissions, lock acquisition, and root sync still take effect.
+func OpenPendingFileStore(root string) (*PendingFileStore, error) {
 	if root == "" {
 		return nil, ErrInvalidStoreRoot
 	}
@@ -192,12 +211,171 @@ func NewFileStore(root string) (*FileStore, error) {
 	}
 	store := &FileStore{root: absolute, rootInfo: information, lock: lock}
 	if err := store.syncRoot(); err != nil {
-		_ = lock.Close()
-		return nil, err
+		return nil, errors.Join(err, store.Close())
+	}
+	return &PendingFileStore{state: &pendingFileStoreState{store: store}}, nil
+}
+
+// WithOwnedRoot borrows the constructor-held artifact root while the pending
+// writer lease cannot be activated or closed. The callback must not retain the
+// root or call Activate, Close, or another pending operation.
+// This is cooperative path consistency evidence, not hostile swap resistance.
+func (p *PendingFileStore) WithOwnedRoot(use func(*os.Root) error) (err error) {
+	if p == nil {
+		return ErrInvalidStore
+	}
+	if p.state == nil {
+		return ErrStoreClosed
+	}
+	if use == nil {
+		return ErrInvalidStore
+	}
+	p.state.mu.Lock()
+	defer p.state.mu.Unlock()
+	store := p.state.store
+	if store == nil {
+		return ErrStoreClosed
+	}
+	if err := store.ensureOpen(); err != nil {
+		return err
+	}
+	pin, err := fileauthority.PinDirectory(store.root)
+	if err != nil {
+		return errors.Join(ErrInvalidStoreRoot, err)
+	}
+	if err := validatePendingRootLeaf(store.root, store.rootInfo); err != nil {
+		return err
+	}
+	opened, err := os.OpenRoot(store.root)
+	if err != nil {
+		return errors.Join(ErrInvalidStoreRoot, err)
+	}
+	// Close before releasing state.mu on every path, including callback or
+	// postcheck panic. A callback panic remains the original panic.
+	defer func() {
+		panicking := recover()
+		closeErr := opened.Close()
+		if panicking != nil {
+			panic(panicking)
+		}
+		err = errors.Join(err, closeErr)
+	}()
+	if err := validatePendingOpenedRoot(opened, store.rootInfo); err != nil {
+		return err
+	}
+	if err := validatePendingRootLeaf(store.root, store.rootInfo); err != nil {
+		return err
+	}
+	if err := pin.Recheck(); err != nil {
+		return errors.Join(ErrInvalidStoreRoot, err)
+	}
+	return func() (result error) {
+		defer func() {
+			// Postchecks run after any callback outcome, including panic. Preserve
+			// the original panic if a postcheck or observer also panics.
+			if panicValue := recover(); panicValue != nil {
+				defer func() { panic(panicValue) }()
+			}
+			pinErr := pin.Recheck() // Recheck the retained pre-open chain.
+			openedErr := validatePendingOpenedRoot(opened, store.rootInfo)
+			leafErr := validatePendingRootLeaf(store.root, store.rootInfo)
+			if pinErr != nil {
+				pinErr = errors.Join(ErrInvalidStoreRoot, pinErr)
+			}
+			postcheckErr := errors.Join(pinErr, openedErr, leafErr)
+			if p.state.onOwnedRootPostcheck != nil {
+				p.state.onOwnedRootPostcheck(pinErr, openedErr, leafErr)
+			}
+			result = errors.Join(result, postcheckErr)
+		}()
+		return use(opened)
+	}()
+}
+
+func validatePendingRootLeaf(path string, captured os.FileInfo) error {
+	info, err := os.Lstat(path)
+	if err != nil || captured == nil || info.Mode() != os.ModeDir|0700 || !fileauthority.TrustedOwner(info) || !os.SameFile(info, captured) {
+		return errors.Join(ErrInvalidStoreRoot, err)
+	}
+	return nil
+}
+
+func validatePendingOpenedRoot(root *os.Root, captured os.FileInfo) error {
+	info, err := root.Stat(".")
+	if err != nil || captured == nil || info.Mode() != os.ModeDir|0700 || !fileauthority.TrustedOwner(info) || !os.SameFile(info, captured) {
+		return errors.Join(ErrInvalidStoreRoot, err)
+	}
+	return nil
+}
+
+// Activate recovers deletion receipts once, transferring the lock to the returned store.
+// Recovery may partially change disk before an error; it does not attest ownership.
+func (p *PendingFileStore) Activate() (*FileStore, error) {
+	if p == nil {
+		return nil, ErrInvalidStore
+	}
+	if p.state == nil {
+		return nil, ErrStoreClosed
+	}
+	if p.state.onLeaseMethodContended != nil {
+		if p.state.mu.TryLock() {
+			p.state.mu.Unlock()
+		} else {
+			p.state.onLeaseMethodContended()
+		}
+	}
+	p.state.mu.Lock()
+	defer p.state.mu.Unlock()
+	if p.state.store == nil {
+		return nil, ErrStoreClosed
+	}
+	store := p.state.store
+	if err := store.ensureOpen(); err != nil {
+		p.state.store = nil
+		return nil, errors.Join(err, store.Close())
 	}
 	if err := store.recoverDeletions(); err != nil {
-		_ = lock.Close()
+		p.state.store = nil
+		return nil, errors.Join(err, store.Close())
+	}
+	p.state.store = nil
+	return store, nil
+}
+
+// Close releases a pending lock, or does nothing after activation.
+func (p *PendingFileStore) Close() error {
+	if p == nil {
+		return ErrInvalidStore
+	}
+	if p.state == nil {
+		return nil
+	}
+	if p.state.onLeaseMethodContended != nil {
+		if p.state.mu.TryLock() {
+			p.state.mu.Unlock()
+		} else {
+			p.state.onLeaseMethodContended()
+		}
+	}
+	p.state.mu.Lock()
+	defer p.state.mu.Unlock()
+	if p.state.store == nil {
+		return nil
+	}
+	store := p.state.store
+	p.state.store = nil
+	return store.Close()
+}
+
+// NewFileStore retains the immediate-recovery legacy contract.
+func NewFileStore(root string) (*FileStore, error) {
+	pending, err := OpenPendingFileStore(root)
+	if err != nil {
 		return nil, err
+	}
+	store, err := pending.Activate()
+	if err != nil {
+		return nil, errors.Join(err, pending.Close())
 	}
 	return store, nil
 }
@@ -280,6 +458,13 @@ func (s *FileStore) Get(ctx context.Context, scope audit.ReviewScope, identity s
 	if err := s.ensureOpen(); err != nil {
 		return Artifact{}, err
 	}
+	// A durable prepared deletion means removal is already authorized; an
+	// interrupted Delete must not leave the bytes readable until recovery.
+	if _, completed, deleting, deletionErr := s.loadDeletionExpected(s.deletionPath(scope, identity), scope, identity); deletionErr != nil {
+		return Artifact{}, deletionErr
+	} else if deleting && !completed {
+		return Artifact{}, ErrArtifactDeleted
+	}
 	value, found, err := s.load(s.artifactPath(scope, identity), scope, identity)
 	if err != nil {
 		return Artifact{}, err
@@ -293,10 +478,10 @@ func (s *FileStore) Get(ctx context.Context, scope audit.ReviewScope, identity s
 	return value, nil
 }
 func (s *FileStore) artifactPath(scope audit.ReviewScope, identity string) string {
-	return filepath.Join(s.root, scope.Identity()+"-"+identity+artifactFileSuffix)
+	return filepath.Join(s.root, artifactFileName(scope, identity))
 }
 func (s *FileStore) deletionPath(scope audit.ReviewScope, identity string) string {
-	return filepath.Join(s.root, scope.Identity()+"-"+identity+deletionFileSuffix)
+	return filepath.Join(s.root, artifactDeletionFileName(scope, identity))
 }
 func (s *FileStore) Delete(ctx context.Context, authorization DeletionAuthorization, at time.Time) (DeletionReceipt, error) {
 	if err := validateContext(ctx); err != nil {
@@ -513,6 +698,11 @@ func (s *FileStore) persist(destination string, encoded []byte) error {
 		return ErrStorePersistence
 	}
 	renamed = true
+	if s.afterPersistRename != nil {
+		if err := s.afterPersistRename(); err != nil {
+			return errors.Join(ErrStorePersistence, err)
+		}
+	}
 	return s.syncRoot()
 }
 func (s *FileStore) syncRoot() error {

@@ -163,6 +163,27 @@ func TestPlanRouteFallbackSelectsSameZoneAndBindsReceipt(t *testing.T) {
 	}
 }
 
+// A provider that does not serve or has retired the routed model leaves
+// another route's model eligible; the decision binds the exact refusal class.
+func TestPlanRouteFallbackLeavesAnotherModelAfterModelRefusal(t *testing.T) {
+	free := mustKnownFreePricing(t)
+	primary := newFallbackRoute(t, 130_100, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier4, free)
+	fallback := newFallbackRoute(t, 130_101, provider.ProviderZoneLocal, provider.ContentLoggingDisabled, provider.RouteQualityTier3, free)
+	fixture := newFallbackFixture(t, 0, fallback, primary)
+	fallbackPolicy, _ := NewRouteFallbackPolicy(2, nil)
+	identities := map[string]RouteFailureClass{}
+	for _, failure := range []RouteFailureClass{RouteFailureModelUnavailable, RouteFailureModelRetired, RouteFailureAuthentication} {
+		decision, err := planRouteFallback(fixture.selection, fixture.ranking, fallbackPolicy, failure, RouteReplayNoSideEffect, []string{observedRouteIdentity(primary)}, 0)
+		if err != nil || !decision.ShouldFallback() || decision.Reason() != RouteFallbackSelected || decision.Failure() != failure || decision.NextRecordIdentity() != observedRouteIdentity(fallback) || decision.Validate() != nil {
+			t.Fatalf("%v fallback = (%#v, %v)", failure, decision, err)
+		}
+		if previous, repeated := identities[decision.Identity()]; repeated {
+			t.Fatalf("%v and %v share a fallback decision identity", previous, failure)
+		}
+		identities[decision.Identity()] = failure
+	}
+}
+
 func TestPlanRouteFallbackReservesPessimisticCumulativeCost(t *testing.T) {
 	free := mustKnownFreePricing(t)
 	expensive, _ := provider.NewRoutePricing(1_000_000, 1_000_000)
@@ -255,6 +276,7 @@ func TestPlanRouteFallbackBlocksUnsafeAndIneligibleFailures(t *testing.T) {
 		{name: "cancelled", failure: RouteFailureCancelled, safety: RouteReplayNoSideEffect, want: RouteFallbackFailureNotEligible},
 		{name: "policy", failure: RouteFailurePolicyDenied, safety: RouteReplayNoSideEffect, want: RouteFallbackFailureNotEligible},
 		{name: "budget", failure: RouteFailureBudgetExhausted, safety: RouteReplayNoSideEffect, want: RouteFallbackFailureNotEligible},
+		{name: "payment", failure: RouteFailurePaymentRequired, safety: RouteReplayNoSideEffect, want: RouteFallbackFailureNotEligible},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			decision, err := planRouteFallback(fixture.selection, fixture.ranking, fallbackPolicy, test.failure, test.safety, []string{observedRouteIdentity(primary)}, 0)

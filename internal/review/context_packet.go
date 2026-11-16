@@ -24,8 +24,14 @@ const (
 	maxContextSourceBytes    = 256 << 10
 	maxContextAggregateBytes = 2 << 20
 	maxContextMemoryItems    = 50
-	// ModelCandidateBatchSchemaIdentity is the SHA-256 identity of canonical model-candidate-batch-v1 JSON Schema.
-	ModelCandidateBatchSchemaIdentity = "b79f43bd52cb67e18896dd053ab85c21efd11c4ba5a97234f3f4ce867109dc0e"
+	// ModelCandidateBatchSchemaIdentity is the SHA-256 identity of the canonical
+	// candidate batch JSON Schema that new generation contexts request:
+	// model-candidate-batch-v2, used from context schema version 7.
+	ModelCandidateBatchSchemaIdentity = "63a1bd4a1f2bea9faf93e17e0722aa0b50ba87d2a8ba80088422b8d5190f91bb"
+	// ModelCandidateBatchV1SchemaIdentity is the SHA-256 identity of canonical
+	// model-candidate-batch-v1 JSON Schema, requested by generation contexts
+	// before version 7. It is accepted only for recorded readback.
+	ModelCandidateBatchV1SchemaIdentity = "b79f43bd52cb67e18896dd053ab85c21efd11c4ba5a97234f3f4ce867109dc0e"
 )
 
 var (
@@ -62,8 +68,17 @@ var (
 // ContextStage identifies the bounded retrieval expansion that produced source evidence.
 type ContextStage uint8
 
+// Stage values order source selection and packet sources. Only their names
+// are recorded, so a new stage may take any position in the order.
 const (
 	ContextStageChangedHunk ContextStage = iota + 1
+	// ContextStageRemovedLines carries the base lines a deletion-only change
+	// removed at one deletion point, bound to the exact base file and labelled
+	// with base line numbers. It is evidence of what was removed, never an
+	// anchor: findings anchor on head lines. It is valid from generation
+	// context version 8, verification version 7 and investigation version 6,
+	// and is selected right after the changed hunks it belongs to.
+	ContextStageRemovedLines
 	ContextStageEnclosingSymbol
 	ContextStageDirectReference
 	ContextStageRepositoryContext
@@ -73,6 +88,8 @@ func (s ContextStage) String() string {
 	switch s {
 	case ContextStageChangedHunk:
 		return "changed_hunk"
+	case ContextStageRemovedLines:
+		return "removed_lines"
 	case ContextStageEnclosingSymbol:
 		return "enclosing_symbol"
 	case ContextStageDirectReference:
@@ -92,11 +109,17 @@ func (s ContextStage) Validate() error {
 }
 
 // ContextRisk identifies a non-authoritative ingest warning on untrusted source text.
+// Risks are attention markers for the model and for people; they never suppress
+// review, select sources, or grant authority.
 type ContextRisk uint8
 
 const (
 	ContextRiskHiddenUnicode ContextRisk = 1 << iota
 	ContextRiskInstructionLikeText
+	// ContextRiskAgentConfiguration marks a source whose path names repository AI
+	// material: agent instruction files, agent skills, prompts, or agent tool
+	// configuration (see agentConfigurationPath). Such files are reviewed as code.
+	ContextRiskAgentConfiguration
 )
 
 // ContextSource is immutable evidence content labeled as data rather than instructions.
@@ -109,11 +132,14 @@ type ContextSource struct {
 	risks           ContextRisk
 	hasSliceBinding bool
 	sliceBinding    evidence.SourceSliceBinding
+	// headLine is set only on the removed_lines source of a deletion point:
+	// the head line beside which its base lines were removed.
+	headLine int
 }
 
 // NewContextSource verifies exact content against one host-issued evidence item.
 func NewContextSource(stage ContextStage, taint memory.TaintClass, item evidence.EvidenceItem, content []byte) (ContextSource, error) {
-	source := ContextSource{stage: stage, taint: taint, evidenceItem: item, content: string(content), risks: detectContextRisks(string(content))}
+	source := ContextSource{stage: stage, taint: taint, evidenceItem: item, content: string(content), risks: detectSourceRisks(item.SourceRange().Path(), string(content))}
 	if err := source.validateFields(); err != nil {
 		return ContextSource{}, err
 	}
@@ -156,8 +182,28 @@ func (s ContextSource) HasRisk(risk ContextRisk) bool             { return s.ris
 func (s ContextSource) HasSliceBinding() bool                     { return s.hasSliceBinding }
 func (s ContextSource) SliceBinding() evidence.SourceSliceBinding { return s.sliceBinding }
 func (s ContextSource) SliceBindingIdentity() string              { return s.sliceBinding.Identity() }
-func (s ContextSource) String() string                            { return "review context source" }
-func (s ContextSource) GoString() string                          { return "review.ContextSource{<redacted>}" }
+
+// HeadLine returns, for the removed_lines source of a deletion point, the head
+// line beside which its base lines were removed; 0 otherwise.
+func (s ContextSource) HeadLine() int { return s.headLine }
+
+// NewRemovedLinesContextSource binds removed base lines as a removed_lines
+// source. headLine is the head line beside which they were removed, as the
+// analysis record names it, or 0 when no head line remains beside them.
+func NewRemovedLinesContextSource(item evidence.EvidenceItem, content []byte, binding evidence.SourceSliceBinding, headLine int) (ContextSource, error) {
+	source, err := NewBoundContextSource(ContextStageRemovedLines, memory.TaintRepositoryControlled, item, content, binding)
+	if err != nil {
+		return ContextSource{}, err
+	}
+	source.headLine = headLine
+	source.identity = deriveContextSourceIdentity(source)
+	if err := source.Validate(); err != nil {
+		return ContextSource{}, err
+	}
+	return source, nil
+}
+func (s ContextSource) String() string   { return "review context source" }
+func (s ContextSource) GoString() string { return "review.ContextSource{<redacted>}" }
 func (s ContextSource) Format(state fmt.State, verb rune) {
 	writeRedactedReviewFormat(state, verb, "review context source", "review.ContextSource{<redacted>}")
 }
@@ -179,6 +225,12 @@ func (s ContextSource) validateFields() error {
 	}
 	if err := s.taint.Validate(); err != nil {
 		return err
+	}
+	if s.stage == ContextStageRemovedLines && s.taint != memory.TaintRepositoryControlled {
+		return ErrInvalidContextSource
+	}
+	if s.headLine < 0 || s.headLine > maxCandidateSourceLine || s.headLine != 0 && s.stage != ContextStageRemovedLines {
+		return ErrInvalidContextSource
 	}
 	if !validCandidateReference(s.evidenceItem.ID()) || !validCandidateDigest(s.evidenceItem.Digest()) {
 		return ErrInvalidContextSource
@@ -203,7 +255,7 @@ func (s ContextSource) validateFields() error {
 	} else if s.sliceBinding.Identity() != "" {
 		return ErrContextSourceSliceMismatch
 	}
-	if s.risks != detectContextRisks(s.content) {
+	if s.risks != detectSourceRisks(s.evidenceItem.SourceRange().Path(), s.content) {
 		return ErrInvalidContextSource
 	}
 	return nil
@@ -217,6 +269,25 @@ func contextSourceLineCount(content string) int {
 	return count
 }
 
+// legacyInstructionMarkers are the content markers recorded by generation
+// contexts before version 7, verification contexts before version 6, and
+// publication content scans. They must not change: recorded readback
+// re-derives risk_flags from content with exactly this list.
+var legacyInstructionMarkers = []string{"ignore previous", "system prompt", "developer message", "tool_call", "call a tool"}
+
+// extendedInstructionMarkers are additional high-signal literal markers used
+// from generation context version 7 and verification context version 6: chat
+// template role and turn tokens, fake system tags, override phrases, and the
+// JSON authority label older Open Trestle payloads used. Matching is a literal
+// substring search over lowercased text, so it has no backtracking cost.
+var extendedInstructionMarkers = []string{
+	"<|im_start|>", "<|im_end|>", "<|system|>", "<|start_header_id|>", "<start_of_turn>", "[inst]",
+	"<system>", "</system>", "ignore all previous", "ignore prior", "ignore all prior",
+	"instruction_authority", "you are now",
+}
+
+// detectContextRisks applies the legacy content rules. Recorded readback of
+// earlier context versions and publication content scans use it unchanged.
 func detectContextRisks(content string) ContextRisk {
 	var risks ContextRisk
 	for _, character := range content {
@@ -225,14 +296,75 @@ func detectContextRisks(content string) ContextRisk {
 			break
 		}
 	}
-	lower := strings.ToLower(content)
-	for _, marker := range []string{"ignore previous", "system prompt", "developer message", "tool_call", "call a tool"} {
-		if strings.Contains(lower, marker) {
-			risks |= ContextRiskInstructionLikeText
-			break
-		}
+	if containsAnyMarker(strings.ToLower(content), legacyInstructionMarkers) {
+		risks |= ContextRiskInstructionLikeText
 	}
 	return risks
+}
+
+// detectSourceRisks applies the current rules: legacy content rules, the
+// extended instruction markers, and the agent_configuration path rule.
+func detectSourceRisks(path, content string) ContextRisk {
+	risks := detectContextRisks(content)
+	if risks&ContextRiskInstructionLikeText == 0 && containsAnyMarker(strings.ToLower(content), extendedInstructionMarkers) {
+		risks |= ContextRiskInstructionLikeText
+	}
+	if agentConfigurationPath(path) {
+		risks |= ContextRiskAgentConfiguration
+	}
+	return risks
+}
+
+// recordedSourceRisks returns the rules a recorded context version used.
+func recordedSourceRisks(current bool, path, content string) ContextRisk {
+	if current {
+		return detectSourceRisks(path, content)
+	}
+	return detectContextRisks(content)
+}
+
+func containsAnyMarker(lower string, markers []string) bool {
+	for _, marker := range markers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// agentConfigurationPath reports whether a repository-relative path names AI
+// material by convention. The list is documented in
+// docs/prompt-injection-boundary.md: AGENTS.md, CLAUDE.md, GEMINI.md,
+// .cursorrules and SKILL.md at any depth (file names compared
+// case-insensitively); any file under a .cursor, .claude, .codex, .trestle or
+// prompts directory; .github/copilot-instructions.md; Markdown files under a
+// skills directory; and *.prompt, *.prompt.md and *.prompty files.
+func agentConfigurationPath(path string) bool {
+	segments := strings.Split(path, "/")
+	base := strings.ToLower(segments[len(segments)-1])
+	switch base {
+	case "agents.md", "claude.md", "gemini.md", ".cursorrules", "skill.md":
+		return true
+	}
+	if strings.HasSuffix(base, ".prompt") || strings.HasSuffix(base, ".prompt.md") || strings.HasSuffix(base, ".prompty") {
+		return true
+	}
+	directories := segments[:len(segments)-1]
+	for index, directory := range directories {
+		switch strings.ToLower(directory) {
+		case ".cursor", ".claude", ".codex", ".trestle", "prompts":
+			return true
+		case "skills":
+			if strings.HasSuffix(base, ".md") {
+				return true
+			}
+		case ".github":
+			if index == len(directories)-1 && base == "copilot-instructions.md" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func deriveContextSourceIdentity(source ContextSource) string {
@@ -253,6 +385,8 @@ func deriveContextSourceIdentity(source ContextSource) string {
 		Risks          uint8  `json:"risks"`
 		SliceBound     bool   `json:"slice_bound"`
 		SliceBinding   string `json:"slice_binding"`
+		// HeadLine is present only on a deletion point's removed_lines source.
+		HeadLine int `json:"head_line,omitempty"`
 	}{
 		Contract: "open-trestle/review-context-source", Version: 1,
 		Stage: source.stage.String(), Taint: source.taint.String(), Reference: source.evidenceItem.ID(),
@@ -260,6 +394,7 @@ func deriveContextSourceIdentity(source ContextSource) string {
 		Start: rangeValue.StartLine(), End: rangeValue.EndLine(),
 		ContentDigest: hex.EncodeToString(contentDigest[:]), ContentBytes: len(source.content), Risks: uint8(source.risks),
 		SliceBound: source.hasSliceBinding, SliceBinding: source.sliceBinding.Identity(),
+		HeadLine: source.headLine,
 	}
 	encoded, _ := json.Marshal(preimage)
 	digest := sha256.Sum256(encoded)
@@ -341,8 +476,52 @@ func (o ContextSourceOmission) Validate() error {
 	return nil
 }
 func validContextSourceOmissionReason(value string) bool {
+	if RepositoryInstructionOmissionReason(value) {
+		return true
+	}
 	_, err := contextSourceOmissionCategory(value)
 	return err == nil
+}
+
+// repositoryInstructionPaths is the fixed, root-only list of repository review
+// instruction files, in supply order. Subdirectory copies are never read.
+var repositoryInstructionPaths = []string{"AGENTS.md", "CLAUDE.md", ".github/copilot-instructions.md", ".trestle/review-instructions.md"}
+
+// RepositoryInstructionPaths returns the fixed, root-only repository review
+// instruction file paths that context assembly may supply from the base tree
+// as repository_context, in supply order.
+func RepositoryInstructionPaths() []string { return slices.Clone(repositoryInstructionPaths) }
+
+// RepositoryInstructionPath reports whether path is one of the fixed
+// repository review instruction file paths.
+func RepositoryInstructionPath(path string) bool {
+	return slices.Contains(repositoryInstructionPaths, path)
+}
+
+// RepositoryInstructionOmissionReason reports whether reason records a
+// repository instruction file that was not supplied as repository_context.
+// Instruction files are advisory context, not changed source: these omissions
+// are reported separately and never count against changed-source coverage.
+func RepositoryInstructionOmissionReason(reason string) bool {
+	switch reason {
+	case "repository_instruction_truncated", "repository_instruction_size_limit", "repository_instruction_unsupported_content",
+		"repository_instruction_path_not_authorized", "repository_instruction_candidate_limit", "repository_instruction_packet_budget",
+		"repository_instruction_changed":
+		return true
+	}
+	return false
+}
+
+// changedSourceCoverage removes repository instruction omissions from recorded
+// packet coverage. The packet wire keeps complete accounting; derived coverage,
+// diagnostics, and completeness see only changed-source omissions.
+func changedSourceCoverage(coverage contextSourceCoverageWire, records []contextSourceOmissionWire) (analyzed, omitted int, instruction uint32) {
+	for _, record := range records {
+		if RepositoryInstructionOmissionReason(record.Reason) {
+			instruction += record.Count
+		}
+	}
+	return coverage.Analyzed - int(instruction), coverage.Omitted - int(instruction), instruction
 }
 func contextSourceOmissionLess(a, b ContextSourceOmission) bool {
 	if a.path != b.path {
@@ -371,6 +550,9 @@ type ContextPacket struct {
 	additionalRetrievals []memory.LexicalRetrieval
 	sourceOmissions      []ContextSourceOmission
 	limits               ContextLimits
+	specialist           ContextSpecialist
+	statedIntent         StatedIntent
+	patternHygiene       ContextPatternHygiene
 }
 
 // NewContextPacket assembles a deterministic provider-neutral packet after hard scope filtering.
@@ -496,6 +678,73 @@ func (p ContextPacket) EvidenceItems() []evidence.EvidenceItem {
 	}
 	return items
 }
+
+// Specialist returns the bound packaged specialist; the zero value means none.
+func (p ContextPacket) Specialist() ContextSpecialist { return p.specialist }
+
+// WithSpecialist returns a copy that binds one packaged specialist profile. The
+// copy encodes the optional specialist block of context schema version 9; the
+// receiver is unchanged.
+func (p ContextPacket) WithSpecialist(specialist ContextSpecialist) (ContextPacket, error) {
+	if err := p.Validate(); err != nil {
+		return ContextPacket{}, err
+	}
+	if !p.specialist.IsZero() || specialist.IsZero() || specialist.Validate() != nil {
+		return ContextPacket{}, ErrInvalidContextSpecialist
+	}
+	value := p
+	value.sources = append([]ContextSource(nil), p.sources...)
+	value.additionalRetrievals = append([]memory.LexicalRetrieval(nil), p.additionalRetrievals...)
+	value.sourceOmissions = append([]ContextSourceOmission(nil), p.sourceOmissions...)
+	value.specialist = specialist
+	value.identity = deriveContextPacketIdentity(value)
+	if err := value.Validate(); err != nil {
+		return ContextPacket{}, err
+	}
+	return value, nil
+}
+
+// StatedIntent returns the bound commit intent; the zero value means none.
+func (p ContextPacket) StatedIntent() StatedIntent { return p.statedIntent }
+
+// WithStatedIntent returns a copy that carries the change author's commit
+// messages as the stated_intent object of context version 9. The text counts
+// toward the source byte budget: the caller fits it to the budget the
+// selected sources left, and a copy that would exceed it is refused.
+func (p ContextPacket) WithStatedIntent(intent StatedIntent) (ContextPacket, error) {
+	if err := p.Validate(); err != nil {
+		return ContextPacket{}, err
+	}
+	if !p.statedIntent.IsZero() || intent.IsZero() {
+		return ContextPacket{}, ErrInvalidStatedIntent
+	}
+	value := p
+	value.statedIntent = intent
+	value.identity = deriveContextPacketIdentity(value)
+	if err := value.Validate(); err != nil {
+		return ContextPacket{}, err
+	}
+	return value, nil
+}
+
+// WithPatternHygiene returns a copy that carries deterministic pattern-hygiene
+// evidence placed on this packet's sources (see NewContextPatternHygiene).
+func (p ContextPacket) WithPatternHygiene(hygiene ContextPatternHygiene) (ContextPacket, error) {
+	if err := p.Validate(); err != nil {
+		return ContextPacket{}, err
+	}
+	if !p.patternHygiene.IsZero() || hygiene.IsZero() {
+		return ContextPacket{}, ErrInvalidContextSource
+	}
+	value := p
+	value.patternHygiene = hygiene
+	value.identity = deriveContextPacketIdentity(value)
+	if err := value.Validate(); err != nil {
+		return ContextPacket{}, err
+	}
+	return value, nil
+}
+
 func (p ContextPacket) String() string   { return "review context packet" }
 func (p ContextPacket) GoString() string { return "review.ContextPacket{<redacted>}" }
 func (p ContextPacket) Format(state fmt.State, verb rune) {
@@ -566,8 +815,11 @@ func (p ContextPacket) validateFields() error {
 		previousStage, previousReference = source.Stage(), source.ReferenceID()
 		totalBytes += source.SizeBytes()
 	}
-	if totalBytes > int(p.limits.MaxSourceBytes()) {
+	if totalBytes+p.statedIntent.TextBytes() > int(p.limits.MaxSourceBytes()) {
 		return ErrContextSourceBudgetExceeded
+	}
+	if !validStatedIntentWire(p.statedIntent.wire()) || !validPatternHygieneWire(p.patternHygiene.wire(), contextSourceWireValues(p.sources)) {
+		return ErrInvalidContextSource
 	}
 	previousOmission := ContextSourceOmission{}
 	for index, omission := range p.sourceOmissions {
@@ -602,6 +854,9 @@ func (p ContextPacket) validateFields() error {
 	if memoryItems > int(p.limits.MaxMemoryItems()) {
 		return ErrContextMemoryBudgetExceeded
 	}
+	if !p.specialist.IsZero() && p.specialist.Validate() != nil {
+		return ErrInvalidContextSpecialist
+	}
 	return nil
 }
 
@@ -614,7 +869,9 @@ type contextPacketWire struct {
 	Task                    string                      `json:"task"`
 	OutputSchemaIdentity    string                      `json:"output_schema_identity"`
 	Instructions            string                      `json:"instructions,omitempty"`
+	InstructionsIdentity    string                      `json:"instructions_identity,omitempty"`
 	OutputSchema            json.RawMessage             `json:"output_schema,omitempty"`
+	Specialist              *contextSpecialistWire      `json:"specialist,omitempty"`
 	SourceSelectionIdentity string                      `json:"source_selection_identity"`
 	SourceCoverage          contextSourceCoverageWire   `json:"source_coverage"`
 	SourceAuthority         string                      `json:"source_authority"`
@@ -625,6 +882,10 @@ type contextPacketWire struct {
 	SourceOmissions         []contextSourceOmissionWire `json:"source_omissions,omitempty"`
 	Memory                  contextMemoryWire           `json:"memory"`
 	AdditionalMemory        []contextMemoryWire         `json:"additional_memory,omitempty"`
+	// StatedIntent and PatternHygiene exist only from version 9. Absent, they
+	// leave earlier versions' bytes unchanged.
+	StatedIntent   *statedIntentWire   `json:"stated_intent,omitempty"`
+	PatternHygiene *patternHygieneWire `json:"pattern_hygiene,omitempty"`
 }
 
 type contextSourceCoverageWire struct {
@@ -642,15 +903,18 @@ type contextLimitsWire struct {
 }
 
 type contextSourceWire struct {
-	SourceID       string   `json:"source_id"`
-	Stage          string   `json:"stage"`
-	Taint          string   `json:"taint"`
-	EvidenceDigest string   `json:"evidence_digest"`
-	Path           string   `json:"path"`
-	StartLine      int      `json:"start_line"`
-	EndLine        int      `json:"end_line"`
-	RiskFlags      []string `json:"risk_flags"`
-	Content        string   `json:"content"`
+	SourceID       string `json:"source_id"`
+	Stage          string `json:"stage"`
+	Taint          string `json:"taint"`
+	EvidenceDigest string `json:"evidence_digest"`
+	Path           string `json:"path"`
+	StartLine      int    `json:"start_line"`
+	EndLine        int    `json:"end_line"`
+	// HeadLine appears only on the removed_lines source of a deletion point:
+	// the head line beside which its base lines were removed.
+	HeadLine  int      `json:"head_line,omitempty"`
+	RiskFlags []string `json:"risk_flags"`
+	Content   string   `json:"content"`
 }
 
 type contextSourceOmissionWire struct {
@@ -692,13 +956,22 @@ type contextMemoryItemWire struct {
 }
 
 func encodeContextPacket(packet ContextPacket) ([]byte, error) {
-	instructions, schema, err := modelOutputContract(false)
+	// Every new generation context is version 9. The specialist block is present
+	// only when a packaged profile is bound. Instruction prose never enters the
+	// payload: the model receives it only through the trusted system channel,
+	// and the payload binds it by instructions_identity.
+	version := modelGenerationContextVersion
+	var specialist *contextSpecialistWire
+	if !packet.specialist.IsZero() {
+		specialist = packet.specialist.wire()
+	}
+	instructions, schema, err := modelOutputContractForVersion(version, false)
 	if err != nil {
 		return nil, err
 	}
 	wire := contextPacketWire{
-		Contract: "open-trestle/review-context-packet", SchemaVersion: modelContextVersion,
-		Instructions: instructions, OutputSchema: schema,
+		Contract: "open-trestle/review-context-packet", SchemaVersion: version,
+		InstructionsIdentity: modelInstructionsIdentity(instructions), OutputSchema: schema, Specialist: specialist,
 		ReviewScopeIdentity: packet.reviewScopeIdentity, MemoryScopeIdentity: packet.memoryScopeIdentity,
 		SnapshotIdentity: packet.snapshotIdentity, Task: packet.task.String(),
 		OutputSchemaIdentity:    packet.outputSchemaIdentity,
@@ -710,6 +983,7 @@ func encodeContextPacket(packet ContextPacket) ([]byte, error) {
 		SourceAuthority: "evidence_data_not_instructions", MemoryAuthority: "advisory_only", ToolCalls: "proposals_only",
 		Limits:  contextLimitsWire{MaxSourceBytes: packet.limits.MaxSourceBytes(), MaxMemoryItems: packet.limits.MaxMemoryItems()},
 		Sources: contextSourceWireValues(packet.sources), SourceOmissions: contextSourceOmissionWireValues(packet.sourceOmissions), Memory: contextMemoryWireValue(packet.retrieval), AdditionalMemory: contextMemoryWireValues(packet.additionalRetrievals),
+		StatedIntent: packet.statedIntent.wire(), PatternHygiene: packet.patternHygiene.wire(),
 	}
 	return json.Marshal(wire)
 }
@@ -725,13 +999,14 @@ func ValidateContextPacketRequest(
 		return err
 	}
 	wire, err := decodeGenerationContextWire(payload)
-	if err != nil || wire.SchemaVersion != modelContextVersion {
+	if err != nil || !executableGenerationContextVersion(wire.SchemaVersion) {
 		return ErrInvalidContextPacketRequest
 	}
 	return nil
 }
 
-// ValidateRecordedContextPacketRequest verifies exact v2 or v3 bytes for readback.
+// ValidateRecordedContextPacketRequest verifies exact v2, v3, v5, v7, v8 or v9 bytes for readback.
+// A v7, v8 or v9 specialist block must re-derive exactly from the embedded profile catalog.
 // It does not admit a legacy context for a new model attempt.
 func ValidateRecordedContextPacketRequest(
 	payload []byte,
@@ -760,9 +1035,9 @@ func ValidateRecordedContextPacketRequest(
 	if err != nil || !bytes.Equal(canonical, payload) {
 		return ErrInvalidContextPacketRequest
 	}
-	if wire.Contract != "open-trestle/review-context-packet" || !validRecordedModelOutputContract(wire.SchemaVersion, wire.Instructions, wire.OutputSchema, false) ||
+	if wire.Contract != "open-trestle/review-context-packet" || !validRecordedModelOutputContract(wire.SchemaVersion, wire.Instructions, wire.InstructionsIdentity, wire.OutputSchema, false) || !validGenerationContextSpecialist(wire) ||
 		wire.ReviewScopeIdentity != reviewScopeIdentity || wire.MemoryScopeIdentity != memoryScopeIdentity || deriveContextMemoryIdentityFromWire(wire) != memoryIdentity || wire.SnapshotIdentity != snapshot.Identity() ||
-		wire.Task != ContextTaskCandidateGeneration.String() || wire.OutputSchemaIdentity != ModelCandidateBatchSchemaIdentity ||
+		wire.Task != ContextTaskCandidateGeneration.String() || wire.OutputSchemaIdentity != candidateSchemaIdentityForContextVersion(wire.SchemaVersion) ||
 		wire.SourceAuthority != "evidence_data_not_instructions" || wire.MemoryAuthority != "advisory_only" ||
 		wire.ToolCalls != "proposals_only" || !validCandidateDigest(wire.SourceSelectionIdentity) ||
 		wire.Limits.MaxSourceBytes == 0 || wire.Limits.MaxSourceBytes > maxContextAggregateBytes ||
@@ -791,11 +1066,21 @@ func ValidateRecordedContextPacketRequest(
 		}
 		previousOmission = omission
 	}
+	if !validSourceHeadLines(wire.Sources) {
+		return ErrInvalidContextPacketRequest
+	}
+	// Stated intent and pattern hygiene exist only in version 9.
+	if (wire.StatedIntent != nil || wire.PatternHygiene != nil) && wire.SchemaVersion != modelGenerationContextVersion ||
+		!validStatedIntentWire(wire.StatedIntent) || !validPatternHygieneWire(wire.PatternHygiene, wire.Sources) {
+		return ErrInvalidContextPacketRequest
+	}
 	var sourceBytes uint32
 	seenEvidence := make(map[string]struct{}, len(evidenceItems))
 	for index, source := range wire.Sources {
 		item := evidenceItems[index]
-		if _, exists := seenEvidence[item.ID()]; exists || !rangeSupportedBySnapshot(item.SourceRange(), snapshot) {
+		// Removed base lines are not head ranges and are never in the snapshot.
+		removed := source.Stage == ContextStageRemovedLines.String()
+		if _, exists := seenEvidence[item.ID()]; exists || !removed && !rangeSupportedBySnapshot(item.SourceRange(), snapshot) {
 			return ErrInvalidContextPacketRequest
 		}
 		seenEvidence[item.ID()] = struct{}{}
@@ -803,19 +1088,20 @@ func ValidateRecordedContextPacketRequest(
 		if source.SourceID != item.ID() || source.EvidenceDigest != item.Digest() ||
 			source.Path != rangeValue.Path() || source.StartLine != rangeValue.StartLine() ||
 			source.EndLine != rangeValue.EndLine() || !utf8.ValidString(source.Content) ||
-			!validContextStageToken(source.Stage) || !validContextTaintToken(source.Taint) {
+			!validContextStageToken(source.Stage, removedLinesGenerationVersion(wire.SchemaVersion)) || !validContextTaintToken(source.Taint) ||
+			removed && source.Taint != memory.TaintRepositoryControlled.String() {
 			return ErrInvalidContextPacketRequest
 		}
 		contentDigest := sha256.Sum256([]byte(source.Content))
 		if hex.EncodeToString(contentDigest[:]) != item.Digest() ||
 			contextSourceLineCount(source.Content) != rangeValue.EndLine()-rangeValue.StartLine()+1 ||
-			!slices.Equal(source.RiskFlags, contextRiskTokens(detectContextRisks(source.Content))) ||
+			!slices.Equal(source.RiskFlags, contextRiskTokens(recordedSourceRisks(systemChannelGenerationVersion(wire.SchemaVersion), source.Path, source.Content))) ||
 			len(source.Content) > int(^uint32(0)-sourceBytes) {
 			return ErrInvalidContextPacketRequest
 		}
 		sourceBytes += uint32(len(source.Content))
 	}
-	if sourceBytes != wire.SourceCoverage.SelectedBytes || sourceBytes > wire.Limits.MaxSourceBytes {
+	if sourceBytes != wire.SourceCoverage.SelectedBytes || uint64(sourceBytes)+uint64(statedIntentWireBytes(wire.StatedIntent)) > uint64(wire.Limits.MaxSourceBytes) {
 		return ErrInvalidContextPacketRequest
 	}
 	return nil
@@ -823,7 +1109,37 @@ func ValidateRecordedContextPacketRequest(
 
 const maxProviderContextPacketBytes = 8 << 20
 
-func validContextStageToken(value string) bool {
+// validSourceHeadLines checks the head lines recorded on removed_lines
+// sources: only a removed_lines source carries one, and it lies inside a
+// changed_hunk source of the same file, the deletion-point context around it.
+func validSourceHeadLines(sources []contextSourceWire) bool {
+	for _, source := range sources {
+		if source.HeadLine == 0 {
+			continue
+		}
+		if source.Stage != ContextStageRemovedLines.String() || source.HeadLine < 0 || source.HeadLine > maxCandidateSourceLine {
+			return false
+		}
+		placed := false
+		for _, head := range sources {
+			if head.Stage == ContextStageChangedHunk.String() && head.Path == source.Path && head.StartLine <= source.HeadLine && source.HeadLine <= head.EndLine {
+				placed = true
+				break
+			}
+		}
+		if !placed {
+			return false
+		}
+	}
+	return true
+}
+
+// validContextStageToken admits removed_lines only for the contract versions
+// that define it; every earlier version keeps its original stage set.
+func validContextStageToken(value string, removedLines bool) bool {
+	if value == ContextStageRemovedLines.String() {
+		return removedLines
+	}
 	for stage := ContextStageChangedHunk; stage <= ContextStageRepositoryContext; stage++ {
 		if value == stage.String() {
 			return true
@@ -837,15 +1153,69 @@ func validContextTaintToken(value string) bool {
 	return err == nil
 }
 
+const (
+	contextRiskTokenHiddenUnicode      = "hidden_unicode"
+	contextRiskTokenInstructionLike    = "instruction_like_text"
+	contextRiskTokenAgentConfiguration = "agent_configuration"
+)
+
 func contextRiskTokens(risks ContextRisk) []string {
-	tokens := make([]string, 0, 2)
+	tokens := make([]string, 0, 3)
 	if risks&ContextRiskHiddenUnicode != 0 {
-		tokens = append(tokens, "hidden_unicode")
+		tokens = append(tokens, contextRiskTokenHiddenUnicode)
 	}
 	if risks&ContextRiskInstructionLikeText != 0 {
-		tokens = append(tokens, "instruction_like_text")
+		tokens = append(tokens, contextRiskTokenInstructionLike)
+	}
+	if risks&ContextRiskAgentConfiguration != 0 {
+		tokens = append(tokens, contextRiskTokenAgentConfiguration)
 	}
 	return tokens
+}
+
+// ContextRiskSourceCounts reports how many sources in exact recorded
+// generation-context bytes carry the agent_configuration and
+// instruction_like_text risk flags. The counts are content-free attention
+// signals for people; flags never suppress review or change selection.
+func ContextRiskSourceCounts(payload []byte) (agentConfiguration, instructionLike int, err error) {
+	if len(payload) == 0 || len(payload) > maxProviderContextPacketBytes {
+		return 0, 0, ErrInvalidContextPacketRequest
+	}
+	wire, err := decodeGenerationContextWire(payload)
+	if err != nil || wire.Contract != "open-trestle/review-context-packet" {
+		return 0, 0, ErrInvalidContextPacketRequest
+	}
+	for _, source := range wire.Sources {
+		if slices.Contains(source.RiskFlags, contextRiskTokenAgentConfiguration) {
+			agentConfiguration++
+		}
+		if slices.Contains(source.RiskFlags, contextRiskTokenInstructionLike) {
+			instructionLike++
+		}
+	}
+	return agentConfiguration, instructionLike, nil
+}
+
+// ContextChangeEvidence reads a recorded generation context and returns the
+// IDs of its sources that are evidence of the change itself: changed hunks
+// (including the unchanged head lines bound around a deletion point) and
+// removed base lines. Direct references and repository context are unchanged
+// code. It never returns source content.
+func ContextChangeEvidence(payload []byte) (map[string]bool, error) {
+	if len(payload) == 0 || len(payload) > maxProviderContextPacketBytes {
+		return nil, ErrInvalidContextPacketRequest
+	}
+	wire, err := decodeGenerationContextWire(payload)
+	if err != nil || wire.Contract != "open-trestle/review-context-packet" {
+		return nil, ErrInvalidContextPacketRequest
+	}
+	ids := map[string]bool{}
+	for _, source := range wire.Sources {
+		if source.Stage == ContextStageChangedHunk.String() || source.Stage == ContextStageRemovedLines.String() {
+			ids[source.SourceID] = true
+		}
+	}
+	return ids, nil
 }
 
 func sourceOmissionCount(values []ContextSourceOmission) int {

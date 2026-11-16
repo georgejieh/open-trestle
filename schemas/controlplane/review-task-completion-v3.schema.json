@@ -1,0 +1,208 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:controlplane:review-task-completion:v3",
+  "title": "Open Trestle review task completion v3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "identity",
+    "status",
+    "output_identity",
+    "failure",
+    "plan_identity",
+    "task_identity",
+    "failure_reason"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/review-task-completion"
+    },
+    "schema_version": {
+      "const": 3
+    },
+    "identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "status": {
+      "const": "failed"
+    },
+    "output_identity": {
+      "const": ""
+    },
+    "failure": {
+      "enum": [
+        "transient",
+        "resource_limit",
+        "policy",
+        "invalid_input",
+        "canceled",
+        "dependency",
+        "internal"
+      ]
+    },
+    "failure_reason": {
+      "enum": [
+        "no_merge_base",
+        "nothing_to_review",
+        "merge_base_unavailable",
+        "route_context_insufficient",
+        "no_eligible_route",
+        "provider_payment_required",
+        "provider_model_unavailable",
+        "provider_model_retired",
+        "provider_authentication_failed",
+        "provider_authorization_denied",
+        "provider_rate_limited",
+        "provider_response_invalid",
+        "model_output_invalid",
+        "provider_request_rejected"
+      ]
+    },
+    "plan_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "task_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "context_shortfall": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required_tokens",
+        "estimated_input_tokens",
+        "max_output_tokens",
+        "declared_context_tokens"
+      ],
+      "properties": {
+        "required_tokens": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 8589934590
+        },
+        "estimated_input_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "max_output_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "declared_context_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "failure_reason"
+        ],
+        "properties": {
+          "failure_reason": {
+            "const": "route_context_insufficient"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "context_shortfall"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "context_shortfall"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "failure_reason"
+        ],
+        "properties": {
+          "failure_reason": {
+            "enum": [
+              "provider_payment_required",
+              "provider_model_unavailable",
+              "provider_model_retired",
+              "provider_authentication_failed",
+              "provider_authorization_denied",
+              "provider_rate_limited",
+              "provider_response_invalid",
+              "model_output_invalid",
+              "provider_request_rejected"
+            ]
+          }
+        }
+      },
+      "then": {
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "failure_reason": {
+                  "const": "provider_rate_limited"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "failure": {
+                  "const": "transient"
+                }
+              }
+            },
+            "else": {
+              "if": {
+                "properties": {
+                  "failure_reason": {
+                    "enum": [
+                      "provider_response_invalid",
+                      "model_output_invalid"
+                    ]
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "failure": {
+                    "const": "internal"
+                  }
+                }
+              },
+              "else": {
+                "properties": {
+                  "failure": {
+                    "const": "policy"
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

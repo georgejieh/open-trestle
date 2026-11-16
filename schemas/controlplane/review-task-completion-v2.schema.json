@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:controlplane:review-task-completion:v2",
+  "title": "Open Trestle review task completion v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "identity",
+    "status",
+    "output_identity",
+    "failure",
+    "plan_identity",
+    "task_identity",
+    "output_kind"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/review-task-completion"
+    },
+    "schema_version": {
+      "const": 2
+    },
+    "identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "status": {
+      "const": "failed"
+    },
+    "output_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "failure": {
+      "enum": [
+        "transient",
+        "resource_limit",
+        "policy",
+        "invalid_input",
+        "canceled",
+        "dependency",
+        "internal"
+      ]
+    },
+    "plan_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "task_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "output_kind": {
+      "const": "context_abstention"
+    }
+  }
+}

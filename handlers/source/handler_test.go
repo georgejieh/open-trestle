@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/georgejieh/open-trestle/artifact"
+	"github.com/georgejieh/open-trestle/artifactvalidation"
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/internal/evidence"
@@ -114,7 +115,7 @@ func TestHandlerAcquiresAndPersistsExactSourceArtifacts(t *testing.T) {
 		t.Fatalf("store input = (%v, %v)", created, err)
 	}
 	request := taskExecutionRequest(t, scope, inputArtifact.Identity(), handler.HandlerIdentity())
-	validated, err := artifact.NewValidatedTaskHandler(
+	validated, err := artifactvalidation.NewValidatedTaskHandler(
 		handler, store, fixedClock{at: time.UnixMilli(201)},
 		[]artifact.Kind{artifact.KindTaskInput}, []artifact.Kind{artifact.KindSourceSnapshot},
 	)
@@ -255,3 +256,51 @@ func TestHandlerRejectsMissingOrExpiredInputBeforeAdapter(t *testing.T) {
 }
 
 var _ controlplane.TaskHandler = (*Handler)(nil)
+
+func TestBoundInputRequiresExactSourceRootAuthority(t *testing.T) {
+	repository, _ := evidence.NewRepositoryIdentity("local.test", []string{"team"}, "repository")
+	revision, _ := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithmSHA1, strings.Repeat("1", 40))
+	adapter, _ := evidence.NewSourceAdapterIdentity(evidence.SourceAdapterKindGit, "local-git-loose", "1.0.0", []evidence.SourceAdapterCapability{evidence.SourceCapabilityReadManifest, evidence.SourceCapabilityReadContent})
+	rootIdentity := strings.Repeat("9", 64)
+	input, err := NewBoundInput(repository, revision, adapter, rootIdentity)
+	if err != nil || input.SourceRootIdentity() != rootIdentity || input.SchemaVersion() != 2 {
+		t.Fatalf("input=(%#v,%v)", input, err)
+	}
+	encoded, err := EncodeInput(input)
+	parsed, parseErr := ParseInput(encoded)
+	if err != nil || parseErr != nil || parsed.Identity() != input.Identity() || parsed.SourceRootIdentity() != rootIdentity {
+		t.Fatalf("round trip=(%#v,%v,%v)", parsed, err, parseErr)
+	}
+	legacy, _ := NewInput(repository, revision, adapter)
+	if legacy.SchemaVersion() != 1 || legacy.SourceRootIdentity() != "" {
+		t.Fatalf("legacy input changed: %#v", legacy)
+	}
+	if _, err := NewBoundInput(repository, revision, adapter, ""); err == nil {
+		t.Fatal("empty source-root authority was accepted")
+	}
+}
+
+func TestBoundHandlerRejectsInputForAnotherSourceRoot(t *testing.T) {
+	store, _ := artifact.NewMemoryStore(artifact.ProtectionProcessPrivate, 8)
+	adapterIdentity, _ := evidence.NewSourceAdapterIdentity(evidence.SourceAdapterKindGit, "test-source", "1.0.0", []evidence.SourceAdapterCapability{evidence.SourceCapabilityReadManifest, evidence.SourceCapabilityReadContent})
+	adapter := &sourceAdapter{identity: adapterIdentity}
+	handler, err := NewHandlerWithSourceRoot(store, adapter, strings.Repeat("9", 64), fixedClock{time.UnixMilli(200)})
+	if err != nil || handler.HandlerIdentity() == "" {
+		t.Fatalf("handler=(%#v,%v)", handler, err)
+	}
+	other, err := NewHandlerWithSourceRoot(store, adapter, strings.Repeat("8", 64), fixedClock{time.UnixMilli(200)})
+	if err != nil || other.HandlerIdentity() == handler.HandlerIdentity() {
+		t.Fatalf("other handler=(%#v,%v)", other, err)
+	}
+	repository, revision, _, result := sourceFixture(t)
+	adapter.result = result
+	scope, _ := audit.NewReviewScope("tenant-a", "repo-a", "run-bound")
+	input, _ := NewBoundInput(repository, revision, adapterIdentity, strings.Repeat("8", 64))
+	inputArtifact, _ := NewInputArtifact(scope, input, artifact.ClassificationInternal, artifact.ProtectionProcessPrivate, []string{strings.Repeat("d", 64)}, time.UnixMilli(100), time.UnixMilli(10000))
+	_, _ = store.Put(context.Background(), inputArtifact, time.UnixMilli(100))
+	request := taskExecutionRequest(t, scope, inputArtifact.Identity(), handler.HandlerIdentity())
+	completion := handler.Execute(context.Background(), request)
+	if completion.Status() != controlplane.TaskCompletionFailed || completion.Failure() != controlplane.RunFailurePolicy || adapter.calls != 0 {
+		t.Fatalf("cross-root completion=%#v calls=%d", completion, adapter.calls)
+	}
+}

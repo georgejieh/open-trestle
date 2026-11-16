@@ -32,7 +32,7 @@ var (
 	ErrOutput = errors.New("LSP output failure")
 )
 
-// DiagnosticReader loads one canonical verified diagnostic set.
+// DiagnosticReader loads one canonical review diagnostic set.
 type DiagnosticReader interface {
 	GetDiagnosticSet(context.Context, audit.ReviewScope) (diagnostics.Set, error)
 }
@@ -190,7 +190,7 @@ func (s *Server) diagnostic(ctx context.Context, state *session, id json.RawMess
 	}
 	set, err := s.reader.GetDiagnosticSet(ctx, state.scope)
 	if err != nil || set.Validate() != nil || set.Scope().Identity() != state.scope.Identity() {
-		return failure(id, -32603, "Verified diagnostics are unavailable.")
+		return failure(id, -32603, "Review diagnostics are unavailable.")
 	}
 	if params.PreviousResultID == set.Identity() {
 		return success(id, map[string]any{"kind": "unchanged", "resultId": set.Identity()})
@@ -223,19 +223,34 @@ type lspDiagnostic struct {
 }
 
 func toLSPDiagnostic(set diagnostics.Set, finding diagnostics.Finding) lspDiagnostic {
-	return lspDiagnostic{
+	snapshotIdentity := set.SnapshotIdentity()
+	if set.SchemaVersion() == 7 {
+		snapshotIdentity = set.ReviewSnapshotIdentity()
+	}
+	diagnostic := lspDiagnostic{
 		Range: lspRange{
 			Start: lspPosition{Line: finding.StartLine() - 1},
 			End:   lspPosition{Line: finding.EndLine()},
 		},
 		Severity: int(finding.Severity()), Code: finding.Fingerprint(), Source: "open-trestle",
-		Message: finding.Title() + ": " + finding.Message() + "\n\n[untrusted review output; verify before editing]",
+		Message: finding.Title() + ": " + finding.Message(),
 		Data: map[string]any{
 			"diagnostic_identity": finding.Identity(), "source_identity": finding.SourceIdentity(),
 			"evidence_ids": finding.EvidenceIDs(), "diagnostic_set_identity": set.Identity(),
-			"snapshot_identity": set.SnapshotIdentity(), "head_revision": set.HeadRevision(),
+			"snapshot_identity": snapshotIdentity, "head_revision": set.HeadRevision(),
 		},
 	}
+	// The open document holds head lines, so removed base lines cannot be
+	// placed on it: the diagnostic is file-level and names its base lines.
+	if finding.Side() != diagnostics.LineSideHead {
+		diagnostic.Range = lspRange{}
+		diagnostic.Message = fmt.Sprintf("Base lines %d-%d (removed code): %s", finding.StartLine(), finding.EndLine(), diagnostic.Message)
+		diagnostic.Data["side"] = "base"
+		diagnostic.Data["base_start_line"] = finding.StartLine()
+		diagnostic.Data["base_end_line"] = finding.EndLine()
+	}
+	diagnostic.Message += "\n\n[untrusted review output; verify before editing]"
+	return diagnostic
 }
 func relativeDocumentPath(root *url.URL, raw string) (string, error) {
 	document, err := url.Parse(raw)

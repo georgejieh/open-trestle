@@ -25,6 +25,9 @@ type investigationSessionReceipt struct {
 			Authorization  string   `json:"authorization_identity"`
 			Outcome        string   `json:"outcome_identity"`
 			Reconciliation string   `json:"reconciliation_identity"`
+			InputTokens    *uint64  `json:"input_tokens"`
+			OutputTokens   *uint64  `json:"output_tokens"`
+			CachedTokens   *uint64  `json:"cached_input_tokens"`
 			Results        []string `json:"tool_result_identities"`
 		} `json:"turns"`
 		ToolCalls     uint32 `json:"tool_calls"`
@@ -103,8 +106,18 @@ func requireInvestigationSessionReceipt(t *testing.T, prepared runtimecatalog.Pr
 	if err := json.Unmarshal(encoded, &receipt); err != nil {
 		t.Fatal(err)
 	}
-	if receipt.Contract != "open-trestle/local-git-model-review-result" || receipt.Version != 2 || receipt.Status != "findings" || receipt.CI != "blocked" || receipt.RunStatus != "succeeded" || receipt.Failure != "" || receipt.ComprehensiveClearance || result.ExitCode() != 4 {
-		t.Fatal("actual Session did not seal a schema2 independent finding")
+	if receipt.Contract != "open-trestle/local-git-model-review-result" || receipt.Version != 6 || receipt.Status != "findings" || receipt.CI != "blocked" || receipt.RunStatus != "succeeded" || receipt.Failure != "" || receipt.ComprehensiveClearance || result.ExitCode() != 4 {
+		t.Fatal("actual Session did not seal a schema 6 independent finding")
+	}
+	// Four generation turns and the verification turn each report 100 input
+	// and 100 output tokens.
+	for _, turn := range receipt.Investigation.Turns {
+		if turn.InputTokens == nil || *turn.InputTokens != 100 || turn.OutputTokens == nil || *turn.OutputTokens != 100 || turn.CachedTokens == nil || *turn.CachedTokens != 0 {
+			t.Fatal("investigation turn lacks its reported token usage")
+		}
+	}
+	if tokens, err := json.Marshal(receipt.TokenUsage); err != nil || string(tokens) != `{"known":true,"route_attempts":5,"input_tokens":500,"output_tokens":500,"cached_input_tokens":0,"generation":{"known":true,"route_attempts":4,"input_tokens":400,"output_tokens":400,"cached_input_tokens":0},"verification":{"known":true,"route_attempts":1,"input_tokens":100,"output_tokens":100,"cached_input_tokens":0}}` {
+		t.Fatalf("investigation token usage = %s", tokens)
 	}
 	if receipt.Request != prepared.RequestIdentity() || receipt.Plan != prepared.Plan().Identity() || receipt.Scope != prepared.Plan().Scope().Identity() || receipt.Run != prepared.Plan().Scope().ReviewRunID() {
 		t.Fatal("receipt is not bound to the actual prepared run")
@@ -156,7 +169,11 @@ func requireInvestigationSessionReceipt(t *testing.T, prepared runtimecatalog.Pr
 	for i, capture := range captures {
 		turn := receipt.Investigation.Turns[i]
 		localModelRequireDigest(t, turn.Request, turn.Authorization, turn.Outcome, turn.Reconciliation)
-		if capture.packet.Scope != receipt.Scope || turn.Request != capture.request || seen[turn.Request] || !claimed[turn.Authorization] || !completed[turn.Outcome] || !reconciled[turn.Reconciliation] {
+		requestBound := turn.Request == capture.request
+		if capture.packet.Task == "candidate_verification" {
+			requestBound = turn.Request != capture.request
+		}
+		if capture.packet.Scope != receipt.Scope || !requestBound || seen[turn.Request] || !claimed[turn.Authorization] || !completed[turn.Outcome] || !reconciled[turn.Reconciliation] {
 			t.Fatal("paid turn is not distinct and bound to the actual request and ledger")
 		}
 		seen[turn.Request] = true
@@ -165,7 +182,7 @@ func requireInvestigationSessionReceipt(t *testing.T, prepared runtimecatalog.Pr
 		delete(reconciled, turn.Reconciliation)
 		if i < 4 {
 			state := capture.packet.Investigation
-			if capture.packet.Task != "candidate_generation" || capture.packet.Version != 4 || state.Turn != uint32(i+1) || state.Session != captures[0].packet.Investigation.Session {
+			if capture.packet.Task != "candidate_generation" || capture.packet.Version != 6 || state.Turn != uint32(i+1) || state.Session != captures[0].packet.Investigation.Session {
 				t.Fatal("actual generation turns lost their one-run investigation identity")
 			}
 			if i > 0 {
@@ -193,7 +210,7 @@ func requireInvestigationSessionReceipt(t *testing.T, prepared runtimecatalog.Pr
 		}
 	}
 	verifier := captures[4]
-	if verifier.packet.Task != "candidate_verification" || verifier.packet.Version != 3 || receipt.GenerationRequest != captures[3].request || receipt.VerificationRequest != verifier.request || receipt.Context != verifier.packet.GenerationContext || receipt.CandidateBatch != verifier.packet.CandidateBatch || len(verifier.packet.Candidates) != 1 || len(receipt.CandidateIDs) != 1 || receipt.CandidateIDs[0] != verifier.packet.Candidates[0].ID {
+	if verifier.packet.Task != "candidate_verification" || verifier.packet.Version != 8 || receipt.GenerationRequest != captures[3].request || receipt.VerificationRequest == verifier.request || receipt.Context != verifier.packet.GenerationContext || receipt.CandidateBatch != verifier.packet.CandidateBatch || len(verifier.packet.Candidates) != 1 || len(receipt.CandidateIDs) != 1 || receipt.CandidateIDs[0] != verifier.packet.Candidates[0].ID {
 		t.Fatal("final result is disconnected from actual final generation and verifier")
 	}
 	if receipt.Independence != "distinct_provider" || receipt.GenerationRoute == receipt.VerificationRoute || receipt.Diagnostics.Coverage.VerifiedCount != 1 || len(receipt.Diagnostics.Findings) != 1 {

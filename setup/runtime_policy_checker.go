@@ -10,9 +10,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/provider"
+	"github.com/georgejieh/open-trestle/runtimecatalog"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 )
 
@@ -26,7 +28,7 @@ const (
 	runtimePolicyLoadUnavailable
 )
 
-// RuntimePolicyApproval binds one explicit local approval to an exact setup root and policy identities.
+// RuntimePolicyApproval binds one explicit setup approval to an exact setup root and policy identities.
 type RuntimePolicyApproval struct{ identity, rootIdentity, tenantID, repositoryID, inventoryIdentity, runtimePolicyIdentity, reviewPolicyIdentity, approvedBy string }
 
 // NewRuntimePolicyApproval records explicit approval of exact non-secret configuration identities by the named setup recovery owner.
@@ -70,19 +72,36 @@ type RuntimePolicyChecker struct {
 	approval                                         RuntimePolicyApproval
 	inventoryPath, policyPath, configurationIdentity string
 	fromFiles                                        bool
+	clock                                            RunnerClock
 }
 
 // NewRuntimePolicyChecker binds already decoded immutable runtime configuration and its explicit approval.
 func NewRuntimePolicyChecker(inventory runtimeconfig.RouteInventory, policy runtimeconfig.RuntimePolicy, approval RuntimePolicyApproval) (*RuntimePolicyChecker, error) {
+	return NewRuntimePolicyCheckerWithClock(inventory, policy, approval, setupRuntimePolicyClock{})
+}
+
+// NewRuntimePolicyCheckerWithClock uses a host-owned clock for expiring brokered declarations.
+func NewRuntimePolicyCheckerWithClock(inventory runtimeconfig.RouteInventory, policy runtimeconfig.RuntimePolicy, approval RuntimePolicyApproval, clock RunnerClock) (*RuntimePolicyChecker, error) {
+	if nilSetupInterface(clock) {
+		return nil, ErrInvalidCheckerRuntime
+	}
 	if inventory.Validate() != nil || policy.Validate() != nil || policy.ValidateAgainstInventory(inventory) != nil || policy.InventoryIdentity() != inventory.Identity() || !validRuntimePolicyApproval(approval) || approval.inventoryIdentity != inventory.Identity() || approval.runtimePolicyIdentity != policy.Identity() || approval.reviewPolicyIdentity != policy.ReviewPolicyIdentity() {
 		return nil, ErrInvalidCheckerRuntime
 	}
 	identity := checkerConfigIdentity(CheckPolicyValidated, inventory.Identity()+"\x00"+policy.Identity()+"\x00"+approval.Identity())
-	return &RuntimePolicyChecker{inventory: inventory, policy: policy, approval: approval, configurationIdentity: identity}, nil
+	return &RuntimePolicyChecker{inventory: inventory, policy: policy, approval: approval, configurationIdentity: identity, clock: clock}, nil
 }
 
 // NewRuntimePolicyFileChecker binds two exact protected configuration paths and an explicit expected authority. Files are read only while the check runs.
 func NewRuntimePolicyFileChecker(inventoryPath, policyPath string, approval RuntimePolicyApproval) (*RuntimePolicyChecker, error) {
+	return NewRuntimePolicyFileCheckerWithClock(inventoryPath, policyPath, approval, setupRuntimePolicyClock{})
+}
+
+// NewRuntimePolicyFileCheckerWithClock checks protected files with one host-owned authority clock.
+func NewRuntimePolicyFileCheckerWithClock(inventoryPath, policyPath string, approval RuntimePolicyApproval, clock RunnerClock) (*RuntimePolicyChecker, error) {
+	if nilSetupInterface(clock) {
+		return nil, ErrInvalidCheckerRuntime
+	}
 	inventoryAbsolute, err := filepath.Abs(inventoryPath)
 	if err != nil || inventoryPath == "" || !validRuntimePolicyApproval(approval) {
 		return nil, ErrInvalidCheckerRuntime
@@ -92,10 +111,10 @@ func NewRuntimePolicyFileChecker(inventoryPath, policyPath string, approval Runt
 		return nil, ErrInvalidCheckerRuntime
 	}
 	identity := checkerConfigIdentity(CheckPolicyValidated, inventoryAbsolute+"\x00"+policyAbsolute+"\x00"+approval.Identity())
-	return &RuntimePolicyChecker{approval: approval, inventoryPath: inventoryAbsolute, policyPath: policyAbsolute, configurationIdentity: identity, fromFiles: true}, nil
+	return &RuntimePolicyChecker{approval: approval, inventoryPath: inventoryAbsolute, policyPath: policyAbsolute, configurationIdentity: identity, fromFiles: true, clock: clock}, nil
 }
 func (c *RuntimePolicyChecker) immutableConfigurationValid() bool {
-	if c == nil || !validRuntimePolicyApproval(c.approval) {
+	if c == nil || nilSetupInterface(c.clock) || !validRuntimePolicyApproval(c.approval) {
 		return false
 	}
 	expected := ""
@@ -136,7 +155,7 @@ func (c *RuntimePolicyChecker) Check(ctx context.Context, plan Plan) CheckResult
 		case runtimePolicyLoadBlocked:
 			outcome = "configuration_invalid"
 		case runtimePolicyLoadValid:
-			if c.approval.validate(plan, inventory, policy) && runtimePolicyMatchesSetup(plan, inventory, policy) {
+			if c.approval.validate(plan, inventory, policy) && c.matchesSetup(plan, inventory, policy) {
 				state, outcome = CheckPassed, "valid"
 			} else {
 				outcome = "posture_mismatch"
@@ -213,7 +232,23 @@ func setupRouteConnectionAuthorities(inventory runtimeconfig.RouteInventory, pol
 	}
 	return authorities, len(authorities) == len(connections)
 }
+
+type setupRuntimePolicyClock struct{}
+
+func (setupRuntimePolicyClock) Now() time.Time { return time.Now().UTC() }
+
+func (c *RuntimePolicyChecker) matchesSetup(plan Plan, inventory runtimeconfig.RouteInventory, policy runtimeconfig.RuntimePolicy) bool {
+	if c == nil || nilSetupInterface(c.clock) {
+		return false
+	}
+	return runtimePolicyMatchesSetupAt(plan, inventory, policy, c.clock.Now())
+}
+
 func runtimePolicyMatchesSetup(plan Plan, inventory runtimeconfig.RouteInventory, policy runtimeconfig.RuntimePolicy) bool {
+	return runtimePolicyMatchesSetupAt(plan, inventory, policy, time.Now().UTC())
+}
+
+func runtimePolicyMatchesSetupAt(plan Plan, inventory runtimeconfig.RouteInventory, policy runtimeconfig.RuntimePolicy, now time.Time) bool {
 	posture := plan.Posture()
 	if inventory.Validate() != nil || policy.Validate() != nil || policy.ValidateAgainstInventory(inventory) != nil || policy.InventoryIdentity() != inventory.Identity() || policy.Constraints().ContentLoggingAllowed() != posture.ContentLoggingAllowed() || policy.Budget().MaxCostMicroUSD() > posture.MaxModelRequestCostMicroUSD() || posture.PublicationEnabled() || posture.DynamicValidationEnabled() || posture.ProviderFallbackEnabled() || !policy.Publication().BlocksOnInconclusive() || policy.Publication().MinimumIndependence() < policy.Independence().Level() {
 		return false
@@ -235,7 +270,7 @@ func runtimePolicyMatchesSetup(plan Plan, inventory runtimeconfig.RouteInventory
 		zones[reference.Zone()] = true
 		authority, found := authorities[reference.AdapterID()]
 		connection, connected := connections[reference.AdapterID()]
-		if !found || !connected || !authority.matches(reference, candidate.ContentLoggingMode()) || !policy.Constraints().AllowedProviderZones().Allows(reference.Zone()) || candidate.ContentLoggingMode() != provider.ContentLoggingDisabled || !endpointMatchesZone(connection.Endpoint(), reference.Zone()) {
+		if !found || !connected || !authority.matches(reference, candidate.ContentLoggingMode()) || !policy.Constraints().AllowedProviderZones().Allows(reference.Zone()) || candidate.ContentLoggingMode() != provider.ContentLoggingDisabled || !setupConnectionEndpointMatchesZone(connection, reference.Zone()) {
 			return false
 		}
 		if routeReadyForPolicy(observed, policy) {
@@ -260,6 +295,19 @@ func runtimePolicyMatchesSetup(plan Plan, inventory runtimeconfig.RouteInventory
 			return false
 		}
 	} else {
+		return false
+	}
+	if policy.VerificationRouteRecordIdentity() != "" {
+		if posture.Inference() == InferenceApprovedRemote {
+			return setupBrokeredRoutePairMatches(plan, inventory, policy, now)
+		}
+		if posture.Inference() != InferenceLocalOnly {
+			return false
+		}
+		_, err := runtimecatalog.ResolveLocalGenerationRoutePair(policy, inventory)
+		return err == nil
+	}
+	if zones[provider.ProviderZoneBrokeredRemote] {
 		return false
 	}
 	if _, pinned := policy.Ranking().PinnedRoute(); pinned {

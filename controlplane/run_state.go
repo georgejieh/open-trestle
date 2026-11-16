@@ -85,20 +85,43 @@ func (s TaskRuntimeStatus) String() string {
 
 // TaskRuntimeState is the current reconstructed state for one immutable task.
 type TaskRuntimeState struct {
-	definition           TaskDefinition
-	status               TaskRuntimeStatus
-	attempts             uint8
-	leaseTokenIdentity   string
-	workerIdentity       string
-	leaseExpiresAtMillis int64
-	outputIdentity       string
-	failure              RunFailure
-	retryAtMillis        int64
-	lastEventRevision    uint64
-	lastEventIdentity    string
-	lastEventAtMillis    int64
+	definition            TaskDefinition
+	status                TaskRuntimeStatus
+	attempts              uint8
+	leaseTokenIdentity    string
+	workerIdentity        string
+	leaseExpiresAtMillis  int64
+	outputIdentity        string
+	failure               RunFailure
+	failureReason         TaskFailureReason
+	shortfall             TaskFailureContextShortfall
+	retryAtMillis         int64
+	lastEventRevision     uint64
+	lastEventIdentity     string
+	lastEventAtMillis     int64
+	preparedEvent         RunEvent
+	preparedEventIdentity string
+	preparedInputTerminal bool
 }
 
+func (s TaskRuntimeState) PreparedContextInput() (PreparedContextInput, bool) {
+	if s.status != TaskRuntimeLeased || s.preparedEvent.Kind() != RunEventContextInputPrepared {
+		return PreparedContextInput{}, false
+	}
+	return PreparedContextInput{s.preparedEvent}, true
+}
+func (s TaskRuntimeState) PreparedContextPacket() (PreparedContextPacket, bool) {
+	if s.status != TaskRuntimeLeased || s.preparedEvent.Kind() != RunEventContextPacketPrepared {
+		return PreparedContextPacket{}, false
+	}
+	return PreparedContextPacket{s.preparedEvent}, true
+}
+func (s TaskRuntimeState) PreparedContextAbstention() (PreparedContextAbstention, bool) {
+	if s.status != TaskRuntimeLeased || s.preparedEvent.Kind() != RunEventContextAbstentionPrepared {
+		return PreparedContextAbstention{}, false
+	}
+	return PreparedContextAbstention{event: s.preparedEvent}, true
+}
 func (s TaskRuntimeState) Definition() TaskDefinition { return s.definition }
 func (s TaskRuntimeState) Key() string                { return s.definition.Key() }
 func (s TaskRuntimeState) Status() TaskRuntimeStatus  { return s.status }
@@ -108,10 +131,18 @@ func (s TaskRuntimeState) WorkerIdentity() string     { return s.workerIdentity 
 func (s TaskRuntimeState) LeaseExpiresAt() time.Time  { return runMillisToTime(s.leaseExpiresAtMillis) }
 func (s TaskRuntimeState) OutputIdentity() string     { return s.outputIdentity }
 func (s TaskRuntimeState) Failure() RunFailure        { return s.failure }
-func (s TaskRuntimeState) RetryAt() time.Time         { return runMillisToTime(s.retryAtMillis) }
-func (s TaskRuntimeState) LastEventRevision() uint64  { return s.lastEventRevision }
-func (s TaskRuntimeState) LastEventIdentity() string  { return s.lastEventIdentity }
-func (s TaskRuntimeState) LastEventAt() time.Time     { return runMillisToTime(s.lastEventAtMillis) }
+
+// FailureReason returns the content-free reason recorded by the last failed source attempt, or zero.
+func (s TaskRuntimeState) FailureReason() TaskFailureReason { return s.failureReason }
+
+// ContextShortfall returns the counts of a route_context_insufficient refusal.
+func (s TaskRuntimeState) ContextShortfall() (TaskFailureContextShortfall, bool) {
+	return s.shortfall, s.shortfall.Present()
+}
+func (s TaskRuntimeState) RetryAt() time.Time        { return runMillisToTime(s.retryAtMillis) }
+func (s TaskRuntimeState) LastEventRevision() uint64 { return s.lastEventRevision }
+func (s TaskRuntimeState) LastEventIdentity() string { return s.lastEventIdentity }
+func (s TaskRuntimeState) LastEventAt() time.Time    { return runMillisToTime(s.lastEventAtMillis) }
 func (s TaskRuntimeState) RetryableAt(at time.Time) bool {
 	return s.status == TaskRuntimeFailed && s.failure.Retryable() && s.attempts < s.definition.MaxAttempts() && s.retryAtMillis != 0 && at.UnixMilli() >= s.retryAtMillis
 }
@@ -240,9 +271,12 @@ func (s *ReviewRunState) applyTaskEvent(event RunEvent, runtime *TaskRuntimeStat
 		runtime.status = TaskRuntimeAvailable
 		runtime.retryAtMillis = 0
 		runtime.failure = 0
+		runtime.failureReason = 0
+		runtime.shortfall = TaskFailureContextShortfall{}
+		runtime.outputIdentity = ""
 	case RunEventTaskLeased:
 		available := runtime.status == TaskRuntimeAvailable
-		expired := runtime.status == TaskRuntimeLeased && event.occurredAtMillis >= runtime.leaseExpiresAtMillis
+		expired := runtime.status == TaskRuntimeLeased && runtime.preparedEventIdentity == "" && event.occurredAtMillis >= runtime.leaseExpiresAtMillis
 		if !available && !expired {
 			return ErrRunTransitionInvalid
 		}
@@ -250,11 +284,23 @@ func (s *ReviewRunState) applyTaskEvent(event RunEvent, runtime *TaskRuntimeStat
 			return ErrRunTransitionAttemptLimit
 		}
 		runtime.status = TaskRuntimeLeased
+		runtime.preparedEvent = RunEvent{}
+		runtime.preparedEventIdentity = ""
+		runtime.preparedInputTerminal = false
 		runtime.attempts = event.Attempt()
 		runtime.leaseTokenIdentity = event.LeaseTokenIdentity()
 		runtime.workerIdentity = event.WorkerIdentity()
 		runtime.leaseExpiresAtMillis = event.leaseExpiresAtMillis
 	case RunEventTaskLeaseRenewed:
+		if runtime.preparedEventIdentity != "" {
+			if runtime.preparedEvent.Kind() == RunEventContextPacketPrepared {
+				return ErrPreparedContextPacket
+			}
+			if runtime.preparedEvent.Kind() == RunEventContextInputPrepared {
+				return ErrPreparedContextInput
+			}
+			return ErrPreparedContextAbstention
+		}
 		matching := runtime.status == TaskRuntimeLeased && event.Attempt() == runtime.attempts && event.LeaseTokenIdentity() == runtime.leaseTokenIdentity && event.WorkerIdentity() == runtime.workerIdentity
 		timely := event.occurredAtMillis <= runtime.leaseExpiresAtMillis && event.leaseExpiresAtMillis > runtime.leaseExpiresAtMillis
 		if !matching || !timely {
@@ -262,6 +308,15 @@ func (s *ReviewRunState) applyTaskEvent(event RunEvent, runtime *TaskRuntimeStat
 		}
 		runtime.leaseExpiresAtMillis = event.leaseExpiresAtMillis
 	case RunEventTaskSucceeded:
+		if runtime.preparedEventIdentity != "" {
+			if runtime.preparedEvent.Kind() == RunEventContextPacketPrepared {
+				return ErrPreparedContextPacket
+			}
+			if runtime.preparedEvent.Kind() == RunEventContextInputPrepared {
+				return ErrPreparedContextInput
+			}
+			return ErrPreparedContextAbstention
+		}
 		if !runtime.matchesLeaseResult(event) {
 			return ErrRunTransitionLeaseMismatch
 		}
@@ -269,18 +324,87 @@ func (s *ReviewRunState) applyTaskEvent(event RunEvent, runtime *TaskRuntimeStat
 		runtime.outputIdentity = event.OutputIdentity()
 		runtime.workerIdentity = ""
 		runtime.leaseExpiresAtMillis = 0
+	case RunEventContextPacketPrepared:
+		if runtime.definition.Kind() != TaskAssembleContext || runtime.preparedEventIdentity != "" || !runtime.matchesLeaseResult(event) || event.occurredAtMillis > runtime.leaseExpiresAtMillis || !event.packetDescriptor.valid(s.plan.Scope()) || event.packetDescriptor.ArtifactIdentity != event.OutputIdentity() || event.packetDescriptor.CreatedAtMilliseconds > event.occurredAtMillis || event.packetDescriptor.ExpiresAtMilliseconds <= event.occurredAtMillis {
+			return ErrPreparedContextPacket
+		}
+		expectedLease := TaskLease{planIdentity: s.plan.Identity(), taskKey: runtime.Key(), taskIdentity: runtime.definition.Identity(), handlerIdentity: runtime.definition.HandlerIdentity(), workerIdentity: runtime.workerIdentity, tokenIdentity: runtime.leaseTokenIdentity, eventIdentity: runtime.lastEventIdentity, attempt: runtime.attempts, expiresAtMillis: runtime.leaseExpiresAtMillis}
+		if event.packetDescriptor.LeaseEventIdentity != runtime.lastEventIdentity || event.packetDescriptor.LeaseIdentity != deriveTaskLeaseIdentity(expectedLease) {
+			return ErrPreparedContextPacket
+		}
+		if !exactPacketDependencies(*s, *runtime, event.packetDescriptor) {
+			return ErrPreparedContextPacket
+		}
+		runtime.preparedEvent = event
+		runtime.preparedEventIdentity = event.Identity()
+	case RunEventContextInputPrepared:
+		previous := runtime.preparedEvent
+		d := event.inputDescriptor
+		if runtime.definition.Kind() != TaskAssembleContext || previous.Kind() != RunEventContextPacketPrepared || runtime.preparedEventIdentity != d.PacketPreparedEventIdentity || previous.OutputIdentity() != d.PacketArtifactIdentity || previous.packetDescriptor.LeaseIdentity != d.LeaseIdentity || previous.packetDescriptor.LeaseEventIdentity != d.LeaseEventIdentity || !runtime.matchesLeaseResult(event) || event.occurredAtMillis > runtime.leaseExpiresAtMillis || !d.valid(s.plan.Scope()) || d.Input.ArtifactIdentity != event.OutputIdentity() || d.Request.CreatedAtMilliseconds > event.occurredAtMillis || d.Receipt.CreatedAtMilliseconds > event.occurredAtMillis || d.Input.CreatedAtMilliseconds > event.occurredAtMillis || d.Input.ExpiresAtMilliseconds <= event.occurredAtMillis || !inputMatchesPacket(d, previous.packetDescriptor, previous.occurredAtMillis) || !exactPacketDependencies(*s, *runtime, previous.packetDescriptor) {
+			return ErrPreparedContextInput
+		}
+		runtime.preparedEvent = event
+		runtime.preparedEventIdentity = event.Identity()
+	case RunEventContextInputSettled:
+		prepared := runtime.preparedEvent
+		if runtime.definition.Kind() != TaskAssembleContext || prepared.Kind() != RunEventContextInputPrepared || runtime.preparedEventIdentity != prepared.Identity() || event.PreviousIdentity() != prepared.Identity() || !runtime.matchesLeaseResult(event) || event.OutputIdentity() != prepared.inputDescriptor.Input.ArtifactIdentity {
+			return ErrPreparedContextInput
+		}
+		runtime.status = TaskRuntimeSucceeded
+		runtime.outputIdentity = event.OutputIdentity()
+		runtime.preparedEvent = RunEvent{}
+		runtime.workerIdentity = ""
+		runtime.leaseExpiresAtMillis = 0
+	case RunEventContextAbstentionPrepared:
+		if runtime.definition.Kind() != TaskAssembleContext || runtime.preparedEventIdentity != "" || !runtime.matchesLeaseResult(event) || event.occurredAtMillis > runtime.leaseExpiresAtMillis {
+			return ErrPreparedContextAbstention
+		}
+		if identity, err := preparedArtifactIdentity(event.preparedArtifact, s.plan.Scope()); err != nil || identity != event.OutputIdentity() {
+			return ErrPreparedContextAbstention
+		}
+		runtime.preparedEvent = event
+		runtime.preparedEventIdentity = event.Identity()
 	case RunEventTaskFailed:
+		inputTermination := runtime.preparedEvent.Kind() == RunEventContextInputPrepared && event.OutputIdentity() == "" && event.Failure() == RunFailurePolicy && event.retryAtMillis == 0 && event.occurredAtMillis >= runtime.leaseExpiresAtMillis && event.Attempt() == runtime.attempts && event.LeaseTokenIdentity() == runtime.leaseTokenIdentity
+		if runtime.preparedEvent.Kind() == RunEventContextInputPrepared && !inputTermination {
+			return ErrPreparedContextInput
+		}
+		packetTermination := runtime.preparedEvent.Kind() == RunEventContextPacketPrepared && event.OutputIdentity() == "" && event.Failure() == RunFailurePolicy && event.FailureReason() == 0 && event.retryAtMillis == 0 && event.occurredAtMillis >= runtime.leaseExpiresAtMillis && event.Attempt() == runtime.attempts && event.LeaseTokenIdentity() == runtime.leaseTokenIdentity
+		// The lease holder may settle a packet-only preparation as a recorded
+		// route refusal before its lease expires.
+		packetRefusal := runtime.preparedEvent.Kind() == RunEventContextPacketPrepared && event.OutputIdentity() == "" && event.Failure() == RunFailurePolicy && contextRefusalReason(event.FailureReason()) && event.retryAtMillis == 0 && runtime.matchesLeaseResult(event)
+		if runtime.preparedEvent.Kind() == RunEventContextPacketPrepared && !packetTermination && !packetRefusal {
+			return ErrPreparedContextPacket
+		}
+		if runtime.preparedEventIdentity != "" && !packetTermination && !packetRefusal && !inputTermination && (event.OutputIdentity() != runtime.preparedEvent.OutputIdentity() || event.Failure() != runtime.preparedEvent.Failure() || event.Attempt() != runtime.preparedEvent.Attempt() || event.LeaseTokenIdentity() != runtime.preparedEvent.LeaseTokenIdentity()) {
+			return ErrPreparedContextAbstention
+		}
+		if runtime.preparedEventIdentity == "" && event.OutputIdentity() != "" && event.occurredAtMillis > runtime.leaseExpiresAtMillis {
+			return ErrRunTransitionLeaseMismatch
+		}
 		// The coordinator can settle an exhausted lease without reviving worker authority.
 		exhaustedExpiry := runtime.status == TaskRuntimeLeased && runtime.attempts == runtime.definition.MaxAttempts() && event.Attempt() == runtime.attempts && event.LeaseTokenIdentity() == runtime.leaseTokenIdentity && event.occurredAtMillis >= runtime.leaseExpiresAtMillis && event.Failure() == RunFailureResourceLimit && event.retryAtMillis == 0
-		if !runtime.matchesLeaseResult(event) && !exhaustedExpiry {
+		preparedSettlement := runtime.preparedEventIdentity != "" && event.OutputIdentity() != "" && event.OutputIdentity() == runtime.preparedEvent.OutputIdentity() && event.Failure() == runtime.preparedEvent.Failure()
+		if !runtime.matchesLeaseResult(event) && !exhaustedExpiry && !preparedSettlement && !packetTermination && !inputTermination {
 			return ErrRunTransitionLeaseMismatch
+		}
+		if event.OutputIdentity() != "" && runtime.definition.Kind() != TaskAssembleContext {
+			return ErrInvalidRunEventOutput
+		}
+		if event.FailureReason() != 0 && !taskFailureReasonAllowed(runtime.definition.Kind(), event.FailureReason(), event.shortfall) {
+			return ErrInvalidTaskFailureReason
 		}
 		canRetry := event.Failure().Retryable() && runtime.attempts < runtime.definition.MaxAttempts()
 		if canRetry != (event.retryAtMillis != 0) {
 			return ErrRunTransitionInvalid
 		}
 		runtime.status = TaskRuntimeFailed
+		runtime.preparedInputTerminal = inputTermination
+		runtime.preparedEvent = RunEvent{}
 		runtime.failure = event.Failure()
+		runtime.failureReason = event.FailureReason()
+		runtime.shortfall = event.shortfall
+		runtime.outputIdentity = event.OutputIdentity()
 		runtime.retryAtMillis = event.retryAtMillis
 		runtime.workerIdentity = ""
 		runtime.leaseExpiresAtMillis = 0
@@ -338,6 +462,18 @@ func (s ReviewRunState) canSucceed() bool {
 		}
 	}
 	return true
+}
+
+// retryPending reports a failed task that still has a scheduled retry. Optional
+// work must be terminal before success; replay acceptance of historical success
+// events is deliberately unchanged so previously stored journals still replay.
+func (s ReviewRunState) retryPending() bool {
+	for _, task := range s.tasks {
+		if task.status == TaskRuntimeFailed && task.failure.Retryable() && task.attempts < task.definition.MaxAttempts() {
+			return true
+		}
+	}
+	return false
 }
 func (s ReviewRunState) canFail() bool {
 	for _, task := range s.tasks {
@@ -417,7 +553,7 @@ func (s ReviewRunState) TerminalCompletion() (TaskCompletion, bool, error) {
 		}
 		return completion, true, nil
 	}
-	if !s.canSucceed() {
+	if !s.canSucceed() || s.retryPending() {
 		return TaskCompletion{}, false, nil
 	}
 	resultTask, err := s.plan.ResultTask()

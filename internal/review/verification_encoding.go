@@ -27,15 +27,29 @@ type encodedVerificationBatchWire struct {
 	Results                []encodedVerificationResultWire `json:"results"`
 }
 type encodedVerificationResultWire struct {
-	Identity          string                         `json:"identity"`
-	CandidateIdentity string                         `json:"candidate_identity"`
-	Outcome           string                         `json:"outcome"`
-	FinalSeverity     string                         `json:"final_severity"`
-	Rationale         string                         `json:"rationale"`
-	Path              string                         `json:"path"`
-	StartLine         int                            `json:"start_line"`
-	EndLine           int                            `json:"end_line"`
-	Evidence          []encodedCandidateEvidenceWire `json:"evidence"`
+	Identity          string `json:"identity"`
+	CandidateIdentity string `json:"candidate_identity"`
+	Outcome           string `json:"outcome"`
+	FinalSeverity     string `json:"final_severity"`
+	Rationale         string `json:"rationale"`
+	Path              string `json:"path"`
+	StartLine         int    `json:"start_line"`
+	EndLine           int    `json:"end_line"`
+	// Side is "base" for a verdict on a base-line candidate location. It and
+	// any evidence side appear only in schema version 2.
+	Side     string                         `json:"side,omitempty"`
+	Evidence []encodedCandidateEvidenceWire `json:"evidence"`
+}
+
+// verificationBatchVersion is 2 exactly when a result or one of its evidence
+// bindings records base lines; every other batch keeps its version 1 bytes.
+func verificationBatchVersion(batch VerificationBatch) int {
+	for _, result := range batch.results {
+		if result.side == LineSideBase || hasBaseSide(result.evidenceBindings) {
+			return 2
+		}
+	}
+	return 1
 }
 
 // EncodeVerificationBatch returns the canonical durable form of admitted verifier verdicts.
@@ -51,6 +65,8 @@ func EncodeVerificationBatch(batch VerificationBatch) ([]byte, error) {
 }
 
 // ParseEncodedVerificationBatch accepts only a canonical previously admitted verdict set.
+// Schema version 2 is used exactly when a result or a cited binding records
+// base lines of a removed_lines source.
 func ParseEncodedVerificationBatch(encoded []byte) (VerificationBatch, error) {
 	if len(encoded) == 0 || len(encoded) > maximumEncodedVerificationBatchBytes {
 		return VerificationBatch{}, ErrInvalidVerificationBatchEncoding
@@ -66,7 +82,7 @@ func ParseEncodedVerificationBatch(encoded []byte) (VerificationBatch, error) {
 	}
 	canonical, err := json.Marshal(wire)
 	if err != nil || !bytes.Equal(canonical, encoded) || wire.Contract != "open-trestle/verification-batch" ||
-		wire.SchemaVersion != 1 || len(wire.CandidateIdentities) > maxCandidateFindings ||
+		(wire.SchemaVersion != 1 && wire.SchemaVersion != 2) || len(wire.CandidateIdentities) > maxCandidateFindings ||
 		len(wire.Results) != len(wire.CandidateIdentities) {
 		return VerificationBatch{}, ErrInvalidVerificationBatchEncoding
 	}
@@ -112,24 +128,19 @@ func parseEncodedVerificationResult(
 	if err != nil {
 		return VerificationResult{}, err
 	}
-	bindings := make([]candidateEvidenceBinding, len(wire.Evidence))
-	for index, encodedBinding := range wire.Evidence {
-		bindingRange, err := evidence.NewSourceRange(
-			encodedBinding.Path, encodedBinding.StartLine, encodedBinding.EndLine,
-		)
-		if err != nil {
-			return VerificationResult{}, err
-		}
-		bindings[index] = candidateEvidenceBinding{
-			identity: encodedBinding.Identity, digest: encodedBinding.Digest,
-			sourceRange: bindingRange,
-		}
+	bindings, err := parseEncodedEvidenceBindings(wire.Evidence)
+	if err != nil {
+		return VerificationResult{}, err
+	}
+	side, ok := parseRecordedLineSide(wire.Side)
+	if !ok {
+		return VerificationResult{}, ErrInvalidVerificationResult
 	}
 	result := VerificationResult{
 		identity: wire.Identity, responseIdentity: responseIdentity,
 		snapshotIdentity: snapshotIdentity, candidateIdentity: wire.CandidateIdentity,
 		outcome: outcome, finalSeverity: Severity(wire.FinalSeverity), rationale: wire.Rationale,
-		sourceRange: sourceRange, evidenceBindings: bindings,
+		sourceRange: sourceRange, evidenceBindings: bindings, side: side,
 	}
 	if err := result.Validate(); err != nil {
 		return VerificationResult{}, err
@@ -144,23 +155,16 @@ func encodedVerificationBatchWireValue(batch VerificationBatch) encodedVerificat
 	}
 	results := make([]encodedVerificationResultWire, len(batch.results))
 	for index, result := range batch.results {
-		bindings := make([]encodedCandidateEvidenceWire, len(result.evidenceBindings))
-		for bindingIndex, binding := range result.evidenceBindings {
-			bindings[bindingIndex] = encodedCandidateEvidenceWire{
-				Identity: binding.identity, Digest: binding.digest, Path: binding.sourceRange.Path(),
-				StartLine: binding.sourceRange.StartLine(), EndLine: binding.sourceRange.EndLine(),
-			}
-		}
 		results[index] = encodedVerificationResultWire{
 			Identity: result.Identity(), CandidateIdentity: result.CandidateIdentity(),
 			Outcome: result.Outcome().String(), FinalSeverity: string(result.FinalSeverity()),
 			Rationale: result.Rationale(), Path: result.sourceRange.Path(),
 			StartLine: result.sourceRange.StartLine(), EndLine: result.sourceRange.EndLine(),
-			Evidence: bindings,
+			Side: recordedLineSide(result.side), Evidence: encodedEvidenceBindings(result.evidenceBindings),
 		}
 	}
 	return encodedVerificationBatchWire{
-		Contract: "open-trestle/verification-batch", SchemaVersion: 1,
+		Contract: "open-trestle/verification-batch", SchemaVersion: verificationBatchVersion(batch),
 		Identity: batch.Identity(), ResponseIdentity: batch.ResponseIdentity(),
 		CandidateBatchIdentity: batch.CandidateBatchIdentity(), SnapshotIdentity: batch.SnapshotIdentity(),
 		CandidateIdentities: candidateIdentities, Results: results,

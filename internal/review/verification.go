@@ -100,6 +100,9 @@ type VerificationResult struct {
 	rationale         string
 	sourceRange       evidence.SourceRange
 	evidenceBindings  []candidateEvidenceBinding
+	// side is the candidate's location side. Bindings record a side only for
+	// a verdict on a categorized (v2) candidate.
+	side LineSide
 }
 
 func (r VerificationResult) Identity() string             { return r.identity }
@@ -109,6 +112,9 @@ func (r VerificationResult) CandidateIdentity() string    { return r.candidateId
 func (r VerificationResult) Outcome() VerificationOutcome { return r.outcome }
 func (r VerificationResult) FinalSeverity() Severity      { return r.finalSeverity }
 func (r VerificationResult) Rationale() string            { return r.rationale }
+
+// Side returns the side of the candidate location the verdict answers.
+func (r VerificationResult) Side() LineSide { return r.side }
 func (r VerificationResult) EvidenceIDs() []string {
 	identities := make([]string, len(r.evidenceBindings))
 	for index, binding := range r.evidenceBindings {
@@ -124,7 +130,7 @@ func (r VerificationResult) Format(state fmt.State, verb rune) {
 
 // Validate verifies verdict semantics, evidence bindings, range support, and identity.
 func (r VerificationResult) Validate() error {
-	if !validCandidateDigest(r.responseIdentity) || !validCandidateDigest(r.snapshotIdentity) || !validCandidateDigest(r.candidateIdentity) || !validCandidateSourceRange(r.sourceRange) {
+	if !validCandidateDigest(r.responseIdentity) || !validCandidateDigest(r.snapshotIdentity) || !validCandidateDigest(r.candidateIdentity) || !validCandidateSourceRange(r.sourceRange) || !validLineSide(r.side) {
 		return ErrInvalidVerificationResult
 	}
 	if err := r.outcome.Validate(); err != nil {
@@ -139,10 +145,10 @@ func (r VerificationResult) Validate() error {
 	previous := ""
 	citedRange := false
 	for _, binding := range r.evidenceBindings {
-		if !validCandidateReference(binding.identity) || !validCandidateDigest(binding.digest) || !validCandidateSourceRange(binding.sourceRange) || previous != "" && binding.identity <= previous {
+		if !validCandidateReference(binding.identity) || !validCandidateDigest(binding.digest) || !validCandidateSourceRange(binding.sourceRange) || !validLineSide(binding.side) || previous != "" && binding.identity <= previous {
 			return ErrInvalidCandidateEvidenceSet
 		}
-		citedRange = citedRange || rangeContains(binding.sourceRange, r.sourceRange)
+		citedRange = citedRange || bindingCovers(binding, r.side, r.sourceRange)
 		previous = binding.identity
 	}
 	if r.outcome == VerificationVerified {
@@ -296,12 +302,76 @@ func ValidateVerificationDocumentSyntax(payload []byte) error {
 
 // ParseVerificationBatch binds strict verifier output to every exact candidate and allowed evidence item.
 func ParseVerificationBatch(response provider.Response, candidates CandidateBatch, evidenceItems []evidence.EvidenceItem) (VerificationBatch, error) {
+	return parseVerificationBatch(response, candidates, evidenceItems, nil)
+}
+
+// ParseContextVerificationBatch is ParseVerificationBatch against the exact
+// verifier request it answers. A removed_lines source of that request may be
+// cited, but never shows that a verified verdict's evidence covers the
+// candidate's head lines, because its line numbers are base coordinates.
+func ParseContextVerificationBatch(response provider.Response, candidates CandidateBatch, context VerificationRequestContext) (VerificationBatch, error) {
+	if context.Validate() != nil || candidates.Identity() != context.CandidateBatchIdentity() {
+		return VerificationBatch{}, ErrInvalidVerificationRequestContext
+	}
+	wire, err := decodeVerificationContextWire(context.Payload())
+	if err != nil {
+		return VerificationBatch{}, ErrInvalidVerificationRequestContext
+	}
+	baseLines := make(map[string]struct{})
+	for _, source := range wire.Sources {
+		if source.Stage == ContextStageRemovedLines.String() {
+			baseLines[source.SourceID] = struct{}{}
+		}
+	}
+	return parseVerificationBatch(response, candidates, context.EvidenceItems(), baseLines)
+}
+
+// VerificationBatchMatchesContext reports whether a recorded verdict batch
+// records exactly the sides its verifier request implies: each result has the
+// side of the candidate it answers, and each cited binding of a verdict on a
+// candidate batch that records sides records base lines exactly when it names
+// a removed_lines source of that request. Any other batch records no side.
+// Readback therefore cannot turn cited base lines into head lines.
+func VerificationBatchMatchesContext(context VerificationRequestContext, candidates CandidateBatch, batch VerificationBatch) bool {
+	if context.Validate() != nil || candidates.Identity() != context.CandidateBatchIdentity() || batch.CandidateBatchIdentity() != candidates.Identity() || len(batch.results) != len(candidates.findings) {
+		return false
+	}
+	wire, err := decodeVerificationContextWire(context.Payload())
+	if err != nil {
+		return false
+	}
+	stages := make(map[string]string, len(wire.Sources))
+	for _, source := range wire.Sources {
+		stages[source.SourceID] = source.Stage
+	}
+	for index, result := range batch.results {
+		if result.side != candidates.findings[index].side {
+			return false
+		}
+		for _, binding := range result.evidenceBindings {
+			stage, exists := stages[binding.identity]
+			expected := LineSideHead
+			if candidates.recordsSides() && stage == ContextStageRemovedLines.String() {
+				expected = LineSideBase
+			}
+			if !exists || binding.side != expected {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func parseVerificationBatch(response provider.Response, candidates CandidateBatch, evidenceItems []evidence.EvidenceItem, baseLines map[string]struct{}) (VerificationBatch, error) {
 	if err := response.Validate(); err != nil {
 		return VerificationBatch{}, err
 	}
 	parts := response.Parts()
-	if response.Capability() != provider.CapabilityReviewV1 || response.FinishReason() != provider.ResponseFinishStop || len(parts) != 1 || parts[0].Kind() != provider.ResponsePartStructuredData {
+	if response.Capability() != provider.CapabilityReviewV1 {
 		return VerificationBatch{}, ErrInvalidVerificationResponseEnvelope
+	}
+	if response.FinishReason() != provider.ResponseFinishStop || len(parts) != 1 || parts[0].Kind() != provider.ResponsePartStructuredData {
+		return VerificationBatch{}, modelOutputFailure(ErrInvalidVerificationResponseEnvelope)
 	}
 	if err := candidates.Validate(); err != nil {
 		return VerificationBatch{}, err
@@ -310,11 +380,22 @@ func ParseVerificationBatch(response provider.Response, candidates CandidateBatc
 	if err != nil {
 		return VerificationBatch{}, err
 	}
-	if err := ValidateVerificationDocumentSyntax(parts[0].Payload()); err != nil {
+	batch, err := parseVerificationDocument(response, parts[0].Payload(), candidates, allowedEvidence, baseLines)
+	if err != nil {
+		return VerificationBatch{}, modelOutputFailure(err)
+	}
+	return batch, nil
+}
+
+// parseVerificationDocument admits the verifier's document against host
+// inputs parseVerificationBatch has already validated, so every error it
+// returns was caused by the document.
+func parseVerificationDocument(response provider.Response, payload []byte, candidates CandidateBatch, allowedEvidence map[string]evidence.EvidenceItem, baseLines map[string]struct{}) (VerificationBatch, error) {
+	if err := ValidateVerificationDocumentSyntax(payload); err != nil {
 		return VerificationBatch{}, err
 	}
 	var document verificationDocument
-	if err := json.Unmarshal(parts[0].Payload(), &document); err != nil {
+	if err := json.Unmarshal(payload, &document); err != nil {
 		return VerificationBatch{}, ErrInvalidVerificationDocumentJSON
 	}
 	candidateValues := candidates.Findings()
@@ -333,7 +414,7 @@ func ParseVerificationBatch(response provider.Response, candidates CandidateBatc
 		if _, exists := byCandidate[verdict.CandidateID]; exists {
 			return VerificationBatch{}, ErrDuplicateVerificationCandidate
 		}
-		result, err := newVerificationResult(response.Identity(), candidates.SnapshotIdentity(), candidate, verdict, allowedEvidence)
+		result, err := newVerificationResult(response.Identity(), candidates.SnapshotIdentity(), candidate, verdict, allowedEvidence, baseLines, candidates.recordsSides())
 		if err != nil {
 			return VerificationBatch{}, err
 		}
@@ -361,15 +442,27 @@ func ParseVerificationBatch(response provider.Response, candidates CandidateBatc
 	return batch, nil
 }
 
-func newVerificationResult(responseIdentity, snapshotIdentity string, candidate CandidateFinding, verdict verificationVerdictDocument, allowed map[string]evidence.EvidenceItem) (VerificationResult, error) {
+// newVerificationResult binds one verdict. baseLines names the removed_lines
+// sources of the request; a verdict on a categorized candidate (recordSides)
+// records each such citation as a base binding. Only a citation on the
+// candidate's own side can cover its location.
+func newVerificationResult(responseIdentity, snapshotIdentity string, candidate CandidateFinding, verdict verificationVerdictDocument, allowed map[string]evidence.EvidenceItem, baseLines map[string]struct{}, recordSides bool) (VerificationResult, error) {
 	outcome, _ := ParseVerificationOutcome(verdict.Outcome)
 	bindings := make([]candidateEvidenceBinding, 0, len(verdict.EvidenceIDs))
+	sides := make(map[string]LineSide, len(verdict.EvidenceIDs))
 	for _, identity := range verdict.EvidenceIDs {
 		item, exists := allowed[identity]
 		if !exists {
 			return VerificationResult{}, ErrVerificationEvidenceNotAllowed
 		}
-		bindings = append(bindings, candidateEvidenceBinding{identity: item.ID(), digest: item.Digest(), sourceRange: item.SourceRange()})
+		binding := candidateEvidenceBinding{identity: item.ID(), digest: item.Digest(), sourceRange: item.SourceRange()}
+		if _, base := baseLines[identity]; base {
+			sides[identity] = LineSideBase
+			if recordSides {
+				binding.side = LineSideBase
+			}
+		}
+		bindings = append(bindings, binding)
 	}
 	sort.Slice(bindings, func(left, right int) bool { return bindings[left].identity < bindings[right].identity })
 	severity := Severity("")
@@ -379,12 +472,14 @@ func newVerificationResult(responseIdentity, snapshotIdentity string, candidate 
 	result := VerificationResult{
 		responseIdentity: responseIdentity, snapshotIdentity: snapshotIdentity,
 		candidateIdentity: candidate.Identity(), outcome: outcome, finalSeverity: severity,
-		rationale: verdict.Rationale, sourceRange: candidate.SourceRange(), evidenceBindings: bindings,
+		rationale: verdict.Rationale, sourceRange: candidate.SourceRange(), evidenceBindings: bindings, side: candidate.side,
 	}
 	if outcome == VerificationVerified {
 		cited := false
 		for _, binding := range bindings {
-			cited = cited || rangeContains(binding.sourceRange, candidate.SourceRange())
+			if sides[binding.identity] == candidate.side {
+				cited = cited || rangeContains(binding.sourceRange, candidate.SourceRange())
+			}
 		}
 		if !cited {
 			return VerificationResult{}, ErrVerificationEvidenceRangeMismatch
@@ -401,12 +496,16 @@ func deriveVerificationResultIdentity(result VerificationResult) string {
 		Path     string `json:"path"`
 		Start    int    `json:"start"`
 		End      int    `json:"end"`
+		// Side is present only for base lines, so head bindings keep their
+		// historical preimage. The location side is bound by the candidate.
+		Side string `json:"side,omitempty"`
 	}
 	evidenceValues := make([]evidenceRecord, len(result.evidenceBindings))
 	for index, binding := range result.evidenceBindings {
 		evidenceValues[index] = evidenceRecord{
 			Identity: binding.identity, Digest: binding.digest, Path: binding.sourceRange.Path(),
 			Start: binding.sourceRange.StartLine(), End: binding.sourceRange.EndLine(),
+			Side: recordedLineSide(binding.side),
 		}
 	}
 	rationaleDigest := sha256.Sum256([]byte(result.rationale))

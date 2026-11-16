@@ -26,7 +26,7 @@ Approved handlers must stop when their context is canceled. Go cannot forcibly t
 
 ## Artifact exchange
 
-The worker API deliberately has no general artifact download or upload endpoint. A deployed handler receives the immutable task recipe identity and exact dependency outputs through `TaskExecutionRequest`. A root task reads its static input artifact. A downstream task reads only the artifact identities produced by its declared prerequisites. Shared workers should use the same PostgreSQL index, versioned S3 backend, and tenant KMS boundary as the daemon. `artifact.ValidatedTaskHandler` resolves the static input for a root task or every available dependency output for a downstream task. It ensures the successful output exists in the same scope and cites each resolved input artifact in provenance before completion crosses the lease boundary.
+The worker API deliberately has no general artifact download or upload endpoint. A deployed handler receives the immutable task recipe identity and exact dependency outputs through `TaskExecutionRequest`. A root task reads its static input artifact. A downstream task reads only the artifact identities produced by its declared prerequisites. Shared workers should use the same PostgreSQL index, versioned S3 backend, and tenant KMS boundary as the daemon. `artifactvalidation.ValidatedTaskHandler` resolves the static input for a root task or every available dependency output for a downstream task. It ensures the successful output exists in the same scope and cites each resolved input artifact in provenance before completion crosses the lease boundary.
 
 This keeps bulk source and model data away from the bearer-control API and prevents a task lease from becoming general object-store authority.
 

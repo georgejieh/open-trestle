@@ -206,7 +206,7 @@ func (c Configuration) validContent() bool {
 		return false
 	}
 	runtimeConfigured := o.RouteInventoryIdentity != "" || o.RuntimePolicyIdentity != "" || o.RouteCount != 0
-	if runtimeConfigured && (!nonzeroDigest(o.RouteInventoryIdentity) || !nonzeroDigest(o.RuntimePolicyIdentity) || o.RouteCount == 0 || o.RouteCount > 64 || !o.LocalWorkers) {
+	if runtimeConfigured && (!nonzeroDigest(o.RouteInventoryIdentity) || !nonzeroDigest(o.RuntimePolicyIdentity) || o.RouteCount == 0 || o.RouteCount > 64 || !o.LocalWorkers && o.ReviewMode != ReviewLocal) {
 		return false
 	}
 	if !runtimeConfigured && (o.RouteInventoryIdentity != "" || o.RuntimePolicyIdentity != "" || o.RouteCount != 0) {

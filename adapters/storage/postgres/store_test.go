@@ -14,6 +14,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/webhook"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -291,6 +292,56 @@ func TestMigrationDefinesForcedTenantIsolationAndChecksums(t *testing.T) {
 	mock.ExpectQuery("SELECT checksum FROM open_trestle_schema_migrations").WithArgs(13).WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec(regexp.QuoteMeta(string(thirteenth))).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("INSERT INTO open_trestle_schema_migrations").WithArgs(13, hex.EncodeToString(thirteenthDigest[:])).WillReturnResult(sqlmock.NewResult(1, 1))
+	fourteenth, err := migrationFiles.ReadFile("migrations/0014_sanitized_egress_artifact_kinds.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fourteenthDigest := sha256.Sum256(fourteenth)
+	mock.ExpectQuery("SELECT checksum FROM open_trestle_schema_migrations").WithArgs(14).WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec(regexp.QuoteMeta(string(fourteenth))).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("INSERT INTO open_trestle_schema_migrations").WithArgs(14, hex.EncodeToString(fourteenthDigest[:])).WillReturnResult(sqlmock.NewResult(1, 1))
+	fifteenth, err := migrationFiles.ReadFile("migrations/0015_generation_rejection_artifact_kind.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fifteenthDigest := sha256.Sum256(fifteenth)
+	mock.ExpectQuery("SELECT checksum FROM open_trestle_schema_migrations").WithArgs(15).WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec(regexp.QuoteMeta(string(fifteenth))).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("INSERT INTO open_trestle_schema_migrations").WithArgs(15, hex.EncodeToString(fifteenthDigest[:])).WillReturnResult(sqlmock.NewResult(1, 1))
+	sixteenth, err := migrationFiles.ReadFile("migrations/0016_webhook_replay_key.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sixteenthDigest := sha256.Sum256(sixteenth)
+	mock.ExpectQuery("SELECT checksum FROM open_trestle_schema_migrations").WithArgs(16).WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec(regexp.QuoteMeta(string(sixteenth))).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("INSERT INTO open_trestle_schema_migrations").WithArgs(16, hex.EncodeToString(sixteenthDigest[:])).WillReturnResult(sqlmock.NewResult(1, 1))
+	seventeenth, err := migrationFiles.ReadFile("migrations/0017_webhook_refusals.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"CREATE TABLE open_trestle_webhook_refusals", "ALTER TABLE open_trestle_webhook_refusals ENABLE ROW LEVEL SECURITY", "ALTER TABLE open_trestle_webhook_refusals FORCE ROW LEVEL SECURITY", "CREATE POLICY open_trestle_webhook_refusals_tenant_isolation"} {
+		if !strings.Contains(string(seventeenth), want) {
+			t.Errorf("missing %s", want)
+		}
+	}
+	seventeenthDigest := sha256.Sum256(seventeenth)
+	mock.ExpectQuery("SELECT checksum FROM open_trestle_schema_migrations").WithArgs(17).WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec(regexp.QuoteMeta(string(seventeenth))).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("INSERT INTO open_trestle_schema_migrations").WithArgs(17, hex.EncodeToString(seventeenthDigest[:])).WillReturnResult(sqlmock.NewResult(1, 1))
+	eighteenth, err := migrationFiles.ReadFile("migrations/0018_webhook_retries.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"CREATE TABLE open_trestle_webhook_retries", "ALTER TABLE open_trestle_webhook_retries ENABLE ROW LEVEL SECURITY", "ALTER TABLE open_trestle_webhook_retries FORCE ROW LEVEL SECURITY", "CREATE POLICY open_trestle_webhook_retries_tenant_isolation", "ON DELETE CASCADE"} {
+		if !strings.Contains(string(eighteenth), want) {
+			t.Errorf("missing %s", want)
+		}
+	}
+	eighteenthDigest := sha256.Sum256(eighteenth)
+	mock.ExpectQuery("SELECT checksum FROM open_trestle_schema_migrations").WithArgs(18).WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec(regexp.QuoteMeta(string(eighteenth))).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("INSERT INTO open_trestle_schema_migrations").WithArgs(18, hex.EncodeToString(eighteenthDigest[:])).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 	if err := ApplyMigrations(context.Background(), database); err != nil {
 		t.Fatal(err)
@@ -371,6 +422,39 @@ func TestDiagnosticStoreKeepsContentInProtectedArtifactStore(t *testing.T) {
 	assertMock(t, mock)
 }
 
+func TestDiagnosticStorePreservesDeterministicObservationAuthority(t *testing.T) {
+	scope, _ := audit.NewReviewScope("tenant-a", "repo-a", "run-deterministic")
+	analysisIdentity := strings.Repeat("8", 64)
+	check, err := diagnostics.NewDeterministicCheck("3f01f93e51003eb3a0deca04719a3957d6e367c97c33bdfea105174d95698092", analysisIdentity, strings.Repeat("7", 64), diagnostics.CheckPassed, 1, 2, 1, 2, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	set, err := diagnostics.NewSetWithDeterministicObservations(scope, strings.Repeat("c", 64), strings.Repeat("d", 40), analysisIdentity, []diagnostics.DeterministicCheck{check}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifacts, _ := artifact.NewMemoryStore(artifact.ProtectionProcessPrivate, 10)
+	database, _ := newMockDatabase(t)
+	store, err := NewDiagnosticStore(database, artifacts, DiagnosticStoreOptions{Classification: artifact.ClassificationRestricted, Protection: artifact.ProtectionProcessPrivate, Retention: time.Hour, Clock: diagnosticFixedClock{at: time.UnixMilli(100)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := store.newDiagnosticArtifact(set, time.UnixMilli(100))
+	if err != nil {
+		t.Fatalf("newDiagnosticArtifact(v6) error=%v", err)
+	}
+	if value.Kind() != artifact.KindDeterministicEvidence || value.Origin() != artifact.OriginDeterministicTool || !slices.Contains(value.Provenance(), analysisIdentity) {
+		t.Fatalf("v6 artifact authority kind=%s origin=%s provenance=%v", value.Kind(), value.Origin(), value.Provenance())
+	}
+	if _, err := artifacts.Put(context.Background(), value, time.UnixMilli(100)); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.loadDiagnosticArtifact(context.Background(), scope, diagnosticMapping{setIdentity: set.Identity(), artifactIdentity: value.Identity(), expiresAt: value.ExpiresAt()}, time.UnixMilli(100))
+	if err != nil || loaded.Identity() != set.Identity() || loaded.SchemaVersion() != 6 {
+		t.Fatalf("loadDiagnosticArtifact(v6)=(%#v,%v)", loaded, err)
+	}
+}
+
 type webhookFixedClock struct{ at time.Time }
 
 func (c webhookFixedClock) Now() time.Time { return c.at }
@@ -395,13 +479,14 @@ func TestWebhookStoreKeepsDeliveryBodyInProtectedArtifactStore(t *testing.T) {
 	}
 	expectTenantTransaction(mock, repositoryScope.TenantID())
 	mock.ExpectQuery("SELECT review_run_id, review_scope_identity, repository_scope_identity").WithArgs(repositoryScope.TenantID(), repositoryScope.RepositoryID(), delivery.Source().String(), delivery.DeduplicationKey()).WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(`SELECT CASE WHEN replay_key IS NULL THEN 0 ELSE 1 END\s+FROM open_trestle_webhook_deliveries`).WithArgs(repositoryScope.TenantID(), repositoryScope.RepositoryID(), delivery.Source().String(), delivery.ReplayKey()).WillReturnError(sql.ErrNoRows)
 	mock.ExpectCommit()
 	expectTenantTransaction(mock, repositoryScope.TenantID())
 	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")).WithArgs("webhook:" + repositoryScope.Identity() + ":" + delivery.Source().String()).WillReturnResult(sqlmock.NewResult(0, 1))
 	expectScope(mock, reviewScope)
 	mock.ExpectQuery("SELECT review_run_id, review_scope_identity, repository_scope_identity").WithArgs(repositoryScope.TenantID(), repositoryScope.RepositoryID(), delivery.Source().String(), delivery.DeduplicationKey()).WillReturnError(sql.ErrNoRows)
 	mock.ExpectQuery(`SELECT count\(\*\)[\s\S]*expires_at > \$4`).WithArgs(repositoryScope.TenantID(), repositoryScope.RepositoryID(), delivery.Source().String(), acceptedAt.UTC()).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-	mock.ExpectExec("INSERT INTO open_trestle_webhook_deliveries").WithArgs(repositoryScope.TenantID(), repositoryScope.RepositoryID(), reviewScope.ReviewRunID(), reviewScope.Identity(), repositoryScope.Identity(), delivery.Source().String(), delivery.DeduplicationKey(), delivery.Identity(), value.Identity(), stored.Receipt().AcceptedAt(), value.ExpiresAt()).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO open_trestle_webhook_deliveries").WithArgs(repositoryScope.TenantID(), repositoryScope.RepositoryID(), reviewScope.ReviewRunID(), reviewScope.Identity(), repositoryScope.Identity(), delivery.Source().String(), delivery.DeduplicationKey(), delivery.Identity(), value.Identity(), stored.Receipt().AcceptedAt(), value.ExpiresAt(), delivery.ReplayKey()).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 	persisted, created, err := store.Put(context.Background(), delivery, acceptedAt)
 	if err != nil || !created || persisted.Delivery().Identity() != delivery.Identity() {

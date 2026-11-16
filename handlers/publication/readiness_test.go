@@ -24,7 +24,7 @@ func TestNewReadinessHandlerBindsBothPolicies(t *testing.T) {
 	policy, _ := review.NewPublicationPolicy(review.SeverityMedium, 10, gateway.RouteIndependenceDistinctProvider, true)
 	diagnosticStore := diagnostics.NewMemoryStore()
 	handler, err := NewReadinessHandler(store, diagnosticStore, fixedClock{time.UnixMilli(100)}, strings.Repeat("a", 64), policy)
-	if err != nil || handler.Validate() != nil || handler.Kind() != controlplane.TaskEvaluatePublication || handler.HandlerIdentity() != "031872918541d21a5869460d6288f88b17fdb8d999b4dd8f44f2eabc4169030e" {
+	if err != nil || handler.Validate() != nil || handler.Kind() != controlplane.TaskEvaluatePublication || handler.HandlerIdentity() != "580701bfa044d587e8efaedd07a17b2e35a8508acebc0ddc0be25a1df58b1d03" {
 		t.Fatalf("handler=(%#v,%v)", handler, err)
 	}
 	other, _ := review.NewPublicationPolicy(review.SeverityHigh, 10, gateway.RouteIndependenceDistinctProvider, true)
@@ -38,6 +38,19 @@ func TestNewReadinessHandlerBindsBothPolicies(t *testing.T) {
 	completion := handler.Execute(nil, controlplane.TaskExecutionRequest{})
 	if completion.Status() != controlplane.TaskCompletionFailed || completion.Failure() != controlplane.RunFailureInvalidInput {
 		t.Fatalf("completion=%#v", completion)
+	}
+}
+
+func TestFinalOnlyReadinessDoesNotClaimDiagnosticSlot(t *testing.T) {
+	store, _ := artifact.NewMemoryStore(artifact.ProtectionProcessPrivate, 10)
+	policy, _ := review.NewPublicationPolicy(review.SeverityMedium, 10, gateway.RouteIndependenceDistinctProvider, true)
+	legacy, err := NewReadinessHandler(store, diagnostics.NewMemoryStore(), fixedClock{time.UnixMilli(100)}, strings.Repeat("a", 64), policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	final, err := NewFinalOnlyReadinessHandler(store, fixedClock{time.UnixMilli(100)}, strings.Repeat("a", 64), policy)
+	if err != nil || final.Validate() != nil || final.HandlerIdentity() != legacy.HandlerIdentity() || !final.finalOnly || final.diagnosticStore != nil {
+		t.Fatalf("final=%#v err=%v", final, err)
 	}
 }
 
@@ -134,5 +147,11 @@ func TestDiagnosticDeterministicCheckPreservesExactAnalysisState(t *testing.T) {
 	}
 	if crossed, err := diagnosticDeterministicCheck(source, strings.Repeat("b", 64), strings.Repeat("c", 64)); err == nil || crossed.Identity() != "" {
 		t.Fatalf("crossed=(%#v,%v)", crossed, err)
+	}
+}
+
+func TestDiagnosticWriteFailureClassifiesSetEncodingLimit(t *testing.T) {
+	if got := diagnosticWriteFailure(context.Background(), diagnostics.ErrSetResourceLimit); got != controlplane.RunFailureResourceLimit {
+		t.Fatalf("diagnostic set limit mapped to %s", got)
 	}
 }

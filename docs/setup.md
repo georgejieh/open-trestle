@@ -2,6 +2,8 @@
 
 Open Trestle uses one versioned setup-plan contract across operator surfaces. A setup plan is a secret-free, content-addressed record of deployment posture and the checks that still block readiness. Creating a plan cannot contact a provider, connect a forge, create an identity, enable publication, or enable dynamic validation.
 
+This page is for operators who run `trestled` and need a deployment plan. To set up a review of one repository on your own machine, run `trestle init` instead: it asks a few questions, writes the setup folder and its plan for you, and `trestle review` then reviews the latest change. See [getting started](getting-started.md), and [local-first bootstrap](local-first-bootstrap.md) for the commands `trestle init` runs.
+
 ## Create a protected plan
 
 Create a private directory and initialize one deployment profile:
@@ -25,6 +27,12 @@ trestle setup inspect \
 ```
 
 Initialization also creates a private append-only receipt ledger beside the plan at `plan.json.receipts`. Back up, restore, and transfer the plan and receipt ledger together. A plan copied without its ledger is rejected once it contains a closed check.
+
+For a local-metadata daemon, keep `--setup-state` under the private `--state-dir/setup/plan.json` directory or outside `--state-dir` (such as the sibling of a `runs` state root). Do not use a direct child such as `--state-dir/plan.json` or `--state-dir/setup.json`: daemon startup now rejects this previously accepted layout, including its `.lock`, `.receipts`, and possible `.next` siblings. This is an explicit availability change, not evidence that an old plan is corrupt or contains v4 events. See [daemon root inventory](daemon-api.md#start-a-local-daemon).
+
+### Offline move of a direct-root setup plan
+
+Stop the daemon and setup writers first. Inspect the original state, record its exact initial root identity and current plan identity, and create a protected backup snapshot at a new non-overwriting path outside the live setup directory using `trestle setup backup create --state "$OLD_DIRECT_PLAN" --destination "$NEW_PROTECTED_BACKUP" --expected-plan-identity "$CURRENT_PLAN_IDENTITY"`. The snapshot contains the complete verified receipt ledger, not only `plan.json`. Use the backup and restore commands below to restore to a new protected `--state-dir/setup/plan.json` or an outside-root path with both `--expected-root-identity "$RECORDED_INITIAL_PLAN_IDENTITY"` and `--expected-plan-identity "$BACKED_UP_PLAN_IDENTITY"`. The destination plan path must not exist, and its private trusted parent directory must already exist; restore never overwrites. Inspect the restored path with `trestle setup inspect --state "$NEW_PLAN" --expected-root-identity "$RECORDED_INITIAL_PLAN_IDENTITY"` and verify its exact plan identity and full receipt history. Preserve the verified external backup. While both writers remain stopped, resolve the original direct-root plan, lock, receipt ledger, and staging entries through an operator-reviewed offline transfer to a protected location outside `--state-dir`; do not leave direct-root copies in place. Only after those entries are absent should you update `--setup-state` and check daemon startup. Retain the original protected copy until the restored path and startup are verified. An unknown direct entry continues to block startup. No daemon migration, silent move, or deletion is performed.
 
 Receipt writes require a filesystem that supports same-directory hard links and file and directory synchronization. Each receipt is written to its canonical receipt filename plus `.next`, synchronized, and closed before a hard link installs the immutable final name without overwriting it. The ledger directory is synchronized before and after staging removal. Unsupported hard-link or synchronization operations fail closed; there is no overwrite fallback.
 
@@ -65,7 +73,7 @@ trestle setup check bundle \
   --approved-by platform-owner
 ```
 
-The storage posture check opens and pins one exact current-user-owned `0700` directory. It pins and rechecks every ancestor to the filesystem root. Every ancestor must be owned by the current user or root. An ancestor with group or other write access must additionally be sticky and protect a child entry owned by the current user. Symlinked or replaceable path components are rejected. Ownership-dependent administrator, backup, storage, and protected runtime-file checks return `unavailable` on platforms where ownership authority is not implemented, including Windows in this release. Protected setup state also refuses open or inspection on those platforms. Mutable state, lock, and receipt files must be owned by the setup process user; their parent chain must prevent replacement by another local principal before any lock creation, chmod, cleanup, or read. It does not claim that backup, capacity, or crash recovery was tested. The observer credential posture check validates bounded header-safe values and constant-time inequality. It never stores or hashes either credential into evidence. It does not claim that a daemon accepted the observer; a later functional check must establish that separately.
+The storage posture check opens and pins one exact current-user-owned `0700` directory. It pins and rechecks every ancestor to the filesystem root. Every ancestor must be owned by the current user or root. An ancestor with group or other write access must additionally be sticky and protect a child entry owned by the current user. Symlinked or replaceable path components are rejected. Ownership-dependent administrator, backup, storage, and protected runtime-file checks return `unavailable` on platforms where ownership authority is not implemented, including Windows today; see [platforms](platforms.md). Protected setup state also refuses open or inspection on those platforms. Mutable state, lock, and receipt files must be owned by the setup process user; their parent chain must prevent replacement by another local principal before any lock creation, chmod, cleanup, or read. It does not claim that backup, capacity, or crash recovery was tested. The observer credential posture check validates bounded header-safe values and constant-time inequality. It never stores or hashes either credential into evidence. It does not claim that a daemon accepted the observer; a later functional check must establish that separately.
 
 The administrator check binds the exact setup root, tenant, repository, named recovery owner, and current effective operating-system user and group identity. `--approved-by` must exactly match the plan's recovery owner. It records consent for the current process identity. It does not create an account, grant operating-system privileges, or prove control of an external identity provider.
 
@@ -128,7 +136,7 @@ The checker binds the setup root, tenant, repository, recovery owner, approving 
 
 This establishes metadata-store identity and schema compatibility at one point in time. It does not validate artifact encryption, backup recovery, replica reconciliation, publication authority, capacity, latency, or future availability. Those remain separate requirements.
 
-Budgeted artifact erasure requires the PostgreSQL schema to include the normal thirteen-migration registry through `0013_artifact_erasure_resume.sql`. Apply that schema only through an explicitly authorized migration administrator before budgeted daemon startup. The budgeted daemon branch verifies the runtime database authority, migration checksums, artifact erasure schema, and resume schema in read-only snapshots. It does not apply migration 0013 or any other migration, and it rejects `--apply-migrations` and `OPEN_TRESTLE_POSTGRES_MIGRATION_URL` in budgeted mode.
+Budgeted artifact erasure requires the PostgreSQL schema to include the full embedded migration registry, which includes `0012_artifact_erasure.sql` and `0013_artifact_erasure_resume.sql`. Apply that schema only through an explicitly authorized migration administrator before budgeted daemon startup. The budgeted daemon branch verifies the runtime database authority, migration checksums, artifact erasure schema, and resume schema in read-only snapshots. It does not apply migration 0013 or any other migration, and it rejects `--apply-migrations` and `OPEN_TRESTLE_POSTGRES_MIGRATION_URL` in budgeted mode.
 
 ## Shared API rate limiting
 
@@ -322,9 +330,11 @@ trestle setup check provider \
 
 The authorization reopens and double-reads the protected files under the same full-ancestry ownership and replacement fences as policy validation. It requires an exact controlled remote-inference posture, at least one canonical non-loopback HTTPS `private_remote` connection, disabled provider content logging across the inventory, known cost inside the profile cap, unpinned ranking, publication blocking on inconclusive results, and a generation/verification pair with distinct provider IDs, connection IDs, canonical endpoint origins with default ports normalized, and credential-environment identities whose immutable registry records are approved and whose health and quota observations are ready. Other inventory records remain visible to deterministic gateway filtering and do not become authorized attempts merely because they are present. Every adapter's provider, connection, zone, logging, endpoint, and credential-environment identity must match the inventory namespace exactly.
 
+This setup receipt alone does not enable remote repository-content dispatch. The standard generation flow creates and persists the sanitized request and Betterleaks egress receipt before the generation handler; the verification handler creates its own pair. Each model handler reloads and jointly validates its exact artifacts, including the compiled launcher and worker digests. Only those handlers can seal the opaque proof accepted by the OpenAI adapter for the authorized `private_remote` request and review scope. Raw requests, investigation requests, legacy callers, and generic adapter dispatch remain denied before credential retrieval. Sanitization fails closed for more than 256 fields, more than 256 KiB in one field, more than 2 MiB decoded in aggregate, scanner or residual findings that cannot be completed, and the five-second worker or six-second parent timeout. A normal root development build has no injected scanner digests and therefore cannot enable this path.
+
 Credential environment names use the `OPEN_TRESTLE_PROVIDER_*` namespace and their reference-derived identities are configuration authority. The authorization never resolves or reads the corresponding values. Distinct environment identities prove separate configuration references, not different secret bytes or disjoint provider-side privileges. DNS names are not resolved, so operators must prevent two approved names from aliasing the same provider authority. It makes no DNS lookup, network request, model call, retry, fallback, publication, source change, webhook action, or dynamic-validation request. Setup state stores only content-derived approval, checker, evidence, and receipt identities, not paths, endpoints, environment names, provider declarations, prices, or route observations.
 
-A pass proves that the named recovery owner authorized one exact remote-provider configuration and that its protected snapshot satisfied the declared policy constraints. It does not prove credential availability, provider connectivity, current service health, review quality, future cost, or permission to publish. The separate policy receipt and non-publishing dry run remain required. Changing either protected file or any approved identity invalidates the authorization.
+A pass proves that the named recovery owner authorized one exact remote-provider configuration and that its protected snapshot satisfied the declared policy constraints. It does not prove credential availability, provider connectivity, scanner packaging or coverage, current service health, review quality, future cost, or permission to publish. The separate policy receipt, packaged scanner evidence, and non-publishing dry run remain required. The pinned Betterleaks v1.8.1 profile detected 11/14 expected occurrences in its reviewed corpus, with bearer, AWS secret key, and AWS session token misses and one redacted `generic-api-key` near miss at `[7,51)`. That evidence is not a claim that every secret is detected. Changing either protected file or any approved identity invalidates the authorization.
 
 ## GitHub integration permissions
 
@@ -416,10 +426,26 @@ trestle config inventory-identity \
   --route-inventory /etc/open-trestle/routes.json
 ```
 
-Copy the reported `inventory_identity` into the runtime policy, and optionally add
-route pins or preferences from the reported `route_record_identities`. This command
-decodes only protected local configuration. It does not contact providers and does
-not prove policy binding, reachability, health, quality, or live conformance.
+For a historical v1 policy, copy the reported `inventory_identity` into the runtime
+policy and optionally add preferences from the reported `route_record_identities`.
+Setup continues to reject generation pins in v1 policies. For a local generation
+and explicit verifier pair, bind a v2 policy instead:
+
+```sh
+trestle config bind \
+  --route-inventory /etc/open-trestle/routes.json \
+  --runtime-policy-template /etc/open-trestle/runtime-policy.template.json \
+  --generation-adapter local-generation \
+  --verification-adapter local-verification
+```
+
+Save its stdout as a new protected runtime-policy file before validation. The
+adapters must identify different local records that satisfy the policy's
+independence requirement. Binding does not approve routes, establish readiness,
+read credentials, contact providers, or change setup state. See
+[local configuration bootstrap](local-model-review.md#local-responses-configuration-bootstrap).
+Inventory identity decoding likewise does not prove policy binding, reachability,
+health, quality, or live conformance.
 
 Validate the protected route inventory and bound runtime policy next:
 
@@ -444,7 +470,7 @@ trestle setup check policy \
 
 The checker double-reads protected regular files and pins their full path ancestry. Files and ancestors must be owned by the current user or root. Configuration files cannot be group or other writable. Shared writable ancestors require the same sticky-directory protections as local storage checks. The checker does not resolve a credential reference or connect to an endpoint.
 
-A passing policy must match the selected setup posture. It uses only declared privacy zones, binds every adapter to one unambiguous zone, provider, connection, logging, endpoint, and credential authority, disables content logging, stays within the profile cost cap, provides at least two currently approved and usable routes at the required independence level, and uses canonical endpoint locality. Local and air-gapped profiles accept only numeric loopback endpoints and local routes. Remote routes reject conventional localhost names and non-unicast numeric addresses; the offline check does not resolve approved DNS names. The policy must block publication on inconclusive verification, and its publication independence floor cannot be weaker than its verification floor. Exact route pins are rejected because removing the generation route for independent verification would make the pin unavailable.
+A passing policy must match the selected setup posture. It uses only declared privacy zones, binds every adapter to one unambiguous zone, provider, connection, logging, endpoint, and credential authority, disables content logging, stays within the profile cost cap, provides at least two currently approved and usable routes at the required independence level, and uses canonical endpoint locality. Local and air-gapped profiles accept only numeric loopback endpoints and local routes. Remote routes reject conventional localhost names and non-unicast numeric addresses; the offline check does not resolve approved DNS names. The policy must block publication on inconclusive verification, and its publication independence floor cannot be weaker than its verification floor. Local v2 policies must bind an exact generation pin and an explicit verifier record. Those selected records must both be eligible and satisfy the required independence level; another usable pair in the inventory cannot substitute for them. Historical v1 policies remain unpinned. Remote setup postures do not accept the local v2 pair contract.
 
 For `local_single_node` and `air_gapped`, validate actual local inference after the exact policy receipt is durable:
 
@@ -459,7 +485,7 @@ trestle setup check inference \
   --approved-by platform-owner
 ```
 
-This is an explicit functional probe, not an offline validation. It reads each selected credential environment only at dispatch time and attempts at most two fixed, secret-free prompts against independently routed models from the approved local inventory. It stops after the first failed step; a pass requires exactly one generation response and one independent-verification response. Both adapters must return the exact empty candidate and verification contracts through the normal strict response admission path. Each request permits at most 256 output tokens, reported input above 1,024 tokens is rejected, and the check has one 90-second total deadline. It performs no retry or fallback. Its HTTP transport disables proxies and connection reuse, accepts only canonical numeric-loopback dial targets, and never performs DNS resolution. Provider storage is disabled, content logging must be disabled by policy, and the checker has no publisher, source writer, or dynamic-validation authority.
+This is an explicit functional probe, not an offline validation. It reads each selected credential environment only at dispatch time and attempts at most two fixed, secret-free prompts against independently routed models from the approved local inventory. It stops after the first failed step; a pass requires exactly one generation response and one independent-verification response. Both adapters must return the exact empty candidate and verification contracts through the normal strict response admission path. Each request reserves its own byte-based input estimate (the request payload plus the trusted system channel plus 256 framing bytes, and the serialized `response_format` on a [local structured-output](local-model-review.md#chat-completions-transport) connection), as review planning does, so a route must declare enough context for it; each permits at most 256 output tokens, reported input above that reservation is rejected, and the check has one 90-second total deadline. For v2, generation uses the pinned record and verification uses only the explicit verifier record, ranked without the generation pin. For v1, verification retains ordered preferences after excluding non-independent routes. It performs no retry or fallback. Its HTTP transport disables proxies and connection reuse, accepts only canonical numeric-loopback dial targets, and never performs DNS resolution. Provider storage is disabled, content logging must be disabled by policy, and the checker has no publisher, source writer, or dynamic-validation authority.
 
 The plan stores only content-derived configuration, execution, and receipt identities. It does not store the credential, prompt, model text, endpoint, model name, token counts, or failure body. A passing result proves that the exact approved local generation and independent-verification paths completed the fixed contract at that time. It does not establish review quality, throughput, future availability, remote fallback, or permission to publish. Authentication, malformed output, or policy mismatch blocks the check. A transient connection, timeout, rate-limit, or server failure records `unavailable`.
 
@@ -476,7 +502,7 @@ trestle setup check dry-run \
   --approved-by platform-owner
 ```
 
-The dry run uses fixed content and local deterministic dispatchers. It exercises the configured eligibility filter, ranking, generation authorization, independent verification authorization, provider-neutral dispatch contract, strict candidate and verifier output admission, terminal attempt records, cost reconciliation, output lineage, and independence receipt. It has a five-second bound and is constructed without a publisher, source writer, validation process, network client, or credential resolver. It cannot publish, mutate source, invoke dynamic validation, or contact a configured model endpoint. A changed or missing policy file produces a blocked or unavailable receipt instead of reusing older evidence.
+The dry run uses fixed content and local deterministic dispatchers. It uses the same generation/verifier record selection as the inference check, including the explicit v2 verifier and generation-only pin. It exercises the configured eligibility filter, ranking, generation authorization, independent verification authorization, provider-neutral dispatch contract, strict candidate and verifier output admission, terminal attempt records, cost reconciliation, output lineage, and independence receipt. It has a five-second bound and is constructed without a publisher, source writer, validation process, network client, or credential resolver. It cannot publish, mutate source, invoke dynamic validation, or contact a configured model endpoint. A changed or missing policy file produces a blocked or unavailable receipt instead of reusing older evidence.
 
 ## Signed offline bundle validation
 

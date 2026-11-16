@@ -16,6 +16,11 @@ import (
 )
 
 const (
+	// maxInboxStoreFiles bounds each kind of file in the root on its own: the
+	// files other than sidecars (the deliveries and the writer lock), the
+	// retry files and the refusal records (each one per delivery, whichever
+	// planner identity recorded it). A sidecar therefore never takes a
+	// delivery's place, and the root holds at most three files per delivery.
 	maxInboxStoreFiles = 10000
 	inboxLockFileName  = ".inbox-writer.lock"
 	deliveryFileSuffix = ".delivery.json"
@@ -39,6 +44,10 @@ type FileStore struct {
 	rootInfo       os.FileInfo
 	lockFile       *filelock.Lock
 	closed         bool
+	// replays maps a delivery replay key to the deduplication key of the stored
+	// delivery that owns it. It is rebuilt from persisted deliveries on the first
+	// write after open, so it needs no file of its own and cannot drift from them.
+	replays map[string]string
 }
 
 func NewFileStore(root string) (*FileStore, error) {
@@ -118,11 +127,17 @@ func (s *FileStore) Put(ctx context.Context, delivery VerifiedDelivery, at time.
 		}
 		return existing, false, nil
 	}
-	entries, err := os.ReadDir(s.root)
-	if err != nil {
-		return StoredDelivery{}, false, fmt.Errorf("%w: read root", ErrInboxStorePersistence)
+	if err := s.loadReplayIndex(); err != nil {
+		return StoredDelivery{}, false, err
 	}
-	if len(entries) >= maxInboxStoreFiles {
+	if _, replayed := s.replays[delivery.ReplayKey()]; replayed {
+		return StoredDelivery{}, false, ErrDeliveryReplayed
+	}
+	counts, err := s.rootCounts()
+	if err != nil {
+		return StoredDelivery{}, false, err
+	}
+	if counts.files >= maxInboxStoreFiles {
 		return StoredDelivery{}, false, ErrInboxStoreCapacity
 	}
 	stored := StoredDelivery{delivery: delivery, receipt: receipt}
@@ -131,9 +146,53 @@ func (s *FileStore) Put(ctx context.Context, delivery VerifiedDelivery, at time.
 		return StoredDelivery{}, false, err
 	}
 	if err := s.persist(path, encoded); err != nil {
+		// The delivery file may already be visible (for example when the
+		// directory sync fails after rename), so rebuild the replay index from
+		// disk on the next write rather than trusting the in-memory copy.
+		s.replays = nil
 		return StoredDelivery{}, false, err
 	}
+	s.replays[delivery.ReplayKey()] = delivery.DeduplicationKey()
 	return stored, true, nil
+}
+
+// loadReplayIndex derives the replay index from every persisted delivery. It
+// fails closed: a delivery file that cannot be read or does not match its path
+// leaves the index unbuilt and the write refused.
+func (s *FileStore) loadReplayIndex() error {
+	if s.replays != nil {
+		return nil
+	}
+	directoryEntries, err := os.ReadDir(s.root)
+	if err != nil {
+		return fmt.Errorf("%w: read root", ErrInboxStorePersistence)
+	}
+	if countRootEntries(directoryEntries).total() > 3*maxInboxStoreFiles+1 {
+		return ErrInboxStoreCapacity
+	}
+	replays := make(map[string]string)
+	for _, entry := range directoryEntries {
+		if !strings.HasSuffix(entry.Name(), deliveryFileSuffix) {
+			continue
+		}
+		path := filepath.Join(s.root, entry.Name())
+		stored, found, loadErr := s.loadPath(path)
+		if loadErr != nil {
+			return loadErr
+		}
+		if !found {
+			return ErrInboxStorePersistence
+		}
+		delivery := stored.Delivery()
+		if s.deliveryPath(delivery.Scope(), delivery.Source(), delivery.DeduplicationKey()) != path {
+			return ErrInvalidStoredDeliveryEncoding
+		}
+		if _, exists := replays[delivery.ReplayKey()]; !exists {
+			replays[delivery.ReplayKey()] = delivery.DeduplicationKey()
+		}
+	}
+	s.replays = replays
+	return nil
 }
 func (s *FileStore) Get(ctx context.Context, scope RepositoryScope, source Source, key string) (StoredDelivery, bool, error) {
 	if err := validateInboxRead(ctx, scope, source, key, 1); err != nil {
@@ -159,7 +218,7 @@ func (s *FileStore) List(ctx context.Context, scope RepositoryScope, source Sour
 	if err != nil {
 		return nil, fmt.Errorf("%w: read root", ErrInboxStorePersistence)
 	}
-	if len(directoryEntries) > maxInboxStoreFiles+1 {
+	if countRootEntries(directoryEntries).total() > 3*maxInboxStoreFiles+1 {
 		return nil, ErrInboxStoreCapacity
 	}
 	prefix := scope.Identity() + "-" + source.String() + "-"
@@ -197,6 +256,36 @@ func (s *FileStore) List(ctx context.Context, scope RepositoryScope, source Sour
 		stored = append(stored, entry)
 	}
 	return stored, nil
+}
+
+// rootCounts are a root's files by kind, each held to its own bound.
+type rootCounts struct{ files, retries, refusals int }
+
+func (c rootCounts) total() int { return c.files + c.retries + c.refusals }
+
+func countRootEntries(entries []os.DirEntry) rootCounts {
+	var counts rootCounts
+	for _, entry := range entries {
+		name := entry.Name()
+		switch {
+		case strings.HasSuffix(name, refusalFileSuffix):
+			counts.refusals++
+		case strings.HasSuffix(name, retryFileSuffix):
+			counts.retries++
+		default:
+			counts.files++
+		}
+	}
+	return counts
+}
+
+// rootCounts reads the root and counts its files by kind.
+func (s *FileStore) rootCounts() (rootCounts, error) {
+	entries, err := os.ReadDir(s.root)
+	if err != nil {
+		return rootCounts{}, fmt.Errorf("%w: read root", ErrInboxStorePersistence)
+	}
+	return countRootEntries(entries), nil
 }
 func (s *FileStore) deliveryPath(scope RepositoryScope, source Source, key string) string {
 	return filepath.Join(s.root, scope.Identity()+"-"+source.String()+"-"+key+deliveryFileSuffix)

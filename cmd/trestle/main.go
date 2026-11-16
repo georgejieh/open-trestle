@@ -9,11 +9,36 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/georgejieh/open-trestle/internal/buildinfo"
 	"github.com/georgejieh/open-trestle/internal/config"
 	"github.com/georgejieh/open-trestle/internal/review"
 )
 
 func main() {
+	if len(os.Args) == 1 {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		code := runHome(ctx, os.Stdin, os.Stdout, os.Stderr)
+		stop()
+		os.Exit(code)
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "keys" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		code := runKeys(ctx, os.Args[2:], os.Stdin, os.Stdout, os.Stderr)
+		stop()
+		os.Exit(code)
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "update" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		code := runUpdate(ctx, os.Args[2:], os.Stdin, os.Stdout, os.Stderr)
+		stop()
+		os.Exit(code)
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "review" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		code := runWithContext(ctx, os.Args[1:], os.Stdout, os.Stderr)
+		stop()
+		os.Exit(code)
+	}
 	if len(os.Args) >= 2 && os.Args[1] == "mcp" {
 		os.Exit(runMCP(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
@@ -32,6 +57,12 @@ func main() {
 	if len(os.Args) >= 3 && os.Args[1] == "setup" && os.Args[2] == "tui" {
 		os.Exit(runSetupTUI(os.Args[3:], os.Stdin, os.Stdout, os.Stderr))
 	}
+	if len(os.Args) >= 2 && os.Args[1] == "init" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		code := runInit(ctx, os.Args[2:], os.Stdin, os.Stdout, os.Stderr)
+		stop()
+		os.Exit(code)
+	}
 	if len(os.Args) >= 2 && os.Args[1] == "tui" {
 		os.Exit(runTUI(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
@@ -49,6 +80,21 @@ func run(args []string, stdout, stderr io.Writer) int {
 }
 
 func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
+		writeUsage(stdout)
+		return 0
+	}
+	if len(args) > 0 && args[0] == "build-info" {
+		if len(args) != 1 {
+			fmt.Fprintln(stderr, "usage: trestle build-info")
+			return 2
+		}
+		if err := buildinfo.Write(stdout, "trestle"); err != nil {
+			fmt.Fprintf(stderr, "build-info: %v\n", err)
+			return 1
+		}
+		return 0
+	}
 	if len(args) >= 1 && args[0] == "setup" {
 		return runSetup(args[1:], stdout, stderr)
 	}
@@ -64,10 +110,29 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	if len(args) >= 1 && args[0] == "runs" {
 		return runRemote(args[1:], stdout, stderr)
 	}
+	if len(args) >= 1 && args[0] == "profiles" {
+		return runProfiles(args[1:], stdout, stderr)
+	}
+	if len(args) >= 1 && args[0] == "usage" {
+		return runUsage(ctx, args[1:], stdout, stderr)
+	}
+	if len(args) >= 1 && args[0] == "keys" {
+		return runKeys(ctx, args[1:], os.Stdin, stdout, stderr)
+	}
+	if len(args) >= 1 && args[0] == "update" {
+		return runUpdate(ctx, args[1:], os.Stdin, stdout, stderr)
+	}
+	// `trestle review <path>` reviews a fixture file, as before; any other
+	// form reviews the latest change with the repository's setup.
+	if len(args) >= 1 && args[0] == "review" && !(len(args) == 2 && !strings.HasPrefix(args[1], "-")) {
+		return runLatestReview(ctx, args[1:], stdout, stderr)
+	}
 	if len(args) >= 2 && args[0] == "local-git" {
 		switch args[1] {
 		case "model-review":
 			return runLocalGitModelReview(ctx, args[2:], stdout, stderr)
+		case "submit-review":
+			return runLocalGitSubmitReview(args[2:], stdout, stderr)
 		case "retained-memory-input":
 			return runLocalGitRetainedMemoryInput(ctx, args[2:], stdout, stderr)
 		case "inspect":
@@ -164,23 +229,52 @@ func runReview(fixturePath string, stdout, stderr io.Writer) int {
 	return exitCode
 }
 
-func writeUsage(stderr io.Writer) {
-	fmt.Fprintln(stderr, "usage: trestle validate-fixture <path>")
-	fmt.Fprintln(stderr, "       trestle review <path>")
-	fmt.Fprintln(stderr, "       trestle ci --format=json <path>")
-	fmt.Fprintln(stderr, "       trestle ci --format=sarif <path>")
-	writeSetupUsage(stderr)
-	writeConfigUsage(stderr)
-	writeEvaluateUsage(stderr)
-	writeAdminUsage(stderr)
-	writeRunsUsage(stderr)
-	writeMCPUsage(stderr)
-	writeLSPUsage(stderr)
-	writeACPUsage(stderr)
-	writeTUIUsage(stderr)
-	writeLocalGitInspectUsage(stderr)
-	writeLocalGitChangeUsage(stderr)
-	writeLocalGitReviewUsage(stderr)
-	writeLocalGitModelReviewUsage(stderr)
-	writeLocalGitRetainedMemoryInputUsage(stderr)
+// writeUsage prints every command's usage, grouped by who uses it. It is the
+// text of `trestle --help` on standard output and of a refused command line on
+// standard error. The first line stays a usage line: the packaged install's
+// smoke probe requires standard error to start with "usage: trestle ".
+func writeUsage(w io.Writer) {
+	fmt.Fprintln(w, "usage: trestle <command> [flags]")
+	fmt.Fprintln(w, "Open Trestle reviews a code change with models you choose. New here: run trestle init inside a Git repository.")
+	fmt.Fprintln(w, "Guides: docs/README.md · "+homeDocs)
+
+	writeUsageGroup(w, "Everyday")
+	fmt.Fprintln(w, "usage: trestle   (in a terminal: this repository's status and next actions)")
+	writeLatestReviewUsage(w)
+	writeUpdateUsage(w)
+	writeUsageUsage(w)
+	writeProfilesUsage(w)
+
+	writeUsageGroup(w, "Setup and keys")
+	fmt.Fprintln(w, "usage: trestle init [--no-input] [answer flags]   (start here: guided setup and first review; see docs/getting-started.md)")
+	writeKeysUsage(w)
+
+	writeUsageGroup(w, "Integrations")
+	writeLocalGitModelReviewUsage(w)
+	writeRunsUsage(w)
+	writeTUIUsage(w)
+	writeMCPUsage(w)
+	writeLSPUsage(w)
+	writeACPUsage(w)
+	writeLocalGitSubmitReviewUsage(w)
+
+	writeUsageGroup(w, "Operators")
+	writeSetupUsage(w)
+	writeConfigUsage(w)
+	writeAdminUsage(w)
+	writeLocalGitInspectUsage(w)
+	writeLocalGitChangeUsage(w)
+	writeLocalGitReviewUsage(w)
+	writeLocalGitRetainedMemoryInputUsage(w)
+	fmt.Fprintln(w, "usage: trestle build-info")
+
+	writeUsageGroup(w, "Evaluation")
+	writeEvaluateUsage(w)
+	fmt.Fprintln(w, "usage: trestle validate-fixture <path>")
+	fmt.Fprintln(w, "       trestle ci --format=json <path>")
+	fmt.Fprintln(w, "       trestle ci --format=sarif <path>")
+}
+
+func writeUsageGroup(w io.Writer, name string) {
+	fmt.Fprintf(w, "\n%s:\n", name)
 }

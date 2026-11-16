@@ -44,12 +44,24 @@ func makeSourceResult(t *testing.T, contents map[string][]byte) scm.SourceAdapte
 	}
 	return scm.SourceAdapterResult{Outcome: evidence.AcquisitionOutcomeAcquired, Reason: evidence.AcquisitionReasonNone, Manifest: manifest, Contents: contents}
 }
-func TestHandlerRetrievesFreshScopedMemoryForChangedPath(t *testing.T) {
+
+type memoryProducerFixture struct {
+	output, change, base, head artifact.Artifact
+	record                     memorycore.Record
+}
+
+func runMemoryProducerFixture(t *testing.T, changedPaths []string, prefixes []string, withRecord bool, validUntil int64) memoryProducerFixture {
+	t.Helper()
 	repository, _ := evidence.NewRepositoryIdentity("github.com", []string{"owner"}, "repo")
 	baseRevision, _ := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithmSHA1, strings.Repeat("1", 40))
 	headRevision, _ := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithmSHA1, strings.Repeat("2", 40))
 	adapterIdentity, _ := evidence.NewSourceAdapterIdentity(evidence.SourceAdapterKindGit, "test-source", "1.0.0", []evidence.SourceAdapterCapability{evidence.SourceCapabilityReadManifest, evidence.SourceCapabilityReadContent})
-	adapter := &memoryTestSource{identity: adapterIdentity, results: map[string]scm.SourceAdapterResult{baseRevision.Identity(): makeSourceResult(t, map[string][]byte{"a.txt": []byte("same\nold\n")}), headRevision.Identity(): makeSourceResult(t, map[string][]byte{"a.txt": []byte("same\nnew\n")})}}
+	baseContents, headContents := make(map[string][]byte), make(map[string][]byte)
+	for _, path := range changedPaths {
+		baseContents[path] = []byte("same\nold\n")
+		headContents[path] = []byte("same\nnew\n")
+	}
+	adapter := &memoryTestSource{identity: adapterIdentity, results: map[string]scm.SourceAdapterResult{baseRevision.Identity(): makeSourceResult(t, baseContents), headRevision.Identity(): makeSourceResult(t, headContents)}}
 	store, _ := artifact.NewMemoryStore(artifact.ProtectionProcessPrivate, 100)
 	scope, _ := audit.NewReviewScope("tenant", "repository", "run")
 	baseInput, _ := sourcehandler.NewInput(repository, baseRevision, adapterIdentity)
@@ -61,19 +73,27 @@ func TestHandlerRetrievesFreshScopedMemoryForChangedPath(t *testing.T) {
 	sourceTaskHandler, _ := sourcehandler.NewHandler(store, adapter, memoryTestClock{time.UnixMilli(200)})
 	changeTaskHandler, _ := changehandler.NewHandler(store, memoryTestClock{time.UnixMilli(210)})
 	index := memorycore.NewLexicalIndex()
-	memoryScope, scopeErr := memorycore.NewScope("tenant", "repository", "reviewer", memorycore.RefVisibilityExact, headRevision.Identity(), []string{"."})
+	memoryScope, scopeErr := memorycore.NewScope("tenant", "repository", "reviewer", memorycore.RefVisibilityExact, headRevision.Identity(), prefixes)
 	if scopeErr != nil {
 		t.Fatal(scopeErr)
 	}
-	record, recordErr := memorycore.NewRecord(memoryScope, memorycore.RecordInput{Kind: memorycore.RecordCanonicalFact, Taint: memorycore.TaintTrusted, Path: "a.txt", Text: "this path has a parser invariant", EvidenceIDs: []string{strings.Repeat("9", 64)}, ProducerIdentity: strings.Repeat("7", 64), ObservedAt: time.UnixMilli(10), ValidFrom: time.UnixMilli(10)})
-	if recordErr != nil {
-		t.Fatal(recordErr)
-	}
-	if _, _, err := index.Add(context.Background(), memoryScope, record); err != nil {
-		t.Fatal(err)
+	var record memorycore.Record
+	if withRecord {
+		input := memorycore.RecordInput{Kind: memorycore.RecordCanonicalFact, Taint: memorycore.TaintTrusted, Path: "a.txt", Text: "this path has a parser invariant", EvidenceIDs: []string{strings.Repeat("9", 64)}, ProducerIdentity: strings.Repeat("7", 64), ObservedAt: time.UnixMilli(10), ValidFrom: time.UnixMilli(10)}
+		if validUntil != 0 {
+			input.ValidUntil = time.UnixMilli(validUntil)
+		}
+		var recordErr error
+		record, recordErr = memorycore.NewRecord(memoryScope, input)
+		if recordErr != nil {
+			t.Fatal(recordErr)
+		}
+		if _, _, err := index.Add(context.Background(), memoryScope, record); err != nil {
+			t.Fatal(err)
+		}
 	}
 	policyIdentity := strings.Repeat("f", 64)
-	memoryTaskHandler, _ := NewHandler(store, memoryTestClock{time.UnixMilli(220)}, index, strings.Repeat("6", 64), policyIdentity, "reviewer", []string{"."}, 10, 20)
+	memoryTaskHandler, _ := NewHandler(store, memoryTestClock{time.UnixMilli(220)}, index, strings.Repeat("6", 64), policyIdentity, "reviewer", prefixes, 10, 20)
 	baseTask, _ := controlplane.NewTaskDefinition("source-base", controlplane.TaskAcquireSource, baseArtifact.Identity(), sourceTaskHandler.HandlerIdentity(), nil, 1, 1000, 30000, true)
 	headTask, _ := controlplane.NewTaskDefinition("source-head", controlplane.TaskAcquireSource, headArtifact.Identity(), sourceTaskHandler.HandlerIdentity(), nil, 1, 1000, 30000, true)
 	changeTask, _ := controlplane.NewTaskDefinition("change", controlplane.TaskBuildChange, strings.Repeat("c", 64), changeTaskHandler.HandlerIdentity(), []string{"source-base", "source-head"}, 1, 1000, 30000, true)
@@ -129,6 +149,13 @@ func TestHandlerRetrievesFreshScopedMemoryForChangedPath(t *testing.T) {
 	headState, _ := state.Task("source-head")
 	baseOutput, _ := store.Get(context.Background(), scope, baseState.OutputIdentity(), time.UnixMilli(221))
 	headOutput, _ := store.Get(context.Background(), scope, headState.OutputIdentity(), time.UnixMilli(221))
+	return memoryProducerFixture{output, changeOutput, baseOutput, headOutput, record}
+}
+
+func TestHandlerRetrievesFreshScopedMemoryForChangedPath(t *testing.T) {
+	fixture := runMemoryProducerFixture(t, []string{"a.txt"}, []string{"."}, true, 0)
+	output, changeOutput, baseOutput, headOutput := fixture.output, fixture.change, fixture.base, fixture.head
+	scope := output.Scope()
 	result, err := ParseResultArtifact(output, changeOutput, baseOutput, headOutput)
 	if err != nil || len(result.Queries()) != 1 || len(result.Omissions()) != 0 {
 		t.Fatalf("result=(%#v,%v)", result, err)

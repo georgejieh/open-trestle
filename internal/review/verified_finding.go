@@ -326,6 +326,14 @@ type VerifiedFinding struct {
 	severity                   Severity
 	sourceRange                evidence.SourceRange
 	evidenceBindings           []candidateEvidenceBinding
+	// category and fix are copied from the admitted candidate. The verifier
+	// checks only the claim; category stays advisory and fix stays unverified.
+	category CandidateCategory
+	fix      string
+	// side is the coordinate space of sourceRange, and headLine the head line of
+	// a base-side location's deletion point; both are copied from the candidate.
+	side     LineSide
+	headLine int
 }
 
 func (f VerifiedFinding) Identity() string                  { return f.identity }
@@ -336,6 +344,21 @@ func (f VerifiedFinding) Title() string                     { return f.title }
 func (f VerifiedFinding) Claim() string                     { return f.claim }
 func (f VerifiedFinding) Severity() Severity                { return f.severity }
 func (f VerifiedFinding) SourceRange() evidence.SourceRange { return f.sourceRange }
+
+// Side returns the coordinate space of SourceRange: head lines of the reviewed
+// snapshot, or base lines of a removed_lines source.
+func (f VerifiedFinding) Side() LineSide { return f.side }
+
+// HeadLine returns, for a base-side finding at a deletion point, the head line
+// beside which its base lines were removed; 0 otherwise.
+func (f VerifiedFinding) HeadLine() int { return f.headLine }
+
+// Category returns the advisory candidate category; the zero value means a v1 candidate.
+func (f VerifiedFinding) Category() CandidateCategory { return f.category }
+
+// Fix returns untrusted, unverified model fix guidance; the empty string means none.
+// The verifier verified the claim, not this text, and nothing applies it.
+func (f VerifiedFinding) Fix() string { return f.fix }
 func (f VerifiedFinding) EvidenceIDs() []string {
 	identities := make([]string, len(f.evidenceBindings))
 	for index, binding := range f.evidenceBindings {
@@ -351,21 +374,26 @@ func (f VerifiedFinding) Format(state fmt.State, verb rune) {
 
 // Validate verifies independent lineage, exact evidence, severity, fingerprint, and identity.
 func (f VerifiedFinding) Validate() error {
+	if err := validateVerifiedFindingStringFieldFreeze(); err != nil {
+		return err
+	}
 	for _, identity := range []string{f.independentReceiptIdentity, f.snapshotIdentity, f.candidateIdentity, f.verificationIdentity, f.fingerprint} {
 		if !validCandidateDigest(identity) {
 			return ErrVerifiedFindingBindingMismatch
 		}
 	}
-	if !validCandidateTitle(f.title) || !validCandidateClaim(f.claim) || !isKnownSeverity(f.severity) || !validCandidateSourceRange(f.sourceRange) || len(f.evidenceBindings) == 0 || len(f.evidenceBindings) > maxCandidateEvidence {
+	if !validCandidateTitle(f.title) || !validCandidateClaim(f.claim) || !isKnownSeverity(f.severity) || !validCandidateSourceRange(f.sourceRange) || len(f.evidenceBindings) == 0 || len(f.evidenceBindings) > maxCandidateEvidence ||
+		validateCandidateGuidance(f.category, f.fix) != nil || !validLineSide(f.side) ||
+		f.headLine < 0 || f.headLine > maxCandidateSourceLine || f.headLine != 0 && f.side != LineSideBase {
 		return ErrVerifiedFindingBindingMismatch
 	}
 	previous := ""
 	cited := false
 	for _, binding := range f.evidenceBindings {
-		if !validCandidateReference(binding.identity) || !validCandidateDigest(binding.digest) || !validCandidateSourceRange(binding.sourceRange) || previous != "" && binding.identity <= previous {
+		if !validCandidateReference(binding.identity) || !validCandidateDigest(binding.digest) || !validCandidateSourceRange(binding.sourceRange) || !validLineSide(binding.side) || previous != "" && binding.identity <= previous {
 			return ErrVerifiedFindingBindingMismatch
 		}
-		cited = cited || rangeContains(binding.sourceRange, f.sourceRange)
+		cited = cited || bindingCovers(binding, f.side, f.sourceRange)
 		previous = binding.identity
 	}
 	if !cited || f.fingerprint != deriveVerifiedFindingFingerprint(f) {
@@ -412,7 +440,7 @@ func PromoteVerifiedCandidates(receipt IndependentVerificationReceipt, candidate
 	findings := make([]VerifiedFinding, 0, receipt.VerifiedCount())
 	for index, candidate := range candidateValues {
 		result := resultValues[index]
-		if result.CandidateIdentity() != candidate.Identity() {
+		if result.CandidateIdentity() != candidate.Identity() || result.side != candidate.side {
 			return VerifiedFindingSet{}, ErrVerifiedFindingBindingMismatch
 		}
 		if result.Outcome() != VerificationVerified {
@@ -423,6 +451,7 @@ func PromoteVerifiedCandidates(receipt IndependentVerificationReceipt, candidate
 			candidateIdentity: candidate.Identity(), verificationIdentity: result.Identity(),
 			title: candidate.Title(), claim: candidate.Claim(), severity: result.FinalSeverity(),
 			sourceRange: candidate.SourceRange(), evidenceBindings: append([]candidateEvidenceBinding(nil), result.evidenceBindings...),
+			category: candidate.Category(), fix: candidate.Fix(), side: candidate.side, headLine: candidate.headLine,
 		}
 		finding.fingerprint = deriveVerifiedFindingFingerprint(finding)
 		finding.identity = deriveVerifiedFindingIdentity(finding)
@@ -534,10 +563,13 @@ func deriveVerifiedFindingFingerprint(finding VerifiedFinding) string {
 		End      int    `json:"end"`
 		Title    string `json:"title"`
 		Claim    string `json:"claim"`
+		// Side is present only for a base-line location, so a base and a head
+		// finding with equal path and line numbers never share a fingerprint.
+		Side string `json:"side,omitempty"`
 	}{
 		Snapshot: finding.snapshotIdentity, Path: finding.sourceRange.Path(),
 		Start: finding.sourceRange.StartLine(), End: finding.sourceRange.EndLine(),
-		Title: finding.title, Claim: finding.claim,
+		Title: finding.title, Claim: finding.claim, Side: recordedLineSide(finding.side),
 	}
 	encoded, _ := json.Marshal(preimage)
 	digest := sha256.Sum256(encoded)
@@ -545,7 +577,7 @@ func deriveVerifiedFindingFingerprint(finding VerifiedFinding) string {
 }
 
 func deriveVerifiedFindingIdentity(finding VerifiedFinding) string {
-	preimage := struct {
+	type findingRecord struct {
 		Contract     string   `json:"contract"`
 		Version      int      `json:"version"`
 		Receipt      string   `json:"receipt"`
@@ -554,13 +586,31 @@ func deriveVerifiedFindingIdentity(finding VerifiedFinding) string {
 		Verification string   `json:"verification"`
 		Severity     string   `json:"severity"`
 		Evidence     []string `json:"evidence"`
-	}{
+	}
+	preimage := findingRecord{
 		Contract: "open-trestle/verified-finding", Version: 1,
 		Receipt: finding.independentReceiptIdentity, Fingerprint: finding.fingerprint,
 		Candidate: finding.candidateIdentity, Verification: finding.verificationIdentity,
 		Severity: string(finding.severity), Evidence: finding.EvidenceIDs(),
 	}
-	encoded, _ := json.Marshal(preimage)
+	var encoded []byte
+	if finding.category == "" {
+		// A finding promoted from a v1 candidate keeps its historical preimage
+		// unless it is at a deletion point on removed base lines.
+		encoded, _ = json.Marshal(struct {
+			findingRecord
+			HeadLine int `json:"head_line,omitempty"`
+		}{preimage, finding.headLine})
+	} else {
+		preimage.Version = 2
+		encoded, _ = json.Marshal(struct {
+			findingRecord
+			Category string `json:"category"`
+			Fix      string `json:"fix"`
+			// HeadLine is present only for a base-side finding at a deletion point.
+			HeadLine int `json:"head_line,omitempty"`
+		}{preimage, string(finding.category), finding.fix, finding.headLine})
+	}
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }

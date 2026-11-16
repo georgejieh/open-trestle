@@ -24,6 +24,7 @@ type PolicyAuthorizer struct {
 	requirements                          provider.ModelRequirements
 	constraints                           policy.ProviderDataConstraints
 	budget                                provider.ModelCostBudget
+	transport                             review.ModelRequestTransport
 	registryRevision, performanceRevision uint64
 	routes                                []gateway.ObservedRouteCandidate
 	rankingPolicy                         gateway.RouteRankingPolicy
@@ -31,7 +32,15 @@ type PolicyAuthorizer struct {
 }
 
 func NewPolicyAuthorizer(policyIdentity string, requirements provider.ModelRequirements, constraints policy.ProviderDataConstraints, budget provider.ModelCostBudget, registryRevision uint64, routes []gateway.ObservedRouteCandidate, rankingPolicy gateway.RouteRankingPolicy, performanceRevision uint64, observations []provider.RoutePerformanceObservation, ledger audit.Ledger) (*PolicyAuthorizer, error) {
-	a := &PolicyAuthorizer{ledger: ledger, policyIdentity: policyIdentity, requirements: requirements, constraints: constraints, budget: budget, registryRevision: registryRevision, routes: append([]gateway.ObservedRouteCandidate(nil), routes...), rankingPolicy: rankingPolicy, performanceRevision: performanceRevision, observations: append([]provider.RoutePerformanceObservation(nil), observations...)}
+	return NewPolicyAuthorizerForTransport(review.ModelRequestTransportStandard, policyIdentity, requirements, constraints, budget, registryRevision, routes, rankingPolicy, performanceRevision, observations, ledger)
+}
+
+// NewPolicyAuthorizerForTransport is NewPolicyAuthorizer for routes whose
+// adapters send transport's request wire. Its input estimate is
+// review.ModelRequestBudgetForTransport, and a non-standard transport is bound
+// into its identity.
+func NewPolicyAuthorizerForTransport(transport review.ModelRequestTransport, policyIdentity string, requirements provider.ModelRequirements, constraints policy.ProviderDataConstraints, budget provider.ModelCostBudget, registryRevision uint64, routes []gateway.ObservedRouteCandidate, rankingPolicy gateway.RouteRankingPolicy, performanceRevision uint64, observations []provider.RoutePerformanceObservation, ledger audit.Ledger) (*PolicyAuthorizer, error) {
+	a := &PolicyAuthorizer{ledger: ledger, policyIdentity: policyIdentity, requirements: requirements, constraints: constraints, budget: budget, transport: transport, registryRevision: registryRevision, routes: append([]gateway.ObservedRouteCandidate(nil), routes...), rankingPolicy: rankingPolicy, performanceRevision: performanceRevision, observations: append([]provider.RoutePerformanceObservation(nil), observations...)}
 	sort.Slice(a.routes, func(i, j int) bool {
 		return a.routes[i].ResolvedRecord().RouteRegistryRecord().Identity() < a.routes[j].ResolvedRecord().RouteRegistryRecord().Identity()
 	})
@@ -55,7 +64,7 @@ func (a *PolicyAuthorizer) Validate() error {
 	return nil
 }
 func (a *PolicyAuthorizer) validateFields() error {
-	if nilInterface(a.ledger) || !validDigest(a.policyIdentity) || a.requirements.Validate() != nil || a.constraints.Validate() != nil || a.budget.Validate() != nil || a.registryRevision == 0 || a.performanceRevision == 0 || a.rankingPolicy.Validate() != nil || len(a.routes) == 0 || len(a.routes) > 256 || len(a.observations) != len(a.routes) {
+	if nilInterface(a.ledger) || !validDigest(a.policyIdentity) || a.requirements.Validate() != nil || a.constraints.Validate() != nil || a.budget.Validate() != nil || a.transport.Validate() != nil || a.registryRevision == 0 || a.performanceRevision == 0 || a.rankingPolicy.Validate() != nil || len(a.routes) == 0 || len(a.routes) > 256 || len(a.observations) != len(a.routes) {
 		return ErrInvalidPolicyAuthorizer
 	}
 	previous := ""
@@ -79,10 +88,10 @@ func (a *PolicyAuthorizer) Authorize(ctx context.Context, scope audit.ReviewScop
 	if ctx == nil || ctx.Err() != nil || a.Validate() != nil || scope.Validate() != nil || request.Validate() != nil || policyIdentity != a.policyIdentity {
 		return gateway.RouteAttemptAuthorization{}, ErrInvalidPolicyAuthorizer
 	}
-	if review.ValidateCandidateModelRequest(request, scope.Identity()) != nil {
+	if review.ValidateCandidateEgressRequest(request, scope.Identity()) != nil {
 		return gateway.RouteAttemptAuthorization{}, ErrInvalidPolicyAuthorizer
 	}
-	budget, err := review.ModelRequestBudget(request, a.budget)
+	budget, err := review.ModelRequestBudgetForTransport(request, a.budget, a.transport)
 	if err != nil {
 		return gateway.RouteAttemptAuthorization{}, err
 	}
@@ -93,6 +102,10 @@ func (a *PolicyAuthorizer) Authorize(ctx context.Context, scope audit.ReviewScop
 	eligibility, err := gateway.FilterEligibleRoutes(input, budget, a.registryRevision, a.routes)
 	if err != nil {
 		return gateway.RouteAttemptAuthorization{}, err
+	}
+	// A refusal names any context shortfall before ranking reports no route.
+	if refusal := gateway.RouteEligibilityRefusal(eligibility, a.routes); refusal != nil {
+		return gateway.RouteAttemptAuthorization{}, refusal
 	}
 	eligibleRecords := make(map[string]bool, len(eligibility.EligibleRoutes()))
 	for _, candidate := range eligibility.EligibleRoutes() {
@@ -148,6 +161,11 @@ func derivePolicyAuthorizerIdentity(a *PolicyAuthorizer) string {
 	}
 	zones := make([]string, 0, 4)
 	allowed := a.constraints.AllowedProviderZones()
+	// The standard transport is omitted, so its version 4 identities are unchanged.
+	transport := ""
+	if a.transport != review.ModelRequestTransportStandard {
+		transport = a.transport.String()
+	}
 	for zone := provider.ProviderZoneLocal; zone <= provider.ProviderZoneSubscriptionOAuth; zone++ {
 		if allowed.Allows(zone) {
 			zones = append(zones, zone.String())
@@ -165,6 +183,7 @@ func derivePolicyAuthorizerIdentity(a *PolicyAuthorizer) string {
 		Logging              bool              `json:"content_logging_allowed"`
 		InputTokens          uint32            `json:"estimated_input_tokens"`
 		InputEstimateVersion int               `json:"input_estimate_version"`
+		InputTransport       string            `json:"input_transport,omitempty"`
 		MaxOutput            uint32            `json:"max_output_tokens"`
 		Cost                 uint64            `json:"max_cost_micro_usd"`
 		Registry             uint64            `json:"registry_revision"`
@@ -172,7 +191,7 @@ func derivePolicyAuthorizerIdentity(a *PolicyAuthorizer) string {
 		Ranking              string            `json:"ranking_policy"`
 		Routes               []routeWire       `json:"routes"`
 		Observations         []observationWire `json:"observations"`
-	}{Contract: "open-trestle/context-policy-authorizer", Version: 3, InputEstimateVersion: review.ModelRequestBudgetVersion, Policy: a.policyIdentity, MinContext: a.requirements.MinContextTokens(), MinOutput: a.requirements.MinOutputTokens(), Features: featureTokens, Classification: string(a.constraints.Classification()), Zones: zones, Logging: a.constraints.ContentLoggingAllowed(), InputTokens: a.budget.EstimatedInputTokens(), MaxOutput: a.budget.MaxOutputTokens(), Cost: a.budget.MaxCostMicroUSD(), Registry: a.registryRevision, Performance: a.performanceRevision, Ranking: a.rankingPolicy.Identity(), Routes: routes, Observations: observations})
+	}{Contract: "open-trestle/context-policy-authorizer", Version: 4, InputEstimateVersion: review.ModelRequestBudgetVersion, InputTransport: transport, Policy: a.policyIdentity, MinContext: a.requirements.MinContextTokens(), MinOutput: a.requirements.MinOutputTokens(), Features: featureTokens, Classification: string(a.constraints.Classification()), Zones: zones, Logging: a.constraints.ContentLoggingAllowed(), InputTokens: a.budget.EstimatedInputTokens(), MaxOutput: a.budget.MaxOutputTokens(), Cost: a.budget.MaxCostMicroUSD(), Registry: a.registryRevision, Performance: a.performanceRevision, Ranking: a.rankingPolicy.Identity(), Routes: routes, Observations: observations})
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }

@@ -169,14 +169,20 @@ func ParseGenerationResultArtifact(
 		review.ValidateRecordedContextPacketRequest(
 			contextArtifact.Payload(), input.ContextIdentity(), input.ReviewScopeIdentity(), input.MemoryScopeIdentity(), input.MemoryIdentity(),
 			input.Snapshot(), input.EvidenceItems(),
-		) != nil {
+		) != nil || !contextOutputSchemaMatches(input, contextArtifact.Payload()) {
 		return GenerationResult{}, ErrInvalidGenerationResult
 	}
-	providerRequest, err := provider.NewRequest(
-		provider.CapabilityReviewV1, contextArtifact.MediaType(), contextArtifact.Payload(),
-	)
-	if err != nil || providerRequest.Identity() != input.Authorization().RequestIdentity() {
-		return GenerationResult{}, ErrInvalidGenerationResult
+	if input.IsSanitized() {
+		if !hasProvenance(inputArtifact.Provenance(), input.SanitizedRequestArtifactIdentity()) || !hasProvenance(inputArtifact.Provenance(), input.SanitizedEgressReceiptArtifactIdentity()) || !hasProvenance(value.Provenance(), input.SanitizedRequestArtifactIdentity()) || !hasProvenance(value.Provenance(), input.SanitizedEgressReceiptArtifactIdentity()) {
+			return GenerationResult{}, ErrInvalidGenerationResult
+		}
+	} else {
+		providerRequest, err := provider.NewRequest(
+			provider.CapabilityReviewV1, contextArtifact.MediaType(), contextArtifact.Payload(),
+		)
+		if err != nil || providerRequest.Identity() != input.Authorization().RequestIdentity() {
+			return GenerationResult{}, ErrInvalidGenerationResult
+		}
 	}
 	payload := value.Payload()
 	if len(payload) == 0 || len(payload) > maximumGenerationResultBytes {
@@ -200,12 +206,13 @@ func ParseGenerationResultArtifact(
 	}
 	candidates, err := review.ParseEncodedCandidateBatch(wire.CandidateBatch)
 	if err != nil || candidates.Identity() != wire.CandidateBatchIdentity ||
-		candidates.SnapshotIdentity() != input.Snapshot().Identity() {
+		candidates.SnapshotIdentity() != input.Snapshot().Identity() ||
+		!review.CandidateBatchMatchesContext(contextArtifact.Payload(), candidates) {
 		return GenerationResult{}, ErrInvalidGenerationResult
 	}
 	routeExecution, err := gateway.ParseRouteExecutionRecord(wire.RouteExecution)
 	if err != nil || routeExecution.Identity() != wire.RouteExecutionIdentity ||
-		routeExecution.Authorization().Identity() != input.Authorization().Identity() ||
+		!gateway.IsSameReservationRetryOf(input.Authorization(), routeExecution.Authorization()) ||
 		routeExecution.Authorization().ReviewScopeIdentity() != value.Scope().Identity() {
 		return GenerationResult{}, ErrInvalidGenerationResult
 	}

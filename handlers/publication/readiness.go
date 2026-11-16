@@ -15,6 +15,7 @@ import (
 	changehandler "github.com/georgejieh/open-trestle/handlers/change"
 	modelhandler "github.com/georgejieh/open-trestle/handlers/model"
 	"github.com/georgejieh/open-trestle/internal/review"
+	"github.com/georgejieh/open-trestle/internal/secretscan"
 	"io"
 	"reflect"
 	"sort"
@@ -36,18 +37,35 @@ type ReadinessHandler struct {
 	reviewPolicyIdentity string
 	publicationPolicy    review.PublicationPolicy
 	pipeline             *modelhandler.InvestigationPipeline
+	contentScanner       review.PublicationContentScanner
+	finalOnly            bool
 }
 
-func NewReadinessHandler(store artifact.Store, diagnosticStore diagnostics.Store, clock artifact.Clock, reviewPolicyIdentity string, policy review.PublicationPolicy) (*ReadinessHandler, error) {
-	if nilInterface(store) || nilInterface(diagnosticStore) || nilInterface(clock) || !validDigest(reviewPolicyIdentity) || policy.Validate() != nil {
+func NewReadinessHandler(store artifact.Store, diagnosticStore diagnostics.Store, clock artifact.Clock, reviewPolicyIdentity string, policy review.PublicationPolicy, scanners ...review.PublicationContentScanner) (*ReadinessHandler, error) {
+	scanner := selectContentScanner(scanners)
+	if nilInterface(store) || nilInterface(diagnosticStore) || nilInterface(clock) || !validDigest(reviewPolicyIdentity) || policy.Validate() != nil || nilInterface(scanner) || !validDigest(scanner.Identity()) {
 		return nil, ErrInvalidReadinessHandler
 	}
-	h := &ReadinessHandler{store: store, diagnosticStore: diagnosticStore, clock: clock, reviewPolicyIdentity: reviewPolicyIdentity, publicationPolicy: policy}
-	h.identity = deriveHandlerIdentity(reviewPolicyIdentity, policy.Identity())
+	h := &ReadinessHandler{store: store, diagnosticStore: diagnosticStore, clock: clock, reviewPolicyIdentity: reviewPolicyIdentity, publicationPolicy: policy, contentScanner: scanner}
+	h.identity = deriveHandlerIdentity(reviewPolicyIdentity, policy.Identity(), scanner.Identity())
 	return h, nil
 }
-func NewInvestigationReadinessHandler(store artifact.Store, diagnosticStore diagnostics.Store, clock artifact.Clock, reviewPolicyIdentity string, policy review.PublicationPolicy, pipeline *modelhandler.InvestigationPipeline) (*ReadinessHandler, error) {
-	if nilInterface(store) || nilInterface(diagnosticStore) || nilInterface(clock) || !validDigest(reviewPolicyIdentity) || policy.Validate() != nil || pipeline == nil || pipeline.Validate() != nil {
+
+// NewFinalOnlyReadinessHandler evaluates readiness without claiming the full
+// review's immutable diagnostic slot before terminal settlement.
+func NewFinalOnlyReadinessHandler(store artifact.Store, clock artifact.Clock, reviewPolicyIdentity string, policy review.PublicationPolicy, scanners ...review.PublicationContentScanner) (*ReadinessHandler, error) {
+	h, err := NewReadinessHandler(store, diagnostics.NewMemoryStore(), clock, reviewPolicyIdentity, policy, scanners...)
+	if err != nil {
+		return nil, err
+	}
+	h.diagnosticStore = nil
+	h.finalOnly = true
+	return h, nil
+}
+
+func NewInvestigationReadinessHandler(store artifact.Store, diagnosticStore diagnostics.Store, clock artifact.Clock, reviewPolicyIdentity string, policy review.PublicationPolicy, pipeline *modelhandler.InvestigationPipeline, scanners ...review.PublicationContentScanner) (*ReadinessHandler, error) {
+	scanner := selectContentScanner(scanners)
+	if nilInterface(store) || nilInterface(diagnosticStore) || nilInterface(clock) || !validDigest(reviewPolicyIdentity) || policy.Validate() != nil || pipeline == nil || pipeline.Validate() != nil || nilInterface(scanner) || !validDigest(scanner.Identity()) {
 		return nil, ErrInvalidReadinessHandler
 	}
 	profile := pipeline.Profile()
@@ -55,11 +73,22 @@ func NewInvestigationReadinessHandler(store artifact.Store, diagnosticStore diag
 		return nil, ErrInvalidReadinessHandler
 	}
 	identity, err := pipeline.HandlerIdentity(controlplane.TaskEvaluatePublication)
-	if err != nil || !validDigest(identity) {
+	if err != nil || !validDigest(identity) || pipeline.PublicationScannerIdentity() != scanner.Identity() {
 		return nil, ErrInvalidReadinessHandler
 	}
-	return &ReadinessHandler{identity: identity, store: store, diagnosticStore: diagnosticStore, clock: clock, reviewPolicyIdentity: reviewPolicyIdentity, publicationPolicy: policy, pipeline: pipeline}, nil
+	return &ReadinessHandler{identity: identity, store: store, diagnosticStore: diagnosticStore, clock: clock, reviewPolicyIdentity: reviewPolicyIdentity, publicationPolicy: policy, pipeline: pipeline, contentScanner: scanner}, nil
 }
+
+func selectContentScanner(scanners []review.PublicationContentScanner) review.PublicationContentScanner {
+	if len(scanners) == 0 {
+		return review.NewFixedPublicationContentScanner()
+	}
+	if len(scanners) != 1 {
+		return nil
+	}
+	return scanners[0]
+}
+
 func (h *ReadinessHandler) HandlerIdentity() string {
 	if h == nil {
 		return ""
@@ -80,29 +109,30 @@ func (h *ReadinessHandler) Kind() controlplane.TaskKind {
 	return controlplane.TaskEvaluatePublication
 }
 func (h *ReadinessHandler) Validate() error {
-	if h == nil || nilInterface(h.store) || nilInterface(h.diagnosticStore) || nilInterface(h.clock) || !validDigest(h.reviewPolicyIdentity) || h.publicationPolicy.Validate() != nil {
+	if h == nil || nilInterface(h.store) || (nilInterface(h.diagnosticStore) != h.finalOnly) || nilInterface(h.clock) || !validDigest(h.reviewPolicyIdentity) || h.publicationPolicy.Validate() != nil || nilInterface(h.contentScanner) || !validDigest(h.contentScanner.Identity()) {
 		return ErrInvalidReadinessHandler
 	}
 	if h.pipeline != nil {
 		identity, err := h.pipeline.HandlerIdentity(controlplane.TaskEvaluatePublication)
 		profile := h.pipeline.Profile()
-		if h.pipeline.Validate() != nil || err != nil || !validDigest(identity) || h.identity != identity || profile.ReviewPolicyIdentity() != h.reviewPolicyIdentity || profile.PublicationPolicyIdentity() != h.publicationPolicy.Identity() {
+		if h.pipeline.Validate() != nil || err != nil || !validDigest(identity) || h.identity != identity || h.pipeline.PublicationScannerIdentity() != h.contentScanner.Identity() || profile.ReviewPolicyIdentity() != h.reviewPolicyIdentity || profile.PublicationPolicyIdentity() != h.publicationPolicy.Identity() {
 			return ErrInvalidReadinessHandler
 		}
 		return nil
 	}
-	if h.identity != deriveHandlerIdentity(h.reviewPolicyIdentity, h.publicationPolicy.Identity()) {
+	if h.identity != deriveHandlerIdentity(h.reviewPolicyIdentity, h.publicationPolicy.Identity(), h.contentScanner.Identity()) {
 		return ErrInvalidReadinessHandler
 	}
 	return nil
 }
-func deriveHandlerIdentity(reviewPolicy, publicationPolicy string) string {
+func deriveHandlerIdentity(reviewPolicy, publicationPolicy, contentScanner string) string {
 	encoded, _ := json.Marshal(struct {
 		Contract          string `json:"contract"`
 		Version           int    `json:"version"`
 		ReviewPolicy      string `json:"review_policy"`
 		PublicationPolicy string `json:"publication_policy"`
-	}{"open-trestle/publication-readiness-handler", 5, reviewPolicy, publicationPolicy})
+		ContentScanner    string `json:"content_scanner"`
+	}{"open-trestle/publication-readiness-handler", 6, reviewPolicy, publicationPolicy, contentScanner})
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }
@@ -112,6 +142,7 @@ type Result struct {
 	status                                                                                                                             review.PublicationReadinessStatus
 	verified, rejected, inconclusive, belowThreshold                                                                                   uint8
 	inline, summary                                                                                                                    int
+	contentScan                                                                                                                        review.PublicationContentScanReceipt
 }
 
 func (r Result) Identity() string                          { return r.identity }
@@ -126,36 +157,53 @@ func (r Result) Format(s fmt.State, v rune) {
 }
 
 type resultWire struct {
-	Contract                     string `json:"contract"`
-	SchemaVersion                int    `json:"schema_version"`
-	Identity                     string `json:"identity"`
-	VerificationArtifactIdentity string `json:"verification_artifact_identity"`
-	VerificationResultIdentity   string `json:"verification_result_identity"`
-	PublicationPolicyIdentity    string `json:"publication_policy_identity"`
-	ReadinessIdentity            string `json:"readiness_identity"`
-	Status                       string `json:"status"`
-	Verified                     uint8  `json:"verified"`
-	Rejected                     uint8  `json:"rejected"`
-	Inconclusive                 uint8  `json:"inconclusive"`
-	BelowThreshold               uint8  `json:"below_threshold"`
-	Inline                       int    `json:"inline"`
-	SummaryOnly                  int    `json:"summary_only"`
+	Contract                     string          `json:"contract"`
+	SchemaVersion                int             `json:"schema_version"`
+	Identity                     string          `json:"identity"`
+	VerificationArtifactIdentity string          `json:"verification_artifact_identity"`
+	VerificationResultIdentity   string          `json:"verification_result_identity"`
+	PublicationPolicyIdentity    string          `json:"publication_policy_identity"`
+	ReadinessIdentity            string          `json:"readiness_identity"`
+	Status                       string          `json:"status"`
+	Verified                     uint8           `json:"verified"`
+	Rejected                     uint8           `json:"rejected"`
+	Inconclusive                 uint8           `json:"inconclusive"`
+	BelowThreshold               uint8           `json:"below_threshold"`
+	Inline                       int             `json:"inline"`
+	SummaryOnly                  int             `json:"summary_only"`
+	ContentScan                  json.RawMessage `json:"content_scan"`
 }
 
 func newResult(artifactID string, verification modelhandler.VerificationResult, readiness review.PublicationReadiness) Result {
-	r := Result{verificationArtifactIdentity: artifactID, verificationResultIdentity: verification.Identity(), publicationPolicyIdentity: readiness.PolicyIdentity(), readinessIdentity: readiness.Identity(), status: readiness.Status(), verified: readiness.VerifiedCount(), rejected: readiness.RejectedCount(), inconclusive: readiness.InconclusiveCount(), belowThreshold: readiness.BelowThresholdCount(), inline: len(readiness.InlineFindings()), summary: readiness.SummaryOnlyCount()}
+	r := Result{verificationArtifactIdentity: artifactID, verificationResultIdentity: verification.Identity(), publicationPolicyIdentity: readiness.PolicyIdentity(), readinessIdentity: readiness.Identity(), status: readiness.Status(), verified: readiness.VerifiedCount(), rejected: readiness.RejectedCount(), inconclusive: readiness.InconclusiveCount(), belowThreshold: readiness.BelowThresholdCount(), inline: len(readiness.InlineFindings()), summary: readiness.SummaryOnlyCount(), contentScan: readiness.ContentScanReceipt()}
 	r.identity = deriveResultIdentity(r)
 	return r
 }
 func (r Result) validate(verificationArtifact artifact.Artifact, verification modelhandler.VerificationResult, policy review.PublicationPolicy) error {
-	readiness, err := review.EvaluatePublicationReadiness(policy, verification.IndependentReceipt(), verification.VerifiedFindings())
+	selection, err := review.SelectPublicationFindings(policy, verification.IndependentReceipt(), verification.VerifiedFindings())
+	if err != nil {
+		return ErrInvalidReadinessResult
+	}
+	readiness, err := review.EvaluatePublicationReadiness(policy, verification.IndependentReceipt(), verification.VerifiedFindings(), verification.VerificationContext(), selection, r.contentScan)
 	if err != nil || r.verificationArtifactIdentity != verificationArtifact.Identity() || r.verificationResultIdentity != verification.Identity() || r.publicationPolicyIdentity != policy.Identity() || r.readinessIdentity != readiness.Identity() || r.status != readiness.Status() || r.verified != readiness.VerifiedCount() || r.rejected != readiness.RejectedCount() || r.inconclusive != readiness.InconclusiveCount() || r.belowThreshold != readiness.BelowThresholdCount() || r.inline != len(readiness.InlineFindings()) || r.summary != readiness.SummaryOnlyCount() || r.identity != deriveResultIdentity(r) {
 		return ErrInvalidReadinessResult
 	}
 	return nil
 }
 func toWire(r Result) resultWire {
-	return resultWire{"open-trestle/publication-readiness-result", 1, r.identity, r.verificationArtifactIdentity, r.verificationResultIdentity, r.publicationPolicyIdentity, r.readinessIdentity, r.status.String(), r.verified, r.rejected, r.inconclusive, r.belowThreshold, r.inline, r.summary}
+	contentScan := json.RawMessage("null")
+	if r.contentScan.Identity() != "" {
+		encoded, err := review.EncodePublicationContentScanReceipt(r.contentScan)
+		if err != nil {
+			return resultWire{}
+		}
+		contentScan = encoded
+	}
+	return resultWire{Contract: "open-trestle/publication-readiness-result", SchemaVersion: 2, Identity: r.identity,
+		VerificationArtifactIdentity: r.verificationArtifactIdentity, VerificationResultIdentity: r.verificationResultIdentity,
+		PublicationPolicyIdentity: r.publicationPolicyIdentity, ReadinessIdentity: r.readinessIdentity, Status: r.status.String(),
+		Verified: r.verified, Rejected: r.rejected, Inconclusive: r.inconclusive, BelowThreshold: r.belowThreshold,
+		Inline: r.inline, SummaryOnly: r.summary, ContentScan: contentScan}
 }
 func deriveResultIdentity(r Result) string {
 	wire := toWire(r)
@@ -187,10 +235,25 @@ func parseResult(value artifact.Artifact, verificationArtifact artifact.Artifact
 	}
 	canonical, _ := json.Marshal(wire)
 	status, err := review.ParsePublicationReadinessStatus(wire.Status)
-	if err != nil || !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/publication-readiness-result" || wire.SchemaVersion != 1 {
+	if err != nil || !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/publication-readiness-result" || wire.SchemaVersion != 2 {
 		return Result{}, ErrInvalidReadinessResult
 	}
-	r := Result{identity: wire.Identity, artifactIdentity: value.Identity(), verificationArtifactIdentity: wire.VerificationArtifactIdentity, verificationResultIdentity: wire.VerificationResultIdentity, publicationPolicyIdentity: wire.PublicationPolicyIdentity, readinessIdentity: wire.ReadinessIdentity, status: status, verified: wire.Verified, rejected: wire.Rejected, inconclusive: wire.Inconclusive, belowThreshold: wire.BelowThreshold, inline: wire.Inline, summary: wire.SummaryOnly}
+	selection, err := review.SelectPublicationFindings(policy, verification.IndependentReceipt(), verification.VerifiedFindings())
+	if err != nil || !contains(value.Provenance(), selection.Identity()) {
+		return Result{}, ErrInvalidReadinessResult
+	}
+	var contentScan review.PublicationContentScanReceipt
+	if selection.Status() != review.PublicationAdvisoryReady {
+		if !bytes.Equal(wire.ContentScan, []byte("null")) {
+			return Result{}, ErrInvalidReadinessResult
+		}
+	} else {
+		contentScan, err = review.ParsePublicationContentScanReceipt(wire.ContentScan)
+		if err != nil || !contains(value.Provenance(), contentScan.Identity()) || !contains(value.Provenance(), contentScan.ScannerAuthorityIdentity()) {
+			return Result{}, ErrInvalidReadinessResult
+		}
+	}
+	r := Result{identity: wire.Identity, artifactIdentity: value.Identity(), verificationArtifactIdentity: wire.VerificationArtifactIdentity, verificationResultIdentity: wire.VerificationResultIdentity, publicationPolicyIdentity: wire.PublicationPolicyIdentity, readinessIdentity: wire.ReadinessIdentity, status: status, verified: wire.Verified, rejected: wire.Rejected, inconclusive: wire.Inconclusive, belowThreshold: wire.BelowThreshold, inline: wire.Inline, summary: wire.SummaryOnly, contentScan: contentScan}
 	if r.validate(verificationArtifact, verification, policy) != nil {
 		return Result{}, ErrInvalidReadinessResult
 	}
@@ -302,18 +365,40 @@ func (h *ReadinessHandler) Execute(ctx context.Context, request controlplane.Tas
 		if err != nil {
 			return failure(readFailure(ctx, err))
 		}
-		verification, err = modelhandler.ParseVerificationResultArtifact(verificationArtifact, generationArtifact, inputArtifact, contextArtifact)
+		verification, err = modelhandler.ParseStoredVerificationResultArtifact(ctx, h.store, at, verificationArtifact, generationArtifact, inputArtifact, contextArtifact)
 		if err != nil || !contains(contextArtifact.Provenance(), analysisArtifact.Identity()) || !contains(contextArtifact.Provenance(), changeArtifact.Identity()) || !contains(contextArtifact.Provenance(), headSnapshotArtifact.Identity()) {
 			return failure(controlplane.RunFailureInvalidInput)
 		}
 	}
-	if _, _, err := review.MaterializeDiagnosticSetWithDeterministicChecks(
-		ctx, h.diagnosticStore, request.Plan().Scope(), changeResult.HeadRevision().Digest(),
-		verification.IndependentReceipt(), verification.VerifiedFindings(), verification.VerificationContext().SourceCoverage(), deterministicChecks,
-	); err != nil {
-		return failure(diagnosticWriteFailure(ctx, err))
+	selection, err := review.SelectPublicationFindings(h.publicationPolicy, verification.IndependentReceipt(), verification.VerifiedFindings())
+	if err != nil {
+		return failure(controlplane.RunFailureInternal)
 	}
-	readiness, err := review.EvaluatePublicationReadiness(h.publicationPolicy, verification.IndependentReceipt(), verification.VerifiedFindings())
+	var contentScan review.PublicationContentScanReceipt
+	if selection.Status() == review.PublicationAdvisoryReady {
+		contentScan, err = h.contentScanner.Scan(ctx, verification.IndependentReceipt(), verification.VerifiedFindings(), verification.VerificationContext(), selection)
+		if err != nil {
+			if ctx.Err() != nil {
+				return failure(controlplane.RunFailureCanceled)
+			}
+			if review.SanitizedEgressFailure(err) == secretscan.FailureResourceLimit {
+				return failure(controlplane.RunFailureResourceLimit)
+			}
+			return failure(controlplane.RunFailurePolicy)
+		}
+		if contentScan.ScannerAuthorityIdentity() != h.contentScanner.Identity() {
+			return failure(controlplane.RunFailurePolicy)
+		}
+	}
+	if !h.finalOnly {
+		if _, _, err := review.MaterializeDiagnosticSetWithDeterministicChecks(
+			ctx, h.diagnosticStore, request.Plan().Scope(), changeResult.HeadRevision().Digest(),
+			verification.IndependentReceipt(), verification.VerifiedFindings(), verification.VerificationContext().SourceCoverage(), deterministicChecks,
+		); err != nil {
+			return failure(diagnosticWriteFailure(ctx, err))
+		}
+	}
+	readiness, err := review.EvaluatePublicationReadiness(h.publicationPolicy, verification.IndependentReceipt(), verification.VerifiedFindings(), verification.VerificationContext(), selection, contentScan)
 	if err != nil {
 		return failure(controlplane.RunFailureInternal)
 	}
@@ -333,9 +418,12 @@ func (h *ReadinessHandler) Execute(ctx context.Context, request controlplane.Tas
 		expires = minimumTime(expires, investigationExpires)
 	}
 	provenance := []string{
-		verificationArtifact.Identity(), verification.Identity(), verification.IndependentReceipt().Identity(), verification.VerifiedFindings().Identity(),
+		verificationArtifact.Identity(), verification.Identity(), verification.IndependentReceipt().Identity(), verification.VerifiedFindings().Identity(), selection.Identity(),
 		analysisArtifact.Identity(), analysisResult.Identity(), analysisResult.Checks()[0].Identity(), deterministicChecks[0].Identity(),
 		changeArtifact.Identity(), changeResult.Identity(), changeResult.HeadRevision().Identity(), h.publicationPolicy.Identity(), h.reviewPolicyIdentity,
+	}
+	if contentScan.Identity() != "" {
+		provenance = append(provenance, contentScan.Identity(), contentScan.ScannerAuthorityIdentity())
 	}
 	sort.Strings(provenance)
 	output, err := artifact.New(request.Plan().Scope(), artifact.KindPublicationPlan, "application/json", verificationArtifact.Classification(), artifact.OriginPolicy, verificationArtifact.Protection(), provenance, payload, at, expires)
@@ -365,7 +453,7 @@ func readFailure(ctx context.Context, err error) controlplane.RunFailure {
 }
 func diagnosticDeterministicChecks(analysis analysishandler.Result, change changehandler.Result) ([]diagnostics.DeterministicCheck, error) {
 	checks := analysis.Checks()
-	if analysis.SchemaVersion() != 3 || len(checks) != 1 || analysis.ChangeIdentity() != change.Identity() {
+	if (analysis.SchemaVersion() < 3 || analysis.SchemaVersion() > 7) || len(checks) != 1 || analysis.ChangeIdentity() != change.Identity() {
 		return nil, ErrInvalidReadinessResult
 	}
 	check, err := diagnosticDeterministicCheck(checks[0], analysis.Identity(), change.Identity())
@@ -400,7 +488,7 @@ func diagnosticWriteFailure(ctx context.Context, err error) controlplane.RunFail
 	if ctx.Err() != nil || errors.Is(err, diagnostics.ErrStoreContextDone) {
 		return controlplane.RunFailureCanceled
 	}
-	if errors.Is(err, diagnostics.ErrStoreCapacity) || errors.Is(err, artifact.ErrStoreCapacity) {
+	if errors.Is(err, diagnostics.ErrSetResourceLimit) || errors.Is(err, diagnostics.ErrStoreCapacity) || errors.Is(err, artifact.ErrStoreCapacity) {
 		return controlplane.RunFailureResourceLimit
 	}
 	return controlplane.RunFailureInternal

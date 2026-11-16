@@ -75,10 +75,14 @@ func TestLocalGitPackedInvestigationReadsSnapshotToolsAndVerifies(t *testing.T) 
 	for i, capture := range captures {
 		turn := receipt.Investigation.Turns[i]
 		localModelRequireDigest(t, turn.Request, turn.Authorization, turn.Outcome, turn.Reconciliation)
-		if seenRequests[capture.request] || turn.Request != capture.request || !claimed[turn.Authorization] || !completed[turn.Outcome] || !reconciled[turn.Reconciliation] {
+		requestBound := turn.Request == capture.request
+		if capture.packet.Task == "candidate_verification" {
+			requestBound = turn.Request != capture.request
+		}
+		if seenRequests[turn.Request] || !requestBound || !claimed[turn.Authorization] || !completed[turn.Outcome] || !reconciled[turn.Reconciliation] {
 			t.Fatal("packed investigation receipt is not bound to actual model turn ledger")
 		}
-		seenRequests[capture.request] = true
+		seenRequests[turn.Request] = true
 		if i > 0 && i < 4 {
 			prior := receipt.Investigation.Turns[i-1]
 			state := capture.packet.Investigation
@@ -87,7 +91,7 @@ func TestLocalGitPackedInvestigationReadsSnapshotToolsAndVerifies(t *testing.T) 
 			}
 		}
 	}
-	if receipt.GenerationRequest != captures[3].request || receipt.VerificationRequest != captures[4].request || receipt.Context != captures[4].packet.GenerationContext || receipt.CandidateBatch != captures[4].packet.CandidateBatch || receipt.Diagnostics.Coverage.VerifiedCount != 1 || len(receipt.Diagnostics.Findings) != 1 {
+	if receipt.GenerationRequest != captures[3].request || receipt.VerificationRequest == captures[4].request || receipt.Context != captures[4].packet.GenerationContext || receipt.CandidateBatch != captures[4].packet.CandidateBatch || receipt.Diagnostics.Coverage.VerifiedCount != 1 || len(receipt.Diagnostics.Findings) != 1 {
 		t.Fatal("packed investigation final review disconnected from actual snapshot turns")
 	}
 	if strings.Contains(stdout.String()+stderr.String(), investigationLine) || stdout.Len() > 256<<10 {

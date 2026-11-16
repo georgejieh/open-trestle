@@ -32,6 +32,23 @@ func LoadProtectedRetainedMemoryInput(ctx context.Context, path string, scope me
 	if err != nil || ctx.Err() != nil {
 		return RetainedMemoryInput{}, ErrInvalidRetainedMemoryInput
 	}
+	value, err := parseRetainedDeclaration(ctx, encoded, scope, repository, policy)
+	if err != nil || !freshRetained(value.records, instant) {
+		return RetainedMemoryInput{}, ErrInvalidRetainedMemoryInput
+	}
+	// Each pair pins metadata/file identity; across pairs only protected authority
+	// and exact bytes are rechecked. This is not an atomic cross-pair inode pin.
+	again, err := readProtectedConfiguration(ctx, path, retainedRawLimit, opener)
+	if err != nil || !bytes.Equal(encoded, again) || ctx.Err() != nil {
+		return RetainedMemoryInput{}, ErrInvalidRetainedMemoryInput
+	}
+	return value, nil
+}
+
+func parseRetainedDeclaration(ctx context.Context, encoded []byte, scope memory.Scope, repository evidence.RepositoryIdentity, policy RuntimePolicy) (RetainedMemoryInput, error) {
+	if ctx == nil || ctx.Err() != nil {
+		return RetainedMemoryInput{}, ErrInvalidRetainedMemoryInput
+	}
 	scanner := retainedScanner{encoded: encoded, ctx: ctx}
 	if len(encoded) == 0 || len(encoded) > retainedRawLimit || !utf8.Valid(encoded) || !scanner.object(retainedEnvelopeObject) {
 		return RetainedMemoryInput{}, ErrInvalidRetainedMemoryInput
@@ -49,20 +66,34 @@ func LoadProtectedRetainedMemoryInput(ctx context.Context, path string, scope me
 	if !ok || ctx.Err() != nil || !fixedRetainedSlice(wire, declaredScope, records) || ctx.Err() != nil {
 		return RetainedMemoryInput{}, ErrInvalidRetainedMemoryInput
 	}
-	if !retainedBindings(wire, declaredScope, scope, repository, policy) || ctx.Err() != nil || !freshRetained(records, instant) || ctx.Err() != nil {
+	if !retainedBindings(wire, declaredScope, scope, repository, policy) || ctx.Err() != nil {
 		return RetainedMemoryInput{}, ErrInvalidRetainedMemoryInput
 	}
 	identity, ok := retainedInputIdentity(wire)
 	if !ok || ctx.Err() != nil {
 		return RetainedMemoryInput{}, ErrInvalidRetainedMemoryInput
 	}
-	// Each pair pins metadata/file identity; across pairs only protected authority
-	// and exact bytes are rechecked. This is not an atomic cross-pair inode pin.
-	again, err := readProtectedConfiguration(ctx, path, retainedRawLimit, opener)
-	if err != nil || !bytes.Equal(encoded, again) || ctx.Err() != nil {
-		return RetainedMemoryInput{}, ErrInvalidRetainedMemoryInput
-	}
 	return RetainedMemoryInput{declared: wire, scope: declaredScope, records: records, identity: identity}, nil
+}
+
+// RemoveProtectedRetainedMemoryInput removes only the matching protected input.
+// Expiry does not grant reuse authority and does not prevent explicit cleanup.
+func RemoveProtectedRetainedMemoryInput(ctx context.Context, path string, scope memory.Scope, repository evidence.RepositoryIdentity, policy RuntimePolicy) (string, error) {
+	if _, ok := retainedArguments(scope, repository, policy, time.UnixMilli(1).UTC()); !ok {
+		return "", ErrInvalidRetainedMemoryInput
+	}
+	identity := ""
+	err := fileauthority.RemoveValidatedProtectedFile(ctx, path, retainedRawLimit, func(encoded []byte) error {
+		value, err := parseRetainedDeclaration(ctx, encoded, scope, repository, policy)
+		if err == nil {
+			identity = value.Identity()
+		}
+		return err
+	})
+	if err != nil {
+		return "", err
+	}
+	return identity, nil
 }
 
 type retainedObject uint8

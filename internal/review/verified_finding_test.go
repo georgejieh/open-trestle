@@ -72,7 +72,12 @@ func independentVerificationFixture(t *testing.T, outcome string) (ContextPacket
 
 func independentVerificationFixtureAtLevel(t *testing.T, outcome string, level gateway.RouteIndependenceLevel) (ContextPacket, CandidateBatch, gateway.RouteOutputReceipt, VerificationContextPacket, VerificationBatch, gateway.RouteOutputReceipt, gateway.RouteIndependenceReceipt) {
 	t.Helper()
-	generationContext, candidates := verificationContextFixture(t)
+	return independentVerificationFixtureFrom(t, outcome, level, verificationContextFixture)
+}
+
+func independentVerificationFixtureFrom(t *testing.T, outcome string, level gateway.RouteIndependenceLevel, fixture func(*testing.T) (ContextPacket, CandidateBatch)) (ContextPacket, CandidateBatch, gateway.RouteOutputReceipt, VerificationContextPacket, VerificationBatch, gateway.RouteOutputReceipt, gateway.RouteIndependenceReceipt) {
+	t.Helper()
+	generationContext, candidates := fixture(t)
 	scope, _ := audit.NewReviewScope("tenant", "repository", "review-run")
 	generationRequest, _ := generationContext.ProviderRequest()
 	generationAuthorization := reviewRouteAuthorization(t, scope, generationRequest, "generator", "model-a")

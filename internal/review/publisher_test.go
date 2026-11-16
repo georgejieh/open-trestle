@@ -106,6 +106,30 @@ func TestDispatchClaimedPublicationRejectsBeforePublisherCall(t *testing.T) {
 	}
 }
 
+func TestDispatchClaimedPublicationNeverReleasesInvalidContentScanToPublisher(t *testing.T) {
+	scope, authorization, claim, attempt, gate, at := claimedPublicationFixture(t)
+	cases := map[string]func(*PublicationContentScanReceipt){
+		"missing":        func(receipt *PublicationContentScanReceipt) { *receipt = PublicationContentScanReceipt{} },
+		"secret match":   func(receipt *PublicationContentScanReceipt) { receipt.initial.MatchCount = 1 },
+		"residual match": func(receipt *PublicationContentScanReceipt) { receipt.residual.MatchCount = 1 },
+		"instruction risk": func(receipt *PublicationContentScanReceipt) {
+			receipt.instructionRiskFields = []PublicationRiskField{{Kind: receipt.fields[0].Kind, Ordinal: 0, FindingIdentity: receipt.fields[0].FindingIdentity}}
+		},
+		"cross digest": func(receipt *PublicationContentScanReceipt) { receipt.scanner.WorkerSHA256 = strings.Repeat("e", 64) },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			crossed := authorization
+			mutate(&crossed.plan.contentScanReceipt)
+			publisher := &recordingPublisher{publisherID: authorization.Plan().Target().PublisherID()}
+			result, err := DispatchClaimedPublication(context.Background(), publisher, scope, crossed, claim, attempt, gate, at)
+			if err == nil || result.Identity() != "" || publisher.calls != 0 {
+				t.Fatalf("invalid content scan reached publisher: result=%#v err=%v calls=%d", result, err, publisher.calls)
+			}
+		})
+	}
+}
+
 func TestDispatchClaimedPublicationRejectsMalformedResult(t *testing.T) {
 	scope, authorization, claim, attempt, gate, at := claimedPublicationFixture(t)
 	publisher := &recordingPublisher{publisherID: "github"}

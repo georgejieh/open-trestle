@@ -54,6 +54,33 @@ const (
 	RouteFailurePolicyDenied
 	RouteFailureBudgetExhausted
 	RouteFailureCancelled
+	// RouteFailureOutputExhausted is a completed response that stopped at the
+	// output token limit before producing any answer, for example a reasoning
+	// model that spent the whole allowance on its trace. Replaying the same
+	// request under the same limit fails the same way, so it is not transient.
+	RouteFailureOutputExhausted
+	// RouteFailurePaymentRequired is a provider refusal for billing or quota
+	// (HTTP 402): the account cannot pay for the request. Replaying it under
+	// the same account fails the same way, so it is neither transient nor a
+	// reason to spend on another route.
+	RouteFailurePaymentRequired
+	// RouteFailureModelUnavailable is a provider answer that it does not serve
+	// the requested model or endpoint (HTTP 404). It is not transient; another
+	// route's model may still serve the request.
+	RouteFailureModelUnavailable
+	// RouteFailureModelRetired is a provider answer that the requested model
+	// was withdrawn (HTTP 410). It is not transient; another route's model may
+	// still serve the request.
+	RouteFailureModelRetired
+	// RouteFailureRequestRejected is a provider answer that the request itself
+	// is invalid as sent (HTTP 400, 405, 415 or 422): for example an unknown
+	// model ID, a parameter the model or endpoint does not accept, or an
+	// endpoint that does not take this method or media type. The provider
+	// answered, so it is not an outage, and replaying the same request fails
+	// the same way, so it is not transient. Another route builds its own
+	// request for its own model, endpoint and parameters, so another route
+	// stays eligible for fallback.
+	RouteFailureRequestRejected
 )
 
 // String returns the stable failure token or an empty string for unknown values.
@@ -81,6 +108,16 @@ func (c RouteFailureClass) String() string {
 		return "budget_exhausted"
 	case RouteFailureCancelled:
 		return "cancelled"
+	case RouteFailureOutputExhausted:
+		return "output_exhausted"
+	case RouteFailurePaymentRequired:
+		return "payment_required"
+	case RouteFailureModelUnavailable:
+		return "model_unavailable"
+	case RouteFailureModelRetired:
+		return "model_retired"
+	case RouteFailureRequestRejected:
+		return "request_rejected"
 	default:
 		return ""
 	}
@@ -88,7 +125,7 @@ func (c RouteFailureClass) String() string {
 
 // ParseRouteFailureClass parses one exact stable failure token.
 func ParseRouteFailureClass(value string) (RouteFailureClass, error) {
-	for candidate := RouteFailureTransport; candidate <= RouteFailureCancelled; candidate++ {
+	for candidate := RouteFailureTransport; candidate <= RouteFailureRequestRejected; candidate++ {
 		if candidate.String() == value {
 			return candidate, nil
 		}

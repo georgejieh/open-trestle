@@ -2,12 +2,15 @@ package webhook
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"reflect"
 	"sort"
 
 	"github.com/georgejieh/open-trestle/artifact"
+	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
 	"time"
 )
@@ -26,6 +29,8 @@ var (
 )
 
 // RunPlanner deterministically converts one accepted delivery into an immutable review plan.
+// Planning performs no I/O, so a planning error other than cancellation refuses
+// the delivery: processing it again would fail the same way.
 type RunPlanner interface {
 	Identity() string
 	Plan(context.Context, StoredDelivery) (controlplane.ReviewRunPlan, error)
@@ -35,6 +40,24 @@ type RunPlanner interface {
 type PreparedRunPlanner interface {
 	Identity() string
 	Prepare(context.Context, StoredDelivery) (controlplane.ReviewRunPlan, []artifact.Artifact, error)
+}
+
+// SupersedingPlanner is optionally implemented by a prepared planner that
+// replaced earlier versions of itself. SupersededPlanIdentities returns the
+// identities of the plans those versions produced for a delivery, so a run one
+// of them opened is resumed as the delivery's run. Like planning, it performs
+// no I/O; a delivery an earlier version could not plan has none.
+type SupersedingPlanner interface {
+	SupersededPlanIdentities(context.Context, StoredDelivery) ([]string, error)
+}
+
+// ReleaseAwarePlanner is optionally implemented by a prepared planner that can
+// recognise a run an earlier release opened for a delivery: a plan with this
+// planner's task graph, policy and mode for the delivery's request that names
+// task handlers this daemon does not run. Such a run can neither be adopted
+// nor make progress here, so it is refused with its own reason.
+type ReleaseAwarePlanner interface {
+	OpenedByIncompatibleRelease(StoredDelivery, controlplane.ReviewRunPlan) bool
 }
 
 // Processor opens replay-safe review runs from durable inbox records.
@@ -98,7 +121,14 @@ func (p *Processor) Process(ctx context.Context, stored StoredDelivery, at time.
 		plan, err = p.planner.Plan(ctx, stored)
 	}
 	if err != nil {
-		return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, err
+		if ctx.Err() != nil {
+			return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, err
+		}
+		reason, named := DeliveryRefusalReason(err)
+		if !named {
+			reason = RefusalReasonPlanningRefused
+		}
+		return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, refuseDelivery(reason, err)
 	}
 	delivery := stored.Delivery()
 	scope := plan.Scope()
@@ -106,13 +136,28 @@ func (p *Processor) Process(ctx context.Context, stored StoredDelivery, at time.
 	matchingRepository := scope.TenantID() == delivery.Scope().TenantID() && scope.RepositoryID() == delivery.Scope().RepositoryID()
 	bound := validPlan && matchingRepository && scope.ReviewRunID() == ReviewRunIDForDelivery(delivery)
 	if !bound {
-		return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, ErrRunPlanNotBound
+		return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, refuseDelivery(RefusalReasonRunPlanNotBound, ErrRunPlanNotBound)
 	}
 	if prepared {
 		existingPlan, existingState, resumeErr := p.coordinator.Resume(ctx, scope)
 		if resumeErr == nil {
+			// A delivery's run is opened once and its plan is immutable, so a
+			// run whose plan is exactly the one this planner, or an earlier
+			// version of it, produces for the delivery is its run. Any other
+			// plan in the scope conflicts, even one naming this delivery's
+			// request: its tasks and policy are not the planner's.
 			if existingPlan.Identity() != plan.Identity() {
-				return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, controlplane.ErrRunPlanConflict
+				superseded, supersededErr := p.supersededPlan(ctx, stored, existingPlan.Identity())
+				if supersededErr != nil {
+					return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, supersededErr
+				}
+				if !superseded {
+					reason := RefusalReasonRunPlanConflict
+					if p.openedByIncompatibleRelease(stored, existingPlan) {
+						reason = RefusalReasonRunOpenedByIncompatibleRelease
+					}
+					return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, refuseDelivery(reason, controlplane.ErrRunPlanConflict)
+				}
 			}
 			existingState, resumeErr = p.coordinator.Advance(ctx, existingPlan, at)
 			if resumeErr != nil {
@@ -127,7 +172,9 @@ func (p *Processor) Process(ctx context.Context, stored StoredDelivery, at time.
 		if !errors.Is(resumeErr, controlplane.ErrRunNotOpened) {
 			return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, resumeErr
 		}
-		if err := persistPreparedInputs(ctx, p.artifactStore, stored, plan, inputs, at); err != nil {
+		if err := persistPreparedInputs(ctx, p.artifactStore, stored, plan, inputs, at); errors.Is(err, ErrRunPlanNotBound) {
+			return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, refuseDelivery(RefusalReasonRunPlanNotBound, err)
+		} else if err != nil {
 			return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, err
 		}
 	}
@@ -144,6 +191,34 @@ func (p *Processor) Process(ctx context.Context, stored StoredDelivery, at time.
 	}
 	admission := newRunAdmissionReceipt(stored.Receipt(), p.plannerIdentity, plan.Identity())
 	return admission, runReceipt, nil
+}
+
+func (p *Processor) openedByIncompatibleRelease(stored StoredDelivery, plan controlplane.ReviewRunPlan) bool {
+	aware, ok := p.preparedPlanner.(ReleaseAwarePlanner)
+	return ok && plan.RequestIdentity() == stored.Delivery().Identity() && aware.OpenedByIncompatibleRelease(stored, plan)
+}
+
+// supersededPlan reports whether an earlier version of the prepared planner
+// produced the plan identity for this delivery. Only cancellation is an error:
+// any other failure means no earlier version planned the delivery.
+func (p *Processor) supersededPlan(ctx context.Context, stored StoredDelivery, identity string) (bool, error) {
+	superseding, ok := p.preparedPlanner.(SupersedingPlanner)
+	if !ok {
+		return false, nil
+	}
+	identities, err := superseding.SupersededPlanIdentities(ctx, stored)
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
+	if err != nil {
+		return false, nil
+	}
+	for _, superseded := range identities {
+		if superseded == identity {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 func persistPreparedInputs(ctx context.Context, store artifact.Store, stored StoredDelivery, plan controlplane.ReviewRunPlan, inputs []artifact.Artifact, at time.Time) error {
 	rootInputs := make(map[string]struct{})
@@ -189,6 +264,42 @@ func persistPreparedInputs(ctx context.Context, store artifact.Store, stored Sto
 	return nil
 }
 
+// probeArtifactIdentity names no artifact; reading it only shows the store answers.
+var probeArtifactIdentity = func() string {
+	digest := sha256.Sum256([]byte("open-trestle/webhook-intake-probe"))
+	return hex.EncodeToString(digest[:])
+}()
+
+// Probe reports whether the run journal and, for prepared processing, the
+// artifact store answer a read unrelated to any delivery's run. A failure
+// while both answer is that delivery's own; a failed probe is global.
+func (p *Processor) Probe(ctx context.Context, stored StoredDelivery, at time.Time) error {
+	if p == nil || p.coordinator == nil || stored.Validate() != nil {
+		return ErrInvalidProcessor
+	}
+	scope, err := audit.NewReviewScope(stored.Delivery().Scope().TenantID(), stored.Delivery().Scope().RepositoryID(), "webhook-intake-probe")
+	if err != nil {
+		return err
+	}
+	if _, _, err := p.coordinator.Resume(ctx, scope); err != nil && !errors.Is(err, controlplane.ErrRunNotOpened) {
+		return err
+	}
+	if !isNilArtifactStore(p.artifactStore) {
+		if _, err := p.artifactStore.Get(ctx, scope, probeArtifactIdentity, at); err != nil && !errors.Is(err, artifact.ErrArtifactNotFound) {
+			return err
+		}
+	}
+	return nil
+}
+
+// PlannerIdentity returns the identity of the planner this processor admits deliveries with.
+func (p *Processor) PlannerIdentity() string {
+	if p == nil {
+		return ""
+	}
+	return p.plannerIdentity
+}
+
 func (p *Processor) String() string   { return "webhook run processor" }
 func (p *Processor) GoString() string { return "webhook.Processor{<redacted>}" }
 func (p *Processor) Format(state fmt.State, verb rune) {
@@ -223,12 +334,16 @@ func isNilArtifactStore(store artifact.Store) bool {
 	return value.Kind() == reflect.Ptr && value.IsNil()
 }
 
+// DeliveryRunIDPrefix starts every run ID webhook intake opens. Run IDs in
+// this namespace are reserved for intake; callers cannot submit them.
+const DeliveryRunIDPrefix = "webhook-"
+
 // ReviewRunIDForDelivery returns the sole run ID permitted for one forge delivery.
 func ReviewRunIDForDelivery(delivery VerifiedDelivery) string {
 	if delivery.Validate() != nil {
 		return ""
 	}
-	return "webhook-" + delivery.DeduplicationKey()
+	return DeliveryRunIDPrefix + delivery.DeduplicationKey()
 }
 
 // RunAdmissionReceipt binds durable webhook acceptance to its deterministic run plan.

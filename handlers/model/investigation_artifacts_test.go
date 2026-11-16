@@ -103,7 +103,8 @@ func (m *artifactsModel) DispatchRoute(ctx context.Context, r gateway.RouteDispa
 	}
 	m.calls = append(m.calls, r)
 	var packet struct {
-		Sources []struct {
+		SchemaVersion int `json:"schema_version"`
+		Sources       []struct {
 			ID    string `json:"source_id"`
 			Start int    `json:"start_line"`
 		} `json:"sources"`
@@ -117,7 +118,14 @@ func (m *artifactsModel) DispatchRoute(ctx context.Context, r gateway.RouteDispa
 		id = "foreign-source"
 	}
 	line := packet.Sources[0].Start
-	payload := artifactsJSON(m.t, map[string]any{"schema_version": 1, "candidates": []any{map[string]any{"title": "Zero input divides by zero", "claim": "The supplied division does not guard zero input.", "severity_hint": "high", "source_range": map[string]any{"source_id": id, "start_line": line, "end_line": line}, "evidence_ids": []string{id}}}})
+	candidate := map[string]any{"title": "Zero input divides by zero", "claim": "The supplied division does not guard zero input.", "severity_hint": "high", "source_range": map[string]any{"source_id": id, "start_line": line, "end_line": line}, "evidence_ids": []string{id}}
+	schemaVersion := 1
+	if packet.SchemaVersion == 9 {
+		// A plain version 9 generation context requests candidate batch v2;
+		// investigation contexts keep candidate batch v1.
+		schemaVersion, candidate["category"] = 2, "correctness"
+	}
+	payload := artifactsJSON(m.t, map[string]any{"schema_version": schemaVersion, "candidates": []any{candidate}})
 	part, err := provider.NewResponsePart(provider.ResponsePartStructuredData, "application/json", payload)
 	artifactsCheck(m.t, err)
 	usage, err := provider.NewRouteTokenUsage(100, 100, 0)
@@ -178,7 +186,8 @@ func artifactsOwnerID(o gateway.InvestigationRouteOwnerOptions) string {
 			zones = append(zones, z.String())
 		}
 	}
-	b, _ := json.Marshal([]any{"open-trestle/investigation-route-owner", 1, o.Scope.Identity(), o.SessionIdentity, o.PolicyIdentity, o.Deadline.UnixMilli(), o.MaxTurns, 1, o.Budget.EstimatedInputTokens(), o.Budget.MaxOutputTokens(), o.Budget.MaxCostMicroUSD(), o.Requirements.MinContextTokens(), o.Requirements.MinOutputTokens(), features, string(o.Constraints.Classification()), zones, o.Constraints.ContentLoggingAllowed(), o.Generation.Identity(), o.Verification.Identity(), o.Catalog.Identity()})
+	// The eighth element is the per-turn estimate version, 2 since the system channel is counted.
+	b, _ := json.Marshal([]any{"open-trestle/investigation-route-owner", 1, o.Scope.Identity(), o.SessionIdentity, o.PolicyIdentity, o.Deadline.UnixMilli(), o.MaxTurns, 2, o.Budget.EstimatedInputTokens(), o.Budget.MaxOutputTokens(), o.Budget.MaxCostMicroUSD(), o.Requirements.MinContextTokens(), o.Requirements.MinOutputTokens(), features, string(o.Constraints.Classification()), zones, o.Constraints.ContentLoggingAllowed(), o.Generation.Identity(), o.Verification.Identity(), o.Catalog.Identity()})
 	return artifactsHash(b)
 }
 func newArtifactsFixture(t *testing.T, runLabels ...string) artifactsFixture {
@@ -301,7 +310,7 @@ func newArtifactsFixture(t *testing.T, runLabels ...string) artifactsFixture {
 	artifactsCheck(t, err)
 	verificationPlan, err := gateway.NewInvestigationRoutePlan(1, []gateway.ObservedRouteCandidate{v}, ranking, 1, []provider.RoutePerformanceObservation{vp})
 	artifactsCheck(t, err)
-	options := gateway.InvestigationRouteOwnerOptions{Scope: scope, SessionIdentity: contextBinding.Identity(), PolicyIdentity: p.Identity(), Deadline: time.UnixMilli(6000), MaxTurns: 5, Budget: budget, Requirements: requirements, Constraints: constraints, Generation: generationPlan, Verification: verificationPlan, Catalog: catalog, Ledger: ledger, Clock: clock}
+	options := gateway.InvestigationRouteOwnerOptions{Scope: scope, SessionIdentity: contextBinding.Identity(), PolicyIdentity: p.Identity(), Deadline: time.UnixMilli(6000), MaxTurns: 5, Budget: budget, Requirements: requirements, Constraints: constraints, Generation: generationPlan, Verification: verificationPlan, Catalog: catalog, Ledger: ledger, Clock: clock, SystemChannelBytes: review.ModelRequestSystemChannelBytes}
 	owner, err := gateway.NewInvestigationRouteOwner(options)
 	artifactsCheck(t, err)
 	expected := InvestigationArtifactExpectations{Scope: scope, SessionIdentity: contextBinding.Identity(), PolicyIdentity: p.Identity(), OwnerIdentity: artifactsOwnerID(options), HeadSnapshotArtifactIdentity: headArtifact.Identity(), HeadSnapshotIdentity: head.Identity(), HeadManifestIdentity: head.ManifestIdentity(), ContextArtifactIdentity: contextArtifact.Identity(), ToolResultArtifactIdentities: []string{}}
@@ -309,8 +318,7 @@ func newArtifactsFixture(t *testing.T, runLabels ...string) artifactsFixture {
 }
 func (f artifactsFixture) predicted(t *testing.T, request provider.Request) gateway.RouteAttemptAuthorization {
 	t.Helper()
-	encoded := request.Payload()
-	budget, err := provider.NewModelCostBudget(max(uint64(f.options.Budget.EstimatedInputTokens()), uint64(len(encoded))+256), uint64(f.options.Budget.MaxOutputTokens()), f.options.Budget.MaxCostMicroUSD())
+	budget, err := gateway.InvestigationTurnCostBudget(f.options.Budget, request, review.ModelRequestSystemChannelBytes(request), 0, f.options.Budget.MaxCostMicroUSD())
 	artifactsCheck(t, err)
 	input, err := gateway.NewReviewRoutingInput(f.options.Scope, request, f.options.Requirements, f.options.Constraints)
 	artifactsCheck(t, err)
@@ -608,6 +616,81 @@ func TestInvestigationArtifactInputClaimsRejectMalformedCanonicalPayload(t *test
 		})
 	}
 }
+
+// An investigation input that records removed_lines evidence is version 5;
+// a head-only input keeps its version 2 bytes, and neither version reads back
+// with the other's content.
+func TestInvestigationInputRecordsBaseEvidenceAsVersionFive(t *testing.T) {
+	f := newArtifactsFixture(t)
+	request, err := f.context.Context.ProviderRequest()
+	artifactsCheck(t, err)
+	input, err := NewInvestigationGenerationInputArtifact(f.context, f.predicted(t, request), f.expected, f.clock.Now())
+	artifactsCheck(t, err)
+	if !bytes.Contains(input.Payload(), []byte(`"schema_version":2`)) || bytes.Contains(input.Payload(), []byte(`"side"`)) {
+		t.Fatalf("head-only investigation input changed version: %s", input.Payload())
+	}
+	claims, err := ParseInvestigationGenerationInput(input.Payload())
+	artifactsCheck(t, err)
+	claims.baseEvidence = map[string]struct{}{claims.evidence[0].ID(): {}}
+	values, err := claims.values()
+	artifactsCheck(t, err)
+	delete(values, "identity")
+	claims.identity = artifactsHash(artifactsJSON(t, values))
+	encoded, err := EncodeInvestigationGenerationInput(claims)
+	artifactsCheck(t, err)
+	if !bytes.Contains(encoded, []byte(`"schema_version":5`)) || bytes.Count(encoded, []byte(`"side":"base"`)) != 1 {
+		t.Fatalf("base evidence was not recorded as version 5: %s", encoded)
+	}
+	parsed, err := ParseInvestigationGenerationInput(encoded)
+	if err != nil || parsed.Identity() != claims.Identity() {
+		t.Fatalf("version 5 input does not read back: %v", err)
+	}
+	for name, forged := range map[string][]byte{
+		"version 2 with a side":    bytes.Replace(encoded, []byte(`"schema_version":5`), []byte(`"schema_version":2`), 1),
+		"version 5 without a side": bytes.Replace(input.Payload(), []byte(`"schema_version":2`), []byte(`"schema_version":5`), 1),
+	} {
+		if _, err := ParseInvestigationGenerationInput(forged); err == nil {
+			t.Fatalf("%s read back", name)
+		}
+	}
+}
+
+// An investigation of a change that only removes files has no head range: its
+// input holds removed_lines evidence alone, so it is always version 5, and a
+// head item outside every snapshot range is still refused.
+func TestInvestigationInputWithoutHeadRangeHoldsOnlyBaseEvidence(t *testing.T) {
+	f := newArtifactsFixture(t)
+	request, err := f.context.Context.ProviderRequest()
+	artifactsCheck(t, err)
+	input, err := NewInvestigationGenerationInputArtifact(f.context, f.predicted(t, request), f.expected, f.clock.Now())
+	artifactsCheck(t, err)
+	claims, err := ParseInvestigationGenerationInput(input.Payload())
+	artifactsCheck(t, err)
+	claims.snapshot, err = review.NewReviewSnapshot(claims.snapshot.Workspace(), claims.snapshot.Revision(), nil)
+	artifactsCheck(t, err)
+	rehash := func() {
+		values, err := claims.values()
+		artifactsCheck(t, err)
+		delete(values, "identity")
+		claims.identity = artifactsHash(artifactsJSON(t, values))
+	}
+	rehash()
+	if _, err := EncodeInvestigationGenerationInput(claims); err == nil {
+		t.Fatal("an input with no head range admitted head evidence")
+	}
+	claims.baseEvidence = map[string]struct{}{}
+	for _, item := range claims.evidence {
+		claims.baseEvidence[item.ID()] = struct{}{}
+	}
+	rehash()
+	encoded, err := EncodeInvestigationGenerationInput(claims)
+	if err != nil || !bytes.Contains(encoded, []byte(`"schema_version":5`)) || !bytes.Contains(encoded, []byte(`"snapshot_ranges":[]`)) {
+		t.Fatalf("removed-only input: %s, %v", encoded, err)
+	}
+	if parsed, err := ParseInvestigationGenerationInput(encoded); err != nil || parsed.Identity() != claims.Identity() || len(parsed.Snapshot().Ranges()) != 0 {
+		t.Fatalf("removed-only input does not read back: %v", err)
+	}
+}
 func TestInvestigationArtifactsKeepExistingV1AndV3CodecControlsExact(t *testing.T) {
 	f := newArtifactsFixture(t)
 	request, err := f.packet.ProviderRequest()
@@ -630,7 +713,7 @@ func TestInvestigationArtifactsKeepExistingV1AndV3CodecControlsExact(t *testing.
 	}
 	inputArtifact, err := NewGenerationInputArtifact(input, contextArtifact, []string{f.context.HeadSnapshotArtifact.Identity()}, f.clock.Now())
 	artifactsCheck(t, err)
-	candidates, err := review.ParseCandidateBatch(turn.Dispatch().Response(), f.context.Context.Snapshot(), f.packet.EvidenceItems())
+	candidates, err := review.ParseContextCandidateBatch(turn.Dispatch().Response(), request.Payload(), f.context.Context.Snapshot(), f.packet.EvidenceItems())
 	artifactsCheck(t, err)
 	output, err := gateway.NewSuccessfulRouteOutputReceipt(gateway.RouteOutputCandidateBatch, f.packet.Identity(), candidates.Identity(), request, turn.Authorization(), turn.Outcome())
 	artifactsCheck(t, err)

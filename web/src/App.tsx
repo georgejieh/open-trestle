@@ -3,26 +3,37 @@ import {
   lazy,
   Suspense,
   useMemo,
+  useEffect,
   useRef,
   useState,
   type FormEvent,
   type ReactNode,
+  type RefObject,
 } from "react";
 import { ShieldCheck } from "./ShieldCheck";
+import { InstrumentIcon, StatusIcon, type StatusValue } from "./Icons";
 import { Identity } from "./Identity";
 import {
   ApiError,
+  contextShortfallHint,
+  fetchDeliveryRefusal,
   fetchDiagnostics,
   fetchRun,
+  fetchRunProgress,
   fetchRuntimeStatus,
   validAccessToken,
   validScope,
 } from "./api";
 import type {
+  ContextShortfall,
   Diagnostic,
   DiagnosticDeterministicCheck,
   DiagnosticSet,
+  DeliveryRefusal,
+  DeterministicObservation,
+  FailureReason,
   RunReceipt,
+  RunProgress,
   RunTask,
   RuntimeStatus,
   Scope,
@@ -30,6 +41,76 @@ import type {
 import "./styles.css";
 
 type View = "overview" | "tasks" | "findings" | "runtime";
+const refusalReasonLabels: Record<string, string> = {
+  invalid_pull_request_payload: "the pull request payload cannot be planned",
+  planning_refused: "the planner refused the delivery",
+  run_plan_not_bound: "the plan was outside the delivery's lineage",
+  run_plan_conflict:
+    "the run scope holds a plan the planner did not produce for this delivery",
+  retries_exhausted:
+    "the delivery kept failing on its own until its retries were spent",
+  retry_capacity_exhausted:
+    "the delivery failed and the inbox had no room to record its retry state",
+  run_opened_by_incompatible_release:
+    "an earlier release opened this delivery's run with task handlers this daemon does not run; push a new commit or reopen the pull request for a fresh review",
+};
+function refusalMessage(refusal: DeliveryRefusal): string {
+  const label =
+    refusalReasonLabels[refusal.reason] ?? "recorded by the planner";
+  const at = new Date(refusal.refused_at_milliseconds).toISOString();
+  return `No run was opened: intake refused this delivery (${refusal.reason}: ${label}) at ${at}. No review result exists.`;
+}
+const failureReasonLabels: Record<FailureReason, string> = {
+  no_merge_base:
+    "No merge base: the requested base and the head share no history",
+  nothing_to_review:
+    "Nothing to review: the head is the requested base or is already contained in it",
+  merge_base_unavailable:
+    "Merge base unavailable: the forge did not report a merge base",
+  route_context_insufficient:
+    "Route context insufficient: the review request needs more context than the route declares",
+  no_eligible_route:
+    "No eligible route: no configured route met the runtime policy for this request",
+  provider_payment_required:
+    "Provider payment required: the provider refused the request for billing",
+  provider_model_unavailable:
+    "Provider model unavailable: the provider does not serve this model at this endpoint",
+  provider_model_retired:
+    "Provider model retired: the provider no longer serves this model",
+  provider_authentication_failed:
+    "Provider authentication failed: the provider did not accept the credential",
+  provider_authorization_denied:
+    "Provider authorization denied: the provider refused this account access to the model or endpoint",
+  provider_rate_limited:
+    "Provider rate limited: the provider rate-limited the request on its last attempt",
+  provider_response_invalid:
+    "Provider reply refused: the provider answered, but its reply did not match what Open Trestle accepts, for example malformed or truncated output, an unrecognized field or an unexpected HTTP status",
+  model_output_invalid:
+    "Model answer not a review document: the model's answer was not a valid review document (for example malformed JSON, the wrong shape or a refusal)",
+  provider_request_rejected:
+    "Provider request rejected: the provider rejected the request as invalid, for example an unknown model ID or a parameter the model or endpoint does not accept",
+};
+/** The fixed action for each provider refusal, as the local review prints it. */
+const failureReasonHints: Partial<Record<FailureReason, string>> = {
+  provider_payment_required:
+    "add credit or a subscription to the provider account, or choose another route",
+  provider_model_unavailable:
+    "check the model name and endpoint, choose a model the provider lists as available, and re-run setup",
+  provider_model_retired:
+    "choose a model the provider lists as available and re-run setup",
+  provider_authentication_failed:
+    "check the API key the route names (for ollama-signin, run `ollama signin`), then retry",
+  provider_authorization_denied:
+    "check the account's access, or choose another route",
+  provider_rate_limited:
+    "wait and run the review again, or choose another route",
+  provider_response_invalid:
+    "run the review again; if it repeats, choose another model or route and report it",
+  model_output_invalid:
+    "run the review again; if it repeats, choose another model",
+  provider_request_rejected:
+    "check the model ID, the endpoint and its transport, and that the model and endpoint accept structured output and the requested output allowance; then re-run setup",
+};
 const emptyScope: Scope = { tenant: "", repository: "", run: "" };
 function rememberedScope(): Scope {
   try {
@@ -43,13 +124,10 @@ function rememberedScope(): Scope {
   } catch {}
   return emptyScope;
 }
-function statusIcon() {
-  return <ShieldCheck aria-hidden="true" />;
-}
-function Status({ value }: { value: string }) {
+function Status({ value }: { value: StatusValue }) {
   return (
     <span className={`state state-${value}`}>
-      {statusIcon()}
+      <StatusIcon value={value} />
       <span>{value.replaceAll("_", " ")}</span>
     </span>
   );
@@ -65,15 +143,66 @@ function Locator({
 }) {
   const [scope, setScope] = useState(initial);
   const [token, setToken] = useState("");
-  const ready = validScope(scope) && validAccessToken(token);
+  const [touched, setTouched] = useState({
+    tenant: false,
+    repository: false,
+    run: false,
+    token: false,
+  });
+  const identifierHint =
+    "Use 1-128 lowercase letters or numbers; . _ : - are allowed. Start and end with a lowercase letter or number.";
+  const tokenHint = "Use 32-512 non-space characters. Hidden and never saved.";
+  const identifierValid = (value: string) =>
+    validScope({ tenant: value, repository: value, run: value });
+  const validity = {
+    tenant: identifierValid(scope.tenant),
+    repository: identifierValid(scope.repository),
+    run: identifierValid(scope.run),
+    token: validAccessToken(token),
+  };
+  const ready = Object.values(validity).every(Boolean);
   function submit(event: FormEvent) {
     event.preventDefault();
     if (ready) onConnect(scope, token);
   }
+  function identifierField(key: keyof Scope, label: string, value: string) {
+    const hintID = `locator-${key}-hint`;
+    const errorID = `locator-${key}-error`;
+    const hasError = touched[key] && !validity[key];
+    return (
+      <label>
+        {label}
+        <input
+          value={value}
+          aria-label={label}
+          required
+          maxLength={128}
+          pattern="[a-z0-9](?:[a-z0-9._:\-]*[a-z0-9])?"
+          aria-describedby={`${hintID}${hasError ? ` ${errorID}` : ""}`}
+          aria-invalid={hasError || undefined}
+          onChange={(event) =>
+            setScope({ ...scope, [key]: event.target.value })
+          }
+          onBlur={() => setTouched((current) => ({ ...current, [key]: true }))}
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <small className="field-hint" id={hintID}>
+          {identifierHint}
+        </small>
+        {hasError && (
+          <small className="field-error" id={errorID}>
+            Use the listed identifier format.
+          </small>
+        )}
+      </label>
+    );
+  }
+  const tokenError = touched.token && !validity.token;
   return (
     <section className="locator" aria-labelledby="locator-title">
       <div className="locator-copy">
-        <ShieldCheck aria-hidden="true" />
+        <InstrumentIcon />
         <div>
           <h1 id="locator-title">Locate a review run</h1>
           <p>
@@ -83,69 +212,48 @@ function Locator({
         </div>
       </div>
       <form onSubmit={submit}>
-        <label>
-          Tenant
-          <input
-            value={scope.tenant}
-            required
-            maxLength={128}
-            pattern="[a-z0-9](?:[a-z0-9._:\-]*[a-z0-9])?"
-            onChange={(event) =>
-              setScope({ ...scope, tenant: event.target.value })
-            }
-            autoComplete="off"
-            spellCheck={false}
-          />
-        </label>
-        <label>
-          Repository
-          <input
-            value={scope.repository}
-            required
-            maxLength={128}
-            pattern="[a-z0-9](?:[a-z0-9._:\-]*[a-z0-9])?"
-            onChange={(event) =>
-              setScope({ ...scope, repository: event.target.value })
-            }
-            autoComplete="off"
-            spellCheck={false}
-          />
-        </label>
-        <label>
-          Run
-          <input
-            value={scope.run}
-            required
-            maxLength={128}
-            pattern="[a-z0-9](?:[a-z0-9._:\-]*[a-z0-9])?"
-            onChange={(event) =>
-              setScope({ ...scope, run: event.target.value })
-            }
-            autoComplete="off"
-            spellCheck={false}
-          />
-        </label>
+        {identifierField("tenant", "Tenant", scope.tenant)}
+        {identifierField("repository", "Repository", scope.repository)}
+        {identifierField("run", "Run", scope.run)}
         <label className="token-field">
           Access token
           <span className="input-with-icon">
-            <ShieldCheck aria-hidden="true" />
+            <InstrumentIcon />
             <input
               type="password"
               name="open-trestle-access-token"
               value={token}
+              aria-label="Access token"
               required
               minLength={32}
               maxLength={512}
+              aria-describedby={`locator-token-hint${tokenError ? " locator-token-error" : ""}`}
+              aria-invalid={tokenError || undefined}
               onChange={(event) => setToken(event.target.value)}
+              onBlur={() =>
+                setTouched((current) => ({ ...current, token: true }))
+              }
               autoComplete="off"
               spellCheck={false}
             />
           </span>
+          <small className="field-hint" id="locator-token-hint">
+            {tokenHint}
+          </small>
+          {tokenError && (
+            <small className="field-error" id="locator-token-error">
+              Use 32-512 non-space characters.
+            </small>
+          )}
         </label>
+        <p className="form-readiness" id="locator-readiness">
+          {ready ? "Valid." : "Correct fields to connect."}
+        </p>
         <button
           type="submit"
           className="primary-button"
           disabled={!ready || busy}
+          aria-describedby="locator-readiness"
         >
           {busy ? <>Connecting</> : <>Connect to run</>}
         </button>
@@ -157,10 +265,12 @@ function TaskSpine({
   tasks,
   selected,
   onSelect,
+  selectedTaskRef,
 }: {
   tasks: RunTask[];
   selected: string;
   onSelect: (key: string) => void;
+  selectedTaskRef?: RefObject<HTMLButtonElement | null>;
 }) {
   return (
     <ol className="task-spine">
@@ -170,6 +280,7 @@ function TaskSpine({
             {String(index + 1).padStart(2, "0")}
           </span>
           <button
+            ref={task.key === selected ? selectedTaskRef : undefined}
             type="button"
             onClick={() => onSelect(task.key)}
             aria-current={selected === task.key ? "step" : undefined}
@@ -193,7 +304,7 @@ function TaskInspector({ task }: { task: RunTask | undefined }) {
   return (
     <div className="inspector-content">
       <div className="inspector-heading">
-        <ShieldCheck aria-hidden="true" />
+        <InstrumentIcon />
         <div>
           <h2>{task.key}</h2>
           <p>{task.kind.replaceAll("_", " ")}</p>
@@ -214,6 +325,24 @@ function TaskInspector({ task }: { task: RunTask | undefined }) {
           <dt>Failure</dt>
           <dd>{task.failure || "None"}</dd>
         </div>
+        {task.failure_reason && (
+          <div>
+            <dt>Reason</dt>
+            <dd>{failureReasonLabels[task.failure_reason]}</dd>
+          </div>
+        )}
+        {task.failure_reason && failureReasonHints[task.failure_reason] && (
+          <div>
+            <dt>Hint</dt>
+            <dd>{failureReasonHints[task.failure_reason]}</dd>
+          </div>
+        )}
+        {task.context_shortfall && (
+          <div>
+            <dt>Hint</dt>
+            <dd>{contextShortfallHint(task.context_shortfall)}</dd>
+          </div>
+        )}
         <Identity label="Task identity" value={task.task_identity} />
         <Identity label="Handler identity" value={task.handler_identity} />
         <Identity label="Input identity" value={task.input_identity} />
@@ -257,34 +386,232 @@ function CheckOutcome({ check }: { check: DiagnosticDeterministicCheck }) {
   );
 }
 
-function CoverageLedger({ set }: { set: DiagnosticSet | null }) {
-  const coverage = set?.coverage;
+function diagnosticItemCount(set: DiagnosticSet): number {
+  if (set.schema_version === 7)
+    return (
+      (set.deterministic?.observations.length ?? 0) +
+      (set.verified?.findings.length ?? 0)
+    );
+  return set.schema_version === 6
+    ? set.observations.length
+    : set.findings.length;
+}
+
+function diagnosticsRequireReview(set: DiagnosticSet): boolean {
+  if (set.schema_version === 7)
+    return (
+      set.outcome !== "completed" ||
+      !set.deterministic ||
+      !set.verified ||
+      diagnosticsRequireReview(set.deterministic) ||
+      diagnosticsRequireReview(set.verified)
+    );
+  if (set.schema_version === 6)
+    return set.observations.length > 0 || set.checks[0].state !== "passed";
+  if (set.findings.length > 0) return true;
+  if (set.schema_version === 1) return false;
+  if (set.coverage.rejected_count > 0 || set.coverage.inconclusive_count > 0)
+    return true;
+  if (
+    (set.schema_version === 3 ||
+      set.schema_version === 4 ||
+      set.schema_version === 5 ||
+      set.schema_version === 8) &&
+    set.source_coverage.omitted_count > 0
+  )
+    return true;
+  return (
+    (set.schema_version === 5 || set.schema_version === 8) &&
+    set.checks[0].state !== "passed"
+  );
+}
+
+function primaryRunHeading(
+  receipt: RunReceipt,
+  diagnostics: DiagnosticSet | null,
+  diagnosticNote: string,
+  busy: boolean,
+): string {
+  if (receipt.status === "active") return "Execution in progress";
+  if (receipt.status === "failed") return "Execution failed";
+  if (receipt.status === "canceled") return "Execution canceled";
+  if (busy && !diagnostics) return "Execution complete, loading review state";
+  if (!diagnostics && diagnosticNote)
+    return "Execution complete, review state unavailable";
+  if (diagnostics?.schema_version === 7)
+    return diagnostics.outcome === "completed"
+      ? "Execution complete, advisory review"
+      : `Execution complete, review ${diagnostics.outcome}`;
+  if (diagnostics && diagnosticsRequireReview(diagnostics))
+    return "Execution complete, review required";
+  return "Execution complete";
+}
+
+function ProgressCoverage({
+  progress,
+  note,
+}: {
+  progress: RunProgress | null;
+  note: string;
+}) {
+  const counts = progress?.progress;
+  const axes = [
+    {
+      name: "Change",
+      axis: counts?.change,
+      values: [
+        ["Changed files", counts?.change.files],
+        ["Changed ranges", counts?.change.ranges],
+      ],
+    },
+    {
+      name: "Deterministic analysis",
+      axis: counts?.deterministic,
+      values: [
+        ["Applicable files", counts?.deterministic.applicable_files],
+        ["Applicable ranges", counts?.deterministic.applicable_ranges],
+        ["Checked files", counts?.deterministic.checked_files],
+        ["Checked ranges", counts?.deterministic.checked_ranges],
+        ["Observations", counts?.deterministic.observations],
+      ],
+    },
+    {
+      name: "Model context",
+      axis: counts?.context,
+      values: [
+        ["Analyzed sources", counts?.context.analyzed],
+        ["Selected sources", counts?.context.selected],
+        ["Omitted sources", counts?.context.omitted],
+      ],
+    },
+    {
+      name: "Candidate verification",
+      axis: counts?.verification,
+      values: [
+        ["Candidates", counts?.verification.candidates],
+        ["Verified", counts?.verification.verified],
+        ["Rejected", counts?.verification.rejected],
+        ["Inconclusive", counts?.verification.inconclusive],
+      ],
+    },
+  ];
+  return (
+    <section
+      className="spine-panel"
+      aria-labelledby="progress-coverage-title"
+      aria-busy={!progress && !note}
+    >
+      <div className="section-head">
+        <div>
+          <h2 id="progress-coverage-title">Artifact-backed progress</h2>
+          <p>
+            Counts from this exact run receipt. Refresh to read the latest
+            evidence.
+          </p>
+        </div>
+      </div>
+      {note && (
+        <p className="note" role="status">
+          {note}
+        </p>
+      )}
+      {axes.map(({ name, axis, values }) => (
+        <section className="coverage-ledger" aria-label={name} key={name}>
+          <h3>{name}</h3>
+          <p>
+            {axis
+              ? axis.state.replaceAll("_", " ")
+              : note
+                ? "Unavailable"
+                : "Loading"}
+          </p>
+          <ul className="coverage-facts" aria-label={`${name} counts`}>
+            {values.map(([label, count]) => (
+              <li key={label}>
+                {label}: {count ?? "Unknown"}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+      <p className="coverage-caveat">
+        Missing counts are unknown, not zero. Source counts are not
+        repository-wide. Observations are not verified findings. These counts do
+        not approve the change or prove correctness.
+      </p>
+    </section>
+  );
+}
+
+function CoverageLedger({
+  set,
+  axis,
+}: {
+  set: DiagnosticSet | null;
+  axis?: "deterministic" | "verified";
+}) {
+  if (!set || set.schema_version === 7) return null;
+  const titleId = axis
+    ? `review-coverage-${axis}-title`
+    : "review-coverage-title";
+  if (set.schema_version === 6) {
+    const check = set.checks[0];
+    return (
+      <section className="coverage-ledger" aria-labelledby={titleId}>
+        <div>
+          <h3 id={titleId}>Deterministic rule coverage</h3>
+          <p>Exact changed-range accounting for one local static rule.</p>
+        </div>
+        <ul className="coverage-facts" aria-label="Deterministic rule coverage">
+          <li>{check.applicable_files} applicable files</li>
+          <li>{check.applicable_ranges} applicable ranges</li>
+          <li>{check.checked_ranges} checked ranges</li>
+          <li>{check.matches} exact matches</li>
+        </ul>
+        <CheckOutcome check={check} />
+        <ul className="coverage-conditions" aria-label="Coverage limits">
+          <li>
+            Observations are deterministic, not independently verified findings.
+          </li>
+          <li>
+            Only changed Go ranges applicable to this exact rule were checked.
+          </li>
+          <li>
+            A cleared rule does not approve the change or prove correctness.
+          </li>
+        </ul>
+      </section>
+    );
+  }
+  if (set.schema_version === 1) return null;
+  const coverage = set.coverage;
   const sourceCoverage =
-    set?.schema_version === 3 ||
-    set?.schema_version === 4 ||
-    set?.schema_version === 5
+    set.schema_version === 3 ||
+    set.schema_version === 4 ||
+    set.schema_version === 5 ||
+    set.schema_version === 8
       ? set.source_coverage
       : null;
   const omissionText =
-    set?.schema_version === 4 || set?.schema_version === 5
+    set.schema_version === 4 ||
+    set.schema_version === 5 ||
+    set.schema_version === 8
       ? set.source_coverage.omissions
           .map(({ reason, count }) => `${count} ${reason.replaceAll("_", " ")}`)
           .join(", ")
       : "";
-  const check = set?.schema_version === 5 ? set.checks[0] : null;
-  if (!coverage) return null;
+  const check =
+    set.schema_version === 5 || set.schema_version === 8 ? set.checks[0] : null;
   const incomplete =
     coverage.inconclusive_count > 0 || (sourceCoverage?.omitted_count ?? 0) > 0;
   return (
-    <section
-      className="coverage-ledger"
-      aria-labelledby="review-coverage-title"
-    >
+    <section className="coverage-ledger" aria-labelledby={titleId}>
       <div>
-        <h3 id="review-coverage-title">Review coverage</h3>
+        <h3 id={titleId}>Review coverage</h3>
         <p>Exact candidate outcomes and bounded source selection.</p>
       </div>
       <ul
+        className="coverage-facts"
         aria-label={
           sourceCoverage
             ? "Candidate and source coverage"
@@ -303,28 +630,109 @@ function CoverageLedger({ set }: { set: DiagnosticSet | null }) {
           </>
         )}
       </ul>
-      <p className={incomplete ? "coverage-warning" : ""}>
-        {coverage.inconclusive_count > 0
-          ? "Candidate coverage is incomplete: at least one verdict is inconclusive. "
-          : "Every admitted candidate received a terminal verdict. "}
-        {sourceCoverage &&
-          (sourceCoverage.omitted_count > 0
-            ? "Source coverage is incomplete: analyzed sources were omitted from model context. "
-            : "Every analyzed source was selected for model review. ")}
-        Rejected candidates are not cleared gates. Source counts are not
-        repository-wide. This does not approve the change or prove correctness.
-      </p>
+      <ul
+        className={`coverage-conditions${incomplete ? " coverage-warning" : ""}`}
+        aria-label="Coverage conditions"
+      >
+        <li>
+          {coverage.inconclusive_count > 0
+            ? "Candidate coverage is incomplete: at least one verdict is inconclusive."
+            : "Every admitted candidate received a terminal verdict."}
+        </li>
+        {sourceCoverage && (
+          <li>
+            {sourceCoverage.omitted_count > 0
+              ? "Source coverage is incomplete: analyzed sources were omitted from model context."
+              : "Every analyzed source was selected for model review."}
+          </li>
+        )}
+        <li>Rejected candidates are not cleared gates.</li>
+        <li>Source counts are not repository-wide.</li>
+        <li>This does not approve the change or prove correctness.</li>
+      </ul>
       {omissionText && <p>Omission reasons: {omissionText}.</p>}
       {check && <CheckOutcome check={check} />}
     </section>
   );
 }
 
-function Findings({ set }: { set: DiagnosticSet | null }) {
+function Findings({
+  set,
+  terminal = false,
+}: {
+  set: DiagnosticSet | null;
+  terminal?: boolean;
+}) {
+  if (set?.schema_version === 7) {
+    return (
+      <>
+        <section aria-label="Terminal review outcome">
+          <h3>Full review {set.outcome}</h3>
+          <p>
+            {set.outcome === "completed"
+              ? "Review completed. Read the separate deterministic and verified results below; an empty list does not approve the change."
+              : `Review ${set.outcome}. Available evidence is shown below. Missing evidence was not run and is not a clear result.`}
+          </p>
+          {set.evidence_expired && (
+            <p className="note">
+              Evidence expired: this result was recorded after the run's
+              evidence retention lapsed. The outcome comes from the run journal
+              only; no findings or observations are available, and that is not a
+              clear result.
+            </p>
+          )}
+          {set.context_refusal && (
+            <dl>
+              <div>
+                <dt>Context refusal</dt>
+                <dd>{failureReasonLabels[set.context_refusal.reason]}</dd>
+              </div>
+              {set.context_refusal.context_shortfall && (
+                <div>
+                  <dt>Hint</dt>
+                  <dd>
+                    {contextShortfallHint(
+                      set.context_refusal.context_shortfall,
+                    )}
+                  </dd>
+                </div>
+              )}
+            </dl>
+          )}
+        </section>
+        <section aria-label="Deterministic observations">
+          <h3>Deterministic observations</h3>
+          {set.deterministic ? (
+            <>
+              <CoverageLedger set={set.deterministic} axis="deterministic" />
+              <Findings set={set.deterministic} terminal />
+            </>
+          ) : (
+            <p className="note">
+              Deterministic analysis is not available; no rule was cleared.
+            </p>
+          )}
+        </section>
+        <section aria-label="Verified findings">
+          <h3>Verified findings</h3>
+          {set.verified ? (
+            <>
+              <CoverageLedger set={set.verified} axis="verified" />
+              <Findings set={set.verified} terminal />
+            </>
+          ) : (
+            <p className="note">
+              Verification is not available; no finding verdict is implied.
+            </p>
+          )}
+        </section>
+      </>
+    );
+  }
   if (!set)
     return (
       <section className="empty-state">
-        <ShieldCheck aria-hidden="true" />
+        <StatusIcon value="unavailable" />
         <h2>No verified finding set is available</h2>
         <p>
           The run may still be active, or it may have finished without a
@@ -332,37 +740,75 @@ function Findings({ set }: { set: DiagnosticSet | null }) {
         </p>
       </section>
     );
+  if (set.schema_version === 6) {
+    if (set.observations.length === 0)
+      return (
+        <section className="empty-state">
+          <StatusIcon
+            value={
+              !terminal && set.checks[0].state === "passed"
+                ? "passed"
+                : "incomplete"
+            }
+          />
+          <h2>No deterministic observations</h2>
+          <p>
+            This exact rule produced no source observation. Its coverage state
+            remains visible above and does not approve the change.
+          </p>
+        </section>
+      );
+    return (
+      <ol className="finding-list observation-list">
+        {set.observations.map((observation) => (
+          <Finding
+            key={observation.identity}
+            finding={observation}
+            deterministic
+          />
+        ))}
+      </ol>
+    );
+  }
   if (set.findings.length === 0) {
     const hasCandidateCoverage = (set.coverage?.candidate_count ?? 0) > 0;
     const gateRequiresReview =
-      set.schema_version === 5 &&
+      (set.schema_version === 5 || set.schema_version === 8) &&
       (set.checks[0].state === "failed" ||
         set.checks[0].state === "incomplete");
     const gateNotCleared =
-      set.schema_version === 5 && set.checks[0].state !== "passed";
+      (set.schema_version === 5 || set.schema_version === 8) &&
+      set.checks[0].state !== "passed";
     const incomplete =
       (set.coverage?.inconclusive_count ?? 0) > 0 ||
       ((set.schema_version === 3 ||
         set.schema_version === 4 ||
-        set.schema_version === 5) &&
+        set.schema_version === 5 ||
+        set.schema_version === 8) &&
         set.source_coverage.omitted_count > 0) ||
       gateRequiresReview;
     return (
       <section
-        className={`empty-state${hasCandidateCoverage || incomplete || gateNotCleared ? "" : " verified"}`}
+        className={`empty-state${terminal || hasCandidateCoverage || incomplete || gateNotCleared ? "" : " verified"}`}
       >
-        <ShieldCheck aria-hidden="true" />
+        {terminal || incomplete || gateNotCleared ? (
+          <StatusIcon value="incomplete" />
+        ) : (
+          <StatusIcon value="passed" />
+        )}
         <h2>No verified findings</h2>
         <p>
-          {incomplete
-            ? gateRequiresReview
-              ? "No candidate was promoted, but a deterministic check requires review. Human review is still required."
-              : "No candidate was promoted, but review coverage remains incomplete. Human review is still required."
-            : gateNotCleared
-              ? "No candidate was promoted, and the deterministic check was not cleared. Human review is still required."
-              : hasCandidateCoverage
-                ? "No candidate was promoted. Rejected candidates are not cleared deterministic gates, and this does not approve the change."
-                : "The diagnostic set is valid and contains zero promoted findings. This is not proof that the change is correct."}
+          {terminal && !incomplete && !gateNotCleared
+            ? "No candidate was promoted. An empty final finding list is not a clear result and does not approve the change."
+            : incomplete
+              ? gateRequiresReview
+                ? "No candidate was promoted, but a deterministic check requires review. Human review is still required."
+                : "No candidate was promoted, but review coverage remains incomplete. Human review is still required."
+              : gateNotCleared
+                ? "No candidate was promoted, and the deterministic check was not cleared. Human review is still required."
+                : hasCandidateCoverage
+                  ? "No candidate was promoted. Rejected candidates are not cleared deterministic gates, and this does not approve the change."
+                  : "The diagnostic set is valid and contains zero promoted findings. This is not proof that the change is correct."}
         </p>
       </section>
     );
@@ -375,19 +821,32 @@ function Findings({ set }: { set: DiagnosticSet | null }) {
     </ol>
   );
 }
-function Finding({ finding }: { finding: Diagnostic }) {
+function Finding({
+  finding,
+  deterministic = false,
+}: {
+  finding: Diagnostic | DeterministicObservation;
+  deterministic?: boolean;
+}) {
   return (
-    <li>
+    <li className={`finding-row severity-edge-${finding.severity}`}>
       <div className={`severity severity-${finding.severity}`}>
-        <ShieldCheck aria-hidden="true" />
-        <span>{finding.severity}</span>
+        <StatusIcon
+          value={finding.severity === "error" ? "failed" : "incomplete"}
+        />
+        <span>
+          {finding.severity}
+          {deterministic && " · deterministic"}
+        </span>
       </div>
       <div className="finding-body">
         <h2>{finding.title}</h2>
         <p>{finding.message}</p>
         <div className="finding-meta">
           <span>
-            {finding.path}:{finding.start_line}-{finding.end_line}
+            {finding.side === "base"
+              ? `${finding.path} · removed base lines ${finding.start_line}-${finding.end_line}`
+              : `${finding.path}:${finding.start_line}-${finding.end_line}`}
           </span>
           <span>
             {finding.evidence_ids.length} evidence{" "}
@@ -397,12 +856,38 @@ function Finding({ finding }: { finding: Diagnostic }) {
         <details className="finding-evidence">
           <summary>Inspect evidence</summary>
           <dl>
-            <Identity label="Diagnostic identity" value={finding.identity} />
             <Identity
-              label="Source finding identity"
-              value={finding.source_identity}
+              label={
+                deterministic ? "Observation identity" : "Diagnostic identity"
+              }
+              value={finding.identity}
             />
-            <Identity label="Finding fingerprint" value={finding.fingerprint} />
+            {deterministic && "analysis_result_identity" in finding && (
+              <>
+                <Identity
+                  label="Analysis result identity"
+                  value={finding.analysis_result_identity}
+                />
+                <Identity
+                  label="Deterministic check identity"
+                  value={finding.check_identity}
+                />
+              </>
+            )}
+            {!deterministic && (
+              <Identity
+                label="Source finding identity"
+                value={finding.source_identity}
+              />
+            )}
+            <Identity
+              label={
+                deterministic
+                  ? "Observation fingerprint"
+                  : "Finding fingerprint"
+              }
+              value={finding.fingerprint}
+            />
             {finding.evidence_ids.map((identity, index) => (
               <Identity
                 key={identity}
@@ -426,7 +911,7 @@ function RuntimeView({
   if (!status)
     return (
       <section className="empty-state">
-        <ShieldCheck aria-hidden="true" />
+        <StatusIcon value="unavailable" />
         <h2>Runtime status is not available</h2>
         <p>{note || "This token may not have runtime inspection authority."}</p>
       </section>
@@ -616,6 +1101,8 @@ function ReviewConsole() {
   const [receipt, setReceipt] = useState<RunReceipt | null>(null);
   const [diagnostics, setDiagnostics] = useState<DiagnosticSet | null>(null);
   const [diagnosticNote, setDiagnosticNote] = useState("");
+  const [progress, setProgress] = useState<RunProgress | null>(null);
+  const [progressNote, setProgressNote] = useState("");
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(
     null,
   );
@@ -625,31 +1112,114 @@ function ReviewConsole() {
   const [view, setView] = useState<View>("overview");
   const [selectedTask, setSelectedTask] = useState("");
   const operationRef = useRef(0);
+  const requestRef = useRef<AbortController | null>(null);
+  const inspectorRef = useRef<HTMLElement | null>(null);
+  const selectedTaskButtonRef = useRef<HTMLButtonElement | null>(null);
+  const [focusSelectedTask, setFocusSelectedTask] = useState(false);
+  const [inspectorScroll, setInspectorScroll] = useState(0);
+  function selectTaskInJournal(key: string) {
+    setSelectedTask(key);
+    setInspectorScroll((count) => count + 1);
+  }
+  function selectTaskFromOverview(key: string) {
+    setView("tasks");
+    setFocusSelectedTask(true);
+    selectTaskInJournal(key);
+  }
+  useEffect(() => {
+    // Below the medium breakpoint the inspector stacks after the journal, so
+    // bring the selected task's evidence into view once it has rendered.
+    if (inspectorScroll === 0) return;
+    if (!window.matchMedia?.("(max-width: 980px)").matches) return;
+    const reduced = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    inspectorRef.current?.scrollIntoView({
+      block: "start",
+      behavior: reduced ? "auto" : "smooth",
+    });
+  }, [inspectorScroll]);
+  useEffect(
+    () => () => {
+      operationRef.current++;
+      requestRef.current?.abort();
+    },
+    [],
+  );
   const selected = useMemo(
     () =>
       receipt?.tasks.find((task) => task.key === selectedTask) ??
       receipt?.tasks[0],
     [receipt, selectedTask],
   );
+  useEffect(() => {
+    if (!focusSelectedTask || view !== "tasks") return;
+    selectedTaskButtonRef.current?.focus();
+    setFocusSelectedTask(false);
+  }, [focusSelectedTask, view]);
   async function connect(nextScope: Scope, nextToken: string) {
+    const refreshing =
+      receipt !== null &&
+      nextToken === token &&
+      nextScope.tenant === scope.tenant &&
+      nextScope.repository === scope.repository &&
+      nextScope.run === scope.run;
     const operation = ++operationRef.current;
+    requestRef.current?.abort();
+    const controller = new AbortController();
+    requestRef.current = controller;
+    setProgress(null);
+    setProgressNote("");
     setBusy(true);
     setError("");
     setDiagnosticNote("");
     setRuntimeNote("");
     try {
-      const next = await fetchRun(nextScope, nextToken);
+      const next = await fetchRun(
+        nextScope,
+        nextToken,
+        undefined,
+        controller.signal,
+      );
       if (operation !== operationRef.current) return;
       setScope(nextScope);
       setToken(nextToken);
       setReceipt(next);
-      setSelectedTask(next.tasks[0]?.key ?? "");
+      setSelectedTask((current) =>
+        refreshing && next.tasks.some((task) => task.key === current)
+          ? current
+          : (next.tasks[0]?.key ?? ""),
+      );
       try {
         sessionStorage.setItem("open-trestle-scope", JSON.stringify(nextScope));
       } catch {}
       if (operation !== operationRef.current) return;
       try {
-        const nextDiagnostics = await fetchDiagnostics(nextScope, nextToken);
+        const nextProgress = await fetchRunProgress(
+          nextScope,
+          nextToken,
+          next,
+          undefined,
+          controller.signal,
+        );
+        if (operation !== operationRef.current) return;
+        setProgress(nextProgress);
+      } catch (err) {
+        if (operation !== operationRef.current) return;
+        setProgressNote(
+          err instanceof ApiError && err.code === "progress_changed"
+            ? "The run advanced while progress was read. Refresh to read current counts."
+            : "Artifact-backed counts could not be verified. Refresh to try again.",
+        );
+      }
+      if (operation !== operationRef.current) return;
+      try {
+        const nextDiagnostics = await fetchDiagnostics(
+          nextScope,
+          nextToken,
+          undefined,
+          controller.signal,
+        );
         if (operation !== operationRef.current) return;
         setDiagnostics(nextDiagnostics);
       } catch (err) {
@@ -657,13 +1227,18 @@ function ReviewConsole() {
         setDiagnostics(null);
         setDiagnosticNote(
           err instanceof ApiError && err.code === "not_found"
-            ? "Verified diagnostics are not available for this run yet."
-            : "Verified diagnostics could not be loaded.",
+            ? "Review diagnostics are not available for this run yet."
+            : "Review diagnostics could not be loaded.",
         );
       }
       if (operation !== operationRef.current) return;
       try {
-        const nextRuntime = await fetchRuntimeStatus(nextScope, nextToken);
+        const nextRuntime = await fetchRuntimeStatus(
+          nextScope,
+          nextToken,
+          undefined,
+          controller.signal,
+        );
         if (operation !== operationRef.current) return;
         setRuntimeStatus(nextRuntime);
       } catch {
@@ -673,19 +1248,52 @@ function ReviewConsole() {
       }
     } catch (err) {
       if (operation !== operationRef.current) return;
+      // A transient daemon failure during Refresh keeps the last verified
+      // receipt and the in-memory token, and says so. Authentication, scope,
+      // and validation failures still end the session.
+      if (
+        refreshing &&
+        err instanceof ApiError &&
+        (err.code === "timeout" || err.code === "unavailable")
+      ) {
+        setProgressNote(
+          "Artifact-backed counts could not be refreshed. Refresh to try again.",
+        );
+        setError(
+          `${err.message} Showing the last verified journal revision ${receipt.revision}.`,
+        );
+        return;
+      }
+      let message =
+        err instanceof ApiError ? err.message : "The run could not be loaded.";
+      if (!refreshing && err instanceof ApiError && err.code === "not_found") {
+        try {
+          const refusal = await fetchDeliveryRefusal(
+            nextScope,
+            nextToken,
+            undefined,
+            controller.signal,
+          );
+          if (operation !== operationRef.current) return;
+          message = refusalMessage(refusal);
+        } catch {
+          if (operation !== operationRef.current) return;
+        }
+      }
       setToken("");
       setReceipt(null);
       setDiagnostics(null);
       setRuntimeStatus(null);
-      setError(
-        err instanceof ApiError ? err.message : "The run could not be loaded.",
-      );
+      setError(message);
     } finally {
       if (operation === operationRef.current) setBusy(false);
     }
   }
   function disconnect() {
     operationRef.current++;
+    requestRef.current?.abort();
+    setProgress(null);
+    setProgressNote("");
     setBusy(false);
     setToken("");
     setReceipt(null);
@@ -701,11 +1309,11 @@ function ReviewConsole() {
           Skip to main content
         </a>
         <Brand />
-        <main id="main">
+        <main id="main" tabIndex={-1}>
           <Locator initial={scope} onConnect={connect} busy={busy} />
           {error && (
             <div className="error-banner" role="alert">
-              <ShieldCheck aria-hidden="true" />
+              <StatusIcon value="failed" />
               <div>
                 <strong>Connection failed</strong>
                 <p>{error}</p>
@@ -719,6 +1327,12 @@ function ReviewConsole() {
   const completed = receipt.tasks.filter(
     (task) => task.status === "succeeded",
   ).length;
+  const primaryHeading = primaryRunHeading(
+    receipt,
+    diagnostics,
+    diagnosticNote,
+    busy,
+  );
   return (
     <div className="app-shell console">
       <a className="skip-link" href="#main">
@@ -732,7 +1346,6 @@ function ReviewConsole() {
             onClick={() => setView("overview")}
             aria-pressed={view === "overview"}
           >
-            <ShieldCheck aria-hidden="true" />
             Overview
           </button>
           <button
@@ -740,7 +1353,6 @@ function ReviewConsole() {
             onClick={() => setView("tasks")}
             aria-pressed={view === "tasks"}
           >
-            <ShieldCheck aria-hidden="true" />
             Tasks <span>{receipt.tasks.length}</span>
           </button>
           <button
@@ -748,16 +1360,16 @@ function ReviewConsole() {
             onClick={() => setView("findings")}
             aria-pressed={view === "findings"}
           >
-            <ShieldCheck aria-hidden="true" />
-            Findings{" "}
-            <span>{diagnostics ? diagnostics.findings.length : "n/a"}</span>
+            Review{" "}
+            <span>
+              {diagnostics ? diagnosticItemCount(diagnostics) : "n/a"}
+            </span>
           </button>
           <button
             className={view === "runtime" ? "active" : ""}
             onClick={() => setView("runtime")}
             aria-pressed={view === "runtime"}
           >
-            <ShieldCheck aria-hidden="true" />
             Runtime <span>{runtimeStatus?.ready ? "ready" : "n/a"}</span>
           </button>
         </nav>
@@ -774,7 +1386,7 @@ function ReviewConsole() {
         <Brand />
         <button onClick={disconnect}>Change</button>
       </header>
-      <main id="main" className="run-main">
+      <main id="main" tabIndex={-1} className="run-main">
         <header className="run-header">
           <div>
             <div className="scope-line">
@@ -784,14 +1396,21 @@ function ReviewConsole() {
               <span>/</span>
               <strong>{scope.run}</strong>
             </div>
-            <h1>Run {receipt.status}</h1>
+            <h1>{primaryHeading}</h1>
             <p>
               Journal revision {receipt.revision} · Updated{" "}
               {new Date(receipt.last_occurred_at_milliseconds).toLocaleString()}
             </p>
           </div>
           <div className="header-actions">
-            <Status value={receipt.status} />
+            <div
+              className="operational-status"
+              role="group"
+              aria-label={`Operational run status ${receipt.status}`}
+            >
+              <span>Operational run status</span>
+              <Status value={receipt.status} />
+            </div>
             <button
               className="secondary-button"
               disabled={busy}
@@ -801,6 +1420,15 @@ function ReviewConsole() {
             </button>
           </div>
         </header>
+        {error && (
+          <div className="error-banner" role="alert">
+            <StatusIcon value="failed" />
+            <div>
+              <strong>Refresh failed</strong>
+              <p>{error}</p>
+            </div>
+          </div>
+        )}
         <nav className="mobile-tabs" aria-label="Run views">
           {(["overview", "tasks", "findings", "runtime"] as View[]).map(
             (item) => (
@@ -809,7 +1437,7 @@ function ReviewConsole() {
                 aria-pressed={view === item}
                 onClick={() => setView(item)}
               >
-                {item}
+                {item === "findings" ? "review" : item}
               </button>
             ),
           )}
@@ -833,6 +1461,51 @@ function ReviewConsole() {
                   <dt>Failure</dt>
                   <dd>{receipt.failure || "None"}</dd>
                 </div>
+                {receipt.tasks
+                  .filter((task) => task.failure_reason)
+                  .map((task) => (
+                    <div key={`reason-${task.key}`}>
+                      <dt>Reason</dt>
+                      <dd>
+                        {task.key}:{" "}
+                        {
+                          failureReasonLabels[
+                            task.failure_reason as FailureReason
+                          ]
+                        }
+                      </dd>
+                    </div>
+                  ))}
+                {receipt.tasks
+                  .filter(
+                    (task) =>
+                      task.failure_reason &&
+                      failureReasonHints[task.failure_reason],
+                  )
+                  .map((task) => (
+                    <div key={`provider-hint-${task.key}`}>
+                      <dt>Hint</dt>
+                      <dd>
+                        {
+                          failureReasonHints[
+                            task.failure_reason as FailureReason
+                          ]
+                        }
+                      </dd>
+                    </div>
+                  ))}
+                {receipt.tasks
+                  .filter((task) => task.context_shortfall)
+                  .map((task) => (
+                    <div key={`hint-${task.key}`}>
+                      <dt>Hint</dt>
+                      <dd>
+                        {contextShortfallHint(
+                          task.context_shortfall as ContextShortfall,
+                        )}
+                      </dd>
+                    </div>
+                  ))}
                 <div>
                   <dt>Required tasks</dt>
                   <dd>
@@ -840,13 +1513,25 @@ function ReviewConsole() {
                   </dd>
                 </div>
                 <div>
-                  <dt>Verified findings</dt>
-                  <dd>{diagnostics?.findings.length ?? "Not available"}</dd>
+                  <dt>
+                    {diagnostics?.schema_version === 6
+                      ? "Deterministic observations"
+                      : diagnostics?.schema_version === 7
+                        ? "Review items"
+                        : "Verified findings"}
+                  </dt>
+                  <dd>
+                    {diagnostics?.schema_version === 7
+                      ? `${diagnostics.deterministic?.observations.length ?? "n/a"} observations / ${diagnostics.verified?.findings.length ?? "n/a"} verified findings`
+                      : diagnostics
+                        ? diagnosticItemCount(diagnostics)
+                        : "Not available"}
+                  </dd>
                 </div>
               </dl>
               {diagnosticNote && (
                 <p className="note">
-                  <ShieldCheck aria-hidden="true" />
+                  <StatusIcon value="unavailable" />
                   {diagnosticNote}
                 </p>
               )}
@@ -858,6 +1543,10 @@ function ReviewConsole() {
                 <Identity label="Plan" value={receipt.plan_identity} />
                 <Identity label="Head" value={receipt.head_identity} />
                 <Identity
+                  label="Diagnostic set"
+                  value={diagnostics?.identity ?? ""}
+                />
+                <Identity
                   label="Terminal output"
                   value={receipt.output_identity}
                 />
@@ -867,6 +1556,7 @@ function ReviewConsole() {
                 provider authority.
               </p>
             </section>
+            <ProgressCoverage progress={progress} note={progressNote} />
             <section className="spine-panel">
               <div className="section-head">
                 <div>
@@ -878,7 +1568,7 @@ function ReviewConsole() {
               <TaskSpine
                 tasks={receipt.tasks}
                 selected={selected?.key ?? ""}
-                onSelect={setSelectedTask}
+                onSelect={selectTaskFromOverview}
               />
             </section>
           </div>
@@ -895,10 +1585,15 @@ function ReviewConsole() {
               <TaskSpine
                 tasks={receipt.tasks}
                 selected={selected?.key ?? ""}
-                onSelect={setSelectedTask}
+                onSelect={selectTaskInJournal}
+                selectedTaskRef={selectedTaskButtonRef}
               />
             </section>
-            <aside className="inspector" aria-label="Task evidence inspector">
+            <aside
+              className="inspector"
+              aria-label="Task evidence inspector"
+              ref={inspectorRef}
+            >
               <TaskInspector task={selected} />
             </aside>
           </div>
@@ -908,12 +1603,27 @@ function ReviewConsole() {
             <div className="section-head">
               <div>
                 <h2>Human review queue</h2>
-                <p>Verified findings and exact deterministic check outcomes.</p>
+                <p>
+                  Verified findings and deterministic observations stay
+                  separate.
+                </p>
               </div>
               {diagnostics && (
                 <span className="set-count">
-                  {diagnostics.findings.length}{" "}
-                  {diagnostics.findings.length === 1 ? "finding" : "findings"}
+                  {diagnostics.schema_version === 7 ? (
+                    `${diagnostics.deterministic?.observations.length ?? "n/a"} observations / ${diagnostics.verified?.findings.length ?? "n/a"} verified findings`
+                  ) : (
+                    <>
+                      {diagnosticItemCount(diagnostics)}{" "}
+                      {diagnosticItemCount(diagnostics) === 1
+                        ? diagnostics.schema_version === 6
+                          ? "observation"
+                          : "finding"
+                        : diagnostics.schema_version === 6
+                          ? "observations"
+                          : "findings"}
+                    </>
+                  )}
                 </span>
               )}
             </div>
@@ -921,7 +1631,7 @@ function ReviewConsole() {
             <Findings set={diagnostics} />
             {diagnosticNote && (
               <p className="note">
-                <ShieldCheck aria-hidden="true" />
+                <StatusIcon value="unavailable" />
                 {diagnosticNote}
               </p>
             )}
@@ -938,7 +1648,7 @@ function Brand({ subtitle = "Evidence console" }: { subtitle?: string }) {
   return (
     <div className="brand">
       <span className="brand-mark">
-        <ShieldCheck aria-hidden="true" />
+        <ShieldCheck className="brand-shield" aria-hidden="true" />
       </span>
       <span>
         <strong>Open Trestle</strong>
@@ -951,7 +1661,7 @@ function TrustNotes() {
   return (
     <section className="trust-notes" aria-label="Console safety">
       <div>
-        <ShieldCheck aria-hidden="true" />
+        <InstrumentIcon />
         <h2>Read-only by design</h2>
         <p>
           This console inspects durable state. It cannot approve, publish, run
@@ -959,7 +1669,7 @@ function TrustNotes() {
         </p>
       </div>
       <div>
-        <ShieldCheck aria-hidden="true" />
+        <InstrumentIcon />
         <h2>Exact scope</h2>
         <p>
           Review requests name one tenant, repository, and run. Runtime requests
@@ -967,7 +1677,7 @@ function TrustNotes() {
         </p>
       </div>
       <div>
-        <ShieldCheck aria-hidden="true" />
+        <StatusIcon value="passed" />
         <h2>Verified means verified</h2>
         <p>
           Candidate output is never presented as a finding. Inconclusive work

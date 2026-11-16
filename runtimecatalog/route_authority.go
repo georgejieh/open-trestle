@@ -11,34 +11,53 @@ import (
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/policy"
 	"github.com/georgejieh/open-trestle/internal/provider"
+	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 )
 
 var ErrInvalidRouteAuthority = errors.New("invalid runtime route authority")
 
 func NewGenerationPolicyAuthorizer(policyIdentity string, requirements provider.ModelRequirements, constraints policy.ProviderDataConstraints, budget provider.ModelCostBudget, inventory runtimeconfig.RouteInventory, ranking gateway.RouteRankingPolicy, ledger audit.Ledger) (*contexthandler.PolicyAuthorizer, error) {
+	return newGenerationPolicyAuthorizer(review.ModelRequestTransportStandard, policyIdentity, requirements, constraints, budget, inventory, ranking, ledger)
+}
+
+func newGenerationPolicyAuthorizer(transport review.ModelRequestTransport, policyIdentity string, requirements provider.ModelRequirements, constraints policy.ProviderDataConstraints, budget provider.ModelCostBudget, inventory runtimeconfig.RouteInventory, ranking gateway.RouteRankingPolicy, ledger audit.Ledger) (*contexthandler.PolicyAuthorizer, error) {
 	if inventory.Validate() != nil {
 		return nil, ErrInvalidRouteAuthority
 	}
-	authorizer, err := contexthandler.NewPolicyAuthorizer(policyIdentity, requirements, constraints, budget, inventory.RegistryRevision(), inventory.Candidates(), ranking, inventory.PerformanceRevision(), inventory.PerformanceObservations(), ledger)
+	authorizer, err := contexthandler.NewPolicyAuthorizerForTransport(transport, policyIdentity, requirements, constraints, budget, inventory.RegistryRevision(), inventory.Candidates(), ranking, inventory.PerformanceRevision(), inventory.PerformanceObservations(), ledger)
 	if err != nil {
 		return nil, ErrInvalidRouteAuthority
 	}
 	return authorizer, nil
 }
 
-type StaticVerificationRouteInventory struct{ inventory runtimeconfig.RouteInventory }
+type StaticVerificationRouteInventory struct {
+	inventory runtimeconfig.RouteInventory
+	selected  *modelhandler.VerificationRouteSnapshot
+}
 
 func NewStaticVerificationRouteInventory(inventory runtimeconfig.RouteInventory) (StaticVerificationRouteInventory, error) {
 	if inventory.Validate() != nil {
 		return StaticVerificationRouteInventory{}, ErrInvalidRouteAuthority
 	}
-	return StaticVerificationRouteInventory{inventory}, nil
+	return StaticVerificationRouteInventory{inventory: inventory}, nil
 }
-func (i StaticVerificationRouteInventory) Identity() string { return i.inventory.Identity() }
+func (i StaticVerificationRouteInventory) Identity() string {
+	if i.selected != nil {
+		return i.selected.Identity()
+	}
+	return i.inventory.Identity()
+}
 func (i StaticVerificationRouteInventory) Snapshot(ctx context.Context, scope audit.ReviewScope) (modelhandler.VerificationRouteSnapshot, error) {
 	if ctx == nil || ctx.Err() != nil || scope.Validate() != nil || i.inventory.Validate() != nil {
 		return modelhandler.VerificationRouteSnapshot{}, ErrInvalidRouteAuthority
+	}
+	if i.selected != nil {
+		if i.selected.Validate() != nil {
+			return modelhandler.VerificationRouteSnapshot{}, ErrInvalidRouteAuthority
+		}
+		return *i.selected, nil
 	}
 	snapshot, err := modelhandler.NewVerificationRouteSnapshot(i.inventory.RegistryRevision(), i.inventory.PerformanceRevision(), i.inventory.Candidates(), i.inventory.PerformanceObservations())
 	if err != nil {
@@ -47,10 +66,14 @@ func (i StaticVerificationRouteInventory) Snapshot(ctx context.Context, scope au
 	return snapshot, nil
 }
 func NewVerificationPolicyAuthorizer(inventory StaticVerificationRouteInventory, requirements provider.ModelRequirements, constraints policy.ProviderDataConstraints, budget provider.ModelCostBudget, ranking gateway.RouteRankingPolicy, independence gateway.RouteIndependencePolicy, ledger audit.Ledger, clock artifact.Clock) (*modelhandler.PolicyVerificationAuthorizer, error) {
-	if inventory.inventory.Validate() != nil {
+	return newVerificationPolicyAuthorizer(review.ModelRequestTransportStandard, inventory, requirements, constraints, budget, ranking, independence, ledger, clock)
+}
+
+func newVerificationPolicyAuthorizer(transport review.ModelRequestTransport, inventory StaticVerificationRouteInventory, requirements provider.ModelRequirements, constraints policy.ProviderDataConstraints, budget provider.ModelCostBudget, ranking gateway.RouteRankingPolicy, independence gateway.RouteIndependencePolicy, ledger audit.Ledger, clock artifact.Clock) (*modelhandler.PolicyVerificationAuthorizer, error) {
+	if inventory.inventory.Validate() != nil || inventory.selected != nil && inventory.selected.Validate() != nil {
 		return nil, ErrInvalidRouteAuthority
 	}
-	authorizer, err := modelhandler.NewPolicyVerificationAuthorizer(inventory, requirements, constraints, budget, ranking, independence, ledger, clock)
+	authorizer, err := modelhandler.NewPolicyVerificationAuthorizerForTransport(transport, inventory, requirements, constraints, budget, ranking, independence, ledger, clock)
 	if err != nil {
 		return nil, ErrInvalidRouteAuthority
 	}
@@ -61,16 +84,43 @@ func NewGenerationPolicyAuthorizerFromRuntimePolicy(configuration runtimeconfig.
 	if configuration.Validate() != nil || configuration.ValidateAgainstInventory(inventory) != nil || configuration.InventoryIdentity() != inventory.Identity() {
 		return nil, ErrInvalidRouteAuthority
 	}
-	return NewGenerationPolicyAuthorizer(configuration.ReviewPolicyIdentity(), configuration.Requirements(), configuration.Constraints(), configuration.Budget(), inventory, configuration.Ranking(), ledger)
+	// The authorizer plans over every inventory candidate.
+	return newGenerationPolicyAuthorizer(configuration.ModelRequestTransport(inventory.Candidates()), configuration.ReviewPolicyIdentity(), configuration.Requirements(), configuration.Constraints(), configuration.Budget(), inventory, configuration.Ranking(), ledger)
 }
 func NewVerificationPolicyAuthorizerFromRuntimePolicy(configuration runtimeconfig.RuntimePolicy, inventory StaticVerificationRouteInventory, ledger audit.Ledger, clock artifact.Clock) (*modelhandler.PolicyVerificationAuthorizer, error) {
 	if configuration.Validate() != nil || configuration.ValidateAgainstInventory(inventory.inventory) != nil || configuration.InventoryIdentity() != inventory.Identity() {
 		return nil, ErrInvalidRouteAuthority
+	}
+	if verificationID := configuration.VerificationRouteRecordIdentity(); verificationID != "" {
+		var route gateway.ObservedRouteCandidate
+		var observation provider.RoutePerformanceObservation
+		found := 0
+		for index, candidate := range inventory.inventory.Candidates() {
+			if candidate.ResolvedRecord().RouteRegistryRecord().Identity() == verificationID {
+				route = candidate
+				observation = inventory.inventory.PerformanceObservations()[index]
+				found++
+			}
+		}
+		if found != 1 {
+			return nil, ErrInvalidRouteAuthority
+		}
+		snapshot, err := modelhandler.NewVerificationRouteSnapshot(inventory.inventory.RegistryRevision(), inventory.inventory.PerformanceRevision(), []gateway.ObservedRouteCandidate{route}, []provider.RoutePerformanceObservation{observation})
+		if err != nil {
+			return nil, ErrInvalidRouteAuthority
+		}
+		inventory = StaticVerificationRouteInventory{inventory: inventory.inventory, selected: &snapshot}
 	}
 	// A generation pin cannot also pin a route that independence excludes.
 	ranking, err := gateway.NewRouteRankingPolicy(configuration.Ranking().PreferredRoutes())
 	if err != nil {
 		return nil, ErrInvalidRouteAuthority
 	}
-	return NewVerificationPolicyAuthorizer(inventory, configuration.Requirements(), configuration.Constraints(), configuration.Budget(), ranking, configuration.Independence(), ledger, clock)
+	// The authorizer plans over the explicit verifier or, without one, every
+	// inventory candidate.
+	routes := inventory.inventory.Candidates()
+	if inventory.selected != nil {
+		routes = inventory.selected.Routes()
+	}
+	return newVerificationPolicyAuthorizer(configuration.ModelRequestTransport(routes), inventory, configuration.Requirements(), configuration.Constraints(), configuration.Budget(), ranking, configuration.Independence(), ledger, clock)
 }

@@ -54,7 +54,7 @@ type Options struct {
 	Once            bool
 }
 
-// Interface is a foreground, bounded view over daemon receipts and verified diagnostics.
+// Interface is a foreground, bounded view over daemon receipts and review diagnostics.
 type Interface struct {
 	service Service
 	input   io.Reader
@@ -85,6 +85,13 @@ func (i *Interface) Run(ctx context.Context) error {
 	}
 	view := interfaceView{}
 	if err := i.refresh(ctx, &view); err != nil {
+		// Only a run that was never opened can stand for a refused delivery;
+		// any other failure to read it stays an error.
+		if errors.Is(err, controlplane.ErrRunNotOpened) {
+			if record, refused := i.refusal(ctx); refused {
+				return i.renderRefusal(record)
+			}
+		}
 		return err
 	}
 	if err := i.render(view); err != nil || i.options.Once {

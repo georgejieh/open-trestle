@@ -19,6 +19,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/policy"
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/review"
+	"github.com/georgejieh/open-trestle/internal/secretscan"
 )
 
 type freshnessClock struct{ at time.Time }
@@ -248,7 +249,11 @@ func freshnessPublicationFixture(t *testing.T, at time.Time, lifetime time.Durat
 	candidateResponse := response(fmt.Sprintf(`{"schema_version":1,"candidates":[{"title":"Issue","claim":"The value is not checked.","severity_hint":"high","source_range":{"source_id":%q,"start_line":%d,"end_line":%d},"evidence_ids":[%q]}]}`, item.ID(), sourceRange.StartLine(), sourceRange.EndLine(), item.ID()))
 	candidates, err := review.ParseCandidateBatch(candidateResponse, f.input.Snapshot(), f.input.EvidenceItems())
 	check(err)
-	generationRequest, err := provider.NewRequest(provider.CapabilityReviewV1, "application/json", f.contextArtifact.Payload())
+	sanitizedRequestArtifact, err := f.store.Get(context.Background(), f.scope, f.input.SanitizedRequestArtifactIdentity(), at)
+	check(err)
+	sanitizedRequest, err := review.ParseSanitizedModelRequest(sanitizedRequestArtifact.Payload())
+	check(err)
+	generationRequest, err := sanitizedRequest.ProviderRequest()
 	check(err)
 	generationAuthorization := f.input.Authorization()
 	generationOutcome, err := gateway.NewSuccessfulRouteAttemptOutcome(generationAuthorization, candidates.ResponseIdentity(), provider.NewUnknownRouteTokenUsage(), 1)
@@ -282,10 +287,22 @@ func freshnessPublicationFixture(t *testing.T, at time.Time, lifetime time.Durat
 	check(err)
 	publicationPolicy, err := review.NewPublicationPolicy(review.SeverityMedium, 10, gateway.RouteIndependenceDistinctProvider, true)
 	check(err)
-	readiness, err := review.EvaluatePublicationReadiness(publicationPolicy, receipt, findings)
+	selection, err := review.SelectPublicationFindings(publicationPolicy, receipt, findings)
+	check(err)
+	fieldBytes := 0
+	for _, finding := range append(selection.InlineFindings(), selection.SummaryOnlyFindings()...) {
+		fieldBytes += len(finding.Title()) + len(finding.Claim()) + len(finding.SourceRange().Path())
+	}
+	fieldCount := int(findings.VerifiedCount()) * 3
+	scan, err := review.NewPublicationContentScanReceipt(receipt, findings, verificationContext, selection,
+		review.ScannerProfile{WorkerProtocol: 1, Scanner: secretscan.ScannerName, ScannerVersion: secretscan.ScannerVersion, ScannerCommit: secretscan.ScannerCommit, RulesetIdentity: secretscan.RulesetIdentity, RulesetRuleCount: secretscan.RulesetRuleCount, BuildProfile: secretscan.BuildProfile, LauncherSHA256: strings.Repeat("c", 64), WorkerSHA256: strings.Repeat("d", 64)},
+		review.ScanCompletion{Complete: true, FieldCount: fieldCount, ScannedByteCount: fieldBytes},
+		review.ScanCompletion{Complete: true, FieldCount: fieldCount, ScannedByteCount: fieldBytes})
+	check(err)
+	readiness, err := review.EvaluatePublicationReadiness(publicationPolicy, receipt, findings, verificationContext, selection, scan)
 	check(err)
 	handler := &Handler{store: f.store}
-	binding, err := handler.buildSourceBinding(context.Background(), f.scope, f.target, artifact.Artifact{}, f.inputArtifact, f.contextArtifact, at)
+	binding, err := handler.buildSourceBinding(context.Background(), f.scope, f.target, nil, artifact.Artifact{}, f.inputArtifact, f.contextArtifact, at)
 	check(err)
 	plan, err := review.NewPublicationPlanFromProtectedSource(readiness, f.target, binding)
 	check(err)

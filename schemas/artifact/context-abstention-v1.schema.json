@@ -1,0 +1,230 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:artifact:context-abstention:v1",
+  "title": "Open Trestle content-free context abstention v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "review_scope_identity",
+    "plan_identity",
+    "task_identity",
+    "head_snapshot_identity",
+    "reason",
+    "failure",
+    "source_coverage",
+    "source_omissions"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/context-abstention"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "review_scope_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "plan_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "task_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "head_snapshot_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "reason": {
+      "enum": [
+        "no_source_changes",
+        "all_sources_omitted",
+        "unsupported_language",
+        "packet_budget_zero_selection"
+      ]
+    },
+    "failure": {
+      "enum": [
+        "policy",
+        "resource_limit"
+      ]
+    },
+    "source_coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "analyzed",
+        "selected",
+        "omitted"
+      ],
+      "properties": {
+        "analyzed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65536
+        },
+        "selected": {
+          "const": 0
+        },
+        "omitted": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65536
+        }
+      }
+    },
+    "source_omissions": {
+      "type": "array",
+      "maxItems": 16384,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "start_line",
+          "end_line",
+          "reason",
+          "count"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "start_line": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "end_line": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "reason": {
+            "enum": [
+              "path_not_authorized",
+              "semantic_path_not_authorized",
+              "candidate_limit",
+              "source_size_limit",
+              "analysis_resource_limit",
+              "analysis_slice_resource_limit",
+              "analysis_evidence_limit",
+              "semantic_limit_exceeded",
+              "semantic_candidate_limit",
+              "semantic_source_size_limit",
+              "packet_budget",
+              "analysis_removed_file",
+              "analysis_unsupported_content",
+              "analysis_empty_added_file",
+              "semantic_unsupported_language",
+              "unsupported_language",
+              "semantic_parse_failure",
+              "semantic_source_unavailable",
+              "semantic_duplicate_source",
+              "excluded_path",
+              "non_text_content",
+              "repository_instruction_truncated",
+              "repository_instruction_size_limit",
+              "repository_instruction_unsupported_content"
+            ]
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 32768
+          }
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "reason": {
+          "const": "no_source_changes"
+        },
+        "failure": {
+          "const": "policy"
+        },
+        "source_coverage": {
+          "properties": {
+            "analyzed": {
+              "const": 0
+            },
+            "omitted": {
+              "const": 0
+            }
+          }
+        },
+        "source_omissions": {
+          "maxItems": 0
+        }
+      }
+    },
+    {
+      "properties": {
+        "reason": {
+          "enum": [
+            "all_sources_omitted",
+            "unsupported_language"
+          ]
+        },
+        "failure": {
+          "const": "policy"
+        },
+        "source_coverage": {
+          "properties": {
+            "analyzed": {
+              "minimum": 1
+            },
+            "omitted": {
+              "minimum": 1
+            }
+          }
+        },
+        "source_omissions": {
+          "minItems": 1
+        }
+      }
+    },
+    {
+      "properties": {
+        "reason": {
+          "const": "packet_budget_zero_selection"
+        },
+        "failure": {
+          "const": "resource_limit"
+        },
+        "source_coverage": {
+          "properties": {
+            "analyzed": {
+              "minimum": 1
+            },
+            "omitted": {
+              "minimum": 1
+            }
+          }
+        },
+        "source_omissions": {
+          "minItems": 1
+        }
+      }
+    }
+  ]
+}

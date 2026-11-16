@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	modelhandler "github.com/georgejieh/open-trestle/handlers/model"
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/provider"
 )
@@ -183,6 +184,14 @@ func (a *Adapter) DispatchRoute(ctx context.Context, request gateway.RouteDispat
 	return fixture.Result()
 }
 
+// DispatchSanitizedRoute returns a fixture only for an exact validated egress proof.
+func (a *Adapter) DispatchSanitizedRoute(ctx context.Context, request gateway.RouteDispatchRequest, proof modelhandler.SanitizedDispatchProof) gateway.RouteDispatchResult {
+	if proof.ValidateRequest(request.Authorization().ReviewScopeIdentity(), request.Request().Identity()) != nil {
+		return closedFailure(gateway.RouteFailurePolicyDenied)
+	}
+	return a.DispatchRoute(ctx, request)
+}
+
 func isNilContext(ctx context.Context) bool {
 	if ctx == nil {
 		return true
@@ -207,3 +216,6 @@ func (a *Adapter) Format(state fmt.State, verb rune) {
 	}
 	_, _ = state.Write([]byte(formatted))
 }
+
+var _ gateway.RouteDispatcher = (*Adapter)(nil)
+var _ modelhandler.SanitizedRouteDispatcher = (*Adapter)(nil)

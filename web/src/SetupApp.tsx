@@ -1,15 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { ShieldCheck } from "./ShieldCheck";
+import { InstrumentIcon, StatusIcon, type StatusValue } from "./Icons";
 import { Identity } from "./Identity";
+import { ApiError, validAccessToken } from "./api";
 import {
-  ApiError,
   fetchSetupSession,
   hasCurrentIntegrationPermissionAuthority,
   initializeSetup,
   runSetupCheck,
-  validAccessToken,
   validSetupBundlePath,
-} from "./api";
+} from "./setupApi";
 import type {
   SetupCheckInput,
   SetupCheckKey,
@@ -19,13 +19,10 @@ import type {
   SetupSession,
 } from "./types";
 
-function statusIcon() {
-  return <ShieldCheck aria-hidden="true" />;
-}
-function Status({ value }: { value: string }) {
+function Status({ value }: { value: StatusValue }) {
   return (
     <span className={`state state-${value}`}>
-      {statusIcon()}
+      <StatusIcon value={value} />
       <span>{value.replaceAll("_", " ")}</span>
     </span>
   );
@@ -34,7 +31,7 @@ function Brand() {
   return (
     <div className="brand">
       <span className="brand-mark">
-        <ShieldCheck aria-hidden="true" />
+        <ShieldCheck className="brand-shield" aria-hidden="true" />
       </span>
       <span>
         <strong>Open Trestle</strong>
@@ -112,14 +109,16 @@ function SetupToken({
   onConnect: (token: string) => void;
 }) {
   const [token, setToken] = useState("");
+  const [touched, setTouched] = useState(false);
   const ready = validAccessToken(token);
+  const hasError = touched && !ready;
   return (
     <section
       className="locator setup-entry"
       aria-labelledby="setup-entry-title"
     >
       <div className="locator-copy">
-        <ShieldCheck aria-hidden="true" />
+        <InstrumentIcon />
         <div>
           <h1 id="setup-entry-title">Open protected setup</h1>
           <p>
@@ -137,23 +136,42 @@ function SetupToken({
         <label className="token-field">
           Setup token
           <span className="input-with-icon">
-            <ShieldCheck aria-hidden="true" />
+            <InstrumentIcon />
             <input
               type="password"
               value={token}
+              aria-label="Setup token"
               minLength={32}
               maxLength={512}
               required
               autoComplete="off"
               spellCheck={false}
+              aria-describedby={`setup-token-hint${hasError ? " setup-token-error" : ""}`}
+              aria-invalid={hasError || undefined}
               onChange={(event) => setToken(event.target.value)}
+              onBlur={() => setTouched(true)}
             />
           </span>
+          <small className="field-hint" id="setup-token-hint">
+            Use 32-512 characters without spaces. The value stays hidden and is
+            never saved.
+          </small>
+          {hasError && (
+            <small className="field-error" id="setup-token-error">
+              Enter 32-512 characters without spaces. The token remains hidden.
+            </small>
+          )}
         </label>
+        <p className="form-readiness" id="setup-token-readiness">
+          {ready
+            ? "The setup token matches the required format."
+            : "Enter a valid setup token to inspect protected setup."}
+        </p>
         <button
           className="primary-button"
           type="submit"
           disabled={!ready || busy}
+          aria-describedby="setup-token-readiness"
         >
           {busy ? <>Connecting</> : <>Inspect setup</>}
         </button>
@@ -177,17 +195,24 @@ function SetupCreate({
   const [tenant, setTenant] = useState("");
   const [repository, setRepository] = useState("");
   const [owner, setOwner] = useState("");
+  const [touched, setTouched] = useState({
+    tenant: false,
+    repository: false,
+    owner: false,
+  });
   const [confirm, setConfirm] = useState(false);
   const confirmActionRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (confirm) confirmActionRef.current?.focus();
   }, [confirm]);
-  const valid =
-    [tenant, repository].every(
-      (value) =>
-        /^[a-z0-9](?:[a-z0-9._:-]*[a-z0-9])?$/.test(value) &&
-        value.length <= 128,
-    ) && /^[A-Za-z0-9_.:@-]{1,128}$/.test(owner);
+  const identifierValid = (value: string) =>
+    /^[a-z0-9](?:[a-z0-9._:-]*[a-z0-9])?$/.test(value) && value.length <= 128;
+  const tenantValid = identifierValid(tenant);
+  const repositoryValid = identifierValid(repository);
+  const ownerValid = /^[A-Za-z0-9_.:@-]{1,128}$/.test(owner);
+  const valid = tenantValid && repositoryValid && ownerValid;
+  const identifierHint =
+    "Use 1-128 lowercase letters, numbers, periods, underscores, colons, or hyphens. Start and end with a lowercase letter or number.";
   return (
     <section className="setup-create" aria-labelledby="setup-create-title">
       <div className="section-head">
@@ -241,55 +266,107 @@ function SetupCreate({
             Tenant
             <input
               value={tenant}
+              aria-label="Tenant"
               maxLength={128}
               required
               autoComplete="off"
               spellCheck={false}
+              aria-describedby={`setup-tenant-hint${touched.tenant && !tenantValid ? " setup-tenant-error" : ""}`}
+              aria-invalid={(touched.tenant && !tenantValid) || undefined}
+              onBlur={() =>
+                setTouched((current) => ({ ...current, tenant: true }))
+              }
               onChange={(event) => {
                 setTenant(event.target.value);
                 setConfirm(false);
               }}
             />
+            <small className="field-hint" id="setup-tenant-hint">
+              {identifierHint}
+            </small>
+            {touched.tenant && !tenantValid && (
+              <small className="field-error" id="setup-tenant-error">
+                Enter 1-128 valid characters. Start and end with a lowercase
+                letter or number.
+              </small>
+            )}
           </label>
           <label>
             Repository
             <input
               value={repository}
+              aria-label="Repository"
               maxLength={128}
               required
               autoComplete="off"
               spellCheck={false}
+              aria-describedby={`setup-repository-hint${touched.repository && !repositoryValid ? " setup-repository-error" : ""}`}
+              aria-invalid={
+                (touched.repository && !repositoryValid) || undefined
+              }
+              onBlur={() =>
+                setTouched((current) => ({ ...current, repository: true }))
+              }
               onChange={(event) => {
                 setRepository(event.target.value);
                 setConfirm(false);
               }}
             />
+            <small className="field-hint" id="setup-repository-hint">
+              {identifierHint}
+            </small>
+            {touched.repository && !repositoryValid && (
+              <small className="field-error" id="setup-repository-error">
+                Enter 1-128 valid characters. Start and end with a lowercase
+                letter or number.
+              </small>
+            )}
           </label>
           <label>
             Recovery owner
             <input
               value={owner}
+              aria-label="Recovery owner"
               maxLength={128}
               required
               autoComplete="off"
               spellCheck={false}
+              aria-describedby={`setup-owner-hint setup-owner-approval${touched.owner && !ownerValid ? " setup-owner-error" : ""}`}
+              aria-invalid={(touched.owner && !ownerValid) || undefined}
+              onBlur={() =>
+                setTouched((current) => ({ ...current, owner: true }))
+              }
               onChange={(event) => {
                 setOwner(event.target.value);
                 setConfirm(false);
               }}
             />
-            <small>
+            <small className="field-hint" id="setup-owner-hint">
+              Use 1-128 letters, numbers, periods, underscores, colons, @, or
+              hyphens. Spaces are not accepted.
+            </small>
+            <small id="setup-owner-approval">
               Only this exact name can approve runtime policy in this plan.
             </small>
+            {touched.owner && !ownerValid && (
+              <small className="field-error" id="setup-owner-error">
+                Enter a recovery owner using only the listed characters.
+              </small>
+            )}
           </label>
         </div>
+        <p className="form-readiness" id="setup-create-readiness">
+          {valid
+            ? "The setup scope and recovery owner match the required formats."
+            : "Enter valid tenant, repository, and recovery owner values to review this plan."}
+        </p>
         {confirm ? (
           <div
             className="confirmation-panel"
             role="region"
             aria-labelledby="create-confirm-title"
           >
-            <ShieldCheck aria-hidden="true" />
+            <StatusIcon value="incomplete" />
             <div>
               <h2 id="create-confirm-title">Create this protected plan?</h2>
               <p>
@@ -324,6 +401,7 @@ function SetupCreate({
             className="primary-button"
             type="submit"
             disabled={!valid || busy}
+            aria-describedby="setup-create-readiness"
           >
             Review plan creation
           </button>
@@ -1385,9 +1463,8 @@ function SetupCheckPanel({
           </p>
           {inferenceCheck && !policyPassed && (
             <p className="setup-guidance">
-              <ShieldCheck aria-hidden="true" />
-              Pass the exact policy validation check before running local
-              inference.
+              <StatusIcon value="incomplete" /> Pass the exact policy validation
+              check before running local inference.
             </p>
           )}
           <label>
@@ -1491,7 +1568,7 @@ function SetupCheckPanel({
       )}
       {!supported && requirement.source !== "deterministic" && (
         <div className="setup-unavailable">
-          <ShieldCheck aria-hidden="true" />
+          <StatusIcon value="unavailable" />
           <p>
             {requirement.state === "pending"
               ? "No built-in web checker is available for this requirement. Run it from another setup surface; it remains pending."
@@ -1509,8 +1586,8 @@ function SetupCheckPanel({
       )}
       {supported && requirement.state === "passed" && (
         <p className="setup-guidance verified">
-          <ShieldCheck aria-hidden="true" />
-          This exact requirement has a passing receipt.
+          <StatusIcon value="passed" /> This exact requirement has a passing
+          receipt.
         </p>
       )}
       {canRun &&
@@ -1520,7 +1597,7 @@ function SetupCheckPanel({
             role="region"
             aria-labelledby="check-confirm-title"
           >
-            <ShieldCheck aria-hidden="true" />
+            <StatusIcon value="incomplete" />
             <div>
               <h3 id="check-confirm-title">
                 Write one {setupLabel(requirement.key)} receipt?
@@ -1664,7 +1741,7 @@ function SetupWorkspace({
         <div className="setup-detail">
           <section className="setup-boundary">
             <div>
-              <ShieldCheck aria-hidden="true" />
+              <InstrumentIcon />
               <span>
                 <strong>Publication remains locked</strong>
                 <small>
@@ -1719,6 +1796,10 @@ export default function SetupConsole() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const operationRef = useRef(0);
+  const errorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (error) errorRef.current?.focus();
+  }, [error]);
   async function connect(value: string) {
     const operation = ++operationRef.current;
     setBusy(true);
@@ -1808,7 +1889,27 @@ export default function SetupConsole() {
         <Brand />
         <a href="/console/">Review console</a>
       </header>
-      <main id="main">
+      <main id="main" tabIndex={-1}>
+        {notice && (
+          <div className="success-banner" role="status">
+            <StatusIcon value="passed" />
+            <p>{notice}</p>
+          </div>
+        )}
+        {error && (
+          <div
+            className="error-banner"
+            role="alert"
+            ref={errorRef}
+            tabIndex={-1}
+          >
+            <StatusIcon value="failed" />
+            <div>
+              <strong>Setup request failed</strong>
+              <p>{error}</p>
+            </div>
+          </div>
+        )}
         {!session ? (
           <SetupToken busy={busy} onConnect={connect} />
         ) : !session.initialized ? (
@@ -1821,21 +1922,6 @@ export default function SetupConsole() {
             onRefresh={() => connect(token)}
             onDisconnect={disconnect}
           />
-        )}{" "}
-        {notice && (
-          <div className="success-banner" role="status">
-            <ShieldCheck aria-hidden="true" />
-            <p>{notice}</p>
-          </div>
-        )}
-        {error && (
-          <div className="error-banner" role="alert">
-            <ShieldCheck aria-hidden="true" />
-            <div>
-              <strong>Setup request failed</strong>
-              <p>{error}</p>
-            </div>
-          </div>
         )}
       </main>
     </div>

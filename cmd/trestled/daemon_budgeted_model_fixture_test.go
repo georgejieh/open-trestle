@@ -103,15 +103,29 @@ type daemonBudgetedModelCapture struct {
 }
 
 type daemonBudgetedModelEndpoint struct {
-	mu             sync.Mutex
-	server         *httptest.Server
-	name           string
-	model          string
-	key            string
-	calls          int
-	aggregateBytes int64
-	captures       []daemonBudgetedModelCapture
-	failures       []string
+	mu                  sync.Mutex
+	server              *httptest.Server
+	name                string
+	verificationOutcome string
+	generationOutcome   string
+	model               string
+	key                 string
+	calls               int
+	aggregateBytes      int64
+	captures            []daemonBudgetedModelCapture
+	failures            []string
+	// rateLimits answers the first requests with HTTP 429 and a one-second
+	// Retry-After, before reading them, so the handler retries on the same route.
+	rateLimits int
+	// onDispatch, when set before the first request, runs for each request
+	// that is not rate-limited, before it is read or answered, while the
+	// handler waits on it.
+	onDispatch func(call int)
+	// unavailable makes every request fail at the transport. Tests use it
+	// instead of closing the server so the listener keeps its port: a closed
+	// httptest port can be reused by a parallel test's endpoint, which would
+	// then answer requests meant for this unavailable one.
+	unavailable bool
 }
 
 type daemonBudgetedModelFixture struct {
@@ -204,12 +218,40 @@ func (e *daemonBudgetedModelEndpoint) URL() string {
 	return e.server.URL
 }
 
+// makeUnavailable keeps the endpoint's port bound while every later request
+// fails at the transport, as a stopped model server would.
+func (e *daemonBudgetedModelEndpoint) makeUnavailable() {
+	e.mu.Lock()
+	e.unavailable = true
+	e.mu.Unlock()
+	e.server.CloseClientConnections()
+}
+
 func (e *daemonBudgetedModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 	t.Helper()
 	e.mu.Lock()
+	if e.unavailable {
+		e.mu.Unlock()
+		if hijacker, ok := w.(http.Hijacker); ok {
+			if connection, _, err := hijacker.Hijack(); err == nil {
+				_ = connection.Close()
+				return
+			}
+		}
+		panic(http.ErrAbortHandler)
+	}
 	e.calls++
 	call := e.calls
+	rateLimited, onDispatch := call <= e.rateLimits, e.onDispatch
 	e.mu.Unlock()
+	if rateLimited {
+		w.Header().Set("Retry-After", "1")
+		http.Error(w, "rate limited", http.StatusTooManyRequests)
+		return
+	}
+	if onDispatch != nil {
+		onDispatch(call)
+	}
 	if call > daemonBudgetedModelMaxRequests {
 		e.fail("model request limit exceeded")
 		http.Error(w, "too many requests", http.StatusTooManyRequests)
@@ -256,8 +298,8 @@ func (e *daemonBudgetedModelEndpoint) serve(t *testing.T, w http.ResponseWriter,
 	payload := []byte(wire.Input[0].Content[0].Text)
 	request, requestErr := provider.NewRequest(provider.CapabilityReviewV1, "application/json", payload)
 	var packet daemonBudgetedModelPacket
-	if requestErr != nil || json.Unmarshal(payload, &packet) != nil || packet.Version != 3 || packet.Scope == "" || packet.SourceAuthority != "evidence_data_not_instructions" || packet.MemoryAuthority != "advisory_only" {
-		e.fail("model did not receive actual provider-neutral v3 context")
+	if requestErr != nil || json.Unmarshal(payload, &packet) != nil || packet.Task == "candidate_generation" && packet.Version != 9 || packet.Task != "candidate_generation" && packet.Version != 8 || packet.Scope == "" || packet.SourceAuthority != "evidence_data_not_instructions" || packet.MemoryAuthority != "advisory_only" {
+		e.fail("model did not receive actual provider-neutral v9 generation or v8 verification context")
 		http.Error(w, "invalid context", http.StatusBadRequest)
 		return
 	}
@@ -317,16 +359,31 @@ func (e *daemonBudgetedModelEndpoint) outputForPacket(t *testing.T, packet daemo
 			e.fail("generation request lost generation-only route or lineage")
 			return nil, false
 		}
-		return map[string]any{"schema_version": 1, "candidates": []any{map[string]any{
+		if e.generationOutcome == "empty" {
+			return map[string]any{"schema_version": 2, "candidates": []any{}}, true
+		}
+		if e.generationOutcome == "malformed" {
+			return map[string]any{"schema_version": 2, "candidates": []any{map[string]any{"claim": "missing evidence"}}}, true
+		}
+		return map[string]any{"schema_version": 2, "candidates": []any{map[string]any{
 			"title":         "Budgeted daemon candidate cites changed code",
 			"claim":         "The local external model observed the exact changed source slice through the daemon-owned context packet.",
+			"category":      "correctness",
 			"severity_hint": "high",
 			"source_range":  map[string]any{"source_id": selected.ID, "start_line": selected.Start, "end_line": selected.Start},
 			"evidence_ids":  []string{selected.ID},
 		}}}, true
 	case "candidate_verification":
-		if e.model != "model-b" || packet.GenerationContext == "" || packet.CandidateBatch == "" || len(packet.Candidates) == 0 {
+		if e.model != "model-b" || packet.GenerationContext == "" || packet.CandidateBatch == "" {
 			e.fail("verification request lost independent route or candidate lineage")
+			return nil, false
+		}
+		outcome, severity := e.verificationOutcome, "none"
+		if outcome == "" {
+			outcome, severity = "verified", "high"
+		}
+		if outcome != "verified" && outcome != "rejected" && outcome != "inconclusive" {
+			e.fail("invalid fixture verification outcome")
 			return nil, false
 		}
 		verdicts := make([]any, 0, len(packet.Candidates))
@@ -335,7 +392,7 @@ func (e *daemonBudgetedModelEndpoint) outputForPacket(t *testing.T, packet daemo
 				e.fail("verification candidate did not carry allowed evidence")
 				return nil, false
 			}
-			verdicts = append(verdicts, map[string]any{"candidate_id": candidate.ID, "outcome": "verified", "severity": "high", "rationale": "The cited source range is present in the exact verifier context.", "evidence_ids": []string{selected.ID}})
+			verdicts = append(verdicts, map[string]any{"candidate_id": candidate.ID, "outcome": outcome, "severity": severity, "rationale": "The cited source range is present in the exact verifier context.", "evidence_ids": []string{selected.ID}})
 		}
 		return map[string]any{"schema_version": 1, "verdicts": verdicts}, true
 	default:

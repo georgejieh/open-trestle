@@ -1,6 +1,6 @@
 # GitHub review publication
 
-`adapters/scm/github.PublicationAdapter` implements the source-control head resolver and review publisher contracts for GitHub pull requests. It is callable only through the existing publication authorization, exclusive claim, audited retry, and fresh-head gates.
+`adapters/scm/github.PublicationAdapter` implements the source-control head resolver and review publisher contracts for GitHub pull requests. It is callable only through the existing publication authorization, exclusive claim, audited retry, and fresh-head gates. Live GitHub publication is unverified (see the [roadmap](roadmap.md#available-now)). Nothing is published unless an operator runs `trestled` with `--github-enable-publication` and a publication token.
 
 ## Exact target binding
 
@@ -17,6 +17,8 @@ Publication uses `POST /repos/{owner}/{repo}/pulls/{number}/reviews` with:
 - bounded inline comments only for findings selected as inline-ready
 - all summary-only findings in the review body
 - a deterministic operation marker derived from the authorization
+
+A finding on removed base lines is always summary-only, labelled `` `path` removed base lines a-b ``, and never an inline comment. An inline comment anchors on head lines (side `RIGHT`), and GitHub numbers the left side of a pull request diff from the merge base, which need not be the reviewed base revision, so base line numbers could point at other lines. Selection and plan validation refuse an inline base-side finding, and the adapter refuses to build one.
 
 Only independently verified findings contained in the authorized publication plan enter the request. The adapter checks the returned review ID and exact commit ID. It hashes the external review reference before returning it to the runtime.
 

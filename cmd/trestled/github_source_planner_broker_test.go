@@ -220,10 +220,10 @@ func plannerBrokerBoundaryClaim(t *testing.T, d *daemon, plan controlplane.Revie
 func plannerBrokerBoundaryCheckPlan(t *testing.T, d *daemon, plan controlplane.ReviewRunPlan, broker bool) []sourcehandler.Input {
 	t.Helper()
 	adapterIdentity, handlerIdentity := plannerBrokerBoundaryDefaultAdapter, plannerBrokerBoundaryDefaultHandler
-	payloadHashes := []string{"7cd4f0ac1d914bf42bcf44cee60a0b5650d0c1bb625d5748615d27d447142914", "ce8059ddc4007a6be0bf660db7d9b322687ff088613616e451eed563cbd46780"}
+	payloadHashes := []string{"30bcfce5901e48ea040a239b86cabe465994e38d4648ddde846da25b95c3978e", "ce8059ddc4007a6be0bf660db7d9b322687ff088613616e451eed563cbd46780"}
 	if broker {
 		adapterIdentity, handlerIdentity = plannerBrokerBoundaryBrokerAdapter, plannerBrokerBoundaryBrokerHandler
-		payloadHashes = []string{"cf5cbe471c019ffb164eaa4bbf268288f9a745ec975483039015406aaa27d98f", "3eee6b4204e2c69e36c45eb1ff5688c5c8c267e919b40fc0d125b8ba76b6025b"}
+		payloadHashes = []string{"0ae47ed618d4f7e7fb337879bf5cbe4cae3b39f6db2cb8d21f0f2d76c3fffeff", "3eee6b4204e2c69e36c45eb1ff5688c5c8c267e919b40fc0d125b8ba76b6025b"}
 	}
 	keys := []string{}
 	dependencies := map[string][]string{"analysis": {"change"}, "candidates": {"context"}, "change": {"source-base", "source-head"}, "context": {"analysis", "memory"}, "memory": {"change"}, "readiness": {"analysis", "change", "verification"}, "source-base": nil, "source-head": nil, "verification": {"candidates"}}
@@ -404,13 +404,14 @@ func TestPlannerBrokerBoundaryMountedPreparedSource(t *testing.T) {
 		if len(f.failures) != 0 {
 			t.Fatalf("HTTP fixture refusals: %v", f.failures)
 		}
-		expected := []string{"GET /api/v3/app/installations/42", "POST /api/v3/app/installations/42/access_tokens"}
+		// The base task reads the merge base before acquiring it.
+		expected := []string{"GET /api/v3/app/installations/42", "POST /api/v3/app/installations/42/access_tokens", "GET /api/v3/repos/owner/repo/compare/" + strings.Repeat("a", 40) + "..." + strings.Repeat("b", 40) + "?per_page=1"}
 		expectedArchives := []string{}
 		for _, commit := range []string{strings.Repeat("a", 40), strings.Repeat("b", 40)} {
 			expected = append(expected, "GET /api/v3/repos/owner/repo/git/commits/"+commit, "GET /api/v3/repos/owner/repo/git/trees/"+f.tree+"?recursive=1", "GET /api/v3/repos/owner/repo/tarball/"+commit)
 			expectedArchives = append(expectedArchives, "GET /owner/repo/archive/"+commit)
 		}
-		if f.installationGETs != 1 || f.installationPOSTs != 1 || !reflect.DeepEqual(f.apiPaths, expected) || !reflect.DeepEqual(f.archivePaths, expectedArchives) || len(f.sourceHeaders) != 6 || len(f.archiveHeaders) != 2 {
+		if f.installationGETs != 1 || f.installationPOSTs != 1 || !reflect.DeepEqual(f.apiPaths, expected) || !reflect.DeepEqual(f.archivePaths, expectedArchives) || len(f.sourceHeaders) != 7 || len(f.archiveHeaders) != 2 {
 			t.Fatal("actual prepared tasks did not consume one native issued grant in order")
 		}
 		for _, header := range f.sourceHeaders {

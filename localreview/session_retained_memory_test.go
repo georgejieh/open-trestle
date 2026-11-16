@@ -231,6 +231,7 @@ func TestRetainedSessionFreshGraphsUseActualRetrievedAdvice(t *testing.T) {
 				t.Fatal("native nine-task run did not finish once")
 			}
 		}
+		assertFindingGuidance(t, r)
 		rmResultBounds(t, r, path, true)
 		m, a := rmReadMemory(t, s, p, o.Clock.Now())
 		if m.RetrieverIdentity() != inputID || m.MemoryScopeIdentity() != w.Scope.Identity || m.PolicyIdentity() != o.Policy.ReviewPolicyIdentity() || len(m.Queries()) != 1 || m.Queries()[0].Path() != "a.go" || len(m.Omissions()) != 0 {
@@ -251,7 +252,7 @@ func TestRetainedSessionFreshGraphsUseActualRetrievedAdvice(t *testing.T) {
 		_, gc := f.generation.snapshot()
 		_, vc := f.verification.snapshot()
 		g, v := gc[len(gc)-1], vc[len(vc)-1]
-		if g.ContextID != r.wire.Context || g.RequestID != r.wire.GenerationRequest || v.ContextID != r.wire.VerificationContext || v.RequestID != r.wire.VerificationRequest || v.Packet.GenerationContext != g.ContextID || v.Packet.CandidateBatch != r.wire.CandidateBatch || g.Packet.Scope != p.Plan().Scope().Identity() || v.Packet.Scope != g.Packet.Scope {
+		if g.ContextID != r.wire.Context || g.RequestID == r.wire.GenerationRequest || v.ContextID != r.wire.VerificationContext || v.RequestID == "" || v.RequestID == r.wire.VerificationRequest || v.Packet.GenerationContext != g.ContextID || v.Packet.CandidateBatch != r.wire.CandidateBatch || g.Packet.Scope != p.Plan().Scope().Identity() || v.Packet.Scope != g.Packet.Scope {
 			t.Fatal("actual independent requests lost context/candidate lineage")
 		}
 		rmRecordInPacket(t, g.Packet, w, m)
@@ -706,5 +707,15 @@ func TestRetainedSessionNilIdentityAndResourceControls(t *testing.T) {
 				t.Fatal("bound failure gained external attempt")
 			}
 		})
+	}
+}
+
+func TestLocalReadbackTimeoutIsBoundedByReviewTimeout(t *testing.T) {
+	for _, test := range []struct{ configured, want time.Duration }{
+		{time.Second, 2 * time.Second}, {5 * time.Second, 5 * time.Second}, {time.Minute, 30 * time.Second},
+	} {
+		if got := localReadbackTimeout(test.configured); got != test.want {
+			t.Fatalf("localReadbackTimeout(%s)=%s want %s", test.configured, got, test.want)
+		}
 	}
 }

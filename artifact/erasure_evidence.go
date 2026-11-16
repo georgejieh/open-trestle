@@ -3,7 +3,6 @@ package artifact
 import (
 	"bytes"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -53,14 +52,7 @@ func responseFromEvidence(e ErasureEvidence) (attemptResponseRecord, error) {
 	if e.Kind() != "response" {
 		return attemptResponseRecord{}, ErrInvalidErasureContract
 	}
-	if err := e.Validate(); err != nil {
-		return attemptResponseRecord{}, err
-	}
-	var response attemptResponseRecord
-	if err := json.Unmarshal(e.RecordBytes(), &response); err != nil {
-		return attemptResponseRecord{}, ErrInvalidErasureContract
-	}
-	return response, nil
+	return e.validate()
 }
 
 func exactFenceResponse(op ErasureOperation, r attemptResponseRecord) error {

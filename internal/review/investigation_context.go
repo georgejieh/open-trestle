@@ -25,9 +25,20 @@ import (
 var ErrInvestigationContext = errors.New("invalid investigation context claims")
 
 const investigationSchemaIdentity = "77367fd94611f87d36e4490729096db927b8d27b9d687a4b6ab515db70e2bbc4"
+
+// investigationInstructionsIdentity pins the recorded version 4 text.
 const investigationInstructionsIdentity = "990e881d4038ea3c222c4c0aed5b6dad7dbff547faa5f30ff067b3ac18072c8c"
 
+// investigationInstructionsV5Identity pins the recorded version 5 text.
+const investigationInstructionsV5Identity = "f5c77f4a3d7c06310e10a4b64280d1b8a3376515352376b253af2d862a911f08"
+
+// investigationInstructionsV6Identity pins the executable version 6 text.
+const investigationInstructionsV6Identity = "dd2f63c1863cb4398a73fa7d516fc35c9c60668e7036284092efb5e698a818fc"
+
 func InvestigationOutputSchema() []byte { return reviewschema.InvestigationOutputSchema() }
+
+// InvestigationInstructions returns the pinned version 4 investigation rules.
+// They are the recorded version 4 contract and the rule body of version 5.
 func InvestigationInstructions() string { return reviewschema.InvestigationInstructions() }
 
 // InvestigationRouteContextClaim describes routing data, not approval or a claim.
@@ -78,9 +89,11 @@ func NewInvestigationContextBinding(o InvestigationContextBindingOptions) (Inves
 	if !investigationPacketMatches(o.InitialContext, o.InitialSnapshot, o.Scope.Identity(), o.HeadManifestIdentity) {
 		return InvestigationContextBinding{}, ErrInvestigationContext
 	}
+	// An investigation starts from changed code: a changed hunk, or the
+	// removed text of a change that only removes files.
 	foundChanged := false
 	for _, source := range o.InitialContext.sources {
-		if source.Stage() == ContextStageChangedHunk {
+		if source.Stage() == ContextStageChangedHunk || source.Stage() == ContextStageRemovedLines {
 			foundChanged = true
 		}
 	}
@@ -186,7 +199,10 @@ func investigationPacketMatches(p ContextPacket, s ReviewSnapshot, scope, manife
 	if sourceBytes > uint64(p.limits.MaxSourceBytes()) {
 		return false
 	}
-	if len(s.ranges) == 0 || len(s.ranges) > maxSelectedContextSources || len(p.sources) == 0 || len(p.sources) > maxSelectedContextSources || s.Validate() != nil || p.Validate() != nil || p.ReviewScopeIdentity() != scope || p.SnapshotIdentity() != s.Identity() || p.Task() != ContextTaskCandidateGeneration || p.MemoryItemCount() != 0 || p.limits.MaxMemoryItems() != 0 || len(s.ranges) != len(p.sources) {
+	// A snapshot may hold no head range only for a change that only removes
+	// files: every source is then removed text, which the loop below admits
+	// only when it names no head line.
+	if len(s.ranges) > maxSelectedContextSources || len(p.sources) == 0 || len(p.sources) > maxSelectedContextSources || s.Validate() != nil || p.Validate() != nil || p.ReviewScopeIdentity() != scope || p.SnapshotIdentity() != s.Identity() || p.Task() != ContextTaskCandidateGeneration || p.MemoryItemCount() != 0 || p.limits.MaxMemoryItems() != 0 {
 		return false
 	}
 	type rangeWire struct {
@@ -198,19 +214,40 @@ func investigationPacketMatches(p ContextPacket, s ReviewSnapshot, scope, manife
 	byRange := map[evidence.SourceRange]string{}
 	byPath := map[string]string{}
 	bindings := map[string]bool{}
+	headSources := 0
 	for _, source := range p.sources {
 		if !source.HasSliceBinding() || source.SliceBinding().Validate() != nil {
 			return false
 		}
 		binding := source.SliceBinding()
-		span := source.EvidenceItem().SourceRange()
-		file := binding.RepositoryFileIdentity()
-		if bindings[binding.Identity()] || byRange[span] != "" || byPath[span.Path()] != "" && byPath[span.Path()] != file {
+		if bindings[binding.Identity()] {
 			return false
 		}
 		bindings[binding.Identity()] = true
+		// Removed base lines are bound to the base file and carry base line
+		// numbers, so they are neither head ranges nor snapshot ranges.
+		if source.Stage() == ContextStageRemovedLines {
+			continue
+		}
+		headSources++
+		span := source.EvidenceItem().SourceRange()
+		file := binding.RepositoryFileIdentity()
+		if byRange[span] != "" || byPath[span.Path()] != "" && byPath[span.Path()] != file {
+			return false
+		}
 		byRange[span] = file
 		byPath[span.Path()] = file
+	}
+	if len(s.ranges) != headSources {
+		return false
+	}
+	// A deletion point's removed text is supplied only beside a head source of
+	// the same file; the removed text of an emptied or removed file has no
+	// head line and needs none.
+	for _, source := range p.sources {
+		if source.Stage() == ContextStageRemovedLines && source.HeadLine() != 0 && byPath[source.EvidenceItem().SourceRange().Path()] == "" {
+			return false
+		}
 	}
 	ranges := make([]rangeWire, len(s.ranges))
 	for i, span := range s.ranges {
@@ -280,8 +317,11 @@ func investigationAnnotationObject(payload []byte) (map[string]any, error) {
 	if decoder.Decode(&value) != nil || value == nil {
 		return nil, ErrInvestigationContext
 	}
-	if _, exists := value["artifact_identity"]; exists {
-		return nil, ErrInvestigationContext
+	// Both keys are added by the host when the result enters a request.
+	for _, key := range []string{"artifact_identity", "risk_flags"} {
+		if _, exists := value[key]; exists {
+			return nil, ErrInvestigationContext
+		}
 	}
 	canonical, err := json.Marshal(value)
 	if err != nil || !bytes.Equal(canonical, payload) {
@@ -417,6 +457,7 @@ func NewInvestigationGenerationContext(binding InvestigationContextBinding, sele
 			return InvestigationGenerationContext{}, ErrInvestigationContext
 		}
 		value["artifact_identity"] = annotation.artifactIdentity
+		value["risk_flags"] = contextRiskTokens(investigationResultRisks(value))
 		results = append(results, value)
 	}
 	if payloadBytes > state.ReturnedBytes {
@@ -439,8 +480,10 @@ func NewInvestigationGenerationContext(binding InvestigationContextBinding, sele
 }
 
 func encodeInvestigationContext(value InvestigationGenerationContext, results []any) ([]byte, error) {
-	schema, instructions := InvestigationOutputSchema(), InvestigationInstructions()
-	if investigationContextDigest(schema) != investigationSchemaIdentity || investigationContextDigest([]byte(instructions)) != investigationInstructionsIdentity {
+	schema, instructions := InvestigationOutputSchema(), investigationInstructionsV6
+	// The recorded version 4 and 5 texts keep their own pins; version 6 is
+	// pinned too, so no contract can drift unnoticed.
+	if investigationContextDigest(schema) != investigationSchemaIdentity || investigationContextDigest([]byte(InvestigationInstructions())) != investigationInstructionsIdentity || investigationContextDigest([]byte(investigationInstructionsV5)) != investigationInstructionsV5Identity || investigationContextDigest([]byte(instructions)) != investigationInstructionsV6Identity {
 		return nil, ErrInvestigationContext
 	}
 	legacy, err := encodeContextPacket(value.selected)
@@ -452,8 +495,12 @@ func encodeInvestigationContext(value InvestigationGenerationContext, results []
 		return nil, ErrInvestigationContext
 	}
 	set := func(key string, v any) { wire[key], _ = json.Marshal(v) }
-	set("schema_version", 4)
-	set("instructions", instructions)
+	set("schema_version", investigationContextVersion)
+	// Investigation version 6 sends its contract only in the trusted system
+	// channel; the payload binds it by instructions_identity and carries no
+	// instruction prose.
+	delete(wire, "instructions")
+	set("instructions_identity", modelInstructionsIdentity(instructions))
 	wire["output_schema"] = json.RawMessage(schema)
 	set("output_schema_identity", investigationSchemaIdentity)
 	set("tool_calls", "host_admitted_snapshot_read_v1")
@@ -472,6 +519,38 @@ func encodeInvestigationContext(value InvestigationGenerationContext, results []
 	}
 	return encoded, nil
 }
+
+// investigationResultRisks applies the source risk rules to one raw tool result
+// as the model sees it: the content rules to every string value, which covers
+// returned file text, search matches and paths, and the agent_configuration
+// path rule to every value of a "path" key. The flags mark the raw copy for
+// attention exactly as they mark sources; they never change the persisted tool
+// result record, suppress review, or grant authority.
+func investigationResultRisks(value any) ContextRisk {
+	var risks ContextRisk
+	var walk func(key string, value any)
+	walk = func(key string, value any) {
+		switch typed := value.(type) {
+		case map[string]any:
+			for name, item := range typed {
+				walk(name, item)
+			}
+		case []any:
+			for _, item := range typed {
+				walk(key, item)
+			}
+		case string:
+			path := ""
+			if key == "path" {
+				path = typed
+			}
+			risks |= detectSourceRisks(path, typed)
+		}
+	}
+	walk("", value)
+	return risks
+}
+
 func mustInvestigationJSON(value any) []byte { encoded, _ := json.Marshal(value); return encoded }
 func investigationContextDigest(value []byte) string {
 	sum := sha256.Sum256(value)
@@ -484,6 +563,38 @@ func (c InvestigationGenerationContext) Snapshot() ReviewSnapshot {
 func (c InvestigationGenerationContext) EvidenceItems() []evidence.EvidenceItem {
 	return c.selected.EvidenceItems()
 }
+
+// RemovedLinesEvidence returns the IDs of the selected removed_lines sources,
+// whose evidence lines are base lines outside the head snapshot.
+func (c InvestigationGenerationContext) RemovedLinesEvidence() map[string]struct{} {
+	ids := map[string]struct{}{}
+	for id := range c.removedLinesSources() {
+		ids[id] = struct{}{}
+	}
+	return ids
+}
+
+// removedLinesSources returns the selected removed_lines sources by ID, with
+// their head lines.
+func (c InvestigationGenerationContext) removedLinesSources() map[string]int {
+	removed := map[string]int{}
+	for _, source := range c.selected.sources {
+		if source.Stage() == ContextStageRemovedLines {
+			removed[source.ReferenceID()] = source.HeadLine()
+		}
+	}
+	return removed
+}
+
+// ParseInvestigationCandidateBatch strictly decodes the candidates of one
+// investigation turn against its exact context. A candidate located in a
+// removed_lines source is a base-side finding inside its base lines, with the
+// source's head line; the uncategorized batch then records sides. Base and
+// head lines never cover each other.
+func ParseInvestigationCandidateBatch(response provider.Response, context InvestigationGenerationContext) (CandidateBatch, error) {
+	return parseCandidateBatch(response, context.snapshot, context.selected.EvidenceItems(), 1, removedLinesAnchorRules(context.selected.sources))
+}
+
 func (c InvestigationGenerationContext) Validate() error {
 	canonical, err := NewInvestigationGenerationContext(c.binding, c.selected, c.snapshot, c.state)
 	if err != nil || c.identity != canonical.identity || c.payload != canonical.payload {
@@ -508,15 +619,27 @@ func NewInvestigationVerificationRequestContext(final InvestigationGenerationCon
 	for _, item := range p.EvidenceItems() {
 		allowed[item.ID()] = item
 	}
+	removed := final.removedLinesSources()
 	for _, candidate := range candidates.Findings() {
 		source, ok := allowed[candidate.SourceReferenceID()]
-		if !ok || !rangeContains(source.SourceRange(), candidate.SourceRange()) {
+		headLine, baseAnchor := removed[candidate.SourceReferenceID()]
+		if !ok || baseAnchor != (candidate.Side() == LineSideBase) || baseAnchor && candidate.HeadLine() != headLine || !rangeContains(source.SourceRange(), candidate.SourceRange()) {
 			return VerificationRequestContext{}, ErrInvestigationContext
 		}
+		// Cited evidence must cover the anchored lines on the same side: base
+		// line numbers never cover head lines, nor head line numbers base ones.
+		cited := false
 		for _, id := range candidate.EvidenceIDs() {
-			if _, ok := allowed[id]; !ok {
+			item, ok := allowed[id]
+			if !ok {
 				return VerificationRequestContext{}, ErrInvestigationContext
 			}
+			if _, baseLines := removed[id]; baseLines == baseAnchor {
+				cited = cited || rangeContains(item.SourceRange(), candidate.SourceRange())
+			}
+		}
+		if !cited {
+			return VerificationRequestContext{}, ErrInvestigationContext
 		}
 	}
 	legacy, err := encodeContextPacket(p)
@@ -541,7 +664,9 @@ func NewInvestigationVerificationRequestContext(final InvestigationGenerationCon
 	if err != nil {
 		return VerificationRequestContext{}, ErrInvestigationContext
 	}
-	coverage, err := newContextSourceCoverage(identity, p.ReviewScopeIdentity(), final.snapshot.Identity(), candidates.Identity(), wire.SourceCoverage.Analyzed, wire.SourceCoverage.Selected, wire.SourceCoverage.Omitted, summaries)
+	analyzed, omitted, instruction := changedSourceCoverage(wire.SourceCoverage, wire.SourceOmissions)
+	coverage, err := newContextSourceCoverage(identity, p.ReviewScopeIdentity(), final.snapshot.Identity(), candidates.Identity(), analyzed, wire.SourceCoverage.Selected, omitted, summaries)
+	coverage.instructionOmittedCount = instruction
 	if err != nil {
 		return VerificationRequestContext{}, ErrInvestigationContext
 	}

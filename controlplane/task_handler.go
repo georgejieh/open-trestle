@@ -287,7 +287,7 @@ func DispatchLeasedTask(ctx context.Context, catalog TaskHandlerCatalog, state R
 		return TaskCompletion{}, ErrInvalidTaskExecutionRequest
 	}
 	runtime, exists := state.Task(lease.TaskKey())
-	if !exists || !runtimeMatchesLease(runtime, lease) || at.UnixMilli() > runtime.leaseExpiresAtMillis {
+	if !exists || !runtimeMatchesLease(runtime, lease) || runtime.preparedEventIdentity != "" || at.UnixMilli() > runtime.leaseExpiresAtMillis {
 		return TaskCompletion{}, ErrRunTransitionLeaseMismatch
 	}
 	handler, exists := catalog.Resolve(task.HandlerIdentity())

@@ -228,17 +228,8 @@ func inspectResponseBody(r attemptResponseRecord, scope audit.ReviewScope) (resp
 	return labels, nil
 }
 
-func parseAttemptResponse(encoded []byte, ref ErasureOperationRef) (attemptResponseRecord, error) {
-	var r attemptResponseRecord
-	if !erasureMetadataDecode(encoded, maxEncodedAttemptResponseBytes, &r) {
-		return attemptResponseRecord{}, ErrInvalidErasureContract
-	}
-	if err := r.shape(); err != nil {
-		return attemptResponseRecord{}, err
-	}
-	if err := responseBodyShape(r); err != nil {
-		return attemptResponseRecord{}, err
-	}
+// bindAttemptResponse follows payload syntax checks and reference validation.
+func bindAttemptResponse(r attemptResponseRecord, ref ErasureOperationRef) (attemptResponseRecord, error) {
 	labels, err := inspectResponseBody(r, ref.Scope())
 	if err != nil {
 		return attemptResponseRecord{}, err

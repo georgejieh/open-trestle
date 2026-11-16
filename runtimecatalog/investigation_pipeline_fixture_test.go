@@ -21,6 +21,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/internal/scm"
+	"github.com/georgejieh/open-trestle/internal/testsupport"
 	"github.com/georgejieh/open-trestle/runtimecatalog"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 	"github.com/georgejieh/open-trestle/worker"
@@ -28,6 +29,15 @@ import (
 
 const bridgeNotes = "deployment notes\r\nConsume is enabled for zero-valued requests.\r\nnot selected by symbol analysis\n"
 const bridgeLine = "Consume is enabled for zero-valued requests.\r\n"
+
+// The removed-lines modes review a change that only removes the zero guard
+// of a.go: its deletion point has head context and removed base lines.
+const (
+	bridgeDeletionBase = "package p\nfunc Changed(x int) int {\n\tif x == 0 {\n\t\treturn 0\n\t}\n\treturn 10 / x\n}\n"
+	bridgeDeletionHead = "package p\nfunc Changed(x int) int {\n\treturn 10 / x\n}\n"
+)
+
+func bridgeDeletionMode(mode string) bool { return strings.HasPrefix(mode, "removed-lines") }
 
 var errBridgeInjected = errors.New("injected operation failure")
 
@@ -93,6 +103,8 @@ func (tr *bridgeTrace) eventsCopy() []string {
 type bridgeObservedHandler struct {
 	controlplane.TaskHandler
 	trace *bridgeTrace
+	// replace, when set for a task key, runs instead of the actual handler.
+	replace map[string]func(context.Context, controlplane.TaskExecutionRequest) controlplane.TaskCompletion
 }
 
 func (h *bridgeObservedHandler) Execute(ctx context.Context, request controlplane.TaskExecutionRequest) controlplane.TaskCompletion {
@@ -105,7 +117,12 @@ func (h *bridgeObservedHandler) Execute(ctx context.Context, request controlplan
 	h.trace.contexts[key], h.trace.requests[key] = ctx, request
 	h.trace.eventLocked("execute:" + key)
 	h.trace.mu.Unlock()
-	completion := h.TaskHandler.Execute(ctx, request)
+	var completion controlplane.TaskCompletion
+	if replacement := h.replace[key]; replacement != nil {
+		completion = replacement(ctx, request)
+	} else {
+		completion = h.TaskHandler.Execute(ctx, request)
+	}
 	h.trace.mu.Lock()
 	h.trace.completions[key] = completion
 	h.trace.eventLocked("returned:" + key)
@@ -335,8 +352,14 @@ func bridgeFailedDispatch() gateway.RouteDispatchResult {
 }
 func (d *bridgeDispatcher) DispatchRoute(ctx context.Context, request gateway.RouteDispatchRequest) gateway.RouteDispatchResult {
 	m := d.models
+	requestPayload := request.Request().Payload()
+	if sanitized, err := review.SanitizedVerificationPayload(request.Request(), request.Authorization().ReviewScopeIdentity()); err == nil {
+		requestPayload = sanitized
+	} else if local, err := review.LocalVerificationPayload(request.Request(), request.Authorization().ReviewScopeIdentity(), request.Authorization().RouteReference().Zone()); err == nil {
+		requestPayload = local
+	}
 	var packet bridgePacket
-	if request.Validate() != nil || json.Unmarshal(request.Request().Payload(), &packet) != nil || ctx.Value(bridgeRunKey{}) != "foreground" || ctx.Err() != nil {
+	if request.Validate() != nil || json.Unmarshal(requestPayload, &packet) != nil || ctx.Value(bridgeRunKey{}) != "foreground" || ctx.Err() != nil {
 		m.t.Error("provider lost actual request or foreground run context")
 		return bridgeFailedDispatch()
 	}
@@ -392,31 +415,47 @@ func (d *bridgeDispatcher) document(p bridgePacket) (map[string]any, error) {
 	fail := func() (map[string]any, error) {
 		return nil, fmt.Errorf("actual investigation request lost source or turn lineage")
 	}
-	var changed requiredRequestSource
+	// In the removed-lines modes a.go also has a removed_lines source: the
+	// zero guard the change removed, at its base lines.
+	deletion := bridgeDeletionMode(d.models.mode)
+	var changed, removed, notes requiredRequestSource
 	ids := []string{}
 	for _, s := range p.Sources {
-		if s.Path == "a.go" {
+		if s.Path == "a.go" && s.Stage == "removed_lines" {
+			removed = s
+		} else if s.Path == "a.go" {
 			changed = s
+		}
+		if s.Path == "a.go" {
 			ids = append(ids, s.ID)
 		}
 		if s.Path == "notes.txt" {
 			if s.Content != bridgeLine || s.StartLine != 2 || s.EndLine != 2 {
 				return fail()
 			}
+			notes = s
 			ids = append(ids, s.ID)
 		}
 	}
-	if changed.ID == "" || !strings.Contains(changed.Content, "return 10 / x") {
+	extra := 0
+	if deletion {
+		extra = 1
+	}
+	if changed.ID == "" || !strings.Contains(changed.Content, "return 10 / x") || deletion != (removed.ID != "") || deletion && removed.Content != "\tif x == 0 {\n\t\treturn 0\n\t}\n" {
 		return fail()
 	}
 	if p.Task == "candidate_verification" {
-		if d.adapter != "adapter-b" || p.Version != 3 || p.GenerationContext == "" || p.CandidateBatch == "" || len(ids) != 2 || len(p.Candidates) != 1 {
+		if d.adapter != "adapter-b" || p.Version != 8 || p.GenerationContext == "" || p.CandidateBatch == "" || len(ids) != 2+extra || len(p.Candidates) != 1 {
 			return fail()
 		}
-		return map[string]any{"schema_version": 1, "verdicts": []any{map[string]any{"candidate_id": p.Candidates[0].ID, "outcome": "verified", "severity": "high", "rationale": "The division guard is absent and the cited deployment text enables zero requests.", "evidence_ids": ids}}}, nil
+		cited := ids
+		if deletion {
+			cited = []string{removed.ID, notes.ID}
+		}
+		return map[string]any{"schema_version": 1, "verdicts": []any{map[string]any{"candidate_id": p.Candidates[0].ID, "outcome": "verified", "severity": "high", "rationale": "The division guard is absent and the cited deployment text enables zero requests.", "evidence_ids": cited}}}, nil
 	}
 	s := p.Investigation
-	if d.adapter != "adapter-a" || p.Task != "candidate_generation" || p.Version != 4 || s.MemoryState != "empty_not_ingested" || s.Session == "" || s.Policy == "" {
+	if d.adapter != "adapter-a" || p.Task != "candidate_generation" || p.Version != 6 || s.MemoryState != "empty_not_ingested" || s.Session == "" || s.Policy == "" {
 		return fail()
 	}
 	var ref string
@@ -444,7 +483,7 @@ func (d *bridgeDispatcher) document(p bridgePacket) (map[string]any, error) {
 	call := map[string]any{"call_id": "list-1", "tool": "snapshot.list", "snapshot_ref": s.SnapshotRef}
 	switch s.Turn {
 	case 1:
-		if len(ids) != 1 || len(s.Results) != 0 || s.PreviousRequest != "" || s.PreviousOutcome != "" {
+		if len(ids) != 1+extra || len(s.Results) != 0 || s.PreviousRequest != "" || s.PreviousOutcome != "" {
 			return fail()
 		}
 	case 2:
@@ -458,8 +497,12 @@ func (d *bridgeDispatcher) document(p bridgePacket) (map[string]any, error) {
 		}
 		call = map[string]any{"call_id": "search-1", "tool": "snapshot.search", "snapshot_ref": s.SnapshotRef, "file_refs": []string{ref}, "literal": "zero-valued"}
 	case 4:
-		if !searched || len(ids) != 2 {
+		if !searched || len(ids) != 2+extra {
 			return fail()
+		}
+		if deletion {
+			// The finding is on the removed guard: a base-side finding.
+			return map[string]any{"schema_version": 1, "candidates": []any{map[string]any{"title": "Removed zero guard", "claim": "Deployment enables zero requests and the change removed the guard before the division.", "severity_hint": "high", "source_range": map[string]any{"source_id": removed.ID, "start_line": removed.StartLine, "end_line": removed.EndLine}, "evidence_ids": []string{removed.ID, notes.ID}}}}, nil
 		}
 		return map[string]any{"schema_version": 1, "candidates": []any{map[string]any{"title": "Enabled zero requests panic", "claim": "Deployment enables zero requests while Changed divides without a guard.", "severity_hint": "high", "source_range": map[string]any{"source_id": changed.ID, "start_line": 2, "end_line": 2}, "evidence_ids": ids}}}, nil
 	default:
@@ -477,7 +520,13 @@ func bridgePricedRuntime(t *testing.T) (runtimeconfig.RuntimePolicy, runtimeconf
 	requiredCheck(t, err)
 	definitions := []runtimeconfig.RouteDefinition{}
 	for _, candidate := range original.Candidates() {
-		route := candidate.ResolvedRecord().RouteRegistryRecord().RouteCandidateDeclaration().RouteCapabilityDeclaration().RouteReference()
+		originalRoute := candidate.ResolvedRecord().RouteRegistryRecord().RouteCandidateDeclaration().RouteCapabilityDeclaration().RouteReference()
+		modelVersion := originalRoute.ModelVersion()
+		if modelVersion == "" {
+			modelVersion = "1"
+		}
+		route, err := provider.NewRouteReference(provider.ProviderZoneLocal, originalRoute.ProviderID(), originalRoute.AdapterID(), originalRoute.ConnectionID(), originalRoute.ModelID(), modelVersion)
+		requiredCheck(t, err)
 		definitions = append(definitions, runtimeconfig.RouteDefinition{Route: route, Capabilities: capabilities, ContentLogging: provider.ContentLoggingDisabled, Pricing: price, Quality: provider.RouteQualityTier3, RegistryRevision: 7, RegistryStatus: provider.RouteRegistryApproved, EvidenceManifest: []byte(`{"fixture":"priced investigation contract"}`), OperationalRevision: 9, Health: provider.RouteHealthHealthy, Quota: provider.RouteQuotaAvailable, PerformanceRevision: 11, P95LatencyMilliseconds: 2500, LatencySampleCount: 100})
 	}
 	inventory, err := runtimeconfig.NewRouteInventory(context.Background(), definitions)
@@ -489,10 +538,10 @@ func bridgePricedRuntime(t *testing.T) (runtimeconfig.RuntimePolicy, runtimeconf
 	}
 	payload, err := json.Marshal(map[string]any{
 		"schema_version": 1, "inventory_identity": inventory.Identity(), "review_policy_identity": baseline.ReviewPolicyIdentity(),
-		"min_context_tokens": 32000, "min_output_tokens": 4096, "required_features": []string{"structured_output"}, "classification": "confidential", "allowed_zones": []string{"private_remote"}, "content_logging_allowed": false,
+		"min_context_tokens": 32000, "min_output_tokens": 4096, "required_features": []string{"structured_output"}, "classification": "confidential", "allowed_zones": []string{"local"}, "content_logging_allowed": false,
 		"estimated_input_tokens": 1000, "max_output_tokens": 4096, "max_cost_micro_usd": 1000000, "pinned_route_record_identity": records["adapter-a"], "preferred_route_record_identities": []string{records["adapter-b"]}, "verification_independence": "distinct_provider",
 		"publication_minimum_severity": "medium", "publication_max_inline_findings": 20, "publication_minimum_independence": "distinct_provider", "publication_block_on_inconclusive": true,
-		"connections": []map[string]string{{"implementation": "openai_responses", "adapter_id": "adapter-a", "endpoint": "https://provider-a.invalid", "credential_environment": "OPEN_TRESTLE_PROVIDER_FIXTURE_A"}, {"implementation": "openai_responses", "adapter_id": "adapter-b", "endpoint": "https://provider-b.invalid", "credential_environment": "OPEN_TRESTLE_PROVIDER_FIXTURE_B"}},
+		"connections": []map[string]string{{"implementation": "openai_responses", "adapter_id": "adapter-a", "endpoint": "http://127.0.0.1:11434/v1", "credential_environment": "OPEN_TRESTLE_PROVIDER_FIXTURE_A"}, {"implementation": "openai_responses", "adapter_id": "adapter-b", "endpoint": "http://127.0.0.1:11435/v1", "credential_environment": "OPEN_TRESTLE_PROVIDER_FIXTURE_B"}},
 	})
 	requiredCheck(t, err)
 	configuration, err := runtimeconfig.DecodeRuntimePolicy(context.Background(), bytes.NewReader(payload), inventory)
@@ -521,9 +570,13 @@ type bridgeFixture struct {
 	control       *bridgeControl
 	runner        *worker.Runner
 	models        *bridgeModels
+	observed      []*bridgeObservedHandler
 }
 
 func newBridgeFixture(t *testing.T, mode string) *bridgeFixture {
+	return newBridgeFixtureWithScanner(t, mode, testsupport.NewCleanPublicationScanner())
+}
+func newBridgeFixtureWithScanner(t *testing.T, mode string, scanner review.PublicationContentScanner) *bridgeFixture {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.WithValue(context.Background(), bridgeRunKey{}, "foreground"), 30*time.Second)
 	f := &bridgeFixture{t: t, ctx: ctx, cancel: cancel, trace: newBridgeTrace(), gate: newBridgeGate(), clock: bridgeClock{}}
@@ -572,7 +625,11 @@ func newBridgeFixture(t *testing.T, mode string) *bridgeFixture {
 		requiredCheck(t, err)
 		return scm.SourceAdapterResult{Outcome: evidence.AcquisitionOutcomeAcquired, Reason: evidence.AcquisitionReasonNone, Manifest: manifest, Contents: contents}
 	}
-	source := &bridgeSource{identity: identity, trace: f.trace, gate: f.gate, mode: mode, keys: map[string]string{base.Identity(): "source-base", head.Identity(): "source-head"}, results: map[string]scm.SourceAdapterResult{base.Identity(): acquired("package p\nfunc Changed(x int) int { if x == 0 { return 0 }; return 10 / x }\n"), head.Identity(): acquired("package p\nfunc Changed(x int) int { return 10 / x }\n")}}
+	baseBody, headBody := "package p\nfunc Changed(x int) int { if x == 0 { return 0 }; return 10 / x }\n", "package p\nfunc Changed(x int) int { return 10 / x }\n"
+	if bridgeDeletionMode(mode) {
+		baseBody, headBody = bridgeDeletionBase, bridgeDeletionHead
+	}
+	source := &bridgeSource{identity: identity, trace: f.trace, gate: f.gate, mode: mode, keys: map[string]string{base.Identity(): "source-base", head.Identity(): "source-head"}, results: map[string]scm.SourceAdapterResult{base.Identity(): acquired(baseBody), head.Identity(): acquired(headBody)}}
 	f.models = &bridgeModels{t: t, gate: f.gate, mode: mode}
 	dispatchers, err := gateway.NewRouteDispatcherCatalog([]gateway.RouteDispatcher{&bridgeDispatcher{f.models, "adapter-a"}, &bridgeDispatcher{f.models, "adapter-b"}})
 	requiredCheck(t, err)
@@ -582,7 +639,7 @@ func newBridgeFixture(t *testing.T, mode string) *bridgeFixture {
 	requiredCheck(t, err)
 	profile, err := runtimecatalog.NewInvestigationProfileFromRuntimePolicy(configuration, inventory, policy, dispatchers.Identity())
 	requiredCheck(t, err)
-	f.catalog, f.bridge, err = runtimecatalog.NewInvestigationPipelineCatalog(profile, runtimecatalog.InvestigationCatalogOptions{Store: f.store, Diagnostics: f.diagnostics, Ledger: f.ledger, Journal: f.journal, Clock: f.clock, Dispatchers: dispatchers, Source: source})
+	f.catalog, f.bridge, err = runtimecatalog.NewInvestigationPipelineCatalog(profile, runtimecatalog.InvestigationCatalogOptions{Store: f.store, Diagnostics: f.diagnostics, Ledger: f.ledger, Journal: f.journal, Clock: f.clock, Dispatchers: dispatchers, Source: source, PublicationScanner: scanner})
 	requiredCheck(t, err)
 	scope, err := audit.NewReviewScope("tenant-a", "repo-a", "bridge-run")
 	requiredCheck(t, err)
@@ -618,7 +675,9 @@ func newBridgeFixture(t *testing.T, mode string) *bridgeFixture {
 		if !ok {
 			t.Fatal("actual catalog handler unavailable")
 		}
-		handlers = append(handlers, &bridgeObservedHandler{handler, f.trace})
+		observedHandler := &bridgeObservedHandler{TaskHandler: handler, trace: f.trace, replace: map[string]func(context.Context, controlplane.TaskExecutionRequest) controlplane.TaskCompletion{}}
+		f.observed = append(f.observed, observedHandler)
+		handlers = append(handlers, observedHandler)
 	}
 	observed, err := controlplane.NewTaskHandlerCatalog(handlers)
 	requiredCheck(t, err)

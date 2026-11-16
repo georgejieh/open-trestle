@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 func TestOpenRejectsUnsafeRemoteTransportBeforeConnecting(t *testing.T) {
@@ -21,5 +23,23 @@ func TestOpenRejectsUnboundedPoolOptions(t *testing.T) {
 	database, err := Open(context.Background(), "postgres://user:password@127.0.0.1/reviews?sslmode=disable", options)
 	if database != nil || !errors.Is(err, ErrInvalidDatabase) {
 		t.Fatalf("database=%v err=%v", database, err)
+	}
+}
+
+func TestOpenRejectsSimpleQueryProtocolBeforeConnecting(t *testing.T) {
+	dataSource := "postgres://user:password@127.0.0.1/reviews?sslmode=disable&default_query_exec_mode=simple_protocol"
+	database, err := Open(context.Background(), dataSource, PoolOptions{})
+	if database != nil || !errors.Is(err, ErrInvalidDatabase) {
+		t.Fatalf("database=%v err=%v", database, err)
+	}
+}
+
+func TestPgxDefaultQueryModeUsesExtendedProtocol(t *testing.T) {
+	config, err := pgx.ParseConfig("postgres://user:password@127.0.0.1/reviews?sslmode=disable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.DefaultQueryExecMode != pgx.QueryExecModeCacheStatement {
+		t.Fatalf("default query mode = %v", config.DefaultQueryExecMode)
 	}
 }

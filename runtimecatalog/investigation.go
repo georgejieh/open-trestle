@@ -59,18 +59,22 @@ func NewInvestigationProfileFromRuntimePolicy(configuration runtimeconfig.Runtim
 	if err != nil {
 		return model.InvestigationPipelineProfile{}, ErrInvalidInvestigationCatalog
 	}
-	routing := model.InvestigationRoutingOptions{RegistryRevision: inventory.RegistryRevision(), PerformanceRevision: inventory.PerformanceRevision(), Generation: generation, Verification: verification, Observations: inventory.PerformanceObservations(), VerificationRanking: ranking, Requirements: configuration.Requirements(), Constraints: configuration.Constraints(), Budget: budget, Independence: configuration.Independence()}
+	// Each role reserves for the request wire its own routes send.
+	routing := model.InvestigationRoutingOptions{RegistryRevision: inventory.RegistryRevision(), PerformanceRevision: inventory.PerformanceRevision(), Generation: generation, Verification: verification, Observations: inventory.PerformanceObservations(), VerificationRanking: ranking, Requirements: configuration.Requirements(), Constraints: configuration.Constraints(), Budget: budget, Independence: configuration.Independence(), GenerationTransport: configuration.ModelRequestTransport([]gateway.ObservedRouteCandidate{generation}), VerificationTransport: configuration.ModelRequestTransport(verification)}
 	return model.NewInvestigationPipelineProfile(model.InvestigationPipelineProfileOptions{RuntimePolicyIdentity: configuration.Identity(), InventoryIdentity: inventory.Identity(), ReviewPolicyIdentity: configuration.ReviewPolicyIdentity(), PublicationPolicyIdentity: configuration.Publication().Identity(), PublicationPolicy: configuration.Publication(), DispatcherCatalogIdentity: catalogIdentity, Policy: policy, Routing: routing})
 }
 
 type InvestigationCatalogOptions struct {
-	Store       artifact.Store
-	Diagnostics diagnostics.Store
-	Ledger      audit.Ledger
-	Journal     controlplane.RunJournal
-	Clock       artifact.Clock
-	Dispatchers gateway.RouteDispatcherCatalog
-	Source      scm.SourceAdapter
+	Store              artifact.Store
+	Diagnostics        diagnostics.Store
+	Ledger             audit.Ledger
+	Journal            controlplane.RunJournal
+	Clock              artifact.Clock
+	Dispatchers        gateway.RouteDispatcherCatalog
+	Source             scm.SourceAdapter
+	PublicationScanner review.PublicationContentScanner
+	// PlanningRefusals, when set, observes investigation turn planning refusals.
+	PlanningRefusals func(error)
 }
 
 // NewInvestigationPipelineCatalog creates actual inert handlers, not a parallel engine.
@@ -92,7 +96,11 @@ func NewInvestigationPipelineCatalog(profile model.InvestigationPipelineProfile,
 	if err != nil {
 		return PipelineCatalog{}, nil, err
 	}
-	bridge, err := model.NewInvestigationPipeline(model.InvestigationPipelineOptions{Profile: profile, Store: o.Store, Ledger: o.Ledger, Journal: o.Journal, Clock: o.Clock, Catalog: o.Dispatchers, Source: o.Source, Support: model.InvestigationSupportBindings{Change: changes.HandlerIdentity(), Analysis: analyses.HandlerIdentity(), Memory: memories.HandlerIdentity()}})
+	publicationScanner := o.PublicationScanner
+	if publicationScanner == nil {
+		publicationScanner = review.NewFixedPublicationContentScanner()
+	}
+	bridge, err := model.NewInvestigationPipeline(model.InvestigationPipelineOptions{Profile: profile, Store: o.Store, Ledger: o.Ledger, Journal: o.Journal, Clock: o.Clock, Catalog: o.Dispatchers, Source: o.Source, Support: model.InvestigationSupportBindings{Change: changes.HandlerIdentity(), Analysis: analyses.HandlerIdentity(), Memory: memories.HandlerIdentity(), PublicationScanner: publicationScanner.Identity()}, PlanningRefusals: o.PlanningRefusals})
 	if err != nil {
 		return PipelineCatalog{}, nil, err
 	}
@@ -112,7 +120,7 @@ func NewInvestigationPipelineCatalog(profile model.InvestigationPipelineProfile,
 	if err != nil {
 		return PipelineCatalog{}, nil, err
 	}
-	readiness, err := publication.NewInvestigationReadinessHandler(o.Store, o.Diagnostics, o.Clock, profile.ReviewPolicyIdentity(), profile.PublicationPolicy(), bridge)
+	readiness, err := publication.NewInvestigationReadinessHandler(o.Store, o.Diagnostics, o.Clock, profile.ReviewPolicyIdentity(), profile.PublicationPolicy(), bridge, publicationScanner)
 	if err != nil {
 		return PipelineCatalog{}, nil, err
 	}

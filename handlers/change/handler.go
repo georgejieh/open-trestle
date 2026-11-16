@@ -16,10 +16,14 @@ import (
 	"github.com/georgejieh/open-trestle/artifact"
 	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/handlers/source"
+	"github.com/georgejieh/open-trestle/internal/changecodec"
 	"github.com/georgejieh/open-trestle/internal/evidence"
+	"github.com/georgejieh/open-trestle/internal/sourceoutput"
 )
 
 const maximumLoadedSourceBytes = 256 << 20
+
+var ErrInvalidHandler = errors.New("invalid change model handler")
 
 type Handler struct {
 	identity string
@@ -57,7 +61,7 @@ func deriveHandlerIdentity() string {
 	encoded, _ := json.Marshal(struct {
 		Contract      string `json:"contract"`
 		SchemaVersion int    `json:"schema_version"`
-	}{"open-trestle/change-model-handler", 2})
+	}{"open-trestle/change-model-handler", 3})
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }
@@ -67,9 +71,12 @@ type loadedSnapshot struct {
 	snapshot      source.Snapshot
 	inputArtifact artifact.Artifact
 	input         source.Input
-	manifest      evidence.RepositoryManifest
-	contents      map[string][]byte
-	bytes         int
+	// revision is the acquired commit: the input's revision, or the merge
+	// base a merge-base input's snapshot recorded.
+	revision evidence.RevisionIdentity
+	manifest evidence.RepositoryManifest
+	contents map[string][]byte
+	bytes    int
 }
 
 func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutionRequest) controlplane.TaskCompletion {
@@ -93,6 +100,13 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 		return failure(readFailure(ctx, err))
 	}
 	defer clearContents(head.contents)
+	// Only the base may be derived, and only from the head this run acquires.
+	if derivation, derived := base.snapshot.Derivation(); derived && derivation.HeadIdentity() != head.revision.Identity() {
+		return failure(controlplane.RunFailureInvalidInput)
+	}
+	if _, derived := head.input.MergeBaseHead(); derived {
+		return failure(controlplane.RunFailureInvalidInput)
+	}
 	if base.bytes+head.bytes > maximumLoadedSourceBytes || base.input.Repository().Identity() != head.input.Repository().Identity() || base.input.SourceAdapterIdentity() != head.input.SourceAdapterIdentity() || base.artifact.Classification() != head.artifact.Classification() || base.artifact.Protection() != head.artifact.Protection() {
 		return failure(controlplane.RunFailureInvalidInput)
 	}
@@ -101,7 +115,7 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 		return failure(controlplane.RunFailureInternal)
 	}
 	entries := delta.Entries()
-	if len(entries) > maximumChangedEntries {
+	if len(entries) > changecodec.MaxChangedEntries {
 		return failure(controlplane.RunFailureResourceLimit)
 	}
 	executions := make([]evidence.RepositoryFileDeltaExecution, len(entries))
@@ -129,11 +143,11 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 			}
 		}
 	}
-	result, err := newResult(base.artifact, head.artifact, base.snapshot, head.snapshot, base.input.Repository(), base.input.Revision(), head.input.Revision(), delta, executions, extra)
+	result, err := changecodec.NewResult(base.artifact, head.artifact, base.snapshot, head.snapshot, base.input.Repository(), base.revision, head.revision, delta, executions, extra)
 	if err != nil {
 		return failure(controlplane.RunFailureInternal)
 	}
-	payload, err := encodeResult(result)
+	payload, err := changecodec.EncodeResult(result)
 	if err != nil {
 		return failure(controlplane.RunFailureResourceLimit)
 	}
@@ -178,7 +192,11 @@ func (h *Handler) load(ctx context.Context, request controlplane.TaskExecutionRe
 		return loadedSnapshot{}, err
 	}
 	input, err := source.ParseInput(inputArtifact.Payload())
-	if err != nil || inputArtifact.Kind() != artifact.KindTaskInput || inputArtifact.Origin() != artifact.OriginHost || inputArtifact.Classification() != snapshotArtifact.Classification() || inputArtifact.Protection() != snapshotArtifact.Protection() || input.Repository().Identity() != snapshot.RepositoryIdentity() || input.Revision().Identity() != snapshot.RevisionIdentity() || input.SourceAdapterIdentity() != snapshot.SourceAdapterIdentity() {
+	if err != nil || inputArtifact.Kind() != artifact.KindTaskInput || inputArtifact.Origin() != artifact.OriginHost || inputArtifact.Classification() != snapshotArtifact.Classification() || inputArtifact.Protection() != snapshotArtifact.Protection() || input.Repository().Identity() != snapshot.RepositoryIdentity() || input.SourceAdapterIdentity() != snapshot.SourceAdapterIdentity() {
+		return loadedSnapshot{}, ErrInvalidResult
+	}
+	revision, ok := acquiredRevision(input, snapshot)
+	if !ok {
 		return loadedSnapshot{}, ErrInvalidResult
 	}
 	files := make([]evidence.RepositoryFile, 0, snapshot.FileCount())
@@ -217,7 +235,23 @@ func (h *Handler) load(ctx context.Context, request controlplane.TaskExecutionRe
 		return loadedSnapshot{}, ErrInvalidResult
 	}
 	success = true
-	return loadedSnapshot{snapshotArtifact, snapshot, inputArtifact, input, manifest, contents, total}, nil
+	return loadedSnapshot{snapshotArtifact, snapshot, inputArtifact, input, revision, manifest, contents, total}, nil
+}
+
+// acquiredRevision returns the commit a snapshot holds for its input. An
+// input that names its revision needs a plain snapshot of exactly that
+// revision; a merge-base input needs a snapshot whose recorded derivation
+// matches its requested base and head and whose revision is that merge base.
+func acquiredRevision(input source.Input, snapshot source.Snapshot) (evidence.RevisionIdentity, bool) {
+	derivation, derived := snapshot.Derivation()
+	head, fromMergeBase := input.MergeBaseHead()
+	if !fromMergeBase {
+		return input.Revision(), !derived && input.Revision().Identity() == snapshot.RevisionIdentity()
+	}
+	if !derived || derivation.Method() != sourceoutput.RevisionDerivationForgeMergeBase || derivation.RequestedBaseIdentity() != input.Revision().Identity() || derivation.HeadIdentity() != head.Identity() || derivation.MergeBase().Identity() != snapshot.RevisionIdentity() {
+		return evidence.RevisionIdentity{}, false
+	}
+	return derivation.MergeBase(), true
 }
 func wholeTextRange(path string, content []byte) (evidence.SourceRange, bool) {
 	if len(content) == 0 || len(content) > 4<<20 || !utf8.Valid(content) || bytes.IndexByte(content, 0) >= 0 {
@@ -293,3 +327,13 @@ func (h *Handler) Format(state fmt.State, verb rune) {
 }
 
 var _ controlplane.TaskHandler = (*Handler)(nil)
+
+func writeRedacted(state fmt.State, verb rune, plain, detailed string) {
+	value := plain
+	if verb == 'q' {
+		value = fmt.Sprintf("%q", plain)
+	} else if verb == 'v' && state.Flag('#') {
+		value = detailed
+	}
+	_, _ = state.Write([]byte(value))
+}

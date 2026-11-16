@@ -14,6 +14,9 @@ const (
 	maxSelectedContextSources  = 32
 )
 
+// MaxSelectedContextSources is the fixed selected-source count bound.
+const MaxSelectedContextSources = maxSelectedContextSources
+
 var (
 	// ErrInvalidContextSourceSelectionReason identifies an unknown selection result.
 	ErrInvalidContextSourceSelectionReason = errors.New("invalid context source selection reason")
@@ -147,6 +150,22 @@ type ContextSourceCoverage struct {
 	verificationContextIdentity, reviewScopeIdentity, snapshotIdentity, candidateBatchIdentity string
 	analyzedCount, selectedCount, omittedCount                                                 uint32
 	omissionSummaries                                                                          []ContextSourceOmissionSummary
+	// instructionOmittedCount counts repository instruction files not supplied
+	// as repository_context. It is outside analyzed/omitted accounting.
+	instructionOmittedCount uint32
+}
+
+// InstructionContextOmittedCount reports repository instruction files that were
+// not supplied as advisory repository_context. They are not changed sources and
+// never make a review incomplete.
+func (c ContextSourceCoverage) InstructionContextOmittedCount() uint32 {
+	return c.instructionOmittedCount
+}
+
+// coverageMatchesWire checks derived coverage against complete packet accounting.
+func coverageMatchesWire(c ContextSourceCoverage, wire contextSourceCoverageWire, records []contextSourceOmissionWire) bool {
+	analyzed, omitted, instruction := changedSourceCoverage(wire, records)
+	return analyzed == int(c.analyzedCount) && wire.Selected == int(c.selectedCount) && omitted == int(c.omittedCount) && instruction == c.instructionOmittedCount
 }
 
 func newContextSourceCoverage(verificationContextIdentity, reviewScopeIdentity, snapshotIdentity, candidateBatchIdentity string, analyzedCount, selectedCount, omittedCount int, omissionSummaries []ContextSourceOmissionSummary) (ContextSourceCoverage, error) {

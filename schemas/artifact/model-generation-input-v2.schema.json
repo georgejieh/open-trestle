@@ -1,0 +1,247 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:artifact:model-generation-input:v2",
+  "title": "Open Trestle model investigation input v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "identity",
+    "review_scope_identity",
+    "context_artifact_identity",
+    "context_identity",
+    "memory_scope_identity",
+    "memory_identity",
+    "output_schema_identity",
+    "snapshot_workspace",
+    "snapshot_revision",
+    "snapshot_identity",
+    "snapshot_ranges",
+    "evidence",
+    "authorization",
+    "investigation_session_identity",
+    "investigation_policy_identity",
+    "owner_identity",
+    "head_snapshot_artifact_identity",
+    "head_snapshot_identity",
+    "head_manifest_identity",
+    "initial_context_identity",
+    "tool_result_artifact_identities"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/model-generation-input"
+    },
+    "schema_version": {
+      "const": 2
+    },
+    "identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "review_scope_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "context_artifact_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "context_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "output_schema_identity": {
+      "description": "The model-investigation-output-v1 schema the investigation turn requests.",
+      "const": "77367fd94611f87d36e4490729096db927b8d27b9d687a4b6ab515db70e2bbc4"
+    },
+    "snapshot_workspace": {
+      "type": "string",
+      "minLength": 1
+    },
+    "snapshot_revision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "snapshot_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "snapshot_ranges": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "start_line",
+          "end_line"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "start_line": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "end_line": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "maxItems": 2048,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "kind",
+          "digest",
+          "path",
+          "start_line",
+          "end_line"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "kind": {
+            "const": "source"
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "start_line": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "end_line": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          }
+        }
+      }
+    },
+    "authorization": {
+      "$ref": "urn:open-trestle:schema:artifact:route-attempt-authorization:v1"
+    },
+    "memory_scope_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "memory_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "investigation_session_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "description": "The investigation session that owns this input."
+    },
+    "investigation_policy_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "description": "The investigation policy the session runs under."
+    },
+    "owner_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "description": "The investigation owner that recorded this input."
+    },
+    "head_snapshot_artifact_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "description": "The protected head snapshot artifact the investigation reads."
+    },
+    "head_snapshot_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "description": "The identity of that head snapshot."
+    },
+    "head_manifest_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "description": "The manifest of that head snapshot."
+    },
+    "initial_context_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "description": "The initial context packet the investigation started from."
+    },
+    "tool_result_artifact_identities": {
+      "description": "Always empty: the input binds the initial turn, before any tool result.",
+      "type": "array",
+      "maxItems": 0
+    }
+  },
+  "description": "The input of an investigation turn: its initial context, head evidence inside the review snapshot, and the investigation session that owns it."
+}

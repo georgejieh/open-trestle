@@ -163,3 +163,27 @@ func TestRepositoryStatusIdentityIgnoresOtherRepositoryMembership(t *testing.T) 
 		t.Fatal("unrelated repository membership changed scoped status")
 	}
 }
+
+func TestConfigurationReportsLocalAdmissionWithoutRunningWorkers(t *testing.T) {
+	options := validOptions()
+	options.MetadataBackend = MetadataLocal
+	options.DatabaseAuthorityIdentity = ""
+	options.ArtifactBackend = ArtifactLocal
+	options.ArtifactProtection = ProtectionProcessPrivate
+	options.NotificationBackend = NotificationProcessLocal
+	options.RateLimitBackend = RateLimitProcessLocal
+	options.RateLimitAuthorityIdentity = ""
+	options.ReviewMode = ReviewLocal
+	options.WebhookIngress = false
+	options.LocalWorkers = false
+	options.PublicationEnabled = false
+	options.PublicationFenceVerified = false
+	configuration, err := NewConfiguration(options)
+	if err != nil || configuration.LocalWorkers() || configuration.RouteCount() != 2 {
+		t.Fatalf("staged local configuration=(%#v,%v)", configuration, err)
+	}
+	options.ReviewMode = ReviewAdvisory
+	if _, err := NewConfiguration(options); err == nil {
+		t.Fatal("unserved remote runtime described as staged local admission")
+	}
+}

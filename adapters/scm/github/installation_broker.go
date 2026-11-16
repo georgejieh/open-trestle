@@ -817,6 +817,15 @@ func validateBrokerSourceRequest(authority InstallationBrokerAuthority, r *http.
 		return ErrBrokerMismatch
 	}
 	suffix := strings.TrimPrefix(r.URL.Path, prefix)
+	// The merge-base read is compare/{base}...{head} of two full object IDs of
+	// one length, for one bounded page.
+	if basehead, compare := strings.CutPrefix(suffix, "compare/"); compare {
+		base, head, found := strings.Cut(basehead, "...")
+		if !found || (len(base) != 40 && len(base) != 64) || !validObjectID(base, len(base)) || !validObjectID(head, len(base)) || r.URL.RawQuery != "per_page=1" {
+			return ErrBrokerMismatch
+		}
+		return nil
+	}
 	tree := false
 	var digest string
 	switch {

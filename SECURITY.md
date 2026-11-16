@@ -6,7 +6,7 @@ Open Trestle is experimental. No release is currently supported for production u
 
 ## Reporting a vulnerability
 
-Do not report vulnerabilities in a public issue. Once the GitHub repository is created, use its private vulnerability-reporting channel from the repository Security tab.
+Do not report vulnerabilities in a public issue. Use private vulnerability reporting instead: open the [Security tab](https://github.com/georgejieh/open-trestle/security) of the repository and choose **Report a vulnerability**, or go directly to the [new advisory form](https://github.com/georgejieh/open-trestle/security/advisories/new).
 
 A report should include the affected revision, impact, reproduction steps, and any relevant proof. Do not include credentials, customer source, tokens, or exploit payloads that would create unnecessary risk.
 

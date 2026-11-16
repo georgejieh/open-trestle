@@ -1,0 +1,47 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "glm-5.3-flash",
+      "object": "model",
+      "owned_by": "opencode",
+      "limit": {
+        "context": 1000000,
+        "output": 131072
+      },
+      "api": {
+        "chat-completions": {
+          "base_url": "https://opencode.ai/inference/go/openai/v1",
+          "sdk": {
+            "aisdk": "@ai-sdk/openai-compatible",
+            "opencodeai": "@opencode/ai/providers/openai-compatible"
+          },
+          "compatibility": {
+            "reasoning_field": "reasoning_content"
+          },
+          "capabilities": {
+            "tools": {
+              "choice": [
+                "auto"
+              ],
+              "updates": false
+            }
+          }
+        }
+      },
+      "cost": {
+        "text": {
+          "input": {
+            "price": 0.15,
+            "cache": {
+              "read": 0.03
+            }
+          },
+          "output": {
+            "price": 0.5
+          }
+        }
+      }
+    }
+  ]
+}

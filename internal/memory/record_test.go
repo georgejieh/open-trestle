@@ -140,3 +140,20 @@ func TestRecordIdentityDetectsTampering(t *testing.T) {
 		t.Fatal("forged record identity accepted")
 	}
 }
+
+func TestNewRecordRejectsExpiryBoundaryAtOrBeforeUnixEpoch(t *testing.T) {
+	scope := testScope(t)
+	for name, mutate := range map[string]func(*RecordInput){
+		"valid until epoch":  func(i *RecordInput) { i.ValidUntil = time.Unix(0, 0) },
+		"valid until sub-ms": func(i *RecordInput) { i.ValidUntil = time.Unix(0, 500_000) },
+		"valid until 1969":   func(i *RecordInput) { i.ValidUntil = time.Unix(-1, 0) },
+		"stale after epoch":  func(i *RecordInput) { i.StaleAfter = time.Unix(0, 0) },
+		"stale after sub-ms": func(i *RecordInput) { i.StaleAfter = time.Unix(0, 999_999) },
+	} {
+		input := canonicalRecordInput()
+		mutate(&input)
+		if _, err := NewRecord(scope, input); err == nil {
+			t.Fatalf("%s: expiry boundary at or before the epoch was accepted (it would have meant no expiry)", name)
+		}
+	}
+}

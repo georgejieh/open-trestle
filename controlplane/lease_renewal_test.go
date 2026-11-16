@@ -22,6 +22,12 @@ func TestLeaseRenewalUsesCurrentTimeNotAccumulatedExpiry(t *testing.T) {
 		t.Fatalf("claim: acquired=%t err=%v", acquired, err)
 	}
 	original := lease
+	for _, at := range []time.Time{time.UnixMilli(200), time.UnixMilli(200).Add(time.Microsecond), time.UnixMilli(200).Add(999 * time.Microsecond)} {
+		renewed, state, err := coordinator.RenewTaskLease(ctx, plan, lease, at)
+		if err != nil || renewed.Identity() != lease.Identity() || state.HeadIdentity() != lease.EventIdentity() {
+			t.Fatalf("same-millisecond renewal changed lease: err=%v", err)
+		}
+	}
 	task, _ := plan.Task("source")
 	duration := time.Duration(task.LeaseDurationMilliseconds()) * time.Millisecond
 	for i := 0; i < 20; i++ {

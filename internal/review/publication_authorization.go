@@ -41,6 +41,8 @@ type PublicationPlan struct {
 	sourceRepositoryIdentity       string
 	sourceHeadRevisionIdentity     string
 	acquiredContextBindingIdentity string
+	selection                      PublicationSelection
+	contentScanReceipt             PublicationContentScanReceipt
 	inlineFindings                 []VerifiedFinding
 	summaryOnlyFindings            []VerifiedFinding
 }
@@ -62,7 +64,7 @@ func newPublicationPlan(readiness PublicationReadiness, target PublicationTarget
 		reviewScopeIdentity: readiness.ReviewScopeIdentity(), readinessIdentity: readiness.Identity(),
 		generationContextIdentity: readiness.GenerationContextIdentity(), snapshotIdentity: readiness.snapshotIdentity,
 		target: target, sourceSnapshotBindingIdentity: sourceSnapshotBindingIdentity,
-		inlineFindings: readiness.InlineFindings(), summaryOnlyFindings: readiness.SummaryOnlyFindings(),
+		selection: readiness.Selection(), contentScanReceipt: readiness.ContentScanReceipt(), inlineFindings: readiness.InlineFindings(), summaryOnlyFindings: readiness.SummaryOnlyFindings(),
 	}
 	plan.identity = derivePublicationPlanIdentity(plan)
 	if err := plan.Validate(); err != nil {
@@ -116,6 +118,10 @@ func (p PublicationPlan) SourceHeadRevisionIdentity() string { return p.sourceHe
 func (p PublicationPlan) AcquiredContextBindingIdentity() string {
 	return p.acquiredContextBindingIdentity
 }
+func (p PublicationPlan) Selection() PublicationSelection { return p.selection }
+func (p PublicationPlan) ContentScanReceipt() PublicationContentScanReceipt {
+	return p.contentScanReceipt
+}
 func (p PublicationPlan) InlineFindingCount() int      { return len(p.inlineFindings) }
 func (p PublicationPlan) SummaryOnlyFindingCount() int { return len(p.summaryOnlyFindings) }
 func (p PublicationPlan) InlineFindings() []VerifiedFinding {
@@ -123,6 +129,12 @@ func (p PublicationPlan) InlineFindings() []VerifiedFinding {
 }
 func (p PublicationPlan) SummaryOnlyFindings() []VerifiedFinding {
 	return append([]VerifiedFinding(nil), p.summaryOnlyFindings...)
+}
+func (p PublicationPlan) InlinePublishableFindings() []PublishableFinding {
+	return p.selection.InlinePublishableFindings()
+}
+func (p PublicationPlan) SummaryOnlyPublishableFindings() []PublishableFinding {
+	return p.selection.SummaryOnlyPublishableFindings()
 }
 
 // AuthorizesPublication always returns false because a plan is not an effect grant.
@@ -135,6 +147,9 @@ func (p PublicationPlan) Format(state fmt.State, verb rune) {
 
 // Validate verifies target, finding sets, scope, snapshot binding, and content identity.
 func (p PublicationPlan) Validate() error {
+	if err := validatePublishableFindingFieldFreeze(); err != nil {
+		return err
+	}
 	identities := []string{
 		p.reviewScopeIdentity, p.readinessIdentity, p.generationContextIdentity,
 		p.snapshotIdentity, p.sourceSnapshotBindingIdentity,
@@ -146,6 +161,9 @@ func (p PublicationPlan) Validate() error {
 	}
 	if err := p.target.Validate(); err != nil {
 		return err
+	}
+	if p.selection.Validate() != nil || p.selection.Identity() != p.contentScanReceipt.SelectionIdentity() || p.selection.PolicyIdentity() != p.contentScanReceipt.PolicyIdentity() || !equalFindingIdentities(p.inlineFindings, p.selection.inlineFindings) || !equalFindingIdentities(p.summaryOnlyFindings, p.selection.summaryOnlyFindings) || p.contentScanReceipt.Validate() != nil || p.contentScanReceipt.Initial().MatchCount != 0 || p.contentScanReceipt.Residual().MatchCount != 0 || p.contentScanReceipt.HasInstructionRisk() || p.contentScanReceipt.ReviewScopeIdentity() != p.reviewScopeIdentity {
+		return ErrInvalidPublicationPlan
 	}
 	if p.hasAcquiredSource {
 		matchingRepository := p.sourceRepositoryIdentity == p.target.RepositoryIdentity().Identity()
@@ -165,12 +183,14 @@ func (p PublicationPlan) Validate() error {
 	}
 	seen := make(map[string]struct{}, len(p.inlineFindings)+len(p.summaryOnlyFindings))
 	groups := [][]VerifiedFinding{p.inlineFindings, p.summaryOnlyFindings}
-	for _, findings := range groups {
+	for group, findings := range groups {
 		for index, finding := range findings {
 			if err := finding.Validate(); err != nil {
 				return err
 			}
-			if finding.snapshotIdentity != p.snapshotIdentity || index > 0 && publicationFindingLess(finding, findings[index-1]) {
+			// An inline comment anchors on head lines, so a finding on removed
+			// base lines is summary-only.
+			if finding.snapshotIdentity != p.snapshotIdentity || index > 0 && publicationFindingLess(finding, findings[index-1]) || group == 0 && finding.Side() != LineSideHead {
 				return ErrInvalidPublicationPlan
 			}
 			if _, exists := seen[finding.Identity()]; exists {
@@ -284,6 +304,8 @@ func derivePublicationPlanIdentity(plan PublicationPlan) string {
 		Repository        string   `json:"repository"`
 		HeadRevision      string   `json:"head_revision"`
 		AcquiredContext   string   `json:"acquired_context"`
+		Selection         string   `json:"selection"`
+		ContentScan       string   `json:"content_scan"`
 		Inline            []string `json:"inline"`
 		Summary           []string `json:"summary"`
 	}{
@@ -291,7 +313,7 @@ func derivePublicationPlanIdentity(plan PublicationPlan) string {
 		Scope: plan.reviewScopeIdentity, Readiness: plan.readinessIdentity,
 		GenerationContext: plan.generationContextIdentity, Snapshot: plan.snapshotIdentity, Target: plan.target.Identity(), SourceBinding: plan.sourceSnapshotBindingIdentity,
 		Acquired: plan.hasAcquiredSource, Repository: plan.sourceRepositoryIdentity,
-		HeadRevision: plan.sourceHeadRevisionIdentity, AcquiredContext: plan.acquiredContextBindingIdentity, Inline: inline, Summary: summary,
+		HeadRevision: plan.sourceHeadRevisionIdentity, AcquiredContext: plan.acquiredContextBindingIdentity, Selection: plan.selection.Identity(), ContentScan: plan.contentScanReceipt.Identity(), Inline: inline, Summary: summary,
 	}
 	encoded, _ := json.Marshal(preimage)
 	digest := sha256.Sum256(encoded)

@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:controlplane:delivery-refusal-response:v1",
+  "title": "Open Trestle delivery refusal response v1",
+  "description": "Read-only refusal of one accepted webhook delivery that intake recorded instead of opening its run. It carries identities and a reason token only, never delivery content. Errors use the api-response envelope.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "request_id",
+    "refusal"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/delivery-refusal-response"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "refusal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract",
+        "schema_version",
+        "identity",
+        "tenant_id",
+        "repository_id",
+        "source",
+        "deduplication_key",
+        "delivery_identity",
+        "planner_identity",
+        "reason",
+        "refused_at_milliseconds"
+      ],
+      "properties": {
+        "contract": {
+          "const": "open-trestle/webhook-delivery-refusal"
+        },
+        "schema_version": {
+          "const": 1
+        },
+        "identity": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        "tenant_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "repository_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "source": {
+          "enum": [
+            "github",
+            "gitlab",
+            "bitbucket_cloud",
+            "gitea",
+            "forgejo"
+          ]
+        },
+        "deduplication_key": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        "delivery_identity": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        "planner_identity": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        "reason": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        "refused_at_milliseconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 253402300799999
+        }
+      }
+    }
+  }
+}

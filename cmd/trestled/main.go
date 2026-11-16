@@ -43,15 +43,19 @@ import (
 	memoryhandler "github.com/georgejieh/open-trestle/handlers/memory"
 	modelhandler "github.com/georgejieh/open-trestle/handlers/model"
 	publicationhandler "github.com/georgejieh/open-trestle/handlers/publication"
+	sourcehandler "github.com/georgejieh/open-trestle/handlers/source"
+	"github.com/georgejieh/open-trestle/internal/buildinfo"
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/internal/fileauthority"
 	memorycore "github.com/georgejieh/open-trestle/internal/memory"
 	providerconfig "github.com/georgejieh/open-trestle/internal/provider"
 	reviewcore "github.com/georgejieh/open-trestle/internal/review"
+	"github.com/georgejieh/open-trestle/internal/scm"
 	"github.com/georgejieh/open-trestle/runtimeadmin"
 	"github.com/georgejieh/open-trestle/runtimecatalog"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 	"github.com/georgejieh/open-trestle/runtimehealth"
+	"github.com/georgejieh/open-trestle/setup"
 	webconsole "github.com/georgejieh/open-trestle/web"
 	"github.com/georgejieh/open-trestle/webhook"
 	"github.com/georgejieh/open-trestle/worker"
@@ -65,6 +69,7 @@ const (
 var (
 	ErrInvalidDaemonConfiguration = errors.New("invalid Open Trestle daemon configuration")
 	ErrDaemonRuntimeUnavailable   = errors.New("Open Trestle daemon runtime unavailable")
+	ErrDaemonPlanIncompatible     = errors.New("active local full review plan has an incompatible context handler")
 )
 
 type repositoryFlags []string
@@ -79,6 +84,7 @@ type daemonSupervisor interface {
 
 type daemon struct {
 	server                 *http.Server
+	admission              *daemonAdmission
 	journal                controlplane.RunJournal
 	inboxStore             webhook.Store
 	diagnosticStore        diagnostics.Store
@@ -86,8 +92,18 @@ type daemon struct {
 	supervisors            []daemonSupervisor
 	supervisorNames        []string
 	closers                []io.Closer
-	closeOnce              sync.Once
+	closeMu                sync.Mutex
+	finishStarted          bool
+	runStarted             bool
+	finishGate             chan struct{}
+	runtimeContext         context.Context
+	stopRuntime            context.CancelFunc
+	runtimeResults         []*daemonRuntimeResult
+	shutdownDone           chan struct{}
+	shutdownErr            error
+	closersDone            chan struct{}
 	closeErr               error
+	handlerDrainTimeout    time.Duration
 	tlsCertificate, tlsKey string
 }
 
@@ -96,6 +112,10 @@ func main() {
 	err := runDaemon(ctx, os.Args[1:], os.Getenv, os.Stdout, os.Stderr)
 	stop()
 	if err != nil {
+		var incomplete *daemonShutdownIncomplete
+		if errors.As(err, &incomplete) {
+			fmt.Fprintln(os.Stderr, "trestled: shutdown incomplete; terminating with cleanup unconfirmed")
+		}
 		fmt.Fprintf(os.Stderr, "trestled: %v\n", err)
 		os.Exit(1)
 	}
@@ -121,19 +141,42 @@ type daemonCloserFunc func() error
 func (f daemonCloserFunc) Close() error { return f() }
 
 func buildDaemon(ctx context.Context, args []string, getenv func(string) string, stderr io.Writer) (*daemon, error) {
-	return buildDaemonWithDependencies(ctx, args, getenv, stderr, daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}})
+	return buildDaemonWithDependencies(ctx, args, getenv, stderr, daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: reviewcore.NewFixedGenerationRequestSanitizer(), verificationSanitizer: reviewcore.NewFixedVerificationRequestSanitizer()})
 }
-func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func(string) string, stderr io.Writer, deps daemonDependencies) (*daemon, error) {
+func publicationContentScannerFromGenerationSanitizer(sanitizer reviewcore.GenerationRequestSanitizer) reviewcore.PublicationContentScanner {
+	if provider, ok := sanitizer.(interface {
+		PublicationContentScanner() reviewcore.PublicationContentScanner
+	}); ok {
+		return provider.PublicationContentScanner()
+	}
+	return reviewcore.NewFixedPublicationContentScanner()
+}
+
+func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func(string) string, stderr io.Writer, deps daemonDependencies) (result *daemon, err error) {
 	if daemonNilDependency(ctx) || getenv == nil || daemonNilDependency(stderr) || deps.openPostgres == nil || daemonNilDependency(deps.clock) {
 		return nil, ErrInvalidDaemonConfiguration
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if daemonNilDependency(deps.generationSanitizer) {
+		deps.generationSanitizer = reviewcore.NewFixedGenerationRequestSanitizer()
+	}
+	if daemonNilDependency(deps.verificationSanitizer) {
+		deps.verificationSanitizer = reviewcore.NewFixedVerificationRequestSanitizer()
+	}
 	flags := flag.NewFlagSet("trestled", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	listenAddress := flags.String("listen", defaultDaemonListenAddress, "TCP listen address")
 	stateDirectory := flags.String("state-dir", "", "private durable state directory")
+	setupState := flags.String("setup-state", "", "initialized local_single_node scope plan; does not grant setup readiness")
+	expectedSetupRootIdentity := flags.String("expected-setup-root-identity", "", "expected setup root identity for scope and posture binding only")
+	localGitObjectsRoot := flags.String("local-git-objects-root", "", "daemon-owned loose Git objects directory")
+	localGitRepositoryAuthority := flags.String("local-git-repository-authority", "", "local Git repository authority label")
+	localGitRepositoryNamespace := flags.String("local-git-repository-namespace", "", "local Git repository namespace")
+	localGitRepositoryName := flags.String("local-git-repository-name", "", "local Git repository name")
+	localFullReview := flags.Bool("local-full-review", false, "admit policy-bound local reviews")
+	localModelWorkers := flags.Bool("local-model-workers", false, "execute policy-bound local generation, verification, and readiness tasks")
 	metadataStore := flags.String("metadata-store", "local", "metadata store: local or postgres")
 	postgresAuthorityIdentity := flags.String("postgres-authority-identity", "", "non-secret PostgreSQL publication authority identity")
 	postgresDatabaseAuthorityIdentity := flags.String("postgres-database-authority-identity", "", "expected runtime-role PostgreSQL database authority identity")
@@ -172,6 +215,9 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	var repositories repositoryFlags
 	flags.Var(&repositories, "repository", "authorized repository identifier; repeat for each repository")
 	if err := flags.Parse(args); err != nil {
+		return nil, ErrInvalidDaemonConfiguration
+	}
+	if *localModelWorkers && (!*localFullReview || *setupState == "" || *localGitObjectsRoot == "" || *runtimeRouteInventory == "" || *runtimePolicy == "" || *githubOpenRuns || *githubLocalDeterministicWorkers || *githubEnablePublication || *metadataStore != "local" || *artifactStoreMode != "local" || !daemonLoopbackAddress(*listenAddress)) {
 		return nil, ErrInvalidDaemonConfiguration
 	}
 	credential := getenv("OPEN_TRESTLE_API_TOKEN")
@@ -230,7 +276,45 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	githubSecretDigest := sha256.Sum256(githubSecret)
 	plannerConfigured := *githubOpenRuns || *githubLocalDeterministicWorkers || *githubFullName != "" || *githubPolicyIdentity != "" || len(githubHandlers) != 0 || *githubReviewMode != "advisory" || *githubPublisherID != githubwebhook.DefaultGitHubPublisherID || *githubEnablePublication || *githubPublicationPolicyIdentity != "" || *githubPublicationPrincipalIdentity != "" || *githubPublicationAuthorizationTTL != 10*time.Minute
 	runtimeConfigured := *runtimeRouteInventory != "" || *runtimePolicy != ""
-	if runtimeConfigured && (*runtimeRouteInventory == "" || *runtimePolicy == "" || !*githubLocalDeterministicWorkers) {
+	localGitValues := []string{*setupState, *expectedSetupRootIdentity, *localGitObjectsRoot, *localGitRepositoryAuthority, *localGitRepositoryNamespace, *localGitRepositoryName}
+	localGitConfigured := false
+	localGitComplete := true
+	for _, value := range localGitValues {
+		localGitConfigured = localGitConfigured || value != ""
+		localGitComplete = localGitComplete && value != ""
+	}
+	if *localModelWorkers && (!*localFullReview || !localGitConfigured) {
+		return nil, ErrInvalidDaemonConfiguration
+	}
+	if localGitConfigured && (!localGitComplete || githubConfigured || plannerConfigured || runtimeConfigured != *localFullReview || *metadataStore != "local" || *artifactStoreMode != "local" || len(repositories) != 1 || *tlsCertificate != "" || *tlsKey != "" || !daemonLoopbackAddress(*listenAddress)) {
+		return nil, ErrInvalidDaemonConfiguration
+	}
+	if *metadataStore == "local" && *setupState != "" {
+		stateRoot, rootErr := filepath.Abs(*stateDirectory)
+		setupParent, parentErr := filepath.Abs(filepath.Dir(*setupState))
+		if rootErr != nil || parentErr != nil {
+			return nil, ErrInvalidDaemonConfiguration
+		}
+		if filepath.Clean(setupParent) == filepath.Clean(stateRoot) {
+			return nil, fmt.Errorf("local metadata startup rejected: --setup-state directly inside --state-dir is unsupported; stop writers and restore a verified offline setup backup with its receipts under --state-dir/setup/plan.json or outside --state-dir, then update --setup-state and inspect; no automatic move or deletion: %w", ErrInvalidDaemonConfiguration)
+		}
+	}
+	var localSetupPlan setup.Plan
+	var localRepository evidence.RepositoryIdentity
+	if localGitConfigured {
+		// Deterministic review performs no setup, model, egress, or publication effect.
+		// The initialized plan binds scope and denied-effect posture only; its pending
+		// readiness gates remain pending and confer no runtime authorization.
+		var setupErr error
+		localSetupPlan, setupErr = setup.InspectStateFile(ctx, *setupState)
+		var repositoryErr error
+		localRepository, repositoryErr = evidence.NewRepositoryIdentity(*localGitRepositoryAuthority, strings.Split(*localGitRepositoryNamespace, "/"), *localGitRepositoryName)
+		posture := localSetupPlan.Posture()
+		if setupErr != nil || repositoryErr != nil || localRepository.Identity() == "" || !daemonNonzeroDigest(*expectedSetupRootIdentity) || localSetupPlan.RootIdentity() != *expectedSetupRootIdentity || localSetupPlan.Profile() != setup.ProfileLocalSingleNode || localSetupPlan.TenantID() != *tenantID || localSetupPlan.RepositoryID() != repositories[0] || posture.MetadataBackend() != setup.MetadataLocal || posture.ArtifactBackend() != setup.ArtifactLocal || posture.Egress() != setup.EgressDenied || posture.PublicationEnabled() || posture.DynamicValidationEnabled() {
+			return nil, ErrInvalidDaemonConfiguration
+		}
+	}
+	if *localFullReview && !localGitConfigured || runtimeConfigured && (*runtimeRouteInventory == "" || *runtimePolicy == "" || !*githubLocalDeterministicWorkers && !*localFullReview) {
 		return nil, ErrInvalidDaemonConfiguration
 	}
 	publicationConfigured := *githubEnablePublication || *githubPublicationPolicyIdentity != "" || *githubPublicationPrincipalIdentity != "" || *githubPublicationAuthorizationTTL != 10*time.Minute
@@ -252,9 +336,9 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 			return nil, ErrInvalidDaemonConfiguration
 		}
 	}
-	capabilities := []httpapi.Capability{
-		httpapi.CapabilityRunRead, httpapi.CapabilityRunWrite,
-		httpapi.CapabilityTaskClaim, httpapi.CapabilityTaskComplete, httpapi.CapabilityRuntimeRead,
+	capabilities := []httpapi.Capability{httpapi.CapabilityRunRead, httpapi.CapabilityRunWrite, httpapi.CapabilityRuntimeRead}
+	if !*localFullReview {
+		capabilities = append(capabilities, httpapi.CapabilityTaskClaim, httpapi.CapabilityTaskComplete)
 	}
 	principal, err := httpapi.NewPrincipal("daemon-operator", *tenantID, repositories, capabilities)
 	if err != nil {
@@ -272,14 +356,19 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	if err != nil {
 		return nil, ErrInvalidDaemonConfiguration
 	}
-	resources := &daemon{}
+	runtimeContext, stopRuntime := context.WithCancel(context.Background())
+	resources := &daemon{runtimeContext: runtimeContext, stopRuntime: stopRuntime}
+	resources.admission = &daemonAdmission{runtime: runtimeContext}
 	built := false
 	defer func() {
 		if !built {
-			_ = resources.Close()
+			err = errors.Join(err, resources.Close())
 		}
 	}()
 	var daemonArtifactClock artifact.Clock = httpapi.SystemClock{}
+	if localGitConfigured && *localFullReview {
+		daemonArtifactClock = deps.clock
+	}
 	var daemonGitHubSourceClock githubsource.BrokerClock = githubsource.SystemBrokerClock{}
 	var daemonWebhookClock githubwebhook.Clock = githubwebhook.SystemClock{}
 	var budgetedClock daemonErasureClock
@@ -294,19 +383,72 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 		daemonGitHubSourceClock = budgetedClock
 		daemonWebhookClock = budgetedClock
 	}
+	var generationStartup *localGenerationStartupAuthority
+	if *localFullReview {
+		generationStartup, err = loadLocalGenerationStartupAuthority(ctx, *runtimeRouteInventory, *runtimePolicy, getenv, deps.generationSanitizer)
+		if err != nil {
+			return nil, ErrInvalidDaemonConfiguration
+		}
+		generationStartup.verificationSanitizer = deps.verificationSanitizer
+	}
+	var localObjectsRoot *os.Root
+	var localObjectStore *scm.LocalGitObjectStore
+	var localSourceAdapter *scm.LocalGitSourceAdapter
+	var localRootDigest string
+	if localGitConfigured {
+		var rootErr error
+		localObjectsRoot, localRootDigest, rootErr = openDaemonLocalGitRoot(*localGitObjectsRoot, localRepository)
+		if rootErr != nil {
+			return nil, rootErr
+		}
+		resources.closers = append(resources.closers, localObjectsRoot)
+		gitPath, pathErr := filepath.Abs(*localGitObjectsRoot)
+		if pathErr != nil {
+			return nil, pathErr
+		}
+		if _, rootErr = observeLocalSourceDirectory(gitPath, localObjectsRoot); rootErr != nil {
+			return nil, rootErr
+		}
+		localObjectStore, rootErr = scm.NewLocalGitObjectStore(localObjectsRoot, localRepository)
+		if rootErr != nil {
+			return nil, rootErr
+		}
+		localSourceAdapter, rootErr = scm.NewLocalGitSourceAdapter(localObjectStore)
+		if rootErr != nil {
+			return nil, rootErr
+		}
+	}
+	if *metadataStore == "local" && *artifactStoreMode != "local" {
+		if mixedErr := rejectMixedLocalOwner(*stateDirectory); mixedErr != nil {
+			return nil, mixedErr
+		}
+	}
+	var journal controlplane.RunJournal
+	var packetOwner *localPacketOwner
 	var artifactStore artifact.RetentionStore
 	var artifactKeyProvider artifact.EnvelopeKeyProvider
 	var budgetedPolicy artifact.ProtectedErasurePolicy
 	var budgetedErasureBackend *s3store.ErasureBackend
 	budgetedErasureConstructed := false
 	artifactProtection := artifact.ProtectionProcessPrivate
-	if *artifactStoreMode == "local" {
-		if err := ctx.Err(); err != nil {
-			return nil, err
+	if *artifactStoreMode == "local" && *metadataStore == "local" {
+		active, fileJournal, bootOwner, gateErr := startLocalSourceOwnerGateWithAuthority(ctx, resources, *stateDirectory, *setupState, &localSetupPlan, *tenantID, repositories[0], localRepository, localObjectsRoot, localObjectStore, localSourceAdapter, localRootDigest, daemonArtifactClock, generationStartup, nil)
+		if gateErr != nil {
+			if localGitConfigured && (errors.Is(gateErr, errLocalSourceOwnerSnapshot) || errors.Is(gateErr, errLocalMissingStateBoundary)) {
+				return nil, errors.Join(ErrInvalidDaemonConfiguration, gateErr)
+			}
+			return nil, gateErr
 		}
-		physicalArtifacts, err := artifact.NewFileStore(filepath.Join(*stateDirectory, "artifacts"))
-		if err != nil {
-			return nil, err
+		artifactStore = active
+		journal = fileJournal
+		packetOwner = bootOwner
+		if packetOwner != nil && len(packetOwner.pendingExpiredPackets) > 0 && (!*localFullReview || !localGitConfigured) {
+			return nil, errHistoricalPacketExpiryStartup
+		}
+	} else if *artifactStoreMode == "local" {
+		physicalArtifacts, storeErr := artifact.NewFileStore(filepath.Join(*stateDirectory, "artifacts"))
+		if storeErr != nil {
+			return nil, storeErr
 		}
 		resources.closers = append(resources.closers, physicalArtifacts)
 		artifactStore = physicalArtifacts
@@ -383,7 +525,6 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 		}
 		artifactProtection = artifact.ProtectionEnvelopeEncrypted
 	}
-	var journal controlplane.RunJournal
 	var taskNotificationQueue controlplane.TaskNotificationQueue
 	var diagnosticStore diagnostics.Store
 	var auditLedger audit.Ledger
@@ -393,12 +534,29 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		fileJournal, err := controlplane.NewFileRunJournal(*stateDirectory)
-		if err != nil {
-			return nil, err
+		if *artifactStoreMode != "local" {
+			fileJournal, journalErr := controlplane.NewFileRunJournal(*stateDirectory)
+			if journalErr != nil {
+				return nil, journalErr
+			}
+			resources.closers = append(resources.closers, fileJournal)
+			if *artifactStoreMode != "local" {
+				if mixedErr := fileJournal.WithOwnedRoot(ctx, func(root *os.Root) error {
+					if err := noGitOwnerAbsent(root); err != nil {
+						return err
+					}
+					if _, err := fileJournal.InspectStartupInventory(ctx); err != nil {
+						return localStartupInventoryError(err)
+					}
+					return noGitOwnerAbsent(root)
+				}); mixedErr != nil {
+					return nil, mixedErr
+				}
+			} else if _, inventoryErr := fileJournal.InspectStartupInventory(ctx); inventoryErr != nil {
+				return nil, localStartupInventoryError(inventoryErr)
+			}
+			journal = fileJournal
 		}
-		resources.closers = append(resources.closers, fileJournal)
-		journal = fileJournal
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -408,6 +566,12 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 		}
 		resources.closers = append(resources.closers, fileAudit)
 		auditLedger = fileAudit
+		if packetOwner != nil && packetOwner.pendingSettlementAudit {
+			if err := verifyOwnerSettledStartup(ctx, packetOwner, fileAudit, localObjectsRoot); err != nil {
+				return nil, err
+			}
+			packetOwner.pendingSettlementAudit = false
+		}
 		taskNotificationQueue = controlplane.NewMemoryTaskNotificationQueue()
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -518,10 +682,133 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	resources.supervisors = append(resources.supervisors, taskSupervisor)
 	resources.supervisorNames = append(resources.supervisorNames, "task_notifications")
 	var inboxStore webhook.Store
+	var refusalReader httpapi.DeliveryRefusalReader
 	var githubHTTPHandler http.Handler
 	var statusHandlers []runtimeadmin.HandlerBinding
 	var statusInventoryIdentity, statusPolicyIdentity string
 	var statusRouteCount uint32
+	var localReviewAdmitter *runtimecatalog.LocalDeterministicReviewAdmitter
+	var localFullAdmitter *runtimecatalog.LocalFullReviewAdmitter
+	if localGitConfigured {
+		rootIdentity := localRootDigest
+		objectStore, sourceAdapter := localObjectStore, localSourceAdapter
+		sourceTask, sourceErr := sourcehandler.NewHandlerWithSourceRoot(artifactStore, sourceAdapter, rootIdentity, daemonArtifactClock)
+		changeTask, changeErr := changehandler.NewHandler(artifactStore, daemonArtifactClock)
+		analysisTask, analysisErr := analysishandler.NewHandlerWithDiagnostics(artifactStore, diagnosticStore, daemonArtifactClock)
+		if sourceErr != nil || changeErr != nil || analysisErr != nil {
+			return nil, ErrInvalidDaemonConfiguration
+		}
+		localHandlers := []controlplane.TaskHandler{sourceTask, changeTask, analysisTask}
+		var pipeline runtimecatalog.PipelineCatalog
+		var pipelineErr error
+		if *localFullReview {
+			analysisTask, analysisErr = analysishandler.NewHandler(artifactStore, daemonArtifactClock)
+			if analysisErr != nil {
+				return nil, ErrInvalidDaemonConfiguration
+			}
+			localHandlers = []controlplane.TaskHandler{sourceTask, changeTask, analysisTask}
+			inventory, configuration := generationStartup.inventory, generationStartup.configuration
+			memoryTask, memoryErr := memoryhandler.NewHandler(artifactStore, daemonArtifactClock, memorycore.NewLexicalIndex(), daemonComponentIdentity("empty-memory-index-v1"), configuration.ReviewPolicyIdentity(), "trestled", []string{"."}, 64, 50)
+			dispatchers := generationStartup.dispatchers
+			verificationInventory, inventoryErr := runtimecatalog.NewStaticVerificationRouteInventory(inventory)
+			if memoryErr != nil || inventoryErr != nil {
+				return nil, ErrInvalidDaemonConfiguration
+			}
+			verificationAuthorizer, verificationAuthErr := runtimecatalog.NewVerificationPolicyAuthorizerFromRuntimePolicy(configuration, verificationInventory, auditLedger, daemonArtifactClock)
+			contextCoordinator, coordinatorErr := controlplane.NewCoordinator(journal)
+			if coordinatorErr != nil {
+				return nil, coordinatorErr
+			}
+			if packetOwner == nil {
+				return nil, ErrInvalidDaemonConfiguration
+			}
+			pair, pairErr := runtimecatalog.ResolveLocalGenerationRoutePair(configuration, inventory)
+			fileAudit, fileAuditOK := auditLedger.(*audit.FileLedger)
+			if pairErr != nil || !fileAuditOK {
+				return nil, ErrInvalidDaemonConfiguration
+			}
+			abstentionPlanner, contextErr := contexthandler.NewJournaledPacketOnlyHandler(artifactStore, daemonArtifactClock, contextCoordinator)
+			contextTask := &localContextOwnerTask{owner: packetOwner, ledger: fileAudit, sanitizer: deps.generationSanitizer, configuration: configuration, inventory: inventory, pair: pair, abstentionPlanner: abstentionPlanner}
+			generationTask, generationErr := modelhandler.NewGenerationHandler(artifactStore, dispatchers, auditLedger, daemonArtifactClock, deps.generationSanitizer.ExpectedBinaryDigests())
+			verificationTask, verificationErr := modelhandler.NewVerificationHandler(artifactStore, dispatchers, auditLedger, verificationAuthorizer, daemonArtifactClock, deps.verificationSanitizer)
+			readinessTask, readinessErr := publicationhandler.NewFinalOnlyReadinessHandler(artifactStore, daemonArtifactClock, configuration.ReviewPolicyIdentity(), configuration.Publication(), publicationContentScannerFromGenerationSanitizer(deps.generationSanitizer))
+			if verificationAuthErr != nil || contextErr != nil || generationErr != nil || verificationErr != nil || readinessErr != nil {
+				return nil, ErrInvalidDaemonConfiguration
+			}
+			localHandlers = append(localHandlers, memoryTask, contextTask, generationTask, verificationTask, readinessTask)
+			pipeline, pipelineErr = runtimecatalog.NewPipelineCatalog(controlplane.ReviewRunLocal, localHandlers)
+			if pipelineErr != nil {
+				return nil, ErrInvalidDaemonConfiguration
+			}
+			if err := checkLocalFullReviewStartupPlans(ctx, journal, *tenantID, repositories, contextTask.HandlerIdentity(), analysisTask.HandlerIdentity()); err != nil {
+				return nil, err
+			}
+			if err := verifyOwnerRejectedGenerationCatalog(ctx, packetOwner, localObjectsRoot, pipeline, configuration.ReviewPolicyIdentity()); err != nil {
+				return nil, err
+			}
+			if len(packetOwner.pendingExpiredPackets) > 0 {
+				if err := verifyOwnerExpiredPacketStartup(ctx, packetOwner, fileAudit, localObjectsRoot, pipeline, configuration.ReviewPolicyIdentity()); err != nil {
+					return nil, err
+				}
+			}
+			if err := recoverLocalFullReviewPrepared(ctx, journal, artifactStore, contextCoordinator, *tenantID, repositories, daemonArtifactClock.Now()); err != nil {
+				return nil, err
+			}
+			localFullAdmitter, err = runtimecatalog.NewLocalFullReviewAdmitter(journal, artifactStore, runtimecatalog.LocalFullReviewAdmissionConfig{Source: objectStore, Repository: localRepository, SourceAdapter: sourceAdapter.Identity(), SourceRootIdentity: rootIdentity, Inventory: inventory, Policy: configuration, Classification: artifact.ClassificationInternal, Protection: artifactProtection, Retention: 24 * time.Hour, Catalog: pipeline})
+			if err != nil {
+				return nil, ErrInvalidDaemonConfiguration
+			}
+			preModelCatalog, catalogErr := controlplane.NewTaskHandlerCatalog([]controlplane.TaskHandler{sourceTask, changeTask, analysisTask, memoryTask, contextTask})
+			if catalogErr != nil {
+				return nil, ErrInvalidDaemonConfiguration
+			}
+			finalProjector, projectorErr := NewLocalFinalDiagnosticProjector(artifactStore, diagnosticStore, analysisTask.HandlerIdentity())
+			if projectorErr != nil {
+				return nil, ErrInvalidDaemonConfiguration
+			}
+			finalProjector.clock = daemonArtifactClock
+			localSupervisor, supervisorErr := worker.NewRepositorySupervisor(journal, preModelCatalog, worker.RepositorySupervisorOptions{TenantID: *tenantID, RepositoryIDs: []string(repositories), WorkerIdentity: "trestled-local-premodel", PollInterval: time.Second, RenewalInterval: 10 * time.Second, ExecutionTimeout: 30 * time.Minute, Clock: daemonArtifactClock, FinalizeSettled: true, OnTerminal: finalProjector.Project})
+			if supervisorErr != nil {
+				return nil, ErrInvalidDaemonConfiguration
+			}
+			resources.supervisors = append(resources.supervisors, localSupervisor)
+			resources.supervisorNames = append(resources.supervisorNames, "local_workers")
+			if *localModelWorkers {
+				modelCatalog, catalogErr := controlplane.NewTaskHandlerCatalog([]controlplane.TaskHandler{generationTask, verificationTask, readinessTask})
+				if catalogErr != nil {
+					return nil, ErrInvalidDaemonConfiguration
+				}
+				modelSupervisor, supervisorErr := worker.NewRepositorySupervisor(journal, modelCatalog, worker.RepositorySupervisorOptions{TenantID: *tenantID, RepositoryIDs: []string(repositories), WorkerIdentity: "trestled-local-model", PollInterval: time.Second, RenewalInterval: 10 * time.Second, ExecutionTimeout: 30 * time.Minute, Clock: daemonArtifactClock, FinalizeSettled: true})
+				if supervisorErr != nil {
+					return nil, ErrInvalidDaemonConfiguration
+				}
+				resources.supervisors = append(resources.supervisors, modelSupervisor)
+				resources.supervisorNames = append(resources.supervisorNames, "local_model_workers")
+			}
+			statusInventoryIdentity, statusPolicyIdentity, statusRouteCount = inventory.Identity(), configuration.Identity(), uint32(len(inventory.Candidates()))
+		} else {
+			pipeline, pipelineErr = runtimecatalog.NewPipelineCatalog(controlplane.ReviewRunLocal, localHandlers)
+			if pipelineErr != nil {
+				return nil, pipelineErr
+			}
+			localReviewPolicyIdentity := daemonComponentIdentity("local-deterministic-static-debug-review-v1")
+			localReviewAdmitter, err = runtimecatalog.NewLocalDeterministicReviewAdmitter(journal, artifactStore, runtimecatalog.LocalDeterministicReviewAdmissionConfig{Repository: localRepository, SourceAdapter: sourceAdapter.Identity(), SourceRootIdentity: rootIdentity, ReviewPolicyIdentity: localReviewPolicyIdentity, Classification: artifact.ClassificationInternal, Protection: artifactProtection, Retention: 24 * time.Hour, Catalog: pipeline})
+			if err != nil {
+				return nil, err
+			}
+			localSupervisor, supervisorErr := worker.NewRepositorySupervisor(journal, pipeline.Catalog(), worker.RepositorySupervisorOptions{TenantID: *tenantID, RepositoryIDs: []string(repositories), WorkerIdentity: "trestled-local", PollInterval: time.Second, RenewalInterval: 10 * time.Second, ExecutionTimeout: 30 * time.Minute, Clock: httpapi.SystemClock{}, FinalizeSettled: true})
+			if supervisorErr != nil {
+				return nil, supervisorErr
+			}
+			resources.supervisors = append(resources.supervisors, localSupervisor)
+			resources.supervisorNames = append(resources.supervisorNames, "local_workers")
+		}
+		bindings := pipeline.Bindings()
+		statusHandlers = make([]runtimeadmin.HandlerBinding, len(bindings))
+		for index, binding := range bindings {
+			statusHandlers[index] = runtimeadmin.HandlerBinding{Kind: binding.Kind.String(), Identity: binding.HandlerIdentity}
+		}
+	}
 	if githubConfigured {
 		scope, scopeErr := webhook.NewRepositoryScope(*tenantID, *githubRepository)
 		if scopeErr != nil {
@@ -598,17 +885,18 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 					statusInventoryIdentity = inventory.Identity()
 					statusPolicyIdentity = configuration.Identity()
 					statusRouteCount = uint32(len(inventory.Candidates()))
-					dispatchers, dispatcherErr := runtimecatalog.NewOpenAIRouteDispatcherCatalogFromRuntimePolicy(inventory, configuration, environmentOpenAICredentialResolver{getenv: getenv})
+					dispatchers, dispatcherErr := runtimecatalog.NewOpenAIRouteDispatcherCatalogWithOptions(inventory, configuration, environmentOpenAICredentialResolver{getenv: getenv}, runtimecatalog.OpenAICatalogOptions{Clock: daemonArtifactClock, HTTPClient: deps.modelHTTPClient, HTTPClientIdentity: deps.modelHTTPClientIdentity})
 					generationAuthorizer, authErr := runtimecatalog.NewGenerationPolicyAuthorizerFromRuntimePolicy(configuration, inventory, auditLedger)
 					verificationInventory, inventoryErr := runtimecatalog.NewStaticVerificationRouteInventory(inventory)
 					if dispatcherErr != nil || authErr != nil || inventoryErr != nil {
 						return nil, ErrInvalidDaemonConfiguration
 					}
 					verificationAuthorizer, verificationAuthErr := runtimecatalog.NewVerificationPolicyAuthorizerFromRuntimePolicy(configuration, verificationInventory, auditLedger, httpapi.SystemClock{})
-					contextTask, contextErr := contexthandler.NewHandler(artifactStore, daemonArtifactClock, generationAuthorizer)
-					generationTask, generationErr := modelhandler.NewGenerationHandler(artifactStore, dispatchers, auditLedger, daemonArtifactClock)
-					verificationTask, verificationErr := modelhandler.NewVerificationHandler(artifactStore, dispatchers, auditLedger, verificationAuthorizer, daemonArtifactClock)
-					readinessTask, readinessErr := publicationhandler.NewReadinessHandler(artifactStore, diagnosticStore, daemonArtifactClock, configuration.ReviewPolicyIdentity(), configuration.Publication())
+					sanitizer := deps.generationSanitizer
+					contextTask, contextErr := contexthandler.NewHandler(artifactStore, daemonArtifactClock, generationAuthorizer, sanitizer)
+					generationTask, generationErr := modelhandler.NewGenerationHandler(artifactStore, dispatchers, auditLedger, daemonArtifactClock, sanitizer.ExpectedBinaryDigests())
+					verificationTask, verificationErr := modelhandler.NewVerificationHandler(artifactStore, dispatchers, auditLedger, verificationAuthorizer, daemonArtifactClock, deps.verificationSanitizer)
+					readinessTask, readinessErr := publicationhandler.NewReadinessHandler(artifactStore, diagnosticStore, daemonArtifactClock, configuration.ReviewPolicyIdentity(), configuration.Publication(), publicationContentScannerFromGenerationSanitizer(deps.generationSanitizer))
 					if verificationAuthErr != nil || contextErr != nil || generationErr != nil || verificationErr != nil || readinessErr != nil {
 						return nil, ErrInvalidDaemonConfiguration
 					}
@@ -669,6 +957,9 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 				return nil, ErrInvalidDaemonConfiguration
 			}
 			processor, processorErr := webhook.NewPreparedProcessor(journal, planner, artifactStore)
+			if refusals, recordsRefusals := inboxStore.(webhook.RefusalStore); recordsRefusals {
+				refusalReader = daemonDeliveryRefusals{store: refusals, source: webhook.SourceGitHub, plannerIdentity: planner.Identity()}
+			}
 			if processorErr != nil {
 				return nil, processorErr
 			}
@@ -701,6 +992,9 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 		componentNames = append(componentNames, "artifact_erasure_budgeted")
 	}
 	statusMode := runtimeadmin.ReviewDisabled
+	if localGitConfigured {
+		statusMode = runtimeadmin.ReviewLocal
+	}
 	if *githubOpenRuns {
 		switch *githubReviewMode {
 		case "local":
@@ -727,7 +1021,7 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	statusConfiguration, err := runtimeadmin.NewConfiguration(runtimeadmin.ConfigurationOptions{
 		TenantID: *tenantID, RepositoryIDs: []string(repositories), MetadataBackend: metadataBackend, DatabaseAuthorityIdentity: *postgresDatabaseAuthorityIdentity,
 		ArtifactBackend: artifactBackend, ArtifactProtection: runtimeadmin.Protection(artifactProtection.String()), NotificationBackend: notificationBackend, RateLimitBackend: rateLimitBackend, RateLimitAuthorityIdentity: rateLimitAuthorityIdentity,
-		ReviewMode: statusMode, WebhookIngress: githubConfigured, LocalWorkers: *githubLocalDeterministicWorkers,
+		ReviewMode: statusMode, WebhookIngress: githubConfigured, LocalWorkers: localGitConfigured || *githubLocalDeterministicWorkers,
 		PublicationEnabled: *githubEnablePublication, PublicationFenceVerified: *postgresAuthorityIdentity != "",
 		RouteInventoryIdentity: statusInventoryIdentity, RuntimePolicyIdentity: statusPolicyIdentity, RouteCount: statusRouteCount, Handlers: statusHandlers,
 	})
@@ -754,9 +1048,25 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	if err != nil {
 		return nil, err
 	}
-	apiHandler, err := httpapi.NewServerWithRuntimeAdministrationAndRateLimiters(journal, authenticator, httpapi.SystemClock{}, diagnosticStore, taskNotificationQueue, statusService, requestLimiter, principalLimiter)
+	var apiHandler *httpapi.Server
+	if localGitConfigured && *localFullReview {
+		apiHandler, err = httpapi.NewServerWithLocalFullRuntimeAdministrationAndRateLimiters(journal, authenticator, daemonArtifactClock, diagnosticStore, taskNotificationQueue, statusService, requestLimiter, principalLimiter, localFullAdmitter)
+	} else if localGitConfigured {
+		apiHandler, err = httpapi.NewServerWithLocalDeterministicRuntimeAdministrationAndRateLimiters(journal, authenticator, httpapi.SystemClock{}, diagnosticStore, taskNotificationQueue, statusService, requestLimiter, principalLimiter, localReviewAdmitter)
+	} else {
+		apiHandler, err = httpapi.NewServerWithRuntimeAdministrationAndRateLimiters(journal, authenticator, httpapi.SystemClock{}, diagnosticStore, taskNotificationQueue, statusService, requestLimiter, principalLimiter)
+	}
 	if err != nil {
 		return nil, err
+	}
+	apiHandler, err = apiHandler.WithProgressArtifacts(artifactStore)
+	if err != nil {
+		return nil, err
+	}
+	if refusalReader != nil {
+		if apiHandler, err = apiHandler.WithDeliveryRefusals(refusalReader); err != nil {
+			return nil, err
+		}
 	}
 	var handler http.Handler = apiHandler
 	if githubHTTPHandler != nil {
@@ -777,8 +1087,10 @@ func buildDaemonWithDependencies(ctx context.Context, args []string, getenv func
 	rootMux.Handle("/readyz", healthHandler)
 	rootMux.Handle("/", handler)
 	handler = rootMux
+	handler = resources.admission.wrap(handler)
 	server := &http.Server{
 		Addr: *listenAddress, Handler: handler,
+		BaseContext:       func(net.Listener) context.Context { return runtimeContext },
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second,
 		WriteTimeout: 20 * time.Second, IdleTimeout: 60 * time.Second,
 		MaxHeaderBytes: 16 << 10, ErrorLog: log.New(stderr, "trestled: ", log.LstdFlags),
@@ -803,92 +1115,131 @@ func runDaemon(ctx context.Context, args []string, getenv func(string) string, s
 	if ctx.Err() != nil {
 		return nil
 	}
-	daemon, err := buildDaemon(ctx, args, getenv, stderr)
+	if len(args) > 0 && args[0] == "build-info" {
+		if len(args) != 1 {
+			return ErrInvalidDaemonConfiguration
+		}
+		return buildinfo.Write(stdout, "trestled")
+	}
+	if len(args) > 0 && (args[0] == "recovery-point" || args[0] == "verify-restore") {
+		return runLocalRecoveryCommand(ctx, args, stdout, stderr)
+	}
+	d, err := buildDaemon(ctx, args, getenv, stderr)
 	if err != nil {
-		if ctx.Err() != nil {
+		if onlyDaemonStartupCancellation(err, ctx.Err()) {
 			return nil
 		}
 		return err
 	}
-	defer daemon.Close()
+	return d.run(ctx, stdout)
+}
+
+func (d *daemon) run(ctx context.Context, stdout io.Writer) (runErr error) {
+	defer func() { runErr = errors.Join(runErr, d.Close()) }()
 	if ctx.Err() != nil {
 		return nil
 	}
-	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", daemon.server.Addr)
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", d.server.Addr)
 	if err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(stdout, "trestled listening on %s\n", listener.Addr().String()); err != nil {
-		_ = listener.Close()
-		return err
+		return errors.Join(err, listener.Close())
 	}
-	runtimeContext, stopRuntime := context.WithCancel(ctx)
-	defer stopRuntime()
-	type runtimeResult struct {
-		server bool
-		err    error
+	d.closeMu.Lock()
+	if d.finishStarted || d.runStarted {
+		d.closeMu.Unlock()
+		return errors.Join(ErrDaemonRuntimeUnavailable, listener.Close())
 	}
-	results := make(chan runtimeResult, len(daemon.supervisors)+1)
-	go func() {
-		if daemon.tlsCertificate != "" {
-			results <- runtimeResult{server: true, err: daemon.server.ServeTLS(listener, daemon.tlsCertificate, daemon.tlsKey)}
-			return
+	d.runStarted = true
+	if d.runtimeContext == nil {
+		d.runtimeContext, d.stopRuntime = context.WithCancel(context.Background())
+	}
+	returned := make(chan struct{}, len(d.supervisors)+1)
+	start := func(run func() error) {
+		result := &daemonRuntimeResult{done: make(chan struct{})}
+		d.runtimeResults = append(d.runtimeResults, result)
+		go func() {
+			result.err = run()
+			if d.runtimeContext.Err() == nil && (result.err == nil || onlyDaemonStartupCancellation(result.err, context.Canceled) || onlyDaemonStartupCancellation(result.err, http.ErrServerClosed) || onlyDaemonStartupCancellation(result.err, worker.ErrRepositorySupervisorShutdown)) {
+				result.err = errors.Join(ErrDaemonRuntimeUnavailable, result.err)
+			}
+			close(result.done)
+			returned <- struct{}{}
+		}()
+	}
+	start(func() error {
+		if d.tlsCertificate != "" {
+			return d.server.ServeTLS(listener, d.tlsCertificate, d.tlsKey)
 		}
-		results <- runtimeResult{server: true, err: daemon.server.Serve(listener)}
-	}()
-	for _, supervisor := range daemon.supervisors {
-		current := supervisor
-		go func() { results <- runtimeResult{err: current.Run(runtimeContext)} }()
+		return d.server.Serve(listener)
+	})
+	for _, supervisor := range d.supervisors {
+		start(func() error { return supervisor.Run(d.runtimeContext) })
 	}
-	firstErr := error(nil)
-	resultConsumed := false
+	d.closeMu.Unlock()
 	select {
-	case result := <-results:
-		resultConsumed = true
-		if result.err != nil && !errors.Is(result.err, http.ErrServerClosed) {
-			firstErr = result.err
-		}
-		if result.err == nil && !result.server && ctx.Err() == nil {
-			firstErr = ErrDaemonRuntimeUnavailable
-		}
+	case <-returned:
 	case <-ctx.Done():
 	}
-	stopRuntime()
-	shutdownContext, cancel := context.WithTimeout(context.Background(), daemonShutdownTimeout)
-	shutdownErr := daemon.server.Shutdown(shutdownContext)
-	cancel()
-	remaining := len(daemon.supervisors) + 1
-	if resultConsumed {
-		remaining--
+	return nil
+}
+
+// Ignore a build interruption only when the entire bounded error tree is
+// exactly the context cancellation. A joined cleanup failure remains visible.
+func onlyDaemonStartupCancellation(err, cancellation error) bool {
+	if err == nil || cancellation == nil {
+		return false
 	}
-	for range remaining {
-		result := <-results
-		if result.err != nil && !errors.Is(result.err, http.ErrServerClosed) && firstErr == nil {
-			firstErr = result.err
+	visited := 0
+	var check func(error, int) (bool, bool)
+	check = func(current error, depth int) (bool, bool) {
+		if current == nil || depth >= 64 || visited >= 256 {
+			return false, false
 		}
+		visited++
+		if _, incomplete := current.(*daemonShutdownIncomplete); incomplete {
+			return false, false
+		}
+		if children, ok := current.(interface{ Unwrap() []error }); ok {
+			values := children.Unwrap()
+			any := false
+			for _, child := range values {
+				if child == nil {
+					continue
+				}
+				matched, valid := check(child, depth+1)
+				if !valid || !matched {
+					return false, false
+				}
+				any = true
+			}
+			return any, any
+		}
+		if wrapper, ok := current.(interface{ Unwrap() error }); ok {
+			child := wrapper.Unwrap()
+			if child == nil {
+				return false, false
+			}
+			return check(child, depth+1)
+		}
+		return current == cancellation, true
 	}
-	if shutdownErr != nil && firstErr == nil {
-		firstErr = shutdownErr
-	}
-	return firstErr
+	matched, valid := check(err, 0)
+	return valid && matched
 }
 
 func (d *daemon) Close() error {
 	if d == nil {
 		return nil
 	}
-	d.closeOnce.Do(func() {
-		for index := len(d.closers) - 1; index >= 0; index-- {
-			if d.closers[index] == nil {
-				continue
-			}
-			if err := d.closers[index].Close(); err != nil && d.closeErr == nil {
-				d.closeErr = err
-			}
-		}
-		d.closers = nil
-	})
-	return d.closeErr
+	timeout := d.handlerDrainTimeout
+	if timeout <= 0 {
+		timeout = daemonShutdownTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return d.Finish(ctx)
 }
 
 func parseReviewRunMode(value string) (controlplane.ReviewRunMode, error) {
@@ -1123,6 +1474,46 @@ func validSecureServiceEndpoint(raw string) bool {
 	return err == nil
 }
 
+func daemonLoopbackAddress(address string) bool {
+	host, _, err := net.SplitHostPort(address)
+	parsed := net.ParseIP(host)
+	return err == nil && parsed != nil && parsed.IsLoopback()
+}
+
+func openDaemonLocalGitRoot(path string, repository evidence.RepositoryIdentity) (*os.Root, string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil || filepath.Clean(absolute) != absolute || repository.Identity() == "" {
+		return nil, "", ErrInvalidDaemonConfiguration
+	}
+	before, err := os.Lstat(absolute)
+	if err != nil || !before.IsDir() || before.Mode()&os.ModeSymlink != 0 {
+		return nil, "", ErrInvalidDaemonConfiguration
+	}
+	resolved, err := filepath.EvalSymlinks(absolute)
+	if err != nil || resolved != absolute {
+		return nil, "", ErrInvalidDaemonConfiguration
+	}
+	root, err := os.OpenRoot(absolute)
+	if err != nil {
+		return nil, "", ErrInvalidDaemonConfiguration
+	}
+	opened, err := root.Stat(".")
+	after, afterErr := os.Lstat(absolute)
+	if err != nil || afterErr != nil || !opened.IsDir() || !os.SameFile(before, opened) || !os.SameFile(opened, after) {
+		_ = root.Close()
+		return nil, "", ErrInvalidDaemonConfiguration
+	}
+	encoded, _ := json.Marshal(struct {
+		Contract   string `json:"contract"`
+		Version    int    `json:"version"`
+		Path       string `json:"path"`
+		Repository string `json:"repository"`
+		Profile    string `json:"profile"`
+	}{"open-trestle/local-git-source-root", 1, absolute, repository.Identity(), string(scm.LocalGitObjectStoreProfileLooseOnly)})
+	digest := sha256.Sum256(encoded)
+	return root, hex.EncodeToString(digest[:]), nil
+}
+
 func validListenAddress(address, certificate, key string) bool {
 	host, port, err := net.SplitHostPort(address)
 	if err != nil || host == "" || port == "" {
@@ -1165,4 +1556,119 @@ func sameDaemonCredential(left []byte, right string) bool {
 	rightBytes := []byte(right)
 	defer clear(rightBytes)
 	return subtle.ConstantTimeCompare(left, rightBytes) == 1
+}
+
+// checkLocalFullReviewStartupPlans rejects active local work bound to incompatible context or full-review analysis handlers.
+func checkLocalFullReviewStartupPlans(ctx context.Context, journal controlplane.RunJournal, tenantID string, repositories []string, contextHandlerIdentity, analysisHandlerIdentity string) error {
+	const pageSize = 100
+	const maximumPlansPerRepository = 10_000
+	coordinator, err := controlplane.NewCoordinator(journal)
+	if err != nil {
+		return err
+	}
+	for _, repositoryID := range repositories {
+		after := ""
+		for examined := 0; ; {
+			plans, err := journal.ListPlans(ctx, tenantID, repositoryID, after, pageSize)
+			if err != nil {
+				return err
+			}
+			if examined+len(plans) > maximumPlansPerRepository {
+				return ErrDaemonRuntimeUnavailable
+			}
+			for _, plan := range plans {
+				if plan.Scope().ReviewRunID() <= after {
+					return ErrDaemonRuntimeUnavailable
+				}
+				_, state, err := coordinator.Resume(ctx, plan.Scope())
+				if err != nil {
+					return err
+				}
+				if state.Status() != controlplane.ReviewRunActive || plan.Mode() != controlplane.ReviewRunLocal {
+					continue
+				}
+				fullReview := isLocalFullReviewPlan(plan)
+				for _, definition := range plan.Tasks() {
+					task, found := state.Task(definition.Key())
+					if !found {
+						return ErrDaemonRuntimeUnavailable
+					}
+					if definition.Kind() == controlplane.TaskAssembleContext && task.Status() != controlplane.TaskRuntimeSucceeded && task.Status() != controlplane.TaskRuntimeSkipped && definition.HandlerIdentity() != contextHandlerIdentity || fullReview && definition.Kind() == controlplane.TaskInspectDeterministic && definition.HandlerIdentity() != analysisHandlerIdentity {
+						return fmt.Errorf("%w: tenant %s repository %s run %s", ErrDaemonPlanIncompatible, tenantID, repositoryID, plan.Scope().ReviewRunID())
+					}
+				}
+			}
+			examined += len(plans)
+			if len(plans) < pageSize {
+				break
+			}
+			after = plans[len(plans)-1].Scope().ReviewRunID()
+		}
+	}
+	return nil
+}
+
+func isLocalFullReviewPlan(plan controlplane.ReviewRunPlan) bool {
+	if plan.Mode() != controlplane.ReviewRunLocal || plan.TaskCount() != 9 {
+		return false
+	}
+	for _, expected := range []struct {
+		key  string
+		kind controlplane.TaskKind
+	}{
+		{"source-base", controlplane.TaskAcquireSource},
+		{"source-head", controlplane.TaskAcquireSource},
+		{"change", controlplane.TaskBuildChange},
+		{"analysis", controlplane.TaskInspectDeterministic},
+		{"memory", controlplane.TaskRetrieveContext},
+		{"context", controlplane.TaskAssembleContext},
+		{"candidates", controlplane.TaskGenerateCandidates},
+		{"verification", controlplane.TaskVerifyCandidates},
+		{"readiness", controlplane.TaskEvaluatePublication},
+	} {
+		task, found := plan.Task(expected.key)
+		if !found || task.Kind() != expected.kind {
+			return false
+		}
+	}
+	return true
+}
+
+// recoverLocalFullReviewPrepared resolves journaled content-free abstentions before
+// any supervisor or listener can settle an expired one-attempt context lease.
+func recoverLocalFullReviewPrepared(ctx context.Context, journal controlplane.RunJournal, store artifact.Store, coordinator *controlplane.Coordinator, tenantID string, repositories []string, at time.Time) error {
+	const pageSize = 100
+	const maximumPlansPerRepository = 10_000
+	for _, repositoryID := range repositories {
+		after := ""
+		for examined := 0; ; {
+			plans, err := journal.ListPlans(ctx, tenantID, repositoryID, after, pageSize)
+			if err != nil {
+				return err
+			}
+			if examined+len(plans) > maximumPlansPerRepository {
+				return ErrDaemonRuntimeUnavailable
+			}
+			for _, plan := range plans {
+				if plan.Scope().ReviewRunID() <= after {
+					return ErrDaemonRuntimeUnavailable
+				}
+				if plan.Mode() != controlplane.ReviewRunLocal {
+					continue
+				}
+				if err := contexthandler.RecoverPreparedContextAbstention(ctx, coordinator, store, plan, at); err != nil {
+					return fmt.Errorf("%w: tenant %s repository %s run %s: %v", ErrDaemonRuntimeUnavailable, tenantID, repositoryID, plan.Scope().ReviewRunID(), err)
+				}
+				if err := contexthandler.RecoverOwnerPreparedContextAbstention(ctx, coordinator, store, plan, at); err != nil {
+					return fmt.Errorf("%w: tenant %s repository %s run %s: %v", ErrDaemonRuntimeUnavailable, tenantID, repositoryID, plan.Scope().ReviewRunID(), err)
+				}
+			}
+			examined += len(plans)
+			if len(plans) < pageSize {
+				break
+			}
+			after = plans[len(plans)-1].Scope().ReviewRunID()
+		}
+	}
+	return nil
 }

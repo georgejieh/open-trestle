@@ -31,6 +31,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/memory"
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/review"
+	"github.com/georgejieh/open-trestle/internal/testsupport"
 	"github.com/georgejieh/open-trestle/runtimecatalog"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 )
@@ -60,6 +61,8 @@ type rmModelPacket struct {
 	Task              string          `json:"task"`
 	GenerationContext string          `json:"generation_context_identity"`
 	CandidateBatch    string          `json:"candidate_batch_identity"`
+	StatedIntent      json.RawMessage `json:"stated_intent"`
+	PatternHygiene    json.RawMessage `json:"pattern_hygiene"`
 	Sources           []rmModelSource `json:"sources"`
 	Candidates        []struct {
 		ID       string   `json:"candidate_id"`
@@ -172,8 +175,8 @@ func (m *rmModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.Req
 	payload := []byte(wire.Input[0].Content[0].Text)
 	var packet rmModelPacket
 	request, requestErr := provider.NewRequest(provider.CapabilityReviewV1, "application/json", payload)
-	if json.Unmarshal(payload, &packet) != nil || requestErr != nil || packet.Version != 3 {
-		t.Error("model did not receive the actual v3 context")
+	if json.Unmarshal(payload, &packet) != nil || requestErr != nil || packet.Task == "candidate_generation" && packet.Version != 9 || packet.Task != "candidate_generation" && packet.Version != 8 {
+		t.Error("model did not receive the actual v9 generation or v8 verification context")
 		http.Error(w, "invalid context", http.StatusBadRequest)
 		return
 	}
@@ -227,10 +230,11 @@ func (m *rmModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.Req
 		if m.mode != "empty" {
 			candidates = append(candidates, map[string]any{
 				"title": "Zero-valued caller now panics", "claim": "Consume passes zero to Changed after removal of the division guard.", "severity_hint": "high",
+				"category": "correctness", "fix": "Restore the zero guard before dividing.",
 				"source_range": map[string]any{"source_id": changed.ID, "start_line": 2, "end_line": 2}, "evidence_ids": evidenceIDs,
 			})
 		}
-		result = map[string]any{"schema_version": 1, "candidates": candidates}
+		result = map[string]any{"schema_version": 2, "candidates": candidates}
 	case "candidate_verification":
 		if m.model != "model-b" || packet.GenerationContext == "" || packet.CandidateBatch == "" {
 			t.Error("verification lost independent provider or generation lineage")
@@ -265,6 +269,14 @@ func (m *rmModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.Req
 		"output": []any{map[string]any{"id": "message-" + m.model, "type": "message", "role": "assistant", "status": "completed", "content": []any{map[string]any{"type": "output_text", "text": string(text)}}}},
 		"usage":  map[string]any{"input_tokens": 100, "output_tokens": 100, "total_tokens": 200},
 	}
+	// cached reports 40 of the input tokens as cached; unreported omits usage,
+	// as a provider that reports none does. Both otherwise answer normally.
+	switch m.mode {
+	case "cached":
+		response["usage"] = map[string]any{"input_tokens": 100, "output_tokens": 100, "total_tokens": 200, "input_tokens_details": map[string]any{"cached_tokens": 40}}
+	case "unreported":
+		delete(response, "usage")
+	}
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		t.Error(err)
@@ -283,6 +295,13 @@ type rmModelFixture struct {
 type rmModelFixtureOptions struct {
 	generationMode, verificationMode                      string
 	verifierPending, remote, expensive, capacity, partial bool
+	// extraBase and extraHead add root-level files to the base and head trees;
+	// a nil content removes the fixture's file of that name.
+	extraBase, extraHead map[string][]byte
+	// headMessages, when set, replaces the single unrelated head commit with
+	// a chain of commits on top of the base, one per message, oldest first;
+	// the last one carries the head tree.
+	headMessages []string
 }
 
 func newRmModelFixture(t *testing.T, options rmModelFixtureOptions) *rmModelFixture {
@@ -301,18 +320,42 @@ func newRmModelFixture(t *testing.T, options rmModelFixtureOptions) *rmModelFixt
 			f.verification = endpoint
 		}
 	}
+	// The unchanged go.mod declares the Go style, as a real module does, so a
+	// review of the Go change carries no style recommendation.
 	base := map[string][]byte{
 		"a.go":      []byte("package p\nfunc Changed(x int) int { if x == 0 { return 0 }; return 10 / x }\n// " + rmModelSecret + "\n"),
 		"caller.go": []byte("package p\nfunc Consume() int { return Changed(0) }\n"),
+		"go.mod":    []byte("module example.test/p\n"),
 	}
 	head := map[string][]byte{
 		"a.go":      []byte("package p\nfunc Changed(x int) int { return 10 / x }\n// " + rmModelSecret + "\n"),
 		"caller.go": base["caller.go"],
+		"go.mod":    base["go.mod"],
 	}
 	if options.partial {
 		base["removed.go"] = []byte("package p\n")
 	}
+	apply := func(tree, extra map[string][]byte) {
+		for path, content := range extra {
+			if content == nil {
+				delete(tree, path)
+			} else {
+				tree[path] = content
+			}
+		}
+	}
+	apply(base, options.extraBase)
+	apply(head, options.extraHead)
 	f.objects, f.base, f.head = rmWriteGit(t, evidence.RevisionAlgorithmSHA1, base, head)
+	if len(options.headMessages) > 0 {
+		headTree := rmWriteTree(t, f.objects, evidence.RevisionAlgorithmSHA1, head)
+		parent := f.base
+		for index, message := range options.headMessages {
+			at := fmt.Sprint(index + 1)
+			parent = rmWriteObject(t, f.objects, evidence.RevisionAlgorithmSHA1, "commit", []byte("tree "+headTree+"\nparent "+parent+"\nauthor A <a@example.com> "+at+" +0000\ncommitter A <a@example.com> "+at+" +0000\n\n"+message))
+		}
+		f.head = parent
+	}
 	zone := provider.ProviderZoneLocal
 	if options.remote {
 		zone = provider.ProviderZonePrivateRemote
@@ -695,7 +738,7 @@ func rmOptions(t *testing.T, f *rmModelFixture, c *rmClock) SessionOptions {
 	}
 	return SessionOptions{TenantID: "tenant-local", RepositoryID: "repository-local", Repository: repository,
 		ObjectsRoot: objects, Inventory: inventory, Policy: policy, Egress: EgressLocalOnly, Credentials: credentials,
-		Clock: c, Timeout: 5 * time.Second, ArtifactCapacity: 128}
+		Clock: c, Timeout: 5 * time.Second, ArtifactCapacity: 128, GenerationSanitizer: testsupport.NewCleanGenerationSanitizer(), VerificationSanitizer: testsupport.NewCleanVerificationSanitizer()}
 }
 func rmRevisions(t *testing.T, f *rmModelFixture) (evidence.RevisionIdentity, evidence.RevisionIdentity) {
 	t.Helper()

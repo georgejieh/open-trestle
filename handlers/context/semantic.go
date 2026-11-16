@@ -10,12 +10,30 @@ import (
 	"github.com/georgejieh/open-trestle/semanticimpact"
 )
 
+type semanticOmissionKey struct {
+	path, reason string
+}
+
 type semanticOmissionSummary struct {
-	path        string
-	line, count int
+	firstLine int
+	sameLine  bool
+	count     int
 }
 
 func appendSemanticCandidates(contents map[string][]byte, memoryScope memorycore.Scope, profile semanticimpact.Profile, candidates []review.ContextSource, omissions []review.ContextSourceOmission) ([]review.ContextSource, []review.ContextSourceOmission, controlplane.RunFailure) {
+	if len(omissions) > 16384 {
+		return nil, nil, controlplane.RunFailureResourceLimit
+	}
+	initialCount := 0
+	for _, omission := range omissions {
+		if omission.Validate() != nil {
+			return nil, nil, controlplane.RunFailureInvalidInput
+		}
+		initialCount += int(omission.Count())
+		if initialCount > 65536 {
+			return nil, nil, controlplane.RunFailureResourceLimit
+		}
+	}
 	seenReferences := map[string]bool{}
 	seenRanges := map[string]bool{}
 	rejectedRanges := map[string]string{}
@@ -24,14 +42,17 @@ func appendSemanticCandidates(contents map[string][]byte, memoryScope memorycore
 		sourceRange := candidate.EvidenceItem().SourceRange()
 		seenRanges[semanticRangeKey(sourceRange.Path(), sourceRange.StartLine(), sourceRange.EndLine())] = true
 	}
-	summaries := map[string]semanticOmissionSummary{}
+	summaries := map[semanticOmissionKey]semanticOmissionSummary{}
 	omit := func(reason, path string, line int) {
-		value := summaries[reason]
+		key := semanticOmissionKey{path: path, reason: reason}
+		value := summaries[key]
 		if value.count == 0 {
-			value.path, value.line = path, line
+			value.firstLine, value.sameLine = line, true
+		} else if value.firstLine != line {
+			value.sameLine = false
 		}
 		value.count++
-		summaries[reason] = value
+		summaries[key] = value
 	}
 	for _, ref := range profile.References() {
 		content, ok := contents[ref.Path()]
@@ -95,8 +116,17 @@ func appendSemanticCandidates(contents map[string][]byte, memoryScope memorycore
 		seenReferences[binding.Identity()] = true
 		seenRanges[rangeKey] = true
 	}
-	for reason, summary := range summaries {
-		value, err := review.NewCountedContextSourceOmission(summary.path, summary.line, summary.line, reason, uint32(summary.count))
+	counted := initialCount
+	for key, summary := range summaries {
+		counted += summary.count
+		if summary.count > 32768 || counted > 65536 || len(omissions) >= 16384 {
+			return nil, nil, controlplane.RunFailureResourceLimit
+		}
+		line := summary.firstLine
+		if !summary.sameLine {
+			line = 0
+		}
+		value, err := review.NewCountedContextSourceOmission(key.path, line, line, key.reason, uint32(summary.count))
 		if err != nil {
 			return nil, nil, controlplane.RunFailureInternal
 		}

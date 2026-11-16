@@ -1,0 +1,443 @@
+//go:build unix
+
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	postgresstore "github.com/georgejieh/open-trestle/adapters/storage/postgres"
+	"github.com/georgejieh/open-trestle/audit"
+	"github.com/georgejieh/open-trestle/client"
+	"github.com/georgejieh/open-trestle/controlplane"
+	"github.com/georgejieh/open-trestle/controlplane/httpapi"
+	"github.com/georgejieh/open-trestle/diagnostics"
+	modelhandler "github.com/georgejieh/open-trestle/handlers/model"
+	"github.com/georgejieh/open-trestle/internal/review"
+	"github.com/georgejieh/open-trestle/runtimecatalog"
+	"github.com/georgejieh/open-trestle/worker"
+)
+
+func TestDaemonLocalModelWorkersEmptyAndMalformedCandidates(t *testing.T) {
+	t.Parallel()
+	cliPath := filepath.Join(t.TempDir(), "trestle")
+	buildCLI := exec.Command("go", "build", "-o", cliPath, "../trestle")
+	if output, err := buildCLI.CombinedOutput(); err != nil {
+		t.Fatalf("build CLI: %v %s", err, output)
+	}
+	for _, mode := range []string{"empty", "malformed"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			args, getenv, fake, repository, base, head, policy, inventory := localModelWorkerFixture(t)
+			fake.generation.generationOutcome = mode
+			args = append(args, "--local-model-workers")
+			build := func() *daemon {
+				t.Helper()
+				d, err := buildDaemonWithDependencies(context.Background(), args, getenv, &bytes.Buffer{}, daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return d
+			}
+			d := build()
+			t.Cleanup(func() { d.Close() })
+			server := httptest.NewServer(d.server.Handler)
+			t.Cleanup(func() { server.Close() })
+			api, err := client.NewLocal(server.URL, getenv("OPEN_TRESTLE_API_TOKEN"), server.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			newCommand := func(args []string) *exec.Cmd {
+				cmd := exec.Command(cliPath, args...)
+				cmd.Env = append(os.Environ(), "OPEN_TRESTLE_API_TOKEN="+getenv("OPEN_TRESTLE_API_TOKEN"))
+				return cmd
+			}
+			command := func(args []string) []byte {
+				t.Helper()
+				output, err := newCommand(args).CombinedOutput()
+				if err != nil {
+					t.Fatalf("CLI result: %v %s", err, output)
+				}
+				return bytes.TrimSpace(output)
+			}
+			assertParity := func(scope audit.ReviewScope, set diagnostics.Set) {
+				t.Helper()
+				cliArgs := []string{"--server", server.URL}
+				assertTerminalResultParity(t, command, newCommand, server.URL, api, scope, set)
+				packagedAssertResultParity(t, command, cliArgs, scope, set)
+				if set.VerifiedSetIdentity() != "" {
+					packagedAssertProgressParity(t, command, cliArgs, scope, api, &set)
+					return
+				}
+				progress := packagedAssertProgressParity(t, command, cliArgs, scope, api, nil)
+				coverage := progress.Progress.Verification
+				if coverage.State != "unavailable" || coverage.Candidates != nil || coverage.Verified != nil || coverage.Rejected != nil || coverage.Inconclusive != nil {
+					t.Fatal("failed generation invented verification counts")
+				}
+			}
+			scope, _ := audit.NewReviewScope("tenant-a", "repo-a", "run-candidates-"+mode)
+			intent, err := runtimecatalog.NewLocalFullReviewIntent(scope, repository, base, head, policy.ReviewPolicyIdentity(), inventory.Identity(), policy.Identity(), time.Now().UTC())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := api.SubmitLocalFullReview(context.Background(), intent); err != nil {
+				t.Fatal(err)
+			}
+			for _, index := range []int{1, 2, 1} {
+				if _, err := d.supervisors[index].(*worker.RepositorySupervisor).RunOnce(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			final, err := api.GetDiagnosticSet(context.Background(), scope)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertParity(scope, final)
+			if len(final.Findings()) != 0 || final.VerifiedCount() != 0 {
+				t.Fatal("empty or invalid candidates promoted findings")
+			}
+			if mode == "empty" && (final.Outcome() != diagnostics.FinalOutcomeCompleted || final.CandidateCount() != 0 || final.VerifiedSetIdentity() == "") {
+				receipt, _ := api.GetRun(context.Background(), scope)
+				for _, task := range receipt.Tasks() {
+					t.Logf("task=%s state=%s failure=%s", task.Key(), task.Status(), task.Failure())
+				}
+				t.Fatalf("empty result=%s", final.Outcome())
+			}
+			if mode == "malformed" && (final.Outcome() != diagnostics.FinalOutcomeInconclusive || final.VerifiedSetIdentity() != "") {
+				t.Fatalf("malformed result=%s", final.Outcome())
+			}
+			receipt, err := api.GetRun(context.Background(), scope)
+			if err != nil {
+				t.Fatal(err)
+			}
+			candidate, _ := receipt.Task("candidates")
+			if mode == "malformed" && (candidate.Status() != controlplane.TaskRuntimeFailed || candidate.OutputIdentity() != "") {
+				t.Fatal("malformed candidates persisted output")
+			}
+			progress, err := api.GetRunProgress(context.Background(), scope)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mode == "empty" && (progress.Progress.Verification.Verified == nil || *progress.Progress.Verification.Verified != 0) {
+				t.Fatal("empty verification did not expose measured zero")
+			}
+			if mode == "malformed" {
+				var ledger *audit.FileLedger
+				for _, closer := range d.closers {
+					if value, ok := closer.(*audit.FileLedger); ok {
+						ledger = value
+					}
+				}
+				if ledger == nil {
+					t.Fatal("daemon audit ledger missing")
+				}
+				events, err := ledger.Read(context.Background(), scope, 0, 64)
+				if err != nil {
+					t.Fatal(err)
+				}
+				contextTask, _ := receipt.Task("context")
+				inputArtifact, err := d.artifactStore.Get(context.Background(), scope, contextTask.OutputIdentity(), time.Now().UTC())
+				if err != nil {
+					t.Fatal(err)
+				}
+				input, err := modelhandler.ParseGenerationInput(inputArtifact.Payload())
+				if err != nil {
+					t.Fatal(err)
+				}
+				contextArtifact, err := d.artifactStore.Get(context.Background(), scope, input.ContextArtifactIdentity(), time.Now().UTC())
+				if err != nil {
+					t.Fatal(err)
+				}
+				found := 0
+				for _, event := range events {
+					if event.Kind() != audit.EventGenerationRejected {
+						continue
+					}
+					found++
+					value, err := d.artifactStore.Get(context.Background(), scope, event.SubjectIdentity(), time.Now().UTC())
+					if err != nil {
+						t.Fatal(err)
+					}
+					rejection, err := modelhandler.ParseGenerationRejectionArtifact(value, inputArtifact, contextArtifact)
+					if err != nil || rejection.Attempt().Authorization().Identity() != input.Authorization().Identity() || rejection.HandlerIdentity() != candidate.HandlerIdentity() {
+						t.Fatalf("stored rejection lineage: %v", err)
+					}
+					facts, err := d.journal.(*controlplane.FileRunJournal).InspectHistoricalContextPackets(context.Background())
+					if err != nil || len(facts) != 1 {
+						t.Fatalf("rejection historical facts: %v", err)
+					}
+					linked, ok := facts[0].LinkedInputEvent()
+					if !ok {
+						t.Fatal("rejection input link missing")
+					}
+					requestArtifact, err := d.artifactStore.Get(context.Background(), scope, input.SanitizedRequestArtifactIdentity(), time.Now().UTC())
+					if err != nil {
+						t.Fatal(err)
+					}
+					sanitized, err := review.ParseSanitizedModelRequest(requestArtifact.Payload())
+					if err != nil {
+						t.Fatal(err)
+					}
+					request, err := sanitized.ProviderRequest()
+					if err != nil {
+						t.Fatal(err)
+					}
+					pair, err := runtimecatalog.ResolveLocalGenerationRoutePair(policy, inventory)
+					if err != nil {
+						t.Fatal(err)
+					}
+					route, err := runtimecatalog.PlanLocalGenerationRoute(context.Background(), scope, request, policy, inventory, pair)
+					if err != nil {
+						t.Fatal(err)
+					}
+					receiptArtifact, err := d.artifactStore.Get(context.Background(), scope, input.SanitizedEgressReceiptArtifactIdentity(), time.Now().UTC())
+					if err != nil {
+						t.Fatal(err)
+					}
+					testGenerationRejectionAuditProof(t, events, value, inputArtifact, contextArtifact, requestArtifact, receiptArtifact, linked.InputDescriptor(), route, candidate.HandlerIdentity(), time.Now().UTC())
+					testGenerationRejectionJournal(t, facts[0], events, time.Now().UTC())
+					testGenerationRejectionPhysical(t, facts[0], inventory, policy, candidate.HandlerIdentity(), args, repository)
+					testGenerationRejectionLateClock(t, d, args, getenv, facts[0], repository)
+				}
+				if found != 1 {
+					t.Fatalf("rejection events=%d", found)
+				}
+			}
+			server.Close()
+			if err := d.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if mode == "malformed" {
+				testGenerationRejectionStartupRefusals(t, args, getenv, scope)
+				d = build()
+				server = httptest.NewServer(d.server.Handler)
+				api, err = client.NewLocal(server.URL, getenv("OPEN_TRESTLE_API_TOKEN"), server.Client())
+				if err != nil {
+					t.Fatal(err)
+				}
+				after, err := api.GetDiagnosticSet(context.Background(), scope)
+				if err != nil || after.Identity() != final.Identity() {
+					t.Fatalf("first reopen changed rejected result: %v", err)
+				}
+				assertParity(scope, after)
+				fake.generation.generationOutcome = "empty"
+				laterScope, _ := audit.NewReviewScope("tenant-a", "repo-a", "run-after-rejected-generation")
+				later, err := runtimecatalog.NewLocalFullReviewIntent(laterScope, repository, base, head, policy.ReviewPolicyIdentity(), inventory.Identity(), policy.Identity(), time.Now().UTC())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := api.SubmitLocalFullReview(context.Background(), later); err != nil {
+					t.Fatal(err)
+				}
+				for _, index := range []int{1, 2, 1} {
+					if _, err := d.supervisors[index].(*worker.RepositorySupervisor).RunOnce(context.Background()); err != nil {
+						t.Fatal(err)
+					}
+				}
+				laterFinal, err := api.GetDiagnosticSet(context.Background(), laterScope)
+				if err != nil || laterFinal.Outcome() != diagnostics.FinalOutcomeCompleted || laterFinal.CandidateCount() != 0 || laterFinal.VerifiedSetIdentity() == "" {
+					t.Fatalf("later run: %v", err)
+				}
+				assertParity(laterScope, laterFinal)
+				server.Close()
+				if err := d.Close(); err != nil {
+					t.Fatal(err)
+				}
+				d = build()
+				server = httptest.NewServer(d.server.Handler)
+				defer server.Close()
+				api, err = client.NewLocal(server.URL, getenv("OPEN_TRESTLE_API_TOKEN"), server.Client())
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, index := range []int{1, 2} {
+					if _, err := d.supervisors[index].(*worker.RepositorySupervisor).RunOnce(context.Background()); err != nil {
+						t.Fatal(err)
+					}
+				}
+				for _, wanted := range []struct {
+					scope    audit.ReviewScope
+					identity string
+				}{{scope, final.Identity()}, {laterScope, laterFinal.Identity()}} {
+					got, err := api.GetDiagnosticSet(context.Background(), wanted.scope)
+					if err != nil || got.Identity() != wanted.identity {
+						t.Fatalf("second reopen changed result: %v", err)
+					}
+					assertParity(wanted.scope, got)
+				}
+				if calls, _, _, failures := fake.generation.snapshot(); calls != 2 || len(failures) != 0 {
+					t.Fatalf("generation calls=%d failures=%v", calls, failures)
+				}
+				if calls, _, _, failures := fake.verification.snapshot(); calls != 1 || len(failures) != 0 {
+					t.Fatalf("verification calls=%d failures=%v", calls, failures)
+				}
+				return
+			}
+			d = build()
+			server = httptest.NewServer(d.server.Handler)
+			api, err = client.NewLocal(server.URL, getenv("OPEN_TRESTLE_API_TOKEN"), server.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, index := range []int{1, 2} {
+				if _, err := d.supervisors[index].(*worker.RepositorySupervisor).RunOnce(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			after, err := api.GetDiagnosticSet(context.Background(), scope)
+			if err != nil || after.Identity() != final.Identity() {
+				t.Fatalf("restart changed result: %v", err)
+			}
+			assertParity(scope, after)
+			if calls, _, _, failures := fake.generation.snapshot(); calls != 1 || len(failures) != 0 {
+				t.Fatalf("generation calls=%d failures=%v", calls, failures)
+			}
+			wantVerification := 1
+			if mode == "malformed" {
+				wantVerification = 0
+			}
+			if calls, _, _, failures := fake.verification.snapshot(); calls != wantVerification || len(failures) != 0 {
+				t.Fatalf("verification calls=%d want=%d failures=%v", calls, wantVerification, failures)
+			}
+		})
+	}
+}
+
+func assertTerminalResultParity(t *testing.T, command func([]string) []byte, newCommand func([]string) *exec.Cmd, serverURL string, api *client.Client, scope audit.ReviewScope, set diagnostics.Set) {
+	t.Helper()
+	rendered := string(command([]string{"tui", "--server", serverURL, "--tenant", scope.TenantID(), "--repository", scope.RepositoryID(), "--run", scope.ReviewRunID(), "--plain", "--once"}))
+	for _, want := range []string{"Final review outcome: " + string(set.Outcome()), "Deterministic observations (not independently verified)", fmt.Sprintf("%d deterministic observation(s)", len(set.DeterministicObservations())), "does not approve the change"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("TUI missing %q: %s", want, rendered)
+		}
+	}
+	if set.VerifiedSetIdentity() == "" {
+		if !strings.Contains(rendered, "Verified findings: unknown (evidence unavailable).") || strings.Contains(rendered, "0 verified finding(s)") || strings.Contains(rendered, "0 candidate(s)") {
+			t.Fatalf("TUI invented verification: %s", rendered)
+		}
+	} else if !strings.Contains(rendered, fmt.Sprintf("%d verified finding(s)", set.VerifiedCount())) {
+		t.Fatalf("TUI lost verified count: %s", rendered)
+	}
+
+	cmd := newCommand([]string{"acp", "--server", serverURL, "--tenant", scope.TenantID(), "--repository", scope.RepositoryID(), "--run", scope.ReviewRunID()})
+	input, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if cmd.ProcessState == nil {
+			cmd.Process.Kill()
+			cmd.Wait()
+		}
+	}()
+	write := func(id int, method string, params any) {
+		t.Helper()
+		if err := json.NewEncoder(input).Encode(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	scanner := bufio.NewScanner(output)
+	scanner.Buffer(make([]byte, 64<<10), 1<<20)
+	read := func() []byte {
+		t.Helper()
+		if !scanner.Scan() {
+			t.Fatalf("ACP output ended: %v", scanner.Err())
+		}
+		return append([]byte(nil), scanner.Bytes()...)
+	}
+	write(1, "initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}})
+	var initialized struct {
+		ID     int `json:"id"`
+		Result struct {
+			ProtocolVersion int `json:"protocolVersion"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(read(), &initialized); err != nil || initialized.ID != 1 || initialized.Result.ProtocolVersion != 1 {
+		t.Fatalf("ACP initialize: %v %+v", err, initialized)
+	}
+	write(2, "session/new", map[string]any{"cwd": t.TempDir(), "mcpServers": []any{}})
+	var session struct {
+		ID     int `json:"id"`
+		Result struct {
+			SessionID string `json:"sessionId"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(read(), &session); err != nil || session.ID != 2 || session.Result.SessionID == "" {
+		t.Fatalf("ACP session: %v %+v", err, session)
+	}
+	write(3, "session/prompt", map[string]any{"sessionId": session.Result.SessionID, "prompt": []map[string]any{{"type": "text", "text": "Show review status"}}})
+	var update struct {
+		Method string `json:"method"`
+		Params struct {
+			SessionID string `json:"sessionId"`
+			Update    struct {
+				Content struct {
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"update"`
+		} `json:"params"`
+	}
+	var done struct {
+		ID     int `json:"id"`
+		Result struct {
+			StopReason string `json:"stopReason"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(read(), &update); err != nil || update.Method != "session/update" || update.Params.SessionID != session.Result.SessionID {
+		t.Fatalf("ACP update: %v %+v", err, update)
+	}
+	if err := json.Unmarshal(read(), &done); err != nil || done.ID != 3 || done.Result.StopReason != "end_turn" {
+		t.Fatalf("ACP completion: %v %+v", err, done)
+	}
+	if err := input.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if scanner.Scan() || scanner.Err() != nil {
+		t.Fatal("unexpected ACP output after completion")
+	}
+	if err := cmd.Wait(); err != nil || stderr.Len() != 0 {
+		t.Fatalf("ACP process: %v %s", err, stderr.String())
+	}
+	text := update.Params.Update.Content.Text
+	_, encodedSet, found := strings.Cut(text, "Final review diagnostics:\n")
+	got, err := diagnostics.ParseSet([]byte(encodedSet))
+	if !found || err != nil || got.Identity() != set.Identity() {
+		t.Fatalf("ACP final result mismatch: %v %s", err, text)
+	}
+	receipt, err := api.GetRun(context.Background(), scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, rest, found := strings.Cut(text, "Run receipt:\n")
+	receiptJSON, _, _ := strings.Cut(rest, "\n\n")
+	gotReceipt, err := controlplane.ParseReviewRunReceipt([]byte(receiptJSON))
+	if !found || err != nil || gotReceipt.Identity() != receipt.Identity() || !strings.Contains(text, "Final review outcome: "+string(set.Outcome())) {
+		t.Fatalf("ACP receipt/outcome mismatch: %v %s", err, text)
+	}
+	if set.VerifiedSetIdentity() == "" {
+		if !strings.Contains(text, "Verified findings: unknown (evidence unavailable).") || strings.Contains(text, "Verified findings: 0.") {
+			t.Fatalf("ACP invented verification: %s", text)
+		}
+	} else if !strings.Contains(text, fmt.Sprintf("Verified findings: %d.", set.VerifiedCount())) {
+		t.Fatalf("ACP lost verified count: %s", text)
+	}
+}

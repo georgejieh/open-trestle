@@ -439,3 +439,32 @@ func TestEvMetaNestedResponseCanonicalFields(t *testing.T) {
 	changed := evMetaChange(t, evMetaWire("terminal_response_record"), map[string]string{"entries": "[" + entry + "," + duplicate + "]"}, true)
 	evMetaDeniedEvidence(t, evMetaNested(t, evMetaWire("terminal_response"), changed), artifact.ErrInvalidErasureContract)
 }
+
+func TestEvMetaResponseSyntaxPrecedesReferenceAndIdentity(t *testing.T) {
+	ref := evMetaRef(t)
+	other, err := artifact.NewErasureOperationRef(evMetaScope(t), ref.NamespaceIdentity(), evMetaOther)
+	evMetaError(t, err, nil)
+	for _, tc := range []struct {
+		name    string
+		rehash  bool
+		changes map[string]string
+		ref     artifact.ErasureOperationRef
+		want    error
+	}{
+		{"syntax-before-reference", true, map[string]string{"record_hex": `"7b7d"`}, other, artifact.ErrInvalidErasureContract},
+		{"syntax-before-response-identity", false, map[string]string{"record_hex": `"7b7d"`, "identity": evMetaJSON(evMetaOther)}, ref, artifact.ErrInvalidErasureContract},
+		{"reference-before-claims", true, map[string]string{"content_digest": evMetaJSON(evMetaOther)}, other, artifact.ErrErasureIdentityMismatch},
+		{"claims-after-reference", true, map[string]string{"content_digest": evMetaJSON(evMetaOther)}, ref, artifact.ErrErasureBindingMismatch},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inner := evMetaChange(t, evMetaWire("initial_response_record"), tc.changes, false)
+			if tc.rehash {
+				inner = evMetaRehash(t, inner)
+			}
+			wire := evMetaNested(t, evMetaWire("initial_response"), inner)
+			value, err := artifact.ParseErasureEvidence([]byte(wire), tc.ref)
+			evMetaError(t, err, tc.want)
+			evMetaZeroEvidence(t, value)
+		})
+	}
+}

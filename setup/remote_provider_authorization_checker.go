@@ -57,7 +57,7 @@ func (c *RemoteProviderAuthorizationChecker) Check(ctx context.Context, plan Pla
 			case runtimePolicyLoadBlocked:
 				outcome = "configuration_invalid"
 			case runtimePolicyLoadValid:
-				if approval.validate(plan, inventory, policy) && runtimePolicyMatchesSetup(plan, inventory, policy) && hasAuthorizedRemoteProvider(inventory, policy) {
+				if approval.validate(plan, inventory, policy) && c.policyChecker.matchesSetup(plan, inventory, policy) && hasAuthorizedRemoteProvider(inventory, policy) {
 					state, outcome = CheckPassed, "authorized"
 				} else {
 					outcome = "authority_mismatch"
@@ -89,7 +89,8 @@ func hasAuthorizedRemoteProvider(inventory runtimeconfig.RouteInventory, policy 
 		if !found {
 			return false
 		}
-		if reference.Zone() != provider.ProviderZonePrivateRemote || !routeReadyForPolicy(observed, policy) {
+		brokered := reference.Zone() == provider.ProviderZoneBrokeredRemote && (reference.ProviderID() == "openrouter" && connection.RequiresZeroDataRetention() || reference.ProviderID() == "opencode-go" && connection.RequestProfile() == runtimeconfig.OpenCodeGoChatProfile || reference.ProviderID() == "opencode-console" && connection.RequestProfile() == runtimeconfig.OpenCodeConsoleChatProfile)
+		if reference.Zone() != provider.ProviderZonePrivateRemote && !brokered || !routeReadyForPolicy(observed, policy) {
 			continue
 		}
 		endpoint, err := provider.ParseServiceEndpoint(connection.Endpoint())

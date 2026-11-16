@@ -1,4 +1,4 @@
-// Package openai provides a bounded adapter for the OpenAI Responses API.
+// Package openai provides bounded OpenAI Responses and Chat Completions adapters.
 package openai
 
 import (
@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -19,19 +20,27 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/georgejieh/open-trestle/artifact"
+	modelhandler "github.com/georgejieh/open-trestle/handlers/model"
 	"github.com/georgejieh/open-trestle/internal/gateway"
 	"github.com/georgejieh/open-trestle/internal/provider"
+	"github.com/georgejieh/open-trestle/internal/review"
 )
 
 const (
-	defaultEndpoint       = "https://api.openai.com/v1"
-	defaultRequestTimeout = 2 * time.Minute
-	maximumRequestTimeout = 5 * time.Minute
-	maximumResponseBytes  = 8 << 20
-	maximumErrorBodyBytes = 4096
-	maximumAPIKeyBytes    = 4096
-	maximumHeaderBytes    = 64 << 10
-	maximumOutputItems    = 64
+	defaultEndpoint = "https://api.openai.com/v1"
+	// defaultRequestTimeout is the timeout a configured client that sets none
+	// gets. The default client gives one request this much per
+	// requestTimeoutOutputTokens of its output allowance, and at least this
+	// much, up to maximumRequestTimeout.
+	defaultRequestTimeout      = 2 * time.Minute
+	requestTimeoutOutputTokens = 4096
+	maximumRequestTimeout      = 5 * time.Minute
+	maximumResponseBytes       = 8 << 20
+	maximumErrorBodyBytes      = 4096
+	maximumAPIKeyBytes         = 4096
+	maximumHeaderBytes         = 64 << 10
+	maximumOutputItems         = 64
 )
 
 var (
@@ -68,6 +77,15 @@ func (k APIKey) Validate() error {
 	return nil
 }
 
+// Authorize sets a validated bearer credential on a caller-authorized request.
+func (k APIKey) Authorize(request *http.Request) error {
+	if request == nil || k.Validate() != nil {
+		return ErrInvalidAPIKey
+	}
+	request.Header.Set("Authorization", "Bearer "+k.value)
+	return nil
+}
+
 func (k APIKey) String() string   { return "OpenAI API key" }
 func (k APIKey) GoString() string { return "openai.APIKey{<redacted>}" }
 func (k APIKey) Format(state fmt.State, verb rune) {
@@ -79,45 +97,106 @@ type APIKeyProvider interface {
 	Retrieve(context.Context) (APIKey, error)
 }
 
-// Config binds one adapter instance to an exact approved route namespace.
-type Config struct {
-	AdapterID          string
-	ProviderID         string
-	ConnectionID       string
-	Zone               provider.ProviderZone
-	ContentLoggingMode provider.ContentLoggingMode
-	Endpoint           string
-	Credentials        APIKeyProvider
-	CredentialIdentity string
-	HTTPClientIdentity string
-	HTTPClient         *http.Client
+// Protocol identifies an exact supported OpenAI wire contract.
+type Protocol string
+
+const (
+	ProtocolResponses       Protocol = "openai_responses"
+	ProtocolChatCompletions Protocol = "openai_chat_completions"
+)
+
+func (p Protocol) valid() bool {
+	return p == ProtocolResponses || p == ProtocolChatCompletions
 }
 
-// Adapter executes exact authorized requests against the Responses API.
+// CredentialMode selects bearer authentication or explicit local no-auth.
+type CredentialMode string
+
+const (
+	CredentialModeBearer CredentialMode = "bearer"
+	CredentialModeNone   CredentialMode = "none"
+)
+
+func validCredentialAuthority(mode CredentialMode, credentials APIKeyProvider, identity string, zone provider.ProviderZone, locality provider.ServiceEndpointLocality, profile RequestProfile) bool {
+	if mode == CredentialModeNone {
+		zoneAllowsNoAuth := zone == provider.ProviderZoneLocal || zone == provider.ProviderZonePrivateRemote && profile == RequestProfileOllamaSigninChatV1
+		return zoneAllowsNoAuth && locality == provider.ServiceEndpointLoopback && credentials == nil && identity == ""
+	}
+	return mode == CredentialModeBearer && !nilInterface(credentials) && validConfigurationIdentity(identity)
+}
+
+// Config binds one adapter instance to an exact approved route namespace.
+type Config struct {
+	LocalStructuredOutput    bool
+	RequestProfile           RequestProfile
+	OpenRouterAuthority      *OpenRouterRouteAuthority
+	OpenCodeGoAuthority      *OpenCodeGoRouteAuthority
+	OpenCodeConsoleAuthority *OpenCodeConsoleRouteAuthority
+	Clock                    artifact.Clock
+	CredentialMode           CredentialMode
+	Protocol                 Protocol
+	AdapterID                string
+	ProviderID               string
+	ConnectionID             string
+	Zone                     provider.ProviderZone
+	ContentLoggingMode       provider.ContentLoggingMode
+	Endpoint                 string
+	Credentials              APIKeyProvider
+	CredentialIdentity       string
+	HTTPClientIdentity       string
+	HTTPClient               *http.Client
+}
+
+// Adapter executes exact authorized requests against its configured protocol.
 type Adapter struct {
-	adapterID             string
-	providerID            string
-	connectionID          string
-	zone                  provider.ProviderZone
-	contentLoggingMode    provider.ContentLoggingMode
-	endpoint              *url.URL
-	credentials           APIKeyProvider
-	credentialIdentity    string
-	httpClientIdentity    string
-	configurationIdentity string
-	httpClient            *http.Client
+	localStructuredOutput    bool
+	requestProfile           RequestProfile
+	openRouterAuthority      *OpenRouterRouteAuthority
+	openCodeGoAuthority      *OpenCodeGoRouteAuthority
+	openCodeConsoleAuthority *OpenCodeConsoleRouteAuthority
+	clock                    artifact.Clock
+	credentialMode           CredentialMode
+	protocol                 Protocol
+	adapterID                string
+	providerID               string
+	connectionID             string
+	zone                     provider.ProviderZone
+	contentLoggingMode       provider.ContentLoggingMode
+	endpoint                 *url.URL
+	credentials              APIKeyProvider
+	credentialIdentity       string
+	httpClientIdentity       string
+	configurationIdentity    string
+	httpClient               *http.Client
+	// scaledTimeout reports the default client, whose per-request deadline
+	// grows with the request's output allowance (DefaultClientRequestTimeout).
+	scaledTimeout bool
 }
 
 // New validates configuration without retrieving credentials or making a request.
 func New(config Config) (*Adapter, error) {
+	protocol := config.Protocol
+	if protocol == "" {
+		protocol = ProtocolResponses
+	}
+	if !protocol.valid() || config.LocalStructuredOutput && (protocol != ProtocolChatCompletions || config.RequestProfile != "" || config.Zone != provider.ProviderZoneLocal) {
+		return nil, ErrInvalidConfig
+	}
+	mode := config.CredentialMode
+	if mode == "" {
+		mode = CredentialModeBearer
+	}
 	endpointValue := config.Endpoint
 	if endpointValue == "" {
 		endpointValue = defaultEndpoint
 	}
 	endpoint, err := provider.ParseServiceEndpoint(endpointValue)
 	locality, localityErr := provider.ClassifyServiceEndpoint(endpointValue)
-	zoneMatches := config.Zone == provider.ProviderZoneLocal && locality == provider.ServiceEndpointLoopback || config.Zone == provider.ProviderZonePrivateRemote && locality == provider.ServiceEndpointRemote
-	if err != nil || localityErr != nil || !zoneMatches || nilInterface(config.Credentials) || !validConfigurationIdentity(config.CredentialIdentity) {
+	zoneMatches := config.Zone == provider.ProviderZoneLocal && locality == provider.ServiceEndpointLoopback || config.Zone == provider.ProviderZonePrivateRemote && locality == provider.ServiceEndpointRemote || config.Zone == provider.ProviderZoneBrokeredRemote && ((config.RequestProfile == RequestProfileOpenRouterZDRChatV1 || config.RequestProfile == RequestProfileOpenRouterZDRChatV2) && endpointValue == openRouterEndpoint || config.RequestProfile == RequestProfileOpenCodeGoChatV1 && endpointValue == "https://opencode.ai/inference/go/openai/v1" || config.RequestProfile == RequestProfileOpenCodeConsoleChatV1 && endpointValue == "https://opencode.ai/inference/openai/v1")
+	// The one closed loopback exception for a non-local zone; validServiceProfile
+	// below enforces the rest of the Ollama sign-in profile.
+	zoneMatches = zoneMatches || config.Zone == provider.ProviderZonePrivateRemote && config.RequestProfile == RequestProfileOllamaSigninChatV1 && locality == provider.ServiceEndpointLoopback
+	if err != nil || localityErr != nil || !zoneMatches || config.LocalStructuredOutput && locality != provider.ServiceEndpointLoopback || !validCredentialAuthority(mode, config.Credentials, config.CredentialIdentity, config.Zone, locality, config.RequestProfile) {
 		return nil, ErrInvalidConfig
 	}
 	if config.ContentLoggingMode.Validate() != nil {
@@ -146,19 +225,36 @@ func New(config Config) (*Adapter, error) {
 	if err != nil {
 		return nil, err
 	}
+	if config.HTTPClient == nil {
+		// The default client's own timeout is only the outer bound; each
+		// request gets the deadline its output allowance needs.
+		client.Timeout = maximumRequestTimeout
+	}
 	endpointCopy := *endpoint
 	endpointCopy.Path = strings.TrimSuffix(endpointCopy.Path, "/")
 	adapter := &Adapter{
-		adapterID:          strings.Clone(config.AdapterID),
-		providerID:         strings.Clone(config.ProviderID),
-		connectionID:       strings.Clone(config.ConnectionID),
-		zone:               config.Zone,
-		contentLoggingMode: config.ContentLoggingMode,
-		endpoint:           &endpointCopy,
-		credentials:        config.Credentials,
-		credentialIdentity: strings.Clone(config.CredentialIdentity),
-		httpClientIdentity: strings.Clone(httpClientIdentity),
-		httpClient:         client,
+		localStructuredOutput:    config.LocalStructuredOutput,
+		requestProfile:           config.RequestProfile,
+		openRouterAuthority:      cloneOpenRouterAuthority(config.OpenRouterAuthority),
+		openCodeGoAuthority:      cloneOpenCodeGoAuthority(config.OpenCodeGoAuthority),
+		openCodeConsoleAuthority: cloneOpenCodeConsoleAuthority(config.OpenCodeConsoleAuthority),
+		clock:                    config.Clock,
+		credentialMode:           mode,
+		protocol:                 protocol,
+		adapterID:                strings.Clone(config.AdapterID),
+		providerID:               strings.Clone(config.ProviderID),
+		connectionID:             strings.Clone(config.ConnectionID),
+		zone:                     config.Zone,
+		contentLoggingMode:       config.ContentLoggingMode,
+		endpoint:                 &endpointCopy,
+		credentials:              config.Credentials,
+		credentialIdentity:       strings.Clone(config.CredentialIdentity),
+		httpClientIdentity:       strings.Clone(httpClientIdentity),
+		httpClient:               client,
+		scaledTimeout:            config.HTTPClient == nil,
+	}
+	if !adapter.validServiceProfile() || !adapter.serviceProfileCurrent() {
+		return nil, ErrInvalidConfig
 	}
 	adapter.configurationIdentity = deriveConfigurationIdentity(adapter)
 	return adapter, nil
@@ -166,13 +262,21 @@ func New(config Config) (*Adapter, error) {
 
 func boundedClient(configured *http.Client) (*http.Client, error) {
 	if configured == nil {
-		transport := http.DefaultTransport.(*http.Transport).Clone()
-		transport.TLSClientConfig = cloneTLSConfig(transport.TLSClientConfig)
-		transport.TLSClientConfig.MinVersion = tls.VersionTLS12
-		transport.MaxResponseHeaderBytes = maximumHeaderBytes
-		configured = &http.Client{Transport: transport, Timeout: defaultRequestTimeout}
+		configured = &http.Client{}
 	}
 	clone := *configured
+	if clone.Transport == nil {
+		clone.Transport = &http.Transport{
+			DialContext:            (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+			ForceAttemptHTTP2:      true,
+			MaxIdleConns:           100,
+			IdleConnTimeout:        90 * time.Second,
+			TLSHandshakeTimeout:    10 * time.Second,
+			ExpectContinueTimeout:  time.Second,
+			TLSClientConfig:        &tls.Config{MinVersion: tls.VersionTLS12},
+			MaxResponseHeaderBytes: maximumHeaderBytes,
+		}
+	}
 	if clone.Timeout == 0 {
 		clone.Timeout = defaultRequestTimeout
 	}
@@ -181,13 +285,6 @@ func boundedClient(configured *http.Client) (*http.Client, error) {
 	}
 	clone.CheckRedirect = func(*http.Request, []*http.Request) error { return ErrInvalidConfig }
 	return &clone, nil
-}
-
-func cloneTLSConfig(config *tls.Config) *tls.Config {
-	if config == nil {
-		return &tls.Config{}
-	}
-	return config.Clone()
 }
 
 func validEndpoint(endpoint *url.URL) bool {
@@ -217,6 +314,10 @@ func deriveConfigurationIdentity(a *Adapter) string {
 	if a == nil || a.endpoint == nil {
 		return ""
 	}
+	contract, version := "open-trestle/openai-responses-adapter", 4
+	if a.protocol == ProtocolChatCompletions {
+		contract, version = "open-trestle/openai-chat-completions-adapter", 1
+	}
 	encoded, _ := json.Marshal(struct {
 		Contract            string `json:"contract"`
 		Version             int    `json:"version"`
@@ -229,20 +330,64 @@ func deriveConfigurationIdentity(a *Adapter) string {
 		Credential          string `json:"credential"`
 		HTTPClient          string `json:"http_client"`
 		TimeoutMilliseconds int64  `json:"timeout_milliseconds"`
-	}{"open-trestle/openai-responses-adapter", 3, a.adapterID, a.providerID, a.connectionID, a.zone.String(), a.contentLoggingMode.String(), a.endpoint.String(), a.credentialIdentity, a.httpClientIdentity, a.httpClient.Timeout.Milliseconds()})
+	}{contract, version, a.adapterID, a.providerID, a.connectionID, a.zone.String(), a.contentLoggingMode.String(), a.endpoint.String(), a.credentialIdentity, a.httpClientIdentity, a.httpClient.Timeout.Milliseconds()})
+	if a.credentialMode == CredentialModeNone {
+		encoded, _ = json.Marshal(struct {
+			Contract       string          `json:"contract"`
+			Version        int             `json:"version"`
+			Configuration  json.RawMessage `json:"configuration"`
+			Protocol       Protocol        `json:"protocol"`
+			CredentialMode CredentialMode  `json:"credential_mode"`
+		}{"open-trestle/openai-no-auth-adapter", 1, encoded, a.protocol, a.credentialMode})
+	}
+	if a.requestProfile != "" {
+		if !a.validServiceProfile() {
+			return ""
+		}
+		encoded = a.serviceIdentityPreimage(encoded)
+	}
+	if a.localStructuredOutput {
+		encoded, _ = json.Marshal(struct {
+			Contract      string          `json:"contract"`
+			Version       int             `json:"version"`
+			Configuration json.RawMessage `json:"configuration"`
+			Enabled       bool            `json:"local_structured_output"`
+		}{"open-trestle/openai-local-structured-output-adapter", 1, encoded, true})
+	}
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
 }
+
+// defaultHTTPClientIdentity binds the default client: its outer timeout, the
+// per-request deadline rule of DefaultClientRequestTimeout, the header bound
+// and the minimum TLS version. Version 2 bound a fixed two-minute timeout.
 func defaultHTTPClientIdentity() string {
 	encoded, _ := json.Marshal(struct {
-		Contract       string `json:"contract"`
-		Version        int    `json:"version"`
-		Timeout        int64  `json:"timeout_milliseconds"`
-		MaximumHeaders int64  `json:"maximum_header_bytes"`
-		MinimumTLS     uint16 `json:"minimum_tls_version"`
-	}{"open-trestle/openai-default-http-client", 1, defaultRequestTimeout.Milliseconds(), maximumHeaderBytes, tls.VersionTLS12})
+		Contract              string `json:"contract"`
+		Version               int    `json:"version"`
+		Timeout               int64  `json:"timeout_milliseconds"`
+		RequestTimeout        int64  `json:"request_timeout_milliseconds"`
+		RequestTimeoutTokens  int64  `json:"request_timeout_output_tokens"`
+		MinimumRequestTimeout int64  `json:"minimum_request_timeout_milliseconds"`
+		MaximumHeaders        int64  `json:"maximum_header_bytes"`
+		MinimumTLS            uint16 `json:"minimum_tls_version"`
+	}{"open-trestle/openai-default-http-client", 3, maximumRequestTimeout.Milliseconds(), defaultRequestTimeout.Milliseconds(), requestTimeoutOutputTokens, defaultRequestTimeout.Milliseconds(), maximumHeaderBytes, tls.VersionTLS12})
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])
+}
+
+// DefaultClientRequestTimeout is the deadline the default client gives one
+// request whose output allowance is maxOutputTokens: two minutes per 4096
+// tokens of allowance, at least two minutes and at most five. A configured
+// client keeps its own timeout.
+func DefaultClientRequestTimeout(maxOutputTokens uint32) time.Duration {
+	scaled := time.Duration(uint64(defaultRequestTimeout/time.Millisecond)*uint64(maxOutputTokens)/requestTimeoutOutputTokens) * time.Millisecond
+	return min(max(scaled, defaultRequestTimeout), maximumRequestTimeout)
+}
+
+// validSanitizedReceiptReference checks only the closed identity format. Trusted handlers own receipt lineage validation.
+func validSanitizedReceiptReference(identity string) bool {
+	return validConfigurationIdentity(identity)
 }
 
 func validConfigurationIdentity(identity string) bool {
@@ -263,20 +408,33 @@ func validConfigurationIdentity(identity string) bool {
 
 // Validate verifies the immutable adapter configuration.
 func (a *Adapter) Validate() error {
-	if a == nil || a.endpoint == nil || a.httpClient == nil || nilInterface(a.credentials) || !validEndpoint(a.endpoint) || !validConfigurationIdentity(a.credentialIdentity) || !validConfigurationIdentity(a.httpClientIdentity) || a.configurationIdentity != deriveConfigurationIdentity(a) {
+	if a == nil || !a.protocol.valid() || a.endpoint == nil || a.httpClient == nil || !a.validServiceProfile() || !validEndpoint(a.endpoint) || !validConfigurationIdentity(a.httpClientIdentity) || a.configurationIdentity != deriveConfigurationIdentity(a) {
 		return ErrInvalidConfig
 	}
 	_, err := provider.NewRouteReference(a.zone, a.providerID, a.adapterID, a.connectionID, "model", "")
 	locality, localityErr := provider.ClassifyServiceEndpoint(a.endpoint.String())
-	zoneMatches := a.zone == provider.ProviderZoneLocal && locality == provider.ServiceEndpointLoopback || a.zone == provider.ProviderZonePrivateRemote && locality == provider.ServiceEndpointRemote
-	if err != nil || localityErr != nil || !zoneMatches || a.contentLoggingMode.Validate() != nil || a.httpClient.Timeout <= 0 || a.httpClient.Timeout > maximumRequestTimeout {
+	zoneMatches := a.zone == provider.ProviderZoneLocal && locality == provider.ServiceEndpointLoopback || a.zone == provider.ProviderZonePrivateRemote && locality == provider.ServiceEndpointRemote || a.zone == provider.ProviderZoneBrokeredRemote && (a.openRouterProfile() || a.requestProfile == RequestProfileOpenCodeGoChatV1 || a.requestProfile == RequestProfileOpenCodeConsoleChatV1)
+	zoneMatches = zoneMatches || a.zone == provider.ProviderZonePrivateRemote && a.requestProfile == RequestProfileOllamaSigninChatV1 && locality == provider.ServiceEndpointLoopback
+	if err != nil || localityErr != nil || !zoneMatches || a.localStructuredOutput && (a.protocol != ProtocolChatCompletions || a.requestProfile != "" || a.zone != provider.ProviderZoneLocal || locality != provider.ServiceEndpointLoopback) || !validCredentialAuthority(a.credentialMode, a.credentials, a.credentialIdentity, a.zone, locality, a.requestProfile) || a.contentLoggingMode.Validate() != nil || a.httpClient.Timeout <= 0 || a.httpClient.Timeout > maximumRequestTimeout {
 		return ErrInvalidConfig
 	}
 	return nil
 }
 
-// DispatchRoute sends content only after the gateway has constructed an exact authorization.
+// DispatchRoute sends only local content through the generic gateway boundary.
 func (a *Adapter) DispatchRoute(ctx context.Context, request gateway.RouteDispatchRequest) gateway.RouteDispatchResult {
+	return a.dispatchRoute(ctx, request, modelhandler.SanitizedDispatchProof{})
+}
+
+// DispatchSanitizedRoute sends remote content only with a jointly validated egress proof.
+func (a *Adapter) DispatchSanitizedRoute(ctx context.Context, request gateway.RouteDispatchRequest, proof modelhandler.SanitizedDispatchProof) gateway.RouteDispatchResult {
+	if proof.ValidateRequest(request.Authorization().ReviewScopeIdentity(), request.Request().Identity()) != nil {
+		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
+	}
+	return a.dispatchRoute(ctx, request, proof)
+}
+
+func (a *Adapter) dispatchRoute(ctx context.Context, request gateway.RouteDispatchRequest, proof modelhandler.SanitizedDispatchProof) gateway.RouteDispatchResult {
 	if nilInterface(ctx) {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
 	}
@@ -287,10 +445,17 @@ func (a *Adapter) DispatchRoute(ctx context.Context, request gateway.RouteDispat
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
 	}
 	authorization := request.Authorization()
-	if authorization.ContentLoggingMode() != a.contentLoggingMode {
+	if authorization.ContentLoggingMode() != a.contentLoggingMode || a.requestProfile != "" && !a.serviceProfileRecordMatches(authorization.RouteRecordIdentity()) {
 		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
 	}
-	return a.execute(ctx, authorization.RouteReference(), authorization.MaxOutputTokens(), request.Request())
+	scopeIdentity, err := review.ModelRequestReviewScopeIdentity(request.Request())
+	if err != nil || scopeIdentity != authorization.ReviewScopeIdentity() {
+		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
+	}
+	if a.requestProfile != "" && !a.serviceProofMatches(proof, authorization.ReviewScopeIdentity(), request.Request().Identity()) {
+		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
+	}
+	return a.executeWithDispatchProof(ctx, authorization.RouteReference(), authorization.MaxOutputTokens(), request.Request(), proof.ReceiptIdentity(), proof, authorization.CostBudget())
 }
 
 func (a *Adapter) execute(
@@ -298,6 +463,28 @@ func (a *Adapter) execute(
 	route provider.RouteReference,
 	maxOutputTokens uint32,
 	providerRequest provider.Request,
+) gateway.RouteDispatchResult {
+	return a.executeWithSanitizedReceipt(ctx, route, maxOutputTokens, providerRequest, "")
+}
+
+func (a *Adapter) executeWithSanitizedReceipt(
+	ctx context.Context,
+	route provider.RouteReference,
+	maxOutputTokens uint32,
+	providerRequest provider.Request,
+	receiptIdentity string,
+) gateway.RouteDispatchResult {
+	return a.executeWithDispatchProof(ctx, route, maxOutputTokens, providerRequest, receiptIdentity, modelhandler.SanitizedDispatchProof{}, provider.ModelCostBudget{})
+}
+
+func (a *Adapter) executeWithDispatchProof(
+	ctx context.Context,
+	route provider.RouteReference,
+	maxOutputTokens uint32,
+	providerRequest provider.Request,
+	receiptIdentity string,
+	proof modelhandler.SanitizedDispatchProof,
+	approvedBudget provider.ModelCostBudget,
 ) gateway.RouteDispatchResult {
 	if nilInterface(ctx) {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
@@ -309,16 +496,95 @@ func (a *Adapter) execute(
 		maxOutputTokens == 0 || !a.routeMatches(route) || !utf8.Valid(providerRequest.Payload()) {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
 	}
-	credentials, err := a.credentials.Retrieve(ctx)
-	if ctx.Err() != nil {
-		return failed(gateway.RouteFailureCancelled, gateway.RouteReplayNotDispatched, 0)
+	reviewScopeIdentity, scopeErr := review.ModelRequestReviewScopeIdentity(providerRequest)
+	if scopeErr != nil {
+		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
 	}
-	if err != nil || credentials.Validate() != nil {
-		return failed(gateway.RouteFailureAuthentication, gateway.RouteReplayNotDispatched, 0)
+	if !a.serviceProfileMatches(route) || a.requestProfile != "" && (!a.serviceProofMatches(proof, reviewScopeIdentity, providerRequest.Identity()) || receiptIdentity != proof.ReceiptIdentity()) {
+		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
 	}
-	request, err := a.newRequest(ctx, credentials, modelSelector(route), maxOutputTokens, providerRequest.Payload())
+	payload := providerRequest.Payload()
+	candidatePayload, candidateErr := review.SanitizedCandidatePayload(providerRequest, reviewScopeIdentity)
+	verificationPayload, verificationErr := review.SanitizedVerificationPayload(providerRequest, reviewScopeIdentity)
+	if route.Zone() == provider.ProviderZoneLocal {
+		switch {
+		case candidateErr == nil:
+			payload = candidatePayload
+		case verificationErr == nil:
+			payload = verificationPayload
+		default:
+			local, localErr := review.LocalVerificationPayload(providerRequest, reviewScopeIdentity, route.Zone())
+			if localErr == nil {
+				payload = local
+			} else if review.ValidateCandidateModelRequest(providerRequest, reviewScopeIdentity) == nil || review.ValidateVerificationModelRequest(providerRequest, reviewScopeIdentity) == nil {
+				return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
+			}
+		}
+	} else {
+		if !validSanitizedReceiptReference(receiptIdentity) {
+			return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
+		}
+		switch {
+		case candidateErr == nil:
+			payload = candidatePayload
+		case verificationErr == nil:
+			payload = verificationPayload
+		default:
+			return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
+		}
+	}
+	instructions, err := review.TrustedModelRequestInstructions(payload)
 	if err != nil {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
+	}
+	if a.localStructuredOutput {
+		format, err := localStructuredResponseFormat(payload)
+		if err != nil {
+			return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
+		}
+		framing, err := json.Marshal(struct {
+			Format *chatResponseFormat `json:"response_format"`
+		}{format})
+		baseline, budgetErr := review.ModelRequestBudget(providerRequest, approvedBudget)
+		// This is a byte-based reservation, not exact tokenizer accounting. It
+		// covers the user payload, the trusted system channel, and the schema
+		// framing.
+		required := max(uint64(baseline.EstimatedInputTokens()), uint64(len(payload))+uint64(len(instructions))+uint64(len(framing))+256)
+		if err != nil || budgetErr != nil || uint64(approvedBudget.EstimatedInputTokens()) < required {
+			return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
+		}
+	}
+	if !a.serviceProfileMatches(route) || a.requestProfile != "" && (!a.serviceProofMatches(proof, reviewScopeIdentity, providerRequest.Identity()) || receiptIdentity != proof.ReceiptIdentity()) {
+		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
+	}
+	var credentials APIKey
+	if a.credentialMode == CredentialModeBearer {
+		credentials, err = a.credentials.Retrieve(ctx)
+		if ctx.Err() != nil {
+			return failed(gateway.RouteFailureCancelled, gateway.RouteReplayNotDispatched, 0)
+		}
+		if err != nil || credentials.Validate() != nil {
+			return failed(gateway.RouteFailureAuthentication, gateway.RouteReplayNotDispatched, 0)
+		}
+	}
+	requestContext := ctx
+	if a.scaledTimeout {
+		var cancel context.CancelFunc
+		requestContext, cancel = context.WithTimeout(ctx, DefaultClientRequestTimeout(maxOutputTokens))
+		defer cancel()
+	}
+	request, err := a.newRequest(requestContext, credentials, modelSelector(route), maxOutputTokens, instructions, payload)
+	if err != nil {
+		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayNotDispatched, 0)
+	}
+	if !a.serviceProfileMatches(route) || a.requestProfile != "" && (!a.serviceProofMatches(proof, reviewScopeIdentity, providerRequest.Identity()) || receiptIdentity != proof.ReceiptIdentity()) {
+		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
+	}
+	if a.requestProfile == RequestProfileOpenCodeConsoleChatV1 && a.setOpenCodeConsoleHeaders(request, proof, reviewScopeIdentity, providerRequest.Identity()) != nil {
+		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
+	}
+	if a.requestProfile == RequestProfileOpenCodeGoChatV1 && a.setOpenCodeGoHeaders(request, proof, reviewScopeIdentity, providerRequest.Identity()) != nil {
+		return failed(gateway.RouteFailurePolicyDenied, gateway.RouteReplayNotDispatched, 0)
 	}
 	response, err := a.httpClient.Do(request)
 	if err != nil {
@@ -336,11 +602,25 @@ func (a *Adapter) execute(
 	if response.StatusCode != http.StatusOK {
 		return classifyHTTPFailure(response)
 	}
-	content, ok := readBounded(response)
-	if !ok {
-		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayOutcomeUnknown, 0)
+	content, readErr := readBounded(response)
+	if readErr != nil {
+		return failed(bodyReadFailure(ctx, readErr), gateway.RouteReplayOutcomeUnknown, 0)
 	}
-	normalized, err := normalizeResponse(content, route)
+	var normalized provider.Response
+	if a.requestProfile == RequestProfileOpenCodeConsoleChatV1 {
+		normalized, err = normalizeOpenCodeConsoleResponse(content, route)
+	} else if a.requestProfile == RequestProfileOpenCodeGoChatV1 {
+		normalized, err = normalizeOpenCodeGoResponse(content, route)
+	} else if a.requestProfile == RequestProfileOllamaSigninChatV1 {
+		normalized, err = normalizeOllamaSigninResponse(content, route)
+	} else {
+		normalized, err = a.normalizeProviderResponse(content, route)
+	}
+	if errors.Is(err, errModelOutputExhausted) {
+		// The provider completed the request and may have reported what it
+		// consumed; settle the attempt from that usage, as for a success.
+		return failedWithUsage(gateway.RouteFailureOutputExhausted, gateway.RouteReplayOutcomeUnknown, exhaustedUsage(err))
+	}
 	if err != nil {
 		return failed(gateway.RouteFailureInvalidResponse, gateway.RouteReplayOutcomeUnknown, 0)
 	}
@@ -358,6 +638,7 @@ func (a *Adapter) routeMatches(route provider.RouteReference) bool {
 
 type requestWire struct {
 	Model           string         `json:"model"`
+	Instructions    string         `json:"instructions"`
 	Input           []requestInput `json:"input"`
 	MaxOutputTokens uint32         `json:"max_output_tokens"`
 	Store           bool           `json:"store"`
@@ -376,49 +657,98 @@ func (a *Adapter) newRequest(
 	credentials APIKey,
 	model string,
 	maxOutputTokens uint32,
+	instructions string,
 	payload []byte,
 ) (*http.Request, error) {
-	wire := requestWire{
-		Model: model,
-		Input: []requestInput{{
-			Role:    "user",
-			Content: []requestInputContent{{Type: "input_text", Text: string(payload)}},
-		}},
-		MaxOutputTokens: maxOutputTokens,
-		Store:           false,
+	if strings.TrimSpace(instructions) == "" {
+		return nil, errors.New("invalid model request instructions")
+	}
+	var wire any
+	path := "/responses"
+	if a.protocol == ProtocolChatCompletions {
+		path = "/chat/completions"
+		chat := chatRequestWire{Model: model, Messages: []chatRequestMessage{{Role: "system", Content: instructions}, {Role: "user", Content: string(payload)}}, MaxTokens: maxOutputTokens, Stream: false}
+		if a.localStructuredOutput {
+			format, err := localStructuredResponseFormat(payload)
+			if err != nil {
+				return nil, err
+			}
+			chat.ResponseFormat = format
+		}
+		wire = chat
+	} else {
+		wire = requestWire{
+			Model:        model,
+			Instructions: instructions,
+			Input: []requestInput{{
+				Role:    "user",
+				Content: []requestInputContent{{Type: "input_text", Text: string(payload)}},
+			}},
+			MaxOutputTokens: maxOutputTokens,
+			Store:           false,
+		}
+	}
+	if a.openRouterProfile() {
+		wire = openRouterChatRequestWire{
+			chatRequestWire: wire.(chatRequestWire),
+			Provider:        a.openRouterPreferences(),
+		}
 	}
 	content, err := json.Marshal(wire)
 	if err != nil {
 		return nil, err
 	}
 	requestURL := *a.endpoint
-	requestURL.Path += "/responses"
+	requestURL.Path += path
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL.String(), bytes.NewReader(content))
 	if err != nil {
 		return nil, err
 	}
-	request.Header.Set("Authorization", "Bearer "+credentials.value)
+	if a.credentialMode == CredentialModeBearer {
+		request.Header.Set("Authorization", "Bearer "+credentials.value)
+	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
 	return request, nil
 }
 
+// classifyHTTPFailure maps a non-200 answer of every request profile to one
+// closed class by its status alone. The body is discarded unread: provider
+// error text is untrusted and never reaches a result, record or log. A status
+// that rejects the request as sent (400 and 422 for its content, such as an
+// unknown model ID or an unsupported parameter, 405 and 415 for a method or
+// media type the endpoint does not take) is request_rejected; a status no
+// class names stays invalid_response, an unexpected answer.
 func classifyHTTPFailure(response *http.Response) gateway.RouteDispatchResult {
 	if response == nil {
 		return failed(gateway.RouteFailureTransport, gateway.RouteReplayOutcomeUnknown, 0)
 	}
 	drainAndClose(response.Body)
 	switch response.StatusCode {
+	case http.StatusBadRequest, http.StatusMethodNotAllowed, http.StatusUnsupportedMediaType, http.StatusUnprocessableEntity:
+		return failed(gateway.RouteFailureRequestRejected, gateway.RouteReplayNoSideEffect, 0)
 	case http.StatusUnauthorized:
 		return failed(gateway.RouteFailureAuthentication, gateway.RouteReplayNoSideEffect, 0)
+	case http.StatusPaymentRequired:
+		return failed(gateway.RouteFailurePaymentRequired, gateway.RouteReplayNoSideEffect, 0)
 	case http.StatusForbidden:
 		return failed(gateway.RouteFailureAuthorization, gateway.RouteReplayNoSideEffect, 0)
+	case http.StatusNotFound:
+		return failed(gateway.RouteFailureModelUnavailable, gateway.RouteReplayNoSideEffect, 0)
+	case http.StatusGone:
+		return failed(gateway.RouteFailureModelRetired, gateway.RouteReplayNoSideEffect, 0)
 	case http.StatusRequestTimeout, http.StatusGatewayTimeout:
 		return failed(gateway.RouteFailureTimeout, gateway.RouteReplayOutcomeUnknown, 0)
 	case http.StatusTooManyRequests:
-		return failed(gateway.RouteFailureRateLimited, gateway.RouteReplayNoSideEffect, retryAfterMilliseconds(response.Header.Get("Retry-After")))
+		return rateLimited(retryAfterMilliseconds(response.Header.Get("Retry-After")))
 	case http.StatusRequestEntityTooLarge:
 		return failed(gateway.RouteFailureBudgetExhausted, gateway.RouteReplayNoSideEffect, 0)
+	case http.StatusServiceUnavailable:
+		// Only a 503 that names how long to wait is a refusal before
+		// processing; without a delay in seconds it is a server failure.
+		if retryAfter := retryAfterMilliseconds(response.Header.Get("Retry-After")); retryAfter != 0 {
+			return rateLimited(retryAfter)
+		}
 	}
 	if response.StatusCode >= 500 {
 		return failed(gateway.RouteFailureProviderServer, gateway.RouteReplayOutcomeUnknown, 0)
@@ -438,19 +768,98 @@ func retryAfterMilliseconds(value string) uint32 {
 	return uint32(seconds * 1000)
 }
 
-func readBounded(response *http.Response) ([]byte, bool) {
+var errInvalidResponseBody = errors.New("invalid OpenAI response body")
+
+// errModelOutputExhausted is a completed response that stopped at the output
+// token limit with no answer text, or with answer text that is not a complete
+// JSON value, typically because a reasoning model spent most or all of the
+// allowance on its trace. It is classified apart from malformed
+// output so operators can see that the output allowance, not the model's
+// document shape, ended the request.
+var errModelOutputExhausted = errors.New("model output allowance exhausted before the answer was finished")
+
+// outputExhaustedError is errModelOutputExhausted with the usage the provider
+// reported on the exhausted response. The usage passed the same checks as a
+// successful response's usage; usage that fails them, or none, is unknown, so
+// the failure class never depends on the usage.
+type outputExhaustedError struct{ usage provider.RouteTokenUsage }
+
+func (e outputExhaustedError) Error() string        { return errModelOutputExhausted.Error() }
+func (e outputExhaustedError) Is(target error) bool { return target == errModelOutputExhausted }
+
+// exhaustedWithUsage returns errModelOutputExhausted carrying usage, or
+// unknown usage when normalizing it failed.
+func exhaustedWithUsage(usage provider.RouteTokenUsage, err error) error {
+	if err != nil {
+		usage = provider.NewUnknownRouteTokenUsage()
+	}
+	return outputExhaustedError{usage: usage}
+}
+
+// exhaustedUsage returns the reported usage an exhausted-response error
+// carries, and unknown usage for any other error.
+func exhaustedUsage(err error) provider.RouteTokenUsage {
+	var exhausted outputExhaustedError
+	if errors.As(err, &exhausted) {
+		return exhausted.usage
+	}
+	return provider.NewUnknownRouteTokenUsage()
+}
+
+// unfinishedAnswer reports whether the answer parts of a length-stopped
+// response hold text that is not a complete JSON value and no refusal: an
+// answer the model did not finish before the output limit.
+func unfinishedAnswer(parts []provider.ResponsePart) bool {
+	text := false
+	for _, part := range parts {
+		switch part.Kind() {
+		case provider.ResponsePartRefusal:
+			return false
+		case provider.ResponsePartAssistantText:
+			text = true
+		}
+	}
+	return text
+}
+
+// errNoOutputParts is a response with no answer part (for example only a
+// reasoning item). It is refused like any malformed response unless the
+// response stopped at the output limit.
+var errNoOutputParts = errors.New("OpenAI response has no answer part")
+
+// readBounded returns the transport read error when the body could not be read, or
+// errInvalidResponseBody when the body was read but violated the size contract.
+func readBounded(response *http.Response) ([]byte, error) {
 	if response == nil || response.Body == nil || response.ContentLength > maximumResponseBytes {
 		if response != nil {
 			drainAndClose(response.Body)
 		}
-		return nil, false
+		return nil, errInvalidResponseBody
 	}
 	content, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
 	closeErr := response.Body.Close()
-	if err != nil || closeErr != nil || len(content) == 0 || len(content) > maximumResponseBytes {
-		return nil, false
+	if err != nil {
+		return nil, err
 	}
-	return content, true
+	if closeErr != nil || len(content) == 0 || len(content) > maximumResponseBytes {
+		return nil, errInvalidResponseBody
+	}
+	return content, nil
+}
+
+// bodyReadFailure keeps timeout and caller cancellation distinct from malformed bodies,
+// matching the classification already applied to failures before response headers.
+func bodyReadFailure(ctx context.Context, err error) gateway.RouteFailureClass {
+	if errors.Is(err, errInvalidResponseBody) {
+		return gateway.RouteFailureInvalidResponse
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return gateway.RouteFailureTimeout
+	}
+	if ctx.Err() != nil {
+		return gateway.RouteFailureCancelled
+	}
+	return gateway.RouteFailureTransport
 }
 
 type responseWire struct {
@@ -508,6 +917,10 @@ func modelSelector(route provider.RouteReference) string {
 }
 
 func normalizeResponse(content []byte, route provider.RouteReference) (provider.Response, error) {
+	// The decoder would silently replace invalid UTF-8 with U+FFFD, rewriting model output.
+	if !utf8.Valid(content) {
+		return provider.Response{}, ErrInvalidConfig
+	}
 	if err := validateJSONShape(content); err != nil {
 		return provider.Response{}, err
 	}
@@ -527,6 +940,12 @@ func normalizeResponse(content []byte, route provider.RouteReference) (provider.
 		return provider.Response{}, err
 	}
 	parts, err := normalizeOutput(wire.Output, wire.Status)
+	if finish == provider.ResponseFinishLength && (errors.Is(err, errNoOutputParts) || err == nil && unfinishedAnswer(parts)) {
+		return provider.Response{}, exhaustedWithUsage(normalizeUsage(wire.Usage))
+	}
+	if errors.Is(err, errNoOutputParts) {
+		return provider.Response{}, ErrInvalidConfig
+	}
 	if err != nil {
 		return provider.Response{}, err
 	}
@@ -597,7 +1016,7 @@ func normalizeOutput(output []json.RawMessage, responseStatus string) ([]provide
 		}
 	}
 	if len(parts) == 0 {
-		return nil, ErrInvalidConfig
+		return nil, errNoOutputParts
 	}
 	return parts, nil
 }
@@ -659,6 +1078,10 @@ func validateJSONShape(content []byte) error {
 }
 
 func scanJSONValue(decoder *json.Decoder) error {
+	return scanJSONValueWithKeys(decoder, canonicalResponseKey)
+}
+
+func scanJSONValueWithKeys(decoder *json.Decoder, validKey func(string) bool) error {
 	token, err := decoder.Token()
 	if err != nil {
 		return err
@@ -676,7 +1099,7 @@ func scanJSONValue(decoder *json.Decoder) error {
 				return err
 			}
 			key, ok := keyToken.(string)
-			if !ok || !canonicalResponseKey(key) {
+			if !ok || !validKey(key) {
 				return ErrInvalidConfig
 			}
 			folded := strings.ToLower(key)
@@ -684,14 +1107,14 @@ func scanJSONValue(decoder *json.Decoder) error {
 				return ErrInvalidConfig
 			}
 			keys[folded] = struct{}{}
-			if err := scanJSONValue(decoder); err != nil {
+			if err := scanJSONValueWithKeys(decoder, validKey); err != nil {
 				return err
 			}
 		}
 		return consumeDelimiter(decoder, '}')
 	case '[':
 		for decoder.More() {
-			if err := scanJSONValue(decoder); err != nil {
+			if err := scanJSONValueWithKeys(decoder, validKey); err != nil {
 				return err
 			}
 		}
@@ -734,6 +1157,16 @@ func requireJSONEOF(decoder *json.Decoder) error {
 	return nil
 }
 
+// rateLimited is a provider's refusal before processing the request (HTTP 429,
+// or a 503 that names a Retry-After). The provider processed nothing, so the
+// attempt consumed nothing: its usage is known zero, never assumed for any
+// other failure.
+func rateLimited(retryAfter uint32) gateway.RouteDispatchResult {
+	zero, _ := provider.NewRouteTokenUsage(0, 0, 0)
+	result, _ := gateway.NewFailedRouteDispatchResult(gateway.RouteFailureRateLimited, gateway.RouteReplayNoSideEffect, zero, retryAfter)
+	return result
+}
+
 func failed(failure gateway.RouteFailureClass, safety gateway.RouteReplaySafety, retryAfter uint32) gateway.RouteDispatchResult {
 	result, _ := gateway.NewFailedRouteDispatchResult(
 		failure,
@@ -741,6 +1174,16 @@ func failed(failure gateway.RouteFailureClass, safety gateway.RouteReplaySafety,
 		provider.NewUnknownRouteTokenUsage(),
 		retryAfter,
 	)
+	return result
+}
+
+// failedWithUsage is a failure whose response reported usage. Usage the
+// gateway refuses falls back to unknown, so the failure is still recorded.
+func failedWithUsage(failure gateway.RouteFailureClass, safety gateway.RouteReplaySafety, usage provider.RouteTokenUsage) gateway.RouteDispatchResult {
+	result, err := gateway.NewFailedRouteDispatchResult(failure, safety, usage, 0)
+	if err != nil {
+		return failed(failure, safety, 0)
+	}
 	return result
 }
 
@@ -775,10 +1218,16 @@ func writeRedacted(state fmt.State, verb rune, normal, detailed string) {
 	_, _ = state.Write([]byte(value))
 }
 
-func (a *Adapter) String() string   { return "OpenAI Responses adapter" }
+func (a *Adapter) String() string {
+	if a != nil && a.protocol == ProtocolChatCompletions {
+		return "OpenAI Chat Completions adapter"
+	}
+	return "OpenAI Responses adapter"
+}
 func (a *Adapter) GoString() string { return "openai.Adapter{<redacted>}" }
 func (a *Adapter) Format(state fmt.State, verb rune) {
-	writeRedacted(state, verb, "OpenAI Responses adapter", "openai.Adapter{<redacted>}")
+	writeRedacted(state, verb, a.String(), "openai.Adapter{<redacted>}")
 }
 
 var _ gateway.RouteDispatcher = (*Adapter)(nil)
+var _ modelhandler.SanitizedRouteDispatcher = (*Adapter)(nil)

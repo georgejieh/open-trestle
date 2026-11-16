@@ -1,0 +1,386 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:evaluation:deterministic-corpus-candidate-result:v1",
+  "title": "Open Trestle deterministic corpus candidate result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "identity",
+    "corpus_identity",
+    "label_set_identity",
+    "adjudication_identity",
+    "evaluator_identity",
+    "static_debug_suite_identity",
+    "review_state",
+    "release_evidence_eligible",
+    "golden_status",
+    "execution_status",
+    "case_count",
+    "target_count",
+    "workload",
+    "targets",
+    "cases"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/deterministic-corpus-candidate-result"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "corpus_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "label_set_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "adjudication_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "evaluator_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "static_debug_suite_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "review_state": {
+      "const": "pending"
+    },
+    "release_evidence_eligible": {
+      "const": false
+    },
+    "golden_status": {
+      "const": "prohibited_pending_human_review"
+    },
+    "execution_status": {
+      "enum": [
+        "matched",
+        "mismatch"
+      ]
+    },
+    "case_count": {
+      "const": 6
+    },
+    "target_count": {
+      "const": 8
+    },
+    "workload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fixture_file_count",
+        "fixture_byte_count",
+        "changed_file_count",
+        "changed_range_count",
+        "prediction_count",
+        "maximum_cases",
+        "maximum_files",
+        "maximum_total_bytes",
+        "maximum_file_bytes",
+        "maximum_labels_per_target"
+      ],
+      "properties": {
+        "fixture_file_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "fixture_byte_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "changed_file_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "changed_range_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "prediction_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "maximum_cases": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "maximum_files": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "maximum_total_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "maximum_file_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "maximum_labels_per_target": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        }
+      }
+    },
+    "targets": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key",
+          "version",
+          "family",
+          "match_unit",
+          "case_count",
+          "expected_count",
+          "observed_count",
+          "true_positive_count",
+          "false_positive_count",
+          "false_negative_count",
+          "precision_numerator",
+          "precision_denominator",
+          "recall_numerator",
+          "recall_denominator",
+          "coverage_numerator",
+          "coverage_denominator",
+          "abstention_numerator",
+          "abstention_denominator",
+          "applicable_units",
+          "analyzed_units",
+          "abstained_units",
+          "unsupported_units",
+          "not_applicable_units",
+          "abstention_reasons"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._-]{0,63}$"
+          },
+          "version": {
+            "const": 1
+          },
+          "family": {
+            "enum": [
+              "finding_rule",
+              "structural_analyzer"
+            ]
+          },
+          "match_unit": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "case_count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4294967295
+          },
+          "expected_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "observed_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "true_positive_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "false_positive_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "false_negative_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "precision_numerator": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "precision_denominator": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "recall_numerator": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "recall_denominator": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "coverage_numerator": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "coverage_denominator": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "abstention_numerator": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "abstention_denominator": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "applicable_units": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "analyzed_units": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "abstained_units": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "unsupported_units": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "not_applicable_units": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "abstention_reasons": {
+            "type": "array",
+            "maxItems": 3,
+            "uniqueItems": true,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "reason",
+                "count"
+              ],
+              "properties": {
+                "reason": {
+                  "enum": [
+                    "parse_failure",
+                    "source_unavailable",
+                    "limit_exceeded"
+                  ]
+                },
+                "count": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 4294967295
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 48,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "target_key",
+          "expected_count",
+          "observed_count",
+          "true_positive_count",
+          "false_positive_count",
+          "false_negative_count",
+          "coverage_mismatch_count"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._-]{0,63}$"
+          },
+          "target_key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._-]{0,63}$"
+          },
+          "expected_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "observed_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "true_positive_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "false_positive_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "false_negative_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "coverage_mismatch_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    }
+  }
+}

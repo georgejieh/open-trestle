@@ -99,8 +99,10 @@ func (e *investigationEndpoint) serve(t *testing.T, w http.ResponseWriter, r *ht
 	e.captures = append(e.captures, investigationCapture{p, request.Identity()})
 	e.mu.Unlock()
 	var output any
-	if p.Task == "candidate_verification" {
-		if wire.Model != "model-b" || p.Version != 3 || len(p.Candidates) != 1 || p.GenerationContext == "" {
+	if e.mode == "removed file" {
+		output = investigationRemovedFileResult(t, wire.Model, p)
+	} else if p.Task == "candidate_verification" {
+		if wire.Model != "model-b" || p.Version != 8 || len(p.Candidates) != 1 || p.GenerationContext == "" {
 			t.Error("independent verifier lost candidate lineage")
 		}
 		ids := []string{}
@@ -116,7 +118,7 @@ func (e *investigationEndpoint) serve(t *testing.T, w http.ResponseWriter, r *ht
 		output = map[string]any{"schema_version": 1, "verdicts": []any{map[string]any{"candidate_id": p.Candidates[0].ID, "outcome": "verified", "severity": "high", "rationale": "The division guard is absent and the cited deployment text enables zero requests.", "evidence_ids": ids}}}
 	} else {
 		state := p.Investigation
-		if wire.Model != "model-a" || p.Version != 4 || state.MemoryState != "empty_not_ingested" || state.Session == "" || state.Policy == "" || state.Snapshot == "" {
+		if wire.Model != "model-a" || p.Version != 6 || state.MemoryState != "empty_not_ingested" || state.Session == "" || state.Policy == "" || state.Snapshot == "" {
 			t.Error("investigation did not receive explicit v4 authority and empty memory label")
 			http.Error(w, "invalid authority", 400)
 			return
@@ -266,11 +268,78 @@ func (e *investigationEndpoint) serve(t *testing.T, w http.ResponseWriter, r *ht
 	}
 }
 
+// investigationRemovedFileResult answers an investigation of a change that
+// only removes gone.go. The first turn holds that file's removed text alone
+// and lists the head snapshot, the second reads notes.txt from it, and the
+// third reports the removed helper on its base line; the verifier verifies it
+// from that removed_lines source.
+func investigationRemovedFileResult(t *testing.T, model string, p investigationPacket) any {
+	t.Helper()
+	var gone, notes localModelSource
+	for _, s := range p.Sources {
+		if s.Path == "gone.go" && s.Stage == "removed_lines" {
+			gone = s
+		}
+		if s.Path == "notes.txt" {
+			notes = s
+		}
+	}
+	if gone.ID == "" || gone.Content != removedOnlyGone || gone.Start != 1 || gone.End != 3 {
+		t.Error("removed file text did not reach the investigation as removed_lines evidence")
+		return map[string]any{}
+	}
+	if p.Task == "candidate_verification" {
+		if model != "model-b" || p.Version != 8 || len(p.Candidates) != 1 {
+			t.Error("independent verifier lost the removed-file candidate")
+		}
+		return map[string]any{"schema_version": 1, "verdicts": []any{map[string]any{"candidate_id": p.Candidates[0].ID, "outcome": "verified", "severity": "high", "rationale": "The removed lines define Helper.", "evidence_ids": []string{gone.ID}}}}
+	}
+	state := p.Investigation
+	if model != "model-a" || p.Version != 6 {
+		t.Error("removed-file investigation lost its authority")
+	}
+	var ref string
+	for _, result := range state.Results {
+		for _, file := range result.Files {
+			if result.Tool == "snapshot.list" && file.Path == "notes.txt" {
+				ref = file.Ref
+			}
+		}
+	}
+	switch state.Turn {
+	case 1:
+		if len(p.Sources) != 1 {
+			t.Error("removed-file investigation did not start from the removed text alone")
+		}
+		return map[string]any{"schema_version": 1, "tool_calls": []any{map[string]any{"call_id": "list-1", "tool": "snapshot.list", "snapshot_ref": state.SnapshotRef}}}
+	case 2:
+		if ref == "" {
+			t.Error("removed-file investigation could not list the head snapshot")
+			return map[string]any{}
+		}
+		return map[string]any{"schema_version": 1, "tool_calls": []any{map[string]any{"call_id": "read-1", "tool": "snapshot.read", "snapshot_ref": state.SnapshotRef, "file_ref": ref, "start_line": 2, "end_line": 2}}}
+	case 3:
+		if notes.Content != investigationLine || notes.Stage != "repository_context" || len(p.Sources) != 2 {
+			t.Error("removed-file investigation could not read the head snapshot")
+		}
+	default:
+		t.Error("unexpected removed-file investigation turn")
+	}
+	return map[string]any{"schema_version": 1, "candidates": []any{map[string]any{"title": "Removed helper", "claim": "Helper is removed while callers elsewhere may still use it.", "severity_hint": "high", "source_range": map[string]any{"source_id": gone.ID, "start_line": 3, "end_line": 3}, "evidence_ids": []string{gone.ID}}}}
+}
+
 func newInvestigationFixture(t *testing.T, mode string, cancel context.CancelFunc) (*localModelFixture, *investigationEndpoint, map[string]any, string) {
 	t.Helper()
 	f := newLocalModelFixture(t, localModelFixtureOptions{})
-	base := map[string][]byte{"a.go": []byte("package p\nfunc Changed(x int) int { if x == 0 { return 0 }; return 10 / x }\n"), "notes.txt": []byte(investigationNotes)}
-	head := map[string][]byte{"a.go": []byte("package p\nfunc Changed(x int) int { return 10 / x }\n"), "notes.txt": base["notes.txt"]}
+	// The unchanged go.mod declares the Go style, so the result carries no style
+	// advice and stays at investigation schema version 2.
+	base := map[string][]byte{"a.go": []byte("package p\nfunc Changed(x int) int { if x == 0 { return 0 }; return 10 / x }\n"), "notes.txt": []byte(investigationNotes), "go.mod": []byte("module example.test/p\n")}
+	head := map[string][]byte{"a.go": []byte("package p\nfunc Changed(x int) int { return 10 / x }\n"), "notes.txt": base["notes.txt"], "go.mod": base["go.mod"]}
+	if mode == "removed file" {
+		// The change only removes gone.go; a.go is unchanged.
+		head["a.go"] = base["a.go"]
+		base["gone.go"] = []byte(removedOnlyGone)
+	}
 	f.objects, f.base, f.head = writeLocalGitChangeFixture(t, evidence.RevisionAlgorithmSHA1, base, head)
 	e := &investigationEndpoint{mode: mode, cancel: cancel}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { e.serve(t, w, r) }))
@@ -363,7 +432,7 @@ func TestLocalGitInvestigationReadsUnselectedSnapshotAndVerifies(t *testing.T) {
 			ReturnedBytes uint64 `json:"returned_bytes"`
 		} `json:"investigation"`
 	}
-	if json.Unmarshal(stdout.Bytes(), &receipt) != nil || code != 4 || receipt.Status != "findings" || receipt.RunStatus != "succeeded" || receipt.Version != 2 || stderr.Len() != 0 {
+	if json.Unmarshal(stdout.Bytes(), &receipt) != nil || code != 4 || receipt.Status != "findings" || receipt.RunStatus != "succeeded" || receipt.Version != 6 || stderr.Len() != 0 {
 		t.Fatal("investigation did not produce a bounded independent finding")
 	}
 	captures := endpoint.snapshot()
@@ -391,10 +460,14 @@ func TestLocalGitInvestigationReadsUnselectedSnapshotAndVerifies(t *testing.T) {
 	for i, c := range captures {
 		turn := receipt.Investigation.Turns[i]
 		localModelRequireDigest(t, turn.Request, turn.Authorization, turn.Outcome, turn.Reconciliation)
-		if seen[c.request] || turn.Request != c.request {
+		requestBound := turn.Request == c.request
+		if c.packet.Task == "candidate_verification" {
+			requestBound = turn.Request != c.request
+		}
+		if seen[turn.Request] || !requestBound {
 			t.Fatal("successful turn reused request identity or receipt invented a request")
 		}
-		seen[c.request] = true
+		seen[turn.Request] = true
 		if seenAuthority[turn.Authorization] || !claimed[turn.Authorization] {
 			t.Fatal("new model turn lacks distinct actual route claim")
 		}
@@ -412,7 +485,7 @@ func TestLocalGitInvestigationReadsUnselectedSnapshotAndVerifies(t *testing.T) {
 			}
 		}
 	}
-	if receipt.GenerationRequest != captures[3].request || receipt.VerificationRequest != captures[4].request || receipt.Context != captures[4].packet.GenerationContext || receipt.CandidateBatch != captures[4].packet.CandidateBatch || len(receipt.CandidateIDs) != 1 || receipt.CandidateIDs[0] != captures[4].packet.Candidates[0].ID {
+	if receipt.GenerationRequest != captures[3].request || receipt.VerificationRequest == captures[4].request || receipt.Context != captures[4].packet.GenerationContext || receipt.CandidateBatch != captures[4].packet.CandidateBatch || len(receipt.CandidateIDs) != 1 || receipt.CandidateIDs[0] != captures[4].packet.Candidates[0].ID {
 		t.Fatal("final output is disconnected from actual generation and independent verification")
 	}
 	if receipt.Diagnostics.Coverage.VerifiedCount != 1 || len(receipt.Diagnostics.Findings) != 1 || receipt.Independence != "distinct_provider" || receipt.ComprehensiveClearance {
@@ -430,6 +503,33 @@ func TestLocalGitInvestigationReadsUnselectedSnapshotAndVerifies(t *testing.T) {
 	}
 	if strings.Contains(stdout.String()+stderr.String(), investigationLine) || stdout.Len() > 256<<10 {
 		t.Fatal("terminal result leaked tool bytes or exceeded output limit")
+	}
+}
+
+// A change that only removes a file has no head range for an investigation to
+// start from. It is investigated from the file's removed text, like a direct
+// review, and the verified finding is on its removed base lines.
+func TestLocalGitInvestigationReviewsAChangeThatOnlyRemovesAFile(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	f, endpoint, policy, path := newInvestigationFixture(t, "removed file", cancel)
+	writeInvestigationPolicy(t, path, policy)
+	f.args = replaceLocalGitChangeValue(f.args, "--timeout", "30s")
+	var stdout, stderr bytes.Buffer
+	code := runWithContext(ctx, f.args, &stdout, &stderr)
+	var receipt localModelReceipt
+	if json.Unmarshal(stdout.Bytes(), &receipt) != nil || code != 4 || receipt.Status != "findings" || receipt.RunStatus != "succeeded" || stderr.Len() != 0 {
+		t.Fatalf("removed-only investigation code=%d status=%s run=%s stderr=%q", code, receipt.Status, receipt.RunStatus, stderr.String())
+	}
+	captures := endpoint.snapshot()
+	if len(captures) != 4 || captures[2].packet.Task != "candidate_generation" || captures[3].packet.Task != "candidate_verification" {
+		t.Fatalf("removed-only investigation made %d model calls", len(captures))
+	}
+	if len(receipt.Diagnostics.Findings) != 1 {
+		t.Fatalf("removed-only investigation findings=%d", len(receipt.Diagnostics.Findings))
+	}
+	if finding := receipt.Diagnostics.Findings[0]; finding.Path != "gone.go" || finding.Side != "base" || finding.Start != 3 || finding.End != 3 || finding.HeadLine != 0 {
+		t.Fatalf("removed-file finding=%+v", finding)
 	}
 }
 
@@ -471,6 +571,14 @@ func TestLocalGitInvestigationRefusesUnsafeContinuation(t *testing.T) {
 			for _, c := range captures {
 				if c.packet.Task == "candidate_verification" {
 					t.Fatal("refused investigation reached verifier")
+				}
+			}
+			if receipt.TokenUsage == nil || receipt.TokenUsage.RouteAttempts > uint32(want) {
+				t.Fatalf("token usage %+v counts more than the %d dispatched turns", receipt.TokenUsage, want)
+			}
+			if mode == "unknown usage" {
+				if tokens, err := json.Marshal(receipt.TokenUsage); err != nil || string(tokens) != `{"known":false,"route_attempts":2,"generation":{"known":false,"route_attempts":1},"verification":{"known":false,"route_attempts":0}}` {
+					t.Fatalf("a turn without reported usage left token usage %s", tokens)
 				}
 			}
 		})

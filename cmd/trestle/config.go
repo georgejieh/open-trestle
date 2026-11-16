@@ -15,6 +15,15 @@ func runConfig(args []string, stdout, stderr io.Writer) int {
 		writeConfigUsage(stderr)
 		return 2
 	}
+	if args[0] == "codex-session" {
+		return runConfigCodexSession(args[1:], stdout, stderr)
+	}
+	if args[0] == "models" {
+		return runConfigModels(args[1:], stdout, stderr)
+	}
+	if args[0] == "bind" {
+		return runConfigBind(args[1:], stdout, stderr)
+	}
 	if args[0] == "inventory-identity" {
 		return runConfigInventoryIdentity(args[1:], stdout, stderr)
 	}
@@ -72,4 +81,8 @@ func runConfig(args []string, stdout, stderr io.Writer) int {
 }
 func writeConfigUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "usage: trestle config validate --route-inventory PATH --runtime-policy PATH")
+	writeConfigBindUsage(writer)
+	writeConfigInventoryIdentityUsage(writer)
+	writeConfigModelsUsage(writer)
+	writeConfigCodexSessionUsage(writer)
 }

@@ -35,7 +35,21 @@ type InvestigationRoutingOptions struct {
 	Constraints                           policy.ProviderDataConstraints
 	Budget                                provider.ModelCostBudget
 	Independence                          gateway.RouteIndependencePolicy
+	// GenerationTransport and VerificationTransport name the request wire each
+	// role's routes send. The zero value is the standard transport; the local
+	// structured-output transport also reserves the response_format bytes.
+	GenerationTransport, VerificationTransport review.ModelRequestTransport
 }
+
+// responseFormatBytes returns the owner's per-turn response_format measure for a
+// role on transport: nil for the standard transport.
+func responseFormatBytes(transport review.ModelRequestTransport) func(provider.Request) uint32 {
+	if transport == review.ModelRequestTransportLocalStructuredOutput {
+		return review.ModelRequestResponseFormatBytes
+	}
+	return nil
+}
+
 type InvestigationOptions struct {
 	Scope                        audit.ReviewScope
 	MemoryScope                  memory.Scope
@@ -51,6 +65,10 @@ type InvestigationOptions struct {
 	HeadSnapshotArtifactIdentity string
 	InitialContext               review.ContextPacket
 	InitialSnapshot              review.ReviewSnapshot
+	// PlanningRefusals, when set, receives each turn planning refusal, such as
+	// a gateway.RouteContextShortfall. It observes only; it never changes the
+	// refusal or the investigation.
+	PlanningRefusals func(error)
 }
 type Investigation struct {
 	mu                                              sync.Mutex
@@ -162,7 +180,7 @@ func investigationSameService(a, b any) bool {
 	return va.Type() == vb.Type() && va.Comparable() && vb.Comparable() && va.Interface() == vb.Interface()
 }
 func NewInvestigation(ctx context.Context, o InvestigationOptions) (*Investigation, error) {
-	if nilInterface(ctx) || ctx.Err() != nil || o.Scope.Validate() != nil || o.MemoryScope.Validate() != nil || o.MemoryScope.TenantID() != o.Scope.TenantID() || o.MemoryScope.RepositoryID() != o.Scope.RepositoryID() || o.MemoryScope.Identity() != o.InitialContext.MemoryScopeIdentity() || o.InitialContext.Validate() != nil || o.InitialSnapshot.Validate() != nil || o.InitialContext.SnapshotIdentity() != o.InitialSnapshot.Identity() || o.InitialContext.ReviewScopeIdentity() != o.Scope.Identity() || o.InitialContext.SourceSelection().OmittedCount() != 0 || o.InitialContext.MemoryItemCount() != 0 || o.Policy.ValidateRuntimeBudget(o.Routing.Budget) != nil || nilInterface(o.Clock) || nilInterface(o.Store) || nilInterface(o.Ledger) || o.Catalog.Validate() != nil || o.Acquisition == nil || o.Acquisition.owner == nil {
+	if nilInterface(ctx) || ctx.Err() != nil || o.Scope.Validate() != nil || o.MemoryScope.Validate() != nil || o.MemoryScope.TenantID() != o.Scope.TenantID() || o.MemoryScope.RepositoryID() != o.Scope.RepositoryID() || o.MemoryScope.Identity() != o.InitialContext.MemoryScopeIdentity() || o.InitialContext.Validate() != nil || o.InitialSnapshot.Validate() != nil || o.InitialContext.SnapshotIdentity() != o.InitialSnapshot.Identity() || o.InitialContext.ReviewScopeIdentity() != o.Scope.Identity() || o.InitialContext.SourceSelection().OmittedCount() != 0 || o.InitialContext.MemoryItemCount() != 0 || o.Policy.ValidateRuntimeBudget(o.Routing.Budget) != nil || o.Routing.GenerationTransport.Validate() != nil || o.Routing.VerificationTransport.Validate() != nil || nilInterface(o.Clock) || nilInterface(o.Store) || nilInterface(o.Ledger) || o.Catalog.Validate() != nil || o.Acquisition == nil || o.Acquisition.owner == nil {
 		return nil, ErrInvestigation
 	}
 	for _, retrieval := range o.InitialContext.Retrievals() {
@@ -259,8 +277,15 @@ func NewInvestigation(ctx context.Context, o InvestigationOptions) (*Investigati
 		return nil, ErrInvestigation
 	}
 	c.pin = r.Generation.ResolvedRecord().RouteRegistryRecord().Identity()
-	// Establish independent route possibility with pure UNCLAIMED initial authority.
-	initialContext, err := c.rebuildContext(1, gateway.InvestigationTurnRecord{}, nil)
+	// Establish independent route possibility with pure UNCLAIMED initial
+	// authority. The initial sources are not read yet, so the plan uses the scan
+	// total their reads must charge: it plans the exact first turn request,
+	// which is checked once the sources are read.
+	initialScanned, ok := c.initialScannedBytes()
+	if !ok {
+		return nil, ErrInvestigation
+	}
+	initialContext, err := c.buildContext(1, gateway.InvestigationTurnRecord{}, nil, initialScanned)
 	if err != nil {
 		return nil, ErrInvestigation
 	}
@@ -272,7 +297,7 @@ func NewInvestigation(ctx context.Context, o InvestigationOptions) (*Investigati
 	if err != nil {
 		return nil, ErrInvestigation
 	}
-	authorization, err := c.plan(request, []gateway.ObservedRouteCandidate{r.Generation}, ranking, r.Budget.MaxCostMicroUSD())
+	authorization, err := c.plan(gateway.InvestigationGenerationTurn, request, []gateway.ObservedRouteCandidate{r.Generation}, ranking, r.Budget.MaxCostMicroUSD())
 	if err != nil {
 		return nil, ErrInvestigation
 	}
@@ -317,7 +342,10 @@ func NewInvestigation(ctx context.Context, o InvestigationOptions) (*Investigati
 	if err != nil {
 		return nil, ErrInvestigation
 	}
-	c.owner, err = gateway.NewInvestigationRouteOwner(gateway.InvestigationRouteOwnerOptions{Scope: o.Scope, SessionIdentity: c.binding.Identity(), PolicyIdentity: p.Identity(), Deadline: o.Deadline, MaxTurns: uint8(p.MaxModelTurns()), Budget: r.Budget, Requirements: r.Requirements, Constraints: r.Constraints, Generation: generationPlan, Verification: verificationPlan, Catalog: o.Catalog, Ledger: o.Ledger, Clock: o.Clock})
+	if current, err := c.current.ProviderRequest(); err != nil || c.scanned != initialScanned || current.Identity() != request.Identity() {
+		return nil, ErrInvestigation
+	}
+	c.owner, err = gateway.NewInvestigationRouteOwner(gateway.InvestigationRouteOwnerOptions{Scope: o.Scope, SessionIdentity: c.binding.Identity(), PolicyIdentity: p.Identity(), Deadline: o.Deadline, MaxTurns: uint8(p.MaxModelTurns()), Budget: r.Budget, Requirements: r.Requirements, Constraints: r.Constraints, Generation: generationPlan, Verification: verificationPlan, Catalog: o.Catalog, Ledger: o.Ledger, Clock: o.Clock, SystemChannelBytes: review.ModelRequestSystemChannelBytes, GenerationResponseFormatBytes: responseFormatBytes(r.GenerationTransport), VerificationResponseFormatBytes: responseFormatBytes(r.VerificationTransport), PlanningRefusals: o.PlanningRefusals})
 	if err != nil {
 		return nil, ErrInvestigation
 	}
@@ -345,9 +373,20 @@ func (c *Investigation) observations(routes []gateway.ObservedRouteCandidate) []
 	}
 	return out
 }
-func (c *Investigation) plan(request provider.Request, routes []gateway.ObservedRouteCandidate, rankingPolicy gateway.RouteRankingPolicy, remaining uint64) (gateway.RouteAttemptAuthorization, error) {
+func (c *Investigation) plan(role gateway.InvestigationTurnRole, request provider.Request, routes []gateway.ObservedRouteCandidate, rankingPolicy gateway.RouteRankingPolicy, remaining uint64) (gateway.RouteAttemptAuthorization, error) {
 	r := c.options.Routing
-	budget, err := provider.NewModelCostBudget(max(uint64(r.Budget.EstimatedInputTokens()), uint64(len(request.Payload()))+256), uint64(r.Budget.MaxOutputTokens()), remaining)
+	// The owner plans the same turn with the same function, system channel and
+	// response_format counts, so this pre-planned authorization must equal the
+	// dispatched one.
+	transport := r.GenerationTransport
+	if role == gateway.InvestigationVerificationTurn {
+		transport = r.VerificationTransport
+	}
+	format := uint32(0)
+	if measure := responseFormatBytes(transport); measure != nil {
+		format = measure(request)
+	}
+	budget, err := gateway.InvestigationTurnCostBudget(r.Budget, request, review.ModelRequestSystemChannelBytes(request), format, remaining)
 	if err != nil {
 		return gateway.RouteAttemptAuthorization{}, err
 	}
@@ -359,6 +398,12 @@ func (c *Investigation) plan(request provider.Request, routes []gateway.Observed
 	if err != nil {
 		return gateway.RouteAttemptAuthorization{}, err
 	}
+	if refusal := gateway.RouteEligibilityRefusal(eligible, routes); refusal != nil {
+		if c.options.PlanningRefusals != nil {
+			c.options.PlanningRefusals(refusal)
+		}
+		return gateway.RouteAttemptAuthorization{}, refusal
+	}
 	ranking, err := gateway.RankEligibleRoutes(eligible, rankingPolicy, r.PerformanceRevision, c.observations(eligible.EligibleRoutes()))
 	if err != nil {
 		return gateway.RouteAttemptAuthorization{}, err
@@ -369,6 +414,10 @@ func (c *Investigation) plan(request provider.Request, routes []gateway.Observed
 	}
 	return gateway.NewInitialRouteAttemptAuthorization(request, selection, ranking)
 }
+func localInvestigationVerificationAuthorization(authorization gateway.RouteAttemptAuthorization) bool {
+	return authorization.Validate() == nil && authorization.RouteReference().Zone() == provider.ProviderZoneLocal
+}
+
 func (c *Investigation) live(ctx context.Context) error {
 	if c == nil || nilInterface(ctx) || nilInterface(c.root) || c.cancel == nil || nilInterface(c.options.Clock) || ctx.Err() != nil || c.root.Err() != nil || !time.Now().Before(c.wallDeadline) {
 		return ErrInvestigation
@@ -642,7 +691,13 @@ func (c *Investigation) tool(ctx context.Context, turn gateway.InvestigationTurn
 	}
 	sort.Slice(selected, func(i, j int) bool { return selected[i].Ref() < selected[j].Ref() })
 	required := map[string]bool{}
+	removed := c.current.RemovedLinesEvidence()
 	for _, item := range c.current.EvidenceItems() {
+		// Removed base lines have no head file to hold; a removed file is not
+		// in the head snapshot at all.
+		if _, base := removed[item.ID()]; base {
+			continue
+		}
 		ref, ok := c.byPath[item.SourceRange().Path()]
 		if !ok {
 			return artifact.Artifact{}, ErrInvestigation
@@ -811,17 +866,22 @@ func (c *Investigation) verify(ctx context.Context) (InvestigationVerification, 
 	if err != nil {
 		return InvestigationVerification{}, err
 	}
-	request, err := verificationContext.ProviderRequest()
+	rawRequest, err := verificationContext.ProviderRequest()
+	if err != nil {
+		return InvestigationVerification{}, err
+	}
+	request, err := review.NewLocalVerificationRequest(rawRequest, c.options.Scope.Identity())
 	if err != nil {
 		return InvestigationVerification{}, err
 	}
 	for _, route := range c.options.Routing.Verification {
-		if gateway.VerifyIndependentRouteCandidate(c.options.Routing.Independence, g.FinalTurn().Authorization(), route) != nil {
+		reference := route.ResolvedRecord().RouteRegistryRecord().RouteCandidateDeclaration().RouteCapabilityDeclaration().RouteReference()
+		if reference.Zone() != provider.ProviderZoneLocal || gateway.VerifyIndependentRouteCandidate(c.options.Routing.Independence, g.FinalTurn().Authorization(), route) != nil {
 			return InvestigationVerification{}, ErrInvestigation
 		}
 	}
-	authorization, err := c.plan(request, c.options.Routing.Verification, c.options.Routing.VerificationRanking, c.owner.State().RemainingCostMicroUSD())
-	if err != nil || gateway.VerifyIndependentRouteAuthorizations(c.options.Routing.Independence, g.FinalTurn().Authorization(), authorization) != nil {
+	authorization, err := c.plan(gateway.InvestigationVerificationTurn, request, c.options.Routing.Verification, c.options.Routing.VerificationRanking, c.owner.State().RemainingCostMicroUSD())
+	if err != nil || !localInvestigationVerificationAuthorization(authorization) || gateway.VerifyIndependentRouteAuthorizations(c.options.Routing.Independence, g.FinalTurn().Authorization(), authorization) != nil {
 		return InvestigationVerification{}, ErrInvestigation
 	}
 	turn, _, err := c.dispatch(ctx, gateway.InvestigationVerificationTurn, request)
@@ -831,7 +891,7 @@ func (c *Investigation) verify(ctx context.Context) (InvestigationVerification, 
 	if turn.Authorization().Identity() != authorization.Identity() {
 		return InvestigationVerification{}, ErrInvestigation
 	}
-	verification, err := review.ParseVerificationBatch(turn.Dispatch().Response(), g.Candidates(), verificationContext.EvidenceItems())
+	verification, err := review.ParseContextVerificationBatch(turn.Dispatch().Response(), g.Candidates(), verificationContext)
 	if err != nil {
 		return InvestigationVerification{}, err
 	}

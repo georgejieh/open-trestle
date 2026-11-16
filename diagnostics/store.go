@@ -43,7 +43,7 @@ var (
 	ErrStorePersistence = errors.New("diagnostic store persistence failure")
 )
 
-// Store persists one immutable verified diagnostic set per review scope.
+// Store persists one immutable diagnostic set per review scope.
 type Store interface {
 	PutDiagnosticSet(context.Context, Set) (bool, error)
 	GetDiagnosticSet(context.Context, audit.ReviewScope) (Set, error)
@@ -225,7 +225,7 @@ func (s *FileStore) GetDiagnosticSet(ctx context.Context, scope audit.ReviewScop
 	return set, nil
 }
 func (s *FileStore) setPath(scope audit.ReviewScope) string {
-	return filepath.Join(s.root, scope.Identity()+diagnosticSetSuffix)
+	return filepath.Join(s.root, diagnosticSetFileName(scope))
 }
 func (s *FileStore) ensureOpen() error {
 	if s == nil {

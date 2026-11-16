@@ -1090,7 +1090,7 @@ func TestCurrentCatalogBoundaryCurrentPlanRejectsHistoricalCheckerAndReceipt(t *
 // Diagnostic source/schema parity only. Neither the browser marker nor this
 // structural schema check confers token-creation or runtime authority.
 func TestCurrentCatalogBoundaryBrowserDigestAndHistoricalPlanSchemaParity(t *testing.T) {
-	source, err := os.ReadFile(filepath.Join("..", "web", "src", "api.ts"))
+	source, err := os.ReadFile(filepath.Join("..", "web", "src", "setupApi.ts"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -11,11 +11,9 @@ import (
 	"fmt"
 	"hash"
 	"hash/crc32"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"testing"
 
 	"github.com/georgejieh/open-trestle/internal/evidence"
@@ -534,51 +532,4 @@ func packedExpectRevisionError(t *testing.T, objectRoot string, algorithm eviden
 		t.Fatalf("ReadLocalGitRevision(corrupt packed) = (%#v, %v), want failure", result, err)
 	}
 	return err
-}
-
-func packedReplaceArg(args []string, name, value string) []string {
-	result := append([]string(nil), args...)
-	for i := range result {
-		if result[i] == name && i+1 < len(result) {
-			result[i+1] = value
-			return result
-		}
-	}
-	panic(name)
-}
-
-func packedAppendObjectStore(args []string) []string {
-	for _, value := range args {
-		if value == "--object-store" {
-			return args
-		}
-	}
-	return append(append([]string(nil), args...), "--object-store", string(LocalGitObjectStoreProfileLooseAndPackIndexV1))
-}
-
-func packedLooseObjectPayload(t *testing.T, path string) (string, []byte) {
-	t.Helper()
-	file, err := os.Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer file.Close()
-	zr, err := zlib.NewReader(io.LimitReader(file, 80<<20))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer zr.Close()
-	framed, err := io.ReadAll(io.LimitReader(zr, 80<<20))
-	if err != nil {
-		t.Fatal(err)
-	}
-	sep := bytes.IndexByte(framed, 0)
-	if sep <= 0 {
-		t.Fatal("loose object lacks canonical header")
-	}
-	parts := strings.SplitN(string(framed[:sep]), " ", 2)
-	if len(parts) != 2 {
-		t.Fatal("loose object header lacks type and size")
-	}
-	return parts[0], append([]byte(nil), framed[sep+1:]...)
 }

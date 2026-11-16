@@ -5,7 +5,6 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/binary"
-	"encoding/hex"
 	"fmt"
 	"hash"
 	"io"
@@ -603,11 +602,6 @@ func (c *localGitPackIndexCatalog) rejectDuplicateOIDsAcrossPacks(ctx context.Co
 	}
 }
 
-func (c *localGitPackIndexCatalog) readObject(ctx context.Context, digest string, expectedType string, maxPayloadBytes int64) ([]byte, error) {
-	scope := newLocalGitPackScope(nil, c)
-	return c.readObjectWithScope(ctx, digest, expectedType, maxPayloadBytes, scope)
-}
-
 func (c *localGitPackIndexCatalog) readObjectWithScope(ctx context.Context, digest string, expectedType string, maxPayloadBytes int64, scope *localGitPackScope) ([]byte, error) {
 	if c == nil {
 		return nil, LocalGitRevisionObjectUnavailable
@@ -634,11 +628,6 @@ func (c *localGitPackIndexCatalog) readObjectWithScope(ctx context.Context, dige
 		return nil, LocalGitRevisionInvalidGraph
 	}
 	return payload, ctx.Err()
-}
-
-func (c *localGitPackIndexCatalog) validateStable(ctx context.Context) error {
-	scope := newLocalGitPackScope(nil, c)
-	return c.validateStableWithScope(ctx, scope)
 }
 
 func (c *localGitPackIndexCatalog) validateStableWithScope(ctx context.Context, scope *localGitPackScope) error {
@@ -1098,8 +1087,4 @@ func validateLocalGitInfoDirectory(objectsRoot *os.Root) error {
 
 func sameRegularFileWithStableMetadata(first, second os.FileInfo) bool {
 	return first != nil && second != nil && first.Mode().IsRegular() && second.Mode().IsRegular() && os.SameFile(first, second) && first.Size() == second.Size() && first.ModTime().Equal(second.ModTime())
-}
-
-func hexOID(oid []byte) string {
-	return hex.EncodeToString(oid)
 }

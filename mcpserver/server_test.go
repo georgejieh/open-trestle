@@ -183,3 +183,41 @@ func TestServerRejectsCrossWiredServiceReceipts(t *testing.T) {
 		}
 	}
 }
+
+// A malformed request that still carries a well-formed id must be answered
+// under that id; a null id would leave the client waiting for a response that
+// can never be correlated.
+func TestServerAnswersMalformedRequestsUnderTheirOwnID(t *testing.T) {
+	server, err := New(&readerStub{receipt: mcpReceipt(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name, line string
+		wantID     string
+		wantCode   float64
+	}{
+		{"missing params", `{"jsonrpc":"2.0","id":7,"method":"tools/list"}`, `7`, -32602},
+		{"unknown field", `{"jsonrpc":"2.0","id":"abc","method":"tools/list","extra":true}`, `"abc"`, -32600},
+		{"wrong version", `{"jsonrpc":"1.0","id":8,"method":"tools/list"}`, `8`, -32600},
+		{"null id", `{"jsonrpc":"2.0","id":null,"method":"tools/list"}`, `null`, -32600},
+		{"fractional id", `{"jsonrpc":"2.0","id":1.5,"method":"tools/list"}`, `null`, -32600},
+		{"array body", `[]`, `null`, -32600},
+		{"not json", `{`, `null`, -32700},
+	}
+	for _, tc := range cases {
+		var output bytes.Buffer
+		if err := server.Serve(context.Background(), strings.NewReader(tc.line+"\n"), &output); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		var response struct {
+			ID    json.RawMessage `json:"id"`
+			Error struct {
+				Code float64 `json:"code"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(output.Bytes(), &response); err != nil || string(response.ID) != tc.wantID || response.Error.Code != tc.wantCode {
+			t.Fatalf("%s: id=%s code=%v err=%v output=%s", tc.name, response.ID, response.Error.Code, err, output.String())
+		}
+	}
+}

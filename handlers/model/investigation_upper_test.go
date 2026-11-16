@@ -184,15 +184,21 @@ func (m *upperModel) ConfigurationIdentity() string {
 func (m *upperModel) count() int { m.mu.Lock(); defer m.mu.Unlock(); return len(m.calls) }
 func (m *upperModel) DispatchRoute(ctx context.Context, r gateway.RouteDispatchRequest) gateway.RouteDispatchResult {
 	upperCheck(m.t, r.Validate())
+	payload := r.Request().Payload()
+	if sanitized, err := review.SanitizedVerificationPayload(r.Request(), r.Authorization().ReviewScopeIdentity()); err == nil {
+		payload = sanitized
+	} else if local, err := review.LocalVerificationPayload(r.Request(), r.Authorization().ReviewScopeIdentity(), r.Authorization().RouteReference().Zone()); err == nil {
+		payload = local
+	}
 	var p upperPacket
-	upperCheck(m.t, json.Unmarshal(r.Request().Payload(), &p))
+	upperCheck(m.t, json.Unmarshal(payload, &p))
 	m.mu.Lock()
 	m.calls = append(m.calls, r)
 	m.packets = append(m.packets, p)
 	m.mu.Unlock()
 	var result any
 	if p.Task == "candidate_verification" {
-		if m.adapter != "adapter-b" || p.Schema != 3 || len(p.Candidates) != 1 {
+		if m.adapter != "adapter-b" || p.Schema != 8 || len(p.Candidates) != 1 {
 			m.t.Fatal("verifier lost exact independent final candidate")
 		}
 		ids := []string{}
@@ -201,7 +207,7 @@ func (m *upperModel) DispatchRoute(ctx context.Context, r gateway.RouteDispatchR
 		}
 		result = map[string]any{"schema_version": 1, "verdicts": []any{map[string]any{"candidate_id": p.Candidates[0].ID, "outcome": "verified", "severity": "high", "rationale": "The unguarded division is enabled for zero requests by the cited source.", "evidence_ids": ids}}}
 	} else {
-		if p.Schema != 4 || p.Investigation.Mode != "fixed_generation_route_v1" || p.Investigation.Pin != r.Authorization().RouteRecordIdentity() {
+		if p.Schema != 6 || p.Investigation.Mode != "fixed_generation_route_v1" || p.Investigation.Pin != r.Authorization().RouteRecordIdentity() {
 			m.t.Fatal("generation did not bind explicit actual fixed route")
 		}
 		ref := ""
@@ -388,7 +394,24 @@ func upperFixture(t *testing.T, mode string, generationCapacity ...uint64) (mode
 	upperCheck(t, err)
 	limits, err := review.NewContextLimits(65536, 0)
 	upperCheck(t, err)
-	packet, err := review.NewContextPacket(scope, memoryScope, snapshot, review.ContextTaskCandidateGeneration, []review.ContextSource{bound}, retrieval, limits)
+	sources := []review.ContextSource{bound}
+	if mode == "removed" {
+		// Removed base text is bound to a base file that the head snapshot
+		// does not hold; it is evidence beside the head source of a.go.
+		base := []byte("package p\nfunc Changed(x int) int { if x == 0 { return 0 }; return 10 / x }\n")
+		baseFile, err := evidence.NewRepositoryFile("a.go", base)
+		upperCheck(t, err)
+		baseRange, err := evidence.NewSourceRange("a.go", 2, 2)
+		upperCheck(t, err)
+		baseBinding, err := evidence.BindSourceRange(baseFile, base, baseRange)
+		upperCheck(t, err)
+		baseItem, err := evidence.NewEvidenceItem(baseBinding.Identity(), evidence.EvidenceKindSource, baseBinding.SliceDigest(), baseRange)
+		upperCheck(t, err)
+		removed, err := review.NewBoundContextSource(review.ContextStageRemovedLines, memory.TaintRepositoryControlled, baseItem, []byte("func Changed(x int) int { if x == 0 { return 0 }; return 10 / x }\n"), baseBinding)
+		upperCheck(t, err)
+		sources = append(sources, removed)
+	}
+	packet, err := review.NewContextPacket(scope, memoryScope, snapshot, review.ContextTaskCandidateGeneration, sources, retrieval, limits)
 	upperCheck(t, err)
 	policyBytes, err := os.ReadFile("../../internal/review/testdata/investigation-policy-v1.json")
 	upperCheck(t, err)
@@ -408,6 +431,9 @@ func upperFixture(t *testing.T, mode string, generationCapacity ...uint64) (mode
 	}
 	if mode == "non-independent" {
 		routes[1]["provider_id"] = "provider-a"
+	}
+	if mode == "remote-verifier" {
+		routes[1]["zone"] = "private_remote"
 	}
 	if len(generationCapacity) == 1 {
 		routes[0]["max_context_tokens"] = generationCapacity[0]
@@ -612,7 +638,7 @@ func TestInvestigationUpperNonIndependentOnlyRefusesBeforeAnyModel(t *testing.T)
 	upperCheck(t, err)
 	vp, err := gateway.NewInvestigationRoutePlan(options.Routing.RegistryRevision, options.Routing.Verification, options.Routing.VerificationRanking, options.Routing.PerformanceRevision, observations(options.Routing.Verification))
 	upperCheck(t, err)
-	_, err = gateway.NewInvestigationRouteOwner(gateway.InvestigationRouteOwnerOptions{Scope: options.Scope, SessionIdentity: options.SessionIdentity, PolicyIdentity: options.Policy.Identity(), Deadline: options.Deadline, MaxTurns: 5, Budget: options.Routing.Budget, Requirements: options.Routing.Requirements, Constraints: options.Routing.Constraints, Generation: gp, Verification: vp, Catalog: options.Catalog, Ledger: options.Ledger, Clock: options.Clock})
+	_, err = gateway.NewInvestigationRouteOwner(gateway.InvestigationRouteOwnerOptions{Scope: options.Scope, SessionIdentity: options.SessionIdentity, PolicyIdentity: options.Policy.Identity(), Deadline: options.Deadline, MaxTurns: 5, Budget: options.Routing.Budget, Requirements: options.Routing.Requirements, Constraints: options.Routing.Constraints, Generation: gp, Verification: vp, Catalog: options.Catalog, Ledger: options.Ledger, Clock: options.Clock, SystemChannelBytes: review.ModelRequestSystemChannelBytes})
 	upperCheck(t, err)
 	controller, err := model.NewInvestigation(context.Background(), options)
 	if err == nil || controller != nil || a.count() != 0 || b.count() != 0 {
@@ -624,6 +650,28 @@ func TestInvestigationUpperNonIndependentOnlyRefusesBeforeAnyModel(t *testing.T)
 		if event.Kind() == audit.EventRouteSelected || event.Kind() == audit.EventRouteAttemptClaimed {
 			t.Fatal("independence refusal created route authority")
 		}
+	}
+}
+
+func TestInvestigationUpperRejectsRemoteVerifierCandidateBeforeClaimCostOrDispatch(t *testing.T) {
+	options, _, a, b, _, _ := upperFixture(t, "remote-verifier")
+	controller, err := model.NewInvestigation(context.Background(), options)
+	upperCheck(t, err)
+	_, err = controller.Step(context.Background())
+	upperCheck(t, err)
+	_, err = controller.Step(context.Background())
+	upperCheck(t, err)
+	_, err = controller.Generate(context.Background())
+	upperCheck(t, err)
+	before, err := options.Ledger.Read(context.Background(), options.Scope, 0, 100)
+	upperCheck(t, err)
+	if _, err := controller.Verify(context.Background()); err == nil || a.count() != 3 || b.count() != 0 {
+		t.Fatal("remote verifier candidate reached selection or dispatch")
+	}
+	after, err := options.Ledger.Read(context.Background(), options.Scope, 0, 100)
+	upperCheck(t, err)
+	if len(after) != len(before) {
+		t.Fatal("remote verifier candidate created claim, cost, or dispatch events")
 	}
 }
 
@@ -723,8 +771,11 @@ func TestInvestigationUpperPinnedCapacityGrowthCannotReroute(t *testing.T) {
 	upperCheck(t, err)
 	first, err := baseline.Step(context.Background())
 	upperCheck(t, err)
-	initialNeed := uint64(len(modelA.calls[0].Request().Payload())) + 256 + 4096
-	nextNeed := uint64(len(first.NextRequest().Payload())) + 256 + 4096
+	need := func(request provider.Request) uint64 {
+		return uint64(len(request.Payload())) + uint64(review.ModelRequestSystemChannelBytes(request)) + 256 + 4096
+	}
+	initialNeed := need(modelA.calls[0].Request())
+	nextNeed := need(first.NextRequest())
 	if nextNeed <= initialNeed+32 {
 		t.Fatal("listing did not create a meaningful larger model request")
 	}
@@ -753,5 +804,31 @@ func TestInvestigationUpperForgedOpaqueReferenceRefusesBeforeFileGet(t *testing.
 	}
 	if _, err := controller.Generate(context.Background()); err == nil || a.count() != 2 {
 		t.Fatal("failed proposal was relabeled into new model work")
+	}
+}
+
+// Removed base lines in the initial context are held without a head read: the
+// first investigation request carries them as a removed_lines source at their
+// base lines, and the scan budget charges only the head file.
+func TestInvestigationUpperCarriesRemovedLinesWithoutAHeadRead(t *testing.T) {
+	options, _, a, _, _, _ := upperFixture(t, "removed")
+	controller, err := model.NewInvestigation(context.Background(), options)
+	upperCheck(t, err)
+	first, err := controller.Step(context.Background())
+	upperCheck(t, err)
+	if first.ScannedBytes() != uint64(len(upperInitial)) {
+		t.Fatalf("scan charged %d bytes, want only the head file", first.ScannedBytes())
+	}
+	if len(a.packets) == 0 || a.packets[0].Schema != 6 {
+		t.Fatal("investigation did not send a version 6 request")
+	}
+	found := false
+	for _, source := range a.packets[0].Sources {
+		if source.Stage == "removed_lines" {
+			found = source.Path == "a.go" && source.Start == 2 && source.End == 2 && strings.Contains(source.Content, "if x == 0")
+		}
+	}
+	if !found {
+		t.Fatal("investigation request lacks the removed_lines source")
 	}
 }

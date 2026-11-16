@@ -133,14 +133,18 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 	if err != nil {
 		return failure(controlplane.RunFailureInvalidInput)
 	}
-	readiness, err := review.EvaluatePublicationReadiness(h.policy, verification.IndependentReceipt(), verification.VerifiedFindings())
+	selection, err := review.SelectPublicationFindings(h.policy, verification.IndependentReceipt(), verification.VerifiedFindings())
+	if err != nil {
+		return failure(controlplane.RunFailureInvalidInput)
+	}
+	readiness, err := review.EvaluatePublicationReadiness(h.policy, verification.IndependentReceipt(), verification.VerifiedFindings(), verification.VerificationContext(), selection, readinessResult.contentScan)
 	if err != nil || readiness.Identity() != readinessResult.ReadinessIdentity() {
 		return failure(controlplane.RunFailureInvalidInput)
 	}
 	switch readiness.Status() {
 	case review.PublicationNoVerifiedFindings, review.PublicationBelowThreshold:
 		return h.persistReceipt(ctx, request, readinessArtifact, publicationInputArtifact, receiptWire{Contract: "open-trestle/publication-receipt", SchemaVersion: 1, Status: "not_required", ReadinessIdentity: readiness.Identity()}, at)
-	case review.PublicationBlockedInconclusive, review.PublicationBlockedIndependence:
+	case review.PublicationBlockedInconclusive, review.PublicationBlockedIndependence, review.PublicationBlockedSensitiveContent, review.PublicationBlockedInstructionRisk:
 		return failure(controlplane.RunFailurePolicy)
 	case review.PublicationAdvisoryReady:
 	default:
@@ -150,7 +154,11 @@ func (h *Handler) Execute(ctx context.Context, request controlplane.TaskExecutio
 	if err != nil {
 		return failure(controlplane.RunFailureInvalidInput)
 	}
-	sourceBinding, err := h.buildSourceBinding(ctx, request.Plan().Scope(), target, generationArtifact, inputArtifact, contextArtifact, at)
+	locations := make([]evidence.SourceRange, 0, len(readiness.InlineFindings())+readiness.SummaryOnlyCount())
+	for _, finding := range append(readiness.InlineFindings(), readiness.SummaryOnlyFindings()...) {
+		locations = append(locations, finding.SourceRange())
+	}
+	sourceBinding, err := h.buildSourceBinding(ctx, request.Plan().Scope(), target, locations, generationArtifact, inputArtifact, contextArtifact, at)
 	if err != nil {
 		return failure(controlplane.RunFailureInvalidInput)
 	}
@@ -255,10 +263,17 @@ func (h *Handler) loadVerification(ctx context.Context, scope audit.ReviewScope,
 	if err != nil {
 		return zero, vr, zero, zero, zero, err
 	}
-	vr, err = modelhandler.ParseVerificationResultArtifact(verificationArtifact, generationArtifact, inputArtifact, contextArtifact)
+	vr, err = modelhandler.ParseStoredVerificationResultArtifact(ctx, h.store, at, verificationArtifact, generationArtifact, inputArtifact, contextArtifact)
 	return verificationArtifact, vr, generationArtifact, inputArtifact, contextArtifact, err
 }
-func (h *Handler) buildSourceBinding(ctx context.Context, scope audit.ReviewScope, target review.PublicationTarget, generationArtifact, inputArtifact, contextArtifact artifact.Artifact, at time.Time) (review.ProtectedSourceBinding, error) {
+
+// buildSourceBinding rebinds every generation evidence item to the exact
+// protected snapshot it came from. Each item must be a changed analysis item,
+// a removed_lines record, a semantic reference, or a repository instruction
+// prefix whose base copy the head leaves byte-identical. Instruction context is
+// advisory evidence only: a published location in an instruction file refuses
+// the binding.
+func (h *Handler) buildSourceBinding(ctx context.Context, scope audit.ReviewScope, target review.PublicationTarget, locations []evidence.SourceRange, generationArtifact, inputArtifact, contextArtifact artifact.Artifact, at time.Time) (review.ProtectedSourceBinding, error) {
 	input, err := modelhandler.ParseGenerationInput(inputArtifact.Payload())
 	if err != nil {
 		return review.ProtectedSourceBinding{}, err
@@ -316,6 +331,15 @@ func (h *Handler) buildSourceBinding(ctx context.Context, scope audit.ReviewScop
 	if err != nil {
 		return review.ProtectedSourceBinding{}, err
 	}
+	base, err := sourcehandler.ParseSnapshotArtifact(baseArtifact)
+	if err != nil {
+		return review.ProtectedSourceBinding{}, err
+	}
+	baseFiles := make(map[string]sourcehandler.FileReference, base.FileCount())
+	for _, reference := range base.Files() {
+		baseFiles[reference.Path()] = reference
+	}
+	instructionFiles := make(map[string]bool)
 	byEvidence := make(map[string]analysishandler.Item, len(analysis.Items()))
 	for _, item := range analysis.Items() {
 		byEvidence[item.EvidenceID()] = item
@@ -332,6 +356,10 @@ func (h *Handler) buildSourceBinding(ctx context.Context, scope audit.ReviewScop
 	for _, reference := range head.Files() {
 		files[reference.Path()] = reference
 	}
+	removedByEvidence := make(map[string]analysishandler.Item, len(analysis.RemovedLines()))
+	for _, item := range analysis.RemovedLines() {
+		removedByEvidence[item.EvidenceID()] = item
+	}
 	items := input.EvidenceItems()
 	bindings := make([]string, len(items))
 	for index, item := range items {
@@ -339,17 +367,37 @@ func (h *Handler) buildSourceBinding(ctx context.Context, scope audit.ReviewScop
 		if item.Kind() != evidence.EvidenceKindSource {
 			return review.ProtectedSourceBinding{}, ErrInvalidPublicationInput
 		}
+		// Removed base lines rebind to the exact base file their analysis
+		// record names; they are evidence, never a published location.
+		if removedItem, removed := removedByEvidence[item.ID()]; removed {
+			binding, err := h.bindBaseRemovedLines(ctx, scope, baseArtifact, removedItem, at)
+			if err != nil {
+				return review.ProtectedSourceBinding{}, err
+			}
+			if removedItem.Path() != sourceRange.Path() || removedItem.StartLine() != sourceRange.StartLine() || removedItem.EndLine() != sourceRange.EndLine() || removedItem.Digest() != item.Digest() || binding.Identity() != item.ID() {
+				return review.ProtectedSourceBinding{}, ErrInvalidPublicationInput
+			}
+			bindings[index] = binding.Identity()
+			continue
+		}
 		sourceItem, changed := byEvidence[item.ID()]
+		reference, exists := files[sourceRange.Path()]
+		if !exists {
+			return review.ProtectedSourceBinding{}, ErrInvalidPublicationInput
+		}
 		if changed {
 			if sourceItem.Path() != sourceRange.Path() || sourceItem.StartLine() != sourceRange.StartLine() || sourceItem.EndLine() != sourceRange.EndLine() || sourceItem.Digest() != item.Digest() {
 				return review.ProtectedSourceBinding{}, ErrInvalidPublicationInput
 			}
 		} else if !semanticRanges[sourceRange] {
-			return review.ProtectedSourceBinding{}, ErrInvalidPublicationInput
-		}
-		reference, exists := files[sourceRange.Path()]
-		if !exists {
-			return review.ProtectedSourceBinding{}, ErrInvalidPublicationInput
+			// Repository instruction context is a whole-line prefix of a root
+			// instruction file that the head leaves byte-identical to the base,
+			// so it binds to the head snapshot exactly as context assembly did.
+			baseReference, inBase := baseFiles[sourceRange.Path()]
+			if !review.RepositoryInstructionPath(sourceRange.Path()) || sourceRange.StartLine() != 1 || !inBase || baseReference.Digest() != reference.Digest() || baseReference.SizeBytes() != reference.SizeBytes() {
+				return review.ProtectedSourceBinding{}, ErrInvalidPublicationInput
+			}
+			instructionFiles[sourceRange.Path()] = true
 		}
 		binding, err := h.bindHeadSourceRange(ctx, scope, head, reference, sourceRange, at)
 		if err != nil {
@@ -367,8 +415,45 @@ func (h *Handler) buildSourceBinding(ctx context.Context, scope audit.ReviewScop
 		}
 		bindings[index] = binding.Identity()
 	}
+	for _, location := range locations {
+		if instructionFiles[location.Path()] {
+			return review.ProtectedSourceBinding{}, ErrInvalidPublicationInput
+		}
+	}
 	return review.NewProtectedSourceBinding(scope, change.Repository(), change.HeadRevision(), headArtifact.Identity(), head.Identity(), head.ManifestIdentity(), changeArtifact.Identity(), change.Identity(), analysisArtifact.Identity(), contextArtifact.Identity(), input.ContextIdentity(), input.Snapshot().Identity(), bindings)
 }
+
+// bindBaseRemovedLines rebinds one removed-lines analysis record to the exact
+// base snapshot file: the reference digest, the rebuilt file identity and the
+// slice binding must all match the record.
+func (h *Handler) bindBaseRemovedLines(ctx context.Context, scope audit.ReviewScope, baseArtifact artifact.Artifact, item analysishandler.Item, at time.Time) (evidence.SourceSliceBinding, error) {
+	base, err := sourcehandler.ParseSnapshotArtifact(baseArtifact)
+	if err != nil {
+		return evidence.SourceSliceBinding{}, err
+	}
+	for _, reference := range base.Files() {
+		if reference.Path() != item.Path() {
+			continue
+		}
+		if reference.Digest() != item.FileDigest() {
+			return evidence.SourceSliceBinding{}, ErrInvalidPublicationInput
+		}
+		sourceRange, err := evidence.NewSourceRange(item.Path(), item.StartLine(), item.EndLine())
+		if err != nil {
+			return evidence.SourceSliceBinding{}, ErrInvalidPublicationInput
+		}
+		binding, err := h.bindHeadSourceRange(ctx, scope, base, reference, sourceRange, at)
+		if err != nil {
+			return evidence.SourceSliceBinding{}, err
+		}
+		if binding.Identity() != item.BindingIdentity() || binding.RepositoryFileIdentity() != item.FileIdentity() || binding.RepositoryFileDigest() != item.FileDigest() || binding.SliceBytes() != item.SliceBytes() || binding.SliceDigest() != item.Digest() {
+			return evidence.SourceSliceBinding{}, ErrInvalidPublicationInput
+		}
+		return binding, nil
+	}
+	return evidence.SourceSliceBinding{}, ErrInvalidPublicationInput
+}
+
 func (h *Handler) bindHeadSourceRange(ctx context.Context, scope audit.ReviewScope, head sourcehandler.Snapshot, reference sourcehandler.FileReference, sourceRange evidence.SourceRange, at time.Time) (evidence.SourceSliceBinding, error) {
 	value, err := h.store.Get(ctx, scope, reference.ArtifactIdentity(), at)
 	if err != nil {

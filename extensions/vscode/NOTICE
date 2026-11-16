@@ -3,12 +3,7 @@ Copyright 2026 George Jieh
 
 This extension is distributed under the license in LICENSE.
 
-The bundled extension includes:
+The bundled extension includes vscode-jsonrpc, vscode-languageserver-protocol,
+and vscode-languageserver-types, Copyright Microsoft Corporation, MIT.
 
-- vscode-languageclient, vscode-jsonrpc, vscode-languageserver-protocol, vscode-languageserver-textdocument, and vscode-languageserver-types, Copyright Microsoft Corporation, MIT.
-- balanced-match, MIT.
-- brace-expansion, MIT.
-- minimatch, BlueOak-1.0.0.
-- semver, ISC.
-
-Complete license texts are included in THIRD_PARTY_LICENSES.
+Complete license text is included in THIRD_PARTY_LICENSES.

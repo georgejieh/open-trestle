@@ -24,6 +24,11 @@ func TestRouteFailureClassRoundTrips(t *testing.T) {
 		{RouteFailurePolicyDenied, "policy_denied"},
 		{RouteFailureBudgetExhausted, "budget_exhausted"},
 		{RouteFailureCancelled, "cancelled"},
+		{RouteFailureOutputExhausted, "output_exhausted"},
+		{RouteFailurePaymentRequired, "payment_required"},
+		{RouteFailureModelUnavailable, "model_unavailable"},
+		{RouteFailureModelRetired, "model_retired"},
+		{RouteFailureRequestRejected, "request_rejected"},
 	}
 	for _, test := range values {
 		parsed, err := ParseRouteFailureClass(test.token)
@@ -31,7 +36,10 @@ func TestRouteFailureClassRoundTrips(t *testing.T) {
 			t.Fatalf("failure class %q = (%v, %v, %q)", test.token, parsed, err, parsed.String())
 		}
 	}
-	for _, token := range []string{"", "unknown", " timeout", "TIMEOUT"} {
+	if RouteFailureRequestRejected.Validate() != nil || (RouteFailureRequestRejected+1).Validate() == nil || (RouteFailureRequestRejected+1).String() != "" {
+		t.Fatal("the failure class set is not closed after request_rejected")
+	}
+	for _, token := range []string{"", "unknown", " timeout", "TIMEOUT", "payment", "model_gone", "MODEL_RETIRED", "rejected", "bad_request", "REQUEST_REJECTED"} {
 		if parsed, err := ParseRouteFailureClass(token); !errors.Is(err, ErrInvalidRouteFailureClass) || parsed != 0 {
 			t.Fatalf("ParseRouteFailureClass(%q) = (%v, %v)", token, parsed, err)
 		}
@@ -146,7 +154,7 @@ func TestEvaluateRouteRetryAllowsOnlyTransientSafeFailures(t *testing.T) {
 			t.Fatalf("transient %v = (%#v, %v)", failure, decision, err)
 		}
 	}
-	permanent := []RouteFailureClass{RouteFailureInvalidResponse, RouteFailureAuthentication, RouteFailureAuthorization, RouteFailurePolicyDenied, RouteFailureBudgetExhausted, RouteFailureCancelled}
+	permanent := []RouteFailureClass{RouteFailureInvalidResponse, RouteFailureAuthentication, RouteFailureAuthorization, RouteFailurePolicyDenied, RouteFailureBudgetExhausted, RouteFailureCancelled, RouteFailureOutputExhausted, RouteFailurePaymentRequired, RouteFailureModelUnavailable, RouteFailureModelRetired, RouteFailureRequestRejected}
 	for _, failure := range permanent {
 		decision, err := evaluateRouteRetry(policy, failure, RouteReplayNoSideEffect, 1, 0)
 		if err != nil || decision.ShouldRetry() || decision.Reason() != RouteRetryPermanentFailure || decision.MinimumDelayMilliseconds() != 0 || decision.MaximumDelayMilliseconds() != 0 {

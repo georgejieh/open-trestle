@@ -12,9 +12,10 @@ import (
 )
 
 func TestPublicationPlanAcceptsExactProtectedSourceBinding(t *testing.T) {
-	receipt, set := verifiedSetFixture(t, "verified", gateway.RouteIndependenceDistinctProvider)
+	receipt, set, verificationContext := verifiedSetContextFixture(t, "verified", gateway.RouteIndependenceDistinctProvider)
 	publicationPolicy, _ := NewPublicationPolicy(SeverityLow, 10, gateway.RouteIndependenceDistinctProvider, true)
-	readiness, err := EvaluatePublicationReadiness(publicationPolicy, receipt, set)
+	selection, _ := SelectPublicationFindings(publicationPolicy, receipt, set)
+	readiness, err := EvaluatePublicationReadiness(publicationPolicy, receipt, set, verificationContext, selection, contentScanReceiptFixture(t, receipt, set, verificationContext, selection, 0))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -134,3 +134,45 @@ func TestHTTPHandlerDoesNotAcknowledgeExpiredDelivery(t *testing.T) {
 		t.Fatalf("expired delivery acknowledged: status=%d body=%#v", response.Code, body)
 	}
 }
+
+func TestHTTPHandlerRefusesSignedBodyReplayUnderNewDeliveryID(t *testing.T) {
+	handler, store, secret := webhookHandlerFixture(t)
+	notifier := &captureNotifier{}
+	base := handler
+	handler, err := NewHTTPHandlerWithNotifier(base.scope, base.verifier, base.inbox, notifier, fixedWebhookClock{at: time.UnixMilli(1000)}, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte(`{"action":"opened","number":1}`)
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, githubRequest(payload, secret))
+	if first.Code != http.StatusAccepted {
+		t.Fatalf("first=%d %s", first.Code, first.Body.String())
+	}
+	replay := githubRequest(payload, secret)
+	replay.Header.Set("X-GitHub-Delivery", "delivery-replayed")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, replay)
+	var body webhookResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusConflict || body.Error != "delivery_replayed" || body.AcceptanceIdentity != "" || body.Duplicate {
+		t.Fatalf("replay=%d %s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "delivery-replayed") {
+		t.Fatal("replay response echoed request-controlled content")
+	}
+	entries, err := store.List(context.Background(), base.scope, webhook.SourceGitHub, "", 10)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("replay created a delivery: entries=(%d,%v)", len(entries), err)
+	}
+	if len(notifier.notices) != 1 {
+		t.Fatalf("replay woke reconciliation: notices=%d", len(notifier.notices))
+	}
+	again := httptest.NewRecorder()
+	handler.ServeHTTP(again, githubRequest(payload, secret))
+	if again.Code != http.StatusOK {
+		t.Fatalf("same-ID redelivery=%d %s", again.Code, again.Body.String())
+	}
+}

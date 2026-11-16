@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:runtime:usage-ledger-entry:v1",
+  "title": "Open Trestle usage ledger entry v1",
+  "description": "One line of the local usage ledger: the spend of one review run that sent at least one model request through a route with an API key. Lines are appended under a file lock to one protected 0600 file per UTC month in the private usage folder. The cost is an upper-bound estimate, not a bill: it is priced at the route's declared price, the highest pinned endpoint price (price_basis route_max_price), and is the settled cost when usage was known for every request, or otherwise counts each request whose usage is unknown at the cost reserved for it (cost reservation_upper_bound). When the review's routes use different keys, each key is charged the whole cost. The entry holds no source, prompt, model reply or key. The native parser additionally requires the canonical encoding, sorted unique keys and models, credential reference identities derived from the names, and cost equal to settled_usage exactly when usage_known is true.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "recorded_at",
+    "review_run_id",
+    "runtime_policy_identity",
+    "keys",
+    "models",
+    "requests_sent",
+    "usage_known",
+    "cost_micro_usd",
+    "cost",
+    "price_basis"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/usage-ledger-entry"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "recorded_at": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 20,
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "review_run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "runtime_policy_identity": {
+      "$ref": "#/$defs/digest"
+    },
+    "keys": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "provider_id",
+          "credential_environment",
+          "credential_reference_identity"
+        ],
+        "properties": {
+          "provider_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+          },
+          "credential_environment": {
+            "type": "string",
+            "minLength": 23,
+            "maxLength": 128,
+            "pattern": "^OPEN_TRESTLE_PROVIDER_[A-Z0-9_]+$"
+          },
+          "credential_reference_identity": {
+            "$ref": "#/$defs/digest"
+          }
+        }
+      }
+    },
+    "models": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      }
+    },
+    "requests_sent": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000
+    },
+    "usage_known": {
+      "type": "boolean"
+    },
+    "cost_micro_usd": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000000000000
+    },
+    "cost": {
+      "enum": [
+        "settled_usage",
+        "reservation_upper_bound"
+      ]
+    },
+    "price_basis": {
+      "const": "route_max_price"
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}

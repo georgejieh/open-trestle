@@ -52,7 +52,7 @@ func NewTaskNotification(state ReviewRunState, runtime TaskRuntimeState, at time
 	}
 	availableAt := runtime.LastEventAt()
 	eligible := runtime.status == TaskRuntimeAvailable
-	if runtime.status == TaskRuntimeLeased && runtime.LeaseExpiresAt().UnixMilli() > 0 && at.UnixMilli() >= runtime.LeaseExpiresAt().UnixMilli() {
+	if runtime.status == TaskRuntimeLeased && runtime.preparedEventIdentity == "" && runtime.LeaseExpiresAt().UnixMilli() > 0 && at.UnixMilli() >= runtime.LeaseExpiresAt().UnixMilli() {
 		eligible = true
 		availableAt = runtime.LeaseExpiresAt()
 	}

@@ -230,7 +230,7 @@ func TestInvestigationArtifactKindsMatchPublicSchema(t *testing.T) {
 	if err := json.Unmarshal(encoded, &schema); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"source_snapshot", "change_model", "deterministic_evidence", "retrieval_result", "context_packet", "candidate_batch", "verification_batch", "verified_finding_set", "publication_plan", "run_export", "task_input", "webhook_delivery", "source_file", "publication_receipt", "investigation_turn", "investigation_tool_result"}
+	want := []string{"source_snapshot", "change_model", "deterministic_evidence", "retrieval_result", "context_packet", "candidate_batch", "verification_batch", "verified_finding_set", "publication_plan", "run_export", "task_input", "webhook_delivery", "source_file", "publication_receipt", "investigation_turn", "investigation_tool_result", "sanitized_model_request", "sanitized_egress_receipt", "generation_rejection"}
 	if !reflect.DeepEqual(schema.Properties["kind"].Enum, want) {
 		t.Fatal("public artifact schema changed old kinds or omitted the append-only investigation tokens")
 	}

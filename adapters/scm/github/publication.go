@@ -433,26 +433,21 @@ func publicationPayload(request review.PublicationDispatchRequest) (reviewPayloa
 	target := plan.Target()
 	var summary strings.Builder
 	summary.WriteString("## Open Trestle verified review\n\n")
-	inline := plan.InlineFindings()
-	summaryOnly := plan.SummaryOnlyFindings()
+	inline := plan.InlinePublishableFindings()
+	summaryOnly := plan.SummaryOnlyPublishableFindings()
 	comments := make([]reviewCommentWire, 0, len(inline))
 	if len(inline) > 0 {
 		summary.WriteString("### Inline findings\n\n")
 	}
 	for _, finding := range inline {
-		if finding.Validate() != nil {
-			return reviewPayloadWire{}, ErrInvalidPublicationConfig
-		}
-		source := finding.SourceRange()
-		fmt.Fprintf(&summary, "- **%s: %s** (`%s:%d-%d`)\n", strings.ToUpper(string(finding.Severity())), escapeMarkdown(finding.Title()), escapeMarkdown(source.Path()), source.StartLine(), source.EndLine())
+		fmt.Fprintf(&summary, "- **%s: %s** (%s)\n", strings.ToUpper(string(finding.Severity())), escapeMarkdown(finding.Title()), findingLocation(finding))
 		body := renderFinding(finding)
 		if len(body) > maximumPublicationBodyBytes {
 			return reviewPayloadWire{}, ErrInvalidPublicationConfig
 		}
-		comment := reviewCommentWire{Path: source.Path(), Line: source.EndLine(), Side: "RIGHT", Body: body}
-		if source.StartLine() != source.EndLine() {
-			comment.StartLine = source.StartLine()
-			comment.StartSide = "RIGHT"
+		comment, err := inlineReviewComment(finding, body)
+		if err != nil {
+			return reviewPayloadWire{}, err
 		}
 		comments = append(comments, comment)
 	}
@@ -460,11 +455,7 @@ func publicationPayload(request review.PublicationDispatchRequest) (reviewPayloa
 		summary.WriteString("\n### Summary findings\n")
 	}
 	for _, finding := range summaryOnly {
-		if finding.Validate() != nil {
-			return reviewPayloadWire{}, ErrInvalidPublicationConfig
-		}
-		source := finding.SourceRange()
-		fmt.Fprintf(&summary, "\n#### %s: %s\n\nPath: `%s:%d-%d`\n\n%s\n", strings.ToUpper(string(finding.Severity())), escapeMarkdown(finding.Title()), escapeMarkdown(source.Path()), source.StartLine(), source.EndLine(), escapeMarkdown(finding.Claim()))
+		fmt.Fprintf(&summary, "\n#### %s: %s\n\nPath: %s\n\n%s\n", strings.ToUpper(string(finding.Severity())), escapeMarkdown(finding.Title()), findingLocation(finding), escapeMarkdown(finding.Claim()))
 	}
 	fmt.Fprintf(&summary, "\n<!-- open-trestle-operation:%s -->", request.IdempotencyKey())
 	if summary.Len() > maximumPublicationBodyBytes {
@@ -472,13 +463,73 @@ func publicationPayload(request review.PublicationDispatchRequest) (reviewPayloa
 	}
 	return reviewPayloadWire{CommitID: target.HeadRevision().Digest(), Body: summary.String(), Event: "COMMENT", Comments: comments}, nil
 }
-func renderFinding(finding review.VerifiedFinding) string {
-	source := finding.SourceRange()
-	return fmt.Sprintf("**%s: %s**\n\n%s\n\nLocation: `%s:%d-%d`", strings.ToUpper(string(finding.Severity())), escapeMarkdown(finding.Title()), escapeMarkdown(finding.Claim()), escapeMarkdown(source.Path()), source.StartLine(), source.EndLine())
+func renderFinding(finding review.PublishableFinding) string {
+	return fmt.Sprintf("**%s: %s**\n\n%s\n\nLocation: %s", strings.ToUpper(string(finding.Severity())), escapeMarkdown(finding.Title()), escapeMarkdown(finding.Claim()), findingLocation(finding))
+}
+
+// locatedFinding is the location part of a publishable finding.
+type locatedFinding interface {
+	Path() string
+	StartLine() int
+	EndLine() int
+	Side() review.LineSide
+}
+
+// findingLocation renders a location in code formatting. Head lines read
+// `path:start-end`; removed base lines name their side explicitly, so a reader
+// never takes base line numbers for head lines.
+func findingLocation(finding locatedFinding) string {
+	if finding.Side() == review.LineSideBase {
+		return fmt.Sprintf("`%s` removed base lines %d-%d", escapeMarkdown(finding.Path()), finding.StartLine(), finding.EndLine())
+	}
+	return fmt.Sprintf("`%s:%d-%d`", escapeMarkdown(finding.Path()), finding.StartLine(), finding.EndLine())
+}
+
+// inlineReviewComment anchors a comment on head lines (side RIGHT). A finding
+// on removed base lines is refused: GitHub numbers the left side of a pull
+// request diff from the merge base, which need not be the reviewed base
+// revision, so base line numbers could point at other lines. Such findings
+// are published in the review summary only.
+func inlineReviewComment(finding locatedFinding, body string) (reviewCommentWire, error) {
+	if finding.Side() != review.LineSideHead {
+		return reviewCommentWire{}, ErrInvalidPublicationConfig
+	}
+	comment := reviewCommentWire{Path: finding.Path(), Line: finding.EndLine(), Side: "RIGHT", Body: body}
+	if finding.StartLine() != finding.EndLine() {
+		comment.StartLine = finding.StartLine()
+		comment.StartSide = "RIGHT"
+	}
+	return comment, nil
 }
 func escapeMarkdown(value string) string {
-	replacer := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "@", "@\u200b", "\\", "\\\\", "*", "\\*", "_", "\\_", "[", "\\[", "]", "\\]", "(", "\\(", ")", "\\)", "#", "\\#", "!", "\\!", "|", "\\|", "`", "\\`", "~", "\\~")
-	return replacer.Replace(value)
+	replacer := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "@", "\u200b@\u200b", "\\", "\\\\", "*", "\\*", "_", "\\_", "[", "\\[", "]", "\\]", "(", "\\(", ")", "\\)", "#", "\\#", "!", "\\!", "|", "\\|", "`", "\\`", "~", "\\~")
+	return defuseAutolinks(replacer.Replace(value))
+}
+
+// defuseAutolinks breaks what GitHub would link by itself in untrusted text: a
+// scheme such as https:, http:, ftp:, mailto: or xmpp: (a zero-width space
+// goes before a colon that follows a letter or digit and precedes a non-space
+// character) and a www. host (one goes before its dot). Email addresses are
+// already broken at their @. A zero-width space is used, not an entity,
+// because the autolink pass reads text after entities are decoded. The
+// publisher emits no links of its own.
+func defuseAutolinks(value string) string {
+	alphanumeric := func(character byte) bool {
+		return character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9'
+	}
+	var builder strings.Builder
+	builder.Grow(len(value))
+	for index := 0; index < len(value); index++ {
+		character := value[index]
+		if character == ':' && index > 0 && alphanumeric(value[index-1]) && index+1 < len(value) && value[index+1] != ' ' {
+			builder.WriteString("\u200b")
+		}
+		if character == '.' && index >= 3 && strings.EqualFold(value[index-3:index], "www") && (index == 3 || !alphanumeric(value[index-4])) {
+			builder.WriteString("\u200b")
+		}
+		builder.WriteByte(character)
+	}
+	return builder.String()
 }
 func classifyHeadTransport(ctx context.Context, err error) review.PublicationHeadFailure {
 	if ctx.Err() != nil || errors.Is(err, context.Canceled) {

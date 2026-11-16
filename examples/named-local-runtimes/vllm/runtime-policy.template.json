@@ -1,0 +1,39 @@
+{
+  "schema_version": 2,
+  "inventory_identity": "",
+  "review_policy_identity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "min_context_tokens": 8192,
+  "min_output_tokens": 1024,
+  "required_features": [
+    "structured_output"
+  ],
+  "classification": "confidential",
+  "allowed_zones": [
+    "local"
+  ],
+  "content_logging_allowed": false,
+  "estimated_input_tokens": 512,
+  "max_output_tokens": 1024,
+  "max_cost_micro_usd": 0,
+  "pinned_route_record_identity": "",
+  "preferred_route_record_identities": [],
+  "verification_independence": "distinct_model",
+  "publication_minimum_severity": "medium",
+  "publication_max_inline_findings": 20,
+  "publication_minimum_independence": "distinct_model",
+  "publication_block_on_inconclusive": true,
+  "connections": [
+    {
+      "implementation": "openai_chat_completions",
+      "adapter_id": "local-generation",
+      "endpoint": "http://127.0.0.1:8000/v1",
+      "credential_mode": "none"
+    },
+    {
+      "implementation": "openai_chat_completions",
+      "adapter_id": "local-verification",
+      "endpoint": "http://127.0.0.1:8001/v1",
+      "credential_mode": "none"
+    }
+  ]
+}

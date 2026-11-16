@@ -108,72 +108,80 @@ func evidenceRecordIdentity(r erasureEvidenceRecord) string {
 }
 
 func (e ErasureEvidence) Validate() error {
+	_, err := e.validate()
+	return err
+}
+
+func (e ErasureEvidence) validate() (attemptResponseRecord, error) {
 	r := e.record
 	if err := r.shape(); err != nil {
-		return err
+		return attemptResponseRecord{}, err
 	}
 	if _, err := erasureMetadataEncode(r, maxEncodedErasureEvidenceBytes); err != nil {
-		return err
+		return attemptResponseRecord{}, err
 	}
-	if err := evidencePayloadShape(r); err != nil {
-		return err
+	response, err := evidencePayloadShape(r)
+	if err != nil {
+		return attemptResponseRecord{}, err
 	}
 	if e.ref.Validate() != nil {
-		return ErrInvalidErasureContract
+		return attemptResponseRecord{}, ErrInvalidErasureContract
 	}
 	if r.NamespaceIdentity != e.ref.NamespaceIdentity() || r.ScopeIdentity != e.ref.Scope().Identity() || r.OperationIdentity != e.ref.OperationIdentity() {
-		return ErrErasureIdentityMismatch
+		return attemptResponseRecord{}, ErrErasureIdentityMismatch
 	}
-	body, _ := hex.DecodeString(r.RecordHex)
 	switch r.Kind {
 	case "response":
-		response, err := parseAttemptResponse(body, e.ref)
+		response, err = bindAttemptResponse(response, e.ref)
 		if err != nil {
-			return err
+			return attemptResponseRecord{}, err
 		}
 		if response.OperationIdentity != r.OperationIdentity || response.AttemptIdentity != r.AttemptIdentity || response.ObservedAtMilliseconds != r.ObservedAtMilliseconds {
-			return ErrErasureBindingMismatch
+			return attemptResponseRecord{}, ErrErasureBindingMismatch
 		}
 	case "fence":
+		body, _ := hex.DecodeString(r.RecordHex)
 		version, err := ParseObjectVersion(body)
 		if err != nil {
-			return err
+			return attemptResponseRecord{}, err
 		}
 		if version.Kind() != ObjectVersionData {
-			return ErrInvalidErasureContract
+			return attemptResponseRecord{}, ErrInvalidErasureContract
 		}
 		if version.NamespaceIdentity() != r.NamespaceIdentity {
-			return ErrErasureBindingMismatch
+			return attemptResponseRecord{}, ErrErasureBindingMismatch
 		}
 	case "verification":
+		body, _ := hex.DecodeString(r.RecordHex)
 		verification, err := ParseErasureVerification(body, e.ref)
 		if err != nil {
-			return err
+			return attemptResponseRecord{}, err
 		}
 		if r.Slot != "verification:"+verification.Identity() {
-			return ErrInvalidErasureContract
+			return attemptResponseRecord{}, ErrInvalidErasureContract
 		}
 		vr := verification.record
 		if r.ObservedAtMilliseconds != vr.CompletedAtMilliseconds || r.ParentIdentities[0] != vr.FenceEvidenceIdentity ||
 			r.ParentIdentities[1] != vr.ListResponseIdentities[0] || r.ParentIdentities[2] != vr.CurrentResponseIdentity {
-			return ErrErasureBindingMismatch
+			return attemptResponseRecord{}, ErrErasureBindingMismatch
 		}
 	case "candidate":
+		body, _ := hex.DecodeString(r.RecordHex)
 		attestation, err := ParseErasureAttestationV2(body, e.ref.Scope())
 		if err != nil {
-			return err
+			return attemptResponseRecord{}, err
 		}
 		if attestation.NamespaceIdentity() != r.NamespaceIdentity || attestation.OperationIdentity() != r.OperationIdentity {
-			return ErrErasureIdentityMismatch
+			return attemptResponseRecord{}, ErrErasureIdentityMismatch
 		}
 		if attestation.record.CompletedAtMilliseconds != r.ObservedAtMilliseconds {
-			return ErrErasureBindingMismatch
+			return attemptResponseRecord{}, ErrErasureBindingMismatch
 		}
 	}
 	if r.Identity != evidenceRecordIdentity(r) {
-		return ErrErasureIdentityMismatch
+		return attemptResponseRecord{}, ErrErasureIdentityMismatch
 	}
-	return nil
+	return response, nil
 }
 
 // EncodeErasureEvidence returns a new canonical byte slice, not an accepted row.
@@ -225,39 +233,43 @@ func newErasureEvidence(ref ErasureOperationRef, kind, slot, attempt string, at 
 	return ParseErasureEvidence(encoded, ref)
 }
 
-func evidencePayloadShape(r erasureEvidenceRecord) error {
+func evidencePayloadShape(r erasureEvidenceRecord) (attemptResponseRecord, error) {
+	var response attemptResponseRecord
 	body, _ := hex.DecodeString(r.RecordHex)
 	switch r.Kind {
 	case "response":
-		var response attemptResponseRecord
 		if !erasureMetadataDecode(body, maxEncodedAttemptResponseBytes, &response) {
-			return ErrInvalidErasureContract
+			return attemptResponseRecord{}, ErrInvalidErasureContract
 		}
 		if err := response.shape(); err != nil {
-			return err
+			return attemptResponseRecord{}, err
 		}
-		return responseBodyShape(response)
+		if err := responseBodyShape(response); err != nil {
+			return attemptResponseRecord{}, err
+		}
 	case "fence":
 		var version objectVersionRecord
 		if !erasureMetadataDecode(body, 4096, &version) || version.Contract != objectVersionContract || version.SchemaVersion != 1 ||
 			!validDigest(version.Identity) || (ExactObjectKey{version.NamespaceIdentity, version.Key}).Validate() != nil ||
 			version.Kind != "data" || !validObjectVersionID(version.VersionID) {
-			return ErrInvalidErasureContract
+			return attemptResponseRecord{}, ErrInvalidErasureContract
 		}
 	case "verification":
 		var verification erasureVerificationRecord
 		if !erasureMetadataDecode(body, 8192, &verification) {
-			return ErrInvalidErasureContract
+			return attemptResponseRecord{}, ErrInvalidErasureContract
 		}
 		if err := verification.shape(); err != nil {
-			return err
+			return attemptResponseRecord{}, err
 		}
 	case "candidate":
 		var attestation erasureAttestationV2Record
 		if !erasureMetadataDecode(body, 8192, &attestation) {
-			return ErrInvalidErasureContract
+			return attemptResponseRecord{}, ErrInvalidErasureContract
 		}
-		return attestation.shape()
+		if err := attestation.shape(); err != nil {
+			return attemptResponseRecord{}, err
+		}
 	}
-	return nil
+	return response, nil
 }

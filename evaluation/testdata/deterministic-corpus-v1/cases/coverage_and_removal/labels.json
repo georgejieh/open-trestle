@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "case_id": "coverage_and_removal",
+  "changes": [
+    {
+      "path": "broken.go",
+      "ranges": [
+        {
+          "start_line": 3,
+          "end_line": 3
+        }
+      ]
+    },
+    {
+      "path": "notes.py",
+      "ranges": [
+        {
+          "start_line": 1,
+          "end_line": 1
+        }
+      ]
+    },
+    {
+      "path": "removed.go",
+      "ranges": []
+    }
+  ],
+  "targets": [
+    {
+      "key": "changed_declaration",
+      "expected": [
+        {
+          "path": "removed.go",
+          "declaration_key": "func:Removed",
+          "change_kind": "removed"
+        }
+      ],
+      "expected_coverage": [
+        {
+          "path": "broken.go",
+          "outcome": "abstained",
+          "reason": "parse_failure"
+        },
+        {
+          "path": "notes.py",
+          "outcome": "unsupported",
+          "reason": "unsupported_language"
+        },
+        {
+          "path": "removed.go",
+          "outcome": "analyzed",
+          "reason": "none"
+        }
+      ]
+    },
+    {
+      "key": "public_api_change",
+      "expected": [
+        {
+          "path": "removed.go",
+          "declaration_key": "func:Removed",
+          "change_kind": "removed"
+        }
+      ],
+      "expected_coverage": [
+        {
+          "path": "broken.go",
+          "outcome": "abstained",
+          "reason": "parse_failure"
+        },
+        {
+          "path": "notes.py",
+          "outcome": "unsupported",
+          "reason": "unsupported_language"
+        },
+        {
+          "path": "removed.go",
+          "outcome": "analyzed",
+          "reason": "none"
+        }
+      ]
+    }
+  ]
+}

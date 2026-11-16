@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +28,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/provider"
 	"github.com/georgejieh/open-trestle/internal/review"
 	"github.com/georgejieh/open-trestle/internal/scm"
+	"github.com/georgejieh/open-trestle/internal/testsupport"
 )
 
 type bindingSourceAdapter struct {
@@ -113,6 +115,20 @@ type sourceBindingFixture struct {
 
 func newSourceBindingFixture(t *testing.T, withReference bool) sourceBindingFixture {
 	t.Helper()
+	return newSourceBindingFixtureFor(t, withReference, "package p\nfunc Changed() int{return 1}\n", "package p\nfunc Changed() int{return 2}\n")
+}
+
+// newSourceBindingFixtureFor runs the real handlers over caller-chosen base and
+// head contents of a.go.
+func newSourceBindingFixtureFor(t *testing.T, withReference bool, baseChanged, headChanged string) sourceBindingFixture {
+	t.Helper()
+	return newSourceBindingFixtureWith(t, withReference, baseChanged, headChanged, nil, nil)
+}
+
+// newSourceBindingFixtureWith also adds caller-chosen extra files to the base
+// and head trees.
+func newSourceBindingFixtureWith(t *testing.T, withReference bool, baseChanged, headChanged string, baseExtra, headExtra map[string]string) sourceBindingFixture {
+	t.Helper()
 	ctx := context.Background()
 	check := func(err error) {
 		t.Helper()
@@ -132,10 +148,15 @@ func newSourceBindingFixture(t *testing.T, withReference bool) sourceBindingFixt
 	if withReference {
 		testContent = "package p\nfunc TestChanged(){_=Changed()}\n"
 	}
-	result := func(changed string) scm.SourceAdapterResult {
+	result := func(changed string, extra map[string]string) scm.SourceAdapterResult {
 		contents := map[string][]byte{"a.go": []byte(changed), "a_test.go": []byte(testContent)}
+		paths := []string{"a.go", "a_test.go"}
+		for path, content := range extra {
+			contents[path] = []byte(content)
+			paths = append(paths, path)
+		}
 		files := make([]evidence.RepositoryFile, 0, len(contents))
-		for _, path := range []string{"a.go", "a_test.go"} {
+		for _, path := range paths {
 			file, err := evidence.NewRepositoryFile(path, contents[path])
 			check(err)
 			files = append(files, file)
@@ -145,8 +166,8 @@ func newSourceBindingFixture(t *testing.T, withReference bool) sourceBindingFixt
 		return scm.SourceAdapterResult{Outcome: evidence.AcquisitionOutcomeAcquired, Reason: evidence.AcquisitionReasonNone, Manifest: manifest, Contents: contents}
 	}
 	adapter := bindingSourceAdapter{identity: adapterIdentity, results: map[string]scm.SourceAdapterResult{
-		baseRevision.Identity(): result("package p\nfunc Changed() int{return 1}\n"),
-		headRevision.Identity(): result("package p\nfunc Changed() int{return 2}\n"),
+		baseRevision.Identity(): result(baseChanged, baseExtra),
+		headRevision.Identity(): result(headChanged, headExtra),
 	}}
 	store, err := artifact.NewMemoryStore(artifact.ProtectionProcessPrivate, 100)
 	check(err)
@@ -172,7 +193,8 @@ func newSourceBindingFixture(t *testing.T, withReference bool) sourceBindingFixt
 	memory, err := memoryhandler.NewHandler(store, fixedClock{time.UnixMilli(220)}, memorycore.NewLexicalIndex(), strings.Repeat("6", 64), strings.Repeat("f", 64), "reviewer", []string{"."}, 10, 20)
 	check(err)
 	authorizer := bindingPolicyAuthorizer(t)
-	assembly, err := contexthandler.NewHandler(store, fixedClock{time.UnixMilli(230)}, authorizer)
+	sanitizer := testsupport.NewCleanGenerationSanitizer()
+	assembly, err := contexthandler.NewHandler(store, fixedClock{time.UnixMilli(230)}, authorizer, sanitizer)
 	check(err)
 	definition := func(key string, handler controlplane.TaskHandler, input string, dependencies []string) controlplane.TaskDefinition {
 		task, err := controlplane.NewTaskDefinition(key, handler.Kind(), input, handler.HandlerIdentity(), dependencies, 1, 1000, 30000, true)
@@ -319,7 +341,7 @@ func assertExactProtectedBinding(t *testing.T, f sourceBindingFixture) {
 	}
 	// The generation result is unused by this consumer; model dispatch is outside this seam.
 	handler := &Handler{store: f.store}
-	got, err := handler.buildSourceBinding(context.Background(), f.scope, f.target, artifact.Artifact{}, f.inputArtifact, f.contextArtifact, time.UnixMilli(250))
+	got, err := handler.buildSourceBinding(context.Background(), f.scope, f.target, nil, artifact.Artifact{}, f.inputArtifact, f.contextArtifact, time.UnixMilli(250))
 	if err != nil {
 		t.Fatalf("publication rejected selected protected sources: %v", err)
 	}
@@ -397,8 +419,26 @@ func sourceBindingContextVariant(t *testing.T, f sourceBindingFixture, mutation 
 		sources = append(sources, source)
 		ranges = append(ranges, rangeValue)
 	}
+	return rebuildSourceBindingContext(t, f, sources, ranges)
+}
+
+// rebuildSourceBindingContext stores a real sanitized generation input over the
+// given sources and returns the fixture rebound to it.
+func rebuildSourceBindingContext(t *testing.T, f sourceBindingFixture, sources []review.ContextSource, ranges []evidence.SourceRange) sourceBindingFixture {
+	t.Helper()
+	check := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	paths := make([]string, 0, len(f.contents))
+	for path := range f.contents {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
 	files := make([]evidence.RepositoryFile, 0, len(f.contents))
-	for _, path := range []string{"a.go", "a_test.go"} {
+	for _, path := range paths {
 		file, err := evidence.NewRepositoryFile(path, f.contents[path])
 		check(err)
 		files = append(files, file)
@@ -423,16 +463,23 @@ func sourceBindingContextVariant(t *testing.T, f sourceBindingFixture, mutation 
 	check(err)
 	contextArtifact, err := artifact.New(f.scope, artifact.KindContextPacket, "application/json", f.contextArtifact.Classification(), artifact.OriginHost, f.contextArtifact.Protection(), f.contextArtifact.Provenance(), request.Payload(), time.UnixMilli(240), f.contextArtifact.ExpiresAt())
 	check(err)
-	authorization, err := f.authorizer.Authorize(context.Background(), f.scope, request, strings.Repeat("f", 64), time.UnixMilli(240))
+	sanitizer := testsupport.NewCleanGenerationSanitizer()
+	sanitized, receipt, err := sanitizer.SanitizeGeneration(context.Background(), request, f.scope.Identity())
 	check(err)
-	input, err := modelhandler.NewGenerationInput(contextArtifact, packet, snapshot, authorization)
+	requestArtifact, receiptArtifact, err := review.NewSanitizedEgressArtifacts(contextArtifact, sanitized, receipt, sanitizer.ExpectedBinaryDigests(), time.UnixMilli(240))
+	check(err)
+	dispatchRequest, err := sanitized.ProviderRequest()
+	check(err)
+	authorization, err := f.authorizer.Authorize(context.Background(), f.scope, dispatchRequest, strings.Repeat("f", 64), time.UnixMilli(240))
+	check(err)
+	input, err := modelhandler.NewSanitizedGenerationInput(contextArtifact, packet, snapshot, requestArtifact, receiptArtifact, sanitizer.ExpectedBinaryDigests(), authorization)
 	check(err)
 	inputArtifact, err := modelhandler.NewGenerationInputArtifact(input, contextArtifact, []string{f.analysisArtifact.Identity()}, time.UnixMilli(240))
 	check(err)
 	parsed, err := modelhandler.ParseGenerationInput(inputArtifact.Payload())
 	check(err)
 	check(review.ValidateContextPacketRequest(contextArtifact.Payload(), parsed.ContextIdentity(), f.scope.Identity(), parsed.MemoryScopeIdentity(), parsed.MemoryIdentity(), parsed.Snapshot(), parsed.EvidenceItems()))
-	for _, value := range []artifact.Artifact{contextArtifact, inputArtifact} {
+	for _, value := range []artifact.Artifact{contextArtifact, requestArtifact, receiptArtifact, inputArtifact} {
 		_, err = f.store.Put(context.Background(), value, time.UnixMilli(240))
 		check(err)
 	}
@@ -465,7 +512,7 @@ func TestBuildSourceBindingRejectsMismatchedSemanticAuthority(t *testing.T) {
 				fixture = sourceBindingContextVariant(t, fixture, mutation)
 			}
 			handler := &Handler{store: fixture.store}
-			binding, err := handler.buildSourceBinding(context.Background(), fixture.scope, fixture.target, artifact.Artifact{}, fixture.inputArtifact, fixture.contextArtifact, time.UnixMilli(250))
+			binding, err := handler.buildSourceBinding(context.Background(), fixture.scope, fixture.target, nil, artifact.Artifact{}, fixture.inputArtifact, fixture.contextArtifact, time.UnixMilli(250))
 			if err == nil || binding.Identity() != "" {
 				t.Fatal("publication accepted selected source outside protected semantic authority")
 			}
@@ -485,7 +532,7 @@ func TestBuildSourceBindingRejectsChangedEvidenceRangeMismatch(t *testing.T) {
 				t.Fatal("fixture must preserve changed evidence ID and digest while changing its range")
 			}
 			handler := &Handler{store: fixture.store}
-			binding, err := handler.buildSourceBinding(context.Background(), fixture.scope, fixture.target, artifact.Artifact{}, fixture.inputArtifact, fixture.contextArtifact, time.UnixMilli(250))
+			binding, err := handler.buildSourceBinding(context.Background(), fixture.scope, fixture.target, nil, artifact.Artifact{}, fixture.inputArtifact, fixture.contextArtifact, time.UnixMilli(250))
 			if err == nil || binding.Identity() != "" {
 				t.Fatal("publication accepted changed evidence by digest without exact range")
 			}
@@ -520,7 +567,7 @@ func TestBuildSourceBindingRequiresProtectedSemanticFile(t *testing.T) {
 		t.Fatal("semantic source artifact missing from fixture")
 	}
 	handler := &Handler{store: store}
-	binding, err := handler.buildSourceBinding(context.Background(), fixture.scope, fixture.target, artifact.Artifact{}, fixture.inputArtifact, fixture.contextArtifact, time.UnixMilli(250))
+	binding, err := handler.buildSourceBinding(context.Background(), fixture.scope, fixture.target, nil, artifact.Artifact{}, fixture.inputArtifact, fixture.contextArtifact, time.UnixMilli(250))
 	if err == nil || binding.Identity() != "" || !store.requested {
 		t.Fatal("publication did not fail closed on the missing protected semantic file")
 	}

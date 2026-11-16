@@ -1,0 +1,538 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:artifact:deterministic-evidence-result:v7",
+  "title": "Open Trestle deterministic evidence result v7",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "identity",
+    "change_artifact_identity",
+    "change_identity",
+    "repository_identity",
+    "head_revision_identity",
+    "head_snapshot_artifact_identity",
+    "head_snapshot_identity",
+    "head_manifest_identity",
+    "changed_entries",
+    "changed_ranges",
+    "evidence_items",
+    "coverage_gaps",
+    "items",
+    "removed_lines",
+    "gaps",
+    "checks",
+    "observations",
+    "semantic_impact"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/deterministic-evidence-result"
+    },
+    "schema_version": {
+      "const": 7
+    },
+    "identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "change_artifact_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "change_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "repository_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "head_revision_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "head_snapshot_artifact_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "head_snapshot_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "head_manifest_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "changed_entries": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4096
+    },
+    "changed_ranges": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "evidence_items": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 8192
+    },
+    "coverage_gaps": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 8192
+    },
+    "items": {
+      "type": "array",
+      "maxItems": 8192,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "evidence_id",
+          "binding_identity",
+          "change_entry_identity",
+          "change_execution_identity",
+          "path",
+          "start_line",
+          "end_line",
+          "digest",
+          "file_identity",
+          "file_digest",
+          "slice_bytes"
+        ],
+        "properties": {
+          "evidence_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "binding_identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "change_entry_identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "change_execution_identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "start_line": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "end_line": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "file_identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "file_digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "slice_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1048576
+          }
+        }
+      }
+    },
+    "removed_lines": {
+      "type": "array",
+      "maxItems": 8192,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "evidence_id",
+          "binding_identity",
+          "change_entry_identity",
+          "change_execution_identity",
+          "path",
+          "start_line",
+          "end_line",
+          "digest",
+          "file_identity",
+          "file_digest",
+          "slice_bytes"
+        ],
+        "properties": {
+          "evidence_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "binding_identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "change_entry_identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "change_execution_identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "start_line": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "end_line": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "file_identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "file_digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "slice_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1048576
+          },
+          "head_line": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000,
+            "description": "The head line beside which the base lines of a deletion point were removed: the start line of that point's deleted_lines gap. It is absent on the chunks of an emptied or removed file, which keep no head line. start_line and end_line stay base lines."
+          }
+        }
+      },
+      "description": "Removed base lines bound to the exact base file. start_line and end_line are base lines, file_identity and file_digest name the base file, and a record is never a changed head range. A deletion point's record names its head_line. The records of an emptied or removed file name no head line: they are line-aligned chunks of at most 64 lines and 8 KiB, up to 32 KiB per file or the evidence budget the other entries left, that cover its base lines from line 1 beside its whole-entry gap. A removed_lines_limit gap then records the base lines from the first line that did not fit to the end of the file. A file that is not text binds no records."
+    },
+    "gaps": {
+      "type": "array",
+      "maxItems": 8192,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "change_entry_identity",
+          "change_execution_identity",
+          "path",
+          "start_line",
+          "end_line",
+          "reason"
+        ],
+        "properties": {
+          "change_entry_identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "change_execution_identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "start_line": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "end_line": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "reason": {
+            "enum": [
+              "removed_file",
+              "unsupported_content",
+              "resource_limit",
+              "empty_added_file",
+              "slice_resource_limit",
+              "evidence_limit",
+              "no_changed_head_lines",
+              "deleted_lines",
+              "removed_lines_limit"
+            ],
+            "description": "A no_changed_head_lines gap covers one whole deletion-only entry with start_line and end_line 0. A deleted_lines gap marks one deletion point by the head lines on either side of the removed base lines. A removed_lines_limit gap records removed base lines that exceed the removed-text bound; unlike every other ranged gap, its start_line and end_line are base lines. With start_line and end_line 0 it records that the whole removed text of an emptied or removed file was not read, because the analysis budget for removed text was spent or the file is past the change model's size bound. A resource_limit gap with start_line and end_line 0 covers one whole entry of any kind that the change model could not diff because of its size."
+          }
+        }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "identity",
+          "key",
+          "rule_version",
+          "change_identity",
+          "state",
+          "applicable_files",
+          "applicable_ranges",
+          "checked_files",
+          "checked_ranges",
+          "matches"
+        ],
+        "properties": {
+          "identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "key": {
+            "const": "static_debug_output"
+          },
+          "rule_version": {
+            "const": 1
+          },
+          "change_identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "state": {
+            "enum": [
+              "passed",
+              "failed",
+              "incomplete",
+              "not_applicable"
+            ]
+          },
+          "applicable_files": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4096
+          },
+          "applicable_ranges": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "checked_files": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4096
+          },
+          "checked_ranges": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "matches": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 16777216
+          }
+        },
+        "description": "Runtime validation binds identity, change, exact count relationships, coverage completeness, and state semantics. Passed means every applicable changed Go range was checked with zero exact matches."
+      }
+    },
+    "semantic_impact": {
+      "$ref": "urn:open-trestle:schema:artifact:semantic-impact-profile:v1"
+    },
+    "observations": {
+      "type": "array",
+      "maxItems": 8192,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "identity",
+          "fingerprint",
+          "check_identity",
+          "evidence_id",
+          "path",
+          "start_line",
+          "end_line",
+          "digest",
+          "file_identity",
+          "file_digest",
+          "slice_bytes"
+        ],
+        "properties": {
+          "identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "fingerprint": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "check_identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "evidence_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "start_line": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "end_line": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "file_identity": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "file_digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "slice_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1048576
+          }
+        }
+      },
+      "description": "Exact deterministic static-rule observations. They are evidence-bound but are not independently verified findings."
+    }
+  }
+}

@@ -2,6 +2,7 @@ package runtimecatalog
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -201,5 +202,104 @@ func TestPreparedReviewRejectsInvalidOrPublicationShapedAuthority(t *testing.T) 
 				t.Fatal("invalid prepared authority was admitted")
 			}
 		})
+	}
+}
+
+func TestPreparedReviewCreatesDeterministicFourTaskPlan(t *testing.T) {
+	options := preparedReviewOptions(t)
+	handlers := []controlplane.TaskHandler{
+		handler{controlplane.TaskAcquireSource, strings.Repeat("1", 64)},
+		handler{controlplane.TaskBuildChange, strings.Repeat("2", 64)},
+		handler{controlplane.TaskInspectDeterministic, strings.Repeat("3", 64)},
+	}
+	var err error
+	options.Catalog, err = NewPipelineCatalog(controlplane.ReviewRunLocal, handlers)
+	options.InventoryIdentity = ""
+	options.RuntimePolicyIdentity = ""
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := NewPreparedReviewRequest(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := PrepareReviewRun(context.Background(), request)
+	if err != nil || prepared.Validate() != nil {
+		t.Fatalf("PrepareReviewRun() = (%#v,%v)", prepared, err)
+	}
+	plan := prepared.Plan()
+	if plan.TaskCount() != 4 || len(prepared.Inputs()) != 2 {
+		t.Fatalf("deterministic plan has %d tasks and %d inputs", plan.TaskCount(), len(prepared.Inputs()))
+	}
+	for _, inputArtifact := range prepared.Inputs() {
+		input, parseErr := sourcehandler.ParseInput(inputArtifact.Payload())
+		if parseErr != nil || input.SchemaVersion() != 2 || input.SourceRootIdentity() != options.SourceRootIdentity {
+			t.Fatalf("deterministic source input=(%#v,%v)", input, parseErr)
+		}
+	}
+	want := map[string][]string{
+		"source-base": nil,
+		"source-head": nil,
+		"change":      {"source-base", "source-head"},
+		"analysis":    {"change"},
+	}
+	for key, dependencies := range want {
+		task, found := plan.Task(key)
+		if !found || !reflect.DeepEqual(task.Dependencies(), dependencies) {
+			t.Fatalf("task %q = (%#v,%t), want dependencies %#v", key, task, found, dependencies)
+		}
+	}
+	for _, forbidden := range []string{"memory", "context", "candidates", "verification", "readiness", "publication"} {
+		if _, found := plan.Task(forbidden); found {
+			t.Fatalf("deterministic plan gained %q task", forbidden)
+		}
+	}
+}
+
+func TestPreparedFullReviewSourceInputsBindDaemonRoot(t *testing.T) {
+	options := preparedReviewOptions(t)
+	options.RequireBoundSource = true
+	request, err := NewPreparedReviewRequest(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := PrepareReviewRun(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, inputArtifact := range prepared.Inputs() {
+		input, parseErr := sourcehandler.ParseInput(inputArtifact.Payload())
+		if parseErr != nil || input.SchemaVersion() != 2 || input.SourceRootIdentity() != options.SourceRootIdentity {
+			t.Fatalf("full-review source input is not bound to daemon root: %#v, %v", input, parseErr)
+		}
+	}
+}
+
+func TestPreparedDeterministicReviewRejectsModelRoutingAuthority(t *testing.T) {
+	options := preparedReviewOptions(t)
+	handlers := []controlplane.TaskHandler{
+		handler{controlplane.TaskAcquireSource, strings.Repeat("1", 64)},
+		handler{controlplane.TaskBuildChange, strings.Repeat("2", 64)},
+		handler{controlplane.TaskInspectDeterministic, strings.Repeat("3", 64)},
+	}
+	options.Catalog, _ = NewPipelineCatalog(controlplane.ReviewRunLocal, handlers)
+	for _, name := range []string{"inventory", "runtime policy"} {
+		t.Run(name, func(t *testing.T) {
+			candidate := options
+			if name == "inventory" {
+				candidate.RuntimePolicyIdentity = ""
+			} else {
+				candidate.InventoryIdentity = ""
+			}
+			if request, err := NewPreparedReviewRequest(candidate); err == nil || request.identity != "" {
+				t.Fatalf("model routing authority admitted: %#v err=%v", request, err)
+			}
+		})
+	}
+	options.InventoryIdentity = ""
+	options.RuntimePolicyIdentity = ""
+	request, err := NewPreparedReviewRequest(options)
+	if err != nil || request.identity == "" {
+		t.Fatalf("deterministic request rejected: %#v err=%v", request, err)
 	}
 }

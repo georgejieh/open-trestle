@@ -314,7 +314,7 @@ func TestLocalGitRetainedMemoryActualFreshCLIGraphs(t *testing.T) {
 		gc, vc := g[run], v[run]
 		rmCLIPacket(t, gc.Packet, w)
 		rmCLIPacket(t, vc.Packet, w)
-		if gc.ContextID != r.Context || gc.RequestID != r.GenerationRequest || vc.ContextID != r.VerificationContext || vc.RequestID != r.VerificationRequest || vc.Packet.GenerationContext != gc.ContextID || vc.Packet.CandidateBatch != r.CandidateBatch || gc.Packet.Scope != r.Scope || vc.Packet.Scope != r.Scope || !reflect.DeepEqual(gc.Packet.Memory, vc.Packet.Memory) {
+		if gc.ContextID != r.Context || gc.RequestID == r.GenerationRequest || vc.ContextID != r.VerificationContext || vc.RequestID == r.VerificationRequest || vc.Packet.GenerationContext != gc.ContextID || vc.Packet.CandidateBatch != r.CandidateBatch || gc.Packet.Scope != r.Scope || vc.Packet.Scope != r.Scope || !reflect.DeepEqual(gc.Packet.Memory, vc.Packet.Memory) {
 			t.Fatal("CLI model requests lost actual context/retrieval lineage")
 		}
 		if run > 0 && (r.Request == prior.Request || r.Scope == prior.Scope || r.Context == prior.Context || r.Plan == prior.Plan) {
@@ -460,7 +460,7 @@ func TestLocalGitRetainedMemoryKeepsSourceModelBudgetAndOutputGuards(t *testing.
 				return
 			}
 			if kind == "text" {
-				args = replaceLocalGitChangeValue(args, "--format", "text")
+				args = append(replaceLocalGitChangeValue(args, "--format", "text"), "--verbose")
 			}
 			code := runWithContext(context.Background(), args, &out, &errout)
 			if errout.Len() != 0 || strings.Contains(out.String(), rmAdvice) || strings.Contains(out.String(), path) || strings.Contains(out.String(), localModelKey) {

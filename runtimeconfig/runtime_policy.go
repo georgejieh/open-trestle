@@ -17,7 +17,19 @@ import (
 	"github.com/georgejieh/open-trestle/internal/review"
 )
 
-type ProviderConnection struct{ implementation, adapterID, endpoint, credentialEnvironment, credentialIdentity string }
+type ProviderConnection struct {
+	localStructuredOutput                                                                          bool
+	implementation, adapterID, endpoint, credentialEnvironment, credentialIdentity, credentialMode string
+	requestProfile                                                                                 string
+	brokeredAuthority                                                                              BrokeredRouteAuthority
+	openCodeGoAuthority                                                                            OpenCodeGoRouteAuthority
+	openCodeConsoleAuthority                                                                       OpenCodeConsoleRouteAuthority
+}
+
+func (c ProviderConnection) CredentialMode() string { return c.credentialMode }
+
+// LocalStructuredOutput reports the explicit local Chat schema wire option.
+func (c ProviderConnection) LocalStructuredOutput() bool { return c.localStructuredOutput }
 
 func (c ProviderConnection) Implementation() string        { return c.implementation }
 func (c ProviderConnection) AdapterID() string             { return c.adapterID }
@@ -26,16 +38,20 @@ func (c ProviderConnection) CredentialEnvironment() string { return c.credential
 func (c ProviderConnection) CredentialIdentity() string    { return c.credentialIdentity }
 
 type RuntimePolicy struct {
-	identity, inventoryIdentity, reviewPolicyIdentity string
-	requirements                                      provider.ModelRequirements
-	constraints                                       policy.ProviderDataConstraints
-	budget                                            provider.ModelCostBudget
-	ranking                                           gateway.RouteRankingPolicy
-	independence                                      gateway.RouteIndependencePolicy
-	publication                                       review.PublicationPolicy
-	connections                                       []ProviderConnection
+	identity, inventoryIdentity, reviewPolicyIdentity, verificationRouteRecordIdentity string
+	schemaVersion                                                                      int
+	requirements                                                                       provider.ModelRequirements
+	constraints                                                                        policy.ProviderDataConstraints
+	budget                                                                             provider.ModelCostBudget
+	ranking                                                                            gateway.RouteRankingPolicy
+	independence                                                                       gateway.RouteIndependencePolicy
+	publication                                                                        review.PublicationPolicy
+	connections                                                                        []ProviderConnection
 }
 
+func (p RuntimePolicy) VerificationRouteRecordIdentity() string {
+	return p.verificationRouteRecordIdentity
+}
 func (p RuntimePolicy) Identity() string                              { return p.identity }
 func (p RuntimePolicy) InventoryIdentity() string                     { return p.inventoryIdentity }
 func (p RuntimePolicy) ReviewPolicyIdentity() string                  { return p.reviewPolicyIdentity }
@@ -49,12 +65,12 @@ func (p RuntimePolicy) Connections() []ProviderConnection {
 	return append([]ProviderConnection(nil), p.connections...)
 }
 func (p RuntimePolicy) Validate() error {
-	if !nonzeroDigest(p.inventoryIdentity) || !nonzeroDigest(p.reviewPolicyIdentity) || p.requirements.Validate() != nil || p.constraints.Validate() != nil || p.budget.Validate() != nil || p.ranking.Validate() != nil || p.independence.Validate() != nil || p.publication.Validate() != nil || len(p.connections) == 0 || len(p.connections) > 64 || p.identity != runtimePolicyIdentity(p) {
+	if (p.schemaVersion != 1 && p.schemaVersion != 2 && p.schemaVersion != 3 && p.schemaVersion != 4 && p.schemaVersion != 5 && p.schemaVersion != 6 && p.schemaVersion != ollamaSigninPolicyVersion && p.schemaVersion != openRouterObservedPolicyVersion) || (p.schemaVersion == 1 && p.verificationRouteRecordIdentity != "") || (p.schemaVersion >= 2 && !nonzeroDigest(p.verificationRouteRecordIdentity)) || !nonzeroDigest(p.inventoryIdentity) || !nonzeroDigest(p.reviewPolicyIdentity) || p.requirements.Validate() != nil || p.constraints.Validate() != nil || p.budget.Validate() != nil || p.ranking.Validate() != nil || p.independence.Validate() != nil || p.publication.Validate() != nil || len(p.connections) == 0 || len(p.connections) > 64 || p.identity != runtimePolicyIdentity(p) {
 		return ErrInvalidRouteInventory
 	}
 	seen := map[string]struct{}{}
 	for _, c := range p.connections {
-		if c.implementation != "openai_responses" || provider.ValidateAdapterID(c.adapterID) != nil || !validProviderConnectionEndpoint(c.endpoint) || !validCredentialEnvironment(c.credentialEnvironment) || c.credentialIdentity != credentialEnvironmentIdentity(c.credentialEnvironment) {
+		if !validProviderImplementation(c.implementation) || p.schemaVersion == 1 && c.implementation != "openai_responses" || provider.ValidateAdapterID(c.adapterID) != nil || !validProviderConnectionEndpoint(c.endpoint) || (!validConnectionCredentials(c, p.schemaVersion) || !validConnectionProfile(c, p.schemaVersion)) || !validConnectionStructuredOutput(c, p.schemaVersion) {
 			return ErrInvalidRouteInventory
 		}
 		if _, ok := seen[c.adapterID]; ok {
@@ -85,6 +101,18 @@ func (p RuntimePolicy) ValidateAgainstInventory(inventory RouteInventory) error 
 		}
 		namespaces[reference.AdapterID()] = value
 	}
+	if p.schemaVersion >= 2 {
+		found := false
+		for _, candidate := range inventory.Candidates() {
+			if candidate.ResolvedRecord().RouteRegistryRecord().Identity() == p.verificationRouteRecordIdentity {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return ErrInvalidRouteInventory
+		}
+	}
 	if len(namespaces) != len(p.connections) {
 		return ErrInvalidRouteInventory
 	}
@@ -95,11 +123,63 @@ func (p RuntimePolicy) ValidateAgainstInventory(inventory RouteInventory) error 
 		}
 		locality, err := provider.ClassifyServiceEndpoint(connection.endpoint)
 		zoneMatches := namespace.zone == provider.ProviderZoneLocal && locality == provider.ServiceEndpointLoopback || namespace.zone == provider.ProviderZonePrivateRemote && locality == provider.ServiceEndpointRemote
-		if err != nil || !zoneMatches {
+		if connection.requestProfile != "" {
+			switch connection.requestProfile {
+			case OpenRouterZDRChatProfile:
+				if !validBrokeredInventoryBinding(connection, inventory) {
+					return ErrInvalidRouteInventory
+				}
+			case OpenRouterZDRChatV2Profile:
+				if !validObservedOpenRouterInventoryBinding(connection, inventory) {
+					return ErrInvalidRouteInventory
+				}
+			case OpenCodeGoChatProfile:
+				if !validOpenCodeGoInventoryBinding(connection, inventory) {
+					return ErrInvalidRouteInventory
+				}
+			case OpenCodeConsoleChatProfile:
+				if !validOpenCodeConsoleInventoryBinding(connection, inventory) {
+					return ErrInvalidRouteInventory
+				}
+			case OllamaSigninChatProfile:
+				if !validOllamaSigninInventoryBinding(connection, inventory) {
+					return ErrInvalidRouteInventory
+				}
+			default:
+				return ErrInvalidRouteInventory
+			}
+			zoneMatches = namespace.zone == provider.ProviderZoneBrokeredRemote && locality == provider.ServiceEndpointRemote
+			if connection.requestProfile == OllamaSigninChatProfile {
+				// The one closed loopback exception: see OllamaSigninChatProfile.
+				zoneMatches = namespace.zone == provider.ProviderZonePrivateRemote && locality == provider.ServiceEndpointLoopback
+			}
+		}
+		anonymousRemote := connection.credentialMode == "none" && connection.requestProfile != OllamaSigninChatProfile
+		if err != nil || !zoneMatches || (anonymousRemote || connection.localStructuredOutput) && namespace.zone != provider.ProviderZoneLocal {
 			return ErrInvalidRouteInventory
 		}
 	}
 	return nil
+}
+
+func validConnectionStructuredOutput(c ProviderConnection, version int) bool {
+	if !c.localStructuredOutput {
+		return true
+	}
+	locality, err := provider.ClassifyServiceEndpoint(c.endpoint)
+	return version == 6 && c.implementation == "openai_chat_completions" && c.requestProfile == "" && err == nil && locality == provider.ServiceEndpointLoopback
+}
+
+func validConnectionCredentials(c ProviderConnection, version int) bool {
+	if c.credentialMode == "none" {
+		locality, err := provider.ClassifyServiceEndpoint(c.endpoint)
+		return version >= 2 && err == nil && locality == provider.ServiceEndpointLoopback && c.credentialEnvironment == "" && c.credentialIdentity == ""
+	}
+	return c.credentialMode == "bearer" && validCredentialEnvironment(c.credentialEnvironment) && c.credentialIdentity == credentialEnvironmentIdentity(c.credentialEnvironment)
+}
+
+func validProviderImplementation(value string) bool {
+	return value == "openai_responses" || value == "openai_chat_completions"
 }
 
 func validProviderConnectionEndpoint(raw string) bool {
@@ -108,32 +188,86 @@ func validProviderConnectionEndpoint(raw string) bool {
 }
 
 type runtimePolicyWire struct {
-	SchemaVersion                  int                      `json:"schema_version"`
-	InventoryIdentity              string                   `json:"inventory_identity"`
-	ReviewPolicyIdentity           string                   `json:"review_policy_identity"`
-	MinContextTokens               uint64                   `json:"min_context_tokens"`
-	MinOutputTokens                uint64                   `json:"min_output_tokens"`
-	RequiredFeatures               []string                 `json:"required_features"`
-	Classification                 string                   `json:"classification"`
-	AllowedZones                   []string                 `json:"allowed_zones"`
-	ContentLoggingAllowed          bool                     `json:"content_logging_allowed"`
-	EstimatedInputTokens           uint64                   `json:"estimated_input_tokens"`
-	MaxOutputTokens                uint64                   `json:"max_output_tokens"`
-	MaxCostMicroUSD                uint64                   `json:"max_cost_micro_usd"`
-	PinnedRouteRecordIdentity      string                   `json:"pinned_route_record_identity"`
-	PreferredRouteRecordIdentities []string                 `json:"preferred_route_record_identities"`
-	VerificationIndependence       string                   `json:"verification_independence"`
-	PublicationMinimumSeverity     string                   `json:"publication_minimum_severity"`
-	PublicationMaxInlineFindings   uint8                    `json:"publication_max_inline_findings"`
-	PublicationMinimumIndependence string                   `json:"publication_minimum_independence"`
-	PublicationBlockOnInconclusive bool                     `json:"publication_block_on_inconclusive"`
-	Connections                    []providerConnectionWire `json:"connections"`
+	SchemaVersion                   int                      `json:"schema_version"`
+	VerificationRouteRecordIdentity *string                  `json:"verification_route_record_identity,omitempty"`
+	InventoryIdentity               string                   `json:"inventory_identity"`
+	ReviewPolicyIdentity            string                   `json:"review_policy_identity"`
+	MinContextTokens                uint64                   `json:"min_context_tokens"`
+	MinOutputTokens                 uint64                   `json:"min_output_tokens"`
+	RequiredFeatures                []string                 `json:"required_features"`
+	Classification                  string                   `json:"classification"`
+	AllowedZones                    []string                 `json:"allowed_zones"`
+	ContentLoggingAllowed           bool                     `json:"content_logging_allowed"`
+	EstimatedInputTokens            uint64                   `json:"estimated_input_tokens"`
+	MaxOutputTokens                 uint64                   `json:"max_output_tokens"`
+	MaxCostMicroUSD                 uint64                   `json:"max_cost_micro_usd"`
+	PinnedRouteRecordIdentity       string                   `json:"pinned_route_record_identity"`
+	PreferredRouteRecordIdentities  []string                 `json:"preferred_route_record_identities"`
+	VerificationIndependence        string                   `json:"verification_independence"`
+	PublicationMinimumSeverity      string                   `json:"publication_minimum_severity"`
+	PublicationMaxInlineFindings    uint8                    `json:"publication_max_inline_findings"`
+	PublicationMinimumIndependence  string                   `json:"publication_minimum_independence"`
+	PublicationBlockOnInconclusive  bool                     `json:"publication_block_on_inconclusive"`
+	Connections                     []providerConnectionWire `json:"connections"`
 }
 type providerConnectionWire struct {
-	Implementation        string `json:"implementation"`
-	AdapterID             string `json:"adapter_id"`
-	Endpoint              string `json:"endpoint"`
-	CredentialEnvironment string `json:"credential_environment"`
+	LocalStructuredOutput    bool                               `json:"local_structured_output,omitempty"`
+	Implementation           string                             `json:"implementation"`
+	AdapterID                string                             `json:"adapter_id"`
+	Endpoint                 string                             `json:"endpoint"`
+	CredentialEnvironment    string                             `json:"credential_environment,omitempty"`
+	CredentialMode           string                             `json:"credential_mode,omitempty"`
+	RequestProfile           string                             `json:"request_profile,omitempty"`
+	BrokeredAuthority        *brokeredRouteAuthorityWire        `json:"brokered_route_authority,omitempty"`
+	OpenCodeGoAuthority      *openCodeGoRouteAuthorityWire      `json:"opencode_go_authority,omitempty"`
+	OpenCodeConsoleAuthority *openCodeConsoleRouteAuthorityWire `json:"opencode_console_authority,omitempty"`
+}
+
+func validatePolicyCredentialFields(encoded []byte, schemaVersion int) error {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(encoded, &fields) != nil {
+		return ErrInvalidRouteInventory
+	}
+	var rawConnections []map[string]json.RawMessage
+	if json.Unmarshal(fields["connections"], &rawConnections) != nil {
+		return ErrInvalidRouteInventory
+	}
+	for _, connection := range rawConnections {
+		for key := range connection {
+			if schemaVersion == 6 {
+				switch strings.ToLower(key) {
+				case "request_profile", "brokered_route_authority", "opencode_go_authority", "opencode_console_authority":
+					return ErrInvalidRouteInventory
+				}
+			}
+			if strings.EqualFold(key, "credential_mode") && key != "credential_mode" || strings.EqualFold(key, "credential_environment") && key != "credential_environment" {
+				return ErrInvalidRouteInventory
+			}
+		}
+		for key, value := range connection {
+			if strings.EqualFold(key, "local_structured_output") {
+				if key != "local_structured_output" || schemaVersion != 6 || string(value) != "true" && string(value) != "false" {
+					return ErrInvalidRouteInventory
+				}
+			}
+		}
+		modeRaw, hasMode := connection["credential_mode"]
+		_, hasEnvironment := connection["credential_environment"]
+		if hasMode {
+			var mode string
+			if json.Unmarshal(modeRaw, &mode) != nil || (mode != "bearer" && mode != "none") || mode == "none" && hasEnvironment {
+				return ErrInvalidRouteInventory
+			}
+		}
+	}
+	if schemaVersion == 1 {
+		for _, connection := range rawConnections {
+			if _, present := connection["credential_mode"]; present {
+				return ErrInvalidRouteInventory
+			}
+		}
+	}
+	return nil
 }
 
 func DecodeRuntimePolicy(ctx context.Context, reader io.Reader, inventory RouteInventory) (RuntimePolicy, error) {
@@ -144,10 +278,23 @@ func DecodeRuntimePolicy(ctx context.Context, reader io.Reader, inventory RouteI
 	if err != nil || len(encoded) == 0 || len(encoded) >= 1<<20 || validateUniqueJSONKeys(encoded) != nil {
 		return RuntimePolicy{}, ErrInvalidRouteInventory
 	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(encoded, &fields) != nil {
+		return RuntimePolicy{}, ErrInvalidRouteInventory
+	}
+	_, hasVerificationGrant := fields["verification_route_record_identity"]
+	for key := range fields {
+		if strings.EqualFold(key, "verification_route_record_identity") && key != "verification_route_record_identity" {
+			return RuntimePolicy{}, ErrInvalidRouteInventory
+		}
+	}
 	decoder := json.NewDecoder(bytes.NewReader(encoded))
 	decoder.DisallowUnknownFields()
 	var wire runtimePolicyWire
-	if decoder.Decode(&wire) != nil || decoder.Decode(&struct{}{}) != io.EOF || wire.SchemaVersion != 1 || wire.InventoryIdentity != inventory.Identity() || !nonzeroDigest(wire.ReviewPolicyIdentity) {
+	if decoder.Decode(&wire) != nil || decoder.Decode(&struct{}{}) != io.EOF || (wire.SchemaVersion != 1 && wire.SchemaVersion != 2 && wire.SchemaVersion != 3 && wire.SchemaVersion != 4 && wire.SchemaVersion != 5 && wire.SchemaVersion != 6 && wire.SchemaVersion != ollamaSigninPolicyVersion && wire.SchemaVersion != openRouterObservedPolicyVersion) || (wire.SchemaVersion == 1 && hasVerificationGrant) || (wire.SchemaVersion >= 2 && (wire.VerificationRouteRecordIdentity == nil || !nonzeroDigest(*wire.VerificationRouteRecordIdentity) || *wire.VerificationRouteRecordIdentity == wire.PinnedRouteRecordIdentity)) || wire.InventoryIdentity != inventory.Identity() || !nonzeroDigest(wire.ReviewPolicyIdentity) {
+		return RuntimePolicy{}, ErrInvalidRouteInventory
+	}
+	if validatePolicyCredentialFields(encoded, wire.SchemaVersion) != nil || !validatePolicyProfileFields(encoded, wire.SchemaVersion) {
 		return RuntimePolicy{}, ErrInvalidRouteInventory
 	}
 	features := make([]provider.ModelFeature, len(wire.RequiredFeatures))
@@ -197,6 +344,13 @@ func DecodeRuntimePolicy(ctx context.Context, reader io.Reader, inventory RouteI
 			return RuntimePolicy{}, ErrInvalidRouteInventory
 		}
 	}
+	verificationID := ""
+	if wire.VerificationRouteRecordIdentity != nil {
+		verificationID = *wire.VerificationRouteRecordIdentity
+		if _, ok := records[verificationID]; !ok {
+			return RuntimePolicy{}, ErrInvalidRouteInventory
+		}
+	}
 	var ranking gateway.RouteRankingPolicy
 	if wire.PinnedRouteRecordIdentity != "" {
 		pinned, ok := records[wire.PinnedRouteRecordIdentity]
@@ -228,10 +382,47 @@ func DecodeRuntimePolicy(ctx context.Context, reader io.Reader, inventory RouteI
 	}
 	connections := make([]ProviderConnection, len(wire.Connections))
 	for i, v := range wire.Connections {
-		connections[i] = ProviderConnection{v.Implementation, v.AdapterID, v.Endpoint, v.CredentialEnvironment, credentialEnvironmentIdentity(v.CredentialEnvironment)}
+		mode := v.CredentialMode
+		if mode == "" {
+			mode = "bearer"
+		}
+		identity := ""
+		if mode == "bearer" {
+			identity = credentialEnvironmentIdentity(v.CredentialEnvironment)
+		}
+		var authority BrokeredRouteAuthority
+		var goAuthority OpenCodeGoRouteAuthority
+		var consoleAuthority OpenCodeConsoleRouteAuthority
+		switch v.RequestProfile {
+		case OpenRouterZDRChatProfile:
+			var ok bool
+			authority, ok = decodeBrokeredAuthority(v.BrokeredAuthority)
+			if !ok {
+				return RuntimePolicy{}, ErrInvalidRouteInventory
+			}
+		case OpenRouterZDRChatV2Profile:
+			var ok bool
+			authority, ok = decodeObservedBrokeredAuthority(v.BrokeredAuthority)
+			if !ok {
+				return RuntimePolicy{}, ErrInvalidRouteInventory
+			}
+		case OpenCodeGoChatProfile:
+			var ok bool
+			goAuthority, ok = decodeOpenCodeGoAuthority(v.OpenCodeGoAuthority)
+			if !ok {
+				return RuntimePolicy{}, ErrInvalidRouteInventory
+			}
+		case OpenCodeConsoleChatProfile:
+			var ok bool
+			consoleAuthority, ok = decodeOpenCodeConsoleAuthority(v.OpenCodeConsoleAuthority)
+			if !ok {
+				return RuntimePolicy{}, ErrInvalidRouteInventory
+			}
+		}
+		connections[i] = ProviderConnection{localStructuredOutput: v.LocalStructuredOutput, implementation: v.Implementation, adapterID: v.AdapterID, endpoint: v.Endpoint, credentialEnvironment: v.CredentialEnvironment, credentialIdentity: identity, credentialMode: mode, requestProfile: v.RequestProfile, brokeredAuthority: authority, openCodeGoAuthority: goAuthority, openCodeConsoleAuthority: consoleAuthority}
 	}
 	sort.Slice(connections, func(i, j int) bool { return connections[i].adapterID < connections[j].adapterID })
-	value := RuntimePolicy{inventoryIdentity: inventory.Identity(), reviewPolicyIdentity: wire.ReviewPolicyIdentity, requirements: requirements, constraints: constraints, budget: budget, ranking: ranking, independence: independence, publication: publicationPolicy, connections: connections}
+	value := RuntimePolicy{schemaVersion: wire.SchemaVersion, verificationRouteRecordIdentity: verificationID, inventoryIdentity: inventory.Identity(), reviewPolicyIdentity: wire.ReviewPolicyIdentity, requirements: requirements, constraints: constraints, budget: budget, ranking: ranking, independence: independence, publication: publicationPolicy, connections: connections}
 	value.identity = runtimePolicyIdentity(value)
 	if value.Validate() != nil || value.ValidateAgainstInventory(inventory) != nil {
 		return RuntimePolicy{}, ErrInvalidRouteInventory
@@ -241,7 +432,11 @@ func DecodeRuntimePolicy(ctx context.Context, reader io.Reader, inventory RouteI
 func runtimePolicyIdentity(p RuntimePolicy) string {
 	connections := make([]providerConnectionWire, len(p.connections))
 	for i, c := range p.connections {
-		connections[i] = providerConnectionWire{c.implementation, c.adapterID, c.endpoint, c.credentialEnvironment}
+		mode := ""
+		if c.credentialMode == "none" {
+			mode = "none"
+		}
+		connections[i] = providerConnectionWire{LocalStructuredOutput: c.localStructuredOutput, Implementation: c.implementation, AdapterID: c.adapterID, Endpoint: c.endpoint, CredentialEnvironment: c.credentialEnvironment, CredentialMode: mode, RequestProfile: c.requestProfile, BrokeredAuthority: c.brokeredAuthority.wire(), OpenCodeGoAuthority: c.openCodeGoAuthority.wire(), OpenCodeConsoleAuthority: c.openCodeConsoleAuthority.wire()}
 	}
 	encoded, _ := json.Marshal(struct {
 		Contract                                                                                 string `json:"contract"`
@@ -249,6 +444,16 @@ func runtimePolicyIdentity(p RuntimePolicy) string {
 		Inventory, Policy, Requirements, Constraints, Budget, Ranking, Independence, Publication string
 		Connections                                                                              []providerConnectionWire `json:"connections"`
 	}{"open-trestle/runtime-policy", 1, p.inventoryIdentity, p.reviewPolicyIdentity, requirementsIdentity(p.requirements), constraintsIdentity(p.constraints), budgetIdentity(p.budget), p.ranking.Identity(), p.independence.Identity(), p.publication.Identity(), connections})
+	// Keep the v1 preimage unchanged for existing receipts and local admission.
+	if p.schemaVersion >= 2 {
+		encoded, _ = json.Marshal(struct {
+			Contract                                                                                 string `json:"contract"`
+			Version                                                                                  int    `json:"version"`
+			Inventory, Policy, Requirements, Constraints, Budget, Ranking, Independence, Publication string
+			Connections                                                                              []providerConnectionWire `json:"connections"`
+			VerificationRouteRecordIdentity                                                          string                   `json:"verification_route_record_identity"`
+		}{"open-trestle/runtime-policy", p.schemaVersion, p.inventoryIdentity, p.reviewPolicyIdentity, requirementsIdentity(p.requirements), constraintsIdentity(p.constraints), budgetIdentity(p.budget), p.ranking.Identity(), p.independence.Identity(), p.publication.Identity(), connections, p.verificationRouteRecordIdentity})
+	}
 	sum := sha256.Sum256(encoded)
 	return hex.EncodeToString(sum[:])
 }
@@ -288,6 +493,23 @@ func validCredentialEnvironment(value string) bool {
 func credentialEnvironmentIdentity(value string) string {
 	sum := sha256.Sum256([]byte("open-trestle/provider-credential-environment/" + value))
 	return hex.EncodeToString(sum[:])
+}
+
+// ValidCredentialEnvironment reports whether name is an admissible credential
+// variable name: OPEN_TRESTLE_PROVIDER_ followed by capital letters, digits
+// and underscores, at most 128 bytes. It never reads the variable.
+func ValidCredentialEnvironment(name string) bool { return validCredentialEnvironment(name) }
+
+// CredentialReferenceIdentity is the credential reference identity a runtime
+// policy connection, and every setup privacy witness, records for the
+// credential variable name: the SHA-256 of a fixed prefix and the name. It
+// identifies the variable, never the key it holds, and ok is false for a name
+// ValidCredentialEnvironment refuses.
+func CredentialReferenceIdentity(name string) (identity string, ok bool) {
+	if !validCredentialEnvironment(name) {
+		return "", false
+	}
+	return credentialEnvironmentIdentity(name), true
 }
 func nonzeroDigest(value string) bool {
 	if len(value) != 64 || value != strings.ToLower(value) {

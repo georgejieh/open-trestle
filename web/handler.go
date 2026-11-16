@@ -51,14 +51,14 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	case request.URL.Path == "/console/" || request.URL.Path == "/console/setup":
 		writer.Header().Set("Cache-Control", "no-store")
 		serveEmbeddedIndex(writer, request)
-	case consoleAssetName.MatchString(request.URL.Path) || request.URL.Path == "/console/favicon.svg":
+	case consoleAssetName.MatchString(request.URL.Path) || request.URL.Path == "/console/favicon.svg" || request.URL.Path == "/console/not-found.css":
 		relative := strings.TrimPrefix(request.URL.Path, "/console/")
 		information, err := fs.Stat(h.filesystem, relative)
 		if err != nil || !information.Mode().IsRegular() {
 			http.NotFound(writer, request)
 			return
 		}
-		if request.URL.Path == "/console/favicon.svg" {
+		if request.URL.Path == "/console/favicon.svg" || request.URL.Path == "/console/not-found.css" {
 			writer.Header().Set("Cache-Control", "public, max-age=3600, must-revalidate")
 		} else {
 			writer.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
@@ -67,9 +67,28 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		clone.URL.Path = strings.TrimPrefix(request.URL.Path, "/console")
 		h.assets.ServeHTTP(writer, clone)
 	default:
+		if strings.HasPrefix(request.URL.Path, "/console/") {
+			serveConsoleNotFound(writer, request)
+			return
+		}
 		http.NotFound(writer, request)
 	}
 }
+
+func serveConsoleNotFound(writer http.ResponseWriter, request *http.Request) {
+	content, err := consoleFiles.ReadFile("dist/not-found.html")
+	if err != nil {
+		http.Error(writer, "console unavailable", http.StatusInternalServerError)
+		return
+	}
+	writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+	writer.Header().Set("Content-Length", strconv.Itoa(len(content)))
+	writer.WriteHeader(http.StatusNotFound)
+	if request.Method == http.MethodGet {
+		_, _ = writer.Write(content)
+	}
+}
+
 func serveEmbeddedIndex(writer http.ResponseWriter, request *http.Request) {
 	content, err := consoleFiles.ReadFile("dist/index.html")
 	if err != nil {

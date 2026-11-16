@@ -1,0 +1,268 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:diagnostics:set:v7",
+  "title": "Open Trestle terminal full-review diagnostic set v7",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "identity",
+    "tenant_id",
+    "repository_id",
+    "review_run_id",
+    "snapshot_identity",
+    "head_revision",
+    "outcome"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/review-diagnostic-set"
+    },
+    "schema_version": {
+      "const": 7
+    },
+    "identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "repository_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "review_run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "snapshot_identity": {
+      "type": "string",
+      "pattern": "^(?:$|[0-9a-f]{64})$"
+    },
+    "head_revision": {
+      "type": "string",
+      "pattern": "^(?:$|[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "outcome": {
+      "enum": [
+        "completed",
+        "failed",
+        "canceled",
+        "abstained",
+        "inconclusive"
+      ]
+    },
+    "deterministic": {
+      "$ref": "urn:open-trestle:schema:diagnostics:set:v6"
+    },
+    "verified": {
+      "oneOf": [
+        {
+          "$ref": "urn:open-trestle:schema:diagnostics:set:v5"
+        },
+        {
+          "$ref": "urn:open-trestle:schema:diagnostics:set:v8"
+        }
+      ]
+    },
+    "context_refusal": {
+      "description": "The refused context task's recorded route reason; present only on a failed outcome without verified evidence.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason"
+      ],
+      "properties": {
+        "reason": {
+          "enum": [
+            "route_context_insufficient",
+            "no_eligible_route"
+          ]
+        },
+        "context_shortfall": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "required_tokens",
+            "estimated_input_tokens",
+            "max_output_tokens",
+            "declared_context_tokens"
+          ],
+          "properties": {
+            "required_tokens": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 8589934590
+            },
+            "estimated_input_tokens": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4294967295
+            },
+            "max_output_tokens": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4294967295
+            },
+            "declared_context_tokens": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4294967295
+            }
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "reason": {
+            "const": "route_context_insufficient"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "context_shortfall"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "context_shortfall"
+          ]
+        }
+      }
+    },
+    "evidence_expired": {
+      "description": "The result was recorded after the run's evidence retention lapsed. Its outcome is only what the run journal proves; it carries no evidence part, and absent evidence is unknown, not clean.",
+      "const": true
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "completed"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "deterministic",
+          "verified"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "verified"
+        ]
+      },
+      "then": {
+        "required": [
+          "deterministic"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "snapshot_identity": {
+            "const": ""
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "head_revision": {
+            "const": ""
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "head_revision": {
+            "const": ""
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "snapshot_identity": {
+            "const": ""
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "context_refusal"
+        ]
+      },
+      "then": {
+        "properties": {
+          "outcome": {
+            "const": "failed"
+          }
+        },
+        "not": {
+          "required": [
+            "verified"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "evidence_expired"
+        ]
+      },
+      "then": {
+        "properties": {
+          "outcome": {
+            "enum": [
+              "failed",
+              "canceled",
+              "abstained",
+              "inconclusive"
+            ]
+          },
+          "snapshot_identity": {
+            "const": ""
+          },
+          "head_revision": {
+            "const": ""
+          }
+        },
+        "allOf": [
+          {
+            "not": {
+              "required": [
+                "deterministic"
+              ]
+            }
+          },
+          {
+            "not": {
+              "required": [
+                "verified"
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "description": "The runtime derives identity from exact bytes, validates embedded V5 or V8 and V6 identities, binds their common scope/head/check, and enforces the shared one MiB budget. The top-level and V6 snapshot is the physical source snapshot; the V5 or V8 snapshot is the selected review snapshot and need not equal it. Absent evidence means not run, not clean or verified. A context refusal copies the failed run's refused context task; its required tokens equal input plus output and exceed the declared context."
+}

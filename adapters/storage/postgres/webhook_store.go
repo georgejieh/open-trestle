@@ -4,9 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"slices"
 	"sort"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/georgejieh/open-trestle/artifact"
 	"github.com/georgejieh/open-trestle/audit"
@@ -17,6 +20,9 @@ const (
 	minimumWebhookRetention = time.Minute
 	maximumWebhookRetention = 30 * 24 * time.Hour
 	maximumWebhookEntries   = 10_000
+
+	// webhookReplayIndex enforces one accepted delivery per signed body, event, and action.
+	webhookReplayIndex = "open_trestle_webhook_deliveries_replay_key_idx"
 )
 
 // WebhookClock supplies protected inbox retrieval time.
@@ -54,8 +60,11 @@ func (s *WebhookStore) Put(ctx context.Context, delivery webhook.VerifiedDeliver
 	if delivery.Validate() != nil {
 		return webhook.StoredDelivery{}, false, webhook.ErrInvalidVerifiedDelivery
 	}
-	if existing, found, err := s.loadWebhookMapping(ctx, delivery.Scope(), delivery.Source(), delivery.DeduplicationKey()); err != nil {
+	if existing, found, replayed, err := s.loadWebhookAdmission(ctx, delivery); err != nil {
 		return webhook.StoredDelivery{}, false, err
+	} else if replayed {
+		// Refused before any protected body is written for a delivery that cannot be accepted.
+		return webhook.StoredDelivery{}, false, webhook.ErrDeliveryReplayed
 	} else if found {
 		stored, err := s.loadWebhookArtifact(ctx, delivery.Scope(), delivery.Source(), delivery.DeduplicationKey(), existing, s.options.Clock.Now().UTC())
 		if err != nil {
@@ -112,13 +121,16 @@ WHERE tenant_id = $1 AND repository_id = $2 AND source = $3 AND expires_at > $4`
 		if _, err := tx.ExecContext(
 			ctx,
 			`INSERT INTO open_trestle_webhook_deliveries
-(tenant_id, repository_id, review_run_id, review_scope_identity, repository_scope_identity, source, deduplication_key, delivery_identity, artifact_identity, accepted_at, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+(tenant_id, repository_id, review_run_id, review_scope_identity, repository_scope_identity, source, deduplication_key, delivery_identity, artifact_identity, accepted_at, expires_at, replay_key)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 			delivery.Scope().TenantID(), delivery.Scope().RepositoryID(), reviewScope.ReviewRunID(),
 			reviewScope.Identity(), delivery.Scope().Identity(), delivery.Source().String(),
 			delivery.DeduplicationKey(), delivery.Identity(), value.Identity(),
-			stored.Receipt().AcceptedAt(), value.ExpiresAt(),
+			stored.Receipt().AcceptedAt(), value.ExpiresAt(), delivery.ReplayKey(),
 		); err != nil {
+			if webhookReplayViolation(err) {
+				return webhook.ErrDeliveryReplayed
+			}
 			return classifyTransactionError(err)
 		}
 		created = true
@@ -267,6 +279,46 @@ func (s *WebhookStore) loadWebhookMapping(ctx context.Context, scope webhook.Rep
 		return webhookMapping{}, false, err
 	}
 	return mapping, found, nil
+}
+
+// loadWebhookAdmission reads the delivery's own mapping and, only when none exists,
+// whether another delivery already owns its signed content or legacy keys remain
+// unknown. Expired rows retain replay protection. Both reads share one transaction.
+func (s *WebhookStore) loadWebhookAdmission(ctx context.Context, delivery webhook.VerifiedDelivery) (webhookMapping, bool, bool, error) {
+	tx, err := s.store.beginTenant(ctx, delivery.Scope().TenantID(), sql.LevelReadCommitted)
+	if err != nil {
+		return webhookMapping{}, false, false, err
+	}
+	defer tx.Rollback()
+	mapping, found, err := queryWebhookMapping(ctx, tx, delivery.Scope(), delivery.Source(), delivery.DeduplicationKey())
+	if err != nil {
+		return webhookMapping{}, false, false, err
+	}
+	replayed := false
+	if !found {
+		var owner int
+		err := tx.QueryRowContext(ctx, `SELECT CASE WHEN replay_key IS NULL THEN 0 ELSE 1 END
+FROM open_trestle_webhook_deliveries
+WHERE tenant_id = $1 AND repository_id = $2 AND source = $3 AND (replay_key = $4 OR replay_key IS NULL)
+ORDER BY replay_key NULLS FIRST
+LIMIT 1`, delivery.Scope().TenantID(), delivery.Scope().RepositoryID(), delivery.Source().String(), delivery.ReplayKey()).Scan(&owner)
+		switch {
+		case err == nil && owner == 0:
+			return webhookMapping{}, false, false, fmt.Errorf("%w: legacy webhook replay keys require trusted backfill", ErrDatabaseUnavailable)
+		case err == nil:
+			replayed = true
+		case !errors.Is(err, sql.ErrNoRows):
+			return webhookMapping{}, false, false, redactTransactionError(classifyTransactionError(err))
+		}
+	}
+	if err := commit(tx); err != nil {
+		return webhookMapping{}, false, false, err
+	}
+	return mapping, found, replayed, nil
+}
+func webhookReplayViolation(err error) bool {
+	var failure *pgconn.PgError
+	return errors.As(err, &failure) && failure != nil && failure.Code == "23505" && failure.ConstraintName == webhookReplayIndex
 }
 func (s *WebhookStore) newWebhookArtifact(stored webhook.StoredDelivery) (artifact.Artifact, audit.ReviewScope, error) {
 	delivery := stored.Delivery()

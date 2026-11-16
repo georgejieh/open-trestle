@@ -84,7 +84,7 @@ func TestPlannerAttemptExtractionPreservesExactPlanBytes(t *testing.T) {
 						Classification string `json:"classification"`
 						Protection     string `json:"protection"`
 						Retention      int64  `json:"retention"`
-					}{"open-trestle/prepared-github-pull-request-planner", 1, baseIdentity, "github.com", "github-review", planner.sourceAdapter.Identity(), "confidential", "process_private", time.Hour.Milliseconds()})
+					}{"open-trestle/prepared-github-pull-request-planner", 2, baseIdentity, "github.com", "github-review", planner.sourceAdapter.Identity(), "confidential", "process_private", time.Hour.Milliseconds()})
 					if planner.Identity() != identity {
 						t.Fatal("attempt extraction changed the accepted prepared planner identity")
 					}

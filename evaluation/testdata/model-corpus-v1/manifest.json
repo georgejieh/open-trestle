@@ -1,0 +1,1087 @@
+{
+  "contract": "open-trestle/model-corpus-manifest",
+  "schema_version": 1,
+  "corpus_identity": "33cced6dcc2c32c6513084335df4d60931f426e3d8aabf648552339ca35ea36a",
+  "corpus_version": 1,
+  "license": "Apache-2.0",
+  "review_state": "pending",
+  "labels_contract": "urn:open-trestle:schema:evaluation:model-corpus-labels:v1",
+  "bounds": {
+    "maximum_cases": 32,
+    "maximum_files_per_case": 16,
+    "maximum_file_bytes": 65536,
+    "maximum_total_bytes": 1048576
+  },
+  "origin": {
+    "path": "ORIGIN.md",
+    "sha256": "4fe4afabfc20e8994e16c65092bf4ee9fd367632b68a81f5e725ec3abcd223f7",
+    "bytes": 346
+  },
+  "cases": [
+    {
+      "id": "abstention_argument_order",
+      "kind": "abstention",
+      "go_versions": {
+        "base": "1.22",
+        "head": "1.22"
+      },
+      "build": "external_module_source_absent",
+      "files": [
+        {
+          "side": "base",
+          "path": "go.mod",
+          "sha256": "d5db78524ab0443959d1dc1e2f3884e654d1d12b7266cf2bd9eed11a385975c8",
+          "bytes": 74
+        },
+        {
+          "side": "base",
+          "path": "push.go",
+          "sha256": "3e74f9432c0fac602b25ac5289f251d7ed76291c25f804cb19694388965f9b44",
+          "bytes": 645
+        },
+        {
+          "side": "head",
+          "path": "go.mod",
+          "sha256": "d5db78524ab0443959d1dc1e2f3884e654d1d12b7266cf2bd9eed11a385975c8",
+          "bytes": 74
+        },
+        {
+          "side": "head",
+          "path": "push.go",
+          "sha256": "eab7a905116b55f7673e738fd36f962cdd3751eb8bcd1815dd6e958d8ef2cb7d",
+          "bytes": 645
+        }
+      ],
+      "readme": {
+        "path": "cases/abstention_argument_order/README.md",
+        "sha256": "b52582c7d7ada4699312ffe4f2ae41d1d1ac99517bd735c950001a1d1df6b7bf",
+        "bytes": 428
+      },
+      "labels": {
+        "path": "cases/abstention_argument_order/labels.json",
+        "sha256": "acb825f0fa76338802e1301b2c206a09dbf580c3168dbfade07795374d5cad03",
+        "bytes": 1491
+      }
+    },
+    {
+      "id": "abstention_unit_unknown",
+      "kind": "abstention",
+      "go_versions": {
+        "base": "1.22",
+        "head": "1.22"
+      },
+      "build": "external_module_source_absent",
+      "files": [
+        {
+          "side": "base",
+          "path": "go.mod",
+          "sha256": "a042c65dee77a4c9865db5d94ac165bbd199fe6ecc1ceb6be8887ce3b48345ea",
+          "bytes": 74
+        },
+        {
+          "side": "base",
+          "path": "session.go",
+          "sha256": "6d014ead6ce7712833ecf072bca9f94973e3c4f039e88f34898241546451e20e",
+          "bytes": 721
+        },
+        {
+          "side": "head",
+          "path": "go.mod",
+          "sha256": "a042c65dee77a4c9865db5d94ac165bbd199fe6ecc1ceb6be8887ce3b48345ea",
+          "bytes": 74
+        },
+        {
+          "side": "head",
+          "path": "session.go",
+          "sha256": "7924eb826bebbfa6fbec6b66f89f3714785d55aa82aa31ee31dc4f60ee8b86e4",
+          "bytes": 726
+        }
+      ],
+      "readme": {
+        "path": "cases/abstention_unit_unknown/README.md",
+        "sha256": "74feea78b195dc697935b23a173940623e7ca099e2272203cfd6457497b9477b",
+        "bytes": 380
+      },
+      "labels": {
+        "path": "cases/abstention_unit_unknown/labels.json",
+        "sha256": "c1004a6e4e25e944acb4a4d3878b41742f198a4a23746006c5ac26f9ef98943d",
+        "bytes": 1491
+      }
+    },
+    {
+      "id": "clean_extract_function",
+      "kind": "clean",
+      "go_versions": {
+        "base": "1.22",
+        "head": "1.22"
+      },
+      "build": "builds",
+      "files": [
+        {
+          "side": "base",
+          "path": "go.mod",
+          "sha256": "51fa6964710fc92aad0e33b1a0fac13e5812ab3694b559f97d14a2f83fabe5d3",
+          "bytes": 36
+        },
+        {
+          "side": "base",
+          "path": "orders.go",
+          "sha256": "421173151aacbe84760d7c72dcd43089aebd64976d224eeda84e53c735445086",
+          "bytes": 876
+        },
+        {
+          "side": "head",
+          "path": "go.mod",
+          "sha256": "51fa6964710fc92aad0e33b1a0fac13e5812ab3694b559f97d14a2f83fabe5d3",
+          "bytes": 36
+        },
+        {
+          "side": "head",
+          "path": "orders.go",
+          "sha256": "92366ca6a76c49a2a8ae2a25ffaf7829f4a4b087fc6e1fcb13cf838942f4d865",
+          "bytes": 1041
+        }
+      ],
+      "readme": {
+        "path": "cases/clean_extract_function/README.md",
+        "sha256": "20c9e7e2b77a546315e930a3462f8f74ea5b533e06c4617408f079dcaf75dedf",
+        "bytes": 436
+      },
+      "labels": {
+        "path": "cases/clean_extract_function/labels.json",
+        "sha256": "958c8bac5e0bca9447f320916994041502a5626026bfec3bc14d8e1430abbd66",
+        "bytes": 628
+      }
+    },
+    {
+      "id": "clean_rename",
+      "kind": "clean",
+      "go_versions": {
+        "base": "1.22",
+        "head": "1.22"
+      },
+      "build": "builds",
+      "files": [
+        {
+          "side": "base",
+          "path": "go.mod",
+          "sha256": "2baef681aa2db83ddb1df1e57a9aaea2110cbff516b813541e194388aab5f1b5",
+          "bytes": 32
+        },
+        {
+          "side": "base",
+          "path": "parse.go",
+          "sha256": "39b954e407e750cc028c937745a822ff4b9ed08e10a46fb8ba0ba16ed227f4e2",
+          "bytes": 1056
+        },
+        {
+          "side": "head",
+          "path": "go.mod",
+          "sha256": "2baef681aa2db83ddb1df1e57a9aaea2110cbff516b813541e194388aab5f1b5",
+          "bytes": 32
+        },
+        {
+          "side": "head",
+          "path": "parse.go",
+          "sha256": "bc0f820f8bfa86a459916a7acbd82382405fb0e72bb28a157ae75abf24580def",
+          "bytes": 1090
+        }
+      ],
+      "readme": {
+        "path": "cases/clean_rename/README.md",
+        "sha256": "6adcfd4409a9faff1fa5ccd7a302b3f5b49a4e8d7f4333bd90e25b0410374c82",
+        "bytes": 425
+      },
+      "labels": {
+        "path": "cases/clean_rename/labels.json",
+        "sha256": "fedede5e14e5b8303894f5c954ab4a5011a7016205d0c6dde9c20797a33cb5e0",
+        "bytes": 618
+      }
+    },
+    {
+      "id": "clean_test_only",
+      "kind": "clean",
+      "go_versions": {
+        "base": "1.22",
+        "head": "1.22"
+      },
+      "build": "builds",
+      "files": [
+        {
+          "side": "base",
+          "path": "go.mod",
+          "sha256": "3304606a5874525e47293b3bf9b06ebf8c8dedae191b559b093fa5fb744c712f",
+          "bytes": 34
+        },
+        {
+          "side": "base",
+          "path": "slug.go",
+          "sha256": "50cace5e229c4ab62b3bd990de158af2693d2b2f53bc54ff4afcbccc6443bd59",
+          "bytes": 451
+        },
+        {
+          "side": "head",
+          "path": "go.mod",
+          "sha256": "3304606a5874525e47293b3bf9b06ebf8c8dedae191b559b093fa5fb744c712f",
+          "bytes": 34
+        },
+        {
+          "side": "head",
+          "path": "slug.go",
+          "sha256": "50cace5e229c4ab62b3bd990de158af2693d2b2f53bc54ff4afcbccc6443bd59",
+          "bytes": 451
+        },
+        {
+          "side": "head",
+          "path": "slug_test.go",
+          "sha256": "a346556b7b1a97d92a8c3211e74fa769f7e4282030edf59e3bbd27beeb74dd71",
+          "bytes": 459
+        }
+      ],
+      "readme": {
+        "path": "cases/clean_test_only/README.md",
+        "sha256": "59d1af90c680c78d724b4a1209895671815bac7d324e307b6e02d74a3fd0d1c3",
+        "bytes": 366
+      },
+      "labels": {
+        "path": "cases/clean_test_only/labels.json",
+        "sha256": "8d992a9ef81bf21aa3f44f5a19dcfd1b1d9839d4ab01b26148d6b6873c9218e0",
+        "bytes": 621
+      }
+    },
+    {
+      "id": "defect_data_race",
+      "kind": "defect",
+      "go_versions": {
+        "base": "1.22",
+        "head": "1.22"
+      },
+      "build": "builds",
+      "files": [
+        {
+          "side": "base",
+          "path": "fetch.go",
+          "sha256": "5d84e24756463e3e10f651f76749a224f0ad03bbdb54046a7c633a479a59c59e",
+          "bytes": 383
+        },
+        {
+          "side": "base",
+          "path": "go.mod",
+          "sha256": "1a6a3f82c605b019f40c9a037aa8c775d0f8a9115d3cc81049e61da77e85e812",
+          "bytes": 35
+        },
+        {
+          "side": "head",
+          "path": "fetch.go",
+          "sha256": "60d0cd4a77b2849d656bd7e5dd26ff90ce1bf1eb67e224ed8e502b40fd7381a0",
+          "bytes": 793
+        },
+        {
+          "side": "head",
+          "path": "go.mod",
+          "sha256": "1a6a3f82c605b019f40c9a037aa8c775d0f8a9115d3cc81049e61da77e85e812",
+          "bytes": 35
+        }
+      ],
+      "readme": {
+        "path": "cases/defect_data_race/README.md",
+        "sha256": "2b09446584c86954dfda14277a65b3aa2333ee82c01c6de1b80bbf388c619eab",
+        "bytes": 382
+      },
+      "labels": {
+        "path": "cases/defect_data_race/labels.json",
+        "sha256": "bee2345d8f41f5371995ceb74664f3cbd51adfa638aa6d26436dd2aa9b37031c",
+        "bytes": 1716
+      }
+    },
+    {
+      "id": "defect_error_wrap",
+      "kind": "defect",
+      "go_versions": {
+        "base": "1.22",
+        "head": "1.22"
+      },
+      "build": "builds",
+      "files": [
+        {
+          "side": "base",
+          "path": "go.mod",
+          "sha256": "790ac73448034ffc32a00e18c9d09d7e205a76f0b2c34479920453ce67736976",
+          "bytes": 39
+        },
+        {
+          "side": "base",
+          "path": "items.go",
+          "sha256": "a92148491d858bc6984950109467b59607ee9744bc00aa6516585bec71212eba",
+          "bytes": 1216
+        },
+        {
+          "side": "head",
+          "path": "go.mod",
+          "sha256": "790ac73448034ffc32a00e18c9d09d7e205a76f0b2c34479920453ce67736976",
+          "bytes": 39
+        },
+        {
+          "side": "head",
+          "path": "items.go",
+          "sha256": "7aa8457e92135c95b8d024389bcf417d65d9a5c5b7458b2ef0c4eeb8e1e9fa17",
+          "bytes": 1268
+        }
+      ],
+      "readme": {
+        "path": "cases/defect_error_wrap/README.md",
+        "sha256": "edcee964126be560299ce0cc8f7f3de59215aa0db2a1a558c71aefe636ef16cf",
+        "bytes": 416
+      },
+      "labels": {
+        "path": "cases/defect_error_wrap/labels.json",
+        "sha256": "36632c2e697181d8e2692bfd505c90586f8eefe182e998cfc91121ac7ec7086d",
+        "bytes": 1448
+      }
+    },
+    {
+      "id": "defect_http_body_not_closed",
+      "kind": "defect",
+      "go_versions": {
+        "base": "1.22",
+        "head": "1.22"
+      },
+      "build": "builds",
+      "files": [
+        {
+          "side": "base",
+          "path": "client.go",
+          "sha256": "d0ce10ce93e61b7505a475a0b3fa7c06f280d517a897961eaf3814b4c8988013",
+          "bytes": 986
+        },
+        {
+          "side": "base",
+          "path": "go.mod",
+          "sha256": "a587cbf591f3644514d8e4754786a2961ad017fab99245cd0796cf2b2d550509",
+          "bytes": 36
+        },
+        {
+          "side": "head",
+          "path": "client.go",
+          "sha256": "8ebf75b37508bcae723241bc752dc3d093f5b64b765f0167f4cc333df29d5e1c",
+          "bytes": 1366
+        },
+        {
+          "side": "head",
+          "path": "go.mod",
+          "sha256": "a587cbf591f3644514d8e4754786a2961ad017fab99245cd0796cf2b2d550509",
+          "bytes": 36
+        }
+      ],
+      "readme": {
+        "path": "cases/defect_http_body_not_closed/README.md",
+        "sha256": "27955d30b1b71fdf77f9802ba39c791a24948582d43dcf0b15210d1a6b3d6f9e",
+        "bytes": 359
+      },
+      "labels": {
+        "path": "cases/defect_http_body_not_closed/labels.json",
+        "sha256": "43acb22a3680c502cdfdd86f649d796d317de4521cb34cdf75388e810829f89b",
+        "bytes": 1358
+      }
+    },
+    {
+      "id": "defect_ignored_error",
+      "kind": "defect",
+      "go_versions": {
+        "base": "1.22",
+        "head": "1.22"
+      },
+      "build": "builds",
+      "files": [
+        {
+          "side": "base",
+          "path": "config.go",
+          "sha256": "ebf99093c8ef3623ed5fe83aff1ea6487825a185d34e25af6668b89403d1870d",
+          "bytes": 494
+        },
+        {
+          "side": "base",
+          "path": "go.mod",
+          "sha256": "0b8ac1ab7cbbec9821e38c4e4e4bfc4e67540d580f5badb54700cc2b0794cda3",
+          "bytes": 36
+        },
+        {
+          "side": "head",
+          "path": "config.go",
+          "sha256": "16ff94c9c52083fd1198fc0e8376ac42eed3b7dd00d14076747b40caaabc07c1",
+          "bytes": 848
+        },
+        {
+          "side": "head",
+          "path": "go.mod",
+          "sha256": "0b8ac1ab7cbbec9821e38c4e4e4bfc4e67540d580f5badb54700cc2b0794cda3",
+          "bytes": 36
+        }
+      ],
+      "readme": {
+        "path": "cases/defect_ignored_error/README.md",
+        "sha256": "aea1397a7c5e0367ddaf77f089f3ed644841162d634673b349c5aa3938ba69ab",
+        "bytes": 360
+      },
+      "labels": {
+        "path": "cases/defect_ignored_error/labels.json",
+        "sha256": "736d4e6e21800a19fd114e9d40dff7aa802d6452eb88bf9e7f008769cac4522e",
+        "bytes": 1338
+      }
+    },
+    {
+      "id": "defect_lock_not_released",
+      "kind": "defect",
+      "go_versions": {
+        "base": "1.22",
+        "head": "1.22"
+      },
+      "build": "builds",
+      "files": [
+        {
+          "side": "base",
+          "path": "cache.go",
+          "sha256": "4669c213544eef972a56e5ccdd214d8eb6b3a6ecf7e27c2cd305c278ed16a984",
+          "bytes": 961
+        },
+        {
+          "side": "base",
+          "path": "go.mod",
+          "sha256": "6093e5a0d47ef47651ea514fb588ffdcde30ff6785e2fe219e396f9dc6820c50",
+          "bytes": 35
+        },
+        {
+          "side": "head",
+          "path": "cache.go",
+          "sha256": "2080a00036cc428d8272f39e35b8cb38a855e0517fe80ea2a2358f69511b2be2",
+          "bytes": 1311
+        },
+        {
+          "side": "head",
+          "path": "go.mod",
+          "sha256": "6093e5a0d47ef47651ea514fb588ffdcde30ff6785e2fe219e396f9dc6820c50",
+          "bytes": 35
+        }
+      ],
+      "readme": {
+        "path": "cases/defect_lock_not_released/README.md",
+        "sha256": "2723baf79b1fccb86411e2bbb32c9877fc7acc38d62cb31e3e42674964cac474",
+        "bytes": 345
+      },
+      "labels": {
+        "path": "cases/defect_lock_not_released/labels.json",
+        "sha256": "0242d95222ca2d3749bc241dd3306b804386ccdd6faad70c936a09005894d4d1",
+        "bytes": 1298
+      }
+    },
+    {
+      "id": "defect_nil_map_write",
+      "kind": "defect",
+      "go_versions": {
+        "base": "1.22",
+        "head": "1.22"
+      },
+      "build": "builds",
+      "files": [
+        {
+          "side": "base",
+          "path": "go.mod",
+          "sha256": "d8b3651adeb73bf36ac775cdf7d2c67500ba06e73735ee8b2e281cc020221a0f",
+          "bytes": 37
+        },
+        {
+          "side": "base",
+          "path": "metrics.go",
+          "sha256": "ebb96f9a2ace31541bbe598eb9e5fa011fcd9cb500a5a4059f429a79a5fd051b",
+          "bytes": 761
+        },
+        {
+          "side": "head",
+          "path": "go.mod",
+          "sha256": "d8b3651adeb73bf36ac775cdf7d2c67500ba06e73735ee8b2e281cc020221a0f",
+          "bytes": 37
+        },
+        {
+          "side": "head",
+          "path": "metrics.go",
+          "sha256": "3f115eb1b0e8748e5f86bcaf8de63f13fbd7dcb229f4a88d30d93030fb55789d",
+          "bytes": 1055
+        }
+      ],
+      "readme": {
+        "path": "cases/defect_nil_map_write/README.md",
+        "sha256": "93c85eaeca69830ee7ea4f62bcd006f81564d776596af21f6e9e4c41ac22d2ca",
+        "bytes": 383
+      },
+      "labels": {
+        "path": "cases/defect_nil_map_write/labels.json",
+        "sha256": "906b2c000db8c1723d0570a5a5c3b57d6dc0c25c5075d1c37f0175b5c3028293",
+        "bytes": 1388
+      }
+    },
+    {
+      "id": "defect_off_by_one",
+      "kind": "defect",
+      "go_versions": {
+        "base": "1.22",
+        "head": "1.22"
+      },
+      "build": "builds",
+      "files": [
+        {
+          "side": "base",
+          "path": "go.mod",
+          "sha256": "b13f26a4d88aa0bd48e6fa62bf2ff2498843be4ed2468ff1ce0ff0c08219fd7f",
+          "bytes": 37
+        },
+        {
+          "side": "base",
+          "path": "tail.go",
+          "sha256": "3c8a5e2fc709a1618ba5e5e2099c7a3e5f06759bba701ba8f1c00ba24480fd6e",
+          "bytes": 465
+        },
+        {
+          "side": "head",
+          "path": "go.mod",
+          "sha256": "b13f26a4d88aa0bd48e6fa62bf2ff2498843be4ed2468ff1ce0ff0c08219fd7f",
+          "bytes": 37
+        },
+        {
+          "side": "head",
+          "path": "tail.go",
+          "sha256": "737628b4e6099c421335a257890953cbd5ad2cd5b5d554c1baed8669193c6c4c",
+          "bytes": 743
+        }
+      ],
+      "readme": {
+        "path": "cases/defect_off_by_one/README.md",
+        "sha256": "3a61784e3350cecbbe5a52e6c515af962ce9862c898fc05acde949d9bcf6909c",
+        "bytes": 403
+      },
+      "labels": {
+        "path": "cases/defect_off_by_one/labels.json",
+        "sha256": "7a1fa3d776d7c9a8a3c65540d675b5b63e5bde6e0757494f626b02e9c6b224fb",
+        "bytes": 1306
+      }
+    },
+    {
+      "id": "defect_path_traversal",
+      "kind": "defect",
+      "go_versions": {
+        "base": "1.22",
+        "head": "1.22"
+      },
+      "build": "builds",
+      "files": [
+        {
+          "side": "base",
+          "path": "go.mod",
+          "sha256": "d40071ce245fc3b688ab6082d658363a2ef41e1d75f25d05c7461bedfb80bb41",
+          "bytes": 37
+        },
+        {
+          "side": "base",
+          "path": "server.go",
+          "sha256": "2500f3eb52942fffb3982ecb8ef094933d5f00b086685c08506cdd5788b8c355",
+          "bytes": 977
+        },
+        {
+          "side": "head",
+          "path": "go.mod",
+          "sha256": "d40071ce245fc3b688ab6082d658363a2ef41e1d75f25d05c7461bedfb80bb41",
+          "bytes": 37
+        },
+        {
+          "side": "head",
+          "path": "server.go",
+          "sha256": "3457c6b83c693491811b3818583c658e5eb4973159dacbc17c3e51b69510fc6a",
+          "bytes": 1477
+        }
+      ],
+      "readme": {
+        "path": "cases/defect_path_traversal/README.md",
+        "sha256": "d834cfc6db0190a3334663f2499233f0fcd0cf92941b0ffd4d815e7ae125f7d6",
+        "bytes": 375
+      },
+      "labels": {
+        "path": "cases/defect_path_traversal/labels.json",
+        "sha256": "3f1961420c2f688c4744ce12ffbe57753b4b852455400eb8adb986e7fc8f2496",
+        "bytes": 1410
+      }
+    },
+    {
+      "id": "defect_size_overflow",
+      "kind": "defect",
+      "go_versions": {
+        "base": "1.22",
+        "head": "1.22"
+      },
+      "build": "builds",
+      "files": [
+        {
+          "side": "base",
+          "path": "frame.go",
+          "sha256": "f99f9f536d5f412d5213c08608f7d162b823442b10fc8fe49592583b4046ea5f",
+          "bytes": 752
+        },
+        {
+          "side": "base",
+          "path": "go.mod",
+          "sha256": "eac6dc5bdc9b8f2ae4fbff5e61dc9b42558ee6317a8fc7e9d95bc0117b18d209",
+          "bytes": 35
+        },
+        {
+          "side": "head",
+          "path": "frame.go",
+          "sha256": "5dd011981cee1fe7d88fb7a3b622cc66a43e51d782261ce6744f845e13e3415a",
+          "bytes": 871
+        },
+        {
+          "side": "head",
+          "path": "go.mod",
+          "sha256": "eac6dc5bdc9b8f2ae4fbff5e61dc9b42558ee6317a8fc7e9d95bc0117b18d209",
+          "bytes": 35
+        }
+      ],
+      "readme": {
+        "path": "cases/defect_size_overflow/README.md",
+        "sha256": "5bc27b5862d9b166aec4b9d2b3269e8681f0615da92845d4bd14d932a206cec2",
+        "bytes": 415
+      },
+      "labels": {
+        "path": "cases/defect_size_overflow/labels.json",
+        "sha256": "2b7c8e6c221f5c96b483c0924b91190560f59c6df8024985bf86d3c6d14b7835",
+        "bytes": 1490
+      }
+    },
+    {
+      "id": "defect_slice_alias",
+      "kind": "defect",
+      "go_versions": {
+        "base": "1.22",
+        "head": "1.22"
+      },
+      "build": "builds",
+      "files": [
+        {
+          "side": "base",
+          "path": "go.mod",
+          "sha256": "6e28365f74016f243bbef91a1d0feddf92ea6ca608f590bcd2af40784101dbd7",
+          "bytes": 35
+        },
+        {
+          "side": "base",
+          "path": "steps.go",
+          "sha256": "20b4cea7ae3a40c45d29074a5c030ee2c5340ed8f42a2e20883eae39fb5a71af",
+          "bytes": 241
+        },
+        {
+          "side": "head",
+          "path": "go.mod",
+          "sha256": "6e28365f74016f243bbef91a1d0feddf92ea6ca608f590bcd2af40784101dbd7",
+          "bytes": 35
+        },
+        {
+          "side": "head",
+          "path": "steps.go",
+          "sha256": "11abbb0ddcbffa4c21452c204bed1f668d91afc47734178ed9bacd1e6eb44962",
+          "bytes": 584
+        }
+      ],
+      "readme": {
+        "path": "cases/defect_slice_alias/README.md",
+        "sha256": "5f3001db4d9897de41631faef71a15d4e9233e21fabb06476b91280f09384fbf",
+        "bytes": 369
+      },
+      "labels": {
+        "path": "cases/defect_slice_alias/labels.json",
+        "sha256": "295ef6837bcb22bcdd6885c45d034d5e13aebfef84c1d97d4d1721ca19af7706",
+        "bytes": 1297
+      }
+    },
+    {
+      "id": "defect_sql_string",
+      "kind": "defect",
+      "go_versions": {
+        "base": "1.22",
+        "head": "1.22"
+      },
+      "build": "builds",
+      "files": [
+        {
+          "side": "base",
+          "path": "go.mod",
+          "sha256": "0d80a963bf862a77e0666a17a725df05eb7f8d1fa6980c2e73dee3542f58e1d6",
+          "bytes": 39
+        },
+        {
+          "side": "base",
+          "path": "store.go",
+          "sha256": "d622b8a006aa011127bd3e8fd58382d40a52baa1c112985689a82d8ddf530a9a",
+          "bytes": 533
+        },
+        {
+          "side": "head",
+          "path": "go.mod",
+          "sha256": "0d80a963bf862a77e0666a17a725df05eb7f8d1fa6980c2e73dee3542f58e1d6",
+          "bytes": 39
+        },
+        {
+          "side": "head",
+          "path": "store.go",
+          "sha256": "d7d6b59e8251d5fc4e0202c8aa972928e0f4450ec2db98d338f223b4f8ed3450",
+          "bytes": 1085
+        }
+      ],
+      "readme": {
+        "path": "cases/defect_sql_string/README.md",
+        "sha256": "eebb62dcb7ac92a9bfe026e41f6c154c20e49b570ace039222a00f5aa8ca5eac",
+        "bytes": 347
+      },
+      "labels": {
+        "path": "cases/defect_sql_string/labels.json",
+        "sha256": "65693388baf6067471e4a403b06190201fa33738a53dad9a6b015c4c7fa70871",
+        "bytes": 1264
+      }
+    },
+    {
+      "id": "defect_token_compare",
+      "kind": "defect",
+      "go_versions": {
+        "base": "1.22",
+        "head": "1.22"
+      },
+      "build": "builds",
+      "files": [
+        {
+          "side": "base",
+          "path": "auth.go",
+          "sha256": "fbc1d63e71dd6dc9d025b7634daf11f92a106396091f0a3c2c898dada0827d0e",
+          "bytes": 729
+        },
+        {
+          "side": "base",
+          "path": "go.mod",
+          "sha256": "6fd85fb3d27e122f95f008b2e2e9d4efe1a7609a66e0fc3cadb2351b5cfbc09f",
+          "bytes": 34
+        },
+        {
+          "side": "head",
+          "path": "auth.go",
+          "sha256": "271f9620e38933320e60bf770de46cbc0ac274fd49107c6e4a1f7455994c0fb8",
+          "bytes": 665
+        },
+        {
+          "side": "head",
+          "path": "go.mod",
+          "sha256": "6fd85fb3d27e122f95f008b2e2e9d4efe1a7609a66e0fc3cadb2351b5cfbc09f",
+          "bytes": 34
+        }
+      ],
+      "readme": {
+        "path": "cases/defect_token_compare/README.md",
+        "sha256": "e8b847e580324c235e038addf45238905a3c166fb8bdb5c2bec4354f733cde06",
+        "bytes": 369
+      },
+      "labels": {
+        "path": "cases/defect_token_compare/labels.json",
+        "sha256": "7c30be4eb3cf614f7302dfffc6c136d57cd040f7781ebfbabf8d5eef4cf690f1",
+        "bytes": 1295
+      }
+    },
+    {
+      "id": "deletion_authz_check",
+      "kind": "deletion_defect",
+      "go_versions": {
+        "base": "1.22",
+        "head": "1.22"
+      },
+      "build": "builds",
+      "files": [
+        {
+          "side": "base",
+          "path": "go.mod",
+          "sha256": "5dfbf20fc0104abaece3ca32998e60e46996edccd72eae0a5cd7f5addb0d078c",
+          "bytes": 34
+        },
+        {
+          "side": "base",
+          "path": "service.go",
+          "sha256": "a1d85abf28a5da79fbb647c53024fb2c344675d50be5a2913b6380e9f2133d9d",
+          "bytes": 1314
+        },
+        {
+          "side": "head",
+          "path": "go.mod",
+          "sha256": "5dfbf20fc0104abaece3ca32998e60e46996edccd72eae0a5cd7f5addb0d078c",
+          "bytes": 34
+        },
+        {
+          "side": "head",
+          "path": "service.go",
+          "sha256": "fec80a43f428d73536a5bdb66afa488e6c22e1323cc1d4b9c4ab368971264d40",
+          "bytes": 1241
+        }
+      ],
+      "readme": {
+        "path": "cases/deletion_authz_check/README.md",
+        "sha256": "b5539d1a588dd2540dc66737838c9aaff834b72552033b1068272e5db723c0b6",
+        "bytes": 370
+      },
+      "labels": {
+        "path": "cases/deletion_authz_check/labels.json",
+        "sha256": "0bca6798b2f53dc8c4782122b1b0909a62f4cd39198aedff1b34a1237b42ddf7",
+        "bytes": 1387
+      }
+    },
+    {
+      "id": "deletion_bounds_check",
+      "kind": "deletion_defect",
+      "go_versions": {
+        "base": "1.22",
+        "head": "1.22"
+      },
+      "build": "builds",
+      "files": [
+        {
+          "side": "base",
+          "path": "go.mod",
+          "sha256": "08087bd7d0f81ef110d2bfc2de22d95f3bb1b1062a022839664dc0cd992325e6",
+          "bytes": 37
+        },
+        {
+          "side": "base",
+          "path": "handler.go",
+          "sha256": "9e428e4a0d827cd9ba246c556bbf7b96856332915783853fa88971c6cd7f7b3b",
+          "bytes": 637
+        },
+        {
+          "side": "base",
+          "path": "page.go",
+          "sha256": "cceb556cbb36d26c0209de459f797ddf2598cff5ed206009719e24cb8cc0485a",
+          "bytes": 846
+        },
+        {
+          "side": "head",
+          "path": "go.mod",
+          "sha256": "08087bd7d0f81ef110d2bfc2de22d95f3bb1b1062a022839664dc0cd992325e6",
+          "bytes": 37
+        },
+        {
+          "side": "head",
+          "path": "handler.go",
+          "sha256": "9e428e4a0d827cd9ba246c556bbf7b96856332915783853fa88971c6cd7f7b3b",
+          "bytes": 637
+        },
+        {
+          "side": "head",
+          "path": "page.go",
+          "sha256": "df14dbc696af4e3c12da15b6066553b92c5ca91b441f167b3d0b1cb7cbfa41dd",
+          "bytes": 776
+        }
+      ],
+      "readme": {
+        "path": "cases/deletion_bounds_check/README.md",
+        "sha256": "b68f9a0eb27ede594d7ad7d6e36742f62195596a5b120e5f9a6d38e843202101",
+        "bytes": 390
+      },
+      "labels": {
+        "path": "cases/deletion_bounds_check/labels.json",
+        "sha256": "2264f2840e044c3b9deb60af584d2b789a342cf9c54a80f0580d63678c0b7518",
+        "bytes": 1648
+      }
+    },
+    {
+      "id": "deletion_nil_guard",
+      "kind": "deletion_defect",
+      "go_versions": {
+        "base": "1.22",
+        "head": "1.22"
+      },
+      "build": "builds",
+      "files": [
+        {
+          "side": "base",
+          "path": "client.go",
+          "sha256": "92bc26c88cb5637706115577f6f4dac2889bf78f939ce22a5da13b99736f9204",
+          "bytes": 748
+        },
+        {
+          "side": "base",
+          "path": "default.go",
+          "sha256": "d626a663686de9c5d4a241f3c9b52ce00cb4eff3821045f8d18fe6de4d46a842",
+          "bytes": 158
+        },
+        {
+          "side": "base",
+          "path": "go.mod",
+          "sha256": "e122ac080c528b7a458466b5615cf190c3f7db3c88b37a65b69a13de0f36bdef",
+          "bytes": 36
+        },
+        {
+          "side": "head",
+          "path": "client.go",
+          "sha256": "750c804601dd8fe7fd6e6a016c1a62e0e699a536acb7c913939367dba79fa256",
+          "bytes": 701
+        },
+        {
+          "side": "head",
+          "path": "default.go",
+          "sha256": "d626a663686de9c5d4a241f3c9b52ce00cb4eff3821045f8d18fe6de4d46a842",
+          "bytes": 158
+        },
+        {
+          "side": "head",
+          "path": "go.mod",
+          "sha256": "e122ac080c528b7a458466b5615cf190c3f7db3c88b37a65b69a13de0f36bdef",
+          "bytes": 36
+        }
+      ],
+      "readme": {
+        "path": "cases/deletion_nil_guard/README.md",
+        "sha256": "4b3ed489963bd621b77866a58ac135f455422dcdb0c8fe323923199d2ada8d5e",
+        "bytes": 386
+      },
+      "labels": {
+        "path": "cases/deletion_nil_guard/labels.json",
+        "sha256": "9da1abf8932592d70a02a125bfe5e10f3756e1c6e57e039b865ba9708a88bc10",
+        "bytes": 1561
+      }
+    },
+    {
+      "id": "near_miss_loop_variable_go122",
+      "kind": "near_miss",
+      "go_versions": {
+        "base": "1.21",
+        "head": "1.22"
+      },
+      "build": "builds",
+      "files": [
+        {
+          "side": "base",
+          "path": "go.mod",
+          "sha256": "6c8733895973a5f46dd3581ec8a1a2431a373de5b7892903d3a90fc6f9fc6eb3",
+          "bytes": 36
+        },
+        {
+          "side": "base",
+          "path": "notify.go",
+          "sha256": "7d9e432bdfb60120e0b34e6bf4d038e9bccc3682cb196da8d8e40c7fc64509d9",
+          "bytes": 609
+        },
+        {
+          "side": "head",
+          "path": "go.mod",
+          "sha256": "20871d568e3fae8865b2be8714387d12126bdad297ed2f5b8b9c8e5fe6c4da18",
+          "bytes": 36
+        },
+        {
+          "side": "head",
+          "path": "notify.go",
+          "sha256": "bce324e6a01124908901a9fb01329d7716071c1406d92386db1b4dd4f8f4e598",
+          "bytes": 590
+        }
+      ],
+      "readme": {
+        "path": "cases/near_miss_loop_variable_go122/README.md",
+        "sha256": "6f8ed95c3a4cebb380a79cc8c2f90a9aab266fbac5c1067759e5a36a143d7efa",
+        "bytes": 431
+      },
+      "labels": {
+        "path": "cases/near_miss_loop_variable_go122/labels.json",
+        "sha256": "5ffec7ed38480288f33cc546f1f76295966f093d24d1cf0c40a74d285be8b678",
+        "bytes": 1890
+      }
+    },
+    {
+      "id": "near_miss_nil_map_read",
+      "kind": "near_miss",
+      "go_versions": {
+        "base": "1.22",
+        "head": "1.22"
+      },
+      "build": "builds",
+      "files": [
+        {
+          "side": "base",
+          "path": "go.mod",
+          "sha256": "3351deff76e1f5011c40ef2f635a6039af09bde7dcef6b81cea228d22435eaf4",
+          "bytes": 35
+        },
+        {
+          "side": "base",
+          "path": "registry.go",
+          "sha256": "36194bcb51e0f96eb1a787b0b8e6500625f590dfe1569aa75212e20b7aac8f76",
+          "bytes": 649
+        },
+        {
+          "side": "head",
+          "path": "go.mod",
+          "sha256": "3351deff76e1f5011c40ef2f635a6039af09bde7dcef6b81cea228d22435eaf4",
+          "bytes": 35
+        },
+        {
+          "side": "head",
+          "path": "registry.go",
+          "sha256": "c9ee16bcff30af69b98dd5099a3282fc2d4693a4916db04992a7ada86e2d6e50",
+          "bytes": 609
+        }
+      ],
+      "readme": {
+        "path": "cases/near_miss_nil_map_read/README.md",
+        "sha256": "21cdf39503fbf9ce4f154cb2ef616604cc07c377a107acd4f736c917365f13a3",
+        "bytes": 379
+      },
+      "labels": {
+        "path": "cases/near_miss_nil_map_read/labels.json",
+        "sha256": "21991558570f82ede1b88e4ef804274a5ecbd412d74f31d4b567f7ad4d093b9c",
+        "bytes": 1331
+      }
+    },
+    {
+      "id": "near_miss_time_after_go123",
+      "kind": "near_miss",
+      "go_versions": {
+        "base": "1.22",
+        "head": "1.23"
+      },
+      "build": "builds",
+      "files": [
+        {
+          "side": "base",
+          "path": "drain.go",
+          "sha256": "23e7f6219d951c42463718a4a28c2259c4e5205223d72db7147cb785087d5c99",
+          "bytes": 623
+        },
+        {
+          "side": "base",
+          "path": "go.mod",
+          "sha256": "5c87c058ae4a1c7ba1299b6c9e16018ff7b7044a68a1076a8ac7cb0b012de1f1",
+          "bytes": 35
+        },
+        {
+          "side": "head",
+          "path": "drain.go",
+          "sha256": "a0d776d3ce6bcc0918da36ace5418ac099f6f173c0dd498089e1f735b0e5d952",
+          "bytes": 520
+        },
+        {
+          "side": "head",
+          "path": "go.mod",
+          "sha256": "0161658ff9fe3045e0f04a93e7cdc6ccc48858658d8deb81bcba0a7afaee87f1",
+          "bytes": 35
+        }
+      ],
+      "readme": {
+        "path": "cases/near_miss_time_after_go123/README.md",
+        "sha256": "725fcd04e6d368cc04831599458fccd35f7684b30de7d03bf5307fbd4f08df41",
+        "bytes": 466
+      },
+      "labels": {
+        "path": "cases/near_miss_time_after_go123/labels.json",
+        "sha256": "dd08ca1b5dd4cd11dc37ff9d1dc05747a4459a117e6e6adc36d67c743481e727",
+        "bytes": 1447
+      }
+    }
+  ]
+}

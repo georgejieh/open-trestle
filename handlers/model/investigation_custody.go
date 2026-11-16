@@ -166,6 +166,11 @@ func (c *Investigation) selectedSnapshot(sources []review.ContextSource) (review
 	rows := make([]row, 0, len(sources))
 	ranges := make([]evidence.SourceRange, 0, len(sources))
 	for _, s := range sources {
+		// Removed base lines are bound to the base file and are never head
+		// snapshot ranges.
+		if s.Stage() == review.ContextStageRemovedLines {
+			continue
+		}
 		b := s.SliceBinding()
 		r := b.SourceRange()
 		rows = append(rows, row{r.Path(), r.StartLine(), r.EndLine(), b.RepositoryFileIdentity()})
@@ -197,6 +202,28 @@ func (c *Investigation) selectedSnapshot(sources []review.ContextSource) (review
 	return review.NewReviewSnapshot(c.options.InitialSnapshot.Workspace(), artifactPayloadHash(encoded), ranges)
 }
 func (c *Investigation) rebuildContext(turn uint8, prior gateway.InvestigationTurnRecord, newIDs []string) (review.InvestigationGenerationContext, error) {
+	return c.buildContext(turn, prior, newIDs, c.scanned)
+}
+
+// initialScannedBytes returns the scan budget readInitial charges: the whole
+// size of each initial head source file, which every initial read must scan
+// exactly. Removed base lines are not read.
+func (c *Investigation) initialScannedBytes() (uint64, bool) {
+	var total uint64
+	for _, s := range c.options.InitialContext.Sources() {
+		if s.Stage() == review.ContextStageRemovedLines {
+			continue
+		}
+		ref, ok := c.byPath[s.EvidenceItem().SourceRange().Path()]
+		if !ok {
+			return 0, false
+		}
+		total += uint64(ref.SizeBytes())
+	}
+	return total, true
+}
+
+func (c *Investigation) buildContext(turn uint8, prior gateway.InvestigationTurnRecord, newIDs []string, scanned uint64) (review.InvestigationGenerationContext, error) {
 	packet := c.options.InitialContext
 	snapshot := c.options.InitialSnapshot
 	if turn > 1 {
@@ -213,7 +240,7 @@ func (c *Investigation) rebuildContext(turn uint8, prior gateway.InvestigationTu
 			return review.InvestigationGenerationContext{}, err
 		}
 	}
-	state := review.InvestigationContextState{Turn: turn, ScannedBytes: c.scanned, ReturnedBytes: c.returned, ToolCallsUsed: uint8(len(c.tools)), NewResultArtifactIdentities: append([]string(nil), newIDs...)}
+	state := review.InvestigationContextState{Turn: turn, ScannedBytes: scanned, ReturnedBytes: c.returned, ToolCallsUsed: uint8(len(c.tools)), NewResultArtifactIdentities: append([]string(nil), newIDs...)}
 	if turn > 1 {
 		state.PreviousRequestIdentity = prior.RequestIdentity()
 		state.PreviousOutcomeIdentity = prior.Outcome().Identity()
@@ -236,9 +263,24 @@ func (c *Investigation) contextArtifact(value review.InvestigationGenerationCont
 	sort.Strings(provenance)
 	return artifact.New(c.options.Scope, artifact.KindContextPacket, "application/json", c.head.Classification(), artifact.OriginHost, c.head.Protection(), provenance, request.Payload(), at, c.expires)
 }
+
+// readInitial rereads every initial head source from the protected head
+// snapshot. Removed base lines are not in the head snapshot: their custody is
+// the analysis record the pipeline matched at assembly, so they are held as
+// validated candidates without a head read and never charge the scan budget.
 func (c *Investigation) readInitial(ctx context.Context) error {
 	files := []string{}
+	headSources := make([]review.ContextSource, 0, len(c.options.InitialContext.Sources()))
 	for _, s := range c.options.InitialContext.Sources() {
+		if s.Stage() == review.ContextStageRemovedLines {
+			if s.Validate() != nil || !s.HasSliceBinding() {
+				return ErrInvestigation
+			}
+			continue
+		}
+		headSources = append(headSources, s)
+	}
+	for _, s := range headSources {
 		ref, ok := c.byPath[s.EvidenceItem().SourceRange().Path()]
 		if !ok || !c.options.MemoryScope.AllowsPath(ref.Path()) {
 			return ErrInvestigation
@@ -249,7 +291,7 @@ func (c *Investigation) readInitial(ctx context.Context) error {
 		return ErrInvestigation
 	}
 	var total uint64
-	for _, s := range c.options.InitialContext.Sources() {
+	for _, s := range headSources {
 		r := s.EvidenceItem().SourceRange()
 		ref := c.byPath[r.Path()]
 		n := uint64(ref.SizeBytes())
@@ -258,7 +300,7 @@ func (c *Investigation) readInitial(ctx context.Context) error {
 		}
 		total += n
 	}
-	for _, s := range c.options.InitialContext.Sources() {
+	for _, s := range headSources {
 		r := s.EvidenceItem().SourceRange()
 		ref := c.byPath[r.Path()]
 		if uint64(ref.SizeBytes()) > c.options.Policy.MaxScannedBytes()-c.scanned {
@@ -279,6 +321,11 @@ func (c *Investigation) readInitial(ctx context.Context) error {
 		}
 		c.retained[ref.ArtifactIdentity()] = c.files[ref.ArtifactIdentity()]
 		c.candidates = append(c.candidates, s)
+	}
+	for _, s := range c.options.InitialContext.Sources() {
+		if s.Stage() == review.ContextStageRemovedLines {
+			c.candidates = append(c.candidates, s)
+		}
 	}
 	return nil
 }

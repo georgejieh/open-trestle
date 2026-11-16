@@ -122,7 +122,7 @@ func TestVerificationContextPacketCountsGenerationOmissions(t *testing.T) {
 	if json.Unmarshal(request.Payload(), &wire) != nil {
 		t.Fatal("decode")
 	}
-	if wire.SchemaVersion != 3 || wire.SourceCoverage.PreselectionOmitted != 7 || wire.SourceCoverage.Omitted != 7 || wire.SourceOmissions[0].Count != 7 {
+	if wire.SchemaVersion != 8 || wire.SourceCoverage.PreselectionOmitted != 7 || wire.SourceCoverage.Omitted != 7 || wire.SourceOmissions[0].Count != 7 {
 		t.Fatalf("wire=%#v", wire)
 	}
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/georgejieh/open-trestle/diagnostics"
 	"github.com/georgejieh/open-trestle/internal/apilimit"
 	"github.com/georgejieh/open-trestle/runtimeadmin"
+	"github.com/georgejieh/open-trestle/runtimecatalog"
 )
 
 const (
@@ -68,6 +69,40 @@ func New(rawBaseURL, credential string, httpClient *http.Client) (*Client, error
 	baseCopy.RawPath = ""
 	return &Client{baseURL: &baseCopy, credential: strings.Clone(credential), httpClient: &clone}, nil
 }
+
+// NewLocal confines an alpha client to canonical numeric loopback HTTP.
+func NewLocal(rawBaseURL, credential string, httpClient *http.Client) (*Client, error) {
+	baseURL, err := url.Parse(rawBaseURL)
+	if err != nil || baseURL.Scheme != "http" || net.ParseIP(baseURL.Hostname()) == nil || !net.ParseIP(baseURL.Hostname()).IsLoopback() {
+		return nil, ErrInvalidClient
+	}
+	return New(rawBaseURL, credential, httpClient)
+}
+
+// SubmitLocalDeterministicReview admits one exact provider-free intent through the existing runs endpoint.
+func (c *Client) SubmitLocalDeterministicReview(ctx context.Context, intent runtimecatalog.LocalDeterministicReviewIntent) (controlplane.ReviewRunReceipt, error) {
+	if intent.Validate() != nil {
+		return controlplane.ReviewRunReceipt{}, runtimecatalog.ErrInvalidLocalDeterministicReview
+	}
+	encoded, err := runtimecatalog.EncodeLocalDeterministicReviewIntent(intent)
+	if err != nil {
+		return controlplane.ReviewRunReceipt{}, err
+	}
+	return c.doReceipt(ctx, http.MethodPost, "/api/v1/runs", encoded, http.StatusAccepted, intent.Scope())
+}
+
+// SubmitLocalFullReview admits a scoped full review; the daemon supplies source and policy authority.
+func (c *Client) SubmitLocalFullReview(ctx context.Context, intent runtimecatalog.LocalFullReviewIntent) (controlplane.ReviewRunReceipt, error) {
+	if intent.Validate() != nil {
+		return controlplane.ReviewRunReceipt{}, runtimecatalog.ErrInvalidLocalFullReview
+	}
+	encoded, err := runtimecatalog.EncodeLocalFullReviewIntent(intent)
+	if err != nil {
+		return controlplane.ReviewRunReceipt{}, err
+	}
+	return c.doReceipt(ctx, http.MethodPost, "/api/v1/runs", encoded, http.StatusAccepted, intent.Scope())
+}
+
 func (c *Client) SubmitRun(ctx context.Context, plan controlplane.ReviewRunPlan) (controlplane.ReviewRunReceipt, error) {
 	if err := plan.Validate(); err != nil {
 		return controlplane.ReviewRunReceipt{}, err
@@ -85,12 +120,27 @@ func (c *Client) SubmitRun(ctx context.Context, plan controlplane.ReviewRunPlan)
 	}
 	return receipt, nil
 }
+
+// GetRun reads one authorized run. When the daemon answers not_found, the
+// error is both its *APIError and controlplane.ErrRunNotOpened, so callers can
+// tell a run that was never opened from any other failure to read it.
 func (c *Client) GetRun(ctx context.Context, scope audit.ReviewScope) (controlplane.ReviewRunReceipt, error) {
 	if err := scope.Validate(); err != nil {
 		return controlplane.ReviewRunReceipt{}, err
 	}
-	return c.doReceipt(ctx, http.MethodGet, runPath(scope), nil, http.StatusOK, scope)
+	receipt, err := c.doReceipt(ctx, http.MethodGet, runPath(scope), nil, http.StatusOK, scope)
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.Code() == "not_found" {
+		return controlplane.ReviewRunReceipt{}, runNotOpenedError{apiErr}
+	}
+	return receipt, err
 }
+
+// runNotOpenedError is a run read the daemon answered with not_found.
+type runNotOpenedError struct{ apiError *APIError }
+
+func (e runNotOpenedError) Error() string   { return e.apiError.Error() }
+func (e runNotOpenedError) Unwrap() []error { return []error{e.apiError, controlplane.ErrRunNotOpened} }
 
 // GetRunPlan reads the exact immutable plan for one authorized run.
 func (c *Client) GetRunPlan(ctx context.Context, scope audit.ReviewScope) (controlplane.ReviewRunPlan, error) {
@@ -111,7 +161,7 @@ func (c *Client) GetRunPlan(ctx context.Context, scope audit.ReviewScope) (contr
 	return plan, nil
 }
 
-// GetDiagnosticSet reads independently verified diagnostics for one exact run scope.
+// GetDiagnosticSet reads canonical review diagnostics for one exact run scope.
 func (c *Client) GetDiagnosticSet(ctx context.Context, scope audit.ReviewScope) (diagnostics.Set, error) {
 	if err := scope.Validate(); err != nil {
 		return diagnostics.Set{}, err

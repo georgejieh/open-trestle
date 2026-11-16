@@ -1,0 +1,45 @@
+{
+  "contract": "open-trestle/model-corpus-labels",
+  "schema_version": 1,
+  "case_id": "deletion_nil_guard",
+  "case_kind": "deletion_defect",
+  "review_state": "pending",
+  "reviewer_identifier": null,
+  "review_date": null,
+  "fixture_author_identifier": "open-trestle-maintainers",
+  "go_version": "1.22",
+  "go_semantics": "Both trees declare go 1.22 in go.mod. The labels assume Go 1.22 language semantics and standard library, built by a Go 1.22 or later toolchain with this module as the main module.",
+  "expected_outcome": "findings",
+  "expected_findings": [
+    {
+      "id": "f1",
+      "path": "client.go",
+      "side": "base",
+      "start_line": 26,
+      "end_line": 28,
+      "also_accept_locations": [
+        {
+          "path": "client.go",
+          "side": "head",
+          "start_line": 26,
+          "end_line": 26
+        },
+        {
+          "path": "default.go",
+          "side": "head",
+          "start_line": 5,
+          "end_line": 5
+        }
+      ],
+      "category": "correctness",
+      "also_compatible_categories": [
+        "reliability"
+      ],
+      "severity_hint": "high",
+      "defect": "Without the nil check, `NewClient(endpoint, nil)` dereferences a nil `*Options` and panics, which breaks the documented nil default and every call to `Default`.",
+      "rationale": "The `Options` doc comment still promises that nil selects `DefaultOptions`, and the unchanged `Default` passes nil, so `opts.Timeout` is evaluated on a nil pointer."
+    }
+  ],
+  "false_positive_traps": [],
+  "abstention_reason": null
+}

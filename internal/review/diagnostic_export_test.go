@@ -142,3 +142,38 @@ func TestExportDiagnosticSetPreservesDeterministicCheck(t *testing.T) {
 		t.Fatalf("materialized=(%#v,%t,%v)", materialized, created, err)
 	}
 }
+
+func TestExportDiagnosticSetRecordsABaseSideFindingOnlyInVersion8(t *testing.T) {
+	receipt, verified := verifiedSetFixture(t, "verified", gateway.RouteIndependenceDistinctProvider)
+	// Relabel the fixture finding as a categorized finding on removed base
+	// lines, with its covering evidence on the same side.
+	finding := verified.findings[0]
+	finding.category, finding.side = CandidateCategoryCorrectness, LineSideBase
+	finding.evidenceBindings = append([]candidateEvidenceBinding(nil), finding.evidenceBindings...)
+	for index := range finding.evidenceBindings {
+		finding.evidenceBindings[index].side = LineSideBase
+	}
+	finding.fingerprint = deriveVerifiedFindingFingerprint(finding)
+	finding.identity = deriveVerifiedFindingIdentity(finding)
+	verified.findings = []VerifiedFinding{finding}
+	verified.identity = deriveVerifiedFindingSetIdentity(verified)
+	if err := verified.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	scope, _ := audit.NewReviewScope("tenant", "repository", "review-run")
+	selection, _ := newContextSourceOmissionSummary(ContextOmissionSelectionLimit, 172)
+	coverage, _ := newContextSourceCoverage(receipt.VerificationContextIdentity(), scope.Identity(), receipt.SnapshotIdentity(), receipt.CandidateBatchIdentity(), 173, 1, 172, []ContextSourceOmissionSummary{selection})
+	check, _ := diagnostics.NewDeterministicCheck("7d14e06842bbf9ba2db3c600f146d2e497bcaacd1664a1bdcb02b52e7b3d1a96", strings.Repeat("8", 64), strings.Repeat("a", 64), diagnostics.CheckPassed, 2, 3, 2, 3, 0)
+	exported, err := ExportDiagnosticSetWithDeterministicChecks(scope, strings.Repeat("1", 40), receipt, verified, coverage, []diagnostics.DeterministicCheck{check})
+	if err != nil || exported.SchemaVersion() != 8 || len(exported.Findings()) != 1 || exported.Findings()[0].Side() != diagnostics.LineSideBase || exported.Findings()[0].SourceIdentity() != finding.Identity() {
+		t.Fatalf("exported=(%#v,%v)", exported, err)
+	}
+	// A version that cannot record a side refuses rather than relabel base
+	// lines as head lines.
+	if _, err := ExportDiagnosticSet(scope, strings.Repeat("1", 40), receipt, verified); err == nil {
+		t.Fatal("version 2 export accepted a base-side finding")
+	}
+	if _, err := ExportDiagnosticSetWithOmissionReasons(scope, strings.Repeat("1", 40), receipt, verified, coverage); err == nil {
+		t.Fatal("version 4 export accepted a base-side finding")
+	}
+}

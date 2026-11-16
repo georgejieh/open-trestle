@@ -33,6 +33,10 @@ var (
 	ErrInboxStoreCapacity = errors.New("webhook inbox store capacity exceeded")
 	// ErrDeliveryConflict identifies reuse of one forge delivery ID for different content.
 	ErrDeliveryConflict = errors.New("webhook delivery conflict")
+	// ErrDeliveryReplayed identifies a verified body already accepted for the same scope, source,
+	// event type, and action under a different forge delivery ID. The delivery ID is not covered
+	// by the forge signature, so a captured signed body must not mint a new delivery or run.
+	ErrDeliveryReplayed = errors.New("webhook delivery replayed")
 	// ErrDeliveryExpired identifies a retired delivery whose body must not be replayed.
 	ErrDeliveryExpired = errors.New("webhook delivery expired")
 	// ErrInvalidInboxList identifies an unsafe scope, source, cursor, or page bound.
@@ -239,11 +243,16 @@ func validateInboxOperation(ctx context.Context) error {
 
 // MemoryStore is a concurrency-safe bounded-operation in-memory inbox.
 type MemoryStore struct {
-	mu      sync.RWMutex
-	entries map[string]StoredDelivery
+	mu       sync.RWMutex
+	entries  map[string]StoredDelivery
+	replays  map[string]string
+	refusals map[string]RefusalRecord
+	retries  map[string]RetryRecord
 }
 
-func NewMemoryStore() *MemoryStore { return &MemoryStore{entries: make(map[string]StoredDelivery)} }
+func NewMemoryStore() *MemoryStore {
+	return &MemoryStore{entries: make(map[string]StoredDelivery), replays: make(map[string]string)}
+}
 func (s *MemoryStore) Put(ctx context.Context, delivery VerifiedDelivery, at time.Time) (StoredDelivery, bool, error) {
 	if err := validateInboxOperation(ctx); err != nil {
 		return StoredDelivery{}, false, err
@@ -266,10 +275,14 @@ func (s *MemoryStore) Put(ctx context.Context, delivery VerifiedDelivery, at tim
 		}
 		return existing, false, nil
 	}
+	if _, replayed := s.replays[delivery.ReplayKey()]; replayed {
+		return StoredDelivery{}, false, ErrDeliveryReplayed
+	}
 	if len(s.entries) >= maxMemoryStoreEntries {
 		return StoredDelivery{}, false, ErrInboxStoreCapacity
 	}
 	s.entries[delivery.DeduplicationKey()] = stored
+	s.replays[delivery.ReplayKey()] = delivery.DeduplicationKey()
 	return stored, true, nil
 }
 func (s *MemoryStore) Get(ctx context.Context, scope RepositoryScope, source Source, key string) (StoredDelivery, bool, error) {

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/georgejieh/open-trestle/audit"
+	"github.com/georgejieh/open-trestle/diagnostics"
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/internal/fileauthority"
 	"github.com/georgejieh/open-trestle/internal/memory"
@@ -18,6 +20,8 @@ import (
 type localGitRetainedMemoryInputOptions struct {
 	inventory  string
 	policy     string
+	review     string
+	remove     string
 	feedback   string
 	output     string
 	tenant     string
@@ -39,6 +43,38 @@ type localGitRetainedMemoryInputReceipt struct {
 	RecordCount                 int    `json:"record_count"`
 	PathCount                   int    `json:"path_count"`
 	ExpiresAtUnixMilliseconds   int64  `json:"expires_at_unix_ms"`
+}
+
+type localGitRetainedMemoryRemovalReceipt struct {
+	Contract                    string `json:"contract"`
+	SchemaVersion               int    `json:"schema_version"`
+	Status                      string `json:"status"`
+	RetainedMemoryInputIdentity string `json:"retained_memory_input_identity"`
+	ScopeIdentity               string `json:"scope_identity"`
+	RepositoryIdentity          string `json:"repository_identity"`
+	HeadRevisionIdentity        string `json:"head_revision_identity"`
+	RuntimePolicyIdentity       string `json:"runtime_policy_identity"`
+}
+
+func writeLocalGitRetainedMemoryRemovalReceipt(format string, receipt localGitRetainedMemoryRemovalReceipt, stdout io.Writer) error {
+	var encoded []byte
+	if format == "text" {
+		encoded = []byte(fmt.Sprintf("status: %s\nretained_memory_input_identity: %s\nscope_identity: %s\nrepository_identity: %s\nhead_revision_identity: %s\nruntime_policy_identity: %s\n", receipt.Status, receipt.RetainedMemoryInputIdentity, receipt.ScopeIdentity, receipt.RepositoryIdentity, receipt.HeadRevisionIdentity, receipt.RuntimePolicyIdentity))
+	} else {
+		value, err := json.Marshal(receipt)
+		if err != nil {
+			return err
+		}
+		encoded = append(value, '\n')
+	}
+	written, err := stdout.Write(encoded)
+	if err != nil {
+		return err
+	}
+	if written != len(encoded) {
+		return io.ErrShortWrite
+	}
+	return nil
 }
 
 func runLocalGitRetainedMemoryInput(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -70,7 +106,50 @@ func runLocalGitRetainedMemoryInput(ctx context.Context, args []string, stdout, 
 		fmt.Fprintln(stderr, "local-git retained-memory-input: protected configuration refused")
 		return 4
 	}
-	feedback, err := runtimeconfig.LoadProtectedRetainedMemoryFeedback(execution, options.feedback)
+	var review diagnostics.Set
+	if options.review != "" {
+		review, head, err = runtimeconfig.LoadProtectedFeedbackReview(execution, options.review, options.tenant, options.repository, repository, policy)
+		if err != nil {
+			if execution.Err() != nil {
+				fmt.Fprintln(stderr, "local-git retained-memory-input: canceled")
+				return 3
+			}
+			fmt.Fprintln(stderr, "local-git retained-memory-input: protected review refused")
+			return 4
+		}
+	}
+	scope, err := memory.NewScope(options.tenant, options.repository, "local-reviewer", memory.RefVisibilityExact, head.Identity(), []string{"."})
+	if err != nil {
+		fmt.Fprintln(stderr, "local-git retained-memory-input: protected scope refused")
+		return 4
+	}
+	if options.remove != "" {
+		removedIdentity, err := runtimeconfig.RemoveProtectedRetainedMemoryInput(execution, options.remove, scope, repository, policy)
+		if err != nil {
+			if errors.Is(err, fileauthority.ErrProtectedRemoveIncomplete) {
+				fmt.Fprintln(stderr, "local-git retained-memory-input: removal may remain incomplete")
+				return 1
+			}
+			if execution.Err() != nil {
+				fmt.Fprintln(stderr, "local-git retained-memory-input: canceled")
+				return 3
+			}
+			fmt.Fprintln(stderr, "local-git retained-memory-input: protected removal refused")
+			return 4
+		}
+		receipt := localGitRetainedMemoryRemovalReceipt{Contract: "open-trestle/retained-memory-removal-result", SchemaVersion: 1, Status: "removed", RetainedMemoryInputIdentity: removedIdentity, ScopeIdentity: scope.Identity(), RepositoryIdentity: repository.Identity(), HeadRevisionIdentity: head.Identity(), RuntimePolicyIdentity: policy.Identity()}
+		if err := writeLocalGitRetainedMemoryRemovalReceipt(options.format, receipt, stdout); err != nil {
+			fmt.Fprintln(stderr, "local-git retained-memory-input: removal receipt unavailable")
+			return 1
+		}
+		return 0
+	}
+	var feedback []runtimeconfig.RetainedMemoryFeedback
+	if options.review != "" {
+		feedback, err = runtimeconfig.LoadProtectedFindingFeedback(execution, options.feedback, review)
+	} else {
+		feedback, err = runtimeconfig.LoadProtectedRetainedMemoryFeedback(execution, options.feedback)
+	}
 	if err != nil {
 		if execution.Err() != nil {
 			fmt.Fprintln(stderr, "local-git retained-memory-input: canceled")
@@ -85,11 +164,6 @@ func runLocalGitRetainedMemoryInput(ctx context.Context, args []string, stdout, 
 	}
 	observedAt := time.UnixMilli(time.Now().UTC().UnixMilli()).UTC()
 	validUntil := observedAt.Add(options.validFor)
-	scope, err := memory.NewScope(options.tenant, options.repository, "local-reviewer", memory.RefVisibilityExact, head.Identity(), []string{"."})
-	if err != nil {
-		fmt.Fprintln(stderr, "local-git retained-memory-input: protected scope refused")
-		return 4
-	}
 	encoded, err := runtimeconfig.EncodeRetainedMemoryInput(execution, scope, repository, head, policy, feedback, observedAt, validUntil)
 	if err != nil {
 		if execution.Err() != nil {
@@ -146,26 +220,16 @@ func parseLocalGitRetainedMemoryInput(args []string) (localGitRetainedMemoryInpu
 		return options, evidence.RepositoryIdentity{}, evidence.RevisionIdentity{}, fmt.Errorf("invalid explicit retained memory authoring intent")
 	}
 	allowed := map[string]bool{
-		"--repository-authority": true,
-		"--repository-namespace": true,
-		"--repository-name":      true,
-		"--revision-algorithm":   true,
-		"--head-revision-digest": true,
-		"--tenant":               true,
-		"--repository":           true,
-		"--route-inventory":      true,
-		"--runtime-policy":       true,
-		"--egress":               true,
-		"--timeout":              true,
-		"--valid-for":            true,
-		"--feedback-input":       true,
-		"--output":               true,
-		"--format":               true,
+		"--repository-authority": true, "--repository-namespace": true, "--repository-name": true,
+		"--revision-algorithm": true, "--head-revision-digest": true, "--review-input": true,
+		"--tenant": true, "--repository": true, "--route-inventory": true, "--runtime-policy": true,
+		"--egress": true, "--timeout": true, "--valid-for": true, "--feedback-input": true,
+		"--output": true, "--remove-input": true, "--format": true,
 	}
-	if len(args) != 28 && len(args) != 30 || len(args)%2 != 0 {
+	if len(args)%2 != 0 || len(args) < 22 || len(args) > 30 {
 		return fail()
 	}
-	values := make(map[string]string, len(allowed))
+	values := map[string]string{}
 	for i := 0; i < len(args); i += 2 {
 		flag, value := args[i], args[i+1]
 		if !allowed[flag] || value == "" || len(value) > 4096 || values[flag] != "" {
@@ -173,10 +237,26 @@ func parseLocalGitRetainedMemoryInput(args []string) (localGitRetainedMemoryInpu
 		}
 		values[flag] = value
 	}
-	for flag := range allowed {
-		if flag != "--format" && values[flag] == "" {
+	for _, flag := range []string{"--repository-authority", "--repository-namespace", "--repository-name", "--tenant", "--repository", "--route-inventory", "--runtime-policy", "--egress", "--timeout"} {
+		if values[flag] == "" {
 			return fail()
 		}
+	}
+	review := values["--review-input"] != ""
+	if review {
+		if values["--revision-algorithm"] != "" || values["--head-revision-digest"] != "" {
+			return fail()
+		}
+	} else if values["--revision-algorithm"] == "" || values["--head-revision-digest"] == "" {
+		return fail()
+	}
+	removal := values["--remove-input"] != ""
+	if removal {
+		if !review || values["--feedback-input"] != "" || values["--output"] != "" || values["--valid-for"] != "" {
+			return fail()
+		}
+	} else if values["--feedback-input"] == "" || values["--output"] == "" || values["--valid-for"] == "" {
+		return fail()
 	}
 	if values["--egress"] != "local-only" {
 		return fail()
@@ -192,32 +272,32 @@ func parseLocalGitRetainedMemoryInput(args []string) (localGitRetainedMemoryInpu
 	if err != nil || timeout < time.Second || timeout > 15*time.Minute {
 		return fail()
 	}
-	validFor, err := parseWholeMillisecondDuration(values["--valid-for"])
-	if err != nil || validFor <= timeout || validFor > 168*time.Hour {
-		return fail()
+	var validFor time.Duration
+	if !removal {
+		validFor, err = parseWholeMillisecondDuration(values["--valid-for"])
+		if err != nil || validFor <= timeout || validFor > 168*time.Hour {
+			return fail()
+		}
 	}
 	repository, err := evidence.NewRepositoryIdentity(values["--repository-authority"], strings.Split(values["--repository-namespace"], "/"), values["--repository-name"])
 	if err != nil {
 		return fail()
 	}
-	head, err := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithm(values["--revision-algorithm"]), values["--head-revision-digest"])
-	if err != nil {
+	var head evidence.RevisionIdentity
+	if !review {
+		head, err = evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithm(values["--revision-algorithm"]), values["--head-revision-digest"])
+		if err != nil {
+			return fail()
+		}
+	}
+	if review {
+		if _, err := audit.NewReviewScope(values["--tenant"], values["--repository"], "feedback-intent"); err != nil {
+			return fail()
+		}
+	} else if _, err := memory.NewScope(values["--tenant"], values["--repository"], "local-reviewer", memory.RefVisibilityExact, head.Identity(), []string{"."}); err != nil {
 		return fail()
 	}
-	if _, err := memory.NewScope(values["--tenant"], values["--repository"], "local-reviewer", memory.RefVisibilityExact, head.Identity(), []string{"."}); err != nil {
-		return fail()
-	}
-	options = localGitRetainedMemoryInputOptions{
-		inventory:  values["--route-inventory"],
-		policy:     values["--runtime-policy"],
-		feedback:   values["--feedback-input"],
-		output:     values["--output"],
-		tenant:     values["--tenant"],
-		repository: values["--repository"],
-		format:     format,
-		timeout:    timeout,
-		validFor:   validFor,
-	}
+	options = localGitRetainedMemoryInputOptions{inventory: values["--route-inventory"], policy: values["--runtime-policy"], feedback: values["--feedback-input"], output: values["--output"], review: values["--review-input"], remove: values["--remove-input"], tenant: values["--tenant"], repository: values["--repository"], format: format, timeout: timeout, validFor: validFor}
 	return options, repository, head, nil
 }
 
@@ -254,5 +334,5 @@ func writeLocalGitRetainedMemoryInputReceipt(format string, receipt localGitReta
 }
 
 func writeLocalGitRetainedMemoryInputUsage(stderr io.Writer) {
-	fmt.Fprintln(stderr, "usage: trestle local-git retained-memory-input --repository-authority AUTHORITY --repository-namespace SEGMENT[/SEGMENT...] --repository-name NAME --revision-algorithm sha1|sha256 --head-revision-digest HEX --tenant ID --repository ID --route-inventory PATH --runtime-policy PATH --egress local-only --timeout DURATION --valid-for DURATION --feedback-input PATH --output PATH [--format json|text]")
+	fmt.Fprintln(stderr, "usage: trestle local-git retained-memory-input --repository-authority AUTHORITY --repository-namespace SEGMENT[/SEGMENT...] --repository-name NAME (--revision-algorithm sha1|sha256 --head-revision-digest HEX | --review-input PATH) --tenant ID --repository ID --route-inventory PATH --runtime-policy PATH --egress local-only --timeout DURATION (--valid-for DURATION --feedback-input PATH --output PATH | --remove-input PATH) [--format json|text]")
 }

@@ -14,6 +14,32 @@ type pinnedPath struct {
 	info os.FileInfo
 }
 
+// DirectoryPin is a sampled, checked directory path chain, not an authorization token.
+// Its saved component identities are private and cannot be changed by callers.
+type DirectoryPin struct {
+	chain []pinnedPath
+}
+
+// PinDirectory captures a trusted non-symlink directory and all of its ancestors.
+func PinDirectory(path string) (*DirectoryPin, error) {
+	chain, err := pinChain(path, true)
+	if err != nil {
+		return nil, err
+	}
+	if err := recheckChain(chain); err != nil {
+		return nil, err
+	}
+	return &DirectoryPin{chain: chain}, nil
+}
+
+// Recheck compares the path chain against the same saved component identities.
+func (p *DirectoryPin) Recheck() error {
+	if p == nil || len(p.chain) == 0 {
+		return ErrUntrustedPath
+	}
+	return recheckChain(p.chain)
+}
+
 func trustedParent(parent, child os.FileInfo) bool {
 	return parent.IsDir() && parent.Mode()&os.ModeSymlink == 0 && TrustedOwner(parent) &&
 		(parent.Mode().Perm()&0022 == 0 || parent.Mode()&os.ModeSticky != 0 && TrustedOwner(child))

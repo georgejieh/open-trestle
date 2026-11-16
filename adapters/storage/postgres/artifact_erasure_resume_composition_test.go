@@ -113,9 +113,6 @@ func resumeExpectedFence(t *testing.T, op artifact.ErasureOperation) []byte {
 func resumeAttestationKey(g *resumeJournalGraph) string {
 	return resumePrefix + "/deletions/" + g.scope.Identity() + "/" + g.value.Identity() + ".attestation-v2"
 }
-func resumeIntentKey(g *resumeJournalGraph) string {
-	return strings.TrimSuffix(resumeAttestationKey(g), ".attestation-v2") + ".intent-v2"
-}
 func assertResumeCertified(t *testing.T, g *budgetedResumeGraph, op artifact.ErasureOperation, r artifact.ErasureResult, err error, selected ...artifact.ProtectedErasurePolicy) artifact.ErasureAttestationV2 {
 	t.Helper()
 	if err != nil || r.State() != artifact.ErasureState(5) || r.Operation().Identity() != op.Identity() {
@@ -868,7 +865,6 @@ func TestBudgetedResumeEscapedHistoryUsesActualPageSelection(t *testing.T) {
 		snapshot := g.sql.Snapshot()
 		events := g.peer.Events()[before:]
 		overflow := false
-		var invocationUnknowns []resumeListResponseOracle
 		for _, event := range events {
 			q, _ := url.ParseQuery(event.Query)
 			if !q.Has("versions") {
@@ -907,7 +903,7 @@ func TestBudgetedResumeEscapedHistoryUsesActualPageSelection(t *testing.T) {
 					}
 				}
 			case artifact.AttemptResponseUnavailable:
-				invocationUnknowns = append(invocationUnknowns, oracle)
+				// The operation-agnostic boundary assertion below verifies the exact failed attempt.
 			default:
 				t.Fatal("unsupported durable version-list response", oracle.Response.Code)
 			}
@@ -947,15 +943,21 @@ func TestBudgetedResumeEscapedHistoryUsesActualPageSelection(t *testing.T) {
 		if unknownBoundary {
 			resumeZeroResult(t, result, err)
 			if invocationElapsed < 90*time.Second || invocationContext.Err() != nil || invocationObserved.Before(a.NotBefore()) || !invocationObserved.Before(a.NotAfter()) || !g.policy.AllowsAt(invocationObserved) {
-				t.Fatal("unknown list response did not reach the explicit invocation boundary", invocationElapsed, invocationContext.Err())
+				t.Fatal("unknown response did not reach the explicit invocation boundary", invocationElapsed, invocationContext.Err())
+			}
+			var invocationUnknowns []resumeListResponseOracle
+			for _, event := range events {
+				if oracle, failed := resumeFailedAttemptOracle(t, g, op, snapshot, event, a, label, invocationObserved); failed {
+					invocationUnknowns = append(invocationUnknowns, oracle)
+				}
 			}
 			if len(invocationUnknowns) != 1 {
-				t.Fatal("unknown boundary did not retain exactly one failed version-list response", len(invocationUnknowns))
+				t.Fatal("unknown boundary did not retain exactly one failed dispatched response", len(invocationUnknowns))
 			}
 			oracle := invocationUnknowns[0]
-			progress, found, readErr := g.journal.ReadErasureProgress(g.Context("unknown-list-spend"), op.Ref(), oracle.Request.AllowanceIdentity())
+			progress, found, readErr := g.journal.ReadErasureProgress(g.Context("unknown-spend"), op.Ref(), oracle.Request.AllowanceIdentity())
 			if readErr != nil || !found {
-				t.Fatal("unknown list usage", readErr)
+				t.Fatal("unknown response usage", readErr)
 			}
 			usage := resumeSingleUsage(t, progress, a)
 			resumeAssertAllowanceUsageMatchesAttempts(t, g, snapshot, a, usage)
@@ -968,7 +970,7 @@ func TestBudgetedResumeEscapedHistoryUsesActualPageSelection(t *testing.T) {
 				}
 			}
 			retainedUnknowns = append(retainedUnknowns, retainedListUnknown{allowance: a, usage: usage, attemptIdentity: oracle.Attempt.Identity(), unknownIdentity: oracle.UnknownRow["evidence_identity"].(string), unknownCanonical: append([]byte(nil), oracle.UnknownRow["canonical_evidence"].([]byte)...)})
-			t.Logf("explicit invocation %d reached unchanged 90-second limit with committed list uncertainty and active allowance/policy", invocation)
+			t.Logf("explicit invocation %d reached unchanged 90-second limit with committed request uncertainty and active allowance/policy", invocation)
 			continue
 		}
 		invocationExpired := errors.Is(err, artifact.ErrErasureAllowanceExpired) &&

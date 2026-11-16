@@ -1,0 +1,186 @@
+{
+  "contract": "open-trestle/betterleaks-qualification-coverage",
+  "schema_version": 1,
+  "scanner_identity": {
+    "scanner": "betterleaks",
+    "scanner_version": "v1.8.1",
+    "scanner_commit": "5eab48332cc48565864514e3bc6de89df091a7c4",
+    "ruleset_identity": "27ded783c81940d13c22cc46556a3f8184baf397bff08a69fcfae87991925f42",
+    "ruleset_rule_count": 417,
+    "build_profile": "public_detect_run_re2_purego_go1.26.11_linux_amd64_v1"
+  },
+  "summary": {
+    "expected_occurrences": 14,
+    "accepted_detections": 11,
+    "positive_fixtures": 11,
+    "detected_fixtures": 10,
+    "repeated_expected": 2,
+    "repeated_detected": 2,
+    "exact_detection_spans": 11,
+    "known_misses": [
+      "bearer",
+      "aws_secret_key",
+      "aws_session_token"
+    ]
+  },
+  "fixtures": [
+    {
+      "id": "github-pat",
+      "fixture_sha256": "9e9cfc13b3ca75187e1e975f17dc644551f8c26648833a0566ae2a4b50af6149",
+      "content_base64": "Z2l0aHViX3BhdCA9IGdocF9OT1RSRUFMMEExQjJDM0Q0RTVGNkc3SDhKOUtMTU5QUVJTVFU=",
+      "occurrences": [
+        {
+          "name": "github_pat",
+          "accepted_detection": true,
+          "span_id": "github-pat-1"
+        }
+      ]
+    },
+    {
+      "id": "openai-api",
+      "fixture_sha256": "7d1d1602b66ef10c18e77e58e5e0558e58224e3d8b6788d7ef1aaf2f3d056ec0",
+      "content_base64": "b3BlbmFpX2tleSA9IHNrLU5PVFJFQUwwQTFCMkMzRDRFNUY2VDNCbGJrRkpJTlZBTElEMEExQjJDM0Q0RTVGNgo=",
+      "occurrences": [
+        {
+          "name": "openai_api",
+          "accepted_detection": true,
+          "span_id": "openai-api-1"
+        }
+      ]
+    },
+    {
+      "id": "github-oauth",
+      "fixture_sha256": "573aa59fc52b1c82374b8d3c10809d56bf238c9aff8c8839b8b916c90875d8d5",
+      "content_base64": "b2F1dGggPSBnaG9fTk9UUkVBTDBBMUIyQzNENEU1RjZHN0g4SjlLTE1OUFFSU1RV",
+      "occurrences": [
+        {
+          "name": "github_oauth",
+          "accepted_detection": true,
+          "span_id": "github-oauth-1"
+        }
+      ]
+    },
+    {
+      "id": "bearer",
+      "fixture_sha256": "f45a00b253866afc7a5dd275cf142dcbe8d235c7cce70af9eb5fd8cc5680d613",
+      "content_base64": "QXV0aG9yaXphdGlvbjogQmVhcmVyIE5PVFJFQUxCRUFSRVIwQTFCMkMzRDRFNUY2RzdIOEo5S0xNTlBRUlNUVVZXWFlaMAo=",
+      "occurrences": [
+        {
+          "name": "bearer",
+          "accepted_detection": false,
+          "span_id": ""
+        }
+      ]
+    },
+    {
+      "id": "private-key",
+      "fixture_sha256": "12f1f5665a8777af0b9e4c5a4bb62fbad8a410763c7203b3fc721ff8318aa513",
+      "content_base64": "LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk9QRU5fVFJFU1RMRV9JTlZBTElEX0tFWV9NQVRFUklBTF8wMTIzNDU2Nzg5QUJDREVGCk5PVF9BX0tFWV8wMTIzNDU2Nzg5QUJDREVGX09QRU5fVFJFU1RMRV9JTlZBTElEX01BVEVSSUFMCi0tLS0tRU5EIFBSSVZBVEUgS0VZLS0tLS0=",
+      "occurrences": [
+        {
+          "name": "pem_private_key",
+          "accepted_detection": true,
+          "span_id": "private-key-1"
+        }
+      ]
+    },
+    {
+      "id": "postgresql-uri",
+      "fixture_sha256": "3fe5b5b802b065a5e18a30250461d184240139a4289529ca18f53bbc5167d007",
+      "content_base64": "ZGF0YWJhc2UgPSBwb3N0Z3Jlc3FsOi8vZml4dHVyZTpOT1RSRUFMMEExQjJDM0Q0RTVGNkc3SDhAZGF0YWJhc2UuaW52YWxpZDo1NDMyL2ZpeHR1cmUK",
+      "occurrences": [
+        {
+          "name": "postgresql_uri",
+          "accepted_detection": true,
+          "span_id": "postgresql-uri-1"
+        }
+      ]
+    },
+    {
+      "id": "mongodb-uri",
+      "fixture_sha256": "9a7dec5f8ba95dab3ec80ff5072522f830734d027444afa7bce3d324cba016ee",
+      "content_base64": "bW9uZ29kYiA9IG1vbmdvZGI6Ly9maXh0dXJlOk5PVFJFQUwwQTFCMkMzRDRFNUY2RzdIOEBkYXRhYmFzZS5pbnZhbGlkOjI3MDE3L2ZpeHR1cmUK",
+      "occurrences": [
+        {
+          "name": "mongodb_uri",
+          "accepted_detection": true,
+          "span_id": "mongodb-uri-1"
+        }
+      ]
+    },
+    {
+      "id": "aws-triplet",
+      "fixture_sha256": "e8f84a14a50b8a4ccc0ff9f5ae003a9a919764f10c3fe21348647bd2c12bacb8",
+      "content_base64": "QVdTX0FDQ0VTU19LRVlfSUQ9QUtJQU5PVFJFQUwyMzQ1NjdCQ0QKQVdTX1NFQ1JFVF9BQ0NFU1NfS0VZPU5PVFJFQUxTRUNSRVQwQTFCMkMzRDRFNUY2RzdIOEo5S0xNTlBRUlMKQVdTX1NFU1NJT05fVE9LRU49Tk9UUkVBTFNFU1NJT04wQTFCMkMzRDRFNUY2RzdIOEo5S0xNTlBRUlNUVVZXWFlaYWJjZDBBMUIyQzNENEU1Rgo=",
+      "occurrences": [
+        {
+          "name": "aws_access_key",
+          "accepted_detection": true,
+          "span_id": "aws-access-key-1"
+        },
+        {
+          "name": "aws_secret_key",
+          "accepted_detection": false,
+          "span_id": ""
+        },
+        {
+          "name": "aws_session_token",
+          "accepted_detection": false,
+          "span_id": ""
+        }
+      ]
+    },
+    {
+      "id": "jwt",
+      "fixture_sha256": "ae31b9fe2456637095a6bdf944cad89119247a9c6e72367fb45087bfd1c27bb3",
+      "content_base64": "Zml4dHVyZV9qd3QgPSBleUpoYkdjaU9pSnViMjVsSWl3aWFXNTJZV3hwWkNJNmRISjFaWDAuZXlKemRXSWlPaUptYVhoMGRYSmxJaXdpYVc1MllXeHBaQ0k2ZEhKMVpYMC5OT1RSRUFMU0lHTkFUVVJFMEExQjJDM0Q=",
+      "occurrences": [
+        {
+          "name": "jwt",
+          "accepted_detection": true,
+          "span_id": "jwt-1"
+        }
+      ]
+    },
+    {
+      "id": "slack-webhook",
+      "fixture_sha256": "fe087269511bc2e8a27d13a4a5c9a242e012e96bea47ca6bd56a8628e99aa836",
+      "content_base64": "d2ViaG9vayA9IGh0dHBzOi8vaG9va3Muc2xhY2suY29tL3NlcnZpY2VzL05PVFJFQUwwQTFCMkMzRDRFNUY2RzdIOEo5S0xNTlBRUlNUVVZXWFlaMEEK",
+      "occurrences": [
+        {
+          "name": "slack_webhook",
+          "accepted_detection": true,
+          "span_id": "slack-webhook-1"
+        }
+      ]
+    },
+    {
+      "id": "oauth-repeat-unicode-crlf",
+      "fixture_sha256": "d0357bd6656c05c2ec1272a41e96977f37d8264dc2e898de13fe667cddaf0ea9",
+      "content_base64": "bGFiZWwgzrI6IGdob19OT1RSRUFMMEExQjJDM0Q0RTVGNkc3SDhKOUtMTU5QUVJTVFUNCnJlcGVhdDogZ2hvX05PVFJFQUwwQTFCMkMzRDRFNUY2RzdIOEo5S0xNTlBRUlNUVQ0K",
+      "occurrences": [
+        {
+          "name": "github_oauth_first",
+          "accepted_detection": true,
+          "span_id": "oauth-repeat-1"
+        },
+        {
+          "name": "github_oauth_second",
+          "accepted_detection": true,
+          "span_id": "oauth-repeat-2"
+        }
+      ]
+    }
+  ],
+  "near_miss": {
+    "id": "generic-api-key-near-miss",
+    "fixture_sha256": "157a0a6c722b1c3d72bbf06bd497a5fb54f3f7d88963a541e22f1d8dd1018175",
+    "content_base64": "SU5FUlQhCmFwaV9rZXkgPSBYN21RMnZOOWNSNHBMOHNENmtXM3lINWJaMFE5QWFDY1F6Cg==",
+    "findings": [
+      {
+        "rule_id": "generic-api-key",
+        "span_id": "generic-api-key-near-miss-1"
+      }
+    ]
+  }
+}

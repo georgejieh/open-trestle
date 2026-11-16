@@ -246,11 +246,6 @@ func packedCLIHashBytes(t *testing.T, algorithm evidence.RevisionAlgorithm, valu
 	return h.Sum(nil)
 }
 
-func packedCLISHA256Hex(value []byte) string {
-	sum := sha256.Sum256(value)
-	return hex.EncodeToString(sum[:])
-}
-
 func packedCLIDecodeHex(t *testing.T, value string) []byte {
 	t.Helper()
 	decoded, err := hex.DecodeString(value)
@@ -297,7 +292,7 @@ func TestRunLocalGitPackedModelReviewCompletesNineTaskGraph(t *testing.T) {
 	if !slices.Contains(result.Limitations, "loose_and_pack_index_v1_subset") || slices.Contains(result.Limitations, "loose_git_objects_only") || !slices.Contains(result.Limitations, "bounded_source_context") || !slices.Contains(result.Limitations, "no_publication") {
 		t.Fatalf("packed limitations = %v", result.Limitations)
 	}
-	if result.Context != generated[0].ContextID || result.GenerationRequest != generated[0].RequestID || result.VerificationRequest != verified[0].RequestID || result.VerificationContext != verified[0].ContextID || len(result.CandidateIDs) != 1 {
+	if result.Context != generated[0].ContextID || result.GenerationRequest == generated[0].RequestID || result.VerificationRequest == verified[0].RequestID || result.VerificationContext != verified[0].ContextID || len(result.CandidateIDs) != 1 {
 		t.Fatal("packed result is disconnected from actual model-visible packets")
 	}
 	if result.Diagnostics.SourceCoverage.Selected == 0 || result.Diagnostics.Coverage.VerifiedCount != 1 || len(result.Diagnostics.Findings) != 1 {

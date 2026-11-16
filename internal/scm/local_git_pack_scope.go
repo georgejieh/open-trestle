@@ -2,9 +2,7 @@ package scm
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"os"
 
 	"github.com/georgejieh/open-trestle/internal/evidence"
 )
@@ -278,8 +276,4 @@ func localGitPackCacheKey(ref localGitPackObjectRef) string {
 		return ""
 	}
 	return ref.pack.stem + ":" + fmt.Sprintf("%d", ref.offset)
-}
-
-func isGenuineLooseAbsence(err error) bool {
-	return errors.Is(err, os.ErrNotExist)
 }

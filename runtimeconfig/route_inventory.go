@@ -37,11 +37,15 @@ type RouteDefinition struct {
 	LatencySampleCount     uint32
 }
 type RouteInventory struct {
-	identity            string
-	registryRevision    uint64
-	performanceRevision uint64
-	candidates          []gateway.ObservedRouteCandidate
-	performance         []provider.RoutePerformanceObservation
+	identity               string
+	registryRevision       uint64
+	performanceRevision    uint64
+	candidates             []gateway.ObservedRouteCandidate
+	performance            []provider.RoutePerformanceObservation
+	openRouterPrivacy      []openRouterPrivacyProjection
+	openRouterObserved     []openRouterObservedProjection
+	openCodeGoPrivacy      []openCodeGoPrivacyProjection
+	openCodeConsolePrivacy []openCodeConsolePrivacyProjection
 }
 
 func NewRouteInventory(ctx context.Context, definitions []RouteDefinition) (RouteInventory, error) {
@@ -50,6 +54,14 @@ func NewRouteInventory(ctx context.Context, definitions []RouteDefinition) (Rout
 	}
 	candidates := make([]gateway.ObservedRouteCandidate, 0, len(definitions))
 	performance := make([]provider.RoutePerformanceObservation, 0, len(definitions))
+	type inventoryEntry struct {
+		candidate      gateway.ObservedRouteCandidate
+		privacy        openRouterPrivacyProjection
+		observed       openRouterObservedProjection
+		goPrivacy      openCodeGoPrivacyProjection
+		consolePrivacy openCodeConsolePrivacyProjection
+	}
+	entries := make([]inventoryEntry, 0, len(definitions))
 	seen := make(map[string]struct{}, len(definitions))
 	registryRevision := definitions[0].RegistryRevision
 	performanceRevision := definitions[0].PerformanceRevision
@@ -102,14 +114,25 @@ func NewRouteInventory(ctx context.Context, definitions []RouteDefinition) (Rout
 		if err != nil {
 			return RouteInventory{}, ErrInvalidRouteInventory
 		}
-		candidates = append(candidates, observed)
+		entries = append(entries, inventoryEntry{observed, extractOpenRouterPrivacy(definition.EvidenceManifest, record), extractOpenRouterObservedManifest(definition.EvidenceManifest, record), extractOpenCodeGoPrivacy(definition.EvidenceManifest, record), extractOpenCodeConsolePrivacy(definition.EvidenceManifest, record)})
 		performance = append(performance, observation)
 	}
-	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].ResolvedRecord().RouteRegistryRecord().Identity() < candidates[j].ResolvedRecord().RouteRegistryRecord().Identity()
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].candidate.ResolvedRecord().RouteRegistryRecord().Identity() < entries[j].candidate.ResolvedRecord().RouteRegistryRecord().Identity()
 	})
+	privacy := make([]openRouterPrivacyProjection, 0, len(entries))
+	observedPrivacy := make([]openRouterObservedProjection, 0, len(entries))
+	goPrivacy := make([]openCodeGoPrivacyProjection, 0, len(entries))
+	consolePrivacy := make([]openCodeConsolePrivacyProjection, 0, len(entries))
+	for _, entry := range entries {
+		candidates = append(candidates, entry.candidate)
+		privacy = append(privacy, entry.privacy)
+		observedPrivacy = append(observedPrivacy, entry.observed)
+		goPrivacy = append(goPrivacy, entry.goPrivacy)
+		consolePrivacy = append(consolePrivacy, entry.consolePrivacy)
+	}
 	sort.Slice(performance, func(i, j int) bool { return performance[i].RecordIdentity() < performance[j].RecordIdentity() })
-	value := RouteInventory{registryRevision: registryRevision, performanceRevision: performanceRevision, candidates: candidates, performance: performance}
+	value := RouteInventory{registryRevision: registryRevision, performanceRevision: performanceRevision, candidates: candidates, performance: performance, openRouterPrivacy: privacy, openRouterObserved: observedPrivacy, openCodeGoPrivacy: goPrivacy, openCodeConsolePrivacy: consolePrivacy}
 	value.identity = inventoryIdentity(value)
 	return value, nil
 }
@@ -123,7 +146,7 @@ func (i RouteInventory) PerformanceObservations() []provider.RoutePerformanceObs
 	return append([]provider.RoutePerformanceObservation(nil), i.performance...)
 }
 func (i RouteInventory) Validate() error {
-	if i.registryRevision == 0 || i.performanceRevision == 0 || len(i.candidates) == 0 || len(i.candidates) > maxInventoryRoutes || len(i.candidates) != len(i.performance) || i.identity != inventoryIdentity(i) {
+	if i.registryRevision == 0 || i.performanceRevision == 0 || len(i.candidates) == 0 || len(i.candidates) > maxInventoryRoutes || len(i.candidates) != len(i.performance) || len(i.candidates) != len(i.openRouterPrivacy) || len(i.candidates) != len(i.openRouterObserved) || len(i.candidates) != len(i.openCodeGoPrivacy) || len(i.candidates) != len(i.openCodeConsolePrivacy) || i.identity != inventoryIdentity(i) {
 		return ErrInvalidRouteInventory
 	}
 	previous := ""
@@ -133,6 +156,21 @@ func (i RouteInventory) Validate() error {
 		}
 		identity := candidate.ResolvedRecord().RouteRegistryRecord().Identity()
 		if identity <= previous || i.performance[index].Validate() != nil || i.performance[index].ObservationRevision() != i.performanceRevision || i.performance[index].RecordIdentity() != identity {
+			return ErrInvalidRouteInventory
+		}
+		projection := i.openRouterPrivacy[index]
+		if projection != (openRouterPrivacyProjection{}) && !projection.matchesRecord(candidate.ResolvedRecord().RouteRegistryRecord()) {
+			return ErrInvalidRouteInventory
+		}
+		if observed := i.openRouterObserved[index]; observed != (openRouterObservedProjection{}) && (projection != (openRouterPrivacyProjection{}) || !observed.matchesRecord(candidate.ResolvedRecord().RouteRegistryRecord())) {
+			return ErrInvalidRouteInventory
+		}
+		goProjection := i.openCodeGoPrivacy[index]
+		if goProjection != (openCodeGoPrivacyProjection{}) && !goProjection.matchesRecord(candidate.ResolvedRecord().RouteRegistryRecord()) {
+			return ErrInvalidRouteInventory
+		}
+		consoleProjection := i.openCodeConsolePrivacy[index]
+		if consoleProjection != (openCodeConsolePrivacyProjection{}) && !consoleProjection.matchesRecord(candidate.ResolvedRecord().RouteRegistryRecord()) {
 			return ErrInvalidRouteInventory
 		}
 		previous = identity

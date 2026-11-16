@@ -2,6 +2,7 @@ package diagnostics
 
 import (
 	"bytes"
+	"fmt"
 	"github.com/georgejieh/open-trestle/audit"
 	"strings"
 	"testing"
@@ -223,5 +224,90 @@ func TestDeterministicDiagnosticCheckRejectsImpossibleState(t *testing.T) {
 	omission, _ := NewOmissionSummary(OmissionSelectionLimit, 1)
 	if set, err := NewSetWithDeterministicChecks(scope, strings.Repeat("d", 64), strings.Repeat("1", 40), strings.Repeat("e", 64), strings.Repeat("f", 64), 0, 0, 0, 2, 1, 1, []OmissionSummary{omission}, nil, nil); err == nil || set.Identity() != "" {
 		t.Fatalf("empty checks set=%#v err=%v", set, err)
+	}
+}
+
+func TestSetV6KeepsDeterministicObservationsSeparateFromVerifiedFindings(t *testing.T) {
+	scope, _ := audit.NewReviewScope("tenant-a", "repo-a", "run-a")
+	analysisIdentity := strings.Repeat("8", 64)
+	changeIdentity := strings.Repeat("7", 64)
+	sourceCheck := DeterministicCheck{changeIdentity: changeIdentity, state: CheckFailed, applicableFiles: 1, applicableRanges: 2, checkedFiles: 1, checkedRanges: 2, matches: 1}
+	check, err := NewDeterministicCheck(deriveSourceDeterministicCheckIdentity(sourceCheck), analysisIdentity, changeIdentity, CheckFailed, 1, 2, 1, 2, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation, err := NewDeterministicObservation(
+		strings.Repeat("6", 64), strings.Repeat("5", 64), analysisIdentity, check.Identity(),
+		"Debug output left in source", "The deterministic static rule matched this exact changed range; human review is required.",
+		SeverityWarning, "main.go", 6, 6, []string{strings.Repeat("4", 64)},
+	)
+	if err != nil || observation.Validate() != nil {
+		t.Fatalf("observation=(%#v,%v)", observation, err)
+	}
+	set, err := NewSetWithDeterministicObservations(scope, strings.Repeat("d", 64), strings.Repeat("1", 40), analysisIdentity, []DeterministicCheck{check}, []DeterministicObservation{observation})
+	if err != nil || set.Validate() != nil || set.SchemaVersion() != 6 || set.AnalysisResultIdentity() != analysisIdentity || set.VerifiedSetIdentity() != "" || len(set.Findings()) != 0 || len(set.DeterministicObservations()) != 1 {
+		t.Fatalf("set=%#v err=%v", set, err)
+	}
+	encoded, err := EncodeSet(set)
+	if err != nil || bytes.Contains(encoded, []byte(`"verified_set_identity"`)) || bytes.Contains(encoded, []byte(`"findings"`)) || !bytes.Contains(encoded, []byte(`"observations"`)) {
+		t.Fatalf("encoded=%s err=%v", encoded, err)
+	}
+	parsed, err := ParseSet(encoded)
+	if err != nil || parsed.Identity() != set.Identity() || !bytes.Equal(encoded, mustEncodeSet(t, parsed)) || parsed.DeterministicObservations()[0].Identity() != observation.Identity() {
+		t.Fatalf("parsed=%#v err=%v", parsed, err)
+	}
+	observations := set.DeterministicObservations()
+	observations[0] = DeterministicObservation{}
+	if set.DeterministicObservations()[0].Validate() != nil {
+		t.Fatal("deterministic observations were mutable")
+	}
+	for _, mutate := range []func(DeterministicObservation) DeterministicObservation{
+		func(value DeterministicObservation) DeterministicObservation {
+			value.analysisResultIdentity = strings.Repeat("9", 64)
+			return value
+		},
+		func(value DeterministicObservation) DeterministicObservation {
+			value.checkIdentity = strings.Repeat("9", 64)
+			return value
+		},
+	} {
+		changed := mutate(observation)
+		if candidate, candidateErr := NewSetWithDeterministicObservations(scope, strings.Repeat("d", 64), strings.Repeat("1", 40), analysisIdentity, []DeterministicCheck{check}, []DeterministicObservation{changed}); candidateErr == nil || candidate.Identity() != "" {
+			t.Fatalf("cross-wired observation admitted: %#v err=%v", candidate, candidateErr)
+		}
+	}
+}
+
+func TestSetV6RequiresExactObservationCount(t *testing.T) {
+	scope, _ := audit.NewReviewScope("tenant-a", "repo-a", "run-a")
+	analysisIdentity := strings.Repeat("8", 64)
+	changeIdentity := strings.Repeat("7", 64)
+	sourceCheck := DeterministicCheck{changeIdentity: changeIdentity, state: CheckFailed, applicableFiles: 1, applicableRanges: 1, checkedFiles: 1, checkedRanges: 1, matches: 1}
+	check, _ := NewDeterministicCheck(deriveSourceDeterministicCheckIdentity(sourceCheck), analysisIdentity, changeIdentity, CheckFailed, 1, 1, 1, 1, 1)
+	if set, err := NewSetWithDeterministicObservations(scope, strings.Repeat("d", 64), strings.Repeat("1", 40), analysisIdentity, []DeterministicCheck{check}, nil); err == nil || set.Identity() != "" {
+		t.Fatalf("missing observations set=%#v err=%v", set, err)
+	}
+}
+
+func TestSetV6ObservationLimitIsIndependentOfVerifiedFindingLimit(t *testing.T) {
+	scope, _ := audit.NewReviewScope("tenant-a", "repo-a", "run-many")
+	analysisIdentity := strings.Repeat("8", 64)
+	changeIdentity := strings.Repeat("7", 64)
+	sourceCheck := DeterministicCheck{changeIdentity: changeIdentity, state: CheckFailed, applicableFiles: 1, applicableRanges: 1, checkedFiles: 1, checkedRanges: 1, matches: 101}
+	check, err := NewDeterministicCheck(deriveSourceDeterministicCheckIdentity(sourceCheck), analysisIdentity, changeIdentity, CheckFailed, 1, 1, 1, 1, 101)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observations := make([]DeterministicObservation, 101)
+	for index := range observations {
+		path := fmt.Sprintf("file-%03d.go", index)
+		observations[index], err = NewDeterministicObservation(fmt.Sprintf("%064x", index+1), fmt.Sprintf("%064x", index+1001), analysisIdentity, check.Identity(), "Debug output left in source", "The deterministic static rule matched this exact changed range; human review is required.", SeverityWarning, path, 1, 1, []string{fmt.Sprintf("%064x", index+2001)})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	set, err := NewSetWithDeterministicObservations(scope, strings.Repeat("d", 64), strings.Repeat("1", 40), analysisIdentity, []DeterministicCheck{check}, observations)
+	if err != nil || set.Validate() != nil || len(set.DeterministicObservations()) != 101 {
+		t.Fatalf("set with 101 deterministic observations=(%#v,%v)", set, err)
 	}
 }

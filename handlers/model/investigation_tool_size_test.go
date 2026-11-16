@@ -188,7 +188,7 @@ func toolSizeFixture(t *testing.T, label string, fileCount int, notes string, re
 		toolRecordCheck(t, err)
 		return plan
 	}
-	f.owner, err = gateway.NewInvestigationRouteOwner(gateway.InvestigationRouteOwnerOptions{Scope: f.scope, SessionIdentity: f.binding.Identity(), PolicyIdentity: f.policy.Identity(), Deadline: options.Deadline, MaxTurns: uint8(f.policy.MaxModelTurns()), Budget: budget, Requirements: requirements, Constraints: constraints, Generation: makePlan(generation), Verification: makePlan(verification), Catalog: catalog, Ledger: f.ledger, Clock: f.clock})
+	f.owner, err = gateway.NewInvestigationRouteOwner(gateway.InvestigationRouteOwnerOptions{Scope: f.scope, SessionIdentity: f.binding.Identity(), PolicyIdentity: f.policy.Identity(), Deadline: options.Deadline, MaxTurns: uint8(f.policy.MaxModelTurns()), Budget: budget, Requirements: requirements, Constraints: constraints, Generation: makePlan(generation), Verification: makePlan(verification), Catalog: catalog, Ledger: f.ledger, Clock: f.clock, SystemChannelBytes: review.ModelRequestSystemChannelBytes})
 	toolRecordCheck(t, err)
 	f.state = review.InvestigationContextState{Turn: 1, ScannedBytes: initial.ScannedBytes()}
 	f.setContext(f.initial, f.selected)

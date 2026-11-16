@@ -19,7 +19,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/provider"
 )
 
-func contextPacketFixture(t *testing.T, content string) (audit.ReviewScope, memory.Scope, ReviewSnapshot, ContextSource, memory.LexicalRetrieval) {
+func contextPacketFixture(t testing.TB, content string) (audit.ReviewScope, memory.Scope, ReviewSnapshot, ContextSource, memory.LexicalRetrieval) {
 	t.Helper()
 	reviewScope, err := audit.NewReviewScope("tenant", "repository", "review-run")
 	if err != nil {
@@ -201,18 +201,23 @@ func TestContextPacketRejectsScopeAndBudgetMismatch(t *testing.T) {
 }
 
 func TestModelCandidateSchemaIdentityMatchesCanonicalPublicSchema(t *testing.T) {
-	encoded, err := os.ReadFile("../../schemas/review/model-candidate-batch-v1.schema.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var schema any
-	if err := json.Unmarshal(encoded, &schema); err != nil {
-		t.Fatal(err)
-	}
-	canonical, _ := json.Marshal(schema)
-	digest := sha256.Sum256(canonical)
-	if got := hex.EncodeToString(digest[:]); got != ModelCandidateBatchSchemaIdentity {
-		t.Fatalf("schema identity = %s, want %s", got, ModelCandidateBatchSchemaIdentity)
+	for path, want := range map[string]string{
+		"../../schemas/review/model-candidate-batch-v1.schema.json": ModelCandidateBatchV1SchemaIdentity,
+		"../../schemas/review/model-candidate-batch-v2.schema.json": ModelCandidateBatchSchemaIdentity,
+	} {
+		encoded, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var schema any
+		if err := json.Unmarshal(encoded, &schema); err != nil {
+			t.Fatal(err)
+		}
+		canonical, _ := json.Marshal(schema)
+		digest := sha256.Sum256(canonical)
+		if got := hex.EncodeToString(digest[:]); got != want {
+			t.Fatalf("%s schema identity = %s, want %s", path, got, want)
+		}
 	}
 }
 

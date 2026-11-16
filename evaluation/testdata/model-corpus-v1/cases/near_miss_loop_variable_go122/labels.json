@@ -1,0 +1,44 @@
+{
+  "contract": "open-trestle/model-corpus-labels",
+  "schema_version": 1,
+  "case_id": "near_miss_loop_variable_go122",
+  "case_kind": "near_miss",
+  "review_state": "pending",
+  "reviewer_identifier": null,
+  "review_date": null,
+  "fixture_author_identifier": "open-trestle-maintainers",
+  "go_version": "1.22",
+  "go_semantics": "The base go.mod declares go 1.21 and the head go.mod declares go 1.22. The labels assume Go 1.22 semantics for the head, built by a Go 1.22 or later toolchain with this module as the main module.",
+  "expected_outcome": "no_finding",
+  "expected_findings": [],
+  "false_positive_traps": [
+    {
+      "id": "t1",
+      "path": "notify.go",
+      "side": "head",
+      "start_line": 18,
+      "end_line": 20,
+      "also_match_locations": [
+        {
+          "path": "notify.go",
+          "side": "base",
+          "start_line": 17,
+          "end_line": 17
+        }
+      ],
+      "wrong_finding": "Removing `i, sub := i, sub` makes every goroutine capture the shared loop variables, so notifications can go to the wrong subscriber or be stored at the wrong index.",
+      "why_wrong": "The head go.mod declares go 1.22. Since Go 1.22 a `for` statement with `:=` declares new `i` and `sub` variables for each iteration, so each goroutine captures its own copies and the removed copy was redundant. The base declared go 1.21, where the copy was required."
+    },
+    {
+      "id": "t2",
+      "path": "notify.go",
+      "side": "head",
+      "start_line": 20,
+      "end_line": 20,
+      "also_match_locations": [],
+      "wrong_finding": "Goroutines write to the shared `errs` slice concurrently, which is a data race.",
+      "why_wrong": "Each goroutine writes a different element, and distinct slice elements are distinct variables under the Go memory model; `wg.Wait` orders every write before the return."
+    }
+  ],
+  "abstention_reason": null
+}

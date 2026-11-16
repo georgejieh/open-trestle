@@ -131,7 +131,7 @@ func TestNewResponseEnforcesFinishAndAggregateBounds(t *testing.T) {
 func TestResponseHasClosedRepresentation(t *testing.T) {
 	part, _ := NewResponsePart(ResponsePartAssistantText, "text/plain", []byte("x"))
 	response, _ := NewResponse(CapabilityReviewV1, ResponseFinishStop, []ResponsePart{part}, NewUnknownRouteTokenUsage())
-	if reflect.TypeOf(part).NumField() != 3 || reflect.TypeOf(response).NumField() != 5 {
+	if reflect.TypeOf(part).NumField() != 3 || reflect.TypeOf(response).NumField() != 6 {
 		t.Fatal("response values gained an unexpected field")
 	}
 	for _, value := range []string{"stop", "length", "tool_calls", "content_filter"} {

@@ -102,7 +102,8 @@ type toolRecordContextHeader struct {
 	Task    string `json:"task"`
 	Tools   string `json:"tool_calls"`
 	Sources []struct {
-		Path string `json:"path"`
+		Path  string `json:"path"`
+		Stage string `json:"stage"`
 	} `json:"sources"`
 	Investigation struct {
 		Session      string `json:"session_identity"`
@@ -317,14 +318,16 @@ func NewInvestigationToolOperation(b InvestigationToolEvidence, e InvestigationT
 	}
 	c := contextHeader.Investigation
 	wantRef := toolRecordIdentity([]any{"open-trestle/investigation-snapshot-ref", 1, e.SessionIdentity, e.Scope.Identity(), e.HeadArtifactIdentity, e.HeadSnapshotIdentity})
-	if contextHeader.Version != 4 || contextHeader.Scope != e.Scope.Identity() || contextHeader.Task != "candidate_generation" || contextHeader.Tools != "host_admitted_snapshot_read_v1" || c.Mode != "fixed_generation_route_v1" || c.Session != e.SessionIdentity || c.Policy != e.PolicyIdentity || c.HeadArtifact != e.HeadArtifactIdentity || c.Head != e.HeadSnapshotIdentity || c.Manifest != e.HeadManifestIdentity || c.SnapshotRef != wantRef {
+	// The bound context is rebuilt by current code, so it is always the
+	// executable investigation context version 6.
+	if contextHeader.Version != 6 || contextHeader.Scope != e.Scope.Identity() || contextHeader.Task != "candidate_generation" || contextHeader.Tools != "host_admitted_snapshot_read_v1" || c.Mode != "fixed_generation_route_v1" || c.Session != e.SessionIdentity || c.Policy != e.PolicyIdentity || c.HeadArtifact != e.HeadArtifactIdentity || c.Head != e.HeadSnapshotIdentity || c.Manifest != e.HeadManifestIdentity || c.SnapshotRef != wantRef {
 		return InvestigationToolOperation{}, errToolRecord
 	}
 	if b.TurnArtifact.Validate() != nil {
 		return InvestigationToolOperation{}, errToolRecord
 	}
 	turnBytes := b.TurnArtifact.Payload()
-	turn, err := gateway.ParseInvestigationTurnRecord(turnBytes)
+	turn, err := parseRetainedInvestigationTurn(turnBytes)
 	if err != nil || turn.Identity() != e.TurnIdentity || turn.RequestIdentity() != e.RequestIdentity || turn.PreviousTurnIdentity() != e.PreviousTurnIdentity || turn.Outcome().Identity() != e.OutcomeIdentity || turn.Dispatch().Response().Identity() != e.ResponseIdentity || turn.Authorization().ReviewScopeIdentity() != e.Scope.Identity() || turn.Authorization().RouteRecordIdentity() != c.Pin {
 		return InvestigationToolOperation{}, errToolRecord
 	}
@@ -388,6 +391,11 @@ func NewInvestigationToolOperation(b InvestigationToolEvidence, e InvestigationT
 		}
 	}
 	for _, item := range contextHeader.Sources {
+		// Removed base lines are not head files: their custody is the analysis
+		// record, and a removed file has no head file to supply.
+		if item.Stage == review.ContextStageRemovedLines.String() {
+			continue
+		}
 		if !seen[byPath[item.Path]] {
 			return InvestigationToolOperation{}, errToolRecord
 		}

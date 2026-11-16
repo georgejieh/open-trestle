@@ -52,7 +52,7 @@ func TestRunRendersAuthenticatedRunAndVerifiedDiagnostics(t *testing.T) {
 		t.Fatal(err)
 	}
 	rendered := output.String()
-	for _, want := range []string{"OPEN TRESTLE", "tenant-a / repo-a / run-ui", "active", "acquire", "available", "Verified diagnostics", "src/main.go:7", "Avoid unchecked result", "text is untrusted"} {
+	for _, want := range []string{"OPEN TRESTLE", "tenant-a / repo-a / run-ui", "active", "acquire", "available", "Review diagnostics", "src/main.go:7", "Avoid unchecked result", "text is untrusted"} {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("missing %q in:\n%s", want, rendered)
 		}

@@ -1,0 +1,276 @@
+package sourceinput
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"slices"
+
+	"github.com/georgejieh/open-trestle/internal/evidence"
+)
+
+const maximumInputBytes = 16 << 10
+
+var (
+	// ErrInvalidInput identifies malformed or cross-wired source acquisition authority.
+	ErrInvalidInput = errors.New("invalid source acquisition input")
+)
+
+// Input authorizes one exact read-only complete-content acquisition.
+type Input struct {
+	identity, sourceRootIdentity string
+	schemaVersion                int
+	repository                   evidence.RepositoryIdentity
+	revision                     evidence.RevisionIdentity
+	adapter                      evidence.SourceAdapterIdentity
+	// mergeBaseHead is set only by schema version 3: the input then names the
+	// requested base in revision and acquires the merge base of it and this head.
+	mergeBaseHead evidence.RevisionIdentity
+}
+
+// mergeBaseDerivation names the only derived-base rule of schema version 3.
+const mergeBaseDerivation = "merge_base"
+
+// NewMergeBaseInput authorizes acquisition of the merge base of the requested
+// base and the head, as a pull request diff presents it. The base and head use
+// one object algorithm; equal commits are recorded and refused at acquisition.
+func NewMergeBaseInput(repository evidence.RepositoryIdentity, requestedBase, head evidence.RevisionIdentity, adapter evidence.SourceAdapterIdentity) (Input, error) {
+	input := Input{schemaVersion: 3, repository: repository, revision: requestedBase, adapter: adapter, mergeBaseHead: head}
+	if err := input.validateFields(); err != nil {
+		return Input{}, err
+	}
+	input.identity = deriveInputIdentity(input)
+	return input, nil
+}
+
+// MergeBaseHead returns the head whose merge base with Revision this input
+// acquires. It reports false for an input that acquires Revision itself.
+func (i Input) MergeBaseHead() (evidence.RevisionIdentity, bool) {
+	return i.mergeBaseHead, i.schemaVersion == 3
+}
+
+// NewInput creates an immutable acquisition input for an exact repository revision and adapter.
+func NewInput(
+	repository evidence.RepositoryIdentity,
+	revision evidence.RevisionIdentity,
+	adapter evidence.SourceAdapterIdentity,
+) (Input, error) {
+	input := Input{schemaVersion: 1, repository: repository, revision: revision, adapter: adapter}
+	if err := input.validateFields(); err != nil {
+		return Input{}, err
+	}
+	input.identity = deriveInputIdentity(input)
+	return input, nil
+}
+
+// NewBoundInput binds acquisition to one daemon-retained source-root authority.
+func NewBoundInput(repository evidence.RepositoryIdentity, revision evidence.RevisionIdentity, adapter evidence.SourceAdapterIdentity, sourceRootIdentity string) (Input, error) {
+	input := Input{schemaVersion: 2, repository: repository, revision: revision, adapter: adapter, sourceRootIdentity: sourceRootIdentity}
+	if err := input.validateFields(); err != nil {
+		return Input{}, err
+	}
+	input.identity = deriveInputIdentity(input)
+	return input, nil
+}
+
+func (i Input) Identity() string                        { return i.identity }
+func (i Input) SchemaVersion() int                      { return i.schemaVersion }
+func (i Input) SourceRootIdentity() string              { return i.sourceRootIdentity }
+func (i Input) Repository() evidence.RepositoryIdentity { return i.repository }
+func (i Input) Revision() evidence.RevisionIdentity     { return i.revision }
+func (i Input) Adapter() evidence.SourceAdapterIdentity { return i.adapter }
+func (i Input) SourceAdapterIdentity() string           { return i.adapter.Identity() }
+func (i Input) String() string                          { return "source acquisition input" }
+func (i Input) GoString() string                        { return "source.Input{<redacted>}" }
+func (i Input) Format(state fmt.State, verb rune) {
+	writeSourceRedacted(state, verb, "source acquisition input", "source.Input{<redacted>}")
+}
+func (i Input) Validate() error {
+	if err := i.validateFields(); err != nil {
+		return err
+	}
+	if i.identity != deriveInputIdentity(i) {
+		return ErrInvalidInput
+	}
+	return nil
+}
+
+func (i Input) validateFields() error {
+	if i.schemaVersion < 1 || i.schemaVersion > 3 || i.schemaVersion != 2 && i.sourceRootIdentity != "" || i.schemaVersion == 2 && !validInputDigest(i.sourceRootIdentity) {
+		return ErrInvalidInput
+	}
+	if i.schemaVersion == 3 {
+		head, err := evidence.NewRevisionIdentity(i.mergeBaseHead.Kind(), i.mergeBaseHead.Algorithm(), i.mergeBaseHead.Digest())
+		if err != nil || head != i.mergeBaseHead || head.Kind() != evidence.RevisionKindGitCommit || i.revision.Kind() != evidence.RevisionKindGitCommit || head.Algorithm() != i.revision.Algorithm() {
+			return ErrInvalidInput
+		}
+	} else if i.mergeBaseHead != (evidence.RevisionIdentity{}) {
+		return ErrInvalidInput
+	}
+	repository, err := evidence.NewRepositoryIdentity(i.repository.Authority(), i.repository.Namespace(), i.repository.Name())
+	if err != nil || repository.Identity() != i.repository.Identity() {
+		return ErrInvalidInput
+	}
+	revision, err := evidence.NewRevisionIdentity(i.revision.Kind(), i.revision.Algorithm(), i.revision.Digest())
+	if err != nil || revision != i.revision {
+		return ErrInvalidInput
+	}
+	adapter, err := evidence.NewSourceAdapterIdentity(i.adapter.Kind(), i.adapter.Name(), i.adapter.Version(), i.adapter.Capabilities())
+	if err != nil || !sameAdapterIdentity(adapter, i.adapter) ||
+		!adapter.HasCapability(evidence.SourceCapabilityReadManifest) ||
+		!adapter.HasCapability(evidence.SourceCapabilityReadContent) {
+		return ErrInvalidInput
+	}
+	return nil
+}
+
+func sameAdapterIdentity(first, second evidence.SourceAdapterIdentity) bool {
+	return first.Identity() == second.Identity() && first.Kind() == second.Kind() &&
+		first.Name() == second.Name() && first.Version() == second.Version() &&
+		first.MajorVersion() == second.MajorVersion() && slices.Equal(first.Capabilities(), second.Capabilities())
+}
+
+type inputWire struct {
+	Contract              string                             `json:"contract"`
+	SchemaVersion         int                                `json:"schema_version"`
+	SourceRootIdentity    string                             `json:"source_root_identity,omitempty"`
+	Identity              string                             `json:"identity"`
+	RepositoryAuthority   string                             `json:"repository_authority"`
+	RepositoryNamespace   []string                           `json:"repository_namespace"`
+	RepositoryName        string                             `json:"repository_name"`
+	RevisionKind          evidence.RevisionKind              `json:"revision_kind"`
+	RevisionAlgorithm     evidence.RevisionAlgorithm         `json:"revision_algorithm"`
+	RevisionDigest        string                             `json:"revision_digest"`
+	SourceAdapterIdentity string                             `json:"source_adapter_identity"`
+	SourceAdapterKind     evidence.SourceAdapterKind         `json:"source_adapter_kind"`
+	SourceAdapterName     string                             `json:"source_adapter_name"`
+	SourceAdapterVersion  string                             `json:"source_adapter_version"`
+	SourceCapabilities    []evidence.SourceAdapterCapability `json:"source_capabilities"`
+	Artifact              string                             `json:"artifact"`
+	Effect                string                             `json:"effect"`
+	BaseDerivation        string                             `json:"base_derivation,omitempty"`
+	MergeBaseHeadDigest   string                             `json:"merge_base_head_revision_digest,omitempty"`
+}
+
+// EncodeInput returns the one canonical JSON representation.
+func EncodeInput(input Input) ([]byte, error) {
+	if err := input.Validate(); err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(inputWireValue(input))
+	if err != nil || len(encoded) > maximumInputBytes {
+		return nil, ErrInvalidInput
+	}
+	return encoded, nil
+}
+
+// ParseInput accepts only the canonical complete-content input representation.
+func ParseInput(encoded []byte) (Input, error) {
+	if len(encoded) == 0 || len(encoded) > maximumInputBytes {
+		return Input{}, ErrInvalidInput
+	}
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.DisallowUnknownFields()
+	var wire inputWire
+	if err := decoder.Decode(&wire); err != nil {
+		return Input{}, ErrInvalidInput
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return Input{}, ErrInvalidInput
+	}
+	canonical, err := json.Marshal(wire)
+	if err != nil || !bytes.Equal(canonical, encoded) || wire.Contract != "open-trestle/source-acquisition-input" ||
+		(wire.SchemaVersion < 1 || wire.SchemaVersion > 3) || wire.SchemaVersion != 2 && wire.SourceRootIdentity != "" || wire.SchemaVersion == 2 && !validInputDigest(wire.SourceRootIdentity) ||
+		(wire.SchemaVersion == 3) != (wire.BaseDerivation == mergeBaseDerivation) || (wire.SchemaVersion == 3) != (wire.MergeBaseHeadDigest != "") || wire.Artifact != string(evidence.AcquisitionArtifactManifestAndContent) ||
+		wire.Effect != string(evidence.AcquisitionEffectReadOnly) {
+		return Input{}, ErrInvalidInput
+	}
+	repository, err := evidence.NewRepositoryIdentity(wire.RepositoryAuthority, wire.RepositoryNamespace, wire.RepositoryName)
+	if err != nil {
+		return Input{}, ErrInvalidInput
+	}
+	revision, err := evidence.NewRevisionIdentity(wire.RevisionKind, wire.RevisionAlgorithm, wire.RevisionDigest)
+	if err != nil {
+		return Input{}, ErrInvalidInput
+	}
+	adapter, err := evidence.NewSourceAdapterIdentity(
+		wire.SourceAdapterKind,
+		wire.SourceAdapterName,
+		wire.SourceAdapterVersion,
+		wire.SourceCapabilities,
+	)
+	if err != nil || adapter.Identity() != wire.SourceAdapterIdentity {
+		return Input{}, ErrInvalidInput
+	}
+	var input Input
+	if wire.SchemaVersion == 3 {
+		head, headErr := evidence.NewRevisionIdentity(wire.RevisionKind, wire.RevisionAlgorithm, wire.MergeBaseHeadDigest)
+		if headErr != nil {
+			return Input{}, ErrInvalidInput
+		}
+		input, err = NewMergeBaseInput(repository, revision, head, adapter)
+	} else if wire.SchemaVersion == 2 {
+		input, err = NewBoundInput(repository, revision, adapter, wire.SourceRootIdentity)
+	} else {
+		input, err = NewInput(repository, revision, adapter)
+	}
+	if err != nil || input.Identity() != wire.Identity {
+		return Input{}, ErrInvalidInput
+	}
+	reencoded, _ := EncodeInput(input)
+	if !bytes.Equal(reencoded, encoded) {
+		return Input{}, ErrInvalidInput
+	}
+	return input, nil
+}
+
+func inputWireValue(input Input) inputWire {
+	wire := inputWire{
+		Contract: "open-trestle/source-acquisition-input", SchemaVersion: input.schemaVersion, SourceRootIdentity: input.sourceRootIdentity, Identity: input.Identity(),
+		RepositoryAuthority: input.repository.Authority(), RepositoryNamespace: input.repository.Namespace(),
+		RepositoryName: input.repository.Name(), RevisionKind: input.revision.Kind(),
+		RevisionAlgorithm: input.revision.Algorithm(), RevisionDigest: input.revision.Digest(),
+		SourceAdapterIdentity: input.adapter.Identity(), SourceAdapterKind: input.adapter.Kind(),
+		SourceAdapterName: input.adapter.Name(), SourceAdapterVersion: input.adapter.Version(),
+		SourceCapabilities: input.adapter.Capabilities(),
+		Artifact:           string(evidence.AcquisitionArtifactManifestAndContent), Effect: string(evidence.AcquisitionEffectReadOnly),
+	}
+	if input.schemaVersion == 3 {
+		wire.BaseDerivation = mergeBaseDerivation
+		wire.MergeBaseHeadDigest = input.mergeBaseHead.Digest()
+	}
+	return wire
+}
+
+func deriveInputIdentity(input Input) string {
+	wire := inputWireValue(input)
+	wire.Identity = ""
+	encoded, err := json.Marshal(wire)
+	if err != nil {
+		return ""
+	}
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:])
+}
+
+func validInputDigest(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	decoded, err := hex.DecodeString(value)
+	return err == nil && hex.EncodeToString(decoded) == value && bytes.Count(decoded, []byte{0}) != len(decoded)
+}
+
+func writeSourceRedacted(state fmt.State, verb rune, plain, detailed string) {
+	value := plain
+	if verb == 'q' {
+		value = fmt.Sprintf("%q", plain)
+	} else if verb == 'v' && state.Flag('#') {
+		value = detailed
+	}
+	_, _ = state.Write([]byte(value))
+}

@@ -11,8 +11,10 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/georgejieh/open-trestle/audit"
+	"github.com/georgejieh/open-trestle/internal/fileauthority"
 	"github.com/georgejieh/open-trestle/internal/filelock"
 )
 
@@ -31,6 +33,8 @@ var (
 	ErrRunJournalLocked = errors.New("run journal locked")
 	// ErrRunJournalClosed identifies use after releasing the writer lease.
 	ErrRunJournalClosed = errors.New("run journal closed")
+	// ErrInvalidRunJournalEffectSection identifies a missing effect callback.
+	ErrInvalidRunJournalEffectSection = errors.New("invalid run journal effect section")
 	// ErrCorruptRunJournalStream identifies a malformed or broken event stream.
 	ErrCorruptRunJournalStream = errors.New("corrupt run journal stream")
 	// ErrRunJournalStreamTooLarge identifies a stream beyond local bounds.
@@ -39,16 +43,47 @@ var (
 	ErrRunJournalPersistence = errors.New("run journal persistence failure")
 )
 
-// FileRunJournal is a durable local journal with one exclusive writer per root.
+// FileRunJournal is a durable local journal with one cooperative writer lease per root.
+// Normal operations are path-based; borrowed rooted inventory does not pin their lifetime.
 type FileRunJournal struct {
-	mu             sync.Mutex
-	root, lockPath string
-	lockFile       *filelock.Lock
-	closed         bool
+	mu              sync.Mutex
+	scopeGateActive *scopeGateGrant // protected by mu
+	gateMu          sync.Mutex
+	gate            chan struct{}
+	closingSignal   chan struct{}
+	closing         bool
+	root, lockPath  string
+	rootInfo        os.FileInfo // constructor-captured inode, never caller-held authority
+	lockFile        *filelock.Lock
+	closeOwnedRoot  func(*os.Root) error // test-only close seam; nil uses os.Root.Close
+	// Optional fault-injection seams; production uses syncRoot and lockFile.Close.
+	syncOnClose               func() error
+	closeLock                 func(*filelock.Lock) error
+	onContendedGateWait       func() // test observer, set before concurrent use only
+	contentionWatcher         chan struct{}
+	afterCanceledStreamRename func(audit.ReviewScope) error // test-only instance seam; set before concurrent use
+	afterPlanRename           func(audit.ReviewScope) error // test-only instance seam; set before concurrent use
+	afterStreamRename         func(audit.ReviewScope) error // test-only instance seam; set before concurrent use
+	closed                    bool
+}
+
+// errOwnedJournalRoot marks a failed sampled identity, private mode, or owner check.
+var errOwnedJournalRoot = errors.New("run journal owned root changed or untrusted")
+
+// fileRunJournalConstructorOptions holds per-call test seams. Public construction
+// always supplies zero options; no process-global hook changes constructor behavior.
+type fileRunJournalConstructorOptions struct {
+	afterSync      func() error
+	closeCandidate func(*os.Root) error
+	closeLock      func(*filelock.Lock) error
 }
 
 // NewFileRunJournal creates a private root and acquires its exclusive writer lease.
 func NewFileRunJournal(root string) (*FileRunJournal, error) {
+	return newFileRunJournal(root, fileRunJournalConstructorOptions{})
+}
+
+func newFileRunJournal(root string, options fileRunJournalConstructorOptions) (*FileRunJournal, error) {
 	if root == "" {
 		return nil, ErrInvalidRunJournalRoot
 	}
@@ -74,31 +109,280 @@ func NewFileRunJournal(root string) (*FileRunJournal, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrRunJournalPersistence, err)
 	}
-	journal := &FileRunJournal{root: absolute, lockPath: lockPath, lockFile: lockFile}
-	if err := journal.syncRoot(); err != nil {
-		_ = lockFile.Close()
-		return nil, err
+	journal := &FileRunJournal{
+		root: absolute, lockPath: lockPath, lockFile: lockFile,
+		gate: make(chan struct{}, 1), closingSignal: make(chan struct{}),
+	}
+	journal.gate <- struct{}{}
+	closeLock := options.closeLock
+	if closeLock == nil {
+		closeLock = (*filelock.Lock).Close
+	}
+	closeCandidate := options.closeCandidate
+	if closeCandidate == nil {
+		closeCandidate = (*os.Root).Close
+	}
+	journal.mu.Lock()
+	captureErr := journal.syncRoot()
+	if captureErr == nil && options.afterSync != nil {
+		captureErr = options.afterSync()
+	}
+	var candidate *os.Root
+	if captureErr == nil {
+		var before, opened, after os.FileInfo
+		before, captureErr = os.Lstat(absolute)
+		if captureErr == nil {
+			candidate, captureErr = os.OpenRoot(absolute)
+		}
+		if captureErr == nil {
+			opened, captureErr = candidate.Stat(".")
+		}
+		if captureErr == nil {
+			after, captureErr = os.Lstat(absolute)
+		}
+		if captureErr == nil {
+			captureErr = checkOwnedJournalInfo(information, before, opened, after)
+			if captureErr == nil {
+				journal.rootInfo = opened
+			}
+		}
+	}
+	if candidate != nil {
+		captureErr = errors.Join(captureErr, closeCandidate(candidate))
+	}
+	journal.mu.Unlock()
+	if captureErr != nil {
+		return nil, errors.Join(captureErr, closeLock(lockFile))
 	}
 	return journal, nil
 }
-func (j *FileRunJournal) Close() error {
-	if j == nil {
+
+func checkOwnedJournalInfo(captured os.FileInfo, observations ...os.FileInfo) error {
+	if captured == nil {
+		return errOwnedJournalRoot
+	}
+	for _, info := range observations {
+		if info == nil || info.Mode() != os.ModeDir|0o700 || !fileauthority.TrustedOwner(info) || !os.SameFile(captured, info) {
+			return errOwnedJournalRoot
+		}
+	}
+	return nil
+}
+
+// WithOwnedRoot lends one rooted handle only for the callback. The callback must
+// not retain it, call Close, or enter another effect section on this journal.
+// Validation samples do not prove uninterrupted pathname ownership.
+func (j *FileRunJournal) WithOwnedRoot(ctx context.Context, use func(*os.Root) error) error {
+	if j == nil || j.gate == nil || j.closingSignal == nil {
 		return ErrInvalidRunJournal
 	}
+	if use == nil {
+		return ErrInvalidRunJournalEffectSection
+	}
+	if err := validateFileRunContext(ctx); err != nil {
+		return err
+	}
+	return j.withEffectSection(ctx, func() error {
+		j.mu.Lock()
+		if j.closed || j.rootInfo == nil {
+			j.mu.Unlock()
+			return ErrRunJournalClosed
+		}
+		root, captured := j.root, j.rootInfo
+		pin, err := fileauthority.PinDirectory(root)
+		var opened *os.Root
+		if err == nil {
+			var before, inRoot, after os.FileInfo
+			before, err = os.Lstat(root)
+			if err == nil {
+				opened, err = os.OpenRoot(root)
+			}
+			if err == nil {
+				inRoot, err = opened.Stat(".")
+			}
+			if err == nil {
+				after, err = os.Lstat(root)
+			}
+			if err == nil {
+				err = checkOwnedJournalInfo(captured, before, inRoot, after)
+			}
+			if err == nil {
+				err = pin.Recheck()
+			}
+		}
+		if err != nil {
+			j.mu.Unlock()
+			if opened != nil {
+				return errors.Join(err, j.closeBorrowedRoot(opened))
+			}
+			return err
+		}
+		j.mu.Unlock() // Inventory may take mu from within use; gate remains held.
+		return func() (result error) {
+			defer func() {
+				// A callback panic still runs the same post-use checks and root close.
+				// Preserve its original value even if a cleanup step panics.
+				if panicValue := recover(); panicValue != nil {
+					defer func() { panic(panicValue) }()
+				}
+				// Close must run even if a postcheck panics, before the gate opens.
+				defer func() { result = errors.Join(result, j.closeBorrowedRoot(opened)) }()
+				chainErr := pin.Recheck() // original component pins, not a new path check
+				inRoot, rootErr := opened.Stat(".")
+				leaf, leafErr := os.Lstat(root)
+				if rootErr == nil && leafErr == nil {
+					rootErr = checkOwnedJournalInfo(captured, inRoot, leaf)
+				}
+				// On normal return, join callback, postcheck, and close errors.
+				result = errors.Join(result, chainErr, rootErr, leafErr)
+			}()
+			return use(opened)
+		}()
+	})
+}
+
+func (j *FileRunJournal) closeBorrowedRoot(root *os.Root) error {
+	if j.closeOwnedRoot != nil {
+		return j.closeOwnedRoot(root)
+	}
+	return root.Close()
+}
+
+func (j *FileRunJournal) Close() error {
+	if j == nil || j.gate == nil || j.closingSignal == nil {
+		return ErrInvalidRunJournal
+	}
+	j.gateMu.Lock()
+	if !j.closing {
+		j.closing = true
+		close(j.closingSignal)
+	}
+	j.gateMu.Unlock()
+	<-j.gate
+	defer func() { j.gate <- struct{}{} }()
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if j.closed {
 		return nil
 	}
-	if j.lockFile != nil {
-		if err := j.lockFile.Close(); err != nil {
-			return fmt.Errorf("%w: %v", ErrRunJournalPersistence, err)
-		}
-		j.lockFile = nil
-	}
+	// Retire the old owner before any fallible filesystem operation or lease release.
 	j.closed = true
-	return j.syncRoot()
+	// Sync while the writer lease is still held, even when sync fails.
+	syncRoot := j.syncOnClose
+	if syncRoot == nil {
+		syncRoot = j.syncRoot
+	}
+	syncErr := syncRoot()
+	if j.lockFile == nil {
+		return syncErr
+	}
+	closeLock := j.closeLock
+	if closeLock == nil {
+		closeLock = (*filelock.Lock).Close
+	}
+	closeErr := closeLock(j.lockFile)
+	j.lockFile = nil
+	if closeErr != nil {
+		closeErr = fmt.Errorf("%w: %v", ErrRunJournalPersistence, closeErr)
+	}
+	return errors.Join(syncErr, closeErr)
 }
+
+// WithEffectSection serializes a local synchronous effect with cancellation appends.
+// The section is non-reentrant: the callback must not call Close, append a
+// cancellation, or nest another WithEffectSection on this journal.
+func (j *FileRunJournal) WithEffectSection(ctx context.Context, effect func() error) error {
+	if j == nil || j.gate == nil || j.closingSignal == nil {
+		return ErrInvalidRunJournal
+	}
+	if effect == nil {
+		return ErrInvalidRunJournalEffectSection
+	}
+	if err := validateFileRunContext(ctx); err != nil {
+		return err
+	}
+	if j.insideScopeGate(ctx) {
+		return effect()
+	}
+	return j.withEffectSection(ctx, effect)
+}
+
+// WatchEffectGateContention observes actual busy-gate acquisition attempts.
+// It is diagnostic only: a notification does not establish a durable append.
+func (j *FileRunJournal) WatchEffectGateContention() (<-chan struct{}, func(), error) {
+	if j == nil || j.gate == nil || j.closingSignal == nil {
+		return nil, nil, ErrInvalidRunJournal
+	}
+	j.gateMu.Lock()
+	defer j.gateMu.Unlock()
+	if j.closing {
+		return nil, nil, ErrRunJournalClosed
+	}
+	j.mu.Lock()
+	closed := j.closed
+	j.mu.Unlock()
+	if closed {
+		return nil, nil, ErrRunJournalClosed
+	}
+	if j.contentionWatcher != nil {
+		return nil, nil, ErrInvalidRunJournalEffectSection
+	}
+	watcher := make(chan struct{}, 1)
+	j.contentionWatcher = watcher
+	var once sync.Once
+	unsubscribe := func() {
+		once.Do(func() {
+			j.gateMu.Lock()
+			if j.contentionWatcher == watcher {
+				j.contentionWatcher = nil
+			}
+			j.gateMu.Unlock()
+		})
+	}
+	return watcher, unsubscribe, nil
+}
+
+func (j *FileRunJournal) withEffectSection(ctx context.Context, effect func() error) error {
+	// An unbounded caller context must not leave a gate waiter stuck forever.
+	waitCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	// A test observer only acknowledges a real contended acquisition. It must
+	// not block or change the gate, and must be installed before concurrent use.
+	select {
+	case <-j.gate:
+	default:
+		j.gateMu.Lock()
+		if j.contentionWatcher != nil {
+			select {
+			case j.contentionWatcher <- struct{}{}:
+			default:
+			}
+		}
+		j.gateMu.Unlock()
+		if j.onContendedGateWait != nil {
+			j.onContendedGateWait()
+		}
+		select {
+		case <-waitCtx.Done():
+			return ErrRunJournalContextDone
+		case <-j.closingSignal:
+			return ErrRunJournalClosed
+		case <-j.gate:
+		}
+	}
+	defer func() { j.gate <- struct{}{} }()
+	j.gateMu.Lock()
+	closing := j.closing
+	j.gateMu.Unlock()
+	if closing {
+		return ErrRunJournalClosed
+	}
+	if err := fileRunContextDone(waitCtx); err != nil {
+		return err
+	}
+	return effect()
+}
+
 func (j *FileRunJournal) SavePlan(ctx context.Context, plan ReviewRunPlan) error {
 	if j == nil {
 		return ErrInvalidRunJournal
@@ -113,6 +397,9 @@ func (j *FileRunJournal) SavePlan(ctx context.Context, plan ReviewRunPlan) error
 	defer j.mu.Unlock()
 	if j.closed {
 		return ErrRunJournalClosed
+	}
+	if err := j.checkScopeGate(ctx, plan.Scope()); err != nil {
+		return err
 	}
 	existing, found, err := j.loadPlan(plan.Scope())
 	if err != nil {
@@ -216,6 +503,11 @@ func (j *FileRunJournal) replacePlan(ctx context.Context, plan ReviewRunPlan) er
 		return fmt.Errorf("%w: %v", ErrRunJournalPersistence, err)
 	}
 	cleaned = true
+	if j.afterPlanRename != nil {
+		if err := j.afterPlanRename(plan.Scope()); err != nil {
+			return errors.Join(ErrRunJournalPersistence, err)
+		}
+	}
 	return j.syncRoot()
 }
 
@@ -271,7 +563,7 @@ func (j *FileRunJournal) ListPlans(ctx context.Context, tenantID, repositoryID, 
 }
 
 func (j *FileRunJournal) Append(ctx context.Context, expectedHead string, event RunEvent) error {
-	if j == nil {
+	if j == nil || j.gate == nil || j.closingSignal == nil {
 		return ErrInvalidRunJournal
 	}
 	if err := validateFileRunContext(ctx); err != nil {
@@ -283,6 +575,16 @@ func (j *FileRunJournal) Append(ctx context.Context, expectedHead string, event 
 	if err := event.Validate(); err != nil {
 		return err
 	}
+	if event.Kind() == RunEventContextInputSettled {
+		return ErrPreparedContextInput
+	}
+	if event.Kind() == RunEventCanceled {
+		return j.withEffectSection(ctx, func() error { return j.appendValidated(ctx, expectedHead, event) })
+	}
+	return j.appendValidated(ctx, expectedHead, event)
+}
+
+func (j *FileRunJournal) appendValidated(ctx context.Context, expectedHead string, event RunEvent) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if j.closed {
@@ -290,6 +592,17 @@ func (j *FileRunJournal) Append(ctx context.Context, expectedHead string, event 
 	}
 	if err := fileRunContextDone(ctx); err != nil {
 		return err
+	}
+	if err := j.checkScopeGate(ctx, event.Scope()); err != nil {
+		return err
+	}
+	if grant, ok := ctx.Value(scopeGateContextKey{}).(*scopeGateGrant); ok {
+		if grant.ownerInputPreparationTransition && event.Kind() != RunEventContextInputSettled {
+			return ErrPreparedContextInput
+		}
+		if grant.ownerContextExpiryTransition && (event.Kind() != RunEventTaskFailed || event.Failure() != RunFailurePolicy || event.OutputIdentity() != "" || !event.RetryAt().IsZero()) {
+			return ErrPreparedContextInput
+		}
 	}
 	stream, err := j.loadStream(event.Scope())
 	if err != nil {
@@ -304,6 +617,9 @@ func (j *FileRunJournal) Append(ctx context.Context, expectedHead string, event 
 	}
 	if len(stream) > 0 && stream[0].PlanIdentity() != event.PlanIdentity() {
 		return ErrRunPlanConflict
+	}
+	if publicSuccessFollowsPreparedPacket(stream, event) {
+		return ErrPreparedContextPacket
 	}
 	if len(stream) > 0 && stream[len(stream)-1].Identity() == event.Identity() {
 		return nil
@@ -409,18 +725,33 @@ func (j *FileRunJournal) loadStream(scope audit.ReviewScope) ([]RunEvent, error)
 	if information.Size() <= 0 || information.Size() > maxRunJournalStreamBytes {
 		return nil, ErrRunJournalStreamTooLarge
 	}
-	if _, err := file.Seek(-1, io.SeekEnd); err != nil {
-		return nil, ErrCorruptRunJournalStream
+	if err := probeRunJournalStreamNewline(file); err != nil {
+		return nil, err
+	}
+	return parseRunJournalStream(scope, file)
+}
+
+// probeRunJournalStreamNewline checks the final delimiter on an already-open
+// stream, then rewinds it. Parsing can then use the same handle via an io.Reader.
+func probeRunJournalStreamNewline(stream io.ReadSeeker) error {
+	if _, err := stream.Seek(-1, io.SeekEnd); err != nil {
+		return ErrCorruptRunJournalStream
 	}
 	last := []byte{0}
-	if _, err := io.ReadFull(file, last); err != nil || last[0] != '\n' {
-		return nil, ErrCorruptRunJournalStream
+	if _, err := io.ReadFull(stream, last); err != nil || last[0] != '\n' {
+		return ErrCorruptRunJournalStream
 	}
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrRunJournalPersistence, err)
+	if _, err := stream.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("%w: %v", ErrRunJournalPersistence, err)
 	}
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 4<<10), maxEncodedRunEventBytes+1)
+	return nil
+}
+
+// parseRunJournalStream accepts an already-open stream. A caller can wrap its
+// reader to count and hash the bytes consumed without replacing this parser.
+func parseRunJournalStream(scope audit.ReviewScope, stream io.Reader) ([]RunEvent, error) {
+	scanner := bufio.NewScanner(stream)
+	scanner.Buffer(make([]byte, 4<<10), maxEncodedRunEventV3Bytes+1)
 	events := make([]RunEvent, 0, 64)
 	previous, planIdentity := "", ""
 	var occurredAt int64
@@ -506,6 +837,16 @@ func (j *FileRunJournal) replaceStream(ctx context.Context, scope audit.ReviewSc
 		return fmt.Errorf("%w: %v", ErrRunJournalPersistence, err)
 	}
 	cleaned = true
+	if j.afterStreamRename != nil {
+		if err := j.afterStreamRename(scope); err != nil {
+			return errors.Join(ErrRunJournalPersistence, err)
+		}
+	}
+	if len(events) > 0 && events[len(events)-1].Kind() == RunEventCanceled && j.afterCanceledStreamRename != nil {
+		if err := j.afterCanceledStreamRename(scope); err != nil {
+			return errors.Join(ErrRunJournalPersistence, err)
+		}
+	}
 	return j.syncRoot()
 }
 func (j *FileRunJournal) syncRoot() error {

@@ -131,6 +131,7 @@ type verificationContextWire struct {
 	Task                      string                      `json:"task"`
 	OutputSchemaIdentity      string                      `json:"output_schema_identity"`
 	Instructions              string                      `json:"instructions,omitempty"`
+	InstructionsIdentity      string                      `json:"instructions_identity,omitempty"`
 	OutputSchema              json.RawMessage             `json:"output_schema,omitempty"`
 	CandidateBatchIdentity    string                      `json:"candidate_batch_identity"`
 	CandidateAuthority        string                      `json:"candidate_authority"`
@@ -144,7 +145,10 @@ type verificationContextWire struct {
 	SourceOmissions           []contextSourceOmissionWire `json:"source_omissions,omitempty"`
 	Memory                    contextMemoryWire           `json:"memory"`
 	AdditionalMemory          []contextMemoryWire         `json:"additional_memory,omitempty"`
-	Candidates                []verificationCandidateWire `json:"candidates"`
+	// StatedIntent exists only from version 8: the generation context's
+	// stated_intent, unchanged, so the verifier can check an intent claim.
+	StatedIntent *statedIntentWire           `json:"stated_intent,omitempty"`
+	Candidates   []verificationCandidateWire `json:"candidates"`
 }
 
 type verificationCandidateWire struct {
@@ -167,8 +171,8 @@ func encodeVerificationContext(packet VerificationContextPacket) ([]byte, error)
 	generation := packet.generationContext
 	selection := generation.sourceSelection
 	wire := verificationContextWire{
-		Contract: "open-trestle/verification-context-packet", SchemaVersion: modelContextVersion,
-		Instructions: instructions, OutputSchema: schema,
+		Contract: "open-trestle/verification-context-packet", SchemaVersion: modelVerificationContextVersion,
+		InstructionsIdentity: modelInstructionsIdentity(instructions), OutputSchema: schema,
 		GenerationContextIdentity: generation.Identity(), ReviewScopeIdentity: generation.ReviewScopeIdentity(),
 		MemoryScopeIdentity: generation.MemoryScopeIdentity(), SnapshotIdentity: generation.SnapshotIdentity(),
 		Task: "candidate_verification", OutputSchemaIdentity: packet.outputSchemaIdentity,
@@ -181,7 +185,8 @@ func encodeVerificationContext(packet VerificationContextPacket) ([]byte, error)
 		},
 		Limits:  contextLimitsWire{MaxSourceBytes: generation.limits.MaxSourceBytes(), MaxMemoryItems: generation.limits.MaxMemoryItems()},
 		Sources: contextSourceWireValues(generation.sources), SourceOmissions: contextSourceOmissionWireValues(generation.sourceOmissions), Memory: contextMemoryWireValue(generation.retrieval), AdditionalMemory: contextMemoryWireValues(generation.additionalRetrievals),
-		Candidates: make([]verificationCandidateWire, len(packet.candidates.findings)),
+		StatedIntent: generation.statedIntent.wire(),
+		Candidates:   make([]verificationCandidateWire, len(packet.candidates.findings)),
 	}
 	for index, candidate := range packet.candidates.findings {
 		sourceRange := candidate.SourceRange()
@@ -202,7 +207,7 @@ func contextSourceWireValues(sources []ContextSource) []contextSourceWire {
 		values[index] = contextSourceWire{
 			SourceID: source.ReferenceID(), Stage: source.Stage().String(), Taint: source.Taint().String(),
 			EvidenceDigest: source.EvidenceItem().Digest(), Path: rangeValue.Path(),
-			StartLine: rangeValue.StartLine(), EndLine: rangeValue.EndLine(),
+			StartLine: rangeValue.StartLine(), EndLine: rangeValue.EndLine(), HeadLine: source.headLine,
 			RiskFlags: contextRiskTokens(source.risks), Content: source.content,
 		}
 	}

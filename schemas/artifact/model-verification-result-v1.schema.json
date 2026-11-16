@@ -25,7 +25,10 @@
       "const": "open-trestle/model-verification-result"
     },
     "schema_version": {
-      "const": 1
+      "enum": [
+        1,
+        2
+      ]
     },
     "identity": {
       "type": "string",
@@ -90,14 +93,161 @@
         "const": "0000000000000000000000000000000000000000000000000000000000000000"
       }
     },
+    "raw_verification_request_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "sanitized_verification_request_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "sanitized_request_artifact_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "sanitized_receipt_artifact_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "sanitized_receipt_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "verification_sanitizer_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "scanner_launcher_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "scanner_worker_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
     "verification_batch": {
-      "$ref": "urn:open-trestle:schema:artifact:verification-batch:v1"
+      "description": "The admitted verdicts, recorded as verification-batch v1, or v2 when a verdict or cited binding is on removed base lines.",
+      "oneOf": [
+        {
+          "$ref": "urn:open-trestle:schema:artifact:verification-batch:v1"
+        },
+        {
+          "$ref": "urn:open-trestle:schema:artifact:verification-batch:v2"
+        }
+      ]
     },
     "route_execution": {
       "$ref": "urn:open-trestle:schema:artifact:route-execution-record:v1"
     },
     "verified_finding_set": {
-      "$ref": "urn:open-trestle:schema:artifact:verified-finding-set:v1"
+      "description": "The promoted findings, recorded as verified-finding-set v1, v2 (categorized) or v3 (uncategorized, recording removed base lines).",
+      "oneOf": [
+        {
+          "$ref": "urn:open-trestle:schema:artifact:verified-finding-set:v1"
+        },
+        {
+          "$ref": "urn:open-trestle:schema:artifact:verified-finding-set:v2"
+        },
+        {
+          "$ref": "urn:open-trestle:schema:artifact:verified-finding-set:v3"
+        }
+      ]
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "schema_version": {
+            "const": 2
+          }
+        },
+        "required": [
+          "schema_version"
+        ]
+      },
+      "then": {
+        "required": [
+          "raw_verification_request_identity",
+          "sanitized_verification_request_identity",
+          "sanitized_request_artifact_identity",
+          "sanitized_receipt_artifact_identity",
+          "sanitized_receipt_identity",
+          "verification_sanitizer_identity",
+          "scanner_launcher_sha256",
+          "scanner_worker_sha256"
+        ]
+      },
+      "else": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "raw_verification_request_identity"
+              ]
+            },
+            {
+              "required": [
+                "sanitized_verification_request_identity"
+              ]
+            },
+            {
+              "required": [
+                "sanitized_request_artifact_identity"
+              ]
+            },
+            {
+              "required": [
+                "sanitized_receipt_artifact_identity"
+              ]
+            },
+            {
+              "required": [
+                "sanitized_receipt_identity"
+              ]
+            },
+            {
+              "required": [
+                "verification_sanitizer_identity"
+              ]
+            },
+            {
+              "required": [
+                "scanner_launcher_sha256"
+              ]
+            },
+            {
+              "required": [
+                "scanner_worker_sha256"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
 }

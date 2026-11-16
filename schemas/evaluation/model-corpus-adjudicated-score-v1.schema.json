@@ -1,0 +1,1127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-trestle:schema:evaluation:model-corpus-adjudicated-score:v1",
+  "title": "Open Trestle model-review corpus adjudicated score v1",
+  "description": "Counts and ratios from matching the verified findings of captured model-review runs, by the rules of the model-corpus score v1, to the labels of the cases an imported human adjudication record confirms. Every number is labelled adjudicated_externally_asserted: the record's reviewer and declarations are externally asserted, not authenticated, and confirmed labels are not verified truth. Cases the record revises or rejects are excluded from every number and listed with the record's reasons. release_evidence_eligible is true only when every corpus case is confirmed and a complete bundle ran every case under the corpus and label digests the record binds. No threshold is evaluated and acceptance is not decided.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schema_version",
+    "label_status",
+    "provenance_status",
+    "acceptance_status",
+    "release_evidence_eligible",
+    "release_evidence_blockers",
+    "scorer",
+    "corpus_identity",
+    "manifest_sha256",
+    "bundle_sha256",
+    "bundle_completion",
+    "adjudication",
+    "matching",
+    "limitations",
+    "aggregate",
+    "cases",
+    "excluded_cases"
+  ],
+  "properties": {
+    "contract": {
+      "const": "open-trestle/model-corpus-adjudicated-score"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "label_status": {
+      "const": "adjudicated_externally_asserted"
+    },
+    "provenance_status": {
+      "const": "externally_asserted"
+    },
+    "acceptance_status": {
+      "const": "not_decided"
+    },
+    "release_evidence_eligible": {
+      "type": "boolean"
+    },
+    "release_evidence_blockers": {
+      "type": "array",
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "cases_excluded_by_review",
+          "bundle_omits_cases",
+          "bundle_not_complete"
+        ]
+      },
+      "description": "Why release_evidence_eligible is false: the record revises or rejects a case, the bundle lacks a corpus case, or the bundle's completion is not complete."
+    },
+    "scorer": {
+      "const": "open_trestle_eval.model_score/1"
+    },
+    "corpus_identity": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "manifest_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "bundle_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "bundle_completion": {
+      "enum": [
+        "in_progress",
+        "complete",
+        "interrupted",
+        "failed"
+      ]
+    },
+    "adjudication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract",
+        "schema_version",
+        "record_sha256",
+        "case_count",
+        "confirmed_count",
+        "excluded_count"
+      ],
+      "properties": {
+        "contract": {
+          "const": "open-trestle/model-corpus-human-adjudication"
+        },
+        "schema_version": {
+          "const": 1
+        },
+        "record_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "case_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "confirmed_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32
+        },
+        "excluded_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32
+        }
+      },
+      "description": "The imported record, by the operator-pinned SHA-256 of its exact bytes. The reviewer identifier and review date are bound by that digest and not repeated here."
+    },
+    "matching": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rule",
+        "uncategorized_findings",
+        "assignment"
+      ],
+      "properties": {
+        "rule": {
+          "const": "same_path_same_side_overlapping_lines_compatible_category"
+        },
+        "uncategorized_findings": {
+          "const": "matched_on_location_only"
+        },
+        "assignment": {
+          "const": "maximum_one_to_one"
+        }
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "human_review_externally_asserted",
+          "location_and_category_matching_not_claim_semantics",
+          "not_completed_and_unreadable_runs_excluded_from_rates",
+          "result_identities_not_reverified",
+          "small_synthetic_corpus",
+          "token_counts_provider_reported"
+        ]
+      }
+    },
+    "aggregate": {
+      "$ref": "#/$defs/metrics",
+      "description": "Over the confirmed cases the bundle ran."
+    },
+    "cases": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "$ref": "#/$defs/case"
+      },
+      "description": "Every confirmed case the bundle ran, in bundle order."
+    },
+    "excluded_cases": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "$ref": "#/$defs/excluded_case"
+      },
+      "description": "Every case the record revises or rejects, in corpus order."
+    }
+  },
+  "if": {
+    "properties": {
+      "release_evidence_eligible": {
+        "const": true
+      }
+    }
+  },
+  "then": {
+    "properties": {
+      "release_evidence_blockers": {
+        "maxItems": 0
+      },
+      "excluded_cases": {
+        "maxItems": 0
+      }
+    }
+  },
+  "else": {
+    "properties": {
+      "release_evidence_blockers": {
+        "minItems": 1
+      }
+    }
+  },
+  "$defs": {
+    "ratio": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "label_status",
+        "numerator",
+        "denominator"
+      ],
+      "properties": {
+        "label_status": {
+          "const": "adjudicated_externally_asserted"
+        },
+        "numerator": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "denominator": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        }
+      },
+      "description": "An integer pair; a zero denominator is 0/0, not success."
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runs",
+        "counts",
+        "observed_outcomes",
+        "precision",
+        "recall",
+        "false_positive_rate",
+        "near_miss_false_positive_rate",
+        "outcome_agreement",
+        "abstention",
+        "latency_ns",
+        "cost_micro_usd",
+        "tokens"
+      ],
+      "properties": {
+        "runs": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "label_status",
+            "total",
+            "completed",
+            "not_completed",
+            "unreadable"
+          ],
+          "properties": {
+            "label_status": {
+              "const": "adjudicated_externally_asserted"
+            },
+            "total": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "completed": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "not_completed": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "unreadable": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            }
+          }
+        },
+        "counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "label_status",
+            "true_positive",
+            "false_positive",
+            "false_negative",
+            "near_miss_false_positive",
+            "duplicate_false_positive",
+            "category_mismatch_false_positive",
+            "category_unchecked_true_positive"
+          ],
+          "properties": {
+            "label_status": {
+              "const": "adjudicated_externally_asserted"
+            },
+            "true_positive": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "false_positive": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "false_negative": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "near_miss_false_positive": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "duplicate_false_positive": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "category_mismatch_false_positive": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "category_unchecked_true_positive": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            }
+          },
+          "description": "Summed over completed runs. near_miss_false_positive counts false positives at a labelled trap location; the other false_positive subcounts are disjoint from it and from each other."
+        },
+        "observed_outcomes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "label_status",
+            "findings",
+            "no_finding",
+            "abstention"
+          ],
+          "properties": {
+            "label_status": {
+              "const": "adjudicated_externally_asserted"
+            },
+            "findings": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "no_finding": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "abstention": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            }
+          }
+        },
+        "precision": {
+          "$ref": "#/$defs/ratio",
+          "description": "true_positive / (true_positive + false_positive)."
+        },
+        "recall": {
+          "$ref": "#/$defs/ratio",
+          "description": "true_positive / (true_positive + false_negative)."
+        },
+        "false_positive_rate": {
+          "$ref": "#/$defs/ratio",
+          "description": "Completed runs of no_finding cases with at least one false positive / completed runs of no_finding cases."
+        },
+        "near_miss_false_positive_rate": {
+          "$ref": "#/$defs/ratio",
+          "description": "Completed near_miss runs with a false positive at a trap / completed near_miss runs."
+        },
+        "outcome_agreement": {
+          "$ref": "#/$defs/ratio",
+          "description": "Completed runs whose observed outcome equals the expected outcome / completed runs."
+        },
+        "abstention": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "label_status",
+            "correct",
+            "overclaimed",
+            "silent",
+            "correctness"
+          ],
+          "properties": {
+            "label_status": {
+              "const": "adjudicated_externally_asserted"
+            },
+            "correct": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "overclaimed": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "silent": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "correctness": {
+              "$ref": "#/$defs/ratio"
+            }
+          },
+          "description": "Over completed runs of abstention cases: correct is an inconclusive outcome, overclaimed a verified finding, silent no finding and no inconclusive verdict."
+        },
+        "latency_ns": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "label_status",
+            "sample_count",
+            "mean",
+            "minimum",
+            "maximum",
+            "sample_standard_deviation"
+          ],
+          "properties": {
+            "label_status": {
+              "const": "adjudicated_externally_asserted"
+            },
+            "sample_count": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "mean": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "minimum": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 18446744073709551615
+            },
+            "maximum": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 18446744073709551615
+            },
+            "sample_standard_deviation": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0
+            }
+          },
+          "description": "Wall-clock latency of completed runs, as the driver measured it."
+        },
+        "cost_micro_usd": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "label_status",
+            "sample_count",
+            "mean",
+            "minimum",
+            "maximum",
+            "sample_standard_deviation",
+            "unknown_count"
+          ],
+          "properties": {
+            "label_status": {
+              "const": "adjudicated_externally_asserted"
+            },
+            "sample_count": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "mean": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "minimum": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 18446744073709551615
+            },
+            "maximum": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 18446744073709551615
+            },
+            "sample_standard_deviation": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "unknown_count": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            }
+          },
+          "description": "actual_cost_micro_usd of completed runs whose usage_known is true; unknown_count counts the others."
+        },
+        "tokens": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "label_status",
+            "input_tokens",
+            "output_tokens",
+            "cached_input_tokens"
+          ],
+          "properties": {
+            "label_status": {
+              "const": "adjudicated_externally_asserted"
+            },
+            "input_tokens": {
+              "$ref": "#/$defs/token_spread"
+            },
+            "output_tokens": {
+              "$ref": "#/$defs/token_spread"
+            },
+            "cached_input_tokens": {
+              "$ref": "#/$defs/token_spread"
+            }
+          },
+          "description": "token_usage totals of completed runs whose result reports known token usage; each unknown_count counts the other completed runs, including results earlier than schema version 6, which report no token usage."
+        }
+      }
+    },
+    "token_spread": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "label_status",
+        "sample_count",
+        "mean",
+        "minimum",
+        "maximum",
+        "sample_standard_deviation",
+        "unknown_count"
+      ],
+      "properties": {
+        "label_status": {
+          "const": "adjudicated_externally_asserted"
+        },
+        "sample_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "mean": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "minimum": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "maximum": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "sample_standard_deviation": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "unknown_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        }
+      },
+      "description": "Mean, range and sample standard deviation across runs of one provider-reported token count."
+    },
+    "token_count": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "known",
+            "route_attempts",
+            "input_tokens",
+            "output_tokens",
+            "cached_input_tokens"
+          ],
+          "properties": {
+            "known": {
+              "const": true
+            },
+            "route_attempts": {
+              "$ref": "#/$defs/token_number"
+            },
+            "input_tokens": {
+              "$ref": "#/$defs/token_number"
+            },
+            "output_tokens": {
+              "$ref": "#/$defs/token_number"
+            },
+            "cached_input_tokens": {
+              "$ref": "#/$defs/token_number"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "known",
+            "route_attempts"
+          ],
+          "properties": {
+            "known": {
+              "const": false
+            },
+            "route_attempts": {
+              "$ref": "#/$defs/token_number"
+            }
+          }
+        }
+      ],
+      "description": "Provider-reported tokens summed over route attempts. The counts are present only when every summed attempt reported usage; an unknown count is never zero. input_tokens includes cached_input_tokens."
+    },
+    "token_number": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "token_usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "known",
+        "route_attempts",
+        "generation",
+        "verification"
+      ],
+      "properties": {
+        "known": {
+          "type": "boolean"
+        },
+        "route_attempts": {
+          "$ref": "#/$defs/token_number"
+        },
+        "input_tokens": {
+          "$ref": "#/$defs/token_number"
+        },
+        "output_tokens": {
+          "$ref": "#/$defs/token_number"
+        },
+        "cached_input_tokens": {
+          "$ref": "#/$defs/token_number"
+        },
+        "generation": {
+          "$ref": "#/$defs/token_count"
+        },
+        "verification": {
+          "$ref": "#/$defs/token_count"
+        }
+      },
+      "if": {
+        "properties": {
+          "known": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "input_tokens",
+          "output_tokens",
+          "cached_input_tokens"
+        ]
+      },
+      "else": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "input_tokens"
+              ]
+            },
+            {
+              "required": [
+                "output_tokens"
+              ]
+            },
+            {
+              "required": [
+                "cached_input_tokens"
+              ]
+            }
+          ]
+        }
+      },
+      "description": "A version 6 result's token_usage: the total over every route attempt the run claimed, and the generation and verification shares."
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_index",
+        "completion",
+        "status",
+        "observed_outcome",
+        "outcome_matches_expected",
+        "coverage",
+        "latency_ns",
+        "usage_known",
+        "actual_cost_micro_usd",
+        "token_usage",
+        "matches",
+        "false_positives",
+        "false_negatives"
+      ],
+      "properties": {
+        "run_index": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "completion": {
+          "enum": [
+            "completed",
+            "not_completed",
+            "unreadable"
+          ]
+        },
+        "status": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "enum": [
+                "findings",
+                "no_candidates",
+                "incomplete",
+                "refused",
+                "canceled",
+                "failed"
+              ]
+            }
+          ]
+        },
+        "observed_outcome": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "enum": [
+                "findings",
+                "no_finding",
+                "abstention"
+              ]
+            }
+          ]
+        },
+        "outcome_matches_expected": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "coverage": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "candidate_count",
+                "verified_count",
+                "rejected_count",
+                "inconclusive_count"
+              ],
+              "properties": {
+                "candidate_count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100000
+                },
+                "verified_count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100000
+                },
+                "rejected_count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100000
+                },
+                "inconclusive_count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100000
+                }
+              }
+            }
+          ]
+        },
+        "latency_ns": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "usage_known": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "actual_cost_micro_usd": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "token_usage": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/token_usage"
+            }
+          ],
+          "description": "The result's token_usage; null for a result that reports none, such as one earlier than schema version 6, or an unreadable run."
+        },
+        "matches": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "expected_id",
+              "finding_identity",
+              "category_checked",
+              "severity_hint",
+              "observed_severity"
+            ],
+            "properties": {
+              "expected_id": {
+                "type": "string",
+                "pattern": "^f[1-9]$"
+              },
+              "finding_identity": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "category_checked": {
+                "type": "boolean"
+              },
+              "severity_hint": {
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "critical"
+                ]
+              },
+              "observed_severity": {
+                "enum": [
+                  "error",
+                  "warning",
+                  "information",
+                  "hint"
+                ]
+              }
+            }
+          }
+        },
+        "false_positives": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "finding_identity",
+              "path",
+              "side",
+              "start_line",
+              "end_line",
+              "category",
+              "severity",
+              "class",
+              "trap_id"
+            ],
+            "properties": {
+              "finding_identity": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              },
+              "side": {
+                "enum": [
+                  "head",
+                  "base"
+                ]
+              },
+              "start_line": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10000000
+              },
+              "end_line": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10000000
+              },
+              "category": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "enum": [
+                      "correctness",
+                      "security",
+                      "concurrency",
+                      "performance",
+                      "reliability",
+                      "maintainability",
+                      "style",
+                      "documentation",
+                      "testing"
+                    ]
+                  }
+                ]
+              },
+              "severity": {
+                "enum": [
+                  "error",
+                  "warning",
+                  "information",
+                  "hint"
+                ]
+              },
+              "class": {
+                "enum": [
+                  "near_miss",
+                  "duplicate",
+                  "category_mismatch",
+                  "other"
+                ]
+              },
+              "trap_id": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^t[1-9]$"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "false_negatives": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^f[1-9]$"
+          }
+        }
+      }
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "case_id",
+        "case_kind",
+        "expected_outcome",
+        "labels_sha256",
+        "metrics",
+        "runs"
+      ],
+      "properties": {
+        "case_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        "case_kind": {
+          "enum": [
+            "defect",
+            "deletion_defect",
+            "near_miss",
+            "clean",
+            "abstention"
+          ]
+        },
+        "expected_outcome": {
+          "enum": [
+            "findings",
+            "no_finding",
+            "abstention"
+          ]
+        },
+        "labels_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "metrics": {
+          "$ref": "#/$defs/metrics"
+        },
+        "runs": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "$ref": "#/$defs/run"
+          }
+        }
+      }
+    },
+    "excluded_case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "case_id",
+        "case_kind",
+        "labels_sha256",
+        "decision",
+        "reason",
+        "runs_not_scored"
+      ],
+      "properties": {
+        "case_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        "case_kind": {
+          "enum": [
+            "defect",
+            "deletion_defect",
+            "near_miss",
+            "clean",
+            "abstention"
+          ]
+        },
+        "labels_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "decision": {
+          "enum": [
+            "revised",
+            "rejected"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "runs_not_scored": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10
+        }
+      },
+      "description": "A case the imported record revises or rejects, with the record's reason. Its runs are checked against their pins but not matched or counted; runs_not_scored is 0 when the bundle omits the case."
+    }
+  }
+}

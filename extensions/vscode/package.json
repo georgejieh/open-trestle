@@ -1,14 +1,14 @@
 {
   "name": "open-trestle",
   "displayName": "Open Trestle",
-  "description": "Read-only independently verified code-review diagnostics from Open Trestle.",
+  "description": "Read-only independently verified findings from Open Trestle diagnostic versions 1 through 5.",
   "version": "0.1.0",
   "private": true,
   "publisher": "open-trestle",
   "license": "Apache-2.0",
   "engines": {
     "vscode": "^1.95.0",
-    "node": ">=22"
+    "node": ">=20"
   },
   "categories": [
     "Linters",
@@ -139,16 +139,22 @@
   },
   "homepage": "https://github.com/georgejieh/open-trestle",
   "dependencies": {
-    "vscode-languageclient": "10.1.1"
+    "vscode-jsonrpc": "10.0.0",
+    "vscode-languageserver-protocol": "3.18.5"
   },
   "devDependencies": {
     "@types/node": "26.4.1",
     "@types/vscode": "1.95.0",
-    "@vscode/vsce": "3.9.2",
+    "@vscode/vsce": "4.0.0",
     "esbuild": "0.28.2",
     "prettier": "3.9.6",
     "typescript": "7.0.2",
-    "vitest": "4.1.11"
+    "vitest": "4.1.12"
+  },
+  "overrides": {
+    "@vscode/vsce": {
+      "minimatch": "11.0.1"
+    }
   },
   "icon": "icon.png",
   "extensionKind": [

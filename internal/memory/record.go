@@ -214,11 +214,19 @@ func NewRecord(scope Scope, input RecordInput) (Record, error) {
 		observedAtUnixMilliseconds: input.ObservedAt.UnixMilli(),
 		validFromUnixMilliseconds:  input.ValidFrom.UnixMilli(),
 	}
+	// A supplied boundary at or before the Unix epoch must not collapse into the
+	// zero sentinel that means "no expiry".
 	if !input.ValidUntil.IsZero() {
 		record.validUntilUnixMilliseconds = input.ValidUntil.UnixMilli()
+		if record.validUntilUnixMilliseconds <= 0 {
+			return Record{}, ErrInvalidMemoryTime
+		}
 	}
 	if !input.StaleAfter.IsZero() {
 		record.staleAfterUnixMilliseconds = input.StaleAfter.UnixMilli()
+		if record.staleAfterUnixMilliseconds <= 0 {
+			return Record{}, ErrInvalidMemoryTime
+		}
 	}
 	if err := record.validateFields(); err != nil {
 		return Record{}, err

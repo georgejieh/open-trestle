@@ -1,4 +1,4 @@
-// Package diagnostics defines secret-free verified review diagnostics for editor transports.
+// Package diagnostics defines secret-free review diagnostics and their evidence authority.
 package diagnostics
 
 import (
@@ -30,6 +30,9 @@ const (
 // MaxEncodedSetBytes is the complete canonical diagnostic payload budget.
 const MaxEncodedSetBytes = 1 << 20
 
+// MaxDeterministicObservations is the bounded location count in one deterministic-only set.
+const MaxDeterministicObservations = 8192
+
 var (
 	// ErrInvalidFinding identifies malformed or unbound diagnostic data.
 	ErrInvalidFinding = errors.New("invalid review diagnostic")
@@ -41,6 +44,8 @@ var (
 	ErrInvalidSetIdentity = errors.New("invalid review diagnostic set identity")
 	// ErrInvalidSetEncoding identifies noncanonical, unknown, or excessive JSON.
 	ErrInvalidSetEncoding = errors.New("invalid review diagnostic set encoding")
+	// ErrSetResourceLimit identifies a canonical deterministic set beyond the durable payload budget.
+	ErrSetResourceLimit = errors.New("review diagnostic set resource limit")
 )
 
 // Severity is a closed editor-neutral diagnostic level.
@@ -68,20 +73,87 @@ func (s Severity) String() string {
 	}
 }
 
+// LineSide names the coordinate space of a finding's lines. Head lines are
+// lines of the reviewed head revision; base lines are removed lines of the
+// base revision, on the base path. The two spaces never compare equal.
+type LineSide uint8
+
+const (
+	// LineSideHead is the zero value: lines of the reviewed head revision.
+	LineSideHead LineSide = iota
+	// LineSideBase is removed lines of the base revision.
+	LineSideBase
+)
+
+// String returns "head" or "base".
+func (s LineSide) String() string {
+	switch s {
+	case LineSideHead:
+		return "head"
+	case LineSideBase:
+		return "base"
+	default:
+		return ""
+	}
+}
+
+// recordedSide is the omitempty record token: head is absent.
+func recordedSide(side LineSide) string {
+	if side == LineSideBase {
+		return "base"
+	}
+	return ""
+}
+
+func parseRecordedSide(value string) (LineSide, error) {
+	switch value {
+	case "":
+		return LineSideHead, nil
+	case "base":
+		return LineSideBase, nil
+	default:
+		return 0, ErrInvalidFinding
+	}
+}
+
 // Finding is one independently verified source-range diagnostic.
 type Finding struct {
 	identity, sourceIdentity, fingerprint, title, message, path string
 	severity                                                    Severity
 	startLine, endLine                                          uint32
 	evidenceIDs                                                 []string
+	side                                                        LineSide
+	// headLine is, for a base-side finding at a deletion point, the head line
+	// beside which its base lines were removed; 0 otherwise.
+	headLine uint32
 }
 
+// NewFinding creates a verified diagnostic on head lines.
 func NewFinding(sourceIdentity, fingerprint, title, message string, severity Severity, sourcePath string, startLine, endLine uint32, evidenceIDs []string) (Finding, error) {
+	return NewFindingOnSide(sourceIdentity, fingerprint, title, message, severity, sourcePath, LineSideHead, startLine, endLine, evidenceIDs)
+}
+
+// NewFindingOnSide creates a verified diagnostic whose lines are on the given
+// side. A base-side diagnostic's path and lines name removed base lines; only
+// set version 8, and a final set that carries it, can record one.
+func NewFindingOnSide(sourceIdentity, fingerprint, title, message string, severity Severity, sourcePath string, side LineSide, startLine, endLine uint32, evidenceIDs []string) (Finding, error) {
+	return newFinding(sourceIdentity, fingerprint, title, message, severity, sourcePath, side, startLine, endLine, 0, evidenceIDs)
+}
+
+// NewBaseSideFinding creates a verified diagnostic on removed base lines.
+// headLine is the head line beside which they were removed, or 0 when no head
+// line remains beside them, such as for a removed file.
+func NewBaseSideFinding(sourceIdentity, fingerprint, title, message string, severity Severity, sourcePath string, startLine, endLine, headLine uint32, evidenceIDs []string) (Finding, error) {
+	return newFinding(sourceIdentity, fingerprint, title, message, severity, sourcePath, LineSideBase, startLine, endLine, headLine, evidenceIDs)
+}
+
+func newFinding(sourceIdentity, fingerprint, title, message string, severity Severity, sourcePath string, side LineSide, startLine, endLine, headLine uint32, evidenceIDs []string) (Finding, error) {
 	evidence := append([]string(nil), evidenceIDs...)
 	sort.Strings(evidence)
 	validIdentity := validDigest(sourceIdentity) && validDigest(fingerprint)
 	validContent := validText(title, 256) && validText(message, maxDiagnosticTextBytes)
-	validLocation := severity.String() != "" && validPath(sourcePath) && startLine > 0 && endLine >= startLine && endLine <= maxDiagnosticLine
+	validLocation := severity.String() != "" && side.String() != "" && validPath(sourcePath) && startLine > 0 && endLine >= startLine && endLine <= maxDiagnosticLine &&
+		headLine <= maxDiagnosticLine && (headLine == 0 || side == LineSideBase)
 	validEvidence := len(evidence) > 0 && len(evidence) <= 16
 	if !validIdentity || !validContent || !validLocation || !validEvidence {
 		return Finding{}, ErrInvalidFinding
@@ -94,7 +166,7 @@ func NewFinding(sourceIdentity, fingerprint, title, message string, severity Sev
 	finding := Finding{
 		sourceIdentity: sourceIdentity, fingerprint: fingerprint,
 		title: strings.Clone(title), message: strings.Clone(message), severity: severity,
-		path: strings.Clone(sourcePath), startLine: startLine, endLine: endLine, evidenceIDs: evidence,
+		path: strings.Clone(sourcePath), startLine: startLine, endLine: endLine, evidenceIDs: evidence, side: side, headLine: headLine,
 	}
 	finding.identity = hashValue(struct {
 		SourceIdentity string   `json:"source_identity"`
@@ -106,7 +178,11 @@ func NewFinding(sourceIdentity, fingerprint, title, message string, severity Sev
 		StartLine      uint32   `json:"start_line"`
 		EndLine        uint32   `json:"end_line"`
 		Evidence       []string `json:"evidence"`
-	}{sourceIdentity, fingerprint, title, message, severity.String(), sourcePath, startLine, endLine, evidence})
+		// Side and HeadLine are present only for base lines, so head
+		// diagnostics keep their historical identities.
+		Side     string `json:"side,omitempty"`
+		HeadLine uint32 `json:"head_line,omitempty"`
+	}{sourceIdentity, fingerprint, title, message, severity.String(), sourcePath, startLine, endLine, evidence, recordedSide(side), headLine})
 	return finding, nil
 }
 func (f Finding) Identity() string       { return f.identity }
@@ -118,9 +194,17 @@ func (f Finding) Severity() Severity     { return f.severity }
 func (f Finding) Path() string           { return f.path }
 func (f Finding) StartLine() uint32      { return f.startLine }
 func (f Finding) EndLine() uint32        { return f.endLine }
-func (f Finding) EvidenceIDs() []string  { return append([]string(nil), f.evidenceIDs...) }
+
+// Side reports whether Path, StartLine and EndLine name head lines or removed
+// base lines.
+func (f Finding) Side() LineSide { return f.side }
+
+// HeadLine returns, for a base-side finding at a deletion point, the head line
+// beside which its base lines were removed; 0 otherwise.
+func (f Finding) HeadLine() uint32      { return f.headLine }
+func (f Finding) EvidenceIDs() []string { return append([]string(nil), f.evidenceIDs...) }
 func (f Finding) Validate() error {
-	rebuilt, err := NewFinding(f.sourceIdentity, f.fingerprint, f.title, f.message, f.severity, f.path, f.startLine, f.endLine, f.evidenceIDs)
+	rebuilt, err := newFinding(f.sourceIdentity, f.fingerprint, f.title, f.message, f.severity, f.path, f.side, f.startLine, f.endLine, f.headLine, f.evidenceIDs)
 	if err != nil {
 		return err
 	}
@@ -195,12 +279,18 @@ func (s OmissionSummary) Validate() error {
 type Set struct {
 	identity, snapshotIdentity, headRevision, verifiedSetIdentity, sourceContextIdentity string
 	scope                                                                                audit.ReviewScope
+	analysisResultIdentity, reviewSnapshotIdentity                                       string
 	findings                                                                             []Finding
 	omissionSummaries                                                                    []OmissionSummary
 	deterministicChecks                                                                  []DeterministicCheck
+	deterministicObservations                                                            []DeterministicObservation
 	schemaVersion                                                                        int
+	finalOutcome                                                                         FinalOutcome
 	candidateCount, rejectedCount, inconclusiveCount                                     uint16
 	sourceAnalyzedCount, sourceSelectedCount, sourceOmittedCount                         uint32
+
+	contextRefusal  ContextRefusal
+	evidenceExpired bool
 }
 
 // NewSet constructs the version 1 diagnostic contract for compatibility.
@@ -223,9 +313,54 @@ func NewSetWithOmissionReasons(scope audit.ReviewScope, snapshotIdentity, headRe
 	return newSet(scope, snapshotIdentity, headRevision, verifiedSetIdentity, 4, candidateCount, rejectedCount, inconclusiveCount, sourceContextIdentity, sourceAnalyzedCount, sourceSelectedCount, sourceOmittedCount, omissionSummaries, nil, findings)
 }
 
-// NewSetWithDeterministicChecks constructs version 5 with one exact content-free check.
+// NewSetWithDeterministicChecks constructs version 5 with one exact
+// content-free check, or version 8 exactly when at least one finding is on
+// base lines. Version 8 is version 5 plus a recorded side on such findings, so
+// a set of head findings keeps its version 5 bytes and identity.
 func NewSetWithDeterministicChecks(scope audit.ReviewScope, snapshotIdentity, headRevision, verifiedSetIdentity, sourceContextIdentity string, candidateCount, rejectedCount, inconclusiveCount uint16, sourceAnalyzedCount, sourceSelectedCount, sourceOmittedCount uint32, omissionSummaries []OmissionSummary, deterministicChecks []DeterministicCheck, findings []Finding) (Set, error) {
-	return newSet(scope, snapshotIdentity, headRevision, verifiedSetIdentity, 5, candidateCount, rejectedCount, inconclusiveCount, sourceContextIdentity, sourceAnalyzedCount, sourceSelectedCount, sourceOmittedCount, omissionSummaries, deterministicChecks, findings)
+	version := 5
+	if hasBaseFinding(findings) {
+		version = 8
+	}
+	return newSet(scope, snapshotIdentity, headRevision, verifiedSetIdentity, version, candidateCount, rejectedCount, inconclusiveCount, sourceContextIdentity, sourceAnalyzedCount, sourceSelectedCount, sourceOmittedCount, omissionSummaries, deterministicChecks, findings)
+}
+
+// verifiedVersion reports a verified set version that carries one
+// deterministic check: 5, or 8 with base-side findings.
+func verifiedVersion(version int) bool {
+	return version == 5 || version == 8
+}
+
+func hasBaseFinding(findings []Finding) bool {
+	for _, finding := range findings {
+		if finding.side == LineSideBase {
+			return true
+		}
+	}
+	return false
+}
+
+// NewSetWithDeterministicObservations constructs version 6 without implying independent verification.
+func NewSetWithDeterministicObservations(scope audit.ReviewScope, snapshotIdentity, headRevision, analysisResultIdentity string, deterministicChecks []DeterministicCheck, observations []DeterministicObservation) (Set, error) {
+	checks := append([]DeterministicCheck(nil), deterministicChecks...)
+	canonical := append([]DeterministicObservation(nil), observations...)
+	sort.Slice(canonical, func(i, j int) bool { return deterministicObservationLess(canonical[i], canonical[j]) })
+	valid := scope.Validate() == nil && validDigest(snapshotIdentity) && validRevision(headRevision) && validDigest(analysisResultIdentity) && len(checks) == 1 && checks[0].Validate() == nil && checks[0].AnalysisResultIdentity() == analysisResultIdentity && len(canonical) <= MaxDeterministicObservations && uint32(len(canonical)) == checks[0].MatchCount()
+	for index, observation := range canonical {
+		if observation.Validate() != nil || observation.AnalysisResultIdentity() != analysisResultIdentity || observation.CheckIdentity() != checks[0].Identity() || index > 0 && canonical[index-1].Identity() == observation.Identity() {
+			valid = false
+		}
+	}
+	if !valid {
+		return Set{}, ErrInvalidSet
+	}
+	set := Set{scope: scope, snapshotIdentity: snapshotIdentity, headRevision: headRevision, analysisResultIdentity: analysisResultIdentity, deterministicChecks: checks, deterministicObservations: canonical, schemaVersion: 6}
+	set.identity = deriveSetIdentity(set)
+	encoded, encodeErr := json.Marshal(setToRecordV6(set))
+	if encodeErr != nil || len(encoded) > MaxEncodedSetBytes {
+		return Set{}, ErrSetResourceLimit
+	}
+	return set, nil
 }
 
 func newSet(scope audit.ReviewScope, snapshotIdentity, headRevision, verifiedSetIdentity string, schemaVersion int, candidateCount, rejectedCount, inconclusiveCount uint16, sourceContextIdentity string, sourceAnalyzedCount, sourceSelectedCount, sourceOmittedCount uint32, omissionSummaries []OmissionSummary, deterministicChecks []DeterministicCheck, findings []Finding) (Set, error) {
@@ -252,12 +387,16 @@ func newSet(scope audit.ReviewScope, snapshotIdentity, headRevision, verifiedSet
 		schemaVersion == 2 && validCandidateCoverage && sourceContextIdentity == "" && sourceAnalyzedCount == 0 && sourceSelectedCount == 0 && sourceOmittedCount == 0 && len(canonicalOmissions) == 0 && len(canonicalChecks) == 0 ||
 		schemaVersion == 3 && validCandidateCoverage && validDigest(sourceContextIdentity) && validSourceCoverage && len(canonicalOmissions) == 0 && len(canonicalChecks) == 0 ||
 		schemaVersion == 4 && validCandidateCoverage && validDigest(sourceContextIdentity) && validSourceCoverage && validOmissions && len(canonicalChecks) == 0 ||
-		schemaVersion == 5 && validCandidateCoverage && validDigest(sourceContextIdentity) && validSourceCoverage && validOmissions && validChecks
+		verifiedVersion(schemaVersion) && validCandidateCoverage && validDigest(sourceContextIdentity) && validSourceCoverage && validOmissions && validChecks
+	// Only version 8 records a side, and it is used exactly when one is base.
+	if hasBaseFinding(findings) != (schemaVersion == 8) {
+		return Set{}, ErrInvalidSet
+	}
 	if scope.Validate() != nil || !validDigest(snapshotIdentity) || !validRevision(headRevision) || !validDigest(verifiedSetIdentity) || len(findings) > maxDiagnostics || !validCoverage {
 		return Set{}, ErrInvalidSet
 	}
 	canonical := append([]Finding(nil), findings...)
-	sort.Slice(canonical, func(i, j int) bool { return findingLess(canonical[i], canonical[j]) })
+	sort.SliceStable(canonical, func(i, j int) bool { return findingLess(canonical[i], canonical[j]) })
 	for index, finding := range canonical {
 		if finding.Validate() != nil || index > 0 && canonical[index-1].Identity() == finding.Identity() {
 			return Set{}, ErrInvalidSet
@@ -267,12 +406,17 @@ func newSet(scope audit.ReviewScope, snapshotIdentity, headRevision, verifiedSet
 	set.identity = deriveSetIdentity(set)
 	return set, nil
 }
-func (s Set) Identity() string                    { return s.identity }
-func (s Set) Scope() audit.ReviewScope            { return s.scope }
-func (s Set) SnapshotIdentity() string            { return s.snapshotIdentity }
+func (s Set) Identity() string         { return s.identity }
+func (s Set) Scope() audit.ReviewScope { return s.scope }
+func (s Set) SnapshotIdentity() string { return s.snapshotIdentity }
+
+// ReviewSnapshotIdentity is the selected model review snapshot for V7 only.
+func (s Set) ReviewSnapshotIdentity() string      { return s.reviewSnapshotIdentity }
 func (s Set) HeadRevision() string                { return s.headRevision }
 func (s Set) VerifiedSetIdentity() string         { return s.verifiedSetIdentity }
+func (s Set) AnalysisResultIdentity() string      { return s.analysisResultIdentity }
 func (s Set) SchemaVersion() int                  { return s.schemaVersion }
+func (s Set) Outcome() FinalOutcome               { return s.finalOutcome }
 func (s Set) CandidateCount() uint16              { return s.candidateCount }
 func (s Set) VerifiedCount() uint16               { return uint16(len(s.findings)) }
 func (s Set) RejectedCount() uint16               { return s.rejectedCount }
@@ -288,6 +432,9 @@ func (s Set) DeterministicChecks() []DeterministicCheck {
 	return append([]DeterministicCheck(nil), s.deterministicChecks...)
 }
 func (s Set) Findings() []Finding { return append([]Finding(nil), s.findings...) }
+func (s Set) DeterministicObservations() []DeterministicObservation {
+	return append([]DeterministicObservation(nil), s.deterministicObservations...)
+}
 func (s Set) Validate() error {
 	var rebuilt Set
 	var err error
@@ -299,15 +446,26 @@ func (s Set) Validate() error {
 		rebuilt, err = NewSetWithSourceCoverage(s.scope, s.snapshotIdentity, s.headRevision, s.verifiedSetIdentity, s.sourceContextIdentity, s.candidateCount, s.rejectedCount, s.inconclusiveCount, s.sourceAnalyzedCount, s.sourceSelectedCount, s.sourceOmittedCount, s.findings)
 	} else if s.schemaVersion == 4 {
 		rebuilt, err = NewSetWithOmissionReasons(s.scope, s.snapshotIdentity, s.headRevision, s.verifiedSetIdentity, s.sourceContextIdentity, s.candidateCount, s.rejectedCount, s.inconclusiveCount, s.sourceAnalyzedCount, s.sourceSelectedCount, s.sourceOmittedCount, s.omissionSummaries, s.findings)
-	} else if s.schemaVersion == 5 {
+	} else if verifiedVersion(s.schemaVersion) {
 		rebuilt, err = NewSetWithDeterministicChecks(s.scope, s.snapshotIdentity, s.headRevision, s.verifiedSetIdentity, s.sourceContextIdentity, s.candidateCount, s.rejectedCount, s.inconclusiveCount, s.sourceAnalyzedCount, s.sourceSelectedCount, s.sourceOmittedCount, s.omissionSummaries, s.deterministicChecks, s.findings)
+	} else if s.schemaVersion == 6 {
+		rebuilt, err = NewSetWithDeterministicObservations(s.scope, s.snapshotIdentity, s.headRevision, s.analysisResultIdentity, s.deterministicChecks, s.deterministicObservations)
+	} else if s.schemaVersion == 7 {
+		deterministic, verified := s.finalParts()
+		rebuilt, err = NewFinalReviewSet(s.scope, s.snapshotIdentity, s.headRevision, s.finalOutcome, deterministic, verified)
+		if err == nil && s.contextRefusal.Reason != "" {
+			rebuilt, err = rebuilt.WithContextRefusal(s.contextRefusal)
+		}
+		if err == nil && s.evidenceExpired {
+			rebuilt, err = rebuilt.WithEvidenceExpired()
+		}
 	} else {
 		return ErrInvalidSet
 	}
 	if err != nil {
 		return err
 	}
-	if rebuilt.identity != s.identity || rebuilt.candidateCount != s.candidateCount || rebuilt.rejectedCount != s.rejectedCount || rebuilt.inconclusiveCount != s.inconclusiveCount || rebuilt.sourceContextIdentity != s.sourceContextIdentity || rebuilt.sourceAnalyzedCount != s.sourceAnalyzedCount || rebuilt.sourceSelectedCount != s.sourceSelectedCount || rebuilt.sourceOmittedCount != s.sourceOmittedCount {
+	if rebuilt.identity != s.identity || rebuilt.finalOutcome != s.finalOutcome || rebuilt.candidateCount != s.candidateCount || rebuilt.rejectedCount != s.rejectedCount || rebuilt.inconclusiveCount != s.inconclusiveCount || rebuilt.analysisResultIdentity != s.analysisResultIdentity || rebuilt.reviewSnapshotIdentity != s.reviewSnapshotIdentity || rebuilt.sourceContextIdentity != s.sourceContextIdentity || rebuilt.sourceAnalyzedCount != s.sourceAnalyzedCount || rebuilt.sourceSelectedCount != s.sourceSelectedCount || rebuilt.sourceOmittedCount != s.sourceOmittedCount {
 		return ErrInvalidSetIdentity
 	}
 	if len(rebuilt.omissionSummaries) != len(s.omissionSummaries) {
@@ -326,6 +484,14 @@ func (s Set) Validate() error {
 			return ErrInvalidSetIdentity
 		}
 	}
+	if len(rebuilt.deterministicObservations) != len(s.deterministicObservations) {
+		return ErrInvalidSetIdentity
+	}
+	for index := range rebuilt.deterministicObservations {
+		if rebuilt.deterministicObservations[index].Identity() != s.deterministicObservations[index].Identity() {
+			return ErrInvalidSetIdentity
+		}
+	}
 	for index := range rebuilt.findings {
 		if rebuilt.findings[index].Identity() != s.findings[index].Identity() {
 			return ErrInvalidSet
@@ -337,16 +503,20 @@ func (s Set) String() string   { return "review diagnostic set" }
 func (s Set) GoString() string { return "diagnostics.Set{<redacted>}" }
 
 type findingRecord struct {
-	Identity       string   `json:"identity"`
-	SourceIdentity string   `json:"source_identity"`
-	Fingerprint    string   `json:"fingerprint"`
-	Title          string   `json:"title"`
-	Message        string   `json:"message"`
-	Severity       string   `json:"severity"`
-	Path           string   `json:"path"`
-	StartLine      uint32   `json:"start_line"`
-	EndLine        uint32   `json:"end_line"`
-	EvidenceIDs    []string `json:"evidence_ids"`
+	Identity       string `json:"identity"`
+	SourceIdentity string `json:"source_identity"`
+	Fingerprint    string `json:"fingerprint"`
+	Title          string `json:"title"`
+	Message        string `json:"message"`
+	Severity       string `json:"severity"`
+	Path           string `json:"path"`
+	StartLine      uint32 `json:"start_line"`
+	EndLine        uint32 `json:"end_line"`
+	// Side is "base" only in version 8, for a finding on removed base lines,
+	// and HeadLine is then the head line of its deletion point, if any.
+	Side        string   `json:"side,omitempty"`
+	HeadLine    uint32   `json:"head_line,omitempty"`
+	EvidenceIDs []string `json:"evidence_ids"`
 }
 type setRecord struct {
 	Contract            string          `json:"contract"`
@@ -454,6 +624,34 @@ type setRecordV5 struct {
 	Findings            []findingRecord            `json:"findings"`
 }
 
+type deterministicObservationRecord struct {
+	Identity               string   `json:"identity"`
+	SourceIdentity         string   `json:"source_identity"`
+	Fingerprint            string   `json:"fingerprint"`
+	AnalysisResultIdentity string   `json:"analysis_result_identity"`
+	CheckIdentity          string   `json:"check_identity"`
+	Title                  string   `json:"title"`
+	Message                string   `json:"message"`
+	Severity               string   `json:"severity"`
+	Path                   string   `json:"path"`
+	StartLine              uint32   `json:"start_line"`
+	EndLine                uint32   `json:"end_line"`
+	EvidenceIDs            []string `json:"evidence_ids"`
+}
+type setRecordV6 struct {
+	Contract               string                           `json:"contract"`
+	SchemaVersion          int                              `json:"schema_version"`
+	Identity               string                           `json:"identity"`
+	TenantID               string                           `json:"tenant_id"`
+	RepositoryID           string                           `json:"repository_id"`
+	ReviewRunID            string                           `json:"review_run_id"`
+	SnapshotIdentity       string                           `json:"snapshot_identity"`
+	HeadRevision           string                           `json:"head_revision"`
+	AnalysisResultIdentity string                           `json:"analysis_result_identity"`
+	Checks                 []deterministicCheckRecord       `json:"checks"`
+	Observations           []deterministicObservationRecord `json:"observations"`
+}
+
 func EncodeSet(set Set) ([]byte, error) {
 	if err := set.Validate(); err != nil {
 		return nil, err
@@ -469,11 +667,18 @@ func EncodeSet(set Set) ([]byte, error) {
 		encoded, err = json.Marshal(setToRecordV3(set))
 	case 4:
 		encoded, err = json.Marshal(setToRecordV4(set))
-	case 5:
+	case 5, 8:
 		encoded, err = json.Marshal(setToRecordV5(set))
+	case 6:
+		encoded, err = json.Marshal(setToRecordV6(set))
+	case 7:
+		encoded, err = json.Marshal(setToRecordV7(set))
 	}
-	if err != nil || len(encoded) > maxEncodedSetBytes {
+	if err != nil {
 		return nil, ErrInvalidSetEncoding
+	}
+	if len(encoded) > maxEncodedSetBytes {
+		return nil, ErrSetResourceLimit
 	}
 	return encoded, nil
 }
@@ -496,8 +701,12 @@ func ParseSet(encoded []byte) (Set, error) {
 		return parseSetV3(encoded)
 	case 4:
 		return parseSetV4(encoded)
-	case 5:
+	case 5, 8:
 		return parseSetV5(encoded)
+	case 6:
+		return parseSetV6(encoded)
+	case 7:
+		return parseSetV7(encoded)
 	default:
 		return Set{}, ErrInvalidSetEncoding
 	}
@@ -583,7 +792,7 @@ func parseSetV4(encoded []byte) (Set, error) {
 
 func parseSetV5(encoded []byte) (Set, error) {
 	var record setRecordV5
-	if err := decodeCanonicalSetRecord(encoded, &record); err != nil || record.Contract != "open-trestle/review-diagnostic-set" || record.SchemaVersion != 5 || record.Coverage.VerifiedCount != uint16(len(record.Findings)) || len(record.Checks) != 1 {
+	if err := decodeCanonicalSetRecord(encoded, &record); err != nil || record.Contract != "open-trestle/review-diagnostic-set" || !verifiedVersion(record.SchemaVersion) || record.Coverage.VerifiedCount != uint16(len(record.Findings)) || len(record.Checks) != 1 {
 		return Set{}, ErrInvalidSetEncoding
 	}
 	scope, findings, err := parseSetContents(record.TenantID, record.RepositoryID, record.ReviewRunID, record.Findings)
@@ -613,6 +822,44 @@ func parseSetV5(encoded []byte) (Set, error) {
 		}
 	}
 	set, err := NewSetWithDeterministicChecks(scope, record.SnapshotIdentity, record.HeadRevision, record.VerifiedSetIdentity, record.SourceCoverage.VerificationContextIdentity, record.Coverage.CandidateCount, record.Coverage.RejectedCount, record.Coverage.InconclusiveCount, record.SourceCoverage.AnalyzedCount, record.SourceCoverage.SelectedCount, record.SourceCoverage.OmittedCount, summaries, checks, findings)
+	if err != nil || set.schemaVersion != record.SchemaVersion || set.identity != record.Identity {
+		return Set{}, ErrInvalidSetIdentity
+	}
+	return verifyParsedSetEncoding(set, encoded)
+}
+
+func parseSetV6(encoded []byte) (Set, error) {
+	var record setRecordV6
+	if err := decodeCanonicalSetRecord(encoded, &record); err != nil || record.Contract != "open-trestle/review-diagnostic-set" || record.SchemaVersion != 6 || len(record.Checks) != 1 {
+		return Set{}, ErrInvalidSetEncoding
+	}
+	scope, err := audit.NewReviewScope(record.TenantID, record.RepositoryID, record.ReviewRunID)
+	if err != nil {
+		return Set{}, ErrInvalidSetEncoding
+	}
+	checks := make([]DeterministicCheck, len(record.Checks))
+	for index, value := range record.Checks {
+		state, stateErr := parseDeterministicCheckState(value.State)
+		if stateErr != nil || value.Key != deterministicCheckKey || value.RuleVersion != deterministicCheckRuleVersion {
+			return Set{}, ErrInvalidSet
+		}
+		checks[index], err = NewDeterministicCheck(value.SourceCheckIdentity, value.AnalysisResultIdentity, value.ChangeIdentity, state, value.ApplicableFiles, value.ApplicableRanges, value.CheckedFiles, value.CheckedRanges, value.Matches)
+		if err != nil || checks[index].Identity() != value.Identity {
+			return Set{}, ErrInvalidSetIdentity
+		}
+	}
+	observations := make([]DeterministicObservation, len(record.Observations))
+	for index, value := range record.Observations {
+		severity, severityErr := parseSeverity(value.Severity)
+		if severityErr != nil {
+			return Set{}, severityErr
+		}
+		observations[index], err = NewDeterministicObservation(value.SourceIdentity, value.Fingerprint, value.AnalysisResultIdentity, value.CheckIdentity, value.Title, value.Message, severity, value.Path, value.StartLine, value.EndLine, value.EvidenceIDs)
+		if err != nil || observations[index].Identity() != value.Identity {
+			return Set{}, ErrInvalidSetIdentity
+		}
+	}
+	set, err := NewSetWithDeterministicObservations(scope, record.SnapshotIdentity, record.HeadRevision, record.AnalysisResultIdentity, checks, observations)
 	if err != nil || set.identity != record.Identity {
 		return Set{}, ErrInvalidSetIdentity
 	}
@@ -645,7 +892,11 @@ func parseSetContents(tenantID, repositoryID, reviewRunID string, records []find
 		if parseErr != nil {
 			return audit.ReviewScope{}, nil, parseErr
 		}
-		finding, createErr := NewFinding(value.SourceIdentity, value.Fingerprint, value.Title, value.Message, severity, value.Path, value.StartLine, value.EndLine, value.EvidenceIDs)
+		side, sideErr := parseRecordedSide(value.Side)
+		if sideErr != nil {
+			return audit.ReviewScope{}, nil, sideErr
+		}
+		finding, createErr := newFinding(value.SourceIdentity, value.Fingerprint, value.Title, value.Message, severity, value.Path, side, value.StartLine, value.EndLine, value.HeadLine, value.EvidenceIDs)
 		if createErr != nil {
 			return audit.ReviewScope{}, nil, createErr
 		}
@@ -667,7 +918,7 @@ func setToFindingRecords(set Set) []findingRecord {
 		findings[index] = findingRecord{
 			Identity: value.identity, SourceIdentity: value.sourceIdentity, Fingerprint: value.fingerprint,
 			Title: value.title, Message: value.message, Severity: value.severity.String(), Path: value.path,
-			StartLine: value.startLine, EndLine: value.endLine, EvidenceIDs: value.EvidenceIDs(),
+			StartLine: value.startLine, EndLine: value.endLine, Side: recordedSide(value.side), HeadLine: value.headLine, EvidenceIDs: value.EvidenceIDs(),
 		}
 	}
 	return findings
@@ -726,7 +977,7 @@ func setToRecordV5(set Set) setRecordV5 {
 		checks[index] = deterministicCheckRecord{Identity: check.Identity(), SourceCheckIdentity: check.SourceCheckIdentity(), AnalysisResultIdentity: check.AnalysisResultIdentity(), ChangeIdentity: check.ChangeIdentity(), Key: check.Key(), RuleVersion: check.RuleVersion(), State: check.State().String(), ApplicableFiles: check.ApplicableFiles(), ApplicableRanges: check.ApplicableRanges(), CheckedFiles: check.CheckedFiles(), CheckedRanges: check.CheckedRanges(), Matches: check.MatchCount()}
 	}
 	return setRecordV5{
-		Contract: "open-trestle/review-diagnostic-set", SchemaVersion: 5,
+		Contract: "open-trestle/review-diagnostic-set", SchemaVersion: set.schemaVersion,
 		Identity: set.identity, TenantID: set.scope.TenantID(), RepositoryID: set.scope.RepositoryID(), ReviewRunID: set.scope.ReviewRunID(),
 		SnapshotIdentity: set.snapshotIdentity, HeadRevision: set.headRevision, VerifiedSetIdentity: set.verifiedSetIdentity,
 		Coverage:       coverageRecord{CandidateCount: set.candidateCount, VerifiedCount: set.VerifiedCount(), RejectedCount: set.rejectedCount, InconclusiveCount: set.inconclusiveCount},
@@ -735,8 +986,45 @@ func setToRecordV5(set Set) setRecordV5 {
 	}
 }
 
+func setToRecordV6(set Set) setRecordV6 {
+	checks := make([]deterministicCheckRecord, len(set.deterministicChecks))
+	for index, check := range set.deterministicChecks {
+		checks[index] = deterministicCheckRecord{Identity: check.Identity(), SourceCheckIdentity: check.SourceCheckIdentity(), AnalysisResultIdentity: check.AnalysisResultIdentity(), ChangeIdentity: check.ChangeIdentity(), Key: check.Key(), RuleVersion: check.RuleVersion(), State: check.State().String(), ApplicableFiles: check.ApplicableFiles(), ApplicableRanges: check.ApplicableRanges(), CheckedFiles: check.CheckedFiles(), CheckedRanges: check.CheckedRanges(), Matches: check.MatchCount()}
+	}
+	observations := make([]deterministicObservationRecord, len(set.deterministicObservations))
+	for index, observation := range set.deterministicObservations {
+		observations[index] = deterministicObservationRecord{Identity: observation.Identity(), SourceIdentity: observation.SourceIdentity(), Fingerprint: observation.Fingerprint(), AnalysisResultIdentity: observation.AnalysisResultIdentity(), CheckIdentity: observation.CheckIdentity(), Title: observation.Title(), Message: observation.Message(), Severity: observation.Severity().String(), Path: observation.Path(), StartLine: observation.StartLine(), EndLine: observation.EndLine(), EvidenceIDs: observation.EvidenceIDs()}
+	}
+	return setRecordV6{Contract: "open-trestle/review-diagnostic-set", SchemaVersion: 6, Identity: set.identity, TenantID: set.scope.TenantID(), RepositoryID: set.scope.RepositoryID(), ReviewRunID: set.scope.ReviewRunID(), SnapshotIdentity: set.snapshotIdentity, HeadRevision: set.headRevision, AnalysisResultIdentity: set.analysisResultIdentity, Checks: checks, Observations: observations}
+}
+func deterministicObservationLess(a, b DeterministicObservation) bool {
+	if a.Path() != b.Path() {
+		return a.Path() < b.Path()
+	}
+	if a.StartLine() != b.StartLine() {
+		return a.StartLine() < b.StartLine()
+	}
+	if a.EndLine() != b.EndLine() {
+		return a.EndLine() < b.EndLine()
+	}
+	if a.Fingerprint() != b.Fingerprint() {
+		return a.Fingerprint() < b.Fingerprint()
+	}
+	return a.Identity() < b.Identity()
+}
+
 func deriveSetIdentity(set Set) string {
-	if set.schemaVersion == 5 {
+	if set.schemaVersion == 7 {
+		record := setToRecordV7(set)
+		record.Identity = ""
+		return hashValue(record)
+	}
+	if set.schemaVersion == 6 {
+		record := setToRecordV6(set)
+		record.Identity = ""
+		return hashValue(record)
+	}
+	if verifiedVersion(set.schemaVersion) {
 		record := setToRecordV5(set)
 		record.Identity = ""
 		return hashValue(record)
@@ -760,9 +1048,15 @@ func deriveSetIdentity(set Set) string {
 	record.Identity = ""
 	return hashValue(record)
 }
+
+// findingLess orders by path, then head lines before removed base lines of the
+// same path, so a set of head findings keeps its historical order.
 func findingLess(a, b Finding) bool {
 	if a.path != b.path {
 		return a.path < b.path
+	}
+	if a.side != b.side {
+		return a.side < b.side
 	}
 	if a.startLine != b.startLine {
 		return a.startLine < b.startLine

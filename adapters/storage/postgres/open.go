@@ -74,7 +74,7 @@ func validPoolOptions(options PoolOptions) bool {
 	return validCounts && validLifetime && validIdle
 }
 func safeConnection(config *pgx.ConnConfig) bool {
-	if config == nil || config.User == "" || config.Database == "" || config.Host == "" || !safeTarget(config.Host, config.TLSConfig) {
+	if config == nil || config.User == "" || config.Database == "" || config.Host == "" || config.DefaultQueryExecMode == pgx.QueryExecModeSimpleProtocol || !safeTarget(config.Host, config.TLSConfig) {
 		return false
 	}
 	for _, fallback := range config.Fallbacks {

@@ -51,7 +51,24 @@ type InvestigationGenerationInput struct {
 	schemaIdentity                                                                   string
 	snapshot                                                                         review.ReviewSnapshot
 	evidence                                                                         []evidence.EvidenceItem
-	authorization                                                                    gateway.RouteAttemptAuthorization
+	// baseEvidence names the evidence items that are removed_lines sources.
+	baseEvidence  map[string]struct{}
+	authorization gateway.RouteAttemptAuthorization
+}
+
+// Investigation inputs are model-generation-input version 2. One that records
+// removed_lines evidence, marked "side":"base", is version 5, so every other
+// investigation input keeps its version 2 bytes.
+const (
+	investigationInputVersion     = 2
+	investigationInputBaseVersion = 5
+)
+
+func (i InvestigationGenerationInput) version() int {
+	if len(i.baseEvidence) > 0 {
+		return investigationInputBaseVersion
+	}
+	return investigationInputVersion
 }
 
 func (i InvestigationGenerationInput) Identity() string                { return i.identity }
@@ -102,9 +119,12 @@ func (i InvestigationGenerationInput) values() (map[string]any, error) {
 	items := make([]generationEvidenceWire, len(i.evidence))
 	for n, item := range i.evidence {
 		r := item.SourceRange()
-		items[n] = generationEvidenceWire{item.ID(), string(item.Kind()), item.Digest(), r.Path(), r.StartLine(), r.EndLine()}
+		items[n] = generationEvidenceWire{ID: item.ID(), Kind: string(item.Kind()), Digest: item.Digest(), Path: r.Path(), StartLine: r.StartLine(), EndLine: r.EndLine()}
+		if _, base := i.baseEvidence[item.ID()]; base {
+			items[n].Side = "base"
+		}
 	}
-	return map[string]any{"contract": "open-trestle/model-generation-input", "schema_version": 2, "identity": i.identity, "review_scope_identity": i.scope, "context_artifact_identity": i.contextArtifact, "context_identity": i.contextIdentity, "memory_scope_identity": i.memoryScope, "memory_identity": i.memoryIdentity, "output_schema_identity": i.schemaIdentity, "snapshot_workspace": i.snapshot.Workspace(), "snapshot_revision": i.snapshot.Revision(), "snapshot_identity": i.snapshot.Identity(), "snapshot_ranges": ranges, "evidence": items, "authorization": json.RawMessage(authorization), "investigation_session_identity": i.session, "investigation_policy_identity": i.policy, "owner_identity": i.owner, "head_snapshot_artifact_identity": i.headArtifact, "head_snapshot_identity": i.headSnapshot, "head_manifest_identity": i.headManifest, "initial_context_identity": i.initialContext, "tool_result_artifact_identities": []string{}}, nil
+	return map[string]any{"contract": "open-trestle/model-generation-input", "schema_version": i.version(), "identity": i.identity, "review_scope_identity": i.scope, "context_artifact_identity": i.contextArtifact, "context_identity": i.contextIdentity, "memory_scope_identity": i.memoryScope, "memory_identity": i.memoryIdentity, "output_schema_identity": i.schemaIdentity, "snapshot_workspace": i.snapshot.Workspace(), "snapshot_revision": i.snapshot.Revision(), "snapshot_identity": i.snapshot.Identity(), "snapshot_ranges": ranges, "evidence": items, "authorization": json.RawMessage(authorization), "investigation_session_identity": i.session, "investigation_policy_identity": i.policy, "owner_identity": i.owner, "head_snapshot_artifact_identity": i.headArtifact, "head_snapshot_identity": i.headSnapshot, "head_manifest_identity": i.headManifest, "initial_context_identity": i.initialContext, "tool_result_artifact_identities": []string{}}, nil
 }
 func (i InvestigationGenerationInput) Validate() error {
 	for _, id := range []string{i.identity, i.scope, i.contextArtifact, i.contextIdentity, i.memoryScope, i.memoryIdentity, i.schemaIdentity, i.session, i.policy, i.owner, i.headArtifact, i.headSnapshot, i.headManifest, i.initialContext} {
@@ -112,17 +132,28 @@ func (i InvestigationGenerationInput) Validate() error {
 			return ErrInvestigationArtifacts
 		}
 	}
-	if len(i.snapshot.Ranges()) == 0 || len(i.snapshot.Ranges()) > investigationArtifactSources || len(i.snapshot.Workspace()) == 0 || len(i.snapshot.Workspace()) > 1024 || i.snapshot.Validate() != nil || len(i.evidence) == 0 || len(i.evidence) > investigationArtifactSources || i.authorization.Validate() != nil || i.authorization.ReviewScopeIdentity() != i.scope || i.authorization.Kind() != gateway.RouteAttemptInitial || i.authorization.PreviousOutcomeIdentity() != "" || i.schemaIdentity != artifactPayloadHash(review.InvestigationOutputSchema()) {
+	// A snapshot with no head range belongs to a change that only removes
+	// files, so the input must record removed_lines evidence (version 5); the
+	// loop below then admits no head evidence at all.
+	if len(i.snapshot.Ranges()) == 0 && len(i.baseEvidence) == 0 || len(i.snapshot.Ranges()) > investigationArtifactSources || len(i.snapshot.Workspace()) == 0 || len(i.snapshot.Workspace()) > 1024 || i.snapshot.Validate() != nil || len(i.evidence) == 0 || len(i.evidence) > investigationArtifactSources || i.authorization.Validate() != nil || i.authorization.ReviewScopeIdentity() != i.scope || i.authorization.Kind() != gateway.RouteAttemptInitial || i.authorization.PreviousOutcomeIdentity() != "" || i.schemaIdentity != artifactPayloadHash(review.InvestigationOutputSchema()) {
 		return ErrInvestigationArtifacts
 	}
 	seen := map[string]bool{}
 	for _, item := range i.evidence {
 		r := item.SourceRange()
 		rebuilt, err := evidence.NewEvidenceItem(item.ID(), item.Kind(), item.Digest(), r)
-		if err != nil || rebuilt.ID() != item.ID() || item.Kind() != evidence.EvidenceKindSource || seen[item.ID()] || !rangeSupported(r, i.snapshot) {
+		// Head evidence lies inside a snapshot range; only a removed_lines
+		// source, whose lines are base lines, lies outside the snapshot.
+		_, base := i.baseEvidence[item.ID()]
+		if err != nil || rebuilt.ID() != item.ID() || item.Kind() != evidence.EvidenceKindSource || seen[item.ID()] || !base && !rangeSupported(r, i.snapshot) {
 			return ErrInvestigationArtifacts
 		}
 		seen[item.ID()] = true
+	}
+	for id := range i.baseEvidence {
+		if !seen[id] {
+			return ErrInvestigationArtifacts
+		}
 	}
 	values, err := i.values()
 	if err != nil {
@@ -156,7 +187,7 @@ func ParseInvestigationGenerationInput(encoded []byte) (InvestigationGenerationI
 		return InvestigationGenerationInput{}, ErrInvestigationArtifacts
 	}
 	var wire investigationInputWire
-	if decodeInvestigationJSON(encoded, &wire) != nil || wire.Contract != "open-trestle/model-generation-input" || wire.Version != 2 || len(wire.Ranges) == 0 || len(wire.Ranges) > investigationArtifactSources || len(wire.Evidence) == 0 || len(wire.Evidence) > investigationArtifactSources || len(wire.Workspace) == 0 || len(wire.Workspace) > 1024 || wire.Tools == nil || len(wire.Tools) != 0 {
+	if decodeInvestigationJSON(encoded, &wire) != nil || wire.Contract != "open-trestle/model-generation-input" || wire.Version != investigationInputVersion && wire.Version != investigationInputBaseVersion || len(wire.Ranges) > investigationArtifactSources || len(wire.Evidence) == 0 || len(wire.Evidence) > investigationArtifactSources || len(wire.Workspace) == 0 || len(wire.Workspace) > 1024 || wire.Tools == nil || len(wire.Tools) != 0 {
 		return InvestigationGenerationInput{}, ErrInvestigationArtifacts
 	}
 	ranges := make([]evidence.SourceRange, len(wire.Ranges))
@@ -172,10 +203,14 @@ func ParseInvestigationGenerationInput(encoded []byte) (InvestigationGenerationI
 		return InvestigationGenerationInput{}, ErrInvestigationArtifacts
 	}
 	items := make([]evidence.EvidenceItem, len(wire.Evidence))
+	baseEvidence := map[string]struct{}{}
 	for n, item := range wire.Evidence {
 		r, err := evidence.NewSourceRange(item.Path, item.StartLine, item.EndLine)
-		if err != nil {
+		if err != nil || item.Side != "" && item.Side != "base" {
 			return InvestigationGenerationInput{}, ErrInvestigationArtifacts
+		}
+		if item.Side == "base" {
+			baseEvidence[item.ID] = struct{}{}
 		}
 		items[n], err = evidence.NewEvidenceItem(item.ID, evidence.EvidenceKind(item.Kind), item.Digest, r)
 		if err != nil {
@@ -186,7 +221,7 @@ func ParseInvestigationGenerationInput(encoded []byte) (InvestigationGenerationI
 	if err != nil {
 		return InvestigationGenerationInput{}, ErrInvestigationArtifacts
 	}
-	value := InvestigationGenerationInput{identity: wire.Identity, scope: wire.Scope, contextArtifact: wire.ContextArtifact, contextIdentity: wire.ContextIdentity, memoryScope: wire.MemoryScope, memoryIdentity: wire.MemoryIdentity, schemaIdentity: wire.SchemaIdentity, session: wire.Session, policy: wire.Policy, owner: wire.Owner, headArtifact: wire.HeadArtifact, headSnapshot: wire.HeadSnapshot, headManifest: wire.HeadManifest, initialContext: wire.InitialContext, snapshot: snapshot, evidence: items, authorization: authorization}
+	value := InvestigationGenerationInput{identity: wire.Identity, scope: wire.Scope, contextArtifact: wire.ContextArtifact, contextIdentity: wire.ContextIdentity, memoryScope: wire.MemoryScope, memoryIdentity: wire.MemoryIdentity, schemaIdentity: wire.SchemaIdentity, session: wire.Session, policy: wire.Policy, owner: wire.Owner, headArtifact: wire.HeadArtifact, headSnapshot: wire.HeadSnapshot, headManifest: wire.HeadManifest, initialContext: wire.InitialContext, snapshot: snapshot, evidence: items, baseEvidence: baseEvidence, authorization: authorization}
 	canonical, err := EncodeInvestigationGenerationInput(value)
 	if err != nil || !bytes.Equal(canonical, encoded) {
 		return InvestigationGenerationInput{}, ErrInvestigationArtifacts
@@ -247,6 +282,7 @@ type investigationContextReadback struct {
 	Snapshot    string `json:"snapshot_identity"`
 	Sources     []struct {
 		ID      string `json:"source_id"`
+		Stage   string `json:"stage"`
 		Path    string `json:"path"`
 		Start   int    `json:"start_line"`
 		End     int    `json:"end_line"`
@@ -319,8 +355,13 @@ func validateInvestigationArtifactContext(c InvestigationArtifactContext, e Inve
 	}
 	paths := map[string]bool{}
 	byID := map[string]evidence.EvidenceItem{}
+	removed := c.Context.RemovedLinesEvidence()
 	for _, item := range items {
-		paths[item.SourceRange().Path()] = true
+		// Removed base lines are bound to the base file, not to a supplied
+		// head file; a removed file has no head file at all.
+		if _, base := removed[item.ID()]; !base {
+			paths[item.SourceRange().Path()] = true
+		}
 		byID[item.ID()] = item
 	}
 	if len(paths) != len(c.SourceFileArtifacts) {
@@ -408,7 +449,9 @@ func bindInvestigationArtifactFile(path string, content []byte, wire investigati
 	}
 	identities[path] = file.Identity()
 	for _, entry := range wire.Sources {
-		if entry.Path != path {
+		// Removed base lines are bound to the base file, not to this head
+		// file; the pipeline matched them to their analysis record.
+		if entry.Path != path || entry.Stage == "removed_lines" {
 			continue
 		}
 		item, ok := items[entry.ID]
@@ -434,7 +477,7 @@ func NewInvestigationGenerationInputArtifact(c InvestigationArtifactContext, aut
 	if authorization.Validate() != nil || authorization.RequestIdentity() != checked.requestIdentity || authorization.ReviewScopeIdentity() != e.Scope.Identity() || authorization.RouteRecordIdentity() != checked.wire.Investigation.Pin || authorization.Kind() != gateway.RouteAttemptInitial {
 		return artifact.Artifact{}, ErrInvestigationArtifacts
 	}
-	input := InvestigationGenerationInput{scope: e.Scope.Identity(), contextArtifact: e.ContextArtifactIdentity, contextIdentity: c.Context.Identity(), memoryScope: checked.wire.MemoryScope, memoryIdentity: checked.memoryIdentity, schemaIdentity: artifactPayloadHash(review.InvestigationOutputSchema()), session: e.SessionIdentity, policy: e.PolicyIdentity, owner: e.OwnerIdentity, headArtifact: e.HeadSnapshotArtifactIdentity, headSnapshot: e.HeadSnapshotIdentity, headManifest: e.HeadManifestIdentity, initialContext: checked.wire.Investigation.InitialContext, snapshot: c.Context.Snapshot(), evidence: c.Context.EvidenceItems(), authorization: authorization}
+	input := InvestigationGenerationInput{scope: e.Scope.Identity(), contextArtifact: e.ContextArtifactIdentity, contextIdentity: c.Context.Identity(), memoryScope: checked.wire.MemoryScope, memoryIdentity: checked.memoryIdentity, schemaIdentity: artifactPayloadHash(review.InvestigationOutputSchema()), session: e.SessionIdentity, policy: e.PolicyIdentity, owner: e.OwnerIdentity, headArtifact: e.HeadSnapshotArtifactIdentity, headSnapshot: e.HeadSnapshotIdentity, headManifest: e.HeadManifestIdentity, initialContext: checked.wire.Investigation.InitialContext, snapshot: c.Context.Snapshot(), evidence: c.Context.EvidenceItems(), baseEvidence: c.Context.RemovedLinesEvidence(), authorization: authorization}
 	values, err := input.values()
 	if err != nil {
 		return artifact.Artifact{}, err
@@ -560,7 +603,7 @@ func buildInvestigationResult(inputArtifact artifact.Artifact, c InvestigationAr
 		return InvestigationGenerationResult{}, ErrInvestigationArtifacts
 	}
 	payload := turnArtifact.Payload()
-	turn, err := gateway.ParseInvestigationTurnRecord(payload)
+	turn, err := parseRetainedInvestigationTurn(payload)
 	if err != nil {
 		return InvestigationGenerationResult{}, ErrInvestigationArtifacts
 	}
@@ -590,7 +633,7 @@ func buildInvestigationResult(inputArtifact artifact.Artifact, c InvestigationAr
 			return InvestigationGenerationResult{}, ErrInvestigationArtifacts
 		}
 	}
-	candidates, err := review.ParseCandidateBatch(turn.Dispatch().Response(), input.snapshot, input.evidence)
+	candidates, err := review.ParseInvestigationCandidateBatch(turn.Dispatch().Response(), c.Context)
 	if err != nil {
 		return InvestigationGenerationResult{}, ErrInvestigationArtifacts
 	}

@@ -113,7 +113,7 @@ func (h *daemonBudgetedPublicationHarness) args(t *testing.T) []string {
 
 func (h *daemonBudgetedPublicationHarness) build(t *testing.T, ctx context.Context) *daemon {
 	t.Helper()
-	d, err := buildDaemonWithDependencies(ctx, h.args(t), h.env, io.Discard, daemonDependencies{openPostgres: h.openPostgres, clock: h.clock})
+	d, err := buildDaemonWithDependencies(ctx, h.args(t), h.env, io.Discard, daemonDependencies{openPostgres: h.openPostgres, clock: h.clock, generationSanitizer: daemonTestGenerationSanitizer(), verificationSanitizer: daemonTestVerificationSanitizer()})
 	if err != nil {
 		t.Fatalf("budgeted required publication daemon build failed: %v", err)
 	}
@@ -328,7 +328,7 @@ func TestDaemonBudgetedRequiredPublicationBelowThresholdPersistsNoEffectReceiptW
 	if err != nil || generation.ContextIdentity() != generationInput.ContextIdentity() || len(generation.Candidates().Findings()) != 1 {
 		t.Fatalf("generation result = %#v err=%v", generation, err)
 	}
-	verification, err := modelhandler.ParseVerificationResultArtifact(outputs["verification"], outputs["candidates"], outputs["context"], contextArtifact)
+	verification, err := modelhandler.ParseStoredVerificationResultArtifact(ctx, d.artifactStore, fixture.clock.UTCMS(), outputs["verification"], outputs["candidates"], outputs["context"], contextArtifact)
 	if err != nil || verification.GenerationArtifactIdentity() != outputs["candidates"].Identity() || verification.Verification().Results()[0].Outcome() != review.VerificationVerified || verification.VerifiedFindings().Findings()[0].Severity() != review.SeverityHigh || verification.RouteExecution().Authorization().RouteReference().ModelID() != "model-b" {
 		t.Fatalf("verification result = %#v err=%v", verification, err)
 	}

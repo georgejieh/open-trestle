@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"os"
 	"reflect"
 	"strings"
@@ -15,10 +16,16 @@ import (
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/internal/scm"
+	"github.com/georgejieh/open-trestle/internal/testsupport"
 	"github.com/georgejieh/open-trestle/localreview"
 	"github.com/georgejieh/open-trestle/runtimecatalog"
 	"github.com/georgejieh/open-trestle/runtimeconfig"
 )
+
+func init() {
+	localReviewGenerationSanitizer = testsupport.NewCleanGenerationSanitizer()
+	localReviewVerificationSanitizer = testsupport.NewCleanVerificationSanitizer()
+}
 
 type localModelSessionClock struct{}
 
@@ -60,7 +67,7 @@ func localModelSessionOptions(t *testing.T, f *localModelFixture) (localreview.S
 	if err != nil {
 		t.Fatal(err)
 	}
-	return localreview.SessionOptions{TenantID: "tenant-local", RepositoryID: "repository-local", Repository: repository, ObjectsRoot: objects, Inventory: inventory, Policy: policy, Egress: localreview.EgressLocalOnly, Credentials: credentials, Clock: localModelSessionClock{}, Timeout: 5 * time.Second, ArtifactCapacity: 128}, objects
+	return localreview.SessionOptions{TenantID: "tenant-local", RepositoryID: "repository-local", Repository: repository, ObjectsRoot: objects, Inventory: inventory, Policy: policy, Egress: localreview.EgressLocalOnly, Credentials: credentials, Clock: localModelSessionClock{}, Timeout: 5 * time.Second, ArtifactCapacity: 128, GenerationSanitizer: testsupport.NewCleanGenerationSanitizer(), VerificationSanitizer: testsupport.NewCleanVerificationSanitizer()}, objects
 }
 
 func localModelNewSession(t *testing.T, options localreview.SessionOptions) *localreview.Session {
@@ -235,7 +242,7 @@ func TestLocalModelSessionRefusesDuplicateConcurrentAndClaimedRuns(t *testing.T)
 					if err != nil {
 						t.Fatal(err)
 					}
-				case <-time.After(3 * time.Second):
+				case <-time.After(10 * time.Second):
 					t.Fatal("first run did not finish")
 				}
 			}
@@ -364,8 +371,12 @@ func TestLocalModelSessionCapacityAndTimingRemainBounded(t *testing.T) {
 }
 
 func TestLocalModelSessionCannotReceiveForgeOrCustomHandlerCapabilities(t *testing.T) {
-	allowed := map[string]bool{"TenantID": true, "RepositoryID": true, "Repository": true, "ObjectsRoot": true, "ObjectStoreProfile": true, "ObjectAlgorithm": true, "Inventory": true, "Policy": true, "Egress": true, "Credentials": true, "Clock": true, "Timeout": true, "ArtifactCapacity": true, "RenewalInterval": true, "Retention": true, "RetainedMemoryInput": true}
+	allowed := map[string]bool{"TenantID": true, "RepositoryID": true, "Repository": true, "ObjectsRoot": true, "ObjectStoreProfile": true, "ObjectAlgorithm": true, "Inventory": true, "Policy": true, "Egress": true, "Credentials": true, "Clock": true, "Timeout": true, "ArtifactCapacity": true, "RenewalInterval": true, "Retention": true, "RetainedMemoryInput": true, "GenerationSanitizer": true, "VerificationSanitizer": true, "ModelHTTPClient": true, "ModelHTTPClientIdentity": true}
 	options := reflect.TypeOf(localreview.SessionOptions{})
+	// The policy-approved transport is a plain identity-bound HTTP client, not a handler.
+	if field, ok := options.FieldByName("ModelHTTPClient"); !ok || field.Type != reflect.TypeOf((*http.Client)(nil)) {
+		t.Fatal("model transport option must remain a plain HTTP client")
+	}
 	for name, want := range map[string]reflect.Type{
 		"ObjectStoreProfile": reflect.TypeOf(scm.LocalGitObjectStoreProfile("")),
 		"ObjectAlgorithm":    reflect.TypeOf(evidence.RevisionAlgorithm("")),

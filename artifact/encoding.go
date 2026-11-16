@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/georgejieh/open-trestle/audit"
 	"io"
+	"slices"
 	"time"
 )
 
@@ -67,7 +68,9 @@ func Parse(encoded []byte) (Artifact, error) {
 	if err != nil {
 		return Artifact{}, err
 	}
-	artifact, err := New(
+	// Payload is a fresh base64-decoded []byte without a custom unmarshaler.
+	// Keep the decoded record local so this call transfers exclusive ownership.
+	artifact, err := artifactFromBorrowedPayload(
 		scope, kind, value.MediaType, classification, origin, protection,
 		value.Provenance, value.Payload,
 		time.UnixMilli(value.CreatedAtMilliseconds), time.UnixMilli(value.ExpiresAtMilliseconds),
@@ -78,8 +81,9 @@ func Parse(encoded []byte) (Artifact, error) {
 	if artifact.identity != value.Identity || artifact.payloadDigest != value.PayloadDigest {
 		return Artifact{}, ErrInvalidArtifactIdentity
 	}
-	reencoded, _ := Encode(artifact)
-	if !bytes.Equal(reencoded, encoded) {
+	// All record fields round-trip exactly after validation except provenance,
+	// which New sorts. The input envelope was already checked for canonical JSON.
+	if !slices.Equal(artifact.provenance, value.Provenance) {
 		return Artifact{}, ErrInvalidEncoding
 	}
 	return artifact, nil
@@ -98,7 +102,7 @@ func toRecord(value Artifact) record {
 }
 func parseEnums(kindValue, classificationValue, originValue, protectionValue string) (Kind, Classification, Origin, Protection, error) {
 	var kind Kind
-	for candidate := KindSourceSnapshot; candidate <= KindInvestigationToolResult; candidate++ {
+	for candidate := KindSourceSnapshot; candidate <= KindGenerationRejection; candidate++ {
 		if candidate.String() == kindValue {
 			kind = candidate
 		}

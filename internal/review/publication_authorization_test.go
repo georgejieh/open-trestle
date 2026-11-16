@@ -24,9 +24,10 @@ func reviewPublicationTarget(t *testing.T) PublicationTarget {
 
 func publicationPlanFixture(t *testing.T) (PublicationReadiness, PublicationPlan) {
 	t.Helper()
-	receipt, set := verifiedSetFixture(t, "verified", gateway.RouteIndependenceDistinctProvider)
+	receipt, set, verificationContext := verifiedSetContextFixture(t, "verified", gateway.RouteIndependenceDistinctProvider)
 	publicationPolicy, _ := NewPublicationPolicy(SeverityLow, 10, gateway.RouteIndependenceDistinctProvider, true)
-	readiness, _ := EvaluatePublicationReadiness(publicationPolicy, receipt, set)
+	selection, _ := SelectPublicationFindings(publicationPolicy, receipt, set)
+	readiness, _ := EvaluatePublicationReadiness(publicationPolicy, receipt, set, verificationContext, selection, contentScanReceiptFixture(t, receipt, set, verificationContext, selection, 0))
 	plan, err := newPublicationPlan(readiness, reviewPublicationTarget(t), strings.Repeat("d", 64))
 	if err != nil {
 		t.Fatal(err)
@@ -42,9 +43,10 @@ func TestNewPublicationPlanBindsReadinessTargetAndSourceSnapshot(t *testing.T) {
 }
 
 func TestNewPublicationPlanRejectsBlockedReadinessAndInvalidBinding(t *testing.T) {
-	receipt, set := verifiedSetFixture(t, "inconclusive", gateway.RouteIndependenceDistinctProvider)
+	receipt, set, verificationContext := verifiedSetContextFixture(t, "inconclusive", gateway.RouteIndependenceDistinctProvider)
 	publicationPolicy, _ := NewPublicationPolicy(SeverityLow, 10, gateway.RouteIndependenceDistinctProvider, true)
-	blocked, _ := EvaluatePublicationReadiness(publicationPolicy, receipt, set)
+	selection, _ := SelectPublicationFindings(publicationPolicy, receipt, set)
+	blocked, _ := EvaluatePublicationReadiness(publicationPolicy, receipt, set, verificationContext, selection, PublicationContentScanReceipt{})
 	if plan, err := newPublicationPlan(blocked, reviewPublicationTarget(t), strings.Repeat("d", 64)); !errors.Is(err, ErrPublicationPlanNotReady) || plan.Identity() != "" {
 		t.Fatalf("blocked plan = (%#v, %v)", plan, err)
 	}

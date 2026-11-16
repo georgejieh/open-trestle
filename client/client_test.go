@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,7 +9,9 @@ import (
 	"github.com/georgejieh/open-trestle/audit"
 	"github.com/georgejieh/open-trestle/controlplane"
 	"github.com/georgejieh/open-trestle/diagnostics"
+	"github.com/georgejieh/open-trestle/internal/evidence"
 	"github.com/georgejieh/open-trestle/runtimeadmin"
+	"github.com/georgejieh/open-trestle/runtimecatalog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -133,7 +136,7 @@ func TestClientDoesNotForwardCredentialsAcrossRedirects(t *testing.T) {
 	}
 }
 
-func TestClientReadsScopedVerifiedDiagnostics(t *testing.T) {
+func TestClientReadsScopedReviewDiagnostics(t *testing.T) {
 	scope, _ := audit.NewReviewScope("tenant-a", "repo-a", "run-a")
 	omission, _ := diagnostics.NewOmissionSummary(diagnostics.OmissionSelectionLimit, 172)
 	check, _ := diagnostics.NewDeterministicCheck("3f01f93e51003eb3a0deca04719a3957d6e367c97c33bdfea105174d95698092", strings.Repeat("8", 64), strings.Repeat("7", 64), diagnostics.CheckPassed, 1, 2, 1, 2, 0)
@@ -149,6 +152,25 @@ func TestClientReadsScopedVerifiedDiagnostics(t *testing.T) {
 	got, err := client.GetDiagnosticSet(context.Background(), scope)
 	if err != nil || got.Identity() != set.Identity() || got.SchemaVersion() != 5 || len(got.OmissionSummaries()) != 1 || len(got.DeterministicChecks()) != 1 || got.OmissionSummaries()[0].Count() != 172 || got.CandidateCount() != 2 || got.RejectedCount() != 1 || got.InconclusiveCount() != 1 || got.SourceAnalyzedCount() != 173 || got.SourceSelectedCount() != 1 || got.SourceOmittedCount() != 172 {
 		t.Fatalf("set=(%#v,%v)", got, err)
+	}
+}
+
+func TestClientPreservesDeterministicObservationAuthority(t *testing.T) {
+	scope, _ := audit.NewReviewScope("tenant-a", "repo-a", "run-v6")
+	analysisIdentity := strings.Repeat("8", 64)
+	check, _ := diagnostics.NewDeterministicCheck("3f01f93e51003eb3a0deca04719a3957d6e367c97c33bdfea105174d95698092", analysisIdentity, strings.Repeat("7", 64), diagnostics.CheckPassed, 1, 2, 1, 2, 0)
+	set, _ := diagnostics.NewSetWithDeterministicObservations(scope, strings.Repeat("d", 64), strings.Repeat("1", 40), analysisIdentity, []diagnostics.DeterministicCheck{check}, nil)
+	encoded, _ := diagnostics.EncodeSet(set)
+	body, _ := json.Marshal(map[string]any{"contract": "open-trestle/api-response", "schema_version": 1, "request_id": "request-v6", "diagnostics": json.RawMessage(encoded)})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write(body)
+	}))
+	defer server.Close()
+	client, _ := New(server.URL, clientTestToken, server.Client())
+	got, err := client.GetDiagnosticSet(context.Background(), scope)
+	if err != nil || got.Identity() != set.Identity() || got.SchemaVersion() != 6 || got.AnalysisResultIdentity() != analysisIdentity || got.VerifiedSetIdentity() != "" || len(got.Findings()) != 0 || len(got.DeterministicObservations()) != 0 {
+		t.Fatalf("v6 set=(%#v,%v)", got, err)
 	}
 }
 
@@ -204,5 +226,72 @@ func TestClientRejectsCrossWiredRuntimeStatus(t *testing.T) {
 	apiClient, _ := New(server.URL, clientTestToken, server.Client())
 	if _, err := apiClient.GetRuntimeStatus(context.Background(), "tenant-a", "repo-a"); !errors.Is(err, ErrInvalidResponse) {
 		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestLocalClientSubmitsDeterministicIntentOnlyToNumericLoopback(t *testing.T) {
+	receipt := clientReceipt(t)
+	repository, _ := evidence.NewRepositoryIdentity("local.test", []string{"team"}, "repository")
+	base, _ := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithmSHA1, strings.Repeat("1", 40))
+	head, _ := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithmSHA1, strings.Repeat("2", 40))
+	intent, _ := runtimecatalog.NewLocalDeterministicReviewIntent(receipt.Scope(), repository, base, head, time.UnixMilli(1000))
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/api/v1/runs" {
+			t.Errorf("request=%s %s", request.Method, request.URL.Path)
+		}
+		var encoded bytes.Buffer
+		_, _ = encoded.ReadFrom(request.Body)
+		parsed, err := runtimecatalog.ParseLocalDeterministicReviewIntent(encoded.Bytes())
+		if err != nil || parsed.Identity() != intent.Identity() {
+			t.Errorf("intent=(%#v,%v)", parsed, err)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusAccepted)
+		_, _ = writer.Write(responseBody(t, receipt))
+	}))
+	defer server.Close()
+	local, err := NewLocal(server.URL, clientTestToken, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := local.SubmitLocalDeterministicReview(context.Background(), intent)
+	if err != nil || got.Identity() != receipt.Identity() {
+		t.Fatalf("submit=(%#v,%v)", got, err)
+	}
+	for _, endpoint := range []string{"https://example.com", "http://example.com", "https://127.0.0.1:8741", "http://localhost:8741"} {
+		if candidate, err := NewLocal(endpoint, clientTestToken, nil); !errors.Is(err, ErrInvalidClient) || candidate != nil {
+			t.Fatalf("NewLocal(%q)=(%#v,%v)", endpoint, candidate, err)
+		}
+	}
+}
+
+func TestLocalClientSubmitsFullReviewIntentWithoutAuthorityPaths(t *testing.T) {
+	receipt := clientReceipt(t)
+	repository, _ := evidence.NewRepositoryIdentity("local.test", []string{"team"}, "repository")
+	base, _ := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithmSHA1, strings.Repeat("1", 40))
+	head, _ := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithmSHA1, strings.Repeat("2", 40))
+	intent, _ := runtimecatalog.NewLocalFullReviewIntent(receipt.Scope(), repository, base, head, strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64), time.UnixMilli(1000))
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/api/v1/runs" || request.Header.Get("Authorization") != "Bearer "+clientTestToken {
+			t.Errorf("request=%s %s", request.Method, request.URL.Path)
+		}
+		var encoded bytes.Buffer
+		_, _ = encoded.ReadFrom(request.Body)
+		parsed, err := runtimecatalog.ParseLocalFullReviewIntent(encoded.Bytes())
+		if err != nil || parsed.Identity() != intent.Identity() || bytes.Contains(encoded.Bytes(), []byte("objects_root")) {
+			t.Errorf("intent=(%#v,%v)", parsed, err)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusAccepted)
+		_, _ = writer.Write(responseBody(t, receipt))
+	}))
+	defer server.Close()
+	local, err := NewLocal(server.URL, clientTestToken, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := local.SubmitLocalFullReview(context.Background(), intent)
+	if err != nil || got.Identity() != receipt.Identity() {
+		t.Fatalf("submit=(%#v,%v)", got, err)
 	}
 }

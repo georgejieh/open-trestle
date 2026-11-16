@@ -24,6 +24,7 @@ class Artifact:
     """A content-addressed release artifact."""
 
     name: str
+    sha1: str
     sha256: str
     size: int
 
@@ -65,6 +66,8 @@ def _reject_sensitive_path(
     if scoped_parts is None:
         scoped_parts = PurePosixPath(name).parts
     lower_parts = {part.lower() for part in scoped_parts}
+    hidden_parts = tuple(part for part in scoped_parts if part.startswith("."))
+    allowed_container_root = name == "container" and scoped_parts == (".container",)
     if (
         basename == ".env"
         or basename.startswith(".env.")
@@ -79,15 +82,16 @@ def _reject_sensitive_path(
             "id_rsa",
         }
         or path.suffix.lower() in {".key", ".p12", ".pfx", ".pem"}
-        or lower_parts
-        & {".aws", ".git", ".prime", ".remember", ".ssh", "references"}
+        or hidden_parts and not allowed_container_root
+        or "references" in lower_parts
     ):
         raise ValueError(f"sensitive artifact path is forbidden: {name}")
 
 
 def _artifact(name: str, path: Path) -> Artifact:
     _reject_sensitive_path(path, name)
-    digest = hashlib.sha256()
+    sha1 = hashlib.sha1()
+    sha256 = hashlib.sha256()
     size = 0
     try:
         with path.open("rb") as source:
@@ -95,7 +99,8 @@ def _artifact(name: str, path: Path) -> Artifact:
             if not stat.S_ISREG(before.st_mode):
                 raise ValueError(f"artifact is not a regular file: {name}")
             while chunk := source.read(1 << 20):
-                digest.update(chunk)
+                sha1.update(chunk)
+                sha256.update(chunk)
                 size += len(chunk)
             after = os.fstat(source.fileno())
     except OSError as error:
@@ -107,7 +112,12 @@ def _artifact(name: str, path: Path) -> Artifact:
         raise ValueError(f"artifact changed while read: {name}")
     if size == 0:
         raise ValueError(f"artifact must not be empty: {name}")
-    return Artifact(name=name, sha256=digest.hexdigest(), size=size)
+    return Artifact(
+        name=name,
+        sha1=sha1.hexdigest(),
+        sha256=sha256.hexdigest(),
+        size=size,
+    )
 
 
 def _input_path(root: Path, source: str, label: str) -> tuple[Path, tuple[str, ...]]:
@@ -253,6 +263,8 @@ def _validate_artifacts(artifacts: tuple[Artifact, ...]) -> None:
         _validate_name(artifact.name)
         if artifact.name in names:
             raise ValueError(f"duplicate artifact name: {artifact.name}")
+        if not re.fullmatch(r"[0-9a-f]{40}", artifact.sha1):
+            raise ValueError(f"invalid artifact digest: {artifact.name}")
         if not re.fullmatch(r"[0-9a-f]{64}", artifact.sha256):
             raise ValueError(f"invalid artifact digest: {artifact.name}")
         if artifact.size <= 0:
@@ -284,6 +296,110 @@ def _validate_components(components: tuple[Component, ...]) -> None:
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 .()+-]{0,127}", component.license):
             raise ValueError("invalid component license")
         identities.add(identity)
+
+
+MAX_CHANGELOG_BYTES = 1 << 20
+_CHANGELOG_CATEGORIES = frozenset(
+    {"Added", "Changed", "Deprecated", "Removed", "Fixed", "Security"}
+)
+
+
+def read_unreleased_changelog(path: Path) -> str:
+    """Read and validate the authored Unreleased changelog entries."""
+    if _has_symlink_component(path):
+        raise ValueError("changelog must not be symlinked")
+    try:
+        with path.open("rb") as source:
+            before = os.fstat(source.fileno())
+            if not stat.S_ISREG(before.st_mode):
+                raise ValueError("changelog must be a regular file")
+            raw = source.read(MAX_CHANGELOG_BYTES + 1)
+            after = os.fstat(source.fileno())
+    except OSError as error:
+        raise ValueError("changelog is unavailable") from error
+    if len(raw) > MAX_CHANGELOG_BYTES:
+        raise ValueError("changelog exceeds 1 MiB")
+    stable_fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+    if len(raw) != before.st_size or any(
+        getattr(before, field) != getattr(after, field) for field in stable_fields
+    ):
+        raise ValueError("changelog changed while read")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError("changelog must be valid UTF-8") from error
+
+    lines = text.splitlines()
+    if any(
+        line.startswith("## Unreleased") and line != "## Unreleased"
+        for line in lines
+    ):
+        raise ValueError("malformed ## Unreleased heading")
+    indices = [index for index, line in enumerate(lines) if line == "## Unreleased"]
+    if len(indices) != 1:
+        raise ValueError("changelog must contain exactly one ## Unreleased section")
+    start = indices[0] + 1
+    end = next(
+        (index for index in range(start, len(lines)) if lines[index].startswith("## ")),
+        len(lines),
+    )
+    section = lines[start:end]
+    while section and not section[0]:
+        section.pop(0)
+    while section and not section[-1]:
+        section.pop()
+
+    seen_categories: set[str] = set()
+    has_bullet = False
+    current_category: str | None = None
+    category_has_bullet = False
+    for line in section:
+        if not line:
+            continue
+        if line.startswith("### "):
+            if current_category is not None and not category_has_bullet:
+                raise ValueError("each changelog category requires a bullet")
+            category = line.removeprefix("### ")
+            if category not in _CHANGELOG_CATEGORIES:
+                raise ValueError(f"unknown changelog category: {category}")
+            if category in seen_categories:
+                raise ValueError(f"duplicate changelog category: {category}")
+            seen_categories.add(category)
+            current_category = category
+            category_has_bullet = False
+            continue
+        if line.startswith("#"):
+            raise ValueError("nested changelog heading is invalid")
+        if line.startswith("- ") and line[2:].strip():
+            if current_category is None:
+                raise ValueError("changelog bullet requires a category")
+            has_bullet = True
+            category_has_bullet = True
+            continue
+        if line.startswith("  ") and line.strip() and category_has_bullet:
+            if line.lstrip().startswith(('-', '*', '+')):
+                raise ValueError("nested changelog bullet is invalid")
+            continue
+        raise ValueError("malformed changelog content")
+    if current_category is None or not category_has_bullet or not has_bullet:
+        raise ValueError("## Unreleased must contain categorized bullets")
+    return "\n".join(section) + "\n"
+
+
+def encode_release_notes(
+    unreleased: str, *, version: str, revision: str, created: str
+) -> bytes:
+    """Encode deterministic candidate notes from validated changelog content."""
+    _validate_release_metadata(version, revision, created)
+    return (
+        f"# Open Trestle {version} release candidate\n\n"
+        f"Revision: `{revision}`\n\n"
+        f"Created: `{created}`\n\n"
+        "> This is an unsigned candidate, not a supported release. "
+        "It is not suitable for production use.\n\n"
+        "## Changes\n\n"
+        f"{unreleased}"
+    ).encode("utf-8")
 
 
 def _validate_release_metadata(version: str, revision: str, created: str) -> None:
@@ -331,7 +447,8 @@ def encode_spdx(
             {
                 "SPDXID": spdx_id,
                 "checksums": [
-                    {"algorithm": "SHA256", "checksumValue": artifact.sha256}
+                    {"algorithm": "SHA1", "checksumValue": artifact.sha1},
+                    {"algorithm": "SHA256", "checksumValue": artifact.sha256},
                 ],
                 "fileName": "./" + artifact.name,
             }
@@ -397,7 +514,7 @@ def encode_spdx(
     relationships = [
         {
             "relatedSpdxElement": file_id,
-            "relationshipType": "CONTAINS",
+            "relationshipType": "DISTRIBUTION_ARTIFACT",
             "spdxElementId": root_package_id,
         }
         for file_id in file_ids
@@ -441,6 +558,7 @@ def write_release_evidence(
     artifacts: tuple[Artifact, ...],
     components: tuple[Component, ...],
     *,
+    release_notes: bytes,
     version: str,
     revision: str,
     created: str,
@@ -462,6 +580,7 @@ def write_release_evidence(
     temporary = Path(tempfile.mkdtemp(prefix=".release-evidence-", dir=output.parent))
     try:
         (temporary / "SHA256SUMS").write_bytes(checksums)
+        (temporary / "release-notes.md").write_bytes(release_notes)
         (temporary / "sbom.spdx.json").write_bytes(spdx)
         os.rename(temporary, output)
     except BaseException:
@@ -494,6 +613,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--go-binary", action="append", default=[], metavar="PATH")
     parser.add_argument("--npm-lock", action="append", default=[], metavar="PATH")
+    parser.add_argument("--changelog", required=True, metavar="PATH")
     parser.add_argument("--version", required=True)
     parser.add_argument("--revision", required=True)
     parser.add_argument("--created", required=True)
@@ -505,6 +625,14 @@ def main(argv: list[str] | None = None, *, root: Path = Path(".")) -> int:
     """Generate release evidence from explicit local inputs."""
     arguments = _parser().parse_args(argv)
     try:
+        changelog_path = _input_path(root, arguments.changelog, "changelog path")[0]
+        unreleased = read_unreleased_changelog(changelog_path)
+        release_notes = encode_release_notes(
+            unreleased,
+            version=arguments.version,
+            revision=arguments.revision,
+            created=arguments.created,
+        )
         artifacts = collect_artifacts(tuple(arguments.artifact), root)
         component_groups = [
             read_go_binary_components(_input_path(root, path, "Go binary path")[0])
@@ -522,6 +650,7 @@ def main(argv: list[str] | None = None, *, root: Path = Path(".")) -> int:
             output,
             artifacts,
             components,
+            release_notes=release_notes,
             version=arguments.version,
             revision=arguments.revision,
             created=arguments.created,

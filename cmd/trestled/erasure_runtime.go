@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -15,6 +16,7 @@ import (
 	"github.com/georgejieh/open-trestle/adapters/storage/s3"
 	"github.com/georgejieh/open-trestle/artifact"
 	"github.com/georgejieh/open-trestle/internal/fileauthority"
+	"github.com/georgejieh/open-trestle/internal/review"
 )
 
 const (
@@ -23,8 +25,12 @@ const (
 )
 
 type daemonDependencies struct {
-	openPostgres func(context.Context, string, postgres.PoolOptions) (*sql.DB, error)
-	clock        interface{ Now() time.Time }
+	modelHTTPClient         *http.Client
+	modelHTTPClientIdentity string
+	openPostgres            func(context.Context, string, postgres.PoolOptions) (*sql.DB, error)
+	clock                   interface{ Now() time.Time }
+	generationSanitizer     review.GenerationRequestSanitizer
+	verificationSanitizer   review.VerificationRequestSanitizer
 }
 
 type daemonErasureClock struct {
