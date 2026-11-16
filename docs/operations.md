@@ -313,7 +313,7 @@ python3 tools/release_evidence.py \
   --changelog CHANGELOG.md \
   --version 0.1.0-dev \
   --revision "$(git rev-parse HEAD)" \
-  --created 2026-08-30T22:46:23Z \
+  --created "$CREATED" \
   --output release-evidence
 ```
 
@@ -392,8 +392,9 @@ for a new run if the original ownership cannot be preserved.
 Before restarting workers, compare the closed backup inventory and file hashes
 with the restored bytes, verify the configured setup and source identities, and
 replay terminal receipts and diagnostics without dispatch. Confirm their exact
-identities match the recovery-point record. This guide does not yet provide an
-executable replay-only procedure for that check. Normal daemon startup is not a
+identities match the recovery-point record. The `trestled verify-restore` command
+in [Offline in-place recovery comparison](#offline-in-place-recovery-comparison)
+does this for the supported layout. Normal daemon startup is not a
 read-only verifier: it can recover stored effects and starts pre-model workers
 even when `--local-model-workers` is disabled. Do not start the daemon as a
 substitute for the replay-only check. If that check cannot be performed, retain
@@ -440,7 +441,7 @@ For the local full-review evaluation profile, a context abstention first appends
 
 If replay or startup reports a typed incompatibility for an old active review plan, halt dispatch and publication for that plan. Do not treat an incompatible journal as a completed review or silently rewrite its immutable plan and events. For the local single-node profile, stop the daemon and take a consistent backup of the entire private `--state-dir` (journal, artifacts, and diagnostics) together with the configured `--setup-state` file, before any disposition. Record the recovery point and confirm the backup can be read. For PostgreSQL/S3 profiles, use their consistent metadata/object/envelope-key backup procedure instead. Do not copy a live file journal piecemeal.
 
-An operator may use a compatible stage-2 runtime and authenticated `trestle runs cancel --tenant ID --repository ID --run ID --server URL` to retire the old plan. First verify that the runtime can replay the plan and that cancellation is authorized for that exact scope. If a compatible runtime cannot safely replay and cancel it, leave the old plan intact and isolated for later operator review. There is no automatic cancellation or supported migration of an incompatible active plan. If cancellation is confirmed, start the newer daemon against that state and submit a fresh review run ID. If the old active plan remains intact, the newer daemon will still refuse that state: isolate and retain its backup, and use a separately initialized state root for any fresh run. Never reuse the old run ID or claim this is an in-place migration.
+An operator may use a compatible runtime and authenticated `trestle runs cancel --tenant ID --repository ID --run ID --server URL` to retire the old plan. First verify that the runtime can replay the plan and that cancellation is authorized for that exact scope. If a compatible runtime cannot safely replay and cancel it, leave the old plan intact and isolated for later operator review. There is no automatic cancellation or supported migration of an incompatible active plan. If cancellation is confirmed, start the newer daemon against that state and submit a fresh review run ID. If the old active plan remains intact, the newer daemon will still refuse that state: isolate and retain its backup, and use a separately initialized state root for any fresh run. Never reuse the old run ID or claim this is an in-place migration.
 
 ## Shutdown and health
 

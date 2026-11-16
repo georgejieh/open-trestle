@@ -6,7 +6,7 @@
 
 First select a case under `evaluation/testdata/deterministic-corpus-v1/cases/`. The reviewed repository's complete base and head trees must contain exactly that case's `base/` and `head/` files, with the original paths and exact bytes. Extra files, missing files, changed content, a different case or different repository/revision identities refuse import. Use an owned local test repository and preserve its exact Git revisions and declared repository identity. This first bridge supports loose Git objects, not a packed-object qualification journey.
 
-Run the existing [local model review](local-model-review.md) only with separately authorized model routes, source scope and any required credentials or spend. Preserve its JSON stdout unchanged, including its final LF. A completed review can exit 3 (inconclusive) or 4 (blocked findings); neither means execution failed. For example, substitute explicit authorized values in these commands:
+Run the existing [local model review](local-model-review.md) only with separately authorized model routes, source scope and any required credentials or spend. Run it without `--specialists` or `--profile`: `trestle review` and the command printed by `trestle setup bootstrap` run a review set by default, and the importer refuses that result. Preserve its JSON stdout unchanged, including its final LF. A completed review can exit 3 (inconclusive) or 4 (blocked findings); neither means execution failed. For example, substitute explicit authorized values in these commands:
 
 ```sh
 trestle local-git model-review \
@@ -34,7 +34,7 @@ trestle evaluate model-result \
   > model-evaluation.json
 ```
 
-Supply `CAPTURE_SHA256` from the exact captured file. The pin identifies bytes, not a signature or an authenticated producer. The operator must retain the run/capture provenance separately. The importer refuses arbitrary candidate JSON, standalone diagnostic JSON, noncanonical or oversized results, unstarted or failed runs, unsupported investigation v2 results, inconsistent diagnostic scope/head/context/counts, and identical generation/verification routes. It preserves the recorded route separation level; it does not independently establish provider ownership or model independence from route hashes. It accepts the existing distinct-route, distinct-model and distinct-provider levels without inventing a new minimum.
+Supply `CAPTURE_SHA256` from the exact captured file. The pin identifies bytes, not a signature or an authenticated producer. The operator must retain the run/capture provenance separately. The importer refuses arbitrary candidate JSON, standalone diagnostic JSON, noncanonical or oversized results, unstarted or failed runs, unsupported investigation v2 results, a result from a review set (`--specialists`) or a single profile (`--profile`), inconsistent diagnostic scope/head/context/counts, and identical generation/verification routes. It preserves the recorded route separation level; it does not independently establish provider ownership or model independence from route hashes. It accepts the existing distinct-route, distinct-model and distinct-provider levels without inventing a new minimum.
 
 The bounded input is the existing `localreview.MaxResultJSONBytes` (256 KiB including LF). Output is one JSON report plus LF, bounded by the existing 1 MiB corpus report limit. Exit 4 means the pending report was written. Exit 1 means input, source binding, evaluation or output failed; exit 2 means invalid usage. No success exit is approval.
 
