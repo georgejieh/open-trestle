@@ -1,6 +1,6 @@
 # Read-only ACP review agent
 
-`trestle acp` exposes one exact Open Trestle review run to editors that support Agent Client Protocol v1. It is an interoperability adapter, not a privileged coding agent.
+`trestle acp` lets an editor that supports Agent Client Protocol v1 show one existing Open Trestle review run. It only observes a run that the daemon already has, so it cannot start a review. It is an interoperability adapter, not a coding agent with extra privileges.
 
 ```sh
 export OPEN_TRESTLE_API_TOKEN="replace-with-the-daemon-credential"
@@ -11,13 +11,38 @@ trestle acp \
   --server http://127.0.0.1:8741
 ```
 
-The process implements ACP v1 initialization, `session/new`, `session/prompt`, `session/update`, and `session/cancel` over newline-delimited JSON-RPC stdio. Messages are bounded to 1 MiB. Standard output contains protocol messages only. A client that requests a protocol version above 1 is answered with version 1 as ACP negotiation requires; only a missing or zero version is rejected.
+## Protocol
 
-Each process is bound to the tenant, repository, and run from its launch configuration. Sessions are cryptographically random, process-local, and capped at 64. Prompt requests are validated and admitted before a worker starts. At most eight prompts may be active, with one per session; their admission remains held until output completes. Invalid, duplicate, or excess requests create no prompt worker. A stalled output stream applies bounded backpressure rather than accumulating workers. Session creation requires an absolute clean working directory but never reads it. Additional directories and client-provided MCP servers are rejected.
+The process implements ACP v1 initialization, `session/new`, `session/prompt`, `session/update` and `session/cancel` over newline-delimited JSON-RPC on standard input and output. Messages are limited to 1 MiB, and standard output carries only protocol messages. If a client requests a protocol version above 1, the agent answers with version 1, as ACP negotiation requires. Only a missing or zero version is rejected.
 
-The agent advertises no filesystem, terminal, remote MCP, image, audio, embedded-context, session-load, or authentication-flow capabilities. Prompt input supports bounded text and resource-link blocks because ACP requires those baseline forms, but it treats them as untrusted display input and does not fetch a link or interpret text as authority.
+The agent advertises no filesystem, terminal, remote MCP, image, audio, embedded-context, session-load or authentication-flow capabilities. Prompts may contain bounded text and resource-link blocks, because ACP requires those baseline forms. The agent treats them as untrusted display input. It does not fetch a link, and it does not read text as a command.
 
-A prompt returns the current secret-free run receipt and, when available, the canonical diagnostic set. When the daemon answers that the run was not found because intake refused the scope's webhook delivery, it returns the fixed reason, its explanation, and the content-free refusal record instead of `Review status is unavailable.`, which any other read failure still returns. Versions 1 through 5 are labeled `Verified diagnostics`; version 6 is labeled `Deterministic review observations` and is never described as independently verified. Version 7 is labeled `Final review diagnostics` and states the terminal outcome; a failed result that records a context route refusal adds a `Context refusal` line and, for `route_context_insufficient`, a `Hint` line with the same text as the local review. A result recorded after its evidence expired adds an `Evidence expired` line. Schema-aware omission notices preserve the same distinction. The adapter sends one `agent_message_chunk` followed by `stopReason: end_turn`. The size limit includes JSON-string escaping and newline framing. If the diagnostic set cannot fit, the response retains the receipt and an explicit omission notice rather than truncating canonical diagnostics. Cancellation during either run or diagnostic retrieval returns `stopReason: cancelled` without a normal state update. Returned review text is explicitly labeled untrusted. The adapter cannot edit files, run commands, request hidden permissions, change policy, select a provider, obtain worker leases, or publish review output.
+## Sessions
+
+Each process is bound to the tenant, repository and run given when it is launched. Session IDs are cryptographically random and exist only within the process. At most 64 sessions can exist at once.
+
+Open Trestle validates and accepts a prompt before it starts a worker. At most eight prompts can be active at once, and only one per session. Each prompt holds its place until its output is complete. An invalid, duplicate or excess request does not start a worker. If the output stream stalls, the agent applies bounded backpressure instead of piling up workers.
+
+Creating a session requires an absolute, clean working directory, which the agent never reads. It rejects additional directories and MCP servers supplied by the client.
+
+## What a prompt returns
+
+A prompt returns the current run receipt, which contains no secrets, and the canonical diagnostic set when one is available. If the daemon answers that the run was not found because intake refused the scope's webhook delivery, the agent returns the fixed reason, its explanation and the refusal record, which has no content. Any other read failure still returns `Review status is unavailable.`
+
+The label on the diagnostics depends on the diagnostic-set version:
+
+- Versions 1 through 5 are labeled `Verified diagnostics`.
+- Version 6 is labeled `Deterministic review observations`. It is never described as independently verified.
+- Version 7 is labeled `Final review diagnostics` and states the terminal outcome. A failed result that records a context route refusal adds a `Context refusal` line. For `route_context_insufficient` it also adds a `Hint` line, with the same text as the local review.
+- A result recorded after its evidence expired adds an `Evidence expired` line.
+
+Notices for omitted content, which are aware of the schema, preserve the same distinction.
+
+The agent sends one `agent_message_chunk` followed by `stopReason: end_turn`. The size limit counts JSON-string escaping and newline framing. If the diagnostic set does not fit, the response keeps the receipt and adds an explicit notice that diagnostics were omitted. It does not truncate the canonical diagnostics. If the client cancels while the run or the diagnostics are being retrieved, the agent returns `stopReason: cancelled` without a normal state update.
+
+The returned review text is labeled as untrusted. The adapter cannot edit files, run commands, request hidden permissions, change policy, select a provider, obtain worker leases or publish review output.
+
+## Sources
 
 The implementation was checked against the current ACP v1 schema and these primary references:
 
@@ -26,4 +51,4 @@ The implementation was checked against the current ACP v1 schema and these prima
 - https://agentclientprotocol.com/protocol/v1/transports
 - https://github.com/agentclientprotocol/agent-client-protocol/releases/latest/download/schema.json
 
-No ACP v2 draft capability is claimed.
+The adapter does not claim any ACP v2 draft capability.
