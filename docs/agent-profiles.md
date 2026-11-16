@@ -1,98 +1,48 @@
 # Agent profiles and routing plans
 
-Open Trestle packages nine specialist review profiles and a deterministic router
-that decides, for one change, which profiles apply, how hard the change is for
-each, which difficulty tier to use, and which exact model route the user has
-assigned to that tier. The package is `agentprofile`; the CLI is
-`trestle profiles`.
+Open Trestle packages nine specialist review profiles and a deterministic router. For one change, the router decides which profiles apply, how hard the change is for each of them, which difficulty tier to use, and which exact model route you have assigned to that tier. The package is `agentprofile`, and the CLI is `trestle profiles`.
+
+This page is for contributors and for operators who want to understand or tune which specialists review a change.
 
 ## Status
 
-This is mainly a **planning layer**. Its production uses are in the direct
-`trestle local-git model-review` path only: one operator-chosen profile
-(`--profile`), or an automatically selected or explicitly listed set of profiles
-(`--specialists`). It is not wired into the daemon's durable generation and
-verification task graph.
+This is mainly a **planning layer**. Its only production use is in the direct `trestle local-git model-review` path. There you can pick one profile (`--profile`), or let Open Trestle select the profiles automatically, or list them yourself (`--specialists`). The daemon's durable task graph for generation and verification does not use it.
 
-What exists today:
+### What exists today
 
-- An embedded, versioned, content-identified profile catalog with skill
-  instructions for each profile (`agentprofile/skills/*.md`).
-- A strict, versioned assignments document that maps tiers to exact
-  `provider.RouteReference` values.
-- A strict, versioned change-features document, plus a constructor that derives
-  the same features from an `evidence.Change` and a `semanticimpact.Profile`.
-- `agentprofile.Plan`, which returns a content-identified `RoutingPlan`.
+- An embedded, versioned catalog of profiles, identified by its content, with skill instructions for each profile (`agentprofile/skills/*.md`).
+- A strict, versioned assignments document that maps tiers to exact `provider.RouteReference` values.
+- A strict, versioned change-features document, and a constructor that derives the same features from an `evidence.Change` and a `semanticimpact.Profile`.
+- `agentprofile.Plan`, which returns a `RoutingPlan` that is identified by its content.
 - `trestle profiles list` and `trestle profiles plan`.
-- `trestle local-git model-review --profile PROFILE_ID` (and
-  `localreview.NewSpecialistSession`). It places one operator-selected
-  model-calling profile's skill instructions into the candidate-generation
-  request. The skill text goes only into the trusted system channel, looked up
-  from the embedded catalog. The context's optional `specialist` block (review-context
-  schema versions 7, 8 and 9) carries only the profile and catalog identities, which bind
-  request identity, and the result reports them. The verifier request does not
-  carry the instructions. See
-  [local model review](local-model-review.md#specialist-profile-opt-in) and the
-  [prompt-injection boundary](prompt-injection-boundary.md).
-- `trestle local-git model-review --specialists auto|ID[,ID...]`. With `auto`,
-  the command derives change features from the general review's own recorded
-  change-model and semantic-impact artifacts, plus the declared style read from
-  the base tree's style configuration files
-  (`localreview.Session.ChangeFeatures`, then
-  `agentprofile.ChangeFeaturesFromFileSpecs`; see
-  [Declared style in local reviews](#declared-style-in-local-reviews)), calls
-  `Plan`, and keeps the
-  activated, planned direct-review profiles in priority order, cut to
-  `--max-specialists` (default 3, at most 6). It then runs the general review and
-  each selected profile as its own independently verified run, concurrently (at
-  most three at a time) on remote routes when no spending limit could be passed
-  and one by one otherwise, and merges the verified findings with the shared
-  duplicate rule (near-identical statements, then paraphrases at one place in
-  one changed declaration). The selection trace records the plan identity and
-  every dropped profile with its reason; it is in the JSON output and in
-  `--verbose` text, while the default text names the reviewers that ran. See
-  [local model review](local-model-review.md#specialist-review-set-opt-in).
-- **Specialists by default.** A new setup (`trestle init`, or
-  `trestle setup bootstrap init`) saves `--specialists auto` in its review
-  command, so `trestle review` runs the set. `--specialists none` at setup, or
-  `trestle review --specialists none` for one run, keeps the single general
-  review; the wizard does not ask. Setups saved before this default keep the
-  single review.
+- `trestle local-git model-review --profile PROFILE_ID` (and `localreview.NewSpecialistSession`). It places the skill instructions of one profile that you selected, and that calls a model, into the candidate-generation request. The skill text goes only into the trusted system channel, looked up from the embedded catalog. The context's optional `specialist` block (review-context schema versions 7, 8 and 9) carries only the profile and catalog identities, which bind the request identity, and the result reports them. The verifier request does not carry the instructions. See [local model review](local-model-review.md#specialist-profile-opt-in) and the [prompt-injection boundary](prompt-injection-boundary.md).
+- `trestle local-git model-review --specialists auto|ID[,ID...]`, described below.
+- Specialists by default, described below.
 
-What does **not** exist yet:
+#### Automatic specialist selection
 
-- The daemon does not dispatch profiles. Its context-assembly handler never
-  binds a specialist block. The request validators it shares accept a version 7
-  specialist block only when the block re-derives exactly from the embedded
-  catalog.
-- `test_author` is not accepted by `--profile`: its test proposals do not fit the
-  defect-claim candidate contract.
-- No daemon fan-out. Automatic selection exists only in the direct
-  `local-git model-review` path; the daemon never runs more than one generation
-  per review run.
-- No per-profile route assignment. A `--profile` or `--specialists` run uses the
-  one runtime-policy generation and verification route pair for every member.
-  For `--specialists auto`, `Plan` needs an assignments document; the command
-  synthesizes a minimal one that maps every tier to the policy's generation route
-  (its pin, else its first preferred route, else the first inventory route) and
-  every verifier tier to its verification route. It does not read an operator
-  assignments file and has no total token cap, so `budget_cap_exceeded` does not
-  occur there. The plan's tiers, token budgets and route choice are informational.
-- Recorded change features carry changed head-line counts only (deleted lines
-  count as zero). They declare change intent when the general review's
-  generation context carried the commit messages of the range (presence only,
-  never the text; see
-  [commit messages as stated intent](local-model-review.md#commit-messages-as-stated-intent)),
-  so the intent condition of `drift_auditor` activates under `auto` on a change
-  with commits. No linked documents or pull-request description are read.
-  `style_conformance` activates under `auto` when the base tree declares a style
-  that governs a changed language. Difficulty tiers are informational.
-- `trestle profiles plan` reads a features file. It does not derive features
-  from a Git change by itself.
+With `--specialists auto`, the command derives change features from the general review's own recorded change-model and semantic-impact artifacts, plus the declared style that it reads from the base tree's style configuration files (`localreview.Session.ChangeFeatures`, then `agentprofile.ChangeFeaturesFromFileSpecs`; see [Declared style in local reviews](#declared-style-in-local-reviews)). It then calls `Plan`, and keeps the activated, planned direct-review profiles in priority order, cut to `--max-specialists` (default 3, at most 6).
+
+It then runs the general review and each selected profile as its own, independently verified run. On remote routes, the runs go concurrently (at most three at a time) when no spending limit could be passed, and one by one otherwise. The command merges the verified findings with the shared duplicate rule: near-identical statements first, then paraphrases at one place in one changed declaration.
+
+The selection trace records the plan identity and every dropped profile with its reason. It is in the JSON output and in `--verbose` text, while the default text names the reviewers that ran. See [local model review](local-model-review.md#specialist-review-set-opt-in).
+
+#### Specialists by default
+
+A new setup (`trestle init`, or `trestle setup bootstrap init`) saves `--specialists auto` in its review command, so `trestle review` runs the set. To keep the single general review, pass `--specialists none` at setup, or `trestle review --specialists none` for one run. The wizard does not ask. Setups saved before this default keep the single review.
+
+### What does not exist yet
+
+- The daemon does not dispatch profiles. Its context-assembly handler never binds a specialist block. The request validators that it shares accept a version 7 specialist block only when the block re-derives exactly from the embedded catalog.
+- `--profile` does not accept `test_author`, because its test proposals do not fit the defect-claim candidate contract.
+- There is no daemon fan-out. Automatic selection exists only in the direct `local-git model-review` path. The daemon never runs more than one generation per review run.
+- There is no per-profile route assignment. A `--profile` or `--specialists` run uses the one runtime-policy pair of generation and verification routes for every member. For `--specialists auto`, `Plan` needs an assignments document, so the command synthesizes a minimal one. It maps every tier to the policy's generation route (its pin, else its first preferred route, else the first inventory route), and every verifier tier to its verification route. The command does not read an assignments file from the operator and has no total token cap, so `budget_cap_exceeded` does not occur there. The plan's tiers, token budgets and route choice are informational.
+- Recorded change features carry only the counts of changed head lines (deleted lines count as zero). They declare change intent when the generation context of the general review carried the commit messages of the range (presence only, never the text; see [commit messages as stated intent](local-model-review.md#commit-messages-as-stated-intent)). The intent condition of `drift_auditor` therefore activates under `auto` on a change with commits. No linked documents or pull-request description are read. `style_conformance` activates under `auto` when the base tree declares a style that governs a changed language. Difficulty tiers are informational.
+- `trestle profiles plan` reads a features file. It does not derive features from a Git change by itself.
 
 ### Integration seam (follow-up)
 
-The plan already produces the values the existing route authorities take:
+The plan already produces the values that the existing route authorities take:
 
 | Plan output | Existing consumer |
 |---|---|
@@ -102,59 +52,35 @@ The plan already produces the values the existing route authorities take:
 | `PlanEntry.VerifierRankingPolicy()` | `ranking` argument of `NewVerificationPolicyAuthorizer` |
 | `Assignments.Independence()` (`gateway.RouteIndependencePolicy`) | `independence` argument of `NewVerificationPolicyAuthorizer` |
 
-Today `runtimecatalog.NewGenerationPolicyAuthorizerFromRuntimePolicy` and
-`NewVerificationPolicyAuthorizerFromRuntimePolicy` take all of these from one
-`runtimeconfig.RuntimePolicy`. Their callers are `localreview/session.go` and
-`cmd/trestled/main.go`. To integrate profiles:
+Today `runtimecatalog.NewGenerationPolicyAuthorizerFromRuntimePolicy` and `NewVerificationPolicyAuthorizerFromRuntimePolicy` take all of these values from one `runtimeconfig.RuntimePolicy`. Their callers are `localreview/session.go` and `cmd/trestled/main.go`. To integrate profiles, the work is:
 
-1. Add a per-entry constructor in `runtimecatalog` that calls the lower-level
-   authorizers with the plan values above.
-2. Create one candidate-generation task per planned entry. Create an
-   independent-verification task only when `PlanEntry.Verification()` is
-   `independent`, using the existing `handlers/model` generation and verification
-   handlers. Retain candidates from `unverifiable` entries as non-findings.
-3. Carry the profile identity into the context packet and the skill text into
-   the model request's system channel. This step exists for one directly
-   selected profile: `review.ContextPacket.WithSpecialist` encodes the version 7
-   `specialist` identity block (`internal/review/context_specialist.go`),
-   `review.TrustedModelRequestInstructions` appends the catalog-exact skill text
-   to the system channel, and
-   `contexthandler.NewSpecialistHandler` binds it into the handler identity.
-   Per-entry dispatch would create one such context per planned entry.
-4. Derive change features from the run's `evidence.Change` and semantic-impact
-   profile with `agentprofile.ChangeFeaturesFromSemanticImpact`, instead of a
-   file.
+1. Add a per-entry constructor in `runtimecatalog` that calls the lower-level authorizers with the plan values above.
+2. Create one candidate-generation task per planned entry. Create an independent-verification task only when `PlanEntry.Verification()` is `independent`, using the existing `handlers/model` generation and verification handlers. Keep the candidates from `unverifiable` entries as non-findings.
+3. Carry the profile identity into the context packet, and the skill text into the system channel of the model request. This step already exists for one directly selected profile. `review.ContextPacket.WithSpecialist` encodes the version 7 `specialist` identity block (`internal/review/context_specialist.go`), `review.TrustedModelRequestInstructions` appends the skill text exactly as it appears in the catalog to the system channel, and `contexthandler.NewSpecialistHandler` binds it into the handler identity. Per-entry dispatch would create one such context per planned entry.
+4. Derive change features from the run's `evidence.Change` and semantic-impact profile with `agentprofile.ChangeFeaturesFromSemanticImpact`, instead of from a file.
 
-The verification authorizer currently ranks with an unpinned preference list,
-because a generation pin cannot also pin a route that independence excludes.
-A per-profile verifier pin has to keep that check.
+The verification authorizer currently ranks with an unpinned preference list, because a generation pin cannot also pin a route that independence excludes. A per-profile verifier pin has to keep that check.
 
 ### What the plan does not bypass
 
-A `RoutingPlan` is advisory input to dispatch. It is not authority. Gateway
-eligibility (`internal/gateway/route_eligibility_filter.go`) still runs for every
-request. That check covers provider policy zones, local-only requests (no silent
-remote fallback), route capacity (`max_output_tokens` must fit the output
-capacity, and input plus output must fit the context), cost budgets, and
-operational readiness. The gateway also re-checks generator and verifier
-independence on resolved records (`route_independence.go`). A plan that names a
-route the registry does not have, or one that is ineligible, fails at dispatch.
-It never silently falls back.
+A `RoutingPlan` is advisory input to dispatch, not authority. Gateway eligibility (`internal/gateway/route_eligibility_filter.go`) still runs for every request. That check covers:
+
+- provider policy zones
+- local-only requests (no silent remote fallback)
+- route capacity: `max_output_tokens` must fit the output capacity, and input plus output must fit the context
+- cost budgets
+- operational readiness
+
+The gateway also re-checks the independence of generator and verifier on resolved records (`route_independence.go`). A plan that names a route the registry does not have, or one that is ineligible, fails at dispatch. It never silently falls back.
 
 ## Authority
 
-Every profile has the same fixed authority. It is part of the catalog JSON and
-cannot be configured:
+Every profile has the same fixed authority. It is part of the catalog JSON and cannot be configured:
 
-- Output is **candidates only**. Candidates need independent verification on a
-  separate route before they can become findings.
-- No tool execution, no network access outside gateway dispatch, no
-  publication, and no source mutation.
-- No dynamic validation. `security_probe` is static and read-only. Dynamic
-  validation needs the separate governed-execution authorization described in
-  [architecture](architecture.md#execution), and this layer cannot grant it.
-- `test_author` output is a proposed test artifact. This layer never writes or
-  runs it.
+- Output is **candidates only**. Candidates need independent verification on a separate route before they can become findings.
+- A profile has no tool execution, no network access outside gateway dispatch, no publication and no source mutation.
+- A profile does no dynamic validation. `security_probe` is static and read-only. Dynamic validation needs the separate governed-execution authorization described in [architecture](architecture.md#execution), and this layer cannot grant it.
+- `test_author` output is a proposed test artifact. This layer never writes or runs it.
 
 ## Profiles
 
@@ -170,93 +96,52 @@ cannot be configured:
 | `drift_auditor` | required | a declared description or linked docs, or docs and code changing together | 40 |
 | `style_conformance` | required | a declared style intent that governs a changed language | 20 |
 
-The `bug_hunter` (version 2) and `frontend` (version 2) skills each end their
-checklist with a short **nuance traps** list: APIs that are easy to use almost
-correctly and deserve extra scrutiny. `bug_hunter` names Go goroutine and
-channel leaks, `defer` in a loop, loop-variable capture before Go 1.22,
-`time.Sleep` and library `panic`, and Python mutable defaults and bare
-`except:`; `frontend` names React `useEffect` and imperative timers. Both point
-the model at lines the packet's deterministic `pattern_hygiene` evidence cites
-(see [pattern hygiene](local-model-review.md#pattern-hygiene)) and ask that a
-candidate about a new suppression or workaround comment name the root cause.
+The `bug_hunter` (version 2) and `frontend` (version 2) skills each end their checklist with a short list of **nuance traps**: APIs that are easy to use almost correctly and deserve extra scrutiny. `bug_hunter` names Go goroutine and channel leaks, `defer` in a loop, loop-variable capture before Go 1.22, `time.Sleep` and library `panic`, and Python mutable defaults and bare `except:`. `frontend` names React `useEffect` and imperative timers. Both point the model at the lines that the packet's deterministic `pattern_hygiene` evidence cites (see [pattern hygiene](local-model-review.md#pattern-hygiene)). Both also ask that a candidate about a new suppression or workaround comment name the root cause.
 
-The catalog is version 1. Five profiles are at profile version 2 and the other
-four are at version 1: `security_probe`, `bug_hunter`, `frontend`,
-`knowledge_graph` and `style_conformance` are at 2 (the `security_probe` skill
-text now uses plain punctuation), and `orchestrator`, `backend`, `test_author`
-and `drift_auditor` are at 1. A profile version bump changes the catalog
-identity, and with it the identity of every plan that includes the profile.
+### Catalog and profile versions
 
-Activation predicates are OR-combined. Vendor (`vendor/`, `node_modules/`,
-`third_party/`) and generated files never activate or score a profile. Each
-entry records the predicates that matched, or why none did.
+The catalog is version 1. Five profiles are at profile version 2 and the other four are at version 1:
 
-Language, file class, and path signals come from exact path rules in
-`agentprofile/paths.go`: extensions, directory names, and whole words in the
-path. Analyzers can add signals such as `concurrency` or `public_api` through
-the features document. Path signals are heuristics. For example, any path with
-the word `api` or `server` carries the `http` signal.
+- Version 2: `security_probe`, `bug_hunter`, `frontend`, `knowledge_graph` and `style_conformance`. The `security_probe` skill text now uses plain punctuation.
+- Version 1: `orchestrator`, `backend`, `test_author` and `drift_auditor`.
 
-Declared style intents come from configuration files only
-(`agentprofile/style.go`). `go.mod` gives `gofmt_effective_go`.
-`.editorconfig` gives `editorconfig`. Prettier and ESLint configs give
-`prettier` and `eslint`. `.flake8`, `ruff.toml`, and the matching `setup.cfg`,
-`tox.ini`, or `pyproject.toml` sections give `pep8`. A `[tool.black]` section
-gives `black`. A yapf configuration is read from its own section only:
-`[style]` in `.style.yapf`, `[yapf]` in `setup.cfg`, and `[tool.yapf]` in
-`pyproject.toml`. Its `based_on_style` gives `google_python` when it is `google`
-or `yapf` (a style yapf derives from Google's), and `pep8` for any other base or
-none, since yapf's default base is PEP 8. A `.style.yapf` without a `[style]`
-section also gives `pep8`. `based_on_style` outside those sections, and in
-`tox.ini`, which yapf does not read, declares nothing.
-`.clang-format` gives `clang_format`, and `BasedOnStyle: Google` in it also gives
-`google_cpp`. `rustfmt.toml` and `.rubocop.yml` give `rustfmt` and `rubocop`.
-The `style_conformance` skill has guidance for gofmt and Effective Go, PEP 8 with
-Black and Google Python style, Google C++ with clang-format, and Prettier, ESLint
-and EditorConfig. It has no section for `rustfmt` or `rubocop`, so a review that
-activates it for those styles gets only its general rules.
-Detection never infers a style from source code.
+A profile version bump changes the catalog identity, and with it the identity of every plan that includes the profile.
+
+### How profiles activate
+
+Activation predicates are OR-combined. Vendor files (`vendor/`, `node_modules/`, `third_party/`) and generated files never activate or score a profile. Each entry records the predicates that matched, or why none did.
+
+Language, file class and path signals come from exact path rules in `agentprofile/paths.go`: extensions, directory names, and whole words in the path. Analyzers can add signals such as `concurrency` or `public_api` through the features document. Path signals are heuristics. For example, any path with the word `api` or `server` carries the `http` signal.
+
+### How a declared style is detected
+
+Declared style intents come from configuration files only (`agentprofile/style.go`). Detection never infers a style from source code.
+
+- `go.mod` gives `gofmt_effective_go`.
+- `.editorconfig` gives `editorconfig`.
+- Prettier and ESLint configs give `prettier` and `eslint`.
+- `.flake8`, `ruff.toml`, and the matching sections of `setup.cfg`, `tox.ini` or `pyproject.toml` give `pep8`.
+- A `[tool.black]` section gives `black`.
+- A yapf configuration is read from its own section only: `[style]` in `.style.yapf`, `[yapf]` in `setup.cfg`, and `[tool.yapf]` in `pyproject.toml`. Its `based_on_style` gives `google_python` when it is `google` or `yapf` (a style that yapf derives from Google's), and `pep8` for any other base or none, since yapf's default base is PEP 8. A `.style.yapf` without a `[style]` section also gives `pep8`. A `based_on_style` outside those sections, or in `tox.ini`, which yapf does not read, declares nothing.
+- `.clang-format` gives `clang_format`, and `BasedOnStyle: Google` in it also gives `google_cpp`.
+- `rustfmt.toml` and `.rubocop.yml` give `rustfmt` and `rubocop`.
+
+The `style_conformance` skill has guidance for gofmt and Effective Go, PEP 8 with Black and Google Python style, Google C++ with clang-format, and Prettier, ESLint and EditorConfig. It has no section for `rustfmt` or `rubocop`, so a review that activates it for those styles gets only its general rules.
 
 ### Declared style in local reviews
 
-`trestle local-git model-review` supplies the configuration files for style
-detection from the review's base tree (the default-branch side), never from the
-head. A change's author controls the head, so a head edit to a style
-configuration must not decide which style that same change is reviewed against;
-the edit is reviewed as ordinary changed code. A configuration that exists only
-in the head declares nothing, and one that differs between base and head is read
-as it is in the base, including one the head deletes.
+`trestle local-git model-review` reads the configuration files for style detection from the review's base tree (the default-branch side), never from the head. The author of a change controls the head, so an edit to a style configuration in the head must not decide which style the same change is reviewed against. Open Trestle reviews that edit as ordinary changed code. A configuration that exists only in the head declares nothing. A configuration that differs between base and head is read as it is in the base, including one that the head deletes.
 
-- Only root-level files are read, following the repository instruction files
-  (see [context assembly](context-assembly-handler.md)). A subproject's own
-  configuration, such as `services/api/ruff.toml`, is not read.
-- Only the names detection recognizes are read (`agentprofile.IsStyleConfigFile`):
-  `go.mod`, `.editorconfig`, `.prettierrc` and `.prettierrc.*`,
-  `prettier.config.*`, `package.json`, `.eslintrc` and `.eslintrc.*`,
-  `eslint.config.*`, `.flake8`, `.pycodestyle`, `ruff.toml`, `.ruff.toml`,
-  `setup.cfg`, `tox.ini`, `pyproject.toml`, `.style.yapf`, `.clang-format`,
-  `_clang-format`, `rustfmt.toml`, `.rustfmt.toml` and `.rubocop.yml`.
-- Contents come from the base file artifacts that source acquisition already
-  recorded for the run. No Git object is read again.
-- A file larger than 64 KiB, or not valid UTF-8, is skipped whole and never
-  truncated; so is every readable file after the first 256 in path order, and
-  every file that would push the change-features document past its 1 MiB bound
-  (files are added in path order, so a later, smaller file may still fit). A
-  skipped file declares nothing. The review set's selection trace counts the
-  skipped files in `features.style_configuration_unread`.
+- Only root-level files are read, following the repository instruction files (see [context assembly](context-assembly-handler.md)). A subproject's own configuration, such as `services/api/ruff.toml`, is not read.
+- Only the names that detection recognizes are read (`agentprofile.IsStyleConfigFile`): `go.mod`, `.editorconfig`, `.prettierrc` and `.prettierrc.*`, `prettier.config.*`, `package.json`, `.eslintrc` and `.eslintrc.*`, `eslint.config.*`, `.flake8`, `.pycodestyle`, `ruff.toml`, `.ruff.toml`, `setup.cfg`, `tox.ini`, `pyproject.toml`, `.style.yapf`, `.clang-format`, `_clang-format`, `rustfmt.toml`, `.rustfmt.toml` and `.rubocop.yml`.
+- Contents come from the base file artifacts that source acquisition already recorded for the run. No Git object is read again.
+- A file larger than 64 KiB, or not valid UTF-8, is skipped whole and never truncated. So is every readable file after the first 256 in path order, and so is every file that would push the change-features document past its 1 MiB bound. Files are added in path order, so a later, smaller file may still fit. A skipped file declares nothing. The selection trace of the review set counts the skipped files in `features.style_configuration_unread`.
 
-The same declared style decides the review result's
-[style recommendations](local-model-review.md#style-recommendations)
-(`agentprofile.RecommendStyles`), from exactly the files the change-features
-document carries: a file routing skips is unread for the recommendations too.
-Only when routing has no change features (the analysis was not recorded) do
-recommendations use every readable file.
+The same declared style decides the review result's [style recommendations](local-model-review.md#style-recommendations) (`agentprofile.RecommendStyles`). It uses exactly the files that the change-features document carries, so a file that routing skips is unread for the recommendations too. Only when routing has no change features (the analysis was not recorded) do the recommendations use every readable file.
 
 ## Assignments document
 
-Schema `open-trestle/agent-profile-assignments`, version 1. Decoding is strict:
-unknown fields, duplicate keys, and trailing data are rejected, and the document
-may be at most 64 KiB.
+The schema is `open-trestle/agent-profile-assignments`, version 1. Decoding is strict: unknown fields, duplicate keys and trailing data are rejected, and the document may be at most 64 KiB.
 
 ```json
 {
@@ -280,36 +165,26 @@ may be at most 64 KiB.
 }
 ```
 
-- `independence` is required: `distinct_route`, `distinct_model`, or
-  `distinct_provider`. These are the gateway's terms.
-- `tiers` and `verifier_tiers` hold global exact routes. `profiles.<id>` holds
-  overrides, which win over global routes. The orchestrator takes no routes.
-  An override must assign at least one route, and the document must assign at
-  least one generator route.
-- **Unassigned tier.** The profile is omitted with reason `tier_unassigned`.
-  It never borrows another tier's route unless `escalation_order` is set. With
-  an escalation order, the router uses the first assigned tier listed after the
-  scored tier and records it as `escalated_from`. Requirements and token budget
-  still come from the scored tier, so escalation never loosens what the work
-  needs.
-- **Verifier.** Without a verifier route that is independent of the generator
-  route at the configured level, the entry is `unverifiable`. Its candidates
-  cannot become findings, and the router never invents a verifier. Verifier
-  routes follow the same override, global, and escalation rules.
-- **`total_token_budget`** is optional; 0 or absent means no cap. Each planned
-  entry counts its tier's input plus output budget, doubled when an independent
-  verifier is planned. Over the cap, the router drops planned entries one at a
-  time: lowest priority first, and on equal priority the higher profile ID
-  first. It stops as soon as the total fits. Each drop is recorded as
-  `budget_cap_exceeded` with the running totals.
+- `independence` is required. Its value is `distinct_route`, `distinct_model` or `distinct_provider`, which are the gateway's terms.
+- `tiers` and `verifier_tiers` hold global exact routes. `profiles.<id>` holds overrides, which win over the global routes. The orchestrator takes no routes. An override must assign at least one route, and the document must assign at least one generator route.
+- `escalation_order` is optional and controls what happens to a tier without a route.
+- `total_token_budget` is optional. A value of 0, or no value, means no cap.
+
+### Unassigned tiers
+
+When a tier has no route, the profile is omitted with the reason `tier_unassigned`. It never borrows another tier's route unless `escalation_order` is set. With an escalation order, the router uses the first assigned tier that is listed after the scored tier, and records it as `escalated_from`. The requirements and the token budget still come from the scored tier, so escalation never loosens what the work needs.
+
+### Verifier routes
+
+If no verifier route is independent of the generator route at the configured level, the entry is `unverifiable`. Its candidates cannot become findings, and the router never invents a verifier. Verifier routes follow the same override, global and escalation rules.
+
+### Token budget
+
+Each planned entry counts its tier's input plus output budget, doubled when an independent verifier is planned. When the total is over the cap, the router drops planned entries one at a time. It drops the lowest priority first and, on equal priority, the higher profile ID first. It stops as soon as the total fits. Each drop is recorded as `budget_cap_exceeded` with the running totals.
 
 ## Change-features document
 
-Schema `open-trestle/agent-profile-change-features`, version 1. Decoding is
-strict, and the document may be at most 1 MiB. Construction enforces the same
-bound on the canonical encoding (`ErrChangeFeaturesTooLarge`), so every
-features value can be written and read back; `agentprofile.FitConfigFiles`
-selects the configuration files that fit.
+The schema is `open-trestle/agent-profile-change-features`, version 1. Decoding is strict, and the document may be at most 1 MiB. Construction enforces the same bound on the canonical encoding (`ErrChangeFeaturesTooLarge`), so every features value can be written and read back. `agentprofile.FitConfigFiles` selects the configuration files that fit.
 
 ```json
 {
@@ -330,19 +205,15 @@ selects the configuration files that fit.
 }
 ```
 
-- Paths must be clean, relative, and slash-separated, and none may repeat.
-- `coverage` is optional. When it is absent, coverage is recorded as unknown
-  and adds no points.
+- Paths must be clean, relative and slash-separated, and none may repeat.
+- `coverage` is optional. When it is absent, coverage is recorded as unknown and adds no points.
 - `intent` records only whether intent was declared, never the text.
-- `config_files[].content` is optional and at most 64 KiB. It is read only for
-  the exact markers listed above.
-- In the canonical form, path-derived signals are merged into `files[].signals`.
-  Re-parsing the canonical form gives the same identity.
+- `config_files[].content` is optional and at most 64 KiB. It is read only for the exact markers listed above.
+- In the canonical form, path-derived signals are merged into `files[].signals`. Parsing the canonical form again gives the same identity.
 
 ## Difficulty scoring
 
-All scoring lives in `agentprofile/scoring.go`. Owners tune it in two tables:
-`difficultyWeights` and `profileTierThresholds`. The arithmetic is integer-only:
+All scoring lives in `agentprofile/scoring.go`. Owners tune it in two tables, `difficultyWeights` and `profileTierThresholds`. The arithmetic uses integers only:
 
 ```
 points(signal) = min(cap, (observed / divisor) * points)
@@ -361,9 +232,7 @@ score          = sum(points)        # 0..125
 | `test_absence` | 1 when scope has source changes and no test file changed | 1 | 6 | 6 |
 | `coverage_gap` | uncovered changed lines (0 when unknown) | 20 | 1 | 10 |
 
-"Scope" means the files that activated the profile. The tier comes from the
-profile's thresholds: below `standard` is light, from `standard` up to `deep` is
-standard, and `deep` or above is deep.
+"Scope" means the files that activated the profile. The tier comes from the profile's thresholds: a score below `standard` is light, a score from `standard` up to `deep` is standard, and a score of `deep` or above is deep.
 
 | Profile | standard | deep |
 |---|---|---|
@@ -374,11 +243,9 @@ standard, and `deep` or above is deep.
 | `knowledge_graph` | 25 | 70 |
 | `style_conformance` | 30 | 80 |
 
-Each plan entry includes every row of its breakdown. The scoring table and
-thresholds are bound into the catalog identity, so a tuned router is always
-distinguishable from the packaged one.
+Each plan entry includes every row of its breakdown. The scoring table and thresholds are bound into the catalog identity, so a tuned router is always distinguishable from the packaged one.
 
-Per-tier token budgets (input / output; the minimum context covers both):
+The token budgets for each tier are below, as input / output. The minimum context covers both.
 
 | Tier | Review profiles | Compact profiles (style, drift, knowledge graph) |
 |---|---|---|
@@ -390,11 +257,7 @@ All model-calling profiles require `structured_output`.
 
 ## Determinism and identity
 
-`Plan` makes no model call and no network request. It reads no clock and uses no
-randomness. The catalog, assignments, features, and plan each have a SHA-256
-identity over canonical JSON. The plan identity binds the other three
-identities and every entry. Entries are in profile-ID order. Omissions list
-unassigned tiers first, in profile order, then budget drops in drop order.
+`Plan` makes no model call and no network request. It reads no clock and uses no randomness. The catalog, the assignments, the features and the plan each have a SHA-256 identity over canonical JSON. The plan identity binds the other three identities and every entry. Entries are in profile-ID order. The omissions list the unassigned tiers first, in profile order, and then the budget drops, in drop order.
 
 ## CLI
 
@@ -403,13 +266,14 @@ trestle profiles list [--format text|json]
 trestle profiles plan --assignments assignments.json --features features.json
 ```
 
-`list` prints one line per profile by default (`--format text`): its ID, when
-it calls a model (`required`, `gap_only` or `none`), whether
-`local-git model-review` accepts it in `--profile` and `--specialists`
-(`--profile`) or only plans it (`plan only`), and its purpose. Three closing
-lines give the profile count and catalog identity, explain the `REVIEW` column,
-and point to `profiles plan` and the JSON form. The catalog binds no provider, model or zone; an assignments
-document binds those per tier. Abridged:
+By default (`--format text`), `list` prints one line per profile with these columns:
+
+- its ID
+- when it calls a model (`required`, `gap_only` or `none`)
+- whether `local-git model-review` accepts it in `--profile` and `--specialists` (`--profile`) or only plans it (`plan only`)
+- its purpose
+
+Three closing lines give the profile count and the catalog identity, explain the `REVIEW` column, and point to `profiles plan` and the JSON form. The catalog binds no provider, model or zone, and an assignments document binds those for each tier. Abridged:
 
 ```
 PROFILE            MODEL     REVIEW     PURPOSE
@@ -419,10 +283,7 @@ orchestrator       none      plan only  Deterministic router: activates profiles
 9 profiles, catalog version 1, identity d251da266e0ed52d709d69da9233c00e7688079ecb18543b504eae7db498a2f4
 ```
 
-`list --format json` prints the catalog as one JSON line: profiles, skills,
-scoring table, and authority. These bytes are unchanged from the earlier
-JSON-only `list`. `plan` prints the `RoutingPlan` as one JSON line. Both inputs
-must be regular files within their size bounds.
+`list --format json` prints the catalog as one JSON line: the profiles, skills, scoring table and authority. These bytes are unchanged from the earlier `list`, which printed JSON only. `plan` prints the `RoutingPlan` as one JSON line. Both input files must be regular files within their size bounds.
 
 Exit codes:
 
@@ -448,12 +309,7 @@ Example plan entry (abridged):
 
 ## Known limitations
 
-- Path signals and file classes are heuristics over paths. They do not inspect
-  file content, so concurrency and deserialization signals come only from
-  analyzers.
-- Deterministic semantic coverage exists only for Go. Every other source
-  language counts as a knowledge-graph gap.
-- The verifier budget is assumed equal to the generator budget for cap
-  accounting.
-- Pricing is not consulted. `PlanEntry.CostBudget` takes a caller-supplied cost
-  cap, and the gateway enforces it.
+- Path signals and file classes are heuristics over paths. They do not inspect file content, so concurrency and deserialization signals come only from analyzers.
+- Deterministic semantic coverage exists only for Go. Every other source language counts as a knowledge-graph gap.
+- For cap accounting, the verifier budget is assumed to equal the generator budget.
+- Pricing is not consulted. `PlanEntry.CostBudget` takes a cost cap that the caller supplies, and the gateway enforces it.
