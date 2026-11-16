@@ -1,22 +1,5 @@
 # Private local material
 references/
-/AGENTS.md
-/CLAUDE.md
-# Repository AI-tool configuration, at any depth. The harness reads these
-# from repositories under review; it does not ship its own.
-**/AGENTS.md
-**/CLAUDE.md
-**/GEMINI.md
-**/.cursorrules
-**/.claude/
-**/.cursor/
-**/.codex/
-**/.trestle/
-**/prompts/
-**/.mcp.json
-**/*.prompt
-**/*.prompt.md
-**/*.prompty
 
 # Credentials and local configuration
 .env
