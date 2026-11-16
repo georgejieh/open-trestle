@@ -1,13 +1,10 @@
 # Local model review
 
-`trestle local-git model-review` is an explicit request for model calls. It does not
-change `local-git review`, which remains deterministic. This command cannot publish
-a forge review or create a required check. For private source, prefer a local model
-or a provider whose zero-data-retention terms and account settings you have
-verified. Route-policy checks and `store: false` cannot prove how a provider
-retains or uses data. `--egress policy-approved` can send sanitized, scanned
-selected source to an approved remote route (see Authority and egress below and
-[remote model review](remote-model-review.md)).
+`trestle local-git model-review` asks language models to review the change between two commits that you name. It is the model-backed review command. Developers and CI jobs use it, and `trestle review` runs it for you after `trestle init`. This page explains how a review works, what the output looks like and what the exit codes mean, and then covers each option and each boundary in detail.
+
+The command is an explicit request for model calls. It does not change `local-git review`, which stays deterministic. It cannot publish a forge review or create a required check.
+
+For private source, prefer a local model or a provider whose zero-data-retention terms and account settings you have verified. Route-policy checks and `store: false` cannot prove how a provider retains or uses data. `--egress policy-approved` can send sanitized, scanned selected source to an approved remote route (see Authority and egress below and [remote model review](remote-model-review.md)).
 
 ```text
 trestle local-git model-review \
@@ -25,41 +22,75 @@ trestle local-git model-review \
   --object-store loose-and-pack-index-v1 --format json
 ```
 
-Use separate flag/value pairs. Repeated flags, equals-form flags, missing values,
-unknown flags, and equal revisions are refused. SHA-1 and SHA-256 full commit
-digests are supported. The timeout must be between one second and 15 minutes.
-JSON is the default; `--format text` selects a short human-readable summary.
-`--object-store` is optional. Its only accepted values are `loose-only` and
-`loose-and-pack-index-v1`. When it is absent, the command keeps the historical
-loose-object-only behavior. There are no publish, resume, state, or existing-run
-identity flags.
+Write each flag and its value as two separate words. The command refuses repeated flags, flags in `--flag=value` form, missing values, unknown flags and equal revisions. It supports full SHA-1 and SHA-256 commit digests. The timeout must be between one second and 15 minutes. JSON is the default output format, and `--format text` selects a short summary for people.
+
+`--object-store` is optional. It accepts only `loose-only` and `loose-and-pack-index-v1`. When you leave it out, the command reads loose objects only, as it always has. The command has no flags to publish, resume, keep state, or name an existing run.
+
+## How a review works
+
+A review takes four steps, and the command runs them in order:
+
+1. You select two distinct commits, a base and a head. The command reads the objects of those two commits and works out what changed. It reviews committed work only, never the index or the working tree.
+2. Open Trestle selects the changed source that it may send, sanitizes it, and scans it for secrets. It sends the result to the generation route that your route inventory and runtime policy name. That model proposes candidate findings.
+3. A second model reviews each candidate. The runtime policy must name this verification route separately, and it must be independent of the generation route. Only a candidate that the verifier confirms becomes a verified finding.
+4. The command prints one result and exits with a code that summarizes it.
+
+Your protected route inventory and runtime policy decide which models may be called and where the source may go. The command does not choose defaults or approve routes for you. `--egress local-only` refuses any route that is not local. See [Authority and egress](#authority-and-egress).
+
+### What the output tells you
+
+The result is a single document on standard output. `--format` selects one of four formats:
+
+- `json` is the default. It is one terminal receipt, which a script can read.
+- `text` is a short summary for people.
+- `sarif` is a SARIF 2.1.0 document that code-scanning tools can read (see [SARIF output](#sarif-output)).
+- `markdown` is a pull request summary comment (see [Markdown output](#markdown-output)).
+
+Read the `status`, `ci_disposition`, `run_status`, `limitations` and `diagnostics` fields together. They mean different things:
+
+- A run that succeeded means that the pipeline finished. It does not mean that the repository is clear.
+- Verified findings give `ci_disposition: blocked`. The exception is an [advisory](#advisory-results) run whose confirmed findings are all low severity or pre-existing, which gives `inconclusive`.
+- No candidates, incomplete evidence, and an abstention all give `inconclusive`.
+- Refusal and failure are separate terminal statuses.
+- The result never claims comprehensive clearance, and an empty finding list is not an approval.
+
+[Results and limits](#results-and-limits) describes the rest of the output.
+
+### Exit codes
+
+By default the command never exits with 0. The exit code summarizes the result:
+
+| Exit | Meaning |
+| --- | --- |
+| 4 | There are verified findings that block (an introduced medium, high or critical finding), or the run was refused for policy or resource reasons. |
+| 3 | There are only [advisory](#advisory-results) findings, or there are no candidates, the evidence is incomplete, the source is unsupported, or the run was canceled. |
+| 2 | The command was used incorrectly. |
+| 1 | The result was internal or malformed, the command could not drain or close safely, or the output failed. |
+
+Do not hide a nonzero status, and do not treat an empty finding list as approval in CI. If a CI step must pass when a completed review has no blocking findings, use the opt-in `--exit-code-policy` (see [Exit-code policy](#exit-code-policy)). Even then, exit 0 is a decision about your pipeline, not a statement that the change is clear.
 
 ## Reviewing the latest change with `trestle review`
 
-After `trestle init` (see [getting started](getting-started.md)), `trestle review`
-runs this same command for you. It finds the saved setup, takes the saved review
-command's route inventory, runtime policy, scope labels, egress and timeout, and
-replaces only the two commits, which it picks again on every run: `HEAD`, and the
-newest commit `HEAD` shares with the default branch (`--base REF` and `--head REF`
-pick them exactly). Only committed work is reviewed. A new setup saves `--format
-text` and, unless it was set up with `--specialists none`, `--specialists auto`.
+After `trestle init` (see [getting started](getting-started.md)), `trestle review` runs this same command for you. It finds the saved setup and takes the route inventory, runtime policy, scope labels, egress and timeout from the saved review command. It replaces only the two commits, which it picks again on every run:
 
-The result goes to standard output as one document, in the saved format or the one
-you pass with `--format text|json|sarif|markdown`. Every other line, including the
-commits, where the source is sent, and the spending and scanning messages, goes to
-standard error. `--timeout`, `--profile`, `--specialists`, `--max-specialists`,
-`--exit-code-policy`, `--all` and `--verbose` pass through, and the exit code is
-this page's [exit table](#results-and-limits). Nothing is sent, and the exit code is
-`3`, when the repository has no setup, there is no committed change to review, or
-the setup's API key is missing (`trestle keys set NAME`). Outside a Git checkout,
-or with flags the saved setup cannot combine, it exits `2`. `trestle review PATH`
-instead reviews a local fixture file. The rest of this page describes the
-underlying command and its output, which `trestle review` shares.
+- the head is `HEAD`;
+- the base is the newest commit that `HEAD` shares with the default branch.
+
+`--base REF` and `--head REF` pick the commits exactly. Only committed work is reviewed. A new setup saves `--format text` and, unless you set it up with `--specialists none`, `--specialists auto`.
+
+The result goes to standard output as one document, in the saved format or in the one you pass with `--format text|json|sarif|markdown`. Every other line goes to standard error. That includes the commits, where the source is sent, and the spending and scanning messages. `--timeout`, `--profile`, `--specialists`, `--max-specialists`, `--exit-code-policy`, `--all` and `--verbose` pass through, and the exit code follows this page's [exit table](#exit-codes).
+
+The command sends nothing and exits with `3` in these cases:
+
+- the repository has no setup;
+- there is no committed change to review;
+- the API key of the setup is missing (set it with `trestle keys set NAME`).
+
+Outside a Git checkout, or with flags that the saved setup cannot combine, the command exits with `2`. `trestle review PATH` reviews a local fixture file instead. The rest of this page describes the underlying command and its output, which `trestle review` shares.
 
 ## Ordinary checkout source selection
 
-Instead of the object-root and three revision flags, select two immutable commits
-from an ordinary local checkout:
+Instead of the object-root flag and the three revision flags, you can select two immutable commits from an ordinary local checkout:
 
 ```sh
 trestle local-git model-review \
@@ -73,47 +104,17 @@ trestle local-git model-review \
   --egress local-only --timeout 5m --format text
 ```
 
-`--base` and `--head` are both required. Each accepts `HEAD`, an exact full
-lowercase commit digest, or a full `refs/heads/...` or `refs/tags/...` name.
-There is no default base, inferred merge base, short branch name, revision
-expression, index review or dirty-worktree review. Annotated tags must resolve
-to commits. Equal selected commits refuse. Do not combine checkout selection
-with `--objects-root`, revision flags or `--object-store`.
+`--base` and `--head` are both required. Each accepts `HEAD`, an exact full lowercase commit digest, or a full `refs/heads/...` or `refs/tags/...` name. The command has no default base, and it does not infer a merge base. It does not accept short branch names or revision expressions, and it does not review the index or a dirty worktree. An annotated tag must resolve to a commit. If both selections resolve to the same commit, the command refuses. Do not combine checkout selection with `--objects-root`, the revision flags or `--object-store`.
 
-This explicit source form requires installed Git supporting `--no-lazy-fetch`.
-Git resolves the shared object directory (including linked worktrees), object
-format and selected commit IDs. The existing immutable reader then authenticates
-those exact objects using `loose-and-pack-index-v1`; its pack, alternates, missing
-object, symlink and gitlink restrictions still apply. Ref changes after selection
-do not relabel acquired evidence. Concurrent object removal can make a review
-incomplete. No atomic checkout snapshot or origin authentication is claimed.
+This form needs an installed Git that supports `--no-lazy-fetch`. Git resolves the shared object directory (including linked worktrees), the object format and the selected commit IDs. The existing immutable reader then authenticates those exact objects with `loose-and-pack-index-v1`, and its restrictions on packs, alternates, missing objects, symlinks and gitlinks still apply. A ref that changes after the selection does not relabel the evidence that was already acquired. If objects are removed while the review runs, the review can be incomplete. The command does not claim an atomic snapshot of the checkout, and it does not authenticate where the checkout came from.
 
-Preparation runs no shell, fetch, checkout, filter, textconv, hook, credential
-helper or maintenance command. It clears inherited Git overrides and global/system
-configuration, disables lazy fetching, replacements and transports, and bounds
-metadata output and execution time. Repository configuration and includes remain
-ordinary same-user metadata reads; do not point it at an untrusted checkout if
-those reads are not permitted. No provider credential is resolved by preparation.
-The subsequent model review still uses the explicit protected policy and egress
-checks. This convenience form is foreground-only; it does not enroll a checkout
-as a durable daemon source root or grant publication authority.
+Preparing the source runs no shell, fetch, checkout, filter, textconv, hook, credential helper or maintenance command. It clears inherited Git overrides and the global and system configuration. It disables lazy fetching, replacements and transports, and it bounds the size of metadata output and the execution time. The repository configuration and its includes are still read as ordinary metadata by the same user, so do not point the command at an untrusted checkout if those reads are not acceptable. The preparation resolves no provider credential. The model review that follows still uses the protected policy and the egress checks. This form runs in the foreground only. It does not enroll a checkout as a durable daemon source root, and it grants no publication authority.
 
 ## Headless CI use
 
-`trestle ci --format=json|sarif PATH` reviews a local fixture file through the
-deterministic fixture path. It does not select an arbitrary checkout or invoke
-models. For noninteractive model-backed review of a checkout, use the existing
-foreground command below. It needs no terminal prompt and creates no durable
-run or publication effect.
+`trestle ci --format=json|sarif PATH` reviews a local fixture file through the deterministic fixture path. It does not select an arbitrary checkout, and it does not call models. For a model-backed review of a checkout without a terminal, use the foreground command below. It needs no terminal prompt, and it creates no durable run and no publication effect.
 
-Prepare both commits in the checkout before this command. Set `BASE_COMMIT` and
-`HEAD_COMMIT` to distinct full lowercase commit digests for the intended review;
-there is no inferred merge base or fetch. Set tenant and repository IDs to the
-scope approved by your operator. Provision the protected route inventory, runtime
-policy and any required credential references separately. They must bind the
-approved generation and independent-verification pair; this command does not
-approve them or choose defaults. Use the supported configuration preparation
-steps below rather than hand-constructing identities.
+Before you run the command, prepare both commits in the checkout. Set `BASE_COMMIT` and `HEAD_COMMIT` to two distinct full lowercase commit digests for the review that you intend. The command does not infer a merge base and does not fetch. Set the tenant and repository IDs to the scope that your operator approved. Provision the protected route inventory, the runtime policy and any required credential references separately. They must bind the approved generation and independent verification pair. This command does not approve them or choose defaults. Use the configuration steps below instead of building identities by hand.
 
 ```sh
 trestle local-git model-review \
@@ -127,52 +128,21 @@ trestle local-git model-review \
   --egress local-only --timeout 5m --format json
 ```
 
-Replace the example paths and identity labels with approved values. The repository
-identity fields describe the selected repository; they do not authenticate an
-origin or trigger a network request. Checkout mode must not be combined with
-object-root, revision-digest or object-store flags. The CI runner needs the
-supported installed Git version and permission to read the selected objects.
-No repository hooks, credential helpers, fetch, source writer or publisher is
-run by this command. The explicitly selected model routes are contacted only
-through their existing policy and credential boundaries. This example uses
-`local-only`, which refuses remote routes.
+Replace the example paths and identity labels with approved values. The repository identity fields describe the selected repository. They do not authenticate an origin, and they do not trigger a network request. Do not combine checkout mode with the object-root, revision-digest or object-store flags. The CI runner needs the supported Git version and permission to read the selected objects.
 
-Capture stdout as one terminal JSON receipt and retain the process exit status.
-The receipt uses `open-trestle/local-git-model-review-result`, schema version 6
-for every run that opened, which adds [token usage](#token-usage) to the fields
-of versions 1 to 5, and version 1 for a request that never opened a run (see
-[Results and limits](#results-and-limits)), except a
-[spending-limit refusal](#spending-limits), which is version 6; inspect `status`, `ci_disposition`,
-`run_status`, `limitations` and `diagnostics` together. A succeeded run means the pipeline finished, not that the repository
-is clear. Verified findings use `ci_disposition: blocked`, except an
-[advisory](#advisory-results) run whose confirmed findings are all low severity
-or pre-existing, which is `inconclusive`; no candidates,
-incomplete evidence or abstention remain `inconclusive`. Refusal and failure
-remain distinct terminal statuses. The [exit table](#results-and-limits) below
-is authoritative: exit 4 covers blocking findings or policy/resource refusal, 3 covers
-advisory findings and no-candidate/incomplete/canceled outcomes, 2 is invalid intent, and 1 is failure.
-By default there is no exit-0 branch, and no policy yields a comprehensive-clearance
-result. The opt-in [exit-code policy](#exit-code-policy) can map a completed review
-to 0 for CI.
-Do not mask a nonzero status or treat an empty finding list as CI approval.
+The command runs no repository hooks, credential helpers, fetch, source writer or publisher. It contacts the model routes you selected only through their existing policy and credential boundaries. This example uses `local-only`, which refuses remote routes.
 
-`--format` selects `json` (default), `text`, `sarif` or `markdown` (a pull request
-summary comment; see [ranked findings and the walkthrough](#ranked-findings-and-the-walkthrough)).
-Text and Markdown list confirmed high, critical and medium findings and count
-the rest (when there are none, up to 10 lower-severity findings, so a finding is
-never hidden behind nothing); `--all` lists every finding. `--verbose` adds the
-limitations list and, for a review set, the selection trace and per-member
-details to text output; JSON, SARIF and Markdown are unchanged by it. For a separately admitted
-daemon run, `runs status --format json|sarif` retrieves the canonical result;
-successful retrieval is not a review-pass decision. No export creates publication
-permission. This headless example remains ephemeral and cannot resume an older
-run. It does not establish model quality or live provider qualification.
+Capture stdout as one terminal JSON receipt, and keep the process exit status. The receipt uses `open-trestle/local-git-model-review-result`. Its schema version is 6 for every run that opened, which adds [token usage](#token-usage) to the fields of versions 1 to 5. A request that never opened a run gets version 1 (see [Results and limits](#results-and-limits)), except a [spending-limit refusal](#spending-limits), which is version 6.
+
+Inspect `status`, `ci_disposition`, `run_status`, `limitations` and `diagnostics` together. A succeeded run means that the pipeline finished, not that the repository is clear. The [exit table](#exit-codes) above is authoritative. By default there is no exit-0 branch, and no policy yields a comprehensive-clearance result. The opt-in [exit-code policy](#exit-code-policy) can map a completed review to 0 for CI. Do not mask a nonzero status, and do not treat an empty finding list as CI approval.
+
+`--format` selects `json` (the default), `text`, `sarif` or `markdown`. Markdown is a pull request summary comment (see [ranked findings and the walkthrough](#ranked-findings-and-the-walkthrough)). Text and Markdown list the confirmed high, critical and medium findings and count the rest. When there are none of those, they list up to 10 lower-severity findings, so that a finding is never hidden behind nothing. `--all` lists every finding. `--verbose` adds the list of limitations to the text output and, for a review set, the selection trace and the details of each member. It does not change JSON, SARIF or Markdown.
+
+For a run that was admitted separately by the daemon, `runs status --format json|sarif` retrieves the canonical result. Retrieving a result is not a decision that the review passed. No export creates permission to publish. The headless example above is ephemeral and cannot resume an older run. It does not establish model quality or qualification of a live provider.
 
 ### SARIF output
 
-`--format sarif` writes one newline-terminated SARIF 2.1.0 document instead of the
-JSON receipt, built from the same sealed result and the same SARIF types as the
-other Open Trestle exports. It carries only independently verified findings:
+`--format sarif` writes one newline-terminated SARIF 2.1.0 document instead of the JSON receipt. It is built from the same sealed result and the same SARIF types as the other Open Trestle exports, and it carries only independently verified findings:
 
 | SARIF | Source |
 | --- | --- |
@@ -187,30 +157,15 @@ other Open Trestle exports. It carries only independently verified findings:
 | run `properties` | `trestleModelReviewStatus`, `trestleCiDisposition`, `trestleRunStatus`, `trestleFailure`, sorted `trestleLimitations`, candidate/verified/rejected/inconclusive counts, source coverage and omissions, and `trestleComprehensiveClearance: false` |
 | run `properties.trestleStyleAdvice` | the [style advice](#style-recommendations): `recommendations` (`language`, `changedFiles`, `recommendation`), `withheld`, `configurationUnread` and `unavailable`, absent when there is none; each advice line is also a `note` in `invocations[0].toolExecutionNotifications`, never a result |
 
-Fix guidance is a result property, not a SARIF `fixes[]` entry, because the SARIF
-schema requires every fix to contain machine-applicable `artifactChanges` and this
-text is unverified prose that nothing applies. The verifier checked the claim, not
-the category or the fix. `openTrestleContentHash/v1` stays equal across pushes when
-the same path, category, title and claim recur, which lets code scanning match an
-alert between runs; the model may word the same problem differently, so matching
-is best effort. Results, rules, limitations and omissions are sorted, so identical
-input yields identical bytes.
+Fix guidance is a result property, not a SARIF `fixes[]` entry. The SARIF schema requires every fix to contain machine-applicable `artifactChanges`, and this text is unverified prose that nothing applies. The verifier checked the claim, not the category or the fix.
 
-A run that was refused, could not read the change, was canceled or failed is still
-valid SARIF: it has zero `results`, `invocations[0].executionSuccessful: false`
-and one `error` notification that states the status and failure. An empty result
-list from a run that completed with no candidates or with coverage gaps carries
-`executionSuccessful: true` and a `note` or `warning` notification; none of these
-is a clearance.
+`openTrestleContentHash/v1` stays equal across pushes when the same path, category, title and claim recur, which lets code scanning match an alert between runs. The model may word the same problem differently, so the matching is best effort. Results, rules, limitations and omissions are sorted, so identical input yields identical bytes.
+
+A run that was refused, could not read the change, was canceled or failed is still valid SARIF. It has zero `results`, `invocations[0].executionSuccessful: false` and one `error` notification that states the status and the failure. A run that completed with no candidates or with coverage gaps has an empty result list, `executionSuccessful: true` and a `note` or `warning` notification. None of these is a clearance.
 
 ### Exit-code policy
 
-By default the exit status follows the table in [Results and limits](#results-and-limits)
-and is never 0. A CI step that must pass on a completed review without blocking
-findings can opt in with `--exit-code-policy`. The flag changes only the process
-exit status; the JSON, text or SARIF output, its `status`, `ci_disposition` and
-`comprehensive_clearance: false` are identical under every policy. Exit 0 under
-any policy is a pipeline decision, not a statement that the change is clear.
+By default the exit status follows the table in [Results and limits](#results-and-limits) and is never 0. A CI step that must pass on a completed review without blocking findings can opt in with `--exit-code-policy`. The flag changes only the process exit status. The JSON, text or SARIF output, its `status`, its `ci_disposition` and `comprehensive_clearance: false` are identical under every policy. Exit 0 under any policy is a pipeline decision, not a statement that the change is clear.
 
 | Policy | Exit 0 when | Otherwise |
 | --- | --- | --- |
@@ -219,210 +174,103 @@ any policy is a pipeline decision, not a statement that the change is clear.
 | `strict` | the run succeeded with no candidates at all, so no finding of any severity and no verification gap | the default code, so any verified finding fails the step: 4 when it blocks, 3 when the run is [advisory](#advisory-results), and any coverage gap is 3 |
 | `always-zero` | a valid result was written, including a refused or failed run | 1 only if the result could not be written; 2 for invalid usage |
 
-Results are listed in [rank order](#rank), a merged duplicate after the finding it
-was merged into.
+The results are listed in [rank order](#rank), with a merged duplicate after the finding that it was merged into.
 
-A `findings` run whose diagnostics cannot be read back but whose status is
-`findings` is treated as blocking. `always-zero` is advisory-only: pair it with
-SARIF or the JSON status, because a green step then says nothing about whether the
-review ran. Invalid usage (2) and output write failure (1) are never masked.
+A run with the status `findings` whose diagnostics cannot be read back is treated as blocking. `always-zero` is for advisory use only. Pair it with SARIF or the JSON status, because a green step then says nothing about whether the review ran. Invalid usage (2) and an output write failure (1) are never masked.
 
 ### Shallow and pull-request checkouts
 
-Checkout mode reads only the objects of the two named commits. It does not
-fetch and does not deepen a shallow clone. When a selected base or head cannot be
-resolved, the run is `incomplete` with no model call, and stderr says why. In a
-shallow checkout the message names the missing revision and the commands to run:
-`git fetch --no-tags --depth=N origin <sha>` (N must reach the base) or, in GitHub
-Actions, `actions/checkout` with `fetch-depth: 0`. A shallow clone that does hold
-both commits reviews normally. A partial clone (`--filter=...`) can resolve the
-commits but lack file contents; those are not fetched on demand, the run is
-`incomplete`, and stderr suggests re-checking out without a filter. For a pull
-request use `github.event.pull_request.base.sha` and `head.sha` as the pinned
-commits. See [GitHub pull-request review](github-pr-review.md) and the
-[example workflow](../examples/github-actions/README.md).
+Checkout mode reads only the objects of the two named commits. It does not fetch, and it does not deepen a shallow clone. When the command cannot resolve the selected base or head, the run is `incomplete`, no model is called, and stderr says why.
+
+In a shallow checkout, the message names the missing revision and the commands to run. Either run `git fetch --no-tags --depth=N origin <sha>`, where N must reach the base, or, in GitHub Actions, use `actions/checkout` with `fetch-depth: 0`. A shallow clone that holds both commits reviews normally.
+
+A partial clone (`--filter=...`) can resolve the commits but still lack file contents. The command does not fetch those on demand, so the run is `incomplete`, and stderr suggests checking out again without a filter.
+
+For a pull request, use `github.event.pull_request.base.sha` and `head.sha` as the pinned commits. See [GitHub pull-request review](github-pr-review.md) and the [example workflow](../examples/github-actions/README.md).
 
 ## Runtime policy route-pair boundary
 
-The existing `local-git model-review` command and historical runtime policy v1 keep their current behavior. A single entry in `preferred_route_record_identities` is a ranking hint, not an exact verifier grant. Runtime policy v2 adds required `verification_route_record_identity`, which must name one record in the bound inventory and differ from the generation pin. The preliminary local generation route-pair resolver uses only that explicit grant, requires local-only zones with logging disabled, and checks both routes against eligibility and configured independence. Preferred-route hints cannot substitute for the grant or redirect the pair. Neither a schema-valid v2 document nor a preflight pair authorizes an actual model request. Generation and verification need separate eligibility checks for their actual sanitized requests, exact record pins, and no fallback before dispatch. The foreground `local-git model-review` command retains its historical behavior. The opt-in durable full-review daemon resolves the explicit v2 pair before constructing its generation worker; its generation and verification handlers still require separate authorization for each sanitized request. Preflight resolution alone is not dispatch authority.
+The `local-git model-review` command and the historical runtime policy v1 keep their current behavior. In v1, a single entry in `preferred_route_record_identities` is a ranking hint. It does not grant a specific verifier.
+
+Runtime policy v2 adds the required field `verification_route_record_identity`. It must name one record in the bound inventory, and that record must differ from the generation pin. A route-pair resolver for local generation, which is still preliminary, uses only that explicit grant. It requires local-only zones with logging disabled, and it checks both routes for eligibility and for the configured independence. Preferred-route hints cannot replace the grant or redirect the pair.
+
+A v2 document that passes the schema does not authorize a model request, and neither does a preflight check of the pair. Before dispatch, generation and verification each need a separate eligibility check for their actual sanitized request, the exact record pins, and no fallback. The foreground `local-git model-review` command keeps its historical behavior. The opt-in durable full-review daemon resolves the explicit v2 pair before it builds its generation worker, but its generation and verification handlers still need separate authorization for each sanitized request. Resolving the pair in a preflight check is not authority to dispatch.
 
 ## Object store profile
 
-The default profile is `loose-only`. It reads only loose Git commit, tree, and
-blob objects under the supplied `objects` root.
+The default profile is `loose-only`. It reads only loose Git commit, tree and blob objects under the `objects` root that you supply.
 
-`--object-store loose-and-pack-index-v1` is an explicit opt-in for a narrow packed
-Git subset. It still uses loose objects when present, and it may read `.pack` and
-version-2 `.idx` pairs from `objects/pack` only when a loose object is genuinely
-absent. The selected `--revision-algorithm` binds the packed reader to SHA-1 or
-SHA-256 object names for that session.
+`--object-store loose-and-pack-index-v1` is an explicit opt-in for a narrow subset of packed Git storage. It still uses loose objects when they exist. It reads `.pack` files and version-2 `.idx` files from `objects/pack` only when a loose object is truly absent. The `--revision-algorithm` you select binds the packed reader to SHA-1 or SHA-256 object names for that session.
 
 The packed subset has deliberate limits:
 
-- Acquired object types are commit, tree, and blob. Unused tag objects may exist
-  in a pack, but tags are not acquired. A selected tag or a delta chain that
-  resolves to a tag is refused.
-- OFS_DELTA and REF_DELTA bases must be in the same pack. Thin packs with
-  external bases are refused.
-- Duplicate object IDs across admitted packs are refused. Repacking during a run
-  can make the source invalid or incomplete.
-- Multi-pack-index, promisor objects and alternates are unsupported by this
-  reader. Refs and linked worktrees require the explicit checkout selection
-  above; there is no Git subprocess fallback during object acquisition.
-- The command validates selected bytes and bounded pack/index structure, but it
-  does not claim an atomic repository snapshot. It also does not grant extra
-  filesystem permissions or comprehensive source clearance.
+- The reader acquires commit, tree and blob objects. A pack may contain unused tag objects, but the reader does not acquire tags. It refuses a selected tag, and a delta chain that resolves to a tag.
+- The bases of OFS_DELTA and REF_DELTA objects must be in the same pack. The reader refuses thin packs with external bases.
+- The reader refuses duplicate object IDs across the packs it accepts. Repacking during a run can make the source invalid or incomplete.
+- The reader does not support multi-pack-index files, promisor objects or alternates. Refs and linked worktrees need the checkout selection described above. Object acquisition never falls back to a Git subprocess.
+- The command validates the selected bytes and the bounded structure of the pack and index. It does not claim an atomic snapshot of the repository. It grants no extra filesystem permissions, and it does not give comprehensive clearance of the source.
 
-Provider routes and credentials still come only from the supplied inventory,
-policy, and the existing credential resolver. The object-store option adds no
-provider configuration or credential defaults.
+Provider routes and credentials still come only from the inventory and policy that you supply and from the existing credential resolver. The object-store option adds no provider configuration and no credential defaults.
 
 ## Authority and egress
 
-Supply both the existing route-inventory and runtime-policy JSON contracts. The
-policy must bind the decoded inventory identity. Both files must pass the existing
-`internal/fileauthority` owner, ancestor, mode, symlink, and replacement checks.
-The loader checks bounded stable content and rechecks the pair after decoding.
-Inventory input is limited to 8 MiB; policy input is limited to 1 MiB. Unsupported
-ownership platforms fail closed. There is no environment-based policy fallback.
+You supply both the route-inventory and the runtime-policy JSON files. The policy must bind the identity of the decoded inventory. Both files must pass the owner, ancestor, mode, symlink and replacement checks of `internal/fileauthority`. The loader checks that the content is bounded and stable, and it checks the pair again after decoding. The inventory may be at most 8 MiB, and the policy at most 1 MiB. On platforms where ownership checks are unsupported, loading fails closed. There is no policy fallback from the environment.
 
-`local-only` requires local routes and canonical numeric loopback endpoints. The
-existing local transport disables proxies and confines dialing. `policy-approved`
-still applies the protected inventory and policy, and the direct review uses the
-standard runtime generation and independent-verification handlers. They admit a
-`private_remote` route, or a `brokered_remote` route with a current OpenRouter ZDR,
-OpenCode Go or OpenCode Console declaration or an API-observed OpenRouter ZDR
-witness (which has no window), only after separate Betterleaks scans,
-a fresh zero-finding residual scan, artifact reload, and a handler-sealed dispatch
-proof. A binary without injected scanner digests, or without the installed
-scanner, therefore refuses remote requests before credential retrieval. Use the
-packaged binary and installed scanner described in
-[remote model review](remote-model-review.md), whose bootstrap writes the protected
-remote configuration. Remote routes work only on the packaged Linux amd64 install
-today; macOS and Windows are planned for the next release (see
-[platforms](platforms.md)). Investigation and retained-memory requests remain
-local-only. Route approval, data classification,
-logging restrictions, provider independence, capacity, and per-request cost budgets
-remain in force. Provider credentials use only explicit protected-policy environment
-references, through the existing credential resolver.
+`local-only` requires local routes and canonical numeric loopback endpoints. The local transport disables proxies and confines dialing.
 
-Repository and audit labels are host-supplied scope labels, not proof of Git
-origin, forge authentication, or permission to publish. The opened source root is
-bound to its session. Only the requested immutable Git commits are acquired. The
-object-root path never invokes Git or falls back to the mutable worktree.
-Explicit checkout selection invokes only the bounded metadata commands above. Without the
-packed opt-in, pack-only repositories remain unsupported. With the packed opt-in,
-only the narrow pack/index subset above is supported. Alternates, worktree
-pointer files supplied as object roots, symlink/gitlink source entries, unavailable objects, and other
-unsupported Git layouts do not produce comprehensive clearance.
+`policy-approved` still applies the protected inventory and policy. The direct review uses the standard runtime handlers for generation and independent verification. These handlers accept two kinds of remote route:
+
+- a `private_remote` route;
+- a `brokered_remote` route with a current OpenRouter ZDR, OpenCode Go or OpenCode Console declaration, or with an OpenRouter ZDR witness observed through the API (which has no time window).
+
+They accept such a route only after separate Betterleaks scans, a fresh residual scan with zero findings, a reload of the artifact, and a dispatch proof that the handler seals. A binary without injected scanner digests, or without the installed scanner, therefore refuses remote requests before it retrieves any credential. Use the packaged binary and the installed scanner described in [remote model review](remote-model-review.md), whose bootstrap writes the protected remote configuration. Today, remote routes work only on the packaged Linux amd64 install. macOS and Windows are planned for the next release (see [platforms](platforms.md)).
+
+Investigation and retained-memory requests remain local-only. Route approval, data classification, logging restrictions, provider independence, capacity and per-request cost budgets stay in force. Provider credentials come only from environment references that the protected policy names explicitly, through the existing credential resolver.
+
+The repository and audit labels are scope labels that the host supplies. They are not proof of the Git origin, of forge authentication, or of permission to publish. The opened source root is bound to its session, and only the immutable Git commits that you request are acquired. The object-root path never runs Git and never falls back to the mutable worktree. Checkout selection runs only the bounded metadata commands described above.
+
+Without the packed opt-in, repositories that have only packs remain unsupported. With the opt-in, only the narrow pack and index subset above is supported. These cases do not produce comprehensive clearance: alternates, worktree pointer files given as object roots, symlink and gitlink source entries, unavailable objects, and other unsupported Git layouts.
 
 ## Chat Completions transport
 
-In runtime policy v2, set a protected connection's `implementation` to
-`openai_chat_completions` to select Chat Completions instead of
-`openai_responses`. The endpoint remains the API base, for example
-`http://127.0.0.1:8080/v1`. Changing implementation changes the policy and adapter
-identities; recompute bindings and obtain any required exact approvals.
+In runtime policy v2, set the `implementation` of a protected connection to `openai_chat_completions` to select Chat Completions instead of `openai_responses`. The endpoint stays the API base, for example `http://127.0.0.1:8080/v1`. Changing the implementation changes the policy and adapter identities, so recompute the bindings and obtain any exact approvals that are required.
 
-Chat sends `POST /v1/chat/completions` for that base, with the exact model
-selector, a trusted system message, the authorized user payload, `max_tokens`,
-and `stream:false`. It uses the same bearer credential resolver, request bounds,
-locality checks, sanitization proofs and audit path as Responses. It does not
-send tools or claim provider retention settings. Responses keeps its existing
-wire format and identity. Neither transport activates or approves a route.
+For that base, Chat sends `POST /v1/chat/completions` with the exact model selector, a trusted system message, the authorized user payload, `max_tokens` and `stream:false`. It uses the same bearer credential resolver, request bounds, locality checks, sanitization proofs and audit path as Responses. It sends no tools, and it makes no claim about the provider's retention settings. Responses keeps its existing wire format and identity. Neither transport activates or approves a route.
 
-Only bounded text/refusal output from one assistant choice is accepted. The
-returned model selector must match exactly. Tool calls, streaming and unsupported
-fields fail closed. Model-specific `developer` roles or
-`max_completion_tokens` profiles are not inferred. A compatible wire response
-is not evidence of model quality, privacy terms or live server readiness. Test
-your exact server and model before approving the route. The existing local
-credential requirement remains; this transport does not add anonymous access.
+The adapter accepts only bounded text or refusal output from one assistant choice. The returned model selector must match exactly. Tool calls, streaming and unsupported fields fail closed. The adapter does not infer model-specific `developer` roles or `max_completion_tokens` profiles. A response that fits the wire format is not evidence of model quality, of privacy terms, or that the live server is ready. Test your exact server and model before you approve the route. The local credential requirement stays in force, and this transport does not add anonymous access.
 
-For an explicitly opted-in local connection, set `local_structured_output: true`
-in an explicitly versioned protected v6 JSON policy as a JSON boolean. It is supported only with
-`openai_chat_completions`, a canonical numeric-loopback endpoint and no request
-profile. Both bearer and explicit local no-auth configurations are supported.
-Within v6, omitting the field or setting it to false produces the same bound
-bytes and policy identity. Explicit v6 retains its own versioned identity; it
-does not migrate historical v1/v2 policies. Versions 1 through 5 reject the
-field even when false. Historical v1/v2 templates without the option still bind
-to v2 with unchanged bytes and identities. V6 is generic only: named request
-profiles and brokered, OpenCode Go or Console authorities are not accepted.
+For a local connection that you opt in explicitly, set `local_structured_output: true` as a JSON boolean in an explicitly versioned, protected v6 JSON policy. It works only with `openai_chat_completions`, a canonical numeric-loopback endpoint and no request profile. Both bearer and explicit local no-auth configurations are supported. Within v6, leaving the field out or setting it to false produces the same bound bytes and the same policy identity. An explicit v6 policy has its own versioned identity, and it does not migrate historical v1 or v2 policies. Versions 1 through 5 reject the field, even when it is false. Historical v1 and v2 templates without the option still bind to v2 with unchanged bytes and identities. V6 is generic only: it does not accept named request profiles or brokered, OpenCode Go or Console authorities.
 
-When enabled, Chat also sends `response_format` with `type: json_schema`,
-`strict: true`, the fixed name `open_trestle_review` and the exact host-pinned
-candidate, verifier or investigation schema validated from the authorized inner
-request. It does not accept a caller-selected schema or change temperature.
-True changes the policy, adapter and catalog identities; bind the changed
-protected policy and obtain fresh exact approvals where required.
+When the option is on, Chat also sends `response_format` with `type: json_schema`, `strict: true`, the fixed name `open_trestle_review`, and the exact candidate, verifier or investigation schema that the host pins and validates from the authorized inner request. It does not accept a schema that the caller selects, and it does not change the temperature. Setting the option to true changes the policy, adapter and catalog identities, so bind the changed protected policy and obtain fresh exact approvals where they are required.
 
-Dispatch refuses, before credential retrieval or HTTP, an approved reservation
-below the larger of the normal host byte-based request estimate and the inner
-payload bytes plus the trusted system channel bytes plus the serialized
-`response_format` object (including its field wrapper) plus 256 framing bytes.
-Route planning counts the same `response_format` bytes, which are
-deterministic from the pinned schema, whenever a planning step's candidate
-routes include a connection with this option: the generation and verification
-route authorizers, the local generation route plan and each investigation turn
-reserve the payload, the system channel and the schema framing, so
-`estimated_input_tokens` need not carry that margin. A step reserves once for
-all of its candidate routes, so a route without the option planned in the same
-step is reserved the same way; an investigation decides per role, from the
-pinned generation route and from the verification routes. Such an authorizer
-binds `input_transport: local_structured_output` into its identity (the
-verification authorizer moves to identity version 3 for it), and such an
-investigation binds its role transports into the route owner and pipeline
-profile identities (version 2 of each); without the option every estimate and
-identity is unchanged. This estimate is conservative byte accounting,
-not exact tokenization. Set a justified reservation that fits the route's
-approved context capacity; no budget is increased after authorization.
+Dispatch refuses an approved reservation that is below the larger of two values, and it refuses before it retrieves a credential or makes an HTTP request. The first value is the normal byte-based request estimate of the host. The second is the inner payload bytes, plus the trusted system channel bytes, plus the serialized `response_format` object (including its field wrapper), plus 256 framing bytes.
 
-Server support for these schema keywords is not assumed. Unsupported requests
-fail through the existing transport and strict response checks, without a
-simplified schema, retry or fallback. Schema transport does not establish
-factual accuracy or qualify a model. Candidate coverage, evidence, usage,
-tool-call and authorization checks remain unchanged.
+Route planning counts the same `response_format` bytes, which are deterministic from the pinned schema, whenever the candidate routes of a planning step include a connection with this option. The generation and verification route authorizers, the local generation route plan and each investigation turn reserve the payload, the system channel and the schema framing, so `estimated_input_tokens` does not need to carry that margin. A step reserves once for all of its candidate routes, so a route without the option that is planned in the same step is reserved the same way. An investigation decides per role, from the pinned generation route and from the verification routes.
+
+Such an authorizer binds `input_transport: local_structured_output` into its identity, and the verification authorizer moves to identity version 3 for it. Such an investigation binds the transports of its roles into the route owner and pipeline profile identities, in version 2 of each. Without the option, every estimate and identity is unchanged. This estimate is conservative byte accounting, not exact tokenization. Set a justified reservation that fits the approved context capacity of the route. No budget is increased after authorization.
+
+The command does not assume that a server supports these schema keywords. Requests that the server does not support fail through the existing transport and strict response checks, without a simplified schema, retry or fallback. Schema transport does not establish factual accuracy and does not qualify a model. The checks on candidate coverage, evidence, usage, tool calls and authorization stay unchanged.
 
 ## Local Responses configuration bootstrap
 
-The files in [`examples/local-model-review/`](../examples/local-model-review/) are
-illustrative bootstrap configurations, not measured live-readiness evidence. They
-name a loopback OpenAI Responses-style endpoint at `http://127.0.0.1:11434/v1`.
-At dispatch time the adapter sends `POST /v1/responses` with JSON containing
-`model`, one user `input` item of type `input_text`, `max_output_tokens`, and
-`store:false`. It sends `Authorization: Bearer <credential>`, `Content-Type:
-application/json`, and `Accept: application/json`. The response must be a bounded
-OpenAI Responses object with `object:"response"`, the selected model, status
-`completed` or the supported `incomplete` reasons, and assistant `output_text` or
-`refusal` content. OpenAI-compatible local servers vary; do not assume every
-local server implements this protocol.
+The files in [`examples/local-model-review/`](../examples/local-model-review/) are illustrative bootstrap configurations. They are not measured evidence that anything is live and ready. They name a loopback OpenAI Responses-style endpoint at `http://127.0.0.1:11434/v1`.
 
-Before use, edit `routes.json` for your actual local server, model, capabilities,
-content-logging posture, status, health, quota, pricing, and evidence manifest.
-The example deliberately uses unknown or pending declarations where the repository
-cannot measure reality. Any example declaration is illustrative operator input,
-not empirical certification. Replace the credential reference with an environment
-name that exists in your protected runtime environment; do not put credentials in
-these JSON files.
+At dispatch time the adapter sends `POST /v1/responses` with JSON that contains `model`, one user `input` item of type `input_text`, `max_output_tokens` and `store:false`. It sends `Authorization: Bearer <credential>`, `Content-Type: application/json` and `Accept: application/json`. The response must be a bounded OpenAI Responses object with `object:"response"`, the selected model, the status `completed` or a supported `incomplete` reason, and assistant `output_text` or `refusal` content. OpenAI-compatible local servers vary, so do not assume that every local server implements this protocol.
 
-The example `review_policy_identity` is a synthetic label, not a provenance or
-quality certificate. Replace it with the stable identity used by your review
-policy.
+Before you use the example, edit `routes.json` for your actual local server, model, capabilities, content-logging posture, status, health, quota, pricing and evidence manifest. Where the repository cannot measure reality, the example deliberately uses unknown or pending declarations. Every declaration in the example is illustrative operator input, not an empirical certification. Replace the credential reference with the name of an environment variable that exists in your protected runtime environment. Do not put credentials in these JSON files.
 
-Then compute and bind the inventory identity with the native command:
+The `review_policy_identity` in the example is a synthetic label. It is not a certificate of provenance or quality. Replace it with the stable identity that your review policy uses.
+
+Then compute the inventory identity and bind it, using the native command:
 
 ```sh
 trestle config inventory-identity \
   --route-inventory /protected/routes.json
 ```
 
-The `decoded` result reports structural inventory and route-record identities
-only. It does not establish policy binding, live health, quality, or execution
-authorization. Use `config validate` separately to check the pair.
+The `decoded` result reports structural identities of the inventory and of its route records only. It does not establish policy binding, live health, quality, or authorization to execute. Use `config validate` separately to check the pair.
 
-For a daemon generation/verifier pair, prepare a policy template and bind its
-identities with the supported offline command:
+For a daemon generation and verifier pair, prepare a policy template and bind its identities with the offline command:
 
 ```sh
 trestle config bind \
@@ -432,31 +280,13 @@ trestle config bind \
   --verification-adapter local-verification
 ```
 
-Each adapter must select exactly one local record, and the adapters must differ.
-The selected pair must satisfy the template's verification independence level;
-this static check does not require live health or approval.
-The command emits one runtime-policy-v2 JSON document for a historical v1/v2
-template, or runtime-policy-v6 for an explicit v6 template. It never upgrades a
-historical template to v6 or adds the schema option. It does not write
-files, read credentials, contact a provider, approve routes, or change setup state.
-Save the output as a new protected file before validation. No output file is
-opened by the command, so the operator controls its path, permissions and any
-replacement.
+Each adapter must select exactly one local record, and the two adapters must differ. The selected pair must meet the verification independence level of the template. This static check does not require live health or approval.
 
-Empty, omitted or all-zero binding identities are placeholders. Existing nonzero
-inventory, generation-pin and verifier identities must match the selected records.
-Other policy values, including constraints, independence and connections, are
-preserved. A v1 template cannot contain the verifier field; v2 and v6 templates
-may omit it before binding. Only an explicit v6 template may contain
-`local_structured_output`. Null values, unknown or duplicate fields, conflicting
-bindings and ambiguous adapter selections are refused. Inputs must pass the
-protected-file checks described above. Pending routes remain pending and cannot
-be executed merely because binding and validation succeed.
+The command prints one runtime-policy-v2 JSON document for a historical v1 or v2 template, or runtime-policy-v6 for an explicit v6 template. It never upgrades a historical template to v6 and never adds the schema option. It writes no files, reads no credentials, contacts no provider, approves no routes, and changes no setup state. Save the output as a new protected file before you validate it. The command opens no output file, so you control its path, its permissions and any replacement.
 
-For a historical v1 policy, copy the reported `inventory_identity` into
-`runtime-policy.json` after editing the inventory. The shipped example pair is
-already structurally bound. Leave `preferred_route_record_identities` empty unless
-you intentionally pin or prefer records reported by the same inventory command.
+Empty, omitted and all-zero binding identities are placeholders. Nonzero inventory, generation-pin and verifier identities that already exist must match the selected records. Other policy values, including the constraints, the independence and the connections, are kept. A v1 template cannot contain the verifier field. V2 and v6 templates may leave it out before binding. Only an explicit v6 template may contain `local_structured_output`. The command refuses null values, unknown or duplicate fields, conflicting bindings and ambiguous adapter selections. Its inputs must pass the protected-file checks described above. Pending routes stay pending, and you cannot run them merely because binding and validation succeeded.
+
+For a historical v1 policy, copy the reported `inventory_identity` into `runtime-policy.json` after you edit the inventory. The shipped example pair is already structurally bound. Leave `preferred_route_record_identities` empty unless you intend to pin or prefer records that the same inventory command reports.
 
 After binding, validate the pair without provider calls:
 
@@ -466,43 +296,17 @@ trestle config validate \
   --runtime-policy /protected/runtime-policy.json
 ```
 
-Only after validation should you run `trestle local-git model-review` with the
-same protected files. Identity and validation do not call the provider and do not
-prove reachability, health, quality, policy conformance under live load, or review
-quality. The model-review command is the explicit provider-call boundary and still
-uses conservative non-zero exits for refused, canceled, failed, or inconclusive
-runs. It cannot publish results.
+Run `trestle local-git model-review` with the same protected files only after validation. Identity and validation do not call the provider. They do not prove reachability, health, quality, that the policy holds under live load, or the quality of a review. The model-review command is the explicit boundary where provider calls happen. It still exits with conservative nonzero codes for refused, canceled, failed or inconclusive runs, and it cannot publish results.
 
 ## Retained advisory input (opt-in)
 
-For an ordinary `local-only` review, add
-`--retained-memory-input /protected/operator-feedback.json`. Do not combine it
-with `--investigation-policy` or `--egress policy-approved`. Omitting the flag
-keeps the empty memory index. The command does not discover nearby memory files.
+For an ordinary `local-only` review, add `--retained-memory-input /protected/operator-feedback.json`. Do not combine it with `--investigation-policy` or `--egress policy-approved`. If you leave the flag out, the command keeps the empty memory index. The command does not look for memory files near the repository.
 
-The input is a read-only, operator-attested advisory snapshot. It contains only
-`human_feedback` records with `user_controlled` taint. It is not acquired source
-evidence, authenticated human authorship, or permission to publish. The normal
-changed-path retrieval step selects records; loading a record does not guarantee
-that a model sees it. Both generation and independent verification receive the
-selected advice through the existing context pipeline.
+The input is a read-only advisory snapshot that the operator attests to. It contains only `human_feedback` records with `user_controlled` taint. It is not acquired source evidence, it does not authenticate who wrote the feedback, and it is not permission to publish. The normal changed-path retrieval step selects the records, so loading a record does not guarantee that a model sees it. Generation and independent verification both receive the selected advice through the existing context pipeline.
 
-Use the `open-trestle/retained-memory-input` schema version 1 envelope implemented
-in [`runtimeconfig/retained_memory_input.go`](../runtimeconfig/retained_memory_input.go)
-and its protected loader. This is not a free-form notes file. The loader checks
-record identities, operator-note references, declared scope, repository identity,
-and runtime-policy identity. The authoring command can build this contract from
-an explicitly selected protected feedback file. It does not run review, resolve
-credentials, call providers, or update other memory stores.
+The input must be an `open-trestle/retained-memory-input` schema version 1 envelope, implemented in [`runtimeconfig/retained_memory_input.go`](../runtimeconfig/retained_memory_input.go) and its protected loader. It is not a free-form notes file. The loader checks the record identities, the operator-note references, the declared scope, the repository identity and the runtime-policy identity. The authoring command can build this envelope from a protected feedback file that you select explicitly. It does not run a review, resolve credentials, call providers, or update other memory stores.
 
-The example below authors path/text preferences for an explicit head. For
-feedback on verified findings, use `--review-input` with a protected completed
-foreground result instead of the two revision flags. That mode derives the head
-and finding identities; it does not establish human adjudication. See
-[Manual review feedback](local-feedback.md) for decision selectors, later opt-in
-reuse, and exact-input removal with `--remove-input`. Removal requires the
-matching review, scope and policy; it does not revoke copies or change past
-results.
+The example below authors path and text preferences for an explicit head. To record feedback on verified findings, pass `--review-input` with a protected, completed foreground result instead of the two revision flags. That mode derives the head and the finding identities from the result, and it does not establish human adjudication. See [Manual review feedback](local-feedback.md) for the decision selectors, for opting in to reuse later, and for removing an exact input with `--remove-input`. Removal requires the matching review, scope and policy. It does not revoke copies, and it does not change past results.
 
 ```text
 trestle local-git retained-memory-input \
@@ -519,234 +323,98 @@ trestle local-git retained-memory-input \
   --output /protected/operator-feedback.json --format json
 ```
 
-For this explicit-head example, all flags except `--format` are required. The
-authoring command accepts only `--egress local-only`. `--timeout` must be one
-second to 15 minutes. `--valid-for`
-must use whole milliseconds, exceed the timeout, and be at most seven days. The
-command samples the clock once after protected configuration and feedback load,
-then sets each record's `observed_at` and `valid_from` to that millisecond.
+In this explicit-head example, every flag except `--format` is required. The authoring command accepts only `--egress local-only`. `--timeout` must be between one second and 15 minutes. `--valid-for` must be in whole milliseconds, must exceed the timeout, and can be at most seven days. The command reads the clock once, after it has loaded the protected configuration and the feedback. It then sets the `observed_at` and `valid_from` of every record to that millisecond.
 
-The feedback file is a protected convenience JSON file, not the wire contract:
+The feedback file is a protected JSON file for your convenience, not the wire contract:
 
 ```json
 [{"path":"src/file.go","text":"operator advisory text"}]
 ```
 
-This path/text form is limited to 64 KiB, 1 to 16 records, exact `path` and
-`text` keys, no unknown or duplicate keys, no comments, no trailing tokens, no
-nested values, and no null,
-boolean, or numeric values. Paths must be clean repository-relative printable
-paths, not `.`, `..`, absolute, backslash-containing, or duplicated. Text must be
-non-empty after trimming and may contain newline and tab. Hidden controls and
-Unicode format characters are refused. The emitted `allowed_paths` sort ascending,
-and records sort by `record_identity`.
+This path and text form has these limits and rules:
 
-The retained-memory JSON is written only to `--output`. The output parent must
-already exist. The command refuses to create directories, overwrite, truncate, or
-replace a file. Stdout is a content-free receipt with identities, counts, and
-expiry only; it omits the output path and all advice text. Stderr uses stable
-reason classes. If failure occurs after exclusive output creation, a partial or
-complete output file may remain and is not removed automatically.
+- The file is at most 64 KiB and holds 1 to 16 records.
+- Each record has exactly the keys `path` and `text`. Unknown or duplicate keys, comments, trailing tokens, nested values, and null, boolean or numeric values are refused.
+- A path must be a clean, printable, repository-relative path. It cannot be `.` or `..`, absolute, or duplicated, and it cannot contain a backslash.
+- The text must be non-empty after trimming. It may contain newlines and tabs. Hidden control characters and Unicode format characters are refused.
 
-The scope must match the tenant and logical repository, actor `local-reviewer`,
-visibility `exact`, and the single path prefix `.`. Its ref-set is the requested
-head's versioned `RevisionIdentity.Identity()`, not the raw Git commit digest or
-the new run ID. A file for a different head or runtime policy is refused rather
-than relabeled. A later invocation reopens the same file and builds a fresh index;
-it does not resume the previous run.
+The command sorts `allowed_paths` in ascending order and sorts the records by `record_identity`.
 
-Limits include 64 KiB of raw input, 16 records and 16 allowed paths, 4096 bytes per
-canonical record, 1024 bytes of text per record, 8192 total text bytes, and 32768
-decoded string bytes including repeated keys and values. Records must have a
-bounded validity window of at most seven days. Each must be fresh at admission
-and expire strictly after the full configured review timeout. Even an unselected
-record can cause this admission check to fail. Context expiry still prevents a
-later model dispatch; no date is extended to finish a run.
+The command writes the retained-memory JSON only to `--output`. The parent directory of the output must already exist. The command refuses to create directories, and it refuses to overwrite, truncate or replace a file. Stdout is a receipt that contains only identities, counts and the expiry, without the output path or any advice text. Stderr uses stable reason classes. If a failure happens after the command has created the output exclusively, a partial or complete output file can remain, and the command does not remove it automatically.
 
-The file is loaded after protected runtime configuration and before opening the
-source root or resolving credentials. Existing owner, ancestor, symlink,
-replacement, and group/world-write checks apply. These are integrity checks, not
-a guarantee of confidentiality or an atomic filesystem snapshot. Use mode `0600`
-and a suitable private directory for sensitive advice. The model-review command
-never edits, curates, migrates, or deletes the input. Explicit removal uses the
-separate authoring command described in [Manual review feedback](local-feedback.md).
+The scope must match the tenant and the logical repository, with actor `local-reviewer`, visibility `exact`, and the single path prefix `.`. Its ref-set is the versioned `RevisionIdentity.Identity()` of the requested head, not the raw Git commit digest or the new run ID. A file for a different head or runtime policy is refused, not relabeled. A later invocation reopens the same file and builds a fresh index. It does not resume the previous run.
 
-Successfully constructed opted-in Session results replace `empty_memory_index`
-with `retained_input_advisory_not_all_records_selected` and
-`retained_input_read_only`. The result's schema version, output bounds,
-independent verification, and nonzero dispositions remain unchanged. A protected
-input refusal produces `refused` with exit 4; cancellation produces exit 3. Later
-Run or Close errors keep the existing conservative failure handling. Input reuse
-is not automatic retained-memory generation, cross-head reuse, or revocation.
+The limits are 64 KiB of raw input, 16 records and 16 allowed paths, 4096 bytes per canonical record, 1024 bytes of text per record, 8192 bytes of text in total, and 32768 bytes of decoded strings, including repeated keys and values. Every record needs a validity window of at most seven days. Each record must be fresh when it is admitted, and it must expire strictly after the full configured review timeout. Even a record that is not selected can make this admission check fail. Context expiry still prevents a later model dispatch, and no date is extended to finish a run.
+
+The command loads the file after the protected runtime configuration and before it opens the source root or resolves credentials. The existing checks for owner, ancestor, symlink, replacement, and group or world write access apply. These are integrity checks. They do not guarantee confidentiality or an atomic filesystem snapshot. Use mode `0600` and a suitable private directory for sensitive advice. The model-review command never edits, curates, migrates or deletes the input. Removal uses the separate authoring command described in [Manual review feedback](local-feedback.md).
+
+In the results of a session that was built successfully with this input, `empty_memory_index` is replaced with `retained_input_advisory_not_all_records_selected` and `retained_input_read_only`. The schema version of the result, the output bounds, the independent verification and the nonzero dispositions stay unchanged. If the command refuses the protected input, the result is `refused` with exit 4, and a cancellation gives exit 3. Errors in a later Run or Close keep the existing conservative failure handling. Reusing an input is not automatic retained-memory generation, reuse across heads, or revocation.
 
 ## Specialist profile (opt-in)
 
-Add `--profile PROFILE_ID` to select one packaged specialist profile from the
-embedded catalog described in [agent profiles](agent-profiles.md). Accepted IDs are
-the model-calling review profiles: `backend`, `bug_hunter`, `drift_auditor`,
-`frontend`, `security_probe` and `style_conformance`. The `orchestrator`
-(model-free) and `knowledge_graph` (gap-only) profiles are refused, and so is
-`test_author`: it proposes tests, which the defect-claim candidate contract and
-its independent verifier cannot represent.
-An unknown or refused ID is a usage error (exit 2) that lists the valid IDs before
-any configuration is read or model request is made. Do not combine `--profile` with
-`--investigation-policy`. It can be combined with `--retained-memory-input`.
-Library callers use `localreview.NewSpecialistSession(options, specialist)` with a
-value from `review.NewContextSpecialist`.
+Add `--profile PROFILE_ID` to select one packaged specialist profile from the embedded catalog described in [agent profiles](agent-profiles.md). The accepted IDs are the profiles that call models to review: `backend`, `bug_hunter`, `drift_auditor`, `frontend`, `security_probe` and `style_conformance`. The command refuses the `orchestrator` profile (it uses no model) and the `knowledge_graph` profile (it reports gaps only). It also refuses `test_author`, because that profile proposes tests, which the defect-claim candidate contract and its independent verifier cannot represent.
 
-The flag affects only the candidate-generation request. Its version 9 review
-context carries the optional `specialist` object with only `profile_id`,
-`profile_identity` and `catalog_identity`. The profile's exact skill markdown is
-sent only in the trusted system channel, after the version 9 host contract, under
-a `Specialist review guidance (operator-packaged profile <id>, shipped with Open
-Trestle):` heading. It is looked up in the embedded catalog, never read from the
-payload or the repository. The host contract tells the model to use that section
-to decide what to look for, without changing the output contract, evidence rules
-or authority limits. Source content keeps its `evidence_data_not_instructions`
-label. The identity block is bound into the context, sanitized request and
-provider request identities. The context-assembly handler identity also binds the profile
-and catalog identities, so the run plan identity differs from a run without the
-flag. Readback accepts a version 7, 8 or 9 specialist block only when it re-derives
-exactly from the embedded catalog; an unknown profile ID, a mismatched identity,
-or any extra field such as instruction text or an authority label is refused.
+An unknown or refused ID is a usage error (exit 2). The error lists the valid IDs, and it happens before the command reads any configuration or makes any model request. Do not combine `--profile` with `--investigation-policy`. You can combine it with `--retained-memory-input`. Library callers use `localreview.NewSpecialistSession(options, specialist)` with a value from `review.NewContextSpecialist`.
 
-Route selection is unchanged: the same runtime-policy generation and verification
-routes and independence level apply. Independent verification still runs. Its
-request is verification-context schema version 8, binds the version 9 generation context
-through `generation_context_identity`, and does not receive the specialist
-instructions. The profile catalog's tiers, token budgets and route assignments are
-not used by this command.
+The flag affects only the candidate-generation request. The version 9 review context of that request carries the optional `specialist` object, with only `profile_id`, `profile_identity` and `catalog_identity`. The command sends the exact skill markdown of the profile only in the trusted system channel, after the version 9 host contract. It appears under the heading `Specialist review guidance (operator-packaged profile <id>, shipped with Open Trestle):`. The command looks the skill up in the embedded catalog, and never reads it from the payload or the repository. The host contract tells the model to use that section to decide what to look for, without changing the output contract, the evidence rules or the authority limits. Source content keeps its `evidence_data_not_instructions` label.
 
-Without `--profile`, the version 9 request has no `specialist` block and the result
-does not report a profile. With it, the result adds
-`specialist` with `profile_id`, `profile_identity` and `catalog_identity`, both on
-completed and on refused or failed runs. Such a result is schema version 6 once
-its run opened and version 3 before; earlier builds wrote an opened run as
-version 3, version 4 with finding guidance or version 5 with a
-[style recommendation](#style-recommendations). The reported profile must match the one
-recorded in the generation context. Text output adds a `specialist profile:` line.
-The instruction text itself is not written to the result. The retained-memory
-feedback review and the [model-result evaluation](model-result-evaluation.md)
-import refuse every result that carries a `specialist` object, at any version.
+The identity block is bound into the identities of the context, the sanitized request and the provider request. The identity of the context-assembly handler also binds the profile and catalog identities, so the run plan identity differs from the identity of a run without the flag. When the command reads a result back, it accepts a version 7, 8 or 9 specialist block only if the block re-derives exactly from the embedded catalog. It refuses an unknown profile ID, a mismatched identity, and any extra field, such as instruction text or an authority label.
+
+Route selection does not change. The same generation and verification routes of the runtime policy apply, with the same independence level, and independent verification still runs. Its request uses verification-context schema version 8, binds the version 9 generation context through `generation_context_identity`, and does not receive the specialist instructions. This command does not use the tiers, token budgets and route assignments of the profile catalog.
+
+Without `--profile`, the version 9 request has no `specialist` block, and the result does not report a profile. With the flag, the result adds `specialist` with `profile_id`, `profile_identity` and `catalog_identity`, for completed runs and for refused or failed runs. Such a result has schema version 6 once its run has opened, and version 3 before that. Earlier builds wrote an opened run as version 3, as version 4 with finding guidance, or as version 5 with a [style recommendation](#style-recommendations). The reported profile must match the one recorded in the generation context. Text output adds a `specialist profile:` line. The instruction text itself is not written to the result. The retained-memory feedback review and the [model-result evaluation](model-result-evaluation.md) import refuse every result that carries a `specialist` object, at any version.
 
 ## Specialist review set (opt-in)
 
-Add `--specialists auto` (or `--specialists ID[,ID...]`) to run the general review
-plus several packaged specialist profiles and merge their verified findings.
-`--specialists none`, or no flag, is the ordinary single review with unchanged
-output. A setup made by `trestle init` or `trestle setup bootstrap init` saves
-`--specialists auto` in its review command unless it was given
-`--specialists none`, so `trestle review` runs the set; `trestle review
---specialists none` runs the single review once, and `--profile ID` replaces the
-saved set with one specialist. Setups saved earlier have no `--specialists` flag
-and keep the single review. `--profile` remains the single-specialist form and cannot be combined with
-`--specialists`; neither can `--investigation-policy`. IDs are the ones `--profile`
-accepts. An unknown ID is a usage error (exit 2) that lists the valid IDs.
+Add `--specialists auto` (or `--specialists ID[,ID...]`) to run the general review plus several packaged specialist profiles and merge their verified findings. `--specialists none`, or no flag, is the ordinary single review with unchanged output.
 
-Selection:
+A setup made by `trestle init` or `trestle setup bootstrap init` saves `--specialists auto` in its review command, unless you gave it `--specialists none`. So `trestle review` runs the set. `trestle review --specialists none` runs the single review once, and `--profile ID` replaces the saved set with one specialist. Setups that were saved earlier have no `--specialists` flag and keep the single review.
 
-- `auto` derives change features from the general review's own recorded change
-  model and semantic-impact profile, after that review ran, and the declared
-  style from the root-level style configuration files of the base tree that
-  review recorded, never the head (see
-  [declared style in local reviews](agent-profiles.md#declared-style-in-local-reviews)).
-  No model is called for selection and no Git object is read again. A base
-  style that governs a changed language activates `style_conformance`. It
-  calls the routing planner and keeps activated, planned profiles that may
-  steer defect review, in descending
-  priority (ties by profile ID). The rest are recorded in `selection.dropped`
-  with a reason: `not_applicable` (model-free, gap-only, `test_author`, or no
-  model call for this change), `max_specialists` (cut by the limit), or a planner
-  omission such as `tier_unassigned`. Inactive profiles are listed in
-  `selection.inactive`. If features are unavailable (for example the general
-  review did not reach analysis), `selection.status` is `features_unavailable`,
-  `selection.reason` names the general review's failed task (text:
-  `status=features_unavailable (general review failed at <task>)`), and no
-  specialist runs. When the general review recorded its change and analysis but
-  failed later, the features summary is still derived from those artifacts, so
-  languages and file classes are reported even if the plan is unavailable.
-- An explicit list runs in the given order. It is never cut: a list longer than
-  `--max-specialists` is a usage error.
-- `--max-specialists N` (1 to 6, default 3) bounds how many specialists run. It
-  needs an active `--specialists` value. It is not a spend cap on its own: every
-  member is a full run bounded by the runtime policy's per-run `max_cost`, so the
-  set's spend can reach (1 + N) × that `max_cost` (the general review plus N
-  specialists).
+`--profile` remains the form for a single specialist. You cannot combine it with `--specialists`, and neither can you combine `--investigation-policy` with `--specialists`. The IDs are the ones that `--profile` accepts. An unknown ID is a usage error (exit 2) that lists the valid IDs.
 
-Routes: every member uses the runtime policy's one generation and verification
-route pair and its independence level. Per-profile route assignment is not
-applied, and `selection.route_assignment` says so. The planner requires an
-assignments document, so the command builds a minimal one that maps every tier to
-the generation route the general review actually recorded and every verifier
-tier to its recorded verification route (route selection is not re-derived), and
-records that basis in `selection.plan`. If the general review recorded no route
-pair, `selection.status` is `plan_unavailable` and no specialist runs. The plan's
-tier and route choice is informational.
+### How the command selects specialists
 
-The general review runs first. Each selected specialist then runs as its own
-session and run with its own run identity, the same specialist generation
-request as `--profile`, and its own independent verification (the verifier never
-receives the profile instructions). Specialists run concurrently, at most three
-at a time, when every route is remote: no route in this machine's zone and no
-loopback model service (a local server such as Ollama serializes requests, so
-concurrent members would only share one member's time), and no limited API key's
-recorded spend plus the wave's worst case could reach its limit. Otherwise they
-run one by one and `bounds.sequential_reason` says why (`local_model_route`,
-`loopback_model_service`, `spending_limit_could_be_passed` or
-`at_most_one_specialist`); `bounds.specialist_concurrency` is the number that
-could run at once, and the limitations name `specialists_concurrent_bounded` or
-`sequential_members_no_parallelism`. Members are independent sessions with
-their own objects root, gateway and route state; their spending checks and
-ledger entries are serialized. A provider's own rate limits still apply to
-concurrent requests, and a member refused by them fails like any other member.
-The general review shares the `--timeout` window with configuration loading, and
-each specialist gets a fresh `--timeout` window, so model work is bounded by
-(1 + the number of specialist waves) × `--timeout`
-(`bounds.max_model_wall_time_milliseconds`), plus at most
-`bounds.member_cleanup_bound_milliseconds` of bounded close and readback per
-member. Members are listed in selection order whichever finishes first. No
-further wave starts once the invocation is canceled or a launched member's run
-did not succeed (refused, failed, canceled, or the source could not be read);
-members already running in that wave finish. Members that did not start appear
-with `launched: false` and a `not_launched_reason`. Nothing is retried.
+With `auto`, the command works as follows:
 
-Output is the `open-trestle/local-git-model-review-set` schema version 1 (JSON),
-not the single-review result:
+- It derives the change features from the change model and the semantic-impact profile that the general review recorded, after that review has run. It derives the declared style from the root-level style configuration files of the base tree, as the general review recorded them, never from the head (see [declared style in local reviews](agent-profiles.md#declared-style-in-local-reviews)). No model is called for the selection, and no Git object is read again.
+- A base style that governs a changed language activates `style_conformance`.
+- The command calls the routing planner. It keeps the activated, planned profiles that may steer defect review, in descending priority, with ties broken by profile ID.
+- It records the other profiles in `selection.dropped`, with a reason. The reason is `not_applicable` (the profile is model-free, only reports gaps, is `test_author`, or has no model call for this change), `max_specialists` (the limit cut it), or a planner omission such as `tier_unassigned`. Inactive profiles are listed in `selection.inactive`.
+- If the features are unavailable, for example because the general review did not reach analysis, then `selection.status` is `features_unavailable`, and no specialist runs. `selection.reason` names the task of the general review that failed. In text output it reads `status=features_unavailable (general review failed at <task>)`. If the general review recorded its change and analysis and failed later, the command still derives the features summary from those artifacts, so languages and file classes are reported even when the plan is unavailable.
 
-- `selection`: mode, status, features summary (identity, changed file count,
-  languages, file classes, security signals, semantic gap count, public API
-  changes, reference fan-out, and `style_configuration_unread` when base style
-  configuration files could not be used for routing), plan identities,
-  selected and dropped profiles with reasons, inactive profiles.
-- `members`: one entry per member (`general`, then profile IDs) with status, CI
-  disposition, run status, failure, `failure_task` and `failure_detail` (when the
-  run did not succeed), `context_shortfall` (only with `failure_detail`
-  `route_context_insufficient`), run, scope, plan and context identities,
-  route record identities, independence, diagnostic set identity, usage and cost,
-  the member result's [`token_usage`](#token-usage) (absent when the member's
-  result reports none, as for a member that never ran), verification counts and
-  limitations.
-- `walkthrough`: the general member's [walkthrough](#walkthrough), once for the
-  set.
-- `findings`: merged verified findings in [rank order](#rank), merged with the
-  shared [duplicate rule](#duplicates) (members are the origins), each with its
-  `rank`, `pre_existing` (when every contributor is pre-existing), the
-  representative's own location, and every contributor with its own finding
-  identity, severity and range. Only members whose run succeeded contribute.
-  The wording comparison can still keep apart findings a person would merge
-  (`deduplication_is_heuristic`).
+With an explicit list, the specialists run in the order that you give. The command never cuts the list. A list that is longer than `--max-specialists` is a usage error.
+
+`--max-specialists N` (1 to 6, default 3) bounds how many specialists run. It needs an active `--specialists` value. It is not a spending limit on its own. Every member is a full run, bounded by the per-run `max_cost` of the runtime policy, so the spending of the set can reach (1 + N) × that `max_cost` (the general review plus N specialists).
+
+### Routes, concurrency and time bounds
+
+Every member uses the one generation and verification route pair of the runtime policy, with its independence level. The command does not apply a route assignment for each profile, and `selection.route_assignment` says so. The planner requires an assignments document, so the command builds a minimal one. It maps every tier to the generation route that the general review actually recorded, and every verifier tier to the recorded verification route. It does not derive the route selection again. It records that basis in `selection.plan`. If the general review recorded no route pair, `selection.status` is `plan_unavailable`, and no specialist runs. The tier and route choices in the plan are informational.
+
+The general review runs first. Each selected specialist then runs as its own session and run, with its own run identity, the same specialist generation request as `--profile`, and its own independent verification. The verifier never receives the profile instructions.
+
+Specialists run concurrently, at most three at a time, when all of these hold:
+
+- every route is remote, so that no route is in this machine's zone and no model service is on loopback (a local server such as Ollama serializes requests, so concurrent members would only share the time of one member);
+- no limited API key could reach its limit with its recorded spending plus the worst case of the wave.
+
+Otherwise the specialists run one by one, and `bounds.sequential_reason` says why: `local_model_route`, `loopback_model_service`, `spending_limit_could_be_passed` or `at_most_one_specialist`. `bounds.specialist_concurrency` is the number that could run at once. The limitations name `specialists_concurrent_bounded` or `sequential_members_no_parallelism`.
+
+Members are independent sessions, each with its own objects root, gateway and route state. Their spending checks and ledger entries are serialized. A provider's own rate limits still apply to concurrent requests, and a member that those limits refuse fails like any other member.
+
+The general review shares the `--timeout` window with configuration loading, and each specialist gets a fresh `--timeout` window. Model work is therefore bounded by (1 + the number of specialist waves) × `--timeout` (`bounds.max_model_wall_time_milliseconds`), plus at most `bounds.member_cleanup_bound_milliseconds` of bounded close and readback for each member. The command lists members in selection order, whichever finishes first. No further wave starts once the invocation is canceled, or once a launched member's run did not succeed (it was refused, failed or canceled, or the source could not be read). Members that are already running in that wave finish. Members that did not start appear with `launched: false` and a `not_launched_reason`. Nothing is retried.
+
+### Review set output
+
+The output is the `open-trestle/local-git-model-review-set` schema version 1 (JSON), not the result of a single review. It has these fields:
+
+- `selection`: the mode, the status, a features summary, the plan identities, the selected and dropped profiles with reasons, and the inactive profiles. The features summary has the identity, the changed file count, the languages, the file classes, the security signals, the semantic gap count, the public API changes and the reference fan-out. It also has `style_configuration_unread` when the style configuration files of the base could not be used for routing.
+- `members`: one entry per member (`general`, then the profile IDs). Each entry has the status, the CI disposition, the run status, and the failure. When the run did not succeed, it also has `failure_task` and `failure_detail`. It has `context_shortfall` only with `failure_detail` `route_context_insufficient`. It has the run, scope, plan and context identities, the route record identities, the independence, the diagnostic set identity, the usage and cost, the verification counts and the limitations. It also has the [`token_usage`](#token-usage) of the member's result, which is absent when the result reports none, as for a member that never ran.
+- `walkthrough`: the [walkthrough](#walkthrough) of the general member, once for the whole set.
+- `findings`: the merged verified findings in [rank order](#rank). They are merged with the shared [duplicate rule](#duplicates), where the members are the origins. Each finding has its `rank`, `pre_existing` (when every contributor is pre-existing), the location of the representative, and every contributor with its own finding identity, severity and range. Only members whose run succeeded contribute. The comparison of wording can still keep apart findings that a person would merge (`deduplication_is_heuristic`).
 - `summary`, `bounds`, `limitations` and `comprehensive_clearance: false`.
-- `style_recommendations`, `style_withheld`, `style_configuration_unread` and
-  `style_advice_unavailable`: the general review's
-  [style advice](#style-recommendations), once for the set
-  and never per member, because every member reviews the same change against
-  the same base tree. The fields are absent when the general review has no
-  advice, so such a set keeps its earlier bytes. Text output adds the same `style:` lines
-  before the clearance line, and set SARIF the same run property and notes as a
-  single review. The advice never changes the set's status, CI disposition or
-  exit code.
+- `style_recommendations`, `style_withheld`, `style_configuration_unread` and `style_advice_unavailable`: the [style advice](#style-recommendations) of the general review. They appear once for the set and never for each member, because every member reviews the same change against the same base tree. The fields are absent when the general review has no advice, so such a set keeps its earlier bytes. Text output adds the same `style:` lines before the clearance line, and the SARIF of the set adds the same run property and notes as a single review. The advice never changes the status, the CI disposition or the exit code of the set.
 
-Set status and CI disposition:
+The status and CI disposition of the set are:
 
 | Set | `status` | `ci_disposition` | Default exit |
 |---|---|---|---|
@@ -757,21 +425,11 @@ Set status and CI disposition:
 | Every member completed with no candidates | `no_candidates` | `inconclusive` | 3 |
 | Every member completed, otherwise | `incomplete` | `inconclusive` | 3 |
 
-`complete` is false whenever a member did not complete. An incomplete set never
-demotes a completed member's verified high or critical finding.
+`complete` is false whenever a member did not complete. An incomplete set never demotes the verified high or critical finding of a completed member.
 
-Text output is written for people. It starts with `status:` and `ci:`, then
-the reviewers that ran (`reviewers: general, bug_hunter, backend (3 of 3 ran)`),
-a `not finished:` line with the failure and a `hint:` line for each member whose
-run did not succeed, and a `not run:` line, with the reason, for each selected
-member that was not started. Then come the walkthrough of the whole set, the
-merged confirmed findings in rank order, each with a `confirmed by:` line
-naming the members whose verifier confirmed it and, when other wordings were
-merged into it, an `also reported as:` line; then the pre-existing findings,
-the hidden count, an `incomplete:` line when a member did not finish, the
-source coverage when source was omitted, the token total over the members, the
-style advice and `comprehensive clearance: false`. From the offline fixture
-used in the tests:
+Text output is written for people. It starts with `status:` and `ci:`, then lists the reviewers that ran (`reviewers: general, bug_hunter, backend (3 of 3 ran)`). For each member whose run did not succeed, it adds a `not finished:` line with the failure and a `hint:` line. For each selected member that was not started, it adds a `not run:` line with the reason.
+
+After that come the walkthrough of the whole set and the merged confirmed findings in rank order. Each finding has a `confirmed by:` line that names the members whose verifier confirmed it, and an `also reported as:` line when other wordings were merged into it. Then come the pre-existing findings, the hidden count, an `incomplete:` line when a member did not finish, the source coverage when source was omitted, the token total over the members, the style advice, and `comprehensive clearance: false`. This is the output of the offline fixture that the tests use:
 
 ```text
 status: findings
@@ -808,31 +466,25 @@ hint: bug_hunter: the model's answer was not a valid review document (...)
 not run: backend (stopped after bug_hunter did not finish (failed))
 ```
 
-`--verbose` (text only) adds the internals after the reviewers line: `complete:`,
-the selection trace (`selection:`, `change features:`, `selected:`, `dropped:`,
-`route assignment:`), `members run:`, one `member: NAME status=... run=...
-verified_findings=N` line for each member (with `failure=` and a
-`member hint:` line for one that did not succeed), the `findings:` summary by
-severity and category and `files covered:`; and the `limitations:` list before
-the clearance line. The JSON output carries every one of these fields with or
-without the flag. `--format markdown` renders the set as a pull request summary with the
-members that ran and, for each finding, the members that confirmed it. SARIF
-output is one run whose results are the merged findings in rank order, each
-with a `trestleContributors` property; when some members did not complete, the results
-still list the completed members' verified findings and an error notification
-says the set is not a clean result, even when it lists no finding. If the
-general member's report could not be read, the set records the limitation
-`general_member_report_unreadable_source_coverage_unknown` and the notification
-says that source coverage counts are unavailable.
+`--verbose` (text only) adds the internals after the reviewers line:
 
-Exit policy on the merged set: `default` maps `blocked` to 4, `inconclusive` to
-3 and `error` to 1. `findings` exits 0 only when every member completed and no
-introduced merged finding is error severity (verified high or critical). `strict` exits 0
-only when every member completed with no candidates, so an advisory set exits 3
-under it. `always-zero` exits 0 when
-the general review completed, even if a specialist was refused or failed; when the
-general review itself did not complete it returns the default code (for example 4
-for a refused general review).
+- `complete:`;
+- the selection trace (`selection:`, `change features:`, `selected:`, `dropped:` and `route assignment:`);
+- `members run:`;
+- one `member: NAME status=... run=... verified_findings=N` line for each member, with `failure=` and a `member hint:` line for a member that did not succeed;
+- the `findings:` summary by severity and category, and `files covered:`;
+- the `limitations:` list before the clearance line.
+
+The JSON output carries every one of these fields with or without the flag.
+
+`--format markdown` renders the set as a pull request summary with the members that ran and, for each finding, the members that confirmed it. The SARIF output is one run whose results are the merged findings in rank order, each with a `trestleContributors` property. When some members did not complete, the results still list the verified findings of the completed members, and an error notification says that the set is not a clean result, even when it lists no finding. If the report of the general member could not be read, the set records the limitation `general_member_report_unreadable_source_coverage_unknown`, and the notification says that the counts of source coverage are unavailable.
+
+The exit policy on the merged set works as follows:
+
+- `default` maps `blocked` to 4, `inconclusive` to 3 and `error` to 1.
+- `findings` exits 0 only when every member completed and no introduced merged finding is error severity (verified high or critical).
+- `strict` exits 0 only when every member completed with no candidates, so an advisory set exits 3 under it.
+- `always-zero` exits 0 when the general review completed, even if a specialist was refused or failed. When the general review itself did not complete, it returns the default code, for example 4 for a refused general review.
 
 ## Snapshot investigation (opt-in)
 
