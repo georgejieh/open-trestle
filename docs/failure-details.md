@@ -1,10 +1,15 @@
 # Failure details
 
+This page explains the `failure:` and `hint:` lines that a failed review prints.
+Use it to find out what a `failure_detail` value means and what Open Trestle
+suggests.
+
 A review that did not succeed prints a `failure:` line and a `hint:` line. The
-JSON result carries the same facts as `failure`, `failure_detail` and, for a
-set, per member. `failure` is one of seven classes (`policy`, `resource_limit`,
-`transient`, `invalid_input`, `canceled`, `dependency`, `internal`). When
-Open Trestle could observe why, `failure_detail` adds one of the values below.
+JSON result carries the same facts as `failure` and `failure_detail`, and, for a
+review set, repeats them for each member. `failure` is one of seven classes
+(`policy`, `resource_limit`, `transient`, `invalid_input`, `canceled`,
+`dependency`, `internal`). When Open Trestle could observe why the review failed,
+`failure_detail` adds one of the values below.
 
 ```text
 status: refused
@@ -14,8 +19,8 @@ failure: policy (task candidates): provider_payment_required
 hint: the provider refused the request for billing: add credit or a subscription to the provider account, or choose another route
 ```
 
-A detail never carries a provider's message, a model's answer or any source.
-The field is absent when none applies. For the process exit status, see
+A detail never carries a provider's message, a model's answer or any source. The
+field is absent when none applies. For the process exit status, see
 [exit codes](exit-codes.md); for the full output, see
 [local model review](local-model-review.md#results-and-limits).
 
@@ -47,9 +52,9 @@ A class with no detail still has a one-line hint:
 | `dependency` | a task this one depends on did not complete |
 | `internal` | a model response could not be accepted (for example malformed or truncated output) or an internal check failed |
 
-For the context task, `policy` adds that usually no changed source could be
-supplied to the model, and `resource_limit` that usually the changed source did
-not fit the context packet budget.
+For the context task, the `policy` hint adds that usually no changed source could
+be supplied to the model. The `resource_limit` hint adds that usually the changed
+source did not fit the context packet budget.
 
 Common fixes for each value are in [troubleshooting](troubleshooting.md). The
 HTTP status mapping and retry rules are in

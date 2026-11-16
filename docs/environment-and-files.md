@@ -1,9 +1,9 @@
 # Environment variables and files
 
-Every `OPEN_TRESTLE_*` variable the programs read, and every path they write.
-No variable holds a key value in a command line, a result, a log or a setup
-file. Variables marked secret hold a credential; set them from your shell or a
-secret manager, never in a file in the repository.
+This page lists every `OPEN_TRESTLE_*` variable that the programs read, and every
+path that they write. Open Trestle never puts a key value in a command line, a
+result, a log or a setup file. Variables marked secret hold a credential, so set
+them from your shell or a secret manager, never in a file in the repository.
 
 ## For everyday use
 
@@ -44,11 +44,12 @@ Other variables that change behavior:
 
 The GitHub Actions example also uses `OPEN_TRESTLE_REF` and
 `OPEN_TRESTLE_REPOSITORY` as workflow-level values that choose which source
-revision to build; they are not read by any Open Trestle program.
+revision to build. No Open Trestle program reads them.
 
 ## Paths
 
-`~` is your home folder. XDG variables apply only when set to an absolute path.
+`~` is your home folder. An XDG variable applies only when it is set to an
+absolute path.
 
 | Path | Holds | Mode |
 | --- | --- | --- |
@@ -74,7 +75,7 @@ The usage folder holds `limit-<64 hex>.json`, one per limited key and provider,
 and `ledger-YYYY-MM.jsonl`, one per UTC month. None of these files holds a key,
 source, prompt or reply.
 
-A path that is a symbolic link, is not owned by you, or has broader
-permissions than listed is refused, with the reason named. See
+Open Trestle refuses a path that is a symbolic link, that you do not own, or that
+has broader permissions than listed, and it names the reason. See
 [troubleshooting](troubleshooting.md#a-folder-is-refused-as-not-private).
 The platforms where these checks work are in [platforms](platforms.md).

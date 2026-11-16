@@ -1,10 +1,11 @@
 # Exit codes
 
-Exit codes are stable per command. Most commands use `0` for success, `1` for a
-failure, and `2` for wrong usage. Reviews and setup checks add `3` for work
-that is not finished and `4` for a refusal. Read the output as well: a code
-alone does not say which refusal or failure it was. For a failed review, see
-[failure details](failure-details.md).
+This page lists the exit codes of each `trestle` command, so that scripts and CI
+steps can react to them. The codes stay the same for a given command. Most
+commands use `0` for success, `1` for a failure and `2` for wrong usage. Reviews
+and setup checks add `3` for work that is not finished and `4` for a refusal.
+Read the output as well, because a code alone does not say which refusal or
+failure it was. For a failed review, see [failure details](failure-details.md).
 
 ## Reviews
 
@@ -21,15 +22,16 @@ the saved setup, and returns its code.
 | `2` | Invalid usage, for example an unknown `--format` or a `--base` that is not a commit. |
 | `1` | The run failed, for example a model reply could not be accepted or a provider failed temporarily. |
 
-A review set (`--specialists`) merges its members: it is `4` when a member did
-not finish and an introduced merged finding has high or critical severity, or
-when every member finished and a medium or higher finding was introduced. See
+A review set (`--specialists`) merges the results of its members. The exit code
+is `4` in two cases: a member did not finish and the merged set has an
+introduced finding of high or critical severity, or every member finished and
+the set has an introduced finding of medium severity or higher. See
 [the set table](local-model-review.md#specialist-review-set-opt-in).
 
 ### Exit-code policy
 
 `--exit-code-policy` changes only the process exit status. The result, its
-`status` and `ci_disposition` and `comprehensive_clearance: false` are the same
+`status`, its `ci_disposition` and `comprehensive_clearance: false` are the same
 under every policy. Exit `0` is a pipeline decision, not a statement that the
 change is clear.
 
@@ -40,7 +42,7 @@ change is clear.
 | `strict` | the run succeeded with no candidates at all | the default code, so any verified finding fails the step |
 | `always-zero` | a valid result was written, including a refused or failed run | `1` if the result could not be written, `2` for invalid usage |
 
-Under `always-zero`, a green step says nothing about whether the review ran:
+Under `always-zero`, a passing step says nothing about whether the review ran, so
 read the SARIF or the JSON `status`. For review sets, see
 [the exit policy on the merged set](local-model-review.md#specialist-review-set-opt-in).
 
@@ -97,5 +99,5 @@ The first review inside `trestle init` uses these codes, not the table for
 | `trestle evaluate deterministic-corpus-candidate` | `3` mismatch; `4` matched; `1` failure. |
 | `trestle evaluate model-contract-candidate` | `4` after printing the report; `1` failure. |
 
-The observers (`trestle tui`, `mcp`, `lsp`, `acp`) run until their input
-closes; their exit codes were not traced for this page.
+The observers (`trestle tui`, `mcp`, `lsp`, `acp`) run until their input closes.
+This page does not list their exit codes, because they have not been traced.
