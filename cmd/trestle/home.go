@@ -18,8 +18,9 @@ import (
 // next actions, each one or two steps away. Anywhere else (standard input or
 // output not a terminal, NO_COLOR set, or TERM=dumb) it prints the usage text
 // and exits 2, exactly as before, so scripts see no change. The home screen
-// reads only local state: the setup folder, the usage folder and the
-// credential store. It sends nothing over the network.
+// reads local state: the setup folder, the usage folder and the credential
+// store. Its only network request is the update notice's release list GET,
+// at most once a day (update_notice.go).
 
 // homeInteractive reports whether the home screen may be shown. Tests
 // replace it.
@@ -94,6 +95,7 @@ type homeAction struct {
 }
 
 func runHomeScreen(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) int {
+	notice := startUpdateNotice(ctx)
 	w := latestReviewPrinter(ctx, stdout, "")
 	mark := tui.AmbassadorBridgeCompactMark
 	for i, line := range []string{strings.TrimRight(mark[0], " "), mark[1], strings.TrimRight(mark[2], " ")} {
@@ -108,6 +110,7 @@ func runHomeScreen(ctx context.Context, stdin io.Reader, stdout, stderr io.Write
 	if err != nil {
 		w.say("\n  This folder is not inside a Git repository. Change into the repository you want reviewed and run trestle again; trestle init sets it up.")
 		w.hint("  Guides: docs/getting-started.md · " + homeDocs)
+		sayUpdateNotice(ctx, w, notice)
 		return 0
 	}
 	w.checkout = checkout
@@ -116,13 +119,13 @@ func runHomeScreen(ctx context.Context, stdin io.Reader, stdout, stderr io.Write
 	if !setupExists(dir) {
 		w.say("\n  %s has no Open Trestle setup yet. Setup asks a few questions, sends no source, and can run the first review.", initDisplayPath(checkout))
 		actions = append(actions, homeAction{"Set up this repository", "trestle init", func() int { return runInit(ctx, nil, stdin, stdout, stderr) }})
-		return homeChoose(ctx, w, stdin, actions)
+		return homeChoose(ctx, w, stdin, homeUpdate(ctx, w, notice, actions, stdin, stdout, stderr))
 	}
 	repo, err := loadRepositorySetup(ctx, checkout, dir)
 	if err != nil {
 		w.say("\n  %s The setup in %s cannot be read (%s).", w.bad, initDisplayPath(dir), err)
 		actions = append(actions, homeAction{"Check the setup", "trestle init", func() int { return runInit(ctx, nil, stdin, stdout, stderr) }})
-		return homeChoose(ctx, w, stdin, actions)
+		return homeChoose(ctx, w, stdin, homeUpdate(ctx, w, notice, actions, stdin, stdout, stderr))
 	}
 	w.say("")
 	for _, line := range w.style.framed(initPanel(initLabel(filepath.Base(checkout), "repository"), homeRows(ctx, repo), w.style.ascii)) {
@@ -151,7 +154,17 @@ func runHomeScreen(ctx context.Context, stdin io.Reader, stdout, stderr io.Write
 			return 0
 		}},
 	)
-	return homeChoose(ctx, w, stdin, actions)
+	return homeChoose(ctx, w, stdin, homeUpdate(ctx, w, notice, actions, stdin, stdout, stderr))
+}
+
+// homeUpdate prints the update notice and, on a packaged install, adds the
+// update action last, so the other actions keep their numbers.
+func homeUpdate(ctx context.Context, w *initWizard, notice <-chan string, actions []homeAction, stdin io.Reader, stdout, stderr io.Writer) []homeAction {
+	sayUpdateNotice(ctx, w, notice)
+	if _, installed := updatePackageInstalled(); installed {
+		actions = append(actions, homeAction{"Update Open Trestle", "trestle update", func() int { return runUpdate(ctx, nil, stdin, stdout, stderr) }})
+	}
+	return actions
 }
 
 // missingOrSetKeys is the setup's key variables, for the key action.

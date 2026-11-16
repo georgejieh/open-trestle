@@ -401,7 +401,14 @@ func runLatestReview(ctx context.Context, args []string, stdout, stderr io.Write
 		fmt.Fprintf(stderr, "trestle review: the setup in %s is for %s, not this repository. Run trestle review there, or trestle init here.\n", initDisplayPath(dir), initDisplayPath(repo.templateCheckout))
 		return 2
 	}
-	code, _ = reviewLatestChange(ctx, latestReviewPrinter(ctx, stderr, checkout), repo, options, stdout, stderr)
+	printer := latestReviewPrinter(ctx, stderr, checkout)
+	code, ran := reviewLatestChange(ctx, printer, repo, options, stdout, stderr)
+	// The update notice follows a review only on a terminal, never in CI logs.
+	if ran && initTerminal(stderr) {
+		if line := updateNotice(ctx); line != "" {
+			printer.hint("  " + line)
+		}
+	}
 	return code
 }
 
