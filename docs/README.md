@@ -1,8 +1,8 @@
 # Documentation
 
-Find a page by what you want to do. Open Trestle is an unreleased development
-candidate; each page says what the code does today. See the
-[roadmap](roadmap.md) for what is planned.
+This index groups the documentation by what you want to do. Open Trestle is an
+unreleased development candidate, and each page describes what the code does
+today. See the [roadmap](roadmap.md) for what is planned.
 
 ## Start
 
@@ -41,7 +41,7 @@ candidate; each page says what the code does today. See the
 
 ## Help
 
-- [Troubleshooting](troubleshooting.md): symptom, cause, fix.
+- [Troubleshooting](troubleshooting.md): what each message means and how to fix it.
 - [Privacy](privacy.md): what leaves your machine, when and where.
 - [Support](../SUPPORT.md) and [security reports](../SECURITY.md).
 
