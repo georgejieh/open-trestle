@@ -80,6 +80,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 }
 
 func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
+		writeUsage(stdout)
+		return 0
+	}
 	if len(args) > 0 && args[0] == "build-info" {
 		if len(args) != 1 {
 			fmt.Fprintln(stderr, "usage: trestle build-info")
@@ -225,31 +229,50 @@ func runReview(fixturePath string, stdout, stderr io.Writer) int {
 	return exitCode
 }
 
-func writeUsage(stderr io.Writer) {
-	fmt.Fprintln(stderr, "usage: trestle init [--no-input] [answer flags]   (start here: guided setup and first review; see docs/getting-started.md)")
-	fmt.Fprintln(stderr, "       trestle   (in a terminal: this repository's status and next actions)")
-	writeLatestReviewUsage(stderr)
-	writeKeysUsage(stderr)
-	writeUsageUsage(stderr)
-	writeUpdateUsage(stderr)
-	fmt.Fprintln(stderr, "       trestle validate-fixture <path>")
-	fmt.Fprintln(stderr, "       trestle build-info")
-	fmt.Fprintln(stderr, "       trestle ci --format=json <path>")
-	fmt.Fprintln(stderr, "       trestle ci --format=sarif <path>")
-	writeSetupUsage(stderr)
-	writeConfigUsage(stderr)
-	writeEvaluateUsage(stderr)
-	writeAdminUsage(stderr)
-	writeRunsUsage(stderr)
-	writeProfilesUsage(stderr)
-	writeMCPUsage(stderr)
-	writeLSPUsage(stderr)
-	writeACPUsage(stderr)
-	writeTUIUsage(stderr)
-	writeLocalGitInspectUsage(stderr)
-	writeLocalGitChangeUsage(stderr)
-	writeLocalGitReviewUsage(stderr)
-	writeLocalGitModelReviewUsage(stderr)
-	writeLocalGitSubmitReviewUsage(stderr)
-	writeLocalGitRetainedMemoryInputUsage(stderr)
+// writeUsage prints every command's usage, grouped by who uses it. It is the
+// text of `trestle --help` on standard output and of a refused command line on
+// standard error.
+func writeUsage(w io.Writer) {
+	fmt.Fprintln(w, "Open Trestle reviews a code change with models you choose. New here: run trestle init inside a Git repository.")
+	fmt.Fprintln(w, "Guides: docs/README.md · "+homeDocs)
+
+	writeUsageGroup(w, "Everyday")
+	fmt.Fprintln(w, "usage: trestle   (in a terminal: this repository's status and next actions)")
+	writeLatestReviewUsage(w)
+	writeUpdateUsage(w)
+	writeUsageUsage(w)
+	writeProfilesUsage(w)
+
+	writeUsageGroup(w, "Setup and keys")
+	fmt.Fprintln(w, "usage: trestle init [--no-input] [answer flags]   (start here: guided setup and first review; see docs/getting-started.md)")
+	writeKeysUsage(w)
+
+	writeUsageGroup(w, "Integrations")
+	writeLocalGitModelReviewUsage(w)
+	writeRunsUsage(w)
+	writeTUIUsage(w)
+	writeMCPUsage(w)
+	writeLSPUsage(w)
+	writeACPUsage(w)
+	writeLocalGitSubmitReviewUsage(w)
+
+	writeUsageGroup(w, "Operators")
+	writeSetupUsage(w)
+	writeConfigUsage(w)
+	writeAdminUsage(w)
+	writeLocalGitInspectUsage(w)
+	writeLocalGitChangeUsage(w)
+	writeLocalGitReviewUsage(w)
+	writeLocalGitRetainedMemoryInputUsage(w)
+	fmt.Fprintln(w, "usage: trestle build-info")
+
+	writeUsageGroup(w, "Evaluation")
+	writeEvaluateUsage(w)
+	fmt.Fprintln(w, "usage: trestle validate-fixture <path>")
+	fmt.Fprintln(w, "       trestle ci --format=json <path>")
+	fmt.Fprintln(w, "       trestle ci --format=sarif <path>")
+}
+
+func writeUsageGroup(w io.Writer, name string) {
+	fmt.Fprintf(w, "\n%s:\n", name)
 }

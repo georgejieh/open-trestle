@@ -117,7 +117,7 @@ func TestUsageNamesTheEverydayCommands(t *testing.T) {
 	text := usage.String()
 	for _, want := range []string{
 		"usage: trestle init ",
-		"       trestle   (in a terminal: this repository's status and next actions)\n",
+		"usage: trestle   (in a terminal: this repository's status and next actions)\n",
 		"usage: trestle review [--format text|json|sarif|markdown] [--all]",
 		"       trestle review <path>   (review a local fixture file)\n",
 		"usage: trestle keys [list]",
