@@ -2,6 +2,8 @@
 
 Open Trestle uses one versioned setup-plan contract across operator surfaces. A setup plan is a secret-free, content-addressed record of deployment posture and the checks that still block readiness. Creating a plan cannot contact a provider, connect a forge, create an identity, enable publication, or enable dynamic validation.
 
+This page is for operators who run `trestled` and need a deployment plan. To set up a review of one repository on your own machine, run `trestle init` instead: it asks a few questions, writes the setup folder and its plan for you, and `trestle review` then reviews the latest change. See [getting started](getting-started.md), and [local-first bootstrap](local-first-bootstrap.md) for the commands `trestle init` runs.
+
 ## Create a protected plan
 
 Create a private directory and initialize one deployment profile:
@@ -71,7 +73,7 @@ trestle setup check bundle \
   --approved-by platform-owner
 ```
 
-The storage posture check opens and pins one exact current-user-owned `0700` directory. It pins and rechecks every ancestor to the filesystem root. Every ancestor must be owned by the current user or root. An ancestor with group or other write access must additionally be sticky and protect a child entry owned by the current user. Symlinked or replaceable path components are rejected. Ownership-dependent administrator, backup, storage, and protected runtime-file checks return `unavailable` on platforms where ownership authority is not implemented, including Windows in this release. Protected setup state also refuses open or inspection on those platforms. Mutable state, lock, and receipt files must be owned by the setup process user; their parent chain must prevent replacement by another local principal before any lock creation, chmod, cleanup, or read. It does not claim that backup, capacity, or crash recovery was tested. The observer credential posture check validates bounded header-safe values and constant-time inequality. It never stores or hashes either credential into evidence. It does not claim that a daemon accepted the observer; a later functional check must establish that separately.
+The storage posture check opens and pins one exact current-user-owned `0700` directory. It pins and rechecks every ancestor to the filesystem root. Every ancestor must be owned by the current user or root. An ancestor with group or other write access must additionally be sticky and protect a child entry owned by the current user. Symlinked or replaceable path components are rejected. Ownership-dependent administrator, backup, storage, and protected runtime-file checks return `unavailable` on platforms where ownership authority is not implemented, including Windows today; see [platforms](platforms.md). Protected setup state also refuses open or inspection on those platforms. Mutable state, lock, and receipt files must be owned by the setup process user; their parent chain must prevent replacement by another local principal before any lock creation, chmod, cleanup, or read. It does not claim that backup, capacity, or crash recovery was tested. The observer credential posture check validates bounded header-safe values and constant-time inequality. It never stores or hashes either credential into evidence. It does not claim that a daemon accepted the observer; a later functional check must establish that separately.
 
 The administrator check binds the exact setup root, tenant, repository, named recovery owner, and current effective operating-system user and group identity. `--approved-by` must exactly match the plan's recovery owner. It records consent for the current process identity. It does not create an account, grant operating-system privileges, or prove control of an external identity provider.
 
@@ -134,7 +136,7 @@ The checker binds the setup root, tenant, repository, recovery owner, approving 
 
 This establishes metadata-store identity and schema compatibility at one point in time. It does not validate artifact encryption, backup recovery, replica reconciliation, publication authority, capacity, latency, or future availability. Those remain separate requirements.
 
-Budgeted artifact erasure requires the PostgreSQL schema to include the normal thirteen-migration registry through `0013_artifact_erasure_resume.sql`. Apply that schema only through an explicitly authorized migration administrator before budgeted daemon startup. The budgeted daemon branch verifies the runtime database authority, migration checksums, artifact erasure schema, and resume schema in read-only snapshots. It does not apply migration 0013 or any other migration, and it rejects `--apply-migrations` and `OPEN_TRESTLE_POSTGRES_MIGRATION_URL` in budgeted mode.
+Budgeted artifact erasure requires the PostgreSQL schema to include the full embedded migration registry, which includes `0012_artifact_erasure.sql` and `0013_artifact_erasure_resume.sql`. Apply that schema only through an explicitly authorized migration administrator before budgeted daemon startup. The budgeted daemon branch verifies the runtime database authority, migration checksums, artifact erasure schema, and resume schema in read-only snapshots. It does not apply migration 0013 or any other migration, and it rejects `--apply-migrations` and `OPEN_TRESTLE_POSTGRES_MIGRATION_URL` in budgeted mode.
 
 ## Shared API rate limiting
 
