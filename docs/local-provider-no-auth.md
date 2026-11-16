@@ -15,7 +15,7 @@ A connection that uses no authentication looks like this:
 }
 ```
 
-Do not include `credential_environment`, even as an empty string or null. No key, placeholder or environment reference is needed. Trestle does not resolve credentials or send an Authorization header for this connection.
+Do not include `credential_environment`, even as an empty string or null. No key, placeholder or environment reference is needed. Open Trestle does not resolve credentials or send an Authorization header for this connection.
 
 Two other things are still required. The inventory must contain a matching approved `local` namespace, and schema v2 requires its explicit grant for an independent verification route. Pass the protected runtime policy and route inventory to `trestle local-git model-review` as usual.
 
@@ -23,7 +23,7 @@ If you omit `credential_mode`, the connection keeps bearer authentication and st
 
 ## Where `none` is refused
 
-Trestle rejects `none` for any of these:
+Open Trestle rejects `none` for any of these:
 
 - a remote endpoint
 - a remote route zone
