@@ -1773,7 +1773,7 @@ A review set warns once, before its first member, for every review it may run
 member before it starts, and runs specialists concurrently only when no limited
 key could reach its limit during the wave. A review set member refused at the
 limit carries the same detail and `member hint:` line and stops the set. `failure_detail` and result version 6
-exist only on this branch, so they take the value in place; a result without
+are not in any release, so they take the value in place; a result without
 it keeps its bytes. Results themselves never carry spending figures. See
 [spending limits](spending-limits.md).
 
