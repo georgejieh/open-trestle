@@ -461,8 +461,12 @@ detection, and none of it is released or supported for production. See the
 
 ## Documentation
 
+Start at the [documentation index](docs/README.md), which groups every page by what you want to do.
+
 | Area | Reference |
 |---|---|
+| Start | [install](docs/install.md) · [getting started](docs/getting-started.md) · [platforms](docs/platforms.md) |
+| Reference and help | [commands](docs/commands.md) · [exit codes](docs/exit-codes.md) · [failure details](docs/failure-details.md) · [environment variables and files](docs/environment-and-files.md) · [troubleshooting](docs/troubleshooting.md) · [privacy](docs/privacy.md) |
 | Architecture and roadmap | [architecture](docs/architecture.md) · [roadmap](docs/roadmap.md) · [development standards](docs/development.md) |
 | Runtime | [review-run runtime](docs/review-run-runtime.md) · [daemon API](docs/daemon-api.md) · [remote workers](docs/remote-workers.md) · [task notifications](docs/task-notifications.md) · [automatic finalization](docs/automatic-finalization.md) · [handler catalogs](docs/runtime-handler-catalogs.md) |
 | Review pipeline | [source acquisition](docs/source-acquisition-handler.md) · [change model](docs/change-model-handler.md) · [evidence](docs/deterministic-evidence-handler.md) · [semantic impact](docs/semantic-impact.md) · [memory retrieval](docs/memory-retrieval-handler.md) · [context assembly](docs/context-assembly-handler.md) · [candidate generation](docs/model-generation-handler.md) · [verification](docs/model-verification-handler.md) · [OpenAI provider](docs/openai-provider.md) · [publication readiness](docs/publication-readiness-handler.md) · [publication](docs/publication-handler.md) |

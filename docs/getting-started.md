@@ -4,7 +4,9 @@
 reviewed. It asks only what it cannot work out itself, shows every setting in
 one panel, saves a protected configuration, runs the setup checks, and offers
 to run your first review. If something is missing,
-it says what is missing and what to do, then stops without guessing.
+it says what is missing and what to do, then stops without guessing. Every
+command is listed in [commands](commands.md), and every page is in the
+[documentation index](README.md).
 
 Remote providers (OpenRouter, Ollama Cloud, OpenCode Go, and Ollama signed in
 to Ollama Cloud) work only with the packaged Linux amd64 install, which places
@@ -574,6 +576,9 @@ price flags to add.
 The values above are placeholders, not recommendations.
 
 ## Exit codes
+
+These are the codes of `trestle init`. [Exit codes](exit-codes.md) lists every
+command's, including `trestle review`.
 
 | Code | Meaning |
 | --- | --- |
