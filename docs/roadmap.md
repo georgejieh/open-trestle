@@ -9,14 +9,14 @@ evidence come first: every finding must point to the source that supports it.
 
 ## Status language
 
-**Shipped on this branch** means the code and its tests exist at this commit.
-It is not a release. Nothing is released yet, and nothing counts as released
-until its release evidence exists (see [release gates](#release-gates)).
-**Planned** means not built. Waves are listed in their intended order and carry
-no dates. Each planned item ships with tests, documentation and a CHANGELOG
-entry.
+**Available now** means the code and its tests exist in the source tree. It is
+not a release. Nothing is released yet, and nothing counts as released until
+its release evidence exists (see [release gates](#release-gates)). **Next
+release** is the planned scope of the first release. **Later** is planned
+after it. Items carry no dates, and each ships with tests, documentation and a
+CHANGELOG entry.
 
-## Shipped on this branch
+## Available now
 
 - **Guided setup.** `trestle init`, run inside a repository, asks where the two
   models run and which model finds problems and which different model
@@ -85,7 +85,7 @@ entry.
 - **Updates.** `trestle update` updates the packaged install in one step:
   find, show, ask, run the new build's own upgrade with `sudo`, report.
   `--check` reports only, and the home screen and `trestle review` show a
-  notice at most once a day. The client side is shipped: GitHub release
+  notice at most once a day. The client side is available: GitHub release
   discovery, Ed25519 verification against keys pinned in the build, the local
   update folder for development builds, and the offline signing tool. Release
   signing is pending the release phase: no key is pinned yet, so the release
@@ -95,135 +95,115 @@ entry.
   vulnerability gate; and a static-debug evaluation over eight built-in cases.
   Nothing is signed. See [operations](operations.md).
 
-## Planned work
+## Next release
 
-### Wave 1: the everyday loop and onboarding
+The first release runs on Windows, macOS and Linux and is limited to four
+areas. Anything outside them is listed under [Later](#later).
 
-Shipped on this branch (see above): `trestle review`, hidden API key entry with
-an owner-only credential store and `trestle keys`, the `trestle` home screen,
-`trestle update` on the client side (release signing waits for the release
-phase), and the documentation truth pass, including the three code-side mismatches
-(the `knowledge_graph` and `style_conformance` purpose text, the usage text,
-and the Dockerfile port). Remaining:
+### Platforms and the everyday loop
+
+Today the packaged install is Linux amd64 only, and remote providers and the
+saved-key store are refused on other systems (see [platforms](platforms.md)).
+The release brings the whole loop to Windows and macOS:
+
+- Install with native packages or installers on each system.
+- `trestle init`, `trestle review`, `trestle update`, the home screen and
+  remote providers on all three systems.
+- A secret scanner that runs on all three systems, which remote providers
+  depend on.
+- Owner-only credential and configuration files on Windows, using ACLs.
+
+### Codebase understanding
+
+- A repository index and a ranked repository map: enclosing definitions for
+  changed hunks, symbol tags ranked within a token budget, caller and usage
+  lookups, module boundaries and a feature map. Go uses its AST; other
+  languages begin with lexical tags.
+- A repository profile read from existing tests and CI configuration:
+  conventions and the maintainers' priorities. Configuration is parsed and
+  never executed.
+
+### Generated verification
+
+- AI-written checks, and the repository's own tests, run in a sandbox on each
+  system. The code decides the outcome, not the model.
+- Execution needs consent through an allow prompt: Allow, Deny, or Always
+  allow for this repository. In CI, a workflow input does the allowing.
+- This area needs a reviewed security design before any code.
+
+### Integrations
+
+- A GitHub Action (`action.yml`), verified on a test repository. This needs
+  maintainer approval to push to one.
+- VS Code starts a review from the command palette through the direct path and
+  shows the findings as diagnostics. Today the extension shows the verified
+  diagnostics of one daemon run.
+
+## Later
+
+### Review quality
 
 - Review uncommitted changes without writing objects into the repository.
-- An OS keyring as an optional backend for saved keys.
-
-### Wave 2: review quality core
-
-- **W2.1 Rank and summarise.** Shipped on this branch: one deterministic
-  duplicate rule for a run, the specialists and repeated runs; deterministic
-  ranking; confirmed high and medium findings by default with `--all`; a
-  pre-existing class that never blocks CI; a verification-led walkthrough
-  (what was verified, a per-file change summary, missing verification); and
-  text, `--format markdown` and rank-ordered SARIF. See
-  [ranked findings and the walkthrough](local-model-review.md#ranked-findings-and-the-walkthrough).
-  Remaining: the optional one-paragraph model summary (a separate structured
-  request on the verifier route under the same egress, scanning and spending
-  rules, labelled with its model and off for local setups); the daemon
-  publisher's summary body and the web console, which keep their own rendering;
-  the pre-existing class and the walkthrough for investigation runs; the
-  optional model-drawn state or sequence diagram; and the evaluation scorer
-  reading ranked output.
-- **W2.2 Context.** Enclosing definitions for changed hunks; a
-  language-agnostic repository map of symbol tags with personalised ranking
-  within a token budget; and caller and usage lookups. Go already uses its AST;
-  other languages begin with lexical tags, and tree-sitter is a later upgrade.
-- **W2.3 Commit and pull-request context.** Shipped on this branch for the
-  direct path: `trestle review` and `trestle local-git model-review` read the
-  commit messages of `base..head` from the verified Git objects and give them
-  to the finder and the verifier as bounded, risk-flagged, secret-scanned
-  stated-intent data (generation context 9, verification context 8), never
-  instructions; the walkthrough shows the subjects as author-stated and
-  unverified; and the drift auditor's intent condition fires under
-  `--specialists auto`. See
-  [commit messages as stated intent](local-model-review.md#commit-messages-as-stated-intent).
-  Remaining: the daemon and webhook path. The `pull_request` webhook payload
-  already carries the title and body under the admitted event, so no new
-  permission or call is needed, but the webhook planner keeps neither and the
-  daemon's run has no bound artifact for them; the daemon also reads no commit
-  messages. Linked issue text needs `issues: read`, which is not admitted, so
-  it waits for a permission decision. A distinct `intent_mismatch` candidate
-  category needs candidate batch v3 (v2 bytes are pinned in every recorded
-  context); today a mismatch is a `correctness` candidate.
-- **W2.4 Specialists by default.** Shipped on this branch: new setups save
-  `--specialists auto` and `trestle review` uses it; specialists run up to
-  three at a time on remote routes when no spending limit could be passed, and
-  one by one otherwise; the spending warning counts every member;
-  `--specialists none` turns them off. Remaining: per-profile route
-  assignment.
-- **W2.5 Checks from findings.** Planned: when a finding category recurs or is
-  accepted, draft a deterministic rule (ast-grep, Semgrep, golangci-lint or
-  ESLint) with a failing and a passing fixture, offered as a patch and never
-  applied silently.
-- **W2.6 Pattern hygiene.** Shipped on this branch, deterministic part: every
-  generation context records curated anti-patterns whose count a change raised
-  in a directory (base against head), added lint and type suppressions,
-  workaround comments, TODO markers without an issue reference and absolute
-  rules added to agent instruction and skill files, with a deterministic
-  low-severity root-cause note for a suppression beside a workaround comment;
-  the walkthrough reports it in text, Markdown and JSON; and the bug hunter and
-  frontend skills name per-language nuance traps. See
-  [pattern hygiene](local-model-review.md#pattern-hygiene). Remaining: a
-  pattern-hygiene specialist profile, deprecated-API detection, more languages
-  than Go, JavaScript, TypeScript and Python, and multi-line Python
+- Per-profile route assignment for specialists.
+- A pattern-hygiene specialist profile, deprecated-API detection, more
+  languages than Go, JavaScript, TypeScript and Python, and multi-line Python
   signatures.
+- Checks from findings: when a finding category recurs or is accepted, draft a
+  deterministic rule (ast-grep, Semgrep, golangci-lint or ESLint) with a
+  failing and a passing fixture, offered as a patch and never applied silently.
+- The optional one-paragraph model summary (a separate structured request on
+  the verifier route under the same egress, scanning and spending rules,
+  labelled with its model and off for local setups), the optional model-drawn
+  state or sequence diagram, and the pre-existing class and walkthrough for
+  investigation runs.
+- Commit and pull-request context on the daemon and webhook path. The
+  `pull_request` webhook payload already carries the title and body under the
+  admitted event, but the webhook planner keeps neither and the daemon's run
+  has no bound artifact for them. Linked issue text needs `issues: read`,
+  which is not admitted. A distinct `intent_mismatch` candidate category needs
+  candidate batch v3; today a mismatch is a `correctness` candidate.
+- Inexpensive read-only evidence scouts, kept separate from candidate
+  generation and verification, and remote investigation tools.
+- Embeddings for context and memory retrieval.
 
-### Wave 3: memory and learning
+### Memory and learning
 
-- **W3.1 Outcome memory.** Record findings and whether a later commit addressed
-  them; record explicit feedback (`trestle feedback`, the IDE, pull-request
+- Outcome memory: record findings and whether a later commit addressed them;
+  record explicit feedback (`trestle feedback`, the IDE, pull-request
   reactions); recall similar past outcomes as advisory context; suppress
   categories by their history, never security. Today the memory index is empty
   unless a manually authored retained-memory file is supplied.
-- **W3.2 Metrics.** Address rate and outdated rate in `trestle usage` or a
-  stats view and in the console.
+- Metrics: address rate and outdated rate in `trestle usage` or a stats view
+  and in the console.
 
-### Wave 4: runs anywhere
+### Surfaces
 
-- **W4.1 A GitHub Action** (`action.yml`), verified live on a test repository.
-  This needs maintainer approval to push to one.
-- **W4.2 VS Code.** Start a review from the command palette through the CLI
-  direct path, show findings as diagnostics, and offer quick-fix code actions
-  for suggestions. Today the extension shows the verified diagnostics of one
-  daemon run.
-- **W4.3 TUI.** Start a review and browse findings interactively. Today the TUI
+- An optional OS keyring backend for saved keys.
+- TUI: start a review and browse findings interactively. Today the TUI
   observes, and can cancel, one daemon run.
-- **W4.4 Pull-request interaction.** Suggestion blocks, check runs and replies
-  to the bot. Today the daemon can post one `COMMENT` review.
-- **W4.5 Desktop app (last).** Reuse the web console in a native shell.
+- Pull-request interaction: suggestion blocks, check runs and replies to the
+  bot. Today the daemon can post one `COMMENT` review.
+- VS Code quick-fix code actions for suggestions.
+- A desktop app that reuses the web console in a native shell.
+- Additional forge adapters, Git-hook integration, a gRPC API, streaming
+  subscriptions, and policy and provider administration.
+- The daemon recording and enforcing spending limits.
 
-### Wave 5: tests and execution
-
-This wave needs a security design, reviewed before any code.
-
-- **W5.1 A sandboxed executor** for configured linters and tests, with no
-  network and a read-only checkout. Linter and static-analysis findings come
-  first, as hints the model must confirm; then test selection and runs as
-  evidence; then generated tests, kept only if they build, pass and add
-  coverage. Dynamic validation stays separately authorized and off by default.
-
-### Wave 6: measured quality
+### Measured quality
 
 - An independent human reviewer adjudicates the 23 corpus cases.
 - Score the sealed run bundle against the adjudicated labels.
 - Add public benchmarks (SWR-Bench, AACR-Bench, c-CRAB) to the evaluation
-  driver.
+  driver, and publish the numbers.
 
-### Other planned work
-
-These items are planned but not yet assigned to a wave.
+### Policy, analysis and operations
 
 - **Policy and analysis:** repository-scoped policy packs, deterministic CI
-  planning, broader user-visible deterministic rules, and inexpensive read-only
-  evidence scouts kept separate from candidate generation and verification.
+  planning and broader user-visible deterministic rules.
 - **Semantic evidence:** type-aware language adapters whose compiler or
   language-server facts could support verification, and heuristics such as
   historical co-change that may only point at review targets. Only the
   `structural` and `syntactic_candidate` grades exist today.
-- **Surfaces and integration:** additional forge adapters, Git-hook
-  integration, a gRPC API, streaming subscriptions, and policy and provider
-  administration.
 - **Setup:** external delivery reachability, broader replica and failover
   coordination, no-egress enforcement, and governed bundle import.
 - **Deployment:** supported installation profiles, OpenTelemetry observability,
@@ -232,9 +212,9 @@ These items are planned but not yet assigned to a wave.
   distribution. The setup planner's `kubernetes_ha` profile and its
   shared-store probe are setup checks, not a deployment.
 - **Release:** signing, attestation publication and verification, supported
-  multi-platform packaging, supported production upgrade and crash-recovery
-  guarantees, deployment qualification, accessibility evidence, and realistic
-  adjudicated evaluation data with calibration, cost and latency evidence.
+  production upgrade and crash-recovery guarantees, deployment qualification,
+  accessibility evidence, and realistic adjudicated evaluation data with
+  calibration, cost and latency evidence.
 
 ## Release gates
 
