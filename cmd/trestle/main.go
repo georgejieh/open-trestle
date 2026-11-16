@@ -231,8 +231,10 @@ func runReview(fixturePath string, stdout, stderr io.Writer) int {
 
 // writeUsage prints every command's usage, grouped by who uses it. It is the
 // text of `trestle --help` on standard output and of a refused command line on
-// standard error.
+// standard error. The first line stays a usage line: the packaged install's
+// smoke probe requires standard error to start with "usage: trestle ".
 func writeUsage(w io.Writer) {
+	fmt.Fprintln(w, "usage: trestle <command> [flags]")
 	fmt.Fprintln(w, "Open Trestle reviews a code change with models you choose. New here: run trestle init inside a Git repository.")
 	fmt.Fprintln(w, "Guides: docs/README.md · "+homeDocs)
 

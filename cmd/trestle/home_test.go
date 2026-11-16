@@ -111,6 +111,22 @@ func TestHomeIsUsageTextWhenNotInteractive(t *testing.T) {
 	}
 }
 
+// The packaged install's smoke probe runs `trestle` without a terminal and
+// accepts only exit 2, no standard output, and standard error that starts with
+// "usage: trestle " and stays within 64 KiB.
+func TestBareTrestleMeetsThePackagedSmokeProbe(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run(nil, &stdout, &stderr)
+	if code != 2 || stdout.Len() != 0 || !strings.HasPrefix(stderr.String(), "usage: trestle ") || stderr.Len() > 65536 {
+		t.Fatalf("exit=%d stdout=%d bytes stderr starts %q, %d bytes", code, stdout.Len(), firstLine(stderr.String()), stderr.Len())
+	}
+}
+
+func firstLine(text string) string {
+	line, _, _ := strings.Cut(text, "\n")
+	return line
+}
+
 func TestUsageNamesTheEverydayCommands(t *testing.T) {
 	var usage bytes.Buffer
 	writeUsage(&usage)
