@@ -44,6 +44,9 @@ jobs:
         run: |
           rm -rf "$RUNNER_TEMP/open-trestle-web-dist"
           cp -R web/dist "$RUNNER_TEMP/open-trestle-web-dist"
+          OPEN_TRESTLE_CHROMIUM_PATH="$(command -v chromium || command -v google-chrome || command -v google-chrome-stable)"
+          test -n "$OPEN_TRESTLE_CHROMIUM_PATH"
+          export OPEN_TRESTLE_CHROMIUM_PATH
           npm ci --prefix web
           npm run format:check --prefix web
           npm test --prefix web

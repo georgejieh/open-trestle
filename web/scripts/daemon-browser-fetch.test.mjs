@@ -40,7 +40,7 @@ const json = (response, value) => {
 
 test(
   "browser identity fetch rejects redirects and preserves exact endpoint attribution",
-  { timeout: 10_000 },
+  { timeout: 30_000 },
   async (t) => {
     const previousTemporary = process.env.TMPDIR;
     const temporary = await mkdtemp(join(tmpdir(), "otdr-"));
@@ -146,8 +146,10 @@ test(
     loopReads = 0;
     browser = await chromium.launch({
       headless: true,
-      executablePath: "/usr/bin/chromium",
+      executablePath:
+        process.env.OPEN_TRESTLE_CHROMIUM_PATH ?? "/usr/bin/chromium",
       args: ["--disable-gpu"],
+      timeout: 20_000,
     });
     page = await browser.newPage();
     await page.goto(`${origin(primary)}/page`);
