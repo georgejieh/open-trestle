@@ -297,3 +297,82 @@ func TestPrepareReleaseRefusals(t *testing.T) {
 		})
 	}
 }
+
+func TestRecheckBeforeTheCopyRuns(t *testing.T) {
+	build, _, err := FindLocal(localFolder(t, "0.1.6-dev"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, change := range map[string]func(workspace *Workspace, copied *Copy){
+		"unchanged": func(*Workspace, *Copy) {},
+		"copy rewritten": func(_ *Workspace, copied *Copy) {
+			os.Chmod(copied.Archive, 0o755)
+			os.WriteFile(copied.Archive, testsupport.UpdateArchive("9.9.9", Target), 0o755)
+			os.Chmod(copied.Archive, 0o555)
+		},
+		"copy made writable":      func(_ *Workspace, copied *Copy) { os.Chmod(copied.Archive, 0o755) },
+		"folder opened":           func(workspace *Workspace, _ *Copy) { os.Chmod(workspace.Dir(), 0o755) },
+		"path outside the folder": func(_ *Workspace, copied *Copy) { copied.Archive = build.Archive },
+		"folder replaced": func(workspace *Workspace, copied *Copy) {
+			moved := workspace.Dir() + ".moved"
+			os.Rename(workspace.Dir(), moved)
+			os.Mkdir(workspace.Dir(), 0o700)
+			content, _ := os.ReadFile(filepath.Join(moved, ArchiveName))
+			os.WriteFile(copied.Archive, content, 0o555)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			workspace := newWorkspace(t)
+			prepared, err := PrepareLocal(build, nil, workspace)
+			if err != nil {
+				t.Fatal(err)
+			}
+			copied := prepared.Copy
+			change(workspace, &copied)
+			err = workspace.Recheck(copied)
+			if name == "unchanged" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrCandidateRefused) {
+				t.Fatalf("err=%v", err)
+			}
+		})
+	}
+}
+
+func TestCheckRootFile(t *testing.T) {
+	self := uint32(os.Getuid())
+	dir := t.TempDir()
+	path := filepath.Join(dir, "trestle")
+	content := []byte("trestle binary")
+	writeFile(t, path, content, 0o555)
+	want := InstalledFile{SHA256: digest(content), Size: int64(len(content))}
+	if err := CheckRootFile(path, self, want); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckRootFile(path, self, InstalledFile{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckRootFile(path, self, InstalledFile{SHA256: digest([]byte("other")), Size: want.Size}); err == nil || !strings.Contains(err.Error(), "not the file the receipt names") {
+		t.Fatalf("a different binary passed: %v", err)
+	}
+	if os.Getuid() != 0 {
+		if err := CheckRootFile(path, 0, want); err == nil || !strings.Contains(err.Error(), "not owned by root") {
+			t.Fatalf("a file of this account passed as root's: %v", err)
+		}
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(path, link); err != nil {
+		t.Fatal(err)
+	}
+	writable := filepath.Join(dir, "writable")
+	writeFile(t, writable, content, 0o775)
+	for _, refused := range []string{link, writable, filepath.Join(dir, "missing")} {
+		if err := CheckRootFile(refused, self, InstalledFile{}); err == nil {
+			t.Fatalf("%s passed", refused)
+		}
+	}
+}

@@ -89,6 +89,21 @@ func TestReadReceipt(t *testing.T) {
 	}
 }
 
+func TestReadReceiptNamesTheInstalledTrestle(t *testing.T) {
+	fields := goodReceipt()
+	fields["files"] = []any{
+		map[string]any{"elf": true, "mode": 365, "path": "usr/local/bin/trestled", "sha256": strings.Repeat("3", 64), "size": 10},
+		map[string]any{"elf": true, "mode": 365, "path": "usr/local/bin/trestle", "sha256": strings.Repeat("4", 64), "size": 20},
+	}
+	installed, err := ReadReceipt(writeReceipt(t, fields, 0o444), uint32(os.Getuid()))
+	if err != nil || installed.Trestle != (InstalledFile{SHA256: strings.Repeat("4", 64), Size: 20}) {
+		t.Fatalf("installed=%+v err=%v", installed, err)
+	}
+	if installed, err := ReadReceipt(writeReceipt(t, goodReceipt(), 0o444), uint32(os.Getuid())); err != nil || installed.Trestle != (InstalledFile{}) {
+		t.Fatalf("installed=%+v err=%v", installed, err)
+	}
+}
+
 func TestLocalDirectory(t *testing.T) {
 	env := func(values map[string]string) func(string) string {
 		return func(key string) string { return values[key] }

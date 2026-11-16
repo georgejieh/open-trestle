@@ -31,7 +31,10 @@ const shebang = "#!/usr/bin/env python3\n"
 var afterCopy = func(string) {}
 
 // Workspace is a fresh private folder for one candidate.
-type Workspace struct{ dir string }
+type Workspace struct {
+	dir string
+	pin *fileauthority.DirectoryPin
+}
 
 // NewWorkspace creates a mode-0700 folder under the temporary folder.
 func NewWorkspace() (*Workspace, error) {
@@ -45,11 +48,37 @@ func NewWorkspace() (*Workspace, error) {
 		return nil, fmt.Errorf("%s cannot be made private", dir)
 	}
 	info, err := os.Lstat(dir)
-	if err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 || fileauthority.CheckDirectory(dir) != nil {
+	if err == nil && info.IsDir() && info.Mode().Perm() == 0o700 {
+		workspace.pin, err = fileauthority.PinDirectory(dir)
+	}
+	if err != nil || workspace.pin == nil {
 		_ = workspace.Remove()
 		return nil, fmt.Errorf("%s or a parent folder is not private to this account", dir)
 	}
 	return workspace, nil
+}
+
+// Recheck confirms, just before the copy runs, that the folder is the same
+// private folder and the copy still has the verified bytes.
+func (w *Workspace) Recheck(copied Copy) error {
+	refused := fmt.Errorf("%w: the verified copy changed before it ran", ErrCandidateRefused)
+	if w.pin == nil || w.pin.Recheck() != nil || filepath.Dir(copied.Archive) != w.dir {
+		return refused
+	}
+	if info, err := os.Lstat(w.dir); err != nil || info.Mode().Perm() != 0o700 {
+		return refused
+	}
+	file, info, err := openRegular(copied.Archive)
+	if err != nil {
+		return refused
+	}
+	defer file.Close()
+	hash := sha256.New()
+	size, err := io.Copy(hash, io.LimitReader(file, MaxArchiveBytes+1))
+	if err != nil || info.Mode().Perm() != 0o555 || size != copied.Size || hex.EncodeToString(hash.Sum(nil)) != copied.SHA256 {
+		return refused
+	}
+	return nil
 }
 
 // Dir is the folder's path.
@@ -129,8 +158,8 @@ type Copy struct {
 }
 
 // VerifyCopy checks an archive copy and its sidecar copy in place: modes
-// 0555 and 0444 as the lifecycle requires, the pyz shebang, a sidecar that
-// names the copy's SHA-256 and file name, and a manifest for this target.
+// 0555 and 0444 as the lifecycle requires, a sidecar that names the copy's
+// SHA-256 and file name, the pyz shebang, and a manifest for this target.
 func VerifyCopy(archive, sidecar string) (Copy, error) {
 	file, before, err := openRegular(archive)
 	if err != nil {
@@ -145,6 +174,16 @@ func VerifyCopy(archive, sidecar string) (Copy, error) {
 	if err != nil || size != before.Size() {
 		return Copy{}, fmt.Errorf("%w: the copy could not be read completely", ErrCandidateRefused)
 	}
+	digest := hex.EncodeToString(hash.Sum(nil))
+	sidecarFile, sidecarInfo, err := openRegular(sidecar)
+	if err != nil {
+		return Copy{}, err
+	}
+	defer sidecarFile.Close()
+	raw, err := io.ReadAll(io.LimitReader(sidecarFile, MaxSidecarBytes+1))
+	if err != nil || sidecarInfo.Mode().Perm() != 0o444 || !bytes.Equal(raw, []byte(digest+"  "+filepath.Base(archive)+"\n")) {
+		return Copy{}, fmt.Errorf("%w: the SHA-256 sidecar does not match the archive", ErrCandidateRefused)
+	}
 	head := make([]byte, len(shebang))
 	if _, err := file.ReadAt(head, 0); err != nil || string(head) != shebang {
 		return Copy{}, fmt.Errorf("%w: the copy does not start with the pyz shebang", ErrCandidateRefused)
@@ -157,17 +196,7 @@ func VerifyCopy(archive, sidecar string) (Copy, error) {
 	if err != nil || after.Size() != before.Size() || !after.ModTime().Equal(before.ModTime()) {
 		return Copy{}, fmt.Errorf("%w: the copy changed while it was verified", ErrCandidateRefused)
 	}
-	result := Copy{Archive: archive, SHA256: hex.EncodeToString(hash.Sum(nil)), Size: size, Version: version, Manifest: manifest}
-	sidecarFile, sidecarInfo, err := openRegular(sidecar)
-	if err != nil {
-		return Copy{}, err
-	}
-	defer sidecarFile.Close()
-	raw, err := io.ReadAll(io.LimitReader(sidecarFile, MaxSidecarBytes+1))
-	if err != nil || sidecarInfo.Mode().Perm() != 0o444 || !bytes.Equal(raw, []byte(result.SHA256+"  "+filepath.Base(archive)+"\n")) {
-		return Copy{}, fmt.Errorf("%w: the SHA-256 sidecar does not match the archive", ErrCandidateRefused)
-	}
-	return result, nil
+	return Copy{Archive: archive, SHA256: digest, Size: size, Version: version, Manifest: manifest}, nil
 }
 
 // Matches checks a verified copy against a signed statement.
@@ -193,23 +222,33 @@ type Prepared struct {
 	SignatureUnchecked bool
 }
 
+// VerifyReleaseSignature downloads a release's signature and verifies it
+// with ring as a statement for that release's tag and version.
+func VerifyReleaseSignature(ctx context.Context, client Client, ring KeyRing, release Release) (Statement, PublicKey, error) {
+	if len(ring) == 0 {
+		return Statement{}, PublicKey{}, ErrNoPinnedKey
+	}
+	var raw bytes.Buffer
+	if _, err := client.Download(ctx, release.Signature, MaxSignatureBytes, 30*time.Second, &raw); err != nil {
+		return Statement{}, PublicKey{}, err
+	}
+	statement, key, err := ring.Verify(raw.Bytes())
+	if err != nil {
+		return Statement{}, PublicKey{}, fmt.Errorf("%w: %w", ErrCandidateRefused, err)
+	}
+	if statement.Tag != release.Tag || statement.Version != release.Version.String() {
+		return Statement{}, PublicKey{}, fmt.Errorf("%w: the signature is for %s, not %s", ErrCandidateRefused, statement.Tag, release.Tag)
+	}
+	return statement, key, nil
+}
+
 // PrepareRelease verifies a release's signature, then downloads its sidecar
 // and archive into workspace and verifies the copies against the signed
 // statement. Nothing is downloaded past the signature unless it verifies.
 func PrepareRelease(ctx context.Context, client Client, ring KeyRing, release Release, workspace *Workspace, timeout time.Duration) (Prepared, error) {
-	if len(ring) == 0 {
-		return Prepared{}, ErrNoPinnedKey
-	}
-	var raw bytes.Buffer
-	if _, err := client.Download(ctx, release.Signature, MaxSignatureBytes, 30*time.Second, &raw); err != nil {
-		return Prepared{}, err
-	}
-	statement, key, err := ring.Verify(raw.Bytes())
+	statement, key, err := VerifyReleaseSignature(ctx, client, ring, release)
 	if err != nil {
-		return Prepared{}, fmt.Errorf("%w: %w", ErrCandidateRefused, err)
-	}
-	if statement.Tag != release.Tag || statement.Version != release.Version.String() {
-		return Prepared{}, fmt.Errorf("%w: the signature is for %s, not %s", ErrCandidateRefused, statement.Tag, release.Tag)
+		return Prepared{}, err
 	}
 	sidecar, err := workspace.write(SidecarName, 0o444, func(destination io.Writer) error {
 		_, err := client.Download(ctx, release.Sidecar, MaxSidecarBytes, 30*time.Second, destination)
