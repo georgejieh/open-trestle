@@ -7,6 +7,15 @@ claims, or rewrite old run identities. Runtime configuration and route inventory
 remain separate authorities. Loopback alone does not prove local inference:
 a local runtime can expose cloud-backed model aliases.
 
+`trestle init` does not use this command or a catalog file. In an interactive
+run, when a model was not already given by flag, it reads one list from the
+provider it chose, with the same list reader and no key: `openai_models` for
+OpenCode Go and for a local server's `/v1/models`, `ollama_tags` for Ollama Cloud,
+and for OpenRouter its public model and zero-data-retention
+endpoint lists (see [OpenRouter zero data retention](openrouter-zdr-profile.md)).
+The list is read fresh on each run, shown for that run only and never saved as a
+catalog. When it cannot be read, the wizard asks you to type the model ID.
+
 ## Source manifest
 
 Create a protected JSON manifest in an owned directory. Source IDs are stable
@@ -161,8 +170,8 @@ path. Review exact IDs, metadata, source failures and the two digests before
 running `trestle config models apply`. Apply does not fetch or activate anything.
 Source IDs above are examples; choose stable IDs for your configuration.
 
-Both documented endpoints returned public metadata without a key on October 30,
-2026. Schema version 1 never reads credentials. Do not put inference keys into
+Both documented endpoints returned public metadata without a key when last
+checked (see the retrieval date below). Schema version 1 never reads credentials. Do not put inference keys into
 these URLs or assume every metadata endpoint is permanently unauthenticated.
 If the service later documents authenticated discovery, review that contract and
 use the existing schema version 2 credential-reference mechanism where supported.

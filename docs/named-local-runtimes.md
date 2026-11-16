@@ -6,6 +6,11 @@ runtime registry. Choose one explicitly; none is a default. LM Studio is the
 selected Mac server: its official requirements cover Apple Silicon on macOS 14+
 (not Intel Macs). This selection is not a claim of Mac-host qualification.
 
+`trestle init` does not use these templates. It looks for a server at the
+default ports in the table below (Ollama 11434, LM Studio 1234, llama.cpp 8080,
+vLLM 8000), offers what answers, and writes its own setup folder. Use the
+templates when you bind and check the configuration by hand.
+
 | Directory under `examples/named-local-runtimes/` | Generation API base | Verification API base | Exact model selectors |
 | --- | --- | --- | --- |
 | `llama-cpp` | `http://127.0.0.1:8080/v1` | `http://127.0.0.1:8081/v1` | `trestle-generation`, `trestle-verification` |

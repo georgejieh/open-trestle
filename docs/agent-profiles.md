@@ -180,6 +180,13 @@ the model at lines the packet's deterministic `pattern_hygiene` evidence cites
 (see [pattern hygiene](local-model-review.md#pattern-hygiene)) and ask that a
 candidate about a new suppression or workaround comment name the root cause.
 
+The catalog is version 1. Five profiles are at profile version 2 and the other
+four are at version 1: `security_probe`, `bug_hunter`, `frontend`,
+`knowledge_graph` and `style_conformance` are at 2 (the `security_probe` skill
+text now uses plain punctuation), and `orchestrator`, `backend`, `test_author`
+and `drift_auditor` are at 1. A profile version bump changes the catalog
+identity, and with it the identity of every plan that includes the profile.
+
 Activation predicates are OR-combined. Vendor (`vendor/`, `node_modules/`,
 `third_party/`) and generated files never activate or score a profile. Each
 entry records the predicates that matched, or why none did.

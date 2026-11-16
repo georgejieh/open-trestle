@@ -6,7 +6,7 @@ Use the CLI to validate a route inventory and its exact runtime policy before da
 trestle config validate --route-inventory inventory.json --runtime-policy policy.json
 ```
 
-Success prints one `open-trestle/runtime-configuration-validation-result` version 1 JSON object containing only its contract and schema discriminators, the inventory, runtime-policy, and review-policy identities, and route and connection counts. The strict public shape is `schemas/runtime/configuration-validation-result-v1.schema.json`. It does not resolve or read provider credentials, contact provider endpoints, open source repositories, or grant publication authority. Failure returns exit code 1. Invalid command usage returns exit code 2.
+Success prints one `open-trestle/runtime-configuration-validation-result` version 1 JSON object containing only its contract and schema discriminators, a `status` of `valid`, the inventory, runtime-policy, and review-policy identities, and route and connection counts. The strict public shape is `schemas/runtime/configuration-validation-result-v1.schema.json`. It does not resolve or read provider credentials, contact provider endpoints, open source repositories, or grant publication authority. Failure returns exit code 1. Invalid command usage returns exit code 2.
 
 The validator applies the same bounded decoders used by `trestled`. The runtime policy must bind the decoded inventory identity. Route evidence manifests are checked and discarded. Credential environment names are validated but are not printed in the result.
 
