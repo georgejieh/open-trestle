@@ -103,7 +103,7 @@ Run endpoints:
 
 `GET /api/v1/tenants/{tenant}/repositories/{repository}/runs/{run}/progress` accepts no body. It requires one bearer credential, the exact tenant/repository allowlist, and `run_read`. The ordinary pre-authentication and per-principal rate limits below apply. There is no separate worker, model, or publication permission in this read.
 
-The success response follows [`run-progress-response-v1.schema.json`](../schemas/controlplane/run-progress-response-v1.schema.json). It has exactly `contract: open-trestle/run-progress-response`, `schema_version: 1`, a bounded `request_id`, `run`, and `progress`. Its `run` field is the unchanged canonical `ReviewRunReceipt` (version 1 or 2), not a new progress-bearing receipt version. Its `progress` field has four independent axes:
+The success response follows [`run-progress-response-v1.schema.json`](../schemas/controlplane/run-progress-response-v1.schema.json). It has exactly `contract: open-trestle/run-progress-response`, `schema_version: 1`, a bounded `request_id`, `run`, and `progress`. Its `run` field is the unchanged canonical `ReviewRunReceipt` (version 1, 2 or 3), not a new progress-bearing receipt version. Its `progress` field has four independent axes:
 
 - `change`: changed `files` and `ranges`.
 - `deterministic`: `applicable_files`, `applicable_ranges`, `checked_files`, `checked_ranges`, and exact `observations` count when the recorded schema supplies it. Observations are not independently verified findings.

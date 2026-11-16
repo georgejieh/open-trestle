@@ -1,6 +1,6 @@
 # VS Code extension
 
-Use the Node version in `.node-version` for reproducible packaging. `extensions/vscode` packages a read-only Open Trestle diagnostic client. It starts the existing `trestle lsp` process and does not implement a second review engine.
+Use the Node version in `.node-version` for reproducible packaging. `extensions/vscode` packages a read-only Open Trestle diagnostic client. It starts the existing `trestle lsp` process and does not implement a second review engine. It observes one run that a `trestled` daemon already holds. It cannot start a review, and it is not how you review the change you are editing: use `trestle review` for that. It is not in any release or marketplace.
 
 ## Install from a local build
 
