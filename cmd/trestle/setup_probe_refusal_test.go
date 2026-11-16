@@ -42,12 +42,12 @@ func TestSetupBootstrapCheckNamesTheProbeRefusal(t *testing.T) {
 		{"probe_refuse_402", "local_inference_validated: provider_payment_required: " + payment},
 		{"probe_refuse_404", "local_inference_validated: provider_model_unavailable: " + missing},
 		{"probe_refuse_410", "local_inference_validated: provider_model_retired: " + retired},
-		// A 200 reply the adapter refuses, and a status it does not classify,
-		// used to be refused with no reason at all.
+		// A 200 reply the adapter refuses, and a status it does not classify, are
+		// refused with a reason.
 		{"probe_reply_unknown_field", "local_inference_validated: provider_response_invalid: " + invalid},
 		{"probe_refuse_409", "local_inference_validated: provider_response_invalid: " + invalid},
-		// A probe the server rejects as an invalid request (for example an
-		// unknown model ID) used to be named a refused reply.
+		// A probe the server rejects as an invalid request, such as an unknown
+		// model ID, is named as a rejected request.
 		{"probe_refuse_400", "local_inference_validated: provider_request_rejected: " + rejected},
 		{"probe_refuse_422", "local_inference_validated: provider_request_rejected: " + rejected},
 	} {

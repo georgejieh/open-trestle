@@ -6,10 +6,9 @@ import (
 	"testing"
 )
 
-// The first live run refused this change at the context task with
-// all_sources_omitted: removing a guard changes no head line. The head lines
-// around the deletion point now enter the packet as a changed_hunk source, and
-// the deletion point is a labelled omission, so the change is reviewable.
+// Removing a guard changes no head line, so the head lines around the deletion
+// point enter the packet as a changed_hunk source and the deletion point is a
+// labelled omission.
 func TestDeletionOnlyChangeIsReviewableFromDeletionPointContext(t *testing.T) {
 	base := map[string][]byte{"calc.go": []byte("package calc\n\nfunc Div(a, b int) int {\n\tif b == 0 {\n\t\treturn 0\n\t}\n\treturn a / b\n}\n")}
 	head := map[string][]byte{"calc.go": []byte("package calc\n\nfunc Div(a, b int) int {\n\treturn a / b\n}\n")}

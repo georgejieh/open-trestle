@@ -11,8 +11,8 @@ import (
 	"github.com/georgejieh/open-trestle/localreview"
 )
 
-// Regressions for defects found in the first live end-to-end runs. The fake
-// model servers reuse the captured live response shapes; no real model runs.
+// Outcomes of a direct model review against fake model servers: unusual
+// changes, named failures, provider refusals and merged review sets.
 
 func runLocalModelText(t *testing.T, f *localModelFixture, wantCode int, extra ...string) string {
 	t.Helper()
@@ -30,8 +30,8 @@ func runLocalModelText(t *testing.T, f *localModelFixture, wantCode int, extra .
 	return stdout.String()
 }
 
-// Defect A: a change that only removes a guard used to be refused at the
-// context task (failure policy, all_sources_omitted) before any model call.
+// A change that only removes a guard is reviewed, not refused at the context
+// task.
 func TestLocalModelReviewReviewsDeletionOnlyChange(t *testing.T) {
 	f := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, deletionOnly: true})
 	result, _ := localModelExecute(t, f, f.args, 4)
@@ -46,10 +46,8 @@ func TestLocalModelReviewReviewsDeletionOnlyChange(t *testing.T) {
 	}
 }
 
-// Removing a file over the 1 MiB change-model size bound failed the analysis
-// task with an internal error, so the whole review failed; adding one that
-// gets no whole-text range was recorded as an empty added file. Each is now a
-// resource_limit omission, and the small Go change beside it is reviewed.
+// A removed or added file over the change-model size bound is a resource_limit
+// omission, and the small Go change beside it is still reviewed.
 func TestLocalModelReviewRecordsALargeFileAsAResourceLimit(t *testing.T) {
 	large := map[string][]byte{"large.bin": bytes.Repeat([]byte("large file line\n"), 128<<10)}
 	binary := map[string][]byte{"large.bin": bytes.Repeat([]byte{0, 1, 2, 3}, 512<<10)}
@@ -74,9 +72,8 @@ func TestLocalModelReviewRecordsALargeFileAsAResourceLimit(t *testing.T) {
 	}
 }
 
-// A change that only removes a file used to be refused at the context task
-// (all_sources_omitted). It is now reviewed from the file's removed text, and
-// the verified finding is on its removed base lines.
+// A change that only removes a file is reviewed from the file's removed text,
+// and the verified finding is on its removed base lines.
 func TestLocalModelReviewReviewsAChangeThatOnlyRemovesAFile(t *testing.T) {
 	f := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, removedOnly: true})
 	result, _ := localModelExecute(t, f, f.args, 4)
@@ -94,8 +91,7 @@ func TestLocalModelReviewReviewsAChangeThatOnlyRemovesAFile(t *testing.T) {
 	}
 }
 
-// Defect B: a failed run printed only its status; it now names the failure
-// class, the failing task and a plain-language hint.
+// A failed run names the failure class, the failing task and a hint.
 func TestLocalModelReviewTextNamesFailureClassTaskAndHint(t *testing.T) {
 	f := newLocalModelFixture(t, localModelFixtureOptions{generationMode: "malformed"})
 	text := runLocalModelText(t, f, 1)
@@ -108,8 +104,8 @@ func TestLocalModelReviewTextNamesFailureClassTaskAndHint(t *testing.T) {
 	}
 }
 
-// Defect C: a reasoning verifier that stopped at the output limit with empty
-// content (the live nemotron reply) failed as a generic internal failure.
+// A verifier that stopped at the output limit with empty content reports an
+// exhausted output allowance.
 func TestLocalModelReviewReportsExhaustedVerifierOutput(t *testing.T) {
 	f := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, verificationMode: "exhausted"})
 	var stdout, stderr bytes.Buffer
@@ -155,9 +151,7 @@ func TestLocalModelReviewReportsExhaustedVerifierOutput(t *testing.T) {
 }
 
 // A verifier that stopped at the output limit part way through its answer
-// failed as a bare internal failure with no detail, because the partial
-// answer then failed the strict document parse. It is an exhausted output
-// allowance, with the usage the reply reported.
+// reports an exhausted output allowance with the usage the reply reported.
 func TestLocalModelReviewReportsAPartialAnswerAtTheOutputLimit(t *testing.T) {
 	f := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, verificationMode: "exhausted_partial"})
 	var stdout, stderr bytes.Buffer
@@ -174,12 +168,10 @@ func TestLocalModelReviewReportsAPartialAnswerAtTheOutputLimit(t *testing.T) {
 	}
 }
 
-// A reply that stopped normally but whose answer was not a valid review
-// document (raw chat-template tokens around the JSON, a raw control character
-// in a JSON string, a document cut short, or a verdict for a candidate the
-// request did not name) failed the review as a bare internal failure that read
-// like an internal bug. It names the model's answer, with a fixed hint, and
-// the answer's text never reaches any output.
+// A reply that stopped normally but whose answer is not a valid review
+// document (chat-template tokens around the JSON, a raw control character, a
+// cut-short document, or a verdict for an unnamed candidate) names the model's
+// answer with a fixed hint, and the answer's text never reaches any output.
 func TestLocalModelReviewNamesAnAnswerThatIsNotAReviewDocument(t *testing.T) {
 	const hint = "the model's answer was not a valid review document (for example malformed JSON, the wrong shape or a refusal): run the review again; if it repeats, choose another model"
 	for _, test := range []struct {
@@ -219,11 +211,8 @@ func TestLocalModelReviewNamesAnAnswerThatIsNotAReviewDocument(t *testing.T) {
 	}
 }
 
-// Defect F: a provider that refused the request for billing (HTTP 402) or had
-// retired the model (HTTP 410) failed every run as a bare internal failure
-// with no detail or hint. Each provider refusal now names its class, the
-// failing task, a fixed detail and a fixed hint, and the provider's own
-// message text never reaches any output.
+// Each provider refusal names its class, the failing task, a fixed detail and
+// a fixed hint, and the provider's own message text never reaches any output.
 func TestLocalModelReviewNamesProviderRefusals(t *testing.T) {
 	for _, test := range []struct {
 		name, generation, verification string
@@ -236,15 +225,13 @@ func TestLocalModelReviewNamesProviderRefusals(t *testing.T) {
 		{"authentication", "refuse_401", "", 4, "policy", "candidates", localreview.FailureDetailProviderAuthenticationFailed, "the provider did not accept the credential"},
 		{"authorization", "refuse_403", "", 4, "policy", "candidates", localreview.FailureDetailProviderAuthorizationDenied, "the provider refused this account access"},
 		{"rate limited", "refuse_429", "", 1, "transient", "candidates", localreview.FailureDetailProviderRateLimited, "the provider rate-limited the request on its last attempt"},
-		// A provider that answers HTTP 200 with a reply the adapter refuses, or
-		// with a status the adapter does not classify, used to fail the run as
-		// a bare internal failure that read like an internal bug.
+		// A reply the adapter refuses, or a status it does not classify, is named
+		// as a refused reply.
 		{"reply with an unknown field", "reply_unknown_field", "", 1, "internal", "candidates", localreview.FailureDetailProviderResponseInvalid, "the provider answered, but its reply did not match what Open Trestle accepts, for example malformed or truncated output, an unrecognized field or an unexpected HTTP status: run the review again; if it repeats, choose another model or route and report it"},
 		{"truncated reply at verification", "", "reply_truncated", 1, "internal", "verification", localreview.FailureDetailProviderResponseInvalid, "the provider answered, but its reply did not match"},
 		{"unclassified status", "refuse_409", "", 1, "internal", "candidates", localreview.FailureDetailProviderResponseInvalid, "the provider answered, but its reply did not match"},
-		// A provider that rejects the request itself as invalid (OpenRouter
-		// answers an unknown model ID with HTTP 400) used to be named a
-		// refused reply with advice to run the review again.
+		// A request the provider rejects as invalid, such as an unknown model ID,
+		// is named as a rejected request, not a refused reply.
 		{"request rejected", "refuse_400", "", 4, "policy", "candidates", localreview.FailureDetailProviderRequestRejected, "the provider rejected the request as invalid, for example an unknown model ID or a parameter the model or endpoint does not accept: check the model ID, the endpoint and its transport, and that the model and endpoint accept structured output and the requested output allowance; then re-run setup"},
 		{"request unprocessable at verification", "", "refuse_422", 4, "policy", "verification", localreview.FailureDetailProviderRequestRejected, "the provider rejected the request as invalid"},
 	} {
@@ -367,9 +354,9 @@ func assertNoProviderRefusalText(t *testing.T, output string) {
 	}
 }
 
-// Defects B and E for review sets: a member's failure names its class and
-// task, and change features are reported from the recorded change even when
-// the general review failed after it (the live run printed languages=none).
+// In a review set a member's failure names its class and task, and change
+// features are reported from the recorded change even when the general review
+// failed after it.
 func TestLocalModelReviewSetNamesMemberFailureAndKeepsFeatures(t *testing.T) {
 	f := newLocalModelFixture(t, localModelFixtureOptions{generationMode: "malformed_specialist"})
 	_, text := runLocalModelSet(t, f, []string{"--specialists", "bug_hunter,backend", "--format", "text"}, 4)
@@ -413,14 +400,11 @@ func TestSummarizeSpecialistFeaturesWithoutPlan(t *testing.T) {
 	}
 }
 
-// Defect D: the live set reported "Avg may divide by zero" (general) and "Avg
-// panics on empty slice" (bug_hunter) as two findings. They share path,
-// category, an overlapping range and the cited evidence, but their statements
-// are paraphrases, not near-identical, so the shared deterministic rule keeps
-// them as two ranked findings: the more severe one ranks first. The earlier
-// heuristic merged them on a 0.3 word overlap; the near-identical rule trades
-// that merge for never hiding a distinct defect behind another's statement.
-func TestMergeVerifiedFindingsKeepsLiveParaphrasesApartAndRanked(t *testing.T) {
+// Findings that share path, category, an overlapping range and evidence but
+// word their statements differently stay as two ranked findings, the more
+// severe first. Only near-identical statements merge, so a distinct defect is
+// never hidden behind another's statement.
+func TestMergeVerifiedFindingsKeepsParaphrasesApartAndRanked(t *testing.T) {
 	const evidence = "76a14b86b8e4bfef0306da257cc6b99fa1f3d8057b992b0aa74b2d50f4424e45"
 	general := localreview.ReportFinding{Identity: "g1", Title: "Avg function may divide by zero", Claim: "The Avg function returns sum / len(xs) without checking if xs is empty, which can cause a runtime panic due to division by zero.", Severity: diagnostics.SeverityWarning, Path: "calc.go", StartLine: 10, EndLine: 18, EvidenceIDs: []string{evidence}, Category: "correctness"}
 	bugHunter := localreview.ReportFinding{Identity: "b1", Title: "Avg panics on empty slice", Claim: "Calling Avg with an empty slice triggers a runtime panic because it divides by zero (len(xs) == 0).", Severity: diagnostics.SeverityError, Path: "calc.go", StartLine: 16, EndLine: 16, EvidenceIDs: []string{evidence}, Category: "correctness"}
@@ -435,7 +419,7 @@ func TestMergeVerifiedFindingsKeepsLiveParaphrasesApartAndRanked(t *testing.T) {
 	bugHunter.Title, bugHunter.Claim = general.Title, general.Claim
 	merged, duplicates = mergeVerifiedFindings([]string{"general", "bug_hunter"}, [][]localreview.ReportFinding{{general}, {bugHunter}})
 	if len(merged) != 1 || duplicates != 1 || merged[0].FindingIdentity != "b1" || merged[0].Severity != "error" || strings.Join(merged[0].contributorLabels(), ",") != "general,bug_hunter" {
-		t.Fatalf("near-identical live duplicate kept apart: %+v", merged)
+		t.Fatalf("near-identical duplicate kept apart: %+v", merged)
 	}
 }
 

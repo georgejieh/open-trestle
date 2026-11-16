@@ -19,7 +19,7 @@ import (
 	"github.com/georgejieh/open-trestle/controlplane"
 )
 
-// These full payloads and hashes were captured by the old handler probe at HEAD 425edbc.
+// Pinned snapshot payloads and their hashes. A change to any of them changes recorded bytes.
 const (
 	oldSnapshotPayload                  = `{"contract":"open-trestle/source-snapshot","schema_version":1,"identity":"f50d4c8b27d72f755168b2e01b2e37dd90b00f275be45fc6223782c33157a226","acquisition_request_identity":"3b4fb65236f3cb0f2e5ebed3d6eb962c8df51522556e2147f465e537e91be891","acquisition_receipt_identity":"6c8680ef2147de64b87ed222f933aaf17b19bd6d8a9fc9c0be6fdc099988b76a","acquisition_execution_identity":"e552b581ba8929c4e85edd958a790381cc7e3491776c443a65fa9621093402bb","repository_identity":"cd867fa3f5f79345873f8b6dca79ee854722ad13ca567ae191755208f9095435","revision_identity":"48a8e29ccc988d91ac800034e3e172d79d0442e3921dae16cf57599baffe0075","source_adapter_identity":"c70fe7801224f5d9b67e403caff995c3d6cd8746993d81c3fea3f679f4ec0dbe","manifest_identity":"f45e813330e30bdc83738a0f42731193203d028ad569177f5f21045279dfc0d3","files":[{"path":"empty.txt","digest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size_bytes":0,"artifact_identity":"77b01ab57b9e2633827850a14feb8a81156772722674aba055a2433768aecf59"},{"path":"src/main.go","digest":"df1d036cbbf3df46e2045071e082245ece204c7f53ecf0a4e022bff9bb228f47","size_bytes":13,"artifact_identity":"54c65b26fc0fc35778804372a87211266a10b72e17f5a28a983efeb177f0a63d"}]}`
 	oldSnapshotPayloadSHA256            = "8ae8e9c3c8f4b0843bedc35ccebbc8edf1a7f38e9c54c9da755a101dc7396784"
