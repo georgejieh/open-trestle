@@ -103,6 +103,12 @@ endpoint serving the model is refused with HTTP 404 even with
 `allow_fallbacks` true, and every endpoint in `only` is a pinned ZDR endpoint
 whose price the cost limit already covers.
 
+Each request has a deadline of two minutes per 4096 tokens of its output
+allowance, at least two and at most five minutes, so the 16384-token allowance
+setup aims for gets the full five minutes and a smaller allowance gets less. A
+caller's earlier deadline still wins. See
+[the request deadline](openai-provider.md#sanitized-egress-boundary).
+
 The setup summary, `bootstrap check` (`data_retention: required_per_request`)
 and the wizard all say that ZDR is required on every request. That is a fact
 about the request, not a promise about what any provider retains: OpenRouter
@@ -214,8 +220,7 @@ tag is never pinned. An endpoint left out for its output limit allows at least
 also left out for Safety Retention, and appears only with `openrouter_api`;
 at most 64 are listed. Each source time is no earlier than `retrieved_at`, and
 the label names that time. The output-limit member was added in place: witness
-version 3 and runtime policy version 8 exist only in this development
-candidate.
+version 3 and runtime policy version 8 are not in any release.
 
 ### Runtime policy version 8
 
@@ -279,7 +284,7 @@ with the hint to check the model ID (see
 
 ## Earlier reviewed setups
 
-Setups made before this change use the `openrouter_zdr_chat_v1` profile in
+Setups made with the earlier form of this route use the `openrouter_zdr_chat_v1` profile in
 runtime policy version 3, 4 or 5, with a version 2 witness that you reviewed and
 declared by hand: one slug per model, four evidence objects, an account review
 and a validity window. Their bytes, identities and dispatch are unchanged. They
