@@ -1,0 +1,9 @@
+# Ed25519 public keys that sign Open Trestle releases, one per line:
+#
+#   ed25519 <standard base64 of the 32-byte public key>
+#
+# Every build embeds this file. More than one key may be listed while a key is
+# rotated; a release verifies only with the key its signature names. No key is
+# listed yet, so this build cannot verify releases and `trestle update` never
+# installs a downloaded release. Adding a key is part of the release phase and
+# needs the maintainer's approval; see docs/updates.md.
