@@ -9,9 +9,9 @@ API provider, with two differences you should keep in mind:
   provider-reported tokens priced at the route's declared price, which for
   OpenRouter is the highest price among the pinned endpoints. When a request's
   usage is not reported, it counts at the cost reserved for it, an upper bound.
-  Your provider usually charges less: on one OpenRouter key, OpenRouter
-  reported $0.08 for the month while Open Trestle's settlement of the same
-  calls was about $0.60.
+  Your provider usually charges less, because it bills the endpoint that served
+  the request, which can be cheaper than the highest pinned price. When the
+  two differ, trust your provider's figure.
 - **The limit is best effort.** Concurrent reviews, other tools that use the
   same key and provider price changes are invisible to it. Your provider's own
   limit is the guarantee; set one there as well (for OpenRouter, in the key's

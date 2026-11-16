@@ -1,7 +1,10 @@
 # Local-first bootstrap
 
-Use `trestle setup bootstrap` after installing the Linux amd64 binaries with the
-[distribution instructions](operations.md). This is a same-user,
+`trestle init` runs the commands on this page for you and is the usual way to
+set up a review of one repository; see [getting started](getting-started.md).
+Use `trestle setup bootstrap` directly after installing the Linux amd64
+binaries with the [distribution instructions](operations.md) when you need the
+daemon scope or want to script the setup. This is a same-user,
 authenticated, local-only advisory journey. It configures existing machinery;
 it does not install a service, start a daemon, download models, provision
 credentials, or make a model request during initialization.
@@ -74,8 +77,9 @@ at least 8192 context and 4096 output tokens, and the declared context must not
 exceed the context length each server is started with. Reviews reserve input as
 a byte-based upper bound, so a review request needs well over 8192 tokens; the
 [named local runtimes](named-local-runtimes.md#context-length) declare and start
-32768. Generated reviews have a 4096 output
-token cap and zero monetary budget. The built-in review-policy version derives
+32768. Generated reviews have a review output allowance
+of 4096 tokens by default (`--max-output-tokens` raises it, up to `--output-tokens`)
+and a zero monetary budget. The built-in review-policy version derives
 its identity from local-only, distinct-model, no-publication behavior. You never
 compute inventory, route, policy or setup hashes.
 
