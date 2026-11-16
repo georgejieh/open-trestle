@@ -43,7 +43,6 @@ func TestPlanAndGrantProducesV5TaskInput(t *testing.T) {
 		t.Fatal("fixture context task is not leased")
 	}
 
-	// --- Build packet candidate from the real fixture store ---
 	candidate, err := contexthandler.BuildPacketCandidate(
 		ctx, localPacketFixtureReader{fixture.store}, fixture.request, state,
 		fixture.clock, fixture.rootDigest, at, at,
@@ -52,7 +51,6 @@ func TestPlanAndGrantProducesV5TaskInput(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// --- Sanitize using the clean sanitizer (no model contact) ---
 	sanitized, err := contexthandler.BuildSanitizedPacketCandidate(
 		ctx, candidate, testsupport.NewCleanGenerationSanitizer(), at,
 	)
@@ -64,13 +62,11 @@ func TestPlanAndGrantProducesV5TaskInput(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// --- Build inventory and policy matching the local generation authority fixtures ---
 	inventory, policy, err := localGenerationInventoryAndPolicyForTest(ctx, t)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// --- Resolve the route pair from the policy and inventory ---
 	pair, err := runtimecatalog.ResolveLocalGenerationRoutePair(policy, inventory)
 	if err != nil {
 		t.Fatalf("ResolveLocalGenerationRoutePair failed: %v", err)
@@ -79,7 +75,7 @@ func TestPlanAndGrantProducesV5TaskInput(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// --- Plan: proves the actual sanitized request fits the bound generation record.
+	// Plan: proves the actual sanitized request fits the bound generation record.
 	// Plan.authorization is private; we verify via the grant's exported methods.
 	plan, err := runtimecatalog.PlanLocalGenerationRoute(ctx, scope, modelRequest, policy, inventory, pair)
 	if err != nil {
@@ -98,7 +94,7 @@ func TestPlanAndGrantProducesV5TaskInput(t *testing.T) {
 		t.Fatal("plan policy identity differs from policy")
 	}
 
-	// --- Grant: proves the same request still produces the identical plan, then records selection.
+	// Grant: proves the same request still produces the identical plan, then records selection.
 	// GrantLocalGenerationRoute calls PlanLocalGenerationRoute again internally and compares
 	// with reflect.DeepEqual.  A non-zero grant identity proves the deep-equal passed.
 	ledger := audit.NewMemoryLedger()
@@ -121,7 +117,7 @@ func TestPlanAndGrantProducesV5TaskInput(t *testing.T) {
 		t.Fatal("grant route record differs from pair generation record")
 	}
 
-	// --- Selection audit event proves the ledger was written ---
+	// Selection audit event proves the ledger was written.
 	events, err := ledger.Read(ctx, scope, 0, 10)
 	if err != nil {
 		t.Fatal(err)
@@ -136,7 +132,7 @@ func TestPlanAndGrantProducesV5TaskInput(t *testing.T) {
 		t.Fatalf("selection subject=%q != plan selection=%q", events[0].SubjectIdentity(), plan.SelectionIdentity())
 	}
 
-	// --- Build authorized input: proves BuildAuthorizedPacketInput accepts the real grant ---
+	// Build authorized input: proves BuildAuthorizedPacketInput accepts the real grant.
 	input, err := contexthandler.BuildAuthorizedPacketInput(
 		ctx, sanitized, grant, fixture.request, strings.Repeat("e", 64), at,
 	)
@@ -144,7 +140,6 @@ func TestPlanAndGrantProducesV5TaskInput(t *testing.T) {
 		t.Fatalf("BuildAuthorizedPacketInput failed: %v", err)
 	}
 
-	// --- Verify the result is a real v5 task_input ---
 	if input.Kind() != artifact.KindTaskInput {
 		t.Fatalf("expected KindTaskInput, got %v", input.Kind())
 	}
@@ -155,7 +150,6 @@ func TestPlanAndGrantProducesV5TaskInput(t *testing.T) {
 		t.Fatal("task input has empty identity")
 	}
 
-	// --- Parse and verify full lineage ---
 	parsed, err := modelhandler.ParseGenerationInput(input.Payload())
 	if err != nil {
 		t.Fatalf("ParseGenerationInput failed: %v", err)
@@ -176,7 +170,6 @@ func TestPlanAndGrantProducesV5TaskInput(t *testing.T) {
 		t.Fatal("parsed receipt artifact identity differs from sanitized receipt artifact")
 	}
 
-	// --- Verify provenance binds all required parents ---
 	analysis, _ := fixture.request.DependencyOutput("analysis")
 	memory, _ := fixture.request.DependencyOutput("memory")
 	wantProvenance := []string{
@@ -196,7 +189,6 @@ func TestPlanAndGrantProducesV5TaskInput(t *testing.T) {
 		t.Fatalf("provenance mismatch:\ngot:  %v\nwant: %v", sortedGot, sortedWant)
 	}
 
-	// --- Verify no artifact was persisted to the store and no journal event was appended ---
 	beforeEvents, err := fixture.journal.Read(ctx, scope, 0, 100)
 	if err != nil {
 		t.Fatal(err)

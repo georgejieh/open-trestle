@@ -513,8 +513,6 @@ func initValidateDirectory(value string) (string, error) {
 	return absolute, nil
 }
 
-// --- Step 1: what will be reviewed -------------------------------------------------
-
 func (w *initWizard) stepSelection() error {
 	w.header(1, "What will be reviewed")
 	normalize := func(value string) (string, error) { return initNormalizeSelection(w.ctx, w.checkout, value) }
@@ -634,8 +632,6 @@ func (w *initWizard) sourcePreflight() error {
 		"  Your repository was not changed. Nothing was written.", err, initShellQuote(w.checkout), initShellQuote(w.checkout+"-review"))
 }
 
-// --- Step 3: where the models run -----------------------------------------------
-
 // initScannerBlock reports why this binary cannot send source to a remote
 // provider at all, or "" when remote review is possible (an installed-scanner
 // problem is reported later by the setup check, with its fix).
@@ -742,8 +738,6 @@ func (w *initWizard) stepProvider() error {
 	w.say("  Using: %s", w.a.provider.label)
 	return nil
 }
-
-// --- Step 4: models ---------------------------------------------------------------
 
 func (w *initWizard) stepModels() error {
 	w.header(3, "The two models")
@@ -1353,8 +1347,6 @@ func initFormatUSD(micro uint64) string {
 	return text
 }
 
-// --- Step 5: credentials ----------------------------------------------------------
-
 func initCredentialName(value string) (string, error) {
 	if remoteCredentialEnvironmentError("credential-env", value) == nil {
 		return value, nil
@@ -1410,8 +1402,6 @@ func (w *initWizard) stepCredentials() error {
 	}
 	return w.spendingLimit()
 }
-
-// --- Step 6: declarations ---------------------------------------------------------
 
 func (w *initWizard) stepDeclarations() error {
 	w.header(5, "Your consent")
@@ -1701,8 +1691,6 @@ func (w *initWizard) openCodeGoDeclarations() error {
 		windowFact,
 	})
 }
-
-// --- Step 7a: names ---------------------------------------------------------------
 
 func initLabel(value, fallback string) string {
 	var b strings.Builder

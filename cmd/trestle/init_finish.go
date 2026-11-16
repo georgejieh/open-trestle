@@ -256,8 +256,6 @@ func (w *initWizard) notReady(setup initSetup, outcome initOutcome) int {
 	return outcome.code
 }
 
-// --- Step 8: save and check -------------------------------------------------------
-
 // reviewOutputTokens is the per-request review output allowance: the
 // --max-output-tokens flag, else the allowance an OpenRouter setup chose for
 // its pinned endpoints, else 4096. Bootstrap validates it against the
@@ -695,8 +693,6 @@ func (w *initWizard) renderLocal(messages []string) string {
 	}
 	return tally.String()
 }
-
-// --- Finish: show the command, then review only with consent ---------------------
 
 func (w *initWizard) finish(setup initSetup, outcome initOutcome) (int, error) {
 	w.writeNextSteps(setup, outcome)
