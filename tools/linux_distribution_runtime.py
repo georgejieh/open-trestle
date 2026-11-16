@@ -875,9 +875,13 @@ def _stage_file(parent: Path, final_name: str, mode: int, writer: Callable[[Bina
             raise ValueError("staged temporary ownership changed")
     except BaseException as error:
         try:
-            handle.close()
-            if owned is not None:
-                _unlink_owned_file(parent / temporary, None, (owned.st_dev, owned.st_ino))
+            try:
+                # The open handle keeps the staged inode allocated, so a file
+                # recreated under the temporary name cannot reuse its identity.
+                if owned is not None:
+                    _unlink_owned_file(parent / temporary, None, (owned.st_dev, owned.st_ino))
+            finally:
+                handle.close()
         except BaseException as cleanup_error:
             raise error from cleanup_error
         raise

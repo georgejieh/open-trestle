@@ -29,6 +29,16 @@ def _elf(payload: bytes = b"runtime", elf_type: int = 2) -> bytes:
     return bytes(header) + payload
 
 
+def _open_descriptor_status() -> list[os.stat_result]:
+    statuses = []
+    for name in os.listdir("/proc/self/fd"):
+        try:
+            statuses.append(os.stat(f"/proc/self/fd/{name}"))
+        except OSError:
+            pass
+    return statuses
+
+
 def _write(path: Path, body: bytes, mode: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(body)
@@ -223,6 +233,31 @@ class StagedTemporaryOwnershipTest(unittest.TestCase):
             self.assertTrue(swapped)
             self.assertEqual(temporary.read_bytes(), replacement)
             self.assertEqual(list(parent.iterdir()), [temporary])
+
+    def test_cleanup_holds_the_staged_inode_until_capture(self):
+        # A filesystem that reuses inode numbers (ext4) could give a replacement
+        # the staged file's identity if nothing kept the staged inode allocated.
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            temporary = parent / ".payload.open-trestle-owned-transaction"
+            rename = linux_distribution_runtime._rename_noreplace
+            held = []
+            def capture(parent, source, destination):
+                if source == temporary.name and not held:
+                    staged = os.lstat(temporary)
+                    held.append(any(
+                        (status.st_dev, status.st_ino) == (staged.st_dev, staged.st_ino)
+                        for status in _open_descriptor_status()
+                    ))
+                return rename(parent, source, destination)
+            def writer(handle):
+                handle.write(b"partial")
+                raise OSError("synthetic writer failure")
+            with patch.object(linux_distribution_runtime, "_rename_noreplace", capture):
+                with self.assertRaisesRegex(OSError, "synthetic writer failure"):
+                    linux_distribution_runtime._stage_file(parent, "payload", 0o444, writer, "owned-transaction")
+            self.assertEqual(held, [True])
+            self.assertEqual(list(parent.iterdir()), [])
 
     def test_cleanup_error_preserves_writer_error(self):
         with tempfile.TemporaryDirectory() as directory:
