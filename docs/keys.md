@@ -37,6 +37,8 @@ terminal, the wizard asks for it right after the models are chosen:
   on Linux and macOS, the console mode on Windows) and turned back on before
   anything else is printed, also when you press Ctrl-C or Ctrl-D. The prompt
   appears only once echo is off. If echo cannot be turned off, no key is read.
+  Only Linux has been tested; the macOS and Windows code is untested (see
+  [platforms](platforms.md)).
 - **No terminal, no question.** With `--no-input`, or when standard input is a
   pipe or a file, the wizard never asks for a key; the setup check says how to
   add one, as before.
@@ -83,8 +85,9 @@ so the key is never an argument. It checks an OpenRouter key as the wizard
 does and saves nothing when OpenRouter refuses it (exit 4). A key is one line
 of printable ASCII without spaces, at most 4096 bytes. `remove` deletes only
 the saved file; a variable set in the shell keeps being used. Exit codes: `0`
-done, `1` the credential folder cannot be used, `2` a usage error or no key
-given, `4` OpenRouter refused the key.
+done, `1` the credential folder cannot be used, hidden input is unavailable or
+the key could not be saved, `2` a usage error or no key given, `4` OpenRouter
+refused the key. See [exit codes](exit-codes.md#keys-usage-and-the-home-screen).
 
 From the [home screen](getting-started.md#running-it-again), "Change the API
 key" runs `trestle keys set` for the setup's key variable.
@@ -122,7 +125,7 @@ The key is never shown, never written to scrollback, never passed as a command
 argument, and never written to the setup folder, `NEXT-STEPS.txt`, the usage
 ledger, a review result, or any log. It goes to the provider only as the
 `Authorization` bearer credential, and never into a model request body. A test
-saves a canary key, runs a full review in each output format through the
-production session, and checks that the key is absent from every request body,
+saves a canary key, runs a full review in JSON, text and SARIF output through
+the production session, and checks that the key is absent from every request body,
 the review's output, the setup folder and the usage ledger. The secret scanner
 and the prompt-injection boundary are unchanged.
