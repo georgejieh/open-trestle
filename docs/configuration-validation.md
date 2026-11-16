@@ -1,17 +1,35 @@
 # Runtime configuration validation
 
-Use the CLI to validate a route inventory and its exact runtime policy before daemon startup:
+`trestle config validate` checks a route inventory and its runtime policy offline, before you start the daemon (`trestled`). Run it whenever you write or change either file.
 
 ```text
 trestle config validate --route-inventory inventory.json --runtime-policy policy.json
 ```
 
-Success prints one `open-trestle/runtime-configuration-validation-result` version 1 JSON object containing only its contract and schema discriminators, a `status` of `valid`, the inventory, runtime-policy, and review-policy identities, and route and connection counts. The strict public shape is `schemas/runtime/configuration-validation-result-v1.schema.json`. It does not resolve or read provider credentials, contact provider endpoints, open source repositories, or grant publication authority. Failure returns exit code 1. Invalid command usage returns exit code 2.
+On success the command prints one JSON object of type `open-trestle/runtime-configuration-validation-result` (version 1). It contains the contract and schema fields, a `status` of `valid`, the identities of the inventory, the runtime policy and the review policy, and the route and connection counts. The strict public shape is `schemas/runtime/configuration-validation-result-v1.schema.json`.
 
-The validator applies the same bounded decoders used by `trestled`. The runtime policy must bind the decoded inventory identity. Route evidence manifests are checked and discarded. Credential environment names are validated but are not printed in the result.
+The command does not read provider credentials, contact provider endpoints, open source repositories, or grant publication authority. It exits with code 1 when validation fails and with code 2 when the command is used incorrectly.
 
-Daemon startup adds stricter filesystem authority checks. Runtime files supplied to `trestled` must be non-symlinked regular files that are not group- or world-writable.
+## What the command checks
 
-A runtime policy is decoded only when each adapter ID maps to one unambiguous route namespace across the bound inventory. The namespace includes zone, provider, connection, and content-logging authority. Multiple models may share it. Divergent provider, connection, zone, or logging declarations under one adapter ID are rejected before daemon or setup construction. Connection endpoints must also match the adapter-supported zone: numeric loopback for `local` and non-loopback HTTPS for `private_remote`. Conventional localhost names and non-unicast numeric addresses are rejected. Setup validation adds profile posture, route readiness, budget, explicit approval, and independent-verification checks.
+The validator uses the same size-bounded decoders as `trestled`. It checks that the runtime policy is bound to the identity of the decoded inventory. It checks route evidence manifests and then discards them. It validates credential environment names but never prints them.
 
-Validation checks document structure and identity bindings. It does not establish live health, route approval, or static compatibility of a selected generation/verifier pair with its independence requirement. Use `config bind` to check that selected pair offline; startup and dispatch enforce eligibility independently. Publication policy is enforced separately and may intentionally require stronger independence than an advisory review provides.
+A runtime policy is accepted only when each adapter ID maps to one unambiguous route namespace across the inventory. The namespace is made up of the zone, provider, connection and content-logging authority. Several models may share one namespace. If one adapter ID has different provider, connection, zone or logging declarations, the policy is rejected before the daemon or setup is built.
+
+Each connection endpoint must also match the zone its adapter supports: a numeric loopback address for `local`, and a non-loopback HTTPS address for `private_remote`. Conventional localhost names and non-unicast numeric addresses are rejected.
+
+Setup validation adds more checks: profile posture, route readiness, budget, explicit approval and independent verification.
+
+## What the command does not check
+
+Validation confirms that the files are well formed and that their identities match. It does not establish any of the following:
+
+- That a route is healthy right now.
+- That a route has been approved.
+- That the generation model and verifier model you selected satisfy the independence requirement. Use `config bind` to check that pair offline. Startup and dispatch also check eligibility on their own.
+
+Publication policy is enforced separately. It may require stronger independence than an advisory review needs.
+
+## Stricter checks at daemon startup
+
+`trestled` adds filesystem checks that `config validate` does not make. Every runtime file you give it must be a regular file, not a symlink, and must not be writable by the group or by others.
