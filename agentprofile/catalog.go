@@ -214,7 +214,7 @@ func packagedProfileSpecs() ([]ProfileSpec, error) {
 			RequiredFeatures: structuredOutput, Tiers: compactTiers,
 		},
 		{
-			ID: ProfileSecurityProbe, Version: 1, Priority: 90, ModelCall: ModelCallRequired,
+			ID: ProfileSecurityProbe, Version: 2, Priority: 90, ModelCall: ModelCallRequired,
 			Purpose: "Static, read-only security probe: attack-surface reconnaissance, vulnerability hypotheses, and evidence from changed code. Never executes or dynamically validates.",
 			Activation: Activation{
 				PathGlobs: []string{"**/*.key", "**/*.pem", "**/.env", "**/.env.*"},
