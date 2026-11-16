@@ -1,10 +1,11 @@
 # Privacy
 
-What leaves your machine, when, and where it goes. This page covers the
-command-line paths a person runs: `trestle init`, `trestle review`,
-`trestle update` and `trestle keys`. A deployed daemon, the GitHub webhook and
-publication make further requests, described in [operations](operations.md) and
-the GitHub pages linked from the [docs index](README.md#operate).
+This page says what leaves your machine, when it leaves, and where it goes. It
+covers the command-line paths that a person runs: `trestle init`,
+`trestle review`, `trestle update` and `trestle keys`. A deployed daemon, the
+GitHub webhook and publication make further requests. These are described in
+[operations](operations.md) and in the GitHub pages linked from the
+[docs index](README.md#operate).
 
 ## The short version
 
@@ -13,22 +14,22 @@ the GitHub pages linked from the [docs index](README.md#operate).
 - With a model server on your machine, nothing leaves it.
 - Before a request to a remote provider, Open Trestle scans it for secrets in a
   sandboxed process. A request that fails the scan is not sent.
-- Open Trestle has no telemetry and no analytics. A search of the source finds
-  no code that reports usage anywhere.
+- Open Trestle has no telemetry and no analytics. A search of the source finds no
+  code that reports usage anywhere.
 - The update check makes one unauthenticated request, at most once a day, and
   sends nothing about you or your repository.
 - API keys go to their provider as a bearer credential and nowhere else.
 
 ## What a review sends
 
-A review sends the model the review instructions, the changed code of the two
-commits you compare, bounded context drawn from the repository around the
-change (instruction files included, which are treated as data), and the commit
-messages of the compared range as stated intent. It sends no API key and no
-environment variable value. Commits are read from the repository's stored
-objects; uncommitted changes are never read.
+A review sends the model four things: the review instructions, the changed code
+of the two commits you compare, bounded context from the repository around the
+change, and the commit messages of the compared range as the stated intent. The
+context includes instruction files, which Open Trestle treats as data. A review
+sends no API key and no environment variable value. Open Trestle reads commits
+from the repository's stored objects and never reads uncommitted changes.
 
-Where it goes depends on the route your setup saved:
+Where the source goes depends on the route that your setup saved:
 
 | Route | Where the source goes |
 | --- | --- |
@@ -39,18 +40,18 @@ Where it goes depends on the route your setup saved:
 | Ollama on this machine, signed in to Ollama Cloud (`ollama-signin`) | Your local Ollama relays the request to Ollama Cloud. It is a remote provider. |
 
 Open Trestle makes no claim about what a provider keeps, beyond the
-zero-data-retention requirement it puts in the request. Read your provider's
-terms.
+zero-data-retention requirement that it puts in the request. Read your
+provider's terms.
 
 The result, the setup folder and the usage ledger stay on your machine. The
 ledger holds amounts, never a key, source, prompt or reply.
 
 ## Secret scanning
 
-Every request to a remote route passes two sandboxed Betterleaks scans:
-the request fields are scanned and any finding is redacted, and a second fresh
-process must find nothing left. A binary without the packaged scanner refuses to
-send to a remote route, so the check fails closed. The scanner is a pattern
+Every request to a remote route passes two sandboxed Betterleaks scans. The first
+scans the request fields and redacts any finding. A second, fresh process must
+then find nothing left. A binary without the packaged scanner refuses to send to
+a remote route, so the check fails closed. The scanner is a pattern
 scanner, not a guarantee: on the reviewed corpus it found 11 of 14 expected
 occurrences, and it misses bearer credentials, AWS secret keys and AWS session
 tokens. Do not rely on it to make a secret safe to send. Details are in the
@@ -62,9 +63,9 @@ tokens. Do not rely on it to make a secret safe to send. Details are in the
 Zero data retention (ZDR) is an OpenRouter setting that restricts a request to
 endpoints that do not retain prompts. When both models have such endpoints,
 setup requires it: Open Trestle sends the requirement on every request and pins
-the endpoints that qualify. If you continue without it (`--without-zdr`), the result carries the limitation
-`openrouter_zero_data_retention_not_required` and the text output prints a line
-saying so. See [the OpenRouter profile](openrouter-zdr-profile.md).
+the endpoints that qualify. If you continue without it (`--without-zdr`), the
+result carries the limitation `openrouter_zero_data_retention_not_required`, and
+the text output prints a line saying so. See [the OpenRouter profile](openrouter-zdr-profile.md).
 
 ## Other network requests
 
@@ -77,16 +78,16 @@ saying so. See [the OpenRouter profile](openrouter-zdr-profile.md).
 | The home screen and `trestle review`, packaged install | One GET `https://api.github.com/repos/georgejieh/open-trestle/releases?per_page=20`, at most once a day, cached in the state folder | No credential or identifier, and a fixed `User-Agent: open-trestle-update`. GitHub sees your address. Turn it off with `OPEN_TRESTLE_UPDATE_CHECK=off`. |
 | `trestle update` | The same release list, then the build you choose from GitHub's asset hosts | Nothing about you. |
 
-The update check runs only on the packaged install, and says nothing when it
+The update check runs only on the packaged install, and it says nothing when it
 cannot tell. See [updates](updates.md).
 
 ## What is not done
 
-- No repository code, test or build script is run by a review today. A planned
-  feature that runs generated checks will ask for consent first; see the
+- A review runs no repository code, test or build script today. A planned feature
+  that runs generated checks will ask for consent first; see the
   [roadmap](roadmap.md#generated-verification).
-- Repository text, including files that look like instructions, is data. Only
-  the system channel carries instructions. See the
+- Open Trestle treats repository text, including files that look like
+  instructions, as data. Only the system channel carries instructions. See the
   [prompt-injection boundary](prompt-injection-boundary.md).
-- Keys are never shown, logged, put in a command line, a request body, a result
-  or a setup file. See [API keys](keys.md#what-never-happens).
+- Open Trestle never shows or logs a key, and never puts one in a command line, a
+  request body, a result or a setup file. See [API keys](keys.md#what-never-happens).
