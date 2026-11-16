@@ -64,8 +64,7 @@ func normalizeOllamaSigninResponse(content []byte, route provider.RouteReference
 
 // unwrapOneJSONFence removes exactly one outer Markdown code fence. Ollama
 // ignores response_format for relayed cloud models, and some OpenRouter
-// endpoints that list structured output support still fence their JSON (live,
-// 2026-11-11). The unwrapped text still goes through the same strict output
+// endpoints that list structured output support may still fence their JSON. The unwrapped text still goes through the same strict output
 // validation; anything other than a single outer fence, with no language or
 // json, is returned unchanged and refused there.
 func unwrapOneJSONFence(content string) string {

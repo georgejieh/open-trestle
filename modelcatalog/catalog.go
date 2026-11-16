@@ -25,7 +25,7 @@ import (
 const (
 	// MaxResponseBytes bounds one live model-list HTTP body. It admits a fetch
 	// only and binds no recorded catalog, digest or identity. OpenRouter's public
-	// list measured 829,400 bytes on 2026-11-08, so 4 MiB leaves room to grow.
+	// list measured 829,400 bytes, so 4 MiB leaves room to grow.
 	MaxResponseBytes = 4 << 20
 	maxFileBytes     = 8 << 20
 	maxSources       = 32

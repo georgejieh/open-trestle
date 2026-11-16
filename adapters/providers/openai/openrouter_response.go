@@ -282,8 +282,8 @@ func normalizeOpenRouterChatUsage(wire *openRouterChatUsageWire) (*chatUsageWire
 	// is decoded as unsigned integers and then dropped: settlement uses only
 	// the prompt, completion and total counts. It is not compared with the
 	// completion count, because upstream providers report it inconsistently
-	// (on 2026-11-11 a reply billed for 95 completion tokens reported 99
-	// reasoning tokens), and a breakdown nothing reads must not void an answer.
+	// (a reply billed for 95 completion tokens may report 99 reasoning
+	// tokens), and a breakdown nothing reads must not void an answer.
 	return generic, nil
 }
 

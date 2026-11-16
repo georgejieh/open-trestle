@@ -12,7 +12,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/gateway"
 )
 
-// Provider refusal bodies in the shape a live Ollama daemon returned for an
+// Provider refusal bodies in the shape an Ollama daemon returns for an
 // account without usage credit and for a retired cloud model. Their message
 // text is untrusted and must never reach a result, record or log.
 const (

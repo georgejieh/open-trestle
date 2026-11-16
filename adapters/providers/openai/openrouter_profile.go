@@ -198,12 +198,12 @@ type openRouterProviderPreferences struct {
 // only endpoints that accept every request parameter. V1 pins its one slug
 // with only and order and allows no fallback. V2 sends only, without order,
 // so OpenRouter balances requests across the pinned ZDR endpoints instead of
-// sending every request to the first one (a fixed cheapest-first order sent
-// every live request to one endpoint, whose serving faults then decided every
-// result), and allows fallback, which only keeps inside the pinned slugs
-// (verified live 2026-11-13: a model outside only was refused with HTTP 404
-// even with allow_fallbacks true). Without it, OpenRouter serves a request
-// only from its top-ranked endpoint, and that endpoint's errors failed runs.
+// sending every request to the first one (a fixed cheapest-first order sends
+// every request to one endpoint, whose serving faults then decide every
+// result), and allows fallback, which only keeps inside the pinned slugs (a
+// model outside only is refused with HTTP 404 even with allow_fallbacks true).
+// Without it, OpenRouter serves a request only from its top-ranked endpoint,
+// and that endpoint's errors fail runs.
 func (a *Adapter) openRouterPreferences() openRouterProviderPreferences {
 	if a.requestProfile == RequestProfileOpenRouterZDRChatV2 {
 		return openRouterProviderPreferences{ZDR: true, Only: slices.Clone(a.openRouterAuthority.ProviderSlugs), AllowFallbacks: true, RequireParameters: true}

@@ -157,18 +157,17 @@ func TestOpenRouterResponseRejectsInvalidUTF8LikeGenericChat(t *testing.T) {
 	}
 }
 
-// The fixtures are OpenRouter's replies to a synthetic probe on 2026-11-11,
-// byte for byte. Their provider, native_finish_reason, message.reasoning and
+// The fixtures are OpenRouter's replies to a synthetic probe, byte for byte. Their provider, native_finish_reason, message.reasoning and
 // image_tokens members are undocumented or newer than the decoder was, and
-// every real review failed as an invalid response until they were accepted.
-func TestOpenRouterResponseAcceptsLiveReplies(t *testing.T) {
+// a decoder that refuses them fails every real review as an invalid response.
+func TestOpenRouterResponseAcceptsRealReplies(t *testing.T) {
 	for file, model := range map[string]string{
-		"openrouter-live-2026-11-11-gpt-oss-120b.json":  "openai/gpt-oss-120b",
-		"openrouter-live-2026-11-11-glm-5.3-flash.json": "z-ai/glm-5.3-flash",
+		"openrouter-reply-gpt-oss-120b.json":  "openai/gpt-oss-120b",
+		"openrouter-reply-glm-5.3-flash.json": "z-ai/glm-5.3-flash",
 		// A verification reply with reasoning and reasoning_details, and 99
 		// reasoning tokens reported against 95 billed completion tokens. Only
 		// the reasoning text is replaced; every other byte is as received.
-		"openrouter-live-2026-11-11-glm-5.3-flash-verification.json": "z-ai/glm-5.3-flash",
+		"openrouter-reply-glm-5.3-flash-verification.json": "z-ai/glm-5.3-flash",
 	} {
 		body, err := os.ReadFile(filepath.Join("testdata", file))
 		if err != nil {

@@ -12,7 +12,7 @@ import (
 	"github.com/georgejieh/open-trestle/internal/provider"
 )
 
-// Shape of the live reply from a local Ollama daemon relaying the reasoning
+// Shape of the reply from a local Ollama daemon relaying the reasoning
 // model nemotron-3-super:cloud as verifier: the whole output allowance went to
 // the reasoning trace and the answer is empty.
 const ollamaSigninExhaustedResponse = `{"id":"chatcmpl-12","object":"chat.completion","created":1794119300,"model":"nemotron-3-super","system_fingerprint":"fp_ollama","choices":[{"index":0,"message":{"role":"assistant","content":"","reasoning":"We need to check each candidate against the evidence."},"finish_reason":"length"}],"usage":{"prompt_tokens":3120,"completion_tokens":4096,"total_tokens":7216}}`

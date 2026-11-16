@@ -31,7 +31,7 @@ func TestResponseBoundAdmitsFourMiBBodiesAndRefusesOneByteMore(t *testing.T) {
 		size   int
 		reject bool
 	}{
-		// The size OpenRouter's public list measured on 2026-11-08; the body is synthetic.
+		// The size of OpenRouter's public list; the body is synthetic.
 		{name: "measured_openrouter_size", size: 829400},
 		{name: "former_1_mib_bound_plus_one", size: 1<<20 + 1},
 		{name: "exact_bound", size: MaxResponseBytes},
