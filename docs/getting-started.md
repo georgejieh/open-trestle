@@ -12,7 +12,8 @@ Remote providers (OpenRouter, Ollama Cloud, OpenCode Go, and Ollama signed in
 to Ollama Cloud) work only with the packaged Linux amd64 install, which places
 its secret scanner under `/usr/local` as root. A plain `go build`, and any
 platform other than Linux, refuses to send source to them. A model server on
-this machine works with a development build. See
+this machine works with a development build. macOS and Windows are planned for
+the next release; [platforms](platforms.md) says what works on each today. See
 [prerequisite 1](remote-model-review.md#prerequisite-1-a-scanner-bound-binary-and-installed-scanner).
 
 ```sh
@@ -183,22 +184,26 @@ accepts each recommended default. It runs in six steps:
 
    ```text
    ┌─ Setup summary ──────────────────────────────────────────┐
-   │ Review    1a2b3c4d5e6f → 7f8e9d0c1b2a                    │
-   │ Runs on   OpenRouter, zero data retention required on    │
-   │           every request                                  │
-   │ Finder    vendor/finder-model                            │
-   │ Checker   other/checker-model                            │
-   │ Limits    context 128000 · output 16000 tokens           │
-   │ Cost      $3.30 in · $16.50 out per million tokens · up  │
-   │           to $0.69 a request, $1.38 a review             │
-   │ Spending  $10.00 a month for this key · alerts at 80%    │
-   │           and 100%                                       │
-   │ Key       OPEN_TRESTLE_PROVIDER_OPENROUTER (from the     │
-   │           environment)                                   │
-   │ Source    github.com/owner/project                       │
-   │ Names     tenant personal · repository project · owner   │
-   │           you                                            │
-   │ Folder    ~/.local/state/open-trestle/project-1a2b3c4d   │
+   │ Review       1a2b3c4d5e6f → 7f8e9d0c1b2a                 │
+   │ Runs on      OpenRouter, zero data retention required on │
+   │              every request                               │
+   │ Finder       vendor/finder-model                         │
+   │ Checker      other/checker-model                         │
+   │ Specialists  on: the general review, then up to 3        │
+   │              specialist reviews picked from the change,  │
+   │              each a full review (--specialists none      │
+   │              turns them off)                             │
+   │ Limits       context 128000 · output 16000 tokens        │
+   │ Cost         $3.30 in · $16.50 out per million tokens ·  │
+   │              up to $0.69 a request, $1.38 a review       │
+   │ Spending     $10.00 a month for this key · alerts at 80% │
+   │              and 100%                                    │
+   │ Key          OPEN_TRESTLE_PROVIDER_OPENROUTER (from the  │
+   │              environment)                                │
+   │ Source       github.com/owner/project                    │
+   │ Names        tenant personal · repository project ·      │
+   │              owner you                                   │
+   │ Folder       ~/.local/state/open-trestle/project-1a2b3c4d │
    └──────────────────────────────────────────────────────────┘
      Use these settings? (Y/n):
    ```
@@ -303,12 +308,12 @@ resume; it can take several minutes.
 A new setup runs specialist reviews by default: the general review first, then
 up to three specialist reviews (such as `bug_hunter` or `security_probe`)
 picked from the change without a model call, each a full review with its own
-independent check. The settings panel shows it as `Specialists on: ...`. On
-remote models the specialists run at the same time, up to three at once; on a
-model on this machine they run one after another. To review with the general
-review only, give `trestle init --specialists none` (the panel then says
-`Specialists off`), or run `trestle review --specialists none` once. The
-spending warning counts every review the command may run. See
+independent check. The settings panel shows it in a `Specialists` row that starts
+`on:`. On remote models the specialists run at the same time, up to three at
+once; on a model on this machine they run one after another. To review with the
+general review only, give `trestle init --specialists none` (the row then starts
+`off:`), or run `trestle review --specialists none` once. The spending warning
+counts every review the command may run. See
 [specialist review set](local-model-review.md#specialist-review-set-opt-in).
 
 The result starts with the status and the reviews that ran, then a walkthrough
@@ -323,6 +328,7 @@ reviewers: general, bug_hunter, backend (3 of 3 ran)
 walkthrough:
 verified: secret scan: 6 model requests from 3 reviewers scanned before sending (876 bytes, 0 secret matches)
 verified: static check static_debug_output: passed (1 file checked, 0 matches)
+verified: pattern hygiene: 0 added suppressions, 0 added workaround comments, 0 spreading anti-patterns
 verified: style detection: ran (1 recommendation, 0 withheld)
 verified: semantic impact: 1 changed declaration, 0 public API changes, 1 reference (0 from tests), 0 gaps
 verified: independent verifier (distinct_provider): 3 of 3 candidates from 3 reviewers confirmed, 0 rejected, 0 inconclusive
@@ -415,7 +421,8 @@ garbage-collected.
   are not included and that committing them includes them. It writes nothing
   into your repository and never fetches.
 - **Output.** The result goes to standard output in the setup's text format;
-  `--format json` or `--format sarif` prints one JSON or SARIF document there.
+  `--format json`, `--format sarif` or `--format markdown` prints one JSON,
+  SARIF or pull request summary document there.
   Every other line goes to standard error, including the egress,
   secret-scanning and spending messages, which are exactly those of
   `trestle local-git model-review`. `--timeout`, `--profile`, `--specialists`,
