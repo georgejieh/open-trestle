@@ -266,7 +266,8 @@ When an `opencode` billing block is present, it is closed:
 - the billed counters are closed
 - `estimated` is absent or false
 
-Balance, free, BYOK, go-plus and estimated billing are refused. For this branch, where Extra Usage is disabled, `usage.cost` may be absent, null or numeric zero. A positive charge is a contradictory result after the effect has happened, so Open Trestle refuses it, but the refusal cannot undo the charge. A zero cost or allowance does not authorize a free route or a future balance. Unknown or malformed extensions are rejected, not silently treated as zero.
+Balance, free, BYOK, go-plus and estimated billing are refused. In this case,
+where Extra Usage is disabled, `usage.cost` may be absent, null or numeric zero. A positive charge is a contradictory result after the effect has happened, so Open Trestle refuses it, but the refusal cannot undo the charge. A zero cost or allowance does not authorize a free route or a future balance. Unknown or malformed extensions are rejected, not silently treated as zero.
 
 ### Cost reconciliation
 

@@ -138,7 +138,7 @@ Inspect `status`, `ci_disposition`, `run_status`, `limitations` and `diagnostics
 
 `--format` selects `json` (the default), `text`, `sarif` or `markdown`. Markdown is a pull request summary comment (see [ranked findings and the walkthrough](#ranked-findings-and-the-walkthrough)). Text and Markdown list the confirmed high, critical and medium findings and count the rest. When there are none of those, they list up to 10 lower-severity findings, so that a finding is never hidden behind nothing. `--all` lists every finding. `--verbose` adds the list of limitations to the text output and, for a review set, the selection trace and the details of each member. It does not change JSON, SARIF or Markdown.
 
-For a run that was admitted separately by the daemon, `runs status --format json|sarif` retrieves the canonical result. Retrieving a result is not a decision that the review passed. No export creates permission to publish. The headless example above is ephemeral and cannot resume an older run. It does not establish model quality or qualification of a live provider.
+For a run that the daemon accepted separately, `runs status --format json|sarif` retrieves the canonical result. Retrieving a result is not a decision that the review passed. No export creates permission to publish. The headless example above is ephemeral and cannot resume an older run. It does not establish model quality or qualification of a live provider.
 
 ### SARIF output
 

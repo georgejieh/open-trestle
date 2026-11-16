@@ -219,7 +219,7 @@ After the fences for the PostgreSQL receipt, scope, actor, authority and stale p
 - Two independent limiter instances share one quota of two requests and reject the third request.
 - The two instances share a bound of two keys and reject a third key.
 - The quota resets only after the expiry measured by the database clock.
-- Of two concurrent attempts for the final permit, exactly one is admitted.
+- Of two concurrent attempts for the final permit, exactly one succeeds.
 - The table contains exactly the two expected key digests and configuration identities.
 
 A pass deletes only the exact conformance namespace and verifies that zero rows remain before it releases its session lock.
@@ -787,7 +787,7 @@ trestle setup check bundle \
   --approved-by platform-owner
 ```
 
-The checker admits only the air-gapped posture of local storage, local inference, denied egress and an offline bundle. It checks the setup scope, the recovery owner, the approved authority, the immutable probe configuration and the current plan identity before it opens the file. The verifier rejects all of these:
+The checker accepts only the air-gapped posture of local storage, local inference, denied egress and an offline bundle. It checks the setup scope, the recovery owner, the approved authority, the immutable probe configuration and the current plan identity before it opens the file. The verifier rejects all of these:
 
 - empty or oversized files
 - noncanonical or all-zero key material
