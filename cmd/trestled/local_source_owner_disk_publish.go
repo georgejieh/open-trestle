@@ -139,6 +139,17 @@ func publishLocalSourceOwnerRecord(root *os.Root, statePath string, record local
 		}
 		return errors.Join(primary, ownerPublishCapability("temporary cleanup parent sync", syncErr))
 	}
+	// hold keeps the temporary inode allocated until publish returns. After file is
+	// closed, a removed and recreated temporary name could otherwise receive the same
+	// inode number, and os.SameFile could not tell the replacement from the original.
+	hold, err := root.OpenFile(temp, os.O_RDONLY, 0)
+	if err != nil {
+		return cleanup(ownerPublishIO("temporary hold", err))
+	}
+	defer hold.Close()
+	if held, err := hold.Stat(); err != nil || !os.SameFile(held, opened) {
+		return cleanup(errors.Join(ownerPublishIO("temporary hold capture", err), ownerPersistence("temporary hold identity", nil)))
+	}
 	info, err := root.Lstat(temp)
 	if err != nil {
 		return cleanup(ownerPersistence("temporary capture lookup", err))
