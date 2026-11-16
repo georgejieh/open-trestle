@@ -10,6 +10,14 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
+/* Landlock ABI 5 (Linux 6.10) added this right. Kernel headers older than 6.10
+   lack the macro; its value is fixed by the kernel ABI, and enter_landlock
+   refuses any kernel below REQUIRED_LANDLOCK_ABI, so the right is never sent to
+   a kernel that does not know it. */
+#ifndef LANDLOCK_ACCESS_FS_IOCTL_DEV
+#define LANDLOCK_ACCESS_FS_IOCTL_DEV (1ULL << 15)
+#endif
+
 #if !defined(__linux__) || !defined(__x86_64__)
 #error "the secret scanner launcher supports Linux amd64 only"
 #endif
