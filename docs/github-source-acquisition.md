@@ -1,48 +1,60 @@
-# GitHub immutable source acquisition
+# GitHub source acquisition
 
-`adapters/scm/github` implements the provider-neutral `scm.SourceAdapter` contract for GitHub repositories. It retrieves one full commit by object ID and returns a canonical manifest with optional exact file content. It does not clone a worktree, run Git, execute repository files, or write source to disk.
+`adapters/scm/github` implements the provider-neutral `scm.SourceAdapter` contract for GitHub repositories. Given a commit ID, it fetches that one full commit and returns a canonical manifest of its files, with the exact file content if requested. It does not clone a worktree, run Git, execute repository files or write source to disk.
 
-## Trust and integrity model
+## How the adapter checks integrity
 
-Acquisition uses three independent checks:
+Acquisition makes three independent checks:
 
-1. The GitHub commit-object endpoint must return the exact requested commit ID and one root tree ID.
-2. The recursive tree response must be complete. The adapter reconstructs every Git tree object from its modes, names, child object IDs, and Git ordering rules. Every reconstructed subtree ID and the root tree ID must match GitHub's response.
-3. The temporary tar archive is read without filesystem extraction. Every archive file must have an exact tree entry, size, type, and Git blob object ID. The archive and tree must contain the same file set.
+1. The GitHub commit-object endpoint must return the exact commit ID that was requested and one root tree ID.
+2. The recursive tree response must be complete. The adapter rebuilds every Git tree object from its modes, names, child object IDs and Git's ordering rules. Every rebuilt subtree ID and the root tree ID must match GitHub's response.
+3. The adapter reads the temporary tar archive without extracting it to the filesystem. Every file in the archive must have a tree entry with the same path, size, type and Git blob object ID, and the archive and the tree must contain the same set of files.
 
-The HTTPS GitHub commit endpoint remains the authority that binds the requested commit ID to its root tree. Tree and blob correspondence after that binding is cryptographically checked with the repository's SHA-1 or SHA-256 Git object format. The resulting Open Trestle manifest additionally records SHA-256 over each exact supplied file.
+The HTTPS GitHub commit endpoint is still the authority that ties the requested commit ID to its root tree. After that, the tree and blob contents are checked cryptographically using the repository's SHA-1 or SHA-256 Git object format. The Open Trestle manifest also records a SHA-256 hash of each file exactly as supplied.
 
-A recursive tree marked `truncated` is rejected. GitHub documents a recursive limit of 100,000 entries and 7 MB. Open Trestle applies the smaller manifest limit of 65,536 tree entries and also bounds metadata, compressed bytes, individual files, and total extracted content. Individual files are capped at 10 MiB so they can be represented by the protected source-file artifact contract. Git submodules are rejected because a gitlink is not file content. Symbolic links are preserved as link-target bytes and are never followed.
+The adapter rejects a recursive tree marked `truncated`. GitHub documents a recursive limit of 100,000 entries and 7 MB. Open Trestle applies the smaller manifest limit of 65,536 tree entries. It also bounds metadata, compressed bytes, individual files and total extracted content. Individual files are capped at 10 MiB so that the protected source-file artifact contract can represent them. The adapter rejects Git submodules, because a gitlink is not file content. It keeps symbolic links as the bytes of their link target and never follows them.
 
 ## Scope and authorization
 
-An adapter instance binds one canonical repository authority, API endpoint, API version, and bounded archive-authority allowlist. Requests must use:
+An adapter instance is bound to one canonical repository authority, one API endpoint, one API version and a bounded allowlist of archive hosts. Every request must carry all of these:
 
-- the exact configured repository authority
-- one lowercase GitHub owner and repository name
-- a full immutable Git commit ID
-- read-only effect authority
-- the exact adapter identity
-- manifest or manifest-and-content capability
+- The exact configured repository authority.
+- One lowercase GitHub owner and repository name.
+- A full immutable Git commit ID.
+- Read-only effect authority.
+- The exact adapter identity.
+- The capability to read a manifest, or a manifest and content.
 
-A mismatch is blocked before network access. `TokenProvider` retrieves a token separately for every GitHub API request. A nil provider enables documented anonymous access for public resources. Typed-nil providers are rejected rather than silently selecting anonymous access.
+A request that does not match is blocked before any network access. `TokenProvider` retrieves a token separately for every GitHub API request. A nil provider allows documented anonymous access to public resources. A typed-nil provider is rejected, so it can never select anonymous access by accident.
 
-Setup permission validation is separate from source acquisition. `trestle setup check integration` uses a dedicated GitHub App user access token to inspect one exact installation and the separate runtime installation token to inspect selected repository scope, admits only metadata, contents, and pull-request read permission, and grants no acquisition or publication authority.
+Setup permission validation is separate from source acquisition. `trestle setup check integration` uses a dedicated GitHub App user access token to inspect one exact installation. It then uses the separate runtime installation token to inspect the selected repository scope. It accepts only the metadata, contents and pull-request read permissions, and it grants no authority to acquire source or publish.
 
-The default API endpoint is `https://api.github.com`. The default pinned API version is `2026-03-10`; an operator can select another exact `YYYY-MM-DD` version for GitHub Enterprise compatibility. Plain HTTP is accepted only for an IP-literal loopback endpoint.
+The default API endpoint is `https://api.github.com`. The default pinned API version is `2026-03-10`. An operator can select another exact `YYYY-MM-DD` version for GitHub Enterprise compatibility. Plain HTTP is accepted only for an IP-literal loopback endpoint.
 
 ## Archive redirects
 
-GitHub's archive endpoint returns a temporary redirect. The adapter never follows it automatically. It validates the new scheme, exact authority, repository path, and commit suffix against the configured allowlist, then issues a second request without the GitHub authorization header. Further redirects are rejected. Signed query values on an approved temporary URL are not logged or included in adapter formatting.
+GitHub's archive endpoint answers with a temporary redirect, which the adapter never follows automatically. It checks the new scheme, the exact authority, the repository path and the commit suffix against the configured allowlist. It then issues a second request without the GitHub authorization header. It rejects any further redirect. Signed query values on an approved temporary URL are not logged and do not appear when the adapter is formatted.
 
-The adapter rejects path traversal, mixed archive roots, duplicate files, hard links, devices, and other special archive entries. The archive root must be a zero-size directory. Every tar entry, including skipped directories, counts toward a 65,537-entry limit. All decompressed bytes, including tar metadata, padding, skipped content, and trailing gzip data, count toward a separate 384 MiB stream limit; retained file content remains capped at 256 MiB. Reads check cancellation in bounded chunks. It parses tar data as an input stream and never materializes an archive path on the host filesystem.
+The adapter rejects path traversal, mixed archive roots, duplicate files, hard links, devices and other special archive entries. The archive root must be a zero-size directory. Every tar entry counts toward a limit of 65,537 entries, including directories that are skipped. All decompressed bytes count toward a separate 384 MiB stream limit. That includes tar metadata, padding, skipped content and trailing gzip data. Retained file content is still capped at 256 MiB. Reads check for cancellation in bounded chunks. The adapter parses tar data as an input stream and never creates an archive path on the host filesystem.
 
 ## Merge base
 
-The adapter also implements `scm.MergeBaseResolver`, which reports the merge base GitHub uses for a pull request diff (`merge-base...head`). It sends one `GET /repos/{owner}/{repo}/compare/{base}...{head}?per_page=1` with the same repository, endpoint, version, credential, and request-shape checks as acquisition, bounds the response to the 16 MiB metadata limit, rejects duplicate or non-lowercase members anywhere in it, and reads only `merge_base_commit.sha`, which must be a full object ID of the requested algorithm. Commit lists, file lists, status, and counts are ignored. `merge_base_commit` is required by GitHub's compare response schema; a response without a valid one is unavailable (`artifact_incomplete`). A compare that GitHub reports as not found is unavailable whatever its body (`adapter_failure`, retried like any failed read): GitHub's message for commits with no common ancestor is not sourced in this repository, so the adapter never reports `MergeBaseNone` and unrelated histories surface as `merge_base_unavailable`. Other failures use the acquisition classification below. The brokered source transport admits exactly this compare shape (two full object IDs of one length, three dots, `per_page=1`) beside the commit, tree, and archive reads. Resolution writes nothing and is not acquisition: the resolved commit is then acquired like any other.
+The adapter also implements `scm.MergeBaseResolver`, which reports the merge base that GitHub uses for a pull request diff (`merge-base...head`). It sends one `GET /repos/{owner}/{repo}/compare/{base}...{head}?per_page=1`. The request gets the same checks as acquisition for repository, endpoint, version, credential and request shape.
+
+The adapter handles the response as follows:
+
+- It bounds the response to the 16 MiB metadata limit.
+- It rejects duplicate or non-lowercase members anywhere in the response.
+- It reads only `merge_base_commit.sha`, which must be a full object ID of the requested algorithm.
+- It ignores commit lists, file lists, status and counts.
+- GitHub's compare response schema requires `merge_base_commit`, so a response without a valid one counts as unavailable (`artifact_incomplete`).
+
+If GitHub reports that the compare was not found, the result is unavailable whatever the body says (`adapter_failure`, retried like any failed read). This repository has no source for GitHub's message about commits with no common ancestor. The adapter therefore never reports `MergeBaseNone`, and unrelated histories show up as `merge_base_unavailable`. Other failures use the classification in the next section.
+
+The brokered source transport allows exactly this compare shape (two full object IDs of the same length, three dots and `per_page=1`) alongside the commit, tree and archive reads. Resolving the merge base writes nothing and is not acquisition. Open Trestle then acquires the resolved commit like any other.
 
 ## Terminal outcomes
 
-Authentication failures and unsafe scope changes become typed blocked results. Rate limits, timeouts, and server failures become typed adapter-unavailable results. Truncated trees and size limits become resource-limit results. Tree, archive, blob, or schema mismatches become artifact-incomplete results. Provider response bodies and token-provider errors are not copied into receipts.
+Authentication failures and unsafe scope changes become typed blocked results. Rate limits, timeouts and server failures become typed adapter-unavailable results. A truncated tree or a size limit becomes a resource-limit result. A mismatch in a tree, archive, blob or schema becomes an artifact-incomplete result. Provider response bodies and token-provider errors are not copied into receipts.
 
-The endpoint behavior follows GitHub's official documentation for [commit objects](https://docs.github.com/en/rest/git/commits#get-a-commit-object), [recursive trees](https://docs.github.com/en/rest/git/trees#get-a-tree), [repository tar archives](https://docs.github.com/en/rest/repos/contents#download-a-repository-archive-tar), and [commit comparison](https://docs.github.com/en/rest/commits/commits#compare-two-commits). The lowercase-member rule for compare responses is unverified against live GitHub.
+The endpoint behavior follows GitHub's official documentation for [commit objects](https://docs.github.com/en/rest/git/commits#get-a-commit-object), [recursive trees](https://docs.github.com/en/rest/git/trees#get-a-tree), [repository tar archives](https://docs.github.com/en/rest/repos/contents#download-a-repository-archive-tar) and [commit comparison](https://docs.github.com/en/rest/commits/commits#compare-two-commits). The lowercase-member rule for compare responses is unverified against live GitHub.
