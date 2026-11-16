@@ -7,8 +7,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -520,21 +522,33 @@ func TestClientCancellationKillsProcessGroupDescendant(t *testing.T) {
 		t.Fatalf("cancellation failure mismatch: %#v", scanResult)
 	}
 	deadline = time.Now().Add(time.Second)
-	for processRunning(pid) && time.Now().Before(deadline) {
+	running := processRunning(pid)
+	for running && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
+		running = processRunning(pid)
 	}
-	if processRunning(pid) {
+	if running {
 		t.Fatal("process-group descendant survived cancellation")
 	}
 }
 
+// processRunning reports whether pid is still a live process. A missing /proc
+// entry or a zombie or dead state means it is gone; any other read error is
+// treated as running, because a process that is exiting can fail one read.
 func processRunning(pid int) bool {
 	status, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
-	if err != nil {
+	if errors.Is(err, fs.ErrNotExist) {
 		return false
 	}
+	if err != nil {
+		return true
+	}
 	closing := bytes.LastIndexByte(status, ')')
-	return closing < 0 || closing+2 >= len(status) || status[closing+2] != 'Z'
+	if closing < 0 || closing+2 >= len(status) {
+		return true
+	}
+	state := status[closing+2]
+	return state != 'Z' && state != 'X'
 }
 
 func TestClientProcessUsesParentDeathSignalAndOwnProcessGroup(t *testing.T) {
