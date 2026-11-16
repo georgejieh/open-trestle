@@ -27,6 +27,23 @@ const close = ({ server, sockets }) =>
     server.closeAllConnections();
     server.close(resolve);
   });
+// A cold browser start on a shared CI runner can be slow, so the launch gets a
+// bounded wait and one retry; a browser that never starts still fails the test.
+const launchBrowser = async () => {
+  const options = {
+    headless: true,
+    executablePath:
+      process.env.OPEN_TRESTLE_CHROMIUM_PATH ?? "/usr/bin/chromium",
+    args: ["--disable-gpu"],
+    timeout: 45_000,
+  };
+  try {
+    return await chromium.launch(options);
+  } catch (error) {
+    if (error?.name !== "TimeoutError") throw error;
+    return chromium.launch(options);
+  }
+};
 const origin = ({ server }) => `http://127.0.0.1:${server.address().port}`;
 const json = (response, value) => {
   const body = JSON.stringify(value);
@@ -40,7 +57,7 @@ const json = (response, value) => {
 
 test(
   "browser identity fetch rejects redirects and preserves exact endpoint attribution",
-  { timeout: 30_000 },
+  { timeout: 120_000 },
   async (t) => {
     const previousTemporary = process.env.TMPDIR;
     const temporary = await mkdtemp(join(tmpdir(), "otdr-"));
@@ -144,13 +161,7 @@ test(
     assert.equal(crossReads, 0);
     assert.equal(loopReads, 1);
     loopReads = 0;
-    browser = await chromium.launch({
-      headless: true,
-      executablePath:
-        process.env.OPEN_TRESTLE_CHROMIUM_PATH ?? "/usr/bin/chromium",
-      args: ["--disable-gpu"],
-      timeout: 20_000,
-    });
+    browser = await launchBrowser();
     page = await browser.newPage();
     await page.goto(`${origin(primary)}/page`);
     const options = (path) => ({
