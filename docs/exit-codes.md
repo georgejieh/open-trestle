@@ -1,0 +1,101 @@
+# Exit codes
+
+Exit codes are stable per command. Most commands use `0` for success, `1` for a
+failure, and `2` for wrong usage. Reviews and setup checks add `3` for work
+that is not finished and `4` for a refusal. Read the output as well: a code
+alone does not say which refusal or failure it was. For a failed review, see
+[failure details](failure-details.md).
+
+## Reviews
+
+### `trestle review` and `trestle local-git model-review`
+
+`trestle review` runs the same review as `trestle local-git model-review` with
+the saved setup, and returns its code.
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Never by default, even when the review finds nothing: a completed review is not a clearance. Only an [exit-code policy](#exit-code-policy) returns `0`. |
+| `4` | The result is blocked: a confirmed medium, high or critical finding, or a policy or resource refusal (a provider refused the request, a limit was reached, a spending limit stopped the review). |
+| `3` | The result is inconclusive: only low-severity or pre-existing findings (advisory), no candidates, incomplete coverage, or a canceled review. For `trestle review` alone, also nothing was sent: no setup (run `trestle init`), no committed change, or no API key (run `trestle keys set NAME`). |
+| `2` | Invalid usage, for example an unknown `--format` or a `--base` that is not a commit. |
+| `1` | The run failed, for example a model reply could not be accepted or a provider failed temporarily. |
+
+A review set (`--specialists`) merges its members: it is `4` when a member did
+not finish and an introduced merged finding has high or critical severity, or
+when every member finished and a medium or higher finding was introduced. See
+[the set table](local-model-review.md#specialist-review-set-opt-in).
+
+### Exit-code policy
+
+`--exit-code-policy` changes only the process exit status. The result, its
+`status` and `ci_disposition` and `comprehensive_clearance: false` are the same
+under every policy. Exit `0` is a pipeline decision, not a statement that the
+change is clear.
+
+| Policy | Exit `0` when | Otherwise |
+| --- | --- | --- |
+| `default` (when the flag is absent) | never | `4`, `3`, `2` or `1` as above |
+| `findings` | the run succeeded and no verified finding has high or critical severity, including no candidates, medium or low findings only, and coverage gaps | the default code |
+| `strict` | the run succeeded with no candidates at all | the default code, so any verified finding fails the step |
+| `always-zero` | a valid result was written, including a refused or failed run | `1` if the result could not be written, `2` for invalid usage |
+
+Under `always-zero`, a green step says nothing about whether the review ran:
+read the SARIF or the JSON `status`. For review sets, see
+[the exit policy on the merged set](local-model-review.md#specialist-review-set-opt-in).
+
+## `trestle init`
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Setup is ready and the review was declined, or the first review finished with `findings` or `no_candidates`. |
+| `3` | Something must be fixed before a review can run, or the review was incomplete or canceled. |
+| `4` | A declaration was declined, setup was refused, a setup check refused (for example the scanner check of a development build set up for a remote provider; the setup is kept), or the review was refused. |
+| `2` | A missing or invalid answer, end of input, or three unusable answers in a row. With `--no-input`, every missing flag is listed. |
+| `1` | An internal error, or the first review failed. |
+
+The first review inside `trestle init` uses these codes, not the table for
+`trestle review`.
+
+## `trestle update`
+
+| Code | `trestle update` | `trestle update --check` |
+| --- | --- | --- |
+| `0` | Updated, already up to date, or you answered no. | Nothing newer was found where it looked. |
+| `10` | Not used. | A newer version is available; for a release, its signature verified. |
+| `1` | Not installed as a package, a check failed, GitHub could not be read, or the upgrade failed. | Not installed as a package, a check failed, or GitHub could not be read. |
+| `2` | A usage error, or no terminal to confirm and no `--yes`. | A usage error. |
+
+## Keys, usage and the home screen
+
+| Command | Codes |
+| --- | --- |
+| `trestle keys`, `list` | `0`; `1` when the credential folder cannot be found. |
+| `trestle keys set` | `0` saved; `4` OpenRouter refused the key, nothing saved; `2` no usable key was given or the name is not an `OPEN_TRESTLE_PROVIDER_` variable; `1` hidden input is unavailable, or the key could not be saved. |
+| `trestle keys remove` | `0`; `2` for a bad name; `1` when the key could not be removed. |
+| `trestle usage`, `set`, `clear` | `0`; `2` for a bad flag or value; `1` when the usage folder cannot be found or used. |
+| `trestle` | In a terminal: `0` after you quit or outside a Git repository, and a chosen action returns its own code. Without a terminal: `2`, with the usage on standard error. |
+| `--help`, `-h`, `help` | `0`, usage on standard output. |
+| An unknown command | `2`, usage on standard error. |
+
+## Setup
+
+| Command | Codes |
+| --- | --- |
+| `trestle setup bootstrap init`, `check`, `inspect`, `prepare-review` | `0` ready; `3` checks pending; `4` refused; `1` failure; `2` usage. |
+| `trestle setup check KIND` | `0` the check passed; `3` it ran and did not pass; `1` failure; `2` usage. |
+| Other `setup`, `config`, `admin`, `runs` and static `local-git` commands | `0` success; `1` failure; `2` usage. |
+
+## Fixtures and evaluation
+
+| Command | Codes |
+| --- | --- |
+| `trestle review PATH` | `0` findings or no findings; `3` inconclusive; `4` blocked; `1` an error. |
+| `trestle ci --format=json PATH`, `--format=sarif PATH` | `0`, or `3` when inconclusive, or `1`. |
+| `trestle validate-fixture PATH` | `0` valid; `1` invalid. |
+| `trestle evaluate static-debug` | `0` the built-in cases passed; `3` they did not; `1` failure. |
+| `trestle evaluate deterministic-corpus-candidate` | `3` mismatch; `4` matched; `1` failure. |
+| `trestle evaluate model-contract-candidate` | `4` after printing the report; `1` failure. |
+
+The observers (`trestle tui`, `mcp`, `lsp`, `acp`) run until their input
+closes; their exit codes were not traced for this page.
