@@ -1,8 +1,8 @@
 # Documentation
 
-This index groups the documentation by what you want to do. Open Trestle is an
-unreleased development candidate, and each page describes what the code does
-today. See the [roadmap](roadmap.md) for what is planned.
+This index groups the documentation by what you want to do. Open Trestle has
+no release yet, and each page describes what the code does today. The
+[roadmap](roadmap.md) describes what is planned.
 
 ## Start
 
@@ -20,12 +20,12 @@ today. See the [roadmap](roadmap.md) for what is planned.
 - [Remote model review](remote-model-review.md): OpenRouter, OpenCode Go and Ollama Cloud.
 - [Local models](named-local-runtimes.md): Ollama, llama.cpp, vLLM, LM Studio and other servers on your machine.
 - [Model catalog](model-catalog.md): how setup learns model facts.
-- [Local feedback](local-feedback.md).
+- [Review feedback](local-feedback.md): record your own notes on a past review so that later reviews can use them.
 
 ## Integrate
 
 - [GitHub pull-request review](github-pr-review.md): the Actions example and the GitHub App path.
-- [VS Code](vscode.md).
+- [VS Code](vscode.md): show the findings of a daemon run in the editor.
 - [MCP](mcp.md), [ACP](acp.md) and [LSP](lsp.md).
 - [Terminal UI](tui.md) and [web console](web-console.md).
 - [Daemon API](daemon-api.md).
@@ -36,8 +36,8 @@ today. See the [roadmap](roadmap.md) for what is planned.
 - [Exit codes](exit-codes.md): per command, and the `--exit-code-policy` table.
 - [Failure details](failure-details.md): every `failure_detail` value with its meaning and hint.
 - [Environment variables and files](environment-and-files.md): every `OPEN_TRESTLE_*` variable and every path.
-- [Protocol contracts](protocol-contracts.md).
-- [Prompt-injection boundary](prompt-injection-boundary.md).
+- [Protocol contracts](protocol-contracts.md): the versioned record formats and their JSON Schemas.
+- [Prompt-injection boundary](prompt-injection-boundary.md): how repository text is kept from acting as instructions to the models.
 
 ## Help
 
@@ -47,7 +47,7 @@ today. See the [roadmap](roadmap.md) for what is planned.
 
 ## Operate
 
-For a team or shared deployment of the daemon.
+These pages are for running the daemon for a team or as a shared deployment.
 
 - [Setup planning](setup.md) and [operations and recovery](operations.md).
 - [Configuration validation](configuration-validation.md).
