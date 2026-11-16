@@ -1,6 +1,6 @@
 # Local Git inspection
 
-`trestle local-git inspect` reads one exact loose Git commit beneath a caller-supplied object directory and emits a compact evidence record.
+`trestle local-git inspect` reads one loose Git commit from an object directory that you name. It checks that the commit, its tree and its files are intact, and it prints a short JSON record of what it found. Use it to confirm that Open Trestle can read a commit before you run a review on it.
 
 ```text
 trestle local-git inspect \
@@ -12,26 +12,28 @@ trestle local-git inspect \
   --revision-digest FULL_LOWERCASE_HEX
 ```
 
-All flags are required exactly once. The path is the exact object directory, normally `.git/objects`. The command does not discover repositories, append path components, resolve refs or `HEAD`, inspect an index or working tree, run Git, read Git configuration, use credentials, or access a network. Packed objects and alternates are not supported.
+You must pass every flag, each exactly once. `PATH` is the object directory itself, normally `.git/objects`. The command does not look for a repository, add path components, resolve refs or `HEAD`, read the index or working tree, run Git, read Git configuration, use credentials, or use the network. It does not support packed objects or alternates, so it reads loose objects only.
 
-Repository authority, namespace, and name are caller-supplied scope labels. They do not establish the origin, owner, or authorization of the object directory.
+The repository authority, namespace and name are labels that you supply to describe the scope. They do not establish where the object directory came from, who owns it, or whether anyone is authorized to use it.
 
 ## Output
 
-Success writes one compact JSON object followed by a newline. The contract is `open-trestle/local-git-inspect-result`, schema version 1, with strict public shape `schemas/review/local-git-inspect-result-v1.schema.json`. It contains only the structural status, content coverage, and identities for the envelope, repository label, revision, adapter, request, receipt, acquisition execution, profiled acquisition execution, evidence binding, manifest, verified commit, verified tree graph, manifest correspondence, and profile bundle.
+On success the command writes one compact JSON object followed by a newline. The contract is `open-trestle/local-git-inspect-result`, schema version 1, and its strict public shape is `schemas/review/local-git-inspect-result-v1.schema.json`.
 
-The command does not print the object-root path, repository labels, raw revision digest, file paths, repository content, profile internals, timestamps, host data, or environment data. The status `supplied_evidence_bound` means structural agreement only.
+The object holds only a structural status, content coverage, and identities. An identity is a digest that stands for one item: the envelope, the repository label, the revision, the adapter, the request, the receipt, the acquisition execution, the profiled acquisition execution, the evidence binding, the manifest, the verified commit, the verified tree graph, the manifest correspondence, or the profile bundle.
+
+The command does not print the object-root path, the repository labels, the raw revision digest, file paths, repository content, profile internals, timestamps, host data or environment data. The status `supplied_evidence_bound` means only that the structure agrees with itself.
 
 ## Exit codes
 
-- `0`: the envelope was built, encoded, the object root closed, and the full record written.
-- `1`: object-root, confinement, loose-object, envelope, profile, close, encoding, or output failure.
-- `2`: command grammar or canonical input failure.
+- `0`: the command built and encoded the envelope, closed the object root, and wrote the whole record.
+- `1`: an object-root, confinement, loose-object, envelope, profile, close, encoding or output failure.
+- `2`: a command grammar failure or an invalid canonical input.
 
-Nonzero results do not emit a success record.
+A nonzero exit never comes with a success record.
 
-## Evidence boundary
+## What the command proves
 
-The command confines reads beneath the exact opened directory handle. It verifies the supplied loose commit, tree, and blob bytes using the selected hash algorithm, verifies the complete supported tree graph and its manifest correspondence, and derives structural binding and deterministic repository profiling from one acquisition.
+The command reads only inside the directory you pass. It checks the hash of every commit, tree and blob it reads with the algorithm you selected, confirms that the whole supported tree matches its manifest, and builds both the structural binding and the repository profile from that single read.
 
-This does not prove that the directory belongs to the repository label. It does not prove ownership, authorization, ref reachability, branch state, working-tree or index state, snapshot authority, adapter provenance, tenant isolation, or sandboxing. It performs no review, change calculation, publication, command execution, source mutation, or content output.
+It does not prove that the directory belongs to the repository named by your labels. It also does not prove ownership, authorization, ref reachability, branch state, the state of the working tree or index, snapshot authority, adapter provenance, tenant isolation or sandboxing. It does not review anything, calculate a change, publish, run commands, modify source, or print content.
