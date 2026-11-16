@@ -82,7 +82,9 @@ The review view is a queue for human review. How it presents a result depends on
 
 For versions 1 through 5, the independently verified finding totals stay separate from the outcomes of deterministic checks:
 
-- Version 2 also shows the exact counts of accepted, verified, rejected and inconclusive candidates.
+- Version 2 also shows the exact counts of accepted, verified, rejected and
+  inconclusive candidates. The console calls accepted candidates admitted
+  candidates.
 - Version 3 ties in the validated verification-context identity. It adds bounded counts of analyzed, selected and omitted sources.
 - Version 4 adds sorted reasons for omissions, as aggregates that contain no content.
 - Version 5 adds one deterministic static-debug check that contains no content, with an exact lineage to the analysis and the change.

@@ -32,7 +32,7 @@ GitHub's create-review endpoint has no documented idempotency key, so the adapte
 
 `adapters/storage/postgres.Store` implements this guard. Migration `0006_publication_attempts.sql` stores attempt metadata that contains no content, under forced row-level security. A repeat of the exact attempt cannot be dispatched again, and a request that does not match its claim is a conflict. When an attempt completes, only the result identity is recorded.
 
-If the process stops after the claim but before dispatch, the attempt can stay claimed permanently. This favours safety over liveness: it avoids the risk of posting a duplicate review. A network error or an unexpected provider response is a permanent provider failure, because the adapter cannot prove whether GitHub applied the review. It is not safe to retry that attempt. A rate-limit response with a bounded `Retry-After` value is known to have had no effect, so it can enter the separately audited retry flow with a new attempt identity.
+If the process stops after the claim but before dispatch, the attempt can stay claimed permanently. This favors safety over liveness: it avoids the risk of posting a duplicate review. A network error or an unexpected provider response is a permanent provider failure, because the adapter cannot prove whether GitHub applied the review. It is not safe to retry that attempt. A rate-limit response with a bounded `Retry-After` value is known to have had no effect, so it can enter the separately audited retry flow with a new attempt identity.
 
 ## Credentials and transport
 
