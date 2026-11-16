@@ -42,8 +42,7 @@ The output records remain `human_feedback` with `user_controlled` taint. They ar
 advice, not truth or authority. Dismissing a finding does not suppress it, approve
 a change, bypass independent verification, change severity or publish a review.
 
-A later ordinary local model review admits the file only when you pass the
-explicit `--retained-memory-input PATH` flag. Both roles can receive advice
+A later local model review uses the file only when you pass the explicit `--retained-memory-input PATH` flag. Both roles can receive advice
 selected through the existing bounded changed-path retrieval, but loading the file
 does not guarantee that any advice is selected. A review with another head or
 policy refuses the file. Open Trestle never relabels or extends a file

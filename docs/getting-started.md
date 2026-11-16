@@ -26,9 +26,9 @@ The wizard is a front end over the existing
 [remote model review](remote-model-review.md) commands. It runs the same
 `trestle setup bootstrap init` and `check` code inside its own process, and it
 runs the same `trestle local-git model-review` command that they print. It adds
-no configuration format, default model, privacy claim or shortcut. It shows
-you what it fills in before you consent, and every declaration is still your
-own explicit answer.
+no configuration format, default model, privacy claim or shortcut of its own.
+Anything it fills in is shown to you before you agree to it, and every
+declaration it records is an answer you gave.
 
 ## Before you start
 
@@ -76,10 +76,10 @@ both of them the same way. It stops early only for storage that the review
 cannot read: alternates (clones made with `--shared` or `--reference`), a
 multi-pack-index, or partial-clone packs. In that case it prints a
 `git clone --no-local --no-hardlinks` command that makes a separate full copy.
-The wizard never changes repository permissions. The private `0700`,
-loose-object source described in
-[choose the repository](local-first-bootstrap.md#choose-the-repository-and-model-pair)
-is needed only for the optional background daemon.
+The wizard never changes repository permissions. You need the private `0700`
+copy with loose objects, described in [choose the
+repository](local-first-bootstrap.md#choose-the-repository-and-model-pair), only
+if you use the optional background daemon.
 
 No repository source is sent anywhere during setup. Setup does make a few
 network reads, and none of them sends a key:
@@ -168,14 +168,15 @@ happens next depends on the provider.
   retention on every request (recommended)?", where Enter means yes. If a model
   has no zero-data-retention endpoint, the wizard warns you, because an account
   or key with zero data retention enforced will refuse that model, and it lets
-  you replace the model. Keeping the model, or answering no, continues after
-  one `y`. See [OpenRouter zero data retention](openrouter-zdr-profile.md).
+  you replace the model. If you keep the model or answer no, the wizard asks you
+  to confirm once with `y` before it continues. See [OpenRouter zero data retention](openrouter-zdr-profile.md).
 - With a local server, if a server answers on its usual port (Ollama 11434, LM
   Studio 1234, llama.cpp 8080, vLLM 8000), the wizard uses it without asking.
   Otherwise you pick the server or type its `127.0.0.1` address. The checker
-  shares the server when it lists two models. The wizard assumes no key when
-  both model lists were read without one. The limits are the proposed
-  32768-token context (or a smaller listed value) and a 4096-token output. Start
+  shares the server when it lists two models. If both model lists can be read
+  without a key, the wizard assumes the server needs none. It proposes a
+  32768-token context (or a smaller value if the server lists one) and a
+  4096-token output. Start
   both servers with that context, as
   [named local runtimes](named-local-runtimes.md#context-length) describes. The
   wizard refuses a model that the local Ollama relays to Ollama Cloud; choose
@@ -194,7 +195,7 @@ an OpenRouter key with one free call and offers to save the key once the setup
 is saved; Enter skips. Without a terminal, or with `--no-input`, it never asks.
 See [API keys](keys.md).
 
-The wizard does not ask for the most one model request may cost. Setup uses the
+The wizard does not ask how much a single model request may cost. Setup uses the
 cost of a request that fills the whole context and writes the whole output
 allowance, rounded up to a cent. The settings panel shows that figure and what a
 review of two requests can cost. `--max-cost-micro-usd` sets a different bound.
@@ -293,8 +294,9 @@ run `trestle init` again.
 
 ### How it looks
 
-Every line fits in 60 columns, the minimum width of the terminal interface. Only
-a command to copy, or a link too long for a line, keeps its full length. The
+Every line fits in 60 columns, the narrowest width the terminal interface
+supports. The only exceptions are commands meant for copying and links too long
+for one line. The
 wizard shortens long paths on screen (`~` for your home folder, `...` in the
 middle), while commands and `NEXT-STEPS.txt` keep full paths.
 

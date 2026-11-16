@@ -38,16 +38,17 @@ the wizard asks for the key right after you choose the models:
 
 The prompt behaves as follows.
 
-- Hidden input: The terminal's echo is turned off while you type (termios on
+- Your typing is hidden. The terminal's echo is turned off while you type (termios on
   Linux and macOS, the console mode on Windows) and turned back on before
   anything else is printed, also when you press Ctrl-C or Ctrl-D. The prompt
   appears only once echo is off. If echo cannot be turned off, no key is read.
   Only Linux has been tested; the macOS and Windows code is untested (see
   [platforms](platforms.md)).
-- No terminal, no question: With `--no-input`, or when standard input is a pipe
-  or a file, the wizard never asks for a key. The setup check says how to add
+- Without a terminal, the wizard never asks. With `--no-input`, or when standard
+  input is a pipe or a file, it does not prompt for a key. The setup check says how to add
   one, as before.
-- The check: For OpenRouter, the wizard checks the key with one
+- The key is checked where the provider allows it. For OpenRouter, the wizard
+  checks the key with one
   `GET https://openrouter.ai/api/v1/key`, the same free read that
   [spending limits](spending-limits.md#seeing-the-state) use. If OpenRouter
   refuses the key (HTTP 401 or 403), the wizard does not keep it, and you can
@@ -55,7 +56,8 @@ The prompt behaves as follows.
   or another status), the wizard keeps the key as typed, and the first review
   shows whether it works. Ollama Cloud and OpenCode Go have no call that checks
   a key for free, so the wizard does not check their keys and says so.
-- Saving: Enter (yes) saves the key, but only once the setup itself is saved.
+- Saving the key is your choice. Enter (yes) saves it, but only once the setup
+  itself is saved.
   If you decline a declaration or stop early, nothing is written. Answering `n`
   uses the key for this session only (the setup checks and the first review) and
   prints `read -rs NAME && export NAME`, which exports it without showing it.
