@@ -56,9 +56,10 @@ CHANGELOG entry.
 - **Specialists.** Nine packaged specialist profiles, `trestle profiles
   list|plan`, `--profile` for one profile, and `--specialists auto|LIST`, which
   runs the general review plus selected specialists one after another as
-  separately verified runs and merges their verified findings with a heuristic
-  duplicate check. Specialists are off by default, and the daemon does not
-  dispatch profiles. See [agent profiles](agent-profiles.md).
+  separately verified runs, then merges and ranks their verified findings with
+  the shared duplicate rule. A new setup runs specialists by default
+  (`--specialists none` turns them off), and the daemon does not dispatch
+  profiles. See [agent profiles](agent-profiles.md).
 - **Model evaluation corpus.** 23 synthetic Go cases (12 defects, 3 deletion
   defects, 3 near misses, 3 clean changes, 2 abstentions), with a run driver, a
   scorer and a pinned human-adjudication record format. The labels are the
