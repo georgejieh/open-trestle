@@ -4,7 +4,7 @@ Review-run tasks exchange immutable artifacts rather than conversational summari
 
 The public wire contract is `schemas/artifact/runtime-artifact-v1.schema.json`. Encoded payloads are capped at 16 MiB before base64 encoding. Unknown fields, noncanonical JSON, duplicate provenance, altered payloads, expired timestamps, and identity mismatches fail closed. Artifact formatting is redacted.
 
-The closed artifact kinds include `investigation_turn` and `investigation_tool_result`. These are inert record labels, not validation of a turn or tool-result payload, proof of issuer or protected origin, or permission to run a tool. Payload codecs and trusted expected identities, scope and origin must be checked separately. The existing 16 MiB payload and 22 MiB encoded envelope limits remain unchanged. A future investigation controller must admit persistable record sizes before paid dispatch and check the actual framing afterward.
+The closed artifact kinds include `investigation_turn` and `investigation_tool_result`. These are inert record labels, not validation of a turn or tool-result payload, proof of issuer or protected origin, or permission to run a tool. Payload codecs and trusted expected identities, scope and origin must be checked separately. The existing 16 MiB payload and 22 MiB encoded envelope limits remain unchanged. The snapshot investigation controller checks that a turn's record fits both limits before paid dispatch and checks the encoded record again afterward.
 
 ## Local store
 
