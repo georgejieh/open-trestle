@@ -155,6 +155,13 @@ sudo /usr/local/libexec/open-trestle/open-trestle-distribution.pyz rollback
 sudo /usr/local/libexec/open-trestle/open-trestle-distribution.pyz uninstall
 ```
 
+For an installed package, `trestle update` runs the `upgrade` step for you:
+it finds a strictly newer candidate, verifies it in Go, copies it into a
+private folder, runs its `verify-archive`, prints and asks, then runs
+`sudo -- <copy> upgrade`. `trestle update --from FILE` does the same for a
+candidate you name. See [updates](updates.md); the lifecycle commands below are
+unchanged and remain the way to install, roll back, recover and remove.
+
 `install` validates the sidecar, complete archive grammar, canonical manifest, payload
 modes, sizes, SHA-256 values, ELF headers and closed inventory before it publishes a
 file. It streams members individually and does not call ZIP extraction APIs. Each file

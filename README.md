@@ -213,6 +213,18 @@ own figures. The total is Open Trestle's upper-bound estimate at the highest
 pinned price, not a bill, and the limit is best effort, so set your provider's
 own limit too. See [spending limits](docs/spending-limits.md).
 
+On the packaged Linux amd64 install, one command updates Open Trestle:
+
+```sh
+trestle update
+```
+
+It shows the newer version, asks, and runs that version's own upgrade with
+`sudo`; `trestle update --check` only reports. A GitHub release is installed
+only when its Ed25519 signature verifies with a key pinned in the build. No
+release is signed yet, so for now it installs only unsigned local builds,
+clearly labeled. See [updates](docs/updates.md).
+
 ### Evaluation path
 
 There is no supported runtime package. The following clean-checkout procedure reproduces
@@ -455,7 +467,7 @@ detection, and none of it is released or supported for production. See the
 | Runtime | [review-run runtime](docs/review-run-runtime.md) · [daemon API](docs/daemon-api.md) · [remote workers](docs/remote-workers.md) · [task notifications](docs/task-notifications.md) · [automatic finalization](docs/automatic-finalization.md) · [handler catalogs](docs/runtime-handler-catalogs.md) |
 | Review pipeline | [source acquisition](docs/source-acquisition-handler.md) · [change model](docs/change-model-handler.md) · [evidence](docs/deterministic-evidence-handler.md) · [semantic impact](docs/semantic-impact.md) · [memory retrieval](docs/memory-retrieval-handler.md) · [context assembly](docs/context-assembly-handler.md) · [candidate generation](docs/model-generation-handler.md) · [verification](docs/model-verification-handler.md) · [OpenAI provider](docs/openai-provider.md) · [publication readiness](docs/publication-readiness-handler.md) · [publication](docs/publication-handler.md) |
 | Provider profiles | [OpenRouter ZDR](docs/openrouter-zdr-profile.md) · [OpenCode Go](docs/opencode-go-profile.md) · [OpenCode Console](docs/opencode-console-profile.md) · [Codex ChatGPT session status](docs/codex-chatgpt-session.md) · [local inference without bearer authentication](docs/local-provider-no-auth.md) |
-| Getting started | [`trestle init`](docs/getting-started.md) · [`trestle review`](docs/getting-started.md#running-it-again) · [API keys](docs/keys.md) · [spending limits](docs/spending-limits.md) · [local-first bootstrap](docs/local-first-bootstrap.md) · [remote model review](docs/remote-model-review.md) · [setup](docs/setup.md) · [named local runtimes](docs/named-local-runtimes.md) · [model catalog](docs/model-catalog.md) |
+| Getting started | [`trestle init`](docs/getting-started.md) · [`trestle review`](docs/getting-started.md#running-it-again) · [`trestle update`](docs/updates.md) · [API keys](docs/keys.md) · [spending limits](docs/spending-limits.md) · [local-first bootstrap](docs/local-first-bootstrap.md) · [remote model review](docs/remote-model-review.md) · [setup](docs/setup.md) · [named local runtimes](docs/named-local-runtimes.md) · [model catalog](docs/model-catalog.md) |
 | Local Git | [inspect](docs/local-git-inspect.md) · [change evidence](docs/local-git-change.md) · [review](docs/local-git-review.md) · [model review](docs/local-model-review.md) · [feedback](docs/local-feedback.md) |
 | Specialist profiles | [agent profiles](docs/agent-profiles.md) |
 | Security | [prompt-injection boundary](docs/prompt-injection-boundary.md) |

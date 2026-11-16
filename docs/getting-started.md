@@ -456,14 +456,19 @@ actions, each two steps away (`trestle`, then the number):
 ```
 
 The card reads only local files: the setup folder, the usage folder and the
-credential store; it sends nothing. `Last run` comes from `last-review.json`
-in the setup folder, a small record (time, status, number of confirmed
-findings and the two commits, nothing else) that `trestle review`, the home
-screen and `trestle init` write after each review; a review run directly with
-`trestle local-git model-review` is not recorded. In a repository without a
-setup the only action is `trestle init`. Without a terminal on both sides, or
-with `NO_COLOR` set or `TERM=dumb`, `trestle` prints the usage text and exits
-`2`, as before.
+credential store. `Last run` comes from `last-review.json` in the setup
+folder, a small record (time, status, number of confirmed findings and the two
+commits, nothing else) that `trestle review`, the home screen and `trestle
+init` write after each review; a review run directly with `trestle local-git
+model-review` is not recorded. In a repository without a setup the only action
+is `trestle init`. Without a terminal on both sides, or with `NO_COLOR` set or
+`TERM=dumb`, `trestle` prints the usage text and exits `2`, as before.
+
+On the packaged install, the home screen also adds a last action, "Update Open
+Trestle", which runs `trestle update`, and shows a line above the actions when
+a newer version is available. That line comes from the home screen's only
+network request, the release list GET, made at most once a day (see
+[updating](#updating)).
 
 Run `trestle init` again in the same repository to re-check the setup. `trestle
 init`, `trestle review` and the home screen find the setup in the folder setup
@@ -483,6 +488,25 @@ The first re-runs the checks, then reviews the latest change exactly as
 setup's key is missing, it asks for it first (see [API keys](keys.md)). It
 never re-initializes or changes the saved files. To set up something
 different, use a new folder: `trestle init --directory NEW_FOLDER`.
+
+## Updating
+
+On the packaged Linux amd64 install, one command updates Open Trestle:
+
+```sh
+trestle update
+```
+
+It finds a newer version, shows it, asks, and runs that version's own upgrade
+with `sudo`, which asks for your password. `trestle update --check` only
+reports (exit `10` when an update is available). Nothing is installed unless
+its checks pass in Go first: for a GitHub release, an Ed25519 signature by a
+key pinned in this build and the signed SHA-256 and size. No release is signed
+yet, so today it installs only an unsigned local build: one left in
+`~/.local/share/open-trestle/updates/` for a development install, or a file
+named with `--from`. See
+[updates](updates.md) for the channels, the checks, the threat model and
+`OPEN_TRESTLE_UPDATE_CHECK=off`.
 
 ## Non-interactive use
 

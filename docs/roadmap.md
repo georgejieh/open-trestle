@@ -82,6 +82,14 @@ entry.
   reviewed recall of 11 of 14 expected occurrences. Findings bind to exact
   source slices, and publication is fenced by a fresh-head check and
   idempotency. See the [prompt-injection boundary](prompt-injection-boundary.md).
+- **Updates.** `trestle update` updates the packaged install in one step:
+  find, show, ask, run the new build's own upgrade with `sudo`, report.
+  `--check` reports only, and the home screen and `trestle review` show a
+  notice at most once a day. The client side is shipped: GitHub release
+  discovery, Ed25519 verification against keys pinned in the build, the local
+  update folder for development builds, and the offline signing tool. Release
+  signing is pending the release phase: no key is pinned yet, so the release
+  channel refuses until one is. See [updates](updates.md).
 - **Packaging and release evidence.** An unsigned Linux amd64 candidate with
   install, upgrade, one-step rollback and recovery; SPDX SBOMs; a passive
   vulnerability gate; and a static-debug evaluation over eight built-in cases.
@@ -93,7 +101,8 @@ entry.
 
 Shipped on this branch (see above): `trestle review`, hidden API key entry with
 an owner-only credential store and `trestle keys`, the `trestle` home screen,
-and the documentation truth pass, including the three code-side mismatches
+`trestle update` on the client side (release signing waits for the release
+phase), and the documentation truth pass, including the three code-side mismatches
 (the `knowledge_graph` and `style_conformance` purpose text, the usage text,
 and the Dockerfile port). Remaining:
 
