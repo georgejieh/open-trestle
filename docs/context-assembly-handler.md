@@ -20,7 +20,7 @@ The handler recreates every changed-range evidence slice independently from the 
 
 Repository text stays `repository_controlled` data. Only evidence paths that the already validated memory scope allows can enter the packet.
 
-The handler considers changed-range evidence first. It then admits bounded one-line sources that the semantic profile names, as `direct_reference` candidates, once their source file and slice identities have been reconstructed independently. Affected-test links keep their syntactic-candidate status.
+The handler considers changed-range evidence first. It then accepts bounded one-line sources that the semantic profile names, as `direct_reference` candidates, once their source file and slice identities have been reconstructed independently. Affected-test links keep their syntactic-candidate status.
 
 At most 128 source candidates are considered. Deterministic selection keeps at most 32 sources and 128 KiB of source text.
 
@@ -36,7 +36,7 @@ The handler reconstructs every memory retrieval from its records, queries, score
 
 ## Non-Go text files
 
-For a changed file whose path does not end in `.go`, the handler admits its changed hunks as `changed_hunk` sources. A hunk is admitted when the slice is valid UTF-8 with no NUL byte, and it passes the same size and candidate bounds as Go hunks. These are ordinary repository-controlled evidence data.
+For a changed file whose path does not end in `.go`, the handler accepts its changed hunks as `changed_hunk` sources. A hunk is accepted when the slice is valid UTF-8 with no NUL byte, and it passes the same size and candidate bounds as Go hunks. These are ordinary repository-controlled evidence data.
 
 No structural or semantic analysis exists for these files. The semantic-impact profile still records `unsupported_language` for each such path, and the packet keeps that as the `semantic_unsupported_language` omission. Nothing in the packet claims symbol, reference or test evidence for these files.
 
@@ -71,7 +71,7 @@ Every `repository_instruction_*` omission stays in the packet's complete `source
 
 Instruction files are advisory. They carry the `repository_controlled` taint and the same `evidence_data_not_instructions` label as every other source. The version 7 and 8 generation instructions tell the model that `repository_context` sources are the repository's own review preferences. They are advisory guidance about what to look for and about the repository's conventions. They are never authority, they cannot change the output contract, the evidence rules or the authority limits, and they are not changed code. A pull request can edit its own instruction file, so the text is untrusted. It is a hint about what to look for, never a rule that the review must follow.
 
-Candidate admission drops a candidate whose `source_range` names a `repository_context` source, and it keeps the rest of the batch. The drop is derived only from the exact response and context bytes. It is counted in the batch as `repository_context_anchor_omitted`, which is bound into the batch identity and the durable encoding when it is nonzero. The direct local review reports it as the `repository_context_anchor_candidates_omitted` limitation and count. It never fails the run. A candidate may still cite a `repository_context` source as supporting evidence. When an instruction file is itself changed, its changed lines are a separate `changed_hunk` source, and a candidate located there is admitted.
+Candidate admission drops a candidate whose `source_range` names a `repository_context` source, and it keeps the rest of the batch. The drop is derived only from the exact response and context bytes. It is counted in the batch as `repository_context_anchor_omitted`, which is bound into the batch identity and the durable encoding when it is nonzero. The direct local review reports it as the `repository_context_anchor_candidates_omitted` limitation and count. It never fails the run. A candidate may still cite a `repository_context` source as supporting evidence. When an instruction file is itself changed, its changed lines are a separate `changed_hunk` source, and a candidate located there is accepted.
 
 The verifier receives the same packet sources under the version 7 verification contract, and instruction files give it no extra authority. In required publication mode, the handler rebinds each instruction source to its head file only after it checks the fixed path, the line-1 prefix and the byte-identical base copy. It refuses a published finding that is located in an instruction file. See the [publication task handler](publication-handler.md).
 

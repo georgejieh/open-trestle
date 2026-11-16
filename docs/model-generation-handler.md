@@ -28,7 +28,7 @@ A model task must declare `max_attempts: 1`. Generic control-plane retries canno
 
 As a result, an ambiguous transport outcome stays visible as a claimed attempt with closed audit lineage. If a process crashes between the provider dispatch and the terminal audit record, the handler does not replay the attempt automatically.
 
-The handler admits a successful response only when all of these hold:
+The handler accepts a successful response only when all of these hold:
 
 - it is one complete structured `review.v1` response;
 - it conforms to the candidate schema that its context requests: `model-candidate-batch-v2` for a version 9 context (and a recorded version 7 or 8 context), or `model-candidate-batch-v1` for a recorded earlier context (`review.ParseContextCandidateBatch`);
@@ -37,7 +37,7 @@ The handler admits a successful response only when all of these hold:
 - there are no semantic duplicate findings; and
 - the reconciled cost does not exceed the authorized budget.
 
-If a candidate's `source_range` names a `repository_context` source, the handler drops that candidate from the admitted batch and does not treat it as a failure. The remaining candidates are admitted with contiguous ordinals. The drop count is bound into the batch identity and the durable encoding as `repository_context_anchor_omitted`, which is absent when it is zero.
+If a candidate's `source_range` names a `repository_context` source, the handler drops that candidate from the accepted batch and does not treat it as a failure. The remaining candidates are accepted with contiguous ordinals. The drop count is bound into the batch identity and the durable encoding as `repository_context_anchor_omitted`, which is absent when it is zero.
 
 From context version 8, a candidate that is located in a `removed_lines` source is a base-side finding. Its lines are base lines inside that source, and it records the source's `head_line`. Only cited `removed_lines` evidence covers it, and base-line evidence never covers a head location. The durable candidate-batch encoding records `"side":"base"` and `head_line` on such a candidate and on each cited `removed_lines` binding. See [base-side findings](local-model-review.md#base-side-findings).
 
@@ -62,13 +62,13 @@ Generation at versions 7, 8 and 9 asks for `model-candidate-batch-v2`. Each cand
 
 Parsing stays strict. It rejects a v1 document, a category that is missing, null or unknown, a fix that is empty, blank, oversized, not a string or contains control characters, and any extra member. Category and fix are bound into the candidate identity (preimage version 2) and the batch identity, and the durable `open-trestle/candidate-batch` encoding uses schema version 2 for such batches. Both fields remain untrusted model output. The category is advisory, and the fix is guidance for a person, never a patch, command or automatic edit.
 
-The generation input records the context's `output_schema_identity` (v1 for recorded contexts before version 7, v2 for versions 7, 8 and 9). Both execution and `ParseGenerationResultArtifact` require it to match the context bytes. Readback, which reloads a stored result and checks it, also requires the schema of the admitted batch to match its context version.
+The generation input records the context's `output_schema_identity` (v1 for recorded contexts before version 7, v2 for versions 7, 8 and 9). Both execution and `ParseGenerationResultArtifact` require it to match the context bytes. Readback, which reloads a stored result and checks it, also requires the schema of the accepted batch to match its context version.
 
 ## Candidate artifact
 
 The `candidate_batch` artifact contains:
 
-- the canonical admitted `CandidateBatch`;
+- the canonical accepted `CandidateBatch`;
 - one successful `RouteExecutionRecord`;
 - the route authorization, the terminal outcome, the token usage, the cost settlement and the normalized output receipt; and
 - the exact lineage of the context and the response.

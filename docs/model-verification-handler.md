@@ -8,7 +8,7 @@ The handler takes the exact candidate artifact that candidate generation produce
 
 The handler receives the successful `candidates` dependency through `TaskExecutionRequest`. It resolves the generation result and its exact generation-input and context artifacts in the same review scope. Before a verifier request exists, it revalidates all the generation lineage.
 
-`review.NewVerificationRequestContext` rebuilds the verifier request directly from the canonical generation-context bytes and the admitted candidates. It keeps the exact source and advisory memory context, but it labels the candidates as unverified proposals. The resulting request has a different identity and output schema from candidate generation. The handler checks again the source content, risk flags, evidence digests, snapshot ranges, authority labels, counted preselection omissions, coverage equations and candidate fields.
+`review.NewVerificationRequestContext` rebuilds the verifier request directly from the canonical generation-context bytes and the accepted candidates. It keeps the exact source and advisory memory context, but it labels the candidates as unverified proposals. The resulting request has a different identity and output schema from candidate generation. The handler checks again the source content, risk flags, evidence digests, snapshot ranges, authority labels, counted preselection omissions, coverage equations and candidate fields.
 
 Verification-context schema v2 keeps the exact counted source coverage from generation. It does not rebuild that coverage from the length of the omission records.
 
@@ -51,7 +51,7 @@ The verifier receives every generation source, so it sees the removed base text 
 
 New verifier requests are built only from an executable version 9 generation context. Recorded verification contexts of versions 2, 3, 5, 6 and 7, and recorded generation contexts of versions 5, 7 and 8, are reconstructed for readback but grant no new verification. Readback means reloading a stored result and checking it against its sources.
 
-The verifier response must contain exactly one verdict for every admitted candidate. A verified verdict requires supported source evidence and a final severity. Rejected and inconclusive verdicts remain explicit and cannot carry a final severity. The handler rejects a response with unknown candidates, omitted candidates, duplicate verdicts, unsupported evidence or an incomplete set of verdicts.
+The verifier response must contain exactly one verdict for every accepted candidate. A verified verdict requires supported source evidence and a final severity. Rejected and inconclusive verdicts remain explicit and cannot carry a final severity. The handler rejects a response with unknown candidates, omitted candidates, duplicate verdicts, unsupported evidence or an incomplete set of verdicts.
 
 ## Protected output
 
