@@ -1,38 +1,96 @@
 # Open Trestle for VS Code
 
-Open Trestle for VS Code displays independently verified review findings from diagnostic versions 1 through 5 through the read-only Open Trestle LSP server. Version 6 deterministic observations remain outside LSP findings and are available through the CLI, TUI, and web console. The extension does not edit files, execute repository commands, offer code actions, change policy, call a model directly, or publish review results.
+Open Trestle for VS Code shows the findings of an Open Trestle review in the
+editor's Problems panel. It connects to a review run that the Open Trestle
+daemon already holds, through the read-only `trestle lsp` server, and displays
+the findings that an independent model has verified, from diagnostic
+versions 1 through 5. Version 6 deterministic observations remain outside LSP
+findings, because they are not verified findings; the CLI, the terminal UI and
+the web console show them.
+
+The extension only displays results. It does not start a review, edit files, run
+repository commands, offer code actions, change policy, call a model or publish
+anything.
 
 ## Requirements
 
-Install the `trestle` CLI on the extension host. Configure an HTTPS daemon URL or a canonical loopback IP HTTP URL. The daemon must already contain the exact review run and canonical diagnostic set. A version 6 set is a valid empty LSP result because its deterministic observations are not independently verified findings.
+You need the `trestle` CLI on the extension host and a daemon that already holds
+the review run and its diagnostic set. The daemon URL must use HTTPS, or HTTP on
+a loopback IP address. A run whose set holds only deterministic observations
+(version 6) is valid and shows no findings.
 
 ## Connect
 
-1. Open a trusted workspace folder at the reviewed repository root.
-2. Set the machine-scoped `openTrestle.server`, `openTrestle.tenant`, `openTrestle.repository`, and `openTrestle.run` settings.
-3. Run **Open Trestle: Set API Token**. The token is stored in VS Code SecretStorage.
+1. Open the reviewed repository's root folder as a trusted workspace.
+2. Set the machine-scoped `openTrestle.server`, `openTrestle.tenant`,
+   `openTrestle.repository` and `openTrestle.run` settings.
+3. Run **Open Trestle: Set API Token**. The token is stored in VS Code
+   SecretStorage.
 4. Run **Open Trestle: Connect to Review Run**.
 
-The extension starts the exact configured `trestle` executable without a shell and passes `lsp --server URL`. Only a bounded environment allowlist and `OPEN_TRESTLE_API_TOKEN` reach the child process. The LSP initialization options bind the tenant, repository, and run. Diagnostics outside the active workspace root are rejected by the server.
+The extension starts the configured `trestle` executable directly, without a
+shell, and passes `lsp --server URL`. The child process receives only a short
+allowlist of environment variables plus `OPEN_TRESTLE_API_TOKEN`. The tenant,
+repository and run are fixed in the LSP initialization options, and the server
+rejects diagnostics for files outside the active workspace folder.
 
-`openTrestle.executable`, the server and scope settings, and `openTrestle.autoStart` use VS Code's machine configuration scope so repository settings cannot turn workspace text into process authority. Automatic startup is disabled by default. The extension refuses to start in an untrusted workspace.
+`openTrestle.executable`, the server and scope settings, and
+`openTrestle.autoStart` use VS Code's machine configuration scope. A repository's
+own settings therefore cannot choose which program runs. Automatic startup is
+off by default, and the extension refuses to start in an untrusted workspace.
 
-## Security boundary
+## Security
 
-The extension uses Microsoft protocol and JSON-RPC packages for a narrow pull-diagnostic adapter. It never sends document contents or synchronization notifications. Push diagnostics and dynamic registrations have no effect. Server requests cannot edit files, open documents, execute commands, or install editor features. Workspace edits and document opens receive explicit refusals; configuration requests receive bounded null values. Diagnostic messages remain untrusted review output. Verify source and evidence before editing.
+The extension uses Microsoft's protocol and JSON-RPC packages, but only for a
+narrow adapter that pulls diagnostics. It never sends document contents or
+synchronization notifications, and it ignores pushed diagnostics and dynamic
+registrations. Requests from the server cannot edit files, open documents, run
+commands or install editor features: workspace edits and document opens are
+refused explicitly, and configuration requests get bounded null values.
 
-The token is never written to extension settings, output, diagnostics, command arguments, or status text. Changing or clearing the token invalidates diagnostics immediately, before awaiting process shutdown. A failed shutdown never permits a successor to overlap the prior child. Clearing the token deletes it from SecretStorage even if child closure cannot be confirmed.
+Diagnostic messages are review output and are not trusted. Check the source and
+the evidence before you edit anything.
 
-Bundled dependency license texts are included in the VSIX.
+The token never appears in extension settings, output, diagnostics, command
+arguments or status text. When you change or clear the token, the extension
+withdraws its diagnostics immediately, before it waits for the process to shut
+down. A new process never overlaps one whose shutdown failed. Clearing the token
+removes it from SecretStorage even when the extension cannot confirm that the
+child process closed.
 
-See [the Open Trestle LSP contract](../../docs/lsp.md) for protocol limits and evidence semantics.
+The license texts of bundled dependencies are included in the VSIX. The
+[LSP guide](https://github.com/georgejieh/open-trestle/blob/main/docs/lsp.md) describes the protocol limits and what the
+findings mean.
 
-## Refresh and failure behavior
+## Refreshing and failures
 
-After connection, each eligible visible file is pulled once. Revealing a file again may reuse its exact result identity. Restart explicitly refreshes visible files from a new process with no prior baselines. There is no polling, background workspace scan, save/change refresh, or automatic reconnect. Hidden-file findings remain in Problems until document close or session retirement. Empty findings do not certify repository safety.
+After you connect, the extension pulls findings once for each eligible visible
+file. Showing a file again may reuse its earlier result. **Restart** refreshes
+the visible files from a new process that starts with no earlier results. The
+extension does not poll, scan the workspace in the background, refresh on save
+or change, or reconnect on its own. Findings for a file you have hidden stay in
+the Problems panel until you close the document or the session ends. An empty
+list of findings does not mean the repository is safe.
 
-The selected local file workspace folder is the only root. Other roots, nested separately selected folders, virtual documents and unsafe URIs are not eligible. Results are validated before publication to the native **Open Trestle verified findings** diagnostic collection. Diagnostic text remains plain, inert review output.
+Only the selected local workspace folder is eligible. Other roots, separately
+selected nested folders, virtual documents and unsafe URIs are not. Results are
+validated before they appear in the **Open Trestle verified findings**
+diagnostic collection, and diagnostic text is shown as plain text.
 
-Fixed resource limits are 128 tracked URIs, one pull in flight, 1,000 diagnostics per report and 16 KiB UTF-8 per diagnostic message. Total stdout admission is 8 MiB per session, counted before Microsoft's framing reader. Crossing a limit retires the session rather than truncating findings. This lifetime budget is not a per-frame or measured peak-memory bound; long valid sessions can require an explicit Restart.
+The extension tracks at most 128 files, keeps one pull in flight, accepts at most
+1,000 diagnostics per report and 16 KiB of UTF-8 per diagnostic message, and
+reads at most 8 MiB of standard output per session, counted before Microsoft's
+framing reader. When any limit is crossed, the extension ends the session rather
+than truncating findings. The 8 MiB budget covers the whole session, not a single
+message or peak memory, so a long session can need an explicit **Restart**.
 
-Initialize and pull requests have a 35-second deadline. Stop first invalidates all publication authority, attempts graceful shutdown for one second, then allows one second each after SIGTERM and SIGKILL. Cancellation or JSON-RPC disposal is not proof of exit. A successor starts only after the owned direct child's `close` event. If closure is not observed, attention status remains and Restart can recheck it later. These are direct-child controls, not a portable process-tree containment guarantee. Raw child stderr and protocol errors are never logged.
+Initialize and pull requests time out after 35 seconds. To stop, the extension
+first withdraws its right to publish diagnostics, then asks the server to shut
+down and waits one second, then sends SIGTERM and waits one second, then sends
+SIGKILL and waits one second more. A canceled request or a disposed JSON-RPC
+connection does not prove that the process exited, so a new process starts only
+after the child's `close` event. If that event never arrives, the status keeps
+asking for attention, and **Restart** can check again later. These controls
+apply to the direct child process; they do not guarantee that every descendant
+process is contained. Raw child standard error and protocol errors are never
+logged.
