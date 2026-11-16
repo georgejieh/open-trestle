@@ -63,7 +63,8 @@ The status is one of:
 
 The run status is verified only when the result is `findings`. Reports with the `partial`, `inconclusive`, `no_change` or `unsupported` status stay inconclusive, with that status as the reason.
 
-The SARIF output is deterministic for the inputs that are tested, and that is all it shows. It does not show that a hosted code-scanning service accepts the log, that baselines and fingerprints stay stable across future schema versions, or how uploads and policy enforcement behave. The command uploads nothing.
+The tests show only that the SARIF output is deterministic for the inputs they
+cover. It does not show that a hosted code-scanning service accepts the log, that baselines and fingerprints stay stable across future schema versions, or how uploads and policy enforcement behave. The command uploads nothing.
 
 ## Exit codes
 
