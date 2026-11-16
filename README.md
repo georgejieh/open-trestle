@@ -1,112 +1,116 @@
 # Open Trestle
 
-Open Trestle is an open-source AI code reviewer. It reads the codebase around a
-change, tailors the review to it, and runs where you work: your terminal, CI and,
-for viewing results, your editor. It does not depend on one model provider.
-Remote providers and local models on your own hardware both work.
+Open Trestle is an open-source code reviewer that uses language models to find
+problems in a change and then checks each problem before reporting it. It works
+with the model provider you choose, including models running on your own
+hardware, and it is built to run where your code already lives: in your
+terminal today, and in CI and your editor as those integrations mature.
 
-A review runs in stages. Deterministic checks run first. A finder model proposes
-problems. A different, independent checker model confirms or rejects each one,
-and only confirmed findings are reported, each tied to the source lines that
-support it.
+The project is under active development. There is no release yet, and the
+interfaces and file formats may still change. The [project status](#project-status)
+section below describes what works now and what is still missing.
 
-## Status
+## How a review works
 
-Open Trestle is a development release. No release is signed yet, and nothing here
-is supported for production use.
+A review starts from a committed change. Before any model is involved, Open
+Trestle computes facts about the change that do not depend on a model: the
+changed and removed lines, which Go symbols the change touches, and counts of
+newly added lint suppressions and workaround comments.
 
-- The packaged Linux amd64 install works today. Remote providers (OpenRouter,
-  Ollama Cloud, OpenCode Go) need it. A plain `go build` works with a model
-  server on your own machine.
-- macOS and Windows are planned for the next release. See
-  [platforms](docs/platforms.md) for what each system can do now.
-- Model review quality has not been measured. The evaluation corpus awaits
-  independent human adjudication, so there are no quality numbers to quote yet.
-  See [quality evaluation](docs/quality-evaluation.md).
+A first model, the finder, reads that evidence along with the surrounding code
+and proposes possible problems. A second, different model, the verifier, then
+checks each proposal against the source. Only the problems the verifier
+confirms are reported, and each one points to the lines that support it.
+Confirmed findings are deduplicated and ranked. Findings in code the change did
+not touch are reported separately, so they never block a merge on their own.
 
-## Quick start
+Each result opens with a short walkthrough of what was checked, followed by the
+findings. You can read it as text in the terminal or write it as JSON, SARIF or
+Markdown for other tools. New setups also run a small set of specialist reviews
+(security, tests and others) chosen from what the change contains. The
+[local model review](docs/local-model-review.md) guide covers the details.
 
-Install a build first: see [install](docs/install.md). Then, inside a Git repository:
+Source code is scanned for secrets in a sandboxed process before any request
+leaves your machine. OpenRouter requests require zero data retention by
+default. Open Trestle sends no telemetry. The [privacy](docs/privacy.md) page
+lists exactly what is sent, when, and to whom.
+
+## Project status
+
+What works today, on Linux:
+
+- `trestle init` sets up a repository in one guided pass. It asks where the two
+  models run, takes API keys through hidden input, and can store them in an
+  owner-only credential file.
+- `trestle review` reviews the latest committed change with the saved setup,
+  and `trestle` on its own opens a home screen with the setup, recent spending
+  and the last review.
+- Remote providers (OpenRouter, Ollama Cloud and OpenCode Go) and local model
+  servers (Ollama, llama.cpp, vLLM, LM Studio and other OpenAI-compatible
+  servers) are supported. Remote providers require the packaged Linux amd64
+  install, because that is the only build that includes the secret scanner.
+- You can set a spending limit for each API key. Open Trestle warns you as you
+  approach the limit and stops sending requests when you reach it. Its totals
+  are estimates, so your provider's own limits remain the real safeguard.
+
+What is not done yet:
+
+- There is no signed release or download. You build Open Trestle from source,
+  as described in [install](docs/install.md).
+- macOS and Windows builds compile, but neither has been tested, and some
+  features, including remote providers, are refused on both. Support for both
+  systems is planned for the first release. The [platforms](docs/platforms.md)
+  page shows what each system can do now.
+- The GitHub Actions workflow in
+  [examples/github-actions](examples/github-actions/README.md) has been tested
+  offline but has not yet run on GitHub. The VS Code extension can display the
+  results of a review, but it cannot start one.
+- Review quality has not been measured. The evaluation corpus of 23 synthetic
+  cases is waiting for independent human labels, so there are no accuracy
+  figures to report yet. See [quality evaluation](docs/quality-evaluation.md).
+
+The first release is meant to complete four things: the same review on Linux,
+macOS and Windows; review that draws on the whole codebase, including the
+checks its maintainers already run; checks that the models write and Open
+Trestle runs in a sandbox; and finished GitHub Actions and VS Code integrations.
+The [roadmap](docs/roadmap.md) describes each of these and what comes after.
+
+## Getting started
+
+You need Linux, Git and Go 1.25 or newer. If your models run on your own
+machine, a development build is enough:
 
 ```sh
-trestle init      # choose where two models run; saves a protected setup
-trestle review    # review the latest committed change
-trestle           # home screen: setup, spending, last review, next actions
-trestle update    # update a packaged install
+go build -o trestle ./cmd/trestle
 ```
 
-`trestle init` asks for an API key with hidden input, and checks it where the
-provider allows. You can set a spending limit per key; Open Trestle alerts and
-refuses at the limit. Only committed changes are reviewed. Walk through the
-first run in [getting started](docs/getting-started.md), and see [commands](docs/commands.md)
-for every command. The [API keys](docs/keys.md) and
-[spending limits](docs/spending-limits.md) pages cover those two topics.
+Put the resulting `trestle` binary on your `PATH`. To use a remote provider,
+build and install the packaged Linux amd64 archive instead. The
+[install](docs/install.md) guide walks through both options.
 
-## What a review gives you
+Then, inside the Git repository you want to review:
 
-- A walkthrough of what was verified: the secret scan, the deterministic checks,
-  and how many candidates the checker confirmed or rejected. See
-  [ranked findings and the walkthrough](docs/local-model-review.md#ranked-findings-and-the-walkthrough).
-- Findings that are ranked and deduplicated. See
-  [duplicates and rank](docs/local-model-review.md#duplicates).
-- Separate classes for [pre-existing findings](docs/local-model-review.md#pre-existing-findings)
-  (in code the change did not touch), which never block CI, and
-  [advisory results](docs/local-model-review.md#advisory-results), where only
-  low-severity or pre-existing findings remain and CI reports no verdict.
-- Commit messages are given to the models as
-  [stated intent](docs/local-model-review.md#commit-messages-as-stated-intent),
-  labelled as unverified.
-- [Pattern hygiene](docs/local-model-review.md#pattern-hygiene): deterministic
-  counts of added lint suppressions, workaround comments and bare TODO markers,
-  and of absolute rules added to agent instruction files.
-- [Specialist profiles](docs/agent-profiles.md): nine packaged specialist
-  reviewers. A new setup runs the general review, then the specialists the change
-  calls for; `--specialists none` turns them off.
-- Output as text, JSON, SARIF or Markdown. See
-  [review output and options](docs/local-model-review.md#headless-ci-use).
+```sh
+trestle init      # guided setup; asks for an API key if the provider needs one
+trestle review    # review the latest committed change
+trestle           # home screen with status and next steps
+```
 
-The static `local-git inspect`, `local-git change`, and deterministic `local-git review` commands support verified loose objects only. They make no model call. For model-backed review see [local model review](docs/local-model-review.md).
-
-## Privacy and security in brief
-
-- Your source goes to a model only when you run a review, and only to the
-  provider your setup names. With a model server on your machine, nothing leaves it.
-- Before a request goes to a remote provider, it is scanned for secrets in a
-  sandboxed process. A request that fails the scan is not sent. The scanner is
-  a pattern scanner and misses some credential types, so it is not a guarantee.
-- OpenRouter requests require zero data retention by default.
-- There is no telemetry. Once releases are signed, a packaged install checks
-  GitHub Releases for a newer version at most once a day. That request carries no
-  repository or usage data, and `OPEN_TRESTLE_UPDATE_CHECK=off` turns it off.
-- Repository text, including files that look like instructions, is data and never
-  instructions to the model.
-
-See [privacy](docs/privacy.md), the
-[prompt-injection boundary](docs/prompt-injection-boundary.md) and
-[SECURITY.md](SECURITY.md).
-
-## Where it runs
-
-- **CLI:** today, through the commands above.
-- **CI:** an example GitHub Actions workflow exists, but it has not run on GitHub
-  yet. A packaged `action.yml` is planned. See
-  [GitHub pull-request review](docs/github-pr-review.md).
-- **VS Code:** the extension currently shows the verified diagnostics of runs
-  that a daemon already holds. Starting a review from VS Code is planned for the
-  next release. See [VS Code](docs/vscode.md).
+[Getting started](docs/getting-started.md) follows a first review from start to
+finish, and the [command reference](docs/commands.md) lists every command and
+flag.
 
 ## Documentation
 
-[docs/README.md](docs/README.md) indexes every page by what you want to do.
-
-## Roadmap
-
-[docs/roadmap.md](docs/roadmap.md) separates what exists today from the next
-release and from later work.
+The [documentation index](docs/README.md) groups every page by task. If a
+review fails, [troubleshooting](docs/troubleshooting.md) explains each failure
+message and what to do about it.
 
 ## Contributing
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) before you open a pull request.
+Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before
+opening a pull request, and report security problems privately as described in
+[SECURITY.md](SECURITY.md).
 
 ## License
 
