@@ -1,6 +1,6 @@
 # GitHub review publication
 
-`adapters/scm/github.PublicationAdapter` implements the source-control head resolver and review publisher contracts for GitHub pull requests. It is callable only through the existing publication authorization, exclusive claim, audited retry, and fresh-head gates.
+`adapters/scm/github.PublicationAdapter` implements the source-control head resolver and review publisher contracts for GitHub pull requests. It is callable only through the existing publication authorization, exclusive claim, audited retry, and fresh-head gates. Live GitHub publication is unverified (see the [roadmap](roadmap.md#available-now)). Nothing is published unless an operator runs `trestled` with `--github-enable-publication` and a publication token.
 
 ## Exact target binding
 

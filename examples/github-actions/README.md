@@ -7,7 +7,7 @@ and `reviewdog`; Open Trestle posts nothing to GitHub itself in this path.
 
 **Status: never run on GitHub.** The Open Trestle side (SARIF, exit policy,
 checkout diagnostics) is tested offline. The workflow file itself is checked only
-for being well-formed YAML. Treat every GitHub-facing step as unverified and read
+for being well-formed YAML and for its `jq` escaping module. Treat every GitHub-facing step as unverified and read
 the logs of your first run. See [GitHub pull-request review](../../docs/github-pr-review.md).
 
 ## Before you copy it
@@ -45,7 +45,11 @@ the logs of your first run. See [GitHub pull-request review](../../docs/github-p
   the base branch after the branch point as part of the change; the merge base is
   the comparison GitHub shows for the pull request.
 - Runs `trestle setup bootstrap init`, then `check`, then the printed review
-  command with `--format text` replaced by `--format sarif --exit-code-policy findings`
+  command. Because `init` is not given `--specialists none`, that command carries
+  `--specialists auto`: the job runs the general review plus the specialists
+  Open Trestle selects, one after another, each a paid model run. Add
+  `--specialists none` to the `init` step for a single review. The command is run
+  with `--format text` replaced by `--format sarif --exit-code-policy findings`
   and base/head set to that merge base and `head.sha`.
 - Uploads SARIF to code scanning only when the SARIF run property
   `trestleRunStatus` is `succeeded` (a `jq` check). A refused, failed or canceled
@@ -54,12 +58,16 @@ the logs of your first run. See [GitHub pull-request review](../../docs/github-p
   (`refs/pull/<number>/head`), because `upload-sarif` otherwise uses `github.sha`,
   the temporary merge commit. Those inputs come from the `upload-sarif`
   documentation and are unverified live.
+- Lists findings in rank order. A finding on lines the change did not touch carries
+  `trestlePreExisting` in the SARIF properties. Under `--exit-code-policy findings`
+  it, and any medium or low finding, does not fail the job. The job summary counts
+  every result and does not mark pre-existing ones.
 - Posts inline comments and the job summary from whatever SARIF was produced, then
   fails the job from the recorded status: exit 0 only when the review completed
   with no verified high or critical finding. Refusals, unreadable changes and
   failures fail the job and appear as an unsuccessful invocation in the SARIF.
-- The job summary is rendered from the SARIF with `jq`. One review is a paid model
-  run that yields one output format, so the example does not run a second time for
+- The job summary is rendered from the SARIF with `jq`. One review (several model runs when specialists are on) yields
+  one output format, so the example does not run a second time for
   `--format text` or `--format markdown`.
 - Finding text, fix guidance and paths are untrusted (model output and repository
   text), and both the job summary and reviewdog's pull-request comments are GitHub

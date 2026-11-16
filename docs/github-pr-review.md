@@ -12,6 +12,12 @@ are different products with different trust and maturity.
 | Output | SARIF (code scanning alerts), inline review comments, job summary | a `COMMENT` review pinned to the reviewed head |
 | Fork pull requests | not supported (no secrets, read-only token) | depends on the App installation |
 
+Neither path has run against GitHub. The Actions example has never run on a
+hosted runner, and live publication through the daemon is unverified. Open
+Trestle ships no GitHub App of its own: on the daemon path you register an App
+on your own account and run the daemon yourself. There is also no packaged
+`action.yml` (see the [roadmap](roadmap.md#next-release)).
+
 Use the Actions path to try Open Trestle on a repository you control with no
 server. Use the daemon path when you need durable runs, a fresh-head fence and
 idempotent publication. On the daemon path the App installation is admitted
@@ -39,7 +45,7 @@ it fails with `merge_base_unavailable`. It never falls back to reviewing
 2. A packaged `trestle` binary. Remote model egress is refused by a plain
    `go build`; see [remote model review](remote-model-review.md).
 3. `trestle setup bootstrap init --provider ...` and `check` write and verify the
-   protected configuration and print the review command. The provider key is passed
+   protected configuration and print the review command, which carries `--specialists auto` unless `init` is given `--specialists none`. The provider key is passed
    through an environment variable whose name starts `OPEN_TRESTLE_PROVIDER_`.
 4. `trestle local-git model-review ... --format sarif --exit-code-policy findings`
    with the merge base `git merge-base "$BASE_SHA" "$HEAD_SHA"` as the base and
@@ -67,7 +73,10 @@ policy are specified in [local model review](local-model-review.md#headless-ci-u
 ## What a green job does and does not mean
 
 `--exit-code-policy findings` exits 0 when the review ran to completion and no
-verified high or critical finding exists. It does not mean the change is clear:
+verified high or critical finding exists. Medium and low findings, findings on
+unchanged lines (marked `trestlePreExisting` in the SARIF) and coverage gaps do
+not fail the job under this policy; they still appear in the SARIF and the
+summary, listed in rank order. It does not mean the change is clear:
 the review is bounded, abstentions and omitted source are listed as limitations
 in the SARIF, and `comprehensive_clearance` is always false. A job that could not
 run the review (refused, unreadable change, missing secret, provider failure) fails.
