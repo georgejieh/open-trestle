@@ -29,4 +29,4 @@ The canonical result binds both source artifact and snapshot identities, reposit
 
 `ParseResultArtifact` checks canonical encoding and cross-binds the result to both source snapshots. `artifactvalidation.ValidatedTaskHandler` can enforce `source_snapshot` dependencies and a `change_model` output.
 
-Published schema: `schemas/artifact/change-model-result-v1.schema.json`. The behavior-versioned handler identity is `1a574001085da1114defaf7d093fb91bb05abd684e40d3fc05cd2c20fdd0482d`.
+Published schema: `schemas/artifact/change-model-result-v1.schema.json`. The handler identity is the SHA-256 of the canonical record of contract `open-trestle/change-model-handler` and schema version 3, which is `af559535868494caf3a8e78d0df23ebda6f7c186caa06c57b3a9dac7ee78b276`. A run plan records it, so a run planned under an earlier identity fails closed instead of being executed by this handler.

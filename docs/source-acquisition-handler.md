@@ -60,6 +60,6 @@ Provider error strings and repository content never enter task completions. The 
 
 Schemas are published as:
 
-- `schemas/artifact/source-acquisition-input-v1.schema.json`
+- `schemas/artifact/source-acquisition-input-v1.schema.json`, `schemas/artifact/source-acquisition-input-v2.schema.json` (binds a daemon-retained source-root identity) and `schemas/artifact/source-acquisition-input-v3.schema.json` (merge base)
 - `schemas/artifact/source-file-v1.schema.json`
-- `schemas/artifact/source-snapshot-v1.schema.json`
+- `schemas/artifact/source-snapshot-v1.schema.json` and `schemas/artifact/source-snapshot-v2.schema.json` (merge-base derivation)
