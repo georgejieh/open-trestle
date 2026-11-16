@@ -97,11 +97,11 @@ context, strict response parser, usage reconciliation and bounded transport
 still apply. There is no request overlay, tool execution or model array.
 `allow_fallbacks` is true so that OpenRouter may retry a request on another
 pinned endpoint when the one it picked fails; without it OpenRouter serves a
-request only from its top-ranked endpoint, and that endpoint's errors failed
-live runs. Fallback never leaves `only`: on 2026-11-13 a request whose `only`
-listed no endpoint serving the model was refused with HTTP 404 although
-`allow_fallbacks` was true, and every endpoint in `only` is a pinned ZDR
-endpoint whose price the cost limit already covers.
+request only from its top-ranked endpoint, so one failing endpoint would fail
+the review. Fallback never leaves `only`: a request whose `only` lists no
+endpoint serving the model is refused with HTTP 404 even with
+`allow_fallbacks` true, and every endpoint in `only` is a pinned ZDR endpoint
+whose price the cost limit already covers.
 
 The setup summary, `bootstrap check` (`data_retention: required_per_request`)
 and the wizard all say that ZDR is required on every request. That is a fact
@@ -248,7 +248,7 @@ upstream providers report it inconsistently and settlement does not use it.
 
 OpenRouter's routing metadata around the answer is not decoded strictly,
 because OpenRouter adds members there that its published schema does not list
-(live replies carry a top-level `provider`). The upstream `provider` name must be
+(replies carry a top-level `provider`). The upstream `provider` name must be
 a short printable string. If `openrouter_metadata.pipeline` lists any stage
 other than an account `guardrail` (a plugin, server tool, response healing or
 context compression), something changed what the model saw or answered, and
@@ -261,10 +261,10 @@ The review classifies a refusal by its HTTP status alone and never reads the
 error body. For an OpenRouter route, HTTP 404 means OpenRouter served no
 endpoint for the request: the model ID is not served, or no endpoint the request
 may use can take it, for example because ZDR is required (by the request or by
-your account or key) and the model has no ZDR endpoint. A live probe on
-2026-11-11, a ZDR-required request for a model with no ZDR endpoint, was refused
-with HTTP 404 at OpenRouter's data-policy routing step, before any model ran; if
-OpenRouter changes that status, the generic detail for the new status applies.
+your account or key) and the model has no ZDR endpoint. OpenRouter refuses a
+ZDR-required request for a model with no ZDR endpoint with HTTP 404 at its
+data-policy routing step, before any model runs; if OpenRouter changes that
+status, the generic detail for the new status applies.
 A 404 records `failure_detail`
 `provider_no_allowed_endpoint` and the hint "OpenRouter has no endpoint for
 this model that the request may use: if zero data retention is required (by
