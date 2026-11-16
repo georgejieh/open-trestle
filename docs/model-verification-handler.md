@@ -8,7 +8,10 @@ The handler takes the exact candidate artifact that candidate generation produce
 
 The handler receives the successful `candidates` dependency through `TaskExecutionRequest`. It resolves the generation result and its exact generation-input and context artifacts in the same review scope. Before a verifier request exists, it revalidates all the generation lineage.
 
-`review.NewVerificationRequestContext` rebuilds the verifier request directly from the canonical generation-context bytes and the accepted candidates. It keeps the exact source and advisory memory context, but it labels the candidates as unverified proposals. The resulting request has a different identity and output schema from candidate generation. The handler checks again the source content, risk flags, evidence digests, snapshot ranges, authority labels, counted preselection omissions, coverage equations and candidate fields.
+`review.NewVerificationRequestContext` rebuilds the verifier request directly from the canonical generation-context bytes and the accepted candidates. It keeps the exact source and advisory memory context, but it labels the candidates as unverified proposals. The resulting request has a different identity and output schema from candidate generation. The
+handler then checks the source content, risk flags, evidence digests, snapshot
+ranges, authority labels, counted preselection omissions, coverage equations and
+candidate fields again.
 
 Verification-context schema v2 keeps the exact counted source coverage from generation. It does not rebuild that coverage from the length of the omission records.
 
