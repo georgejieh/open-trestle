@@ -2,6 +2,8 @@
 
 `trestle local-git review` runs the maintained debug-output rule over one exact loose-object base/head comparison and emits compact findings and coverage.
 
+This command is deterministic: it runs no model and sends nothing anywhere. To have models review your latest commit, run `trestle review` in the repository after `trestle init` (see [getting started](getting-started.md#running-it-again) and [local model review](local-model-review.md#reviewing-the-latest-change-with-trestle-review)).
+
 ```text
 trestle local-git review \
   --objects-root PATH \
