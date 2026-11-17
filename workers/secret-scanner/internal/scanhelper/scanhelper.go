@@ -19,8 +19,10 @@
 // output at start; standard output and standard error are then the null
 // device, and nothing is written to either on purpose. The working directory
 // is the compilation cache directory: it must be owned by the current user
-// and have no group or other permission bits. On Windows and macOS, where
-// owner and mode bits do not prove that a directory is private, every
+// and have no group or other permission bits. On Windows it must be owned by
+// the current user, and its access-control list may grant no one other than
+// the current user, LocalSystem and Administrators any access. On macOS,
+// where owner and mode bits do not prove that a directory is private, every
 // working directory is refused. The helper reads no environment variables.
 // Before it reads the first request it compiles the guest and starts libre2,
 // both through caches in that directory, so a session with no request fills
