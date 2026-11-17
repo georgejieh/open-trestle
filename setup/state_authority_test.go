@@ -29,7 +29,7 @@ func TestSetupStateRejectsReplaceableAncestorBeforeMutations(t *testing.T) {
 	if err := state.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(shared, 0777); err != nil {
+	if err := setTestMode(t, shared, 0777); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := InspectStateFile(context.Background(), path); !errors.Is(err, ErrInvalidStatePath) {

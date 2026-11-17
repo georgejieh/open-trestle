@@ -332,7 +332,7 @@ func currentCatalogBoundaryNewPlan(t *testing.T, profile Profile) Plan {
 func currentCatalogBoundaryState(t *testing.T, plan Plan) (*StateFile, string) {
 	t.Helper()
 	root := t.TempDir()
-	if err := os.Chmod(root, 0o700); err != nil {
+	if err := setTestMode(t, root, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(root, "plan.json")
@@ -704,7 +704,7 @@ func currentCatalogBoundaryHistory(t *testing.T) []currentCatalogBoundaryHistory
 func currentCatalogBoundaryRestore(t *testing.T, fixture currentCatalogBoundaryHistoryFixture) (*StateFile, string, Plan) {
 	t.Helper()
 	root := t.TempDir()
-	if err := os.Chmod(root, 0o700); err != nil {
+	if err := setTestMode(t, root, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(root, "plan.json")
@@ -907,7 +907,7 @@ func (c *currentCatalogBoundaryInterruptChecker) removeBlocker() {
 	c.t.Helper()
 	info, err := os.Lstat(c.path + ".next")
 	data, readErr := os.ReadFile(c.path + ".next")
-	if err != nil || readErr != nil || c.info == nil || !os.SameFile(info, c.info) || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || !fileOwnedByCurrentProcess(info) || !bytes.Equal(data, []byte("current-catalog-fixture-plan-staging-blocker")) {
+	if err != nil || readErr != nil || c.info == nil || !os.SameFile(info, c.info) || !info.Mode().IsRegular() || !privateToProcess(c.path+".next", info, exactPermission(0o600)) || !bytes.Equal(data, []byte("current-catalog-fixture-plan-staging-blocker")) {
 		c.t.Fatal("fixture blocker changed; refusing removal")
 	}
 	if err := os.Remove(c.path + ".next"); err != nil {

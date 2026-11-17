@@ -107,12 +107,12 @@ func TestRuntimePolicyFileCheckerReportsUnavailableAndRejectsUnsafeFile(t *testi
 	if os.WriteFile(invPath, inv, 0o600) != nil || os.WriteFile(polPath, pol, 0o600) != nil {
 		t.Fatal("write")
 	}
-	_ = os.Chmod(invPath, 0o666)
+	_ = setTestMode(t, invPath, 0o666)
 	checker, _ = NewRuntimePolicyFileChecker(invPath, polPath, approval)
 	if result := checker.Check(context.Background(), plan); result.State() != CheckBlocked {
 		t.Fatalf("unsafe=%s", result.State())
 	}
-	_ = os.Chmod(invPath, 0o600)
+	_ = setTestMode(t, invPath, 0o600)
 	if result := checker.Check(context.Background(), plan); result.State() != CheckPassed {
 		t.Fatalf("safe=%s", result.State())
 	}
@@ -180,7 +180,7 @@ func TestRuntimePolicyFileCheckerRejectsReplaceableAncestryAndSymlink(t *testing
 	approval := setupRuntimeApproval(t, plan, inventory, policy)
 	world := filepath.Join(root, "world")
 	_ = os.Mkdir(world, 0o777)
-	_ = os.Chmod(world, 0o777)
+	_ = setTestMode(t, world, 0o777)
 	parent := filepath.Join(world, "parent")
 	_ = os.Mkdir(parent, 0o700)
 	inventoryPath, policyPath := filepath.Join(parent, "routes.json"), filepath.Join(parent, "policy.json")
@@ -190,7 +190,7 @@ func TestRuntimePolicyFileCheckerRejectsReplaceableAncestryAndSymlink(t *testing
 	if result := checker.Check(context.Background(), plan); result.State() != CheckBlocked {
 		t.Fatalf("replaceable=%s", result.State())
 	}
-	_ = os.Chmod(world, 0o700)
+	_ = setTestMode(t, world, 0o700)
 	link := filepath.Join(parent, "policy-link.json")
 	_ = os.Symlink(policyPath, link)
 	checker, _ = NewRuntimePolicyFileChecker(inventoryPath, link, approval)
