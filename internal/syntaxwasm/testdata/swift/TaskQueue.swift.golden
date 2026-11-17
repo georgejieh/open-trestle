@@ -1,0 +1,251 @@
+# definitions
+8:1-8:59 type "Completion" exported
+9:1-9:30 type "Identifier"
+11:1-11:34 constant "maxConcurrentTasks" exported
+12:1-12:30 variable "sharedCounter"
+13:1-13:67 constant "defaultTimeout"
+13:1-13:67 constant "defaultRetries"
+15:1-33:2 enum "TaskState" exported
+  16:5-16:17 constant "TaskState.pending" exported
+  17:5-17:35 constant "TaskState.running" exported
+  18:5-18:26 constant "TaskState.finished" exported
+  18:5-18:26 constant "TaskState.failed" exported
+  19:5-19:33 constant "TaskState.cancelled" exported
+  21:5-28:6 field "TaskState.isTerminal" exported
+  30:5-32:6 method "TaskState.describe"
+35:1-42:2 interface "Prioritized" exported
+  36:5-36:37 type "Prioritized.Level" exported
+  37:5-37:29 field "Prioritized.level" exported
+  38:5-38:43 field "Prioritized.defaultLevel" exported
+  39:5-39:41 method "Prioritized.compare" exported
+  40:5-40:23 constructor "Prioritized.init" exported
+  41:5-41:43 method "Prioritized.subscript" exported
+44:1-46:2 interface "Executable" exported
+  45:5-45:32 method "Executable.execute" exported
+48:1-50:2 interface "Observer"
+  49:5-49:39 method "Observer.didChange"
+52:1-66:2 struct "Clamped" exported
+  54:5-54:29 field "Clamped.value"
+  55:5-55:34 field "Clamped.range"
+  57:5-60:6 constructor "Clamped.init" exported
+  62:5-65:6 field "Clamped.wrappedValue" exported
+68:1-115:2 struct "TaskItem" exported
+  69:5-69:33 type "TaskItem.Level" exported
+  71:5-71:24 field "TaskItem.id" exported
+  72:5-72:29 field "TaskItem.title" exported
+  73:5-73:50 field "TaskItem.priority" exported
+  74:5-74:56 field "TaskItem.state" exported
+  75:5-75:43 constant "TaskItem.empty"
+  76:5-76:46 field "TaskItem.defaultLevel" exported
+  78:5-78:39 field "TaskItem.level" exported
+  80:5-83:6 constructor "TaskItem.init" exported
+  85:5-87:6 constructor "TaskItem.init" exported
+  89:5-91:6 method "TaskItem.subscript" exported
+  93:5-95:6 method "TaskItem.compare" exported
+  97:5-106:6 method "TaskItem.advance" exported
+  108:5-110:6 method "TaskItem.==" exported
+  112:5-114:6 method "TaskItem.hash" exported
+117:1-188:2 class "TaskQueue" exported
+  118:5-118:33 type "TaskQueue.Level" exported
+  120:5-120:62 field "TaskQueue.items" exported
+  121:5-121:32 field "TaskQueue.lock"
+  122:5-122:41 field "TaskQueue.observers"
+  123:5-123:64 field "TaskQueue.completions"
+  124:5-124:43 constant "TaskQueue.shared" exported
+  125:5-125:30 field "TaskQueue.level" exported
+  126:5-126:44 field "TaskQueue.defaultLevel" exported
+  128:5-128:21 constructor "TaskQueue.init" exported
+  130:5-132:6 constructor "TaskQueue.init" exported
+  134:5-136:6 method "TaskQueue.deinit"
+  138:5-138:66 method "TaskQueue.subscript" exported
+  140:5-142:6 method "TaskQueue.compare" exported
+  144:5-152:6 method "TaskQueue.add" exported
+  154:5-161:6 method "TaskQueue.execute" exported
+  163:5-169:6 method "TaskQueue.notifyObservers"
+  171:5-173:6 method "TaskQueue.log"
+  175:5-181:6 method "TaskQueue.remove" exported
+  183:5-187:6 method "TaskQueue.nested"
+    184:9-184:47 function "TaskQueue.nested.helper"
+190:1-193:2 enum "QueueError" exported
+  191:5-191:25 constant "QueueError.outOfRange" exported
+  192:5-192:15 constant "QueueError.empty" exported
+195:1-201:2 class "TaskQueue"
+  196:5-196:65 field "TaskQueue.description" exported
+  198:5-200:6 method "TaskQueue.firstTitle" exported
+203:1-207:2 class "Array"
+  204:5-206:6 method "Array.highest"
+209:1-211:2 class "Optional"
+  210:5-210:40 field "Optional.isPresent"
+213:1-217:2 class "Box" exported
+  214:5-214:20 field "Box.contents"
+  215:5-215:53 constructor "Box.init"
+  216:5-216:86 method "Box.makeIterator" exported
+219:1-226:2 class "Counter" exported
+  220:5-220:26 field "Counter.count"
+  222:5-225:6 method "Counter.increment"
+230:1-232:2 function "<+>"
+234:1-240:2 function "makeQueue"
+243:1-243:36 function "debugOnly"
+246:1-246:38 constant "queue"
+247:1-247:41 constant "first"
+# references
+5:2 decorator "_exported"
+6:2 decorator "testable"
+8:32 type "Result" in "Completion"
+8:39 type "Int" in "Completion"
+8:44 type "Error" in "Completion"
+8:55 type "Void" in "Completion"
+9:24 type "String" in "Identifier"
+13:30 type "TimeInterval" in "defaultRetries"
+15:24 inherit "String" in "TaskState"
+15:24 type "String" in "TaskState"
+15:32 inherit "CaseIterable" in "TaskState"
+15:32 type "CaseIterable" in "TaskState"
+15:46 inherit "Codable" in "TaskState"
+15:46 type "Codable" in "TaskState"
+17:28 type "Double" in "TaskState.running"
+21:28 type "Bool" in "TaskState.isTerminal"
+30:24 type "String" in "TaskState.describe"
+36:27 type "Comparable" in "Prioritized.Level"
+37:16 type "Level" in "Prioritized.level"
+38:30 type "Level" in "Prioritized.defaultLevel"
+39:37 type "Bool" in "Prioritized.compare"
+40:17 type "Level" in "Prioritized.init"
+41:22 type "Int" in "Prioritized.subscript"
+41:30 type "Level" in "Prioritized.subscript"
+44:29 inherit "AnyObject" in "Executable"
+44:29 type "AnyObject" in "Executable"
+44:40 inherit "Prioritized" in "Executable"
+44:40 type "Prioritized" in "Executable"
+44:67 type "Int" in "Executable"
+49:29 type "TaskQueue" in "Observer.didChange"
+52:2 decorator "propertyWrapper" in "Clamped"
+53:30 type "Comparable" in "Clamped"
+54:24 type "Value" in "Clamped.value"
+55:16 type "ClosedRange" in "Clamped.range"
+55:28 type "Value" in "Clamped.range"
+57:31 type "Value" in "Clamped.init"
+57:47 type "ClosedRange" in "Clamped.init"
+57:59 type "Value" in "Clamped.init"
+59:22 call "min" in "Clamped.init"
+59:26 call "max" in "Clamped.init"
+62:30 type "Value" in "Clamped.wrappedValue"
+64:23 call "min" in "Clamped.wrappedValue"
+64:27 call "max" in "Clamped.wrappedValue"
+68:25 inherit "Identifiable" in "TaskItem"
+68:25 type "Identifiable" in "TaskItem"
+68:39 inherit "Hashable" in "TaskItem"
+68:39 type "Hashable" in "TaskItem"
+68:49 inherit "Prioritized" in "TaskItem"
+68:49 type "Prioritized" in "TaskItem"
+69:30 type "Int" in "TaskItem.Level"
+71:20 type "UUID" in "TaskItem.id"
+72:23 type "String" in "TaskItem.title"
+73:6 decorator "Clamped" in "TaskItem.priority"
+73:43 type "Int" in "TaskItem.priority"
+74:36 type "TaskState" in "TaskItem.state"
+75:24 call "TaskItem" in "TaskItem.empty"
+76:37 type "Int" in "TaskItem.defaultLevel"
+78:23 type "Int" in "TaskItem.level"
+80:24 type "String" in "TaskItem.init"
+81:19 call "UUID" in "TaskItem.init"
+85:24 type "Int" in "TaskItem.init"
+86:14 call "init" qualifier="self" in "TaskItem.init"
+89:29 type "Int" in "TaskItem.subscript"
+89:37 type "Int" in "TaskItem.subscript"
+93:35 type "TaskItem" in "TaskItem.compare"
+93:48 type "Bool" in "TaskItem.compare"
+108:33 type "TaskItem" in "TaskItem.=="
+108:48 type "TaskItem" in "TaskItem.=="
+108:61 type "Bool" in "TaskItem.=="
+112:41 type "Hasher" in "TaskItem.hash"
+113:16 call "combine" qualifier="hasher" in "TaskItem.hash"
+117:23 inherit "ObservableObject" in "TaskQueue"
+117:23 type "ObservableObject" in "TaskQueue"
+117:41 inherit "Executable" in "TaskQueue"
+117:41 type "Executable" in "TaskQueue"
+118:30 type "Int" in "TaskQueue.Level"
+120:6 decorator "Published" in "TaskQueue.items"
+120:48 type "TaskItem" in "TaskQueue.items"
+121:24 call "NSLock" in "TaskQueue.lock"
+123:35 type "Identifier" in "TaskQueue.completions"
+123:47 type "Completion" in "TaskQueue.completions"
+124:32 call "TaskQueue" in "TaskQueue.shared"
+125:23 type "Int" in "TaskQueue.level"
+126:37 type "Int" in "TaskQueue.defaultLevel"
+130:33 type "Int" in "TaskQueue.init"
+135:19 call "removeAll" qualifier="observers" in "TaskQueue.deinit"
+138:29 type "Int" in "TaskQueue.subscript"
+138:37 type "Int" in "TaskQueue.subscript"
+140:35 type "TaskQueue" in "TaskQueue.compare"
+140:49 type "Bool" in "TaskQueue.compare"
+144:27 type "TaskItem" in "TaskQueue.add"
+144:49 type "Completion" in "TaskQueue.add"
+145:14 call "lock" qualifier="lock" in "TaskQueue.add"
+146:22 call "unlock" qualifier="lock" in "TaskQueue.add"
+147:15 call "append" qualifier="items" in "TaskQueue.add"
+151:9 call "notifyObservers" in "TaskQueue.add"
+156:18 call "advance" qualifier="item" in "TaskQueue.execute"
+157:28 call "sleep" qualifier="Task" in "TaskQueue.execute"
+159:29 call "map" qualifier="items" in "TaskQueue.execute"
+159:49 call "filter" in "TaskQueue.execute"
+160:9 call "print" in "TaskQueue.execute"
+164:19 call "forEach" qualifier="observers" in "TaskQueue.notifyObservers"
+164:32 call "didChange" qualifier="$0" in "TaskQueue.notifyObservers"
+165:23 type "TaskItem" in "TaskQueue.notifyObservers"
+165:36 type "Void" in "TaskQueue.notifyObservers"
+166:18 call "log" qualifier="self" in "TaskQueue.notifyObservers"
+168:15 call "forEach" qualifier="items" in "TaskQueue.notifyObservers"
+171:33 type "String" in "TaskQueue.log"
+172:9 call "NSLog" in "TaskQueue.log"
+175:6 decorator "discardableResult" in "TaskQueue.remove"
+176:34 type "Int" in "TaskQueue.remove"
+176:49 type "TaskItem" in "TaskQueue.remove"
+178:30 call "outOfRange" qualifier="QueueError" in "TaskQueue.remove"
+180:22 call "remove" qualifier="items" in "TaskQueue.remove"
+184:26 type "Int" in "TaskQueue.nested.helper"
+184:34 type "Int" in "TaskQueue.nested.helper"
+185:21 call "helper" in "TaskQueue.nested"
+190:25 inherit "Error" in "QueueError"
+190:25 type "Error" in "QueueError"
+191:21 type "Int" in "QueueError.outOfRange"
+195:22 inherit "CustomStringConvertible" in "TaskQueue"
+195:22 type "CustomStringConvertible" in "TaskQueue"
+196:29 type "String" in "TaskQueue.description"
+198:33 type "String" in "TaskQueue.firstTitle"
+203:34 type "TaskItem" in "Array"
+204:23 type "TaskItem" in "Array.highest"
+205:14 call "max" qualifier="self" in "Array.highest"
+210:20 type "Bool" in "Optional.isPresent"
+213:27 type "Equatable" in "Box"
+213:42 inherit "Sequence" in "Box"
+213:42 type "Sequence" in "Box"
+213:60 type "Hashable" in "Box"
+214:19 type "T" in "Box.contents"
+215:22 type "T" in "Box.init"
+216:35 type "IndexingIterator" in "Box.makeIterator"
+216:53 type "T" in "Box.makeIterator"
+216:60 type "contents" in "Box.makeIterator"
+216:70 call "makeIterator" in "Box.makeIterator"
+222:25 type "Int" in "Counter.increment"
+230:17 type "TaskItem" in "<+>"
+230:34 type "TaskItem" in "<+>"
+230:47 type "TaskItem" in "<+>"
+231:5 call "TaskItem" in "<+>"
+234:29 type "String" in "makeQueue"
+234:43 type "TaskQueue" in "makeQueue"
+235:17 call "TaskQueue" in "makeQueue"
+237:15 call "add" qualifier="queue" in "makeQueue"
+237:19 call "TaskItem" in "makeQueue"
+243:20 call "print" in "debugOnly"
+246:13 call "makeQueue" in "queue"
+247:12 type "TaskItem" in "first"
+248:1 call "print"
+# imports
+1:1-1:18 source="Foundation"
+2:1-2:15 source="Combine"
+3:1-3:36 source="Dispatch" name="DispatchTime"
+4:1-4:26 source="UIKit" name="UIView"
+5:1-5:25 source="os.log"
+6:1-6:25 source="TaskKit"
+# gaps

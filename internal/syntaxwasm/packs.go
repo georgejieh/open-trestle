@@ -42,6 +42,7 @@ var packSpecs = map[syntaxanalysis.Language]packSpec{
 	syntaxanalysis.LanguageC:          {files: []string{"c"}, finish: finishC},
 	syntaxanalysis.LanguageCPP:        {files: []string{"cpp"}, finish: finishCPP},
 	syntaxanalysis.LanguageCSharp:     {files: []string{"csharp"}, finish: finishCSharp},
+	syntaxanalysis.LanguageSwift:      {files: []string{"swift"}, finish: finishSwift},
 	syntaxanalysis.LanguageRust:       {files: []string{"rust"}, finish: finishRust},
 }
 

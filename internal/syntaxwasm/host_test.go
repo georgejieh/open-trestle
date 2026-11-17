@@ -141,7 +141,7 @@ func TestEveryFamilyInstantiatesAndDescribesItsLanguages(t *testing.T) {
 
 func TestLanguagesWithoutQueryPacksReportAGap(t *testing.T) {
 	a := testAnalyzer(t)
-	for _, path := range []string{"a.swift", "a.php", "a.rb", "a.html"} {
+	for _, path := range []string{"a.php", "a.rb", "a.html"} {
 		language, _ := syntaxanalysis.LanguageForPath(path)
 		if !a.Supports(language) || a.HasQueryPack(language) {
 			t.Fatalf("%s: supports=%v pack=%v", path, a.Supports(language), a.HasQueryPack(language))
@@ -269,14 +269,15 @@ func TestNameLengthLimitIsAGap(t *testing.T) {
 func TestSyntaxErrorsAreRegionsAndTheRestIsAnalysed(t *testing.T) {
 	a := testAnalyzer(t)
 	cases := map[string]string{
-		"broken.py":   "def before():\n    pass\n\ndef broken(:\n    return )\n\ndef after():\n    before()\n",
-		"Broken.java": "class A {\n  void before() {}\n  void broken( { int x = ; }\n  void after() { before(); }\n}\n",
-		"broken.ts":   "function before(): void {}\nfunction broken(a: ) { let = ; }\nfunction after() { before(); }\n",
-		"broken.js":   "function before() {}\nconst x = (;\nfunction after() { before(); }\n",
-		"broken.c":    "int before(void) { return 1; }\nint broken(int a { return ; }\nint after(void) { return before(); }\n",
-		"broken.cpp":  "void before() {}\nint broken(std::vector<int> a { return ; }\nvoid after() { before(); }\n",
-		"Broken.cs":   "class A {\n  void before() {}\n  void broken( { int x = ; }\n  void after() { before(); }\n}\n",
-		"broken.rs":   "fn before() {}\nfn broken( { let x = ; }\nfn after() { before(); }\n",
+		"broken.py":    "def before():\n    pass\n\ndef broken(:\n    return )\n\ndef after():\n    before()\n",
+		"Broken.java":  "class A {\n  void before() {}\n  void broken( { int x = ; }\n  void after() { before(); }\n}\n",
+		"broken.ts":    "function before(): void {}\nfunction broken(a: ) { let = ; }\nfunction after() { before(); }\n",
+		"broken.js":    "function before() {}\nconst x = (;\nfunction after() { before(); }\n",
+		"broken.c":     "int before(void) { return 1; }\nint broken(int a { return ; }\nint after(void) { return before(); }\n",
+		"broken.cpp":   "void before() {}\nint broken(std::vector<int> a { return ; }\nvoid after() { before(); }\n",
+		"Broken.cs":    "class A {\n  void before() {}\n  void broken( { int x = ; }\n  void after() { before(); }\n}\n",
+		"broken.rs":    "fn before() {}\nfn broken( { let x = ; }\nfn after() { before(); }\n",
+		"broken.swift": "func before() {}\nfunc broken( { let x = }\nfunc after() { before() }\n",
 	}
 	for path, content := range cases {
 		analysis := analyze(t, a, path, []byte(content))
@@ -312,13 +313,14 @@ func TestSyntaxErrorsAreRegionsAndTheRestIsAnalysed(t *testing.T) {
 func TestInvalidUTF8NeverReachesText(t *testing.T) {
 	a := testAnalyzer(t)
 	cases := map[string]string{
-		"bad.py":   "def caf\xff\xfe():\n    pass\n\ndef good():\n    caf\xff\xfe()\n",
-		"bad.js":   "function \xc3\x28x() {}\nimport y from \"mod\xff\";\nfunction good() {}\n",
-		"Bad.java": "class C\xff { void m\xe2\x82() {} void good() {} }\n",
-		"bad.c":    "int caf\xff\xfe(void) { return 0; }\nint good(void) { return caf\xff\xfe(); }\n",
-		"bad.cpp":  "struct S\xc3\x28 { void m\xe2\x82() {} };\nvoid good() { S\xc3\x28 s; }\n",
-		"Bad.cs":   "class C\xff { void m\xe2\x82() {} void good() {} }\n",
-		"bad.rs":   "fn caf\xff\xfe() {}\nfn good() { caf\xff\xfe(); }\n",
+		"bad.py":    "def caf\xff\xfe():\n    pass\n\ndef good():\n    caf\xff\xfe()\n",
+		"bad.js":    "function \xc3\x28x() {}\nimport y from \"mod\xff\";\nfunction good() {}\n",
+		"Bad.java":  "class C\xff { void m\xe2\x82() {} void good() {} }\n",
+		"bad.c":     "int caf\xff\xfe(void) { return 0; }\nint good(void) { return caf\xff\xfe(); }\n",
+		"bad.cpp":   "struct S\xc3\x28 { void m\xe2\x82() {} };\nvoid good() { S\xc3\x28 s; }\n",
+		"Bad.cs":    "class C\xff { void m\xe2\x82() {} void good() {} }\n",
+		"bad.rs":    "fn caf\xff\xfe() {}\nfn good() { caf\xff\xfe(); }\n",
+		"bad.swift": "func caf\xff\xfe() {}\nfunc good() { caf\xff\xfe() }\n",
 	}
 	for path, content := range cases {
 		analysis := analyze(t, a, path, []byte(content))
@@ -349,16 +351,18 @@ func TestDeeplyNestedInputDoesNotCrashOrHang(t *testing.T) {
 	a := testAnalyzer(t)
 	depth := 100000
 	cases := map[string][]byte{
-		"nested.js":   append(append([]byte("const x = "), bytes.Repeat([]byte("["), depth)...), bytes.Repeat([]byte("]"), depth)...),
-		"nested.py":   append(append([]byte("x = "), bytes.Repeat([]byte("("), depth)...), bytes.Repeat([]byte(")"), depth)...),
-		"Nested.java": append(append([]byte("class A { int x = "), bytes.Repeat([]byte("("), depth)...), append(bytes.Repeat([]byte(")"), depth), []byte("1; }")...)...),
-		"open.ts":     bytes.Repeat([]byte("{"), depth),
-		"nested.c":    append(append([]byte("int x = "), bytes.Repeat([]byte("("), depth)...), bytes.Repeat([]byte(")"), depth)...),
-		"nested.cpp":  append(append([]byte("auto x = "), bytes.Repeat([]byte("{"), depth)...), bytes.Repeat([]byte("}"), depth)...),
-		"deep.cpp":    bytes.Repeat([]byte("namespace a { "), depth/10),
-		"nested.rs":   append(append([]byte("const X: u8 = "), bytes.Repeat([]byte("("), depth)...), bytes.Repeat([]byte(")"), depth)...),
-		"Nested.cs":   append(append([]byte("class A { int x = "), bytes.Repeat([]byte("("), depth)...), append(bytes.Repeat([]byte(")"), depth), []byte("1; }")...)...),
-		"open.rs":     bytes.Repeat([]byte("{"), depth),
+		"nested.js":    append(append([]byte("const x = "), bytes.Repeat([]byte("["), depth)...), bytes.Repeat([]byte("]"), depth)...),
+		"nested.py":    append(append([]byte("x = "), bytes.Repeat([]byte("("), depth)...), bytes.Repeat([]byte(")"), depth)...),
+		"Nested.java":  append(append([]byte("class A { int x = "), bytes.Repeat([]byte("("), depth)...), append(bytes.Repeat([]byte(")"), depth), []byte("1; }")...)...),
+		"open.ts":      bytes.Repeat([]byte("{"), depth),
+		"nested.c":     append(append([]byte("int x = "), bytes.Repeat([]byte("("), depth)...), bytes.Repeat([]byte(")"), depth)...),
+		"nested.cpp":   append(append([]byte("auto x = "), bytes.Repeat([]byte("{"), depth)...), bytes.Repeat([]byte("}"), depth)...),
+		"deep.cpp":     bytes.Repeat([]byte("namespace a { "), depth/10),
+		"nested.rs":    append(append([]byte("const X: u8 = "), bytes.Repeat([]byte("("), depth)...), bytes.Repeat([]byte(")"), depth)...),
+		"Nested.cs":    append(append([]byte("class A { int x = "), bytes.Repeat([]byte("("), depth)...), append(bytes.Repeat([]byte(")"), depth), []byte("1; }")...)...),
+		"open.rs":      bytes.Repeat([]byte("{"), depth),
+		"nested.swift": append(append([]byte("let x = "), bytes.Repeat([]byte("["), depth)...), bytes.Repeat([]byte("]"), depth)...),
+		"open.swift":   bytes.Repeat([]byte("{"), depth),
 	}
 	for path, content := range cases {
 		started := time.Now()
