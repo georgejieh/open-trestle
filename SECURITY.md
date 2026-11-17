@@ -8,7 +8,7 @@ Open Trestle is experimental. No release is currently supported for production u
 
 Do not report vulnerabilities in a public issue. Use private vulnerability reporting instead. Open the [Security tab](https://github.com/georgejieh/open-trestle/security) of the repository and choose **Report a vulnerability**, or go directly to the [new advisory form](https://github.com/georgejieh/open-trestle/security/advisories/new).
 
-A report should include the affected revision, the impact, the steps to reproduce it, and any relevant proof. Do not include credentials, customer source, tokens, or exploit payloads that would create unnecessary risk.
+A report should include the affected revision, the impact, the steps to reproduce it, and any supporting material. Do not include credentials, customer source, tokens, or exploit payloads that would create unnecessary risk.
 
 ## Response goals
 
@@ -16,4 +16,4 @@ Maintainers aim to acknowledge a valid report within three business days. They t
 
 ## Security design commitments
 
-The project intends to enforce least privilege, immutable evidence, strict tenant and repository scope, provider-route policy, default-deny networking for execution, and explicit authorization for dynamic validation. These are planned product controls until a released version demonstrates them with test and release evidence.
+The project intends to enforce least privilege, tenant and repository scope, provider-route policy, default-deny networking for execution, and explicit authorization for dynamic validation. These are planned controls until a release includes them.
