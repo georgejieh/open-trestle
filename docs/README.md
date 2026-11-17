@@ -19,6 +19,7 @@ no release yet, and each page describes what the code does today. The
 - [Specialist profiles](agent-profiles.md): the nine packaged reviewers.
 - [Remote model review](remote-model-review.md): OpenRouter, OpenCode Go and Ollama Cloud.
 - [Local models](named-local-runtimes.md): Ollama, llama.cpp, vLLM, LM Studio and other servers on your machine.
+- [Local servers without a key](local-provider-no-auth.md): declare a local model server that needs no API key.
 - [Model catalog](model-catalog.md): how setup learns model facts.
 - [Review feedback](local-feedback.md): record your own notes on a past review so that later reviews can use them.
 
@@ -62,3 +63,4 @@ These pages are for running the daemon for a team or as a shared deployment.
 - [Architecture](architecture.md) and [roadmap](roadmap.md).
 - [Quality evaluation](quality-evaluation.md) and [model result evaluation](model-result-evaluation.md).
 - [Review-run runtime](review-run-runtime.md) and its handlers: [source acquisition](source-acquisition-handler.md), [change model](change-model-handler.md), [evidence](deterministic-evidence-handler.md), [semantic impact](semantic-impact.md), [memory retrieval](memory-retrieval-handler.md), [context assembly](context-assembly-handler.md), [candidate generation](model-generation-handler.md), [verification](model-verification-handler.md), [publication readiness](publication-readiness-handler.md) and [publication](publication-handler.md).
+- Runtime internals: [handler catalogs](runtime-handler-catalogs.md), [artifact exchange](runtime-artifacts.md), [task notifications](task-notifications.md) and [automatic finalization](automatic-finalization.md).
