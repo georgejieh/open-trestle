@@ -3,7 +3,6 @@
 package secretscan
 
 import (
-	"os"
 	"os/exec"
 	"path/filepath"
 	"syscall"
@@ -19,7 +18,7 @@ func openVerifiedHelper(path string, expectedDigest string) (verifiedHelper, err
 		return verifiedHelper{}, ErrHelperUntrusted
 	}
 	resolved, err := filepath.EvalSymlinks(path)
-	if err != nil || !filepath.IsAbs(resolved) || verifyHelperDirectories(filepath.Dir(resolved)) != nil {
+	if err != nil || !filepath.IsAbs(resolved) || !trustedAncestors(filepath.Dir(resolved)) {
 		return verifiedHelper{}, ErrHelperUntrusted
 	}
 	file, _, err := openHelperFile(resolved, expectedDigest)
@@ -27,24 +26,6 @@ func openVerifiedHelper(path string, expectedDigest string) (verifiedHelper, err
 		return verifiedHelper{}, err
 	}
 	return verifiedHelper{file: file, execPath: resolved, displayPath: resolved}, nil
-}
-
-func verifyHelperDirectories(directory string) error {
-	for {
-		info, err := os.Lstat(directory)
-		if err != nil || !info.IsDir() {
-			return ErrHelperUntrusted
-		}
-		status, ok := info.Sys().(*syscall.Stat_t)
-		if !ok || !trustedHelperOwner(status.Uid) || info.Mode().Perm()&0o022 != 0 && info.Mode()&os.ModeSticky == 0 {
-			return ErrHelperUntrusted
-		}
-		parent := filepath.Dir(directory)
-		if parent == directory {
-			return nil
-		}
-		directory = parent
-	}
 }
 
 // configureHelperCommand puts the helper in its own process group. macOS has

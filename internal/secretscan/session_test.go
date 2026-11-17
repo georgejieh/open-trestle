@@ -82,10 +82,16 @@ func runSessionTestHelper() int {
 }
 
 // sessionHelperEnvironmentClean checks the spawn recipe from inside the
-// helper: root working directory, empty environment, own process group, and
-// no inherited descriptor that refers to a file.
+// helper: a private working directory, as the real helper requires, an empty
+// environment, its own process group, and no inherited descriptor that
+// refers to a file.
 func sessionHelperEnvironmentClean() bool {
-	if cwd, err := os.Getwd(); err != nil || cwd != "/" || len(os.Environ()) != 0 || syscall.Getpgrp() != os.Getpid() {
+	cwd, err := os.Getwd()
+	if err != nil || len(os.Environ()) != 0 || syscall.Getpgrp() != os.Getpid() {
+		return false
+	}
+	info, err := os.Lstat(cwd)
+	if err != nil || !info.IsDir() || info.Mode().Perm()&0o077 != 0 || info.Sys().(*syscall.Stat_t).Uid != uint32(os.Geteuid()) {
 		return false
 	}
 	entries, err := os.ReadDir("/proc/self/fd")
@@ -258,6 +264,7 @@ type sessionTestHelper struct {
 	directory string
 	path      string
 	digest    string
+	cache     string
 }
 
 func newSessionTestHelper(t *testing.T) sessionTestHelper {
@@ -281,18 +288,26 @@ func newSessionTestHelper(t *testing.T) sessionTestHelper {
 	if err := os.Chmod(path, 0555); err != nil {
 		t.Fatal(err)
 	}
+	cache := filepath.Join(directory, "cache")
+	if err := os.Mkdir(cache, 0700); err != nil {
+		t.Fatal(err)
+	}
 	digest := sha256.Sum256(binary)
-	return sessionTestHelper{directory: directory, path: path, digest: hex.EncodeToString(digest[:])}
+	return sessionTestHelper{directory: directory, path: path, digest: hex.EncodeToString(digest[:]), cache: cache}
 }
 
 func (helper sessionTestHelper) settings(watchdog time.Duration) sessionSettings {
 	return sessionSettings{
-		config:         SessionConfig{HelperPath: helper.path, HelperSHA256: helper.digest, BuildProfile: HostRE2BuildProfile},
+		config:         helper.config(),
 		scanWatchdog:   watchdog,
 		startAllowance: 0,
 		scanLimit:      sessionScanLimit,
 		random:         &countingEntropy{},
 	}
+}
+
+func (helper sessionTestHelper) config() SessionConfig {
+	return SessionConfig{HelperPath: helper.path, HelperSHA256: helper.digest, BuildProfile: HostRE2BuildProfile, CacheDirectory: helper.cache}
 }
 
 func openSessionForTest(t *testing.T, settings sessionSettings) *Session {
@@ -448,8 +463,8 @@ func TestSessionSpawnRecipe(t *testing.T) {
 	if attributes == nil || !attributes.Setpgid || attributes.Pdeathsig != syscall.SIGKILL {
 		t.Fatalf("missing process group or parent-death signal: %#v", attributes)
 	}
-	if command.Dir != "/" || command.Env == nil || len(command.Env) != 0 || command.ExtraFiles != nil {
-		t.Fatal("helper is not started with an empty environment, root directory and only stdio")
+	if command.Dir != helper.cache || command.Env == nil || len(command.Env) != 0 || command.ExtraFiles != nil {
+		t.Fatal("helper is not started with an empty environment, the cache directory and only stdio")
 	}
 	if !strings.HasPrefix(command.Path, "/proc/self/fd/") || len(command.Args) != 2 || command.Args[0] != helper.path || command.Args[1] != helperSessionArgument {
 		t.Fatalf("helper is not executed through its verified descriptor: %q %q", command.Path, command.Args)
@@ -559,6 +574,94 @@ func TestOpenSessionRefusesUntrustedHelperBeforeSpawn(t *testing.T) {
 				t.Fatalf("untrusted helper was not refused before spawn: %v, spawned=%v", err, spawned.Load())
 			}
 		})
+	}
+}
+
+func TestOpenSessionRefusesUntrustedCacheDirectoryBeforeSpawn(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*testing.T, *sessionSettings, sessionTestHelper)
+		want   error
+	}{
+		{"empty", func(_ *testing.T, settings *sessionSettings, _ sessionTestHelper) {
+			settings.config.CacheDirectory = ""
+		}, ErrSessionConfig},
+		{"relative", func(_ *testing.T, settings *sessionSettings, _ sessionTestHelper) {
+			settings.config.CacheDirectory = "cache"
+		}, ErrSessionConfig},
+		{"unclean", func(_ *testing.T, settings *sessionSettings, helper sessionTestHelper) {
+			settings.config.CacheDirectory = helper.directory + "/./cache"
+		}, ErrSessionConfig},
+		{"filesystem root", func(_ *testing.T, settings *sessionSettings, _ sessionTestHelper) {
+			settings.config.CacheDirectory = "/"
+		}, ErrSessionConfig},
+		{"missing", func(_ *testing.T, settings *sessionSettings, helper sessionTestHelper) {
+			settings.config.CacheDirectory = helper.cache + ".missing"
+		}, ErrCacheUntrusted},
+		{"group writable", func(t *testing.T, _ *sessionSettings, helper sessionTestHelper) { chmodForTest(t, helper.cache, 0770) }, ErrCacheUntrusted},
+		{"group readable", func(t *testing.T, _ *sessionSettings, helper sessionTestHelper) { chmodForTest(t, helper.cache, 0740) }, ErrCacheUntrusted},
+		{"other searchable", func(t *testing.T, _ *sessionSettings, helper sessionTestHelper) { chmodForTest(t, helper.cache, 0701) }, ErrCacheUntrusted},
+		{"regular file", func(_ *testing.T, settings *sessionSettings, helper sessionTestHelper) {
+			settings.config.CacheDirectory = helper.path
+		}, ErrCacheUntrusted},
+		{"symbolic link", func(t *testing.T, settings *sessionSettings, helper sessionTestHelper) {
+			link := helper.cache + ".link"
+			if err := os.Symlink(helper.cache, link); err != nil {
+				t.Fatal(err)
+			}
+			settings.config.CacheDirectory = link
+		}, ErrCacheUntrusted},
+		{"other-writable parent", func(t *testing.T, settings *sessionSettings, helper sessionTestHelper) {
+			parent := filepath.Join(helper.directory, "shared")
+			if err := os.Mkdir(parent, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(filepath.Join(parent, "cache"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			chmodForTest(t, parent, 0777)
+			settings.config.CacheDirectory = filepath.Join(parent, "cache")
+		}, ErrCacheUntrusted},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			helper := newSessionTestHelper(t)
+			settings := helper.settings(5 * time.Second)
+			test.mutate(t, &settings, helper)
+			var spawned atomic.Bool
+			settings.beforeStart = func() { spawned.Store(true) }
+			session, err := openSession(context.Background(), settings)
+			if session != nil || !errors.Is(err, test.want) || spawned.Load() {
+				t.Fatalf("untrusted cache directory was not refused before spawn: %v, spawned=%v", err, spawned.Load())
+			}
+		})
+	}
+}
+
+func TestOpenSessionResolvesSymbolicLinksAboveTheCacheDirectory(t *testing.T) {
+	helper := newSessionTestHelper(t)
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(helper.directory, link); err != nil {
+		t.Fatal(err)
+	}
+	settings := helper.settings(5 * time.Second)
+	settings.config.CacheDirectory = filepath.Join(link, "cache")
+	session := openSessionForTest(t, settings)
+	if session.process.command.Dir != helper.cache {
+		t.Fatalf("helper started in %q, want the resolved cache directory", session.process.command.Dir)
+	}
+	if result, err := session.Scan(context.Background(), [][]byte{[]byte("clean")}); err != nil || !result.Complete() {
+		t.Fatalf("scan failed: %v", err)
+	}
+	if err := session.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func chmodForTest(t *testing.T, path string, mode os.FileMode) {
+	t.Helper()
+	if err := os.Chmod(path, mode); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -964,7 +1067,8 @@ func TestRunReviewSession(t *testing.T) {
 	if !errors.Is(err, reviewFailure) || !errors.Is(err, errHelperExit) {
 		t.Fatalf("review and close failures were not both reported: %v", err)
 	}
-	untrusted := SessionConfig{HelperPath: helper.path, HelperSHA256: strings.Repeat("0", 64), BuildProfile: HostRE2BuildProfile}
+	untrusted := helper.config()
+	untrusted.HelperSHA256 = strings.Repeat("0", 64)
 	ran := false
 	if err := RunReviewSession(context.Background(), untrusted.Opener(), func(context.Context, ReviewSession) error { ran = true; return nil }); !errors.Is(err, ErrHelperUntrusted) || ran {
 		t.Fatalf("review ran without a trusted helper: %v", err)
@@ -977,7 +1081,7 @@ func TestRunReviewSession(t *testing.T) {
 // The hanging helper does not read stdin, so EOF cannot be what stops it.
 func TestSessionHelperDiesWithItsParent(t *testing.T) {
 	if pidPath := os.Getenv("SECRETSCAN_SESSION_PARENT_PIDS"); pidPath != "" {
-		runSessionParentForTest(pidPath, os.Getenv("SECRETSCAN_SESSION_PARENT_HELPER"), os.Getenv("SECRETSCAN_SESSION_PARENT_DIGEST"))
+		runSessionParentForTest(pidPath, os.Getenv("SECRETSCAN_SESSION_PARENT_HELPER"), os.Getenv("SECRETSCAN_SESSION_PARENT_DIGEST"), os.Getenv("SECRETSCAN_SESSION_PARENT_CACHE"))
 		return
 	}
 	helper := newSessionTestHelper(t)
@@ -986,7 +1090,8 @@ func TestSessionHelperDiesWithItsParent(t *testing.T) {
 	parent.Env = append(os.Environ(),
 		"SECRETSCAN_SESSION_PARENT_PIDS="+pidPath,
 		"SECRETSCAN_SESSION_PARENT_HELPER="+helper.path,
-		"SECRETSCAN_SESSION_PARENT_DIGEST="+helper.digest)
+		"SECRETSCAN_SESSION_PARENT_DIGEST="+helper.digest,
+		"SECRETSCAN_SESSION_PARENT_CACHE="+helper.cache)
 	if err := parent.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -1003,9 +1108,9 @@ func TestSessionHelperDiesWithItsParent(t *testing.T) {
 	requireProcessGone(t, pids[0])
 }
 
-func runSessionParentForTest(pidPath, helperPath, digest string) {
+func runSessionParentForTest(pidPath, helperPath, digest, cache string) {
 	settings := sessionSettings{
-		config:         SessionConfig{HelperPath: helperPath, HelperSHA256: digest, BuildProfile: HostRE2BuildProfile},
+		config:         SessionConfig{HelperPath: helperPath, HelperSHA256: digest, BuildProfile: HostRE2BuildProfile, CacheDirectory: cache},
 		scanWatchdog:   time.Minute,
 		startAllowance: time.Minute,
 		scanLimit:      sessionScanLimit,

@@ -98,8 +98,15 @@ func openVerifiedHelper(path string, expectedDigest string) (verifiedHelper, err
 	return verifiedHelper{file: file, execPath: path, displayPath: path}, nil
 }
 
-func helperWorkingDirectory(path string) string {
-	return filepath.VolumeName(path) + string(filepath.Separator)
+// openCacheDirectory refuses every directory. Owner-only access on Windows is
+// a property of the directory's ACL, which is not verified, and the helper
+// refuses every working directory on Windows for the same reason, so no
+// session starts on Windows.
+func openCacheDirectory(path string, _ bool) (string, error) {
+	if !validAbsolutePath(path) || filepath.Dir(path) == path {
+		return "", ErrSessionConfig
+	}
+	return "", ErrCacheUntrusted
 }
 
 // configureHelperCommand starts the helper suspended, so it runs no code

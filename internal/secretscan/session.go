@@ -37,6 +37,7 @@ const (
 var (
 	ErrSessionConfig    = errors.New("secret scan session configuration is invalid")
 	ErrHelperUntrusted  = errors.New("secret scan helper is not an unwritable regular file owned by root or the current user with the expected SHA-256")
+	ErrCacheUntrusted   = errors.New("secret scan cache is not a directory of the current user without group or other permissions on a path only root or the current user can change")
 	ErrSessionClosed    = errors.New("secret scan session is closed")
 	ErrSessionPoisoned  = errors.New("secret scan session failed earlier and accepts no further scans")
 	ErrSessionScanLimit = errors.New("secret scan session reached its limit of 64 scans")
@@ -57,8 +58,8 @@ var (
 	errScanIncomplete       = errors.New("secret scan did not complete")
 )
 
-// SessionConfig names the helper executable a Session runs and the build
-// profile its responses must carry.
+// SessionConfig names the helper executable a Session runs, the build profile
+// its responses must carry and the helper's compilation cache.
 type SessionConfig struct {
 	// HelperPath is the absolute, clean path of the helper executable.
 	HelperPath string
@@ -68,6 +69,14 @@ type SessionConfig struct {
 	// BuildProfile is the only build profile accepted in responses. It must
 	// be HostRE2BuildProfile, the profile the scan helper emits.
 	BuildProfile string
+	// CacheDirectory is the absolute, clean path of the helper's private
+	// compilation cache, which the helper gets as its working directory.
+	// The helper loads native code from it, so it must be a directory, not
+	// a symbolic link, owned by the effective user with no group or other
+	// permission bit, and every directory above it must be owned by root or
+	// the current user and writable by no one else unless it is sticky.
+	// Both checks run before every spawn. OpenSession never creates it.
+	CacheDirectory string
 }
 
 // ReviewSession is the scanner lifetime of one review: the review opens it at
@@ -159,11 +168,22 @@ type sessionSettings struct {
 	beforeStart    func()
 }
 
-// OpenSession verifies the helper file against config.HelperSHA256 and
-// spawns it with an empty environment, the filesystem root as its working
+// OpenSession verifies the helper file against config.HelperSHA256 and the
+// cache directory as SessionConfig.CacheDirectory describes, then spawns the
+// helper with an empty environment, the cache directory as its working
 // directory, only stdin, stdout and stderr, and its own process group. It
 // does not wait for the helper to become ready; the first exchange carries
 // the start allowance. ctx bounds only the open itself.
+//
+// The helper compiles its guest and starts libre2 before it reads the first
+// request. With a filled cache this fits the start allowance; with a cold
+// cache the compile can take longer, and the first Scan then
+// fails closed with a missed deadline and poisons the session.
+//
+// Sessions are tested on Linux. On Windows the cache check refuses every
+// directory, because owner-only access there is a property of the ACL,
+// which is not verified; the helper refuses every working directory on
+// Windows for the same reason. No session starts on Windows.
 func OpenSession(ctx context.Context, config SessionConfig) (*Session, error) {
 	return openSession(ctx, sessionSettings{
 		config:         config,
@@ -186,10 +206,14 @@ func openSession(ctx context.Context, settings sessionSettings) (*Session, error
 		return nil, err
 	}
 	defer helper.close()
+	directory, err := openCacheDirectory(settings.config.CacheDirectory, false)
+	if err != nil {
+		return nil, err
+	}
 	if ctx.Err() != nil {
 		return nil, errScanCanceled
 	}
-	process, err := startHelperProcess(helper, settings.beforeStart)
+	process, err := startHelperProcess(helper, directory, settings.beforeStart)
 	if err != nil {
 		return nil, err
 	}
@@ -197,10 +221,14 @@ func openSession(ctx context.Context, settings sessionSettings) (*Session, error
 }
 
 func validSessionSettings(settings sessionSettings) bool {
-	path := settings.config.HelperPath
-	return path != "" && filepath.IsAbs(path) && filepath.Clean(path) == path && validDigest(settings.config.HelperSHA256) &&
-		settings.config.BuildProfile == HostRE2BuildProfile &&
+	return validAbsolutePath(settings.config.HelperPath) && validDigest(settings.config.HelperSHA256) &&
+		settings.config.BuildProfile == HostRE2BuildProfile && validAbsolutePath(settings.config.CacheDirectory) &&
+		filepath.Dir(settings.config.CacheDirectory) != settings.config.CacheDirectory &&
 		settings.scanWatchdog > 0 && settings.startAllowance >= 0 && settings.scanLimit > 0 && settings.random != nil
+}
+
+func validAbsolutePath(path string) bool {
+	return path != "" && filepath.IsAbs(path) && filepath.Clean(path) == path
 }
 
 // Scan sends one request to the helper and waits for its response under the
@@ -487,7 +515,7 @@ type helperProcess struct {
 	reapOnce sync.Once
 }
 
-func startHelperProcess(helper verifiedHelper, beforeStart func()) (*helperProcess, error) {
+func startHelperProcess(helper verifiedHelper, directory string, beforeStart func()) (*helperProcess, error) {
 	var pipes [6]*os.File
 	closeAll := func() {
 		for _, pipe := range pipes {
@@ -511,7 +539,7 @@ func startHelperProcess(helper verifiedHelper, beforeStart func()) (*helperProce
 		Path:   helper.execPath,
 		Args:   []string{helper.displayPath, helperSessionArgument},
 		Env:    []string{},
-		Dir:    helperWorkingDirectory(helper.displayPath),
+		Dir:    directory,
 		Stdin:  stdinRead,
 		Stdout: stdoutWrite,
 		Stderr: stderrWrite,

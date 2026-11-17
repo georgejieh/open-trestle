@@ -14,7 +14,9 @@ func openVerifiedHelper(string, string) (verifiedHelper, error) {
 	return verifiedHelper{}, ErrScannerUnsupportedPlatform
 }
 
-func helperWorkingDirectory(string) string { return "/" }
+func openCacheDirectory(string, bool) (string, error) {
+	return "", ErrScannerUnsupportedPlatform
+}
 
 func configureHelperCommand(*exec.Cmd) {}
 

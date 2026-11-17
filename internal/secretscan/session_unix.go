@@ -5,7 +5,9 @@ package secretscan
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -46,7 +48,60 @@ func trustedHelperOwner(uid uint32) bool {
 	return uid == 0 || uid == uint32(os.Geteuid())
 }
 
-func helperWorkingDirectory(string) string { return "/" }
+// openCacheDirectory checks the helper's cache directory and returns the path
+// to start the helper in. Symbolic links above the directory are resolved
+// once, and every directory on the resolved path must be owned by root or the
+// current user and writable by no one else unless it is sticky, so no other
+// user can replace an entry on it between the check and the helper's start.
+// The directory itself must not be a symbolic link and must be owned by the
+// effective user with no group or other permission bit, which is what the
+// helper requires of its working directory. With create, a missing directory
+// is first created with mode 0700; nothing above it is ever created.
+func openCacheDirectory(path string, create bool) (string, error) {
+	if !validAbsolutePath(path) || filepath.Dir(path) == path {
+		return "", ErrSessionConfig
+	}
+	parent, err := filepath.EvalSymlinks(filepath.Dir(path))
+	if err != nil || !filepath.IsAbs(parent) || !trustedAncestors(parent) {
+		return "", ErrCacheUntrusted
+	}
+	directory := filepath.Join(parent, filepath.Base(path))
+	if create {
+		if err := os.Mkdir(directory, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+			return "", ErrCacheUntrusted
+		}
+	}
+	info, err := os.Lstat(directory)
+	if err != nil || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+		return "", ErrCacheUntrusted
+	}
+	status, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || status.Uid != uint32(os.Geteuid()) {
+		return "", ErrCacheUntrusted
+	}
+	return directory, nil
+}
+
+// trustedAncestors reports whether directory and every directory above it
+// are owned by root or the current user and, unless sticky, writable by no
+// one else.
+func trustedAncestors(directory string) bool {
+	for {
+		info, err := os.Lstat(directory)
+		if err != nil || !info.IsDir() {
+			return false
+		}
+		status, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || !trustedHelperOwner(status.Uid) || info.Mode().Perm()&0o022 != 0 && info.Mode()&os.ModeSticky == 0 {
+			return false
+		}
+		parent := filepath.Dir(directory)
+		if parent == directory {
+			return true
+		}
+		directory = parent
+	}
+}
 
 // processGroup is the helper's process group; the helper is its leader.
 type processGroup struct {
