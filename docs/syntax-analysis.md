@@ -16,7 +16,7 @@ Every name, qualifier and import path is repository text. It is carried as a `sy
 ## Analyzers
 
 - Go uses `semanticimpact.GoSyntaxAnalyzer`, built on `go/parser`.
-- The other languages use `internal/syntaxwasm`: tree-sitter grammars compiled to WebAssembly and run under wazero. Java, JavaScript, TypeScript, TSX, Python, C, C++, C#, Rust and Swift have query packs. PHP, Ruby and HTML have grammars in the modules but no query pack yet, so their files get a `no_query_pack` gap.
+- The other languages use `internal/syntaxwasm`: tree-sitter grammars compiled to WebAssembly and run under wazero. Java, JavaScript, TypeScript, TSX, Python, C, C++, C#, Rust, Swift, PHP, Ruby and HTML have query packs.
 
 `syntaxanalysis.NewDispatcher` routes each file to the first analyzer that supports its language.
 
@@ -87,3 +87,11 @@ python3 tools/build_syntax_modules.py --committed # check the committed modules 
 Every build compiles the modules twice, in separate directories from separate copies of the sources, and fails unless the two are byte-identical. To change a pin, edit the commit or archive entry in the manifest, run `--update`, and review the diff of the manifest and of `THIRD_PARTY_LICENSES/syntax-analysis`. The modules may link only wasi-libc and its startup file; the script refuses any other library, because its license texts are not shipped.
 
 A grammar that is not in a family yet needs a `sources` entry, a `grammars` entry, a place in a family, a `licenses` entry and a `syntaxanalysis.Language` value before its query pack.
+
+## PHP, Ruby and HTML
+
+PHP records namespaces, classes, interfaces, enums, functions, methods, properties, constants and file-level variables, and traits as classes. A member is exported unless it is private or protected; interface members and anything at file or namespace level are exported. A namespace without braces covers the file up to the next namespace declaration. A property declared in a constructor parameter list is not recorded, because the constructor would be its parent. Calls, `new`, type uses, `extends`, `implements`, trait `use`, attributes, `use` imports and `require` or `include` of a literal path are recorded. The names `self`, `static` and `parent` are not references.
+
+Ruby records modules, classes, methods, aliases, constants and class variables. A constant bound to `Struct.new`, `Class.new` or `Data.define` is a class, and one bound to `Module.new` is a module. The scope of a name such as `class A::B` is left out of the name. `private`, `protected`, `public`, `module_function`, `private_constant` and `private_class_method` set the exported flag, and a `class << self` block adds its methods to the class around it. Names made by `attr_accessor`, `define_method` and similar calls are not recorded, because they are symbols. Calls, `Name.new`, superclasses, `include`, `extend`, `prepend`, `rescue` types and `require`, `require_relative`, `load` and `autoload` with a literal path are recorded. A bare identifier is not a call, because it may be a local variable.
+
+HTML has no functions or types. An element with an `id` is recorded as a variable named by the id, nested by element. A tag name with a hyphen is recorded as a construction of that custom element. The `src`, `href` and `action` attributes are recorded as imports with the value as written, except the `href` of `base`. Fragment-only values and the `javascript:`, `data:`, `mailto:`, `tel:`, `sms:`, `blob:` and `about:` schemes are left out, and so are `srcset`, `formaction` and `poster`. The code inside `script` and `style` elements is not analysed.
