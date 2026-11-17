@@ -30,6 +30,10 @@ const (
 	sessionStartAllowance = 10 * time.Second
 	// sessionScanLimit is the most scans one helper process may serve.
 	sessionScanLimit = 64
+	// prewarmDeadline bounds Prewarm from the spawn to the helper's exit.
+	// Filling a cold cache compiles the guest and libre2, which takes tens
+	// of seconds; the deadline leaves room for much slower machines.
+	prewarmDeadline = 3 * time.Minute
 )
 
 // Session refusals and failures. None of them carries source content,
@@ -75,7 +79,8 @@ type SessionConfig struct {
 	// a symbolic link, owned by the effective user with no group or other
 	// permission bit, and every directory above it must be owned by root or
 	// the current user and writable by no one else unless it is sticky.
-	// Both checks run before every spawn. OpenSession never creates it.
+	// Both checks run before every spawn. OpenSession never creates it;
+	// Prewarm creates the final directory with mode 0700 if it is missing.
 	CacheDirectory string
 }
 
@@ -165,6 +170,7 @@ type sessionSettings struct {
 	startAllowance time.Duration
 	scanLimit      int
 	random         io.Reader
+	createCache    bool
 	beforeStart    func()
 }
 
@@ -176,14 +182,17 @@ type sessionSettings struct {
 // the start allowance. ctx bounds only the open itself.
 //
 // The helper compiles its guest and starts libre2 before it reads the first
-// request. With a filled cache this fits the start allowance; with a cold
-// cache the compile can take longer, and the first Scan then
-// fails closed with a missed deadline and poisons the session.
+// request. With a cache that Prewarm filled this fits the start allowance.
+// With a cold cache the compile can take longer than the first exchange's
+// deadline, and the first Scan then fails closed with a missed deadline and
+// poisons the session; a review must not open its session before Prewarm
+// has succeeded once for the configuration.
 //
 // Sessions are tested on Linux. On Windows the cache check refuses every
 // directory, because owner-only access there is a property of the ACL,
 // which is not verified; the helper refuses every working directory on
-// Windows for the same reason. No session starts on Windows.
+// Windows for the same reason. Neither a session nor Prewarm starts on
+// Windows.
 func OpenSession(ctx context.Context, config SessionConfig) (*Session, error) {
 	return openSession(ctx, sessionSettings{
 		config:         config,
@@ -192,6 +201,42 @@ func OpenSession(ctx context.Context, config SessionConfig) (*Session, error) {
 		scanLimit:      sessionScanLimit,
 		random:         rand.Reader,
 	})
+}
+
+// Prewarm fills the helper's compilation cache so that later sessions with
+// the same configuration start within their start allowance. It verifies the
+// helper and the cache directory as OpenSession does, except that it first
+// creates a missing final cache directory with mode 0700 when every
+// directory above it passes the checks; it creates nothing else. It then runs
+// the helper in session mode with standard input closed at once, so the
+// helper compiles its guest, starts libre2 and exits. Prewarm returns nil
+// only if the helper exits 0 within prewarmDeadline of its spawn, or sooner
+// if ctx ends, without writing to standard output or standard error. On any
+// failure it kills the helper's process group, reaps it and returns the
+// failure.
+func Prewarm(ctx context.Context, config SessionConfig) error {
+	return prewarm(ctx, sessionSettings{
+		config:         config,
+		scanWatchdog:   sessionScanWatchdog,
+		startAllowance: prewarmDeadline - sessionScanWatchdog,
+		scanLimit:      sessionScanLimit,
+		random:         rand.Reader,
+		createCache:    true,
+	})
+}
+
+// prewarm opens a session and closes it at once. Close closes stdin and
+// requires no output and a clean exit by the first exchange's deadline, the
+// start allowance plus the watchdog after the spawn; it kills and reaps the
+// process group in every case.
+func prewarm(ctx context.Context, settings sessionSettings) error {
+	session, err := openSession(ctx, settings)
+	if err != nil {
+		return err
+	}
+	stop := context.AfterFunc(ctx, func() { session.process.failWith(errScanCanceled) })
+	defer stop()
+	return session.Close()
 }
 
 func openSession(ctx context.Context, settings sessionSettings) (*Session, error) {
@@ -206,7 +251,7 @@ func openSession(ctx context.Context, settings sessionSettings) (*Session, error
 		return nil, err
 	}
 	defer helper.close()
-	directory, err := openCacheDirectory(settings.config.CacheDirectory, false)
+	directory, err := openCacheDirectory(settings.config.CacheDirectory, settings.createCache)
 	if err != nil {
 		return nil, err
 	}

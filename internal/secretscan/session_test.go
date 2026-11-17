@@ -46,6 +46,9 @@ func runSessionTestHelper() int {
 		_, _ = os.Stderr.Write([]byte("x"))
 		return 91
 	}
+	if code := startSessionTestHelper(); code >= 0 {
+		return code
+	}
 	var atClose sessionHelperClose
 	for {
 		var prefix [framePrefixBytes]byte
@@ -118,6 +121,37 @@ func sessionHelperEnvironmentClean() bool {
 		}
 	}
 	return true
+}
+
+// sessionHelperStartFile is a file in the fake helper's working directory
+// whose markers select what the helper does before it reads stdin, for tests
+// in which the helper receives no request.
+const sessionHelperStartFile = "fake-helper-start"
+
+// startSessionTestHelper acts on the markers of sessionHelperStartFile. It
+// returns an exit code to end the helper, or -1 to read requests.
+func startSessionTestHelper() int {
+	content, err := os.ReadFile(sessionHelperStartFile)
+	if err != nil {
+		return -1
+	}
+	for _, marker := range strings.Fields(string(content)) {
+		switch marker {
+		case "pid":
+			if !publishTestPIDs("pid", os.Getpid()) {
+				return 96
+			}
+		case "hang":
+			hangForever()
+		case "exit71":
+			return 71
+		case "stdout":
+			_, _ = os.Stdout.Write([]byte("x"))
+		case "stderr":
+			_, _ = os.Stderr.Write([]byte("x"))
+		}
+	}
+	return -1
 }
 
 func hangForever() {
@@ -969,7 +1003,7 @@ func TestSessionDeadlineIncludesStartAllowanceOnlyForTheFirstExchange(t *testing
 	if got := session.deadline(spawned.Add(time.Second)); !got.Equal(spawned.Add(7 * time.Second)) {
 		t.Fatalf("later exchange deadline %v", got.Sub(spawned))
 	}
-	if sessionScanWatchdog != 6*time.Second || sessionStartAllowance != 10*time.Second || sessionScanLimit != 64 || helperSessionArgument != "--stdio-v1-session" {
+	if sessionScanWatchdog != 6*time.Second || sessionStartAllowance != 10*time.Second || sessionScanLimit != 64 || helperSessionArgument != "--stdio-v1-session" || prewarmDeadline != 3*time.Minute {
 		t.Fatal("production session limits changed")
 	}
 }
@@ -986,6 +1020,129 @@ func TestSessionFirstScanUsesStartAllowance(t *testing.T) {
 	if result.Complete() || !errors.Is(err, errHelperDeadline) {
 		t.Fatalf("later scan was not held to the watchdog: %v", err)
 	}
+}
+
+// TestSessionFirstScanPastTheStartAllowanceFailsClosed is what a session on
+// a cold cache sees: the helper is still compiling when the first exchange's
+// deadline passes, so the scan fails closed and the session is poisoned.
+func TestSessionFirstScanPastTheStartAllowanceFailsClosed(t *testing.T) {
+	helper := newSessionTestHelper(t)
+	settings := helper.settings(100 * time.Millisecond)
+	settings.startAllowance = 200 * time.Millisecond
+	session := openSessionForTest(t, settings)
+	pid := session.helperPID()
+	started := time.Now()
+	result, err := session.Scan(context.Background(), [][]byte{[]byte("session:slow=5s")})
+	if result.Complete() || !errors.Is(err, errHelperDeadline) || time.Since(started) > 2*time.Second {
+		t.Fatalf("first scan past the start allowance did not fail closed at the deadline: %v", err)
+	}
+	requireReapedAndGroupGone(t, pid)
+	requirePoisoned(t, session, errHelperDeadline)
+}
+
+func (helper sessionTestHelper) prewarmSettings(watchdog time.Duration) sessionSettings {
+	settings := helper.settings(watchdog)
+	settings.createCache = true
+	return settings
+}
+
+func writeHelperStartFile(t *testing.T, cache, markers string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(cache, sessionHelperStartFile), []byte(markers), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPrewarmRunsTheHelperWithStdinClosedAndReapsIt(t *testing.T) {
+	helper := newSessionTestHelper(t)
+	writeHelperStartFile(t, helper.cache, "pid")
+	if err := prewarm(context.Background(), helper.prewarmSettings(5*time.Second)); err != nil {
+		t.Fatalf("prewarm failed: %v", err)
+	}
+	pids := readTestPIDs(t, filepath.Join(helper.cache, "pid"))
+	requireReapedAndGroupGone(t, pids[0])
+	if err := Prewarm(context.Background(), helper.config()); err != nil {
+		t.Fatalf("production prewarm failed: %v", err)
+	}
+}
+
+func TestPrewarmCreatesOnlyTheFinalCacheDirectory(t *testing.T) {
+	helper := newSessionTestHelper(t)
+	settings := helper.prewarmSettings(5 * time.Second)
+	settings.config.CacheDirectory = filepath.Join(helper.directory, "new-cache")
+	if err := prewarm(context.Background(), settings); err != nil {
+		t.Fatalf("prewarm with a missing cache directory failed: %v", err)
+	}
+	info, err := os.Lstat(settings.config.CacheDirectory)
+	if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 {
+		t.Fatalf("prewarm did not create a private cache directory: %v", err)
+	}
+	var spawned atomic.Bool
+	settings.beforeStart = func() { spawned.Store(true) }
+	settings.config.CacheDirectory = filepath.Join(helper.directory, "missing", "cache")
+	if err := prewarm(context.Background(), settings); !errors.Is(err, ErrCacheUntrusted) || spawned.Load() {
+		t.Fatalf("prewarm under a missing parent was not refused before spawn: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(helper.directory, "missing")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("prewarm created a parent directory")
+	}
+	settings.config.CacheDirectory = helper.cache
+	chmodForTest(t, helper.cache, 0770)
+	if err := prewarm(context.Background(), settings); !errors.Is(err, ErrCacheUntrusted) || spawned.Load() {
+		t.Fatalf("prewarm with a group-writable cache was not refused before spawn: %v", err)
+	}
+	settings.config.CacheDirectory = filepath.Join(helper.directory, "other-cache")
+	settings.config.HelperSHA256 = strings.Repeat("0", 64)
+	if err := prewarm(context.Background(), settings); !errors.Is(err, ErrHelperUntrusted) || spawned.Load() {
+		t.Fatalf("prewarm with an untrusted helper was not refused before spawn: %v", err)
+	}
+}
+
+func TestPrewarmFailsClosed(t *testing.T) {
+	tests := []struct {
+		name    string
+		markers string
+		want    error
+	}{
+		{"hang", "pid hang", errHelperDeadline},
+		{"non-zero exit", "pid exit71", errHelperExit},
+		{"standard output", "pid stdout", errHelperTrailingOutput},
+		{"standard error", "pid stderr", errHelperStderr},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			helper := newSessionTestHelper(t)
+			writeHelperStartFile(t, helper.cache, test.markers)
+			started := time.Now()
+			if err := prewarm(context.Background(), helper.prewarmSettings(time.Second)); !errors.Is(err, test.want) {
+				t.Fatalf("prewarm did not fail closed: %v", err)
+			}
+			if time.Since(started) > 3*time.Second {
+				t.Fatalf("prewarm failure took %v", time.Since(started))
+			}
+			requireReapedAndGroupGone(t, readTestPIDs(t, filepath.Join(helper.cache, "pid"))[0])
+		})
+	}
+	t.Run("canceled", func(t *testing.T) {
+		helper := newSessionTestHelper(t)
+		writeHelperStartFile(t, helper.cache, "pid hang")
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		pidPath := filepath.Join(helper.cache, "pid")
+		go func() {
+			for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+				if _, err := os.Stat(pidPath); err == nil {
+					break
+				}
+			}
+			cancel()
+		}()
+		started := time.Now()
+		if err := prewarm(ctx, helper.prewarmSettings(time.Minute)); !errors.Is(err, errScanCanceled) || time.Since(started) > 3*time.Second {
+			t.Fatalf("canceled prewarm did not stop the helper promptly: %v", err)
+		}
+		requireReapedAndGroupGone(t, readTestPIDs(t, pidPath)[0])
+	})
 }
 
 func TestSessionSanitizeMasksAndRescansInTheSession(t *testing.T) {
