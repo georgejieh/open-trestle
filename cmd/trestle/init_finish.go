@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -63,7 +64,10 @@ func (w *initWizard) existingSetup() (bool, error) {
 	if len(entries) != 0 {
 		return false, initStopf(initExitRefused, "%s already contains files but no finished Open Trestle setup (an earlier setup may have stopped part-way). Nothing was changed. Keep or inspect those files, then pass --directory with a new, empty folder.", initDisplayPath(dir))
 	}
-	if info.Mode().Perm() != 0o700 {
+	if !fileauthority.PrivateDirectory(dir, info) {
+		if runtime.GOOS == "windows" {
+			return false, initStopf(initExitRefused, "%s exists but is not private: accounts other than yours, SYSTEM and Administrators have access to it. Pass --directory with a new folder.", initDisplayPath(dir))
+		}
 		return false, initStopf(initExitRefused, "%s exists but is not private (mode %04o). Run chmod 700 %s, or pass --directory with a new folder.", initDisplayPath(dir), info.Mode().Perm(), initShellQuote(dir))
 	}
 	return false, nil
@@ -329,10 +333,10 @@ func (w *initWizard) stepWrite() (int, error) {
 	}
 	created := false
 	if _, err := os.Lstat(dir); os.IsNotExist(err) {
-		if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
+		if err := fileauthority.MkdirAllPrivate(filepath.Dir(dir)); err != nil {
 			return 0, initStopf(initExitRefused, "could not create %s. Pass --directory with a folder you can write.", initDisplayPath(filepath.Dir(dir)))
 		}
-		if err := os.Mkdir(dir, 0o700); err != nil {
+		if err := fileauthority.MkdirPrivate(dir); err != nil {
 			return 0, initStopf(initExitRefused, "could not create %s. Pass --directory with a folder you can write.", initDisplayPath(dir))
 		}
 		created = true

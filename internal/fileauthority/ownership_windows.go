@@ -118,6 +118,10 @@ func MkdirAllPrivate(path string) error {
 	return nil
 }
 
+// MkdirPrivate creates a new directory at path that is owner-only from the
+// start, as ownersonly.Mkdir makes it. It fails if anything exists at path.
+func MkdirPrivate(path string) error { return ownersonly.Mkdir(path) }
+
 // CreatePrivateFile creates a new file at path for writing that is
 // owner-only from the start, as ownersonly.CreateFile makes it. It fails if
 // anything exists at path.

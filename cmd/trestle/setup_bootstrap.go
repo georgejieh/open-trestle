@@ -164,7 +164,7 @@ func runSetupBootstrapWithContext(ctx context.Context, args []string, stdout, st
 		return writeSetupBootstrapRefusal(stdout)
 	}
 	info, err := os.Lstat(directoryAbs)
-	if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 || fileauthority.CheckDirectory(directoryAbs) != nil {
+	if err != nil || !fileauthority.PrivateDirectory(directoryAbs, info) || fileauthority.CheckDirectory(directoryAbs) != nil {
 		return writeSetupBootstrapRefusal(stdout)
 	}
 	for _, name := range []string{"plan.json", "plan.json.lock", "plan.json.receipts", "plan.json.next"} {
@@ -519,7 +519,7 @@ func ensureSetupBootstrapDirectories(ctx context.Context, dir string) error {
 			return err
 		}
 		created := false
-		if err := os.Mkdir(path, 0700); err != nil {
+		if err := fileauthority.MkdirPrivate(path); err != nil {
 			if !os.IsExist(err) {
 				return err
 			}
@@ -527,18 +527,12 @@ func ensureSetupBootstrapDirectories(ctx context.Context, dir string) error {
 			created = true
 		}
 		info, err := os.Lstat(path)
-		if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 || fileauthority.CheckDirectory(path) != nil || parent.Recheck() != nil {
+		if err != nil || !fileauthority.PrivateDirectory(path, info) || fileauthority.CheckDirectory(path) != nil || parent.Recheck() != nil {
 			return errors.New("unsafe bootstrap setup directory")
 		}
 		if created {
-			file, err := os.Open(filepath.Dir(path))
-			if err != nil {
+			if err := fileauthority.SyncDirectory(filepath.Dir(path)); err != nil {
 				return err
-			}
-			err = file.Sync()
-			closeErr := file.Close()
-			if err != nil || closeErr != nil {
-				return errors.Join(err, closeErr)
 			}
 		}
 	}
@@ -563,7 +557,7 @@ func readSetupBootstrapFile(path string) ([]byte, error) {
 	}
 	defer file.Close()
 	info, err := file.Stat()
-	if err != nil || info.Mode().Perm() != 0600 {
+	if err != nil || !fileauthority.PrivateOpenFile(file, info) {
 		return nil, errors.New("unsafe bootstrap file")
 	}
 	content, err := io.ReadAll(io.LimitReader(file, 65537))
@@ -580,7 +574,7 @@ func loadSetupBootstrap(ctx context.Context, dir string) (setupBootstrapManifest
 	}
 	for _, path := range []string{filepath.Join(dir, "runs"), filepath.Join(dir, "runs", "setup")} {
 		info, err := os.Lstat(path)
-		if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 || fileauthority.CheckDirectory(path) != nil {
+		if err != nil || !fileauthority.PrivateDirectory(path, info) || fileauthority.CheckDirectory(path) != nil {
 			return fail()
 		}
 	}

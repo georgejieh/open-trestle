@@ -36,6 +36,9 @@ func UnwritableFile(string, os.FileInfo) bool { return false }
 // MkdirAllPrivate creates path and any missing parent with mode 0700.
 func MkdirAllPrivate(path string) error { return os.MkdirAll(path, 0o700) }
 
+// MkdirPrivate creates a new directory at path with mode 0700.
+func MkdirPrivate(path string) error { return os.Mkdir(path, 0o700) }
+
 // CreatePrivateFile creates a new file at path for writing with mode 0600.
 func CreatePrivateFile(path string) (*os.File, error) {
 	return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
