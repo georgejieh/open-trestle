@@ -40,6 +40,9 @@ var gateFixtures = map[syntaxanalysis.Language]string{
 	syntaxanalysis.LanguageCSharp:     "testdata/csharp/OrderProcessor.cs",
 	syntaxanalysis.LanguageRust:       "testdata/rust/ledger.rs",
 	syntaxanalysis.LanguageSwift:      "testdata/swift/TaskQueue.swift",
+	syntaxanalysis.LanguagePHP:        "testdata/php/OrderService.php",
+	syntaxanalysis.LanguageRuby:       "testdata/ruby/job_queue.rb",
+	syntaxanalysis.LanguageHTML:       "testdata/html/dashboard.html",
 }
 
 type gateResult struct {
@@ -63,6 +66,9 @@ func gateSource(t testing.TB, language syntaxanalysis.Language) []byte {
 	content, err := os.ReadFile(gateFixtures[language])
 	if err != nil {
 		t.Fatal(err)
+	}
+	if out, ok := gateScriptSource(language, content); ok {
+		return out
 	}
 	body := content
 	if language == syntaxanalysis.LanguageJava || language == syntaxanalysis.LanguageCSharp {
