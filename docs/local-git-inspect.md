@@ -14,15 +14,15 @@ trestle local-git inspect \
 
 You must pass every flag, each exactly once. `PATH` is the object directory itself, normally `.git/objects`. The command does not look for a repository, add path components, resolve refs or `HEAD`, read the index or working tree, run Git, read Git configuration, use credentials, or use the network. It does not support packed objects or alternates, so it reads loose objects only.
 
-The repository authority, namespace and name are labels that you supply to describe the scope. They do not establish where the object directory came from, who owns it, or whether anyone is authorized to use it.
+The repository authority, namespace and name are labels that you supply to describe the scope. They are not checked against the directory.
 
 ## Output
 
-On success the command writes one compact JSON object followed by a newline. The contract is `open-trestle/local-git-inspect-result`, schema version 1, and its strict public shape is `schemas/review/local-git-inspect-result-v1.schema.json`.
+On success the command writes one compact JSON object followed by a newline. The contract is `open-trestle/local-git-inspect-result`, schema version 1, and its schema is `schemas/review/local-git-inspect-result-v1.schema.json`.
 
 The object holds only a structural status, content coverage, and identities. An identity is a digest that stands for one item: the envelope, the repository label, the revision, the adapter, the request, the receipt, the acquisition execution, the profiled acquisition execution, the evidence binding, the manifest, the verified commit, the verified tree graph, the manifest correspondence, or the profile bundle.
 
-The command does not print the object-root path, the repository labels, the raw revision digest, file paths, repository content, profile internals, timestamps, host data or environment data. The status `supplied_evidence_bound` means only that the structure agrees with itself.
+The command does not print the object-root path, the repository labels, the raw revision digest, file paths, repository content, profile internals, timestamps, host data or environment data. The status `supplied_evidence_bound` means that the structure agrees with itself.
 
 ## Exit codes
 
@@ -30,10 +30,10 @@ The command does not print the object-root path, the repository labels, the raw 
 - `1`: an object-root, confinement, loose-object, envelope, profile, close, encoding or output failure.
 - `2`: a command grammar failure or an invalid canonical input.
 
-A nonzero exit never comes with a success record.
+A nonzero exit comes with no success record.
 
-## What the command proves
+## What the command checks
 
 The command reads only inside the directory you pass. It checks the hash of every commit, tree and blob it reads with the algorithm you selected, confirms that the whole supported tree matches its manifest, and builds both the structural binding and the repository profile from that single read.
 
-It does not prove that the directory belongs to the repository named by your labels. It also does not prove ownership, authorization, ref reachability, branch state, the state of the working tree or index, snapshot authority, adapter provenance, tenant isolation or sandboxing. It does not review anything, calculate a change, publish, run commands, modify source, or print content.
+It does not check that the directory belongs to the repository named by your labels, or ref reachability or the state of the working tree. It does not review anything, calculate a change, publish, run commands, modify source, or print content.

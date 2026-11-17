@@ -25,7 +25,7 @@ Code follows Google Style for the language in use. Public functions, exported ty
 
 ## Verification
 
-Every change includes focused tests for its behavior and its boundary conditions. Where relevant, contract, integration and negative tests cover authorization, tenant scope, idempotency, error states and untrusted input. A change is not complete just because it compiles.
+Every change includes focused tests for its behavior and its boundary conditions. Where relevant, contract, integration and negative tests cover authorization, tenant scope, idempotency, error states and untrusted input.
 
 ## Building and testing
 
@@ -62,7 +62,7 @@ Make one coherent change per commit. A commit should normally add or change one 
 
 A new dependency needs an explicit review of its license, maintenance, security and supply chain. Pin dependencies through the native package manager. Do not add a library only to replace a small standard-library capability.
 
-The secret scanner is a deliberately separate module. The root runtime declares Go 1.25.0, is built with Go 1.26.11 and does not import Betterleaks. `workers/secret-scanner` also declares Go 1.25.0 and uses Go 1.26.11. It pins these things:
+The secret scanner is a separate module. The root runtime declares Go 1.25.0, is built with Go 1.26.11 and does not import Betterleaks. `workers/secret-scanner` also declares Go 1.25.0 and uses Go 1.26.11. It pins these things:
 
 - Betterleaks v1.8.1 at commit `5eab48332cc48565864514e3bc6de89df091a7c4`;
 - the embedded config hash of its 417 rules;
@@ -81,6 +81,6 @@ Do not treat an update to this scanner as a routine version bump. A change to an
 3. Regenerate the ruleset and binary identities.
 4. Rerun the public span fixtures and the private coverage and performance qualification.
 
-The accepted v1.8.1 baseline is 11 of 14 expected occurrences. It misses bearer credentials, AWS secret keys and AWS session tokens, and it has one `generic-api-key` near miss at `[7,51)`. Any drift in coverage or near misses needs an explicit profile decision. This baseline does not claim full secret detection.
+The accepted v1.8.1 baseline is 11 of 14 expected occurrences, with one `generic-api-key` near miss at `[7,51)`. For what the scanner misses, see [privacy](privacy.md). Any drift in coverage or near misses needs a profile decision.
 
-The web and VS Code package roots turn off npm's automatic audit requests, funding notices and update-notifier checks during install. This keeps the retrieval of locked dependencies separate from advisory network requests. After deterministic release staging, CI runs the separately authorized passive dependency gate. The gate scans both Go modules, the staged Go binaries, and the npm lockfiles in the full scope and in the scope that omits development dependencies. See [Passive vulnerability gate](vulnerability-gate.md) for the exact fail rules, the fixed tool identity, the local command, the evidence format and the limits.
+The web and VS Code package roots turn off npm's automatic audit requests, funding notices and update-notifier checks during install. After deterministic release staging, CI runs the separately authorized passive dependency gate. The gate scans both Go modules, the staged Go binaries, and the npm lockfiles in the full scope and in the scope that omits development dependencies. See [Passive vulnerability gate](vulnerability-gate.md) for the fail rules, the pinned tool, the local command, the report format and the limits.

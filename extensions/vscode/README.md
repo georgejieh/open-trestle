@@ -3,7 +3,7 @@
 Open Trestle for VS Code shows the findings of an Open Trestle review in the
 editor's Problems panel. It connects to a review run that the Open Trestle
 daemon already holds, through the read-only `trestle lsp` server, and displays
-the findings that an independent model has verified, from diagnostic
+the verified findings from diagnostic
 versions 1 through 5. Version 6 deterministic observations remain outside LSP
 findings, because they are not verified findings; the CLI, the terminal UI and
 the web console show them.
@@ -42,16 +42,15 @@ off by default, and the extension refuses to start in an untrusted workspace.
 ## Security
 
 The extension uses Microsoft's protocol and JSON-RPC packages, but only for a
-narrow adapter that pulls diagnostics. It never sends document contents or
+narrow adapter that pulls diagnostics. It does not send document contents or
 synchronization notifications, and it ignores pushed diagnostics and dynamic
 registrations. Requests from the server cannot edit files, open documents, run
 commands or install editor features: workspace edits and document opens are
 refused explicitly, and configuration requests get bounded null values.
 
-Diagnostic messages are review output and are not trusted. Check the source and
-the evidence before you edit anything.
+Check a diagnostic against the source before you edit anything.
 
-The token never appears in extension settings, output, diagnostics, command
+The token does not appear in extension settings, output, diagnostics, command
 arguments or status text. When you change or clear the token, the extension
 withdraws its diagnostics immediately, before it waits for the process to shut
 down. A new process never overlaps one whose shutdown failed. Clearing the token
@@ -92,5 +91,5 @@ connection does not prove that the process exited, so a new process starts only
 after the child's `close` event. If that event never arrives, the status keeps
 asking for attention, and **Restart** can check again later. These controls
 apply to the direct child process; they do not guarantee that every descendant
-process is contained. Raw child standard error and protocol errors are never
+process is contained. Raw child standard error and protocol errors are not
 logged.

@@ -169,15 +169,14 @@ any of these is true:
 The public keys are pinned in `internal/update/release_keys.txt`, which every
 build embeds, with one `ed25519 <base64>` line per key. More than one key may be
 listed while a key is rotated: add the new key, sign releases with it, and remove
-the old key in a later release. The file is in the source tree, so a key change
-is a reviewed commit, and every build of that commit pins the same keys. No key
-is listed yet, so every current build refuses the release channel.
+the old key in a later release. No key is listed yet, so every current build
+refuses the release channel.
 
 ## Threat model
 
 `trestle update` is designed so that:
 
-- A changed or substituted download is never installed. Open Trestle installs a
+- A changed or substituted download is not installed. Open Trestle installs a
   release archive only when its bytes match the SHA-256 and size in a statement
   signed by a pinned key. Control of GitHub's API, an asset host, a proxy or the
   network is not enough.
@@ -281,8 +280,8 @@ The notice works as follows.
   cannot be reached. After a failed check, it waits a day before asking again and
   keeps showing what it last knew.
 - It checks releases only when this build pins a key and the state folder is
-  usable, and it checks the local folder only for a development install. It never
-  downloads an archive or a signature; `trestle update` verifies those.
+  usable, and it checks the local folder only for a development install. It does not
+  download an archive or a signature.
 - `OPEN_TRESTLE_UPDATE_CHECK=off` turns the notice off. `trestle update` itself
   still checks when you run it.
 
@@ -312,7 +311,7 @@ go run ./tools/signrelease verify --keys internal/update/release_keys.txt \
 
 `sign` checks that the archive is named `open-trestle-linux-amd64.pyz`, that its
 sidecar matches, and that its manifest version is the tag without the `v`. It
-never replaces an existing `.sig`. A release then uploads the archive, the
+does not replace an existing `.sig`. A release then uploads the archive, the
 sidecar and the `.sig` as three assets of the tag's release.
 
 Adding the key to `release_keys.txt`, keeping the private key, and wiring this
