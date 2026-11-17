@@ -28,9 +28,6 @@ type GenerationRejection struct {
 }
 
 func (r GenerationRejection) Identity() string                             { return r.identity }
-func (r GenerationRejection) InputArtifactIdentity() string                { return r.inputArtifactIdentity }
-func (r GenerationRejection) ContextArtifactIdentity() string              { return r.contextArtifactIdentity }
-func (r GenerationRejection) ContextIdentity() string                      { return r.contextIdentity }
 func (r GenerationRejection) HandlerIdentity() string                      { return r.handlerIdentity }
 func (r GenerationRejection) Attempt() gateway.CompletedRouteAttemptRecord { return r.attempt }
 func (r GenerationRejection) String() string                               { return "model generation rejection" }

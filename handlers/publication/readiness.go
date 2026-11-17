@@ -145,13 +145,9 @@ type Result struct {
 	contentScan                                                                                                                        review.PublicationContentScanReceipt
 }
 
-func (r Result) Identity() string                          { return r.identity }
-func (r Result) ArtifactIdentity() string                  { return r.artifactIdentity }
-func (r Result) ReadinessIdentity() string                 { return r.readinessIdentity }
-func (r Result) Status() review.PublicationReadinessStatus { return r.status }
-func (r Result) Ready() bool                               { return r.status == review.PublicationAdvisoryReady }
-func (r Result) String() string                            { return "publication readiness result" }
-func (r Result) GoString() string                          { return "publication.Result{<redacted>}" }
+func (r Result) ReadinessIdentity() string { return r.readinessIdentity }
+func (r Result) String() string            { return "publication readiness result" }
+func (r Result) GoString() string          { return "publication.Result{<redacted>}" }
 func (r Result) Format(s fmt.State, v rune) {
 	writeRedacted(s, v, "publication readiness result", "publication.Result{<redacted>}")
 }

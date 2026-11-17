@@ -72,11 +72,7 @@ func (i InvestigationGenerationInput) version() int {
 }
 
 func (i InvestigationGenerationInput) Identity() string                { return i.identity }
-func (i InvestigationGenerationInput) ContextIdentity() string         { return i.contextIdentity }
 func (i InvestigationGenerationInput) Snapshot() review.ReviewSnapshot { return i.snapshot }
-func (i InvestigationGenerationInput) EvidenceItems() []evidence.EvidenceItem {
-	return append([]evidence.EvidenceItem(nil), i.evidence...)
-}
 func (i InvestigationGenerationInput) Authorization() gateway.RouteAttemptAuthorization {
 	return i.authorization
 }
@@ -542,7 +538,6 @@ type InvestigationGenerationResult struct {
 	execution                                       gateway.RouteExecutionRecord
 }
 
-func (r InvestigationGenerationResult) Identity() string                  { return r.identity }
 func (r InvestigationGenerationResult) ContextIdentity() string           { return r.input.contextIdentity }
 func (r InvestigationGenerationResult) Candidates() review.CandidateBatch { return r.candidates }
 func (r InvestigationGenerationResult) RouteExecution() gateway.RouteExecutionRecord {
