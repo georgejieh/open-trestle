@@ -186,7 +186,22 @@ type sessionSettings struct {
 	scanLimit      int
 	random         io.Reader
 	createCache    bool
-	beforeStart    func()
+	hooks          processHooks
+}
+
+// processHooks let tests order the events of one helper process. Production
+// sessions leave every hook nil.
+type processHooks struct {
+	// beforeStart runs just before the helper is started.
+	beforeStart func()
+	// exitObserved runs in the exit watcher once the helper has exited,
+	// before the watcher decides whether the exit came too early.
+	exitObserved func()
+	// exitJudged runs in the exit watcher after that decision, before the
+	// watcher records an early exit.
+	exitJudged func(early bool)
+	// closingStarted runs in Close right after the closing transition.
+	closingStarted func()
 }
 
 // OpenSession verifies the helper file against config.HelperSHA256 and the
@@ -275,7 +290,7 @@ func openSession(ctx context.Context, settings sessionSettings) (*Session, error
 	if ctx.Err() != nil {
 		return nil, errScanCanceled
 	}
-	process, err := startHelperProcess(helper, directory, settings.beforeStart)
+	process, err := startHelperProcess(helper, directory, settings.hooks)
 	if err != nil {
 		return nil, err
 	}
@@ -498,7 +513,12 @@ func (session *Session) roundTrip(frame []byte, request Request) (Response, erro
 
 func (session *Session) finish() error {
 	process := session.process
-	process.closing.Store(true)
+	if process.beginClosing() {
+		process.failWith(errHelperExited)
+	}
+	if hook := session.settings.hooks.closingStarted; hook != nil {
+		hook()
+	}
 	timer := time.AfterFunc(time.Until(session.deadline(time.Now())), func() { process.failWith(errHelperDeadline) })
 	defer timer.Stop()
 	if process.fault() == nil {
@@ -508,6 +528,9 @@ func (session *Session) finish() error {
 	}
 	waitError := process.reap()
 	<-process.stderrDone
+	// The exit watcher may still be recording an early exit; Close reports
+	// only once it is done.
+	<-process.watched
 	timerStopped := timer.Stop()
 	defer process.closeFiles()
 	if failure := process.fault(); failure != nil {
@@ -562,11 +585,17 @@ type helperProcess struct {
 	reapRequest chan struct{}
 	reaped      chan struct{}
 	stderrDone  chan struct{}
+	watched     chan struct{}
 	waitError   error
+	hooks       processHooks
 
-	closing      atomic.Bool
 	stderrBytes  atomic.Int64
 	requestsSent atomic.Int64
+
+	// closingMu orders the helper's exit against the closing transition:
+	// an exit observed before closing is set came too early.
+	closingMu sync.Mutex
+	closing   bool
 
 	faultMu sync.Mutex
 	failure error
@@ -577,7 +606,7 @@ type helperProcess struct {
 	reapOnce sync.Once
 }
 
-func startHelperProcess(helper verifiedHelper, directory string, beforeStart func()) (*helperProcess, error) {
+func startHelperProcess(helper verifiedHelper, directory string, hooks processHooks) (*helperProcess, error) {
 	var pipes [6]*os.File
 	closeAll := func() {
 		for _, pipe := range pipes {
@@ -616,9 +645,11 @@ func startHelperProcess(helper verifiedHelper, directory string, beforeStart fun
 		reapRequest: make(chan struct{}),
 		reaped:      make(chan struct{}),
 		stderrDone:  make(chan struct{}),
+		watched:     make(chan struct{}),
+		hooks:       hooks,
 	}
 	started := make(chan error, 1)
-	go process.run(started, beforeStart)
+	go process.run(started, hooks.beforeStart)
 	err := <-started
 	_ = stdinRead.Close()
 	_ = stdoutWrite.Close()
@@ -713,11 +744,38 @@ func (process *helperProcess) reap() error {
 	return process.waitError
 }
 
+// watchExit records an exit of the helper before Close began as a failure
+// and reaps the helper.
 func (process *helperProcess) watchExit() {
+	defer close(process.watched)
 	<-process.exited
-	if !process.closing.Load() {
+	if hook := process.hooks.exitObserved; hook != nil {
+		hook()
+	}
+	process.closingMu.Lock()
+	early := !process.closing
+	process.closingMu.Unlock()
+	if hook := process.hooks.exitJudged; hook != nil {
+		hook(early)
+	}
+	if early {
 		process.failWith(errHelperExited)
 		_ = process.reap()
+	}
+}
+
+// beginClosing is the closing transition. It reports whether the helper had
+// already exited, which is then an early exit whether or not the exit
+// watcher has seen it yet.
+func (process *helperProcess) beginClosing() bool {
+	process.closingMu.Lock()
+	defer process.closingMu.Unlock()
+	process.closing = true
+	select {
+	case <-process.exited:
+		return true
+	default:
+		return false
 	}
 }
 

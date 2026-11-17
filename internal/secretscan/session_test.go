@@ -516,7 +516,7 @@ func TestSessionSpawnRecipe(t *testing.T) {
 func TestSessionExecutesTheVerifiedFileWhenThePathIsSwapped(t *testing.T) {
 	helper := newSessionTestHelper(t)
 	settings := helper.settings(5 * time.Second)
-	settings.beforeStart = func() {
+	settings.hooks.beforeStart = func() {
 		if err := os.Rename(helper.path, helper.path+".moved"); err != nil {
 			panic(err)
 		}
@@ -602,7 +602,7 @@ func TestOpenSessionRefusesUntrustedHelperBeforeSpawn(t *testing.T) {
 			settings := helper.settings(5 * time.Second)
 			test.mutate(t, &settings, helper)
 			var spawned atomic.Bool
-			settings.beforeStart = func() { spawned.Store(true) }
+			settings.hooks.beforeStart = func() { spawned.Store(true) }
 			session, err := openSession(context.Background(), settings)
 			if session != nil || !errors.Is(err, test.want) || spawned.Load() {
 				t.Fatalf("untrusted helper was not refused before spawn: %v, spawned=%v", err, spawned.Load())
@@ -663,7 +663,7 @@ func TestOpenSessionRefusesUntrustedCacheDirectoryBeforeSpawn(t *testing.T) {
 			settings := helper.settings(5 * time.Second)
 			test.mutate(t, &settings, helper)
 			var spawned atomic.Bool
-			settings.beforeStart = func() { spawned.Store(true) }
+			settings.hooks.beforeStart = func() { spawned.Store(true) }
 			session, err := openSession(context.Background(), settings)
 			if session != nil || !errors.Is(err, test.want) || spawned.Load() {
 				t.Fatalf("untrusted cache directory was not refused before spawn: %v, spawned=%v", err, spawned.Load())
@@ -703,7 +703,7 @@ func TestOpenSessionRefusesCanceledContextAndMissingContext(t *testing.T) {
 	helper := newSessionTestHelper(t)
 	settings := helper.settings(5 * time.Second)
 	var spawned atomic.Bool
-	settings.beforeStart = func() { spawned.Store(true) }
+	settings.hooks.beforeStart = func() { spawned.Store(true) }
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if session, err := openSession(ctx, settings); session != nil || !errors.Is(err, errScanCanceled) {
@@ -911,6 +911,56 @@ func TestSessionHelperExitingBeforeCloseFailsClosed(t *testing.T) {
 	}
 }
 
+// TestSessionCloseReportsAnEarlyExitThatRacesWithIt forces both orders in
+// which a helper that exits 0 after a response, before the session is
+// closed, can meet Close: the exit watcher has seen the exit but not yet
+// judged it when Close starts, and the watcher has judged it early but not
+// yet recorded it when Close starts. Close must report the early exit in
+// both, keep reporting it, and return only after the watcher is done.
+func TestSessionCloseReportsAnEarlyExitThatRacesWithIt(t *testing.T) {
+	for _, judgedFirst := range []bool{false, true} {
+		t.Run(fmt.Sprintf("judged before closing %v", judgedFirst), func(t *testing.T) {
+			helper := newSessionTestHelper(t)
+			settings := helper.settings(3 * time.Second)
+			reached := make(chan struct{})
+			closing := make(chan struct{})
+			hold := func() {
+				close(reached)
+				<-closing
+			}
+			if judgedFirst {
+				settings.hooks.exitJudged = func(early bool) {
+					if !early {
+						t.Error("the exit before Close was not judged early")
+					}
+					hold()
+				}
+			} else {
+				settings.hooks.exitObserved = hold
+			}
+			settings.hooks.closingStarted = func() { close(closing) }
+			session := openSessionForTest(t, settings)
+			pid := session.helperPID()
+			if result, err := session.Scan(context.Background(), [][]byte{[]byte("session:exit-after")}); err != nil || !result.Complete() {
+				t.Fatalf("the response before the exit was not returned: %v", err)
+			}
+			<-reached
+			if err := session.Close(); !errors.Is(err, errHelperExited) {
+				t.Fatalf("close did not report the early exit: %v", err)
+			}
+			select {
+			case <-session.process.watched:
+			default:
+				t.Fatal("close returned before the exit watcher finished")
+			}
+			if err := session.Close(); !errors.Is(err, errHelperExited) || !errors.Is(session.Err(), errHelperExited) {
+				t.Fatalf("a later close or Err hid the early exit: %v, %v", err, session.Err())
+			}
+			requireReapedAndGroupGone(t, pid)
+		})
+	}
+}
+
 func TestSessionCallerCancellation(t *testing.T) {
 	t.Run("mid-scan", func(t *testing.T) {
 		helper := newSessionTestHelper(t)
@@ -1078,7 +1128,7 @@ func TestPrewarmCreatesOnlyTheFinalCacheDirectory(t *testing.T) {
 		t.Fatalf("prewarm did not create a private cache directory: %v", err)
 	}
 	var spawned atomic.Bool
-	settings.beforeStart = func() { spawned.Store(true) }
+	settings.hooks.beforeStart = func() { spawned.Store(true) }
 	settings.config.CacheDirectory = filepath.Join(helper.directory, "missing", "cache")
 	if err := prewarm(context.Background(), settings); !errors.Is(err, ErrCacheUntrusted) || spawned.Load() {
 		t.Fatalf("prewarm under a missing parent was not refused before spawn: %v", err)
