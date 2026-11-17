@@ -1,3 +1,5 @@
+//go:build linux
+
 package syntaxwasm
 
 import (
@@ -8,10 +10,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -42,6 +44,7 @@ type gateResult struct {
 	FirstMillis    float64 `json:"first_analysis_ms"`
 	WarmMedianMs   float64 `json:"warm_median_ms"`
 	WarmMaxMs      float64 `json:"warm_max_ms"`
+	WarmCPUMs      float64 `json:"warm_cpu_ms"`
 	PeakResidentMB float64 `json:"peak_resident_mib"`
 	Records        int     `json:"records"`
 	Gaps           int     `json:"gaps"`
@@ -80,9 +83,6 @@ func TestSyntaxGate(t *testing.T) {
 	if os.Getenv("OPEN_TRESTLE_SYNTAX_GATE") != "1" {
 		t.Skip("set OPEN_TRESTLE_SYNTAX_GATE=1 to measure the go/no-go gate")
 	}
-	if runtime.GOOS != "linux" {
-		t.Skip("peak resident memory is read from /proc")
-	}
 	languages := make([]string, 0, len(gateFixtures))
 	for language := range gateFixtures {
 		languages = append(languages, string(language))
@@ -112,8 +112,8 @@ func TestSyntaxGate(t *testing.T) {
 			if result.Language != language {
 				t.Fatalf("%s %s: no result in\n%s", language, run, output)
 			}
-			t.Logf("%-10s %-11s %6d B  compile %7.1f ms  first %7.1f ms  warm median %6.1f ms  max %6.1f ms  peak RSS %5.1f MiB  %d records  %d gaps",
-				language, run, result.Bytes, result.CompileMillis, result.FirstMillis, result.WarmMedianMs, result.WarmMaxMs, result.PeakResidentMB, result.Records, result.Gaps)
+			t.Logf("%-10s %-11s %6d B  compile %7.1f ms  first %7.1f ms  warm median %6.1f ms  max %6.1f ms  cpu %6.1f ms  peak RSS %5.1f MiB  %d records  %d gaps",
+				language, run, result.Bytes, result.CompileMillis, result.FirstMillis, result.WarmMedianMs, result.WarmMaxMs, result.WarmCPUMs, result.PeakResidentMB, result.Records, result.Gaps)
 			if result.WarmMedianMs >= float64(gateWarmLimit.Milliseconds()) || result.PeakResidentMB >= gateResidentMiB || result.Gaps != 0 {
 				failed = true
 			}
@@ -150,23 +150,35 @@ func TestSyntaxGateChild(t *testing.T) {
 	first := analyze(t, a, path, content)
 	firstTime := time.Since(started)
 	times := make([]time.Duration, 0, gateWarmRuns)
+	cpuBefore := processCPU(t)
 	for range gateWarmRuns {
 		started := time.Now()
 		_ = analyze(t, a, path, content)
 		times = append(times, time.Since(started))
 	}
+	cpu := (processCPU(t) - cpuBefore) / gateWarmRuns
 	slices.Sort(times)
 	ms := func(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }
 	result := gateResult{
 		Language: string(language), Bytes: len(content),
 		CompileMillis: ms(compile), FirstMillis: ms(firstTime),
-		WarmMedianMs: ms(times[len(times)/2]), WarmMaxMs: ms(times[len(times)-1]),
+		WarmMedianMs: ms(times[len(times)/2]), WarmMaxMs: ms(times[len(times)-1]), WarmCPUMs: ms(cpu),
 		PeakResidentMB: peakResidentMiB(t),
 		Records:        len(first.Definitions) + len(first.References) + len(first.Imports),
 		Gaps:           len(first.Gaps),
 	}
 	encoded, _ := json.Marshal(result)
 	fmt.Printf("GATE %s\n", encoded)
+}
+
+// processCPU returns the user and system time the process has used, which
+// other load on the machine affects less than wall-clock time.
+func processCPU(t testing.TB) time.Duration {
+	var usage syscall.Rusage
+	if err := syscall.Getrusage(syscall.RUSAGE_SELF, &usage); err != nil {
+		t.Fatal(err)
+	}
+	return time.Duration(usage.Utime.Nano() + usage.Stime.Nano())
 }
 
 func peakResidentMiB(t testing.TB) float64 {
