@@ -92,10 +92,10 @@ type SessionConfig struct {
 	// Prewarm creates the final directory with mode 0700 if it is missing.
 	//
 	// The cache is trusted at the level of its owner, like the helper file
-	// when the current user owns it. wazero checks a cache entry only
-	// against a checksum, so anyone who can write the cache directory
-	// controls the code the helper runs, including any process of the
-	// current user. The directory checks exist so that no other user can
+	// when the current user owns it. wazero authenticates a cache entry
+	// only with a checksum, which a writer can recompute, so anyone who can
+	// write the cache directory controls the code the helper runs,
+	// including any process of the current user. The directory checks exist so that no other user can
 	// write or even reach it; they do not protect it from its owner.
 	CacheDirectory string
 }

@@ -26,9 +26,9 @@
 // both through caches in that directory, so a session with no request fills
 // both caches and exits 0.
 //
-// The cache is trusted at the level of its owner. wazero checks a cache entry
-// only against a checksum, so whoever can write the cache directory controls
-// the code the helper runs; the checks on the directory make sure that only
+// The cache is trusted at the level of its owner. wazero authenticates a
+// cache entry only with a checksum, which a writer can recompute, so whoever
+// can write the cache directory controls the code the helper runs; the checks on the directory make sure that only
 // its owner and root can.
 //
 // The helper sets its own core file and descriptor limits. It exits with
@@ -98,7 +98,7 @@ const (
 	// GuestMemoryPages is the guest's linear memory limit (160 MiB).
 	GuestMemoryPages = 2560
 	// GuestMemoryLimit is the guest's GOMEMLIMIT. Its collector is off
-	// until the heap nears this limit. A collection then runs concurrently
+	// until the memory its runtime manages nears this limit. A collection then runs concurrently
 	// on the guest's one thread while the scan keeps allocating, so the
 	// guest's memory grows well past this limit before the collection ends;
 	// GuestMemoryPages leaves room for that growth on every request the
