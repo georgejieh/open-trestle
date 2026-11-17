@@ -35,13 +35,16 @@ func (failure FailureClass) String() string {
 }
 
 type ScanMetadata struct {
-	Scanner          string
-	ScannerVersion   string
-	ScannerCommit    string
-	RulesetIdentity  string
-	BuildProfile     string
-	LauncherSHA256   string
-	WorkerSHA256     string
+	Scanner         string
+	ScannerVersion  string
+	ScannerCommit   string
+	RulesetIdentity string
+	BuildProfile    string
+	LauncherSHA256  string
+	WorkerSHA256    string
+	// HelperSHA256 identifies the session helper executable for scans run
+	// through a Session; it is empty for scans run through Client.
+	HelperSHA256     string
 	Duration         time.Duration
 	SourceCount      int
 	ScannedByteCount int
