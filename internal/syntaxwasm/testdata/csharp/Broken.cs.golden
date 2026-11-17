@@ -1,0 +1,11 @@
+# definitions
+1:1-4:31 class "A"
+  3:5-3:22 method "A.Before"
+  4:10-4:16 field "A.Broken"
+5:5-5:31 function "After"
+# references
+5:20 call "Before" in "After"
+# imports
+# gaps
+4:16-4:27 parse_error
+6:1-6:2 parse_error

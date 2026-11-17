@@ -1,0 +1,106 @@
+# definitions
+10:1-85:2 module "Outer.Inner"
+  14:5-14:47 module "Outer.Inner.Deep"
+    14:22-14:45 class "Outer.Inner.Deep.Marker" exported
+  16:5-16:66 interface "Outer.Inner.IShape" exported
+    16:31-16:51 field "Outer.Inner.IShape.Area" exported
+    16:52-16:64 method "Outer.Inner.IShape.Draw" exported
+  18:5-32:6 class "Outer.Inner.Hidden"
+    20:9-20:28 constructor "Outer.Inner.Hidden.Hidden"
+    21:9-21:28 constructor "Outer.Inner.Hidden.Hidden" exported
+    22:31-22:36 field "Outer.Inner.Hidden.count"
+    23:36-23:45 constant "Outer.Inner.Hidden.Limit" exported
+    24:29-24:38 constant "Outer.Inner.Hidden.Other"
+    25:29-25:39 constant "Outer.Inner.Hidden.Name" exported
+    25:41-25:52 constant "Outer.Inner.Hidden.Alias" exported
+    26:13-26:14 field "Outer.Inner.Hidden.a"
+    26:16-26:21 field "Outer.Inner.Hidden.b"
+    27:9-27:48 type "Outer.Inner.Hidden.Factory" exported
+    28:35-28:42 field "Outer.Inner.Hidden.Changed" exported
+    28:44-28:51 field "Outer.Inner.Hidden.Cleared" exported
+    29:9-29:42 field "Outer.Inner.Hidden.this" exported
+    30:9-30:77 method "Outer.Inner.Hidden.++" exported
+    31:9-31:70 method "Outer.Inner.Hidden.int" exported
+  34:5-59:6 class "Outer.Inner.Circle" exported
+    36:9-36:35 field "Outer.Inner.Circle.Area"
+    37:9-37:52 method "Outer.Inner.Circle.Draw"
+    38:9-38:34 method "Outer.Inner.Circle.Dispose" exported
+    39:9-39:58 method "Outer.Inner.Circle.Convert"
+    40:9-58:10 method "Outer.Inner.Circle.RunAsync" exported
+      57:13-57:40 function "Outer.Inner.Circle.RunAsync.local"
+  61:5-61:46 struct "Outer.Inner.Point" exported
+    61:32-61:37 field "Outer.Inner.Point.X" exported
+    61:39-61:44 field "Outer.Inner.Point.Y" exported
+  62:5-62:49 struct "Outer.Inner.Vec" exported
+    62:39-62:47 field "Outer.Inner.Vec.A" exported
+  63:5-63:72 class "Outer.Inner.Person" exported
+    63:26-63:37 field "Outer.Inner.Person.Name" exported
+  64:5-67:6 class "Outer.Inner.Account" exported
+    66:9-66:51 field "Outer.Inner.Account.Balance" exported
+  69:5-71:37 enum "Outer.Inner.Color" exported
+    71:25-71:28 constant "Outer.Inner.Color.Red" exported
+    71:30-71:35 constant "Outer.Inner.Color.Green" exported
+  74:5-74:55 class "Outer.Inner.DebugOnly" exported
+    74:30-74:53 method "Outer.Inner.DebugOnly.Trace" exported
+  76:5-76:57 class "Outer.Inner.ReleaseOnly" exported
+    76:32-76:55 method "Outer.Inner.ReleaseOnly.Trace" exported
+  80:5-83:6 class "Outer.Inner.Tools" exported
+    82:9-82:66 method "Outer.Inner.Tools.Many" exported
+87:1-87:37 module "Flat.A.B"
+  87:22-87:35 class "Flat.A.B.InB"
+# references
+18:43 type "IShape" in "Outer.Inner.Hidden"
+27:25 type "T" in "Outer.Inner.Hidden.Factory"
+28:22 type "Action" in "Outer.Inner.Hidden"
+30:23 type "Hidden" in "Outer.Inner.Hidden.++"
+30:30 type "T" in "Outer.Inner.Hidden.++"
+30:33 type "U" in "Outer.Inner.Hidden.++"
+30:48 type "Hidden" in "Outer.Inner.Hidden.++"
+30:55 type "T" in "Outer.Inner.Hidden.++"
+30:58 type "U" in "Outer.Inner.Hidden.++"
+31:45 type "Hidden" in "Outer.Inner.Hidden.int"
+31:52 type "T" in "Outer.Inner.Hidden.int"
+31:55 type "U" in "Outer.Inner.Hidden.int"
+34:27 inherit "IShape" in "Outer.Inner.Circle"
+34:42 inherit "IDisposable" qualifier="System" in "Outer.Inner.Circle"
+34:65 inherit "Inner" in "Outer.Inner.Circle"
+36:16 type "IShape" in "Outer.Inner.Circle.Area"
+37:14 type "IShape" in "Outer.Inner.Circle.Draw"
+37:38 call "WriteLine" qualifier="Console" in "Outer.Inner.Circle.Draw"
+39:27 type "T" in "Outer.Inner.Circle.Convert"
+39:54 type "T" in "Outer.Inner.Circle.Convert"
+40:22 type "Task" in "Outer.Inner.Circle.RunAsync"
+42:32 call "Run" qualifier="Task" in "Outer.Inner.Circle.RunAsync"
+42:42 call "Compute" in "Outer.Inner.Circle.RunAsync"
+43:26 call "Helper" qualifier="this" in "Outer.Inner.Circle.RunAsync"
+45:22 type "Circle" in "Outer.Inner.Circle.RunAsync"
+47:28 type "Circle" in "Outer.Inner.Circle.RunAsync"
+49:42 construct "Marker" qualifier="Outer.Inner.Deep" in "Outer.Inner.Circle.RunAsync"
+49:42 type "Marker" qualifier="Outer.Inner.Deep" in "Outer.Inner.Circle.RunAsync"
+50:25 construct "Dictionary" in "Outer.Inner.Circle.RunAsync"
+50:25 type "Dictionary" in "Outer.Inner.Circle.RunAsync"
+50:44 type "List" in "Outer.Inner.Circle.RunAsync"
+53:36 construct "MemoryStream" in "Outer.Inner.Circle.RunAsync"
+53:36 type "MemoryStream" in "Outer.Inner.Circle.RunAsync"
+54:23 call "Baz" in "Outer.Inner.Circle.RunAsync"
+55:18 call "Dispose" qualifier="base" in "Outer.Inner.Circle.RunAsync"
+56:13 call "local" in "Outer.Inner.Circle.RunAsync"
+57:28 call "Helper2" in "Outer.Inner.Circle.RunAsync.local"
+63:41 type "Base" in "Outer.Inner.Person"
+63:41 inherit "Base" in "Outer.Inner.Person"
+63:53 inherit "IEquatable" in "Outer.Inner.Person"
+63:64 type "Person" in "Outer.Inner.Person"
+64:63 inherit "Entity" in "Outer.Inner.Account"
+69:6 decorator "AttributeUsage" in "Outer.Inner.Color"
+69:51 decorator "Serializable" qualifier="System" in "Outer.Inner.Color"
+70:14 decorator "NotNull" in "Outer.Inner.Color"
+82:23 type "T" in "Outer.Inner.Tools.Many"
+82:40 type "T" in "Outer.Inner.Tools.Many"
+# imports
+2:1-2:14 source="System"
+3:1-3:48 source="System.Collections.Generic" alias="Collections"
+4:1-4:34 source="Legacy::Old.Helpers"
+5:1-5:36 source="(int Left, int Right)" alias="Pair"
+6:1-6:24 source="System.IO"
+12:5-12:23 source="System.Text" in "Outer.Inner"
+# gaps

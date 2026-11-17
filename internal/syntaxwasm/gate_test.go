@@ -37,6 +37,7 @@ var gateFixtures = map[syntaxanalysis.Language]string{
 	syntaxanalysis.LanguagePython:     "testdata/python/scheduler.py",
 	syntaxanalysis.LanguageC:          "testdata/c/kvstore.c",
 	syntaxanalysis.LanguageCPP:        "testdata/cpp/scheduler.cpp",
+	syntaxanalysis.LanguageCSharp:     "testdata/csharp/OrderProcessor.cs",
 	syntaxanalysis.LanguageRust:       "testdata/rust/ledger.rs",
 }
 
@@ -54,7 +55,8 @@ type gateResult struct {
 }
 
 // gateSource repeats a fixture until it reaches the gate size. Repeated Java
-// files drop their package and import lines so the result still parses.
+// and C# files drop their package, namespace and import lines so the result
+// still parses.
 func gateSource(t testing.TB, language syntaxanalysis.Language) []byte {
 	t.Helper()
 	content, err := os.ReadFile(gateFixtures[language])
@@ -62,10 +64,10 @@ func gateSource(t testing.TB, language syntaxanalysis.Language) []byte {
 		t.Fatal(err)
 	}
 	body := content
-	if language == syntaxanalysis.LanguageJava {
+	if language == syntaxanalysis.LanguageJava || language == syntaxanalysis.LanguageCSharp {
 		var kept []string
 		for _, line := range strings.Split(string(content), "\n") {
-			if !strings.HasPrefix(line, "package ") && !strings.HasPrefix(line, "import ") {
+			if !strings.HasPrefix(line, "package ") && !strings.HasPrefix(line, "import ") && !strings.HasPrefix(line, "using ") && !strings.HasPrefix(line, "global using ") && !strings.HasPrefix(line, "namespace ") {
 				kept = append(kept, line)
 			}
 		}

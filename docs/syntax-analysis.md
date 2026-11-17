@@ -16,7 +16,7 @@ Every name, qualifier and import path is repository text. It is carried as a `sy
 ## Analyzers
 
 - Go uses `semanticimpact.GoSyntaxAnalyzer`, built on `go/parser`.
-- The other languages use `internal/syntaxwasm`: tree-sitter grammars compiled to WebAssembly and run under wazero. Java, JavaScript, TypeScript, TSX, Python, C, C++ and Rust have query packs. C#, Swift, PHP, Ruby and HTML have grammars in the modules but no query pack yet, so their files get a `no_query_pack` gap.
+- The other languages use `internal/syntaxwasm`: tree-sitter grammars compiled to WebAssembly and run under wazero. Java, JavaScript, TypeScript, TSX, Python, C, C++, C# and Rust have query packs. Swift, PHP, Ruby and HTML have grammars in the modules but no query pack yet, so their files get a `no_query_pack` gap.
 
 `syntaxanalysis.NewDispatcher` routes each file to the first analyzer that supports its language.
 
@@ -65,10 +65,12 @@ Both are analysed from syntax alone, with no preprocessing. Files ending in `.h`
 - Exported means visible to other files. A function, variable or constant at file or namespace scope is exported unless it is `static` or in an anonymous namespace, and a C++ constant only when it is `extern` or declared in a header. A type, macro or namespace is exported when it is declared in a header. A class member is exported when its class is and its access is public.
 - An anonymous namespace is recorded as a module named `namespace`.
 - Macros are not expanded. What a macro generates is not seen, and a macro invocation that parses as a declaration or a block, such as a test-framework case, gives no definition. Locals are never recorded. A declaration such as `Foo x(y);` is ambiguous in C++ syntax; inside a function its names are not recorded as types.
-## Rust
 
-This pack records definitions, calls and constructions, type uses, base types and conformances, attributes, and imports.
+## C# and Rust
 
+These packs record definitions, calls and constructions, type uses, base types and conformances, attributes, and imports.
+
+- C# records namespaces (a file-scoped namespace covers the rest of the file), classes, structs, records, interfaces, enums, delegates, methods, constructors, operators, properties, events, indexers and fields. `public` makes a definition exported, and members of an interface or enum take the visibility of their owner. Both sides of a `#if` are read as written.
 - Rust records modules, structs, unions, enums and variants, traits, type aliases, functions, constants, statics, macros and named fields. An `impl` block is recorded as a class named after the type it implements, so its functions are methods of that type and a trait impl is exported. `pub` makes a definition exported, and a `use` list is recorded as one import per member. The arguments of a macro are not parsed, so calls and definitions written inside macros are not recorded, but the macro call itself is.
 
 ## Rebuilding the modules
