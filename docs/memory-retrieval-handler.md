@@ -1,26 +1,26 @@
 # Memory retrieval task handler
 
-The memory retrieval handler looks up stored memory records that relate to the files a change touches. It runs in a review run after the change model task, takes the protected `change_model` artifact as its input, and does bounded, advisory retrieval. Memory never establishes a finding. The handler lives in `handlers/memory`.
+The memory retrieval handler looks up stored memory records that relate to the files a change touches. It runs in a review run after the change model task, takes the protected `change_model` artifact as its input, and retrieves records as advisory context. Memory is not a finding. The handler lives in `handlers/memory`.
 
 ## Authority
 
-Authority here means what the handler is allowed to read. A handler installation binds the following into its handler identity, the digest that identifies this implementation:
+This section covers what the handler is allowed to read. A handler installation binds the following into its handler identity, the digest that identifies this implementation:
 
 - one approved review policy;
 - the memory backend identity;
 - the actor;
 - a canonical allowlist of path prefixes;
-- a bound on the number of queries; and
-- a bound on the total number of results.
+- a limit on the number of queries; and
+- a limit on the total number of results.
 
-At execution, the handler requires the plan's exact policy identity. It then creates a fresh memory scope from:
+At execution, the handler requires the plan's policy identity. It then creates a fresh memory scope from:
 
 - the run's tenant and repository;
 - the configured actor and path authorization;
 - `exact` ref visibility; and
 - the acquired head revision, used as the ref-set identity.
 
-The scope is applied before any scoring. A record from another tenant, repository, actor, revision set or path partition is never queried.
+The scope is applied before any scoring, so records from another tenant, repository, actor, revision set or path partition are not queried.
 
 ## Retrieval
 
@@ -39,6 +39,6 @@ Parsing the output rebuilds every memory scope, query, record, retrieval-item id
 
 ## Output
 
-The protected `retrieval_result` artifact has the `memory` origin. Its payload and its artifact provenance bind the change, the review policy, the exact memory scope and the backend identity. Its expiry is capped at one hour, and it is shortened further by the source expiry and by the validity or staleness boundaries of the selected records.
+The protected `retrieval_result` artifact has the `memory` origin. Its payload and its artifact provenance bind the change, the review policy, the memory scope and the backend identity. Its expiry is capped at one hour, and it is shortened further by the source expiry and by the validity or staleness boundaries of the selected records.
 
 The published schema is `schemas/artifact/memory-retrieval-result-v1.schema.json`.
