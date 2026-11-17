@@ -180,21 +180,23 @@ The release brings the whole loop to Windows and macOS:
 - A secret scanner that runs on all three systems, which remote providers
   depend on.
 - Owner-only credential and configuration files on Windows, using ACLs.
+- Setup recommends a checker model from a different model family than the finder, because different families have different blind spots. It recommends this without enforcing it.
 
 ### Codebase understanding
 
 - A repository index and a ranked repository map. The map gives the enclosing
   definition for each changed hunk, ranks symbol tags within a token budget,
   looks up callers and usages, and lists module boundaries and a feature map.
-  Go uses its syntax tree. Other languages begin with lexical tags.
+  The analysis works on syntax trees for JavaScript, TypeScript, Python, Java, C, C++, C#, Rust, Go, PHP, Swift, Ruby and HTML.
 - A repository profile read from the existing tests and CI configuration,
   which records the project's conventions and the maintainers' priorities.
   Open Trestle parses this configuration and never runs it.
 
 ### Generated verification
 
-- Checks written by the model, and the repository's own tests, run in a
-  sandbox on each system. The code decides the outcome, not the model.
+- For each pull request, Open Trestle decides which of its bundled checks and which of the repository's own tests to run, and whether new tests should be written for the change.
+- Checks written by the model, and the repository's own tests, run in a sandbox on each system. The code decides the outcome, not the model.
+- The tests cover the code that depends on the change as well as the changed code, so a change that breaks something elsewhere is caught.
 - Running them needs your consent through an allow prompt: Allow, Deny, or
   Always allow for this repository. In CI, a workflow input gives the consent.
 - This area needs a reviewed security design before any code is written.
@@ -211,6 +213,8 @@ The release brings the whole loop to Windows and macOS:
 
 ### Review quality
 
+- Review an entire codebase, not only a pull request, using the same understanding of the repository that pull-request review builds.
+- Languages used with game engines such as Godot, Unity and Unreal Engine, and the custom languages that large companies build in-house.
 - Review uncommitted changes without writing objects into the repository.
 - Choose a route per profile for specialists.
 - A pattern-hygiene specialist profile, deprecated-API detection, support for
