@@ -19,6 +19,42 @@ The secret scanner is an isolated Go module. It builds with Go 1.26.11 and does 
 
 The adapter selects Betterleaks RE2 before parsing the embedded default config. It uses only `detect.Run` with a private in-memory source. Validation, decoding, filesystem sources, archives, remote sources, baselines, ignore files, reporting, diagnostics, and Betterleaks logging are disabled or unused.
 
+## Patched copies for the scan guest
+
+The scan guest (`guest/`, a separate Go module) links patched copies of two modules. The copies are in `third_party/`, each with the patch that produced it. The guest's `go.mod` replaces the upstream modules with the copies. This module's `go.mod` has no replace directive, so the native worker links the unmodified upstream modules.
+
+| Copy | Upstream | Patch | License |
+| --- | --- | --- | --- |
+| `third_party/betterleaks` | `github.com/betterleaks/betterleaks v1.8.1` | `third_party/betterleaks-v1.8.1.patch` | MIT, upstream `LICENSE` kept |
+| `third_party/tiktoken-go` | `github.com/pkoukk/tiktoken-go v0.1.8` | `third_party/tiktoken-go-v0.1.8.patch` | MIT, upstream `LICENSE` kept |
+
+Each copy holds only the directories the guest builds, with every upstream file of those directories except tests and dot files. The Betterleaks copy keeps only `LICENSE`, `go.mod` and `go.sum` from its root directory. Betterleaks has no NOTICE file.
+
+Changes in the Betterleaks patch:
+
+- `regexp`: exports `CompiledRegexp`, an alias of the internal compiled-regexp interface, so that an engine can be implemented outside Betterleaks. Adds `PatternRecorder`; `Compile` passes every pattern text to an engine that implements it.
+- `regexp/filterpatterns` (new): `Collect` lists, without evaluating anything, the joined patterns of every `matchesAny` and `findMatch` call in the ruleset's filter expressions. It fails when a pattern argument is not a string literal.
+- `detect`: the tokenizer loads its BPE ranks through the `BpeLoader` variable, which defaults to the upstream loader.
+
+Changes in the tiktoken-go patch: `NewCoreBPE` no longer builds the decoder map, which is built on the first decode, or the sorted token list, which nothing reads. The check that no two tokens share a rank moved out of `NewCoreBPE`; the guest's flat table rejects repeated ranks when it loads.
+
+`go test ./third_party` checks that every copied file equals the upstream file from the module cache, with the patch applied without fuzz, that no upstream file of a copied directory is missing, that `THIRD_PARTY_LICENSES/secret-scanner/MODULES.json` records each copy and the SHA-256 of its patch under `patched_copies`, and that every module the guest and the helper link has a reviewed entry there. To change a copy, edit it, regenerate its patch with `diff -ruN` between the upstream files and the copy, and update the digest in `MODULES.json`.
+
+## Scan helper and guest build
+
+`cmd/open-trestle-scan-helper` embeds the guest. The committed `cmd/open-trestle-scan-helper/guest.wasm` is empty, and a helper built from it exits 70. Build a working helper with:
+
+```text
+go run ./internal/cmd/build-scan-helper -o <directory>
+```
+
+It builds the guest with `GOOS=wasip1 GOARCH=wasm`, substitutes it for the empty `guest.wasm` through a `go build -overlay` file, and pins its SHA-256 with `-ldflags -X main.expectedGuestSHA256=<hex>`. The helper checks the embedded guest against the pin before compiling it. Tests build both once per test binary through `internal/helperbuild`.
+
+Two generated files are checked by tests in the guest module:
+
+- `internal/regexhost/pinned-patterns.json`, the patterns the host compiles for a guest. Regenerate it with `go test ./internal/pinnedpatterns -run TestHostTableEqualsRulesetPatterns -update` in `guest/` and set `PinnedPatternsSHA256` in `internal/regexhost/pinned.go` to its new digest.
+- `guest/internal/bpe/cl100k_base.bin`, the flat cl100k_base BPE table. Regenerate it with `go test ./internal/bpe -run TestFlatTableEqualsUpstreamRanks -update` in `guest/`.
+
 ## Launcher toolchain and static runtime
 
 The production launcher uses only the official Zig 0.14.1 x86_64 Linux archive pinned in `launcher/toolchain-v1.json`. The verified archive and extracted-tree digests bind the compiler, bundled LLD linker, headers, x86_64 musl sysroot, and generated static libraries. The fixed target is `x86_64-linux-musl`; host GCC, host libc, `PATH`, and a mutable sysroot are not build inputs.
