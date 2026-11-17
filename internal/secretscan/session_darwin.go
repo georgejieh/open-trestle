@@ -29,7 +29,8 @@ func openVerifiedHelper(path string, expectedDigest string) (verifiedHelper, err
 }
 
 // configureHelperCommand puts the helper in its own process group. macOS has
-// no parent-death signal; a helper whose parent dies sees EOF on stdin.
+// no parent-death signal; the helper polls its parent process ID and exits
+// once its parent is gone, also in the middle of a scan.
 func configureHelperCommand(command *exec.Cmd) {
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }

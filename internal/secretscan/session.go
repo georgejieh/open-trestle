@@ -19,7 +19,8 @@ import (
 const (
 	// helperSessionArgument selects the helper's session mode: request frames
 	// arrive on stdin until EOF at a frame boundary, and each gets exactly one
-	// response frame on stdout.
+	// response frame on stdout, or the helper exits non-zero without writing
+	// one.
 	helperSessionArgument = "--stdio-v1-session"
 	// sessionScanWatchdog bounds every exchange with the helper: one scan, or
 	// the wait for a clean exit at Close.
