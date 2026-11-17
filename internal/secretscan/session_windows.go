@@ -143,11 +143,13 @@ func imageIdentity(process syscall.Handle) (fileIdentity, error) {
 // openCacheDirectory checks the helper's cache directory and returns the path
 // to start the helper in, as the Linux version does, with the owner and DACL
 // of each directory in place of its owner and mode bits; see package
-// ownersonly. Symbolic links and junctions above the directory are resolved
-// once. Every directory on the resolved path must be owned by the current
-// user, LocalSystem, Administrators or TrustedInstaller, and no other
-// principal may write it, except that it may let others add entries, which
-// cannot remove, rename or replace an existing one. The directory itself
+// ownersonly. Symbolic links above the directory are resolved once, and a
+// junction or other reparse point on the resolved path is refused, since
+// filepath.EvalSymlinks does not resolve junctions. Every directory on the
+// resolved path must be owned by the current user, LocalSystem,
+// Administrators or TrustedInstaller, and no other principal may write it,
+// except that it may let others add entries, which cannot remove, rename or
+// replace an existing one. The directory itself
 // must not be a reparse point, must be owned by the current user and must
 // grant no other principal except LocalSystem and Administrators any access,
 // which is what the helper requires of its working directory. With create, a
