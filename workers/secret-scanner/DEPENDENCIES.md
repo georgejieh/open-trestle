@@ -38,7 +38,13 @@ Changes in the Betterleaks patch:
 
 Changes in the tiktoken-go patch: `NewCoreBPE` no longer builds the decoder map, which is built on the first decode, or the sorted token list, which nothing reads. The check that no two tokens share a rank moved out of `NewCoreBPE`; the guest's flat table rejects repeated ranks when it loads.
 
-`go test ./third_party` checks that every copied file equals the upstream file from the module cache, with the patch applied without fuzz, that no upstream file of a copied directory is missing, that `THIRD_PARTY_LICENSES/secret-scanner/MODULES.json` records each copy and the SHA-256 of its patch under `patched_copies`, and that every module the guest and the helper link has a reviewed entry there. To change a copy, edit it, regenerate its patch with `diff -ruN` between the upstream files and the copy, and update the digest in `MODULES.json`.
+`go test ./third_party` checks that every copied file equals the upstream file from the module cache, with the patch applied without fuzz, that no upstream file of a copied directory is missing, that `THIRD_PARTY_LICENSES/secret-scanner/MODULES.json` records each copy and the SHA-256 of its patch under `patched_copies`, and that every module the guest and the helper link has a reviewed entry there. To change a copy, edit it and rewrite every patch from the copies with
+
+```text
+go test ./third_party -run TestCopiesEqualUpstreamWithTheirPatch -update
+```
+
+in this module (it runs GNU `diff`), then set the patch digest in `MODULES.json`, which `go test ./third_party` reports as stale until it matches.
 
 ## Scan helper and guest build
 

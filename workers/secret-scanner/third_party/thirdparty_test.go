@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"flag"
 	"fmt"
 	"io/fs"
 	"os"
@@ -37,10 +39,17 @@ var copies = []patchedCopy{
 // directory keeps all of its upstream files except tests and dot files.
 var rootFiles = map[string]bool{"LICENSE": true, "go.mod": true, "go.sum": true}
 
+var update = flag.Bool("update", false, "rewrite each patch from the differences between its copy and upstream")
+
 func TestCopiesEqualUpstreamWithTheirPatch(t *testing.T) {
 	for _, copied := range copies {
 		t.Run(copied.directory, func(t *testing.T) {
 			upstream := downloadModule(t, copied.module, copied.version)
+			if *update {
+				if err := os.WriteFile(copied.patch, diffCopy(t, copied.directory, upstream), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
 			patch, err := os.ReadFile(copied.patch)
 			if err != nil {
 				t.Fatal(err)
@@ -253,6 +262,35 @@ func TestScanGuestAndHelperModulesAreInTheLicenseInventory(t *testing.T) {
 			t.Fatalf("%s replaces %v, want %v", linked.pkg, replaced, want)
 		}
 	}
+}
+
+// diffCopy returns the patch from the upstream files to the copy in directory:
+// one unified diff per copied file that differs, in path order, with a/ and
+// b/ labels and three lines of context. A file that is not upstream is
+// diffed against an empty file, which makes it a created file. It runs diff,
+// so -update needs a diff that writes unified diffs, such as GNU diff.
+func diffCopy(t *testing.T, directory, upstream string) []byte {
+	t.Helper()
+	var patch bytes.Buffer
+	for _, relative := range copiedFiles(t, directory) {
+		original := filepath.Join(upstream, filepath.FromSlash(relative))
+		if _, err := os.Stat(original); errors.Is(err, fs.ErrNotExist) {
+			original = os.DevNull
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		command := exec.Command("diff", "-u", "--label", "a/"+relative, "--label", "b/"+relative, original, filepath.Join(directory, filepath.FromSlash(relative)))
+		output, err := command.Output()
+		var exit *exec.ExitError
+		switch {
+		case err == nil:
+		case errors.As(err, &exit) && exit.ExitCode() == 1:
+			patch.Write(output)
+		default:
+			t.Fatalf("diff %s: %v", relative, err)
+		}
+	}
+	return patch.Bytes()
 }
 
 func downloadModule(t *testing.T, module, version string) string {
