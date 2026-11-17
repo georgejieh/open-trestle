@@ -185,6 +185,13 @@ The release brings the whole loop to Windows and macOS:
   depend on.
 - Owner-only credential and configuration files on Windows, using ACLs.
 - Setup recommends a checker model from a different model family than the finder, because different families have different blind spots. It recommends this without enforcing it.
+- Sign in with ChatGPT as a provider option, so that you can review with a
+  ChatGPT plan instead of an API key. It uses OpenAI's official sign-in program
+  for open-source tools and the public Responses API. The program does not
+  accept an output limit, so Open Trestle bounds the output itself by stopping
+  the stream at the limit, and it labels the route as using your plan's limits
+  rather than per-token billing. The route makes no zero-data-retention claim,
+  so the review asks you to allow it.
 
 ### Codebase understanding
 
