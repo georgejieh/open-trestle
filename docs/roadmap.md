@@ -175,26 +175,41 @@ saved-key store are refused on other systems (see [platforms](platforms.md)).
 The release brings the whole loop to Windows and macOS:
 
 - Native packages or installers on each system.
+- A desktop app, built from the web console in a native shell. It opens a
+  repository, runs the setup wizard, starts a review, shows the findings and
+  updates Open Trestle with a button. The installers ship it on all three
+  systems.
 - `trestle init`, `trestle review`, `trestle update`, the home screen and
   remote providers on all three systems.
 - A secret scanner that runs on all three systems, which remote providers
   depend on.
 - Owner-only credential and configuration files on Windows, using ACLs.
+- Setup recommends a checker model from a different model family than the finder, because different families have different blind spots. It recommends this without enforcing it.
+- Sign in with ChatGPT as a provider option, so that you can review with a
+  ChatGPT plan instead of an API key. It uses OpenAI's official sign-in program
+  for open-source tools and the public Responses API. The program does not
+  accept an output limit, so Open Trestle bounds the output itself by stopping
+  the stream at the limit, and it labels the route as using your plan's limits
+  rather than per-token billing. The route makes no zero-data-retention claim,
+  so the review asks you to allow it.
 
 ### Codebase understanding
 
 - A repository index and a ranked repository map. The map gives the enclosing
   definition for each changed hunk, ranks symbol tags within a token budget,
   looks up callers and usages, and lists module boundaries and a feature map.
-  Go uses its syntax tree. Other languages begin with lexical tags.
+  The analysis works on syntax trees for Java, JavaScript, TypeScript, Python,
+  HTML, C, C++, C#, Swift, Go, Rust, PHP and Ruby. Every one of these languages
+  gets the same depth of analysis; none is treated as a special case.
 - A repository profile read from the existing tests and CI configuration,
   which records the project's conventions and the maintainers' priorities.
   Open Trestle parses this configuration and never runs it.
 
 ### Generated verification
 
-- Checks written by the model, and the repository's own tests, run in a
-  sandbox on each system. The code decides the outcome, not the model.
+- For each pull request, Open Trestle decides which of its bundled checks and which of the repository's own tests to run, and whether new tests should be written for the change.
+- Checks written by the model, and the repository's own tests, run in a sandbox on each system. The code decides the outcome, not the model.
+- The tests cover the code that depends on the change as well as the changed code, so a change that breaks something elsewhere is caught.
 - Running them needs your consent through an allow prompt: Allow, Deny, or
   Always allow for this repository. In CI, a workflow input gives the consent.
 - This area needs a reviewed security design before any code is written.
@@ -211,6 +226,8 @@ The release brings the whole loop to Windows and macOS:
 
 ### Review quality
 
+- Review an entire codebase, not only a pull request, using the same understanding of the repository that pull-request review builds.
+- Languages used with game engines such as Godot, Unity and Unreal Engine, and the custom languages that large companies build in-house.
 - Review uncommitted changes without writing objects into the repository.
 - Choose a route per profile for specialists.
 - A pattern-hygiene specialist profile, deprecated-API detection, support for
@@ -255,7 +272,7 @@ The release brings the whole loop to Windows and macOS:
 - Pull-request interaction: suggestion blocks, check runs and replies to the
   bot. Today the daemon can post one `COMMENT` review.
 - VS Code quick-fix code actions for suggestions.
-- A desktop app that reuses the web console in a native shell.
+
 - Additional forge adapters, hook integration for Git, a gRPC API, streaming
   subscriptions, and policy and provider administration.
 - Spending limits that the daemon records and enforces.
@@ -266,6 +283,13 @@ The release brings the whole loop to Windows and macOS:
 - The sealed run bundle is scored against the adjudicated labels.
 - Public benchmarks (SWR-Bench, AACR-Bench, c-CRAB) are added to the
   evaluation driver, and the numbers are published.
+- A comparison with minimal harnesses. The same models review pull requests
+  seeded with known bugs in a medium-size codebase, once through Open Trestle
+  and once through a minimal coding-agent harness, and the comparison measures
+  how many bugs each finds, how many false alarms it raises, and the tokens and
+  cost of each review. Vendor coding agents serve as a second, stronger
+  baseline. If Open Trestle helps, the same setup becomes a way to benchmark
+  models.
 
 ### Policy, analysis and operations
 
