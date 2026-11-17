@@ -41,6 +41,7 @@ var packSpecs = map[syntaxanalysis.Language]packSpec{
 	syntaxanalysis.LanguagePython:     {files: []string{"python"}, finish: finishPython},
 	syntaxanalysis.LanguageC:          {files: []string{"c"}, finish: finishC},
 	syntaxanalysis.LanguageCPP:        {files: []string{"cpp"}, finish: finishCPP},
+	syntaxanalysis.LanguageRust:       {files: []string{"rust"}, finish: finishRust},
 }
 
 func loadPacks() (map[syntaxanalysis.Language]pack, error) {

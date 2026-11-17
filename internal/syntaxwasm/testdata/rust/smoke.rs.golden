@@ -1,0 +1,123 @@
+# definitions
+8:1-8:30 function "crate_only"
+9:1-9:31 function "parent_only"
+10:1-10:35 function "path_only"
+11:1-11:36 function "const_fn" exported
+12:1-12:29 function "unsafe_fn" exported
+13:1-13:30 function "both" exported
+14:1-14:34 function "exported_c" exported
+16:1-16:53 interface "Describe" exported
+  16:22-16:51 method "Describe.describe" exported
+18:5-18:57 method "describe" exported
+20:1-22:2 class "Wrapper" exported
+  21:5-21:42 method "Wrapper.from" exported
+24:5-24:51 function "describe"
+27:5-27:51 function "describe"
+29:1-29:32 class "Wrapper" exported
+30:1-32:2 class "Buffer"
+  31:5-31:36 method "Buffer.new" exported
+33:1-33:42 class "Wrapper" exported
+34:1-37:2 class "Wrapper" exported
+  35:5-35:27 type "Wrapper.Output" exported
+  36:5-36:54 method "Wrapper.add" exported
+39:1-39:20 struct "Wrapper" exported
+40:1-40:31 struct "Buffer"
+42:1-48:2 struct "Generic" exported
+  46:5-46:24 field "Generic.first"
+  47:5-47:18 field "Generic.second" exported
+50:1-54:2 enum "Shape" exported
+  51:5-51:16 constant "Shape.Circle" exported
+  52:5-52:28 constant "Shape.Rect" exported
+  53:5-53:9 constant "Shape.Unit" exported
+59:1-59:19 struct "Tagged" exported
+61:1-74:2 function "calls"
+76:1-81:2 function "outer"
+  77:5-77:21 function "outer.inner_fn"
+  78:5-78:22 struct "outer.LocalType"
+  79:5-79:25 constant "outer.LOCAL"
+83:1-87:2 macro "make_fn"
+96:1-100:2 module "outer_mod"
+  97:5-99:6 module "outer_mod.inner_mod" exported
+    98:9-98:25 function "outer_mod.inner_mod.deep" exported
+103:5-103:34 function "c_func" exported
+# references
+1:4 decorator "allow"
+16:44 type "String" in "Describe.describe"
+17:6 type "T"
+17:14 type "Display" qualifier="fmt"
+17:23 inherit "Describe"
+17:23 type "Describe"
+18:27 type "String" in "describe"
+18:36 call "format" in "describe"
+20:6 type "T" in "Wrapper"
+20:9 inherit "From" in "Wrapper"
+20:9 type "From" in "Wrapper"
+20:14 type "T" in "Wrapper"
+21:20 type "T" in "Wrapper.from"
+23:10 type "T"
+23:13 inherit "Describe"
+23:13 type "Describe"
+23:31 type "T"
+24:27 type "String" in "describe"
+24:44 call "new" qualifier="String" in "describe"
+26:6 inherit "Describe"
+26:6 type "Describe"
+27:27 type "String" in "describe"
+27:44 call "new" qualifier="String" in "describe"
+29:13 inherit "Send" in "Wrapper"
+29:13 type "Send" in "Wrapper"
+30:29 type "N" in "Buffer"
+33:21 inherit "Handle" qualifier="crate::shared" in "Wrapper"
+33:21 type "Handle" qualifier="crate::shared" in "Wrapper"
+34:16 inherit "Add" qualifier="std::ops" in "Wrapper"
+34:16 type "Add" qualifier="std::ops" in "Wrapper"
+34:20 type "Wrapper" in "Wrapper"
+35:19 type "Wrapper" in "Wrapper.Output"
+36:25 type "Wrapper" in "Wrapper.add"
+36:37 type "Wrapper" in "Wrapper.add"
+42:20 type "T" in "Generic"
+42:23 type "Clone" in "Generic"
+42:30 type "U" in "Generic"
+42:34 type "Vec" in "Generic"
+42:38 type "T" in "Generic"
+44:5 type "T" in "Generic"
+44:8 type "Default" in "Generic"
+46:23 type "T" in "Generic.first"
+47:17 type "U" in "Generic.second"
+56:10 decorator "main" qualifier="tokio"
+57:3 decorator "derive"
+57:10 inherit "Debug"
+57:35 inherit "Clone"
+58:3 decorator "cfg_attr"
+62:13 type "Vec" in "calls"
+62:25 call "with_capacity" in "calls"
+63:14 type "Wrapper" in "calls"
+63:25 type "Describe" in "calls"
+63:36 call "describe" in "calls"
+64:26 call "make" qualifier="crate::a::b" in "calls"
+65:20 construct "Rect" qualifier="Shape" in "calls"
+65:20 type "Rect" qualifier="Shape" in "calls"
+66:13 type "Generic" in "calls"
+66:52 call "new" qualifier="Vec" in "calls"
+67:22 call "helper" in "calls"
+68:6 call "get_fn" in "calls"
+69:9 call "method" qualifier="obj" in "calls"
+69:18 call "other" in "calls"
+69:26 call "last" in "calls"
+70:11 call "local" qualifier="self" in "calls"
+71:12 call "sibling" qualifier="super" in "calls"
+72:5 call "nested_macro" in "calls"
+73:15 call "swap" qualifier="std::mem" in "calls"
+80:5 call "inner_fn" in "outer"
+89:1 call "make_fn"
+91:14 call "lazy_static" qualifier="lazy_static"
+# imports
+2:1-2:16 source="::std" name="fmt"
+3:1-3:60 source="self::inner" name="deep::{Leaf, Twig as Branch}"
+3:1-3:60 source="self::inner" name="Trunk"
+4:1-4:32 source="a::b" name="c" alias="d"
+4:1-4:32 source="a::b" name="e::*"
+4:1-4:32 source="a::b" name="self"
+5:1-5:11 source="serde"
+6:1-6:30 source="std::io" name="self" alias="stdio"
+# gaps
