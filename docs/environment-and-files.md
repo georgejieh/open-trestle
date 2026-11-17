@@ -60,6 +60,10 @@ absolute path.
 | `$XDG_DATA_HOME/open-trestle/updates/`, default `~/.local/share/open-trestle/updates/` | A development build handed over for `trestle update`. | folder `0700`, files `0600` or stricter, regular files owned by you |
 | `/usr/local/share/open-trestle/distribution/receipt.json` | The package receipt that marks the packaged install. | written by the package |
 
+On Windows the credential, setup and usage folders and files have an access
+control list in place of these modes, which gives only your account and the
+system's own accounts access. See [platforms](platforms.md#protected-files-on-windows).
+
 The setup folder holds:
 
 | File | Meaning |

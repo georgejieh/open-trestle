@@ -15,15 +15,15 @@ can tell a missing feature from a mistake. See the
 | Remote providers (OpenRouter, Ollama Cloud, OpenCode Go, `ollama-signin`) | Yes | Refused | Refused | Refused |
 | Secret scanner | Yes, sandboxed | None | None | None |
 | Hidden key entry | Yes | Yes | Code present, untested | Code present, untested |
-| Saving a key with `trestle keys set` | Yes | Yes | Untested | Refused |
-| Protected setup, credential and usage files | Yes | Yes | Untested | Refused |
+| Saving a key with `trestle keys set` | Yes | Yes | Untested | Yes |
+| Protected setup, credential and usage files | Yes | Yes | Untested | Yes |
 | `trestle update` | Yes | Refused | Refused | Refused |
 | Home screen | Yes | Yes | Untested | Untested |
 
 How to read the cells:
 
 - Yes means that the code supports the capability, and that a test or a run on
-  Linux exercises it.
+  that system exercises it.
 - Compiles means that continuous integration builds the binary and its tests for
   that system on amd64. It does not run them there.
 - Untested means that no platform guard in the code refuses the capability, and
@@ -40,12 +40,6 @@ scanner digests, so the check fails closed. The message is
 install. See
 [remote model review](remote-model-review.md#prerequisite-1-a-scanner-bound-binary-and-installed-scanner).
 
-Protected files are refused on Windows. Open Trestle checks the owner and mode of
-setup, credential and usage files (`0700` folders, `0600` files). Windows has no
-ownership check yet, so the check cannot pass and the files are refused. Saving a
-key is refused, and a typed key lasts for that session only. The release will use
-access control lists. See [API keys](keys.md#threat-model).
-
 `trestle update` is refused off Linux amd64. It updates only the packaged install,
 the one with a receipt at
 `/usr/local/share/open-trestle/distribution/receipt.json`, and it says so without
@@ -57,10 +51,20 @@ The defaults use the XDG layout on Linux and macOS (`~/.config`,
 `~/.local/state`, `~/.local/share`). No separate locations exist yet for Windows
 or macOS. See [environment variables and files](environment-and-files.md#paths).
 
+## Protected files on Windows
+
+On Windows, Open Trestle checks the owner and access control list of setup,
+credential and usage files instead of their mode. Apart from your account and
+the system's own accounts (SYSTEM, Administrators and TrustedInstaller), no
+account may read or change them, and no other account may remove, rename or
+replace a folder above them. Open Trestle creates its folders and files that
+way. It refuses an existing folder or file that gives another account more
+access and does not change it. See
+[troubleshooting](troubleshooting.md#a-folder-is-refused-as-not-private).
+
 ## For the first release
 
 The release has one goal: the same review loop on all three systems. That needs
-a secret scanner that runs on each system, protected files on Windows with access
-control lists, native packages or installers for macOS and Windows, and
-`trestle update` on each. Until those exist, treat this page as the whole truth
-for macOS and Windows.
+a secret scanner that runs on each system, native packages or installers for
+macOS and Windows, and `trestle update` on each. Until those exist, treat this
+page as the whole truth for macOS and Windows.

@@ -208,8 +208,8 @@ screen or the plan. A requirement without a configured local checker stays pendi
 and states that no checker is available. The interface never turns skipped work
 into a pass.
 
-The ownership-dependent checks are currently available on Unix platforms: the
-administrator, backup, storage and protected runtime-file checks. They return
-`unavailable` on Windows and on any other platform where this release does not
+The ownership-dependent checks are currently available on Unix platforms and
+Windows: the administrator, backup, storage and protected runtime-file checks.
+They return `unavailable` on any other platform where this release does not
 implement an ownership authority check. Plan inspection and the checks that do not
 depend on ownership remain available there.

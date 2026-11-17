@@ -131,8 +131,10 @@ run as your account, from the administrator, or from backups and disk images
 that copy the folder. If that is not acceptable, keep exporting the key from your
 own secret manager instead; the environment always wins over the store. An
 operating system keyring is a possible later backend, but it is not used now. On
-Windows, the store's ownership checks are not available, so saving is refused
-and a typed key is used for the session only.
+Windows the folder and files have an access control list instead of a mode:
+only your account and the system's own accounts (SYSTEM, Administrators and
+TrustedInstaller) can open them (see
+[platforms](platforms.md#protected-files-on-windows)).
 
 ## What never happens
 

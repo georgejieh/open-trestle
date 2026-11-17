@@ -172,8 +172,8 @@ areas. Anything outside them is listed under [Later](#later).
 
 ### Platforms and the everyday loop
 
-Today the packaged install is Linux amd64 only, and remote providers and the
-saved-key store are refused on other systems (see [platforms](platforms.md)).
+Today the packaged install is Linux amd64 only, and remote providers are refused
+on other systems (see [platforms](platforms.md)).
 The release brings the whole loop to Windows and macOS:
 
 - Native packages or installers on each system.
@@ -185,7 +185,6 @@ The release brings the whole loop to Windows and macOS:
   remote providers on all three systems.
 - A secret scanner that runs on all three systems, which remote providers
   depend on.
-- Owner-only credential and configuration files on Windows, using ACLs.
 
 - Sign in with ChatGPT as a provider option, so that you can review with a
   ChatGPT plan instead of an API key. It uses OpenAI's official sign-in program
