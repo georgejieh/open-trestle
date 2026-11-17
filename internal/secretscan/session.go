@@ -68,6 +68,7 @@ var (
 	errScanInput            = errors.New("secret scan input is outside the protocol bounds")
 	errScanRequest          = errors.New("secret scan request could not be built")
 	errScanIncomplete       = errors.New("secret scan did not complete")
+	errSanitize             = errors.New("secret scan sanitization did not complete")
 )
 
 // SessionConfig names the helper executable a Session runs, the build profile
@@ -157,16 +158,25 @@ func RunReviewSession(ctx context.Context, open ReviewSessionOpener, review func
 // validated against its own request (request ID, ruleset identity, pinned
 // rule IDs, build profile) from a helper that had shown no fault until then.
 // Some faults can only be seen at Close: the exit status, output after the
-// last response, and a standard error byte that raced with a response. The
-// results of a session are therefore final only once Close returned nil; a
-// non-nil Close means no result of the session may be relied on, and the
-// review that used it has failed. RunReviewSession enforces this.
+// last response, and a standard error byte that raced with a response. None
+// of them can make an earlier result wrong, so a result already returned
+// stays valid when Close later reports a fault: the helper writes a response
+// only after its guest instance exited cleanly with no refused host call, and
+// the session validated that response against its request. A non-nil Close
+// still means the helper did not behave as specified, and the review that
+// used the session has failed; RunReviewSession enforces this.
 //
-// Failure: the first failure of any kind poisons the session. The helper's
-// process group is killed and reaped at once, no further request is sent,
-// every later Scan fails immediately with ErrSessionPoisoned, and there is no
-// retry or respawn. A session serves at most 64 scans; the next one is a
-// failure. A Session is safe for concurrent use; calls are serialized.
+// Failure: the first unsuccessful call poisons the session. That is every
+// Scan that does not return a complete result and every Sanitize whose
+// projection is not complete, for whatever reason: a fault of the helper, a
+// missed deadline or a cancellation, but also input the session refuses
+// before anything reaches the helper (a nil or done context, sources outside
+// the protocol bounds, the scan after the 64th) and a sanitization whose
+// masked sources still have matches. The helper's process group is killed and
+// reaped at once, no further request is sent, every later Scan fails
+// immediately with ErrSessionPoisoned, and there is no retry or respawn. A
+// Session is safe for concurrent use; calls are serialized, and the two scans
+// of one Sanitize run back to back.
 type Session struct {
 	mu        sync.Mutex
 	settings  sessionSettings
@@ -309,8 +319,8 @@ func validAbsolutePath(path string) bool {
 }
 
 // Scan sends one request to the helper and waits for its response under the
-// per-scan watchdog, shortened by ctx. Any failure poisons the session. The
-// error is nil exactly when the result is complete.
+// per-scan watchdog, shortened by ctx. The error is nil exactly when the
+// result is complete; any other result poisons the session.
 func (session *Session) Scan(ctx context.Context, sources [][]byte) (ScanResult, error) {
 	if session == nil {
 		return ScanResult{failure: FailurePolicy}, ErrSessionClosed
@@ -320,15 +330,43 @@ func (session *Session) Scan(ctx context.Context, sources [][]byte) (ScanResult,
 	return session.scanLocked(ctx, sources)
 }
 
-func (session *Session) scan(ctx context.Context, sources [][]byte) ScanResult {
-	result, _ := session.Scan(ctx, sources)
+// Sanitize masks every match and rescans the masked sources, as
+// Client.Sanitize does, with both scans in this session and no other call in
+// between. A projection that is not complete poisons the session.
+func (session *Session) Sanitize(ctx context.Context, sources [][]byte) Projection {
+	if session == nil {
+		return Projection{failure: FailurePolicy}
+	}
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	projection := newProjector(lockedSession{session}).Sanitize(ctx, sources)
+	if !projection.Complete() && !session.closed {
+		cause := errSanitize
+		if projection.Failure() == FailureInvalidInput {
+			cause = errScanInput
+		}
+		session.poisonLocked(cause)
+	}
+	return projection
+}
+
+// lockedSession scans for a projector while the caller holds the session's
+// lock.
+type lockedSession struct {
+	session *Session
+}
+
+func (locked lockedSession) scan(ctx context.Context, sources [][]byte) ScanResult {
+	result, _ := locked.session.scanLocked(ctx, sources)
 	return result
 }
 
-// Sanitize masks every match and rescans the masked sources, as
-// Client.Sanitize does, with both scans in this session.
-func (session *Session) Sanitize(ctx context.Context, sources [][]byte) Projection {
-	return newProjector(session).Sanitize(ctx, sources)
+// poisonLocked records cause as the session failure unless one is recorded
+// already, kills and reaps the helper and returns the first failure.
+func (session *Session) poisonLocked(cause error) error {
+	first := session.process.failWith(cause)
+	_ = session.process.reap()
+	return first
 }
 
 // Err returns the first failure of the session, or nil while it is healthy
@@ -367,9 +405,7 @@ func (session *Session) scanLocked(ctx context.Context, sources [][]byte) (ScanR
 		return ScanResult{metadata: metadata, failure: failure}, err
 	}
 	poison := func(failure FailureClass, cause error) (ScanResult, error) {
-		first := session.process.failWith(cause)
-		_ = session.process.reap()
-		return finish(failure, first)
+		return finish(failure, session.poisonLocked(cause))
 	}
 	if session.closed {
 		return finish(FailurePolicy, ErrSessionClosed)

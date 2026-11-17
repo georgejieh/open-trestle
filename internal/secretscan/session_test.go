@@ -266,6 +266,12 @@ func respondSessionTestRequest(request Request, atClose *sessionHelperClose) int
 			atClose.stderr = true
 		case "session:exit-after":
 			exitAfterResponse = true
+		case "session:first-byte":
+			// A match on the first byte, which masking turns into '*', so
+			// the masked source still holds this marker and matches again.
+			match := Match{SourceOrdinal: 0, RuleID: "github-pat", StartByte: 0, EndByteExclusive: 1}
+			match.OccurrenceID = OccurrenceID(match)
+			response.Matches = []Match{match}
 		}
 	}
 	if response.Status == StatusComplete && len(response.Matches) == 0 {
@@ -1204,6 +1210,49 @@ func TestSessionSanitizeMasksAndRescansInTheSession(t *testing.T) {
 	}
 	if err := session.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestSessionSanitizeFailuresPoisonTheSession checks that every unsuccessful
+// Sanitize poisons the session as an unsuccessful Scan does, including the
+// failures found before or after the helper's scans.
+func TestSessionSanitizeFailuresPoisonTheSession(t *testing.T) {
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	tests := []struct {
+		name    string
+		ctx     context.Context
+		sources [][]byte
+		failure FailureClass
+		cause   error
+		sent    int64
+	}{
+		{"invalid input", context.Background(), [][]byte{{0xff}}, FailureInvalidInput, errScanInput, 0},
+		{"context already done", canceled, [][]byte{[]byte("a TOKEN")}, FailureCanceled, errScanCanceled, 0},
+		{"incomplete scan", context.Background(), [][]byte{[]byte("session:scan-failed")}, FailurePolicy, errScanIncomplete, 1},
+		{"matches after masking", context.Background(), [][]byte{[]byte("x session:first-byte")}, FailurePolicy, errSanitize, 2},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			helper := newSessionTestHelper(t)
+			session := openSessionForTest(t, helper.settings(5*time.Second))
+			pid := session.helperPID()
+			projection := session.Sanitize(test.ctx, test.sources)
+			if projection.Complete() || projection.Failure() != test.failure || projection.Sources() != nil {
+				t.Fatalf("sanitize returned %v, want an incomplete projection with %v", projection.Failure(), test.failure)
+			}
+			if sent := session.process.requestsSent.Load(); sent != test.sent {
+				t.Fatalf("sanitize sent %d requests, want %d", sent, test.sent)
+			}
+			requireReapedAndGroupGone(t, pid)
+			requirePoisoned(t, session, test.cause)
+			if later := session.Sanitize(context.Background(), [][]byte{[]byte("a TOKEN")}); later.Complete() || session.process.requestsSent.Load() != test.sent {
+				t.Fatal("a later sanitize ran in the poisoned session")
+			}
+			if err := session.Close(); !errors.Is(err, test.cause) {
+				t.Fatalf("close did not report the sanitize failure: %v", err)
+			}
+		})
 	}
 }
 
