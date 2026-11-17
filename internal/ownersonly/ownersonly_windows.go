@@ -11,8 +11,9 @@ import (
 	"unsafe"
 )
 
-// The trusted identities. Each can already replace any file on the system,
-// so access held by them is not access held by another principal.
+// The trusted identities: the operating system's own accounts, which this
+// package trusts as Unix code trusts root. Access held by them does not count
+// as access held by another principal.
 const (
 	sidLocalSystem      = "S-1-5-18"
 	sidAdministrators   = "S-1-5-32-544"
@@ -51,18 +52,19 @@ const (
 	tokenOwnerClass     = 4
 )
 
-// Rights another principal may hold under each Others rule. Every other bit,
-// including GENERIC_WRITE, GENERIC_ALL, MAXIMUM_ALLOWED, DELETE, WRITE_DAC,
-// WRITE_OWNER, FILE_DELETE_CHILD, the attribute and extended-attribute write
-// rights and every bit without a defined meaning, counts as write access.
+// Rights another principal may hold under each Others rule. A grant of any
+// other bit is refused: GENERIC_WRITE, GENERIC_ALL, MAXIMUM_ALLOWED, DELETE,
+// WRITE_DAC, WRITE_OWNER, FILE_DELETE_CHILD, the attribute and
+// extended-attribute write rights and every bit without a defined meaning
+// are all disallowed.
 const (
 	othersNoneRights    = fileReadAttributes | readControl | synchronize
 	othersReadRights    = othersNoneRights | fileReadData | fileReadEA | fileExecute | genericRead | genericExecute
 	othersReadAddRights = othersReadRights | fileWriteData | fileAppendData
 )
 
-// advapi32 is a known DLL, which Windows always loads from the system
-// directory.
+// advapi32 is in the KnownDLLs list of supported Windows versions, so the
+// loader takes it from the system directory.
 var (
 	advapi32                = syscall.NewLazyDLL("advapi32.dll")
 	procGetSecurityInfo     = advapi32.NewProc("GetSecurityInfo")
@@ -104,15 +106,18 @@ const (
 type Others uint8
 
 const (
-	// OthersNone permits reading attributes and the security descriptor and
-	// nothing else: the counterpart of mode 0600 or 0700.
+	// OthersNone permits reading attributes and the owner and DACL, and
+	// waiting on the object, and nothing else: the counterpart of mode 0600
+	// or 0700.
 	OthersNone Others = iota + 1
 	// OthersRead also permits reading, listing and executing: no write
 	// access, the counterpart of a mode without group or other write bits.
 	OthersRead
 	// OthersReadAdd also permits adding files and subdirectories to a
-	// directory, but not removing, renaming or replacing an entry: the
-	// counterpart of a sticky directory. For a file it is OthersRead.
+	// directory, but not FILE_DELETE_CHILD: the counterpart of a sticky
+	// directory. An entry inside it can then be removed, renamed or replaced
+	// only by a principal that its own DACL grants DELETE or WRITE_DAC, which
+	// the callers check entry by entry. For a file it is OthersRead.
 	OthersReadAdd
 )
 
@@ -271,12 +276,13 @@ func TokenGroups() ([]string, error) {
 // other principals no right beyond those rule.Others permits. The handle
 // must have READ_CONTROL and FILE_READ_ATTRIBUTES access.
 //
-// A NULL DACL grants everyone every right and is refused. Inherit-only ACEs
-// do not apply to the object and are skipped; inherited ACEs apply and are
-// checked like explicit ones. Deny ACEs are ignored: every allow ACE for
+// A NULL DACL grants everyone every right and is refused. Allow ACEs that are
+// inherit-only do not apply to the object and are skipped; other inherited
+// ACEs apply and are checked like explicit ones. Deny ACEs are ignored: every allow ACE for
 // another principal must be acceptable on its own, so no ordering or deny
 // can make an unacceptable grant look acceptable. Any ACE type other than an
-// access-allowed or access-denied ACE is refused. Integrity labels are not
+// access-allowed or access-denied ACE is refused, even when it is
+// inherit-only. Integrity labels are not
 // part of the DACL and are not checked.
 func CheckHandle(handle syscall.Handle, rule Rule) error {
 	if rule.Owner != OwnerCurrentUser && rule.Owner != OwnerTrusted || rule.Others < OthersNone || rule.Others > OthersReadAdd {
@@ -368,7 +374,8 @@ func checkACL(acl *byte, id processIdentity, permitted uint32) error {
 
 // Open opens the object at path itself, not the target of a final reparse
 // point, with only the access CheckHandle needs. Directories open too. The
-// handle shares reading, writing and deletion, so holding it blocks nothing.
+// handle shares reading, writing and deletion, so holding it does not stop
+// others from opening, changing or deleting the object.
 func Open(path string) (*os.File, error) {
 	name, err := syscall.UTF16PtrFromString(path)
 	if err != nil {
@@ -404,8 +411,8 @@ func CheckPath(path string, info os.FileInfo, rule Rule) error {
 // the current user the owner and has a protected DACL, which inherits
 // nothing from the parent, granting full access to the current user,
 // LocalSystem and the Administrators group only. For a directory the ACEs
-// are inherited by everything created inside it. The caller frees it with
-// LocalFree.
+// are inheritable, so entries created inside it without a protected
+// descriptor of their own inherit them. The caller frees it with LocalFree.
 func privateDescriptor(directory bool) (uintptr, error) {
 	id, err := loadIdentity()
 	if err != nil {
@@ -429,8 +436,9 @@ func privateDescriptor(directory bool) (uintptr, error) {
 
 // CreateFile creates a new file at path that is owner-only from the start:
 // it fails if anything exists at path, including a reparse point, and the
-// file is created with the descriptor privateDescriptor builds, so it never
-// has another DACL. flag must be os.O_WRONLY or os.O_RDWR; the handle can
+// file is created with the descriptor privateDescriptor builds, so there is
+// no moment when it has a broader DACL. A file system without ACLs ignores
+// the descriptor, and callers check the result. flag must be os.O_WRONLY or os.O_RDWR; the handle can
 // also read attributes and the security descriptor, and is not inherited by
 // child processes.
 func CreateFile(path string, flag int) (*os.File, error) {

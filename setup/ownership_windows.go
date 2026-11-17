@@ -13,10 +13,11 @@ import (
 
 // On Windows the owner and DACL of each entry are read through a handle; see
 // package ownersonly. The current user, or the default owner this process
-// gives new objects, must own a private entry, and only LocalSystem and
-// Administrators may also have access. A configuration file and a directory
-// above an entry may also be owned by LocalSystem, Administrators or
-// TrustedInstaller.
+// gives new objects, must own a private entry, and only LocalSystem,
+// Administrators and TrustedInstaller may also have access; other
+// principals may at most read its attributes and DACL. A configuration file
+// and a directory above an entry may also be owned by LocalSystem,
+// Administrators or TrustedInstaller.
 
 func fileOwnershipSupported() bool { return true }
 
@@ -59,10 +60,11 @@ func trustedUnwritable(path string, info os.FileInfo) bool {
 // ancestor accepts a directory that a trusted owner holds and that no other
 // principal can write, or one that lets others only add entries above a
 // child that a trusted owner holds. Removing or renaming an entry takes
-// DELETE on the entry or FILE_DELETE_CHILD on the directory, which other
-// principals do not hold here, so a child owned by LocalSystem, such as the
-// Users folder below the volume root, is as safe as one the current user
-// owns.
+// DELETE on the entry or FILE_DELETE_CHILD on the directory; the directory
+// grants others no FILE_DELETE_CHILD, and each entry's own check refuses
+// DELETE for others. So a child owned by LocalSystem below such a
+// directory, as a folder below a volume root that lets users add folders
+// often is, is as safe as one the current user owns.
 func ancestor(parentPath string, parent os.FileInfo, childPath string, child os.FileInfo) bool {
 	if parent == nil || !parent.IsDir() {
 		return false

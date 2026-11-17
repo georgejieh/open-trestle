@@ -151,7 +151,7 @@ func imageIdentity(process syscall.Handle) (fileIdentity, error) {
 // except that it may let others add entries, which cannot remove, rename or
 // replace an existing one. The directory itself
 // must not be a reparse point, must be owned by the current user and must
-// grant no other principal except LocalSystem and Administrators any access,
+// grant other principals no access beyond reading its attributes and DACL,
 // which is what the helper requires of its working directory. With create, a
 // missing directory is first created owner-only; nothing above it is ever
 // created.

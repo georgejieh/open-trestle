@@ -52,8 +52,8 @@ func ExitWithParent() {}
 
 // PrivateCacheDirectory returns the working directory after checking that it
 // is a directory, not a reparse point, owned by the current user, whose DACL
-// grants no principal other than the current user, LocalSystem and
-// Administrators any access; see package ownersonly. wazero loads native code
+// grants principals other than the current user and the system's own
+// accounts no access beyond reading attributes; see package ownersonly. wazero loads native code
 // from the cache, so a directory anyone else can write would let them run
 // code in the helper.
 func PrivateCacheDirectory() (string, error) {

@@ -73,19 +73,20 @@ func PrivateDirectory(path string, info os.FileInfo) bool {
 // PrivateDirectoryRequirement describes, for an error message, what
 // PrivateDirectory requires.
 func PrivateDirectoryRequirement(os.FileInfo) string {
-	return "only this account, SYSTEM and Administrators may have access"
+	return "only this account, SYSTEM, Administrators and TrustedInstaller may have access"
 }
 
 // PrivateFileRequirement describes, for an error message, what PrivateFile
 // requires.
 func PrivateFileRequirement() string {
-	return "a regular file that only this account, SYSTEM and Administrators can access"
+	return "a regular file that only this account, SYSTEM, Administrators and TrustedInstaller can access"
 }
 
 // UnwritableFile reports whether info, which describes the entry at path, is
 // a regular file, not a reparse point, owned by this account, LocalSystem,
-// Administrators or TrustedInstaller, that no other principal can write,
-// delete or change the security of.
+// Administrators or TrustedInstaller, whose DACL grants no other principal
+// write, DELETE or security-changing rights. Whether the folder above lets
+// others remove it is checked by PinDirectory and OpenReadOnly.
 func UnwritableFile(path string, info os.FileInfo) bool {
 	return info != nil && info.Mode().IsRegular() && trustedEntry(path, info, ownersonly.OthersRead)
 }
@@ -129,10 +130,10 @@ func CreatePrivateFile(path string) (*os.File, error) {
 	return ownersonly.CreateFile(path, os.O_WRONLY)
 }
 
-// SyncDirectory commits the entries of the directory at path to stable
-// storage. Windows flushes a directory only through a handle with write
-// access, so the directory is opened for adding entries, which writes
-// nothing by itself.
+// SyncDirectory asks the file system to flush the entries of the directory
+// at path, which NTFS commits to stable storage. FlushFileBuffers needs a
+// handle with write access, so the directory is opened for adding entries,
+// which writes nothing by itself.
 func SyncDirectory(path string) error {
 	name, err := syscall.UTF16PtrFromString(path)
 	if err != nil {
@@ -154,8 +155,8 @@ func SyncDirectory(path string) error {
 }
 
 // createProtected creates base in the directory at parent, which root
-// holds open, with an owner-only descriptor. Windows cannot pass a security
-// descriptor through os.Root, so the file is created by path; the caller
+// holds open, with an owner-only descriptor. os.Root takes no security
+// descriptor, so the file is created by path below the pinned parent; the caller
 // then requires that root's entry is the created file.
 func createProtected(_ *os.Root, parent, base string) (*os.File, error) {
 	return ownersonly.CreateFile(filepath.Join(parent, base), os.O_WRONLY)

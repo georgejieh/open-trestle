@@ -66,7 +66,7 @@ func (w *initWizard) existingSetup() (bool, error) {
 	}
 	if !fileauthority.PrivateDirectory(dir, info) {
 		if runtime.GOOS == "windows" {
-			return false, initStopf(initExitRefused, "%s exists but is not private: accounts other than yours, SYSTEM and Administrators have access to it. Pass --directory with a new folder.", initDisplayPath(dir))
+			return false, initStopf(initExitRefused, "%s exists but is not private: accounts other than yours, SYSTEM, Administrators and TrustedInstaller have access to it. Pass --directory with a new folder.", initDisplayPath(dir))
 		}
 		return false, initStopf(initExitRefused, "%s exists but is not private (mode %04o). Run chmod 700 %s, or pass --directory with a new folder.", initDisplayPath(dir), info.Mode().Perm(), initShellQuote(dir))
 	}

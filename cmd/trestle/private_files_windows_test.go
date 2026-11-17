@@ -25,7 +25,7 @@ func exposeTestDirectory(t *testing.T, path string) {
 
 // privateDirectoryRefusal is part of the explanation for a directory that is
 // not private.
-const privateDirectoryRefusal = "only this account, SYSTEM and Administrators"
+const privateDirectoryRefusal = "only this account, SYSTEM, Administrators and TrustedInstaller"
 
 // setTestMode gives path the access that matters about mode on Unix: group
 // or other write bits grant Everyone modify access, and any other mode
