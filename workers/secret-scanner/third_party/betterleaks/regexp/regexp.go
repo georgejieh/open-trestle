@@ -12,6 +12,16 @@ type Engine interface {
 	Version() string
 }
 
+// CompiledRegexp is the compiled form an Engine returns. It is exported so
+// that an Engine can be implemented outside this module.
+type CompiledRegexp = internal.CompiledRegexp
+
+// PatternRecorder is implemented by an Engine that wants to see the text of
+// every pattern Compile accepts, at the time Compile creates its Regexp.
+type PatternRecorder interface {
+	RecordPattern(str string)
+}
+
 // Regexp wraps a regular expression. Compilation is deferred until first match.
 type Regexp struct {
 	pattern   string
@@ -91,6 +101,9 @@ func Compile(str string) (*Regexp, error) {
 	parsed, err := syntax.Parse(str, syntax.Perl)
 	if err != nil {
 		return nil, err
+	}
+	if recorder, ok := currentEngine.(PatternRecorder); ok {
+		recorder.RecordPattern(str)
 	}
 	return &Regexp{
 		pattern:   str,

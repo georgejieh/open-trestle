@@ -1,0 +1,83 @@
+--- a/core_bpe.go
++++ b/core_bpe.go
+@@ -1,18 +1,17 @@
+ package tiktoken
+ 
+ import (
+-	"bytes"
+-	"errors"
+ 	"fmt"
+ 	"regexp"
+-	"sort"
+ 	"strings"
++	"sync"
+ 
+ 	"github.com/dlclark/regexp2"
+ )
+ 
+ type CoreBPE struct {
+ 	encoder              map[string]int
++	decoderOnce          sync.Once
+ 	decoder              map[int]string
+ 	specialTokensEncoder map[string]int
+ 	specialTokensDecoder map[int]string
+@@ -36,39 +35,32 @@
+ 		return nil, fmt.Errorf("error compiling special regex: %s", err)
+ 	}
+ 
+-	decoder := make(map[int]string, len(encoder))
+-	for k, v := range encoder {
+-		decoder[v] = k
+-	}
+-
+-	if len(encoder) != len(decoder) {
+-		return nil, errors.New("encoder and decoder map sizes are different")
+-	}
+-
+ 	specialTokensDecoder := make(map[int]string, len(specialTokensEncoder))
+ 	for k, v := range specialTokensEncoder {
+ 		specialTokensDecoder[v] = k
+ 	}
+ 
+-	sortedTokenBytes := make([][]byte, 0, len(encoder))
+-	for k := range encoder {
+-		sortedTokenBytes = append(sortedTokenBytes, []byte(k))
+-	}
+-	sort.Slice(sortedTokenBytes, func(i, j int) bool {
+-		return bytes.Compare(sortedTokenBytes[i], sortedTokenBytes[j]) < 0
+-	})
+-
++	// The decoder is built on the first decode, so that callers that only
++	// encode do not pay for inverting the encoder. sortedTokenBytes is never
++	// read and is not built.
+ 	return &CoreBPE{
+ 		encoder:              encoder,
+ 		specialTokensEncoder: specialTokensEncoder,
+-		decoder:              decoder,
+ 		specialTokensDecoder: specialTokensDecoder,
+ 		tlRegex:              regex,
+ 		tlSpecialRegex:       specialRegex,
+-		sortedTokenBytes:     sortedTokenBytes,
+ 	}, nil
+ }
+ 
++func (bpe *CoreBPE) buildDecoder() {
++	bpe.decoderOnce.Do(func() {
++		bpe.decoder = make(map[int]string, len(bpe.encoder))
++		for k, v := range bpe.encoder {
++			bpe.decoder[v] = k
++		}
++	})
++}
++
+ func (bp *CoreBPE) encodeNative(text string, allowedSpecial map[string]any) ([]int, int) {
+ 	specialRegex := bp.tlSpecialRegex
+ 	regex := bp.tlRegex
+@@ -143,6 +135,7 @@
+ }
+ 
+ func (bpe *CoreBPE) decodeNative(tokens []int) []byte {
++	bpe.buildDecoder()
+ 	ret := make([]byte, 0, len(tokens)*2)
+ 	for _, token := range tokens {
+ 		tokenBytes, ok := bpe.decoder[token]

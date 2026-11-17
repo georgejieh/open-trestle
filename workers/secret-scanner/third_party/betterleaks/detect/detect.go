@@ -349,7 +349,7 @@ func NewDetectorContext(ctx context.Context, cfg *config.Config, valOpts Validat
 // May be nil if the tokenizer failed to initialize.
 func (d *Detector) Tokenizer() *tiktoken.Tiktoken {
 	d.tokenizerOnce.Do(func() {
-		tiktoken.SetBpeLoader(&TiktokenLoader{})
+		tiktoken.SetBpeLoader(BpeLoader)
 		tke, err := tiktoken.GetEncoding("cl100k_base")
 		if err != nil {
 			logging.Warn().Err(err).Msg("Could not initialize cl100k_base tiktokenizer")

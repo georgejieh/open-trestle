@@ -8,10 +8,16 @@ import (
 	"encoding/base64"
 	"strconv"
 	"strings"
+
+	"github.com/pkoukk/tiktoken-go"
 )
 
 //go:embed assets/cl100k_base.tiktoken.gz
 var bpeData []byte
+
+// BpeLoader is the loader the tokenizer uses for its BPE ranks. A caller may
+// replace it before the first scan with a loader that returns the same ranks.
+var BpeLoader tiktoken.BpeLoader = &TiktokenLoader{}
 
 // TikTokenLoader implements the tiktoken.BpeLoader interface
 type TiktokenLoader struct{}
