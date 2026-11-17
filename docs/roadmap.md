@@ -276,6 +276,13 @@ The release brings the whole loop to Windows and macOS:
 - The sealed run bundle is scored against the adjudicated labels.
 - Public benchmarks (SWR-Bench, AACR-Bench, c-CRAB) are added to the
   evaluation driver, and the numbers are published.
+- A comparison with minimal harnesses. The same models review pull requests
+  seeded with known bugs in a medium-size codebase, once through Open Trestle
+  and once through a minimal coding-agent harness, and the comparison measures
+  how many bugs each finds, how many false alarms it raises, and the tokens and
+  cost of each review. Vendor coding agents serve as a second, stronger
+  baseline. If Open Trestle helps, the same setup becomes a way to benchmark
+  models.
 
 ### Policy, analysis and operations
 
