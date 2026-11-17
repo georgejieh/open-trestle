@@ -3,6 +3,8 @@ package spending
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -81,7 +83,7 @@ func (s *Store) Directory() string { return s.dir }
 // the folder does not exist and create is not set.
 func (s *Store) prepare(create bool) (*fileauthority.DirectoryPin, bool, error) {
 	if create {
-		if err := os.MkdirAll(s.dir, 0o700); err != nil {
+		if err := fileauthority.MkdirAllPrivate(s.dir); err != nil {
 			return nil, false, fmt.Errorf("%w: cannot create %s", ErrUnavailable, s.dir)
 		}
 	}
@@ -92,8 +94,8 @@ func (s *Store) prepare(create bool) (*fileauthority.DirectoryPin, bool, error) 
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return nil, false, fmt.Errorf("%w: %s is not a folder", ErrUnavailable, s.dir)
 	}
-	if info.Mode().Perm() != 0o700 {
-		return nil, false, fmt.Errorf("%w: %s must be private (mode 0700, not %04o)", ErrUnavailable, s.dir, info.Mode().Perm())
+	if !fileauthority.PrivateDirectory(s.dir, info) {
+		return nil, false, fmt.Errorf("%w: %s must be private (%s)", ErrUnavailable, s.dir, fileauthority.PrivateDirectoryRequirement(info))
 	}
 	pin, err := fileauthority.PinDirectory(s.dir)
 	if err != nil {
@@ -144,7 +146,7 @@ func (s *Store) read(pin *fileauthority.DirectoryPin, name string, limit int) ([
 	}
 	defer file.Close()
 	before, err := file.Stat()
-	if err != nil || before.Mode().Perm() != 0o600 || before.Size() > int64(limit) {
+	if err != nil || !fileauthority.PrivateOpenFile(file, before) || before.Size() > int64(limit) {
 		return nil, false, fmt.Errorf("%w: %s is not a protected file within its size bound", ErrUnavailable, name)
 	}
 	data, err := io.ReadAll(io.LimitReader(file, int64(limit)+1))
@@ -231,16 +233,20 @@ func (s *Store) SetLimit(ctx context.Context, limit Limit) error {
 // rename, then syncs the folder.
 func (s *Store) replace(ctx context.Context, pin *fileauthority.DirectoryPin, name string, content []byte) error {
 	target := filepath.Join(s.dir, name)
-	if info, err := os.Lstat(target); err == nil && (!info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || !fileauthority.TrustedOwner(info)) {
+	if info, err := os.Lstat(target); err == nil && !fileauthority.PrivateFile(target, info) {
 		return fmt.Errorf("%w: %s is not a protected file", ErrUnavailable, name)
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return ErrUnavailable
 	}
-	temp, err := os.CreateTemp(s.dir, ".limit-*")
+	suffix := make([]byte, 8)
+	if _, err := rand.Read(suffix); err != nil {
+		return ErrUnavailable
+	}
+	temporary := filepath.Join(s.dir, ".limit-"+hex.EncodeToString(suffix))
+	temp, err := fileauthority.CreatePrivateFile(temporary)
 	if err != nil {
 		return fmt.Errorf("%w: cannot write in %s", ErrUnavailable, s.dir)
 	}
-	temporary := temp.Name()
 	defer func() { _ = temp.Close(); _ = os.Remove(temporary) }()
 	opened, err := temp.Stat()
 	if err != nil || temp.Chmod(0o600) != nil {
@@ -250,7 +256,7 @@ func (s *Store) replace(ctx context.Context, pin *fileauthority.DirectoryPin, na
 		return fmt.Errorf("%w: cannot write in %s", ErrUnavailable, s.dir)
 	}
 	staged, err := os.Lstat(temporary)
-	if err != nil || !os.SameFile(opened, staged) || !staged.Mode().IsRegular() || staged.Mode().Perm() != 0o600 || ctx.Err() != nil || pin.Recheck() != nil {
+	if err != nil || !os.SameFile(opened, staged) || !fileauthority.PrivateFile(temporary, staged) || ctx.Err() != nil || pin.Recheck() != nil {
 		return ErrUnavailable
 	}
 	if err := os.Rename(temporary, target); err != nil {
@@ -330,7 +336,7 @@ func (s *Store) Append(ctx context.Context, entry Entry) error {
 	defer file.Close()
 	opened, err := file.Stat()
 	linked, linkErr := root.Lstat(name)
-	if err != nil || linkErr != nil || !opened.Mode().IsRegular() || opened.Mode().Perm() != 0o600 || !fileauthority.TrustedOwner(opened) || !os.SameFile(opened, linked) || pin.Recheck() != nil {
+	if err != nil || linkErr != nil || !fileauthority.PrivateOpenFile(file, opened) || !os.SameFile(opened, linked) || pin.Recheck() != nil {
 		return fmt.Errorf("%w: %s is not a protected file", ErrUnavailable, name)
 	}
 	size := opened.Size()
@@ -440,13 +446,7 @@ func SumSpend(entries []Entry, scope Scope) Spend {
 }
 
 func syncDirectory(dir string) error {
-	directory, err := os.Open(dir)
-	if err != nil {
-		return ErrUnavailable
-	}
-	syncErr := directory.Sync()
-	closeErr := directory.Close()
-	if syncErr != nil || closeErr != nil {
+	if err := fileauthority.SyncDirectory(dir); err != nil {
 		return fmt.Errorf("%w: cannot sync %s", ErrUnavailable, dir)
 	}
 	return nil
