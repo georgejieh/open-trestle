@@ -74,8 +74,8 @@ func TestSecretScannerSchemasPinBetterleaksAndDecodedUTF8(t *testing.T) {
 		}
 	}
 	buildProfile := responseProperties["build_profile"].(map[string]any)
-	if _, pinned := buildProfile["const"]; pinned || !reflect.DeepEqual(buildProfile["enum"], []any{BuildProfile, go12610BuildProfile}) {
-		t.Fatalf("response schema build_profile = %v, want exactly the current and recorded go1.26.10 profiles", buildProfile)
+	if _, pinned := buildProfile["const"]; pinned || !reflect.DeepEqual(buildProfile["enum"], []any{BuildProfile, HostRE2BuildProfile, go12610BuildProfile}) {
+		t.Fatalf("response schema build_profile = %v, want exactly the native, host RE2 and recorded go1.26.10 profiles", buildProfile)
 	}
 	if strings.TrimSpace(buildProfile["description"].(string)) == "" {
 		t.Fatal("response schema build_profile has no description")

@@ -72,6 +72,15 @@ func (result ScanResult) Format(state fmt.State, verb rune) {
 	_, _ = fmt.Fprint(state, result.String())
 }
 
+// ReceiptBuildProfile reports whether a review receipt may name profile:
+// BuildProfile, which the native worker emits, or the recorded go1.26.10
+// profile. KnownBuildProfile also accepts HostRE2BuildProfile, because the
+// scan helper's responses carry it, but reviews do not run the scan helper,
+// so no receipt may claim its profile.
+func ReceiptBuildProfile(profile string) bool {
+	return profile == BuildProfile || profile == go12610BuildProfile
+}
+
 type sourceScanner interface {
 	scan(context.Context, [][]byte) ScanResult
 }

@@ -154,7 +154,7 @@ func respondSessionTestRequest(request Request, atClose *sessionHelperClose) int
 		ScannerVersion:  ScannerVersion,
 		ScannerCommit:   ScannerCommit,
 		RulesetIdentity: RulesetIdentity,
-		BuildProfile:    BuildProfile,
+		BuildProfile:    HostRE2BuildProfile,
 		Matches:         []Match{},
 	}
 	exitAfterResponse := false
@@ -188,7 +188,9 @@ func respondSessionTestRequest(request Request, atClose *sessionHelperClose) int
 			return -1
 		case "session:wrong-id":
 			response.RequestID = strings.Repeat("0", 64)
-		case "session:wrong-profile":
+		case "session:native-profile":
+			response.BuildProfile = BuildProfile
+		case "session:recorded-profile":
 			response.BuildProfile = go12610BuildProfile
 		case "session:unknown-rule":
 			match := Match{SourceOrdinal: 0, RuleID: "not-a-pinned-rule", StartByte: 0, EndByteExclusive: 1}
@@ -285,7 +287,7 @@ func newSessionTestHelper(t *testing.T) sessionTestHelper {
 
 func (helper sessionTestHelper) settings(watchdog time.Duration) sessionSettings {
 	return sessionSettings{
-		config:         SessionConfig{HelperPath: helper.path, HelperSHA256: helper.digest, BuildProfile: BuildProfile},
+		config:         SessionConfig{HelperPath: helper.path, HelperSHA256: helper.digest, BuildProfile: HostRE2BuildProfile},
 		scanWatchdog:   watchdog,
 		startAllowance: 0,
 		scanLimit:      sessionScanLimit,
@@ -415,7 +417,7 @@ func TestSessionScansSeveralRequestsAndClosesCleanly(t *testing.T) {
 		want := strings.Count(input, "TOKEN")
 		metadata := result.Metadata()
 		if len(result.Matches()) != want || metadata.MatchCount != want || metadata.SourceCount != 2 || metadata.ScannedByteCount != len(input)+len("second source") ||
-			metadata.BuildProfile != BuildProfile || metadata.HelperSHA256 != helper.digest || metadata.LauncherSHA256 != "" || metadata.WorkerSHA256 != "" {
+			metadata.BuildProfile != HostRE2BuildProfile || metadata.HelperSHA256 != helper.digest || metadata.LauncherSHA256 != "" || metadata.WorkerSHA256 != "" {
 			t.Fatalf("scan %d returned unexpected result: %d matches, %+v", index, len(result.Matches()), metadata)
 		}
 	}
@@ -537,6 +539,9 @@ func TestOpenSessionRefusesUntrustedHelperBeforeSpawn(t *testing.T) {
 		}, ErrHelperUntrusted},
 		{"recorded build profile", func(_ *testing.T, settings *sessionSettings, _ sessionTestHelper) {
 			settings.config.BuildProfile = go12610BuildProfile
+		}, ErrSessionConfig},
+		{"native build profile", func(_ *testing.T, settings *sessionSettings, _ sessionTestHelper) {
+			settings.config.BuildProfile = BuildProfile
 		}, ErrSessionConfig},
 		{"unknown build profile", func(_ *testing.T, settings *sessionSettings, _ sessionTestHelper) {
 			settings.config.BuildProfile = "public_detect_run_unknown_v1"
@@ -662,7 +667,8 @@ func TestSessionFailsClosedOnEveryHelperFault(t *testing.T) {
 		{"empty frame", "session:zero", []error{errHelperFrame}, FailurePolicy, true},
 		{"malformed frame", "session:malformed", []error{errHelperResponse}, FailurePolicy, true},
 		{"wrong request id", "session:wrong-id", []error{errHelperResponse}, FailurePolicy, true},
-		{"recorded build profile", "session:wrong-profile", []error{errHelperResponse}, FailurePolicy, true},
+		{"native build profile", "session:native-profile", []error{errHelperResponse}, FailurePolicy, true},
+		{"recorded build profile", "session:recorded-profile", []error{errHelperResponse}, FailurePolicy, true},
 		{"unpinned rule id", "session:unknown-rule", []error{errHelperResponse}, FailurePolicy, true},
 		{"scan failed status", "session:scan-failed", []error{errScanIncomplete}, FailurePolicy, true},
 		{"resource exhausted status", "session:resource", []error{errScanIncomplete}, FailureResourceLimit, true},
@@ -958,7 +964,7 @@ func TestRunReviewSession(t *testing.T) {
 	if !errors.Is(err, reviewFailure) || !errors.Is(err, errHelperExit) {
 		t.Fatalf("review and close failures were not both reported: %v", err)
 	}
-	untrusted := SessionConfig{HelperPath: helper.path, HelperSHA256: strings.Repeat("0", 64), BuildProfile: BuildProfile}
+	untrusted := SessionConfig{HelperPath: helper.path, HelperSHA256: strings.Repeat("0", 64), BuildProfile: HostRE2BuildProfile}
 	ran := false
 	if err := RunReviewSession(context.Background(), untrusted.Opener(), func(context.Context, ReviewSession) error { ran = true; return nil }); !errors.Is(err, ErrHelperUntrusted) || ran {
 		t.Fatalf("review ran without a trusted helper: %v", err)
@@ -999,7 +1005,7 @@ func TestSessionHelperDiesWithItsParent(t *testing.T) {
 
 func runSessionParentForTest(pidPath, helperPath, digest string) {
 	settings := sessionSettings{
-		config:         SessionConfig{HelperPath: helperPath, HelperSHA256: digest, BuildProfile: BuildProfile},
+		config:         SessionConfig{HelperPath: helperPath, HelperSHA256: digest, BuildProfile: HostRE2BuildProfile},
 		scanWatchdog:   time.Minute,
 		startAllowance: time.Minute,
 		scanLimit:      sessionScanLimit,

@@ -66,7 +66,7 @@ type SessionConfig struct {
 	// helper file. The file is hashed before every spawn.
 	HelperSHA256 string
 	// BuildProfile is the only build profile accepted in responses. It must
-	// be a profile KnownBuildProfile accepts for live scans.
+	// be HostRE2BuildProfile, the profile the scan helper emits.
 	BuildProfile string
 }
 
@@ -198,9 +198,8 @@ func openSession(ctx context.Context, settings sessionSettings) (*Session, error
 
 func validSessionSettings(settings sessionSettings) bool {
 	path := settings.config.HelperPath
-	profile := settings.config.BuildProfile
 	return path != "" && filepath.IsAbs(path) && filepath.Clean(path) == path && validDigest(settings.config.HelperSHA256) &&
-		KnownBuildProfile(profile) && profile != go12610BuildProfile &&
+		settings.config.BuildProfile == HostRE2BuildProfile &&
 		settings.scanWatchdog > 0 && settings.startAllowance >= 0 && settings.scanLimit > 0 && settings.random != nil
 }
 
