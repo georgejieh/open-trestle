@@ -23,9 +23,13 @@
 
 ; Members and signatures.
 (function_signature name: (identifier) @name) @definition.function
-(method_signature name: [(property_identifier) (private_property_identifier)] @name) @definition.method
+; Members of interfaces and of object types that define a type alias. Object
+; types in annotations, such as a return type, define nothing.
+(interface_body (method_signature name: [(property_identifier) (private_property_identifier)] @name) @definition.method)
+(interface_body (property_signature name: [(property_identifier) (private_property_identifier)] @name) @definition.field)
+(type_alias_declaration value: (object_type (method_signature name: [(property_identifier) (private_property_identifier)] @name) @definition.method))
+(type_alias_declaration value: (object_type (property_signature name: [(property_identifier) (private_property_identifier)] @name) @definition.field))
 (abstract_method_signature name: [(property_identifier) (private_property_identifier)] @name) @definition.method
-(property_signature name: [(property_identifier) (private_property_identifier)] @name) @definition.field
 (public_field_definition name: [(property_identifier) (private_property_identifier)] @name) @definition.field
 (enum_body name: (property_identifier) @name @definition.constant)
 (enum_assignment name: (property_identifier) @name) @definition.constant
