@@ -205,9 +205,6 @@ func parseRequestMeta(encoded []byte) (requestMetadata, error) {
 	return requestMetadata{ProtocolVersion: protocol, ClientCapabilities: capabilities}, nil
 }
 
-type requestParams struct {
-	Meta map[string]json.RawMessage `json:"_meta"`
-}
 type listToolsParams struct {
 	Meta   map[string]json.RawMessage `json:"_meta"`
 	Cursor string                     `json:"cursor,omitempty"`
