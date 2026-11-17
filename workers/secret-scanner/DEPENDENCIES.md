@@ -42,7 +42,7 @@ Changes in the tiktoken-go patch: `NewCoreBPE` no longer builds the decoder map,
 
 ## Scan helper and guest build
 
-`cmd/open-trestle-scan-helper` embeds the guest. The committed `cmd/open-trestle-scan-helper/guest.wasm` is empty, and a helper built from it exits 70. Build a working helper with:
+`cmd/open-trestle-scan-helper` embeds the guest. The committed `cmd/open-trestle-scan-helper/guest.wasm` is empty, and a helper built from it fails its guest check and exits 70 without scanning. Build a working helper with:
 
 ```text
 go run ./internal/cmd/build-scan-helper -o <directory>

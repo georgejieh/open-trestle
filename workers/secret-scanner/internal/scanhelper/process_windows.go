@@ -38,9 +38,10 @@ func LimitResources() error { return nil }
 // in a job object that ends it with the parent.
 func ExitWithParent() {}
 
-// PrivateCacheDirectory refuses every directory. Owner-only access on
-// Windows is a property of the directory's ACL, which this helper does not
-// check yet, and an unchecked cache directory is a path for code injection.
+// PrivateCacheDirectory refuses every directory, so the helper exits with
+// ExitCacheDirectory before it serves a request on Windows. Owner-only access
+// on Windows is a property of the directory's ACL, which this helper does not
+// check, and an unchecked cache directory is a path for code injection.
 func PrivateCacheDirectory() (string, error) {
 	return "", errCacheDirectory
 }
