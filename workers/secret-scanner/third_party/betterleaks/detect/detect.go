@@ -846,6 +846,7 @@ func (d *Detector) detectFragmentWithRule(fragment sources.Fragment,
 	var (
 		findings []report.Finding
 		logger   = fragment.Logger().With().Str("rule_id", r.RuleID).Logger()
+		prior    *suppressionIndex
 	)
 
 	if r.SkipReport && !fragment.InheritedFromFinding {
@@ -1004,8 +1005,13 @@ func (d *Detector) detectFragmentWithRule(fragment sources.Fragment,
 			}
 		}
 
-		if len(priorFindings) > 0 && isSuppressedByHigherSpecificityFinding(finding, priorFindings) {
-			continue
+		if len(priorFindings) > 0 {
+			if prior == nil {
+				prior = newSuppressionIndex(priorFindings)
+			}
+			if prior.suppresses(finding) {
+				continue
+			}
 		}
 
 		// Entropy is always computed — needed for report output regardless of filter path.

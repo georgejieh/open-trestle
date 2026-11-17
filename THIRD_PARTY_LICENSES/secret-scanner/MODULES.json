@@ -62,7 +62,7 @@
         {
           "linked_by": "workers/secret-scanner/guest",
           "patch": "workers/secret-scanner/third_party/betterleaks-v1.8.1.patch",
-          "patch_sha256": "3a50d33434bede1a753269793796f1bfa3850aa123f702a30aaedd8188aa8019",
+          "patch_sha256": "4cb3abc6bb793a3a0038961143a821b80afdfef056267c78015cb158340e6d7c",
           "path": "workers/secret-scanner/third_party/betterleaks"
         }
       ],

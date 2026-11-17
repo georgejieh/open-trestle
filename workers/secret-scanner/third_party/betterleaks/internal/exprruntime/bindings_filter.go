@@ -3,9 +3,11 @@ package exprruntime
 import (
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
+	"unsafe"
 
 	"github.com/betterleaks/betterleaks/internal/confidence"
 	"github.com/betterleaks/betterleaks/internal/words"
@@ -98,9 +100,89 @@ func findMatch(s, pattern string) string {
 }
 
 func containsAny(s string, terms any) bool {
-	trie := getOrBuildTrie(toStringSlice(terms))
+	trie := termListTrie(terms)
 	return trie != nil && len(trie.FindAllString(strings.ToLower(s))) > 0
 }
+
+// termLists remembers, for each term list a filter passed, the trie that
+// getOrBuildTrie returned for it. A filter passes the same constant list for
+// every finding, and getOrBuildTrie copies, lowercases, sorts and joins the
+// list on every call. A remembered list is recognised first by the address
+// and length of each string, which strings that share their bytes with it
+// have, and then by content, so only an identical list reuses a trie: the
+// one getOrBuildTrie returns for it. Strings are immutable, so equal
+// addresses and lengths mean equal terms.
+var termLists struct {
+	sync.Mutex
+	byCount map[int][]termListEntry
+}
+
+type termListEntry struct {
+	terms []string
+	trie  *ahocorasick.Matcher
+}
+
+// termListTrie returns getOrBuildTrie(toStringSlice(terms)), from termLists
+// when the same list was seen before.
+func termListTrie(terms any) *ahocorasick.Matcher {
+	var strs []string
+	var items []any
+	switch typed := terms.(type) {
+	case []string:
+		strs = typed
+	case []any:
+		items = typed
+	default:
+		return nil
+	}
+	count := len(strs) + len(items)
+	if count == 0 {
+		return nil
+	}
+	term := func(index int) (string, bool) {
+		if strs != nil {
+			return strs[index], true
+		}
+		s, ok := items[index].(string)
+		return s, ok
+	}
+	termLists.Lock()
+	defer termLists.Unlock()
+	known := termLists.byCount[count]
+	for _, equal := range []func(a, b string) bool{sameString, equalString} {
+		for _, entry := range known {
+			if entry.matches(term, equal) {
+				return entry.trie
+			}
+		}
+	}
+	list := toStringSlice(terms)
+	if list == nil {
+		return nil
+	}
+	list = slices.Clone(list)
+	trie := getOrBuildTrie(list)
+	if termLists.byCount == nil {
+		termLists.byCount = make(map[int][]termListEntry)
+	}
+	termLists.byCount[count] = append(known, termListEntry{terms: list, trie: trie})
+	return trie
+}
+
+func (entry termListEntry) matches(term func(int) (string, bool), equal func(a, b string) bool) bool {
+	for index, known := range entry.terms {
+		if s, ok := term(index); !ok || !equal(s, known) {
+			return false
+		}
+	}
+	return true
+}
+
+func sameString(a, b string) bool {
+	return len(a) == len(b) && unsafe.StringData(a) == unsafe.StringData(b)
+}
+
+func equalString(a, b string) bool { return a == b }
 
 func toStringSlice(v any) []string {
 	switch ss := v.(type) {

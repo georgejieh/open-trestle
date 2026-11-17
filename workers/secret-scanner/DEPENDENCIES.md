@@ -34,7 +34,8 @@ Changes in the Betterleaks patch:
 
 - `regexp`: exports `CompiledRegexp`, an alias of the internal compiled-regexp interface, so that an engine can be implemented outside Betterleaks. Adds `PatternRecorder`; `Compile` passes every pattern text to an engine that implements it.
 - `regexp/filterpatterns` (new): `Collect` lists, without evaluating anything, the joined patterns of every `matchesAny` and `findMatch` call in the ruleset's filter expressions. It fails when a pattern argument is neither a string literal nor a list of string literals.
-- `detect`: the tokenizer loads its BPE ranks through the `BpeLoader` variable, which defaults to the upstream loader.
+- `detect`: the tokenizer loads its BPE ranks through the `BpeLoader` variable, which defaults to the upstream loader. A finding is checked for suppression by a higher-specificity finding only against the findings that can suppress it, those on its start line and those with component sets, instead of against every finding of the fragment. The result is the same, and a source with many findings no longer costs time quadratic in their number.
+- `internal/exprruntime`: `containsAny` remembers the trie it built for each term list and reuses it for an identical list, instead of copying, lowercasing, sorting and joining the list on every call. The result is the same, without the per-finding allocation that the guest, whose collector runs only near its memory limit, cannot absorb.
 
 Changes in the tiktoken-go patch: `NewCoreBPE` no longer builds the decoder map, which is built on the first decode, or the sorted token list, which nothing reads. The check that no two tokens share a rank moved out of `NewCoreBPE`; the guest's flat table rejects repeated ranks when it loads.
 

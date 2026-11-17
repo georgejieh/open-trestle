@@ -155,6 +155,7 @@ func filter(findings []report.Finding) []report.Finding {
 	}
 
 	var retFindings []report.Finding
+	suppression := newSuppressionIndex(findings)
 	for _, f := range findings {
 		include := true
 
@@ -165,7 +166,7 @@ func filter(findings []report.Finding) []report.Finding {
 			redactedMatch := strings.ReplaceAll(f.Match, f.Secret, "REDACTED")
 			logging.Trace().Msgf("skipping %s finding (%s), already a component of another finding", f.RuleID, redactedMatch)
 			include = false
-		} else if isSuppressedByHigherSpecificityFinding(f, findings) {
+		} else if suppression.suppresses(f) {
 			include = false
 		}
 
@@ -174,6 +175,47 @@ func filter(findings []report.Finding) []report.Finding {
 		}
 	}
 	return retFindings
+}
+
+// suppressionIndex holds, in their original order, the only findings that
+// can suppress a finding f in isSuppressedByHigherSpecificityFinding: those
+// that start on f's line and those that carry component sets. Checking just
+// them, in order, gives the same result as checking every finding, without
+// comparing every pair of findings in a fragment.
+type suppressionIndex struct {
+	findings   []report.Finding
+	byLine     map[int][]int
+	composites []int
+}
+
+func newSuppressionIndex(findings []report.Finding) *suppressionIndex {
+	index := &suppressionIndex{findings: findings, byLine: make(map[int][]int)}
+	for position, f := range findings {
+		index.byLine[f.StartLine] = append(index.byLine[f.StartLine], position)
+		if len(f.ComponentSets) > 0 {
+			index.composites = append(index.composites, position)
+		}
+	}
+	return index
+}
+
+func (index *suppressionIndex) suppresses(f report.Finding) bool {
+	sameLine, composites := index.byLine[f.StartLine], index.composites
+	for len(sameLine) > 0 || len(composites) > 0 {
+		var next int
+		switch {
+		case len(composites) == 0 || len(sameLine) > 0 && sameLine[0] < composites[0]:
+			next, sameLine = sameLine[0], sameLine[1:]
+		case len(sameLine) == 0 || composites[0] < sameLine[0]:
+			next, composites = composites[0], composites[1:]
+		default:
+			next, sameLine, composites = sameLine[0], sameLine[1:], composites[1:]
+		}
+		if isSuppressedByHigherSpecificityFinding(f, index.findings[next:next+1]) {
+			return true
+		}
+	}
+	return false
 }
 
 func isSuppressedByHigherSpecificityFinding(f report.Finding, findings []report.Finding) bool {
