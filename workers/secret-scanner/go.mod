@@ -6,7 +6,9 @@ toolchain go1.26.11
 
 require (
 	github.com/betterleaks/betterleaks v1.8.1
+	github.com/betterleaks/go-re2 v1.11.0-betterleaks.3
 	github.com/rs/zerolog v1.33.0
+	github.com/tetratelabs/wazero v1.12.0
 	golang.org/x/sys v0.46.0
 )
 
@@ -15,7 +17,6 @@ require (
 	github.com/Masterminds/semver/v3 v3.4.0 // indirect
 	github.com/STARRY-S/zip v0.2.3 // indirect
 	github.com/andybalholm/brotli v1.2.7 // indirect
-	github.com/betterleaks/go-re2 v1.11.0-betterleaks.3 // indirect
 	github.com/bodgit/plumbing v1.3.0 // indirect
 	github.com/bodgit/sevenzip v1.6.2 // indirect
 	github.com/bodgit/windows v1.0.1 // indirect
@@ -51,7 +52,6 @@ require (
 	github.com/sorairolake/lzip-go v0.3.8 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
-	github.com/tetratelabs/wazero v1.12.0 // indirect
 	github.com/ulikunitz/xz v0.5.15 // indirect
 	github.com/wasilibs/wazero-helpers v0.0.0-20250123031827-cd30c44769bb // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
