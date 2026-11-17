@@ -234,6 +234,119 @@ func TestSyntheticMebibyteMatchesTheNativeScanner(t *testing.T) {
 	t.Logf("1 MiB single request: %v, %d matches", run.elapsed, len(helperResponse.Matches))
 }
 
+// TestDenseAndLimitRequestsEndAsTheNativeScannerDoes sends finding-dense
+// requests, up to the protocol's request size and source count, through one
+// helper session and requires the native scanner's status and matches for
+// each, including the requests the native scanner stops at the match limit.
+func TestDenseAndLimitRequestsEndAsTheNativeScannerDoes(t *testing.T) {
+	binaries(t)
+	fixtures, _ := readQualification(t)
+	dense := repeatedFixtures(fixtures, reviewSourceBytes)
+	cases := []struct {
+		name    string
+		sources []protocol.Source
+		status  string
+	}{
+		{"fixtures repeated in one source", repeatedSources(dense, 1), protocol.StatusComplete},
+		{"fixtures repeated in two sources", repeatedSources(dense, 2), protocol.StatusComplete},
+		{"fixtures repeated to the request size limit", repeatedSources(dense, 8), protocol.StatusResourceExhausted},
+		{"assignments in one source", assignmentSources(1, reviewSourceBytes), protocol.StatusComplete},
+		{"assignments in the most sources", assignmentSources(256, 8*1024), protocol.StatusResourceExhausted},
+	}
+	native := nativeAdapter(t)
+	var input []byte
+	requests := make([]protocol.Request, len(cases))
+	for index, test := range cases {
+		requests[index] = request(test.name, nil)
+		requests[index].Sources = test.sources
+		input = append(input, encodeRequest(t, requests[index])...)
+	}
+	for _, limit := range []protocol.Request{requests[2], requests[4]} {
+		total := 0
+		for _, source := range limit.Sources {
+			total += len(source.Content)
+		}
+		if total != 2*1024*1024 {
+			t.Fatalf("request at the limits holds %d bytes, want 2 MiB", total)
+		}
+	}
+	if len(requests[4].Sources) != 256 {
+		t.Fatal("request at the source limit does not have 256 sources")
+	}
+	run := runHelper(t, built.helper, built.cache, input, scanhelper.SessionArgument)
+	if run.code != 0 {
+		t.Fatalf("session exited %d", run.code)
+	}
+	responses := splitFrames(t, run.stdout)
+	if len(responses) != len(requests) {
+		t.Fatalf("%d responses for %d requests", len(responses), len(requests))
+	}
+	for index, test := range cases {
+		helperResponse := parseResponse(t, requests[index], responses[index])
+		nativeResponse := nativeScan(t, native, requests[index])
+		if nativeResponse.Status != test.status {
+			t.Fatalf("%s: native status %s, want %s", test.name, nativeResponse.Status, test.status)
+		}
+		if helperResponse.BuildProfile != protocol.HostRE2BuildProfile {
+			t.Fatalf("%s: helper build profile %q", test.name, helperResponse.BuildProfile)
+		}
+		helperResponse.BuildProfile = nativeResponse.BuildProfile
+		if !reflect.DeepEqual(helperResponse, nativeResponse) {
+			t.Fatalf("%s: helper %s with %d matches, native %s with %d matches", test.name, helperResponse.Status, len(helperResponse.Matches), nativeResponse.Status, len(nativeResponse.Matches))
+		}
+	}
+	t.Logf("%d dense requests: %v", len(requests), run.elapsed)
+}
+
+// repeatedFixtures is size bytes of the qualification fixtures repeated, one
+// per line, padded with spaces.
+func repeatedFixtures(fixtures []fixture, size int) []byte {
+	var text bytes.Buffer
+	for {
+		for _, fixture := range fixtures {
+			if text.Len()+len(fixture.content)+1 > size-1 {
+				text.WriteString(strings.Repeat(" ", size-text.Len()-1))
+				text.WriteByte('\n')
+				return text.Bytes()
+			}
+			text.Write(fixture.content)
+			text.WriteByte('\n')
+		}
+	}
+}
+
+func repeatedSources(content []byte, count int) []protocol.Source {
+	sources := make([]protocol.Source, count)
+	for index := range sources {
+		sources[index] = protocol.Source{Ordinal: index, Content: content}
+	}
+	return sources
+}
+
+// assignmentSources returns count sources of size bytes of seeded random
+// secret-like assignments, which the generic rules and their filters
+// examine one by one.
+func assignmentSources(count, size int) []protocol.Source {
+	random := rand.New(rand.NewPCG(uint64(count), uint64(size)))
+	names := []string{"api_key", "secret", "token", "password", "auth", "client_secret", "access_key", "private_key"}
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+	sources := make([]protocol.Source, count)
+	for index := range sources {
+		var text bytes.Buffer
+		for text.Len() < size-128 {
+			value := make([]byte, 16+random.IntN(32))
+			for position := range value {
+				value[position] = alphabet[random.IntN(len(alphabet))]
+			}
+			fmt.Fprintf(&text, "%s_%d = %q\n", names[random.IntN(len(names))], random.IntN(1000), value)
+		}
+		text.WriteString(strings.Repeat(" ", size-text.Len()-1))
+		text.WriteByte('\n')
+		sources[index] = protocol.Source{Ordinal: index, Content: text.Bytes()}
+	}
+	return sources
+}
+
 func TestSingleModeRequiresExactlyOneFrame(t *testing.T) {
 	binaries(t)
 	frame := encodeRequest(t, request("single", []byte("ordinary text")))
