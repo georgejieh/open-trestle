@@ -154,8 +154,13 @@ or "Ollama on this machine, signed in to Ollama Cloud".
 ### Step 3: the two models
 
 Pick each model from the provider's list. The checker must differ from the
-finder. If the list has more than 40 entries, the wizard first asks for part of
-a name. It flags models that look like 7B parameters or fewer as weak. What
+finder, and a checker from a different model family is recommended, because
+different families tend to miss different problems. When both models come from
+one family (both Qwen models, for example), the wizard says so and asks whether
+to keep the checker; Enter keeps it, and `n` lets you pick again. The settings
+panel then marks the checker as being in the same family as the finder.
+
+If the list has more than 40 entries, the wizard first asks for part of a name. It flags models that look like 7B parameters or fewer as weak. What
 happens next depends on the provider.
 
 - With OpenRouter, the wizard reads OpenRouter's public model and

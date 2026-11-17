@@ -35,7 +35,9 @@ review.
 model that finds problems and a different model that double-checks them. It
 fills in everything else it can, shows one settings panel, writes a protected
 configuration and runs the setup checks. It runs the first review only after
-you agree.
+you agree. It recommends a checker from a different model family than the
+finder, because different families have different blind spots, and asks once
+when both come from the same family; it does not enforce the choice.
 
 If the provider's key is not set, `trestle init` asks for it with hidden input
 and checks it with a free call where the provider offers one. It can save the
@@ -184,7 +186,7 @@ The release brings the whole loop to Windows and macOS:
 - A secret scanner that runs on all three systems, which remote providers
   depend on.
 - Owner-only credential and configuration files on Windows, using ACLs.
-- Setup recommends a checker model from a different model family than the finder, because different families have different blind spots. It recommends this without enforcing it.
+
 - Sign in with ChatGPT as a provider option, so that you can review with a
   ChatGPT plan instead of an API key. It uses OpenAI's official sign-in program
   for open-source tools and the public Responses API. The program does not

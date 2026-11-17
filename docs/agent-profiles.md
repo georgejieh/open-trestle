@@ -71,7 +71,7 @@ A `RoutingPlan` is advisory input to dispatch, not authority. Gateway eligibilit
 - cost budgets
 - operational readiness
 
-The gateway also re-checks the independence of generator and verifier on resolved records (`route_independence.go`). A plan that names a route the registry does not have, or one that is ineligible, fails at dispatch. It never silently falls back.
+The gateway also re-checks the independence of generator and verifier on resolved records (`internal/gateway/route_independence.go`). A plan that names a route the registry does not have, or one that is ineligible, fails at dispatch. It never silently falls back.
 
 ## Authority
 

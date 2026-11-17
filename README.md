@@ -70,8 +70,8 @@ What works today, on Linux:
   default branch, which is the same set of changes a pull request shows. Running
   `trestle` on its own opens a home screen with your setup, recent spending and
   the last review.
-- The model review in stage 5 works. The second model must differ from the first,
-  but setup does not yet recommend a different model family. Results come as text
+- The model review in stage 5 works. The second model must differ from the first, and setup
+  recommends one from a different model family. Results come as text
   in the terminal, or as JSON, SARIF or Markdown for other tools.
 - Remote providers (OpenRouter, Ollama Cloud and OpenCode Go) and local model
   servers (Ollama, llama.cpp, vLLM, LM Studio and other OpenAI-compatible

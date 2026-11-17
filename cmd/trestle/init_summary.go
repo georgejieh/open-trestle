@@ -143,7 +143,11 @@ func (w *initWizard) summaryRows() [][2]string {
 	case a.provider.key == "openrouter":
 		runsOn += ", zero data retention not required by Open Trestle"
 	}
-	rows := [][2]string{{"Review", commits}, {"Runs on", runsOn}, {"Finder", a.generationModel}, {"Checker", a.verificationModel}}
+	checker := a.verificationModel
+	if family := initSameFamily(a.generationModel, a.verificationModel); family != "" {
+		checker += " (same " + family + " family as the finder; a different family is recommended)"
+	}
+	rows := [][2]string{{"Review", commits}, {"Runs on", runsOn}, {"Finder", a.generationModel}, {"Checker", checker}}
 	if w.specialists() == specialistModeNone {
 		rows = append(rows, [2]string{"Specialists", "off: the general review only (--specialists auto turns them on)"})
 	} else {
