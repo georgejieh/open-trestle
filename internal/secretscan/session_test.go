@@ -1003,7 +1003,7 @@ func TestSessionDeadlineIncludesStartAllowanceOnlyForTheFirstExchange(t *testing
 	if got := session.deadline(spawned.Add(time.Second)); !got.Equal(spawned.Add(7 * time.Second)) {
 		t.Fatalf("later exchange deadline %v", got.Sub(spawned))
 	}
-	if sessionScanWatchdog != 6*time.Second || sessionStartAllowance != 10*time.Second || sessionScanLimit != 64 || helperSessionArgument != "--stdio-v1-session" || prewarmDeadline != 3*time.Minute {
+	if sessionScanWatchdog != 40*time.Second || sessionStartAllowance != 10*time.Second || sessionScanLimit != 64 || helperSessionArgument != "--stdio-v1-session" || prewarmDeadline != 3*time.Minute {
 		t.Fatal("production session limits changed")
 	}
 }

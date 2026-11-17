@@ -293,6 +293,73 @@ func TestScanHelperReviewOfFourScansClosesCleanly(t *testing.T) {
 	t.Logf("review of 4 scans of 256 KiB: %v", time.Since(started))
 }
 
+// repeatedFixtures is size bytes of the scanner's fixtures repeated, one per
+// line, padded with spaces: finding-dense content.
+func repeatedFixtures(fixtures []helperFixture, size int) []byte {
+	var text bytes.Buffer
+	for {
+		for _, fixture := range fixtures {
+			if text.Len()+len(fixture.content)+1 > size-1 {
+				text.WriteString(strings.Repeat(" ", size-text.Len()-1))
+				text.WriteByte('\n')
+				return text.Bytes()
+			}
+			text.Write(fixture.content)
+			text.WriteByte('\n')
+		}
+	}
+}
+
+// TestScanHelperSessionScansDenseContent runs finding-dense requests through
+// sessions with the production limits. Requests of one and two full sources
+// complete well within the watchdog, and a request at the protocol's size
+// limit stops at the match limit with the failure class the native worker
+// reports for it.
+func TestScanHelperSessionScansDenseContent(t *testing.T) {
+	config := scanHelperForTest(t)
+	fixtures, _ := readScannerFixtures(t)
+	dense := repeatedFixtures(fixtures, 256*1024)
+	repeated := func(count int) [][]byte {
+		sources := make([][]byte, count)
+		for index := range sources {
+			sources[index] = dense
+		}
+		return sources
+	}
+	session := openHelperSessionForTest(t, config)
+	perSource := 0
+	for _, count := range []int{1, 2} {
+		started := time.Now()
+		result, err := session.Scan(context.Background(), repeated(count))
+		elapsed := time.Since(started)
+		if err != nil || !result.Complete() {
+			t.Fatalf("%d dense sources: %v, %v", count, result.Failure(), err)
+		}
+		if count == 1 {
+			perSource = len(result.Matches())
+		}
+		if perSource < 1000 || len(result.Matches()) != count*perSource {
+			t.Fatalf("%d dense sources: %d matches, %d for one source", count, len(result.Matches()), perSource)
+		}
+		if elapsed > sessionScanWatchdog/2 {
+			t.Fatalf("%d dense sources took %v, more than half the watchdog", count, elapsed)
+		}
+		t.Logf("%d dense sources: %v, %d matches", count, elapsed, len(result.Matches()))
+	}
+	if err := session.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	session = openHelperSessionForTest(t, config)
+	started := time.Now()
+	result, err := session.Scan(context.Background(), repeated(8))
+	if result.Complete() || result.Failure() != FailureResourceLimit || !errors.Is(err, errScanIncomplete) {
+		t.Fatalf("dense request at the size limit: %v, %v", result.Failure(), err)
+	}
+	if elapsed := time.Since(started); elapsed > sessionScanWatchdog/2 {
+		t.Fatalf("dense request at the size limit took %v, more than half the watchdog", elapsed)
+	}
+}
+
 func TestScanHelperWithTheWrongDigestDoesNotStart(t *testing.T) {
 	config := scanHelperForTest(t)
 	wrong := sha256.Sum256([]byte("another helper"))
