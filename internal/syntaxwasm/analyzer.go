@@ -101,6 +101,9 @@ type Analyzer struct {
 	orphans     int
 	unavailable bool
 
+	// calls is held for reading by every analysis and for writing by
+	// Close, so that a runtime is never closed under running code.
+	calls  sync.RWMutex
 	mu     sync.Mutex
 	closed bool
 }
@@ -257,8 +260,12 @@ func (a *Analyzer) HasQueryPack(language syntaxanalysis.Language) bool {
 	return ok && entry.pack != nil
 }
 
-// Close releases every instance and compiled module.
+// Close releases every instance and compiled module after the analyses in
+// progress end. A call left running by the watchdog keeps its runtime
+// open until the process exits.
 func (a *Analyzer) Close(ctx context.Context) error {
+	a.calls.Lock()
+	defer a.calls.Unlock()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.closed {
@@ -310,7 +317,13 @@ func (a *Analyzer) Analyze(ctx context.Context, source syntaxanalysis.Source) (s
 		return gap(syntaxanalysis.GapLimitExceeded, syntaxanalysis.LimitFileSize)
 	}
 	content := source.Content()
+	a.calls.RLock()
+	if a.isClosed() {
+		a.calls.RUnlock()
+		return gap(syntaxanalysis.GapAnalysisUnavailable, "")
+	}
 	result, roles, failure := entry.family.analyze(ctx, source.Language(), entry.pack, content, a.limits)
+	a.calls.RUnlock()
 	if failure != nil {
 		if err := ctx.Err(); err != nil {
 			return syntaxanalysis.FileAnalysis{}, err

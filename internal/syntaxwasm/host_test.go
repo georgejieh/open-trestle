@@ -585,3 +585,39 @@ func TestResultPointersAreBoundsChecked(t *testing.T) {
 		t.Fatal("an oversized result length was accepted")
 	}
 }
+
+func TestCloseWaitsForAnalysesInProgress(t *testing.T) {
+	a, err := New(context.Background(), Config{CacheDirectory: sharedCacheDirectory(t), InstancesPerFamily: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !a.Available() {
+		t.Skip("the wazero compiler does not run on this platform")
+	}
+	content := bytes.Repeat([]byte("def f(a):\n    return g(a, [a, a])\n"), 3000)
+	_ = analyze(t, a, "warm.py", content)
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 5 {
+				source, _ := syntaxanalysis.NewSource("f.py", syntaxanalysis.LanguagePython, content)
+				got, err := a.Analyze(context.Background(), source)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				if !got.Complete() && !hasGapWith(got, syntaxanalysis.GapAnalysisUnavailable, "") {
+					t.Errorf("unexpected gaps %+v", got.Gaps)
+					return
+				}
+			}
+		}()
+	}
+	time.Sleep(20 * time.Millisecond)
+	if err := a.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	wg.Wait()
+}
