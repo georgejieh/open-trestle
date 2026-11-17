@@ -123,9 +123,7 @@ func TestDirectoryPinRejectsModeAndLeafReplacement(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Chmod(parent, 0755); err != nil {
-			t.Fatal(err)
-		}
+		changeAccess(t, parent)
 		if err := pin.Recheck(); !errors.Is(err, fileauthority.ErrUntrustedPath) {
 			t.Fatalf("changed parent mode: %v", err)
 		}
@@ -136,9 +134,7 @@ func TestDirectoryPinRejectsModeAndLeafReplacement(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Chmod(leaf, 0755); err != nil {
-			t.Fatal(err)
-		}
+		changeAccess(t, leaf)
 		if err := pin.Recheck(); !errors.Is(err, fileauthority.ErrUntrustedPath) {
 			t.Fatalf("changed leaf mode: %v", err)
 		}
