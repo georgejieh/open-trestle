@@ -30,11 +30,12 @@ const (
 
 // HostEngineScanDeadline bounds one scan in the WebAssembly guest. The guest
 // runs the same Betterleaks code compiled to WebAssembly, on one thread, and
-// takes up to five times as long as the native worker for the same request.
-// Every request that the native worker completes, or stops at the match
-// limit, within internalScanDeadline must end the same way in the guest, so
-// the guest gets internalScanDeadline times that factor and a fifth more.
-const HostEngineScanDeadline = 30 * time.Second
+// takes up to six times as long as the native worker for the same request,
+// most for requests of many small sources. Every request that the native
+// worker completes, or stops at the match limit, within internalScanDeadline
+// must end the same way in the guest, so the guest gets internalScanDeadline
+// times that factor and a third more.
+const HostEngineScanDeadline = 40 * time.Second
 
 var ErrInitialization = errors.New("secret scanner initialization failed")
 

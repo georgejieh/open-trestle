@@ -126,8 +126,8 @@ type hostTestEngine struct{ re2.RE2 }
 func (hostTestEngine) Version() string { return regexabi.EngineVersion }
 
 func TestHostEngineAdapterUsesTheGuestDeadlineAndProfile(t *testing.T) {
-	if HostEngineScanDeadline != 30*time.Second {
-		t.Fatal("guest scan deadline is not thirty seconds")
+	if HostEngineScanDeadline != 40*time.Second {
+		t.Fatal("guest scan deadline is not forty seconds")
 	}
 	defer func() {
 		if _, err := New(); err != nil {

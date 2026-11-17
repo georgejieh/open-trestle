@@ -26,12 +26,12 @@ const (
 	helperSessionArgument = "--stdio-v1-session"
 	// sessionScanWatchdog bounds every exchange with the helper: one scan, or
 	// the wait for a clean exit at Close. The helper's guest stops a scan at
-	// its own deadline of 30 seconds, five times the native worker's 5 s
-	// with a fifth to spare, because it runs Betterleaks up to five times
+	// its own deadline of 40 seconds, six times the native worker's 5 s
+	// with a third to spare, because it runs Betterleaks up to six times
 	// slower. It notices that deadline only between rules and then still
 	// encodes its response, so the watchdog adds the longest rule pass of a
 	// finding-dense source and some slack before it kills the helper.
-	sessionScanWatchdog = 40 * time.Second
+	sessionScanWatchdog = 50 * time.Second
 	// sessionStartAllowance is extra time for the first exchange, measured
 	// from the spawn, because the helper loads and prepares its guest before
 	// it reads the first request.
