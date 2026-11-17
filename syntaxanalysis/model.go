@@ -96,14 +96,28 @@ func (l Language) Valid() bool {
 
 // Text is untrusted text copied from the repository, such as an identifier
 // or an import path. It formats as a placeholder so that it cannot reach a
-// log line or a prompt by accident; Untrusted returns the value itself.
-type Text struct{ value string }
+// log line or a prompt by accident; Untrusted returns the value itself. The
+// value sits behind a pointer so that even the fmt verbs that bypass Format,
+// %p and %T, print an address or the type name rather than the text.
+type Text struct{ value *string }
+
+func newText(value string) Text {
+	if value == "" {
+		return Text{}
+	}
+	return Text{value: &value}
+}
 
 // Untrusted returns the repository text. The caller must treat it as data.
-func (t Text) Untrusted() string { return t.value }
+func (t Text) Untrusted() string {
+	if t.value == nil {
+		return ""
+	}
+	return *t.value
+}
 
 // Empty reports whether the text is absent.
-func (t Text) Empty() bool { return t.value == "" }
+func (t Text) Empty() bool { return t.value == nil || *t.value == "" }
 
 func (t Text) String() string   { return "repository text" }
 func (t Text) GoString() string { return "syntaxanalysis.Text{<untrusted>}" }
@@ -118,7 +132,7 @@ func (t Text) Format(s fmt.State, verb rune) {
 }
 
 // MarshalJSON encodes the text as a JSON string, which is a data encoding.
-func (t Text) MarshalJSON() ([]byte, error) { return json.Marshal(t.value) }
+func (t Text) MarshalJSON() ([]byte, error) { return json.Marshal(t.Untrusted()) }
 
 // UnmarshalJSON decodes a JSON string and requires valid UTF-8.
 func (t *Text) UnmarshalJSON(data []byte) error {
@@ -129,7 +143,7 @@ func (t *Text) UnmarshalJSON(data []byte) error {
 	if !utf8.ValidString(value) {
 		return ErrInvalidInput
 	}
-	t.value = value
+	*t = newText(value)
 	return nil
 }
 
@@ -335,12 +349,12 @@ func (a FileAnalysis) QualifiedName(index int) Text {
 	}
 	parts := []string{}
 	for i, depth := index, 0; i >= 0 && i < len(a.Definitions) && depth <= len(a.Definitions); i, depth = a.Definitions[i].Parent, depth+1 {
-		parts = append(parts, a.Definitions[i].Name.value)
+		parts = append(parts, a.Definitions[i].Name.Untrusted())
 	}
 	for l, r := 0, len(parts)-1; l < r; l, r = l+1, r-1 {
 		parts[l], parts[r] = parts[r], parts[l]
 	}
-	return Text{value: strings.Join(parts, ".")}
+	return newText(strings.Join(parts, "."))
 }
 
 // Source is one file to analyze.

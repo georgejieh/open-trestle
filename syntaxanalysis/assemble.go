@@ -140,7 +140,7 @@ func Assemble(source Source, analyzer string, raw RawFile, limits Limits) FileAn
 			return Text{}, true
 		}
 		value, ok := text(s)
-		return Text{value: value}, ok
+		return newText(value), ok
 	}
 
 	// Merge definitions that share a name span.
@@ -227,7 +227,7 @@ func Assemble(source Source, analyzer string, raw RawFile, limits Limits) FileAn
 			kind = KindMethod
 		}
 		definitions = append(definitions, Definition{
-			Kind: kind, Name: Text{value: p.name}, Container: container,
+			Kind: kind, Name: newText(p.name), Container: container,
 			Range: lines.rangeOf(p.raw.Node), NameRange: lines.rangeOf(p.raw.Name),
 			Parent: parent, Exported: p.raw.Exported,
 		})
@@ -243,7 +243,7 @@ func Assemble(source Source, analyzer string, raw RawFile, limits Limits) FileAn
 			}
 		}
 		for i := range definitions {
-			if definitions[i].Parent < 0 && exported[definitions[i].Name.value] {
+			if definitions[i].Parent < 0 && exported[definitions[i].Name.Untrusted()] {
 				definitions[i].Exported = true
 			}
 		}
@@ -284,7 +284,7 @@ func Assemble(source Source, analyzer string, raw RawFile, limits Limits) FileAn
 			node = i.Source
 		}
 		imports = append(imports, Import{
-			Source: Text{value: sourceText}, Name: name, Alias: alias,
+			Source: newText(sourceText), Name: name, Alias: alias,
 			Range: lines.rangeOf(node), Enclosing: enclosing(definitions, node.Start),
 		})
 	}
@@ -332,7 +332,7 @@ func Assemble(source Source, analyzer string, raw RawFile, limits Limits) FileAn
 		// the call site itself is still recorded.
 		qualifier, _ := optional(r.Qualifier)
 		references = append(references, Reference{
-			Kind: r.Kind, Name: Text{value: name}, Qualifier: qualifier,
+			Kind: r.Kind, Name: newText(name), Qualifier: qualifier,
 			Range: lines.rangeOf(r.Name), Enclosing: enclosing(definitions, r.Name.Start),
 		})
 	}
