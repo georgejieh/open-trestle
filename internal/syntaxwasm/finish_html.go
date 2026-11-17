@@ -1,6 +1,7 @@
 package syntaxwasm
 
 import (
+	"bytes"
 	"strings"
 
 	"github.com/georgejieh/open-trestle/syntaxanalysis"
@@ -8,8 +9,10 @@ import (
 
 // finishHTML keeps the construction records of custom elements and the
 // imports that point at a resource. The query records every tag name and
-// every src, href and action value, because it cannot test their text.
-func finishHTML(_ []byte, _ syntaxanalysis.RawFile, a *syntaxanalysis.FileAnalysis) {
+// every src, href and action value, because it cannot test their text. The
+// href of a base element sets the base for other addresses and is not a
+// target, so it is dropped too.
+func finishHTML(content []byte, _ syntaxanalysis.RawFile, a *syntaxanalysis.FileAnalysis) {
 	references := a.References[:0]
 	for _, r := range a.References {
 		if htmlCustomElement(r.Name.Untrusted()) {
@@ -19,7 +22,7 @@ func finishHTML(_ []byte, _ syntaxanalysis.RawFile, a *syntaxanalysis.FileAnalys
 	a.References = references
 	imports := a.Imports[:0]
 	for _, i := range a.Imports {
-		if htmlResource(i.Source.Untrusted()) {
+		if htmlResource(i.Source.Untrusted()) && htmlTagBefore(content, i.Range.StartByte) != "base" {
 			imports = append(imports, i)
 		}
 	}
@@ -58,4 +61,19 @@ func htmlResource(value string) bool {
 		}
 	}
 	return true
+}
+
+// htmlTagBefore returns the lower-case name of the tag that opens the last
+// start tag before offset, which is the element that owns an attribute
+// starting there.
+func htmlTagBefore(content []byte, offset int) string {
+	open := bytes.LastIndexByte(content[:offset], '<')
+	if open < 0 {
+		return ""
+	}
+	name := content[open+1 : offset]
+	if end := bytes.IndexAny(name, " \t\r\n/>"); end >= 0 {
+		name = name[:end]
+	}
+	return strings.ToLower(string(name))
 }
