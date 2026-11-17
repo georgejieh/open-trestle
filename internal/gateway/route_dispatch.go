@@ -152,16 +152,6 @@ func (s RouteDispatchStatus) String() string {
 	}
 }
 
-// ParseRouteDispatchStatus parses one exact stable dispatch status token.
-func ParseRouteDispatchStatus(value string) (RouteDispatchStatus, error) {
-	for status := RouteDispatchSucceeded; status <= RouteDispatchFailed; status++ {
-		if status.String() == value {
-			return status, nil
-		}
-	}
-	return 0, fmt.Errorf("parse route dispatch status: %w", ErrInvalidRouteDispatchStatus)
-}
-
 func (s RouteDispatchStatus) Validate() error {
 	if s.String() == "" {
 		return ErrInvalidRouteDispatchStatus

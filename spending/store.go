@@ -38,8 +38,7 @@ var (
 )
 
 var (
-	limitFileName  = regexp.MustCompile(`^limit-[0-9a-f]{64}\.json$`)
-	ledgerFileName = regexp.MustCompile(`^ledger-[0-9]{4}-[0-9]{2}\.jsonl$`)
+	limitFileName = regexp.MustCompile(`^limit-[0-9a-f]{64}\.json$`)
 )
 
 // DefaultDirectory is $XDG_STATE_HOME/open-trestle/usage when XDG_STATE_HOME

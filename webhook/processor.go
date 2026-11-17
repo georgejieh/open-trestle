@@ -139,7 +139,7 @@ func (p *Processor) Process(ctx context.Context, stored StoredDelivery, at time.
 		return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, refuseDelivery(RefusalReasonRunPlanNotBound, ErrRunPlanNotBound)
 	}
 	if prepared {
-		existingPlan, existingState, resumeErr := p.coordinator.Resume(ctx, scope)
+		existingPlan, _, resumeErr := p.coordinator.Resume(ctx, scope)
 		if resumeErr == nil {
 			// A delivery's run is opened once and its plan is immutable, so a
 			// run whose plan is exactly the one this planner, or an earlier
@@ -159,7 +159,7 @@ func (p *Processor) Process(ctx context.Context, stored StoredDelivery, at time.
 					return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, refuseDelivery(reason, controlplane.ErrRunPlanConflict)
 				}
 			}
-			existingState, resumeErr = p.coordinator.Advance(ctx, existingPlan, at)
+			existingState, resumeErr := p.coordinator.Advance(ctx, existingPlan, at)
 			if resumeErr != nil {
 				return RunAdmissionReceipt{}, controlplane.ReviewRunReceipt{}, resumeErr
 			}

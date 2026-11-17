@@ -200,7 +200,6 @@ func VerifySharedRateLimitConformance(ctx context.Context, database *sql.DB, exp
 		}
 		return observation, ErrSharedRateLimitConformanceFailed
 	}
-	sequential = append(sequential, allowed)
 	concurrent := make(chan bool, 2)
 	failures := make(chan error, 2)
 	var wait sync.WaitGroup

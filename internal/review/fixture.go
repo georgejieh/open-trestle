@@ -186,16 +186,6 @@ func (f Fixture) Request() ReviewRequest {
 	return f.request
 }
 
-// ProviderRoute returns the validated provider route.
-func (f Fixture) ProviderRoute() config.ProviderRoute {
-	return f.providerRoute
-}
-
-// RequestedCapabilities returns a copy of requested runtime capabilities.
-func (f Fixture) RequestedCapabilities() []policy.Capability {
-	return append([]policy.Capability(nil), f.requestedCapabilities...)
-}
-
 type fixtureWire struct {
 	SchemaVersion         int                 `json:"schema_version"`
 	ProviderRoute         string              `json:"provider_route"`

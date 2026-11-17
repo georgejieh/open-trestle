@@ -244,10 +244,6 @@ func (c *RuntimePolicyChecker) matchesSetup(plan Plan, inventory runtimeconfig.R
 	return runtimePolicyMatchesSetupAt(plan, inventory, policy, c.clock.Now())
 }
 
-func runtimePolicyMatchesSetup(plan Plan, inventory runtimeconfig.RouteInventory, policy runtimeconfig.RuntimePolicy) bool {
-	return runtimePolicyMatchesSetupAt(plan, inventory, policy, time.Now().UTC())
-}
-
 func runtimePolicyMatchesSetupAt(plan Plan, inventory runtimeconfig.RouteInventory, policy runtimeconfig.RuntimePolicy, now time.Time) bool {
 	posture := plan.Posture()
 	if inventory.Validate() != nil || policy.Validate() != nil || policy.ValidateAgainstInventory(inventory) != nil || policy.InventoryIdentity() != inventory.Identity() || policy.Constraints().ContentLoggingAllowed() != posture.ContentLoggingAllowed() || policy.Budget().MaxCostMicroUSD() > posture.MaxModelRequestCostMicroUSD() || posture.PublicationEnabled() || posture.DynamicValidationEnabled() || posture.ProviderFallbackEnabled() || !policy.Publication().BlocksOnInconclusive() || policy.Publication().MinimumIndependence() < policy.Independence().Level() {

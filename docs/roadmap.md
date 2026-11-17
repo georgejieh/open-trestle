@@ -258,7 +258,7 @@ The release brings the whole loop to Windows and macOS:
 ### Memory and learning
 
 - Outcome memory. Open Trestle would record findings and whether a later
-  commit addressed them, and record explicit feedback (`trestle feedback`, the
+  commit addressed them, and record explicit feedback (a future feedback command, the
   IDE, pull-request reactions). It would recall similar past outcomes as
   advisory context and suppress categories by their history, never security
   ones. Today the memory index is empty unless you supply a manually authored

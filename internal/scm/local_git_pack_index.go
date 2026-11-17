@@ -120,12 +120,6 @@ type localGitPackObjectRef struct {
 	crc        uint32
 }
 
-type localGitPackDirectoryEntry struct {
-	stem string
-	ext  string
-	name string
-}
-
 type localGitPackStemFiles struct {
 	stem     string
 	packName string

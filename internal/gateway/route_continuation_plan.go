@@ -44,16 +44,6 @@ func (a RouteContinuationAction) String() string {
 	}
 }
 
-// ParseRouteContinuationAction parses one exact stable action token.
-func ParseRouteContinuationAction(value string) (RouteContinuationAction, error) {
-	for action := RouteContinuationComplete; action <= RouteContinuationStop; action++ {
-		if action.String() == value {
-			return action, nil
-		}
-	}
-	return 0, fmt.Errorf("parse route continuation action: %w", ErrInvalidRouteContinuationAction)
-}
-
 func (a RouteContinuationAction) Validate() error {
 	if a.String() == "" {
 		return ErrInvalidRouteContinuationAction
@@ -87,16 +77,6 @@ func (r RouteContinuationReason) String() string {
 	default:
 		return ""
 	}
-}
-
-// ParseRouteContinuationReason parses one exact stable reason token.
-func ParseRouteContinuationReason(value string) (RouteContinuationReason, error) {
-	for reason := RouteContinuationSucceeded; reason <= RouteContinuationBudgetExhausted; reason++ {
-		if reason.String() == value {
-			return reason, nil
-		}
-	}
-	return 0, fmt.Errorf("parse route continuation reason: %w", ErrInvalidRouteContinuationReason)
 }
 
 func (r RouteContinuationReason) Validate() error {

@@ -70,7 +70,6 @@ type erasureExternalServices struct {
 	entered, release chan struct{}
 	version          string
 	generateError    error
-	failures         []string
 }
 
 func newErasureExternalServices(t *testing.T, s *erasureSQLService, scope audit.ReviewScope, identity string) *erasureExternalServices {

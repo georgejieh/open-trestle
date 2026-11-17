@@ -284,7 +284,6 @@ func (m *rmModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.Req
 }
 
 type rmModelFixture struct {
-	args                               []string
 	objects, base, head                string
 	inventoryPath, policyPath          string
 	inventoryID, policyID              string

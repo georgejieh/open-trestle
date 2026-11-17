@@ -134,19 +134,6 @@ func NewServerWithAdministration(journal controlplane.RunJournal, authenticator 
 	return server, nil
 }
 
-// NewServerWithRuntimeAdministration adds diagnostics, notifications, and runtime inspection.
-func NewServerWithRuntimeAdministration(journal controlplane.RunJournal, authenticator Authenticator, clock Clock, reader DiagnosticReader, queue controlplane.TaskNotificationQueue, status RuntimeStatusReader) (*Server, error) {
-	if isNilRuntimeStatusReader(status) {
-		return nil, ErrInvalidServer
-	}
-	server, err := NewServerWithRuntimeServices(journal, authenticator, clock, reader, queue)
-	if err != nil {
-		return nil, err
-	}
-	server.runtimeStatus = status
-	return server, nil
-}
-
 // NewServerWithRuntimeAdministrationAndRateLimiters adds runtime services with explicit shared request guards.
 func NewServerWithRuntimeAdministrationAndRateLimiters(journal controlplane.RunJournal, authenticator Authenticator, clock Clock, reader DiagnosticReader, queue controlplane.TaskNotificationQueue, status RuntimeStatusReader, requestLimiter, principalLimiter RateLimiter) (*Server, error) {
 	if journal == nil || isNilDiagnosticReader(reader) || isNilNotificationQueue(queue) || isNilRuntimeStatusReader(status) {

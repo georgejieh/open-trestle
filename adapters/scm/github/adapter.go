@@ -136,6 +136,9 @@ func New(config Config) (*Adapter, error) {
 	}
 	var client *http.Client
 	identity, err := adapterIdentity()
+	if err != nil {
+		return nil, ErrInvalidConfig
+	}
 	brokerIdentity := ""
 	if config.InstallationBroker != nil {
 		broker := config.InstallationBroker
