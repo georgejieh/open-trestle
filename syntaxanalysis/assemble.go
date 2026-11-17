@@ -59,9 +59,9 @@ func definitionRank(k DefinitionKind) int {
 	switch k {
 	case KindVariable:
 		return 0
-	case KindConstant:
-		return 1
 	case KindField:
+		return 1
+	case KindConstant:
 		return 2
 	default:
 		return 3
@@ -212,7 +212,8 @@ func Assemble(source Source, analyzer string, raw RawFile, limits Limits) FileAn
 		}
 		for len(stack) > 0 {
 			top := definitions[stack[len(stack)-1]]
-			if p.raw.Node.Start >= top.Range.StartByte && p.raw.Node.End <= top.Range.EndByte {
+			same := p.raw.Node.Start == top.Range.StartByte && p.raw.Node.End == top.Range.EndByte
+			if !same && p.raw.Node.Start >= top.Range.StartByte && p.raw.Node.End <= top.Range.EndByte {
 				break
 			}
 			stack = stack[:len(stack)-1]
@@ -257,8 +258,8 @@ func Assemble(source Source, analyzer string, raw RawFile, limits Limits) FileAn
 		return a.Source.Start - b.Source.Start
 	})
 	seenImports := map[RawImport]bool{}
-	for _, i := range rawImports {
-		if i.Source.Empty() || seenImports[i] {
+	for at, i := range rawImports {
+		if i.Source.Empty() || seenImports[i] || subsumed(rawImports, at) {
 			continue
 		}
 		seenImports[i] = true
@@ -297,12 +298,28 @@ func Assemble(source Source, analyzer string, raw RawFile, limits Limits) FileAn
 		}
 		return a.Name.End - b.Name.End
 	})
-	seenReferences := map[RawReference]bool{}
+	// A name already recorded with a qualifier is not repeated without one,
+	// and the name of a definition is not a reference to it.
+	type referenceKey struct {
+		kind ReferenceKind
+		name Span
+	}
+	qualified := map[referenceKey]bool{}
 	for _, r := range rawReferences {
-		if r.Name.Empty() || seenReferences[r] {
+		if !r.Qualifier.Empty() {
+			qualified[referenceKey{r.Kind, r.Name}] = true
+		}
+	}
+	seenReferences := map[referenceKey]bool{}
+	for _, r := range rawReferences {
+		key := referenceKey{r.Kind, r.Name}
+		if r.Name.Empty() || seenReferences[key] || (r.Qualifier.Empty() && qualified[key]) {
 			continue
 		}
-		seenReferences[r] = true
+		if _, isDefinition := byName[r.Name]; isDefinition {
+			continue
+		}
+		seenReferences[key] = true
 		if len(references) >= budget {
 			drop(r.Name.Start)
 			break
@@ -311,10 +328,9 @@ func Assemble(source Source, analyzer string, raw RawFile, limits Limits) FileAn
 		if !ok {
 			continue
 		}
-		qualifier, ok := optional(r.Qualifier)
-		if !ok {
-			continue
-		}
+		// An over-long or undecodable qualifier is left out with its gap;
+		// the call site itself is still recorded.
+		qualifier, _ := optional(r.Qualifier)
 		references = append(references, Reference{
 			Kind: r.Kind, Name: Text{value: name}, Qualifier: qualifier,
 			Range: lines.rangeOf(r.Name), Enclosing: enclosing(definitions, r.Name.Start),
@@ -395,6 +411,32 @@ func Assemble(source Source, analyzer string, raw RawFile, limits Limits) FileAn
 		Path: source.path, Language: source.language, ContentSHA256: source.digest, Analyzer: analyzer,
 		Definitions: definitions, References: references, Imports: imports, Gaps: out,
 	}
+}
+
+// subsumed reports whether another import of the same node and source says
+// everything rawImports[at] says and more, as when a pattern for a bare
+// import and a pattern for its named members both match one statement.
+func subsumed(imports []RawImport, at int) bool {
+	i := imports[at]
+	fields := func(r RawImport) int {
+		n := 0
+		if !r.Name.Empty() {
+			n++
+		}
+		if !r.Alias.Empty() {
+			n++
+		}
+		return n
+	}
+	for j, other := range imports {
+		if j == at || other.Node != i.Node || other.Source != i.Source || fields(other) <= fields(i) {
+			continue
+		}
+		if (i.Name.Empty() || i.Name == other.Name) && (i.Alias.Empty() || i.Alias == other.Alias) {
+			return true
+		}
+	}
+	return false
 }
 
 // pointSpan widens a zero-width error position, such as a missing token, to

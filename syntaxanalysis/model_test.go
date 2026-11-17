@@ -217,3 +217,43 @@ func TestDispatcherRoutesByLanguage(t *testing.T) {
 		t.Fatal("zero source accepted")
 	}
 }
+
+func TestAssembleMergesOverlappingPatternResults(t *testing.T) {
+	content := "import {a as b} from 'm'; x.f(); g(); class C {} let p, q;"
+	source := mustSource(t, content)
+	node := Span{0, strings.Index(content, ";")}
+	src := spanOf(t, content, "m", 0)
+	raw := RawFile{
+		Imports: []RawImport{
+			{Source: src, Node: node},
+			{Source: src, Name: spanOf(t, content, "a", 0), Node: node},
+			{Source: src, Name: spanOf(t, content, "a", 0), Alias: spanOf(t, content, "b", 0), Node: node},
+		},
+		References: []RawReference{
+			{Kind: ReferenceCall, Name: spanOf(t, content, "f", 0)},
+			{Kind: ReferenceCall, Name: spanOf(t, content, "f", 0), Qualifier: spanOf(t, content, "x", 0)},
+			{Kind: ReferenceCall, Name: spanOf(t, content, "g", 0), Qualifier: Span{0, len(content)}},
+			{Kind: ReferenceType, Name: spanOf(t, content, "C", 0)},
+		},
+		Definitions: []RawDefinition{
+			{Kind: KindClass, Name: spanOf(t, content, "C", 0), Node: Span{strings.Index(content, "class"), strings.LastIndex(content, "}") + 1}},
+			{Kind: KindVariable, Name: spanOf(t, content, "p", 0), Node: Span{strings.Index(content, "let"), len(content)}},
+			{Kind: KindVariable, Name: spanOf(t, content, "q", 0), Node: Span{strings.Index(content, "let"), len(content)}},
+		},
+	}
+	limits := DefaultLimits()
+	limits.MaxNameBytes = 20
+	a := Assemble(source, "test", raw, limits)
+	if len(a.Imports) != 1 || a.Imports[0].Alias.Untrusted() != "b" || a.Imports[0].Name.Untrusted() != "a" {
+		t.Fatalf("imports = %+v", a.Imports)
+	}
+	if len(a.References) != 2 || a.References[0].Qualifier.Untrusted() != "x" || a.References[1].Name.Untrusted() != "g" || !a.References[1].Qualifier.Empty() {
+		t.Fatalf("references = %+v", a.References)
+	}
+	if len(a.Gaps) != 1 || a.Gaps[0].Limit != LimitNameLength {
+		t.Fatalf("an over-long qualifier must leave a gap: %+v", a.Gaps)
+	}
+	if len(a.Definitions) != 3 || a.Definitions[1].Parent != -1 || a.Definitions[2].Parent != -1 {
+		t.Fatalf("definitions with equal ranges must be siblings: %+v", a.Definitions)
+	}
+}
