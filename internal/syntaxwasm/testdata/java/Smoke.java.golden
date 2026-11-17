@@ -1,0 +1,39 @@
+# definitions
+1:1-1:25 module "com.example.app"
+7:1-26:2 class "Outer" exported
+  9:29-9:39 constant "Outer.LIMIT" exported
+  10:32-10:57 field "Outer.names"
+  12:5-15:6 constructor "Outer.Outer" exported
+  17:5-21:6 method "Outer.run" exported
+  23:5-23:48 interface "Outer.Callback"
+    23:26-23:46 method "Outer.Callback.done" exported
+  25:5-25:29 enum "Outer.Mode"
+    25:17-25:21 constant "Outer.Mode.FAST"
+    25:23-25:27 constant "Outer.Mode.SLOW"
+# references
+7:2 decorator "Service" in "Outer"
+8:20 type "T" in "Outer"
+8:31 inherit "Base" in "Outer"
+8:31 type "Base" in "Outer"
+8:47 inherit "Runnable" in "Outer"
+8:47 type "Runnable" in "Outer"
+8:57 inherit "Comparable" in "Outer"
+8:57 type "Comparable" in "Outer"
+8:68 type "Outer" in "Outer"
+8:74 type "T" in "Outer"
+10:19 type "List" in "Outer"
+10:24 type "String" in "Outer"
+10:44 construct "ArrayList" in "Outer.names"
+10:44 type "ArrayList" in "Outer.names"
+12:18 type "String" in "Outer.Outer"
+14:20 call "add" qualifier="this.names" in "Outer.Outer"
+14:24 call "requireNonNull" in "Outer.Outer"
+17:6 decorator "Override" in "Outer.run"
+19:9 call "helper" in "Outer.run"
+20:15 call "forEach" qualifier="names" in "Outer.run"
+20:35 call "println" in "Outer.run"
+# imports
+3:1-3:23 source="java.util.List"
+4:1-4:20 source="java.util" name="*"
+5:1-5:48 source="java.util.Objects.requireNonNull"
+# gaps

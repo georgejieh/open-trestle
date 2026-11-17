@@ -9,6 +9,8 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.45.1
 	github.com/aws/aws-sdk-go-v2/service/kms v1.58.0
 	github.com/jackc/pgx/v5 v5.9.2
+	github.com/tetratelabs/wazero v1.12.0
+	golang.org/x/sys v0.44.0
 )
 
 require (
