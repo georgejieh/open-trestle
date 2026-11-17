@@ -7,8 +7,8 @@ Only then does it report problems, and every problem it reports comes with the
 evidence behind it.
 
 It works with the model providers you choose, including models running on your
-own hardware, and it is built to run where your code already lives: in your
-terminal, in CI and in your editor.
+own hardware, and it is built to run where your code already lives: in your terminal, in a
+desktop app, in CI and in your editor.
 
 Open Trestle is under active development and has no release yet. This README
 describes how Open Trestle is designed to work, then what is built today.
@@ -99,8 +99,8 @@ any other application: you download an installer for your system, run the
 setup wizard and review your own repository.
 
 The first release is meant to complete stages 1 to 4 for the languages above,
-bring the same review to Linux, macOS and Windows, and finish the GitHub Actions
-and VS Code integrations. Reviewing an entire codebase, rather than one pull
+bring the same review to Linux, macOS and Windows with installers and a desktop
+app, and finish the GitHub Actions and VS Code integrations. Reviewing an entire codebase, rather than one pull
 request, is planned after that. The [roadmap](docs/roadmap.md) has the details.
 
 ## Getting started

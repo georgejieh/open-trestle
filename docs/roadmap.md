@@ -175,6 +175,10 @@ saved-key store are refused on other systems (see [platforms](platforms.md)).
 The release brings the whole loop to Windows and macOS:
 
 - Native packages or installers on each system.
+- A desktop app, built from the web console in a native shell. It opens a
+  repository, runs the setup wizard, starts a review, shows the findings and
+  updates Open Trestle with a button. The installers ship it on all three
+  systems.
 - `trestle init`, `trestle review`, `trestle update`, the home screen and
   remote providers on all three systems.
 - A secret scanner that runs on all three systems, which remote providers
@@ -261,7 +265,7 @@ The release brings the whole loop to Windows and macOS:
 - Pull-request interaction: suggestion blocks, check runs and replies to the
   bot. Today the daemon can post one `COMMENT` review.
 - VS Code quick-fix code actions for suggestions.
-- A desktop app that reuses the web console in a native shell.
+
 - Additional forge adapters, hook integration for Git, a gRPC API, streaming
   subscriptions, and policy and provider administration.
 - Spending limits that the daemon records and enforces.
