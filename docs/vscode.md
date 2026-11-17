@@ -79,3 +79,16 @@ If any limit is exceeded, the whole session ends and no partial diagnostics are 
 Initialization and pull requests each have a 35-second deadline. When the extension stops the child process, it first invalidates publication synchronously. It then allows one second for graceful shutdown, and one second each for SIGTERM and SIGKILL. Only the `close` event of the directly owned child proves that it has closed, and only then can a successor start. If the stop fails, the extension stays in an attention status and keeps the owner, and an explicit Restart can check again later whether the child closed. This does not guarantee that arbitrary descendant processes end. The extension logs no raw stderr and no protocol error text.
 
 The bundle targets Node 20 APIs for the declared minimum, VS Code 1.95. The build toolchain remains the Node version pinned in the repository. Qualification in a real extension host records the tested application and platform separately from the mock and unit tests.
+
+## Qualifying in a real extension host
+
+The unit tests use a mock of the VS Code API. To check the extension in a real VS Code extension host, run `extensions/vscode/scripts/test-extension-host.mjs` with Node. It takes three absolute paths: the VS Code executable, an `xvfb-run` style virtual display wrapper, and a new folder for the run's artifacts, which it creates.
+
+```sh
+node extensions/vscode/scripts/test-extension-host.mjs \
+  --vscode=/absolute/path/to/code \
+  --xvfb=/usr/bin/xvfb-run \
+  --artifacts=/absolute/path/to/new-folder
+```
+
+Add `--scenario=manifest-persistence` to check that a saved API token survives a restart of VS Code and is refused once it has been cleared; the default scenario runs one session. The script writes a receipt for each phase into the artifacts folder and fails if one is missing. It is a manual qualification step, and CI does not run it.
