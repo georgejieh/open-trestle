@@ -8,24 +8,33 @@
 //	--stdio-v1          read one request frame, require end of input, write one response frame
 //	--stdio-v1-session  read request frames until end of input at a frame boundary, write one response frame each
 //
-// Standard input carries request frames. Response frames go to the descriptor
-// that was standard output at start; standard output and standard error are
-// then the null device, and nothing is written to either on purpose. The
-// working directory is the compilation cache directory: it must be owned by
-// the current user and have no group or other permission bits. On Windows
-// and macOS, where owner and mode bits do not prove that a directory is
-// private, every working directory is refused. The helper reads no
-// environment variables. Before it reads the first request it compiles the
-// guest and starts libre2, both through caches in that directory, so a
-// session with no request fills both caches and exits 0.
+// In session mode the parent writes the next request only after it has read
+// the response to the previous one, and ends the session by closing
+// standard input between requests. Standard input that hangs up while a
+// request is being served means the parent is gone, and the helper exits.
+//
+// Before anything else the helper closes every descriptor above standard
+// error that it inherited without close-on-exec. Standard input carries
+// request frames. Response frames go to the descriptor that was standard
+// output at start; standard output and standard error are then the null
+// device, and nothing is written to either on purpose. The working directory
+// is the compilation cache directory: it must be owned by the current user
+// and have no group or other permission bits. On Windows and macOS, where
+// owner and mode bits do not prove that a directory is private, every
+// working directory is refused. The helper reads no environment variables.
+// Before it reads the first request it compiles the guest and starts libre2,
+// both through caches in that directory, so a session with no request fills
+// both caches and exits 0.
 //
 // The cache is trusted at the level of its owner. wazero checks a cache entry
 // only against a checksum, so whoever can write the cache directory controls
 // the code the helper runs; the checks on the directory make sure that only
 // its owner and root can.
 //
-// The helper sets its own core file and descriptor limits and exits when its
-// parent process goes away.
+// The helper sets its own core file and descriptor limits. It exits with
+// ExitInternal when its parent process goes away, that is when its parent
+// process ID changes or, during a scan in session mode, when standard input
+// hangs up because no process holds its write end any more.
 package scanhelper
 
 import (
@@ -64,8 +73,9 @@ const (
 	// ExitBadFrame: a request frame has a bad length prefix, is cut short,
 	// or is followed by more input in single mode.
 	ExitBadFrame = 65
-	// ExitInternal: the guest digest does not match its pin, or the helper
-	// could not set up its descriptors, pattern table or runtime.
+	// ExitInternal: the guest digest does not match its pin, the helper
+	// could not set up its descriptors, pattern table or runtime, or its
+	// parent went away.
 	ExitInternal = 70
 	// ExitGuestBridge: the host refused a regex call of the guest, or the
 	// guest exited with regexabi.GuestBridgeFailureExitCode.
@@ -104,6 +114,10 @@ const (
 // parentPollInterval is how often the helper checks that its parent lives.
 const parentPollInterval = 250 * time.Millisecond
 
+// hangupPollInterval is how often a hangup watch rechecks whether it was
+// stopped.
+const hangupPollInterval = 100 * time.Millisecond
+
 const (
 	guestProgramName    = "open-trestle-scan-guest"
 	guestSingleArgument = "--sandboxed-stdio-v1"
@@ -115,6 +129,9 @@ var errGuestDigest = errors.New("scan guest digest mismatch")
 // in hex. It sets up the process (descriptors, core dumps, memory limit,
 // cache directory) and returns the exit status.
 func Main(arguments []string, guest []byte, guestSHA256 string) (exitCode int) {
+	if CloseInheritedDescriptors() != nil {
+		return ExitInternal
+	}
 	debug.SetTraceback("none")
 	defer func() {
 		if recover() != nil {
@@ -148,6 +165,7 @@ func Main(arguments []string, guest []byte, guestSHA256 string) (exitCode int) {
 		CacheDirectory: cacheDirectory,
 		Input:          os.Stdin,
 		Output:         protocolOutput,
+		WatchInput:     func() func() { return WatchInputHangup(0) },
 	})
 }
 
@@ -162,6 +180,12 @@ type Options struct {
 	CacheDirectory string
 	Input          io.Reader
 	Output         io.Writer
+	// WatchInput, in session mode, starts a watch that ends the process if
+	// Input hangs up while a scan runs, and returns the function that stops
+	// it; nil watches nothing. Between requests the parent's writes and its
+	// closing of Input are the protocol itself. In single mode Input has
+	// ended before the scan by design, so it is not watched.
+	WatchInput func() (stop func())
 }
 
 // Run verifies and compiles the guest, then serves requests from Input. It
@@ -208,6 +232,7 @@ func Run(ctx context.Context, options Options) int {
 	if !options.Session {
 		return helper.serveOne(ctx, options.Input, options.Output)
 	}
+	helper.watchInput = options.WatchInput
 	return helper.serveSession(ctx, options.Input, options.Output)
 }
 
@@ -224,9 +249,10 @@ func verifyGuest(guest []byte, want string) error {
 }
 
 type helper struct {
-	runtime  wazero.Runtime
-	compiled wazero.CompiledModule
-	bridge   *regexhost.Bridge
+	runtime    wazero.Runtime
+	compiled   wazero.CompiledModule
+	bridge     *regexhost.Bridge
+	watchInput func() (stop func())
 }
 
 func (h *helper) serveOne(ctx context.Context, input io.Reader, output io.Writer) int {
@@ -261,7 +287,14 @@ func (h *helper) serveSession(ctx context.Context, input io.Reader, output io.Wr
 }
 
 func (h *helper) relay(ctx context.Context, frame []byte, output io.Writer) int {
+	// The watch stops before the response is written, because the parent
+	// may close the pipe as soon as it has read the response.
+	stop := func() {}
+	if h.watchInput != nil {
+		stop = h.watchInput()
+	}
 	response, code := h.scan(ctx, frame)
+	stop()
 	defer clear(response)
 	if code != ExitSuccess {
 		return code

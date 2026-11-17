@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"math/rand/v2"
 	"os"
@@ -151,6 +152,71 @@ func runHelper(t *testing.T, helper, directory string, input []byte, arguments .
 	return run
 }
 
+// runSession runs a helper in session mode as the parent's session does: it
+// writes one request frame at a time and reads its response before writing
+// the next, so standard input stays open while the helper serves a request.
+// It then writes trailing, bytes that are not a whole frame, and closes
+// standard input. It stops writing frames once the helper ends its output.
+func runSession(t testing.TB, helper, directory string, frames [][]byte, trailing []byte) helperRun {
+	t.Helper()
+	command := exec.Command(helper, scanhelper.SessionArgument)
+	command.Env = []string{}
+	command.Dir = directory
+	stdin, err := command.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	started := time.Now()
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	watchdog := time.AfterFunc(10*time.Minute, func() { _ = command.Process.Kill() })
+	defer watchdog.Stop()
+	var output bytes.Buffer
+	for _, frame := range frames {
+		if _, err := stdin.Write(frame); err != nil {
+			break
+		}
+		var prefix [4]byte
+		if _, err := io.ReadFull(stdout, prefix[:]); err != nil {
+			break
+		}
+		response := make([]byte, 4+int(binary.BigEndian.Uint32(prefix[:])))
+		copy(response, prefix[:])
+		if _, err := io.ReadFull(stdout, response[4:]); err != nil {
+			t.Fatalf("response cut short: %v", err)
+		}
+		output.Write(response)
+	}
+	_, _ = stdin.Write(trailing)
+	_ = stdin.Close()
+	rest, err := io.ReadAll(stdout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output.Write(rest)
+	err = command.Wait()
+	run := helperRun{stdout: output.Bytes(), stderr: stderr.Bytes(), elapsed: time.Since(started)}
+	var exit *exec.ExitError
+	switch {
+	case err == nil:
+	case errors.As(err, &exit) && exit.Exited():
+		run.code = exit.ExitCode()
+	default:
+		t.Fatalf("helper did not exit normally: %v", err)
+	}
+	if len(run.stderr) != 0 {
+		t.Fatalf("helper wrote %d bytes to standard error", len(run.stderr))
+	}
+	return run
+}
+
 func requireFailure(t *testing.T, run helperRun, code int) {
 	t.Helper()
 	if run.code != code || len(run.stdout) != 0 {
@@ -181,13 +247,13 @@ func TestFixturesMatchTheNativeScannerAndExpectedSpans(t *testing.T) {
 	binaries(t)
 	fixtures, spans := readQualification(t)
 	native := nativeAdapter(t)
-	var input []byte
+	var frames [][]byte
 	requests := make([]protocol.Request, len(fixtures))
 	for index, fixture := range fixtures {
 		requests[index] = request(fixture.id, fixture.content)
-		input = append(input, encodeRequest(t, requests[index])...)
+		frames = append(frames, encodeRequest(t, requests[index]))
 	}
-	run := runHelper(t, built.helper, built.cache, input, scanhelper.SessionArgument)
+	run := runSession(t, built.helper, built.cache, frames, nil)
 	if run.code != 0 {
 		t.Fatalf("session exited %d", run.code)
 	}
@@ -254,12 +320,12 @@ func TestDenseAndLimitRequestsEndAsTheNativeScannerDoes(t *testing.T) {
 		{"assignments in the most sources", assignmentSources(256, 8*1024), protocol.StatusResourceExhausted},
 	}
 	native := nativeAdapter(t)
-	var input []byte
+	var frames [][]byte
 	requests := make([]protocol.Request, len(cases))
 	for index, test := range cases {
 		requests[index] = request(test.name, nil)
 		requests[index].Sources = test.sources
-		input = append(input, encodeRequest(t, requests[index])...)
+		frames = append(frames, encodeRequest(t, requests[index]))
 	}
 	for _, limit := range []protocol.Request{requests[2], requests[4]} {
 		total := 0
@@ -273,7 +339,7 @@ func TestDenseAndLimitRequestsEndAsTheNativeScannerDoes(t *testing.T) {
 	if len(requests[4].Sources) != 256 {
 		t.Fatal("request at the source limit does not have 256 sources")
 	}
-	run := runHelper(t, built.helper, built.cache, input, scanhelper.SessionArgument)
+	run := runSession(t, built.helper, built.cache, frames, nil)
 	if run.code != 0 {
 		t.Fatalf("session exited %d", run.code)
 	}
@@ -375,14 +441,14 @@ func TestSessionStopsAtTheFirstBadFrame(t *testing.T) {
 	binaries(t)
 	first := encodeRequest(t, request("first", []byte("first text")))
 	second := encodeRequest(t, request("second", []byte("second text")))
-	run := runHelper(t, built.helper, built.cache, append(append(append([]byte(nil), first...), second...), second[:7]...), scanhelper.SessionArgument)
+	run := runSession(t, built.helper, built.cache, [][]byte{first, second}, second[:7])
 	if run.code != scanhelper.ExitBadFrame {
 		t.Fatalf("session with a cut final frame exited %d", run.code)
 	}
 	if responses := splitFrames(t, run.stdout); len(responses) != 2 {
 		t.Fatalf("%d responses before the bad frame, want 2", len(responses))
 	}
-	run = runHelper(t, built.helper, built.cache, append(append([]byte(nil), first...), 0, 0, 0, 0), scanhelper.SessionArgument)
+	run = runSession(t, built.helper, built.cache, [][]byte{first}, []byte{0, 0, 0, 0})
 	if run.code != scanhelper.ExitBadFrame || len(splitFrames(t, run.stdout)) != 1 {
 		t.Fatalf("session with a zero-length frame exited %d", run.code)
 	}
@@ -429,6 +495,7 @@ const (
 	hostileValidFrame         = 'g'
 	hostileOversizedOutput    = 'o'
 	hostileTrap               = 't'
+	hostileSpin               = 'l'
 )
 
 var hostileFrame = []byte{0, 0, 0, 2, '{', '}'}
@@ -469,6 +536,7 @@ func hostileModule() []byte {
 		hostileValidFrame:         wasmtest.Concat(write(goodVector), exit(0)),
 		hostileOversizedOutput:    wasmtest.Concat(write(hugeVector), exit(0)),
 		hostileTrap:               wasmtest.Unreachable,
+		hostileSpin:               wasmtest.Concat(wasmtest.LoopEmpty, wasmtest.Branch(0), wasmtest.End),
 	}
 	body := wasmtest.Concat(wasmtest.I32Const(0), wasmtest.I32Const(readVector), wasmtest.I32Const(1), wasmtest.I32Const(countAt), wasmtest.Call(fdRead), wasmtest.Drop)
 	for selector, scenario := range scenarios {
@@ -530,10 +598,156 @@ func TestGuestFailuresProduceNoResponse(t *testing.T) {
 	if run.code != 0 || !bytes.Equal(run.stdout, hostileFrame) {
 		t.Fatalf("valid hostile frame: exit %d output %q", run.code, run.stdout)
 	}
-	input := append(append(hostileRequest(hostileValidFrame), hostileRequest(hostileRefusedThenAnswers)...), hostileRequest(hostileValidFrame)...)
-	run = runHelper(t, built.hostile, built.cache, input, scanhelper.SessionArgument)
+	frames := [][]byte{hostileRequest(hostileValidFrame), hostileRequest(hostileRefusedThenAnswers), hostileRequest(hostileValidFrame)}
+	run = runSession(t, built.hostile, built.cache, frames, nil)
 	if run.code != scanhelper.ExitGuestBridge || !bytes.Equal(run.stdout, hostileFrame) {
 		t.Fatalf("session with a bridge failure: exit %d output %q, want exit %d after one response", run.code, run.stdout, scanhelper.ExitGuestBridge)
+	}
+}
+
+// TestSessionExitsWhenInputHangsUpDuringAScan closes the helper's standard
+// input while its guest spins forever, as a parent that died mid-scan would.
+// The test process, the helper's parent, stays alive, so the helper's parent
+// process ID does not change and only the hangup can stop it.
+func TestSessionExitsWhenInputHangsUpDuringAScan(t *testing.T) {
+	binaries(t)
+	command := exec.Command(built.hostile, scanhelper.SessionArgument)
+	command.Env = []string{}
+	command.Dir = built.cache
+	stdin, err := command.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	command.Stdout, command.Stderr = &stdout, &stderr
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- command.Wait() }()
+	if _, err := stdin.Write(hostileRequest(hostileSpin)); err != nil {
+		t.Fatal(err)
+	}
+	// The frame stays in the pipe after the write end closes, so the helper
+	// reads it and starts the scan whether or not it already has.
+	closed := time.Now()
+	if err := stdin.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-exited:
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) || exit.ExitCode() != scanhelper.ExitInternal || stdout.Len() != 0 || stderr.Len() != 0 {
+			t.Fatalf("helper ended with %v and %d output bytes, want exit %d and none", err, stdout.Len()+stderr.Len(), scanhelper.ExitInternal)
+		}
+		if elapsed := time.Since(closed); elapsed > 5*time.Second {
+			t.Fatalf("helper took %v to notice the hangup", elapsed)
+		}
+	case <-time.After(30 * time.Second):
+		_ = command.Process.Kill()
+		<-exited
+		t.Fatal("helper kept scanning after its input hung up")
+	}
+}
+
+// TestHelperClosesDescriptorsItInherited opens a file, a pipe and a socket
+// in this process without close-on-exec, so that every child inherits them,
+// starts the real helper, and checks after a scan that the helper holds none
+// of them while a child that does not close them, /bin/sleep, holds all.
+func TestHelperClosesDescriptorsItInherited(t *testing.T) {
+	binaries(t)
+	file, err := syscall.Open(built.guest, syscall.O_RDONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pipe [2]int
+	if err := syscall.Pipe(pipe[:]); err != nil {
+		t.Fatal(err)
+	}
+	socket, err := syscall.Socket(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inherited := []int{file, pipe[0], pipe[1], socket}
+	defer func() {
+		for _, descriptor := range inherited {
+			_ = syscall.Close(descriptor)
+		}
+	}()
+	targets := map[string]bool{}
+	for _, descriptor := range inherited {
+		target, err := os.Readlink(fmt.Sprintf("/proc/self/fd/%d", descriptor))
+		if err != nil {
+			t.Fatal(err)
+		}
+		targets[target] = true
+	}
+	held := func(pid int) int {
+		entries, err := os.ReadDir(fmt.Sprintf("/proc/%d/fd", pid))
+		if err != nil {
+			t.Fatal(err)
+		}
+		count := 0
+		for _, entry := range entries {
+			if target, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/%s", pid, entry.Name())); err == nil && targets[target] {
+				count++
+			}
+		}
+		return count
+	}
+	sleeper := exec.Command("/bin/sleep", "60")
+	if err := sleeper.Start(); err != nil {
+		t.Fatal(err)
+	}
+	sleeperHeld := held(sleeper.Process.Pid)
+	_ = sleeper.Process.Kill()
+	_ = sleeper.Wait()
+	if sleeperHeld != len(inherited) {
+		t.Fatalf("a plain child holds %d of the %d descriptors, so the test does not create inherited descriptors", sleeperHeld, len(inherited))
+	}
+	command := exec.Command(built.helper, scanhelper.SessionArgument)
+	command.Env = []string{}
+	command.Dir = built.cache
+	stdin, err := command.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+	}()
+	scan := request("descriptors", []byte("ordinary text"))
+	if _, err := stdin.Write(encodeRequest(t, scan)); err != nil {
+		t.Fatal(err)
+	}
+	var prefix [4]byte
+	if _, err := io.ReadFull(stdout, prefix[:]); err != nil {
+		t.Fatalf("helper did not answer: %v", err)
+	}
+	response := make([]byte, 4+int(binary.BigEndian.Uint32(prefix[:])))
+	copy(response, prefix[:])
+	if _, err := io.ReadFull(stdout, response[4:]); err != nil {
+		t.Fatal(err)
+	}
+	if parsed := parseResponse(t, scan, response); parsed.Status != protocol.StatusComplete {
+		t.Fatalf("scan after closing descriptors: %s", parsed.Status)
+	}
+	if count := held(command.Process.Pid); count != 0 {
+		t.Fatalf("helper still holds %d inherited descriptors", count)
+	}
+	_ = stdin.Close()
+	if rest, err := io.ReadAll(stdout); err != nil || len(rest) != 0 {
+		t.Fatalf("output after the last response: %d bytes, %v", len(rest), err)
+	}
+	if err := command.Wait(); err != nil {
+		t.Fatalf("helper did not exit cleanly: %v", err)
 	}
 }
 
@@ -583,17 +797,11 @@ const reviewSourceBytes = 256 * 1024
 // helper process, prepared cache, four requests of one 256 KiB source each.
 func BenchmarkReviewOfFourScansThroughOneHelperSession(b *testing.B) {
 	binaries(b)
-	input := reviewInput(b)
+	frames := reviewFrames(b)
 	b.ResetTimer()
 	for range b.N {
-		command := exec.Command(built.helper, scanhelper.SessionArgument)
-		command.Env = []string{}
-		command.Dir = built.cache
-		command.Stdin = bytes.NewReader(input)
-		var stdout bytes.Buffer
-		command.Stdout = &stdout
-		if err := command.Run(); err != nil {
-			b.Fatal(err)
+		if run := runSession(b, built.helper, built.cache, frames, nil); run.code != 0 || len(run.stdout) == 0 {
+			b.Fatalf("session exited %d", run.code)
 		}
 	}
 }
@@ -667,16 +875,12 @@ func reviewRequests(b *testing.B) []protocol.Request {
 	return requests
 }
 
-func reviewInput(b *testing.B) []byte {
-	var input []byte
+func reviewFrames(b *testing.B) [][]byte {
+	var frames [][]byte
 	for _, scan := range reviewRequests(b) {
-		frame, err := protocol.EncodeRequestFrame(scan)
-		if err != nil {
-			b.Fatal(err)
-		}
-		input = append(input, frame...)
+		frames = append(frames, encodeRequest(b, scan))
 	}
-	return input
+	return frames
 }
 
 type fixture struct {

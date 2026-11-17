@@ -156,11 +156,17 @@ func Load8U(offset uint32) []byte {
 	return binary.AppendUvarint([]byte{0x2d, 0x00}, uint64(offset))
 }
 
+// Branch is the instruction br depth.
+func Branch(depth uint32) []byte {
+	return binary.AppendUvarint([]byte{0x0c}, uint64(depth))
+}
+
 // Other instructions.
 var (
 	Drop        = []byte{0x1a}
 	I32Equal    = []byte{0x46}
 	IfEmpty     = []byte{0x04, 0x40}
+	LoopEmpty   = []byte{0x03, 0x40}
 	End         = []byte{0x0b}
 	Unreachable = []byte{0x00}
 )

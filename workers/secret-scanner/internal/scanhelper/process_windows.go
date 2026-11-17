@@ -30,9 +30,18 @@ func IsolateStandardStreams() (*os.File, error) {
 	return protocol, nil
 }
 
+// CloseInheritedDescriptors does nothing on Windows, where the parent's
+// os/exec lets the helper inherit only the handles it names: standard input,
+// output and error.
+func CloseInheritedDescriptors() error { return nil }
+
 // LimitResources does nothing: Windows writes no core files by default and
 // has no descriptor limit of the Unix kind.
 func LimitResources() error { return nil }
+
+// WatchInputHangup does nothing on Windows, where the parent places the
+// helper in a job object that ends it with the parent.
+func WatchInputHangup(int) (stop func()) { return func() {} }
 
 // ExitWithParent does nothing on Windows, where the parent places the helper
 // in a job object that ends it with the parent.
