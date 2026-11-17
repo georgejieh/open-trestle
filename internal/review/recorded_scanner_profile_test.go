@@ -59,8 +59,22 @@ func TestRecordedGo12610PublicationContentScanReceiptReadsBackByteForByte(t *tes
 	if receipt.ScannerAuthorityIdentity() != PublicationContentScannerIdentity(receipt.Scanner()) {
 		t.Fatal("recorded scanner authority is not derived from its own build profile")
 	}
-	if _, err := ParsePublicationContentScanReceipt(bytes.Replace(recorded, []byte(recordedGo12610BuildProfile), []byte(secretscan.HostRE2BuildProfile), 1)); err == nil {
-		t.Fatal("recorded bytes accepted the scan helper build profile")
+	// The same receipt under the scan helper profile, with the authority and
+	// receipt identities derived for it, so that the profile is the only
+	// thing that can make it invalid.
+	helper := receipt
+	helper.scanner.BuildProfile = secretscan.HostRE2BuildProfile
+	helper.scannerAuthorityIdentity = PublicationContentScannerIdentity(helper.scanner)
+	helper.identity = derivePublicationContentScanReceiptIdentity(helper)
+	if helper.Validate() == nil {
+		t.Fatal("receipt validation accepted the scan helper build profile")
+	}
+	helperBytes, err := json.Marshal(publicationContentScanReceiptWireValue(helper))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParsePublicationContentScanReceipt(helperBytes); err == nil {
+		t.Fatal("receipt bytes accepted the scan helper build profile")
 	}
 	live := newFixedPublicationContentScanner(&fixedGenerationClientFixture{launcher: receipt.Scanner().LauncherSHA256, worker: receipt.Scanner().WorkerSHA256})
 	if live.Identity() == receipt.ScannerAuthorityIdentity() {
