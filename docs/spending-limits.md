@@ -103,7 +103,7 @@ member, counts all of them and adds a line such as "That counts every review
 this command may run: the general review and up to 3 specialist reviews, each up
 to $1.38." Open Trestle still checks each member before it starts and refuses it
 at the limit. Specialists run concurrently only when no limited key could reach
-its limit during the concurrent wave, so concurrency never skips that check.
+its limit during the concurrent wave.
 
 After a run that sent at least one request, Open Trestle appends one ledger
 entry. When that entry crosses an alert percentage, one line says so.
@@ -165,7 +165,7 @@ https://openrouter.ai/api/v1/key`, sending the key as the bearer credential. Tha
 read costs nothing and sends no source. It follows no redirect, reads at most 64
 KiB and waits at most ten seconds. It reads only the numeric fields `limit`,
 `limit_remaining`, `usage`, `usage_daily`, `usage_weekly` and `usage_monthly`, and
-the reset word `limit_reset`. It never reads the `label`, which holds a masked
+the reset word `limit_reset`. It does not read the `label`, which holds a masked
 form of the key. When the read fails, the line says only "OpenRouter's usage
 could not be read" and gives a short reason, and nothing else is affected.
 
@@ -189,7 +189,7 @@ folder or file that is not private or not owned by your account.
   `cost_micro_usd`. The cost is the settled cost (`cost: settled_usage`) or, when
   usage was not known for every request, the reservation upper bound (`cost:
   reservation_upper_bound`), always with `price_basis: route_max_price`. An entry
-  never holds a key, source, prompt or model reply.
+  holds no key, source, prompt or model reply.
 
 Open Trestle ignores a final line that an interrupted write left incomplete, and
 the next append closes it. Any other line that is not a canonical entry makes the
