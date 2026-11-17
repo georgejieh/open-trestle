@@ -1,6 +1,6 @@
 # GitHub pull-request review
 
-There are two ways to get Open Trestle results onto a GitHub pull request. They are different products, with different levels of trust and maturity.
+There are two ways to get Open Trestle results onto a GitHub pull request. They differ in setup, state and who posts.
 
 | | GitHub Actions path | Daemon and GitHub App path |
 | --- | --- | --- |
@@ -24,23 +24,23 @@ On the daemon path, a run fails in two cases:
 - If the head equals the base or is already contained in it, the run fails with policy and the recorded reason `nothing_to_review`.
 - If GitHub does not report a merge base, the run fails with `merge_base_unavailable`. This includes commits that share no history, because GitHub answers that compare with not found.
 
-The daemon never falls back to reviewing `base.sha` directly.
+The daemon does not fall back to reviewing `base.sha` directly.
 
 ## How the Actions path fits together
 
 1. `actions/checkout` runs with `fetch-depth: 0`, so the head, the base branch tip and the history between them are all present.
 2. A packaged `trestle` binary is installed. A plain `go build` refuses remote model egress; see [remote model review](remote-model-review.md).
 3. `trestle setup bootstrap init --provider ...` and `check` write and verify the protected configuration and print the review command. That command carries `--specialists auto` unless `init` is given `--specialists none`. The provider key is passed through an environment variable whose name starts with `OPEN_TRESTLE_PROVIDER_`.
-4. `trestle local-git model-review ... --format sarif --exit-code-policy findings` runs with the merge base `git merge-base "$BASE_SHA" "$HEAD_SHA"` as the base and `head.sha` as the head. `BASE_SHA` is `github.event.pull_request.base.sha`, which is the tip of the base branch when the event fired. Reviewing against it directly would treat commits merged into the base branch since the branch point as part of the change. Both SHAs are passed through `env`, never interpolated into `run:`.
-5. The workflow uploads the SARIF only when the run succeeded (`trestleRunStatus` is `succeeded`). Uploading the empty result of a refused or failed run for the same category could close open alerts.
+4. `trestle local-git model-review ... --format sarif --exit-code-policy findings` runs with the merge base `git merge-base "$BASE_SHA" "$HEAD_SHA"` as the base and `head.sha` as the head. `BASE_SHA` is `github.event.pull_request.base.sha`, the tip of the base branch when the event fired. Both SHAs are passed through `env`, not interpolated into `run:`.
+5. The workflow uploads the SARIF only when the run succeeded (`trestleRunStatus` is `succeeded`). Uploading the empty result of a refused or failed run could close open alerts for the same category.
 
 The upload sets `sha` to the pull request head and `ref` to `refs/pull/<number>/head`, because `upload-sarif` otherwise uses `github.sha`, the temporary merge commit. These inputs follow the `upload-sarif` documentation and are unverified live.
 
-After the upload, the workflow posts inline comments with reviewdog, writes a job summary, and fails the job from the recorded exit status. Both the comments and the summary are GitHub Markdown, so the example first escapes the untrusted finding text, fix guidance and paths. It does this with a small `jq` module that follows the rules of `--format markdown`, so no link, image, heading, HTML, mention or autolink can open.
+After the upload, the workflow posts inline comments with reviewdog, writes a job summary, and fails the job from the recorded exit status. Both the comments and the summary are GitHub Markdown, so the example first escapes the finding text, fix guidance and paths with a small `jq` module that follows the rules of `--format markdown`.
 
 The step-by-step workflow, with its placeholders and caveats, is [`examples/github-actions/open-trestle-review.yml`](../examples/github-actions/open-trestle-review.yml) and its [README](../examples/github-actions/README.md). The SARIF mapping and the exit policy are specified in [local model review](local-model-review.md#headless-ci-use).
 
-## What a green job does and does not mean
+## What a green job means
 
 `--exit-code-policy findings` exits 0 when the review ran to completion and no verified high or critical finding exists. Under this policy, the following do not fail the job:
 
@@ -50,13 +50,13 @@ The step-by-step workflow, with its placeholders and caveats, is [`examples/gith
 
 They still appear in the SARIF and in the summary, listed in rank order.
 
-A green job does not mean the change is clear. The review is bounded, abstentions and omitted source are listed as limitations in the SARIF, and `comprehensive_clearance` is always false. A job that could not run the review fails. That covers a refused review, an unreadable change, a missing secret and a provider failure.
+A green job does not mean the change is clear: abstentions and omitted source are listed as limitations in the SARIF, and `comprehensive_clearance` is always false. A job that could not run the review fails. That covers a refused review, an unreadable change, a missing secret and a provider failure.
 
 ## Status
 
 The status of the Actions path:
 
-- Verified offline: the SARIF projection, the fingerprints, the exit policy, and the diagnostics for shallow and partial checkouts. Also verified offline: the example workflow parses as YAML, and its `jq` module escapes untrusted text (finding text, fix guidance and paths) for the job summary and for reviewdog's input exactly as Open Trestle's Markdown renderer does. That last check ran `jq` against crafted SARIF that carries Markdown, HTML, @-mentions and bare URLs. These checks run in the repository tests, against synthetic model transports and inputs.
-- Not verified: any run on GitHub. The workflow has not executed on a hosted runner. The `upload-sarif`, `reviewdog`, `setup-go` and checkout steps, the source build of the packaged binary on a runner, the `jq` extraction of the review command and live provider behavior are written from documentation and have not been run. The example pins action major versions only, and it tells you to pin commit SHAs. No Open Trestle release exists, so the release-artifact install is a placeholder.
+- Tested offline in the repository tests, against synthetic model transports and inputs: the SARIF projection, the fingerprints, the exit policy, the diagnostics for shallow and partial checkouts, that the example workflow parses as YAML, and that its `jq` module escapes finding text, fix guidance and paths the way Open Trestle's Markdown renderer does.
+- Not run on GitHub: the workflow has not executed on a hosted runner. The `upload-sarif`, `reviewdog`, `setup-go` and checkout steps, the source build of the packaged binary on a runner, the `jq` extraction of the review command and live provider behavior are written from documentation. The example pins action major versions only, and it tells you to pin commit SHAs. No Open Trestle release exists, so the release-artifact install is a placeholder.
 - Fork pull requests do not receive repository secrets and get a read-only `GITHUB_TOKEN`, so the example skips them. Do not switch to `pull_request_target` to work around this: it would run with secrets against code from the fork.
-- Source and findings are sent to the model provider you configure. Review that provider's terms before you enable the workflow on private code.
+- Source and findings are sent to the model provider you configure; see [privacy](privacy.md).
