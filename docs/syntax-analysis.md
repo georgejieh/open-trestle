@@ -11,7 +11,7 @@ Open Trestle analyses source files one at a time into a language-neutral record 
 
 All records are syntactic. Names are not resolved to definitions, so a reference is a candidate, as in [semantic impact profiles](semantic-impact.md).
 
-Every name, qualifier and import path is repository text. It is carried as a `syntaxanalysis.Text`, which prints as a placeholder with every `fmt` verb. Read it with `Text.Untrusted` and present it as quoted data, never as part of an instruction.
+Every name, qualifier and import path is repository text. It is carried as a `syntaxanalysis.Text`, which never prints its contents through `fmt`: the formatting verbs print a placeholder, and `%p` and `%T` an address or the type name. Read it with `Text.Untrusted` and present it as quoted data, never as part of an instruction.
 
 ## Analyzers
 
@@ -24,7 +24,7 @@ Every name, qualifier and import path is repository text. It is carried as a `sy
 
 `syntaxanalysis.Limits` bounds the file size (2 MiB by default), the number of records (65,536), the length of each name (1,024 bytes), the number of parse-error regions (256) and the time per file (5 seconds). Reaching a limit adds a `limit_exceeded` or `deadline_exceeded` gap; nothing is cut silently. A failure inside the analyzer becomes an `analysis_failed` gap for that file.
 
-The WebAssembly analyzer also caps each instance's memory (256 MiB by default) and runs only with wazero's compiler. Where the compiler does not run, files get an `analysis_unavailable` gap. Its compilation cache directory must be private to the current user; it is refused on macOS and Windows, where the analyzer compiles each module once per process instead.
+The WebAssembly analyzer also caps the linear memory of each module instance (256 MiB by default) and runs only with wazero's compiler. Where the compiler does not run, files get an `analysis_unavailable` gap. Its compilation cache directory must be private to the current user; it is refused on macOS and Windows, where the analyzer compiles each module once per process instead.
 
 ## Adding a language
 
@@ -54,7 +54,7 @@ Each match must have exactly one of `@definition.*`, `@reference.*`, `@import` o
 
 ## Rebuilding the modules
 
-`tools/build_syntax_modules.py` builds the family modules from the inputs pinned in `internal/syntaxwasm/modules/manifest.json`: the wasi-sdk release archive, the tree-sitter runtime, each grammar and the wasi-libc license sources, each by commit and SHA-256 digest. The C shim is `internal/syntaxwasm/shim/analyze.c`. The script needs Linux on x86-64, Python 3.12, Git and network access; it downloads about 190 MB.
+`tools/build_syntax_modules.py` builds the family modules from the inputs pinned in `internal/syntaxwasm/modules/manifest.json`: the wasi-sdk release archive, the tree-sitter runtime, each grammar and the wasi-libc license sources, each by commit and SHA-256 digest. The C shim is `internal/syntaxwasm/shim/analyze.c`. The script needs Linux on x86-64, Python 3.12, Git and network access. The wasi-sdk archive it downloads is about 190 MB.
 
 ```sh
 python3 tools/build_syntax_modules.py             # rebuild twice and compare with the committed modules
