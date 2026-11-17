@@ -120,9 +120,8 @@ func initAssertAbsent(t *testing.T, path string) {
 func initAssertProtected(t *testing.T, dir string, names ...string) {
 	t.Helper()
 	for _, name := range names {
-		info, err := os.Stat(filepath.Join(dir, name))
-		if err != nil || info.Mode().Perm() != 0o600 {
-			t.Fatalf("%s is not a protected file: %v", name, err)
+		if !privateTestFile(t, filepath.Join(dir, name)) {
+			t.Fatalf("%s is not a protected file", name)
 		}
 	}
 }

@@ -118,9 +118,8 @@ func TestInitAsksForAMissingKeyHiddenChecksItAndSavesItAfterTheSetup(t *testing.
 	if _, hides, restores, readWhileShown := terminal.state(); hides != 2 || restores != 2 || readWhileShown {
 		t.Fatalf("hidden reads: hides=%d restores=%d readWhileShown=%v", hides, restores, readWhileShown)
 	}
-	info, err := os.Lstat(filepath.Join(keys, "OPEN_TRESTLE_PROVIDER_OPENROUTER"))
-	if err != nil || info.Mode().Perm() != 0o600 {
-		t.Fatalf("the saved key is not a 0600 file: %v", err)
+	if !privateTestFile(t, filepath.Join(keys, "OPEN_TRESTLE_PROVIDER_OPENROUTER")) {
+		t.Fatal("the saved key is not a private file")
 	}
 	if content, _ := os.ReadFile(filepath.Join(keys, "OPEN_TRESTLE_PROVIDER_OPENROUTER")); string(content) != remoteTestKey {
 		t.Fatal("the store does not hold the accepted key")

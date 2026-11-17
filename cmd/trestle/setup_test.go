@@ -137,7 +137,7 @@ func TestSetupInitRejectsSymlinkedOrWritableParent(t *testing.T) {
 	if err := os.Mkdir(writable, 0o777); err != nil {
 		t.Fatal(err)
 	}
-	_ = os.Chmod(writable, 0o777)
+	setTestMode(t, writable, 0o777)
 	args[len(args)-1] = filepath.Join(writable, "setup.json")
 	stdout.Reset()
 	stderr.Reset()
