@@ -187,7 +187,9 @@ The release brings the whole loop to Windows and macOS:
 - A repository index and a ranked repository map. The map gives the enclosing
   definition for each changed hunk, ranks symbol tags within a token budget,
   looks up callers and usages, and lists module boundaries and a feature map.
-  The analysis works on syntax trees for JavaScript, TypeScript, Python, Java, C, C++, C#, Rust, Go, PHP, Swift, Ruby and HTML.
+  The analysis works on syntax trees for Java, JavaScript, TypeScript, Python,
+  HTML, C, C++, C#, Swift, Go, Rust, PHP and Ruby. Every one of these languages
+  gets the same depth of analysis; none is treated as a special case.
 - A repository profile read from the existing tests and CI configuration,
   which records the project's conventions and the maintainers' priorities.
   Open Trestle parses this configuration and never runs it.

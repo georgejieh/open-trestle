@@ -45,9 +45,10 @@ did not touch are listed separately and never block a merge on their own.
 
 ### Languages
 
-The first release is meant to understand every major production language at the
-level of its syntax tree: JavaScript, TypeScript, Python, Java, C, C++, C#,
-Rust, Go, PHP, Swift, Ruby and HTML. Support for the languages used with game
+The first release is meant to understand every major production language at
+the level of its syntax tree: Java, JavaScript, TypeScript, Python, HTML, C,
+C++, C#, Swift, Go, Rust, PHP and Ruby. Each of these languages gets the same
+depth of analysis. Support for the languages used with game
 engines such as Godot, Unity and Unreal Engine, and for the custom languages that
 large companies build in-house, is planned after that.
 
@@ -93,8 +94,9 @@ What is not built yet:
 - The [GitHub Actions example](examples/github-actions/README.md) has been
   tested offline but has not yet run on GitHub. The VS Code extension can show
   the results of a review but cannot start one.
-- There is no signed release or download yet. You build Open Trestle from
-  source.
+- There is no signed release or download yet. You build Open Trestle from source. The first release is meant to install like
+any other application: you download an installer for your system, run the
+setup wizard and review your own repository.
 
 The first release is meant to complete stages 1 to 4 for the languages above,
 bring the same review to Linux, macOS and Windows, and finish the GitHub Actions
