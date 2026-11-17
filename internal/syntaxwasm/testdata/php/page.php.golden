@@ -1,0 +1,9 @@
+# definitions
+4:7-4:34 variable "title" exported
+10:1-10:48 function "footer" exported
+# references
+4:16 call "strtoupper" in "title"
+5:9 call "htmlspecialchars"
+7:10 call "render"
+# imports
+# gaps

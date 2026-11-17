@@ -1,0 +1,32 @@
+# definitions
+2:1-20:2 module "Lib" exported
+  5:5-13:6 class "Lib.Box" exported
+    6:9-7:40 method "Lib.Box.open" exported
+    8:23-8:42 method "Lib.Box.plain" exported
+    9:9-9:36 method "Lib.Box.shout"
+    10:9-10:34 constant "Lib.Box.SIZE"
+    11:9-11:20 field "Lib.Box.v" exported
+    12:9-12:70 method "Lib.Box.build" exported
+  15:5-19:6 function "Lib.local" exported
+    16:9-16:28 function "Lib.local.inner"
+    17:9-17:24 class "Lib.local.Hidden"
+23:5-23:24 variable "x" exported
+25:5-25:19 variable "name" exported
+31:5-31:24 interface "Marker" exported
+32:5-32:69 class "Shape" exported
+  32:28-32:67 method "Shape.area" exported
+33:5-33:54 variable "f" exported
+# references
+6:11 decorator "Pure" in "Lib.Box.open"
+6:17 decorator "Marker" in "Lib.Box.open"
+18:17 call "strlen" in "Lib.local"
+18:36 call "count_things" qualifier="Lib" in "Lib.local"
+23:19 construct "Box" qualifier="Lib" in "x"
+24:10 call "open" qualifier="$x"
+28:19 call "plain" qualifier="$x"
+30:13 call "dirname"
+33:44 call "plain" qualifier="$x" in "f"
+# imports
+3:16-3:21 source="Other" name="First" in "Lib"
+3:23-3:39 source="Other" name="Second\\Deep" alias="D" in "Lib"
+# gaps
