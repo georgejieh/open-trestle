@@ -599,6 +599,7 @@ type verifiedHelper struct {
 	file        *os.File
 	execPath    string
 	displayPath string
+	identity    fileIdentity
 }
 
 func (helper verifiedHelper) close() {
@@ -617,6 +618,7 @@ type helperProcess struct {
 	stdout  *os.File
 	stderr  *os.File
 
+	identity    fileIdentity
 	exited      chan struct{}
 	reapRequest chan struct{}
 	reaped      chan struct{}
@@ -677,6 +679,7 @@ func startHelperProcess(helper verifiedHelper, directory string, hooks processHo
 		stdin:       stdinWrite,
 		stdout:      stdoutRead,
 		stderr:      stderrRead,
+		identity:    helper.identity,
 		exited:      make(chan struct{}),
 		reapRequest: make(chan struct{}),
 		reaped:      make(chan struct{}),
@@ -714,7 +717,7 @@ func (process *helperProcess) run(started chan<- error, beforeStart func()) {
 		started <- err
 		return
 	}
-	if err := process.group.attach(process.command.Process); err != nil {
+	if err := process.group.attach(process.command.Process, process.identity); err != nil {
 		_ = process.command.Process.Kill()
 		_ = process.command.Wait()
 		process.group.release()

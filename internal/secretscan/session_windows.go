@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"unsafe"
 )
@@ -19,6 +20,9 @@ const (
 	createNoWindow                         = 0x08000000
 	processSetQuota                        = 0x0100
 	processSuspendResume                   = 0x0800
+	processQueryLimitedInformation         = 0x1000
+	fileReadAttributes                     = 0x0080
+	maximumLongPath                        = 32768
 	jobObjectExtendedLimitInformationClass = 9
 	jobObjectLimitKillOnJobClose           = 0x00002000
 )
@@ -31,10 +35,12 @@ var (
 	procSetInformationJobObject  = kernel32.NewProc("SetInformationJobObject")
 	procAssignProcessToJobObject = kernel32.NewProc("AssignProcessToJobObject")
 	procTerminateJobObject       = kernel32.NewProc("TerminateJobObject")
+	procQueryFullProcessImage    = kernel32.NewProc("QueryFullProcessImageNameW")
 	ntdll                        = syscall.NewLazyDLL("ntdll.dll")
 	procNtResumeProcess          = ntdll.NewProc("NtResumeProcess")
 
-	errJobObject = errors.New("secret scan helper job object could not be set up")
+	errJobObject   = errors.New("secret scan helper job object could not be set up")
+	errHelperImage = errors.New("secret scan helper process does not run the verified file")
 )
 
 type jobObjectBasicLimitInformation struct {
@@ -70,10 +76,11 @@ type jobObjectExtendedLimitInformation struct {
 // openVerifiedHelper opens the helper with a share mode that allows only
 // other readers, so the file cannot be written, renamed or deleted while the
 // handle is open, hashes it through that handle and keeps the handle open
-// until the helper has started. Reparse points are refused. File ownership
-// and ACLs are not checked on Windows.
+// until the helper has started. Reparse points are refused. The path must
+// end in .exe, so os/exec runs exactly that path instead of trying other
+// extensions. File ownership and ACLs are not checked on Windows.
 func openVerifiedHelper(path string, expectedDigest string) (verifiedHelper, error) {
-	if !filepath.IsAbs(path) || filepath.Clean(path) != path || !validDigest(expectedDigest) {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path || !strings.EqualFold(filepath.Ext(path), ".exe") || !validDigest(expectedDigest) {
 		return verifiedHelper{}, ErrHelperUntrusted
 	}
 	name, err := syscall.UTF16PtrFromString(path)
@@ -95,7 +102,39 @@ func openVerifiedHelper(path string, expectedDigest string) (verifiedHelper, err
 		_ = file.Close()
 		return verifiedHelper{}, ErrHelperUntrusted
 	}
-	return verifiedHelper{file: file, execPath: path, displayPath: path}, nil
+	return verifiedHelper{file: file, execPath: path, displayPath: path, identity: identityOf(information)}, nil
+}
+
+// fileIdentity is the volume serial number and file index of a file, which
+// identify it whatever path reaches it.
+type fileIdentity struct {
+	volume    uint32
+	indexHigh uint32
+	indexLow  uint32
+}
+
+func identityOf(information syscall.ByHandleFileInformation) fileIdentity {
+	return fileIdentity{volume: information.VolumeSerialNumber, indexHigh: information.FileIndexHigh, indexLow: information.FileIndexLow}
+}
+
+// imageIdentity returns the identity of the executable file that process
+// runs.
+func imageIdentity(process syscall.Handle) (fileIdentity, error) {
+	name := make([]uint16, maximumLongPath)
+	size := uint32(len(name))
+	if ok, _, _ := procQueryFullProcessImage.Call(uintptr(process), 0, uintptr(unsafe.Pointer(&name[0])), uintptr(unsafe.Pointer(&size))); ok == 0 || size == 0 || size >= uint32(len(name)) {
+		return fileIdentity{}, errHelperImage
+	}
+	file, err := syscall.CreateFile(&name[0], fileReadAttributes, syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE, nil, syscall.OPEN_EXISTING, syscall.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		return fileIdentity{}, errHelperImage
+	}
+	defer syscall.CloseHandle(file)
+	var information syscall.ByHandleFileInformation
+	if err := syscall.GetFileInformationByHandle(file, &information); err != nil {
+		return fileIdentity{}, errHelperImage
+	}
+	return identityOf(information), nil
 }
 
 // openCacheDirectory refuses every directory. Owner-only access on Windows is
@@ -123,7 +162,9 @@ type processGroup struct {
 	process syscall.Handle
 }
 
-func (group *processGroup) attach(process *os.Process) error {
+// attach requires that the suspended helper runs the verified file, then
+// places it in a new job object and resumes it.
+func (group *processGroup) attach(process *os.Process, verified fileIdentity) error {
 	job, _, _ := procCreateJobObjectW.Call(0, 0)
 	if job == 0 {
 		return errJobObject
@@ -134,11 +175,14 @@ func (group *processGroup) attach(process *os.Process) error {
 	if ok, _, _ := procSetInformationJobObject.Call(job, jobObjectExtendedLimitInformationClass, uintptr(unsafe.Pointer(&limits)), unsafe.Sizeof(limits)); ok == 0 {
 		return errJobObject
 	}
-	handle, err := syscall.OpenProcess(processSetQuota|syscall.PROCESS_TERMINATE|syscall.SYNCHRONIZE|processSuspendResume, false, uint32(process.Pid))
+	handle, err := syscall.OpenProcess(processSetQuota|syscall.PROCESS_TERMINATE|syscall.SYNCHRONIZE|processSuspendResume|processQueryLimitedInformation, false, uint32(process.Pid))
 	if err != nil {
 		return errJobObject
 	}
 	group.process = handle
+	if image, err := imageIdentity(handle); err != nil || image != verified {
+		return errHelperImage
+	}
 	if ok, _, _ := procAssignProcessToJobObject.Call(job, uintptr(handle)); ok == 0 {
 		return errJobObject
 	}

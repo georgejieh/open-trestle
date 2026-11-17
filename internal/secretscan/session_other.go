@@ -20,9 +20,11 @@ func openCacheDirectory(string, bool) (string, error) {
 
 func configureHelperCommand(*exec.Cmd) {}
 
+type fileIdentity struct{}
+
 type processGroup struct{}
 
-func (*processGroup) attach(*os.Process) error { return ErrScannerUnsupportedPlatform }
+func (*processGroup) attach(*os.Process, fileIdentity) error { return ErrScannerUnsupportedPlatform }
 
 func (*processGroup) waitExit() {}
 

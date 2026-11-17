@@ -67,12 +67,17 @@ func trustedAncestors(directory string) bool {
 	}
 }
 
+// fileIdentity is empty on Unix: Linux executes the verified descriptor
+// itself and macOS a path that no other user can change, so attach has
+// nothing to compare.
+type fileIdentity struct{}
+
 // processGroup is the helper's process group; the helper is its leader.
 type processGroup struct {
 	pid int
 }
 
-func (group *processGroup) attach(process *os.Process) error {
+func (group *processGroup) attach(process *os.Process, _ fileIdentity) error {
 	group.pid = process.Pid
 	return nil
 }
