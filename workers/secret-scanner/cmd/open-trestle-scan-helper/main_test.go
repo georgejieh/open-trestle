@@ -170,6 +170,11 @@ func TestEmptySessionPreparesTheCompilationCache(t *testing.T) {
 		t.Fatal("empty session left the compilation cache empty")
 	}
 	t.Logf("first compile of the guest: %v, cache size %d bytes", run.elapsed, size)
+	// go-re2 keeps its compiled libre2 in the same directory, found without
+	// any environment variable.
+	if info, err := os.Stat(filepath.Join(built.cache, "com.github.wasilibs")); err != nil || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("libre2 cache directory after an empty session: %v", err)
+	}
 	again := runHelper(t, built.helper, built.cache, nil, scanhelper.SessionArgument)
 	requireFailure(t, again, 0)
 	t.Logf("helper start with a prepared cache: %v", again.elapsed)
@@ -211,11 +216,6 @@ func TestFixturesMatchTheNativeScannerAndExpectedSpans(t *testing.T) {
 	}
 	if detections != 12 {
 		t.Fatalf("%d detections, want the 12 expected spans", detections)
-	}
-	// go-re2 keeps its compiled libre2 in the helper's cache directory,
-	// found without any environment variable.
-	if info, err := os.Stat(filepath.Join(built.cache, "com.github.wasilibs")); err != nil || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
-		t.Fatalf("libre2 cache directory: %v", err)
 	}
 }
 

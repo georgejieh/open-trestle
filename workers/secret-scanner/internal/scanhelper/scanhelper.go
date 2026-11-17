@@ -13,8 +13,11 @@
 // then the null device, and nothing is written to either on purpose. The
 // working directory is the compilation cache directory: it must be owned by
 // the current user and have no group or other permission bits. The helper
-// reads no environment variables. A session with no request compiles the
-// guest into the cache and exits 0, which prepares the cache.
+// reads no environment variables. Before it reads the first request it
+// compiles the guest and starts libre2, both through caches in that
+// directory, so a session with no request fills both caches and exits 0.
+// The helper sets its own core file and descriptor limits and exits when its
+// parent process goes away.
 package scanhelper
 
 import (
@@ -182,6 +185,9 @@ func Run(ctx context.Context, options Options) int {
 	}
 	compiled, err := runtime.CompileModule(ctx, options.Guest)
 	if err != nil {
+		return ExitInternal
+	}
+	if err := table.Prepare(); err != nil {
 		return ExitInternal
 	}
 	helper := &helper{runtime: runtime, compiled: compiled, bridge: bridge}

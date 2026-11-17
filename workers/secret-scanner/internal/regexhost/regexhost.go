@@ -81,6 +81,16 @@ func (t *Table) Len() int { return len(t.patterns) }
 // Patterns returns a copy of the pattern texts in handle order.
 func (t *Table) Patterns() []string { return append([]string(nil), t.patterns...) }
 
+// Prepare compiles the first pattern, which starts go-re2's libre2 module.
+// A process that calls it before reading requests pays that start, and fills
+// go-re2's compilation cache, before the first scan.
+func (t *Table) Prepare() error {
+	if _, ok := t.compiled(0); !ok {
+		return errInvalidTable
+	}
+	return nil
+}
+
 func (t *Table) compiled(handle int32) (*gore2.Regexp, bool) {
 	if handle < 0 || int(handle) >= len(t.entries) {
 		return nil, false
