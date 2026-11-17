@@ -8,8 +8,9 @@ var ErrUnavailable = errors.New("secret scanner sandbox unavailable")
 
 // Install does nothing in a wasip1 guest. The WebAssembly runtime is the
 // sandbox: the guest has no file system, network, environment or process
-// access beyond what its host grants, and the scan helper grants standard
-// input and output only.
+// access beyond what its host grants. The scan helper grants standard input
+// and output, the GOGC and GOMEMLIMIT environment variables, the wall and
+// monotonic clocks and a cryptographic random source.
 func Install() error {
 	return nil
 }

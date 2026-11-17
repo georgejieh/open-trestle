@@ -33,18 +33,6 @@ func ReadRequest(reader io.Reader) (protocol.Request, []byte, error) {
 	return request, frame, err
 }
 
-// ReadSessionRequest reads and parses the next request frame of a session.
-// It returns io.EOF only when the input ends exactly at a frame boundary.
-// The returned frame must be cleared by the caller, also on error.
-func ReadSessionRequest(reader io.Reader) (protocol.Request, []byte, error) {
-	frame, err := readFrame(reader)
-	if err != nil {
-		return protocol.Request{}, frame, err
-	}
-	request, err := protocol.ParseRequestFrame(frame)
-	return request, frame, err
-}
-
 func readFrame(reader io.Reader) ([]byte, error) {
 	prefix := make([]byte, 4)
 	if count, err := io.ReadFull(reader, prefix); err != nil {

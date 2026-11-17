@@ -2,8 +2,6 @@ package workerio
 
 import (
 	"bytes"
-	"errors"
-	"io"
 	"strings"
 	"testing"
 
@@ -42,25 +40,6 @@ func TestReadRequestRequiresExactlyOneFrame(t *testing.T) {
 	} {
 		if _, _, err := ReadRequest(bytes.NewReader(input)); err == nil {
 			t.Errorf("%s accepted", name)
-		}
-	}
-}
-
-func TestReadSessionRequestEndsOnlyAtAFrameBoundary(t *testing.T) {
-	first, second := requestFrame(t, 'a'), requestFrame(t, 'b')
-	input := bytes.NewReader(append(append([]byte(nil), first...), second...))
-	for _, want := range []byte{'a', 'b'} {
-		request, _, err := ReadSessionRequest(input)
-		if err != nil || request.RequestID != strings.Repeat(string(want), 64) {
-			t.Fatalf("frame %c: %v", want, err)
-		}
-	}
-	if _, _, err := ReadSessionRequest(input); !errors.Is(err, io.EOF) {
-		t.Fatalf("end at boundary = %v, want io.EOF", err)
-	}
-	for name, cut := range map[string][]byte{"prefix": first[:2], "payload": first[:10]} {
-		if _, _, err := ReadSessionRequest(bytes.NewReader(cut)); err == nil || errors.Is(err, io.EOF) {
-			t.Errorf("end inside the %s = %v, want a non-EOF error", name, err)
 		}
 	}
 }

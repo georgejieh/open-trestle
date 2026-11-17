@@ -29,11 +29,8 @@ import (
 	"github.com/georgejieh/open-trestle/workers/secret-scanner/internal/helperbuild"
 	"github.com/georgejieh/open-trestle/workers/secret-scanner/internal/protocol"
 	"github.com/georgejieh/open-trestle/workers/secret-scanner/internal/regexabi"
-	"github.com/georgejieh/open-trestle/workers/secret-scanner/internal/regexhost"
 	"github.com/georgejieh/open-trestle/workers/secret-scanner/internal/scanhelper"
 	"github.com/georgejieh/open-trestle/workers/secret-scanner/internal/wasmtest"
-	"github.com/tetratelabs/wazero"
-	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
 	"golang.org/x/sys/unix"
 )
 
@@ -424,63 +421,6 @@ func TestGuestFailuresProduceNoResponse(t *testing.T) {
 	run = runHelper(t, built.hostile, built.cache, input, scanhelper.SessionArgument)
 	if run.code != scanhelper.ExitGuestBridge || !bytes.Equal(run.stdout, hostileFrame) {
 		t.Fatalf("session with a bridge failure: exit %d output %q, want exit %d after one response", run.code, run.stdout, scanhelper.ExitGuestBridge)
-	}
-}
-
-// TestGuestSessionArgumentServesFramesInSequence runs the real guest in
-// this process with its session argument, which the helper does not use.
-func TestGuestSessionArgumentServesFramesInSequence(t *testing.T) {
-	binaries(t)
-	ctx := context.Background()
-	guest, err := os.ReadFile(built.guest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cache, err := wazero.NewCompilationCacheWithDir(built.cache)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cache.Close(ctx)
-	runtime := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfig().WithCompilationCache(cache).WithMemoryLimitPages(scanhelper.GuestMemoryPages))
-	defer runtime.Close(ctx)
-	wasi_snapshot_preview1.MustInstantiate(ctx, runtime)
-	table, err := regexhost.PinnedTable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	bridge, err := regexhost.NewBridge(table, regexhost.DefaultLimits)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := bridge.Instantiate(ctx, runtime); err != nil {
-		t.Fatal(err)
-	}
-	fixtures, _ := readQualification(t)
-	native := nativeAdapter(t)
-	var input []byte
-	var requests []protocol.Request
-	for _, fixture := range fixtures[:3] {
-		requests = append(requests, request(fixture.id, fixture.content))
-		input = append(input, encodeRequest(t, requests[len(requests)-1])...)
-	}
-	sessionContext, session := bridge.NewSession(ctx)
-	var output bytes.Buffer
-	module, err := runtime.InstantiateWithConfig(sessionContext, guest, wazero.NewModuleConfig().
-		WithName("").WithArgs("open-trestle-scan-guest", "--sandboxed-stdio-v1-session").
-		WithEnv("GOGC", "off").WithEnv("GOMEMLIMIT", scanhelper.GuestMemoryLimit).
-		WithStdin(bytes.NewReader(input)).WithStdout(&output).WithSysNanotime().WithSysWalltime())
-	if module != nil {
-		_ = module.Close(ctx)
-	}
-	if err != nil || session.Refused() != 0 {
-		t.Fatalf("guest session: %v, %d refused calls", err, session.Refused())
-	}
-	responses := splitFrames(t, output.Bytes())
-	if len(responses) != len(requests) {
-		t.Fatalf("%d responses for %d requests", len(responses), len(requests))
-	}
-	for index, scan := range requests {
-		requireSameScan(t, scan.RequestID, parseResponse(t, scan, responses[index]), nativeScan(t, native, scan))
 	}
 }
 

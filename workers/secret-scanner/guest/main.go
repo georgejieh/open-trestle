@@ -2,8 +2,9 @@
 // GOOS=wasip1 GOARCH=wasm. It runs inside the scan helper, which evaluates
 // its regular expressions through the host regex interface.
 //
-//	--sandboxed-stdio-v1          one request frame, then end of input; one response frame
-//	--sandboxed-stdio-v1-session  request frames until end of input at a frame boundary; one response frame each
+//	--sandboxed-stdio-v1  one request frame, then end of input; one response frame
+//
+// The helper runs a fresh instance of the guest for every request.
 //
 // Exit status: 0 on success, 64 for bad arguments, 65 for a bad request
 // frame, 70 for an initialization or encoding failure, 71 when the host
@@ -12,7 +13,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"io"
 	"os"
 	"runtime/debug"
@@ -26,10 +26,7 @@ import (
 	"github.com/georgejieh/open-trestle/workers/secret-scanner/internal/workerio"
 )
 
-const (
-	singleArgument  = "--sandboxed-stdio-v1"
-	sessionArgument = "--sandboxed-stdio-v1-session"
-)
+const singleArgument = "--sandboxed-stdio-v1"
 
 func main() {
 	os.Exit(runSafely(os.Args, os.Stdin, os.Stdout))
@@ -46,7 +43,7 @@ func runSafely(arguments []string, input io.Reader, output io.Writer) (exitCode 
 }
 
 func run(arguments []string, input io.Reader, output io.Writer) int {
-	if len(arguments) != 2 || arguments[1] != singleArgument && arguments[1] != sessionArgument {
+	if len(arguments) != 2 || arguments[1] != singleArgument {
 		return 64
 	}
 	if err := sandbox.Install(); err != nil {
@@ -60,29 +57,12 @@ func run(arguments []string, input io.Reader, output io.Writer) int {
 	if err != nil {
 		return 70
 	}
-	if arguments[1] == singleArgument {
-		request, frame, err := workerio.ReadRequest(input)
-		defer clear(frame)
-		if err != nil {
-			return 65
-		}
-		return respond(scanner, &request, output)
+	request, frame, err := workerio.ReadRequest(input)
+	defer clear(frame)
+	if err != nil {
+		return 65
 	}
-	for {
-		request, frame, err := workerio.ReadSessionRequest(input)
-		if errors.Is(err, io.EOF) {
-			return 0
-		}
-		if err != nil {
-			clear(frame)
-			return 65
-		}
-		code := respond(scanner, &request, output)
-		clear(frame)
-		if code != 0 {
-			return code
-		}
-	}
+	return respond(scanner, &request, output)
 }
 
 func respond(scanner *adapter.Adapter, request *protocol.Request, output io.Writer) int {
