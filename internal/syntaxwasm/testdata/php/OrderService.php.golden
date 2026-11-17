@@ -1,202 +1,202 @@
 # definitions
-5:1-5:23 module "Shop\\Orders" exported
-20:1-20:22 constant "MAX_LINES" exported
-21:1-21:45 constant "DEFAULT_TAX" exported
-21:1-21:45 constant "REDUCED_TAX" exported
-23:1-23:31 constant "ORDER_PREFIX" exported
-25:1-25:15 variable "registry" exported
-26:1-26:27 variable "started" exported
-28:1-34:2 class "Audited" exported
-  31:5-33:6 constructor "Audited.__construct" exported
-36:1-41:2 interface "Identifiable" exported
-  38:5-38:32 constant "Identifiable.PREFIX" exported
-  40:5-40:34 method "Identifiable.id" exported
-43:1-46:2 interface "Describable" exported
-  45:5-45:62 method "Describable.describe" exported
-48:1-67:2 class "Timestamps" exported
-  50:5-50:53 field "Timestamps.createdAt"
-  51:5-51:30 field "Timestamps.touches"
-  53:5-59:6 method "Timestamps.touch" exported
-  61:5-64:6 method "Timestamps.age"
-  66:5-66:46 method "Timestamps.label" exported
-69:1-82:2 class "Loggable" exported
-  71:5-71:45 field "Loggable.logger"
-  73:5-76:6 method "Loggable.setLogger" exported
-  78:5-81:6 method "Loggable.log"
-84:1-123:2 enum "Status" exported
-  86:5-86:26 constant "Status.Draft" exported
-  87:5-87:28 constant "Status.Placed" exported
-  88:5-88:30 constant "Status.Shipped" exported
-  89:5-89:34 constant "Status.Cancelled" exported
-  91:5-91:40 constant "Status.DEFAULT" exported
-  93:5-96:6 method "Status.id" exported
-  98:5-101:6 method "Status.describe" exported
-  103:5-106:6 method "Status.__toString" exported
-  108:5-117:6 method "Status.fromLabel" exported
-  119:5-122:6 method "Status.isFinal" exported
-125:1-158:2 class "Entity" exported
-  129:5-129:41 field "Entity.instances"
-  130:5-130:33 field "Entity.changes"
-  132:5-135:6 constructor "Entity.__construct" exported
-  137:5-140:6 method "Entity.id" exported
-  142:5-145:6 method "Entity.record"
-  147:5-150:6 method "Entity.changes" exported
-  152:5-152:50 method "Entity.validate"
-  154:5-157:6 method "Entity.instances" exported
-160:1-176:2 class "OrderLine" exported
-  162:5-170:6 constructor "OrderLine.__construct" exported
-  172:5-175:6 method "OrderLine.total" exported
-178:1-281:2 class "Order" exported
-  185:5-185:42 constant "Order.STATUS_FIELD" exported
-  186:5-186:44 constant "Order.TAX_RATE"
-  187:5-187:37 constant "Order.LIMIT"
-  190:5-190:31 field "Order.lines"
-  191:5-191:46 field "Order.status"
-  192:5-192:33 field "Order.note" exported
-  193:5-193:17 field "Order.legacy" exported
-  195:5-199:6 constructor "Order.__construct" exported
-  201:5-207:6 method "Order.create" exported
-  209:5-219:6 method "Order.addLine" exported
-  221:5-229:6 method "Order.total" exported
-  231:5-243:6 method "Order.place" exported
-  245:5-248:6 method "Order.describe" exported
-  250:5-253:6 method "Order.__toString" exported
-  255:5-258:6 method "Order.label" exported
-  260:5-265:6 method "Order.validate"
-  267:5-270:6 method "Order.summary"
-  272:5-275:6 method "Order.lines" exported
-  277:5-280:6 method "Order.isEditable" exported
-283:1-345:2 class "OrderService" exported
-  285:5-285:35 field "OrderService.listeners"
-  287:5-292:6 constructor "OrderService.__construct" exported
-  294:5-311:6 method "OrderService.place" exported
-  313:5-316:6 method "OrderService.find" exported
-  318:5-321:6 method "OrderService.onPlaced" exported
-  323:5-328:6 method "OrderService.dispatch"
-  330:5-344:6 method "OrderService.report" exported
-    333:13-335:14 constructor "OrderService.report.__construct"
-    337:13-340:14 method "OrderService.report.count"
-347:1-350:2 function "build_service" exported
-353:5-356:6 function "order_total" exported
-359:1-359:31 module "Shop\\Orders\\Reports" exported
-363:1-366:2 function "summarize" exported
+5:1-359:1 module "Shop\\Orders" exported
+  20:1-20:22 constant "Shop\\Orders.MAX_LINES" exported
+  21:1-21:45 constant "Shop\\Orders.DEFAULT_TAX" exported
+  21:1-21:45 constant "Shop\\Orders.REDUCED_TAX" exported
+  23:1-23:31 constant "Shop\\Orders.ORDER_PREFIX" exported
+  25:1-25:15 variable "Shop\\Orders.registry" exported
+  26:1-26:27 variable "Shop\\Orders.started" exported
+  28:1-34:2 class "Shop\\Orders.Audited" exported
+    31:5-33:6 constructor "Shop\\Orders.Audited.__construct" exported
+  36:1-41:2 interface "Shop\\Orders.Identifiable" exported
+    38:5-38:32 constant "Shop\\Orders.Identifiable.PREFIX" exported
+    40:5-40:34 method "Shop\\Orders.Identifiable.id" exported
+  43:1-46:2 interface "Shop\\Orders.Describable" exported
+    45:5-45:62 method "Shop\\Orders.Describable.describe" exported
+  48:1-67:2 class "Shop\\Orders.Timestamps" exported
+    50:5-50:53 field "Shop\\Orders.Timestamps.createdAt"
+    51:5-51:30 field "Shop\\Orders.Timestamps.touches"
+    53:5-59:6 method "Shop\\Orders.Timestamps.touch" exported
+    61:5-64:6 method "Shop\\Orders.Timestamps.age"
+    66:5-66:46 method "Shop\\Orders.Timestamps.label" exported
+  69:1-82:2 class "Shop\\Orders.Loggable" exported
+    71:5-71:45 field "Shop\\Orders.Loggable.logger"
+    73:5-76:6 method "Shop\\Orders.Loggable.setLogger" exported
+    78:5-81:6 method "Shop\\Orders.Loggable.log"
+  84:1-123:2 enum "Shop\\Orders.Status" exported
+    86:5-86:26 constant "Shop\\Orders.Status.Draft" exported
+    87:5-87:28 constant "Shop\\Orders.Status.Placed" exported
+    88:5-88:30 constant "Shop\\Orders.Status.Shipped" exported
+    89:5-89:34 constant "Shop\\Orders.Status.Cancelled" exported
+    91:5-91:40 constant "Shop\\Orders.Status.DEFAULT" exported
+    93:5-96:6 method "Shop\\Orders.Status.id" exported
+    98:5-101:6 method "Shop\\Orders.Status.describe" exported
+    103:5-106:6 method "Shop\\Orders.Status.__toString" exported
+    108:5-117:6 method "Shop\\Orders.Status.fromLabel" exported
+    119:5-122:6 method "Shop\\Orders.Status.isFinal" exported
+  125:1-158:2 class "Shop\\Orders.Entity" exported
+    129:5-129:41 field "Shop\\Orders.Entity.instances"
+    130:5-130:33 field "Shop\\Orders.Entity.changes"
+    132:5-135:6 constructor "Shop\\Orders.Entity.__construct" exported
+    137:5-140:6 method "Shop\\Orders.Entity.id" exported
+    142:5-145:6 method "Shop\\Orders.Entity.record"
+    147:5-150:6 method "Shop\\Orders.Entity.changes" exported
+    152:5-152:50 method "Shop\\Orders.Entity.validate"
+    154:5-157:6 method "Shop\\Orders.Entity.instances" exported
+  160:1-176:2 class "Shop\\Orders.OrderLine" exported
+    162:5-170:6 constructor "Shop\\Orders.OrderLine.__construct" exported
+    172:5-175:6 method "Shop\\Orders.OrderLine.total" exported
+  178:1-281:2 class "Shop\\Orders.Order" exported
+    185:5-185:42 constant "Shop\\Orders.Order.STATUS_FIELD" exported
+    186:5-186:44 constant "Shop\\Orders.Order.TAX_RATE"
+    187:5-187:37 constant "Shop\\Orders.Order.LIMIT"
+    190:5-190:31 field "Shop\\Orders.Order.lines"
+    191:5-191:46 field "Shop\\Orders.Order.status"
+    192:5-192:33 field "Shop\\Orders.Order.note" exported
+    193:5-193:17 field "Shop\\Orders.Order.legacy" exported
+    195:5-199:6 constructor "Shop\\Orders.Order.__construct" exported
+    201:5-207:6 method "Shop\\Orders.Order.create" exported
+    209:5-219:6 method "Shop\\Orders.Order.addLine" exported
+    221:5-229:6 method "Shop\\Orders.Order.total" exported
+    231:5-243:6 method "Shop\\Orders.Order.place" exported
+    245:5-248:6 method "Shop\\Orders.Order.describe" exported
+    250:5-253:6 method "Shop\\Orders.Order.__toString" exported
+    255:5-258:6 method "Shop\\Orders.Order.label" exported
+    260:5-265:6 method "Shop\\Orders.Order.validate"
+    267:5-270:6 method "Shop\\Orders.Order.summary"
+    272:5-275:6 method "Shop\\Orders.Order.lines" exported
+    277:5-280:6 method "Shop\\Orders.Order.isEditable" exported
+  283:1-345:2 class "Shop\\Orders.OrderService" exported
+    285:5-285:35 field "Shop\\Orders.OrderService.listeners"
+    287:5-292:6 constructor "Shop\\Orders.OrderService.__construct" exported
+    294:5-311:6 method "Shop\\Orders.OrderService.place" exported
+    313:5-316:6 method "Shop\\Orders.OrderService.find" exported
+    318:5-321:6 method "Shop\\Orders.OrderService.onPlaced" exported
+    323:5-328:6 method "Shop\\Orders.OrderService.dispatch"
+    330:5-344:6 method "Shop\\Orders.OrderService.report" exported
+      333:13-335:14 constructor "Shop\\Orders.OrderService.report.__construct"
+      337:13-340:14 method "Shop\\Orders.OrderService.report.count"
+  347:1-350:2 function "Shop\\Orders.build_service" exported
+  353:5-356:6 function "Shop\\Orders.order_total" exported
+359:1-367:1 module "Shop\\Orders\\Reports" exported
+  363:1-366:2 function "Shop\\Orders\\Reports.summarize" exported
 # references
-23:1 call "define" in "ORDER_PREFIX"
-26:12 call "microtime" in "started"
-28:4 decorator "Attribute" in "Audited"
-43:31 inherit "Identifiable" in "Describable"
-43:46 inherit "Stringable" in "Describable"
-50:17 type "DateTimeImmutable" in "Timestamps.createdAt"
-53:27 type "Clock" in "Timestamps.touch"
-55:38 call "now" qualifier="$clock" in "Timestamps.touch"
-61:28 type "Clock" in "Timestamps.age"
-63:24 call "now" qualifier="$clock" in "Timestamps.age"
-63:31 call "getTimestamp" in "Timestamps.age"
-63:66 call "getTimestamp" qualifier="$this->createdAt" in "Timestamps.age"
-71:14 type "LoggerInterface" in "Loggable.logger"
-73:31 type "LoggerInterface" in "Loggable.setLogger"
-80:25 call "info" qualifier="$this->logger" in "Loggable.log"
-84:32 inherit "Describable" in "Status"
-100:16 call "ucfirst" in "Status.describe"
-105:23 call "describe" qualifier="$this" in "Status.__toString"
-110:24 call "cases" qualifier="self" in "Status.fromLabel"
-111:24 call "describe" qualifier="$case" in "Status.fromLabel"
-116:19 construct "InvalidArgumentException" in "Status.fromLabel"
-125:34 inherit "Identifiable" in "Entity"
-127:9 inherit "Timestamps" in "Entity"
-165:25 type "Money" in "OrderLine.__construct"
-168:23 construct "InvalidArgumentException" in "OrderLine.__construct"
-172:30 type "Money" in "OrderLine.total"
-174:34 call "times" qualifier="$this->unitPrice" in "OrderLine.total"
-178:3 decorator "Audited" in "Order"
-179:21 inherit "Entity" in "Order"
-179:39 inherit "Describable" in "Order"
-181:9 inherit "Loggable" in "Order"
-181:19 inherit "Timestamps" in "Order"
-191:15 type "Status" in "Order.status"
-195:62 type "Clock" in "Order.__construct"
-197:17 call "__construct" qualifier="parent" in "Order.__construct"
-198:16 call "touch" qualifier="$this" in "Order.__construct"
-201:51 type "Clock" in "Order.create"
-204:17 call "record" qualifier="$order" in "Order.create"
-209:29 type "OrderLine" in "Order.addLine"
-211:13 call "count" in "Order.addLine"
-212:23 construct "InvalidArgumentException" in "Order.addLine"
-216:16 call "log" qualifier="$this" in "Order.addLine"
-221:30 type "Money" in "Order.total"
-223:23 call "zero" qualifier="Money" in "Order.total"
-225:26 call "plus" qualifier="$sum" in "Order.total"
-225:38 call "total" qualifier="$line" in "Order.total"
-228:22 call "times" qualifier="$sum" in "Order.total"
-231:30 type "Outcome" in "Order.place"
-234:20 call "validate" qualifier="$this" in "Order.place"
-235:18 type "InvalidArgumentException" in "Order.place"
-235:46 type "DomainException" in "Order.place"
-236:29 call "failure" qualifier="Outcome" in "Order.place"
-236:45 call "getMessage" qualifier="$error" in "Order.place"
-240:16 call "record" qualifier="$this" in "Order.place"
-242:25 call "success" qualifier="Outcome" in "Order.place"
-247:16 call "sprintf" in "Order.describe"
-247:42 call "id" qualifier="$this" in "Order.describe"
-247:63 call "describe" qualifier="$this->status" in "Order.describe"
-252:23 call "describe" qualifier="$this" in "Order.__toString"
-257:21 call "upper" qualifier="Str" in "Order.label"
-263:23 construct "InvalidArgumentException" in "Order.validate"
-269:16 call "array_map" in "Order.summary"
-269:30 type "OrderLine" in "Order.summary"
-279:33 type "Order" in "Order.isEditable"
-279:58 call "isFinal" qualifier="$this->status" in "Order.isEditable"
-288:17 type "RepositoryContract" in "OrderService.__construct"
-289:17 type "Clock" in "OrderService.__construct"
-290:18 type "LoggerInterface" in "OrderService.__construct"
-294:43 type "OrderLine" in "OrderService.place"
-294:65 type "Order" in "OrderService.place"
-296:25 call "create" qualifier="Order" in "OrderService.place"
-298:21 call "addLine" qualifier="$order" in "OrderService.place"
-301:27 call "place" qualifier="$order" in "OrderService.place"
-302:23 call "isOk" qualifier="$result" in "OrderService.place"
-303:29 call "warning" qualifier="$this->logger" in "OrderService.place"
-304:24 construct "RuntimeException" in "OrderService.place"
-304:50 call "error" qualifier="$result" in "OrderService.place"
-307:28 call "save" qualifier="$this->repository" in "OrderService.place"
-308:16 call "dispatch" qualifier="$this" in "OrderService.place"
-308:29 construct "OrderPlaced" in "OrderService.place"
-308:49 call "id" qualifier="$order" in "OrderService.place"
-313:40 type "Order" in "OrderService.find"
-315:35 call "find" qualifier="$this->repository" in "OrderService.find"
-330:28 type "Order" in "OrderService.report"
-332:52 inherit "Countable" in "OrderService.report"
-333:49 type "Order" in "OrderService.report.__construct"
-339:24 call "count" in "OrderService.report.count"
-339:44 call "changes" qualifier="$this->order" in "OrderService.report.count"
-343:16 call "format_money" in "OrderService.report"
-343:37 call "total" qualifier="$order" in "OrderService.report"
-343:68 call "count" qualifier="$anonymous" in "OrderService.report"
-347:24 type "RepositoryContract" in "build_service"
-347:56 type "Clock" in "build_service"
-347:71 type "OrderService" in "build_service"
-349:16 construct "OrderService" in "build_service"
-352:6 call "function_exists"
-353:26 type "Order" in "order_total"
-353:41 type "Money" in "order_total"
-355:24 call "total" qualifier="$order" in "order_total"
-363:20 type "Order" in "summarize"
-365:12 call "array_map" in "summarize"
-365:33 type "Order" in "summarize"
-365:66 call "describe" qualifier="$order" in "summarize"
+23:1 call "define" in "Shop\\Orders.ORDER_PREFIX"
+26:12 call "microtime" in "Shop\\Orders.started"
+28:4 decorator "Attribute" in "Shop\\Orders.Audited"
+43:31 inherit "Identifiable" in "Shop\\Orders.Describable"
+43:46 inherit "Stringable" in "Shop\\Orders.Describable"
+50:17 type "DateTimeImmutable" in "Shop\\Orders.Timestamps.createdAt"
+53:27 type "Clock" in "Shop\\Orders.Timestamps.touch"
+55:38 call "now" qualifier="$clock" in "Shop\\Orders.Timestamps.touch"
+61:28 type "Clock" in "Shop\\Orders.Timestamps.age"
+63:24 call "now" qualifier="$clock" in "Shop\\Orders.Timestamps.age"
+63:31 call "getTimestamp" in "Shop\\Orders.Timestamps.age"
+63:66 call "getTimestamp" qualifier="$this->createdAt" in "Shop\\Orders.Timestamps.age"
+71:14 type "LoggerInterface" in "Shop\\Orders.Loggable.logger"
+73:31 type "LoggerInterface" in "Shop\\Orders.Loggable.setLogger"
+80:25 call "info" qualifier="$this->logger" in "Shop\\Orders.Loggable.log"
+84:32 inherit "Describable" in "Shop\\Orders.Status"
+100:16 call "ucfirst" in "Shop\\Orders.Status.describe"
+105:23 call "describe" qualifier="$this" in "Shop\\Orders.Status.__toString"
+110:24 call "cases" qualifier="self" in "Shop\\Orders.Status.fromLabel"
+111:24 call "describe" qualifier="$case" in "Shop\\Orders.Status.fromLabel"
+116:19 construct "InvalidArgumentException" in "Shop\\Orders.Status.fromLabel"
+125:34 inherit "Identifiable" in "Shop\\Orders.Entity"
+127:9 inherit "Timestamps" in "Shop\\Orders.Entity"
+165:25 type "Money" in "Shop\\Orders.OrderLine.__construct"
+168:23 construct "InvalidArgumentException" in "Shop\\Orders.OrderLine.__construct"
+172:30 type "Money" in "Shop\\Orders.OrderLine.total"
+174:34 call "times" qualifier="$this->unitPrice" in "Shop\\Orders.OrderLine.total"
+178:3 decorator "Audited" in "Shop\\Orders.Order"
+179:21 inherit "Entity" in "Shop\\Orders.Order"
+179:39 inherit "Describable" in "Shop\\Orders.Order"
+181:9 inherit "Loggable" in "Shop\\Orders.Order"
+181:19 inherit "Timestamps" in "Shop\\Orders.Order"
+191:15 type "Status" in "Shop\\Orders.Order.status"
+195:62 type "Clock" in "Shop\\Orders.Order.__construct"
+197:17 call "__construct" qualifier="parent" in "Shop\\Orders.Order.__construct"
+198:16 call "touch" qualifier="$this" in "Shop\\Orders.Order.__construct"
+201:51 type "Clock" in "Shop\\Orders.Order.create"
+204:17 call "record" qualifier="$order" in "Shop\\Orders.Order.create"
+209:29 type "OrderLine" in "Shop\\Orders.Order.addLine"
+211:13 call "count" in "Shop\\Orders.Order.addLine"
+212:23 construct "InvalidArgumentException" in "Shop\\Orders.Order.addLine"
+216:16 call "log" qualifier="$this" in "Shop\\Orders.Order.addLine"
+221:30 type "Money" in "Shop\\Orders.Order.total"
+223:23 call "zero" qualifier="Money" in "Shop\\Orders.Order.total"
+225:26 call "plus" qualifier="$sum" in "Shop\\Orders.Order.total"
+225:38 call "total" qualifier="$line" in "Shop\\Orders.Order.total"
+228:22 call "times" qualifier="$sum" in "Shop\\Orders.Order.total"
+231:30 type "Outcome" in "Shop\\Orders.Order.place"
+234:20 call "validate" qualifier="$this" in "Shop\\Orders.Order.place"
+235:18 type "InvalidArgumentException" in "Shop\\Orders.Order.place"
+235:46 type "DomainException" in "Shop\\Orders.Order.place"
+236:29 call "failure" qualifier="Outcome" in "Shop\\Orders.Order.place"
+236:45 call "getMessage" qualifier="$error" in "Shop\\Orders.Order.place"
+240:16 call "record" qualifier="$this" in "Shop\\Orders.Order.place"
+242:25 call "success" qualifier="Outcome" in "Shop\\Orders.Order.place"
+247:16 call "sprintf" in "Shop\\Orders.Order.describe"
+247:42 call "id" qualifier="$this" in "Shop\\Orders.Order.describe"
+247:63 call "describe" qualifier="$this->status" in "Shop\\Orders.Order.describe"
+252:23 call "describe" qualifier="$this" in "Shop\\Orders.Order.__toString"
+257:21 call "upper" qualifier="Str" in "Shop\\Orders.Order.label"
+263:23 construct "InvalidArgumentException" in "Shop\\Orders.Order.validate"
+269:16 call "array_map" in "Shop\\Orders.Order.summary"
+269:30 type "OrderLine" in "Shop\\Orders.Order.summary"
+279:33 type "Order" in "Shop\\Orders.Order.isEditable"
+279:58 call "isFinal" qualifier="$this->status" in "Shop\\Orders.Order.isEditable"
+288:17 type "RepositoryContract" in "Shop\\Orders.OrderService.__construct"
+289:17 type "Clock" in "Shop\\Orders.OrderService.__construct"
+290:18 type "LoggerInterface" in "Shop\\Orders.OrderService.__construct"
+294:43 type "OrderLine" in "Shop\\Orders.OrderService.place"
+294:65 type "Order" in "Shop\\Orders.OrderService.place"
+296:25 call "create" qualifier="Order" in "Shop\\Orders.OrderService.place"
+298:21 call "addLine" qualifier="$order" in "Shop\\Orders.OrderService.place"
+301:27 call "place" qualifier="$order" in "Shop\\Orders.OrderService.place"
+302:23 call "isOk" qualifier="$result" in "Shop\\Orders.OrderService.place"
+303:29 call "warning" qualifier="$this->logger" in "Shop\\Orders.OrderService.place"
+304:24 construct "RuntimeException" in "Shop\\Orders.OrderService.place"
+304:50 call "error" qualifier="$result" in "Shop\\Orders.OrderService.place"
+307:28 call "save" qualifier="$this->repository" in "Shop\\Orders.OrderService.place"
+308:16 call "dispatch" qualifier="$this" in "Shop\\Orders.OrderService.place"
+308:29 construct "OrderPlaced" in "Shop\\Orders.OrderService.place"
+308:49 call "id" qualifier="$order" in "Shop\\Orders.OrderService.place"
+313:40 type "Order" in "Shop\\Orders.OrderService.find"
+315:35 call "find" qualifier="$this->repository" in "Shop\\Orders.OrderService.find"
+330:28 type "Order" in "Shop\\Orders.OrderService.report"
+332:52 inherit "Countable" in "Shop\\Orders.OrderService.report"
+333:49 type "Order" in "Shop\\Orders.OrderService.report.__construct"
+339:24 call "count" in "Shop\\Orders.OrderService.report.count"
+339:44 call "changes" qualifier="$this->order" in "Shop\\Orders.OrderService.report.count"
+343:16 call "format_money" in "Shop\\Orders.OrderService.report"
+343:37 call "total" qualifier="$order" in "Shop\\Orders.OrderService.report"
+343:68 call "count" qualifier="$anonymous" in "Shop\\Orders.OrderService.report"
+347:24 type "RepositoryContract" in "Shop\\Orders.build_service"
+347:56 type "Clock" in "Shop\\Orders.build_service"
+347:71 type "OrderService" in "Shop\\Orders.build_service"
+349:16 construct "OrderService" in "Shop\\Orders.build_service"
+352:6 call "function_exists" in "Shop\\Orders"
+353:26 type "Order" in "Shop\\Orders.order_total"
+353:41 type "Money" in "Shop\\Orders.order_total"
+355:24 call "total" qualifier="$order" in "Shop\\Orders.order_total"
+363:20 type "Order" in "Shop\\Orders\\Reports.summarize"
+365:12 call "array_map" in "Shop\\Orders\\Reports.summarize"
+365:33 type "Order" in "Shop\\Orders\\Reports.summarize"
+365:66 call "describe" qualifier="$order" in "Shop\\Orders\\Reports.summarize"
 # imports
-7:5-7:25 source="Shop\\Contracts\\Clock"
-8:5-8:52 source="Shop\\Contracts\\Repository" alias="RepositoryContract"
-9:19-9:24 source="Shop\\Support" name="Money"
-9:26-9:43 source="Shop\\Support" name="Result" alias="Outcome"
-9:45-9:48 source="Shop\\Support" name="Str"
-10:5-10:39 source="Shop\\Support\\format_money"
-11:5-11:40 source="Shop\\Support\\DEFAULT_CURRENCY"
-12:5-12:28 source="Psr\\Log\\LoggerInterface"
-13:5-13:28 source="Shop\\Events\\OrderPlaced"
-14:5-14:29 source="InvalidArgumentException"
-16:1-16:43 source="/../bootstrap.php"
-17:1-17:28 source="config/orders.php"
-18:1-18:28 source="helpers.php"
-361:5-361:22 source="Shop\\Orders\\Order"
+7:5-7:25 source="Shop\\Contracts\\Clock" in "Shop\\Orders"
+8:5-8:52 source="Shop\\Contracts\\Repository" alias="RepositoryContract" in "Shop\\Orders"
+9:19-9:24 source="Shop\\Support" name="Money" in "Shop\\Orders"
+9:26-9:43 source="Shop\\Support" name="Result" alias="Outcome" in "Shop\\Orders"
+9:45-9:48 source="Shop\\Support" name="Str" in "Shop\\Orders"
+10:5-10:39 source="Shop\\Support\\format_money" in "Shop\\Orders"
+11:5-11:40 source="Shop\\Support\\DEFAULT_CURRENCY" in "Shop\\Orders"
+12:5-12:28 source="Psr\\Log\\LoggerInterface" in "Shop\\Orders"
+13:5-13:28 source="Shop\\Events\\OrderPlaced" in "Shop\\Orders"
+14:5-14:29 source="InvalidArgumentException" in "Shop\\Orders"
+16:1-16:43 source="/../bootstrap.php" in "Shop\\Orders"
+17:1-17:28 source="config/orders.php" in "Shop\\Orders"
+18:1-18:28 source="helpers.php" in "Shop\\Orders"
+361:5-361:22 source="Shop\\Orders\\Order" in "Shop\\Orders\\Reports"
 # gaps

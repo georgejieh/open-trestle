@@ -14,6 +14,7 @@ import (
 // declarations inside a function, are not exported. It also drops the
 // relative class names self, static and parent, which name no declaration.
 func finishPHP(content []byte, _ syntaxanalysis.RawFile, a *syntaxanalysis.FileAnalysis) {
+	phpFoldNamespaces(content, a)
 	for i := range a.Definitions {
 		d := &a.Definitions[i]
 		if d.Kind == syntaxanalysis.KindMethod && strings.EqualFold(d.Name.Untrusted(), "__construct") {
@@ -108,4 +109,46 @@ func skipBracketed(content []byte, open, end int) int {
 
 func isWordByte(c byte) bool {
 	return c == '_' || c == '\\' || c >= 0x80 || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+// phpFoldNamespaces extends a namespace declared without braces to the next
+// namespace declaration or the end of the file, as PHP scopes it, and makes
+// the definitions, references and imports in that stretch belong to it.
+func phpFoldNamespaces(content []byte, a *syntaxanalysis.FileAnalysis) {
+	var spaces []int
+	for i, d := range a.Definitions {
+		if d.Kind == syntaxanalysis.KindModule && d.Parent < 0 && d.Range.EndByte > 0 && content[d.Range.EndByte-1] == ';' {
+			spaces = append(spaces, i)
+		}
+	}
+	for n, i := range spaces {
+		d := &a.Definitions[i]
+		end := len(content)
+		if n+1 < len(spaces) {
+			end = a.Definitions[spaces[n+1]].Range.StartByte
+		}
+		d.Range.EndByte = end
+		d.Range.End = phpPosition(content, end)
+		for j := i + 1; j < len(a.Definitions) && a.Definitions[j].Range.StartByte < end; j++ {
+			if a.Definitions[j].Parent < 0 {
+				a.Definitions[j].Parent = i
+			}
+		}
+		for j := range a.References {
+			if r := &a.References[j]; r.Enclosing < 0 && r.Range.StartByte >= d.Range.StartByte && r.Range.StartByte < end {
+				r.Enclosing = i
+			}
+		}
+		for j := range a.Imports {
+			if m := &a.Imports[j]; m.Enclosing < 0 && m.Range.StartByte >= d.Range.StartByte && m.Range.StartByte < end {
+				m.Enclosing = i
+			}
+		}
+	}
+}
+
+// phpPosition returns the 1-based line and byte column of an offset.
+func phpPosition(content []byte, offset int) syntaxanalysis.Position {
+	line := 1 + bytes.Count(content[:offset], []byte{'\n'})
+	return syntaxanalysis.Position{Line: line, Column: offset - bytes.LastIndexByte(content[:offset], '\n')}
 }
