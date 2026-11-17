@@ -1,6 +1,9 @@
 // Package hostre2 is a Betterleaks regex engine whose matching runs in the
-// host, through the regexabi import interface. The guest never compiles or
-// runs a regular expression itself.
+// host, through the regexabi import interface. Every pattern Betterleaks
+// compiles through its engine, which covers the rules and the matchesAny and
+// findMatch calls of filter expressions, runs in the host. Regular
+// expressions that guest code compiles with a library directly, such as
+// tiktoken's and those of the filter runtime's own helpers, run in the guest.
 //
 // Every error result from the host ends the process with
 // regexabi.GuestBridgeFailureExitCode. Returning an error or panicking would
@@ -13,6 +16,7 @@ import (
 	"os"
 	"regexp/syntax"
 	"runtime"
+	"sync"
 	"unsafe"
 
 	blregexp "github.com/betterleaks/betterleaks/regexp"
@@ -84,6 +88,24 @@ func (c *compiled) findAll(s string, limit int32) []uint32 {
 	// at the next rule instead of at the end of the source.
 	runtime.Gosched()
 	pointer, length := text(s)
+	offsets := c.findAllAndRead(pointer, length, limit)
+	for index := 0; index < len(offsets); index += 2 {
+		if offsets[index] > offsets[index+1] || offsets[index+1] > length {
+			fail()
+			return nil
+		}
+	}
+	return offsets
+}
+
+// resultMu makes a find-all call and the read of its result one step. The
+// host holds one result per guest instance, not per call, so two goroutines
+// whose calls interleaved could read each other's matches.
+var resultMu sync.Mutex
+
+func (c *compiled) findAllAndRead(pointer unsafe.Pointer, length uint32, limit int32) []uint32 {
+	resultMu.Lock()
+	defer resultMu.Unlock()
 	count := hostFindAll(c.handle, pointer, length, limit)
 	if count < 0 || count > regexabi.MaxPairs || limit > 0 && count > limit {
 		fail()
@@ -96,12 +118,6 @@ func (c *compiled) findAll(s string, limit int32) []uint32 {
 	if written := hostReadResult(unsafe.Pointer(&offsets[0]), uint32(count)); written != count {
 		fail()
 		return nil
-	}
-	for index := 0; index < len(offsets); index += 2 {
-		if offsets[index] > offsets[index+1] || offsets[index+1] > length {
-			fail()
-			return nil
-		}
 	}
 	return offsets
 }

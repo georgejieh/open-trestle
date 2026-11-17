@@ -131,6 +131,36 @@ func TestEngineResultsEqualStandardLibraryThroughCorrectHost(t *testing.T) {
 	}
 }
 
+// TestFindAllHoldsTheResultLockAcrossBothHostCalls checks that no other
+// find-all can run between a find_all call and the read of its result.
+func TestFindAllHoldsTheResultLockAcrossBothHostCalls(t *testing.T) {
+	installFakeHost(t)
+	engine := compileForTest(t, "a")
+	findAll, readResult := hostFindAll, hostReadResult
+	unlocked := 0
+	hostFindAll = func(handle int32, pointer unsafe.Pointer, length uint32, limit int32) int32 {
+		if resultMu.TryLock() {
+			resultMu.Unlock()
+			unlocked++
+		}
+		return findAll(handle, pointer, length, limit)
+	}
+	hostReadResult = func(out unsafe.Pointer, pairs uint32) int32 {
+		if resultMu.TryLock() {
+			resultMu.Unlock()
+			unlocked++
+		}
+		return readResult(out, pairs)
+	}
+	if got := engine.FindAllStringIndex("aa", -1); len(got) != 2 || unlocked != 0 {
+		t.Fatalf("find-all returned %v with the result lock free in %d host calls", got, unlocked)
+	}
+	if !resultMu.TryLock() {
+		t.Fatal("find-all left the result lock held")
+	}
+	resultMu.Unlock()
+}
+
 func TestFindAllWithZeroLimitMakesNoHostCall(t *testing.T) {
 	host := installFakeHost(t)
 	engine := compileForTest(t, "a")
