@@ -46,6 +46,7 @@ var packSpecs = map[syntaxanalysis.Language]packSpec{
 	syntaxanalysis.LanguageRust:       {files: []string{"rust"}, finish: finishRust},
 	syntaxanalysis.LanguagePHP:        {files: []string{"php"}, finish: finishPHP},
 	syntaxanalysis.LanguageRuby:       {files: []string{"ruby"}, finish: finishRuby},
+	syntaxanalysis.LanguageHTML:       {files: []string{"html"}, finish: finishHTML},
 }
 
 func loadPacks() (map[syntaxanalysis.Language]pack, error) {

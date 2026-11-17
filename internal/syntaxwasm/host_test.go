@@ -140,14 +140,21 @@ func TestEveryFamilyInstantiatesAndDescribesItsLanguages(t *testing.T) {
 }
 
 func TestLanguagesWithoutQueryPacksReportAGap(t *testing.T) {
-	a := testAnalyzer(t)
-	for _, path := range []string{"a.html"} {
-		language, _ := syntaxanalysis.LanguageForPath(path)
-		if !a.Supports(language) || a.HasQueryPack(language) {
-			t.Fatalf("%s: supports=%v pack=%v", path, a.Supports(language), a.HasQueryPack(language))
+	a := newTestAnalyzer(t, Config{})
+	for language, entry := range a.languages {
+		if entry.pack == nil {
+			t.Fatalf("%s has a grammar in a family module but no query pack", language)
 		}
-		onlyGap(t, analyze(t, a, path, []byte("x")), syntaxanalysis.GapNoQueryPack, "")
 	}
+	// A grammar without a pack, as when a family gains a language before
+	// its pack is written, reports only a no_query_pack gap.
+	entry := a.languages[syntaxanalysis.LanguageHTML]
+	entry.pack = nil
+	a.languages[syntaxanalysis.LanguageHTML] = entry
+	if !a.Supports(syntaxanalysis.LanguageHTML) || a.HasQueryPack(syntaxanalysis.LanguageHTML) {
+		t.Fatal("the language without a pack must stay supported")
+	}
+	onlyGap(t, analyze(t, a, "a.html", []byte("<p id=x></p>")), syntaxanalysis.GapNoQueryPack, "")
 	source, _ := syntaxanalysis.NewSource("a.go", syntaxanalysis.LanguageGo, []byte("package a"))
 	if _, err := a.Analyze(context.Background(), source); !errors.Is(err, syntaxanalysis.ErrInvalidInput) {
 		t.Fatal("Go must be left to the go/parser analyzer")

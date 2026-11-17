@@ -1,0 +1,8 @@
+# definitions
+1:1-1:90 variable "outer"
+  1:21-1:80 variable "outer.inner"
+    1:41-1:70 variable "outer.inner.deep"
+# references
+1:42 construct "my-card" in "outer.inner.deep"
+# imports
+# gaps
