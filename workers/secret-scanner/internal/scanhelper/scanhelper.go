@@ -77,12 +77,18 @@ const (
 const (
 	// MaximumResponseFrameBytes is the largest response payload relayed.
 	MaximumResponseFrameBytes = 4 * 1024 * 1024
-	// GuestMemoryPages is the guest's linear memory limit (128 MiB).
-	GuestMemoryPages = 2048
-	// GuestMemoryLimit is the guest's GOMEMLIMIT; its collector is off.
-	GuestMemoryLimit = "96MiB"
-	// MemoryLimitBytes is the soft limit of the helper's own heap.
-	MemoryLimitBytes = 256 * 1024 * 1024
+	// GuestMemoryPages is the guest's linear memory limit (160 MiB).
+	GuestMemoryPages = 2560
+	// GuestMemoryLimit is the guest's GOMEMLIMIT. Its collector is off
+	// until the heap nears this limit. A collection then runs concurrently
+	// on the guest's one thread while the scan keeps allocating, so the
+	// guest's memory grows well past this limit before the collection ends;
+	// GuestMemoryPages leaves room for that growth on every request the
+	// protocol allows.
+	GuestMemoryLimit = "64MiB"
+	// MemoryLimitBytes is the soft limit of the helper's own heap, which
+	// also holds the guest's linear memory.
+	MemoryLimitBytes = 384 * 1024 * 1024
 	// MaximumDescriptors is the helper's open descriptor limit.
 	MaximumDescriptors = 16
 )

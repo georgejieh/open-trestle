@@ -28,6 +28,14 @@ const (
 	internalScanDeadline = 5 * time.Second
 )
 
+// HostEngineScanDeadline bounds one scan in the WebAssembly guest. The guest
+// runs the same Betterleaks code compiled to WebAssembly, on one thread, and
+// takes up to five times as long as the native worker for the same request.
+// Every request that the native worker completes, or stops at the match
+// limit, within internalScanDeadline must end the same way in the guest, so
+// the guest gets internalScanDeadline times that factor and a fifth more.
+const HostEngineScanDeadline = 30 * time.Second
+
 var ErrInitialization = errors.New("secret scanner initialization failed")
 
 type detectorRuntime struct {
@@ -47,10 +55,10 @@ type Adapter struct {
 // host of a WebAssembly guest. engine must report regexabi.EngineVersion, and
 // responses carry protocol.HostRE2BuildProfile.
 func NewWithHostEngine(engine blregexp.Engine) (*Adapter, error) {
-	return newWithEngine(engine, regexabi.EngineVersion, protocol.HostRE2BuildProfile)
+	return newWithEngine(engine, regexabi.EngineVersion, protocol.HostRE2BuildProfile, HostEngineScanDeadline)
 }
 
-func newWithEngine(engine blregexp.Engine, version, buildProfile string) (adapter *Adapter, err error) {
+func newWithEngine(engine blregexp.Engine, version, buildProfile string, deadline time.Duration) (adapter *Adapter, err error) {
 	defer func() {
 		if recover() != nil {
 			adapter = nil
@@ -100,7 +108,7 @@ func newWithEngine(engine blregexp.Engine, version, buildProfile string) (adapte
 			run:        detector.Run,
 			totalBytes: detector.TotalBytes.Load,
 		},
-		deadline:     internalScanDeadline,
+		deadline:     deadline,
 		buildProfile: buildProfile,
 	}, nil
 }

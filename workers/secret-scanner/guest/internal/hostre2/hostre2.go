@@ -12,6 +12,7 @@ package hostre2
 import (
 	"os"
 	"regexp/syntax"
+	"runtime"
 	"unsafe"
 
 	blregexp "github.com/betterleaks/betterleaks/regexp"
@@ -76,6 +77,12 @@ func text(s string) (unsafe.Pointer, uint32) {
 // findAll returns flat start and end offsets of up to limit matches, or of
 // every match when limit is regexabi.UnlimitedMatches.
 func (c *compiled) findAll(s string, limit int32) []uint32 {
+	// The guest has one thread and no preemption, so a timer, such as the
+	// scan deadline, fires only when a goroutine yields. Betterleaks checks
+	// its context before each rule, and a rule with a regular expression
+	// starts with this call, so yielding here lets the deadline stop a scan
+	// at the next rule instead of at the end of the source.
+	runtime.Gosched()
 	pointer, length := text(s)
 	count := hostFindAll(c.handle, pointer, length, limit)
 	if count < 0 || count > regexabi.MaxPairs || limit > 0 && count > limit {

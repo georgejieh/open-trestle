@@ -11,5 +11,5 @@ import (
 // Betterleaks' RE2 engine. The WebAssembly guest does not link it, because
 // go-re2 cannot run inside a wasip1 guest.
 func New() (*Adapter, error) {
-	return newWithEngine(re2.RE2{}, "re2", protocol.BuildProfile)
+	return newWithEngine(re2.RE2{}, "re2", protocol.BuildProfile, internalScanDeadline)
 }
