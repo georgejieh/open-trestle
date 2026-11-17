@@ -52,6 +52,8 @@ npm run build --prefix web
 npm run dist:check --prefix web
 ```
 
+The syntax analyzer's WebAssembly modules in `internal/syntaxwasm/modules/` are committed, compressed, and embedded. `go test ./internal/syntaxwasm` checks them against their manifest. To rebuild them, or to add a query pack for another language, see [syntax analysis](syntax-analysis.md).
+
 `web/dist/` is committed and embedded in `trestled`. If you change the console sources, rebuild it. CI rebuilds it and fails when the committed copy differs. The same steps work for `extensions/vscode`, which also has an `npm run package` step.
 
 ## Commit discipline
