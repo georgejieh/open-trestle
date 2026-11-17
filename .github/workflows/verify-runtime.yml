@@ -150,6 +150,8 @@ jobs:
         run: |
           GOWORK=off GOTOOLCHAIN=go1.26.11 CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go test -run='^$' -exec=true ./...
           GOWORK=off GOTOOLCHAIN=go1.26.11 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go test -run='^$' -exec=true ./...
+      - name: Run scan helper session integration tests
+        run: OPEN_TRESTLE_SCAN_HELPER_INTEGRATION=1 GOWORK=off GOTOOLCHAIN=go1.26.11 go test -count=1 -timeout=15m -run='^TestScanHelper' -v ./internal/secretscan/
       - name: Provision pinned Zig musl builder and build deterministic release staging
         run: |
           python3 tools/package_secret_scanner.py
