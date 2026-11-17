@@ -71,7 +71,7 @@ func rmaLoadBytes(t *testing.T, encoded []byte, expected rmEnvelopeWire, reposit
 		t.Skip("protected loader requires trusted local file ownership")
 	}
 	dir := t.TempDir()
-	if err := os.Chmod(dir, 0o700); err != nil {
+	if err := setTestMode(t, dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "retained-memory-input.json")

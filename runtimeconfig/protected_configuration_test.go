@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -17,7 +18,7 @@ import (
 func protectedRuntimeFixture(t *testing.T) (string, string, RouteInventory) {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.Chmod(dir, 0o700); err != nil {
+	if err := setTestMode(t, dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	encoded := encodedInventory(t)
@@ -57,7 +58,7 @@ func TestLoadProtectedRuntimeConfigurationRefusesUntrustedAncestryAndContent(t *
 			inventoryPath, policyPath, _ := protectedRuntimeFixture(t)
 			switch mutation {
 			case "writable file":
-				if err := os.Chmod(policyPath, 0o666); err != nil {
+				if err := setTestMode(t, policyPath, 0o666); err != nil {
 					t.Fatal(err)
 				}
 			case "symlink file":
@@ -67,7 +68,7 @@ func TestLoadProtectedRuntimeConfigurationRefusesUntrustedAncestryAndContent(t *
 				}
 				policyPath = link
 			case "writable ancestor":
-				if err := os.Chmod(filepath.Dir(policyPath), 0o777); err != nil {
+				if err := setTestMode(t, filepath.Dir(policyPath), 0o777); err != nil {
 					t.Fatal(err)
 				}
 			case "symlink ancestor":
@@ -132,6 +133,9 @@ func (p *protectedReadProbe) Close() error {
 func TestProtectedConfigurationReadRechecksAuthorityAndStableBytes(t *testing.T) {
 	for _, mutation := range []string{"replace after first read", "mutate after first read", "permission after first read", "symlink before second open", "cancel during read", "close failure"} {
 		t.Run(mutation, func(t *testing.T) {
+			if mutation == "replace after first read" && runtime.GOOS == "windows" {
+				t.Skip("Windows refuses to rename over a file that the reader holds open")
+			}
 			path := filepath.Join(t.TempDir(), "configuration")
 			if err := os.WriteFile(path, []byte("approved-bytes"), 0o600); err != nil {
 				t.Fatal(err)
@@ -171,7 +175,7 @@ func TestProtectedConfigurationReadRechecksAuthorityAndStableBytes(t *testing.T)
 								t.Fatal(err)
 							}
 						case "permission after first read":
-							if err := os.Chmod(path, 0o666); err != nil {
+							if err := setTestMode(t, path, 0o666); err != nil {
 								t.Fatal(err)
 							}
 						case "cancel during read":

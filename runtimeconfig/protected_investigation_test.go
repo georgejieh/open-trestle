@@ -22,7 +22,7 @@ func TestProtectedInvestigationPolicyBindsStableImmutableValue(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	if err := os.Chmod(dir, 0o700); err != nil {
+	if err := setTestMode(t, dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "private-investigation-policy.json")
@@ -49,7 +49,7 @@ func TestProtectedInvestigationPolicyRefusesUnsafePathsAndContent(t *testing.T) 
 	for _, mode := range []string{"symlink", "writable file", "writable ancestor", "directory", "missing", "oversized", "malformed", "canceled"} {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
-			if err := os.Chmod(dir, 0o700); err != nil {
+			if err := setTestMode(t, dir, 0o700); err != nil {
 				t.Fatal(err)
 			}
 			path := filepath.Join(dir, "private-policy-sentinel.json")
@@ -66,11 +66,11 @@ func TestProtectedInvestigationPolicyRefusesUnsafePathsAndContent(t *testing.T) 
 				}
 				path = link
 			case "writable file":
-				if err := os.Chmod(path, 0o666); err != nil {
+				if err := setTestMode(t, path, 0o666); err != nil {
 					t.Fatal(err)
 				}
 			case "writable ancestor":
-				if err := os.Chmod(dir, 0o777); err != nil {
+				if err := setTestMode(t, dir, 0o777); err != nil {
 					t.Fatal(err)
 				}
 			case "directory":
@@ -107,7 +107,7 @@ func TestProtectedInvestigationPolicyRechecksDuringReadAndAfterDecode(t *testing
 	for _, mode := range []string{"mutate during read", "replace at final recheck"} {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
-			if err := os.Chmod(dir, 0o700); err != nil {
+			if err := setTestMode(t, dir, 0o700); err != nil {
 				t.Fatal(err)
 			}
 			path := filepath.Join(dir, "private-policy-sentinel.json")
