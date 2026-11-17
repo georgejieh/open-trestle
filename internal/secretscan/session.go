@@ -88,8 +88,12 @@ type SessionConfig struct {
 	// a symbolic link, owned by the effective user with no group or other
 	// permission bit, and every directory above it must be owned by root or
 	// the current user and writable by no one else unless it is sticky.
-	// Both checks run before every spawn. OpenSession never creates it;
-	// Prewarm creates the final directory with mode 0700 if it is missing.
+	// On Windows the same is read from owners and access-control lists: the
+	// directory must be owned by the current user and grant no one but the
+	// current user, LocalSystem and Administrators access, and no one else
+	// may change a directory above it. Both checks run before every spawn.
+	// OpenSession never creates it; Prewarm creates the final directory with
+	// mode 0700, or owner-only on Windows, if it is missing.
 	//
 	// The cache is trusted at the level of its owner, like the helper file
 	// when the current user owns it. wazero authenticates a cache entry
@@ -228,13 +232,14 @@ type processHooks struct {
 // poisons the session; a review must not open its session before Prewarm
 // has succeeded once for the configuration.
 //
-// Sessions run on Linux only. On Windows and macOS the cache check refuses
-// every directory, and the helper refuses every working directory, because
-// owner and mode bits do not prove that a directory is private there: on
-// Windows access is a property of the ACL, and on macOS an extended ACL,
-// which a new directory can inherit from its parent, grants access
-// independently of the mode bits. Neither is verified, so neither a session
-// nor Prewarm starts on Windows or macOS until an ACL check exists.
+// Sessions run on Linux and Windows. On Windows the cache checks read the
+// owner and access-control list of each directory instead of its mode bits.
+// On macOS the cache check refuses every directory, and the helper refuses
+// every working directory, because owner and mode bits do not prove that a
+// directory is private there: an extended ACL, which a new directory can
+// inherit from its parent, grants access independently of the mode bits.
+// ACLs are not verified on macOS, so neither a session nor Prewarm starts
+// there.
 func OpenSession(ctx context.Context, config SessionConfig) (*Session, error) {
 	return openSession(ctx, sessionSettings{
 		config:         config,

@@ -7,12 +7,15 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"unsafe"
+
+	"github.com/georgejieh/open-trestle/internal/ownersonly"
 )
 
 const (
@@ -137,15 +140,57 @@ func imageIdentity(process syscall.Handle) (fileIdentity, error) {
 	return identityOf(information), nil
 }
 
-// openCacheDirectory refuses every directory. Owner-only access on Windows is
-// a property of the directory's ACL, which is not verified, and the helper
-// refuses every working directory on Windows for the same reason, so no
-// session starts on Windows.
-func openCacheDirectory(path string, _ bool) (string, error) {
+// openCacheDirectory checks the helper's cache directory and returns the path
+// to start the helper in, as the Linux version does, with the owner and DACL
+// of each directory in place of its owner and mode bits; see package
+// ownersonly. Symbolic links and junctions above the directory are resolved
+// once. Every directory on the resolved path must be owned by the current
+// user, LocalSystem, Administrators or TrustedInstaller, and no other
+// principal may write it, except that it may let others add entries, which
+// cannot remove, rename or replace an existing one. The directory itself
+// must not be a reparse point, must be owned by the current user and must
+// grant no other principal except LocalSystem and Administrators any access,
+// which is what the helper requires of its working directory. With create, a
+// missing directory is first created owner-only; nothing above it is ever
+// created.
+func openCacheDirectory(path string, create bool) (string, error) {
 	if !validAbsolutePath(path) || filepath.Dir(path) == path {
 		return "", ErrSessionConfig
 	}
-	return "", ErrCacheUntrusted
+	parent, err := filepath.EvalSymlinks(filepath.Dir(path))
+	if err != nil || !filepath.IsAbs(parent) || !trustedAncestors(parent) {
+		return "", ErrCacheUntrusted
+	}
+	directory := filepath.Join(parent, filepath.Base(path))
+	if create {
+		if err := ownersonly.Mkdir(directory); err != nil && !errors.Is(err, fs.ErrExist) {
+			return "", ErrCacheUntrusted
+		}
+	}
+	info, err := os.Lstat(directory)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 ||
+		ownersonly.CheckPath(directory, info, ownersonly.Rule{Owner: ownersonly.OwnerCurrentUser, Others: ownersonly.OthersNone}) != nil {
+		return "", ErrCacheUntrusted
+	}
+	return directory, nil
+}
+
+// trustedAncestors reports whether directory and every directory above it
+// are owned by a trusted identity and let no other principal do more than
+// add entries.
+func trustedAncestors(directory string) bool {
+	for {
+		info, err := os.Lstat(directory)
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 ||
+			ownersonly.CheckPath(directory, info, ownersonly.Rule{Owner: ownersonly.OwnerTrusted, Others: ownersonly.OthersReadAdd}) != nil {
+			return false
+		}
+		parent := filepath.Dir(directory)
+		if parent == directory {
+			return true
+		}
+		directory = parent
+	}
 }
 
 // configureHelperCommand starts the helper suspended, so it runs no code
