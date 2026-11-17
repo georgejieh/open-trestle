@@ -73,37 +73,6 @@ func newPublicationPlan(readiness PublicationReadiness, target PublicationTarget
 	return plan, nil
 }
 
-// NewPublicationPlan creates an external-write proposal bound to verified acquired source and context.
-func NewPublicationPlan(readiness PublicationReadiness, target PublicationTarget, source AcquiredReviewSnapshot, contextBinding AcquiredContextBinding) (PublicationPlan, error) {
-	if err := source.Validate(); err != nil {
-		return PublicationPlan{}, err
-	}
-	if err := contextBinding.Validate(); err != nil {
-		return PublicationPlan{}, err
-	}
-	matchingSnapshot := source.PipelineSnapshotIdentity() == readiness.snapshotIdentity
-	matchingContextSource := contextBinding.AcquiredSnapshotIdentity() == source.Identity()
-	matchingContextPipeline := contextBinding.PipelineSnapshotIdentity() == source.PipelineSnapshotIdentity()
-	matchingGenerationContext := contextBinding.ContextPacketIdentity() == readiness.GenerationContextIdentity()
-	matchingScope := contextBinding.ReviewScopeIdentity() == readiness.ReviewScopeIdentity()
-	if !matchingSnapshot || !matchingContextSource || !matchingContextPipeline || !matchingGenerationContext || !matchingScope || !source.MatchesPublicationTarget(target) {
-		return PublicationPlan{}, ErrInvalidSourceSnapshotBinding
-	}
-	plan, err := newPublicationPlan(readiness, target, source.Identity())
-	if err != nil {
-		return PublicationPlan{}, err
-	}
-	plan.hasAcquiredSource = true
-	plan.sourceRepositoryIdentity = source.RepositoryIdentity()
-	plan.sourceHeadRevisionIdentity = source.HeadRevision().Identity()
-	plan.acquiredContextBindingIdentity = contextBinding.Identity()
-	plan.identity = derivePublicationPlanIdentity(plan)
-	if err := plan.Validate(); err != nil {
-		return PublicationPlan{}, err
-	}
-	return plan, nil
-}
-
 func (p PublicationPlan) Identity() string                  { return p.identity }
 func (p PublicationPlan) ReviewScopeIdentity() string       { return p.reviewScopeIdentity }
 func (p PublicationPlan) ReadinessIdentity() string         { return p.readinessIdentity }
