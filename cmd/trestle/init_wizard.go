@@ -786,11 +786,36 @@ func (w *initWizard) pickPair(generation, verification []modelcatalog.Model) err
 	if w.a.generationModel, err = w.pickModel("generation-model", "Finder model: looks for problems in your change", generation, ""); err != nil {
 		return err
 	}
-	if w.prompt != nil {
-		w.say("\n  The checker must be a different model, so a finding both agree on is more reliable.")
-	}
-	w.a.verificationModel, err = w.pickModel("verification-model", "Checker model: double-checks each finding", verification, w.a.generationModel)
+	w.a.verificationModel, err = w.pickChecker(verification)
 	return err
+}
+
+// pickChecker picks the checker model. It must differ from the finder, and a
+// model from another family is recommended but not required: different model
+// families tend to miss different problems.
+func (w *initWizard) pickChecker(models []modelcatalog.Model) (string, error) {
+	if w.prompt != nil {
+		w.say("\n  The checker must be a different model. A model from a different family is recommended, because different families tend to miss different problems.")
+	}
+	_, given := w.flags["verification-model"]
+	for {
+		checker, err := w.pickModel("verification-model", "Checker model: double-checks each finding", models, w.a.generationModel)
+		if err != nil {
+			return "", err
+		}
+		family := initSameFamily(w.a.generationModel, checker)
+		if family == "" {
+			return checker, nil
+		}
+		w.say("  %s The finder and the checker are both %s models. A checker from a different family is recommended.", w.wait, family)
+		if w.prompt == nil || given {
+			return checker, nil
+		}
+		keep, err := w.confirm("Keep this checker?", true, true)
+		if err != nil || keep {
+			return checker, err
+		}
+	}
 }
 
 var initModelSize = regexp.MustCompile(`(?i)(?:^|[^a-z0-9.])(\d+(?:\.\d+)?)b(?:$|[^a-z0-9])`)
@@ -1131,11 +1156,8 @@ func (w *initWizard) localModels() error {
 			return err
 		}
 	}
-	if w.prompt != nil {
-		w.say("\n  The checker must be a different model, so a finding both agree on is more reliable.")
-	}
 	w.modelEndpoint = w.a.verificationEndpoint
-	if w.a.verificationModel, err = w.pickModel("verification-model", "Checker model: double-checks each finding", verification, w.a.generationModel); err != nil {
+	if w.a.verificationModel, err = w.pickChecker(verification); err != nil {
 		return err
 	}
 	w.a.transport = "openai_chat_completions"
