@@ -60,7 +60,7 @@ These pages are for running the daemon for a team or as a shared deployment.
 ## Contribute
 
 - [Contributing](../CONTRIBUTING.md) and [development standards](development.md).
-- [Architecture](architecture.md) and [roadmap](roadmap.md).
+- [Architecture](architecture.md), [design rationale](rationale.md) and [roadmap](roadmap.md).
 - [Quality evaluation](quality-evaluation.md) and [model result evaluation](model-result-evaluation.md).
 - [Review-run runtime](review-run-runtime.md) and its handlers: [source acquisition](source-acquisition-handler.md), [change model](change-model-handler.md), [evidence](deterministic-evidence-handler.md), [semantic impact](semantic-impact.md), [memory retrieval](memory-retrieval-handler.md), [context assembly](context-assembly-handler.md), [candidate generation](model-generation-handler.md), [verification](model-verification-handler.md), [publication readiness](publication-readiness-handler.md) and [publication](publication-handler.md).
 - Runtime internals: [handler catalogs](runtime-handler-catalogs.md), [artifact exchange](runtime-artifacts.md), [task notifications](task-notifications.md) and [automatic finalization](automatic-finalization.md).
