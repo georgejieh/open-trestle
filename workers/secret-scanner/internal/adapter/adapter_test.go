@@ -26,8 +26,9 @@ import (
 
 func newTestAdapter(run func(context.Context, sources.Source) iter.Seq[detect.Result], totalBytes func() uint64, deadline time.Duration) *Adapter {
 	return &Adapter{
-		runtime:  detectorRuntime{run: run, totalBytes: totalBytes},
-		deadline: deadline,
+		runtime:      detectorRuntime{run: run, totalBytes: totalBytes},
+		deadline:     deadline,
+		buildProfile: protocol.BuildProfile,
 	}
 }
 

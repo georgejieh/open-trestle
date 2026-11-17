@@ -14,9 +14,9 @@ import (
 	"github.com/betterleaks/betterleaks/detect"
 	"github.com/betterleaks/betterleaks/logging"
 	blregexp "github.com/betterleaks/betterleaks/regexp"
-	"github.com/betterleaks/betterleaks/regexp/re2"
 	"github.com/betterleaks/betterleaks/sources"
 	"github.com/georgejieh/open-trestle/workers/secret-scanner/internal/protocol"
+	"github.com/georgejieh/open-trestle/workers/secret-scanner/internal/regexabi"
 	"github.com/rs/zerolog"
 )
 
@@ -36,13 +36,21 @@ type detectorRuntime struct {
 }
 
 type Adapter struct {
-	detector *detect.Detector
-	runtime  detectorRuntime
-	deadline time.Duration
-	mu       sync.Mutex
+	detector     *detect.Detector
+	runtime      detectorRuntime
+	deadline     time.Duration
+	buildProfile string
+	mu           sync.Mutex
 }
 
-func New() (adapter *Adapter, err error) {
+// NewWithHostEngine returns an adapter whose regular expressions run in the
+// host of a WebAssembly guest. engine must report regexabi.EngineVersion, and
+// responses carry protocol.HostRE2BuildProfile.
+func NewWithHostEngine(engine blregexp.Engine) (*Adapter, error) {
+	return newWithEngine(engine, regexabi.EngineVersion, protocol.HostRE2BuildProfile)
+}
+
+func newWithEngine(engine blregexp.Engine, version, buildProfile string) (adapter *Adapter, err error) {
 	defer func() {
 		if recover() != nil {
 			adapter = nil
@@ -51,8 +59,11 @@ func New() (adapter *Adapter, err error) {
 	}()
 
 	logging.Logger = zerolog.Nop()
-	blregexp.SetEngine(re2.RE2{})
-	if blregexp.Version() != "re2" {
+	if engine == nil || !protocol.KnownBuildProfile(buildProfile) {
+		return nil, ErrInitialization
+	}
+	blregexp.SetEngine(engine)
+	if blregexp.Version() != version {
 		return nil, ErrInitialization
 	}
 	wantRulesetDigest := [sha256.Size]byte{
@@ -89,7 +100,8 @@ func New() (adapter *Adapter, err error) {
 			run:        detector.Run,
 			totalBytes: detector.TotalBytes.Load,
 		},
-		deadline: internalScanDeadline,
+		deadline:     internalScanDeadline,
+		buildProfile: buildProfile,
 	}, nil
 }
 
@@ -123,12 +135,16 @@ func PinnedRuleIDs() map[string]struct{} {
 }
 
 func (a *Adapter) Scan(ctx context.Context, request protocol.Request) protocol.Response {
-	response := emptyResponse(request.RequestID, protocol.StatusScanFailed)
+	buildProfile := ""
+	if a != nil {
+		buildProfile = a.buildProfile
+	}
+	response := emptyResponse(request.RequestID, protocol.StatusScanFailed, buildProfile)
 	if !validRequest(request) {
 		response.Status = protocol.StatusInputRejected
 		return response
 	}
-	if a == nil || a.runtime.run == nil || a.runtime.totalBytes == nil || a.deadline <= 0 {
+	if a == nil || a.runtime.run == nil || a.runtime.totalBytes == nil || a.deadline <= 0 || !protocol.KnownBuildProfile(a.buildProfile) {
 		return response
 	}
 
@@ -205,7 +221,7 @@ func (a *Adapter) Scan(ctx context.Context, request protocol.Request) protocol.R
 	return response
 }
 
-func emptyResponse(requestID, status string) protocol.Response {
+func emptyResponse(requestID, status, buildProfile string) protocol.Response {
 	return protocol.Response{
 		SchemaVersion:   1,
 		RequestID:       requestID,
@@ -214,7 +230,7 @@ func emptyResponse(requestID, status string) protocol.Response {
 		ScannerVersion:  protocol.ScannerVersion,
 		ScannerCommit:   protocol.ScannerCommit,
 		RulesetIdentity: protocol.RulesetIdentity,
-		BuildProfile:    protocol.BuildProfile,
+		BuildProfile:    buildProfile,
 		Matches:         []protocol.Match{},
 	}
 }

@@ -139,7 +139,16 @@ func TestUnsupportedImplementationIsSelectedOutsideLinuxAMD64(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(source)
-	if !strings.Contains(text, "//go:build !linux || !amd64") || !strings.Contains(text, "ErrUnsupported") {
+	if !strings.Contains(text, "//go:build (!linux || !amd64) && !wasip1\n") || !strings.Contains(text, "ErrUnsupported") {
 		t.Fatal("unsupported platforms must fail closed")
+	}
+	// The only other implementation is the wasip1 guest's, where the
+	// WebAssembly runtime is the sandbox.
+	guest, err := os.ReadFile("sandbox_wasip1.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(guest), "//go:build wasip1\n") {
+		t.Fatal("the no-op sandbox must be limited to wasip1")
 	}
 }
