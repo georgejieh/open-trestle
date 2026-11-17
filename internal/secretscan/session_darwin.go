@@ -28,6 +28,18 @@ func openVerifiedHelper(path string, expectedDigest string) (verifiedHelper, err
 	return verifiedHelper{file: file, execPath: resolved, displayPath: resolved}, nil
 }
 
+// openCacheDirectory refuses every directory. Owner and mode bits do not
+// prove that a directory is private on macOS: an extended ACL, which a new
+// directory can inherit from its parent, grants access independently of
+// them, and ACLs are not verified. The helper refuses every working
+// directory on macOS for the same reason, so no session starts on macOS.
+func openCacheDirectory(path string, _ bool) (string, error) {
+	if !validAbsolutePath(path) || filepath.Dir(path) == path {
+		return "", ErrSessionConfig
+	}
+	return "", ErrCacheUntrusted
+}
+
 // configureHelperCommand puts the helper in its own process group. macOS has
 // no parent-death signal; the helper polls its parent process ID and exits
 // once its parent is gone, also in the middle of a scan.

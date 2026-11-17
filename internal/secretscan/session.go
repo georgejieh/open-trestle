@@ -82,6 +82,13 @@ type SessionConfig struct {
 	// the current user and writable by no one else unless it is sticky.
 	// Both checks run before every spawn. OpenSession never creates it;
 	// Prewarm creates the final directory with mode 0700 if it is missing.
+	//
+	// The cache is trusted at the level of its owner, like the helper file
+	// when the current user owns it. wazero checks a cache entry only
+	// against a checksum, so anyone who can write the cache directory
+	// controls the code the helper runs, including any process of the
+	// current user. The directory checks exist so that no other user can
+	// write or even reach it; they do not protect it from its owner.
 	CacheDirectory string
 }
 
@@ -189,11 +196,13 @@ type sessionSettings struct {
 // poisons the session; a review must not open its session before Prewarm
 // has succeeded once for the configuration.
 //
-// Sessions are tested on Linux. On Windows the cache check refuses every
-// directory, because owner-only access there is a property of the ACL,
-// which is not verified; the helper refuses every working directory on
-// Windows for the same reason. Neither a session nor Prewarm starts on
-// Windows.
+// Sessions run on Linux only. On Windows and macOS the cache check refuses
+// every directory, and the helper refuses every working directory, because
+// owner and mode bits do not prove that a directory is private there: on
+// Windows access is a property of the ACL, and on macOS an extended ACL,
+// which a new directory can inherit from its parent, grants access
+// independently of the mode bits. Neither is verified, so neither a session
+// nor Prewarm starts on Windows or macOS until an ACL check exists.
 func OpenSession(ctx context.Context, config SessionConfig) (*Session, error) {
 	return openSession(ctx, sessionSettings{
 		config:         config,

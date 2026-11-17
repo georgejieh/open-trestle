@@ -12,10 +12,18 @@
 // that was standard output at start; standard output and standard error are
 // then the null device, and nothing is written to either on purpose. The
 // working directory is the compilation cache directory: it must be owned by
-// the current user and have no group or other permission bits. The helper
-// reads no environment variables. Before it reads the first request it
-// compiles the guest and starts libre2, both through caches in that
-// directory, so a session with no request fills both caches and exits 0.
+// the current user and have no group or other permission bits. On Windows
+// and macOS, where owner and mode bits do not prove that a directory is
+// private, every working directory is refused. The helper reads no
+// environment variables. Before it reads the first request it compiles the
+// guest and starts libre2, both through caches in that directory, so a
+// session with no request fills both caches and exits 0.
+//
+// The cache is trusted at the level of its owner. wazero checks a cache entry
+// only against a checksum, so whoever can write the cache directory controls
+// the code the helper runs; the checks on the directory make sure that only
+// its owner and root can.
+//
 // The helper sets its own core file and descriptor limits and exits when its
 // parent process goes away.
 package scanhelper
