@@ -141,7 +141,7 @@ func TestEveryFamilyInstantiatesAndDescribesItsLanguages(t *testing.T) {
 
 func TestLanguagesWithoutQueryPacksReportAGap(t *testing.T) {
 	a := testAnalyzer(t)
-	for _, path := range []string{"a.rb", "a.html"} {
+	for _, path := range []string{"a.html"} {
 		language, _ := syntaxanalysis.LanguageForPath(path)
 		if !a.Supports(language) || a.HasQueryPack(language) {
 			t.Fatalf("%s: supports=%v pack=%v", path, a.Supports(language), a.HasQueryPack(language))

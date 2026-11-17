@@ -1,0 +1,44 @@
+# definitions
+7:1-32:4 module "Outer" exported
+  8:3-28:6 class "Outer.Inner" exported
+    9:5-9:26 method "Outer.Inner.go"
+    10:5-10:24 method "Outer.Inner.make" exported
+    11:5-11:25 method "Outer.Inner.==" exported
+    12:5-14:8 method "Outer.Inner.value=" exported
+    15:5-15:32 method "Outer.Inner.each" exported
+    21:13-21:28 method "Outer.Inner.hidden"
+    23:5-23:19 method "Outer.Inner.shown"
+    26:5-26:10 constant "Outer.Inner.X"
+  30:3-31:6 class "Outer.Nested" exported
+# references
+1:1 call "require"
+2:1 call "require"
+3:1 call "require"
+4:1 call "require_relative"
+4:23 call "join" qualifier="File"
+5:8 call "require" qualifier="Kernel"
+8:23 inherit "Parent" qualifier="Base" in "Outer.Inner"
+9:17 call "helper" in "Outer.Inner.go"
+15:25 call "each" qualifier="items" in "Outer.Inner.each"
+17:5 call "rescue_from" in "Outer.Inner"
+21:5 call "private" in "Outer.Inner"
+24:5 call "private" in "Outer.Inner"
+27:5 call "private_constant" in "Outer.Inner"
+34:12 construct "Inner" qualifier="Outer"
+35:19 construct "Deep" qualifier="Outer::Inner"
+36:11 call "new" qualifier="klass"
+37:6 call "call" qualifier="obj"
+38:3 call "b" qualifier="a"
+38:5 call "c"
+38:10 call "d"
+39:1 call "puts"
+39:13 call "map"
+39:31 call "sum"
+42:8 type "ArgumentError"
+42:28 type "Bad" qualifier="Foo"
+43:3 call "warn"
+43:10 call "message" qualifier="e"
+# imports
+1:1-1:12 source="a"
+2:1-2:13 source="b"
+# gaps
