@@ -160,6 +160,10 @@ func (a *Adapter) Scan(ctx context.Context, request protocol.Request) protocol.R
 
 	for _, requestSource := range request.Sources {
 		source := newSingleFragmentSource(requestSource.Content)
+		// The line index is built on the first finding of the source and
+		// shared by all of them, so projection costs one pass over the
+		// content however many findings it has.
+		var lines *sourceLines
 		beforeBytes := a.runtime.totalBytes()
 		runCtx, cancelRun := context.WithCancel(scanCtx)
 		for result := range a.runtime.run(runCtx, source) {
@@ -176,7 +180,10 @@ func (a *Adapter) Scan(ctx context.Context, request protocol.Request) protocol.R
 				continue
 			}
 			finding := result.Finding
-			match, ok := projectFinding(requestSource.Ordinal, requestSource.Content, findingCoordinates{
+			if lines == nil {
+				lines = newSourceLines(requestSource.Content)
+			}
+			match, ok := lines.project(requestSource.Ordinal, findingCoordinates{
 				RuleID:      finding.RuleID,
 				StartLine:   finding.StartLine,
 				EndLine:     finding.EndLine,
@@ -272,14 +279,31 @@ type findingCoordinates struct {
 	EndColumn   int
 }
 
+// sourceLines is one source's content with its UTF-8 validity and the byte
+// offset of every line start, computed once for all of its findings.
+type sourceLines struct {
+	content []byte
+	valid   bool
+	starts  []int
+}
+
+func newSourceLines(content []byte) *sourceLines {
+	return &sourceLines{content: content, valid: utf8.Valid(content), starts: lineStartOffsets(content)}
+}
+
 func projectFinding(sourceOrdinal int, content []byte, finding findingCoordinates, ruleIDs map[string]struct{}) (protocol.Match, bool) {
-	if !utf8.Valid(content) || finding.StartLine < 1 || finding.EndLine < 1 || finding.StartColumn < 1 || finding.EndColumn < 1 {
+	return newSourceLines(content).project(sourceOrdinal, finding, ruleIDs)
+}
+
+func (lines *sourceLines) project(sourceOrdinal int, finding findingCoordinates, ruleIDs map[string]struct{}) (protocol.Match, bool) {
+	content := lines.content
+	if !lines.valid || finding.StartLine < 1 || finding.EndLine < 1 || finding.StartColumn < 1 || finding.EndColumn < 1 {
 		return protocol.Match{}, false
 	}
 	if _, known := ruleIDs[finding.RuleID]; !known {
 		return protocol.Match{}, false
 	}
-	lineStarts := lineStartOffsets(content)
+	lineStarts := lines.starts
 	if finding.StartLine > len(lineStarts) || finding.EndLine > len(lineStarts) {
 		return protocol.Match{}, false
 	}
