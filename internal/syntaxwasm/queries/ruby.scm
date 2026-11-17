@@ -30,29 +30,23 @@
 (class body: (body_statement (assignment left: (class_variable) @name) @definition.field))
 (module body: (body_statement (assignment left: (class_variable) @name) @definition.field))
 
-; Calls. A bare identifier is not recorded, since it may be a local variable.
-(call method: [(identifier) (constant)] @name) @reference.call
-(call receiver: [(identifier) (constant) (self) (scope_resolution) (instance_variable) (class_variable) (global_variable)] @qualifier method: [(identifier) (constant)] @name) @reference.call
+; Calls. A bare identifier is not recorded, since it may be a local
+; variable, except for the visibility keywords that finishRuby reads.
+(call receiver: [(identifier) (constant) (self) (scope_resolution) (instance_variable) (class_variable) (global_variable)]? @qualifier method: [(identifier) (constant)] @name) @reference.call
 (body_statement (identifier) @match.private @name @reference.call)
 (body_statement (identifier) @match.protected @name @reference.call)
 (body_statement (identifier) @match.public @name @reference.call)
 (body_statement (identifier) @match.module_function @name @reference.call)
 
 ; Constructions.
-(call receiver: (constant) @name method: (identifier) @match.new) @reference.construct
-(call receiver: (scope_resolution scope: [(constant) (scope_resolution)] @qualifier name: (constant) @name) method: (identifier) @match.new) @reference.construct
+(call receiver: [(constant) @name (scope_resolution scope: [(constant) (scope_resolution)] @qualifier name: (constant) @name)] method: (identifier) @match.new) @reference.construct
 
 ; Superclasses, mixins and rescued types.
-(superclass (constant) @name) @reference.inherit
-(superclass (scope_resolution scope: [(constant) (scope_resolution)] @qualifier name: (constant) @name)) @reference.inherit
-(call !receiver method: (identifier) @match.include arguments: (argument_list (constant) @name)) @reference.inherit
-(call !receiver method: (identifier) @match.include arguments: (argument_list (scope_resolution scope: [(constant) (scope_resolution)] @qualifier name: (constant) @name))) @reference.inherit
-(call !receiver method: (identifier) @match.extend arguments: (argument_list (constant) @name)) @reference.inherit
-(call !receiver method: (identifier) @match.extend arguments: (argument_list (scope_resolution scope: [(constant) (scope_resolution)] @qualifier name: (constant) @name))) @reference.inherit
-(call !receiver method: (identifier) @match.prepend arguments: (argument_list (constant) @name)) @reference.inherit
-(call !receiver method: (identifier) @match.prepend arguments: (argument_list (scope_resolution scope: [(constant) (scope_resolution)] @qualifier name: (constant) @name))) @reference.inherit
-(exceptions (constant) @name) @reference.type
-(exceptions (scope_resolution scope: [(constant) (scope_resolution)] @qualifier name: (constant) @name)) @reference.type
+(superclass [(constant) @name (scope_resolution scope: [(constant) (scope_resolution)] @qualifier name: (constant) @name)]) @reference.inherit
+(call !receiver method: (identifier) @match.include arguments: (argument_list [(constant) @name (scope_resolution scope: [(constant) (scope_resolution)] @qualifier name: (constant) @name)])) @reference.inherit
+(call !receiver method: (identifier) @match.extend arguments: (argument_list [(constant) @name (scope_resolution scope: [(constant) (scope_resolution)] @qualifier name: (constant) @name)])) @reference.inherit
+(call !receiver method: (identifier) @match.prepend arguments: (argument_list [(constant) @name (scope_resolution scope: [(constant) (scope_resolution)] @qualifier name: (constant) @name)])) @reference.inherit
+(exceptions [(constant) @name (scope_resolution scope: [(constant) (scope_resolution)] @qualifier name: (constant) @name)]) @reference.type
 
 ; Loading files.
 (call !receiver method: (identifier) @match.require arguments: (argument_list . (string . (string_content) @import.source .) .)) @import

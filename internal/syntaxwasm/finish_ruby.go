@@ -2,6 +2,7 @@ package syntaxwasm
 
 import (
 	"bytes"
+	"sort"
 
 	"github.com/georgejieh/open-trestle/syntaxanalysis"
 )
@@ -27,7 +28,7 @@ func finishRuby(content []byte, _ syntaxanalysis.RawFile, a *syntaxanalysis.File
 			defs[i].Kind = syntaxanalysis.KindConstructor
 		}
 	}
-	rubyVisibility(content, a, singleton)
+	rubyVisibility(content, a)
 	rubyFoldSingletons(a, singleton)
 	kept := a.References[:0]
 	for _, r := range a.References {
@@ -60,18 +61,92 @@ func rubySelfMethod(content []byte, start int) bool {
 	return bytes.HasPrefix(rest, []byte("self."))
 }
 
-func rubyVisibility(content []byte, a *syntaxanalysis.FileAnalysis, singleton []bool) {
-	defs := a.Definitions
-	calls := map[int][]int{}
-	for i, r := range a.References {
+// rubyScope holds what the visibility calls inside one class or module say.
+type rubyScope struct {
+	// sections are the bare keywords in source order.
+	sections []rubySection
+	// byStart and byName hold the visibility given to a def that follows a
+	// keyword on the same line, by its start offset, and to the symbols
+	// listed after a keyword, by name.
+	byStart map[int]string
+	byName  map[string]string
+	// classByStart and classByName are the same for private_class_method
+	// and public_class_method.
+	classByStart map[int]string
+	classByName  map[string]string
+	// hidden holds the names listed after private_constant.
+	hidden map[string]bool
+}
+
+type rubySection struct {
+	at         int
+	visibility string
+}
+
+func newRubyScope() *rubyScope {
+	return &rubyScope{
+		byStart: map[int]string{}, byName: map[string]string{},
+		classByStart: map[int]string{}, classByName: map[string]string{},
+		hidden: map[string]bool{},
+	}
+}
+
+// rubyScopes reads the visibility calls of a file, grouped by the class or
+// module that contains them.
+func rubyScopes(content []byte, a *syntaxanalysis.FileAnalysis) map[int]*rubyScope {
+	scopes := map[int]*rubyScope{}
+	for _, r := range a.References {
 		if r.Enclosing < 0 || !r.Qualifier.Empty() {
 			continue
 		}
-		switch r.Name.Untrusted() {
+		name := r.Name.Untrusted()
+		switch name {
 		case "private", "protected", "public", "module_function", "private_constant", "private_class_method", "public_class_method":
-			calls[r.Enclosing] = append(calls[r.Enclosing], i)
+		default:
+			continue
+		}
+		scope := scopes[r.Enclosing]
+		if scope == nil {
+			scope = newRubyScope()
+			scopes[r.Enclosing] = scope
+		}
+		start, symbols := rubyArguments(content, r.Range.EndByte)
+		switch name {
+		case "private", "protected", "public", "module_function":
+			visibility := name
+			if name == "module_function" {
+				visibility = "public"
+			}
+			switch {
+			case rubyBare(content, r.Range.EndByte):
+				scope.sections = append(scope.sections, rubySection{at: r.Range.StartByte, visibility: visibility})
+			default:
+				scope.byStart[start] = visibility
+				for _, symbol := range symbols {
+					scope.byName[symbol] = visibility
+				}
+			}
+		case "private_constant":
+			for _, symbol := range symbols {
+				scope.hidden[symbol] = true
+			}
+		default:
+			visibility := "private"
+			if name == "public_class_method" {
+				visibility = "public"
+			}
+			scope.classByStart[start] = visibility
+			for _, symbol := range symbols {
+				scope.classByName[symbol] = visibility
+			}
 		}
 	}
+	return scopes
+}
+
+func rubyVisibility(content []byte, a *syntaxanalysis.FileAnalysis) {
+	defs := a.Definitions
+	scopes := rubyScopes(content, a)
 	for i := range defs {
 		d := &defs[i]
 		if d.Parent < 0 {
@@ -83,66 +158,46 @@ func rubyVisibility(content []byte, a *syntaxanalysis.FileAnalysis, singleton []
 			d.Exported = false
 			continue
 		}
+		scope := scopes[d.Parent]
 		switch d.Kind {
 		case syntaxanalysis.KindField:
 			d.Exported = false
 		case syntaxanalysis.KindFunction, syntaxanalysis.KindMethod, syntaxanalysis.KindConstructor:
-			d.Exported = parent.Exported && rubyMethodVisibility(content, a, calls[d.Parent], d, singleton[d.Parent]) == "public"
+			d.Exported = parent.Exported && scope.methodVisibility(content, d) == "public"
 		default:
-			d.Exported = parent.Exported && !rubyListed(content, a, calls[d.Parent], "private_constant", d)
+			d.Exported = parent.Exported && (scope == nil || !scope.hidden[d.Name.Untrusted()])
 		}
 	}
 }
 
-// rubyMethodVisibility returns the visibility of a method: public,
-// protected or private.
-func rubyMethodVisibility(content []byte, a *syntaxanalysis.FileAnalysis, calls []int, d *syntaxanalysis.Definition, inSingleton bool) string {
-	visibility := "public"
-	selfMethod := !inSingleton && rubySelfMethod(content, d.Range.StartByte)
-	if !selfMethod {
-		for _, at := range calls {
-			r := a.References[at]
-			if r.Range.StartByte >= d.Range.StartByte {
-				break
-			}
-			if !rubyBare(content, r.Range.EndByte) {
-				continue
-			}
-			switch name := r.Name.Untrusted(); name {
-			case "private", "protected":
-				visibility = name
-			case "public", "module_function":
-				visibility = "public"
-			}
-		}
+// methodVisibility returns the visibility of a method: public, protected or
+// private. A def self. method ignores the bare keywords, as Ruby does, and
+// follows private_class_method instead. A scope may be nil.
+func (s *rubyScope) methodVisibility(content []byte, d *syntaxanalysis.Definition) string {
+	if s == nil {
+		return "public"
 	}
-	for _, at := range calls {
-		r := a.References[at]
-		switch name := r.Name.Untrusted(); name {
-		case "private", "protected", "public":
-			if !selfMethod && rubyTargets(content, r.Range.EndByte, d) {
-				visibility = name
-			}
-		case "private_class_method", "public_class_method":
-			if selfMethod && rubyTargets(content, r.Range.EndByte, d) {
-				visibility = "private"
-				if name == "public_class_method" {
-					visibility = "public"
-				}
-			}
+	start, name := d.Range.StartByte, d.Name.Untrusted()
+	if rubySelfMethod(content, start) {
+		if visibility, ok := s.classByStart[start]; ok {
+			return visibility
 		}
-	}
-	return visibility
-}
-
-func rubyListed(content []byte, a *syntaxanalysis.FileAnalysis, calls []int, keyword string, d *syntaxanalysis.Definition) bool {
-	for _, at := range calls {
-		r := a.References[at]
-		if r.Name.Untrusted() == keyword && rubyTargets(content, r.Range.EndByte, d) {
-			return true
+		if visibility, ok := s.classByName[name]; ok {
+			return visibility
 		}
+		return "public"
 	}
-	return false
+	if visibility, ok := s.byStart[start]; ok {
+		return visibility
+	}
+	if visibility, ok := s.byName[name]; ok {
+		return visibility
+	}
+	at := sort.Search(len(s.sections), func(i int) bool { return s.sections[i].at >= start })
+	if at > 0 {
+		return s.sections[at-1].visibility
+	}
+	return "public"
 }
 
 // rubyBare reports whether the rest of the line after pos is empty or a
@@ -159,17 +214,16 @@ func skipBlanks(content []byte, pos int) int {
 	return pos
 }
 
-// rubyTargets reports whether the arguments written after pos name the
-// definition: either the def itself follows, or a list of symbols includes
-// its name.
-func rubyTargets(content []byte, pos int, d *syntaxanalysis.Definition) bool {
+// rubyArguments reads what follows a keyword: the offset where its first
+// argument starts, which is the start of the def in private def name, and
+// the symbols of a list such as private :a, :b.
+func rubyArguments(content []byte, pos int) (int, []string) {
 	i := skipBlanks(content, pos)
 	if i < len(content) && content[i] == '(' {
 		i = skipBlanks(content, i+1)
 	}
-	if i == d.Range.StartByte {
-		return true
-	}
+	start := i
+	var symbols []string
 	for i < len(content) && content[i] == ':' {
 		j := i + 1
 		for j < len(content) && ((isWordByte(content[j]) && content[j] != '\\') || content[j] == '?' || content[j] == '!') {
@@ -178,9 +232,7 @@ func rubyTargets(content []byte, pos int, d *syntaxanalysis.Definition) bool {
 		if j < len(content) && content[j] == '=' && (j+1 >= len(content) || content[j+1] != '>') {
 			j++
 		}
-		if string(content[i+1:j]) == d.Name.Untrusted() {
-			return true
-		}
+		symbols = append(symbols, string(content[i+1:j]))
 		i = skipBlanks(content, j)
 		if i >= len(content) || content[i] != ',' {
 			break
@@ -190,7 +242,7 @@ func rubyTargets(content []byte, pos int, d *syntaxanalysis.Definition) bool {
 			i = skipBlanks(content, i+1)
 		}
 	}
-	return false
+	return start, symbols
 }
 
 // rubyFoldSingletons removes the singleton-class definitions and points
