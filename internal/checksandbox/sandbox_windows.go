@@ -156,7 +156,7 @@ func runContained(ctx context.Context, spec Spec, container *appContainer, appli
 		result.Report = readRegularFile(filepath.Join(temporary, spec.Report))
 	}
 	if !result.Succeeded() && deniedNullDevice(result) && nullDeviceClosed() {
-		return Result{}, unavailable("%s needs the NUL device, which Windows does not open to sandboxed (AppContainer) processes on this system", spec.Args[0])
+		return Result{}, unavailable("%s needs the NUL device, which grants nothing to sandboxed (AppContainer) processes on this system; only an administrator can change that", spec.Args[0])
 	}
 	return result, nil
 }
@@ -174,8 +174,7 @@ func deniedNullDevice(result Result) bool {
 }
 
 // nullDeviceClosed reports whether the NUL device grants nothing to
-// application packages, a known AppContainer limitation that needs an
-// administrator to lift.
+// application packages; only an administrator can change its DACL.
 func nullDeviceClosed() bool {
 	name, err := windows.UTF16PtrFromString(`\\.\NUL`)
 	if err != nil {

@@ -37,6 +37,15 @@ func platformProbe(mode string, _ []string) int {
 		if unix.Mount("/", target, "", unix.MS_BIND, "") == nil {
 			return probeEscaped
 		}
+	case "descriptors":
+		// Only standard input, output and error may reach the command; a
+		// pipe beyond them would be the sandbox's own channel to its parent.
+		for descriptor := 3; descriptor < 64; descriptor++ {
+			var stat unix.Stat_t
+			if unix.Fstat(descriptor, &stat) == nil && stat.Mode&unix.S_IFMT == unix.S_IFIFO {
+				return probeEscaped
+			}
+		}
 	case "unshare":
 		if unix.Unshare(unix.CLONE_NEWUSER|unix.CLONE_NEWNS) == nil {
 			return probeEscaped
@@ -100,6 +109,10 @@ func TestEscapeMount(t *testing.T) {
 
 func TestEscapeNestedNamespace(t *testing.T) {
 	requireBlocked(t, runProbe(t, probeSpec(t, "unshare")))
+}
+
+func TestEscapeInheritedDescriptors(t *testing.T) {
+	requireBlocked(t, runProbe(t, probeSpec(t, "descriptors")))
 }
 
 func TestEscapeHostProcesses(t *testing.T) {

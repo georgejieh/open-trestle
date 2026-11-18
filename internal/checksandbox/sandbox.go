@@ -56,8 +56,8 @@ type Spec struct {
 	// Args is the command. Args[0] is looked up in Path unless it is
 	// absolute.
 	Args []string
-	// Path lists the host directories searched for programs, in order. Each
-	// must lie inside a directory of ReadOnly or the system directories.
+	// Path lists the host directories searched for programs, in order. Only
+	// programs inside ReadOnly or the system directories are visible.
 	Path []string
 	// ReadOnly lists host directories made readable, at the same paths, for
 	// toolchains and their dependency caches.

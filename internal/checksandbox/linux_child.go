@@ -29,6 +29,10 @@ func RunChildIfRequested() {
 // inside them. It builds the private root, drops every way out, runs the
 // command, reaps every process and reports.
 func child() int {
+	// Inherited descriptors stay open across exec; the command must not get
+	// the status pipe.
+	syscall.CloseOnExec(3)
+	syscall.CloseOnExec(4)
 	configFile, statusFile := os.NewFile(3, "config"), os.NewFile(4, "status")
 	var config childConfig
 	if err := json.NewDecoder(io.LimitReader(configFile, 1<<20)).Decode(&config); err != nil {
