@@ -1,0 +1,86 @@
+[
+  {
+    "class": "dependency_review",
+    "tool": "dependency-review",
+    "source": "ci",
+    "path": ".github/workflows/ci.yml"
+  },
+  {
+    "class": "formatting",
+    "tool": "gofmt",
+    "source": "ci",
+    "path": ".github/workflows/ci.yml"
+  },
+  {
+    "class": "formatting",
+    "tool": "golangci-lint:gofmt",
+    "source": "config",
+    "path": ".golangci.yml"
+  },
+  {
+    "class": "fuzzing",
+    "tool": "go-fuzz",
+    "source": "ci",
+    "path": ".github/workflows/ci.yml"
+  },
+  {
+    "class": "lint",
+    "tool": "golangci-lint",
+    "source": "ci",
+    "path": ".github/workflows/ci.yml"
+  },
+  {
+    "class": "lint",
+    "tool": "golangci-lint",
+    "source": "config",
+    "path": ".golangci.yml"
+  },
+  {
+    "class": "lint",
+    "tool": "golangci-lint:errcheck",
+    "source": "config",
+    "path": ".golangci.yml"
+  },
+  {
+    "class": "lint",
+    "tool": "golangci-lint:revive",
+    "source": "config",
+    "path": ".golangci.yml"
+  },
+  {
+    "class": "race_detection",
+    "tool": "go-test-race",
+    "source": "ci",
+    "path": ".github/workflows/ci.yml"
+  },
+  {
+    "class": "static_analysis",
+    "tool": "codeql",
+    "source": "ci",
+    "path": ".github/workflows/ci.yml"
+  },
+  {
+    "class": "static_analysis",
+    "tool": "go-vet",
+    "source": "ci",
+    "path": ".github/workflows/ci.yml"
+  },
+  {
+    "class": "static_analysis",
+    "tool": "golangci-lint:govet",
+    "source": "config",
+    "path": ".golangci.yml"
+  },
+  {
+    "class": "unit_tests",
+    "tool": "go-test",
+    "source": "ci",
+    "path": ".github/workflows/ci.yml"
+  },
+  {
+    "class": "vulnerability_scan",
+    "tool": "govulncheck",
+    "source": "ci",
+    "path": ".github/workflows/ci.yml"
+  }
+]

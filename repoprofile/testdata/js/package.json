@@ -1,0 +1,11 @@
+{
+  "name": "app",
+  "scripts": {
+    "lint": "eslint . --max-warnings 0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "install-tools": "npm install jest",
+    "typecheck": "tsc --noEmit"
+  }
+}

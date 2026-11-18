@@ -251,6 +251,10 @@ Builds and queries the [repository index](repository-index.md) of the checkout i
 | `index query definitions\|references\|tests NAME`, `index query imports PATH` | `--commit REF`, `--directory PATH` |
 | `index query dependents` | `--base REF` (required), `--commit REF`, `--directory PATH` |
 
+### `trestle profile`
+
+Prints the repository profile of a commit (default `HEAD`) of the checkout in the current directory: its languages and their shares, the test frameworks and layout, and the checks its CI workflows, task runners, pre-commit hooks and linter configuration enforce, grouped by class. Configuration files are read as data from the verified Git object store and never run. A review reads the checks of its base commit. Flags: `--commit REF`, `--directory PATH`, `--json`.
+
 ### `trestle build-info`
 
 Prints the source revision and source tree embedded in the build as one JSON line. A build without an embedded identity reports `source_bound: false`.

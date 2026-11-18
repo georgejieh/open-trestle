@@ -98,6 +98,21 @@ func (g *Graph) Imports(filePath string) ([]string, int, bool) {
 	return out, int(g.unresolved[id]), true
 }
 
+// ImportSources returns the import text of a file as its analysis recorded
+// it, such as a package path or a module name, in file order.
+func (g *Graph) ImportSources(filePath string) ([]string, bool) {
+	id, ok := g.byPath[filePath]
+	if !ok {
+		return nil, false
+	}
+	f := g.files[id]
+	out := []string{}
+	for k := f.imports.start; k < f.imports.end; k++ {
+		out = append(out, g.names[g.imports[k].source].Untrusted())
+	}
+	return out, true
+}
+
 // Importers returns the files whose imports resolve to a file or its unit.
 func (g *Graph) Importers(filePath string) ([]string, bool) {
 	id, ok := g.byPath[filePath]

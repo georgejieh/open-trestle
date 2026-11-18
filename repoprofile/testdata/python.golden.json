@@ -1,0 +1,56 @@
+[
+  {
+    "class": "coverage_gate",
+    "tool": "pytest-cov",
+    "source": "task_runner",
+    "path": "Makefile"
+  },
+  {
+    "class": "coverage_gate",
+    "tool": "pytest-cov",
+    "source": "task_runner",
+    "path": "pyproject.toml"
+  },
+  {
+    "class": "formatting",
+    "tool": "black",
+    "source": "pre_commit",
+    "path": ".pre-commit-config.yaml"
+  },
+  {
+    "class": "formatting",
+    "tool": "ruff-format",
+    "source": "pre_commit",
+    "path": ".pre-commit-config.yaml"
+  },
+  {
+    "class": "lint",
+    "tool": "ruff",
+    "source": "config",
+    "path": "pyproject.toml"
+  },
+  {
+    "class": "lint",
+    "tool": "ruff",
+    "source": "pre_commit",
+    "path": ".pre-commit-config.yaml"
+  },
+  {
+    "class": "type_check",
+    "tool": "mypy",
+    "source": "config",
+    "path": "pyproject.toml"
+  },
+  {
+    "class": "unit_tests",
+    "tool": "pytest",
+    "source": "config",
+    "path": "pyproject.toml"
+  },
+  {
+    "class": "unit_tests",
+    "tool": "pytest",
+    "source": "task_runner",
+    "path": "Makefile"
+  }
+]
