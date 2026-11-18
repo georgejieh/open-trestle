@@ -89,13 +89,21 @@ type Coverage struct {
 }
 
 // Snapshot is the index of one commit: every file of its tree with its
-// role and status, and what the build covered.
+// role and status, its Go modules, and what the build covered.
 type Snapshot struct {
 	Algorithm string      `json:"algorithm"`
 	Commit    string      `json:"commit"`
 	BuiltAt   time.Time   `json:"built_at"`
 	Files     []FileEntry `json:"files"`
+	Modules   []GoModule  `json:"modules"`
 	Coverage  Coverage    `json:"coverage"`
+}
+
+// GoModule is a go.mod file's directory and the module path it declares,
+// with the longest path first, so that the innermost module wins.
+type GoModule struct {
+	Dir  string `json:"dir"`
+	Path string `json:"path"`
 }
 
 // key returns the record key of an indexed file.
@@ -115,6 +123,11 @@ func encodeSnapshot(s Snapshot, identity [32]byte) []byte {
 		out = varcodec.AppendUvarint(out, uint64(v))
 	}
 	out = varcodec.AppendBool(out, c.TreeTruncated)
+	out = varcodec.AppendUvarint(out, uint64(len(s.Modules)))
+	for _, m := range s.Modules {
+		out = varcodec.AppendString(out, m.Dir)
+		out = varcodec.AppendString(out, m.Path)
+	}
 	out = varcodec.AppendUvarint(out, uint64(len(s.Files)))
 	for _, f := range s.Files {
 		out = varcodec.AppendString(out, f.Path)
@@ -151,6 +164,10 @@ func decodeSnapshot(data []byte, identity [32]byte) (Snapshot, error) {
 	s.Coverage = Coverage{TreeEntries: int(n[0]), InvalidPaths: int(n[1]), Analysed: int(n[2]), Reused: int(n[3]), AnalysedBytes: n[4], Duration: time.Duration(n[5]),
 		Limits: BuildLimits{MaxEntries: int(n[6]), MaxFiles: int(n[7]), MaxBytes: n[8], MaxDuration: time.Duration(n[9])}}
 	s.Coverage.TreeTruncated = r.Bool()
+	s.Modules = make([]GoModule, r.Count(2))
+	for i := range s.Modules {
+		s.Modules[i] = GoModule{Dir: r.String(), Path: r.String()}
+	}
 	s.Files = make([]FileEntry, r.Count(5))
 	for i := range s.Files {
 		f := &s.Files[i]

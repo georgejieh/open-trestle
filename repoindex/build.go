@@ -3,7 +3,9 @@ package repoindex
 import (
 	"context"
 	"errors"
+	"path"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/georgejieh/open-trestle/syntaxanalysis"
@@ -72,24 +74,35 @@ func (b Builder) Build(ctx context.Context, tree Tree) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	s.Coverage.TreeEntries, s.Coverage.TreeTruncated, s.Coverage.InvalidPaths = len(s.Files), walk.Truncated, walk.InvalidPaths+invalid
+	if s.Modules, err = goModules(ctx, tree, s.Files); err != nil {
+		return Snapshot{}, err
+	}
 
 	budget := max(0, b.Store.limits.MaxBytes-int64(len(s.Files))*snapshotEntryBytes)
 	var recordBytes int64
-	pending := []int{}
+	// Files with the same blob and key share one record and one analysis:
+	// pending holds the first of them and sharing the others.
+	pending, sharing, counted := []int{}, map[Key][]int{}, map[Key]bool{}
 	for i, f := range s.Files {
 		if f.Status != "" {
 			continue
 		}
 		key := s.key(f)
 		if !sess.has(key) {
-			pending = append(pending, i)
+			if _, seen := sharing[key]; !seen {
+				pending = append(pending, i)
+			}
+			sharing[key] = append(sharing[key], i)
 			continue
 		}
-		if recordBytes+sess.recordBytes(key) > budget {
+		if !counted[key] && recordBytes+sess.recordBytes(key) > budget {
 			s.Files[i].Status = StatusStoreLimit
 			continue
 		}
-		recordBytes += sess.recordBytes(key)
+		if !counted[key] {
+			counted[key] = true
+			recordBytes += sess.recordBytes(key)
+		}
 		s.Files[i] = withFlags(f, sess.records[key].flags)
 		s.Coverage.Reused++
 	}
@@ -107,22 +120,27 @@ func (b Builder) Build(ctx context.Context, tree Tree) (Snapshot, error) {
 	}()
 	outcomes, wait := b.analyse(ctx, tree, &s, pending, limits, started, now)
 	for o := range outcomes {
-		f := &s.Files[o.index]
+		key := s.key(s.Files[o.index])
+		apply := func(update func(*FileEntry)) {
+			for _, i := range sharing[key] {
+				update(&s.Files[i])
+			}
+		}
 		if o.record == nil {
-			f.Status = o.status
+			apply(func(f *FileEntry) { f.Status = o.status })
 			continue
 		}
 		encoded := o.record.encode()
 		if recordBytes+int64(len(encoded)) > budget {
-			f.Status = StatusStoreLimit
+			apply(func(f *FileEntry) { f.Status = StatusStoreLimit })
 			continue
 		}
-		if err := segment.add(s.key(*f), o.record.flags(), encoded); err != nil {
+		if err := segment.add(key, o.record.flags(), encoded); err != nil {
 			_ = wait(true)
 			return Snapshot{}, ErrUnavailable
 		}
 		recordBytes += int64(len(encoded))
-		*f = withFlags(*f, o.record.flags())
+		apply(func(f *FileEntry) { *f = withFlags(*f, o.record.flags()) })
 		if !o.record.binary {
 			s.Coverage.Analysed++
 			s.Coverage.AnalysedBytes += o.record.size
@@ -141,6 +159,58 @@ func (b Builder) Build(ctx context.Context, tree Tree) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	return s, sess.evict()
+}
+
+// maxGoModFiles and maxGoModBytes bound the go.mod files a build reads.
+const (
+	maxGoModFiles = 1024
+	maxGoModBytes = 1 << 20
+)
+
+// goModules reads the module path of every go.mod file outside vendored
+// code. A go.mod file that cannot be read or declares no module is left out,
+// and its packages resolve by path suffix instead.
+func goModules(ctx context.Context, tree Tree, files []FileEntry) ([]GoModule, error) {
+	found := []FileEntry{}
+	for _, f := range files {
+		if path.Base(f.Path) == "go.mod" && f.Status == StatusNotAnalysed && f.Role != RoleVendored && len(found) < maxGoModFiles {
+			found = append(found, f)
+		}
+	}
+	modules := []GoModule{}
+	next := 0
+	err := tree.ReadBlobs(ctx, func() (string, bool) {
+		if next >= len(found) {
+			return "", false
+		}
+		next++
+		return found[next-1].Object, true
+	}, func(content []byte, err error) error {
+		if err == nil && len(content) <= maxGoModBytes {
+			if module := goModulePath(content); module != "" {
+				modules = append(modules, GoModule{Dir: path.Dir(found[next-1].Path), Path: module})
+			}
+		}
+		return ctx.Err()
+	})
+	slices.SortStableFunc(modules, func(a, b GoModule) int { return len(b.Path) - len(a.Path) })
+	return modules, err
+}
+
+// goModulePath returns the path of a go.mod file's module directive.
+func goModulePath(content []byte) string {
+	for _, line := range strings.Split(string(content), "\n") {
+		line, _, _ = strings.Cut(line, "//")
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[0] == "module" {
+			module := strings.Trim(fields[1], "\"`")
+			if syntaxanalysis.ValidPath(module) && !strings.ContainsAny(module, " \\") {
+				return module
+			}
+			return ""
+		}
+	}
+	return ""
 }
 
 // newFileEntry classifies a tree entry. A file to be analysed is left

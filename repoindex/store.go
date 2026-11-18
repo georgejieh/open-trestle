@@ -246,6 +246,23 @@ func (sess *session) addSegment(name string) error {
 	return nil
 }
 
+// removeSegmentOf removes the segment holding a record and forgets its
+// records.
+func (sess *session) removeSegmentOf(key Key) error {
+	l, ok := sess.records[key]
+	if !ok {
+		return errCorrupt
+	}
+	seg := sess.segments[l.segment]
+	for k, other := range sess.records {
+		if other.segment == l.segment {
+			delete(sess.records, k)
+		}
+	}
+	_ = seg.file.Close()
+	return sess.remove(seg.name)
+}
+
 func (sess *session) remove(name string) error {
 	if err := sess.root.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("%w: cannot remove %s", ErrUnavailable, name)

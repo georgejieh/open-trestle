@@ -131,7 +131,7 @@ func TestIncrementalBuildAnalysesOnlyNewBlobs(t *testing.T) {
 	if got := analyzer.calls.Load() - analysedFirst; got != 1 || b.Coverage.Analysed != 1 {
 		t.Fatalf("second build analysed %d blobs (coverage %d), want 1", got, b.Coverage.Analysed)
 	}
-	if b.Coverage.Reused != a.Coverage.Analysed+countStatus(a, StatusBinary)-1 {
+	if b.Coverage.Reused != countStatus(a, StatusIndexed)+countStatus(a, StatusBinary)-1 {
 		t.Fatalf("reused %d of %d", b.Coverage.Reused, a.Coverage.Analysed)
 	}
 	g := loadGraph(t, store, b)

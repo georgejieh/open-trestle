@@ -7,10 +7,12 @@ cmd/app/main.go role=source status=indexed language=go
 gen/api.pb.go role=generated status=indexed language=go
 gen/zz.go role=generated status=indexed language=go
 go.mod role=config status=not_analysed language=
+lib/__init__.py role=source status=indexed language=python
 native/kv.c role=source status=indexed language=c
 native/kv.h role=source status=indexed language=c
 native/main.c role=source status=indexed language=c
 other/other.go role=source status=indexed language=go
+pkg/__init__.py role=source status=indexed language=python
 pkg/app.py role=source status=indexed language=python
 pkg/util.py role=source status=indexed language=python
 src/main/java/com/ex/Box.java role=source status=indexed language=java
@@ -18,9 +20,11 @@ src/main/java/com/ex/app/App.java role=source status=indexed language=java
 src/test/java/com/ex/BoxTest.java role=test status=indexed language=java
 tests/test_util.py role=test status=indexed language=python
 vendor/dep/dep.go role=vendored status=not_analysed language=go
+web/app.js role=source status=indexed language=javascript
 web/lib.test.ts role=test status=indexed language=typescript
 web/lib.ts role=source status=indexed language=typescript
 web/main.ts role=source status=indexed language=typescript
+web/page.html role=source status=indexed language=html
 # definitions "Add"
 calc/calc.go:4 function "Add" exported=true
   ref calc/calc.go:8:39 call scope=file in="Push"
@@ -71,6 +75,8 @@ src/main/java/com/ex/Box.java -> [] unresolved=0 <- [src/main/java/com/ex/app/Ap
 src/main/java/com/ex/app/App.java -> [src/main/java/com/ex/Box.java] unresolved=0 <- []
 src/test/java/com/ex/BoxTest.java -> [] unresolved=0 <- [src/main/java/com/ex/app/App.java]
 tests/test_util.py -> [pkg/util.py] unresolved=0 <- []
+web/app.js -> [] unresolved=0 <- [web/page.html]
 web/lib.test.ts -> [web/lib.ts] unresolved=0 <- []
 web/lib.ts -> [] unresolved=0 <- [web/lib.test.ts web/main.ts]
 web/main.ts -> [web/lib.ts] unresolved=0 <- []
+web/page.html -> [web/app.js] unresolved=1 <- []

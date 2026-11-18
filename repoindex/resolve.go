@@ -139,6 +139,9 @@ func (r *resolver) resolve(file int32, imp graphImport) []int32 {
 	case "dotnet":
 		return r.unit("dotnet", "pkg:"+source)
 	case "web":
+		if f.entry.Language == syntaxanalysis.LanguageHTML {
+			return r.pageResource(dir, strings.TrimSpace(source))
+		}
 		return r.relativeModule(dir, strings.TrimSpace(source), []string{"", ".ts", ".tsx", ".d.ts", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", "/index.ts", "/index.tsx", "/index.js", "/index.jsx"})
 	case "python":
 		return r.python(dir, source, name)
@@ -186,9 +189,16 @@ func (r *resolver) suffix(p string) []int32 {
 	return out
 }
 
-// goPackage returns the files of the directory an import path names: the
-// longest directory that is the import path or ends it.
+// goPackage returns the files of the package an import path names: the
+// directory under the Go module whose path starts the import path, or,
+// without such a module, the longest directory that is the import path or
+// ends it.
 func (r *resolver) goPackage(importPath string) []int32 {
+	for _, m := range r.g.goModules {
+		if rest, ok := strings.CutPrefix(importPath, m.Path); ok && (rest == "" || rest[0] == '/') {
+			return r.unit("go", "dir:"+path.Join(m.Dir, strings.TrimPrefix(rest, "/")))
+		}
+	}
 	best := ""
 	for _, d := range r.dirs[path.Base(importPath)] {
 		if (importPath == d || strings.HasSuffix(importPath, "/"+d)) && len(d) > len(best) {
@@ -236,6 +246,17 @@ func (r *resolver) relativeModule(dir, source string, extensions []string) []int
 		}
 	}
 	return nil
+}
+
+// pageResource resolves a page's src, href or action value to the file it
+// names relative to the page, leaving out URLs and site-absolute paths.
+func (r *resolver) pageResource(dir, value string) []int32 {
+	value, _, _ = strings.Cut(value, "#")
+	value, _, _ = strings.Cut(value, "?")
+	if value == "" || strings.Contains(value, ":") || strings.HasPrefix(value, "/") {
+		return nil
+	}
+	return r.exact(path.Join(dir, value))
 }
 
 // python resolves "a.b", ".b" and "from a import b" to a/b.py,

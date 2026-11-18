@@ -163,6 +163,19 @@ func TestBuildBoundsEntriesFilesAndBytes(t *testing.T) {
 	}
 }
 
+func TestBuildAnalysesASharedBlobOnce(t *testing.T) {
+	files := map[string]string{"a/x.go": "package x\n", "b/x.go": "package x\n", "c/y.go": "package y\n"}
+	analyzer := &fakeAnalyzer{}
+	store := newTestStore(t, DefaultStoreLimits())
+	s := build(t, store, analyzer, newMemoryTree(1, files, nil), DefaultBuildLimits(), nil)
+	if analyzer.calls.Load() != 2 || statuses(s)[StatusIndexed] != 3 || s.Coverage.Analysed != 2 {
+		t.Fatalf("calls %d, statuses %v", analyzer.calls.Load(), statuses(s))
+	}
+	if g := loadGraph(t, store, s); len(g.Files()) != 3 {
+		t.Fatal("a file sharing a blob was lost")
+	}
+}
+
 func TestBuildStopsAtTheTimeLimit(t *testing.T) {
 	files, order := manyFiles(100, ".go")
 	var clock atomic.Int64
@@ -322,6 +335,21 @@ func TestStoreDropsStaleAndCorruptFilesAndRefusesUnprotectedOnes(t *testing.T) {
 	if analyzer.calls.Load()-calls != 2 || statuses(s)[StatusIndexed] != 2 {
 		t.Fatal("a corrupt segment was not replaced")
 	}
+
+	segments, _ = filepath.Glob(filepath.Join(store.Directory(), "seg-*"))
+	data, _ = os.ReadFile(segments[0])
+	data[segmentHeader+2] ^= 0xff
+	if err := os.WriteFile(segments[0], data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Load(context.Background(), "sha1", tree.commit); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("a damaged record loaded: %v", err)
+	}
+	calls = analyzer.calls.Load()
+	if s := build(t, store, analyzer, tree, DefaultBuildLimits(), nil); analyzer.calls.Load()-calls != 2 || statuses(s)[StatusIndexed] != 2 {
+		t.Fatal("the files of a damaged segment were not analysed again")
+	}
+	loadGraph(t, store, s)
 
 	if err := os.WriteFile(filepath.Join(store.Directory(), "seg-intruder.otx"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)

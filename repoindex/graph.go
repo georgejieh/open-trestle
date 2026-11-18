@@ -2,6 +2,8 @@ package repoindex
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"path"
 	"strings"
 
@@ -26,6 +28,9 @@ type Graph struct {
 	// import: a directory for languages with packages, the file otherwise.
 	unitFiles postings
 	units     map[string]int32
+	// goModules are the snapshot's Go modules, which map import paths to
+	// directories.
+	goModules []GoModule
 	// goImports maps, per Go file, the name of each imported package to
 	// its unit, or -1 for a package outside the repository.
 	goImports map[int32]map[string]int32
@@ -158,18 +163,25 @@ func (s *Store) Load(ctx context.Context, algorithm, commit string) (*Graph, err
 	if err != nil {
 		return nil, err
 	}
-	g := newGraph()
+	g := newGraph(snapshot.Modules)
 	for i, f := range snapshot.Files {
 		if i%1024 == 0 && ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
 		var analysis *syntaxanalysis.FileAnalysis
 		if f.Status == StatusIndexed {
-			record, err := sess.record(snapshot.key(f))
+			key := snapshot.key(f)
+			record, err := sess.record(key)
 			if err == nil && !record.binary {
 				var decoded syntaxanalysis.FileAnalysis
 				if decoded, err = record.decode(f.Path); err == nil {
 					analysis = &decoded
+				}
+			}
+			if errors.Is(err, errCorrupt) {
+				// The next build analyses the files of a removed segment again.
+				if sess.removeSegmentOf(key) == nil {
+					return nil, fmt.Errorf("%w: a damaged index file was removed; build the index again", ErrUnavailable)
 				}
 			}
 			if err != nil {
@@ -182,8 +194,8 @@ func (s *Store) Load(ctx context.Context, algorithm, commit string) (*Graph, err
 	return g, nil
 }
 
-func newGraph() *Graph {
-	return &Graph{byPath: map[string]int32{}, nameIDs: map[string]int32{}, names: []syntaxanalysis.Text{{}}}
+func newGraph(modules []GoModule) *Graph {
+	return &Graph{byPath: map[string]int32{}, nameIDs: map[string]int32{}, names: []syntaxanalysis.Text{{}}, goModules: modules}
 }
 
 // add appends a file and its analysis. Record indices of the analysis
