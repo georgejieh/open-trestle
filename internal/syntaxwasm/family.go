@@ -3,6 +3,7 @@ package syntaxwasm
 import (
 	"context"
 	"errors"
+	"maps"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -105,6 +106,9 @@ type family struct {
 	// terminating is set once a guest ignored the stop checks; new
 	// instances then come from the terminating runtime.
 	terminating bool
+	// image is the memory of an instance that compiled queries and analysed
+	// nothing; new instances start from it instead of compiling again.
+	image *memoryImage
 }
 
 const (
@@ -127,11 +131,29 @@ type instance struct {
 	languages   []string
 	queries     map[int]loadedQuery
 	mode        int
+	// pristine is true until the instance first sees repository content;
+	// only then may its memory become the family's image.
+	pristine bool
 }
 
 type loadedQuery struct {
 	info  queryInfo
 	roles []role
+}
+
+// imagePageBytes is the unit in which memory images are stored; pages of
+// zeros are left out.
+const imagePageBytes = 64 << 10
+
+// memoryImage is a copy of an instance's linear memory after it compiled
+// the queries in queries. Compiled queries live in the guest heap, so an
+// instance whose memory is replaced by the image has them too. The image
+// holds only state derived from the module and the project's own queries,
+// never repository content.
+type memoryImage struct {
+	size    uint32
+	pages   map[uint32][]byte
+	queries map[int]loadedQuery
 }
 
 func (f *family) compile(ctx context.Context, mode int) (wazero.CompiledModule, wazero.Runtime, error) {
@@ -175,6 +197,7 @@ func (f *family) instantiate(ctx context.Context) (*instance, error) {
 	if f.terminating {
 		mode = modeTerminating
 	}
+	image := f.image
 	f.mu.Unlock()
 	compiled, runtime, err := f.compile(ctx, mode)
 	if err != nil {
@@ -189,7 +212,8 @@ func (f *family) instantiate(ctx context.Context) (*instance, error) {
 		module: module, memory: module.Memory(),
 		alloc: module.ExportedFunction("ot_alloc"), free: module.ExportedFunction("ot_free"),
 		loadQuery: module.ExportedFunction("ot_load_query"), analyze: module.ExportedFunction("ot_analyze"),
-		queries: map[int]loadedQuery{},
+		queries:  map[int]loadedQuery{},
+		pristine: true,
 	}
 	abi, describe, flag := module.ExportedFunction("ot_abi_version"), module.ExportedFunction("ot_describe"), module.ExportedFunction("ot_failure_flag_address")
 	if inst.memory == nil || inst.alloc == nil || inst.free == nil || inst.loadQuery == nil || inst.analyze == nil || abi == nil || describe == nil || flag == nil {
@@ -227,7 +251,104 @@ func (f *family) instantiate(ctx context.Context) (*instance, error) {
 		inst.close()
 		return nil, errModule
 	}
+	if image != nil && !inst.restore(image) {
+		inst.close()
+		return nil, errInstance
+	}
 	return inst, nil
+}
+
+// restore replaces the memory of a fresh instance with the image. The
+// stack pointer and the other mutable globals hold the same values in
+// every instance between calls, so the memory is the whole state that
+// differs.
+func (inst *instance) restore(image *memoryImage) bool {
+	size := inst.memory.Size()
+	if size > image.size {
+		return false
+	}
+	if size < image.size {
+		if _, ok := inst.memory.Grow((image.size - size) / imagePageBytes); !ok || inst.memory.Size() != image.size {
+			return false
+		}
+	}
+	zero := make([]byte, imagePageBytes)
+	for at := uint32(0); at < image.size; at += imagePageBytes {
+		page, ok := image.pages[at]
+		if !ok {
+			current, ok := inst.memory.Read(at, imagePageBytes)
+			if !ok {
+				return false
+			}
+			if allZero(current) {
+				continue
+			}
+			page = zero
+		}
+		if !inst.memory.Write(at, page) {
+			return false
+		}
+	}
+	inst.queries = maps.Clone(image.queries)
+	return true
+}
+
+// snapshot copies the memory of a pristine instance into an image.
+func (inst *instance) snapshot() (*memoryImage, bool) {
+	size := inst.memory.Size()
+	if !inst.pristine || size%imagePageBytes != 0 {
+		return nil, false
+	}
+	image := &memoryImage{size: size, pages: map[uint32][]byte{}, queries: maps.Clone(inst.queries)}
+	for at := uint32(0); at < size; at += imagePageBytes {
+		view, ok := inst.memory.Read(at, imagePageBytes)
+		if !ok {
+			return nil, false
+		}
+		if !allZero(view) {
+			image.pages[at] = slices.Clone(view)
+		}
+	}
+	return image, true
+}
+
+func allZero(b []byte) bool {
+	for _, c := range b {
+		if c != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// keepImage makes image the family's image when it has every query the
+// current one has. Two instances that compiled different queries at the
+// same time cannot be merged; the next pristine instance to compile a
+// missing query produces an image with both.
+func (f *family) keepImage(image *memoryImage) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.image != nil {
+		if len(image.queries) <= len(f.image.queries) {
+			return
+		}
+		for index := range f.image.queries {
+			if _, ok := image.queries[index]; !ok {
+				return
+			}
+		}
+	}
+	f.image = image
+}
+
+func (f *family) imageHas(index int) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.image == nil {
+		return false
+	}
+	_, ok := f.image.queries[index]
+	return ok
 }
 
 // acquire waits for a free slot and returns an idle or new instance.
@@ -245,14 +366,19 @@ func (f *family) acquire(ctx context.Context) (*instance, *failure) {
 		return inst, nil
 	}
 	f.mu.Unlock()
-	setup, cancel := context.WithTimeout(ctx, setupDeadline)
-	defer cancel()
-	inst, err := f.instantiate(setup)
+	inst, err := f.fresh(ctx)
 	if err != nil {
 		<-f.slots
 		return nil, &failure{reason: syntaxanalysis.GapAnalysisUnavailable}
 	}
 	return inst, nil
+}
+
+// fresh instantiates the module for a slot the caller holds.
+func (f *family) fresh(ctx context.Context) (*instance, error) {
+	setup, cancel := context.WithTimeout(ctx, setupDeadline)
+	defer cancel()
+	return f.instantiate(setup)
 }
 
 // release returns a healthy instance to the idle list and closes any other.
@@ -275,6 +401,35 @@ func (f *family) release(inst *instance, healthy bool) {
 	<-f.slots
 }
 
+// prepare returns an instance that has the language's query. An instance
+// that has analysed files and lacks the query is replaced by a fresh one,
+// which starts from the family's image; a pristine instance that compiles
+// the query becomes the new image.
+func (f *family) prepare(ctx context.Context, inst *instance, index int, text string) (*instance, loadedQuery, error) {
+	if q, ok := inst.queries[index]; ok {
+		return inst, q, nil
+	}
+	if !inst.pristine {
+		inst.close()
+		next, err := f.fresh(ctx)
+		if err != nil {
+			return nil, loadedQuery{}, err
+		}
+		inst = next
+		if q, ok := inst.queries[index]; ok {
+			return inst, q, nil
+		}
+	}
+	q, err := inst.ensureQuery(ctx, index, text)
+	if err != nil {
+		return inst, loadedQuery{}, err
+	}
+	if image, ok := inst.snapshot(); ok {
+		f.keepImage(image)
+	}
+	return inst, q, nil
+}
+
 func (f *family) analyze(ctx context.Context, language syntaxanalysis.Language, p *pack, content []byte, limits syntaxanalysis.Limits) (analysisResult, []role, *failure) {
 	index := slices.Index(f.manifest.Languages, string(language))
 	if index < 0 {
@@ -286,17 +441,24 @@ func (f *family) analyze(ctx context.Context, language syntaxanalysis.Language, 
 	}
 	healthy, orphaned := false, false
 	defer func() {
-		if orphaned {
+		switch {
+		case orphaned:
 			<-f.slots
-			return
+		case inst == nil:
+			<-f.slots
+		default:
+			f.release(inst, healthy)
 		}
-		f.release(inst, healthy)
 	}()
 
-	query, err := inst.ensureQuery(ctx, index, p.query)
+	inst, query, err := f.prepare(ctx, inst, index, p.query)
+	if inst == nil {
+		return analysisResult{}, nil, &failure{reason: syntaxanalysis.GapAnalysisUnavailable}
+	}
 	if err != nil {
 		return analysisResult{}, nil, inst.classify(ctx, ctx, err)
 	}
+	inst.pristine = false
 	call, cancel := context.WithTimeout(ctx, limits.FileDeadline)
 	defer cancel()
 	source, err := inst.write(call, content)

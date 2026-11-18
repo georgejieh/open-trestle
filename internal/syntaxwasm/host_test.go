@@ -720,3 +720,78 @@ func TestCloseWaitsForAnalysesInProgress(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestNewInstancesStartFromTheFamilyImage(t *testing.T) {
+	ctx := context.Background()
+	a := newTestAnalyzer(t, Config{InstancesPerFamily: 2})
+	f := a.languages[syntaxanalysis.LanguageCPP].family
+	cIndex := slices.Index(f.manifest.Languages, string(syntaxanalysis.LanguageC))
+	cppIndex := slices.Index(f.manifest.Languages, string(syntaxanalysis.LanguageCPP))
+	// A file whose text must never reach the image.
+	marker := []byte("int image_marker_5e1f9c(void);\n")
+	if got := analyze(t, a, "marker.c", marker); len(got.Definitions) != 1 {
+		t.Fatalf("analysis = %+v", got)
+	}
+	if !f.imageHas(cIndex) {
+		t.Fatal("the compiled C query did not become the family image")
+	}
+	// The instance that analysed the C file lacks the C++ query and has
+	// seen repository content, so a fresh instance compiles it.
+	content, err := os.ReadFile("testdata/cpp/scheduler.cpp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.ReadFile("testdata/cpp/scheduler.cpp.golden")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := renderGolden(analyze(t, a, "testdata/cpp/scheduler.cpp", content)); got != string(want) {
+		t.Fatal("the C++ analysis differs from its golden file")
+	}
+	f.mu.Lock()
+	image := f.image
+	f.mu.Unlock()
+	if _, ok := image.queries[cppIndex]; !ok || !f.imageHas(cIndex) {
+		t.Fatal("the image does not hold both queries")
+	}
+	for _, page := range image.pages {
+		if bytes.Contains(page, []byte("image_marker_5e1f9c")) {
+			t.Fatal("repository content reached the family image")
+		}
+	}
+	// A second instance starts from the image with both queries compiled,
+	// and analyses exactly like the first.
+	first, fail := f.acquire(ctx)
+	if fail != nil {
+		t.Fatal(fail)
+	}
+	second, fail := f.acquire(ctx)
+	if fail != nil {
+		t.Fatal(fail)
+	}
+	for _, inst := range []*instance{first, second} {
+		if _, ok := inst.queries[cppIndex]; !ok {
+			t.Fatal("an instance lacks the compiled C++ query")
+		}
+	}
+	f.release(first, true)
+	f.release(second, true)
+	var wg sync.WaitGroup
+	errs := make(chan string, 8)
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			source, _ := syntaxanalysis.NewSource("testdata/cpp/scheduler.cpp", syntaxanalysis.LanguageCPP, content)
+			got, err := a.Analyze(ctx, source)
+			if err != nil || renderGolden(got) != string(want) {
+				errs <- "an analysis on a pooled instance differs from the golden file"
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for e := range errs {
+		t.Fatal(e)
+	}
+}

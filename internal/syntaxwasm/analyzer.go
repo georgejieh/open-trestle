@@ -25,6 +25,11 @@
 // cannot be interrupted in fast code; its goroutine runs until the loop
 // ends or the process exits.
 //
+// Compiling a query takes up to a few seconds inside the guest. The first
+// instance of a family that compiles a query, before it sees any repository
+// content, becomes the family's memory image, and later instances start
+// from a copy of that memory with the query already compiled.
+//
 // Modules are compiled lazily, once per family and process, with wazero's
 // compiler. Where the compiler does not run, every file gets an
 // analysis_unavailable gap; the interpreter is never used.
