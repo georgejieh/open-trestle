@@ -28,6 +28,10 @@ import (
 // no ollama command is found and none is run. Tests that exercise the
 // production readers install them explicitly against a fake daemon.
 func TestMain(m *testing.M) {
+	// An index build starts this binary as its syntax worker.
+	if len(os.Args) >= 3 && os.Args[1] == "index" && os.Args[2] == "worker" {
+		os.Exit(runIndex(context.Background(), os.Args[2:], os.Stdout, os.Stderr))
+	}
 	ollamaReadTags = func(context.Context, string) ([]ollamaTag, bool, error) { return nil, false, errOllamaTagsUnavailable }
 	ollamaSigninProbe = func(context.Context, string, string) (ollamaProbeOutcome, string) {
 		return ollamaProbeFailed, "no daemon in tests"
