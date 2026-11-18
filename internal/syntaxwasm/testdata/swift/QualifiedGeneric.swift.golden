@@ -1,0 +1,8 @@
+# definitions
+3:1-5:2 struct "Holder"
+  4:5-4:34 field "Holder.made"
+6:1-6:26 constant "plain"
+# references
+6:17 call "Bar" qualifier="Foo" in "plain"
+# imports
+# gaps

@@ -225,6 +225,120 @@ public actor Counter {
     }
 }
 
+extension Prioritized where Level: Numeric {
+    func scaled(by factor: Level) -> Level {
+        level * factor
+    }
+}
+
+extension Collection where Element: Prioritized, Element.Level == Int {
+    public func totalLevel() -> Int {
+        reduce(0) { $0 + $1.level }
+    }
+}
+
+public struct Batch<Item: Prioritized>: Sequence where Item.Level: Hashable {
+    private var storage: [Item] = []
+
+    public init<S: Sequence>(_ items: S) where S.Element == Item {
+        storage = Array(items)
+    }
+
+    public func makeIterator() -> Array<Item>.Iterator {
+        storage.makeIterator()
+    }
+
+    func grouped() -> [Item.Level: [Item]] {
+        Dictionary(grouping: storage, by: { $0.level })
+    }
+}
+
+public enum Job {
+    case fetch(url: URL, retries: Int)
+    case transform((Data) throws -> Data)
+    indirect case chain(Job, Job)
+
+    var retries: Int {
+        if case let .fetch(_, retries) = self {
+            return retries
+        }
+        return 0
+    }
+}
+
+@resultBuilder
+public enum PipelineBuilder {
+    public static func buildBlock(_ steps: Job...) -> [Job] {
+        steps
+    }
+
+    public static func buildOptional(_ steps: [Job]?) -> [Job] {
+        steps ?? []
+    }
+}
+
+public struct Pipeline {
+    let steps: [Job]
+
+    public init(@PipelineBuilder _ build: () -> [Job]) {
+        steps = build()
+    }
+
+    public func run(on worker: Worker) async throws -> Int {
+        var completed = 0
+        for step in steps {
+            try await worker.perform(step)
+            completed += 1
+        }
+        return completed
+    }
+}
+
+public actor Worker {
+    private var running: [String: Task<Void, Error>] = [:]
+    nonisolated let name: String
+
+    public init(name: String) {
+        self.name = name
+    }
+
+    func perform(_ job: Job) async throws {
+        switch job {
+        case .fetch(let url, _):
+            _ = try await URLSession.shared.data(from: url)
+        case .transform(let apply):
+            _ = try apply(Data())
+        case .chain(let first, let second):
+            try await perform(first)
+            try await perform(second)
+        }
+    }
+
+    func schedule(_ key: String, operation: @escaping @Sendable () async throws -> Void) {
+        running[key] = Task { try await operation() }
+    }
+
+    func cancelAll() {
+        running.values.forEach { $0.cancel() }
+        running.removeAll()
+    }
+}
+
+func retrying<T>(times: Int, _ body: () async throws -> T) async rethrows -> T {
+    var attempt = 0
+    while true {
+        do {
+            return try await body()
+        } catch where attempt < times {
+            attempt += 1
+        }
+    }
+}
+
+let sortByLevel: (TaskItem, TaskItem) -> Bool = { lhs, rhs in
+    lhs.level < rhs.level
+}
+
 infix operator <+>: AdditionPrecedence
 
 func <+> (left: TaskItem, right: TaskItem) -> TaskItem {

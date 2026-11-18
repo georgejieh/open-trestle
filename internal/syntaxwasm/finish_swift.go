@@ -13,7 +13,8 @@ import (
 // The members of a protocol and the cases of an enum take the owner's
 // visibility, and the members of an extension take the extension's: the
 // modifier of an extension is the default for what it declares. Some
-// keywords parse as names: `class` in a protocol's inheritance list and the
+// keywords parse as names: `class` in a protocol's inheritance list, `async`
+// in the function type after an attribute such as @Sendable, and the
 // call-shaped `defer` block are not references, Self stands for the
 // enclosing type, and an attribute is not also a type reference.
 func finishSwift(content []byte, _ syntaxanalysis.RawFile, a *syntaxanalysis.FileAnalysis) {
@@ -45,7 +46,7 @@ func finishSwift(content []byte, _ syntaxanalysis.RawFile, a *syntaxanalysis.Fil
 		name := r.Name.Untrusted()
 		switch r.Kind {
 		case syntaxanalysis.ReferenceType:
-			return name == "Self" || name == "class" || decorators[r.Range.StartByte]
+			return name == "Self" || name == "class" || name == "async" || decorators[r.Range.StartByte]
 		case syntaxanalysis.ReferenceInherit:
 			return name == "class"
 		case syntaxanalysis.ReferenceCall:
