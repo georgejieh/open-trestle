@@ -361,6 +361,8 @@ jobs:
           ./modelcatalog/
           ./runtimeconfig/
           ./internal/secretscan/
+          ./internal/scm/
+          ./localreview/
       - name: Build, vet and test the secret-scanner Windows packages
         working-directory: workers/secret-scanner
         run: |
