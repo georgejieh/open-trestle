@@ -249,10 +249,18 @@ func (w *initWizard) reviewLatest(setup initSetup) (int, error) {
 	return w.review(latestReviewCommand(repo.template, source.base, source.head, latestReviewOptions{})), nil
 }
 
+// The scanner check's label and advice, shared by the local and remote
+// setup checks.
+const (
+	initScannerLabel       = "The secret scanner is installed (it checks every request before it leaves)"
+	initScannerPendingHint = "The scanner helper next to this trestle is missing or does not match it. Install the packaged release, or build trestle with its helper: python3 tools/package_secret_scanner.py --development DIR (docs/remote-model-review.md)."
+	initScannerRefusedHint = "This trestle is a development build without a secret scanner, so it refuses to send source. Build trestle with its helper: python3 tools/package_secret_scanner.py --development DIR (docs/remote-model-review.md)."
+)
+
 // notReady explains a setup whose checks did not all pass.
 func (w *initWizard) notReady(setup initSetup, outcome initOutcome) int {
 	w.say("\n  Setup checks: %s.", outcome.summary)
-	if block := initScannerBlock(); setup.remote && block != "" {
+	if block := initScannerBlock(); block != "" {
 		w.explainSavedWithoutScanner(setup, block)
 		return outcome.code
 	}
@@ -395,7 +403,7 @@ func (w *initWizard) rerunCommand(program string) string {
 	return command
 }
 
-// explainSavedWithoutScanner says what a saved remote setup still needs when
+// explainSavedWithoutScanner says what a saved setup still needs when
 // this trestle cannot send source at all, and how a re-run continues it.
 func (w *initWizard) explainSavedWithoutScanner(setup initSetup, block string) {
 	if block == "platform" {
@@ -477,7 +485,7 @@ func (w *initWizard) check(setup initSetup) (initOutcome, error) {
 	if json.Unmarshal(out.Bytes(), &result) != nil {
 		return initOutcome{}, initStopf(initExitFailed, "the setup check returned an unreadable result")
 	}
-	summary := w.renderLocal(result.Messages)
+	summary := w.renderLocal(result.Messages, slices.Contains(result.Pending, setupScannerCheck))
 	// The direct-review scope reports ready only when every check the review
 	// relies on passed; the daemon-only items are not part of it.
 	return initOutcome{code: code, ready: result.Ready && result.Scope == setupBootstrapDirectReviewScope && len(result.EphemeralReviewCommand) > 3, reviewCommand: result.EphemeralReviewCommand, summary: summary}, nil
@@ -525,7 +533,7 @@ func (w *initWizard) renderRemote(result remoteBootstrapResult, setup initSetup)
 		"dispatch_catalog_validated":     "The saved configuration loads into the model dispatcher",
 		"credential_environment_present": initKeyCheckLabel(setup.credentials),
 		"ollama_cloud_models_listed":     "Your local Ollama lists both models as Ollama Cloud models",
-		"sanitized_egress_scanner":       "The secret scanner is installed (it checks every request before it leaves)",
+		"sanitized_egress_scanner":       initScannerLabel,
 	}
 	state := func(key string) string {
 		switch {
@@ -554,8 +562,8 @@ func (w *initWizard) renderRemote(result remoteBootstrapResult, setup initSetup)
 		"credential_environment_present/pending": "Save the key once (the input is hidden), or export it in this shell without showing it, then run `trestle init` again in this repository:",
 		"ollama_cloud_models_listed/pending":     "Start Ollama on this machine (`ollama serve`, or the Ollama app), then run `trestle init` again in this repository.",
 		"ollama_cloud_models_listed/refused":     "A chosen model is no longer listed as an Ollama Cloud model by your local Ollama. Set up again with trestle init --directory NEW_FOLDER.",
-		"sanitized_egress_scanner/pending":       "The scanner helper next to this trestle is missing or does not match it. Install the packaged release, or build trestle with its helper: python3 tools/package_secret_scanner.py --development DIR (docs/remote-model-review.md).",
-		"sanitized_egress_scanner/refused":       "This trestle is a development build without a secret scanner, so it refuses to send source. Build trestle with its helper: python3 tools/package_secret_scanner.py --development DIR (docs/remote-model-review.md)." + scannerDetail,
+		"sanitized_egress_scanner/pending":       initScannerPendingHint,
+		"sanitized_egress_scanner/refused":       initScannerRefusedHint + scannerDetail,
 	}
 	for _, key := range keys {
 		current := state(key)
@@ -641,7 +649,7 @@ var initDaemonOnlyChecks = []setupcore.CheckKey{setupcore.CheckObserverCredentia
 // renderLocal prints each local setup check. A refused test request that the
 // bootstrap check named (messages) shows that fixed reason instead of the
 // generic advice.
-func (w *initWizard) renderLocal(messages []string) string {
+func (w *initWizard) renderLocal(messages []string, scannerMissing bool) string {
 	tally := initTally{}
 	plan, err := setupcore.InspectStateFile(w.ctx, filepath.Join(w.a.directory, "runs", "setup", "plan.json"))
 	if err != nil {
@@ -688,6 +696,18 @@ func (w *initWizard) renderLocal(messages []string) string {
 		if state != "passed" && text[1] != "" {
 			w.hint("        " + text[1])
 		}
+	}
+	scanner, hint := "passed", ""
+	switch {
+	case initScannerBlock() != "":
+		scanner, hint = "refused", initScannerRefusedHint
+	case scannerMissing:
+		scanner, hint = "pending", initScannerPendingHint
+	}
+	tally[scanner]++
+	w.say("    %s %s", w.mark(scanner), initScannerLabel)
+	if hint != "" {
+		w.hint("        " + hint)
 	}
 	if daemonOnly {
 		tally["optional"]++

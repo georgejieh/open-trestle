@@ -129,7 +129,7 @@ The result carries `"scope": "direct-review"` and omits the daemon commands. It 
 
 ### Exit codes and readiness
 
-`ready` (exit 0) means that these setup checks passed. It does not mean that a daemon is running. `pending` (exit 3) lists the checks that are not complete. `refused` (exit 4) means an unsafe input or a blocked checker. Usage errors use exit 2, and output failures use exit 1.
+The check also needs this trestle's secret scan helper, since every review scans its model requests: `sanitized_egress_scanner` is `refused` when the binary pins no helper and `pending` when the helper is missing or does not match. `ready` (exit 0) means that these setup checks passed. It does not mean that a daemon is running. `pending` (exit 3) lists the checks that are not complete. `refused` (exit 4) means an unsafe input or a blocked checker. Usage errors use exit 2, and output failures use exit 1.
 
 ## Launch and request the first review
 

@@ -633,9 +633,9 @@ func (w *initWizard) sourcePreflight() error {
 		"  Your repository was not changed. Nothing was written.", err, initShellQuote(w.checkout), initShellQuote(w.checkout+"-review"))
 }
 
-// initScannerBlock reports why this binary cannot send source to a remote
-// provider at all, or "" when remote review is possible (a missing helper is
-// reported later by the setup check, with its fix).
+// initScannerBlock reports why this binary cannot review at all, or "" when
+// it can (a missing helper is reported later by the setup check, with its
+// fix).
 func initScannerBlock() string {
 	switch err := setupBootstrapScannerPrerequisite(); {
 	case errors.Is(err, secretscan.ErrHelperNotPinned):
@@ -656,12 +656,14 @@ func (w *initWizard) explainScannerBlock(block string) {
 }
 
 // sayBuildWithScanner shows how to get a trestle with its secret scanner: the
-// packaged install on Linux, or a development build with its helper, and the
-// trestle command to run next.
+// packaged install on Linux, or a development build with its helper, each
+// with the trestle command to run next.
 func (w *initWizard) sayBuildWithScanner(next string) {
 	if runtime.GOOS == "linux" {
 		w.say("  To build and install the packaged trestle from a clean checkout (docs/operations.md):")
 		w.sayPackagingSteps()
+		w.say("  Then run this in the repository:")
+		w.sayVerbatim("    /usr/local/bin/trestle " + next)
 		w.say("  Or build trestle with its scanner in a folder (docs/remote-model-review.md):")
 	} else {
 		w.say("  Build trestle with its scanner in a folder (docs/remote-model-review.md):")
@@ -705,11 +707,7 @@ func (w *initWizard) stepProvider() error {
 	keys := []string{}
 	labels := []string{}
 	for _, p := range initProviders {
-		label := p.label
-		if block != "" && p.key != "local" {
-			label += " [needs the packaged build]"
-		}
-		keys, labels = append(keys, p.key), append(labels, label)
+		keys, labels = append(keys, p.key), append(labels, p.label)
 	}
 	if raw, ok := w.flags["provider"]; ok {
 		// openrouter-zdr is OpenRouter with zero data retention required.
@@ -732,12 +730,12 @@ func (w *initWizard) stepProvider() error {
 				return err
 			}
 			w.a.provider = initProviders[index]
-			if block == "" || w.a.provider.key == "local" {
+			if block == "" {
 				chosen = true
 				break
 			}
-			w.say("  %s This build cannot send source to %s; that needs the packaged build.", w.wait, w.a.provider.short)
-			anyway, err := w.prompt.confirm("Set it up anyway, and review later with the packaged trestle?", false)
+			w.say("  %s This build cannot send source to %s; that needs a trestle with its secret scanner.", w.wait, w.a.provider.short)
+			anyway, err := w.prompt.confirm("Set it up anyway, and review later with a trestle that has it?", false)
 			if err != nil {
 				return err
 			}

@@ -47,6 +47,10 @@ const (
 // Tests replace the installed-scanner probe; production checks the real install.
 var setupBootstrapScannerPrerequisite = secretscan.CheckInstalled
 
+// setupScannerCheck is the setup check that this trestle's secret scan
+// helper is usable.
+const setupScannerCheck = "sanitized_egress_scanner"
+
 type remoteBootstrapProvider struct {
 	zone          provider.ProviderZone
 	providerID    string
@@ -378,9 +382,9 @@ func checkRemoteSetupBootstrap(ctx context.Context, manifest remoteBootstrapMani
 	switch err := setupBootstrapScannerPrerequisite(); {
 	case err == nil:
 	case errors.Is(err, secretscan.ErrHelperNotInstalled):
-		pending("sanitized_egress_scanner", "the secret scan helper of this trestle is not installed: install the packaged release, or build trestle with its helper by `python3 tools/package_secret_scanner.py --development DIR`; remote egress is refused without it")
+		pending(setupScannerCheck, "the secret scan helper of this trestle is not installed: install the packaged release, or build trestle with its helper by `python3 tools/package_secret_scanner.py --development DIR`; remote egress is refused without it")
 	default:
-		refused("sanitized_egress_scanner", "this trestle binary cannot sanitize remote egress ("+err.Error()+"); build it with its helper by `python3 tools/package_secret_scanner.py --development DIR`, or use the packaged release")
+		refused(setupScannerCheck, "this trestle binary cannot sanitize remote egress ("+err.Error()+"); build it with its helper by `python3 tools/package_secret_scanner.py --development DIR`, or use the packaged release")
 	}
 	result.Status = "pending"
 	if len(result.Refused) != 0 {

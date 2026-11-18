@@ -333,14 +333,15 @@ func TestSetupBootstrapRemoteOpenCodeGoBuildsProfileConfiguration(t *testing.T) 
 func TestSetupBootstrapRemoteScannerPrerequisite(t *testing.T) {
 	t.Setenv("OPEN_TRESTLE_PROVIDER_REMOTE_TEST", remoteTestKey)
 	args, dir := remoteBootstrapArgs(t, "ollama-cloud")
-	// A test binary has no injected scanner digests, so the real probe refuses.
+	// A test binary pins no scan helper, so the real probe refuses.
+	previous := setupBootstrapScannerPrerequisite
+	setupBootstrapScannerPrerequisite = secretscan.CheckInstalled
+	t.Cleanup(func() { setupBootstrapScannerPrerequisite = previous })
 	result, _ := remoteBootstrapInvoke(t, args, 4)
 	if result.Ready || !slices.Equal(result.Refused, []string{"sanitized_egress_scanner"}) || !strings.Contains(strings.Join(result.Messages, " "), "package_secret_scanner.py") {
 		t.Fatalf("missing scanner digests were not a clear refused prerequisite: %+v", result)
 	}
-	previous := setupBootstrapScannerPrerequisite
 	setupBootstrapScannerPrerequisite = func() error { return secretscan.ErrHelperNotInstalled }
-	t.Cleanup(func() { setupBootstrapScannerPrerequisite = previous })
 	pending, _ := remoteBootstrapInvoke(t, []string{"inspect", "--directory", dir}, 3)
 	if !slices.Equal(pending.Pending, []string{"sanitized_egress_scanner"}) || !strings.Contains(strings.Join(pending.Messages, " "), "install") {
 		t.Fatalf("uninstalled scanner was not a clear pending prerequisite: %+v", pending)
