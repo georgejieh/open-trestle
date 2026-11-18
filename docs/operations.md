@@ -1,6 +1,6 @@
 # Operations and recovery
 
-This page is for operators who build, package, install and recover Open Trestle. It covers building from source, the Linux amd64 install package and its lifecycle commands, the secret-scanner sandbox, PostgreSQL setup, backup and restore, and shutdown. Most sections are numbered procedures.
+This page is for operators who build, package, install and recover Open Trestle. It covers building from source, the Linux amd64 install package and its lifecycle commands, the secret scan helper, PostgreSQL setup, backup and restore, and shutdown. Most sections are numbered procedures.
 
 ## Build
 
@@ -82,7 +82,15 @@ The embedded identities describe a local build. They are not a publisher's signa
 
 ## Package the secret scanner
 
-A normal root `go build` is useful for development, but it does not inject the digests of the scanner binaries. Such a `trestled` build refuses sanitized egress. To build the release staging tree, use the packaging tool instead:
+A normal root `go build` pins no scan helper. Such a `trestle` or `trestled` build refuses every review with `this build pins no secret scan helper; build it with tools/package_secret_scanner.py`. To build a working copy for development on Linux, macOS or Windows (needs Go 1.26.11 and Python 3), use the tool's development mode:
+
+```sh
+python3 tools/package_secret_scanner.py --development DIR [--target GOOS/GOARCH]
+```
+
+`DIR` is relative to the current directory, and the default target is the machine you run it on. The tool writes `DIR/bin/trestle`, `DIR/bin/trestled` and `DIR/libexec/open-trestle/open-trestle-scan-helper` (`.exe` names for Windows) with the helper pinned. Run `DIR/bin/trestle`.
+
+To build the release staging tree, use the output mode:
 
 ```sh
 python3 tools/package_secret_scanner.py --output .container
@@ -90,17 +98,12 @@ python3 tools/package_secret_scanner.py --verify .container
 docker build --network=none -t open-trestle:local .
 ```
 
-The tool checks these before it builds:
+The output mode builds the helper twice and requires byte-identical results. It builds `trestle` and `trestled` with the helper's SHA-256 pinned (`-X github.com/georgejieh/open-trestle/internal/secretscan.expectedHelperSHA256=<hex>`), and it stages the helper at `libexec/open-trestle/open-trestle-scan-helper`. It writes two release files:
 
-- The Go pins of the root module and the worker.
-- The Betterleaks module and ruleset identities.
-- The linked license inventory.
-- The source of the launcher and its build contract.
-- The complete pinned Zig 0.14.1 x86_64-linux-musl toolchain archive and its extracted tree.
+- `release/secret-scanner-release.json`: the helper SHA-256, the guest SHA-256, the target, the toolchain, the build flags, the linked modules of the helper and of the guest, and the patched Betterleaks and tiktoken-go copies with their patch SHA-256.
+- `release/secret-scanner.spdx.json`: the SPDX inventory.
 
-It then builds the static launcher twice with separate Zig caches and builds the Go worker twice, and it requires both binaries to be byte-identical across the two builds. It records both SHA-256 values and writes scanner release evidence and an SPDX inventory with SHA-1 and SHA-256 file checksums. It injects both SHA-256 digests into the Go 1.26.11 `trestled` binary.
-
-The launcher uses static-PIE flags with an empty environment. The worker uses `GOWORK=off`, Go 1.26.11, `GOOS=linux`, `GOARCH=amd64`, `CGO_ENABLED=0`, `-trimpath`, `-buildvcs=false` and an empty build ID.
+`--verify` checks a staging tree against those files. Reproducible builds were confirmed for Linux, macOS and Windows on amd64 and arm64.
 
 The included `Dockerfile` copies that staging tree into a scratch image that has no registry base. The image runs `trestled` as UID and GID 65532. It declares port 8741, the daemon's default. `trestled` listens on `127.0.0.1:8741` unless `--listen` names another address, so the port is reachable only inside the container. A non-loopback address such as `0.0.0.0:8741` requires `--tls-cert` and `--tls-key`. Local review mode (`--local-full-review`) requires a loopback address.
 
@@ -138,7 +141,7 @@ The builder uses only the standard library. It writes an executable Python zip a
 The input inventory contains:
 
 - `trestle` and `trestled`.
-- The scanner launcher and worker.
+- The secret scan helper.
 - The manual model-catalog wrapper.
 - The project LICENSE and NOTICE.
 - All reviewed runtime license files.
@@ -279,7 +282,7 @@ They make no claim about power loss or a supported deployment.
 
 `verify-installed` checks the receipt and the journal, the trusted ancestors, ownership in production, and the modes, sizes, hashes and ELF identities. `smoke` first runs that check. It then runs a probe at the CLI command boundary that changes nothing, with a minimal environment.
 
-In destdir mode, the smoke test does not exercise the scanner launcher, because that launcher opens its worker at the fixed production path. The container sandbox test covers running the scanner. Smoke output is JSON with no content, and it does not show that the daemon, a provider, a database or the network is ready.
+In destdir mode, the smoke test does not exercise the scan helper. Smoke output is JSON with no content, and it does not show that the daemon, a provider, a database or the network is ready.
 
 #### Roll back an install and uninstall
 
@@ -291,17 +294,19 @@ Both commands preserve the application configuration under `/etc/open-trestle`, 
 
 ### Secret-scanner runtime boundary
 
-The scanner runs in a sandbox. The root client invokes `/usr/local/libexec/open-trestle/open-trestle-secret-scanner --stdio-v1`. That launcher is static and single-threaded. It applies `NO_NEW_PRIVS`, core, CPU and file-descriptor limits, and a Landlock domain. It then executes only `/usr/local/libexec/open-trestle/open-trestle-secret-scanner-worker --sandboxed-stdio-v1`.
+The scanner is Betterleaks v1.8.1 running inside a WebAssembly (wasip1) guest. The secret scan helper executes the guest with the wazero runtime and evaluates the guest's regular expressions with RE2. The WebAssembly sandbox and a hard process kill on any deadline or fault are the containment.
 
-The Go worker installs a seccomp filter that covers the whole process (TSYNC) before Betterleaks initializes. The launcher and worker receive anonymous pipes, `/` as the working directory and an empty environment. The worker cannot open network sockets, change the filesystem, create namespaces, mount filesystems, trace another process or execute another program. A failure of the sandbox or of the identity check happens before any source input is accepted.
+The helper is at `<folder of the trestle program>/../libexec/open-trestle/open-trestle-scan-helper` (`.exe` on Windows). The Linux package installs `/usr/local/libexec/open-trestle/open-trestle-scan-helper` as a root-owned `0555` file next to `/usr/local/bin/trestle`. macOS and Windows installs use the same layout relative to the program. Their installers come later.
 
-Both files must be owned by root, with group `root` and mode `0555`. They must sit beneath directories that root owns and nobody else can write, and they must match the digests compiled into `trestled`. This trust check protects against replacement by the service account that has no privileges. It does not protect a host after the compromise of root or the kernel.
+The packaging tool pins the helper's SHA-256 into `trestle` and `trestled`. Before each start, the program checks that the helper file is not writable, is owned by you or root (on Windows, by you or a system account), and matches the pinned SHA-256. A missing or changed helper refuses the review with a message, and nothing is sent. This check protects against replacement by an account that has no privileges. It does not protect a host after the compromise of root or the kernel.
 
-Each scan runs in one child process. That process starts as the launcher and replaces itself with the worker. There is no process pool and no sidecar. A successful sanitization normally starts two child processes: one initial scan and one fresh scan of what remains. Generation and verification sanitize their requests separately. Plan capacity for that start-up cost, and do not assume one scanner that lives for a whole review.
+`trestle review` and `trestle local-git model-review` run one helper process per review run, and each specialist member of a review set has its own. `trestled` runs each sanitization in a helper session of its own. A successful sanitization scans the request, then scans the masked request, which must be clean. Generation and verification sanitize their requests separately. The helper uses up to about 0.5 GB of memory while it runs. It starts in about 0.6 s with a filled cache. In one measurement, a review with six scans of 60 KB took about 2 s of scanning, and model calls take far longer.
 
-The framed request accepts 1 to 256 fields of valid UTF-8, with at most 256 KiB each and 2 MiB decoded in total. Request frames are capped at 3 MiB, response frames at 4 MiB, and a complete response at 8,192 findings. The worker's deadline is five seconds after the frame is decoded. The parent's hard watchdog is six seconds from the start of the process, or an earlier deadline from the caller.
+The cache is at `$XDG_CACHE_HOME/open-trestle/scan-cache/` when `XDG_CACHE_HOME` is an absolute path, otherwise `~/.cache/open-trestle/scan-cache/` (on Windows `%USERPROFILE%\.cache\open-trestle\scan-cache`). It holds the compiled guest and RE2 module, about 110 MB. It must be private: owned by you, mode `0700`, and every folder above it changeable only by you or root. On Windows it needs an owner-only access control list. On macOS it must also carry no ACL entry, and a cache with one is refused with a message that tells you to remove it with `chmod -N`. The first review fills the cache and prints `Preparing the secret scanner for first use; this can take a minute.` `trestled` fills it at start. Deleting the folder is safe; the next review fills it again.
 
-Any of these discards all matches and blocks dispatch: a limit, a timeout, a cancellation, a nonzero exit, a byte on stderr, malformed or extra output, an incomplete scan or a finding that remains in the residual scan. Open Trestle does not accept a partial scan result.
+The framed request accepts 1 to 256 fields of valid UTF-8, with at most 256 KiB each and 2 MiB decoded in total. Request frames are capped at 3 MiB, response frames at 4 MiB, and a complete response at 8,192 findings.
+
+Any of these discards all matches and blocks dispatch: a limit, a timeout, a cancellation, a nonzero exit, a byte on stderr, malformed or extra output, an incomplete scan or a finding that remains in the residual scan. Open Trestle does not accept a partial scan result. A secret is masked. If the scan cannot complete, the request is refused and nothing is sent.
 
 ### Scanner observability and privacy
 
@@ -309,33 +314,33 @@ The records that the scanner keeps are limited to these things:
 
 - Closed classes of failure.
 - Scanner and build-profile identities.
-- Launcher and worker digests.
+- The helper digest.
 - Duration.
 - Counts of fields, bytes and matches.
 - Receipt identities.
 - Rule IDs.
 - Byte spans that are zero-based and half-open.
 
-The child writes protocol data only to stdout and must keep stderr empty. The parent does not log request or response frames, source bytes, matched values, upstream errors or the text of process errors. The initial receipt and the residual receipt contain no field content, paths, snippets, matches, source digests or Betterleaks fingerprints.
+The helper writes protocol data only to stdout and must keep stderr empty. The program does not log request or response frames, source bytes, matched values, upstream errors or the text of process errors. The initial receipt and the residual receipt contain no field content, paths, snippets, matches, source digests or Betterleaks fingerprints.
 
 A record with no content can still reveal sensitive information. A span shows the field ordinal, the location and the length of a suspected secret. Restrict access to receipts, audit and metrics to the review scope, and do not attach span or rule data to general metrics. The provider receives sanitized request text; keep content logging by the provider disabled under the approved route.
 
 ### Scanner upgrade and requalification
 
-Treat any change as a new build profile that needs review. This covers changes to the Betterleaks version or commit, the embedded config, the rule inventory, the regexp engine, the adapter behavior, the launcher or Go toolchain, the target, the CGO setting, the sandbox, the timeouts and the build flags. Before you adopt the new profile:
+Treat any change as a new build profile that needs review. This covers changes to the Betterleaks version or commit, the embedded config, the rule inventory, the regexp engine, the adapter behavior, the WebAssembly runtime or Go toolchain, the target, the sandbox, the timeouts and the build flags. Before you adopt the new profile:
 
 1. Compare the upstream public API and detection behavior with the current version. Review the embedded config, the sorted rule IDs, and every linked module and license.
-2. Regenerate the ruleset identity, the allowlist, the deterministic launcher and worker, the binary digests, the release evidence, the SPDX inventory and the injection of the root digest.
+2. Regenerate the ruleset identity, the allowlist, the deterministic helper, the helper and guest digests, the release evidence, the SPDX inventory and the pin of the helper digest.
 3. Run all public tests of the protocol, the exact spans, repeats, cancellation, resources, the sandbox, leakage and the residual scan.
 4. Run three canonical passes of the unchanged private corpus. The current gate is exactly 11/14 expected occurrences, 10/11 positive files, 2/2 repeated locations and 11/11 exact spans. The gate also expects the three misses that are named (the bearer token, the AWS secret key and the AWS session token) and one `generic-api-key` near miss at `[7,51)`. A loss, a changed span, or an additional or changed near miss blocks adoption until someone has reviewed it.
-5. Run five direct-adapter passes with a warm cache and 16 MiB, and five end-to-end child-process passes at the maximum legal size of 2 MiB. Each gate requires a median wall time of at most two seconds and a maximum RSS of at most 256 MiB.
-6. Rerun the root and worker tests, the race tests, vet, the deterministic packaging, the staging inventory, the release evidence, the container sandbox and the security review of the frozen diff.
+5. Measure the scan time and memory of the helper with a filled cache, and compare them with the figures above.
+6. Rerun the root and scanner-module tests, the race tests, vet, the deterministic packaging, the staging inventory, the release evidence and the security review of the frozen diff.
 
 The private corpus and the raw scanner output stay outside tracked release material. The baseline measures one fixed corpus. The scanner misses some credential formats, including the ones named above.
 
 ## Generate unsigned local release evidence
 
-Release evidence is a checksum list and an SPDX 2.3 inventory of the artifacts you built. Generate it from a clean checkout and from the artifacts that were built from its declared revision. The tool reads the runtime Go module graph that is embedded in the two root binaries and the scanner worker, and the non-development dependency entries in the npm lockfiles. The scanner staging evidence covers the static launcher, which is not a Go binary.
+Release evidence is a checksum list and an SPDX 2.3 inventory of the artifacts you built. Generate it from a clean checkout and from the artifacts that were built from its declared revision. The tool reads the runtime Go module graph that is embedded in the two root binaries and the scan helper, and the non-development dependency entries in the npm lockfiles.
 
 ```sh
 test -z "$(git status --porcelain)"
@@ -349,7 +354,7 @@ python3 tools/release_evidence.py \
   --artifact linux-amd64-lifecycle=open-trestle-linux-lifecycle.json \
   --go-binary .container/trestle \
   --go-binary .container/trestled \
-  --go-binary .container/libexec/open-trestle/open-trestle-secret-scanner-worker \
+  --go-binary .container/libexec/open-trestle/open-trestle-scan-helper \
   --npm-lock web/package-lock.json \
   --npm-lock extensions/vscode/package-lock.json \
   --changelog CHANGELOG.md \
@@ -430,7 +435,7 @@ To take a recovery point:
 
 1. Stop the daemon.
 2. Copy its private `--state-dir`, the configured `--setup-state` file and its `.receipts` directory.
-3. Keep the route inventory, the runtime policy, the Git object store of the source, the setup-root identity, the binary version and the scanner digests, and record them with the recovery point.
+3. Keep the route inventory, the runtime policy, the Git object store of the source, the setup-root identity, the binary version and the scan helper, and record them with the recovery point.
 4. Keep credentials separately.
 
 Do not copy a live journal, and do not combine files from different recovery points. Protect the backup bytes with the same private modes and access controls as the originals.
@@ -552,14 +557,14 @@ To take the record:
 1. Stop the daemon and every child process before you take a consistent copy.
 2. Keep the original state, artifact, setup and Git object directories. The owner record binds the Linux directory identity and the absolute paths, so recreating those directories is not supported, even if the file bytes match.
 3. Run `trestled recovery-point`. It writes a comparison record to stdout. Save that record outside the state directory, with permissions for the operator only.
-4. Keep the matching state and Git object bytes, the ledger of setup receipts, the daemon binary, the scanner and scanner-worker binaries, the route inventory and the runtime policy. Credentials are separate, and these offline commands never read them.
+4. Keep the matching state and Git object bytes, the ledger of setup receipts, the daemon binary, the scan helper, the route inventory and the runtime policy. Credentials are separate, and these offline commands never read them.
 
 ```
 umask 077
 trestled recovery-point --state-dir /private/state \
   --repository-authority local.example --repository-namespace team \
   --repository-name repository --binary /retained/trestled \
-  --scanner /retained/scanner --scanner-worker /retained/scanner-worker \
+  --scan-helper /retained/open-trestle-scan-helper \
   --route-inventory /retained/routes.json --runtime-policy /retained/policy.json \
   > /private/recovery-point.json
 ```

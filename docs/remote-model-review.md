@@ -33,17 +33,27 @@ Both roles (generation and verification) use the same provider with two
 different models. The verification mode is `distinct_model`, which means that
 the two models differ.
 
-## Prerequisite 1: a scanner-bound binary and installed scanner
+## Prerequisite 1: a trestle with its secret scanner
 
 Open Trestle refuses to send source to a remote provider unless every request
-passes two Betterleaks scans in the sandboxed scanner. A plain `go build` has no
-injected scanner digests, so it refuses to send. The scanner and the packaged
-install exist only for Linux amd64 today. Remote review is refused on other
-systems and on a development build. macOS and Windows are planned for the next
-release (see [platforms](platforms.md) and the [roadmap](roadmap.md#next-release)).
+passes two Betterleaks scans in the secret scan helper. A plain `go build` pins
+no helper, so it refuses every review. Use one of two builds.
 
-Build the packaged binaries from a clean committed checkout, then install the
-unsigned Linux amd64 candidate (see [operations](operations.md)):
+On Linux, macOS or Windows (needs Go 1.26.11 and Python 3), build a development
+build and run `DIR/bin/trestle`:
+
+```sh
+python3 tools/package_secret_scanner.py --development DIR
+```
+
+`DIR` is relative to the current directory. Add `--target GOOS/GOARCH` to build
+for another system. The tool writes `DIR/bin/trestle`, `DIR/bin/trestled` and
+`DIR/libexec/open-trestle/open-trestle-scan-helper` (`.exe` names for Windows).
+The helper is the file that the two programs check before each review.
+
+On Linux amd64 you can instead build the packaged binaries from a clean
+committed checkout and install the unsigned candidate (see
+[operations](operations.md)):
 
 ```sh
 python3 tools/package_secret_scanner.py --output .container
@@ -53,18 +63,27 @@ sha256sum -c open-trestle-linux-amd64.pyz.sha256
 sudo ./open-trestle-linux-amd64.pyz install
 ```
 
-The packaging tool injects the SHA-256 values of the scanner launcher and worker
-into both `trestle` and `trestled` with `-ldflags -X`. `install` places the
-scanner pair at `/usr/local/libexec/open-trestle/` as root-owned `0555` files.
-That is the only location the client trusts. Use the installed
-`/usr/local/bin/trestle` for every command below.
+The packaging tool pins the SHA-256 of the helper into both `trestle` and
+`trestled` at link time. `install` places the helper at
+`/usr/local/libexec/open-trestle/open-trestle-scan-helper` as a root-owned
+`0555` file. The programs look for the helper at
+`<folder of the program>/../libexec/open-trestle/open-trestle-scan-helper`.
+Before each start they check that the file is not writable, is owned by you or
+root (on Windows, by you or a system account), and matches the pinned SHA-256.
+A missing or changed helper refuses the review with a message, and nothing is
+sent. Use the installed `/usr/local/bin/trestle` for every command below.
+
+The first review fills the scanner cache and prints `Preparing the secret
+scanner for first use; this can take a minute.` See
+[environment variables and files](environment-and-files.md#paths) for where it
+lives.
 
 `bootstrap check` reports this prerequisite before any review:
 
-- `refused` with `sanitized_egress_scanner` means that this binary has no
-  digests (it is a development build) or that the platform is not Linux.
-- `pending` with `sanitized_egress_scanner` means that the binary has digests,
-  but the installed scanner is missing or does not match them.
+- `refused` with `sanitized_egress_scanner` means that this binary pins no
+  helper (a plain `go build`).
+- `pending` with `sanitized_egress_scanner` means that the binary pins a helper,
+  but the helper is missing or does not match.
 
 ## Prerequisite 2: credentials by name only
 

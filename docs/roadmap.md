@@ -81,8 +81,7 @@ available:
 - Ollama on this machine, signed in to Ollama Cloud.
 - Any OpenAI-compatible server on loopback, without a key.
 
-Remote providers work only with the packaged Linux amd64 install and its
-secret scanner. Each profile is tested offline with synthetic transports, and
+Remote providers work with any build that has its secret scan helper. Each profile is tested offline with synthetic transports, and
 none is qualified against a live account. The OpenCode Console profile is
 offline protocol support only, and the Codex ChatGPT session profile is a
 disabled status report. See [remote model review](remote-model-review.md).
@@ -141,8 +140,8 @@ plan. None of them starts a review.
 ### Security
 
 Repository text, including the base tree's instruction files, is treated as
-data. Every request to a remote route passes two sandboxed Betterleaks scans,
-which have a reviewed recall of 11 of 14 expected occurrences. Each finding is
+data. Every model request passes two Betterleaks scans in the secret scan helper,
+which has a reviewed recall of 11 of 14 expected occurrences. Each finding is
 tied to the source lines it concerns, and publication is guarded by a fresh-head
 check and idempotency. See the
 [prompt-injection boundary](prompt-injection-boundary.md).
@@ -174,8 +173,9 @@ areas. Anything outside them is listed under [Later](#later).
 
 ### Platforms and the everyday loop
 
-Today the packaged install is Linux amd64 only, and remote providers are refused
-on other systems (see [platforms](platforms.md)).
+Today the packaged install is Linux amd64 only. Development builds with the
+secret scan helper run on Linux, macOS and Windows (see
+[platforms](platforms.md)).
 The release brings the whole loop to Windows and macOS:
 
 - Native packages or installers on each system.
@@ -185,8 +185,6 @@ The release brings the whole loop to Windows and macOS:
   systems.
 - `trestle init`, `trestle review`, `trestle update`, the home screen and
   remote providers on all three systems.
-- A secret scanner that runs on all three systems, which remote providers
-  depend on.
 
 - Sign in with ChatGPT as a provider option, so that you can review with a
   ChatGPT plan instead of an API key. It uses OpenAI's official sign-in program
@@ -322,7 +320,7 @@ A release candidate must demonstrate all of the following:
 - Source lines cited for every published finding.
 - Negative tests for authorization and tenant isolation.
 - No unapproved provider route, egress, command or source change.
-- Packaged scanner identities, refusal at 256 fields, 2 MiB, residual-scan and
+- Pinned scan helper identity, refusal at 256 fields, 2 MiB, residual-scan and
   timeout limits, and the reviewed 11 of 14 coverage and known-near-miss
   baseline.
 - No blocking finding that rests only on model output, heuristic impact

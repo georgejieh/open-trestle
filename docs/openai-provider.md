@@ -144,21 +144,19 @@ During configuration validation, Open Trestle classifies DNS names without resol
 
 ## Sanitized egress boundary
 
-Before either standard model stage is authorized, the host extracts the typed text fields and scans them in a fresh scanner process. It replaces reported bytes without changing the byte length or the line breaks. A second fresh process then scans the projected request. Dispatch is denied unless both scans complete and the second scan finds nothing. Candidate generation and verification are sanitized separately, and verification includes the candidate, source and memory text from its own typed request.
+Before either standard model stage is authorized, the host extracts the typed text fields and scans them in the secret scan helper. It replaces reported bytes without changing the byte length or the line breaks. A second scan then checks the projected request. Dispatch is denied unless both scans complete and the second scan finds nothing. Candidate generation and verification are sanitized separately, and verification includes the candidate, source and memory text from its own typed request.
 
-The pinned scanner is Betterleaks v1.8.1, commit `5eab48332cc48565864514e3bc6de89df091a7c4`, with 417 embedded default rules at ruleset identity `27ded783c81940d13c22cc46556a3f8184baf397bff08a69fcfae87991925f42`, RE2, and build profile `public_detect_run_re2_purego_go1.26.11_linux_amd64_v1`.
+The pinned scanner is Betterleaks v1.8.1, commit `5eab48332cc48565864514e3bc6de89df091a7c4`, with 417 embedded default rules at ruleset identity `27ded783c81940d13c22cc46556a3f8184baf397bff08a69fcfae87991925f42`, RE2, and build profile `public_detect_run_re2_host_go1.26.11_wasip1_wasm_v1`. The scanner runs as a WebAssembly (wasip1) guest in the helper, which uses the wazero runtime and evaluates the guest's regular expressions with RE2.
 
-- New scans write and require only that profile, from a worker whose launcher and worker digests match the values injected into the daemon.
-- Responses and receipts recorded under the previous profile, `public_detect_run_re2_purego_go1.26.10_linux_amd64_v1`, still read back and validate. No other profile is accepted.
+- Scans write and require only that profile, from a helper whose SHA-256 matches the value pinned into the daemon. A receipt is accepted only for the helper digest that the reading program pins.
 - A scan accepts 1 to 256 UTF-8 fields, with no more than 256 KiB per field and 2 MiB decoded in total.
-- The worker deadline is five seconds and the parent watchdog is six seconds.
-- Invalid input, a timeout, cancellation, an incomplete iteration, resource exhaustion, a sandbox failure, unexpected output or any remaining finding produces no partial success and no remote dispatch.
+- Invalid input, a timeout, cancellation, an incomplete iteration, resource exhaustion, a helper fault, unexpected output or any remaining finding produces no partial success and no remote dispatch.
 
-The scanner output and the durable receipt contain no content. They keep the scanner and binary identities, completion and byte counts, field roles and ordinals, rule IDs, and zero-based half-open byte spans. They do not keep field text, paths, snippets, matched values, source digests, upstream fingerprints or provider error text. The spans reveal the location and length of a match, so limit access to receipts.
+The scanner output and the durable receipt contain no content. They keep the scanner and helper identities, completion and byte counts, field roles and ordinals, rule IDs, and zero-based half-open byte spans. They do not keep field text, paths, snippets, matched values, source digests, upstream fingerprints or provider error text. The spans reveal the location and length of a match, so limit access to receipts.
 
 ### What the scan misses
 
-On the reviewed corpus the scanner found 11 of 14 expected occurrences across 10 of 11 positive files under the go1.26.10 profile. The misses were bearer credentials, AWS secret keys and AWS session tokens. One near-miss file produced a `generic-api-key` finding at `[7,51)`, so those bytes are redacted even though the finding is not a true secret.
+On the reviewed corpus the scanner found 11 of 14 expected occurrences across 10 of 11 positive files under the pinned profile. The misses were bearer credentials, AWS secret keys and AWS session tokens. One near-miss file produced a `generic-api-key` finding at `[7,51)`, so those bytes are redacted even though the finding is not a true secret.
 
 The scanner does not guarantee that a request contains no secret, and other false negatives and false positives are possible. A remote provider receives the sanitized request.
 

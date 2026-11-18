@@ -40,6 +40,8 @@ GOWORK=off go vet ./...
 
 `go test -race -p=1 ./...` runs the race tests that CI also runs. The documentation tests are in `internal/config`, and you run them with `go test ./internal/config/`. They include the protocol schema inventory described in [protocol contracts](protocol-contracts.md). The secret scanner is a separate module. Run `go test ./...` and `go vet ./...` in `workers/secret-scanner` with `GOWORK=off`.
 
+A plain `go build` pins no secret scan helper, so the program it makes refuses every review. To run a review from a working tree, build with `python3 tools/package_secret_scanner.py --development DIR` on Linux, macOS or Windows, then run `DIR/bin/trestle`. See [operations](operations.md#package-the-secret-scanner).
+
 The release and packaging tools have Python tests: `python3 -m unittest discover -s tools -p "test_*.py"`.
 
 The web console in `web/` and the VS Code extension in `extensions/vscode/` use the Node version in `.node-version` (26.12.1). The web package declares `node >=22`. Install and check the console with:
@@ -69,18 +71,16 @@ The secret scanner is a separate module. The root runtime declares Go 1.25.0, is
 - Betterleaks v1.8.1 at commit `5eab48332cc48565864514e3bc6de89df091a7c4`;
 - the embedded config hash of its 417 rules;
 - the RE2 engine;
-- the Linux amd64 pure-Go target;
+- the WebAssembly (wasip1) guest and the wazero runtime that executes it;
 - the module sums, the linked licenses and the build flags.
 
-CI must run module verification, tests, race tests and vet separately for the root module and the worker module, with `GOWORK=off`.
+CI must run module verification, tests, race tests and vet separately for the root module and the scanner module, with `GOWORK=off`.
 
-The pre-runtime launcher is the one narrow C exception. It is built as a static PIE with the pinned Zig 0.14.1 x86_64-linux-musl toolchain closure, so that Landlock is active before the Go runtime creates threads.
-
-Do not treat an update to this scanner as a routine version bump. A change to any of the following creates a new scanner profile: Betterleaks, its default config, the rule IDs, the regexp engine, the adapter behavior, the Go patch release, the architecture, the CGO setting, the launcher toolchain, the sandbox or the build flags. For such a change, take these steps:
+Do not treat an update to this scanner as a routine version bump. A change to any of the following creates a new scanner profile: Betterleaks, its default config, the rule IDs, the regexp engine, the adapter behavior, the Go patch release, the WebAssembly runtime, the sandbox or the build flags. For such a change, take these steps:
 
 1. Diff the public API and the scanner behavior.
 2. Review the complete set of linked licenses.
-3. Regenerate the ruleset and binary identities.
+3. Regenerate the ruleset and helper identities.
 4. Rerun the public span fixtures and the private coverage and performance qualification.
 
 The accepted v1.8.1 baseline is 11 of 14 expected occurrences, with one `generic-api-key` near miss at `[7,51)`. For what the scanner misses, see [privacy](privacy.md). Any drift in coverage or near misses needs a profile decision.

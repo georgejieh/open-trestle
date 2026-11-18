@@ -1,19 +1,20 @@
 # Platforms
 
-The first release will support Linux, macOS and Windows, but today only Linux
-amd64 has a tested path. This page says what each system can do now, so that you
-can tell a missing feature from a mistake. See the
-[roadmap](roadmap.md#next-release) for what the release adds.
+Linux, macOS and Windows all run the same review loop with the same secret scan
+helper. This page says what each system can do now, so that you can tell a
+missing feature from a mistake. See the [roadmap](roadmap.md#next-release) for
+what the release adds.
 
 ## What works today
 
 | Capability | Linux amd64 (packaged install) | Linux, development build | macOS | Windows |
 | --- | --- | --- | --- | --- |
 | Packaged install | Yes, [unsigned](install.md) | No | No | No |
-| `go build` of `trestle` | Yes | Yes | Compiles | Compiles |
-| Review with a model server on this machine | Yes | Yes | Untested | Refused |
-| Remote providers (OpenRouter, Ollama Cloud, OpenCode Go, `ollama-signin`) | Yes | Refused | Refused | Refused |
-| Secret scanner | Yes, sandboxed | None | None | None |
+| `go build` of `trestle` (reviews refused, no scan helper) | Yes | Yes | Compiles | Compiles |
+| Development build with the scan helper | Yes | Yes | Builds, untested on a Mac | Yes |
+| Review with a model server on this machine | Yes | Yes | Untested | Yes |
+| Remote providers (OpenRouter, Ollama Cloud, OpenCode Go, `ollama-signin`) | Yes | Yes | Untested | Yes |
+| Secret scan helper | Yes | Yes | Untested | Yes |
 | Hidden key entry | Yes | Yes | Code present, untested | Code present, untested |
 | Saving a key with `trestle keys set` | Yes | Yes | Untested | Yes |
 | Protected setup, credential and usage files | Yes | Yes | Untested | Yes |
@@ -31,15 +32,21 @@ How to read the cells:
   that no test or recorded run exists on that system.
 - Refused means that the code stops and says why.
 
+Tested systems: end-to-end tests run a review through the real helper on Linux
+amd64 and Windows amd64 (with an offline fixture provider). On macOS the code
+builds and vets for amd64 and arm64, but the access-list check and the helper
+have not run on a real Mac. arm64 on Linux and Windows builds but is untested.
+The packaged install and `trestle update` are Linux amd64 only.
+
 ## Why each refusal happens
 
-Remote providers are refused off the packaged Linux install. Every request to a
-remote route passes two scans in a sandboxed secret scanner before it leaves the
-machine. The scanner exists only for Linux amd64, and a plain `go build` has no
-scanner digests. The message is
-`sandboxed secret scanner is available only on Linux` or names the missing
-install. See
-[remote model review](remote-model-review.md#prerequisite-1-a-scanner-bound-binary-and-installed-scanner).
+Every review scans every model request twice before it is sent, whether the
+model server is on this machine or remote. The scan runs in the secret scan
+helper. A plain `go build` pins no helper, so it refuses every review with
+`this build pins no secret scan helper; build it with
+tools/package_secret_scanner.py`. Build with
+`python3 tools/package_secret_scanner.py --development DIR` instead. See
+[remote model review](remote-model-review.md#prerequisite-1-a-trestle-with-its-secret-scanner).
 
 `trestle update` is refused off Linux amd64. It updates only the packaged install,
 the one with a receipt at
@@ -65,7 +72,6 @@ access and does not change it. See
 
 ## For the first release
 
-The release has one goal: the same review loop on all three systems. That needs
-a secret scanner that runs on each system, native packages or installers for
-macOS and Windows, and `trestle update` on each. Until those exist, this page
-lists what works on macOS and Windows.
+The release has one goal: the same review loop on all three systems. That still
+needs native packages or installers for macOS and Windows, and `trestle update`
+on each. Until those exist, this page lists what works on macOS and Windows.

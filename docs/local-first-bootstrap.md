@@ -157,7 +157,7 @@ Start the daemon with the operator and observer tokens in its environment. Keep 
 
 Execute `review_command` only after you approve the use of your source, and with the operator token in its environment. This is the step where repository source goes to the model. It requests the review pipeline on the pinned commits: nine tasks over eight stage kinds, because source is acquired once for the base and once for the head.
 
-This command enables no publication task and no forge credentials. The runtime still needs its pinned scanner binaries and host confinement support, which bootstrap does not install.
+This command enables no publication task and no forge credentials. The runtime still needs its secret scan helper next to the program (see [remote model review](remote-model-review.md#prerequisite-1-a-trestle-with-its-secret-scanner)), which bootstrap does not install.
 
 Submit within five minutes of `prepare-review` for the first admission, so prepare only after the daemon is running. Inspection does not refresh that window. Save the submit array and repeat it for retries after admission. If you miss the first-admission window, the submission stays refused. Do not edit or delete the intent file; prepare a new setup in a fresh protected directory instead.
 

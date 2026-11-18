@@ -29,7 +29,7 @@ The daemon does not fall back to reviewing `base.sha` directly.
 ## How the Actions path fits together
 
 1. `actions/checkout` runs with `fetch-depth: 0`, so the head, the base branch tip and the history between them are all present.
-2. A packaged `trestle` binary is installed. A plain `go build` refuses remote model egress; see [remote model review](remote-model-review.md).
+2. A `trestle` binary with its secret scan helper is installed. A plain `go build` pins no helper and refuses every review; see [remote model review](remote-model-review.md#prerequisite-1-a-trestle-with-its-secret-scanner).
 3. `trestle setup bootstrap init --provider ...` and `check` write and verify the protected configuration and print the review command. That command carries `--specialists auto` unless `init` is given `--specialists none`. The provider key is passed through an environment variable whose name starts with `OPEN_TRESTLE_PROVIDER_`.
 4. `trestle local-git model-review ... --format sarif --exit-code-policy findings` runs with the merge base `git merge-base "$BASE_SHA" "$HEAD_SHA"` as the base and `head.sha` as the head. `BASE_SHA` is `github.event.pull_request.base.sha`, the tip of the base branch when the event fired. Both SHAs are passed through `env`, not interpolated into `run:`.
 5. The workflow uploads the SARIF only when the run succeeded (`trestleRunStatus` is `succeeded`). Uploading the empty result of a refused or failed run could close open alerts for the same category.

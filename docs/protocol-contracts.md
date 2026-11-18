@@ -167,7 +167,7 @@ Artifact schemas:
 - `schemas/artifact/runtime-artifact-v1.schema.json`
 - `schemas/artifact/context-abstention-v1.schema.json`
 - `schemas/artifact/sanitized-model-request-v1.schema.json`
-- `schemas/artifact/sanitized-egress-receipt-v1.schema.json`
+- `schemas/artifact/sanitized-egress-receipt-v1.schema.json` (names the scanner with `build_profile` `public_detect_run_re2_host_go1.26.11_wasip1_wasm_v1`, the same on every system, and `helper_sha256`; a program accepts a receipt only for the helper digest it pins)
 - `schemas/artifact/artifact-deletion-authorization-v1.schema.json`
 - `schemas/artifact/artifact-deletion-receipt-v1.schema.json`
 - `schemas/artifact/source-acquisition-input-v1.schema.json`
@@ -188,7 +188,7 @@ Artifact schemas:
 - `schemas/artifact/memory-retrieval-result-v1.schema.json`
 - `schemas/artifact/publication-readiness-result-v1.schema.json`
 - `schemas/artifact/publication-readiness-result-v2.schema.json`
-- `schemas/artifact/publication-content-scan-receipt-v1.schema.json`
+- `schemas/artifact/publication-content-scan-receipt-v1.schema.json` (names the scanner the same way, with `build_profile` and `helper_sha256`)
 - `schemas/artifact/publication-input-v1.schema.json`
 - `schemas/artifact/publication-receipt-v1.schema.json`
 - `schemas/artifact/route-attempt-authorization-v1.schema.json`
@@ -207,7 +207,7 @@ Artifact schemas:
 - `schemas/artifact/verified-finding-set-v1.schema.json`
 - `schemas/artifact/verified-finding-set-v2.schema.json` (categorized findings, with any base-side location or evidence)
 - `schemas/artifact/verified-finding-set-v3.schema.json` (uncategorized findings that record removed base lines)
-- `schemas/artifact/model-verification-result-v1.schema.json` (its `verification_batch` is one of verification-batch v1 or v2, and its `verified_finding_set` one of verified-finding-set v1, v2 or v3)
+- `schemas/artifact/model-verification-result-v1.schema.json` (its `verification_batch` is one of verification-batch v1 or v2, and its `verified_finding_set` one of verified-finding-set v1, v2 or v3; it names the scan helper by `scanner_helper_sha256`)
 
 Each of these versioned artifact schemas describes exactly one version, and later versions are separate files. The version 1 files of the candidate batch and the verified finding set are as first published. The generation input v1 file differs only in that it also accepts the identity of the v2 candidate schema, which a version 7 or later context requests.
 
@@ -383,7 +383,7 @@ Every schema has a stable, versioned `urn:open-trestle:schema:...` identity, rej
 
 A `review-task-lease` and a `task-notification-lease` contain bearer secrets, so they are suitable only for the authorized worker transport. Do not place either in logs, diagnostics, URLs, model context, audit events or public state. `review-run-receipt` and `review-run-event` are intentionally free of secrets.
 
-The v5 `context_input_prepared` event advances the exact v4 packet checkpoint under the same task, attempt, lease and worker. Its public descriptor is made of claims about artifact envelopes and route and scanner identities. It is not proof of a scanner run, a route selection, a stored sanitized request or an authorization. It contains no recoverable request, receipt, input, authorization or repository bytes.
+The v5 `context_input_prepared` event advances the exact v4 packet checkpoint under the same task, attempt, lease and worker. Its public descriptor is made of claims about artifact envelopes and route and scanner identities, and it names the scan helper by `scanner_helper_digest`. It is not proof of a scanner run, a route selection, a stored sanitized request or an authorization. It contains no recoverable request, receipt, input, authorization or repository bytes.
 
 Neither this event nor a route-audit subject grants task success or model authority. Ordinary completion, lease renewal and expiry reclaim remain blocked. After the lease expires, trusted recovery may append a no-output policy failure. A distinct, owner-only v6 `context_input_settled` event can settle a recorded v5 preparation, but only after exact proof of the stored bytes, the audit and the scoped selection. Generic task completion cannot do so. Existing v1 through v4 encodings and v3 abstention behavior remain unchanged.
 

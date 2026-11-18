@@ -123,4 +123,4 @@ GOWORK=off GOTOOLCHAIN=go1.26.11 go list -deps -f '{{with .Module}}{{if .Version
 - `golang.org/x/text v0.41.0`
 - `go.yaml.in/yaml/v3 v3.0.4`
 
-`go.mod` and `go.sum` are authoritative for module resolution and checksums. `THIRD_PARTY_LICENSES/secret-scanner/MODULES.json` binds the reviewed license and notice files to every module in the linked production binary. `tools/package_secret_scanner.py` derives the final inventory with `go version -m` and fails on any missing, unknown, replaced, or changed module or legal file.
+`go.mod` and `go.sum` are authoritative for module resolution and checksums. `THIRD_PARTY_LICENSES/secret-scanner/MODULES.json` binds the reviewed license and notice files to every module in the linked production binary. `tools/package_secret_scanner.py` derives the final inventory by reading the helper's modules with `go version -m` and the guest's from the module data embedded in the wasm. It accepts only the reviewed patched copies as replaced modules, and fails on any missing, unknown, other replaced, or changed module or legal file.

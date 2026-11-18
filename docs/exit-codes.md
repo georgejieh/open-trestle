@@ -52,7 +52,7 @@ read the SARIF or the JSON `status`. For review sets, see
 | --- | --- |
 | `0` | Setup is ready and the review was declined, or the first review finished with `findings` or `no_candidates`. |
 | `3` | Something must be fixed before a review can run, or the review was incomplete or canceled. |
-| `4` | A declaration was declined, setup was refused, a setup check refused (for example the scanner check of a development build set up for a remote provider; the setup is kept), or the review was refused. |
+| `4` | A declaration was declined, setup was refused, a setup check refused (for example the scanner check of a build that pins no secret scan helper; the setup is kept), or the review was refused. |
 | `2` | A missing or invalid answer, end of input, or three unusable answers in a row. With `--no-input`, every missing flag is listed. |
 | `1` | An internal error, or the first review failed. |
 

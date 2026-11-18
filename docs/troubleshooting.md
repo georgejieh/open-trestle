@@ -51,11 +51,13 @@ ahead of it, or no `main` or `master` exists. Commit your change, or pass
 
 ### Setup refuses to send source to a remote provider
 
-A plain `go build` has no secret scanner, so it refuses remote providers with
-`sandboxed secret scanner is available only on Linux` or a message about the
-missing scanner. The saved setup is kept. Use the packaged Linux amd64 install,
-or use a model server on your machine. See [install](install.md) and
-[platforms](platforms.md).
+A plain `go build` pins no secret scan helper, so it refuses every review with
+`this build pins no secret scan helper; build it with
+tools/package_secret_scanner.py`. A missing or changed helper is refused with a
+message too. The saved setup is kept. Build with
+`python3 tools/package_secret_scanner.py --development DIR` and run
+`DIR/bin/trestle`, or use the packaged Linux amd64 install. See
+[install](install.md) and [platforms](platforms.md).
 
 ### The repository's storage cannot be read
 
@@ -79,6 +81,12 @@ On Linux and macOS, the credential, usage and setup folders must be mode
 symbolic links, and no parent may be writable by others. Fix the mode with
 `chmod 700 FOLDER`, or move the folder. The message names the folder and the mode it found. See
 [environment variables and files](environment-and-files.md#paths).
+
+The secret scanner cache (`~/.cache/open-trestle/scan-cache/`) follows the same
+rules. On macOS it must also carry no access-list entry. If it has one, the
+message tells you to run `chmod -N` on it. Deleting the cache folder is safe;
+the next review fills it again and prints `Preparing the secret scanner for
+first use; this can take a minute.`
 
 On Windows the folders and files must give no account other than yours and the
 system's own accounts access, and no parent may let another account remove,
