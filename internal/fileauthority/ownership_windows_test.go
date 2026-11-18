@@ -163,6 +163,24 @@ func TestMkdirAllPrivateCreatesOwnerOnlyDirectories(t *testing.T) {
 	}
 }
 
+func TestPrivateDirectoryJudgesWhatEntriesWouldInherit(t *testing.T) {
+	base := trustedTempDir(t)
+	leaf := filepath.Join(base, "leaf")
+	if err := MkdirPrivate(leaf); err != nil {
+		t.Fatal(err)
+	}
+	if !PrivateDirectory(leaf, lstat(t, leaf)) {
+		t.Fatal("a new private directory was refused")
+	}
+	grant(t, leaf, everyone+":(OI)(CI)(IO)(F)")
+	if PrivateDirectory(leaf, lstat(t, leaf)) {
+		t.Fatal("a directory that hands its entries to Everyone was reported private")
+	}
+	if err := CheckDirectory(leaf); !errors.Is(err, ErrUntrustedPath) {
+		t.Fatalf("a final directory that hands its entries write access was accepted: %v", err)
+	}
+}
+
 func TestPrivateAndUnwritableFiles(t *testing.T) {
 	base := trustedTempDir(t)
 	private := filepath.Join(base, "private")
