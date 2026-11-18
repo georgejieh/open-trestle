@@ -1,0 +1,25 @@
+test_error (test_sample.Sample.test_error) ... ERROR
+test_fail (test_sample.Sample.test_fail) ... FAIL
+test_pass (test_sample.Sample.test_pass) ... ok
+test_skip (test_sample.Sample.test_skip) ... skipped 'later'
+
+======================================================================
+ERROR: test_error (test_sample.Sample.test_error)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/tmp.gIJ0iYA2AZ/py/test_sample.py", line 16, in test_error
+    raise RuntimeError("boom")
+RuntimeError: boom
+
+======================================================================
+FAIL: test_fail (test_sample.Sample.test_fail)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/tmp.gIJ0iYA2AZ/py/test_sample.py", line 9, in test_fail
+    self.fail("expected")
+AssertionError: expected
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.000s
+
+FAILED (failures=1, errors=1, skipped=1)

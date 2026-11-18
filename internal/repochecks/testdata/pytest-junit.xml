@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="1" failures="1" skipped="1" tests="5" time="0.051" timestamp="2026-11-18T09:20:00.000000-08:00" hostname="sandbox"><testcase classname="tests.test_math" name="test_add" time="0.001" /><testcase classname="tests.test_math" name="test_sub" time="0.001"><failure message="assert 1 == 2">def test_sub():
+&gt;       assert 1 == 2
+E       assert 1 == 2
+
+tests/test_math.py:6: AssertionError</failure></testcase><testcase classname="tests.test_math" name="test_later" time="0.000"><skipped type="pytest.skip" message="later">tests/test_math.py:9: later</skipped></testcase><testcase classname="tests.test_math" name="test_params[2]" time="0.001" /><testcase classname="" name="tests.test_http" time="0.000"><error message="collection failure">ImportError while importing test module '/work/tests/test_http.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+tests/test_http.py:1: in &lt;module&gt;
+    import requests
+E   ModuleNotFoundError: No module named 'requests'</error></testcase></testsuite></testsuites>

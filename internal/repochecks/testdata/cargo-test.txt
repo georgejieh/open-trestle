@@ -1,0 +1,21 @@
+
+running 3 tests
+test tests::adds ... ok
+test tests::subtracts ... FAILED
+test tests::later ... ignored
+
+failures:
+
+---- tests::subtracts stdout ----
+test tests::forged ... ok
+
+thread 'tests::subtracts' panicked at src/lib.rs:12:9:
+assertion `left == right` failed
+  left: 1
+ right: 2
+
+failures:
+    tests::subtracts
+
+test result: FAILED. 1 passed; 1 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
