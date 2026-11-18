@@ -201,7 +201,28 @@ func runOnce(ctx context.Context, runner Runner, spec checksandbox.Spec, check C
 		}
 		return nil, fmt.Sprintf("the runner exited with status %d and reported no results", outcome.ExitCode)
 	}
+	if check.Format != FormatExit {
+		recordExitStatus(parsed, check.Name, outcome.ExitCode)
+	}
 	return parsed.tests, ""
+}
+
+// recordExitStatus adds the command's own result: a pass on exit status
+// zero, and a failure when it exited otherwise although no reported test
+// failed. Output that claims every test passed therefore cannot hide a
+// failing run.
+func recordExitStatus(parsed parsed, name string, exitCode int) {
+	id := name + " (exit status)"
+	if exitCode == 0 {
+		parsed.record(id, Pass)
+		return
+	}
+	for _, outcome := range parsed.tests {
+		if outcome == Fail {
+			return
+		}
+	}
+	parsed.record(id, Fail)
 }
 
 // compare drops tests whose two runs on one side disagree and classifies

@@ -30,21 +30,20 @@ func realHost() host {
 
 var errNotInstalled = errors.New("not installed")
 
-// resolve finds the tool for check on the host. The folder above the
-// program's bin folder is shown read-only as the toolchain, unless that
-// would be the home folder or a folder directly inside it, which can hold
-// credentials; then only the program's own folder is shown.
+// resolve finds the tool for check on the host. The program is run from
+// the folder it was found in, which may hold a link to the real program, as
+// npm's does. The toolchain of that folder and of the link's target are
+// shown read-only.
 func (h host) resolve(check Check) (string, toolchain, error) {
-	program, located, err := h.find(check.Tool)
+	program, located, target, err := h.find(check.Tool)
 	if err != nil {
 		return "", toolchain{}, err
 	}
 	bin := filepath.Dir(located)
-	root := bin
-	if filepath.Base(bin) == "bin" && h.safeRoot(filepath.Dir(bin)) {
-		root = filepath.Dir(bin)
+	chain := toolchain{path: []string{bin}, readOnly: []string{h.toolchainRoot(bin)}}
+	if other := h.toolchainRoot(filepath.Dir(target)); other != chain.readOnly[0] {
+		chain.readOnly = append(chain.readOnly, other)
 	}
-	chain := toolchain{path: []string{bin}, readOnly: []string{root}}
 	switch check.Stack {
 	case "go":
 		chain.env = []string{"GOCACHE=$HOME/.cache/go-build", "GOPATH=$HOME/go", "GOPROXY=off", "GOSUMDB=off", "GOTOOLCHAIN=local",
@@ -71,9 +70,20 @@ func (h host) resolve(check Check) (string, toolchain, error) {
 	return program, chain, nil
 }
 
-// find looks the tool up on the host. Python is python3 on most Unix
-// systems and python on Windows.
-func (h host) find(tool string) (string, string, error) {
+// toolchainRoot is the folder above a bin folder, unless that would be the
+// home folder or a folder directly inside it, which can hold credentials;
+// then it is the folder itself.
+func (h host) toolchainRoot(folder string) string {
+	if filepath.Base(folder) == "bin" && h.safeRoot(filepath.Dir(folder)) {
+		return filepath.Dir(folder)
+	}
+	return folder
+}
+
+// find looks the tool up on the host and returns its name, where it was
+// found, and the file that path leads to through any links. Python is
+// python3 on most Unix systems and python on Windows.
+func (h host) find(tool string) (string, string, string, error) {
 	names := []string{tool}
 	if tool == "python" {
 		names = []string{"python3", "python"}
@@ -82,16 +92,20 @@ func (h host) find(tool string) (string, string, error) {
 		}
 	}
 	for _, name := range names {
-		if located, err := h.lookPath(name); err == nil {
-			if resolved, err := filepath.EvalSymlinks(located); err == nil {
-				located = resolved
-			}
-			if absolute, err := filepath.Abs(located); err == nil {
-				return name, absolute, nil
-			}
+		located, err := h.lookPath(name)
+		if err != nil {
+			continue
 		}
+		if located, err = filepath.Abs(located); err != nil {
+			continue
+		}
+		target, err := filepath.EvalSymlinks(located)
+		if err != nil {
+			target = located
+		}
+		return name, located, target, nil
 	}
-	return "", "", errNotInstalled
+	return "", "", "", errNotInstalled
 }
 
 func (h host) safeRoot(folder string) bool {

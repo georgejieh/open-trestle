@@ -7,6 +7,7 @@ import (
 	"encoding/xml"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // Outcome is one test's result in one run.
@@ -41,6 +42,15 @@ type parsed struct {
 
 func newParsed() parsed { return parsed{tests: map[string]Outcome{}} }
 
+// record keeps the worst outcome a run reports for a test, so a line the
+// test prints itself cannot turn a failure into a pass.
+func (p parsed) record(id string, outcome Outcome) {
+	if previous, ok := p.tests[id]; ok && (previous == Fail || previous == Pass && outcome == Skip) {
+		return
+	}
+	p.tests[id] = outcome
+}
+
 // parseRun reads the results of one run from the output the harness asked
 // the runner for: standard output, or the report file for JUnit.
 func parseRun(format Format, name string, exitCode int, stdout, stderr, report []byte) parsed {
@@ -61,7 +71,7 @@ func parseRun(format Format, name string, exitCode int, stdout, stderr, report [
 		if exitCode != 0 {
 			outcome = Fail
 		}
-		result.tests[name] = outcome
+		result.record(name, outcome)
 	}
 	result.missing = append(result.missing, missingDependencies(stdout, stderr)...)
 	return result
@@ -97,14 +107,14 @@ func parseGoJSON(stdout []byte) parsed {
 			continue
 		}
 		if event.Test != "" {
-			result.tests[event.Package+"."+event.Test] = outcome
+			result.record(event.Package+"."+event.Test, outcome)
 			if outcome == Fail {
 				failedTests[event.Package] = true
 			}
 			continue
 		}
 		if outcome == Fail && !failedTests[event.Package] {
-			result.tests[event.Package] = Fail
+			result.record(event.Package, Fail)
 		}
 	}
 	return result
@@ -152,13 +162,13 @@ func parseJUnit(report []byte) parsed {
 				result.missing = append(result.missing, missing...)
 				continue
 			}
-			result.tests[id] = Fail
+			result.record(id, Fail)
 		case testCase.Failure != nil:
-			result.tests[id] = Fail
+			result.record(id, Fail)
 		case testCase.Skipped != nil:
-			result.tests[id] = Skip
+			result.record(id, Skip)
 		default:
-			result.tests[id] = Pass
+			result.record(id, Pass)
 		}
 	}
 }
@@ -195,7 +205,7 @@ func parseTAP(stdout []byte) parsed {
 		if upper := strings.ToUpper(directive); strings.HasPrefix(upper, "SKIP") || strings.HasPrefix(upper, "TODO") {
 			outcome = Skip
 		}
-		result.tests[name] = outcome
+		result.record(name, outcome)
 		stack = stack[:min(level, len(stack))]
 	}
 	return result
@@ -218,11 +228,11 @@ func parseUnittest(stderr []byte) parsed {
 		}
 		switch match[3] {
 		case "ok", "expected failure":
-			result.tests[id] = Pass
+			result.record(id, Pass)
 		case "skipped":
-			result.tests[id] = Skip
+			result.record(id, Skip)
 		default:
-			result.tests[id] = Fail
+			result.record(id, Fail)
 		}
 	}
 	return result
@@ -249,7 +259,7 @@ func parseLibtest(stdout []byte) parsed {
 		if !results || match == nil {
 			continue
 		}
-		result.tests[match[1]] = map[string]Outcome{"ok": Pass, "FAILED": Fail, "ignored": Skip}[match[2]]
+		result.record(match[1], map[string]Outcome{"ok": Pass, "FAILED": Fail, "ignored": Skip}[match[2]])
 	}
 	return result
 }
@@ -260,10 +270,21 @@ var missingDependencyPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`no required module provides package (\S+?);`),
 	regexp.MustCompile(`missing go\.sum entry for module providing package (\S+?)[;\s]`),
 	regexp.MustCompile(`(\S+?)@\S+: module lookup disabled by GOPROXY=off`),
+	regexp.MustCompile(`replacement directory (\S+) does not exist`),
 	regexp.MustCompile(`ModuleNotFoundError: No module named '([^']+)'`),
 	regexp.MustCompile(`No module named ([\w.]+)`),
 	regexp.MustCompile(`Cannot find (?:module|package) '([^']+)'`),
 	regexp.MustCompile(`no matching package named ` + "`" + `([^` + "`" + `]+)` + "`"),
+}
+
+// printable reports whether text has no control or format character.
+func printable(text string) bool {
+	for _, character := range text {
+		if unicode.IsControl(character) || unicode.In(character, unicode.Cf) {
+			return false
+		}
+	}
+	return true
 }
 
 func missingDependencies(outputs ...[]byte) []string {
@@ -273,7 +294,7 @@ func missingDependencies(outputs ...[]byte) []string {
 		for _, pattern := range missingDependencyPatterns {
 			for _, match := range pattern.FindAllSubmatch(output, 8) {
 				name := strings.Trim(string(match[1]), "'\"`")
-				if name != "" && !seen[name] {
+				if name != "" && len(name) <= 200 && printable(name) && !seen[name] {
 					seen[name] = true
 					names = append(names, name)
 				}

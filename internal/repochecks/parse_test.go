@@ -86,20 +86,32 @@ func TestParseLibtestIgnoresCapturedOutput(t *testing.T) {
 	})
 }
 
+func TestParseKeepsAFailureThatLaterOutputClaimsPassed(t *testing.T) {
+	stderr := []byte("test_a (__main__.T.test_a) ... FAIL\ntest_b (__main__.T.test_b) ... ok\ntest_a (__main__.T.test_a) ... ok\n")
+	requireTests(t, parseRun(FormatUnittest, "unittest", 1, nil, stderr, nil), map[string]Outcome{"__main__.T.test_a": Fail, "__main__.T.test_b": Pass})
+}
+
 func TestParseExitStatus(t *testing.T) {
 	requireTests(t, parseRun(FormatExit, "go vet .", 1, nil, nil, nil), map[string]Outcome{"go vet .": Fail})
 	requireTests(t, parseRun(FormatExit, "go vet .", 0, nil, nil, nil), map[string]Outcome{"go vet .": Pass})
 }
 
+func TestMissingDependencyNamesAreText(t *testing.T) {
+	if got := missingDependencies([]byte("ModuleNotFoundError: No module named '\x1b]52;c;aGk=\x07'")); len(got) != 0 {
+		t.Fatalf("a name with terminal controls was kept: %q", got)
+	}
+}
+
 func TestMissingDependencies(t *testing.T) {
 	for output, want := range map[string]string{
-		"x.go:3:8: no required module provides package github.com/acme/lib; to add it:":                "github.com/acme/lib",
-		"go: github.com/acme/lib@v1.2.0: module lookup disabled by GOPROXY=off":                        "github.com/acme/lib",
-		"missing go.sum entry for module providing package golang.org/x/text (imported by m); to add:": "golang.org/x/text",
-		"ModuleNotFoundError: No module named 'yaml'":                                                  "yaml",
-		"/usr/bin/python3: No module named pytest":                                                     "pytest",
-		"Error: Cannot find module 'left-pad'":                                                         "left-pad",
-		"error: no matching package named `serde` found":                                               "serde",
+		"x.go:3:8: no required module provides package github.com/acme/lib; to add it:":                                                 "github.com/acme/lib",
+		"go: github.com/acme/lib@v1.2.0: module lookup disabled by GOPROXY=off":                                                         "github.com/acme/lib",
+		"missing go.sum entry for module providing package golang.org/x/text (imported by m); to add:":                                  "golang.org/x/text",
+		"ModuleNotFoundError: No module named 'yaml'":                                                                                   "yaml",
+		"/usr/bin/python3: No module named pytest":                                                                                      "pytest",
+		"Error: Cannot find module 'left-pad'":                                                                                          "left-pad",
+		"error: no matching package named `serde` found":                                                                                "serde",
+		"go: example.com/m@v0.0.0 (replaced by ../sibling): reading ../sibling/go.mod: replacement directory ../sibling does not exist": "../sibling",
 	} {
 		if got := missingDependencies([]byte(output)); !slices.Equal(got, []string{want}) {
 			t.Errorf("%q: got %v, want %s", output, got, want)

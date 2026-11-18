@@ -105,6 +105,19 @@ func TestRunFindsRegressionsAndDropsFlakyTests(t *testing.T) {
 	}
 }
 
+func TestRunTreatsAFailingExitAsARegressionWhenEveryTestClaimsToPass(t *testing.T) {
+	report := runFake(t, func(side string, _ int, spec checksandbox.Spec) (checksandbox.Result, error) {
+		result := checksandbox.Result{Stdout: goEvents(map[string]string{"TestA": "pass"})}
+		if side == "head" && spec.Args[1] == "test" {
+			result.ExitCode = 1
+		}
+		return result, nil
+	})
+	if got := report.Results[0].Regressions; !slices.Equal(got, []string{"go test ./a (exit status)"}) {
+		t.Fatalf("regressions %v", got)
+	}
+}
+
 func TestRunTreatsAHeadBuildFailureAsARegression(t *testing.T) {
 	report := runFake(t, func(side string, _ int, spec checksandbox.Spec) (checksandbox.Result, error) {
 		if side == "base" || spec.Args[1] == "vet" {

@@ -3,6 +3,7 @@ package repochecks
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"testing"
 )
@@ -94,10 +95,18 @@ func TestDetectNode(t *testing.T) {
 	}
 }
 
-func TestDetectNodeAddsTAPReporter(t *testing.T) {
-	checks, _ := Detect(writeTree(t, map[string]string{"package.json": `{"scripts":{"test":"node --test"}}`}), Scope{})
-	if len(checks) != 1 || !slices.Equal(checks[0].Args, []string{"--test", "--test-reporter=tap", "--test-reporter-destination=stdout"}) {
+func TestDetectNodeAddsTAPReporterBeforeTestPaths(t *testing.T) {
+	checks, _ := Detect(writeTree(t, map[string]string{"package.json": `{"scripts":{"test":"node --test test/ lib/a.test.js"}}`}), Scope{})
+	if len(checks) != 1 || !slices.Equal(checks[0].Args, []string{"--test", "--test-reporter=tap", "--test-reporter-destination=stdout", "test/", "lib/a.test.js"}) {
 		t.Fatalf("got %+v", checks)
+	}
+}
+
+func TestDetectGoRunsTheModuleWhenItsDependenciesChange(t *testing.T) {
+	root := writeTree(t, map[string]string{"go.mod": "module m\n", "go.sum": "", "a/a.go": "package a"})
+	checks, _ := Detect(root, Scope{Changed: []string{"go.sum", "a/a.go"}})
+	if !slices.Equal(names(checks), []string{"go test ./...", "go vet ./..."}) {
+		t.Fatalf("got %q", names(checks))
 	}
 }
 
@@ -121,6 +130,35 @@ func TestDetectRust(t *testing.T) {
 	checks, _ := Detect(writeTree(t, map[string]string{"Cargo.toml": "[package]\n", "src/lib.rs": ""}), Scope{Changed: []string{"src/lib.rs"}})
 	if !slices.Equal(names(checks), []string{"cargo test"}) || !slices.Equal(checks[0].Args, []string{"test", "--offline"}) {
 		t.Fatalf("got %+v", checks)
+	}
+}
+
+func TestResolveRunsALinkedLauncherFromItsOwnFolder(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symbolic links need a privilege on Windows")
+	}
+	root := t.TempDir()
+	target := filepath.Join(root, "node", "lib", "node_modules", "npm", "bin", "npm-cli.js")
+	launcher := filepath.Join(root, "node", "bin", "npm")
+	for _, folder := range []string{filepath.Dir(target), filepath.Dir(launcher)} {
+		if err := os.MkdirAll(folder, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(target, nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../lib/node_modules/npm/bin/npm-cli.js", launcher); err != nil {
+		t.Fatal(err)
+	}
+	machine := host{home: t.TempDir(), getenv: func(string) string { return "" }, lookPath: func(string) (string, error) { return launcher, nil }}
+	program, chain, err := machine.resolve(Check{Tool: "npm", Stack: "node"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedRoot, _ := filepath.EvalSymlinks(filepath.Join(root, "node", "lib", "node_modules", "npm"))
+	if program != "npm" || !slices.Equal(chain.path, []string{filepath.Dir(launcher)}) || !slices.Equal(chain.readOnly, []string{filepath.Join(root, "node"), resolvedRoot}) {
+		t.Fatalf("program %s, path %v, read-only %v", program, chain.path, chain.readOnly)
 	}
 }
 

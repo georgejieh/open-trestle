@@ -105,6 +105,12 @@ func detectGo(files []string, scope Scope) []Check {
 	sort.Slice(modules, func(i, j int) bool { return len(modules[i]) > len(modules[j]) })
 	targets := map[string][]string{}
 	for _, file := range scope.paths() {
+		if base := path.Base(file); base == "go.mod" || base == "go.sum" || base == "go.work" || base == "go.work.sum" {
+			if slices.Contains(modules, path.Dir(file)) {
+				targets[path.Dir(file)] = append(targets[path.Dir(file)], "./...")
+			}
+			continue
+		}
 		if !strings.HasSuffix(file, ".go") || !packages[path.Dir(file)] {
 			continue
 		}
@@ -123,6 +129,9 @@ func detectGo(files []string, scope Scope) []Check {
 		}
 		sort.Strings(patterns)
 		patterns = slices.Compact(patterns)
+		if slices.Contains(patterns, "./...") {
+			patterns = []string{"./..."}
+		}
 		checks = append(checks,
 			Check{Name: "go test " + strings.Join(patterns, " "), Stack: "go", Tool: "go", Dir: module, Args: append([]string{"test", "-json", "-count=1"}, patterns...), Format: FormatGoJSON},
 			Check{Name: "go vet " + strings.Join(patterns, " "), Stack: "go", Tool: "go", Dir: module, Args: append([]string{"vet"}, patterns...), Format: FormatExit},
@@ -189,7 +198,8 @@ func detectNode(files []string, read func(string) []byte, scope Scope) []Check {
 	}
 	check := Check{Name: manager + " test", Stack: "node", Tool: manager, Dir: ".", Args: []string{"test"}, Format: FormatExit}
 	if fields := strings.Fields(script); len(fields) >= 2 && fields[0] == "node" && fields[1] == "--test" && !shellSyntax.MatchString(script) {
-		check = Check{Name: script, Stack: "node", Tool: "node", Dir: ".", Args: append(fields[1:], "--test-reporter=tap", "--test-reporter-destination=stdout"), Format: FormatTAP}
+		args := append([]string{"--test", "--test-reporter=tap", "--test-reporter-destination=stdout"}, fields[2:]...)
+		check = Check{Name: script, Stack: "node", Tool: "node", Dir: ".", Args: args, Format: FormatTAP}
 	}
 	if len(manifest.Dependencies)+len(manifest.DevDependencies) > 0 {
 		check.Missing = "missing dependency: the package's dependencies are not installed, and checks run offline and never install packages"
@@ -220,7 +230,7 @@ func detectPython(files []string, read func(string) []byte, scope Scope) []Check
 		return nil
 	}
 	if !pytest {
-		return []Check{{Name: "python -m unittest", Stack: "python", Tool: "python", Dir: ".", Args: []string{"-m", "unittest", "discover", "-v"}, Format: FormatUnittest}}
+		return []Check{{Name: "python -m unittest", Stack: "python", Tool: "python", Dir: ".", Args: []string{"-m", "unittest", "discover", "-v", "-b"}, Format: FormatUnittest}}
 	}
 	var selected []string
 	if !scope.whole() {
