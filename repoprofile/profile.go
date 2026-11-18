@@ -1,7 +1,7 @@
 // Package repoprofile describes a repository from its snapshot and its
 // configuration files: its languages, how it tests itself and which checks
-// its own CI, task runner, hooks and configuration enforce. It reads text as
-// data and executes nothing.
+// its own CI enforces. It reads only the files and the snapshot its caller
+// passes, as data, and executes nothing.
 package repoprofile
 
 import (
@@ -33,18 +33,18 @@ func Detect(files []repoindex.FileEntry, imports func(path string) []string, con
 	return Profile{Languages: languageShares(files), Tests: detectTests(files, imports), Checks: detectChecks(contents)}
 }
 
-// Classes returns the distinct check classes, sorted.
+// Classes returns the distinct classes of all the checks found, enforced or
+// not, sorted. They are information.
 func (p Profile) Classes() []string { return p.classes(false) }
 
-// EnforcedClasses returns the distinct classes of the checks that CI, a task
-// runner or a hook runs, sorted: a configuration file alone enforces
-// nothing.
+// EnforcedClasses returns the distinct classes of the checks that CI runs on
+// changes, sorted.
 func (p Profile) EnforcedClasses() []string { return p.classes(true) }
 
-func (p Profile) classes(enforced bool) []string {
+func (p Profile) classes(enforcedOnly bool) []string {
 	classes := []string{}
 	for _, c := range p.Checks {
-		if enforced && c.Source == SourceConfig {
+		if enforcedOnly && !c.Enforced {
 			continue
 		}
 		if !slices.Contains(classes, c.Class) {

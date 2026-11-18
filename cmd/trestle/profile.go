@@ -15,11 +15,11 @@ import (
 
 // `trestle profile` describes the repository of the checkout in the current
 // directory: its languages, test frameworks and layout, and the checks its
-// own CI, task runner, hooks and configuration enforce. It reads the commit
+// own CI enforces, apart from those it merely configures. It reads the commit
 // from the Git object store through the repository index.
 
 func writeProfileUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: trestle profile [--commit REF] [--directory PATH] [--json]   (languages, tests and the checks the repository enforces)")
+	fmt.Fprintln(w, "usage: trestle profile [--commit REF] [--directory PATH] [--json]   (languages, tests and the checks the repository's CI enforces)")
 }
 
 func runProfile(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -114,19 +114,46 @@ func writeProfileText(w io.Writer, p repoprofile.Profile) {
 	}
 	fmt.Fprintf(w, "Languages: %s\n", orNone(languages))
 	fmt.Fprintf(w, "Tests: %d files; frameworks: %s; layout: %s\n", p.Tests.Files, orNone(p.Tests.Frameworks), orNone(p.Tests.Layouts))
-	if len(p.Checks) == 0 {
-		fmt.Fprintln(w, "Checks the repository enforces: none found")
-		return
-	}
-	fmt.Fprintln(w, "Checks the repository enforces:")
-	for _, class := range p.Classes() {
-		var tools []string
-		for _, c := range p.Checks {
-			if label := c.Tool + " (" + c.Source + ")"; c.Class == class && !slices.Contains(tools, label) {
-				tools = append(tools, label)
-			}
+	var enforced, configured []repoprofile.Check
+	enforcedTools := map[string]bool{}
+	for _, c := range p.Checks {
+		if c.Enforced {
+			enforced = append(enforced, c)
+			enforcedTools[c.Tool] = true
 		}
-		fmt.Fprintf(w, "  %s: %s\n", class, strings.Join(tools, ", "))
+	}
+	for _, c := range p.Checks {
+		if !c.Enforced && !enforcedTools[c.Tool] {
+			configured = append(configured, c)
+		}
+	}
+	if len(enforced) == 0 {
+		fmt.Fprintln(w, "Checks the repository's CI enforces: none found")
+	} else {
+		fmt.Fprintln(w, "Checks the repository's CI enforces:")
+		writeChecksByClass(w, enforced)
+	}
+	if len(configured) > 0 {
+		fmt.Fprintln(w, "Also configured (not run by CI on changes):")
+		writeChecksByClass(w, configured)
+	}
+}
+
+// writeChecksByClass prints the tools of checks, which are sorted by class,
+// one line per class.
+func writeChecksByClass(w io.Writer, checks []repoprofile.Check) {
+	var classes []string
+	tools := map[string][]string{}
+	for _, c := range checks {
+		if _, ok := tools[c.Class]; !ok {
+			classes = append(classes, c.Class)
+		}
+		if label := c.Tool + " (" + c.Source + ")"; !slices.Contains(tools[c.Class], label) {
+			tools[c.Class] = append(tools[c.Class], label)
+		}
+	}
+	for _, class := range classes {
+		fmt.Fprintf(w, "  %s: %s\n", class, strings.Join(tools[class], ", "))
 	}
 }
 

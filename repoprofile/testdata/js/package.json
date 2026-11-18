@@ -7,5 +7,9 @@
     "test": "vitest run",
     "install-tools": "npm install jest",
     "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "jest": "^29.0.0",
+    "prettier": "^3.0.0"
   }
 }

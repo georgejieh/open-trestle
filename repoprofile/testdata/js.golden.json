@@ -3,36 +3,42 @@
     "class": "formatting",
     "tool": "prettier",
     "source": "task_runner",
-    "path": "package.json"
+    "path": "package.json",
+    "enforced": false
   },
   {
     "class": "lint",
     "tool": "eslint",
     "source": "pre_commit",
-    "path": ".husky/pre-commit"
+    "path": ".husky/pre-commit",
+    "enforced": false
   },
   {
     "class": "lint",
     "tool": "eslint",
     "source": "task_runner",
-    "path": "package.json"
+    "path": "package.json",
+    "enforced": true
   },
   {
     "class": "type_check",
     "tool": "tsc",
     "source": "config",
-    "path": "tsconfig.json"
+    "path": "tsconfig.json",
+    "enforced": false
   },
   {
     "class": "type_check",
     "tool": "tsc",
     "source": "task_runner",
-    "path": "package.json"
+    "path": "package.json",
+    "enforced": true
   },
   {
     "class": "unit_tests",
     "tool": "vitest",
     "source": "task_runner",
-    "path": "package.json"
+    "path": "package.json",
+    "enforced": true
   }
 ]

@@ -15,9 +15,11 @@ const (
 	ClassDependencyReview  = "dependency_review"
 )
 
-// Check sources.
+// Check sources: the kind of file a check was read from. Only a check that
+// CI runs on changes is enforced, whatever its source.
 const (
-	SourceCI         = "ci"
+	SourceCI         = "ci"       // a GitHub Actions workflow
+	SourceCIOther    = "ci_other" // another CI system, read as information
 	SourceTaskRunner = "task_runner"
 	SourcePreCommit  = "pre_commit"
 	SourceConfig     = "config"
@@ -60,10 +62,9 @@ var toolClass = map[string]string{
 	"golangci-lint:gofmt": ClassFormatting, "golangci-lint:goimports": ClassFormatting,
 }
 
-// commandRule matches one command: all words occur in it in order, and when
-// flags is set one of them is among its arguments. A word with a slash names
-// an action or a path and matches as a prefix, so "github/codeql-action"
-// covers its sub-actions and versions.
+// commandRule matches a command: its program is words[0], the following
+// words are its next non-flag arguments in order, and when flags is set one
+// of them is among its arguments.
 type commandRule struct {
 	words []string
 	flags []string
@@ -78,13 +79,9 @@ var commandRules = []commandRule{
 	{[]string{"gofmt"}, []string{"-l", "-d"}, "gofmt"},
 	{[]string{"goimports"}, []string{"-l", "-d"}, "goimports"},
 	{[]string{"golangci-lint", "run"}, nil, "golangci-lint"},
-	{[]string{"golangci/golangci-lint-action"}, nil, "golangci-lint"},
 	{[]string{"staticcheck"}, nil, "staticcheck"},
-	{[]string{"dominikh/staticcheck-action"}, nil, "staticcheck"},
 	{[]string{"gosec"}, nil, "gosec"},
-	{[]string{"securego/gosec"}, nil, "gosec"},
 	{[]string{"govulncheck"}, nil, "govulncheck"},
-	{[]string{"golang/govulncheck-action"}, nil, "govulncheck"},
 
 	{[]string{"eslint"}, nil, "eslint"},
 	{[]string{"prettier"}, []string{"--check", "-c", "--list-different", "-l"}, "prettier"},
@@ -99,7 +96,7 @@ var commandRules = []commandRule{
 	{[]string{"mypy"}, nil, "mypy"},
 	{[]string{"pyright"}, nil, "pyright"},
 	{[]string{"pytest"}, nil, "pytest"},
-	{nil, []string{"--cov-fail-under"}, "pytest-cov"},
+	{[]string{"pytest"}, []string{"--cov-fail-under"}, "pytest-cov"},
 	{[]string{"coverage", "report"}, []string{"--fail-under"}, "coverage-py"},
 
 	{[]string{"cargo", "fmt"}, []string{"--check"}, "rustfmt"},
@@ -119,15 +116,24 @@ var commandRules = []commandRule{
 
 	{[]string{"shellcheck"}, nil, "shellcheck"},
 	{[]string{"semgrep"}, nil, "semgrep"},
-	{[]string{"returntocorp/semgrep-action"}, nil, "semgrep"},
-	{[]string{"github/codeql-action"}, nil, "codeql"},
 	{[]string{"gitleaks"}, nil, "gitleaks"},
-	{[]string{"gitleaks/gitleaks-action"}, nil, "gitleaks"},
 	{[]string{"trufflehog"}, nil, "trufflehog"},
-	{[]string{"trufflesecurity/trufflehog"}, nil, "trufflehog"},
 	{[]string{"osv-scanner"}, nil, "osv-scanner"},
-	{[]string{"google/osv-scanner-action"}, nil, "osv-scanner"},
-	{[]string{"actions/dependency-review-action"}, nil, "dependency-review"},
+}
+
+// actionRules name the GitHub Actions that run a check. An action matches
+// by name, ignoring its version, and a prefix also covers its sub-actions.
+var actionRules = []struct{ prefix, tool string }{
+	{"golangci/golangci-lint-action", "golangci-lint"},
+	{"dominikh/staticcheck-action", "staticcheck"},
+	{"securego/gosec", "gosec"},
+	{"golang/govulncheck-action", "govulncheck"},
+	{"returntocorp/semgrep-action", "semgrep"},
+	{"github/codeql-action/analyze", "codeql"},
+	{"gitleaks/gitleaks-action", "gitleaks"},
+	{"trufflesecurity/trufflehog", "trufflehog"},
+	{"google/osv-scanner-action", "osv-scanner"},
+	{"actions/dependency-review-action", "dependency-review"},
 }
 
 // hookTools maps pre-commit hook ids to tools.
@@ -147,8 +153,9 @@ var configTools = map[string]string{
 	"clippy.toml": "clippy", ".clippy.toml": "clippy", "rustfmt.toml": "rustfmt", ".rustfmt.toml": "rustfmt",
 }
 
-// pyprojectSections maps the start of a pyproject.toml table to its tool.
-var pyprojectSections = map[string]string{
-	"[tool.ruff": "ruff", "[tool.mypy": "mypy", "[tool.black": "black",
-	"[tool.pytest": "pytest", "[tool.pyright": "pyright",
+// pyprojectTables maps a pyproject.toml tool table, with its sub-tables, to
+// the tool it configures.
+var pyprojectTables = map[string]string{
+	"tool.ruff": "ruff", "tool.mypy": "mypy", "tool.black": "black",
+	"tool.pytest": "pytest", "tool.pyright": "pyright",
 }

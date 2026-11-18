@@ -14,13 +14,13 @@ const (
 
 // rootSources maps the root-level files that are read as text to their source.
 var rootSources = map[string]string{
-	".gitlab-ci.yml": SourceCI, "azure-pipelines.yml": SourceCI, "Jenkinsfile": SourceCI,
+	".gitlab-ci.yml": SourceCIOther, "azure-pipelines.yml": SourceCIOther, "Jenkinsfile": SourceCIOther,
 	"Makefile": SourceTaskRunner, "makefile": SourceTaskRunner, "GNUmakefile": SourceTaskRunner,
 	"justfile": SourceTaskRunner, "Justfile": SourceTaskRunner, "Taskfile.yml": SourceTaskRunner,
 	"Taskfile.yaml": SourceTaskRunner, "package.json": SourceTaskRunner, "tox.ini": SourceTaskRunner,
-	"noxfile.py": SourceTaskRunner, "pyproject.toml": SourceTaskRunner,
+	"noxfile.py":              SourceTaskRunner,
 	".pre-commit-config.yaml": SourcePreCommit, "lefthook.yml": SourcePreCommit,
-	"tsconfig.json": SourceConfig,
+	"tsconfig.json": SourceConfig, "pyproject.toml": SourceConfig,
 }
 
 // sourceOf returns how a repository path is read, or "" when it is not read.
@@ -40,24 +40,15 @@ func sourceOf(p string) string {
 		}
 	case ".circleci/":
 		if base == "config.yml" {
-			return SourceCI
+			return SourceCIOther
 		}
 	case ".buildkite/":
 		if base == "pipeline.yml" {
-			return SourceCI
+			return SourceCIOther
 		}
 	case ".husky/":
 		if !strings.HasPrefix(base, "_") {
 			return SourcePreCommit
-		}
-	}
-	return ""
-}
-
-func configTool(base string) string {
-	for prefix, tool := range configTools {
-		if strings.HasPrefix(base, prefix) {
-			return tool
 		}
 	}
 	return ""

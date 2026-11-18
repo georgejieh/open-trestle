@@ -113,14 +113,31 @@ func TestCommandRules(t *testing.T) {
 		{"./node_modules/.bin/eslint .", []string{"eslint"}},
 		{"./mvnw -B verify", []string{"junit"}},
 		{"# eslint .", nil},
-		{"uses: github/codeql-action/init@v3", []string{"codeql"}},
-		{"uses: gitleaks/gitleaks-action@v2", []string{"gitleaks"}},
 		{"coverage report --fail-under=90", []string{"coverage-py"}},
 		{"prettier --write . # --check", nil},
+		{"echo govulncheck", nil},
+		{"echo \"x; govulncheck\"", nil},
+		{"echo 'a && govulncheck'", nil},
+		{"echo $(govulncheck ./...)", []string{"govulncheck"}},
+		{"echo $(date) govulncheck", nil},
+		{"GOFLAGS=-mod=mod sudo -E env CI=1 time govulncheck ./...", []string{"govulncheck"}},
+		{"cd x && go vet ./... | tee out", []string{"go-vet"}},
+		{"govulncheck ./... || true", nil},
+		{"go vet ./... && go test ./... || exit 0", nil},
+		{"go vet ./... || echo failed", []string{"go-vet"}},
+		{"go help test", nil},
+		{"git commit -m 'govulncheck'", nil},
+		{"go vet \\\n  ./...", []string{"go-vet"}},
+		{"python -m pytest --cov-fail-under=85", []string{"pytest", "pytest-cov"}},
+		{"npx --yes eslint .", []string{"eslint"}},
+		{"uv run ruff check .", []string{"ruff"}},
+		{"pip install ruff", nil},
 	}
 	for _, tc := range tests {
 		got := []string{}
-		scanCommands(tc.line, SourceCI, func(_, tool string) { got = append(got, tool) })
+		for _, words := range shellCommands(tc.line) {
+			got = append(got, commandTools(commandWords(words))...)
+		}
 		slices.Sort(got)
 		if !reflect.DeepEqual(got, orEmpty(tc.want)) {
 			t.Errorf("%q: got %v, want %v", tc.line, got, tc.want)
@@ -171,9 +188,15 @@ func TestLanguagesAndTests(t *testing.T) {
 }
 
 func TestClasses(t *testing.T) {
-	p := Profile{Checks: []Check{{Class: "lint"}, {Class: "formatting"}, {Class: "lint"}}}
+	p := Profile{Checks: []Check{{Class: "lint", Enforced: true}, {Class: "formatting"}, {Class: "lint"}}}
 	if got := p.Classes(); !reflect.DeepEqual(got, []string{"formatting", "lint"}) {
 		t.Errorf("classes = %v", got)
+	}
+	if got := p.EnforcedClasses(); !reflect.DeepEqual(got, []string{"lint"}) {
+		t.Errorf("enforced classes = %v", got)
+	}
+	if got := (Profile{}).EnforcedClasses(); got == nil || len(got) != 0 {
+		t.Errorf("enforced classes of nothing = %#v", got)
 	}
 }
 
@@ -203,19 +226,28 @@ func TestBounds(t *testing.T) {
 		t.Errorf("ConfigPaths returned %d paths", len(paths))
 	}
 
+	workflow := func(run string) []byte {
+		return []byte("on: push\njobs:\n  t:\n    steps:\n      - run: " + run + "\n")
+	}
 	contents := map[string][]byte{
-		"Makefile":                  []byte(strings.Repeat("# x\n", 10) + "\tgo vet ./...\n"),
-		".github/workflows/big.yml": append([]byte(strings.Repeat(" ", MaxFileBytes)), "run: go vet ./...\n"...),
-		".github/workflows/bin.yml": append([]byte("run: go vet ./...\n"), 0, 1),
-		"tox.ini":                   []byte(strings.Repeat("\n", maxLines) + "pytest\n"),
+		"Makefile":                  []byte(strings.Repeat("# x\n", 10) + "test:\n\tgo vet ./...\n"),
+		".github/workflows/big.yml": append(workflow("go vet ./..."), strings.Repeat(" ", MaxFileBytes)...),
+		".github/workflows/bin.yml": append(workflow("go vet ./..."), 0, 1),
+		"tox.ini":                   []byte(strings.Repeat("\n", maxLines) + "[testenv]\ncommands = pytest\n"),
 	}
 	got := Detect(nil, nil, contents).Checks
-	if len(got) != 1 || got[0].Tool != "go-vet" || got[0].Path != "Makefile" {
+	if len(got) != 1 || got[0].Tool != "go-vet" || got[0].Path != "Makefile" || got[0].Enforced {
 		t.Errorf("checks = %v", got)
 	}
 
-	long := "run: " + strings.Repeat("a ", maxLineBytes) + "go vet ./...\n"
-	if got := Detect(nil, nil, map[string][]byte{"Makefile": []byte(long)}).Checks; len(got) != 0 {
-		t.Errorf("a line past the bound was read: %v", got)
+	for name, run := range map[string][]byte{
+		"a line past the bound": workflow(strings.Repeat("a ", maxLineBytes) + "; go vet ./..."),
+		"deep block nesting":    []byte("on: push\njobs:\n  t:\n    steps:\n" + strings.Repeat("- ", 4000) + "x\n"),
+		"deep flow nesting":     []byte("on: " + strings.Repeat("[", 4000) + strings.Repeat("]", 4000) + "\n"),
+		"many commands":         workflow(strings.Repeat("echo a; ", 5000)),
+	} {
+		if got := Detect(nil, nil, map[string][]byte{".github/workflows/w.yml": run}).Checks; len(got) != 0 {
+			t.Errorf("%s: %v", name, got)
+		}
 	}
 }
