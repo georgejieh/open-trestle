@@ -646,7 +646,9 @@ A finding on removed base lines, in an added file, or in a file that the diff ca
 
 Pre-existing findings get their own section in the text and Markdown output, and they never block CI (see [advisory results](#advisory-results)).
 
-The command derives the class from the change model and the context of the run itself, which a result does not carry. `localreview.ParseCompletedResult`, which the model-result evaluation import uses, therefore treats a recorded `pre_existing` list as advisory. It checks that the list names distinct diagnostic findings in order, and it recomputes `rank` from the findings of the result. The list cannot relax the `ci_disposition`, and the command refuses a result whose disposition the class relaxed. No exit policy applies the list of a parsed result.
+The command derives the class from the change model and the context of the run itself, which a result does not carry. `localreview.ParseCompletedResult` therefore treats a recorded `pre_existing` list as advisory. It checks that the list names distinct diagnostic findings in order, and it recomputes `rank` from the findings of the result. The list cannot relax the `ci_disposition`, and it refuses a result whose disposition the class relaxed. No exit policy applies the list of a parsed result.
+
+The model-result evaluation import reads a result with `localreview.ObserveCompletedResult` instead. It accepts the same results, and also a version 6 result whose disposition its recorded `pre_existing` list relaxed: `status` `findings`, `ci_disposition` `inconclusive`, and every medium, high or critical finding listed as pre-existing. It returns only the metadata that evaluation records, so the relaxation is observed and never trusted for a gate.
 
 ### Advisory results
 
@@ -665,7 +667,7 @@ SARIF keeps the level of each result (`note` for low), and `trestleCiDisposition
 
 A review set follows the same rule over its merged findings. A merged finding is pre-existing only when every contributor is, and it has the severity of its representative. A set whose merged findings are all low severity or pre-existing has the status `findings` and the disposition `inconclusive`. An incomplete set never demotes an introduced high or critical finding.
 
-`localreview.ParseCompletedResult` derives the disposition again from the severities that a result records, and it refuses any other disposition. A version 6 result whose verified findings are all low severity must be `inconclusive`. A version 6 result with a medium, high or critical finding must be `blocked`, whatever its `pre_existing` list says, because that class cannot be derived again. Results of versions 1, 4 and 5 must carry the readiness disposition (`blocked` when a finding was verified). A relaxation that a result asserts about itself is not imported.
+`localreview.ParseCompletedResult` derives the disposition again from the severities that a result records, and it refuses any other disposition. A version 6 result whose verified findings are all low severity must be `inconclusive`. A version 6 result with a medium, high or critical finding must be `blocked`, whatever its `pre_existing` list says, because that class cannot be derived again. Results of versions 1, 4 and 5 must carry the readiness disposition (`blocked` when a finding was verified). A relaxation that a result asserts about itself is not trusted: only `localreview.ObserveCompletedResult` reads one, as described under [pre-existing findings](#pre-existing-findings).
 
 ### Walkthrough
 
