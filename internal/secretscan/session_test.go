@@ -1160,7 +1160,7 @@ func TestPrepareCachePrewarmsOncePerHelper(t *testing.T) {
 func TestCheckHelperVerifiesWithoutRunning(t *testing.T) {
 	helper := newSessionTestHelper(t)
 	writeHelperStartFile(t, helper.cache, "pid")
-	if err := checkHelper(helper.config()); err != nil {
+	if err := checkHelper(helper.path, helper.digest); err != nil {
 		t.Fatalf("installed helper refused: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(helper.cache, "pid")); !errors.Is(err, fs.ErrNotExist) {
@@ -1171,7 +1171,7 @@ func TestCheckHelperVerifiesWithoutRunning(t *testing.T) {
 	missing := helper.config()
 	missing.HelperPath = filepath.Join(helper.directory, "missing")
 	for name, config := range map[string]SessionConfig{"wrong digest": wrong, "missing": missing} {
-		if err := checkHelper(config); !errors.Is(err, ErrHelperNotInstalled) {
+		if err := checkHelper(config.HelperPath, config.HelperSHA256); !errors.Is(err, ErrHelperNotInstalled) {
 			t.Fatalf("%s: %v", name, err)
 		}
 	}

@@ -8,22 +8,40 @@ import (
 	"github.com/georgejieh/open-trestle/internal/secretscan"
 )
 
-// daemonSecretScanner returns the scanner of the installed scan helper. The
-// daemon has no review lifetime to tie a helper session to, so each
-// sanitization runs in a session of its own. The cache is prepared here, with
-// a notice on first use. A build that pins no helper returns nil, and every
-// request that needs a scan is then refused; an installed helper that fails
-// to prepare is reported and still returned, so that its scans fail closed.
-func daemonSecretScanner(ctx context.Context, stderr io.Writer) secretscan.Sanitizer {
-	config, err := secretscan.InstalledConfig()
-	if err != nil {
+// daemonScanner is the installed scan helper of the daemon. The daemon has
+// no review lifetime to tie a helper session to, so each sanitization runs in
+// a session of its own. A daemon without a usable helper refuses every
+// request that needs a scan.
+type daemonScanner struct {
+	config secretscan.SessionConfig
+	err    error
+}
+
+func installedDaemonScanner(getenv func(string) string) daemonScanner {
+	config, err := secretscan.InstalledConfig(getenv)
+	return daemonScanner{config: config, err: err}
+}
+
+// sanitizer is nil when the helper cannot be found.
+func (scanner daemonScanner) sanitizer() secretscan.Sanitizer {
+	if scanner.err != nil {
 		return nil
 	}
-	announce := func() {
-		fmt.Fprintln(stderr, "trestled: preparing the secret scanner for first use; this can take a minute")
+	return scanner.config.PerCallSanitizer()
+}
+
+// prepare fills the helper's cache, with a notice on first use, and says why
+// the scanner is unavailable when it is. The daemon calls it once its
+// configuration is valid.
+func (scanner daemonScanner) prepare(ctx context.Context, stderr io.Writer) {
+	err := scanner.err
+	if err == nil {
+		announce := func() {
+			fmt.Fprintln(stderr, "trestled: preparing the secret scanner for first use; this can take a minute")
+		}
+		err = secretscan.PrepareCache(ctx, scanner.config, announce)
 	}
-	if err := secretscan.PrepareCache(ctx, config, announce); err != nil {
-		fmt.Fprintf(stderr, "trestled: the secret scanner is not ready, so remote model requests will be refused: %v\n", err)
+	if err != nil {
+		fmt.Fprintf(stderr, "trestled: the secret scanner is unavailable, so requests to models will be refused: %v\n", err)
 	}
-	return config.PerCallSanitizer()
 }

@@ -140,9 +140,17 @@ type daemonCloserFunc func() error
 
 func (f daemonCloserFunc) Close() error { return f() }
 
+// buildDaemon prepares the secret scanner's cache only once the configuration
+// is valid, so a configuration error is reported at once.
 func buildDaemon(ctx context.Context, args []string, getenv func(string) string, stderr io.Writer) (*daemon, error) {
-	scanner := daemonSecretScanner(ctx, stderr)
-	return buildDaemonWithDependencies(ctx, args, getenv, stderr, daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: reviewcore.NewFixedGenerationRequestSanitizer(scanner), verificationSanitizer: reviewcore.NewFixedVerificationRequestSanitizer(scanner)})
+	scanner := installedDaemonScanner(getenv)
+	sanitizer := scanner.sanitizer()
+	d, err := buildDaemonWithDependencies(ctx, args, getenv, stderr, daemonDependencies{openPostgres: postgresstore.Open, clock: httpapi.SystemClock{}, generationSanitizer: reviewcore.NewFixedGenerationRequestSanitizer(sanitizer), verificationSanitizer: reviewcore.NewFixedVerificationRequestSanitizer(sanitizer)})
+	if err != nil {
+		return nil, err
+	}
+	scanner.prepare(ctx, stderr)
+	return d, nil
 }
 func publicationContentScannerFromGenerationSanitizer(sanitizer reviewcore.GenerationRequestSanitizer) reviewcore.PublicationContentScanner {
 	if provider, ok := sanitizer.(interface {

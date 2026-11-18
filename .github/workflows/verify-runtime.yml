@@ -317,6 +317,17 @@ jobs:
           docker run --rm --network=none --read-only --cap-drop=ALL --pids-limit=64 --memory=1g --security-opt=no-new-privileges=true --tmpfs /scan-cache:rw,nosuid,nodev,size=256m,mode=0700,uid=65532,gid=65532 --workdir /scan-cache -i --entrypoint /usr/local/libexec/open-trestle/open-trestle-scan-helper open-trestle:verify --stdio-v1 < "$RUNNER_TEMP/scanner-request" > "$RUNNER_TEMP/scanner-response" 2> "$RUNNER_TEMP/scanner-stderr"
           test ! -s "$RUNNER_TEMP/scanner-stderr"
           python3 -c 'import json,struct,sys; data=open(sys.argv[1],"rb").read(); size=struct.unpack(">I",data[:4])[0]; doc=json.loads(data[4:]); assert size==len(data)-4 and doc["status"]=="complete" and doc["matches"]==[] and doc["scanner"]=="betterleaks" and doc["scanner_version"]=="v1.8.1" and doc["build_profile"]=="public_detect_run_re2_host_go1.26.11_wasip1_wasm_v1"' "$RUNNER_TEMP/scanner-response"
+          OPEN_TRESTLE_API_TOKEN="$(head -c 32 /dev/urandom | base64)" docker run --detach --name open-trestle-daemon --network=none --read-only --cap-drop=ALL --pids-limit=64 --memory=1g --security-opt=no-new-privileges=true --tmpfs /var/lib/open-trestle:rw,nosuid,nodev,size=256m,mode=0700,uid=65532,gid=65532 --env OPEN_TRESTLE_API_TOKEN open-trestle:verify --tenant tenant-a --repository repository-a --state-dir /var/lib/open-trestle/state
+          for attempt in $(seq 1 90); do
+            if docker logs open-trestle-daemon 2>&1 | grep -q "trestled listening on"; then break; fi
+            sleep 2
+          done
+          docker logs open-trestle-daemon > "$RUNNER_TEMP/daemon-log" 2>&1
+          docker rm --force open-trestle-daemon
+          cat "$RUNNER_TEMP/daemon-log"
+          grep -q "trestled: preparing the secret scanner for first use" "$RUNNER_TEMP/daemon-log"
+          grep -q "trestled listening on" "$RUNNER_TEMP/daemon-log"
+          if grep -q "secret scanner is unavailable" "$RUNNER_TEMP/daemon-log"; then exit 1; fi
 
   windows-owner-checks:
     name: Verify Windows owner-only checks

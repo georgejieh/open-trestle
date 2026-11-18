@@ -20,9 +20,9 @@ const helperName = "open-trestle-scan-helper"
 
 // Installation refusals. They carry no path or content.
 var (
-	ErrHelperNotPinned            = errors.New("this build pins no secret scan helper; build it with tools/package_secret_scanner.py")
+	ErrHelperNotPinned            = errors.New("this build pins no secret scan helper; build trestle with its helper by python3 tools/package_secret_scanner.py --development DIR")
 	ErrHelperNotInstalled         = errors.New("the secret scan helper is missing from libexec/open-trestle next to this program's folder, or does not match the SHA-256 this program pins")
-	ErrCacheUnavailable           = errors.New("the secret scan cache folder cannot be found; set HOME or XDG_CACHE_HOME")
+	ErrCacheUnavailable           = errors.New("the secret scan cache folder cannot be found; set XDG_CACHE_HOME, or HOME (USERPROFILE on Windows)")
 	ErrScannerUnsupportedPlatform = errors.New("the secret scan helper does not run on this system")
 )
 
@@ -31,60 +31,76 @@ var (
 // Windows) from the folder of the running executable, the SHA-256 this build
 // pins, and the current user's cache folder,
 // $XDG_CACHE_HOME/open-trestle/scan-cache when XDG_CACHE_HOME is absolute,
-// otherwise ~/.cache/open-trestle/scan-cache.
-func InstalledConfig() (SessionConfig, error) {
-	return installedConfig(expectedHelperSHA256, os.Executable, os.Getenv, os.UserHomeDir)
+// otherwise ~/.cache/open-trestle/scan-cache, with the home folder from HOME
+// (USERPROFILE on Windows). getenv reads the environment.
+func InstalledConfig(getenv func(string) string) (SessionConfig, error) {
+	return installedConfig(expectedHelperSHA256, os.Executable, getenv)
 }
 
-func installedConfig(digest string, executable func() (string, error), getenv func(string) string, home func() (string, error)) (SessionConfig, error) {
+func installedConfig(digest string, executable func() (string, error), getenv func(string) string) (SessionConfig, error) {
+	helper, err := installedHelperPath(digest, executable)
+	if err != nil {
+		return SessionConfig{}, err
+	}
+	cache, err := cacheDirectory(getenv)
+	if err != nil {
+		return SessionConfig{}, err
+	}
+	return SessionConfig{HelperPath: helper, HelperSHA256: digest, CacheDirectory: cache}, nil
+}
+
+// installedHelperPath is the helper path for the running program, once the
+// build is known to pin a helper.
+func installedHelperPath(digest string, executable func() (string, error)) (string, error) {
 	if !validDigest(digest) {
-		return SessionConfig{}, ErrHelperNotPinned
+		return "", ErrHelperNotPinned
 	}
 	program, err := executable()
 	if err == nil {
 		program, err = filepath.EvalSymlinks(program)
 	}
 	if err != nil || !filepath.IsAbs(program) {
-		return SessionConfig{}, ErrHelperNotInstalled
+		return "", ErrHelperNotInstalled
 	}
 	name := helperName
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
-	cache, err := cacheDirectory(getenv, home)
-	if err != nil {
-		return SessionConfig{}, err
-	}
-	return SessionConfig{
-		HelperPath:     filepath.Join(filepath.Dir(filepath.Dir(program)), "libexec", "open-trestle", name),
-		HelperSHA256:   digest,
-		CacheDirectory: cache,
-	}, nil
+	return filepath.Join(filepath.Dir(filepath.Dir(program)), "libexec", "open-trestle", name), nil
 }
 
-func cacheDirectory(getenv func(string) string, home func() (string, error)) (string, error) {
+func cacheDirectory(getenv func(string) string) (string, error) {
 	if cache := getenv("XDG_CACHE_HOME"); cache != "" && filepath.IsAbs(cache) {
 		return filepath.Join(filepath.Clean(cache), "open-trestle", "scan-cache"), nil
 	}
-	directory, err := home()
-	if err != nil || !filepath.IsAbs(directory) {
+	home := "HOME"
+	if runtime.GOOS == "windows" {
+		home = "USERPROFILE"
+	}
+	directory := getenv(home)
+	if directory == "" || !filepath.IsAbs(directory) {
 		return "", ErrCacheUnavailable
 	}
 	return filepath.Join(filepath.Clean(directory), ".cache", "open-trestle", "scan-cache"), nil
 }
 
 // CheckInstalled verifies, without running it, that this build pins a helper
-// and that the installed helper is a trusted file with that SHA-256.
+// and that the installed helper is a trusted file with that SHA-256. It does
+// not look at the cache.
 func CheckInstalled() error {
-	config, err := InstalledConfig()
+	return checkInstalled(expectedHelperSHA256, os.Executable)
+}
+
+func checkInstalled(digest string, executable func() (string, error)) error {
+	helper, err := installedHelperPath(digest, executable)
 	if err != nil {
 		return err
 	}
-	return checkHelper(config)
+	return checkHelper(helper, digest)
 }
 
-func checkHelper(config SessionConfig) error {
-	helper, err := openVerifiedHelper(config.HelperPath, config.HelperSHA256)
+func checkHelper(path, digest string) error {
+	helper, err := openVerifiedHelper(path, digest)
 	if errors.Is(err, ErrScannerUnsupportedPlatform) {
 		return err
 	}

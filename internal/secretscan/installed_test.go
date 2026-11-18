@@ -24,7 +24,16 @@ func TestInstalledConfigFindsTheHelperBesideTheProgramFolder(t *testing.T) {
 	}
 	digest := strings.Repeat("a", 64)
 	home := filepath.Join(resolved, "home")
-	config, err := installedConfig(digest, func() (string, error) { return program, nil }, func(string) string { return "" }, func() (string, error) { return home, nil })
+	homeVariable := "HOME"
+	if runtime.GOOS == "windows" {
+		homeVariable = "USERPROFILE"
+	}
+	config, err := installedConfig(digest, func() (string, error) { return program, nil }, func(name string) string {
+		if name == homeVariable {
+			return home
+		}
+		return ""
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +50,7 @@ func TestInstalledConfigFindsTheHelperBesideTheProgramFolder(t *testing.T) {
 			return cache
 		}
 		return ""
-	}, func() (string, error) { return "", errors.New("no home") })
+	})
 	if err != nil || config.CacheDirectory != filepath.Join(cache, "open-trestle", "scan-cache") {
 		t.Fatalf("config = %+v, %v", config, err)
 	}
@@ -49,20 +58,27 @@ func TestInstalledConfigFindsTheHelperBesideTheProgramFolder(t *testing.T) {
 
 func TestInstalledConfigRefusals(t *testing.T) {
 	program := func() (string, error) { return os.Executable() }
-	none := func(string) string { return "" }
-	home := func() (string, error) { return t.TempDir(), nil }
-	if _, err := installedConfig("", program, none, home); !errors.Is(err, ErrHelperNotPinned) {
+	home := func(string) string { return t.TempDir() }
+	if _, err := installedConfig("", program, home); !errors.Is(err, ErrHelperNotPinned) {
 		t.Fatalf("unpinned build: %v", err)
 	}
-	if _, err := installedConfig(strings.Repeat("A", 64), program, none, home); !errors.Is(err, ErrHelperNotPinned) {
+	if _, err := installedConfig(strings.Repeat("A", 64), program, home); !errors.Is(err, ErrHelperNotPinned) {
 		t.Fatalf("malformed pin: %v", err)
 	}
-	if _, err := installedConfig(strings.Repeat("a", 64), func() (string, error) { return "", errors.New("unknown") }, none, home); !errors.Is(err, ErrHelperNotInstalled) {
+	if _, err := installedConfig(strings.Repeat("a", 64), func() (string, error) { return "", errors.New("unknown") }, home); !errors.Is(err, ErrHelperNotInstalled) {
 		t.Fatalf("unknown program: %v", err)
 	}
-	relative := func(string) string { return "relative" }
-	if _, err := installedConfig(strings.Repeat("a", 64), program, relative, func() (string, error) { return "relative", nil }); !errors.Is(err, ErrCacheUnavailable) {
-		t.Fatalf("relative cache: %v", err)
+	for name, getenv := range map[string]func(string) string{"relative": func(string) string { return "relative" }, "unset": func(string) string { return "" }} {
+		if _, err := installedConfig(strings.Repeat("a", 64), program, getenv); !errors.Is(err, ErrCacheUnavailable) {
+			t.Fatalf("%s home: %v", name, err)
+		}
+	}
+}
+
+func TestCheckInstalledNeedsNoHomeFolder(t *testing.T) {
+	program := func() (string, error) { return filepath.Join(t.TempDir(), "bin", "trestle"), nil }
+	if err := checkInstalled(strings.Repeat("a", 64), program); !errors.Is(err, ErrHelperNotInstalled) {
+		t.Fatalf("a missing helper without a home folder: %v", err)
 	}
 }
 

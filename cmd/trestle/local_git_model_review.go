@@ -67,7 +67,7 @@ var localReviewVerificationSanitizer review.VerificationRequestSanitizer
 // localReviewScanner prepares this program's scan helper for one invocation
 // and returns the opener of each member's session. Tests replace it.
 var localReviewScanner = func(ctx context.Context, stderr io.Writer) (secretscan.ReviewSessionOpener, error) {
-	config, err := secretscan.InstalledConfig()
+	config, err := secretscan.InstalledConfig(os.Getenv)
 	if err != nil {
 		return nil, err
 	}

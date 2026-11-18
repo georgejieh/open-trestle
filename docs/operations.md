@@ -107,6 +107,8 @@ The output mode builds the helper twice and requires byte-identical results. It 
 
 The included `Dockerfile` copies that staging tree into a scratch image that has no registry base. The image runs `trestled` as UID and GID 65532. It declares port 8741, the daemon's default. `trestled` listens on `127.0.0.1:8741` unless `--listen` names another address, so the port is reachable only inside the container. A non-loopback address such as `0.0.0.0:8741` requires `--tls-cert` and `--tls-key`. Local review mode (`--local-full-review`) requires a loopback address.
 
+Mount a writable volume at `/var/lib/open-trestle`, owned by UID 65532 with mode `0700`. The image sets `XDG_CACHE_HOME=/var/lib/open-trestle/cache`, so the secret scanner keeps its compile cache there; put `--state-dir` in another folder of the volume, such as `/var/lib/open-trestle/state`. If the scanner cannot be used, `trestled` says why at start and refuses every request to a model.
+
 Supply the route inventory and runtime policy through read-only mounts, and supply credentials through environment variables. Do not bake route inventories, policies, tokens, database URLs or key material into an image. The image includes the project license, NOTICE, the license texts of the runtime third-party components and the scanner release evidence.
 
 ## Build and inspect the unsigned Linux amd64 candidate

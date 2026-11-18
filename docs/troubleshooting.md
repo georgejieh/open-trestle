@@ -52,8 +52,8 @@ ahead of it, or no `main` or `master` exists. Commit your change, or pass
 ### Setup refuses to send source to a remote provider
 
 A plain `go build` pins no secret scan helper, so it refuses every review with
-`this build pins no secret scan helper; build it with
-tools/package_secret_scanner.py`. A missing or changed helper is refused with a
+`this build pins no secret scan helper; build trestle with its helper by
+python3 tools/package_secret_scanner.py --development DIR`. A missing or changed helper is refused with a
 message too. The saved setup is kept. Build with
 `python3 tools/package_secret_scanner.py --development DIR` and run
 `DIR/bin/trestle`, or use the packaged Linux amd64 install. See
