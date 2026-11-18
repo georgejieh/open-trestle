@@ -175,8 +175,8 @@ func (m *rmModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.Req
 	payload := []byte(wire.Input[0].Content[0].Text)
 	var packet rmModelPacket
 	request, requestErr := provider.NewRequest(provider.CapabilityReviewV1, "application/json", payload)
-	if json.Unmarshal(payload, &packet) != nil || requestErr != nil || packet.Task == "candidate_generation" && packet.Version != 9 || packet.Task != "candidate_generation" && packet.Version != 8 {
-		t.Error("model did not receive the actual v9 generation or v8 verification context")
+	if json.Unmarshal(payload, &packet) != nil || requestErr != nil || packet.Task == "candidate_generation" && packet.Version != 10 || packet.Task != "candidate_generation" && packet.Version != 9 {
+		t.Error("model did not receive the actual v10 generation or v9 verification context")
 		http.Error(w, "invalid context", http.StatusBadRequest)
 		return
 	}
@@ -737,8 +737,24 @@ func rmOptions(t *testing.T, f *rmModelFixture, c *rmClock) SessionOptions {
 	}
 	return SessionOptions{TenantID: "tenant-local", RepositoryID: "repository-local", Repository: repository,
 		ObjectsRoot: objects, Inventory: inventory, Policy: policy, Egress: EgressLocalOnly, Credentials: credentials,
-		Clock: c, Timeout: 5 * time.Second, ArtifactCapacity: 128, GenerationSanitizer: testsupport.NewCleanGenerationSanitizer(), VerificationSanitizer: testsupport.NewCleanVerificationSanitizer()}
+		IndexContext: rmIndexSource{}, Clock: c, Timeout: 5 * time.Second, ArtifactCapacity: 128, GenerationSanitizer: testsupport.NewCleanGenerationSanitizer(), VerificationSanitizer: testsupport.NewCleanVerificationSanitizer()}
 }
+
+// rmIndexSource proposes the unchanged caller of Changed as context, as a
+// repository index would, with Changed as the one definition it reaches.
+type rmIndexSource struct{}
+
+func (rmIndexSource) Identity() string { return strings.Repeat("5", 64) }
+
+func (rmIndexSource) ContextPlan(context.Context, evidence.RepositoryIdentity, evidence.RevisionIdentity, evidence.RevisionIdentity) (review.ContextPlan, error) {
+	return review.ContextPlan{
+		State: review.ContextIndexUsed, Complete: true, Dependents: 1,
+		Coverage: review.ContextIndexCoverage{Files: 3, Indexed: 2},
+		Items:    []review.ContextPlanItem{{Stage: review.ContextStageDirectReference, Path: "caller.go", StartLine: 2, EndLine: 2, Rank: 1, Depth: 1}},
+		Changed:  []review.ContextPlanDefinition{{Path: "a.go", StartLine: 2, EndLine: 2, Dependents: 1}},
+	}, nil
+}
+
 func rmRevisions(t *testing.T, f *rmModelFixture) (evidence.RevisionIdentity, evidence.RevisionIdentity) {
 	t.Helper()
 	base, err := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithmSHA1, f.base)

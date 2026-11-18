@@ -36,7 +36,7 @@ Today the deterministic analysis stage runs one built-in rule (`static_debug_out
 
 After verification, a direct review runs a deterministic judge stage in the `localreview` package. No model takes part in it. The judge does three things:
 
-- It classifies each verified finding as introduced, pre-existing or of unproven origin. A pre-existing finding is on unchanged lines, cites no evidence of the change, and the semantic-impact profile shows that nothing outside the changed declarations reaches them. Any other finding on unchanged lines, such as a caller of a changed function, is of unproven origin and blocks like an introduced one.
+- It classifies each verified finding as introduced, pre-existing or of unproven origin. A pre-existing finding is on unchanged lines, cites no evidence of the change, and the repository index shows that nothing outside the changed declarations reaches them. Any other finding on unchanged lines, such as a caller of a changed function, is of unproven origin and blocks like an introduced one.
 - It merges duplicates of one defect within a run and across the members of a `--specialists` set.
 - It ranks the distinct findings.
 
@@ -55,7 +55,7 @@ The runtime builds semantic impact profiles from approved language adapters, and
 Each element carries an evidence grade. Two grades exist today:
 
 - `structural` covers validated parse results such as declaration differences. It may support verification.
-- `syntactic_candidate` covers name-matched references and affected-test candidates. It may only prioritize inspection.
+- `syntactic_candidate` covers the repository index's name-matched uses and related tests of changed definitions. It may only prioritize inspection.
 
 Two further grades are planned design with no implementation. One is compiler or language-server facts from a type-aware adapter, which could support verification. The other is heuristics such as historical co-change, which would only point at review targets and could never create, raise or verify a finding on their own (see the [roadmap](roadmap.md)). Text or regex fallback may find candidates but cannot be presented as semantic analysis. Unsupported languages, generated content, incomplete resolution and adapter failure produce coverage gaps or abstentions.
 

@@ -16,7 +16,7 @@ The setup-plan parsers replay the embedded checker catalog and the receipt chain
 
 The runtime-status schemas constrain years to 1970 through 9999 and allow only valid Gregorian leap days. The runtime-status parsers also enforce calendar-valid UTC millisecond timestamps, the repository projection, unique and sorted handler kinds and components, backend compatibility, and conditional review, route, worker and publication rules that the schemas cannot express completely.
 
-The executable review-context packet is generation context version 9, and the verification-context packet is version 8. Counted source omissions are part of their request identities and coverage equations.
+The executable review-context packet is generation context version 10, and the verification-context packet is version 9. Counted source omissions are part of their request identities and coverage equations.
 
 Routing, policy, provider, and review schemas:
 
@@ -93,7 +93,7 @@ The `run` member of the API response v1 envelope is the canonical receipt v1, v2
 
 The run-progress response v1 is a separate read-only HTTP envelope with exactly `contract`, `schema_version`, `request_id`, `run` and `progress`. It references the canonical receipt v1, v2 or v3. Its four axes are `change`, `deterministic`, `context` and `verification`. Each axis has a bounded state, an optional immutable artifact identity and only its declared count fields.
 
-The schema inventory contains 140 documents. The native client also validates the scope, the completed-task binding, the output identities other than context, the count equations and the checked-versus-applicable bounds. Schema validation cannot establish artifact lineage or consistency with the receipt head.
+The schema inventory contains 141 documents. The native client also validates the scope, the completed-task binding, the output identities other than context, the count equations and the checked-versus-applicable bounds. Schema validation cannot establish artifact lineage or consistency with the receipt head.
 
 The delivery-refusal response v1 is another read-only envelope, with exactly `contract`, `schema_version`, `request_id` and `refusal`. The `refusal` member is the canonical `open-trestle/webhook-delivery-refusal` v1 record. It describes an accepted webhook delivery that intake refused instead of opening its run. It holds the tenant, repository, source, deduplication key, delivery and planner identities, the reason token and the refusal time. It carries no delivery content. Errors use the api-response envelope.
 
@@ -185,6 +185,7 @@ Artifact schemas:
 - `schemas/artifact/deterministic-evidence-result-v6.schema.json`
 - `schemas/artifact/deterministic-evidence-result-v7.schema.json`
 - `schemas/artifact/semantic-impact-profile-v1.schema.json`
+- `schemas/artifact/semantic-impact-profile-v2.schema.json`
 - `schemas/artifact/memory-retrieval-result-v1.schema.json`
 - `schemas/artifact/publication-readiness-result-v1.schema.json`
 - `schemas/artifact/publication-readiness-result-v2.schema.json`

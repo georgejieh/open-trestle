@@ -29,7 +29,7 @@ func walkthroughOf(t *testing.T, f *localModelFixture, wantCode int) localreview
 // summarizes the changed file from the diff and the semantic-impact profile,
 // and notes that no test file references the changed function.
 func TestWalkthroughFromFixture(t *testing.T) {
-	f := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true})
+	f := newCheckoutModelFixture(t, localModelFixtureOptions{chatCompletions: true})
 	walk := walkthroughOf(t, f, 4)
 	verified := walk.Verified
 	// Local-only requests are secret-scanned too: one receipt each for the
@@ -65,7 +65,7 @@ func TestWalkthroughFromFixture(t *testing.T) {
 // missing-verification note: the affected-test candidates cover it.
 func TestWalkthroughMissingVerificationUsesAffectedTests(t *testing.T) {
 	test := []byte("package p\nimport \"testing\"\nfunc TestChanged(t *testing.T) { _ = Changed(1) }\n")
-	f := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, extraBase: map[string][]byte{"a_test.go": test}, extraHead: map[string][]byte{"a_test.go": test}})
+	f := newCheckoutModelFixture(t, localModelFixtureOptions{chatCompletions: true, extraBase: map[string][]byte{"a_test.go": test}, extraHead: map[string][]byte{"a_test.go": test}})
 	walk := walkthroughOf(t, f, 4)
 	if len(walk.MissingVerification) != 0 || walk.Verified.SemanticImpact.TestReferences == 0 {
 		t.Fatalf("a tested function was reported as missing verification: %+v (test references %d)", walk.MissingVerification, walk.Verified.SemanticImpact.TestReferences)
@@ -102,7 +102,7 @@ func TestWalkthroughRenamesAndLineCounts(t *testing.T) {
 // own account is in verified_by_member, and the per-file summary and the
 // missing-verification note appear once.
 func TestReviewSetWalkthroughTotalsEveryMember(t *testing.T) {
-	f := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, specialist: true})
+	f := newCheckoutModelFixture(t, localModelFixtureOptions{chatCompletions: true, specialist: true})
 	_, stdout := runLocalModelSet(t, f, []string{"--specialists", "auto"}, 4)
 	var receipt struct {
 		Members []struct {

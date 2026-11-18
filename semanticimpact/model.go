@@ -221,21 +221,15 @@ func (d Declaration) SyntaxDigest() string  { return d.syntaxDigest }
 func (d Declaration) APIDigest() string     { return d.apiDigest }
 func (d Declaration) PublicAPIChange() bool { return d.publicAPIChange }
 
-type Reference struct {
+// recordedReference is a name-matched reference candidate of a version 1
+// profile, kept only so that a recorded profile reads back byte for byte.
+// Reviews take references from the repository index.
+type recordedReference struct {
 	identity, declarationIdentity, declarationKey, filePath string
 	line, column                                            int
 	affectedTest                                            bool
 	grade                                                   Grade
 }
-
-func (r Reference) Identity() string            { return r.identity }
-func (r Reference) DeclarationIdentity() string { return r.declarationIdentity }
-func (r Reference) DeclarationKey() string      { return r.declarationKey }
-func (r Reference) Path() string                { return r.filePath }
-func (r Reference) Line() int                   { return r.line }
-func (r Reference) Column() int                 { return r.column }
-func (r Reference) AffectedTest() bool          { return r.affectedTest }
-func (r Reference) Grade() Grade                { return r.grade }
 
 type Gap struct {
 	identity, filePath, detail string
@@ -265,7 +259,7 @@ func NewCoverageGap(filePath string, reason GapReason) (Gap, error) {
 type Profile struct {
 	identity, adapterIdentity, graphSchema, inputIdentity, baseSnapshotIdentity, headSnapshotIdentity, changeModelIdentity string
 	declarations                                                                                                           []Declaration
-	references                                                                                                             []Reference
+	references                                                                                                             []recordedReference
 	gaps                                                                                                                   []Gap
 }
 
@@ -277,7 +271,6 @@ func (p Profile) BaseSnapshotIdentity() string { return p.baseSnapshotIdentity }
 func (p Profile) HeadSnapshotIdentity() string { return p.headSnapshotIdentity }
 func (p Profile) ChangeModelIdentity() string  { return p.changeModelIdentity }
 func (p Profile) Declarations() []Declaration  { return append([]Declaration(nil), p.declarations...) }
-func (p Profile) References() []Reference      { return append([]Reference(nil), p.references...) }
 func (p Profile) Gaps() []Gap                  { return append([]Gap(nil), p.gaps...) }
 func (p Profile) PublicAPIChanges() []Declaration {
 	out := []Declaration{}

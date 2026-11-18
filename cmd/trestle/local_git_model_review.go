@@ -284,6 +284,7 @@ func runLocalGitModelReviewObserved(ctx context.Context, args []string, stdout, 
 	execution, cancel := context.WithTimeout(ctx, options.timeout)
 	defer cancel()
 	inputs, status := prepareLocalModelReview(execution, &options, repository, base, head, stderr)
+	defer inputs.index.close()
 	if status == "" {
 		inputs.spending = newReviewSpending(inputs, options, stderr)
 	}
@@ -317,6 +318,9 @@ type localModelReviewInputs struct {
 	// spending checks and records the spend of each member run; nil when no
 	// route uses an API key.
 	spending *reviewSpending
+	// index is the repository index the review reads context from; nil
+	// without a checkout or for an investigation.
+	index *reviewIndexContext
 }
 
 // prepareLocalModelReview loads protected configuration and resolves the source
@@ -369,6 +373,9 @@ func prepareLocalModelReview(execution context.Context, options *localModelRevie
 		}
 	}
 	inputs.base, inputs.head = base, head
+	if options.checkout != "" && options.investigation == "" {
+		inputs.index = prepareReviewIndex(execution, options.checkout, base, head, stderr)
+	}
 	if options.retainedMemory != "" {
 		scope, scopeErr := memory.NewScope(options.tenant, options.repository, "local-reviewer", memory.RefVisibilityExact, head.Identity(), []string{"."})
 		if scopeErr != nil {
@@ -439,6 +446,9 @@ func runLocalModelReviewMember(ctx, execution context.Context, options localMode
 	sessionOptions := localreview.SessionOptions{TenantID: options.tenant, RepositoryID: options.repository, Repository: inputs.repository, ObjectsRoot: objects, ObjectStoreProfile: options.objectStoreProfile, Inventory: inputs.inventory, Policy: inputs.policy, Egress: options.egress, Credentials: credentials, Clock: localReviewClock{}, Timeout: options.timeout, RetainedMemoryInput: inputs.retainedInput, GenerationSanitizer: localReviewGenerationSanitizer, VerificationSanitizer: localReviewVerificationSanitizer}
 	if options.egress == localreview.EgressPolicyApproved {
 		sessionOptions.ModelHTTPClient, sessionOptions.ModelHTTPClientIdentity = localReviewModelHTTPClient, localReviewModelHTTPClientIdentity
+	}
+	if inputs.index != nil {
+		sessionOptions.IndexContext = inputs.index
 	}
 	if options.objectStoreProfile == scm.LocalGitObjectStoreProfileLooseAndPackIndexV1 {
 		sessionOptions.ObjectAlgorithm = base.Algorithm()

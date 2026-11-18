@@ -57,9 +57,9 @@ type Walkthrough struct {
 	MissingVerification []MissingVerification `json:"missing_verification"`
 	// MissingVerificationNotListed counts notes past the listing bound.
 	MissingVerificationNotListed int `json:"missing_verification_not_listed,omitempty"`
-	// MissingVerificationIncomplete is set when the semantic-impact scan did
-	// not read every Go file, so a test it did not read may reference a
-	// listed function.
+	// MissingVerificationIncomplete is set when the repository index did not
+	// cover every changed function, so a test it did not see may reference a
+	// listed one.
 	MissingVerificationIncomplete bool `json:"missing_verification_incomplete,omitempty"`
 	// StatedIntent is what the change's author says it does: the subjects of
 	// its commit messages. It is author-stated and unverified, never evidence;
@@ -134,6 +134,10 @@ type WalkthroughVerified struct {
 	// PatternHygiene is absent only in walkthroughs recorded before it
 	// existed; a run without a version 9 context reports it unavailable.
 	PatternHygiene *WalkthroughPatternHygiene `json:"pattern_hygiene,omitempty"`
+	// Context is the context manifest of the run's generation context: what
+	// the repository index proposed and what the packet included or left
+	// out. It is absent in walkthroughs recorded before it existed.
+	Context *WalkthroughContext `json:"context,omitempty"`
 	// Verifier is the independent verifier's account; absent when the run
 	// recorded no verified set.
 	Verifier *WalkthroughVerifier `json:"verifier,omitempty"`
@@ -166,6 +170,8 @@ type WalkthroughStyleDetection struct {
 }
 
 // WalkthroughSemanticImpact summarizes the Go semantic-impact profile.
+// References and TestReferences count the direct dependents of the changed
+// definitions, and the tests among them, from the context manifest.
 type WalkthroughSemanticImpact struct {
 	State            string `json:"state"`
 	Declarations     int    `json:"declarations"`
@@ -224,9 +230,11 @@ type walkthroughInputs struct {
 	receipts     []string // sanitized egress receipt artifact identities
 	verifier     *WalkthroughVerifier
 	receiptError bool
-	// intent and hygiene are read from the recorded generation context.
-	intent  review.StatedIntentSummary
-	hygiene review.PatternHygieneSummary
+	// intent, hygiene and manifest are read from the recorded generation
+	// context.
+	intent   review.StatedIntentSummary
+	hygiene  review.PatternHygieneSummary
+	manifest review.ContextManifestSummary
 }
 
 // statedIntentWalkthrough lists a recorded stated intent's subjects.
@@ -310,16 +318,15 @@ func buildWalkthrough(in walkthroughInputs, readReceipt func(string) (review.Sca
 		}
 		profile = in.analysis.SemanticImpact()
 		tests := 0
-		for _, reference := range profile.References() {
-			if reference.AffectedTest() {
-				tests++
-			}
+		for _, changed := range in.manifest.Changed {
+			tests += changed.Tests
 		}
-		w.Verified.SemanticImpact = WalkthroughSemanticImpact{State: "ran", Declarations: len(profile.Declarations()), PublicAPIChanges: len(profile.PublicAPIChanges()), References: len(profile.References()), TestReferences: tests, Gaps: len(profile.Gaps())}
+		w.Verified.SemanticImpact = WalkthroughSemanticImpact{State: "ran", Declarations: len(profile.Declarations()), PublicAPIChanges: len(profile.PublicAPIChanges()), References: in.manifest.Dependents, TestReferences: tests, Gaps: len(profile.Gaps())}
 	}
+	w.Verified.Context = contextWalkthrough(in.manifest)
 	w.Files, w.FilesNotListed = walkthroughFiles(in.recorded, in.lines, profile, in.analysis != nil)
 	if in.analysis != nil {
-		w.MissingVerification, w.MissingVerificationNotListed, w.MissingVerificationIncomplete = missingVerification(profile)
+		w.MissingVerification, w.MissingVerificationNotListed, w.MissingVerificationIncomplete = missingVerification(profile, in.manifest)
 	}
 	w.Verified.PatternHygiene = patternHygieneWalkthrough(in.hygiene)
 	w.StatedIntent = statedIntentWalkthrough(in.intent)
@@ -421,21 +428,35 @@ func walkthroughFiles(recorded recordedChange, lines changeLines, profile semant
 }
 
 // missingVerification lists added or changed functions and methods outside
-// test files that no test file references, in path and name order. The
-// semantic-impact references are syntactic candidates (identifier matches),
-// so a listed function has no test reference at all, while an unlisted one
-// may be referenced by a test of another declaration with the same name.
-func missingVerification(profile semanticimpact.Profile) ([]MissingVerification, int, bool) {
-	tested := map[string]bool{}
-	for _, reference := range profile.References() {
-		if reference.AffectedTest() {
-			tested[reference.DeclarationIdentity()] = true
-		}
-	}
+// test files that no test references, in path and name order. A
+// declaration is tested when a changed definition the context manifest
+// places in it has a test among its dependents. Dependents are matched by
+// name, so a listed function has no test reference at all, while an
+// unlisted one may be referenced by a test of another definition with the
+// same name. Without a complete index, or when a declaration has no placed
+// definition, the list is incomplete.
+func missingVerification(profile semanticimpact.Profile, manifest review.ContextManifestSummary) ([]MissingVerification, int, bool) {
 	notes := []MissingVerification{}
 	notListed := 0
+	incomplete := !manifest.Present || manifest.State != review.ContextIndexUsed || !manifest.Complete || manifest.ChangedNotListed > 0
+	if !manifest.Present || manifest.State != review.ContextIndexUsed {
+		return notes, notListed, true
+	}
 	for _, declaration := range profile.Declarations() {
-		if declaration.Kind() != "function" && declaration.Kind() != "method" || declaration.Change() == semanticimpact.ChangeRemoved || strings.HasSuffix(declaration.Path(), "_test.go") || tested[declaration.Identity()] {
+		if declaration.Kind() != "function" && declaration.Kind() != "method" || declaration.Change() == semanticimpact.ChangeRemoved || strings.HasSuffix(declaration.Path(), "_test.go") {
+			continue
+		}
+		placed, tested := false, false
+		for _, changed := range manifest.Changed {
+			if changed.Path == declaration.Path() && declaration.StartLine() <= changed.Line && changed.Line <= declaration.EndLine() {
+				placed, tested = true, tested || changed.Tests > 0
+			}
+		}
+		if !placed {
+			incomplete = true
+			continue
+		}
+		if tested {
 			continue
 		}
 		name := declarationName(declaration)
@@ -444,12 +465,6 @@ func missingVerification(profile semanticimpact.Profile) ([]MissingVerification,
 			continue
 		}
 		notes = append(notes, MissingVerification{Path: declaration.Path(), Kind: declaration.Kind(), Name: name, Change: string(declaration.Change())})
-	}
-	incomplete := false
-	for _, gap := range profile.Gaps() {
-		if gap.Reason() == semanticimpact.GapLimitExceeded || gap.Reason() == semanticimpact.GapSourceUnavailable {
-			incomplete = true
-		}
 	}
 	return notes, notListed, incomplete
 }
@@ -550,6 +565,7 @@ func (w *Walkthrough) clone() *Walkthrough {
 		intent.Subjects = append([]string{}, intent.Subjects...)
 		value.StatedIntent = &intent
 	}
+	value.Verified.Context = w.Verified.Context.clone()
 	return &value
 }
 
@@ -566,7 +582,7 @@ func (w *Walkthrough) validate() error {
 	default:
 		return errInvalidWalkthrough
 	}
-	if w.Verified.StyleDetection.State != "ran" && w.Verified.StyleDetection.State != "unavailable" || w.Verified.SemanticImpact.State != "ran" && w.Verified.SemanticImpact.State != "unavailable" {
+	if w.Verified.StyleDetection.State != "ran" && w.Verified.StyleDetection.State != "unavailable" || w.Verified.SemanticImpact.State != "ran" && w.Verified.SemanticImpact.State != "unavailable" || !w.Verified.Context.valid() {
 		return errInvalidWalkthrough
 	}
 	text := func(value string, limit int) bool {

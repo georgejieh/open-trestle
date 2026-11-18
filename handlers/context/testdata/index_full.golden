@@ -1,0 +1,17 @@
+source changed_hunk calc/div.go:4-4
+source enclosing_symbol calc/div.go:3-6
+source direct_reference calc/half.go:4-6
+source related_test calc/div_test.go:5-9
+source repository_map tools/scale.py:1-1
+source repository_map calc/div.go:8-8
+budget route_window 96000 bytes 32 sources
+index used complete true dependents 2
+included enclosing_symbol rank 1 depth 0 calc/div.go:3-6
+included direct_reference rank 1 depth 1 calc/half.go:4-6
+included related_test rank 1 depth 1 calc/div_test.go:5-9
+included repository_map rank 2 depth 0 tools/scale.py:1-1
+included repository_map rank 1 depth 0 calc/div.go:8-8
+omitted direct_reference stage_limit 3
+changed calc/div.go:4 dependents 2 tests 1
+changed not listed 0
+checks [lint unit_tests]

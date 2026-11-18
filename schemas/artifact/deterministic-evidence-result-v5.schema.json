@@ -337,7 +337,10 @@
       }
     },
     "semantic_impact": {
-      "$ref": "urn:open-trestle:schema:artifact:semantic-impact-profile:v1"
+      "oneOf": [
+        {"$ref": "urn:open-trestle:schema:artifact:semantic-impact-profile:v1"},
+        {"$ref": "urn:open-trestle:schema:artifact:semantic-impact-profile:v2"}
+      ]
     },
     "observations": {
       "type": "array",

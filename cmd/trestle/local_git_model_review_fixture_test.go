@@ -87,6 +87,25 @@ type localModelMemoryItem struct {
 	TextScore          uint8    `json:"text_score"`
 }
 
+// reviewIndexNotice is what a review of a checkout says once while it builds
+// the repository index.
+const reviewIndexNotice = "Indexing the repository for review context (up to 2m0s; later reviews reuse the index).\n"
+
+// withoutIndexNotice drops the index notice from a review's stderr.
+func withoutIndexNotice(stderr string) string {
+	return strings.ReplaceAll(stderr, reviewIndexNotice, "")
+}
+
+// newCheckoutModelFixture is a local model fixture reviewed through a Git
+// checkout, the one source that has a repository index, so its context
+// carries the unchanged caller of the changed function.
+func newCheckoutModelFixture(t *testing.T, options localModelFixtureOptions) *localModelFixture {
+	t.Helper()
+	f := newLocalModelFixture(t, options)
+	f.args = localChatSourceArgs(t, f, "checkout")
+	return f
+}
+
 type localModelCapture struct {
 	Packet    localModelPacket
 	ContextID string
@@ -221,8 +240,8 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 	request, requestErr := provider.NewRequest(provider.CapabilityReviewV1, "application/json", payload)
 	// Generation uses context version 9, with or without a specialist block;
 	// verification uses version 8.
-	if json.Unmarshal(payload, &packet) != nil || requestErr != nil || packet.Task == "candidate_generation" && packet.Version != 9 || packet.Task != "candidate_generation" && packet.Version != 8 {
-		t.Error("model did not receive the actual v9 generation or v8 verification context")
+	if json.Unmarshal(payload, &packet) != nil || requestErr != nil || packet.Task == "candidate_generation" && packet.Version != 10 || packet.Task != "candidate_generation" && packet.Version != 9 {
+		t.Error("model did not receive the actual v10 generation or v9 verification context")
 		http.Error(w, "invalid context", http.StatusBadRequest)
 		return
 	}
@@ -300,11 +319,11 @@ func (m *localModelEndpoint) serve(t *testing.T, w http.ResponseWriter, r *http.
 			caller = source
 		}
 	}
-	// A deletion-only change has no changed head line, so semantic impact
-	// resolves no changed symbol and no caller reference; the changed source is
-	// the head context around the deletion point.
-	callerMissing := caller.ID == "" || caller.Stage != "direct_reference" || !strings.Contains(caller.Content, "Changed(0)")
-	if changed.ID == "" || changed.Stage != "changed_hunk" || !strings.Contains(changed.Content, "return 10 / x") || changed.Start > 2 || changed.End < 2 || callerMissing && !m.deletionOnly {
+	// The unchanged caller reaches the model only through a repository index,
+	// which a review of a checkout builds: a review of packed objects and a
+	// deletion-only change (no changed head line) have none.
+	callerMissing := caller.ID == ""
+	if changed.ID == "" || changed.Stage != "changed_hunk" || !strings.Contains(changed.Content, "return 10 / x") || changed.Start > 2 || changed.End < 2 || !callerMissing && (caller.Stage != "direct_reference" || !strings.Contains(caller.Content, "Changed(0)")) {
 		t.Error("source-to-model path omitted exact changed code or its unchanged caller")
 		http.Error(w, "missing source", http.StatusBadRequest)
 		return

@@ -11,10 +11,13 @@ import (
 
 // oldFunctionFixture is the ordinary fixture whose model, in the pre_existing
 // modes, reports a defect on the unchanged caller line caller.go:2, which
-// reaches it as a direct reference to the changed function.
+// reaches it as a direct reference to the changed function from the
+// index of a checkout.
 func oldFunctionFixture(t *testing.T, mode string) *localModelFixture {
 	t.Helper()
-	return newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, generationMode: mode, verificationMode: mode})
+	f := newLocalModelFixture(t, localModelFixtureOptions{chatCompletions: true, generationMode: mode, verificationMode: mode})
+	f.args = localChatSourceArgs(t, f, "checkout")
+	return f
 }
 
 type judgementReceipt struct {

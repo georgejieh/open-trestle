@@ -132,8 +132,12 @@ func verifyOldCodeGolden(t *testing.T, frozen analysisGolden) (artifact.Artifact
 			t.Fatal("removed-file v4 shape changed")
 		}
 	case "produced-v4-go-affected-test":
-		if parsed.SchemaVersion() != 4 || len(checks) != 1 || len(observations) != 0 || len(parsed.Items()) != 1 || len(parsed.Gaps()) != 0 || len(parsed.SemanticImpact().References()) != 1 || parsed.Checks()[0].State() != CheckPassed {
+		if parsed.SchemaVersion() != 4 || len(checks) != 1 || len(observations) != 0 || len(parsed.Items()) != 1 || len(parsed.Gaps()) != 0 || parsed.SemanticImpact().GraphSchema() != "open-trestle/semantic-impact/go-ast-graph/v1" || parsed.Checks()[0].State() != CheckPassed {
 			t.Fatal("Go affected-test v4 shape changed")
+		}
+	case "produced-v4-go-modified-function":
+		if parsed.SchemaVersion() != 4 || len(checks) != 1 || len(observations) != 0 || len(parsed.Items()) != 1 || len(parsed.Gaps()) != 0 || parsed.SemanticImpact().GraphSchema() != "open-trestle/semantic-impact/go-ast-graph/v2" || len(parsed.SemanticImpact().Declarations()) != 1 || parsed.Checks()[0].State() != CheckPassed {
+			t.Fatal("Go modified-function v4 shape changed")
 		}
 	case "synthetic-v4-zero-match":
 		if parsed.SchemaVersion() != 4 || len(checks) != 1 || len(observations) != 0 || !bytes.Contains(evidence.Payload(), []byte(`"observations":[]`)) {
@@ -153,7 +157,7 @@ func verifyOldCodeGolden(t *testing.T, frozen analysisGolden) (artifact.Artifact
 	return base, head, change, evidence
 }
 func TestOldCodeAnalysisGoldenFixtures(t *testing.T) {
-	for _, name := range []string{"produced-v4-failed-one-observation", "produced-v4-removed-file-gap", "produced-v4-go-affected-test", "synthetic-v4-zero-match", "synthetic-v3-check-no-observations", "synthetic-v2-no-checks-observations"} {
+	for _, name := range []string{"produced-v4-failed-one-observation", "produced-v4-removed-file-gap", "produced-v4-go-affected-test", "produced-v4-go-modified-function", "synthetic-v4-zero-match", "synthetic-v3-check-no-observations", "synthetic-v2-no-checks-observations"} {
 		t.Run(name, func(t *testing.T) { verifyOldCodeGolden(t, readOldCodeGolden(t, name)) })
 	}
 }

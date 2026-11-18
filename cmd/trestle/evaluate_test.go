@@ -43,7 +43,7 @@ func (evaluationErrorWriter) Write([]byte) (int, error) { return 0, errors.New("
 func TestRunEvaluateDeterministicCorpusCandidateRefusesReleaseStatus(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"evaluate", "deterministic-corpus-candidate"}, &stdout, &stderr)
-	if code != 3 || stderr.Len() != 0 || bytes.Count(stdout.Bytes(), []byte{'\n'}) != 1 || !bytes.Contains(stdout.Bytes(), []byte(`"review_state":"pending"`)) || !bytes.Contains(stdout.Bytes(), []byte(`"release_evidence_eligible":false`)) || !bytes.Contains(stdout.Bytes(), []byte(`"golden_status":"prohibited_pending_human_review"`)) {
+	if code != 4 || stderr.Len() != 0 || bytes.Count(stdout.Bytes(), []byte{'\n'}) != 1 || !bytes.Contains(stdout.Bytes(), []byte(`"review_state":"pending"`)) || !bytes.Contains(stdout.Bytes(), []byte(`"release_evidence_eligible":false`)) || !bytes.Contains(stdout.Bytes(), []byte(`"golden_status":"prohibited_pending_human_review"`)) {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 }

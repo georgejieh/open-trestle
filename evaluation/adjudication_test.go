@@ -16,7 +16,7 @@ func syntheticAdjudicationInputs(t *testing.T) (DeterministicCorpusReport, []byt
 	if err != nil {
 		t.Fatal(err)
 	}
-	corpus, err := loadDeterministicCorpus(deterministicCorpusFiles, corpusRoot)
+	corpus, err := loadDeterministicCorpus(corpusFiles, corpusRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,6 +45,7 @@ func syntheticAdjudicationInputs(t *testing.T) (DeterministicCorpusReport, []byt
 }
 
 func TestEvaluateAdjudicationRetainsObservedMismatchWithoutApproval(t *testing.T) {
+	useMismatchedCorpus(t)
 	candidate, observed, adjudication := syntheticAdjudicationInputs(t)
 	original := append([]byte(nil), observed...)
 	encoded, err := EvaluateAdjudication(adjudication, observed, digestBytes(adjudication))
@@ -70,9 +71,9 @@ func TestEvaluateAdjudicationRetainsObservedMismatchWithoutApproval(t *testing.T
 	}
 	found := false
 	for _, target := range result.Targets {
-		if target.Key == "syntactic_reference_candidate" {
+		if target.Key == "changed_declaration" {
 			found = true
-			if target.TruePositiveCount != 2 || target.FalsePositiveCount != 2 || target.FalseNegativeCount != 0 {
+			if target.TruePositiveCount != 2 || target.FalsePositiveCount != 1 || target.FalseNegativeCount != 1 {
 				t.Fatal("human review import erased an observed mismatch")
 			}
 		}

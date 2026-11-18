@@ -21,7 +21,7 @@ import (
 
 func TestOldCodePacketCandidateRejectsMemoryExpiryBeforeLease(t *testing.T) {
 	expiry := time.UnixMilli(30000)
-	authority, request, coordinator, store, _, closeFixture, journal := newPacketWriterFixtureWithMemoryExpiry(t, false, false, false, false, false, true, false, false, expiry)
+	authority, request, coordinator, store, _, closeFixture, journal := newPacketWriterFixtureWithMemoryExpiry(t, false, false, false, false, false, true, false, expiry)
 	defer closeFixture()
 	ctx := context.Background()
 	scope := request.Plan().Scope()

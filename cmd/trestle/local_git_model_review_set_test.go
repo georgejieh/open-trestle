@@ -111,7 +111,7 @@ func runLocalModelSet(t *testing.T, f *localModelFixture, extra []string, wantCo
 		vc, _ := f.verification.snapshot()
 		t.Fatalf("review set exit=%d want=%d calls=%d/%d stderr=%q stdout=%q", code, wantCode, gc, vc, stderr.String(), stdout.String())
 	}
-	if stderr.Len() != 0 {
+	if withoutIndexNotice(stderr.String()) != "" {
 		t.Fatalf("review set wrote stderr: %q", stderr.String())
 	}
 	for _, forbidden := range []string{f.objects, f.inventoryPath, f.policyPath, localModelSecret, localModelKey, "return 10 / x", "Bearer "} {
@@ -501,7 +501,7 @@ func TestRunLocalGitModelReviewMaxSpecialistsAndExplicitList(t *testing.T) {
 		}
 	})
 	t.Run("text", func(t *testing.T) {
-		f := newLocalModelFixture(t, localModelFixtureOptions{})
+		f := newCheckoutModelFixture(t, localModelFixtureOptions{})
 		// The default text is for people: status, reviewers, the walkthrough
 		// and the findings with the members that confirmed each.
 		_, text := runLocalModelSet(t, f, []string{"--specialists", "backend", "--format", "text"}, 4)

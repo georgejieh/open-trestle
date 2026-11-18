@@ -12,9 +12,17 @@ import (
 	"strings"
 )
 
-const goGraphSchema = "open-trestle/semantic-impact/go-ast-graph/v1"
+// goGraphSchema records declaration differences only. Version 1 also
+// recorded name-matched reference candidates; it is read back, never made.
+const (
+	goGraphSchema   = "open-trestle/semantic-impact/go-ast-graph/v2"
+	goGraphSchemaV1 = "open-trestle/semantic-impact/go-ast-graph/v1"
+)
 
-var goAdapterIdentity = hashJSON(struct{ Implementation, Version, Graph string }{"go/parser", "1", goGraphSchema})
+var (
+	goAdapterIdentity   = hashJSON(struct{ Implementation, Version, Graph string }{"go/parser", "1", goGraphSchema})
+	goAdapterIdentityV1 = hashJSON(struct{ Implementation, Version, Graph string }{"go/parser", "1", goGraphSchemaV1})
+)
 
 type rawDeclaration struct {
 	key, name, kind                string
@@ -140,10 +148,6 @@ func AnalyzeGo(input Input) (Profile, error) {
 		}
 		return strings.Compare(a.key, b.key)
 	})
-	refs := buildReferences(declarations, headParsed)
-	if len(refs) > maximumReferences {
-		return Profile{}, ErrImpactLimit
-	}
 	if len(gaps) > maximumGaps {
 		return Profile{}, ErrImpactLimit
 	}
@@ -153,7 +157,7 @@ func AnalyzeGo(input Input) (Profile, error) {
 		}
 		return strings.Compare(string(a.reason), string(b.reason))
 	})
-	profile := Profile{adapterIdentity: goAdapterIdentity, graphSchema: goGraphSchema, inputIdentity: input.identity, baseSnapshotIdentity: input.baseSnapshotIdentity, headSnapshotIdentity: input.headSnapshotIdentity, changeModelIdentity: input.changeModelIdentity, declarations: declarations, references: refs, gaps: gaps}
+	profile := Profile{adapterIdentity: goAdapterIdentity, graphSchema: goGraphSchema, inputIdentity: input.identity, baseSnapshotIdentity: input.baseSnapshotIdentity, headSnapshotIdentity: input.headSnapshotIdentity, changeModelIdentity: input.changeModelIdentity, declarations: declarations, gaps: gaps}
 	profile.identity = deriveProfileIdentity(profile)
 	if _, err := EncodeProfile(profile); err != nil {
 		return Profile{}, err
@@ -231,55 +235,6 @@ func newDeclaration(p string, r rawDeclaration, ch Change, publicAPIChange bool)
 		Start, End                                       int
 	}{p, r.key, r.name, r.kind, string(ch), r.digest, r.apiDigest, r.exported, publicAPIChange, r.startLine, r.endLine}
 	return Declaration{identity: hashJSON(wire), key: r.key, name: r.name, kind: r.kind, filePath: p, syntaxDigest: r.digest, apiDigest: r.apiDigest, change: ch, exported: r.exported, publicAPIChange: publicAPIChange, startLine: r.startLine, endLine: r.endLine}
-}
-func buildReferences(declarations []Declaration, files map[string]parsedGoFile) []Reference {
-	refs := []Reference{}
-	paths := make([]string, 0, len(files))
-	for p := range files {
-		paths = append(paths, p)
-	}
-	slices.Sort(paths)
-	for _, d := range declarations {
-		for _, p := range paths {
-			if len(refs) > maximumReferences {
-				return refs
-			}
-			file := files[p]
-			ast.Inspect(file.file, func(node ast.Node) bool {
-				id, ok := node.(*ast.Ident)
-				if !ok || id.Name != d.name {
-					return true
-				}
-				pos := file.fset.PositionFor(id.Pos(), false)
-				for _, declared := range file.declarations {
-					if declared.nameOffset == pos.Offset {
-						return true
-					}
-				}
-				wire := struct {
-					Declaration, Path string
-					Line, Column      int
-					Test              bool
-					Grade             Grade
-				}{d.identity, p, pos.Line, pos.Column, strings.HasSuffix(p, "_test.go"), GradeSyntacticCandidate}
-				refs = append(refs, Reference{identity: hashJSON(wire), declarationIdentity: d.identity, declarationKey: d.key, filePath: p, line: pos.Line, column: pos.Column, affectedTest: wire.Test, grade: GradeSyntacticCandidate})
-				return len(refs) <= maximumReferences
-			})
-		}
-	}
-	slices.SortFunc(refs, func(a, b Reference) int {
-		if c := strings.Compare(a.declarationIdentity, b.declarationIdentity); c != 0 {
-			return c
-		}
-		if c := strings.Compare(a.filePath, b.filePath); c != 0 {
-			return c
-		}
-		if a.line != b.line {
-			return a.line - b.line
-		}
-		return a.column - b.column
-	})
-	return refs
 }
 func newGap(p string, reason GapReason, detail string) Gap {
 	return Gap{identity: hashJSON(struct {

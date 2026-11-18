@@ -1,0 +1,7 @@
+state used complete true dependents 1
+enclosing_symbol 1 depth 0 cmd/app/main.go:12-15
+direct_reference 1 depth 1 cmd/app/main.go:8-10
+repository_map 1 depth 0 calc/calc.go:9-9
+repository_map 2 depth 0 util/pad.go:3-3
+repository_map 3 depth 0 calc/calc.go:4-4
+changed cmd/app/main.go:12-15 dependents 1 tests 0

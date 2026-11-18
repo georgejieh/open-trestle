@@ -1,0 +1,11 @@
+source changed_hunk calc/div.go:4-4
+source repository_map calc/half.go:4-6
+budget default 131072 bytes 32 sources
+index used complete true dependents 2
+included repository_map rank 1 depth 0 calc/half.go:4-6
+omitted enclosing_symbol duplicate 1
+omitted direct_reference invalid_range 2
+omitted direct_reference stage_limit 3
+changed calc/div.go:4 dependents 2 tests 1
+changed not listed 0
+checks [lint unit_tests]

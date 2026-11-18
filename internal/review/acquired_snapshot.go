@@ -72,7 +72,7 @@ func NewAcquiredReviewPipelineSnapshot(workspace string, headManifest evidence.R
 	}
 	// No head range is valid only for a change that only removes files, whose
 	// packet then holds removed base lines alone.
-	if len(ranges) > maxSelectedContextSources {
+	if len(ranges) > maxContextSourcesCeiling {
 		return ReviewSnapshot{}, ErrInvalidAcquiredReviewRanges
 	}
 	canonicalRanges := append([]evidence.SourceRange(nil), ranges...)
@@ -199,7 +199,7 @@ func validateAcquiredReviewBindings(
 }
 
 func canonicalAcquiredReviewRanges(ranges []evidence.SourceRange, head evidence.RepositoryManifest, delta evidence.RepositoryManifestDelta) ([]evidence.SourceRange, error) {
-	if len(ranges) > maxSelectedContextSources {
+	if len(ranges) > maxContextSourcesCeiling {
 		return nil, ErrInvalidAcquiredReviewRanges
 	}
 	canonical := append([]evidence.SourceRange(nil), ranges...)

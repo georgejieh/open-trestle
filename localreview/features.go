@@ -80,7 +80,12 @@ func (s *Session) ChangeFeatures(ctx context.Context, prepared runtimecatalog.Pr
 		return agentprofile.ChangeFeatures{}, nil, ErrChangeFeaturesUnavailable
 	}
 	if contextID, hasContext := output("context"); hasContext {
-		input.intent = s.recordedIntent(ctx, scope, contextID, now)
+		if payload, ok := s.recordedContextPayload(ctx, scope, contextID, now); ok {
+			input.intent = recordedIntent(payload)
+			if manifest, err := review.ContextManifestOf(payload); err == nil && manifest.Present {
+				input.fanOut = uint32(min(manifest.Dependents, 1<<24))
+			}
+		}
 	}
 	configFiles, unread, err := s.baseStyleConfigFiles(ctx, scope, recorded.base, now)
 	if err != nil {
@@ -105,6 +110,9 @@ type routingInput struct {
 	impact         semanticimpact.Profile
 	// intent is whether the run's context carried commit messages.
 	intent agentprofile.IntentSpec
+	// fanOut counts the direct dependents of the changed definitions that
+	// the run's context manifest records.
+	fanOut uint32
 }
 
 // readRoutingInput reads the recorded analysis for a recorded change.
@@ -140,27 +148,32 @@ func (s *Session) readRoutingInput(ctx context.Context, scope audit.ReviewScope,
 }
 
 func (r routingInput) features(configFiles []agentprofile.ConfigFile) (agentprofile.ChangeFeatures, error) {
-	return agentprofile.ChangeFeaturesFromFileSpecs(r.changeIdentity, r.files, r.impact, agentprofile.AnalysisHints{ConfigFiles: configFiles, Intent: r.intent})
+	return agentprofile.ChangeFeaturesFromFileSpecs(r.changeIdentity, r.files, r.impact, agentprofile.AnalysisHints{ConfigFiles: configFiles, Intent: r.intent, ReferenceFanOut: r.fanOut})
 }
 
-// recordedIntent reports whether the run's recorded generation context carried
-// a stated intent with at least one commit: declared change intent for the
-// drift_auditor's intent condition. It reads presence, never the text, and
-// reports none when the context task did not succeed.
-func (s *Session) recordedIntent(ctx context.Context, scope audit.ReviewScope, contextOutput string, at time.Time) agentprofile.IntentSpec {
+// recordedContextPayload reads the run's recorded generation context
+// through the context task's output.
+func (s *Session) recordedContextPayload(ctx context.Context, scope audit.ReviewScope, contextOutput string, at time.Time) ([]byte, bool) {
 	inputArtifact, err := s.store.Get(ctx, scope, contextOutput, at)
 	if err != nil {
-		return agentprofile.IntentSpec{}
+		return nil, false
 	}
 	input, err := modelhandler.ParseGenerationInput(inputArtifact.Payload())
 	if err != nil {
-		return agentprofile.IntentSpec{}
+		return nil, false
 	}
 	contextArtifact, err := s.store.Get(ctx, scope, input.ContextArtifactIdentity(), at)
 	if err != nil || contextArtifact.Kind() != artifact.KindContextPacket || contextArtifact.PayloadDigest() != input.ContextIdentity() {
-		return agentprofile.IntentSpec{}
+		return nil, false
 	}
-	summary, err := review.ContextStatedIntent(contextArtifact.Payload())
+	return contextArtifact.Payload(), true
+}
+
+// recordedIntent reports whether a recorded generation context carried a
+// stated intent with at least one commit: declared change intent for the
+// drift_auditor's intent condition. It reads presence, never the text.
+func recordedIntent(payload []byte) agentprofile.IntentSpec {
+	summary, err := review.ContextStatedIntent(payload)
 	if err != nil || !summary.Present || summary.Commits+summary.CommitsOmitted == 0 {
 		return agentprofile.IntentSpec{}
 	}

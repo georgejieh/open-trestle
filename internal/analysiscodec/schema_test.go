@@ -53,7 +53,7 @@ func deterministicEvidenceSchema(t *testing.T, schemas map[string]map[string]any
 func validateSchemaDocument(schemas map[string]map[string]any, schema map[string]any, value any, location string) error {
 	for key := range schema {
 		switch key {
-		case "$schema", "$id", "title", "description", "type", "const", "enum", "required", "properties", "additionalProperties", "items", "minItems", "maxItems", "minimum", "maximum", "minLength", "maxLength", "pattern", "not", "$ref":
+		case "$schema", "$id", "title", "description", "type", "const", "enum", "required", "properties", "additionalProperties", "items", "minItems", "maxItems", "minimum", "maximum", "minLength", "maxLength", "pattern", "not", "oneOf", "$ref":
 		default:
 			return fmt.Errorf("%s: unsupported schema keyword %q", location, key)
 		}
@@ -94,6 +94,17 @@ func validateSchemaDocument(schemas map[string]map[string]any, schema map[string
 	}
 	if negated, ok := schema["not"].(map[string]any); ok && validateSchemaDocument(schemas, negated, value, location) == nil {
 		return fmt.Errorf("%s: value matches a forbidden schema", location)
+	}
+	if alternatives, ok := schema["oneOf"].([]any); ok {
+		matches := 0
+		for _, alternative := range alternatives {
+			if validateSchemaDocument(schemas, alternative.(map[string]any), value, location) == nil {
+				matches++
+			}
+		}
+		if matches != 1 {
+			return fmt.Errorf("%s: value matches %d of %d alternatives, want exactly one", location, matches, len(alternatives))
+		}
 	}
 	switch typed := value.(type) {
 	case map[string]any:
@@ -299,8 +310,17 @@ func TestDeterministicEvidenceV7SchemaDescribesRemovedLines(t *testing.T) {
 	trimmed := schemaWithout(t, v7)
 	delete(trimmed["properties"].(map[string]any), "removed_lines")
 	trimmed["required"] = v6["required"]
+	// v7 also accepts the semantic impact profile v2 beside the v1 profile v6 binds.
+	alternatives, _ := trimmed["properties"].(map[string]any)["semantic_impact"].(map[string]any)["oneOf"].([]any)
+	if !reflect.DeepEqual(alternatives, []any{
+		map[string]any{"$ref": "urn:open-trestle:schema:artifact:semantic-impact-profile:v1"},
+		map[string]any{"$ref": "urn:open-trestle:schema:artifact:semantic-impact-profile:v2"},
+	}) {
+		t.Fatalf("v7 semantic impact alternatives = %v", alternatives)
+	}
+	trimmed["properties"].(map[string]any)["semantic_impact"] = schemaWithout(t, v6)["properties"].(map[string]any)["semantic_impact"]
 	if !reflect.DeepEqual(trimmed, schemaWithout(t, v6)) {
-		t.Fatal("v7 changes more than the version, removed_lines and the gap reasons of v6")
+		t.Fatal("v7 changes more than the version, removed_lines, the semantic profile versions and the gap reasons of v6")
 	}
 	if want := append(gapReasons(v6), "removed_lines_limit"); !reflect.DeepEqual(gapReasons(v7), want) {
 		t.Fatalf("v7 gap reasons=%v want %v", gapReasons(v7), want)

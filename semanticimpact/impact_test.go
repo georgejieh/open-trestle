@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestAnalyzeGoReportsDeclarationsReferencesTestsAndGaps(t *testing.T) {
+func TestAnalyzeGoReportsDeclarationsAndGaps(t *testing.T) {
 	base := []File{mustFile(t, "lib/api.go", "package lib\nfunc Exported(v int) int { return v }\nfunc removed() {}\n"), mustFile(t, "lib/api_test.go", "package lib\nfunc TestExported(){ _ = Exported(1) }\n")}
 	head := []File{mustFile(t, "lib/api.go", "package lib\ntype Public struct{ Value int }\nfunc Exported(v int) int { return v + 1 }\n"), mustFile(t, "lib/api_test.go", "package lib\nfunc TestExported(){ _ = Exported(1); _ = Public{} }\n"), mustFile(t, "lib/broken.go", "package lib\nfunc (")}
 	changes := []ChangedPath{mustChangedPath(t, "lib/api.go"), mustChangedPath(t, "lib/broken.go"), mustChangedPath(t, "README.md")}
@@ -31,15 +31,6 @@ func TestAnalyzeGoReportsDeclarationsReferencesTestsAndGaps(t *testing.T) {
 	if len(profile.PublicAPIChanges()) != 1 || profile.PublicAPIChanges()[0].Key() != "type:Public" {
 		t.Fatalf("public=%#v", profile.PublicAPIChanges())
 	}
-	sawTest := false
-	for _, r := range profile.References() {
-		if r.DeclarationKey() == "func:Exported" && r.Path() == "lib/api_test.go" && r.AffectedTest() && r.Grade() == GradeSyntacticCandidate {
-			sawTest = true
-		}
-	}
-	if !sawTest {
-		t.Fatal("missing affected test candidate")
-	}
 	reasons := map[GapReason]bool{}
 	for _, g := range profile.Gaps() {
 		reasons[g.Reason()] = true
@@ -47,7 +38,7 @@ func TestAnalyzeGoReportsDeclarationsReferencesTestsAndGaps(t *testing.T) {
 	if !reasons[GapUnsupportedLanguage] || !reasons[GapParseFailure] {
 		t.Fatalf("gaps=%#v", profile.Gaps())
 	}
-	if profile.AdapterIdentity() == "" || profile.GraphSchema() != "open-trestle/semantic-impact/go-ast-graph/v1" || profile.Identity() == "" {
+	if profile.AdapterIdentity() == "" || profile.GraphSchema() != "open-trestle/semantic-impact/go-ast-graph/v2" || profile.Identity() == "" {
 		t.Fatal("identity")
 	}
 }

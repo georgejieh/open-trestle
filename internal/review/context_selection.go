@@ -11,11 +11,14 @@ import (
 
 const (
 	maxContextSourceCandidates = 128
-	maxSelectedContextSources  = 32
+	// maxSelectedContextSources is the fixed selected-source bound of
+	// contexts before version 10, and the default of a version 10 context.
+	maxSelectedContextSources = 32
+	// maxContextSourcesCeiling bounds the source limit a version 10 context
+	// may record: each source is two of the 256 fields a sanitized request
+	// may carry.
+	maxContextSourcesCeiling = 64
 )
-
-// MaxSelectedContextSources is the fixed selected-source count bound.
-const MaxSelectedContextSources = maxSelectedContextSources
 
 var (
 	// ErrInvalidContextSourceSelectionReason identifies an unknown selection result.
@@ -170,7 +173,7 @@ func coverageMatchesWire(c ContextSourceCoverage, wire contextSourceCoverageWire
 
 func newContextSourceCoverage(verificationContextIdentity, reviewScopeIdentity, snapshotIdentity, candidateBatchIdentity string, analyzedCount, selectedCount, omittedCount int, omissionSummaries []ContextSourceOmissionSummary) (ContextSourceCoverage, error) {
 	validBindings := validCandidateDigest(verificationContextIdentity) && validCandidateDigest(reviewScopeIdentity) && validCandidateDigest(snapshotIdentity) && validCandidateDigest(candidateBatchIdentity)
-	validCounts := analyzedCount > 0 && analyzedCount <= maxContextSourceCandidates+65536 && selectedCount > 0 && selectedCount <= maxSelectedContextSources && omittedCount >= 0
+	validCounts := analyzedCount > 0 && analyzedCount <= maxContextSourceCandidates+65536 && selectedCount > 0 && selectedCount <= maxContextSourcesCeiling && omittedCount >= 0
 	canonicalSummaries := append([]ContextSourceOmissionSummary(nil), omissionSummaries...)
 	sort.Slice(canonicalSummaries, func(i, j int) bool {
 		return canonicalSummaries[i].Reason().String() < canonicalSummaries[j].Reason().String()
@@ -253,13 +256,13 @@ func SelectContextSources(candidates []ContextSource, limits ContextLimits) (Con
 	})
 	selection := ContextSourceSelection{
 		limits: limits, entries: make([]ContextSourceSelectionEntry, len(canonical)),
-		selectedSources: make([]ContextSource, 0, min(len(canonical), maxSelectedContextSources)),
+		selectedSources: make([]ContextSource, 0, min(len(canonical), limits.MaxSources())),
 	}
 	for index, source := range canonical {
 		reason := ContextSourceSelected
 		size := uint32(source.SizeBytes())
 		switch {
-		case len(selection.selectedSources) >= maxSelectedContextSources:
+		case len(selection.selectedSources) >= limits.MaxSources():
 			reason = ContextSourceOmittedCountLimit
 		case size > limits.MaxSourceBytes()-selection.selectedBytes:
 			reason = ContextSourceOmittedByteLimit
@@ -308,7 +311,7 @@ func (s ContextSourceSelection) Validate() error {
 	if err := s.limits.Validate(); err != nil {
 		return err
 	}
-	if len(s.entries) == 0 || len(s.entries) > maxContextSourceCandidates || len(s.selectedSources) > maxSelectedContextSources {
+	if len(s.entries) == 0 || len(s.entries) > maxContextSourceCandidates || len(s.selectedSources) > s.limits.MaxSources() {
 		return ErrInvalidContextSourceSelection
 	}
 	selectedIndex := 0
@@ -329,7 +332,7 @@ func (s ContextSourceSelection) Validate() error {
 		seenReferences[entry.referenceID] = struct{}{}
 		expected := ContextSourceSelected
 		switch {
-		case selectedIndex >= maxSelectedContextSources:
+		case selectedIndex >= s.limits.MaxSources():
 			expected = ContextSourceOmittedCountLimit
 		case entry.sizeBytes > s.limits.MaxSourceBytes()-selectedBytes:
 			expected = ContextSourceOmittedByteLimit
@@ -386,7 +389,7 @@ func deriveContextSourceSelectionIdentity(selection ContextSourceSelection) stri
 		Entries        []entryRecord `json:"entries"`
 	}{
 		Contract: "open-trestle/review-context-source-selection", Version: 1,
-		MaxSourceBytes: selection.limits.MaxSourceBytes(), MaxSources: maxSelectedContextSources,
+		MaxSourceBytes: selection.limits.MaxSourceBytes(), MaxSources: selection.limits.MaxSources(),
 		SelectedBytes: selection.selectedBytes, Entries: entries,
 	}
 	encoded, _ := json.Marshal(preimage)

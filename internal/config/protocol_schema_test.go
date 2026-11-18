@@ -42,8 +42,8 @@ func TestPublishedProtocolSchemasHaveUniqueBoundedObjectContracts(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count != 140 {
-		t.Fatalf("published schema count=%d, want 140", count)
+	if count != 141 {
+		t.Fatalf("published schema count=%d, want 141", count)
 	}
 	// The protocol contracts page states the same count, so it cannot drift.
 	contracts, err := os.ReadFile(filepath.Join("..", "..", "docs", "protocol-contracts.md"))

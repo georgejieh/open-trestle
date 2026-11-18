@@ -31,6 +31,9 @@ var ErrInvalidDeterministicCorpus = errors.New("invalid deterministic corpus")
 //go:embed testdata/deterministic-corpus-v1
 var deterministicCorpusFiles embed.FS
 
+// corpusFiles is the corpus the evaluators read; tests replace it to build variants.
+var corpusFiles fs.FS = deterministicCorpusFiles
+
 type corpusBounds struct {
 	MaximumCases           int `json:"maximum_cases"`
 	MaximumFiles           int `json:"maximum_files"`
@@ -111,8 +114,6 @@ type corpusLabel struct {
 	QualifiedName  string `json:"qualified_name,omitempty"`
 	DeclarationKey string `json:"declaration_key,omitempty"`
 	ChangeKind     string `json:"change_kind,omitempty"`
-	Line           int    `json:"line,omitempty"`
-	Column         int    `json:"column,omitempty"`
 }
 
 type expectedCoverage struct {
@@ -338,7 +339,6 @@ func validateManifest(manifest corpusManifest) error {
 		{Key: "go_test_path", Version: 1, Family: "structural_analyzer", MatchUnit: "case_id,path,signal"},
 		{Key: "public_api_change", Version: 1, Family: "structural_analyzer", MatchUnit: "case_id,path,declaration_key,change_kind"},
 		{Key: "static_debug_output", Version: 1, Family: "finding_rule", MatchUnit: "case_id,path,start_line,end_line"},
-		{Key: "syntactic_reference_candidate", Version: 1, Family: "structural_analyzer", MatchUnit: "case_id,declaration_key,path,line,column"},
 		{Key: "vendor_path", Version: 1, Family: "structural_analyzer", MatchUnit: "case_id,path,signal"},
 	}
 	expectedCases := []string{"classification_boundaries", "coverage_and_removal", "debug_direct_and_multiline", "debug_near_misses", "go_symbol_boundaries", "semantic_api_and_references"}
@@ -489,12 +489,6 @@ func targetCoveragePaths(item deterministicCorpusCase, target string) []string {
 		for filePath := range item.head {
 			paths = append(paths, filePath)
 		}
-	case "syntactic_reference_candidate":
-		for filePath := range item.head {
-			if path.Ext(filePath) == ".go" {
-				paths = append(paths, filePath)
-			}
-		}
 	default:
 		for _, change := range item.labels.Changes {
 			paths = append(paths, change.Path)
@@ -517,8 +511,6 @@ func validTargetLabelSource(item deterministicCorpusCase, target string, label c
 	case "changed_declaration", "public_api_change":
 		_, baseExists := item.base[label.Path]
 		return changed && (baseExists || headExists)
-	case "syntactic_reference_candidate":
-		return headExists && path.Ext(label.Path) == ".go" && validSourcePosition(headContent, label.Line, label.Column)
 	default:
 		return false
 	}
@@ -527,14 +519,6 @@ func validTargetLabelSource(item deterministicCorpusCase, target string, label c
 func validSourceRange(content []byte, startLine, endLine int) bool {
 	lineCount := physicalLineCountBytes(content)
 	return startLine >= 1 && endLine >= startLine && endLine <= lineCount
-}
-
-func validSourcePosition(content []byte, line, column int) bool {
-	lines := bytes.Split(content, []byte{'\n'})
-	if len(lines) > 0 && len(lines[len(lines)-1]) == 0 {
-		lines = lines[:len(lines)-1]
-	}
-	return line >= 1 && line <= len(lines) && column >= 1 && column <= len(lines[line-1])
 }
 
 func physicalLineCountBytes(content []byte) int {
@@ -584,30 +568,25 @@ func labelMatchKey(caseID, target string, label corpusLabel) (string, error) {
 	prefix := caseID + "\x00" + label.Path + "\x00"
 	switch target {
 	case "static_debug_output":
-		if label.StartLine < 1 || label.EndLine < label.StartLine || label.Signal != "" || label.Kind != "" || label.QualifiedName != "" || label.DeclarationKey != "" || label.ChangeKind != "" || label.Line != 0 || label.Column != 0 {
+		if label.StartLine < 1 || label.EndLine < label.StartLine || label.Signal != "" || label.Kind != "" || label.QualifiedName != "" || label.DeclarationKey != "" || label.ChangeKind != "" {
 			return "", ErrInvalidDeterministicCorpus
 		}
 		return fmt.Sprintf("%s%09d\x00%09d", prefix, label.StartLine, label.EndLine), nil
 	case "vendor_path", "go_test_path", "contains_nul":
-		if label.Signal != target || label.StartLine != 0 || label.EndLine != 0 || label.Kind != "" || label.QualifiedName != "" || label.DeclarationKey != "" || label.ChangeKind != "" || label.Line != 0 || label.Column != 0 {
+		if label.Signal != target || label.StartLine != 0 || label.EndLine != 0 || label.Kind != "" || label.QualifiedName != "" || label.DeclarationKey != "" || label.ChangeKind != "" {
 			return "", ErrInvalidDeterministicCorpus
 		}
 		return prefix + label.Signal, nil
 	case "go_changed_symbol":
-		if (label.Kind != "function" && label.Kind != "method") || label.QualifiedName == "" || label.StartLine < 1 || label.EndLine < label.StartLine || label.Signal != "" || label.DeclarationKey != "" || label.ChangeKind != "" || label.Line != 0 || label.Column != 0 {
+		if (label.Kind != "function" && label.Kind != "method") || label.QualifiedName == "" || label.StartLine < 1 || label.EndLine < label.StartLine || label.Signal != "" || label.DeclarationKey != "" || label.ChangeKind != "" {
 			return "", ErrInvalidDeterministicCorpus
 		}
 		return fmt.Sprintf("%s%s\x00%s\x00%09d\x00%09d", prefix, label.Kind, label.QualifiedName, label.StartLine, label.EndLine), nil
 	case "changed_declaration", "public_api_change":
-		if label.DeclarationKey == "" || (label.ChangeKind != "added" && label.ChangeKind != "modified" && label.ChangeKind != "removed") || label.StartLine != 0 || label.EndLine != 0 || label.Signal != "" || label.Kind != "" || label.QualifiedName != "" || label.Line != 0 || label.Column != 0 {
+		if label.DeclarationKey == "" || (label.ChangeKind != "added" && label.ChangeKind != "modified" && label.ChangeKind != "removed") || label.StartLine != 0 || label.EndLine != 0 || label.Signal != "" || label.Kind != "" || label.QualifiedName != "" {
 			return "", ErrInvalidDeterministicCorpus
 		}
 		return prefix + label.DeclarationKey + "\x00" + label.ChangeKind, nil
-	case "syntactic_reference_candidate":
-		if label.DeclarationKey == "" || label.Line < 1 || label.Column < 1 || label.StartLine != 0 || label.EndLine != 0 || label.Signal != "" || label.Kind != "" || label.QualifiedName != "" || label.ChangeKind != "" {
-			return "", ErrInvalidDeterministicCorpus
-		}
-		return fmt.Sprintf("%s%s\x00%09d\x00%09d", prefix, label.DeclarationKey, label.Line, label.Column), nil
 	default:
 		return "", ErrInvalidDeterministicCorpus
 	}
@@ -875,26 +854,19 @@ func evaluateCaseTarget(item deterministicCorpusCase, target corpusCaseTarget) (
 			out.coverage = append(out.coverage, coverageObservation{file.Path(), string(file.Outcome()), string(file.Reason())})
 		}
 		return out, nil
-	case "changed_declaration", "public_api_change", "syntactic_reference_candidate":
+	case "changed_declaration", "public_api_change":
 		profile, err := semanticProfile(item)
 		if err != nil {
 			return targetExecution{}, err
 		}
 		out := targetExecution{}
-		if target.Key == "syntactic_reference_candidate" {
-			for _, ref := range profile.References() {
-				key, _ := labelMatchKey(item.manifest.ID, target.Key, corpusLabel{Path: ref.Path(), DeclarationKey: ref.DeclarationKey(), Line: ref.Line(), Column: ref.Column()})
-				out.observed = append(out.observed, key)
-			}
-		} else {
-			declarations := profile.Declarations()
-			if target.Key == "public_api_change" {
-				declarations = profile.PublicAPIChanges()
-			}
-			for _, declaration := range declarations {
-				key, _ := labelMatchKey(item.manifest.ID, target.Key, corpusLabel{Path: declaration.Path(), DeclarationKey: declaration.Key(), ChangeKind: string(declaration.Change())})
-				out.observed = append(out.observed, key)
-			}
+		declarations := profile.Declarations()
+		if target.Key == "public_api_change" {
+			declarations = profile.PublicAPIChanges()
+		}
+		for _, declaration := range declarations {
+			key, _ := labelMatchKey(item.manifest.ID, target.Key, corpusLabel{Path: declaration.Path(), DeclarationKey: declaration.Key(), ChangeKind: string(declaration.Change())})
+			out.observed = append(out.observed, key)
 		}
 		gaps := map[string]semanticimpact.Gap{}
 		for _, gap := range profile.Gaps() {
@@ -1038,7 +1010,7 @@ func deriveEvaluatorIdentity(targets []corpusTarget) string {
 }
 
 func evaluateDeterministicCorpusCandidateUnchecked() (DeterministicCorpusReport, error) {
-	corpus, err := loadDeterministicCorpus(deterministicCorpusFiles, corpusRoot)
+	corpus, err := loadDeterministicCorpus(corpusFiles, corpusRoot)
 	if err != nil {
 		return DeterministicCorpusReport{}, err
 	}
@@ -1164,7 +1136,7 @@ func deriveDeterministicReportIdentity(report DeterministicCorpusReport) string 
 }
 
 func (r DeterministicCorpusReport) Validate() error {
-	corpus, err := loadDeterministicCorpus(deterministicCorpusFiles, corpusRoot)
+	corpus, err := loadDeterministicCorpus(corpusFiles, corpusRoot)
 	if err != nil {
 		return ErrInvalidDeterministicCorpus
 	}

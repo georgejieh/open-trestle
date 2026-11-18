@@ -183,7 +183,7 @@ func encodeVerificationContext(packet VerificationContextPacket) ([]byte, error)
 			Analyzed: selection.CandidateCount() + sourceOmissionCount(generation.sourceOmissions), PreselectionOmitted: sourceOmissionCount(generation.sourceOmissions), Available: selection.CandidateCount(), Selected: selection.SelectedCount(),
 			Omitted: selection.OmittedCount() + sourceOmissionCount(generation.sourceOmissions), SelectedBytes: selection.SelectedBytes(),
 		},
-		Limits:  contextLimitsWire{MaxSourceBytes: generation.limits.MaxSourceBytes(), MaxMemoryItems: generation.limits.MaxMemoryItems()},
+		Limits:  generation.limits.wire(),
 		Sources: contextSourceWireValues(generation.sources), SourceOmissions: contextSourceOmissionWireValues(generation.sourceOmissions), Memory: contextMemoryWireValue(generation.retrieval), AdditionalMemory: contextMemoryWireValues(generation.additionalRetrievals),
 		StatedIntent: generation.statedIntent.wire(),
 		Candidates:   make([]verificationCandidateWire, len(packet.candidates.findings)),

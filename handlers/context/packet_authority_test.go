@@ -82,14 +82,10 @@ func newPacketWriterFixture(t *testing.T, blockedFile bool, baseFile bool, legac
 }
 
 func newPacketWriterFixtureVariant(t *testing.T, blockedFile bool, baseFile bool, legacy bool, crossedRoot bool, failAppend bool, indexedChangedPath bool, emptyIndex bool) (*PacketAuthority, controlplane.TaskExecutionRequest, *controlplane.Coordinator, artifact.Store, string, func(), *failingPacketJournal) {
-	return newPacketWriterFixtureWithDuplicate(t, blockedFile, baseFile, legacy, crossedRoot, failAppend, indexedChangedPath, emptyIndex, false)
+	return newPacketWriterFixtureWithMemoryExpiry(t, blockedFile, baseFile, legacy, crossedRoot, failAppend, indexedChangedPath, emptyIndex, time.Time{})
 }
 
-func newPacketWriterFixtureWithDuplicate(t *testing.T, blockedFile bool, baseFile bool, legacy bool, crossedRoot bool, failAppend bool, indexedChangedPath bool, emptyIndex bool, duplicateReference bool) (*PacketAuthority, controlplane.TaskExecutionRequest, *controlplane.Coordinator, artifact.Store, string, func(), *failingPacketJournal) {
-	return newPacketWriterFixtureWithMemoryExpiry(t, blockedFile, baseFile, legacy, crossedRoot, failAppend, indexedChangedPath, emptyIndex, duplicateReference, time.Time{})
-}
-
-func newPacketWriterFixtureWithMemoryExpiry(t *testing.T, blockedFile bool, baseFile bool, legacy bool, crossedRoot bool, failAppend bool, indexedChangedPath bool, emptyIndex bool, duplicateReference bool, memoryValidUntil time.Time) (*PacketAuthority, controlplane.TaskExecutionRequest, *controlplane.Coordinator, artifact.Store, string, func(), *failingPacketJournal) {
+func newPacketWriterFixtureWithMemoryExpiry(t *testing.T, blockedFile bool, baseFile bool, legacy bool, crossedRoot bool, failAppend bool, indexedChangedPath bool, emptyIndex bool, memoryValidUntil time.Time) (*PacketAuthority, controlplane.TaskExecutionRequest, *controlplane.Coordinator, artifact.Store, string, func(), *failingPacketJournal) {
 	if !memoryValidUntil.IsZero() && (!indexedChangedPath || emptyIndex) {
 		t.Fatal("memory expiry requires the indexed changed-path record")
 	}
@@ -101,11 +97,11 @@ func newPacketWriterFixtureWithMemoryExpiry(t *testing.T, blockedFile bool, base
 	git := func(args ...string) string {
 		t.Helper()
 		prefix := []string{"-C", gitRoot}
-		if indexedChangedPath || emptyIndex || duplicateReference {
+		if indexedChangedPath || emptyIndex {
 			prefix = append(prefix, "-c", "commit.gpgsign=false")
 		}
 		cmd := exec.Command("git", append(prefix, args...)...)
-		if indexedChangedPath || emptyIndex || duplicateReference {
+		if indexedChangedPath || emptyIndex {
 			cmd.Env = append(os.Environ(), "GIT_AUTHOR_DATE=2001-01-01T00:00:00Z", "GIT_COMMITTER_DATE=2001-01-01T00:00:00Z")
 		}
 		data, err := cmd.CombinedOutput()
@@ -122,9 +118,6 @@ func newPacketWriterFixtureWithMemoryExpiry(t *testing.T, blockedFile bool, base
 		}
 	}
 	testBody := "package p\nfunc TestChanged(){_=Changed()}\n"
-	if duplicateReference {
-		testBody = "package p\nfunc TestChanged(){_=Changed();_=Changed()}\n"
-	}
 	write("a.go", "package p\nfunc Changed() int{return 1}\n")
 	write("a_test.go", testBody)
 	write("z_unselected.txt", "unchanged\n")
@@ -136,13 +129,6 @@ func newPacketWriterFixtureWithMemoryExpiry(t *testing.T, blockedFile bool, base
 	git("add", ".")
 	git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "head")
 	headRevision, _ := evidence.NewRevisionIdentity(evidence.RevisionKindGitCommit, evidence.RevisionAlgorithmSHA1, git("rev-parse", "HEAD"))
-	if duplicateReference {
-		for _, revision := range []evidence.RevisionIdentity{baseRevision, headRevision} {
-			if got := git("show", revision.Digest()+":a_test.go"); got+"\n" != testBody {
-				t.Fatal("STOP: Git test source differs from unchanged map source")
-			}
-		}
-	}
 
 	adapterIdentity, _ := evidence.NewSourceAdapterIdentity(evidence.SourceAdapterKindGit, "test-source", "1.0.0", []evidence.SourceAdapterCapability{evidence.SourceCapabilityReadManifest, evidence.SourceCapabilityReadContent})
 	adapter := &contextTestSource{identity: adapterIdentity, results: map[string]scm.SourceAdapterResult{baseRevision.Identity(): makeSourceResult(t, map[string][]byte{"a.go": []byte("package p\nfunc Changed() int{return 1}\n"), "a_test.go": []byte(testBody), "z_unselected.txt": []byte("unchanged\n")}), headRevision.Identity(): makeSourceResult(t, map[string][]byte{"a.go": []byte("package p\nfunc Changed() int{return 2}\n"), "a_test.go": []byte(testBody), "z_unselected.txt": []byte("unchanged\n")})}}
@@ -219,7 +205,7 @@ func newPacketWriterFixtureWithMemoryExpiry(t *testing.T, blockedFile bool, base
 	}
 	wrappedJournal := &failingPacketJournal{RunJournal: journal, fail: failAppend}
 	var coordinator *controlplane.Coordinator
-	if indexedChangedPath || emptyIndex || duplicateReference {
+	if indexedChangedPath || emptyIndex {
 		// NewCoordinator retains this reader. Restore the process-global reader
 		// even if construction panics; never seed the rest of the producer run.
 		coordinator, err = func() (*controlplane.Coordinator, error) {

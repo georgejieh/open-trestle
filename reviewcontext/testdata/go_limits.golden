@@ -1,0 +1,6 @@
+state used complete true dependents 4
+enclosing_symbol 1 depth 0 calc/calc.go:5-6
+direct_reference 1 depth 1 calc/calc.go:9-9
+changed calc/calc.go:4-7 dependents 4 tests 1
+stage limit direct_reference 3
+stage limit related_test 1

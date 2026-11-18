@@ -50,8 +50,9 @@ type profileWire struct {
 	HeadSnapshotIdentity string            `json:"head_snapshot_identity"`
 	ChangeModelIdentity  string            `json:"change_model_identity"`
 	Declarations         []declarationWire `json:"declarations"`
-	References           []referenceWire   `json:"references"`
-	Gaps                 []gapWire         `json:"gaps"`
+	// References exists only in version 1.
+	References *[]referenceWire `json:"references,omitempty"`
+	Gaps       []gapWire        `json:"gaps"`
 }
 
 func EncodeProfile(p Profile) ([]byte, error) {
@@ -80,7 +81,7 @@ func DecodeProfile(encoded []byte) (Profile, error) {
 		return Profile{}, ErrInvalidInput
 	}
 	canonical, err := json.Marshal(w)
-	if err != nil || !bytes.Equal(canonical, encoded) || w.Declarations == nil || w.References == nil || w.Gaps == nil {
+	if err != nil || !bytes.Equal(canonical, encoded) || w.Declarations == nil || (w.References == nil) != (w.SchemaVersion == 2) || w.Gaps == nil {
 		return Profile{}, ErrInvalidInput
 	}
 	p := Profile{identity: w.Identity, adapterIdentity: w.AdapterIdentity, graphSchema: w.GraphSchema, inputIdentity: w.InputIdentity, baseSnapshotIdentity: w.BaseSnapshotIdentity, headSnapshotIdentity: w.HeadSnapshotIdentity, changeModelIdentity: w.ChangeModelIdentity}
@@ -90,24 +91,28 @@ func DecodeProfile(encoded []byte) (Profile, error) {
 		}
 		p.declarations = append(p.declarations, Declaration{identity: d.Identity, key: d.Key, name: d.Name, kind: d.Kind, filePath: d.Path, change: d.Change, exported: d.Exported, startLine: d.StartLine, endLine: d.EndLine, syntaxDigest: d.SyntaxDigest, apiDigest: d.APIDigest, publicAPIChange: d.PublicAPIChange})
 	}
-	for _, r := range w.References {
-		p.references = append(p.references, Reference{identity: r.Identity, declarationIdentity: r.DeclarationIdentity, declarationKey: r.DeclarationKey, filePath: r.Path, line: r.Line, column: r.Column, affectedTest: r.AffectedTest, grade: r.Grade})
+	for _, r := range derefReferences(w.References) {
+		p.references = append(p.references, recordedReference{identity: r.Identity, declarationIdentity: r.DeclarationIdentity, declarationKey: r.DeclarationKey, filePath: r.Path, line: r.Line, column: r.Column, affectedTest: r.AffectedTest, grade: r.Grade})
 	}
 	for _, g := range w.Gaps {
 		p.gaps = append(p.gaps, Gap{identity: g.Identity, filePath: g.Path, reason: g.Reason, detail: g.Detail})
 	}
-	if w.Contract != "open-trestle/semantic-impact-profile" || w.SchemaVersion != 1 || validateProfile(p) != nil {
+	if w.Contract != "open-trestle/semantic-impact-profile" || w.SchemaVersion != profileSchemaVersion(p.graphSchema) || validateProfile(p) != nil {
 		return Profile{}, ErrInvalidInput
 	}
 	return p, nil
 }
 func toProfileWire(p Profile) profileWire {
-	w := profileWire{Contract: "open-trestle/semantic-impact-profile", SchemaVersion: 1, Identity: p.identity, AdapterIdentity: p.adapterIdentity, GraphSchema: p.graphSchema, InputIdentity: p.inputIdentity, BaseSnapshotIdentity: p.baseSnapshotIdentity, HeadSnapshotIdentity: p.headSnapshotIdentity, ChangeModelIdentity: p.changeModelIdentity, Declarations: make([]declarationWire, 0, len(p.declarations)), References: make([]referenceWire, 0, len(p.references)), Gaps: make([]gapWire, 0, len(p.gaps))}
+	w := profileWire{Contract: "open-trestle/semantic-impact-profile", SchemaVersion: profileSchemaVersion(p.graphSchema), Identity: p.identity, AdapterIdentity: p.adapterIdentity, GraphSchema: p.graphSchema, InputIdentity: p.inputIdentity, BaseSnapshotIdentity: p.baseSnapshotIdentity, HeadSnapshotIdentity: p.headSnapshotIdentity, ChangeModelIdentity: p.changeModelIdentity, Declarations: make([]declarationWire, 0, len(p.declarations)), Gaps: make([]gapWire, 0, len(p.gaps))}
+	if p.graphSchema == goGraphSchemaV1 {
+		references := make([]referenceWire, 0, len(p.references))
+		w.References = &references
+	}
 	for _, d := range p.declarations {
 		w.Declarations = append(w.Declarations, declarationWire{d.identity, d.key, d.name, d.kind, d.filePath, d.change, d.exported, d.startLine, d.endLine, d.syntaxDigest, d.apiDigest, d.publicAPIChange, GradeStructural})
 	}
 	for _, r := range p.references {
-		w.References = append(w.References, referenceWire{r.identity, r.declarationIdentity, r.declarationKey, r.filePath, r.line, r.column, r.affectedTest, r.grade})
+		*w.References = append(*w.References, referenceWire{r.identity, r.declarationIdentity, r.declarationKey, r.filePath, r.line, r.column, r.affectedTest, r.grade})
 	}
 	for _, g := range p.gaps {
 		w.Gaps = append(w.Gaps, gapWire{g.identity, g.filePath, g.reason, g.detail})
@@ -115,7 +120,7 @@ func toProfileWire(p Profile) profileWire {
 	return w
 }
 func validateProfile(p Profile) error {
-	if !validDigest(p.identity) || !validDigest(p.adapterIdentity) || !validDigest(p.inputIdentity) || !validDigest(p.baseSnapshotIdentity) || !validDigest(p.headSnapshotIdentity) || !validDigest(p.changeModelIdentity) || p.adapterIdentity != goAdapterIdentity || p.graphSchema != goGraphSchema || len(p.declarations) > maximumDeclarations || len(p.references) > maximumReferences || len(p.gaps) > maximumGaps {
+	if !validDigest(p.identity) || !validDigest(p.adapterIdentity) || !validDigest(p.inputIdentity) || !validDigest(p.baseSnapshotIdentity) || !validDigest(p.headSnapshotIdentity) || !validDigest(p.changeModelIdentity) || !validAdapter(p) || len(p.declarations) > maximumDeclarations || len(p.references) > maximumReferences || len(p.gaps) > maximumGaps {
 		return ErrInvalidInput
 	}
 	declIDs := map[string]string{}
@@ -133,7 +138,7 @@ func validateProfile(p Profile) error {
 	}
 	last = ""
 	seenReferences := map[string]bool{}
-	var previousReference *Reference
+	var previousReference *recordedReference
 	for index := range p.references {
 		r := p.references[index]
 		key, declared := declIDs[r.declarationIdentity]
@@ -198,7 +203,7 @@ func declarationIdentity(d Declaration) string {
 		Start, End                                       int
 	}{d.filePath, d.key, d.name, d.kind, string(d.change), d.syntaxDigest, d.apiDigest, d.exported, d.publicAPIChange, d.startLine, d.endLine})
 }
-func referenceIdentity(r Reference) string {
+func referenceIdentity(r recordedReference) string {
 	return hashJSON(struct {
 		Declaration, Path string
 		Line, Column      int
@@ -206,7 +211,7 @@ func referenceIdentity(r Reference) string {
 		Grade             Grade
 	}{r.declarationIdentity, r.filePath, r.line, r.column, r.affectedTest, r.grade})
 }
-func referenceLess(a, b Reference) bool {
+func referenceLess(a, b recordedReference) bool {
 	if a.declarationIdentity != b.declarationIdentity {
 		return a.declarationIdentity < b.declarationIdentity
 	}
@@ -217,4 +222,32 @@ func referenceLess(a, b Reference) bool {
 		return a.line < b.line
 	}
 	return a.column < b.column
+}
+
+// profileSchemaVersion is 1 for a profile of the version 1 graph, which
+// carries reference candidates, and 2 otherwise.
+func profileSchemaVersion(graphSchema string) int {
+	if graphSchema == goGraphSchemaV1 {
+		return 1
+	}
+	return 2
+}
+
+// validAdapter accepts the current graph, and the version 1 graph a recorded
+// profile may hold; only version 1 has references.
+func validAdapter(p Profile) bool {
+	switch p.graphSchema {
+	case goGraphSchema:
+		return p.adapterIdentity == goAdapterIdentity && len(p.references) == 0
+	case goGraphSchemaV1:
+		return p.adapterIdentity == goAdapterIdentityV1
+	}
+	return false
+}
+
+func derefReferences(references *[]referenceWire) []referenceWire {
+	if references == nil {
+		return nil
+	}
+	return *references
 }

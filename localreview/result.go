@@ -646,6 +646,9 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 			if walk.hygiene, err = review.ContextPatternHygieneSummary(contextArtifact.Payload()); err != nil {
 				return Result{}, ErrInvalidResult
 			}
+			if walk.manifest, err = review.ContextManifestOf(contextArtifact.Payload()); err != nil {
+				return Result{}, ErrInvalidResult
+			}
 			// Only a direct run knows its sources' stages, so only a direct run
 			// classifies pre-existing findings.
 			lines = lines.withContextEvidence(contextArtifact.Payload())
@@ -806,7 +809,7 @@ func (s *Session) readResult(ctx context.Context, p runtimecatalog.PreparedRevie
 		var declarations []semanticimpact.Declaration
 		if s.investigation == nil && walk.analysis != nil {
 			declarations = walk.analysis.SemanticImpact().Declarations()
-			lines = lines.withImpact(walk.analysis.SemanticImpact())
+			lines = lines.withImpact(walk.analysis.SemanticImpact(), walk.manifest)
 		}
 		if result, err = judgeResult(result, lines, declarations); err != nil {
 			return Result{}, err

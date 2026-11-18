@@ -111,7 +111,7 @@ func TestOldCodeHandlerProducedBranchGoldens(t *testing.T) {
 		name       string
 		base, head map[string][]byte
 	}{
-		{"produced-v4-go-affected-test", map[string][]byte{"lib/api.go": []byte("package lib\nfunc Exported() int { return 1 }\n"), "lib/api_test.go": []byte("package lib\nfunc TestExported(){ _ = Exported() }\n")}, map[string][]byte{"lib/api.go": []byte("package lib\nfunc Exported() int { return 2 }\n"), "lib/api_test.go": []byte("package lib\nfunc TestExported(){ _ = Exported() }\n")}},
+		{"produced-v4-go-modified-function", map[string][]byte{"lib/api.go": []byte("package lib\nfunc Exported() int { return 1 }\n"), "lib/api_test.go": []byte("package lib\nfunc TestExported(){ _ = Exported() }\n")}, map[string][]byte{"lib/api.go": []byte("package lib\nfunc Exported() int { return 2 }\n"), "lib/api_test.go": []byte("package lib\nfunc TestExported(){ _ = Exported() }\n")}},
 	}
 	for _, s := range scenarios {
 		t.Run(s.name, func(t *testing.T) {
@@ -129,7 +129,7 @@ func TestOldCodeHandlerProducedBranchGoldens(t *testing.T) {
 				t.Fatalf("entries=%d checks=%d observations=%d schema=%d", len(entries), len(checks), len(result.Observations()), result.SchemaVersion())
 			}
 			switch s.name {
-			case "produced-v4-go-affected-test":
+			case "produced-v4-go-modified-function":
 				ranges := entries[0].Ranges()
 				if entries[0].Path() != "lib/api.go" || entries[0].Kind() != "modified" || len(ranges) != 1 || ranges[0].StartLine() != 2 || ranges[0].EndLine() != 2 || len(result.Items()) != 1 || result.Items()[0].Path() != "lib/api.go" || result.Items()[0].StartLine() != 2 || result.Items()[0].EndLine() != 2 || len(result.Gaps()) != 0 {
 					t.Fatalf("go range/coverage mismatch: entry=%#v items=%#v gaps=%#v", entries[0], result.Items(), result.Gaps())
@@ -137,9 +137,9 @@ func TestOldCodeHandlerProducedBranchGoldens(t *testing.T) {
 				if checks[0].State() != CheckPassed || !checks[0].Complete() || checks[0].ApplicableFiles() != 1 || checks[0].ApplicableRanges() != 1 || checks[0].CheckedFiles() != 1 || checks[0].CheckedRanges() != 1 || checks[0].MatchCount() != 0 {
 					t.Fatal("go check mismatch")
 				}
-				ds, rs := profile.Declarations(), profile.References()
-				if len(ds) != 1 || ds[0].Key() != "func:Exported" || ds[0].Path() != "lib/api.go" || ds[0].Change() != semanticimpact.ChangeModified || !ds[0].Exported() || ds[0].PublicAPIChange() || len(profile.PublicAPIChanges()) != 0 || len(profile.Gaps()) != 0 || len(rs) != 1 || rs[0].DeclarationKey() != ds[0].Key() || rs[0].DeclarationIdentity() != ds[0].Identity() || rs[0].Path() != "lib/api_test.go" || rs[0].Line() != 2 || !rs[0].AffectedTest() || rs[0].Grade() != semanticimpact.GradeSyntacticCandidate {
-					t.Fatalf("go semantic mismatch: declarations=%#v refs=%#v gaps=%#v", ds, rs, profile.Gaps())
+				ds := profile.Declarations()
+				if len(ds) != 1 || ds[0].Key() != "func:Exported" || ds[0].Path() != "lib/api.go" || ds[0].Change() != semanticimpact.ChangeModified || !ds[0].Exported() || ds[0].PublicAPIChange() || len(profile.PublicAPIChanges()) != 0 || len(profile.Gaps()) != 0 || profile.GraphSchema() != "open-trestle/semantic-impact/go-ast-graph/v2" {
+					t.Fatalf("go semantic mismatch: declarations=%#v gaps=%#v", ds, profile.Gaps())
 				}
 			}
 			frozen := readOldCodeGolden(t, s.name)

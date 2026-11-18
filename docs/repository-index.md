@@ -1,6 +1,6 @@
 # Repository index
 
-The repository index records every file of a commit and the [syntax analysis](syntax-analysis.md) of its source files, so that a query can find definitions, their uses, the tests that use them and what depends on a change. Reviews do not use it yet.
+The repository index records every file of a commit and the [syntax analysis](syntax-analysis.md) of its source files, so that a query can find definitions, their uses, the tests that use them and what depends on a change. Reviews take their context from it (see [review context](local-model-review.md#review-context)).
 
 ## What it holds
 
@@ -37,6 +37,10 @@ Names are not resolved to declarations, so a candidate can belong to another def
 The dependents of a change start from its changed definitions: each definition, in the head or the base commit, that holds a changed line outside its child definitions. The closure then follows reference candidates backwards, breadth first: the definitions holding candidates of a changed definition have depth 1, those holding candidates of a depth-1 dependent depth 2, and so on. It stops at depth 3, 1,000 dependents, 2,000 candidates per definition and 2,000,000 references checked, and records what each limit cut. Changed files without a complete analysis are listed as gaps. A definition of a file the head no longer has is still matched in its package and in the files that imported that file in the base, and a definition that lost its export is still matched in the files that imported it.
 
 `trestle index query dependents` finds the changed files by comparing the two snapshots. A deleted and an added file with the same blob are a move without a change, matched one to one; a deleted and an added file with the same base name, when no other deleted or added file has it, are a move with an edit. Any other deletion while an addition is left is recorded as a possible move (`unmatched_move`). Each modified file's base and head blobs are diffed, up to 256 MiB in all, to find the changed lines; a file past that budget (`diff_budget`) or that the diff cannot represent (`diff_unavailable`) counts as changed throughout.
+
+## Ranking
+
+A ranking is a PageRank over the file graph, personalised to seed files such as a change's files. A file links to each file whose definitions it holds reference candidates of, and to each file its imports resolve to, weighted by the square root of the count; a definition scores the rank that flows to it from the files that reference it. At most 500 candidates are counted per definition and 4,000,000 references checked. A review's repository map lists the signatures of the source definitions it scores highest.
 
 ## Where it lives
 

@@ -94,16 +94,14 @@ func (f *requiredPipeline) assertLineage(state controlplane.ReviewRunState) {
 	head, err := sourcehandler.ParseSnapshotArtifact(headArtifact)
 	requiredCheck(t, err)
 	if len(analysis.Items()) != 1 || len(input.EvidenceItems()) != 2 {
-		t.Fatal("fixture did not retain changed and semantic evidence")
+		t.Fatal("fixture did not retain changed and index evidence")
 	}
-	semanticMember := false
-	for _, reference := range analysis.SemanticImpact().References() {
-		if reference.Path() == "caller.go" && reference.Line() == 2 {
-			semanticMember = true
-		}
-	}
-	if !semanticMember {
-		t.Fatal("unchanged caller lacks actual semantic membership")
+	indexRanges, err := review.ContextIndexSourceRanges(contextArtifact.Payload())
+	requiredCheck(t, err)
+	callerRange, err := evidence.NewSourceRange("caller.go", 2, 2)
+	requiredCheck(t, err)
+	if len(indexRanges) != 1 || !indexRanges[callerRange] {
+		t.Fatal("unchanged caller is not the packet's index context source")
 	}
 	bindings := make([]string, 0, len(input.EvidenceItems()))
 	for _, item := range input.EvidenceItems() {
@@ -124,7 +122,7 @@ func (f *requiredPipeline) assertLineage(state controlplane.ReviewRunState) {
 				t.Fatal("context evidence differs from acquired head bytes")
 			}
 			if item.SourceRange().Path() == "caller.go" && (binding.Identity() != item.ID() || item.SourceRange().StartLine() != 2 || item.SourceRange().EndLine() != 2) {
-				t.Fatal("semantic evidence is not the exact selected source slice")
+				t.Fatal("index evidence is not the exact selected source slice")
 			}
 			if item.SourceRange().Path() == "a.go" && (analysis.Items()[0].EvidenceID() != item.ID() || analysis.Items()[0].BindingIdentity() != binding.Identity()) {
 				t.Fatal("changed evidence is not bound to actual deterministic analysis")

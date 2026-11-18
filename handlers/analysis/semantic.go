@@ -34,18 +34,14 @@ func buildSemanticProfile(ctx context.Context, store artifact.Store, scope audit
 	loaded := 0
 	expires := at.Add(100 * 365 * 24 * time.Hour)
 	gaps := map[string]semanticimpact.Gap{}
-	limitGapRecorded := false
 	recordLimit := func(filePath string) {
-		if changedGo[filePath] || !limitGapRecorded {
-			gap, _ := semanticimpact.NewCoverageGap(filePath, semanticimpact.GapLimitExceeded)
-			gaps[filePath] = gap
-			limitGapRecorded = true
-		}
+		gap, _ := semanticimpact.NewCoverageGap(filePath, semanticimpact.GapLimitExceeded)
+		gaps[filePath] = gap
 	}
-	load := func(snapshot source.Snapshot, baseSide bool) ([]semanticimpact.File, error) {
+	load := func(snapshot source.Snapshot) ([]semanticimpact.File, error) {
 		files := []semanticimpact.File{}
 		for _, ref := range snapshot.Files() {
-			if path.Ext(ref.Path()) != ".go" || (baseSide && !changedGo[ref.Path()]) {
+			if !changedGo[ref.Path()] {
 				continue
 			}
 			if len(files) >= maximumSemanticFilesPerSide || loaded+ref.SizeBytes() > maximumSemanticSourceBytes {
@@ -80,11 +76,11 @@ func buildSemanticProfile(ctx context.Context, store artifact.Store, scope audit
 		}
 		return files, nil
 	}
-	baseFiles, err := load(base, true)
+	baseFiles, err := load(base)
 	if err != nil {
 		return semanticimpact.Profile{}, time.Time{}, err
 	}
-	headFiles, err := load(head, false)
+	headFiles, err := load(head)
 	if err != nil {
 		return semanticimpact.Profile{}, time.Time{}, err
 	}

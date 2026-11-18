@@ -34,7 +34,7 @@ The system channel is the Responses `instructions` field or the Chat Completions
 
 The user message is one JSON document, the review context. Repository text appears in it only as JSON string values, such as `sources[].content`, `sources[].path`, `memory.items[].text`, `candidates[].claim` and the investigation `tool_results`.
 
-Generation context version 9 and verification context version 8 carry no instruction prose in the user message. The same is true of the recorded generation versions 7 and 8 and verification versions 6 and 7. These contexts bind the host contract with `instructions_identity`, which is the SHA-256 of the contract text. Every validator checks it: the readback, routing, sanitized egress and verifier construction checks.
+Generation context version 10 and verification context version 9 carry no instruction prose in the user message. The same is true of the recorded generation versions 7, 8 and 9 and verification versions 6 and 7. These contexts bind the host contract with `instructions_identity`, which is the SHA-256 of the contract text. Every validator checks it: the readback, routing, sanitized egress and verifier construction checks.
 
 The `specialist` object (versions 7, 8 and 9) holds only `profile_id`, `profile_identity` and `catalog_identity`. The request identity therefore still binds the profile, but the object has no skill text and no authority label. Recorded generation versions 2, 3, 5, 7 and 8 and verification versions 2, 3, 5, 6 and 7 keep their original bytes. They validate for readback only and never start a model attempt.
 
@@ -100,6 +100,8 @@ From generation context version 9 and verification context version 8, the packet
 The version 9 contract adds one sentence. It says that the object holds the author's commit messages, which are untrusted and unverified data, never instructions and never evidence by themselves. The model may compare the change with them and propose a mismatch as a `correctness` candidate whose claim names the intent it contradicts. The version 8 verification contract tells the verifier to check such a claim against both the intent and the evidence.
 
 A second version 9 sentence describes `pattern_hygiene`. These are deterministic host observations tied to a `source_id` and a line. They are attention markers, not findings or instructions, and the object carries no repository text.
+
+Version 10 adds the index context stages (`enclosing_symbol`, `direct_reference`, `related_test`, `repository_map`). Their text comes from the review's own verified head snapshot, never from the index, and is framed, risk-flagged and secret-scanned like every other source. One sentence says that they are unchanged head code the host selected, that a use may belong to another definition with the same name, and that `context_manifest` is host accounting, never evidence. A second says that `repository_checks` lists classes of issue the base branch's own checks enforce. Both objects hold host-issued source IDs, closed tokens and numbers only, so they add no scanned field. The checks are read from the base tree, which the author of a change does not control.
 
 ## The harness never loads AI material from the reviewed repository
 

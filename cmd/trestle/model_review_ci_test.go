@@ -403,7 +403,7 @@ func TestShallowCheckoutWithBothCommitsPresentStillReviews(t *testing.T) {
 		t.Skip("Git did not honor the shallow file")
 	}
 	var stdout, stderr bytes.Buffer
-	if code := run(checkoutModelReviewArgs(f, directory, f.base, f.head), &stdout, &stderr); code != 4 || stderr.Len() != 0 {
+	if code := run(checkoutModelReviewArgs(f, directory, f.base, f.head), &stdout, &stderr); code != 4 || withoutIndexNotice(stderr.String()) != "" {
 		t.Fatalf("exit=%d stdout=%s stderr=%q", code, stdout.String(), stderr.String())
 	}
 }

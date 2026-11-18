@@ -164,7 +164,7 @@ func TestModelReviewRefusesAtTheSpendingLimitBeforeAnyCredentialOrRequest(t *tes
 		t.Fatalf("a refused review sent %v or read credentials %v", transport.requests, lookups())
 	}
 	want := "Spending limit reached: $0.01 of your $0.01 monthly limit for OPEN_TRESTLE_PROVIDER_REMOTE_TEST (100%) is recorded this month, so this review was not started and nothing was sent. Run trestle usage to see it; raise or clear the limit with trestle usage set or trestle usage clear, or wait until the month ends.\n" + spending.Note + "\n"
-	if stderr.String() != want {
+	if withoutIndexNotice(stderr.String()) != want {
 		t.Fatalf("stderr:\n%s\nwant:\n%s", stderr.String(), want)
 	}
 	if entries := spendingMonthEntries(t, store); len(entries) != 1 {
@@ -201,7 +201,7 @@ func TestModelReviewWarnsBeforeAndAlertsAfterCrossingAnAlertPercentage(t *testin
 		"Spending: $0.01 of your $0.01 monthly limit for OPEN_TRESTLE_PROVIDER_REMOTE_TEST this month (5%), alerts at 5% and 100%.",
 		spending.Note,
 	}, "\n") + "\n"
-	if stderr.String() != want {
+	if withoutIndexNotice(stderr.String()) != want {
 		t.Fatalf("stderr:\n%s\nwant:\n%s", stderr.String(), want)
 	}
 	// A second review starts (560 is under the limit) and crosses no new

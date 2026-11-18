@@ -487,6 +487,9 @@ type AnalysisHints struct {
 	ConfigFiles []ConfigFile
 	// FileSignals adds analyzer-derived signals per changed path (for example concurrency).
 	FileSignals map[string][]Signal
+	// ReferenceFanOut counts the direct dependents of the changed definitions,
+	// from the repository index.
+	ReferenceFanOut uint32
 }
 
 // ChangeFeaturesFromSemanticImpact derives router input from existing deterministic evidence:
@@ -571,12 +574,11 @@ func changeFeaturesFromImpact(changeIdentity string, files []ChangedFileSpec, im
 	for gapPath := range gapSet {
 		spec.SemanticGapPaths = append(spec.SemanticGapPaths, gapPath)
 	}
-	references := len(impact.References())
-	if len(publicAPIChanges) > maxPublicAPIChanges || references > maxReferenceFanOut {
+	if len(publicAPIChanges) > maxPublicAPIChanges || hints.ReferenceFanOut > maxReferenceFanOut {
 		return ChangeFeatures{}, fmt.Errorf("%w: semantic profile exceeds bounds", ErrInvalidChangeFeatures)
 	}
 	spec.PublicAPIChanges = uint32(len(publicAPIChanges))
-	spec.ReferenceFanOut = uint32(references)
+	spec.ReferenceFanOut = hints.ReferenceFanOut
 	return NewChangeFeatures(spec)
 }
 

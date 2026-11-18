@@ -68,14 +68,15 @@ func ReconstructRecordedVerificationRequestContext(
 	// generation context is bound through generation_context_identity, but its
 	// specialist guidance is not forwarded, and candidate categories and fix
 	// guidance are bound only through candidate_batch_identity and candidate_id:
-	// the verifier never receives them. A v9 generation context yields a
-	// version 8 verifier request, a recorded v8 context a version 7 one and a
-	// recorded v7 context a version 6 one; every such contract travels only in
-	// the trusted system channel. The verifier receives every generation
-	// source, so removed_lines sources at a deletion point reach it unchanged,
-	// and a v9 stated_intent unchanged; pattern_hygiene is finder evidence and
-	// is not forwarded. Recorded earlier generation versions keep their own
-	// verifier version for readback.
+	// the verifier never receives them. A v10 generation context yields a
+	// version 9 verifier request, a recorded v9 context a version 8 one, a
+	// recorded v8 context a version 7 one and a recorded v7 context a version
+	// 6 one; every such contract travels only in the trusted system channel.
+	// The verifier receives every generation source, so removed_lines sources
+	// and the index stages reach it unchanged, and a stated_intent unchanged;
+	// pattern_hygiene, context_manifest and repository_checks are finder
+	// evidence and are not forwarded. Recorded earlier generation versions
+	// keep their own verifier version for readback.
 	if !candidateBatchMatchesContextVersion(generationWire.SchemaVersion, candidates) {
 		return VerificationRequestContext{}, ErrInvalidVerificationRequestContext
 	}
@@ -314,13 +315,14 @@ func decodeVerificationContextWire(payload []byte) (verificationContextWire, err
 		return verificationContextWire{}, ErrInvalidVerificationRequestContext
 	}
 	canonical, err := json.Marshal(wire)
-	if err != nil || !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/verification-context-packet" || (wire.SchemaVersion != 2 && wire.SchemaVersion != 3 && wire.SchemaVersion != modelContextVersion && wire.SchemaVersion != modelVerificationContextVersionV6 && wire.SchemaVersion != modelVerificationContextVersionV7 && wire.SchemaVersion != modelVerificationContextVersion) {
+	if err != nil || !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/verification-context-packet" || (wire.SchemaVersion != 2 && wire.SchemaVersion != 3 && wire.SchemaVersion != modelContextVersion && wire.SchemaVersion != modelVerificationContextVersionV6 && wire.SchemaVersion != modelVerificationContextVersionV7 && wire.SchemaVersion != modelVerificationContextVersionV8 && wire.SchemaVersion != modelVerificationContextVersion) {
 		return verificationContextWire{}, ErrInvalidVerificationRequestContext
 	}
-	// A stated intent exists only in version 8. Its content is validated with
-	// the generation context it is copied from; a sanitized copy may carry
-	// redacted text, so it is not re-derived here.
-	if wire.StatedIntent != nil && wire.SchemaVersion != modelVerificationContextVersion {
+	// A stated intent exists only from version 8, and a source limit only in
+	// version 9. Stated intent content is validated with the generation
+	// context it is copied from; a sanitized copy may carry redacted text, so
+	// it is not re-derived here.
+	if wire.StatedIntent != nil && !intentVerificationVersion(wire.SchemaVersion) || wire.Limits.MaxSources != 0 && wire.SchemaVersion != modelVerificationContextVersion {
 		return verificationContextWire{}, ErrInvalidVerificationRequestContext
 	}
 	return wire, nil
@@ -357,7 +359,7 @@ func verificationSourcesMatch(wire verificationContextWire, items []evidence.Evi
 			source.SourceID != item.ID() || source.EvidenceDigest != item.Digest() ||
 			source.Path != rangeValue.Path() || source.StartLine != rangeValue.StartLine() ||
 			source.EndLine != rangeValue.EndLine() || !utf8.ValidString(source.Content) ||
-			!validContextStageToken(source.Stage, removedLinesVerificationVersion(wire.SchemaVersion)) || !validContextTaintToken(source.Taint) ||
+			!validContextStageToken(source.Stage, removedLinesVerificationVersion(wire.SchemaVersion), wire.SchemaVersion == modelVerificationContextVersion) || !validContextTaintToken(source.Taint) ||
 			removed && source.Taint != memory.TaintRepositoryControlled.String() {
 			return false
 		}

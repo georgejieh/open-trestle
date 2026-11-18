@@ -34,6 +34,20 @@ import (
 	"github.com/georgejieh/open-trestle/webhook"
 )
 
+// requiredIndexSource proposes the unchanged caller of Changed as index
+// context, as a repository index would.
+type requiredIndexSource struct{}
+
+func (requiredIndexSource) Identity() string { return requiredDigest("index-source") }
+
+func (requiredIndexSource) ContextPlan(context.Context, evidence.RepositoryIdentity, evidence.RevisionIdentity, evidence.RevisionIdentity) (review.ContextPlan, error) {
+	return review.ContextPlan{
+		State: review.ContextIndexUsed, Complete: true, Dependents: 1,
+		Coverage: review.ContextIndexCoverage{Files: 2, Indexed: 2},
+		Items:    []review.ContextPlanItem{{Stage: review.ContextStageDirectReference, Path: "caller.go", StartLine: 2, EndLine: 2, Rank: 1, Depth: 1}},
+	}, nil
+}
+
 func requiredCheck(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
@@ -358,6 +372,8 @@ func newRequiredPipelineWithShared(t *testing.T, approvedVerifier, staleHead boo
 	requiredCheck(t, err)
 	sanitizer := testsupport.NewCleanGenerationSanitizer()
 	assembly, err := contexthandler.NewHandler(store, clock, generationAuthority, sanitizer)
+	requiredCheck(t, err)
+	assembly, err = assembly.WithRepositoryContext(requiredIndexSource{}, review.DefaultContextBudget())
 	requiredCheck(t, err)
 	generationHandler, err := modelhandler.NewGenerationHandler(store, dispatchers, ledger, clock, sanitizer.ExpectedBinaryDigests())
 	requiredCheck(t, err)

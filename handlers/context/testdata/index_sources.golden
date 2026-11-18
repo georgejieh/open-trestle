@@ -1,0 +1,13 @@
+source changed_hunk calc/div.go:4-4
+source enclosing_symbol calc/div.go:3-6
+source direct_reference calc/half.go:4-6
+budget route_window 65536 bytes 3 sources
+index used complete true dependents 2
+included enclosing_symbol rank 1 depth 0 calc/div.go:3-6
+included direct_reference rank 1 depth 1 calc/half.go:4-6
+omitted direct_reference stage_limit 3
+omitted related_test source_limit 1
+omitted repository_map source_limit 2
+changed calc/div.go:4 dependents 2 tests 1
+changed not listed 0
+checks [lint unit_tests]

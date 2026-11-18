@@ -99,6 +99,20 @@ func bindingPolicyAuthorizer(t *testing.T) *contexthandler.PolicyAuthorizer {
 	return authorizer
 }
 
+// bindingIndexSource proposes the unchanged test line that uses Changed, as a
+// repository index would.
+type bindingIndexSource struct{}
+
+func (bindingIndexSource) Identity() string { return strings.Repeat("7", 64) }
+
+func (bindingIndexSource) ContextPlan(context.Context, evidence.RepositoryIdentity, evidence.RevisionIdentity, evidence.RevisionIdentity) (review.ContextPlan, error) {
+	return review.ContextPlan{
+		State: review.ContextIndexUsed, Complete: true, Dependents: 1,
+		Coverage: review.ContextIndexCoverage{Files: 2, Indexed: 2},
+		Items:    []review.ContextPlanItem{{Stage: review.ContextStageDirectReference, Path: "a_test.go", StartLine: 2, EndLine: 2, Rank: 1, Depth: 1}},
+	}, nil
+}
+
 type sourceBindingFixture struct {
 	store                                                                          artifact.Store
 	scope                                                                          audit.ReviewScope
@@ -113,21 +127,21 @@ type sourceBindingFixture struct {
 	authorizer                                                                     *contexthandler.PolicyAuthorizer
 }
 
-func newSourceBindingFixture(t *testing.T, withReference bool) sourceBindingFixture {
+func newSourceBindingFixture(t *testing.T, withIndex bool) sourceBindingFixture {
 	t.Helper()
-	return newSourceBindingFixtureFor(t, withReference, "package p\nfunc Changed() int{return 1}\n", "package p\nfunc Changed() int{return 2}\n")
+	return newSourceBindingFixtureFor(t, withIndex, "package p\nfunc Changed() int{return 1}\n", "package p\nfunc Changed() int{return 2}\n")
 }
 
 // newSourceBindingFixtureFor runs the real handlers over caller-chosen base and
 // head contents of a.go.
-func newSourceBindingFixtureFor(t *testing.T, withReference bool, baseChanged, headChanged string) sourceBindingFixture {
+func newSourceBindingFixtureFor(t *testing.T, withIndex bool, baseChanged, headChanged string) sourceBindingFixture {
 	t.Helper()
-	return newSourceBindingFixtureWith(t, withReference, baseChanged, headChanged, nil, nil)
+	return newSourceBindingFixtureWith(t, withIndex, baseChanged, headChanged, nil, nil)
 }
 
 // newSourceBindingFixtureWith also adds caller-chosen extra files to the base
 // and head trees.
-func newSourceBindingFixtureWith(t *testing.T, withReference bool, baseChanged, headChanged string, baseExtra, headExtra map[string]string) sourceBindingFixture {
+func newSourceBindingFixtureWith(t *testing.T, withIndex bool, baseChanged, headChanged string, baseExtra, headExtra map[string]string) sourceBindingFixture {
 	t.Helper()
 	ctx := context.Background()
 	check := func(err error) {
@@ -144,10 +158,7 @@ func newSourceBindingFixtureWith(t *testing.T, withReference bool, baseChanged, 
 	check(err)
 	adapterIdentity, err := evidence.NewSourceAdapterIdentity(evidence.SourceAdapterKindGit, "test-source", "1.0.0", []evidence.SourceAdapterCapability{evidence.SourceCapabilityReadManifest, evidence.SourceCapabilityReadContent})
 	check(err)
-	testContent := "package p\nfunc TestOther(){}\n"
-	if withReference {
-		testContent = "package p\nfunc TestChanged(){_=Changed()}\n"
-	}
+	testContent := "package p\nfunc TestChanged(){_=Changed()}\n"
 	result := func(changed string, extra map[string]string) scm.SourceAdapterResult {
 		contents := map[string][]byte{"a.go": []byte(changed), "a_test.go": []byte(testContent)}
 		paths := []string{"a.go", "a_test.go"}
@@ -196,6 +207,10 @@ func newSourceBindingFixtureWith(t *testing.T, withReference bool, baseChanged, 
 	sanitizer := testsupport.NewCleanGenerationSanitizer()
 	assembly, err := contexthandler.NewHandler(store, fixedClock{time.UnixMilli(230)}, authorizer, sanitizer)
 	check(err)
+	if withIndex {
+		assembly, err = assembly.WithRepositoryContext(bindingIndexSource{}, review.DefaultContextBudget())
+		check(err)
+	}
 	definition := func(key string, handler controlplane.TaskHandler, input string, dependencies []string) controlplane.TaskDefinition {
 		task, err := controlplane.NewTaskDefinition(key, handler.Kind(), input, handler.HandlerIdentity(), dependencies, 1, 1000, 30000, true)
 		check(err)
@@ -271,7 +286,7 @@ func newSourceBindingFixtureWith(t *testing.T, withReference bool, baseChanged, 
 	return sourceBindingFixture{store: store, scope: scope, target: target, inputArtifact: input, contextArtifact: packet, analysisArtifact: analysisArtifact, changeArtifact: changeArtifact, headArtifact: headArtifact, input: parsedInput, analysis: parsedAnalysis, change: parsedChange, head: parsedHead, memory: parsedMemory, contents: contents, authorizer: authorizer}
 }
 
-func assertSelectedBindingSources(t *testing.T, f sourceBindingFixture, withReference bool) {
+func assertSelectedBindingSources(t *testing.T, f sourceBindingFixture, withIndex bool) {
 	t.Helper()
 	if err := review.ValidateContextPacketRequest(f.contextArtifact.Payload(), f.input.ContextIdentity(), f.scope.Identity(), f.input.MemoryScopeIdentity(), f.input.MemoryIdentity(), f.input.Snapshot(), f.input.EvidenceItems()); err != nil {
 		t.Fatalf("producer packet rejected before publication: %v", err)
@@ -289,32 +304,23 @@ func assertSelectedBindingSources(t *testing.T, f sourceBindingFixture, withRefe
 		t.Fatal(err)
 	}
 	want := 1
-	if withReference {
+	if withIndex {
 		want = 2
 	}
 	if len(packet.Sources) != want || len(f.input.EvidenceItems()) != want || len(f.analysis.Items()) != 1 {
 		t.Fatalf("selected=%d input=%d changed=%d", len(packet.Sources), len(f.input.EvidenceItems()), len(f.analysis.Items()))
 	}
-	changed, semantic := false, false
+	changed, indexed := false, false
 	for _, source := range packet.Sources {
 		switch source.Path {
 		case "a.go":
 			changed = source.Stage == "changed_hunk" && source.SourceID == f.analysis.Items()[0].EvidenceID()
 		case "a_test.go":
-			semantic = source.Stage == "direct_reference" && source.StartLine == 2 && source.EndLine == 2 && source.SourceID != f.analysis.Items()[0].EvidenceID()
+			indexed = source.Stage == "direct_reference" && source.StartLine == 2 && source.EndLine == 2 && source.SourceID != f.analysis.Items()[0].EvidenceID()
 		}
 	}
-	if !changed || semantic != withReference {
-		t.Fatal("changed hunk or unchanged direct reference not selected exactly")
-	}
-	foundReference := false
-	for _, reference := range f.analysis.SemanticImpact().References() {
-		if reference.Path() == "a_test.go" && reference.Line() == 2 {
-			foundReference = true
-		}
-	}
-	if foundReference != withReference {
-		t.Fatal("authoritative semantic profile does not match fixture")
+	if !changed || indexed != withIndex {
+		t.Fatal("changed hunk or unchanged index source not selected exactly")
 	}
 }
 
@@ -356,7 +362,7 @@ func TestBuildSourceBindingAcceptsChangedHunk(t *testing.T) {
 	assertExactProtectedBinding(t, fixture)
 }
 
-func TestBuildSourceBindingAcceptsUnchangedSemanticReference(t *testing.T) {
+func TestBuildSourceBindingAcceptsIndexContextSource(t *testing.T) {
 	fixture := newSourceBindingFixture(t, true)
 	assertSelectedBindingSources(t, fixture, true)
 	assertExactProtectedBinding(t, fixture)
@@ -393,6 +399,8 @@ func sourceBindingContextVariant(t *testing.T, f sourceBindingFixture, mutation 
 		if original.SourceRange().Path() == "a_test.go" {
 			stage = review.ContextStageDirectReference
 			switch mutation {
+			case "stage":
+				stage = review.ContextStageChangedHunk
 			case "range":
 				changedRange, err := evidence.NewSourceRange("a_test.go", 1, 1)
 				check(err)
@@ -487,15 +495,24 @@ func rebuildSourceBindingContext(t *testing.T, f sourceBindingFixture, sources [
 	return f
 }
 
-func TestBuildSourceBindingAcceptsRebuiltSemanticContext(t *testing.T) {
+func TestBuildSourceBindingAcceptsRebuiltIndexContext(t *testing.T) {
 	fixture := newSourceBindingFixture(t, true)
 	fixture = sourceBindingContextVariant(t, fixture, "none")
 	assertSelectedBindingSources(t, fixture, true)
 	assertExactProtectedBinding(t, fixture)
 }
 
-func TestBuildSourceBindingRejectsMismatchedSemanticAuthority(t *testing.T) {
-	for _, mutation := range []string{"range", "digest", "reference", "head"} {
+// The context packet is the authority for index context: another unchanged
+// range is accepted when the packet carries it as an index source, and the
+// same range labelled as anything else is not.
+func TestBuildSourceBindingFollowsTheRangesOfTheContextPacket(t *testing.T) {
+	fixture := newSourceBindingFixture(t, true)
+	fixture = sourceBindingContextVariant(t, fixture, "range")
+	assertExactProtectedBinding(t, fixture)
+}
+
+func TestBuildSourceBindingRejectsMismatchedIndexAuthority(t *testing.T) {
+	for _, mutation := range []string{"stage", "digest", "reference", "head"} {
 		t.Run(mutation, func(t *testing.T) {
 			fixture := newSourceBindingFixture(t, true)
 			assertSelectedBindingSources(t, fixture, true)
@@ -514,7 +531,7 @@ func TestBuildSourceBindingRejectsMismatchedSemanticAuthority(t *testing.T) {
 			handler := &Handler{store: fixture.store}
 			binding, err := handler.buildSourceBinding(context.Background(), fixture.scope, fixture.target, nil, artifact.Artifact{}, fixture.inputArtifact, fixture.contextArtifact, time.UnixMilli(250))
 			if err == nil || binding.Identity() != "" {
-				t.Fatal("publication accepted selected source outside protected semantic authority")
+				t.Fatal("publication accepted selected source outside protected index authority")
 			}
 		})
 	}
@@ -554,7 +571,7 @@ func (s *missingBindingSourceStore) Get(ctx context.Context, scope audit.ReviewS
 	return s.Store.Get(ctx, scope, id, at)
 }
 
-func TestBuildSourceBindingRequiresProtectedSemanticFile(t *testing.T) {
+func TestBuildSourceBindingRequiresProtectedIndexFile(t *testing.T) {
 	fixture := newSourceBindingFixture(t, true)
 	assertSelectedBindingSources(t, fixture, true)
 	store := &missingBindingSourceStore{Store: fixture.store}
@@ -564,11 +581,11 @@ func TestBuildSourceBindingRequiresProtectedSemanticFile(t *testing.T) {
 		}
 	}
 	if store.missing == "" {
-		t.Fatal("semantic source artifact missing from fixture")
+		t.Fatal("index source artifact missing from fixture")
 	}
 	handler := &Handler{store: store}
 	binding, err := handler.buildSourceBinding(context.Background(), fixture.scope, fixture.target, nil, artifact.Artifact{}, fixture.inputArtifact, fixture.contextArtifact, time.UnixMilli(250))
 	if err == nil || binding.Identity() != "" || !store.requested {
-		t.Fatal("publication did not fail closed on the missing protected semantic file")
+		t.Fatal("publication did not fail closed on the missing protected index file")
 	}
 }

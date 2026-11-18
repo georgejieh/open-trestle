@@ -18,10 +18,12 @@ import (
 // a number, not text, so it carries nothing to scan. Each stated_intent commit
 // text is scanned as stated_intent_text; its commit ID, sizes and markers are
 // host-derived. pattern_hygiene carries only kinds, curated rule IDs,
-// host-issued source IDs and numbers, so it adds no scanned field.
+// host-issued source IDs and numbers, and context_manifest and
+// repository_checks carry only host-issued source IDs, closed tokens and
+// numbers, so they add no scanned field.
 const (
-	generationSanitizableWireShapeIdentity   = "60a4e8278407acfb1211c7f143178dd055049be775ab5fdba1426c6c627d481a"
-	verificationSanitizableWireShapeIdentity = "6963ac0ac4ea03569d0144a0f1586c598aaa01d01292d197ac39110b8df0789d"
+	generationSanitizableWireShapeIdentity   = "152b5b4a5b0a9cebac3696dda93af31e200bcd91f1d89b8ad153aa319981fe18"
+	verificationSanitizableWireShapeIdentity = "6116dae31654f854e8ad427ad913c1d06bfad28ebcf880072cf373a7d3f6ad87"
 )
 
 func wireShapeIdentity(root reflect.Type) string {
@@ -71,8 +73,8 @@ func parseSanitizableRequest(request provider.Request, reviewScopeIdentity strin
 		Contract      string `json:"contract"`
 		SchemaVersion int    `json:"schema_version"`
 	}
-	// Generation admits only the executable context version 9; verification
-	// admits only version 8. Each contract is checked against its own version
+	// Generation admits only the executable context version 10; verification
+	// admits only version 9. Each contract is checked against its own version
 	// below too.
 	if json.Unmarshal(request.Payload(), &header) != nil ||
 		header.Contract == "open-trestle/review-context-packet" && !executableGenerationContextVersion(header.SchemaVersion) ||

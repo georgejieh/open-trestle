@@ -138,51 +138,37 @@ func (c changeLines) preExisting(finding ReportFinding) bool {
 	return c.origin(finding) == originPreExisting
 }
 
-// withImpact records whether the run's semantic-impact profile proves the
-// change isolated (see isolatedChange).
-func (c changeLines) withImpact(profile semanticimpact.Profile) changeLines {
-	c.isolated = isolatedChange(profile)
+// withImpact records whether the run's semantic-impact profile and context
+// manifest prove the change isolated (see isolatedChange).
+func (c changeLines) withImpact(profile semanticimpact.Profile, manifest review.ContextManifestSummary) changeLines {
+	c.isolated = isolatedChange(profile, manifest)
 	return c
 }
 
-// isolatedChange reports a profile that proves nothing outside the changed
-// declarations can reach them. All of these hold:
+// isolatedChange reports a change that nothing outside the changed
+// declarations can reach. All of these hold:
 //
-//   - it records no coverage gap: every changed path was analysed as Go and
-//     every head Go file was read;
+//   - the semantic-impact profile records no coverage gap: every changed
+//     path was analysed as Go;
 //   - no changed declaration is a method or an init function, which code can
 //     reach without naming them (an interface call from another package, a
 //     method set that satisfies an interface, package initialization);
-//   - it records no reference to a changed declaration outside the lines of
-//     an added or modified declaration on the same path.
+//   - the context manifest shows a complete repository index that found no
+//     dependent of any changed definition outside the changed definitions.
 //
-// References are matched by name in every head Go file, so code that calls,
-// uses or passes on a changed declaration, directly or through other
-// unchanged code, leaves a reference to one outside the changed
-// declarations.
-func isolatedChange(profile semanticimpact.Profile) bool {
+// Dependents are reference candidates matched by name across the indexed
+// head, so code that calls, uses or passes on a changed definition leaves
+// one.
+func isolatedChange(profile semanticimpact.Profile, manifest review.ContextManifestSummary) bool {
 	if profile.Identity() == "" || len(profile.Gaps()) != 0 {
 		return false
 	}
-	declarations := profile.Declarations()
-	for _, declaration := range declarations {
+	for _, declaration := range profile.Declarations() {
 		if declaration.Kind() == "method" || declaration.Kind() == "function" && declaration.Name() == "init" {
 			return false
 		}
 	}
-	for _, reference := range profile.References() {
-		inside := false
-		for _, declaration := range declarations {
-			if declaration.Change() != semanticimpact.ChangeRemoved && declaration.Path() == reference.Path() && declaration.StartLine() <= reference.Line() && reference.Line() <= declaration.EndLine() {
-				inside = true
-				break
-			}
-		}
-		if !inside {
-			return false
-		}
-	}
-	return true
+	return manifest.Present && manifest.State == review.ContextIndexUsed && manifest.Complete && manifest.Dependents == 0
 }
 
 // changeLineAccounting builds the accounting from a recorded change model and

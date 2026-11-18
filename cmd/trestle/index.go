@@ -116,11 +116,20 @@ func openIndexSession(ctx context.Context, f indexFlags) (*indexSession, error) 
 	if err != nil {
 		return nil, errors.New("this folder is not inside a Git checkout (or git is not installed)")
 	}
-	dir := discoverSetupDirectory(ctx, checkout)
+	dir := ""
 	if f.directory != "" {
 		if dir, err = initValidateDirectory(f.directory); err != nil {
 			return nil, fmt.Errorf("--directory: %w", err)
 		}
+	}
+	return openIndexSessionAt(ctx, checkout, dir)
+}
+
+// openIndexSessionAt opens the index of a checkout in a setup folder, the
+// checkout's own one when dir is empty.
+func openIndexSessionAt(ctx context.Context, checkout, dir string) (*indexSession, error) {
+	if dir == "" {
+		dir = discoverSetupDirectory(ctx, checkout)
 	}
 	if dir == "" {
 		return nil, errors.New("the setup folder cannot be found (set HOME)")

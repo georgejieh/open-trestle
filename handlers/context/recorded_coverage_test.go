@@ -100,7 +100,7 @@ func TestReadRecordedSourceCoverageBeforeCandidates(t *testing.T) {
 	f := newRecordedCoverageFixture(t)
 	reader := &coverageReader{value: f.packet, expected: f.packet.Identity(), scope: f.packet.Scope(), at: f.at}
 	result, err := f.read(context.Background(), reader, f.output, f.at)
-	if err != nil || result.ArtifactIdentity() != f.packet.Identity() || result.Selected() != 2 || result.Analyzed() != result.Selected()+result.Omitted() || reader.gets != 1 || result.GenerationInput().Identity() != f.input.Identity() {
+	if err != nil || result.ArtifactIdentity() != f.packet.Identity() || result.Selected() != 1 || result.Analyzed() != result.Selected()+result.Omitted() || reader.gets != 1 || result.GenerationInput().Identity() != f.input.Identity() {
 		t.Fatalf("result=%#v gets=%d err=%v", result, reader.gets, err)
 	}
 	reader.gets = 0

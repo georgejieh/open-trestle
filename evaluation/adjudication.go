@@ -67,7 +67,7 @@ func EvaluateAdjudication(adjudicationBytes, observedBytes []byte, expectedAdjud
 	if err != nil {
 		return nil, ErrInvalidAdjudication
 	}
-	corpus, err := loadDeterministicCorpus(deterministicCorpusFiles, corpusRoot)
+	corpus, err := loadDeterministicCorpus(corpusFiles, corpusRoot)
 	if err != nil || human.Contract != "open-trestle/deterministic-corpus-human-adjudication" || human.SchemaVersion != 1 || human.CorpusIdentity != corpus.manifest.CorpusIdentity || human.LabelSetIdentity != deriveLabelSetIdentity(corpus.manifest) || human.EvaluatorIdentity != observed.evaluatorIdentity || human.ObservedReportIdentity != observed.Identity() || human.ObservedSHA256 != digestBytes(observedBytes) || !validCaseID(human.ReviewerIdentifier) || !validCaseID(human.FixtureAuthorIdentifier) || human.ReviewerIdentifier == human.FixtureAuthorIdentifier || human.Method != "independent_human_review" || !human.SourceFirst || human.PriorResultExposure != "none_declared" || human.Conflicts != "none_declared" {
 		return nil, ErrInvalidAdjudication
 	}
