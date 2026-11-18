@@ -184,8 +184,8 @@ func (s *indexSession) commit(ctx context.Context, ref string) (evidence.Revisio
 }
 
 // builder returns a builder of a commit's tree with a pool of syntax
-// workers, which the returned function stops.
-func (s *indexSession) builder(revision evidence.RevisionIdentity) (repoindex.Builder, *repoindex.GitTree, func(), error) {
+// workers, which the caller closes.
+func (s *indexSession) builder(revision evidence.RevisionIdentity) (repoindex.Builder, *repoindex.GitTree, *syntaxworker.Pool, error) {
 	tree, err := repoindex.NewGitTree(s.store, revision)
 	if err != nil {
 		return repoindex.Builder{}, nil, nil, err
@@ -202,17 +202,7 @@ func (s *indexSession) builder(revision evidence.RevisionIdentity) (repoindex.Bu
 	if err != nil {
 		return repoindex.Builder{}, nil, nil, err
 	}
-	return repoindex.Builder{Store: s.index, Analyzer: pool, Parallelism: pool.Workers()}, tree, pool.Close, nil
-}
-
-// build indexes a commit.
-func (s *indexSession) build(ctx context.Context, revision evidence.RevisionIdentity) (repoindex.Snapshot, error) {
-	b, tree, stop, err := s.builder(revision)
-	if err != nil {
-		return repoindex.Snapshot{}, err
-	}
-	defer stop()
-	return b.Build(ctx, tree)
+	return repoindex.Builder{Store: s.index, Analyzer: pool, Parallelism: pool.Workers()}, tree, pool, nil
 }
 
 // compiledModuleFolder is the private folder for compiled grammar modules.
@@ -242,11 +232,11 @@ func workerEnvironment() []string {
 // ensureIndexed loads a commit's graph, building the commit first when the
 // index has no snapshot of it or its records are damaged.
 func (s *indexSession) ensureIndexed(ctx context.Context, revision evidence.RevisionIdentity, stderr io.Writer) (*repoindex.Graph, error) {
-	b, tree, stop, err := s.builder(revision)
+	b, tree, pool, err := s.builder(revision)
 	if err != nil {
 		return nil, err
 	}
-	defer stop()
+	defer pool.Close()
 	graph, built, err := b.Load(ctx, tree)
 	if built && err == nil {
 		fmt.Fprintf(stderr, "Indexed %s first.\n", shortCommit(revision.Digest()))
@@ -271,12 +261,20 @@ func runIndexBuild(ctx context.Context, args []string, stdout, stderr io.Writer)
 	if err != nil {
 		return indexFail(stderr, 2, "--commit: %v", err)
 	}
-	snapshot, err := s.build(ctx, revision)
+	b, tree, pool, err := s.builder(revision)
+	if err != nil {
+		return indexFail(stderr, 1, "the index could not be built: %v", err)
+	}
+	snapshot, err := b.Build(ctx, tree)
+	pool.Close()
 	if err != nil {
 		return indexFail(stderr, 1, "the index could not be built: %v", err)
 	}
 	for _, line := range snapshotLines(snapshot) {
 		fmt.Fprintln(stdout, line)
+	}
+	if stats := pool.Stats(); stats.Killed > 0 {
+		fmt.Fprintf(stdout, "  Syntax workers replaced: %d (%d timed out, %d crashed, %d answered malformed output, %d left a guest call running, %d canceled).\n", stats.Killed, stats.TimedOut, stats.Crashed, stats.Malformed, stats.Abandoned, stats.Canceled)
 	}
 	return 0
 }

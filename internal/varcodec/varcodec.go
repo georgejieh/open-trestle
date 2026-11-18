@@ -160,14 +160,5 @@ func (r *Reader) Uint32() uint32 {
 	return binary.LittleEndian.Uint32(b)
 }
 
-// Uint64 reads a little-endian uint64.
-func (r *Reader) Uint64() uint64 {
-	b := r.Fixed(8)
-	if b == nil {
-		return 0
-	}
-	return binary.LittleEndian.Uint64(b)
-}
-
 // Fail marks the input malformed, for a value that decoded but is invalid.
 func (r *Reader) Fail() { r.fail() }
