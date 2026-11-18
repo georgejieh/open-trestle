@@ -141,10 +141,16 @@ func expectedImportedCI(version int, findings []diagnostics.Finding, readinessCI
 
 // rankEntries merges and ranks one run's findings into rank wire entries.
 func rankEntries(findings []ReportFinding, origin, independence string) []rankWire {
+	return rankEntriesBy(findings, origin, independence, false)
+}
+
+// rankEntriesBy is rankEntries; locationOnly merges by the location-only
+// rule of earlier results (see deduplicateFindings).
+func rankEntriesBy(findings []ReportFinding, origin, independence string, locationOnly bool) []rankWire {
 	if len(findings) == 0 {
 		return nil
 	}
-	ranked := RankFindings(DeduplicateFindings([]FindingOrigin{{Label: origin, Independence: independence, Findings: findings}}))
+	ranked := RankFindings(deduplicateFindings([]FindingOrigin{{Label: origin, Independence: independence, Findings: findings}}, locationOnly))
 	entries := make([]rankWire, 0, len(ranked))
 	for _, group := range ranked {
 		entry := rankWire{Rank: group.Rank, FindingIdentity: group.Finding.Identity}
@@ -275,14 +281,21 @@ func validRecordedJudgement(result Result) bool {
 		return false
 	}
 	// The recorded rank was computed with the recorded classification and
-	// anchors as its inputs, so it is recomputed the same way.
+	// anchors as its inputs, so it is recomputed the same way: by the current
+	// merge rule, or by the location-only rule of results recorded before
+	// paraphrases at one place needed related wording to merge. A rank only
+	// orders and groups findings; it never changes a disposition.
 	recomputed := result
 	recomputed.judged = true
 	report, err := recomputed.Report()
 	if err != nil {
 		return false
 	}
-	return slices.EqualFunc(wire.Rank, rankEntries(report.Findings, singleRunOrigin(wire), report.Independence), func(a, b rankWire) bool {
-		return a.Rank == b.Rank && a.FindingIdentity == b.FindingIdentity && slices.Equal(a.Merged, b.Merged)
-	})
+	same := func(entries []rankWire) bool {
+		return slices.EqualFunc(wire.Rank, entries, func(a, b rankWire) bool {
+			return a.Rank == b.Rank && a.FindingIdentity == b.FindingIdentity && slices.Equal(a.Merged, b.Merged)
+		})
+	}
+	origin := singleRunOrigin(wire)
+	return same(rankEntriesBy(report.Findings, origin, report.Independence, false)) || same(rankEntriesBy(report.Findings, origin, report.Independence, true))
 }

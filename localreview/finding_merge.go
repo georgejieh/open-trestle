@@ -187,13 +187,15 @@ func MergedDuplicates(findings []MergedFinding) int {
 //     shared (see defectStatementTokens).
 //
 // The second pass merges the groups of the first whose representatives are
-// one defect at one place, whatever their wording (sameDefectLocation): the
-// same path and side, overlapping ranges, categories of the same family that
-// is not security, and either the same changed declaration of the
-// semantic-impact profile (ReportFinding.Anchor) or, when no changed
-// declaration holds either, one range of at most five lines. Two paraphrases
-// of one bug ("Avg may divide by zero", "Avg panics on empty slice") merge;
-// security findings merge only by the strict rule.
+// paraphrases of one defect at one place (sameDefectLocation and
+// relatedStatements): the same path and side, overlapping ranges, categories
+// of the same family that is not security, either the same changed
+// declaration of the semantic-impact profile (ReportFinding.Anchor) or, when
+// no changed declaration holds either, one range of at most five lines, and
+// defect statements that share at least half of their combined distinctive
+// words and differ in no symbol. The location alone is no evidence of one
+// defect: a division by zero and an integer truncation on one line stay two
+// findings. Security findings merge only by the strict rule.
 //
 // Only a representative's own range, statement and anchor decide a match, so
 // a finding never joins a group through a finding the group already absorbed.
@@ -208,6 +210,14 @@ func MergedDuplicates(findings []MergedFinding) int {
 // earlier group it matches. Contributors stay in origin and finding order.
 // Groups are returned in creation order; RankFindings orders them.
 func DeduplicateFindings(origins []FindingOrigin) []MergedFinding {
+	return deduplicateFindings(origins, false)
+}
+
+// deduplicateFindings is DeduplicateFindings. locationOnly applies the
+// second pass without relatedStatements, the rule results recorded before
+// that requirement used; only the check of such a recorded rank
+// (validRecordedJudgement) asks for it.
+func deduplicateFindings(origins []FindingOrigin, locationOnly bool) []MergedFinding {
 	var groups []*MergedFinding
 	order := 0
 	for index, origin := range origins {
@@ -246,7 +256,7 @@ func DeduplicateFindings(origins []FindingOrigin) []MergedFinding {
 			}
 		}
 	}
-	// The second pass: one defect at one place, whatever the wording. stageRule
+	// The second pass: paraphrases of one defect at one place. stageRule
 	// records, for each first-pass group that joined another, the rule by
 	// which it joined.
 	stageRule := map[int]string{}
@@ -255,7 +265,7 @@ func DeduplicateFindings(origins []FindingOrigin) []MergedFinding {
 		var target *MergedFinding
 		rule := ""
 		for _, candidate := range kept {
-			if matched, ok := sameDefectLocation(candidate.Finding, group.Finding); ok {
+			if matched, ok := sameDefectLocation(candidate.Finding, group.Finding); ok && (locationOnly || relatedStatements(candidate.tokens, group.tokens)) {
 				target, rule = candidate, matched
 				break
 			}
@@ -300,8 +310,8 @@ func DeduplicateFindings(origins []FindingOrigin) []MergedFinding {
 	return out
 }
 
-// sameDefectLocation reports whether two findings are one defect at one
-// place whatever their wording, and by which rule: the same path and side,
+// sameDefectLocation reports whether two findings are at one place, where
+// paraphrases of one defect may merge, and by which rule: the same path and side,
 // overlapping ranges, categories of one family that is not security (an
 // uncategorized finding never merges this way), and either the same changed
 // declaration (both anchored to it) or, when neither is anchored, one range
@@ -477,10 +487,14 @@ func compatibleCategories(a, b string) bool {
 
 // Near-identical statements share at least nearIdenticalNumerator /
 // nearIdenticalDenominator (four fifths) of their combined distinctive words
-// (Jaccard similarity). Integer arithmetic keeps the comparison exact.
+// (Jaccard similarity); related statements at one place share at least
+// relatedNumerator / relatedDenominator (half). Integer arithmetic keeps the
+// comparison exact.
 const (
 	nearIdenticalNumerator   = 4
 	nearIdenticalDenominator = 5
+	relatedNumerator         = 1
+	relatedDenominator       = 2
 )
 
 // defectStatement is a finding's normalized title and claim: its distinctive
@@ -495,6 +509,19 @@ type defectStatement struct {
 // one of them uses must not be an identifier or number, so "a / b" and
 // "a / c", or "limit 10" and "limit 100", describe different defects.
 func nearIdentical(a, b defectStatement) bool {
+	return sharedStatements(a, b, nearIdenticalNumerator, nearIdenticalDenominator)
+}
+
+// relatedStatements reports two statements that share at least half of their
+// combined distinctive words and differ in no symbol: the wording evidence
+// the location pass needs before two findings at one place are one defect.
+func relatedStatements(a, b defectStatement) bool {
+	return sharedStatements(a, b, relatedNumerator, relatedDenominator)
+}
+
+// sharedStatements reports two statements that differ in no symbol and share
+// at least numerator / denominator of their combined distinctive words.
+func sharedStatements(a, b defectStatement, numerator, denominator int) bool {
 	shared := 0
 	for word := range a.words {
 		if b.words[word] {
@@ -509,7 +536,7 @@ func nearIdentical(a, b defectStatement) bool {
 		}
 	}
 	union := len(a.words) + len(b.words) - shared
-	return union > 0 && shared*nearIdenticalDenominator >= union*nearIdenticalNumerator
+	return union > 0 && shared*denominator >= union*numerator
 }
 
 // statementStopwords are function words that carry no defect identity.
