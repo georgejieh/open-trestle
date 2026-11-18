@@ -54,7 +54,8 @@ func (a GoSyntaxAnalyzer) Analyze(ctx context.Context, source syntaxanalysis.Sou
 	started := time.Now()
 	content := source.Content()
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, source.Path(), content, parser.AllErrors|parser.SkipObjectResolution)
+	// Object resolution tells a function-local name from a package-level one.
+	file, err := parser.ParseFile(fset, source.Path(), content, parser.AllErrors)
 	raw := syntaxanalysis.RawFile{}
 	var list scanner.ErrorList
 	if errors.As(err, &list) {
@@ -71,8 +72,7 @@ func (a GoSyntaxAnalyzer) Analyze(ctx context.Context, source syntaxanalysis.Sou
 	if tf == nil {
 		return syntaxanalysis.WholeFileGap(source, GoSyntaxAnalyzerIdentity, syntaxanalysis.GapAnalysisFailed, ""), nil
 	}
-	w := goWalker{file: tf, raw: &raw}
-	w.collect(file)
+	newGoWalker(tf, file, &raw).collect(file)
 	if err := ctx.Err(); err != nil {
 		return syntaxanalysis.FileAnalysis{}, err
 	}
@@ -106,6 +106,21 @@ func lineErrorSpan(content []byte, offset int) syntaxanalysis.Span {
 type goWalker struct {
 	file *token.File
 	raw  *syntaxanalysis.RawFile
+	// scope holds the file's package-level objects.
+	scope *ast.Scope
+	// imports are the names the file's imports bind, as far as the import
+	// paths tell.
+	imports map[string]bool
+	// claimed are the identifiers already recorded, or known not to be
+	// uses, so that the value walk passes over them.
+	claimed map[*ast.Ident]bool
+	// implied is the type of a composite literal whose type is elided.
+	implied map[*ast.CompositeLit]ast.Expr
+}
+
+func newGoWalker(tf *token.File, file *ast.File, raw *syntaxanalysis.RawFile) goWalker {
+	return goWalker{file: tf, raw: raw, scope: file.Scope, imports: importNames(file),
+		claimed: map[*ast.Ident]bool{}, implied: map[*ast.CompositeLit]ast.Expr{}}
 }
 
 func (w goWalker) span(from, to token.Pos) syntaxanalysis.Span {
@@ -130,14 +145,28 @@ func (w goWalker) definition(kind syntaxanalysis.DefinitionKind, name *ast.Ident
 	})
 }
 
+// add records a reference, with the qualifier when there is one.
+func (w goWalker) add(kind syntaxanalysis.ReferenceKind, name *ast.Ident, qualifier ast.Node) {
+	r := syntaxanalysis.RawReference{Kind: kind, Name: w.node(name)}
+	if qualifier != nil {
+		r.Qualifier = w.node(qualifier)
+	}
+	w.raw.References = append(w.raw.References, r)
+}
+
+// reference records the name an expression uses. A name bound to a
+// function-local declaration is claimed but not recorded, because it never
+// names a definition of the model.
 func (w goWalker) reference(kind syntaxanalysis.ReferenceKind, expr ast.Expr) {
 	switch e := expr.(type) {
 	case *ast.Ident:
-		if e.Name != "_" {
-			w.raw.References = append(w.raw.References, syntaxanalysis.RawReference{Kind: kind, Name: w.node(e)})
+		w.claim(e)
+		if e.Name != "_" && !w.local(e) {
+			w.add(kind, e, nil)
 		}
 	case *ast.SelectorExpr:
-		w.raw.References = append(w.raw.References, syntaxanalysis.RawReference{Kind: kind, Name: w.node(e.Sel), Qualifier: w.node(e.X)})
+		w.claim(e.Sel)
+		w.add(kind, e.Sel, e.X)
 	case *ast.IndexExpr:
 		w.reference(kind, e.X)
 	case *ast.IndexListExpr:
@@ -181,6 +210,7 @@ func (w goWalker) fieldTypes(fields *ast.FieldList) {
 func (w goWalker) collect(file *ast.File) {
 	// The package clause is a module definition, as a Java package is, so
 	// that an importer knows the name the package binds.
+	w.claim(file.Name)
 	if file.Name != nil && file.Name.Name != "_" {
 		w.raw.Definitions = append(w.raw.Definitions, syntaxanalysis.RawDefinition{
 			Kind: syntaxanalysis.KindModule, Name: w.node(file.Name), Node: w.span(file.Package, file.Name.End()), Exported: true,
@@ -242,14 +272,24 @@ func (w goWalker) collect(file *ast.File) {
 			w.raw.Gaps = append(w.raw.Gaps, syntaxanalysis.RawGap{Reason: syntaxanalysis.GapParseError, Span: w.node(d)})
 			return false
 		case *ast.FuncDecl:
+			w.claim(d.Name)
 			if d.Recv != nil {
 				w.fieldTypes(d.Recv)
 			}
+		case *ast.Field:
+			w.claim(d.Names...)
+		case *ast.ImportSpec:
+			w.claim(d.Name)
+		case *ast.LabeledStmt:
+			w.claim(d.Label)
+		case *ast.BranchStmt:
+			w.claim(d.Label)
 		case *ast.FuncType:
 			w.fieldTypes(d.TypeParams)
 			w.fieldTypes(d.Params)
 			w.fieldTypes(d.Results)
 		case *ast.TypeSpec:
+			w.claim(d.Name)
 			w.fieldTypes(d.TypeParams)
 			switch d.Type.(type) {
 			case *ast.StructType, *ast.InterfaceType:
@@ -257,6 +297,7 @@ func (w goWalker) collect(file *ast.File) {
 				w.typeReferences(d.Type)
 			}
 		case *ast.ValueSpec:
+			w.claim(d.Names...)
 			w.typeReferences(d.Type)
 		case *ast.StructType:
 			if d.Fields != nil {
@@ -277,17 +318,25 @@ func (w goWalker) collect(file *ast.File) {
 				}
 			}
 		case *ast.CallExpr:
-			w.reference(syntaxanalysis.ReferenceCall, d.Fun)
+			w.call(d)
 		case *ast.CompositeLit:
 			switch d.Type.(type) {
 			case nil:
 			case *ast.Ident, *ast.SelectorExpr, *ast.IndexExpr, *ast.IndexListExpr:
 				w.reference(syntaxanalysis.ReferenceConstruct, d.Type)
+				w.typeArguments(d.Type, true)
 			default:
 				w.typeReferences(d.Type)
 			}
+			w.compositeKeys(d)
 		case *ast.TypeAssertExpr:
 			w.typeReferences(d.Type)
+		case *ast.TypeSwitchStmt:
+			w.typeSwitch(d)
+		case *ast.SelectorExpr:
+			w.selectorValue(d)
+		case *ast.Ident:
+			w.identValue(d)
 		}
 		return true
 	})

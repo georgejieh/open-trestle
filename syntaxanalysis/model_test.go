@@ -82,6 +82,17 @@ func TestLanguageForPath(t *testing.T) {
 	}
 }
 
+func TestOnlyGoRecordsValueUses(t *testing.T) {
+	for _, l := range extensionLanguages {
+		if RecordsValueUses(l) != (l == LanguageGo) {
+			t.Fatalf("RecordsValueUses(%s) = %v", l, RecordsValueUses(l))
+		}
+	}
+	if !ReferenceValue.Valid() {
+		t.Fatal("the value kind must be valid")
+	}
+}
+
 func TestAssembleNestsDefinitionsAndEnclosesReferences(t *testing.T) {
 	content := "class Outer:\n    def run(self):\n        helper()\n\ndef helper():\n    pass\n"
 	source := mustSource(t, content)

@@ -221,15 +221,29 @@ const (
 	ReferenceInherit ReferenceKind = "inherit"
 	// ReferenceDecorator is a decorator or annotation application.
 	ReferenceDecorator ReferenceKind = "decorator"
+	// ReferenceValue is a use of a name outside a call or type position: a
+	// read or write of a variable or constant, a function or method used
+	// as a value, a field read through a selector or a field named by a
+	// composite literal key, qualified by the literal's type name.
+	ReferenceValue ReferenceKind = "value"
 )
 
 var referenceKinds = map[ReferenceKind]bool{
 	ReferenceCall: true, ReferenceConstruct: true, ReferenceType: true,
-	ReferenceInherit: true, ReferenceDecorator: true,
+	ReferenceInherit: true, ReferenceDecorator: true, ReferenceValue: true,
 }
 
 // Valid reports whether the kind is one of the declared constants.
 func (k ReferenceKind) Valid() bool { return referenceKinds[k] }
+
+// RecordsValueUses reports whether the analysis of a language records
+// ReferenceValue references, so that a definition without candidates may
+// still be read or passed as a value where it does not.
+func RecordsValueUses(l Language) bool {
+	// Only the Go analyzer records them; the query packs capture calls,
+	// constructions, types, bases and decorators.
+	return l == LanguageGo
+}
 
 // Definition is a named definition. Parent is the index in
 // FileAnalysis.Definitions of the innermost definition that lexically

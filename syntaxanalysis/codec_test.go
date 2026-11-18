@@ -23,12 +23,13 @@ func codecSample(t *testing.T) FileAnalysis {
 			{Kind: ReferenceCall, Name: spanOf(t, content, "helper", 0)},
 			{Kind: ReferenceCall, Name: spanOf(t, content, "save", 0), Qualifier: spanOf(t, content, "store", 0)},
 			{Kind: ReferenceType, Name: spanOf(t, content, "store", 0)},
+			{Kind: ReferenceValue, Name: spanOf(t, content, "item", 2)},
 		},
 		Imports: []RawImport{{Source: spanOf(t, content, "os", 0), Node: spanOf(t, content, "import os", 0)}},
 		Gaps:    []RawGap{{Reason: GapParseError, Span: spanOf(t, content, "\x01bad", 0)}, {Reason: GapLimitExceeded, Limit: LimitMatches}},
 	}
 	a := Assemble(source, "test", raw, DefaultLimits())
-	if len(a.Definitions) != 2 || len(a.References) != 3 || len(a.Imports) != 1 || len(a.Gaps) != 2 {
+	if len(a.Definitions) != 2 || len(a.References) != 4 || len(a.Imports) != 1 || len(a.Gaps) != 2 {
 		t.Fatalf("sample analysis is incomplete: %d %d %d %d", len(a.Definitions), len(a.References), len(a.Imports), len(a.Gaps))
 	}
 	return a
