@@ -46,7 +46,7 @@ The index lives in the setup folder (see [environment variables and files](envir
 - `snap-*.otx` files hold one commit's file list and coverage.
 - `compiled/` holds compiled grammar modules on Linux.
 
-Every file starts with the format and the analysis identity, the SHA-256 of the `trestle` program file. A different build removes the files of another one when it opens the index. A record that is missing or fails its check removes its segment, and the next query or build indexes the commit again. One process uses the index at a time.
+Every file starts with the format and the analysis identity, the SHA-256 of the `trestle` program file. A different build removes the files of another one when it opens the index. Any damage, a file that fails its check or a record a snapshot needs that is missing, clears the index, and the build or query starts over. One process uses the index at a time.
 
 ## Limits
 

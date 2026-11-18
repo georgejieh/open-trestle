@@ -17,6 +17,7 @@ can tell a missing feature from a mistake. See the
 | Hidden key entry | Yes | Yes | Code present, untested | Code present, untested |
 | Saving a key with `trestle keys set` | Yes | Yes | Untested | Yes |
 | Protected setup, credential and usage files | Yes | Yes | Untested | Yes |
+| Repository index (`trestle index`) | Yes | Yes | Untested | Yes |
 | `trestle update` | Yes | Refused | Refused | Refused |
 | Home screen | Yes | Yes | Untested | Untested |
 
@@ -54,7 +55,7 @@ or macOS. See [environment variables and files](environment-and-files.md#paths).
 ## Protected files on Windows
 
 On Windows, Open Trestle checks the owner and access control list of setup,
-credential and usage files instead of their mode. Apart from your account and
+credential, usage and repository index files instead of their mode. Apart from your account and
 the system's own accounts (SYSTEM, Administrators and TrustedInstaller), no
 account may read or change them, and no other account may remove, rename or
 replace a folder above them. Open Trestle creates its folders and files that
