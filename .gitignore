@@ -32,6 +32,7 @@ extensions/vscode/dist/*
 !extensions/vscode/dist/open-trestle.vsix
 build/
 .container/
+.vulnerability-reports/
 .tmp/
 /open-trestle-linux-a/
 /open-trestle-linux-b/
