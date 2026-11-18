@@ -138,7 +138,9 @@ func directories(moduleDirectory, outputDirectory string) (string, string, error
 		return "", "", err
 	}
 	goMod, err := os.ReadFile(filepath.Join(moduleDirectory, "go.mod"))
-	if err != nil || !strings.HasPrefix(string(goMod), "module "+modulePath+"\n") {
+	// A checkout with CRLF line endings ends the line with a carriage return.
+	first, _, _ := strings.Cut(string(goMod), "\n")
+	if err != nil || strings.TrimSpace(first) != "module "+modulePath {
 		return "", "", errors.New("not the secret scanner module directory: " + moduleDirectory)
 	}
 	outputDirectory, err = filepath.Abs(outputDirectory)
