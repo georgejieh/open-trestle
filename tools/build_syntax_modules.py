@@ -277,12 +277,15 @@ def download(url: str, size: int, digest: str, destination: Path) -> None:
 def safe_extract(archive: Path, destination: Path, root: str) -> Path:
     """Extract a gzip tar whose members all stay under one root directory.
 
-    Symbolic links are allowed only when their target resolves inside the
-    root; device files, hard links and absolute or parent paths are refused.
+    Every member must be a directory, a regular file or a symbolic link
+    under the root. tarfile's data filter then refuses any member or link
+    target that resolves outside the destination, including through links
+    extracted earlier, and device files.
     """
     destination.mkdir(parents=True)
     with tarfile.open(archive, mode="r:gz") as source:
-        for member in source.getmembers():
+        members = source.getmembers()
+        for member in members:
             relative = PurePosixPath(member.name)
             if (
                 relative.is_absolute()
@@ -292,33 +295,14 @@ def safe_extract(archive: Path, destination: Path, root: str) -> Path:
                 or not (member.isdir() or member.isfile() or member.issym())
             ):
                 raise ValueError(f"toolchain archive member is unsafe: {member.name}")
-            target = destination.joinpath(*relative.parts)
-            if member.issym():
-                link = PurePosixPath(member.linkname)
-                resolved = PurePosixPath(*relative.parts[:-1]) / link
-                parts: list[str] = []
-                for part in resolved.parts:
-                    if part == "..":
-                        if not parts:
-                            raise ValueError(f"toolchain archive link escapes: {member.name}")
-                        parts.pop()
-                    elif part not in ("", "."):
-                        parts.append(part)
-                if link.is_absolute() or not parts or parts[0] != root:
-                    raise ValueError(f"toolchain archive link escapes: {member.name}")
-                target.parent.mkdir(parents=True, exist_ok=True)
-                os.symlink(member.linkname, target)
-                continue
-            if member.isdir():
-                target.mkdir(parents=True, exist_ok=True)
-                continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            extracted = source.extractfile(member)
-            if extracted is None:
-                raise ValueError("toolchain archive member is unreadable")
-            with extracted, target.open("xb") as output:
-                shutil.copyfileobj(extracted, output, 1 << 20)
-            target.chmod(0o755 if member.mode & 0o111 else 0o644)
+        try:
+            source.extractall(destination, members=members, filter="data")
+        except tarfile.FilterError as error:
+            raise ValueError(f"toolchain archive member is unsafe: {error}") from error
+    extracted = (destination / root).resolve()
+    for path in extracted.rglob("*"):
+        if path.is_symlink() and not path.resolve().is_relative_to(extracted):
+            raise ValueError(f"toolchain archive link escapes: {path.relative_to(destination)}")
     return destination / root
 
 

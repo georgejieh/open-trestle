@@ -153,6 +153,8 @@ class ExtractTest(unittest.TestCase):
             [link_member("sdk/bin/x", "/usr/bin/x")],
             [link_member("sdk/bin/x", "../../outside")],
             [link_member("sdk/bin/x", "sdk/bin/y", tarfile.LNKTYPE)],
+            [link_member("sdk/up", ".."), file_member("sdk/up/escape")],
+            [link_member("sdk/dir", "sub"), link_member("sdk/sub", ".."), file_member("sdk/x")],
         ):
             with self.assertRaises(ValueError):
                 self.extract(members)
