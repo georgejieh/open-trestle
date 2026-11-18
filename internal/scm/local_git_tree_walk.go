@@ -108,11 +108,19 @@ func (w *treeWalker) entries(digest string) ([]localGitTreeEntry, error) {
 	if entries, ok := w.cache[digest]; ok {
 		return entries, nil
 	}
+	// A directory with more entries than the whole walk may have, or larger
+	// than a tree object may be, ends the walk as truncated rather than as
+	// an error.
 	content, err := w.reader.ReadTree(w.ctx, w.algorithm, digest)
+	var entries []localGitTreeEntry
 	if err != nil {
-		return nil, classifyLocalGitObjectRead(err)
+		err = classifyLocalGitObjectRead(err)
+	} else {
+		entries, err = parseLocalGitTreeEntries(w.ctx, content, w.algorithm, w.max)
 	}
-	entries, err := parseLocalGitTreeEntries(w.ctx, content, w.algorithm, maxLocalGitRevisionEntries)
+	if errors.Is(err, LocalGitRevisionResourceLimit) {
+		return nil, errWalkTruncated
+	}
 	if err != nil {
 		return nil, err
 	}

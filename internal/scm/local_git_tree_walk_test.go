@@ -35,12 +35,12 @@ func TestWalkTreeVisitsEntriesInTreeOrderWithoutBlobs(t *testing.T) {
 	}
 
 	got = nil
-	walk, err = store.WalkTree(context.Background(), revision, 4, func(e LocalGitTreeEntry) error {
+	walk, err = store.WalkTree(context.Background(), revision, 6, func(e LocalGitTreeEntry) error {
 		got = append(got, e.Path)
 		return nil
 	})
-	// The limit counts the directory d as well as d/a.go, d/link and e.
-	if err != nil || !walk.Truncated || walk.Entries != 2 || len(got) != 2 {
+	// The limit counts the directories d and e as well as their entries.
+	if err != nil || !walk.Truncated || walk.Entries != 4 || len(got) != 4 {
 		t.Fatalf("limited walk = %v %+v %v", got, walk, err)
 	}
 
@@ -77,5 +77,28 @@ func TestWalkTreeBoundsNestedSharedSubtrees(t *testing.T) {
 	walk, err := store.WalkTree(context.Background(), revision, 1000, func(LocalGitTreeEntry) error { return nil })
 	if err != nil || !walk.Truncated || walk.Entries != 0 || walk.InvalidPaths > 1000 {
 		t.Fatalf("walk = %+v, %v", walk, err)
+	}
+}
+
+func TestWalkTreeAllowsADirectoryAsLargeAsItsBudget(t *testing.T) {
+	directory, store := newLocalGitObjectStoreFixture(t)
+	algorithm := evidence.RevisionAlgorithmSHA1
+	blob := writeLooseObject(t, directory, algorithm, "blob", []byte("x"))
+	names := make([]string, 70_000)
+	for i := range names {
+		names[i] = fmt.Sprintf("f%06d", i)
+	}
+	tree := []byte{}
+	for _, name := range names {
+		tree = append(tree, localTreeEntry(t, algorithm, evidence.GitTreeModeRegular, []byte(name), blob)...)
+	}
+	revision := writeLocalRevision(t, directory, algorithm, localTreeEntry(t, algorithm, evidence.GitTreeModeDirectory, []byte("big"), writeLooseObject(t, directory, algorithm, "tree", tree)))
+	walk, err := store.WalkTree(context.Background(), revision, 100_000, func(LocalGitTreeEntry) error { return nil })
+	if err != nil || walk.Truncated || walk.Entries != len(names) {
+		t.Fatalf("walk of a 70,000-entry directory = %+v, %v", walk, err)
+	}
+	walk, err = store.WalkTree(context.Background(), revision, 50_000, func(LocalGitTreeEntry) error { return nil })
+	if err != nil || !walk.Truncated {
+		t.Fatalf("walk past the budget = %+v, %v", walk, err)
 	}
 }
