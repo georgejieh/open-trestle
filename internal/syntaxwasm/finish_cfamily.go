@@ -529,3 +529,64 @@ func skipRawString(b []byte, i int) int {
 	}
 	return len(b)
 }
+
+// cppSniffBytes bounds the text read to decide the language of a .h file.
+const cppSniffBytes = 256 << 10
+
+// headerLanguage returns the language to analyse a C source as: C++ for a
+// .h file whose first bytes use syntax that C does not have, C otherwise.
+// The signals are namespace and using declarations, templates, class
+// declarations, access labels, operator overloads and the scope operator
+// outside C23 attribute brackets, and the noexcept and virtual keywords.
+// Comments, literals and preprocessor lines are skipped, so an extern "C"
+// guard leaves a C header as C.
+func headerLanguage(p string, content []byte) syntaxanalysis.Language {
+	if strings.ToLower(path.Ext(p)) != ".h" || !looksLikeCPP(content[:min(len(content), cppSniffBytes)]) {
+		return syntaxanalysis.LanguageC
+	}
+	return syntaxanalysis.LanguageCPP
+}
+
+func looksLikeCPP(b []byte) bool {
+	found := false
+	// previous holds the last two tokens: a word as itself, punctuation as
+	// its byte.
+	var previous [2]string
+	attribute := 0
+	lexCode(b, func(token byte, pos int, word string) bool {
+		current := word
+		if token != 'w' {
+			current = string(token)
+		}
+		last, beforeLast := previous[0], previous[1]
+		switch {
+		case token == '[' && last == "[":
+			attribute++
+		case token == ']' && last == "]" && attribute > 0:
+			attribute--
+		case token == 'S' && attribute == 0:
+			found = true
+		case last == "namespace" && (token == 'w' || token == '{'):
+			found = true
+		case last == "template" && token == '<':
+			found = true
+		case last == "using" && (word == "namespace" || token == 'w'):
+			found = true
+		case beforeLast == "class" && isIdentifier(last) && (token == '{' || token == ':' || token == ';' || word == "final"):
+			found = true
+		case token == ':' && (last == "public" || last == "private" || last == "protected") && (beforeLast == "{" || beforeLast == ";" || beforeLast == "}" || beforeLast == ":"):
+			found = true
+		case last == "operator" && token != 'w' && token != ';' && token != ',' && token != ')':
+			found = true
+		case token == 'w' && (word == "noexcept" || word == "virtual"):
+			found = true
+		}
+		previous[1], previous[0] = last, current
+		return !found
+	})
+	return found
+}
+
+func isIdentifier(s string) bool {
+	return s != "" && (s[0] == '_' || s[0] >= 'a' && s[0] <= 'z' || s[0] >= 'A' && s[0] <= 'Z' || s[0] >= 0x80)
+}

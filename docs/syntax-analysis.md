@@ -57,7 +57,7 @@ Each match must have exactly one of `@definition.*`, `@reference.*`, `@import` o
 
 ## C and C++
 
-Both are analysed from syntax alone, with no preprocessing. Files ending in `.h` are read as C, so C++ code in them gets parse-error gaps; `.hh`, `.hpp` and `.hxx` are read as C++.
+Both are analysed from syntax alone, with no preprocessing. `.hh`, `.hpp` and `.hxx` files are C++. A `.h` file is C unless its first 256 KiB use syntax that C does not have, such as a namespace, a template, a class or the `::` operator; it is then analysed and reported as C++.
 
 - Definitions: functions and prototypes, methods, constructors, structs, unions (as structs), classes, enums and enumerators, typedefs and aliases, namespaces, concepts, `#define` macros, file-scope variables and constants, and data members. A variable or member is a constant when nothing can reassign it: `const` on the declared type or on a pointer, or `constexpr`.
 - A definition written as `Owner::name` records the owner as its container, and a constructor is named like its class. A destructor is a method named with its tilde. Conversion operators are not recorded.

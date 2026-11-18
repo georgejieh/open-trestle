@@ -1,0 +1,43 @@
+# definitions
+3:1-4:1 macro "REGISTRY_H" exported
+9:1-41:2 module "plugins" exported
+  11:1-11:36 enum "plugins.State" exported
+    11:20-11:26 constant "plugins.State.Loaded" exported
+    11:28-11:34 constant "plugins.State.Failed" exported
+  13:1-16:2 struct "plugins.Descriptor" exported
+    14:5-14:22 field "plugins.Descriptor.name" exported
+    15:5-15:21 field "plugins.Descriptor.version" exported
+  19:1-31:2 class "plugins.Registry" exported
+    21:5-21:45 constructor "plugins.Registry.Registry" exported
+    22:5-22:17 method "plugins.Registry.~Registry" exported
+    24:5-24:47 method "plugins.Registry.add" exported
+    25:5-25:58 method "plugins.Registry.find" exported
+    26:5-26:57 method "plugins.Registry.size" exported
+    29:5-29:39 field "plugins.Registry.entries_"
+    30:5-30:27 field "plugins.Registry.capacity_"
+  33:1-37:2 class "plugins.Loader" exported
+    36:5-36:49 method "plugins.Loader.load" exported
+  39:1-39:43 function "plugins.registryVersion" exported
+# references
+14:10 type "string" qualifier="std" in "plugins.Descriptor.name"
+21:28 type "size_t" qualifier="std" in "plugins.Registry.Registry"
+24:25 type "string" qualifier="std" in "plugins.Registry.add"
+24:38 type "T" in "plugins.Registry.add"
+25:11 type "T" in "plugins.Registry.find"
+25:30 type "string" qualifier="std" in "plugins.Registry.find"
+26:10 type "size_t" qualifier="std" in "plugins.Registry.size"
+26:48 call "size" qualifier="entries_" in "plugins.Registry.size"
+29:10 type "map" qualifier="std" in "plugins.Registry.entries_"
+29:19 type "string" qualifier="std" in "plugins.Registry.entries_"
+29:27 type "T" in "plugins.Registry.entries_"
+30:10 type "size_t" qualifier="std" in "plugins.Registry.capacity_"
+33:23 inherit "Registry" in "plugins.Loader"
+33:32 type "Descriptor" in "plugins.Loader"
+36:13 type "State" in "plugins.Loader.load"
+36:35 type "string" qualifier="std" in "plugins.Loader.load"
+# imports
+5:1-6:1 source="<map>"
+6:1-7:1 source="<string>"
+7:1-8:1 source="handle.h"
+35:5-35:30 source="Registry::Registry" in "plugins.Loader"
+# gaps

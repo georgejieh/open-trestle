@@ -202,3 +202,48 @@ TEST(Box, Works) {
 		}
 	}
 }
+
+func TestHeadersInCPlusPlusAreAnalysedAsCPlusPlus(t *testing.T) {
+	cpp := []string{
+		"namespace a { int f(); }\n",
+		"template <typename T> T id(T v);\n",
+		"class Widget;\n",
+		"class Widget : public Base {};\n",
+		"struct S {\npublic:\n  int x;\n};\n",
+		"std::string name(void);\n",
+		"using namespace std;\n",
+		"struct V { virtual ~V(); };\n",
+		"bool operator==(const A &, const A &);\n",
+	}
+	c := []string{
+		"#ifdef __cplusplus\nextern \"C\" {\n#endif\nint f(void);\n#ifdef __cplusplus\n}\n#endif\n",
+		"struct node { struct node *new; int class; };\n",
+		"[[gnu::unused]] static int counter;\n",
+		"/* namespace a { class B {}; } */\nint g(void);\n",
+		"const char *s = \"std::string\";\n",
+		"struct flags { unsigned public : 1; };\n",
+		"#define CLASS class X {\nint h(void);\n",
+	}
+	for _, text := range cpp {
+		if got := headerLanguage("x.h", []byte(text)); got != syntaxanalysis.LanguageCPP {
+			t.Errorf("%q: %s", text, got)
+		}
+		if got := headerLanguage("x.c", []byte(text)); got != syntaxanalysis.LanguageC {
+			t.Errorf("%q in a .c file: %s", text, got)
+		}
+	}
+	for _, text := range c {
+		if got := headerLanguage("x.h", []byte(text)); got != syntaxanalysis.LanguageC {
+			t.Errorf("%q: %s", text, got)
+		}
+	}
+	a := testAnalyzer(t)
+	header := analyze(t, a, "widget.h", []byte("namespace ui {\nclass Widget {\npublic:\n  void draw();\n};\n}\n"))
+	if header.Language != syntaxanalysis.LanguageCPP || !header.Complete() || len(header.Definitions) != 3 {
+		t.Fatalf("C++ header: language %s, gaps %+v, %d definitions", header.Language, header.Gaps, len(header.Definitions))
+	}
+	plain := analyze(t, a, "plain.h", []byte("struct point { int x; };\nint area(struct point p);\n"))
+	if plain.Language != syntaxanalysis.LanguageC || !plain.Complete() {
+		t.Fatalf("C header: language %s, gaps %+v", plain.Language, plain.Gaps)
+	}
+}

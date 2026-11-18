@@ -349,6 +349,14 @@ func (a *Analyzer) Analyze(ctx context.Context, source syntaxanalysis.Source) (s
 		return gap(syntaxanalysis.GapLimitExceeded, syntaxanalysis.LimitFileSize)
 	}
 	content := source.Content()
+	if source.Language() == syntaxanalysis.LanguageC && headerLanguage(source.Path(), content) == syntaxanalysis.LanguageCPP {
+		// A .h file is C by its name; one written in C++ is analysed and
+		// reported as C++.
+		cpp, err := syntaxanalysis.NewSource(source.Path(), syntaxanalysis.LanguageCPP, content)
+		if cppEntry, ok := a.languages[syntaxanalysis.LanguageCPP]; err == nil && ok && cppEntry.pack != nil {
+			source, entry = cpp, cppEntry
+		}
+	}
 	a.calls.RLock()
 	if a.isClosed() {
 		a.calls.RUnlock()
