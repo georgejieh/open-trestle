@@ -236,7 +236,7 @@ func TestSanitizedEgressReceiptRejectsCountSpanRuleAndCompletionMismatches(t *te
 		{"initial incomplete", "initial_scan.complete", false}, {"residual incomplete", "residual_scan.complete", false}, {"residual match", "residual_scan.match_count", float64(1)},
 		{"ordinal", "fields.0.ordinal", float64(1)}, {"field bytes", "fields.0.scanned_byte_count", float64(11)}, {"field redacted", "fields.1.redacted_byte_count", float64(7)},
 		{"span", "fields.1.matches.0.end_byte_exclusive", float64(21)}, {"rule", "fields.1.matches.0.rule_id", "not-a-pinned-rule"}, {"occurrence", "fields.1.matches.0.occurrence_id", strings.Repeat("d", 64)},
-		{"worker protocol", "scanner.worker_protocol", float64(2)}, {"rule count", "scanner.ruleset_rule_count", float64(416)}, {"profile", "scanner.build_profile", "other"}, {"launcher digest", "scanner.launcher_sha256", strings.Repeat("0", 64)},
+		{"worker protocol", "scanner.worker_protocol", float64(2)}, {"rule count", "scanner.ruleset_rule_count", float64(416)}, {"profile", "scanner.build_profile", "other"}, {"helper digest", "scanner.helper_sha256", strings.Repeat("0", 64)},
 	}
 	for _, mutation := range mutations {
 		t.Run(mutation.name, func(t *testing.T) {
@@ -676,7 +676,11 @@ func mutateJSONPath(t *testing.T, encoded []byte, path string, value any) []byte
 	if len(last) == 1 && last[0] >= '0' && last[0] <= '9' {
 		current.([]any)[int(last[0]-'0')] = value
 	} else {
-		current.(map[string]any)[last] = value
+		object := current.(map[string]any)
+		if _, ok := object[last]; !ok {
+			t.Fatalf("no field at %s", path)
+		}
+		object[last] = value
 	}
 	changed, _ := json.Marshal(root)
 	return changed
