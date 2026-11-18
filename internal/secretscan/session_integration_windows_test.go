@@ -234,6 +234,8 @@ func TestScanHelperRefusesAWorkingDirectoryOthersCanRead(t *testing.T) {
 	}{
 		{"private", "", 0},
 		{"others can read", ownersonlytest.Users + ":(RX)", 78},
+		{"others would inherit access", ownersonlytest.Users + ":(OI)(CI)(IO)(M)", 78},
+		{"an entry others can write", "", 78},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			directory := filepath.Join(ownersonlytest.TempDir(t), "cache")
@@ -242,6 +244,12 @@ func TestScanHelperRefusesAWorkingDirectoryOthersCanRead(t *testing.T) {
 			}
 			if test.grant != "" {
 				ownersonlytest.Grant(t, directory, test.grant)
+			} else if test.code != 0 {
+				entry := filepath.Join(directory, "entry")
+				if err := os.WriteFile(entry, []byte("code"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				ownersonlytest.Grant(t, entry, ownersonlytest.Everyone+":(M)")
 			}
 			helper := exec.Command(config.HelperPath, helperSessionArgument)
 			helper.Dir = directory

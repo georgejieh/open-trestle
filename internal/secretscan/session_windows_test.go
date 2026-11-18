@@ -85,6 +85,36 @@ func TestOpenCacheDirectoryOnWindows(t *testing.T) {
 			t.Fatal("a refused open created the cache through the junction")
 		}
 	})
+	t.Run("cache others would inherit access to", func(t *testing.T) {
+		cache := filepath.Join(ownersonlytest.TempDir(t), "cache")
+		if err := ownersonly.Mkdir(cache); err != nil {
+			t.Fatal(err)
+		}
+		ownersonlytest.Grant(t, cache, ownersonlytest.Everyone+":(OI)(CI)(IO)(F)")
+		if _, err := openCacheDirectory(cache, false); !errors.Is(err, ErrCacheUntrusted) {
+			t.Fatalf("a cache that hands its entries to Everyone was accepted: %v", err)
+		}
+	})
+	t.Run("entry inside others can write", func(t *testing.T) {
+		cache := filepath.Join(ownersonlytest.TempDir(t), "cache")
+		if _, err := openCacheDirectory(cache, true); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(cache, "wazero"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		entry := filepath.Join(cache, "wazero", "module")
+		if err := os.WriteFile(entry, []byte("native code"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := openCacheDirectory(cache, false); err != nil {
+			t.Fatalf("a cache with owner-only entries was refused: %v", err)
+		}
+		ownersonlytest.Grant(t, entry, ownersonlytest.Everyone+":(M)")
+		if _, err := openCacheDirectory(cache, false); !errors.Is(err, ErrCacheUntrusted) {
+			t.Fatalf("a cache entry others can write was accepted: %v", err)
+		}
+	})
 	t.Run("invalid path", func(t *testing.T) {
 		for _, path := range []string{"", "relative", `C:\`} {
 			if _, err := openCacheDirectory(path, true); !errors.Is(err, ErrSessionConfig) {

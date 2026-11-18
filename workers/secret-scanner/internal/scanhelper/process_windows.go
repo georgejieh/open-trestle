@@ -50,20 +50,18 @@ func WatchInputHangup(int) (stop func()) { return func() {} }
 // in a job object that ends it with the parent.
 func ExitWithParent() {}
 
-// PrivateCacheDirectory returns the working directory after checking that it
-// is a directory, not a reparse point, owned by the current user, whose DACL
-// grants principals other than the current user and the system's own
-// accounts no access beyond reading attributes; see package ownersonly. wazero loads native code
-// from the cache, so a directory anyone else can write would let them run
+// PrivateCacheDirectory returns the working directory after checking it with
+// ownersonly.CheckPrivateDirectoryTree: it must be owned by the current user
+// and grant other principals no access beyond reading its attributes and
+// DACL, also through ACEs that new entries would inherit; it must resolve to
+// itself with no junction on the way; every directory above it must let
+// others at most read it and add entries; and every entry inside it must be
+// owned by a trusted identity and grant others nothing. wazero loads native
+// code from the cache, so an entry anyone else can write would let them run
 // code in the helper.
 func PrivateCacheDirectory() (string, error) {
 	directory, err := os.Getwd()
-	if err != nil || !filepath.IsAbs(directory) {
-		return "", errCacheDirectory
-	}
-	info, err := os.Lstat(directory)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 ||
-		ownersonly.CheckPath(directory, info, ownersonly.Rule{Owner: ownersonly.OwnerCurrentUser, Others: ownersonly.OthersNone}) != nil {
+	if err != nil || !filepath.IsAbs(directory) || ownersonly.CheckPrivateDirectoryTree(directory) != nil {
 		return "", errCacheDirectory
 	}
 	return directory, nil

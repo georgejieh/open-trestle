@@ -89,9 +89,12 @@ type SessionConfig struct {
 	// permission bit, and every directory above it must be owned by root or
 	// the current user and writable by no one else unless it is sticky.
 	// On Windows the same is read from owners and access-control lists: the
-	// directory must be owned by the current user and grant other principals
-	// than the system's own accounts no access beyond reading its attributes,
-	// and no one else may change a directory above it. Both checks run before every spawn.
+	// directory must be owned by the current user and grant principals other
+	// than the system's own accounts no access beyond reading its
+	// attributes, also through ACEs that entries created inside it would
+	// inherit; every entry already inside it must grant them nothing; and no
+	// one else may remove or replace a directory above it. Both checks run
+	// before every spawn.
 	// OpenSession never creates it; Prewarm creates the final directory with
 	// mode 0700, or owner-only on Windows, if it is missing.
 	//

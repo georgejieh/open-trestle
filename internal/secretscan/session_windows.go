@@ -142,25 +142,29 @@ func imageIdentity(process syscall.Handle) (fileIdentity, error) {
 
 // openCacheDirectory checks the helper's cache directory and returns the path
 // to start the helper in, as the Linux version does, with the owner and DACL
-// of each directory in place of its owner and mode bits; see package
-// ownersonly. Symbolic links above the directory are resolved once, and a
-// junction or other reparse point on the resolved path is refused, since
-// filepath.EvalSymlinks does not resolve junctions. Every directory on the
-// resolved path must be owned by the current user, LocalSystem,
-// Administrators or TrustedInstaller, and no other principal may write it,
-// except that it may let others add entries, which cannot remove, rename or
-// replace an existing one. The directory itself
-// must not be a reparse point, must be owned by the current user and must
-// grant other principals no access beyond reading its attributes and DACL,
-// which is what the helper requires of its working directory. With create, a
-// missing directory is first created owner-only; nothing above it is ever
-// created.
+// of each entry in place of its owner and mode bits; see package ownersonly.
+// Symbolic links above the directory are resolved once; a junction or other
+// reparse point on the resolved path is refused, since filepath.EvalSymlinks
+// does not resolve junctions. Every directory above the cache must be owned
+// by the current user, LocalSystem, Administrators or TrustedInstaller and
+// may let other principals at most read it and add entries. The cache itself
+// must be owned by the current user, must grant other principals no access
+// beyond reading its attributes and DACL, also through ACEs that entries
+// created inside it would inherit, and every entry already inside it must be
+// owned by a trusted identity and grant others nothing. The helper requires
+// the same of its working directory.
+//
+// With create, a missing cache is first created owner-only; nothing above it
+// is ever created. Another principal that may add entries to an empty parent
+// could turn the parent into a junction between the check and the creation,
+// so the cache must afterwards resolve to the expected path; once the cache
+// exists the parent is no longer empty and cannot become a junction.
 func openCacheDirectory(path string, create bool) (string, error) {
 	if !validAbsolutePath(path) || filepath.Dir(path) == path {
 		return "", ErrSessionConfig
 	}
 	parent, err := filepath.EvalSymlinks(filepath.Dir(path))
-	if err != nil || !filepath.IsAbs(parent) || !trustedAncestors(parent) {
+	if err != nil || !filepath.IsAbs(parent) || ownersonly.CheckAncestors(parent) != nil {
 		return "", ErrCacheUntrusted
 	}
 	directory := filepath.Join(parent, filepath.Base(path))
@@ -169,30 +173,10 @@ func openCacheDirectory(path string, create bool) (string, error) {
 			return "", ErrCacheUntrusted
 		}
 	}
-	info, err := os.Lstat(directory)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 ||
-		ownersonly.CheckPath(directory, info, ownersonly.Rule{Owner: ownersonly.OwnerCurrentUser, Others: ownersonly.OthersNone}) != nil {
+	if ownersonly.CheckPrivateDirectoryTree(directory) != nil {
 		return "", ErrCacheUntrusted
 	}
 	return directory, nil
-}
-
-// trustedAncestors reports whether directory and every directory above it
-// are owned by a trusted identity and let no other principal do more than
-// add entries.
-func trustedAncestors(directory string) bool {
-	for {
-		info, err := os.Lstat(directory)
-		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 ||
-			ownersonly.CheckPath(directory, info, ownersonly.Rule{Owner: ownersonly.OwnerTrusted, Others: ownersonly.OthersReadAdd}) != nil {
-			return false
-		}
-		parent := filepath.Dir(directory)
-		if parent == directory {
-			return true
-		}
-		directory = parent
-	}
 }
 
 // configureHelperCommand starts the helper suspended, so it runs no code

@@ -20,10 +20,11 @@
 // device, and nothing is written to either on purpose. The working directory
 // is the compilation cache directory: it must be owned by the current user
 // and have no group or other permission bits. On Windows it must be owned by
-// the current user, and its access-control list may grant principals other
-// than the system's own accounts no access beyond reading attributes. On macOS,
-// where owner and mode bits do not prove that a directory is private, every
-// working directory is refused. The helper reads no environment variables.
+// the current user, and neither its access-control list nor that of any
+// entry inside it may grant principals other than the system's own accounts
+// access beyond reading attributes, also for entries created later. On
+// macOS, where owner and mode bits do not prove that a directory is private,
+// every working directory is refused. The helper reads no environment variables.
 // Before it reads the first request it compiles the guest and starts libre2,
 // both through caches in that directory, so a session with no request fills
 // both caches and exits 0.
