@@ -36,6 +36,7 @@ var gateFixtures = map[syntaxanalysis.Language]string{
 	syntaxanalysis.LanguageTSX:        "testdata/tsx/Dashboard.tsx",
 	syntaxanalysis.LanguagePython:     "testdata/python/scheduler.py",
 	syntaxanalysis.LanguageC:          "testdata/c/kvstore.c",
+	syntaxanalysis.LanguageCPP:        "testdata/cpp/scheduler.cpp",
 }
 
 type gateResult struct {

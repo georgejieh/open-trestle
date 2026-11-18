@@ -16,7 +16,7 @@ Every name, qualifier and import path is repository text. It is carried as a `sy
 ## Analyzers
 
 - Go uses `semanticimpact.GoSyntaxAnalyzer`, built on `go/parser`.
-- The other languages use `internal/syntaxwasm`: tree-sitter grammars compiled to WebAssembly and run under wazero. Java, JavaScript, TypeScript, TSX, Python and C have query packs. C++, C#, Swift, Rust, PHP, Ruby and HTML have grammars in the modules but no query pack yet, so their files get a `no_query_pack` gap.
+- The other languages use `internal/syntaxwasm`: tree-sitter grammars compiled to WebAssembly and run under wazero. Java, JavaScript, TypeScript, TSX, Python, C and C++ have query packs. C#, Swift, Rust, PHP, Ruby and HTML have grammars in the modules but no query pack yet, so their files get a `no_query_pack` gap.
 
 `syntaxanalysis.NewDispatcher` routes each file to the first analyzer that supports its language.
 
@@ -49,8 +49,6 @@ Captures:
 | `@export` | An export list entry; a top-level definition with its `@name` is exported. |
 | `@container` | The owner named in a definition's name, as in `Owner::name`, when it is not the lexical parent. |
 | `@opaque` | A span in which the pack drops type references, because the grammar reads values or macro arguments there as types. |
-| `@container` | The owner named in a definition's name, as in `Owner::name`, when it is not the lexical parent. |
-| `@opaque` | A span in which the pack drops type references, because the grammar reads values or macro arguments there as types. |
 | `@match.<word>` | Keeps the match only when the captured text is `<word>`, in place of `#eq?`. |
 | `@_<anything>` | A helper capture with no meaning. |
 
@@ -58,13 +56,15 @@ Each match must have exactly one of `@definition.*`, `@reference.*`, `@import` o
 
 ## C and C++
 
-C is analysed from syntax alone, with no preprocessing. Files ending in `.h` are read as C.
+Both are analysed from syntax alone, with no preprocessing. Files ending in `.h` are read as C, so C++ code in them gets parse-error gaps; `.hh`, `.hpp` and `.hxx` are read as C++.
 
-- Definitions: functions and prototypes, structs, unions (as structs), enums and enumerators, typedefs, `#define` macros, file-scope variables and constants, and struct members. A variable is a constant when nothing can reassign it: `const` on the declared type or on a pointer.
-- Includes are imports. A system include keeps its angle brackets, `<stdio.h>`; a quoted one is the text inside the quotes.
-- References: calls (including macro invocations), type uses and attributes.
-- A function, variable or constant at file scope is exported unless it is `static`. A type or macro is exported when it is declared in a header.
-- Macros are not expanded. What a macro generates is not seen, and a macro invocation that parses as a declaration or a block gives no definition. Locals are never recorded.
+- Definitions: functions and prototypes, methods, constructors, structs, unions (as structs), classes, enums and enumerators, typedefs and aliases, namespaces, concepts, `#define` macros, file-scope variables and constants, and data members. A variable or member is a constant when nothing can reassign it: `const` on the declared type or on a pointer, or `constexpr`.
+- A definition written as `Owner::name` records the owner as its container, and a constructor is named like its class. A destructor is a method named with its tilde. Conversion operators are not recorded.
+- Includes are imports. A system include keeps its angle brackets, `<stdio.h>`; a quoted one is the text inside the quotes. `using` declarations and namespace aliases are imports too.
+- References: calls (including macro invocations), constructions with `new`, braces or arguments, type uses, base classes, and attributes. A qualified name records its innermost scope as the qualifier.
+- Exported means visible to other files. A function, variable or constant at file or namespace scope is exported unless it is `static` or in an anonymous namespace, and a C++ constant only when it is `extern` or declared in a header. A type, macro or namespace is exported when it is declared in a header. A class member is exported when its class is and its access is public.
+- An anonymous namespace is recorded as a module named `namespace`.
+- Macros are not expanded. What a macro generates is not seen, and a macro invocation that parses as a declaration or a block, such as a test-framework case, gives no definition. Locals are never recorded. A declaration such as `Foo x(y);` is ambiguous in C++ syntax; inside a function its names are not recorded as types.
 
 ## Rebuilding the modules
 
