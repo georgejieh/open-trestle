@@ -37,6 +37,14 @@ func TestWindowsStateFilesAreOwnerOnlyBelowAReadableParent(t *testing.T) {
 	}
 	ownersonlytest.RequireOwnerOnly(t, path)
 	ownersonlytest.RequireOwnerOnly(t, path+".receipts")
+	ownersonlytest.RequireOwnerOnly(t, path+".lock")
+	reopened, err := OpenStateFile(path)
+	if err != nil {
+		t.Fatalf("the writer refused its own state below a readable parent: %v", err)
+	}
+	if err := reopened.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if inspected, err := InspectStateFile(context.Background(), path); err != nil || inspected.Identity() != plan.Identity() {
 		t.Fatalf("inspect: %v", err)
 	}
