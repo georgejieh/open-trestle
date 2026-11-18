@@ -28,7 +28,7 @@ A reference is a candidate for a definition when it has the definition's exact n
 
 In Go, a reference qualified by an imported package's name matches only that package's top-level definitions, and a method or field of another package matches only a selector in a file that imports that package.
 
-Imports resolve by path rules: Go import paths to the directory they end with, Java class names to their file, relative JavaScript and TypeScript imports with the usual extensions and `index` files, Python modules to `.py`, `.pyi` or `__init__.py`, C and C++ includes, Rust `use` paths, Ruby and PHP required paths and PHP namespaced names to files, and C# `using` to the files declaring the namespace. An import of a package outside the repository is unresolved and counted.
+Imports resolve by path rules: Go import paths through the module paths of the commit's `go.mod` files, or else to the directory they end with, Java class names to their file, relative JavaScript and TypeScript imports with the usual extensions and `index` files, HTML `src`, `href` and `action` values relative to the page, Python modules to `.py`, `.pyi` or `__init__.py`, C and C++ includes, Rust `use` paths, Ruby and PHP required paths and PHP namespaced names to files, and C# `using` to the files declaring the namespace. An import of a package outside the repository is unresolved and counted.
 
 Names are not resolved to declarations, so a candidate can belong to another definition with the same name, and a use through a variable, an alias or reflection can be missed.
 
@@ -40,7 +40,7 @@ The dependents of a change start from its changed definitions: each definition, 
 
 The index lives in the setup folder (see [environment variables and files](environment-and-files.md)), under `index/`: a `0700` folder of `0600` files.
 
-- `seg-*.otx` files hold one analysis per blob and language. A blob analysed once is never analysed again for that program build, so a build of a new commit analyses only new blobs.
+- `seg-*.otx` files hold one analysis per blob and language. A blob analysed once is never analysed again for that program build, so a build of a new commit analyses only new blobs, and files with the same content share one analysis.
 - `snap-*.otx` files hold one commit's file list and coverage.
 - `compiled/` holds compiled grammar modules on Linux.
 
