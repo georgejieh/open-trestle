@@ -33,7 +33,7 @@ func TestRecordedGo12610SanitizedEgressReceiptReadsBackByteForByte(t *testing.T)
 	if err != nil || !bytes.Equal(encoded, recorded) {
 		t.Fatalf("recorded go1.26.10 receipt changed on re-encode: %v", err)
 	}
-	for _, profile := range []string{"public_detect_run_re2_purego_go1.26.8_linux_amd64_v1", "public_detect_run_re2_purego_go1.26.12_linux_amd64_v1"} {
+	for _, profile := range []string{"public_detect_run_re2_purego_go1.26.8_linux_amd64_v1", "public_detect_run_re2_purego_go1.26.12_linux_amd64_v1", secretscan.HostRE2BuildProfile} {
 		input := receiptInputFrom(t, receipt)
 		input.Scanner.BuildProfile = profile
 		if _, err := NewSanitizedEgressReceipt(input); err == nil {
@@ -59,6 +59,23 @@ func TestRecordedGo12610PublicationContentScanReceiptReadsBackByteForByte(t *tes
 	if receipt.ScannerAuthorityIdentity() != PublicationContentScannerIdentity(receipt.Scanner()) {
 		t.Fatal("recorded scanner authority is not derived from its own build profile")
 	}
+	// The same receipt under the scan helper profile, with the authority and
+	// receipt identities derived for it, so that the profile is the only
+	// thing that can make it invalid.
+	helper := receipt
+	helper.scanner.BuildProfile = secretscan.HostRE2BuildProfile
+	helper.scannerAuthorityIdentity = PublicationContentScannerIdentity(helper.scanner)
+	helper.identity = derivePublicationContentScanReceiptIdentity(helper)
+	if helper.Validate() == nil {
+		t.Fatal("receipt validation accepted the scan helper build profile")
+	}
+	helperBytes, err := json.Marshal(publicationContentScanReceiptWireValue(helper))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParsePublicationContentScanReceipt(helperBytes); err == nil {
+		t.Fatal("receipt bytes accepted the scan helper build profile")
+	}
 	live := newFixedPublicationContentScanner(&fixedGenerationClientFixture{launcher: receipt.Scanner().LauncherSHA256, worker: receipt.Scanner().WorkerSHA256})
 	if live.Identity() == receipt.ScannerAuthorityIdentity() {
 		t.Fatal("a current scanner with the recorded digests inherited the go1.26.10 scanner authority")
@@ -83,6 +100,28 @@ func TestLiveScanProjectionRequiresTheCurrentBuildProfile(t *testing.T) {
 	metadata.BuildProfile = recordedGo12610BuildProfile
 	if validProjectionMetadata(metadata, expected, 1) {
 		t.Fatal("live scan accepted the recorded go1.26.10 build profile")
+	}
+	metadata.BuildProfile = secretscan.HostRE2BuildProfile
+	if validProjectionMetadata(metadata, expected, 1) {
+		t.Fatal("live scan accepted the scan helper build profile")
+	}
+}
+
+func TestReceiptsRefuseTheScanHelperBuildProfile(t *testing.T) {
+	if !secretscan.KnownBuildProfile(secretscan.HostRE2BuildProfile) || secretscan.ReceiptBuildProfile(secretscan.HostRE2BuildProfile) {
+		t.Fatal("the scan helper profile must be readable in responses and refused in receipts")
+	}
+	scanner := ScannerProfile{
+		WorkerProtocol: 1, Scanner: secretscan.ScannerName, ScannerVersion: secretscan.ScannerVersion, ScannerCommit: secretscan.ScannerCommit,
+		RulesetIdentity: secretscan.RulesetIdentity, RulesetRuleCount: secretscan.RulesetRuleCount, BuildProfile: secretscan.BuildProfile,
+		LauncherSHA256: strings.Repeat("a", 64), WorkerSHA256: strings.Repeat("b", 64),
+	}
+	if !validScannerProfile(scanner) {
+		t.Fatal("receipt scanner profile with the native profile is invalid")
+	}
+	scanner.BuildProfile = secretscan.HostRE2BuildProfile
+	if validScannerProfile(scanner) {
+		t.Fatal("receipt scanner profile accepted the scan helper build profile")
 	}
 }
 

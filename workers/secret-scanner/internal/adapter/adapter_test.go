@@ -19,15 +19,18 @@ import (
 	"unicode/utf8"
 
 	"github.com/betterleaks/betterleaks/detect"
+	"github.com/betterleaks/betterleaks/regexp/re2"
 	"github.com/betterleaks/betterleaks/report"
 	"github.com/betterleaks/betterleaks/sources"
 	"github.com/georgejieh/open-trestle/workers/secret-scanner/internal/protocol"
+	"github.com/georgejieh/open-trestle/workers/secret-scanner/internal/regexabi"
 )
 
 func newTestAdapter(run func(context.Context, sources.Source) iter.Seq[detect.Result], totalBytes func() uint64, deadline time.Duration) *Adapter {
 	return &Adapter{
-		runtime:  detectorRuntime{run: run, totalBytes: totalBytes},
-		deadline: deadline,
+		runtime:      detectorRuntime{run: run, totalBytes: totalBytes},
+		deadline:     deadline,
+		buildProfile: protocol.BuildProfile,
 	}
 }
 
@@ -110,6 +113,36 @@ func TestPinnedInitializationAndDisabledFeatures(t *testing.T) {
 	}
 	if got := len(adapter.detector.Config.Rules); got != protocol.RulesetRuleCount {
 		t.Fatalf("got %d rules, want %d", got, protocol.RulesetRuleCount)
+	}
+	if adapter.deadline != internalScanDeadline || adapter.buildProfile != protocol.BuildProfile {
+		t.Fatal("native adapter does not use the native deadline and profile")
+	}
+}
+
+// hostTestEngine is the native RE2 engine under the name the guest's host
+// engine reports, so that NewWithHostEngine can be tested natively.
+type hostTestEngine struct{ re2.RE2 }
+
+func (hostTestEngine) Version() string { return regexabi.EngineVersion }
+
+func TestHostEngineAdapterUsesTheGuestDeadlineAndProfile(t *testing.T) {
+	if HostEngineScanDeadline != 40*time.Second {
+		t.Fatal("guest scan deadline is not forty seconds")
+	}
+	defer func() {
+		if _, err := New(); err != nil {
+			t.Fatal(err)
+		}
+	}()
+	adapter, err := NewWithHostEngine(hostTestEngine{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adapter.deadline != HostEngineScanDeadline || adapter.buildProfile != protocol.HostRE2BuildProfile {
+		t.Fatal("host engine adapter does not use the guest deadline and profile")
+	}
+	if _, err := NewWithHostEngine(re2.RE2{}); !errors.Is(err, ErrInitialization) {
+		t.Fatal("host engine adapter accepted an engine with another version")
 	}
 }
 

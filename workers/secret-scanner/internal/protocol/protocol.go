@@ -37,6 +37,11 @@ const (
 	maxRuleIDBytes          = 256
 )
 
+// HostRE2BuildProfile is the profile of scans that run Betterleaks in the
+// wasip1 WebAssembly guest of the scan helper, with RE2 evaluated by the
+// helper through the host regex interface.
+const HostRE2BuildProfile = "public_detect_run_re2_host_go1.26.11_wasip1_wasm_v1"
+
 // go12610BuildProfile is the scanner profile that preceded BuildProfile. No
 // new scan emits it, but responses and receipts recorded under it stay valid.
 const go12610BuildProfile = "public_detect_run_re2_purego_go1.26.10_linux_amd64_v1"
@@ -44,10 +49,11 @@ const go12610BuildProfile = "public_detect_run_re2_purego_go1.26.10_linux_amd64_
 var ErrInvalidProtocol = errors.New("invalid secret scan protocol")
 
 // KnownBuildProfile reports whether a recorded response or receipt names one
-// of the exactly two readable scanner profiles: BuildProfile, which new scans
-// emit, or the go1.26.10 profile. Live scans require BuildProfile itself.
+// of the exactly three readable scanner profiles: BuildProfile, which native
+// scans emit, HostRE2BuildProfile, which scan helper scans emit, or the
+// go1.26.10 profile. A live scan requires the profile of the scanner it ran.
 func KnownBuildProfile(profile string) bool {
-	return profile == BuildProfile || profile == go12610BuildProfile
+	return profile == BuildProfile || profile == HostRE2BuildProfile || profile == go12610BuildProfile
 }
 
 type Source struct {

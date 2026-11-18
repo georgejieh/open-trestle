@@ -58,6 +58,14 @@
       ],
       "license": "MIT",
       "module": "github.com/betterleaks/betterleaks",
+      "patched_copies": [
+        {
+          "linked_by": "workers/secret-scanner/guest",
+          "patch": "workers/secret-scanner/third_party/betterleaks-v1.8.1.patch",
+          "patch_sha256": "4cb3abc6bb793a3a0038961143a821b80afdfef056267c78015cb158340e6d7c",
+          "path": "workers/secret-scanner/third_party/betterleaks"
+        }
+      ],
       "version": "v1.8.1"
     },
     {
@@ -448,6 +456,14 @@
       ],
       "license": "MIT",
       "module": "github.com/pkoukk/tiktoken-go",
+      "patched_copies": [
+        {
+          "linked_by": "workers/secret-scanner/guest",
+          "patch": "workers/secret-scanner/third_party/tiktoken-go-v0.1.8.patch",
+          "patch_sha256": "22f0aa8baa41e8e3372e2e937c7dbeaca6deaeddbee6a88b704c9578cbdaa424",
+          "path": "workers/secret-scanner/third_party/tiktoken-go"
+        }
+      ],
       "version": "v0.1.8"
     },
     {

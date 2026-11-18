@@ -14,9 +14,9 @@ import (
 	"github.com/betterleaks/betterleaks/detect"
 	"github.com/betterleaks/betterleaks/logging"
 	blregexp "github.com/betterleaks/betterleaks/regexp"
-	"github.com/betterleaks/betterleaks/regexp/re2"
 	"github.com/betterleaks/betterleaks/sources"
 	"github.com/georgejieh/open-trestle/workers/secret-scanner/internal/protocol"
+	"github.com/georgejieh/open-trestle/workers/secret-scanner/internal/regexabi"
 	"github.com/rs/zerolog"
 )
 
@@ -28,6 +28,15 @@ const (
 	internalScanDeadline = 5 * time.Second
 )
 
+// HostEngineScanDeadline bounds one scan in the WebAssembly guest. The guest
+// runs the same Betterleaks code compiled to WebAssembly, on one thread, and
+// takes up to six times as long as the native worker for the same request,
+// most for requests of many small sources. Every request that the native
+// worker completes, or stops at the match limit, within internalScanDeadline
+// must end the same way in the guest, so the guest gets internalScanDeadline
+// times that factor and a third more.
+const HostEngineScanDeadline = 40 * time.Second
+
 var ErrInitialization = errors.New("secret scanner initialization failed")
 
 type detectorRuntime struct {
@@ -36,13 +45,21 @@ type detectorRuntime struct {
 }
 
 type Adapter struct {
-	detector *detect.Detector
-	runtime  detectorRuntime
-	deadline time.Duration
-	mu       sync.Mutex
+	detector     *detect.Detector
+	runtime      detectorRuntime
+	deadline     time.Duration
+	buildProfile string
+	mu           sync.Mutex
 }
 
-func New() (adapter *Adapter, err error) {
+// NewWithHostEngine returns an adapter whose regular expressions run in the
+// host of a WebAssembly guest. engine must report regexabi.EngineVersion, and
+// responses carry protocol.HostRE2BuildProfile.
+func NewWithHostEngine(engine blregexp.Engine) (*Adapter, error) {
+	return newWithEngine(engine, regexabi.EngineVersion, protocol.HostRE2BuildProfile, HostEngineScanDeadline)
+}
+
+func newWithEngine(engine blregexp.Engine, version, buildProfile string, deadline time.Duration) (adapter *Adapter, err error) {
 	defer func() {
 		if recover() != nil {
 			adapter = nil
@@ -51,8 +68,11 @@ func New() (adapter *Adapter, err error) {
 	}()
 
 	logging.Logger = zerolog.Nop()
-	blregexp.SetEngine(re2.RE2{})
-	if blregexp.Version() != "re2" {
+	if engine == nil || !protocol.KnownBuildProfile(buildProfile) {
+		return nil, ErrInitialization
+	}
+	blregexp.SetEngine(engine)
+	if blregexp.Version() != version {
 		return nil, ErrInitialization
 	}
 	wantRulesetDigest := [sha256.Size]byte{
@@ -89,7 +109,8 @@ func New() (adapter *Adapter, err error) {
 			run:        detector.Run,
 			totalBytes: detector.TotalBytes.Load,
 		},
-		deadline: internalScanDeadline,
+		deadline:     deadline,
+		buildProfile: buildProfile,
 	}, nil
 }
 
@@ -123,12 +144,16 @@ func PinnedRuleIDs() map[string]struct{} {
 }
 
 func (a *Adapter) Scan(ctx context.Context, request protocol.Request) protocol.Response {
-	response := emptyResponse(request.RequestID, protocol.StatusScanFailed)
+	buildProfile := ""
+	if a != nil {
+		buildProfile = a.buildProfile
+	}
+	response := emptyResponse(request.RequestID, protocol.StatusScanFailed, buildProfile)
 	if !validRequest(request) {
 		response.Status = protocol.StatusInputRejected
 		return response
 	}
-	if a == nil || a.runtime.run == nil || a.runtime.totalBytes == nil || a.deadline <= 0 {
+	if a == nil || a.runtime.run == nil || a.runtime.totalBytes == nil || a.deadline <= 0 || !protocol.KnownBuildProfile(a.buildProfile) {
 		return response
 	}
 
@@ -144,6 +169,10 @@ func (a *Adapter) Scan(ctx context.Context, request protocol.Request) protocol.R
 
 	for _, requestSource := range request.Sources {
 		source := newSingleFragmentSource(requestSource.Content)
+		// The line index is built on the first finding of the source and
+		// shared by all of them, so projection costs one pass over the
+		// content however many findings it has.
+		var lines *sourceLines
 		beforeBytes := a.runtime.totalBytes()
 		runCtx, cancelRun := context.WithCancel(scanCtx)
 		for result := range a.runtime.run(runCtx, source) {
@@ -160,7 +189,10 @@ func (a *Adapter) Scan(ctx context.Context, request protocol.Request) protocol.R
 				continue
 			}
 			finding := result.Finding
-			match, ok := projectFinding(requestSource.Ordinal, requestSource.Content, findingCoordinates{
+			if lines == nil {
+				lines = newSourceLines(requestSource.Content)
+			}
+			match, ok := lines.project(requestSource.Ordinal, findingCoordinates{
 				RuleID:      finding.RuleID,
 				StartLine:   finding.StartLine,
 				EndLine:     finding.EndLine,
@@ -205,7 +237,7 @@ func (a *Adapter) Scan(ctx context.Context, request protocol.Request) protocol.R
 	return response
 }
 
-func emptyResponse(requestID, status string) protocol.Response {
+func emptyResponse(requestID, status, buildProfile string) protocol.Response {
 	return protocol.Response{
 		SchemaVersion:   1,
 		RequestID:       requestID,
@@ -214,7 +246,7 @@ func emptyResponse(requestID, status string) protocol.Response {
 		ScannerVersion:  protocol.ScannerVersion,
 		ScannerCommit:   protocol.ScannerCommit,
 		RulesetIdentity: protocol.RulesetIdentity,
-		BuildProfile:    protocol.BuildProfile,
+		BuildProfile:    buildProfile,
 		Matches:         []protocol.Match{},
 	}
 }
@@ -256,14 +288,31 @@ type findingCoordinates struct {
 	EndColumn   int
 }
 
+// sourceLines is one source's content with its UTF-8 validity and the byte
+// offset of every line start, computed once for all of its findings.
+type sourceLines struct {
+	content []byte
+	valid   bool
+	starts  []int
+}
+
+func newSourceLines(content []byte) *sourceLines {
+	return &sourceLines{content: content, valid: utf8.Valid(content), starts: lineStartOffsets(content)}
+}
+
 func projectFinding(sourceOrdinal int, content []byte, finding findingCoordinates, ruleIDs map[string]struct{}) (protocol.Match, bool) {
-	if !utf8.Valid(content) || finding.StartLine < 1 || finding.EndLine < 1 || finding.StartColumn < 1 || finding.EndColumn < 1 {
+	return newSourceLines(content).project(sourceOrdinal, finding, ruleIDs)
+}
+
+func (lines *sourceLines) project(sourceOrdinal int, finding findingCoordinates, ruleIDs map[string]struct{}) (protocol.Match, bool) {
+	content := lines.content
+	if !lines.valid || finding.StartLine < 1 || finding.EndLine < 1 || finding.StartColumn < 1 || finding.EndColumn < 1 {
 		return protocol.Match{}, false
 	}
 	if _, known := ruleIDs[finding.RuleID]; !known {
 		return protocol.Match{}, false
 	}
-	lineStarts := lineStartOffsets(content)
+	lineStarts := lines.starts
 	if finding.StartLine > len(lineStarts) || finding.EndLine > len(lineStarts) {
 		return protocol.Match{}, false
 	}
