@@ -74,6 +74,7 @@ The setup folder holds:
 | `runs/setup/plan.json` and its `.lock`, `.receipts` and `.next` companions | The setup plan and its check receipts. |
 | `last-review.json` | The time, status, finding count and two commits of the last review, for the home screen. |
 | `NEXT-STEPS.txt` | The commands to run next. It never holds a key. |
+| `index/` | The [repository index](repository-index.md): `0700`, with `0600` segment and snapshot files and, on Linux, compiled grammar modules. |
 
 The usage folder holds `limit-<64 hex>.json`, one per limited key and provider,
 and `ledger-YYYY-MM.jsonl`, one per UTC month. None of these files holds a key,

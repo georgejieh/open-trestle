@@ -241,6 +241,16 @@ See
 | `local-git review` | the same as `change`, plus `--format json\|sarif`; or add `--tenant`, `--repository`, `--run`, `--server` to review through the daemon |
 | `local-git retained-memory-input` | `--repository-authority`, `--repository-namespace`, `--repository-name`, `--revision-algorithm` with `--head-revision-digest`, or `--review-input`, `--tenant`, `--repository`, `--route-inventory`, `--runtime-policy`, `--egress local-only`, `--timeout`, `--valid-for` with `--feedback-input` and `--output`, or `--remove-input`, `--format json\|text` |
 
+### `trestle index`
+
+Builds and queries the [repository index](repository-index.md) of the checkout in the current directory, in the setup folder. It reads the verified Git object store and makes no model call.
+
+| Command | Flags |
+| --- | --- |
+| `index build`, `index status` | `--commit REF`, `--directory PATH` |
+| `index query definitions\|references\|tests NAME`, `index query imports PATH` | `--commit REF`, `--directory PATH` |
+| `index query dependents` | `--base REF` (required), `--commit REF`, `--directory PATH` |
+
 ### `trestle build-info`
 
 Prints the source revision and source tree embedded in the build as one JSON line. A build without an embedded identity reports `source_bound: false`.
