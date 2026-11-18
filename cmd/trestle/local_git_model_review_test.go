@@ -387,7 +387,7 @@ func TestRunLocalGitModelReviewDeadlineCancelsActualModelWait(t *testing.T) {
 	select {
 	case code := <-done:
 		var result localModelReceipt
-		if code != 3 || json.Unmarshal(stdout.Bytes(), &result) != nil || result.Status != "canceled" || result.RunStatus != "canceled" || result.CI != "inconclusive" || stderr.Len() != 0 || stdout.Len() > 256<<10 {
+		if code != 3 || json.Unmarshal(stdout.Bytes(), &result) != nil || result.Status != "canceled" || result.RunStatus != "canceled" || result.CI != "inconclusive" || withoutIndexNotice(stderr.String()) != "" || stdout.Len() > 256<<10 {
 			t.Fatal("deadline did not yield a bounded finalized cancellation receipt")
 		}
 	case <-time.After(5 * time.Second):

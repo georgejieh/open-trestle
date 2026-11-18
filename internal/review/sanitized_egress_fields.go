@@ -22,8 +22,8 @@ import (
 // repository_checks carry only host-issued source IDs, closed tokens and
 // numbers, so they add no scanned field.
 const (
-	generationSanitizableWireShapeIdentity   = "152b5b4a5b0a9cebac3696dda93af31e200bcd91f1d89b8ad153aa319981fe18"
-	verificationSanitizableWireShapeIdentity = "6116dae31654f854e8ad427ad913c1d06bfad28ebcf880072cf373a7d3f6ad87"
+	generationSanitizableWireShapeIdentity   = "b3ed8779195a60676206aa38aef8974364053d2609cb98bee14d05438a69e3f4"
+	verificationSanitizableWireShapeIdentity = "6963ac0ac4ea03569d0144a0f1586c598aaa01d01292d197ac39110b8df0789d"
 )
 
 func wireShapeIdentity(root reflect.Type) string {

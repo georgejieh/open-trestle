@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -87,13 +88,13 @@ type localModelMemoryItem struct {
 	TextScore          uint8    `json:"text_score"`
 }
 
-// reviewIndexNotice is what a review of a checkout says once while it builds
-// the repository index.
-const reviewIndexNotice = "Indexing the repository for review context (up to 2m0s; later reviews reuse the index).\n"
+// reviewIndexNotice matches what a review says once while it builds the
+// repository index; the time bound it names depends on the review timeout.
+var reviewIndexNotice = regexp.MustCompile(`Indexing the repository for review context \(up to [^)]*; later reviews reuse the index\)\.\n`)
 
 // withoutIndexNotice drops the index notice from a review's stderr.
 func withoutIndexNotice(stderr string) string {
-	return strings.ReplaceAll(stderr, reviewIndexNotice, "")
+	return reviewIndexNotice.ReplaceAllString(stderr, "")
 }
 
 // newCheckoutModelFixture is a local model fixture reviewed through a Git
@@ -740,6 +741,6 @@ func newLocalModelFixture(t *testing.T, options localModelFixtureOptions) *local
 		t.Fatal(err)
 	}
 	f.args = append([]string{"local-git", "model-review"}, localGitChangeArgs(f.objects, evidence.RevisionAlgorithmSHA1, f.base, f.head)...)
-	f.args = append(f.args, "--tenant", "tenant-local", "--repository", "repository-local", "--route-inventory", f.inventoryPath, "--runtime-policy", f.policyPath, "--egress", "local-only", "--timeout", "5s", "--format", "json")
+	f.args = append(f.args, "--tenant", "tenant-local", "--repository", "repository-local", "--route-inventory", f.inventoryPath, "--runtime-policy", f.policyPath, "--egress", "local-only", "--timeout", "30s", "--format", "json")
 	return f
 }

@@ -318,8 +318,8 @@ type localModelReviewInputs struct {
 	// spending checks and records the spend of each member run; nil when no
 	// route uses an API key.
 	spending *reviewSpending
-	// index is the repository index the review reads context from; nil
-	// without a checkout or for an investigation.
+	// index is the repository index the review reads context from; nil for
+	// an investigation or when the objects have no usable index.
 	index *reviewIndexContext
 }
 
@@ -373,8 +373,8 @@ func prepareLocalModelReview(execution context.Context, options *localModelRevie
 		}
 	}
 	inputs.base, inputs.head = base, head
-	if options.checkout != "" && options.investigation == "" {
-		inputs.index = prepareReviewIndex(execution, options.checkout, base, head, stderr)
+	if options.investigation == "" {
+		inputs.index = prepareReviewIndex(execution, openReviewIndexSession(execution, *options, base), base, head, options.timeout, stderr)
 	}
 	if options.retainedMemory != "" {
 		scope, scopeErr := memory.NewScope(options.tenant, options.repository, "local-reviewer", memory.RefVisibilityExact, head.Identity(), []string{"."})

@@ -59,72 +59,6 @@ func indexManifestSpec(changed, caller ContextSource) ContextManifestSpec {
 	}
 }
 
-func TestContextLimitsRecordTheirSourceBoundOnlyFromVersionTenContexts(t *testing.T) {
-	if limits, err := NewContextLimits(1<<20, 5); err != nil || limits.MaxSources() != 32 {
-		t.Fatalf("fixed bound = %d, %v", limits.MaxSources(), err)
-	}
-	for _, sources := range []uint8{0, 65} {
-		if _, err := NewContextLimitsWithSources(1<<20, sources, 5); !errors.Is(err, ErrInvalidContextLimits) {
-			t.Fatalf("source bound %d accepted: %v", sources, err)
-		}
-	}
-	if limits, err := NewContextLimitsWithSources(1<<20, 64, 5); err != nil || limits.MaxSources() != 64 {
-		t.Fatalf("ceiling = %d, %v", limits.MaxSources(), err)
-	}
-	for name, test := range map[string]struct {
-		sources uint8
-		want    bool
-	}{"fixed": {0, false}, "recorded": {40, true}} {
-		limits, err := NewContextLimits(1<<20, 5)
-		if test.want {
-			limits, err = NewContextLimitsWithSources(1<<20, test.sources, 5)
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		packet, _, _, _ := indexPacketFixture(t, limits)
-		request, err := packet.ProviderRequest()
-		if err != nil {
-			t.Fatal(err)
-		}
-		var wire struct {
-			Limits map[string]int `json:"limits"`
-		}
-		if err := json.Unmarshal(request.Payload(), &wire); err != nil {
-			t.Fatal(err)
-		}
-		_, recorded := wire.Limits["max_sources"]
-		if recorded != test.want || test.want && wire.Limits["max_sources"] != 40 {
-			t.Fatalf("%s: limits = %v", name, wire.Limits)
-		}
-	}
-}
-
-func TestSourceSelectionHonoursThePacketSourceBound(t *testing.T) {
-	sources := []ContextSource{
-		v7ContextSource(t, ContextStageChangedHunk, "a", "internal/a.go", 1, "one\n"),
-		v7ContextSource(t, ContextStageChangedHunk, "b", "internal/b.go", 1, "two\n"),
-		v7ContextSource(t, ContextStageDirectReference, "c", "internal/c.go", 1, "three\n"),
-	}
-	limits, err := NewContextLimitsWithSources(1<<20, 2, 5)
-	if err != nil {
-		t.Fatal(err)
-	}
-	selection, err := SelectContextSources(sources, limits)
-	if err != nil || selection.SelectedCount() != 2 || selection.OmittedCount() != 1 || selection.Validate() != nil {
-		t.Fatalf("selection = %d selected, %d omitted, %v", selection.SelectedCount(), selection.OmittedCount(), err)
-	}
-	for _, entry := range selection.Entries() {
-		if entry.Stage() == ContextStageDirectReference && entry.Reason() != ContextSourceOmittedCountLimit {
-			t.Fatalf("the later stage was %s, not left out by the count limit", entry.Reason())
-		}
-	}
-	fixed, _ := NewContextLimits(1<<20, 5)
-	if all, err := SelectContextSources(sources, fixed); err != nil || all.SelectedCount() != 3 {
-		t.Fatalf("fixed bound selected %d: %v", all.SelectedCount(), err)
-	}
-}
-
 func TestRelatedTestAndRepositoryMapStagesBelongToVersionTenAndNine(t *testing.T) {
 	for _, stage := range []ContextStage{ContextStageRelatedTest, ContextStageRepositoryMap} {
 		token := stage.String()
@@ -143,7 +77,7 @@ func TestRelatedTestAndRepositoryMapStagesBelongToVersionTenAndNine(t *testing.T
 }
 
 func TestContextManifestIsRecordedValidatedAndSummarised(t *testing.T) {
-	limits, _ := NewContextLimitsWithSources(1<<20, 32, 5)
+	limits, _ := NewContextLimits(1<<20, 5)
 	packet, snapshot, changed, caller := indexPacketFixture(t, limits)
 	if !packet.manifest.IsZero() {
 		t.Fatal("a packet without accounting has a manifest")
@@ -171,7 +105,7 @@ func TestContextManifestIsRecordedValidatedAndSummarised(t *testing.T) {
 	if !summary.Present || summary.State != ContextIndexUsed || !summary.Complete || summary.Dependents != 1 || summary.Coverage.Files != 3 || summary.Coverage.LeftOut != 1 {
 		t.Fatalf("summary = %+v", summary)
 	}
-	if summary.Budget.Basis != ContextBudgetRouteWindow || summary.Budget.RouteContextTokens != 64000 || summary.Budget.OutputTokens != 4096 || summary.Budget.MaxSources != 32 {
+	if summary.Budget.Basis != ContextBudgetRouteWindow || summary.Budget.RouteContextTokens != 64000 || summary.Budget.OutputTokens != 4096 {
 		t.Fatalf("budget = %+v", summary.Budget)
 	}
 	if len(summary.Included) != 1 || summary.Included[0] != (ContextManifestSummarySource{SourceID: caller.ReferenceID(), Path: "internal/caller.go", Stage: ContextStageDirectReference, StartLine: 4, EndLine: 4, Rank: 1, Depth: 1}) {
@@ -204,7 +138,7 @@ func TestContextManifestIsRecordedValidatedAndSummarised(t *testing.T) {
 }
 
 func TestContextManifestRefusesAccountingThatDisagreesWithTheSources(t *testing.T) {
-	limits, _ := NewContextLimitsWithSources(1<<20, 32, 5)
+	limits, _ := NewContextLimits(1<<20, 5)
 	packet, _, changed, caller := indexPacketFixture(t, limits)
 	for name, mutate := range map[string]func(*ContextManifestSpec){
 		"an index source left unlisted":        func(s *ContextManifestSpec) { s.Included = nil },
@@ -246,7 +180,7 @@ func mustDecodeGeneration(t *testing.T, payload []byte) contextPacketWire {
 
 // A recorded version 9 context cannot carry what version 10 added.
 func TestRecordedVersionNineContextRefusesVersionTenFields(t *testing.T) {
-	limits, _ := NewContextLimitsWithSources(1<<20, 32, 5)
+	limits, _ := NewContextLimits(1<<20, 5)
 	packet, snapshot, changed, caller := indexPacketFixture(t, limits)
 	bound, err := packet.WithContextManifest(indexManifestSpec(changed, caller))
 	if err != nil {
@@ -265,7 +199,6 @@ func TestRecordedVersionNineContextRefusesVersionTenFields(t *testing.T) {
 		t.Fatal("the same sources do not read back as a version 9 context")
 	}
 	for name, mutate := range map[string]func(*contextPacketWire){
-		"a source limit":     func(w *contextPacketWire) { w.Limits.MaxSources = 32 },
 		"a context manifest": func(w *contextPacketWire) { w.ContextManifest = current.ContextManifest },
 		"repository checks":  func(w *contextPacketWire) { w.RepositoryChecks = []string{"lint"} },
 	} {
@@ -280,7 +213,7 @@ func TestRecordedVersionNineContextRefusesVersionTenFields(t *testing.T) {
 // The verifier sees the index sources and the source limit of version 10, and
 // never the manifest or the repository checks, which are finder accounting.
 func TestVerifierReceivesIndexSourcesWithoutTheManifest(t *testing.T) {
-	limits, _ := NewContextLimitsWithSources(1<<20, 32, 5)
+	limits, _ := NewContextLimits(1<<20, 5)
 	packet, snapshot, changed, caller := indexPacketFixture(t, limits)
 	spec := indexManifestSpec(changed, caller)
 	generation, err := packet.WithContextManifest(spec)
@@ -299,7 +232,7 @@ func TestVerifierReceivesIndexSourcesWithoutTheManifest(t *testing.T) {
 	}
 	request, _ := verification.ProviderRequest()
 	fields := modelContractFields(t, request.Payload())
-	if string(fields["schema_version"]) != "9" || fields["context_manifest"] != nil || fields["repository_checks"] != nil || !strings.Contains(string(fields["limits"]), `"max_sources":32`) {
+	if string(fields["schema_version"]) != "9" || fields["context_manifest"] != nil || fields["repository_checks"] != nil {
 		t.Fatalf("verifier fields: version=%s manifest=%s checks=%s limits=%s", fields["schema_version"], fields["context_manifest"], fields["repository_checks"], fields["limits"])
 	}
 	var wire verificationContextWire

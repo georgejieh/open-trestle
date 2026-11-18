@@ -109,7 +109,7 @@ func TestOldCodePacketCandidateGoldenWithIndexedMemory(t *testing.T) {
 			t.Fatalf("body was redacted or changed: %+v", item)
 		}
 	}
-	sourceBodies := map[string]string{"a.go": "func Changed() int{return 2}\n"}
+	sourceBodies := map[string]string{"a.go": "func Changed() int{return 2}\n", "a_test.go": "func TestChanged(){_=Changed()}\n"}
 	if len(packet.Sources) != len(sourceBodies) {
 		t.Fatalf("unexpected selected sources: %+v", packet.Sources)
 	}
@@ -248,7 +248,7 @@ func TestOldCodePacketCandidateGoldenWithZeroHitMemory(t *testing.T) {
 			t.Fatal("additional memory hit")
 		}
 	}
-	bodies := map[string]string{"a.go": "func Changed() int{return 2}\n"}
+	bodies := map[string]string{"a.go": "func Changed() int{return 2}\n", "a_test.go": "func TestChanged(){_=Changed()}\n"}
 	if len(packet.Sources) != len(bodies) {
 		t.Fatalf("selected source count: %d", len(packet.Sources))
 	}

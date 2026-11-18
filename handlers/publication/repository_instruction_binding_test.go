@@ -34,6 +34,25 @@ func recordedBindingSources(t *testing.T, f sourceBindingFixture) []recordedBind
 	return packet.Sources
 }
 
+func recordedStage(t *testing.T, source recordedBindingSource) review.ContextStage {
+	t.Helper()
+	for _, stage := range []review.ContextStage{
+		review.ContextStageChangedHunk,
+		review.ContextStageRemovedLines,
+		review.ContextStageEnclosingSymbol,
+		review.ContextStageDirectReference,
+		review.ContextStageRelatedTest,
+		review.ContextStageRepositoryMap,
+		review.ContextStageRepositoryContext,
+	} {
+		if stage.String() == source.Stage {
+			return stage
+		}
+	}
+	t.Fatalf("unknown recorded stage %q", source.Stage)
+	return 0
+}
+
 // withForgedInstructionSource rebuilds the recorded generation context with one
 // more repository_context source over the head bytes of path.
 func withForgedInstructionSource(t *testing.T, f sourceBindingFixture, path string, startLine, endLine int) sourceBindingFixture {
@@ -43,11 +62,6 @@ func withForgedInstructionSource(t *testing.T, f sourceBindingFixture, path stri
 		if err != nil {
 			t.Fatal(err)
 		}
-	}
-	stages := map[string]review.ContextStage{
-		review.ContextStageChangedHunk.String():       review.ContextStageChangedHunk,
-		review.ContextStageDirectReference.String():   review.ContextStageDirectReference,
-		review.ContextStageRepositoryContext.String(): review.ContextStageRepositoryContext,
 	}
 	bound := func(id string, stage review.ContextStage, rangeValue evidence.SourceRange) review.ContextSource {
 		content := f.contents[rangeValue.Path()]
@@ -69,10 +83,7 @@ func withForgedInstructionSource(t *testing.T, f sourceBindingFixture, path stri
 	var sources []review.ContextSource
 	var ranges []evidence.SourceRange
 	for _, recorded := range recordedBindingSources(t, f) {
-		stage, ok := stages[recorded.Stage]
-		if !ok {
-			t.Fatalf("unexpected recorded stage %q", recorded.Stage)
-		}
+		stage := recordedStage(t, recorded)
 		rangeValue, err := evidence.NewSourceRange(recorded.Path, recorded.StartLine, recorded.EndLine)
 		check(err)
 		sources = append(sources, bound(recorded.SourceID, stage, rangeValue))
@@ -95,7 +106,7 @@ func TestBuildSourceBindingBindsRepositoryInstructionContext(t *testing.T) {
 	for _, source := range recordedBindingSources(t, f) {
 		instruction = instruction || source.Path == "AGENTS.md" && source.Stage == "repository_context" && source.StartLine == 1 && source.EndLine == 2
 	}
-	if !instruction || len(f.input.EvidenceItems()) != 2 {
+	if !instruction || len(f.input.EvidenceItems()) != 3 {
 		t.Fatalf("context lacks the repository_context instruction source: evidence=%d", len(f.input.EvidenceItems()))
 	}
 	assertExactProtectedBinding(t, f)

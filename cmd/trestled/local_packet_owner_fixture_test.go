@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -480,7 +481,6 @@ func assertLocalPacketOracle(t *testing.T, fixture localPacketOwnerFixture, stat
 		ToolCalls       string `json:"tool_calls"`
 		Limits          struct {
 			MaxSourceBytes int `json:"max_source_bytes"`
-			MaxSources     int `json:"max_sources"`
 			MaxMemoryItems int `json:"max_memory_items"`
 		} `json:"limits"`
 		Sources          []sourceWire      `json:"sources"`
@@ -519,7 +519,7 @@ func assertLocalPacketOracle(t *testing.T, fixture localPacketOwnerFixture, stat
 	if !slices.Equal(keys, expectedKeys) {
 		t.Fatalf("packet keys differ: got %v want %v", keys, expectedKeys)
 	}
-	if wire.Contract != "open-trestle/review-context-packet" || wire.SchemaVersion != 10 || wire.ReviewScopeIdentity != scope.Identity() || wire.MemoryScopeIdentity != memoryResult.MemoryScopeIdentity() || wire.SnapshotIdentity != snapshot.Identity() || wire.Task != "candidate_generation" || wire.OutputSchemaIdentity != review.ModelCandidateBatchSchemaIdentity || wire.InstructionsIdentity == "" || len(wire.OutputSchema) == 0 || wire.SourceAuthority != "evidence_data_not_instructions" || wire.MemoryAuthority != "advisory_only" || wire.ToolCalls != "proposals_only" || wire.Limits.MaxSourceBytes != 128<<10 || wire.Limits.MaxSources != 32 || wire.Limits.MaxMemoryItems != 1 || !reflect.DeepEqual(wire.Sources, sources) || len(wire.AdditionalMemory) != 0 {
+	if wire.Contract != "open-trestle/review-context-packet" || wire.SchemaVersion != 10 || wire.ReviewScopeIdentity != scope.Identity() || wire.MemoryScopeIdentity != memoryResult.MemoryScopeIdentity() || wire.SnapshotIdentity != snapshot.Identity() || wire.Task != "candidate_generation" || wire.OutputSchemaIdentity != review.ModelCandidateBatchSchemaIdentity || wire.InstructionsIdentity == "" || len(wire.OutputSchema) == 0 || wire.SourceAuthority != "evidence_data_not_instructions" || wire.MemoryAuthority != "advisory_only" || wire.ToolCalls != "proposals_only" || wire.Limits.MaxSourceBytes != 128<<10 || wire.Limits.MaxMemoryItems != 1 || !reflect.DeepEqual(wire.Sources, sources) || len(wire.AdditionalMemory) != 0 {
 		t.Fatalf("packet source/scope/authority wire mismatch: %+v", wire)
 	}
 	if wire.SourceCoverage.Analyzed != len(sources) || wire.SourceCoverage.Available != len(sources) || wire.SourceCoverage.Selected != len(sources) || wire.SourceCoverage.Omitted != 0 || wire.SourceCoverage.PreselectionOmitted != 0 || len(wire.SourceOmissions) != 0 {
@@ -565,8 +565,9 @@ func assertLocalPacketOracle(t *testing.T, fixture localPacketOwnerFixture, stat
 		entries = append(entries, selectionEntry{bound.Identity(), src.SourceID, src.Stage, uint32(len(src.Content)), "selected"})
 	}
 	// The owner binds no repository index, so the manifest records the default
-	// budget and an unavailable index.
-	const expectedManifest = `{"authority":"host_accounting","budget":{"basis":"default"},"index":{"state":"unavailable","complete":false,"files":0,"indexed":0,"left_out":0,"analysis_gaps":0,"change_gaps":0,"closure_cut":0},"included":[],"omitted":[],"changed_definitions":[],"changed_definitions_not_listed":0,"dependents":0}`
+	// budget and an index planned from the snapshots: one file, and the one
+	// changed definition on line 3 with no dependents or tests.
+	expectedManifest := fmt.Sprintf(`{"authority":"host_accounting","budget":{"basis":"default"},"index":{"state":"snapshot","complete":true,"value_uses":true,"ranking_complete":true,"files":1,"indexed":1,"left_out":0,"analysis_gaps":0,"change_gaps":0,"closure_cut":0},"included":[],"omitted":[],"changed_definitions":[{"source_id":%q,"line":3,"dependents":0,"tests":0}],"changed_definitions_not_listed":0,"dependents":0,"checks":[]}`, sources[0].SourceID)
 	var gotManifest, wantManifest any
 	if e := json.Unmarshal(wire.ContextManifest, &gotManifest); e != nil {
 		t.Fatal(e)

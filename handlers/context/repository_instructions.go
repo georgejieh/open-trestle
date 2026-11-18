@@ -104,7 +104,7 @@ func fitRepositoryInstructionCandidates(baseline review.ContextSourceSelection, 
 	kept := make([]review.ContextSource, 0, len(ordered))
 	for _, source := range ordered {
 		size := uint32(source.SizeBytes())
-		if count < limits.MaxSources() && size <= limits.MaxSourceBytes()-used {
+		if count < review.MaxSelectedContextSources && size <= limits.MaxSourceBytes()-used {
 			kept = append(kept, source)
 			count++
 			used += size

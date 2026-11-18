@@ -1,4 +1,4 @@
-state used complete true dependents 2
+state used complete true ranking complete true value uses false dependents 2
 enclosing_symbol 1 depth 0 pkg/util.py:1-3
 direct_reference 1 depth 1 pkg/app.py:4-5
 related_test 1 depth 1 tests/test_util.py:4-5

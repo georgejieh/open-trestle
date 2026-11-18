@@ -33,7 +33,7 @@ func legacyGenerationWire(t *testing.T, wire contextPacketWire, version int) con
 	// No recorded version before 10 carries a source limit, a manifest or
 	// repository checks, and none before 9 carries stated_intent or
 	// pattern_hygiene.
-	wire.Limits.MaxSources, wire.ContextManifest, wire.RepositoryChecks = 0, nil, nil
+	wire.ContextManifest, wire.RepositoryChecks = nil, nil
 	if version != modelGenerationContextVersionV9 {
 		wire.StatedIntent, wire.PatternHygiene = nil, nil
 	}

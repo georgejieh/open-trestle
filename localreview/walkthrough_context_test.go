@@ -11,7 +11,7 @@ import (
 func contextFixtureManifest() review.ContextManifestSummary {
 	return review.ContextManifestSummary{
 		Present: true, State: review.ContextIndexUsed, Complete: true,
-		Budget: review.ContextBudget{Basis: review.ContextBudgetRouteWindow, RouteContextTokens: 64000, OutputTokens: 4096, MaxSourceBytes: 29 << 10, MaxSources: 32},
+		Budget: review.ContextBudget{Basis: review.ContextBudgetRouteWindow, RouteContextTokens: 64000, OutputTokens: 4096, MaxSourceBytes: 29 << 10},
 		Included: []review.ContextManifestSummarySource{
 			{SourceID: "s1", Path: "calc/div.go", Stage: review.ContextStageEnclosingSymbol, StartLine: 3, EndLine: 6, Rank: 1},
 			{SourceID: "s2", Path: "calc/half.go", Stage: review.ContextStageDirectReference, StartLine: 4, EndLine: 6, Rank: 1, Depth: 1},
@@ -33,7 +33,7 @@ func TestContextWalkthroughCountsIncludedSourcesByStage(t *testing.T) {
 	if w == nil || !w.valid() {
 		t.Fatalf("walkthrough context = %+v", w)
 	}
-	if w.Index != "used" || !w.Complete || w.Budget != "route_window" || w.MaxSourceBytes != 29<<10 || w.MaxSources != 32 || w.RouteContextTokens != 64000 {
+	if w.Index != "used" || !w.Complete || w.Budget != "route_window" || w.MaxSourceBytes != 29<<10 || w.RouteContextTokens != 64000 {
 		t.Fatalf("index and budget = %+v", w)
 	}
 	if w.Definitions != 1 || w.Callers != 1 || w.Tests != 1 || w.MapEntries != 1 || len(w.Included) != 4 || w.Included[1] != (WalkthroughContextSource{Stage: "direct_reference", Path: "calc/half.go", StartLine: 4, EndLine: 6, Rank: 1, Depth: 1}) {
@@ -77,15 +77,15 @@ func TestContextTextWordsTheIndexStateBudgetAndChecks(t *testing.T) {
 	}
 	lines := contextText(contextWalkthrough(contextFixtureManifest()))
 	want := []string{
-		"context used: 1 enclosing definition, 1 caller, 1 test, 1 map entry; left out: 3 callers (stage limit), 1 map entry (packet budget); budget 29 KiB in 32 sources (route window)",
-		"checks the repository already enforces: lint, unit_tests",
+		"context used: 1 enclosing definition, 1 caller, 1 test, 1 map entry; left out: 3 callers (stage limit), 1 map entry (packet budget); budget 29 KiB (route window)",
+		"checks the repository's CI enforces: lint, unit_tests",
 	}
 	if !reflect.DeepEqual(lines, want) {
 		t.Fatalf("lines = %q", lines)
 	}
 	incomplete := contextFixtureManifest()
 	incomplete.Complete, incomplete.Omitted, incomplete.Checks = false, nil, nil
-	if lines := contextText(contextWalkthrough(incomplete)); len(lines) != 1 || !strings.Contains(lines[0], "(the index does not cover every file)") || strings.Contains(lines[0], "left out") {
+	if lines := contextText(contextWalkthrough(incomplete)); len(lines) != 1 || !strings.Contains(lines[0], "(the analysis does not cover every file)") || strings.Contains(lines[0], "left out") {
 		t.Fatalf("incomplete index lines = %q", lines)
 	}
 	for state, fragment := range map[string]string{
@@ -95,7 +95,7 @@ func TestContextTextWordsTheIndexStateBudgetAndChecks(t *testing.T) {
 	} {
 		manifest := review.ContextManifestSummary{Present: true, State: state, Budget: review.DefaultContextBudget()}
 		lines := contextText(contextWalkthrough(manifest))
-		if len(lines) != 1 || !strings.Contains(lines[0], fragment) || !strings.HasSuffix(lines[0], "budget 128 KiB in 32 sources (default)") {
+		if len(lines) != 1 || !strings.Contains(lines[0], fragment) || !strings.HasSuffix(lines[0], "budget 128 KiB (default)") {
 			t.Fatalf("%s: lines = %q", state, lines)
 		}
 	}

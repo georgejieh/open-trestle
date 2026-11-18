@@ -463,7 +463,7 @@ func TestLocalGitRetainedMemoryKeepsSourceModelBudgetAndOutputGuards(t *testing.
 				args = append(replaceLocalGitChangeValue(args, "--format", "text"), "--verbose")
 			}
 			code := runWithContext(context.Background(), args, &out, &errout)
-			if errout.Len() != 0 || strings.Contains(out.String(), rmAdvice) || strings.Contains(out.String(), path) || strings.Contains(out.String(), localModelKey) {
+			if withoutIndexNotice(errout.String()) != "" || strings.Contains(out.String(), rmAdvice) || strings.Contains(out.String(), path) || strings.Contains(out.String(), localModelKey) {
 				t.Fatal("guard leaked input/credentials")
 			}
 			if kind == "text" {

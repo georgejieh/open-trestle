@@ -94,7 +94,7 @@ func TestRunLocalGitModelReviewProfilePlacesSpecialistOnlyInGeneration(t *testin
 	if code := run(args, &stdout, &stderr); code != 4 {
 		t.Fatalf("profile model-review exit=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
 	}
-	if stderr.Len() != 0 || strings.Count(stdout.String(), "\n") != 1 {
+	if withoutIndexNotice(stderr.String()) != "" || strings.Count(stdout.String(), "\n") != 1 {
 		t.Fatal("profile model-review did not emit one terminal JSON result")
 	}
 	for _, forbidden := range []string{f.objects, f.inventoryPath, f.policyPath, localModelSecret, localModelKey, specialist.Instructions()} {

@@ -16,7 +16,7 @@ func syntheticAdjudicationInputs(t *testing.T) (DeterministicCorpusReport, []byt
 	if err != nil {
 		t.Fatal(err)
 	}
-	corpus, err := loadDeterministicCorpus(corpusFiles, corpusRoot)
+	corpus, err := loadDeterministicCorpus(deterministicCorpusFiles, corpusRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,8 +44,7 @@ func syntheticAdjudicationInputs(t *testing.T) (DeterministicCorpusReport, []byt
 	return candidate, observed, adjudication
 }
 
-func TestEvaluateAdjudicationRetainsObservedMismatchWithoutApproval(t *testing.T) {
-	useMismatchedCorpus(t)
+func TestEvaluateAdjudicationRetainsObservedScoresWithoutApproval(t *testing.T) {
 	candidate, observed, adjudication := syntheticAdjudicationInputs(t)
 	original := append([]byte(nil), observed...)
 	encoded, err := EvaluateAdjudication(adjudication, observed, digestBytes(adjudication))
@@ -66,15 +65,15 @@ func TestEvaluateAdjudicationRetainsObservedMismatchWithoutApproval(t *testing.T
 	if err := json.Unmarshal(encoded, &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.Contract != "open-trestle/evaluation-adjudication-result" || result.SchemaVersion != 1 || result.ProvenanceStatus != "externally_asserted" || result.AcceptanceStatus != "not_decided" || result.ReleaseEvidenceEligible || result.ExecutionStatus != "mismatch" || result.ObservedReportIdentity != candidate.Identity() || result.AdjudicationSHA256 != digestBytes(adjudication) {
+	if result.Contract != "open-trestle/evaluation-adjudication-result" || result.SchemaVersion != 1 || result.ProvenanceStatus != "externally_asserted" || result.AcceptanceStatus != "not_decided" || result.ReleaseEvidenceEligible || result.ExecutionStatus != "matched" || result.ObservedReportIdentity != candidate.Identity() || result.AdjudicationSHA256 != digestBytes(adjudication) {
 		t.Fatal("import inferred approval or lost its observed/adjudication binding")
 	}
 	found := false
 	for _, target := range result.Targets {
-		if target.Key == "changed_declaration" {
+		if target.Key == "syntactic_reference_candidate" {
 			found = true
-			if target.TruePositiveCount != 2 || target.FalsePositiveCount != 1 || target.FalseNegativeCount != 1 {
-				t.Fatal("human review import erased an observed mismatch")
+			if target.TruePositiveCount != 2 || target.FalsePositiveCount != 0 || target.FalseNegativeCount != 0 {
+				t.Fatal("human review import changed the observed scores")
 			}
 		}
 	}

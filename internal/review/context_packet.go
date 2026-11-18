@@ -435,33 +435,15 @@ func (t ContextTask) Validate() error {
 	return nil
 }
 
-// ContextLimits bounds copied source bytes, selected sources and advisory
-// memory records.
+// ContextLimits bounds copied source bytes and advisory memory records.
 type ContextLimits struct {
 	maxSourceBytes uint32
-	// maxSources is zero for the fixed bound of 32 that contexts before
-	// version 10 apply, which they do not record.
-	maxSources     uint8
 	maxMemoryItems uint8
 }
 
-// NewContextLimits creates a bounded packet budget with the fixed source
-// bound.
+// NewContextLimits creates a bounded packet budget.
 func NewContextLimits(maxSourceBytes uint32, maxMemoryItems uint8) (ContextLimits, error) {
-	return newContextLimits(maxSourceBytes, 0, maxMemoryItems)
-}
-
-// NewContextLimitsWithSources creates a bounded packet budget that records
-// its own source bound, as version 10 contexts do.
-func NewContextLimitsWithSources(maxSourceBytes uint32, maxSources, maxMemoryItems uint8) (ContextLimits, error) {
-	if maxSources == 0 {
-		return ContextLimits{}, ErrInvalidContextLimits
-	}
-	return newContextLimits(maxSourceBytes, maxSources, maxMemoryItems)
-}
-
-func newContextLimits(maxSourceBytes uint32, maxSources, maxMemoryItems uint8) (ContextLimits, error) {
-	limits := ContextLimits{maxSourceBytes: maxSourceBytes, maxSources: maxSources, maxMemoryItems: maxMemoryItems}
+	limits := ContextLimits{maxSourceBytes: maxSourceBytes, maxMemoryItems: maxMemoryItems}
 	if err := limits.Validate(); err != nil {
 		return ContextLimits{}, err
 	}
@@ -470,17 +452,8 @@ func newContextLimits(maxSourceBytes uint32, maxSources, maxMemoryItems uint8) (
 
 func (l ContextLimits) MaxSourceBytes() uint32 { return l.maxSourceBytes }
 func (l ContextLimits) MaxMemoryItems() uint8  { return l.maxMemoryItems }
-
-// MaxSources is the selected-source bound.
-func (l ContextLimits) MaxSources() int {
-	if l.maxSources == 0 {
-		return maxSelectedContextSources
-	}
-	return int(l.maxSources)
-}
-
 func (l ContextLimits) Validate() error {
-	if l.maxSourceBytes == 0 || l.maxSourceBytes > maxContextAggregateBytes || l.maxMemoryItems > maxContextMemoryItems || int(l.maxSources) > maxContextSourcesCeiling {
+	if l.maxSourceBytes == 0 || l.maxSourceBytes > maxContextAggregateBytes || l.maxMemoryItems > maxContextMemoryItems {
 		return ErrInvalidContextLimits
 	}
 	return nil
@@ -828,7 +801,7 @@ func (p ContextPacket) validateFields() error {
 	if err := p.sourceSelection.Validate(); err != nil {
 		return err
 	}
-	if len(p.sources) == 0 || len(p.sources) > p.limits.MaxSources() {
+	if len(p.sources) == 0 || len(p.sources) > maxSelectedContextSources {
 		return ErrInvalidContextSource
 	}
 	selected := p.sourceSelection.SelectedSources()
@@ -944,10 +917,7 @@ type contextSourceCoverageWire struct {
 
 type contextLimitsWire struct {
 	MaxSourceBytes uint32 `json:"max_source_bytes"`
-	// MaxSources exists only from version 10; earlier versions apply the
-	// fixed bound of 32.
-	MaxSources     uint8 `json:"max_sources,omitempty"`
-	MaxMemoryItems uint8 `json:"max_memory_items"`
+	MaxMemoryItems uint8  `json:"max_memory_items"`
 }
 
 type contextSourceWire struct {
@@ -1089,11 +1059,11 @@ func ValidateRecordedContextPacketRequest(
 		wire.Task != ContextTaskCandidateGeneration.String() || wire.OutputSchemaIdentity != candidateSchemaIdentityForContextVersion(wire.SchemaVersion) ||
 		wire.SourceAuthority != "evidence_data_not_instructions" || wire.MemoryAuthority != "advisory_only" ||
 		wire.ToolCalls != "proposals_only" || !validCandidateDigest(wire.SourceSelectionIdentity) ||
-		wire.Limits.MaxSourceBytes == 0 || wire.Limits.MaxSourceBytes > maxContextAggregateBytes || int(wire.Limits.MaxSources) > maxContextSourcesCeiling ||
+		wire.Limits.MaxSourceBytes == 0 || wire.Limits.MaxSourceBytes > maxContextAggregateBytes ||
 		wire.Limits.MaxMemoryItems > maxContextMemoryItems || len(wire.AdditionalMemory) > 63 || contextMemoryItemCount(wire) > int(wire.Limits.MaxMemoryItems) {
 		return ErrInvalidContextPacketRequest
 	}
-	if len(wire.Sources) != len(evidenceItems) || wire.SourceCoverage.Selected != len(wire.Sources) || len(wire.Sources) > wireSourceLimit(wire.Limits) ||
+	if len(wire.Sources) != len(evidenceItems) || wire.SourceCoverage.Selected != len(wire.Sources) ||
 		wire.SourceCoverage.Available < wire.SourceCoverage.Selected || wireSourceOmissionCount(wire.SourceOmissions) != wire.SourceCoverage.PreselectionOmitted ||
 		wire.SourceCoverage.Analyzed != wire.SourceCoverage.Available+wire.SourceCoverage.PreselectionOmitted ||
 		wire.SourceCoverage.Omitted != wire.SourceCoverage.Available-wire.SourceCoverage.Selected+wire.SourceCoverage.PreselectionOmitted {
@@ -1118,11 +1088,11 @@ func ValidateRecordedContextPacketRequest(
 	if !validSourceHeadLines(wire.Sources) {
 		return ErrInvalidContextPacketRequest
 	}
-	// Stated intent and pattern hygiene exist only from version 9; the source
-	// limit, the manifest and the repository checks only in version 10.
+	// Stated intent and pattern hygiene exist only from version 9; the
+	// manifest and the repository checks only in version 10.
 	indexVersion := wire.SchemaVersion == modelGenerationContextVersion
 	if (wire.StatedIntent != nil || wire.PatternHygiene != nil) && !intentGenerationVersion(wire.SchemaVersion) ||
-		(wire.Limits.MaxSources != 0 || wire.ContextManifest != nil || wire.RepositoryChecks != nil) && !indexVersion ||
+		(wire.ContextManifest != nil || wire.RepositoryChecks != nil) && !indexVersion ||
 		!validStatedIntentWire(wire.StatedIntent) || !validPatternHygieneWire(wire.PatternHygiene, wire.Sources) ||
 		!validContextManifestWire(wire.ContextManifest, wire.Sources) || !validRepositoryChecks(wire.RepositoryChecks) {
 		return ErrInvalidContextPacketRequest

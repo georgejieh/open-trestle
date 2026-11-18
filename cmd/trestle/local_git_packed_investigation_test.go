@@ -44,7 +44,7 @@ func TestLocalGitPackedInvestigationReadsSnapshotToolsAndVerifies(t *testing.T) 
 			ReturnedBytes uint64 `json:"returned_bytes"`
 		} `json:"investigation"`
 	}
-	if json.Unmarshal(stdout.Bytes(), &receipt) != nil || code != 4 || receipt.Status != "findings" || receipt.RunStatus != "succeeded" || stderr.Len() != 0 || receipt.ComprehensiveClearance {
+	if json.Unmarshal(stdout.Bytes(), &receipt) != nil || code != 4 || receipt.Status != "findings" || receipt.RunStatus != "succeeded" || withoutIndexNotice(stderr.String()) != "" || receipt.ComprehensiveClearance {
 		t.Fatalf("packed investigation result code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 	captures := endpoint.snapshot()

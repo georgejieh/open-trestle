@@ -36,31 +36,37 @@ func DiffChanges(ctx context.Context, tree Tree, changes []Change, pairs []DiffP
 		c := &changes[pairs[next/2-1].Index]
 		c.Approximation = ApproximationDiffUnavailable
 		if baseRead && err == nil {
-			if headLines, baseLines, ok := diffLines(c.Path, baseContent, content); ok {
-				c.HeadLines, c.BaseLines, c.Approximation = headLines, baseLines, ""
+			if lines, ok := diffLines(c.Path, baseContent, content); ok {
+				c.HeadLines, c.BaseLines, c.DeletionPoints, c.Approximation = lines.HeadLines, lines.BaseLines, lines.DeletionPoints, ""
 			}
 		}
 		return ctx.Err()
 	})
 }
 
-// diffLines returns the changed head and base lines of a modified file.
-func diffLines(path string, baseContent, headContent []byte) (head, base []LineRange, ok bool) {
+// diffLines returns the changed lines of a modified file: its head and base
+// lines and its deletion points.
+func diffLines(path string, baseContent, headContent []byte) (Change, bool) {
 	patch, err := evidence.GenerateUnifiedFileDiff(path, baseContent, headContent)
 	if err != nil {
-		return nil, nil, false
+		return Change{}, false
 	}
 	_, lineMap, err := evidence.ParseUnifiedFileDiff(path, baseContent, headContent, patch)
 	if err != nil {
-		return nil, nil, false
+		return Change{}, false
 	}
+	var c Change
 	for _, hunk := range lineMap.Hunks() {
-		if n := hunk.HeadLineCount(); n > 0 {
-			head = append(head, LineRange{Start: hunk.HeadStartLine(), End: hunk.HeadStartLine() + n - 1})
+		n := hunk.HeadLineCount()
+		if n > 0 {
+			c.HeadLines = append(c.HeadLines, LineRange{Start: hunk.HeadStartLine(), End: hunk.HeadStartLine() + n - 1})
 		}
-		if n := hunk.BaseLineCount(); n > 0 {
-			base = append(base, LineRange{Start: hunk.BaseStartLine(), End: hunk.BaseStartLine() + n - 1})
+		if m := hunk.BaseLineCount(); m > 0 {
+			c.BaseLines = append(c.BaseLines, LineRange{Start: hunk.BaseStartLine(), End: hunk.BaseStartLine() + m - 1})
+			if n == 0 {
+				c.DeletionPoints = append(c.DeletionPoints, hunk.HeadStartLine())
+			}
 		}
 	}
-	return head, base, true
+	return c, true
 }

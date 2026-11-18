@@ -35,7 +35,7 @@ func ParseRecordedContext(payload []byte, scope audit.ReviewScope, head sourceou
 		return RecordedContext{}, ErrInvalidContextPacketRequest
 	}
 	wire, err := decodeGenerationContextWire(payload)
-	if err != nil || len(wire.Sources) == 0 || len(wire.Sources) > maxContextSourcesCeiling || len(wire.SourceOmissions) > 16384 || wire.SourceCoverage.Available > maxContextSourceCandidates || wire.SourceCoverage.Analyzed > maxContextSourceCandidates+65536 {
+	if err != nil || len(wire.Sources) == 0 || len(wire.Sources) > maxSelectedContextSources || len(wire.SourceOmissions) > 16384 || wire.SourceCoverage.Available > maxContextSourceCandidates || wire.SourceCoverage.Analyzed > maxContextSourceCandidates+65536 {
 		return RecordedContext{}, ErrInvalidContextPacketRequest
 	}
 	files := make([]evidence.RepositoryFile, 0, head.FileCount())

@@ -117,7 +117,7 @@ func (b AcquiredContextBinding) Validate() error {
 			return ErrInvalidAcquiredContextBinding
 		}
 	}
-	if len(b.sliceBindingIdentities) == 0 || len(b.sliceBindingIdentities) > maxContextSourcesCeiling || b.changedRangeCount <= 0 || b.changedRangeCount > maxContextSourcesCeiling {
+	if len(b.sliceBindingIdentities) == 0 || len(b.sliceBindingIdentities) > maxSelectedContextSources || b.changedRangeCount <= 0 || b.changedRangeCount > maxSelectedContextSources {
 		return ErrInvalidAcquiredContextBinding
 	}
 	previous := ""

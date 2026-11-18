@@ -156,7 +156,7 @@ func TestRunLocalGitModelReviewUsesDirectCallerContext(t *testing.T) {
 			select {
 			case code := <-done:
 				var receipt localModelReceipt
-				if code != 3 || json.Unmarshal(stdout.Bytes(), &receipt) != nil || receipt.Status != "canceled" || receipt.CI != "inconclusive" || stderr.Len() != 0 {
+				if code != 3 || json.Unmarshal(stdout.Bytes(), &receipt) != nil || receipt.Status != "canceled" || receipt.CI != "inconclusive" || withoutIndexNotice(stderr.String()) != "" {
 					t.Fatal("direct caller cancellation did not produce bounded inconclusive disposition")
 				}
 			case <-time.After(3 * time.Second):

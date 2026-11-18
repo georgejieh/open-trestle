@@ -253,7 +253,7 @@ Builds and queries the [repository index](repository-index.md) of the checkout i
 
 ### `trestle profile`
 
-Prints the repository profile of a commit (default `HEAD`) of the checkout in the current directory: its languages and their shares, the test frameworks and layout, and the checks its CI workflows, task runners, pre-commit hooks and linter configuration enforce, grouped by class. Configuration files are read as data from the verified Git object store and never run. A review reads the checks of its base commit. Flags: `--commit REF`, `--directory PATH`, `--json`.
+Prints the repository profile of a commit (default `HEAD`) of the checkout in the current directory: its languages and their shares, the test frameworks and layout, the checks its CI enforces, grouped by class, and the checks that are only configured. A check counts as enforced when a GitHub Actions step that runs on pushes or pull requests, not disabled and not allowed to fail, runs it at a command position, directly or through a Make, just, Task, package.json, tox, nox or pre-commit target that step invokes; other CI systems, task-runner targets nobody invokes and linter configuration alone are listed as configured. Configuration files are read as data from the verified Git object store and never run. A review reads the checks of its base commit. Flags: `--commit REF`, `--directory PATH`, `--json`.
 
 ### `trestle build-info`
 

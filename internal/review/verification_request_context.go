@@ -318,11 +318,10 @@ func decodeVerificationContextWire(payload []byte) (verificationContextWire, err
 	if err != nil || !bytes.Equal(canonical, payload) || wire.Contract != "open-trestle/verification-context-packet" || (wire.SchemaVersion != 2 && wire.SchemaVersion != 3 && wire.SchemaVersion != modelContextVersion && wire.SchemaVersion != modelVerificationContextVersionV6 && wire.SchemaVersion != modelVerificationContextVersionV7 && wire.SchemaVersion != modelVerificationContextVersionV8 && wire.SchemaVersion != modelVerificationContextVersion) {
 		return verificationContextWire{}, ErrInvalidVerificationRequestContext
 	}
-	// A stated intent exists only from version 8, and a source limit only in
-	// version 9. Stated intent content is validated with the generation
-	// context it is copied from; a sanitized copy may carry redacted text, so
-	// it is not re-derived here.
-	if wire.StatedIntent != nil && !intentVerificationVersion(wire.SchemaVersion) || wire.Limits.MaxSources != 0 && wire.SchemaVersion != modelVerificationContextVersion {
+	// A stated intent exists only from version 8. Its content is validated
+	// with the generation context it is copied from; a sanitized copy may
+	// carry redacted text, so it is not re-derived here.
+	if wire.StatedIntent != nil && !intentVerificationVersion(wire.SchemaVersion) {
 		return verificationContextWire{}, ErrInvalidVerificationRequestContext
 	}
 	return wire, nil

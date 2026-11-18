@@ -168,7 +168,7 @@ func isolatedChange(profile semanticimpact.Profile, manifest review.ContextManif
 			return false
 		}
 	}
-	return manifest.Present && manifest.State == review.ContextIndexUsed && manifest.Complete && manifest.Dependents == 0
+	return manifest.Present && (manifest.State == review.ContextIndexUsed || manifest.State == review.ContextIndexSnapshot) && manifest.Complete && manifest.ValueUses && manifest.Dependents == 0
 }
 
 // changeLineAccounting builds the accounting from a recorded change model and

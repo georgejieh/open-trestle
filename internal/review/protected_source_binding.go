@@ -46,7 +46,7 @@ func (b ProtectedSourceBinding) Validate() error {
 			return ErrInvalidProtectedSourceBinding
 		}
 	}
-	if len(b.evidenceBindingIdentities) == 0 || len(b.evidenceBindingIdentities) > maxContextSourcesCeiling {
+	if len(b.evidenceBindingIdentities) == 0 || len(b.evidenceBindingIdentities) > maxSelectedContextSources {
 		return ErrInvalidProtectedSourceBinding
 	}
 	previous := ""

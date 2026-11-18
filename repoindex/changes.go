@@ -39,6 +39,20 @@ type DiffPair struct {
 // left unmatched while an addition is also unmatched may be a move, and is
 // marked so.
 func ChangedFiles(base, head []FileEntry) ([]Change, []DiffPair) {
+	changes, pairs, _ := compareFiles(base, head)
+	return changes, pairs
+}
+
+// UneditedMoves returns a change for each file ChangedFiles matched as a
+// move without an edit: the file removed from its base path. Such a move
+// changes nothing in the file, but can break the files that imported it or
+// move it to another package.
+func UneditedMoves(base, head []FileEntry) []Change {
+	_, _, moves := compareFiles(base, head)
+	return moves
+}
+
+func compareFiles(base, head []FileEntry) (changes []Change, pairs []DiffPair, moves []Change) {
 	baseByPath, headByPath := map[string]FileEntry{}, map[string]FileEntry{}
 	for _, f := range base {
 		baseByPath[f.Path] = f
@@ -46,7 +60,7 @@ func ChangedFiles(base, head []FileEntry) ([]Change, []DiffPair) {
 	for _, f := range head {
 		headByPath[f.Path] = f
 	}
-	changes, pairs := []Change{}, []DiffPair{}
+	changes, pairs, moves = []Change{}, []DiffPair{}, []Change{}
 	modify := func(b, h FileEntry) {
 		pairs = append(pairs, DiffPair{Index: len(changes), Base: b.Object, Head: h.Object})
 		changes = append(changes, Change{Path: h.Path, BasePath: b.Path, HeadLines: WholeFile, BaseLines: WholeFile})
@@ -64,7 +78,9 @@ func ChangedFiles(base, head []FileEntry) ([]Change, []DiffPair) {
 			deleted = append(deleted, f)
 		}
 	}
-	deleted, added = matchMoves(deleted, added, func(f FileEntry) string { return f.Object }, false, nil)
+	deleted, added = matchMoves(deleted, added, func(f FileEntry) string { return f.Object }, false, func(d, _ FileEntry) {
+		moves = append(moves, Change{BasePath: d.Path, BaseLines: WholeFile})
+	})
 	deleted, added = matchMoves(deleted, added, func(f FileEntry) string { return path.Base(f.Path) }, true, modify)
 	for _, a := range added {
 		changes = append(changes, Change{Path: a.Path, HeadLines: WholeFile})
@@ -76,12 +92,12 @@ func ChangedFiles(base, head []FileEntry) ([]Change, []DiffPair) {
 		}
 		changes = append(changes, change)
 	}
-	return changes, pairs
+	return changes, pairs, moves
 }
 
 // matchMoves pairs deleted and added files with the same key, one to one in
 // path order, or with unique only when exactly one of each has the key. It
-// calls pair, when not nil, for each pair and returns the files left.
+// calls pair for each pair and returns the files left.
 func matchMoves(deleted, added []FileEntry, key func(FileEntry) string, unique bool, pair func(d, a FileEntry)) ([]FileEntry, []FileEntry) {
 	byKey, deletedPerKey := map[string][]int{}, map[string]int{}
 	for i, a := range added {
@@ -100,9 +116,7 @@ func matchMoves(deleted, added []FileEntry, key func(FileEntry) string, unique b
 			continue
 		}
 		used[queue[0]], byKey[k] = true, queue[1:]
-		if pair != nil {
-			pair(d, added[queue[0]])
-		}
+		pair(d, added[queue[0]])
 	}
 	rest := []FileEntry{}
 	for i, a := range added {

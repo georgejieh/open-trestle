@@ -28,19 +28,19 @@ const (
 	defaultContextSourceBytes = 128 << 10
 )
 
-// ContextBudget is the source budget of a packet and how it was chosen.
+// ContextBudget is the source byte budget of a packet and how it was chosen.
+// Every packet keeps at most 32 sources.
 type ContextBudget struct {
 	Basis              string
 	RouteContextTokens uint32
 	OutputTokens       uint32
 	MaxSourceBytes     uint32
-	MaxSources         uint8
 }
 
 // DefaultContextBudget is the budget of a packet whose routes declare no
-// context window: 128 KiB in at most 32 sources.
+// context window: 128 KiB.
 func DefaultContextBudget() ContextBudget {
-	return ContextBudget{Basis: ContextBudgetDefault, MaxSourceBytes: defaultContextSourceBytes, MaxSources: maxSelectedContextSources}
+	return ContextBudget{Basis: ContextBudgetDefault, MaxSourceBytes: defaultContextSourceBytes}
 }
 
 // RouteContextBudget derives a budget from the smallest context window of
@@ -49,8 +49,8 @@ func DefaultContextBudget() ContextBudget {
 // window left after the answer goes to source text; the other half covers
 // the JSON framing, the instructions, memory and, for the verifier, the
 // candidates. The result stays between 8 KiB and 1 MiB, within what the
-// secret scanner reads in one request, and a budget of at least 128 KiB may
-// fill 64 sources. A window of zero is unknown and gives the default.
+// secret scanner reads in one request. A window of zero is unknown and gives
+// the default.
 func RouteContextBudget(windowTokens, outputTokens uint32) ContextBudget {
 	if windowTokens == 0 {
 		return DefaultContextBudget()
@@ -60,34 +60,24 @@ func RouteContextBudget(windowTokens, outputTokens uint32) ContextBudget {
 		available = windowTokens - outputTokens
 	}
 	bytes := min(max(available/2, minimumRouteSourceBytes), maximumRouteSourceBytes)
-	sources := uint8(maxSelectedContextSources)
-	if bytes >= defaultContextSourceBytes {
-		sources = maxContextSourcesCeiling
-	}
-	return ContextBudget{Basis: ContextBudgetRouteWindow, RouteContextTokens: windowTokens, OutputTokens: outputTokens, MaxSourceBytes: bytes, MaxSources: sources}
+	return ContextBudget{Basis: ContextBudgetRouteWindow, RouteContextTokens: windowTokens, OutputTokens: outputTokens, MaxSourceBytes: bytes}
 }
 
 // Limits returns the packet limits of the budget.
 func (b ContextBudget) Limits(maxMemoryItems uint8) (ContextLimits, error) {
-	return NewContextLimitsWithSources(b.MaxSourceBytes, b.MaxSources, maxMemoryItems)
+	return NewContextLimits(b.MaxSourceBytes, maxMemoryItems)
 }
 
 func (l ContextLimits) wire() contextLimitsWire {
-	return contextLimitsWire{MaxSourceBytes: l.maxSourceBytes, MaxSources: l.maxSources, MaxMemoryItems: l.maxMemoryItems}
-}
-
-// wireSourceLimit is the selected-source bound a recorded limits object
-// states.
-func wireSourceLimit(limits contextLimitsWire) int {
-	if limits.MaxSources == 0 {
-		return maxSelectedContextSources
-	}
-	return int(limits.MaxSources)
+	return contextLimitsWire{MaxSourceBytes: l.maxSourceBytes, MaxMemoryItems: l.maxMemoryItems}
 }
 
 // Index states recorded in a context manifest.
 const (
-	ContextIndexUsed        = "used"
+	ContextIndexUsed = "used"
+	// ContextIndexSnapshot is context planned from the review's own
+	// snapshots, analysed in process, when no repository index was used.
+	ContextIndexSnapshot    = "snapshot"
 	ContextIndexUnavailable = "unavailable"
 	ContextIndexOverBudget  = "over_budget"
 	ContextIndexFailed      = "failed"
@@ -106,6 +96,11 @@ const (
 )
 
 var contextManifestOmissionReasons = []string{ContextOmittedDuplicate, ContextOmittedRange, ContextOmittedPacketBudget, ContextOmittedPath, ContextOmittedSizeLimit, ContextOmittedSourceLimit, ContextOmittedStageLimit, ContextOmittedContent}
+
+// ModelCheckClasses are the classes a review tells its models to spend no
+// effort on when the repository's CI enforces them; every other enforced
+// class is information only and never a reason to reduce scrutiny.
+var ModelCheckClasses = []string{"formatting", "lint", "type_check"}
 
 // RepositoryCheckClasses are the classes of issue a repository's own checks
 // can be recorded as enforcing.
@@ -138,8 +133,15 @@ type ContextPlanDefinition struct {
 // Items come in priority order: by stage, then by rank. StageOmitted counts,
 // per stage, the items the planner's own per-stage bounds left out.
 type ContextPlan struct {
-	State        string
-	Complete     bool
+	State    string
+	Complete bool
+	// RankingComplete is false when a bound cut the repository map's
+	// ranking; it does not make the index incomplete.
+	RankingComplete bool
+	// ValueUses is true when the analysis of every changed definition's
+	// language records value uses (reads, function values, field reads), so
+	// that zero dependents can show that nothing uses the change.
+	ValueUses    bool
 	Coverage     ContextIndexCoverage
 	Items        []ContextPlanItem
 	StageOmitted map[ContextStage]int
@@ -207,6 +209,8 @@ type contextManifestWire struct {
 	Changed          []contextManifestDefinitionWire `json:"changed_definitions"`
 	ChangedNotListed int                             `json:"changed_definitions_not_listed"`
 	Dependents       int                             `json:"dependents"`
+	// Checks are the classes the repository's CI enforces, as information.
+	Checks []string `json:"checks"`
 }
 
 type contextBudgetWire struct {
@@ -216,14 +220,18 @@ type contextBudgetWire struct {
 }
 
 type contextIndexWire struct {
-	State        string `json:"state"`
-	Complete     bool   `json:"complete"`
-	Files        int    `json:"files"`
-	Indexed      int    `json:"indexed"`
-	LeftOut      int    `json:"left_out"`
-	AnalysisGaps int    `json:"analysis_gaps"`
-	ChangeGaps   int    `json:"change_gaps"`
-	ClosureCut   int    `json:"closure_cut"`
+	State    string `json:"state"`
+	Complete bool   `json:"complete"`
+	// ValueUses says the analysis of every changed definition records
+	// value uses, so that zero dependents shows nothing uses the change.
+	ValueUses       bool `json:"value_uses"`
+	RankingComplete bool `json:"ranking_complete"`
+	Files           int  `json:"files"`
+	Indexed         int  `json:"indexed"`
+	LeftOut         int  `json:"left_out"`
+	AnalysisGaps    int  `json:"analysis_gaps"`
+	ChangeGaps      int  `json:"change_gaps"`
+	ClosureCut      int  `json:"closure_cut"`
 }
 
 type contextManifestSourceWire struct {
@@ -274,7 +282,7 @@ func (p ContextPacket) WithContextManifest(spec ContextManifestSpec) (ContextPac
 	wire := &contextManifestWire{
 		Authority: contextManifestAuthority,
 		Budget:    contextBudgetWire{Basis: spec.Budget.Basis, RouteContextTokens: spec.Budget.RouteContextTokens, OutputTokens: spec.Budget.OutputTokens},
-		Index: contextIndexWire{State: plan.State, Complete: plan.Complete, Files: plan.Coverage.Files, Indexed: plan.Coverage.Indexed, LeftOut: plan.Coverage.LeftOut,
+		Index: contextIndexWire{State: plan.State, Complete: plan.Complete, ValueUses: plan.ValueUses, RankingComplete: plan.RankingComplete, Files: plan.Coverage.Files, Indexed: plan.Coverage.Indexed, LeftOut: plan.Coverage.LeftOut,
 			AnalysisGaps: plan.Coverage.AnalysisGaps, ChangeGaps: plan.Coverage.ChangeGaps, ClosureCut: plan.Coverage.ClosureCut},
 		Included: []contextManifestSourceWire{}, Omitted: []contextManifestOmissionWire{}, Changed: []contextManifestDefinitionWire{},
 		ChangedNotListed: spec.ChangedNotListed, Dependents: plan.Dependents,
@@ -316,11 +324,17 @@ func (p ContextPacket) WithContextManifest(spec ContextManifestSpec) (ContextPac
 		}
 		return a.Line - b.Line
 	})
-	checks := slices.Clone(plan.Checks)
-	slices.Sort(checks)
-	checks = slices.Compact(checks)
-	if len(checks) == 0 {
-		checks = nil
+	wire.Checks = slices.Clone(plan.Checks)
+	slices.Sort(wire.Checks)
+	wire.Checks = slices.Compact(wire.Checks)
+	if wire.Checks == nil {
+		wire.Checks = []string{}
+	}
+	var checks []string
+	for _, check := range wire.Checks {
+		if slices.Contains(ModelCheckClasses, check) {
+			checks = append(checks, check)
+		}
 	}
 	value := p
 	value.manifest = ContextManifest{manifest: wire, checks: checks}
@@ -375,9 +389,9 @@ func validContextManifestWire(wire *contextManifestWire, sources []contextSource
 	}
 	index := wire.Index
 	switch index.State {
-	case ContextIndexUsed:
+	case ContextIndexUsed, ContextIndexSnapshot:
 	case ContextIndexUnavailable, ContextIndexOverBudget, ContextIndexFailed:
-		if index.Complete || index.Files != 0 || index.Indexed != 0 || len(wire.Included) != 0 || len(wire.Changed) != 0 || wire.Dependents != 0 {
+		if index.Complete || index.ValueUses || index.Files != 0 || index.Indexed != 0 || len(wire.Included) != 0 || len(wire.Changed) != 0 || wire.Dependents != 0 {
 			return false
 		}
 	default:
@@ -387,6 +401,9 @@ func validContextManifestWire(wire *contextManifestWire, sources []contextSource
 		if value < 0 || value > maxManifestCount {
 			return false
 		}
+	}
+	if wire.Checks == nil || !slices.IsSorted(wire.Checks) || slices.ContainsFunc(wire.Checks, func(c string) bool { return !slices.Contains(RepositoryCheckClasses, c) }) || len(slices.Compact(slices.Clone(wire.Checks))) != len(wire.Checks) {
+		return false
 	}
 	if index.Indexed > index.Files || len(wire.Changed) > maxManifestDefinitions || len(wire.Omitted) > len(contextManifestOmissionReasons)*4 {
 		return false
@@ -449,7 +466,7 @@ func validRepositoryChecks(checks []string) bool {
 		return false
 	}
 	for i, check := range checks {
-		if !slices.Contains(RepositoryCheckClasses, check) || i > 0 && checks[i-1] == check {
+		if !slices.Contains(ModelCheckClasses, check) || i > 0 && checks[i-1] == check {
 			return false
 		}
 	}
@@ -469,7 +486,9 @@ type ContextManifestSummary struct {
 	Changed          []ContextManifestSummaryDefinition
 	ChangedNotListed int
 	Dependents       int
-	Checks           []string
+	// Checks are the classes the repository's CI enforces, as information.
+	Checks                     []string
+	ValueUses, RankingComplete bool
 }
 
 // ContextManifestSummarySource is an included index source.
@@ -502,8 +521,8 @@ func ContextManifestOf(payload []byte) (ContextManifestSummary, error) {
 	if manifest == nil {
 		return ContextManifestSummary{}, nil
 	}
-	summary := ContextManifestSummary{Present: true, State: manifest.Index.State, Complete: manifest.Index.Complete, ChangedNotListed: manifest.ChangedNotListed, Dependents: manifest.Dependents, Checks: slices.Clone(wire.RepositoryChecks),
-		Budget:   ContextBudget{Basis: manifest.Budget.Basis, RouteContextTokens: manifest.Budget.RouteContextTokens, OutputTokens: manifest.Budget.OutputTokens, MaxSourceBytes: wire.Limits.MaxSourceBytes, MaxSources: uint8(wireSourceLimit(wire.Limits))},
+	summary := ContextManifestSummary{Present: true, State: manifest.Index.State, Complete: manifest.Index.Complete, ChangedNotListed: manifest.ChangedNotListed, Dependents: manifest.Dependents, Checks: slices.Clone(manifest.Checks), ValueUses: manifest.Index.ValueUses, RankingComplete: manifest.Index.RankingComplete,
+		Budget:   ContextBudget{Basis: manifest.Budget.Basis, RouteContextTokens: manifest.Budget.RouteContextTokens, OutputTokens: manifest.Budget.OutputTokens, MaxSourceBytes: wire.Limits.MaxSourceBytes},
 		Coverage: ContextIndexCoverage{Files: manifest.Index.Files, Indexed: manifest.Index.Indexed, LeftOut: manifest.Index.LeftOut, AnalysisGaps: manifest.Index.AnalysisGaps, ChangeGaps: manifest.Index.ChangeGaps, ClosureCut: manifest.Index.ClosureCut}}
 	byID := map[string]contextSourceWire{}
 	for _, source := range wire.Sources {

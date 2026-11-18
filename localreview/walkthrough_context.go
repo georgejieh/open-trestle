@@ -13,13 +13,13 @@ import (
 // beside the changed code, from its context manifest.
 type WalkthroughContext struct {
 	// Index is the repository index state: used, unavailable, over_budget
-	// or failed. Complete is false when the index did not cover every file.
+	// or failed, or snapshot for context from the review's own snapshots.
+	// Complete is false when the analysis did not cover every file.
 	Index    string `json:"index"`
 	Complete bool   `json:"complete"`
 	// Budget is how the source budget was chosen: route_window or default.
 	Budget             string `json:"budget"`
 	MaxSourceBytes     uint32 `json:"max_source_bytes"`
-	MaxSources         uint8  `json:"max_sources"`
 	RouteContextTokens uint32 `json:"route_context_tokens,omitempty"`
 	// Definitions, Callers, Tests and MapEntries count the included sources
 	// of each index stage.
@@ -55,7 +55,7 @@ func contextWalkthrough(m review.ContextManifestSummary) *WalkthroughContext {
 	if !m.Present {
 		return nil
 	}
-	w := &WalkthroughContext{Index: m.State, Complete: m.Complete, Budget: m.Budget.Basis, MaxSourceBytes: m.Budget.MaxSourceBytes, MaxSources: m.Budget.MaxSources, RouteContextTokens: m.Budget.RouteContextTokens,
+	w := &WalkthroughContext{Index: m.State, Complete: m.Complete, Budget: m.Budget.Basis, MaxSourceBytes: m.Budget.MaxSourceBytes, RouteContextTokens: m.Budget.RouteContextTokens,
 		Included: []WalkthroughContextSource{}, Omitted: []WalkthroughContextOmitted{}, Checks: append([]string{}, m.Checks...)}
 	for _, source := range m.Included {
 		switch source.Stage {
@@ -95,7 +95,7 @@ func (w *WalkthroughContext) valid() bool {
 		return false
 	}
 	switch w.Index {
-	case review.ContextIndexUsed, review.ContextIndexUnavailable, review.ContextIndexOverBudget, review.ContextIndexFailed:
+	case review.ContextIndexUsed, review.ContextIndexSnapshot, review.ContextIndexUnavailable, review.ContextIndexOverBudget, review.ContextIndexFailed:
 	default:
 		return false
 	}
@@ -134,10 +134,13 @@ func contextText(w *WalkthroughContext) []string {
 	}
 	var line string
 	switch w.Index {
-	case review.ContextIndexUsed:
+	case review.ContextIndexUsed, review.ContextIndexSnapshot:
 		line = fmt.Sprintf("context used: %d enclosing definition%s, %d caller%s, %d test%s, %d map entr%s", w.Definitions, plural(w.Definitions), w.Callers, plural(w.Callers), w.Tests, plural(w.Tests), w.MapEntries, map[bool]string{true: "y", false: "ies"}[w.MapEntries == 1])
+		if w.Index == review.ContextIndexSnapshot {
+			line += " (from the review's own snapshots, Go only; the repository index was not used)"
+		}
 		if !w.Complete {
-			line += " (the index does not cover every file)"
+			line += " (the analysis does not cover every file)"
 		}
 	case review.ContextIndexOverBudget:
 		line = "context used: changed code only (the repository index was not ready within its time budget)"
@@ -159,9 +162,9 @@ func contextText(w *WalkthroughContext) []string {
 		}
 		line += "; left out: " + strings.Join(parts, ", ")
 	}
-	lines := []string{line + fmt.Sprintf("; budget %d KiB in %d sources (%s)", w.MaxSourceBytes>>10, w.MaxSources, strings.ReplaceAll(w.Budget, "_", " "))}
+	lines := []string{line + fmt.Sprintf("; budget %d KiB (%s)", w.MaxSourceBytes>>10, strings.ReplaceAll(w.Budget, "_", " "))}
 	if len(w.Checks) > 0 {
-		lines = append(lines, "checks the repository already enforces: "+strings.Join(w.Checks, ", "))
+		lines = append(lines, "checks the repository's CI enforces: "+strings.Join(w.Checks, ", "))
 	}
 	return lines
 }

@@ -432,7 +432,7 @@ func TestLocalGitInvestigationReadsUnselectedSnapshotAndVerifies(t *testing.T) {
 			ReturnedBytes uint64 `json:"returned_bytes"`
 		} `json:"investigation"`
 	}
-	if json.Unmarshal(stdout.Bytes(), &receipt) != nil || code != 4 || receipt.Status != "findings" || receipt.RunStatus != "succeeded" || receipt.Version != 6 || stderr.Len() != 0 {
+	if json.Unmarshal(stdout.Bytes(), &receipt) != nil || code != 4 || receipt.Status != "findings" || receipt.RunStatus != "succeeded" || receipt.Version != 6 || withoutIndexNotice(stderr.String()) != "" {
 		t.Fatal("investigation did not produce a bounded independent finding")
 	}
 	captures := endpoint.snapshot()
@@ -518,7 +518,7 @@ func TestLocalGitInvestigationReviewsAChangeThatOnlyRemovesAFile(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runWithContext(ctx, f.args, &stdout, &stderr)
 	var receipt localModelReceipt
-	if json.Unmarshal(stdout.Bytes(), &receipt) != nil || code != 4 || receipt.Status != "findings" || receipt.RunStatus != "succeeded" || stderr.Len() != 0 {
+	if json.Unmarshal(stdout.Bytes(), &receipt) != nil || code != 4 || receipt.Status != "findings" || receipt.RunStatus != "succeeded" || withoutIndexNotice(stderr.String()) != "" {
 		t.Fatalf("removed-only investigation code=%d status=%s run=%s stderr=%q", code, receipt.Status, receipt.RunStatus, stderr.String())
 	}
 	captures := endpoint.snapshot()

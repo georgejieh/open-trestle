@@ -75,10 +75,17 @@ func TestMain(m *testing.M) {
 	if err != nil || os.Setenv("XDG_DATA_HOME", data) != nil {
 		os.Exit(1)
 	}
+	// Setup folders, and the repository index a review builds in one, live
+	// under the home folder.
+	home, err := os.MkdirTemp("", "trestle-test-home-")
+	if err != nil || os.Setenv("HOME", home) != nil {
+		os.Exit(1)
+	}
 	code := m.Run()
 	_ = os.RemoveAll(state)
 	_ = os.RemoveAll(config)
 	_ = os.RemoveAll(data)
+	_ = os.RemoveAll(home)
 	os.Exit(code)
 }
 

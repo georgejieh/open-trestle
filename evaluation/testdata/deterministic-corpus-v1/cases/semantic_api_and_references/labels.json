@@ -51,6 +51,40 @@
           "reason": "none"
         }
       ]
+    },
+    {
+      "key": "syntactic_reference_candidate",
+      "expected": [
+        {
+          "declaration_key": "func:BodyOnly",
+          "path": "service_test.go",
+          "line": 5,
+          "column": 6
+        },
+        {
+          "declaration_key": "func:Exported",
+          "path": "service_test.go",
+          "line": 4,
+          "column": 6
+        }
+      ],
+      "expected_coverage": [
+        {
+          "path": "other.go",
+          "outcome": "analyzed",
+          "reason": "none"
+        },
+        {
+          "path": "service.go",
+          "outcome": "analyzed",
+          "reason": "none"
+        },
+        {
+          "path": "service_test.go",
+          "outcome": "analyzed",
+          "reason": "none"
+        }
+      ]
     }
   ]
 }

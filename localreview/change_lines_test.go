@@ -128,12 +128,12 @@ func goProfile(t *testing.T, changedPath, base, head string) semanticimpact.Prof
 // indexManifest is the manifest of a run whose repository index found the
 // given number of direct dependents of the changed definitions.
 func indexManifest(state string, complete bool, dependents int) review.ContextManifestSummary {
-	return review.ContextManifestSummary{Present: true, State: state, Complete: complete, Dependents: dependents}
+	return review.ContextManifestSummary{Present: true, State: state, Complete: complete, ValueUses: true, Dependents: dependents}
 }
 
 // A change is isolated only when the semantic-impact profile records no gap
 // and no changed method or init function, and the context manifest shows a
-// complete repository index that found no dependent.
+// complete analysis that records value uses and found no dependent.
 func TestIsolatedChangeNeedsAProfileAndACompleteIndexWithoutDependents(t *testing.T) {
 	const base = "package p\n\nfunc Avg(xs []int) int {\n\treturn 0\n}\n"
 	const head = "package p\n\nfunc Avg(xs []int) int {\n\treturn 1\n}\n"
@@ -146,12 +146,13 @@ func TestIsolatedChangeNeedsAProfileAndACompleteIndexWithoutDependents(t *testin
 		t.Fatal("a change nothing references was not isolated")
 	}
 	for name, manifest := range map[string]review.ContextManifestSummary{
-		"one dependent":                 indexManifest(review.ContextIndexUsed, true, 1),
-		"an incomplete index":           indexManifest(review.ContextIndexUsed, false, 0),
-		"no index":                      indexManifest(review.ContextIndexUnavailable, false, 0),
-		"an index over its time budget": indexManifest(review.ContextIndexOverBudget, false, 0),
-		"a failed index":                indexManifest(review.ContextIndexFailed, false, 0),
-		"no manifest":                   {},
+		"one dependent":                  indexManifest(review.ContextIndexUsed, true, 1),
+		"an incomplete index":            indexManifest(review.ContextIndexUsed, false, 0),
+		"no index":                       indexManifest(review.ContextIndexUnavailable, false, 0),
+		"an index over its time budget":  indexManifest(review.ContextIndexOverBudget, false, 0),
+		"a failed index":                 indexManifest(review.ContextIndexFailed, false, 0),
+		"no manifest":                    {},
+		"an analysis without value uses": {Present: true, State: review.ContextIndexUsed, Complete: true},
 	} {
 		if isolatedChange(profile, manifest) {
 			t.Fatalf("%s: the change was proved isolated", name)

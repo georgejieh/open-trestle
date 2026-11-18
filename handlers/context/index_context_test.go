@@ -92,7 +92,7 @@ func renderIndexContext(t *testing.T, result textFallbackResult) string {
 		r := source.EvidenceItem().SourceRange()
 		fmt.Fprintf(&b, "source %s %s:%d-%d\n", source.Stage(), r.Path(), r.StartLine(), r.EndLine())
 	}
-	fmt.Fprintf(&b, "budget %s %d bytes %d sources\n", summary.Budget.Basis, summary.Budget.MaxSourceBytes, summary.Budget.MaxSources)
+	fmt.Fprintf(&b, "budget %s %d bytes\n", summary.Budget.Basis, summary.Budget.MaxSourceBytes)
 	fmt.Fprintf(&b, "index %s complete %t dependents %d\n", summary.State, summary.Complete, summary.Dependents)
 	for _, source := range summary.Included {
 		fmt.Fprintf(&b, "included %s rank %d depth %d %s:%d-%d\n", source.Stage, source.Rank, source.Depth, source.Path, source.StartLine, source.EndLine)
@@ -144,13 +144,35 @@ func TestIndexContextFollowsThePlanInPriorityOrder(t *testing.T) {
 	}
 }
 
-func TestIndexContextCutsByBytesAndSources(t *testing.T) {
+func TestIndexContextCutsByBytes(t *testing.T) {
 	// The changed hunk and the stated budget leave room for the enclosing
 	// definition only; later items are left out with their reasons.
-	budget := review.ContextBudget{Basis: review.ContextBudgetRouteWindow, RouteContextTokens: 1, MaxSourceBytes: uint32(len("\tq := a / (b + 0)\n") + len("func Div(a, b int) int {\n\tq := a / (b + 0)\n\treturn q\n}\n") + 20), MaxSources: 32}
+	budget := review.ContextBudget{Basis: review.ContextBudgetRouteWindow, RouteContextTokens: 1, MaxSourceBytes: uint32(len("\tq := a / (b + 0)\n") + len("func Div(a, b int) int {\n\tq := a / (b + 0)\n\treturn q\n}\n") + 20)}
 	checkIndexGolden(t, "bytes", renderIndexContext(t, assembleWithIndex(t, fakeIndexSource{plan: indexPlan()}, budget)))
-	budget = review.ContextBudget{Basis: review.ContextBudgetRouteWindow, RouteContextTokens: 1, MaxSourceBytes: 64 << 10, MaxSources: 3}
-	checkIndexGolden(t, "sources", renderIndexContext(t, assembleWithIndex(t, fakeIndexSource{plan: indexPlan()}, budget)))
+}
+
+func TestManyFilesWithoutAnalysisFitTheScannedFieldBound(t *testing.T) {
+	base, head := indexFiles()
+	for i := 0; i < 100; i++ {
+		name := fmt.Sprintf("deps/lib%03d.min.js", i)
+		base[name] = []byte("old\n")
+		head[name] = []byte("new\n")
+	}
+	result := assembleTextFallback(t, base, head)
+	if result.failure != 0 {
+		t.Fatalf("assembly failed: %s", result.failure)
+	}
+	omissions := result.assembly.Packet.SourceOmissions()
+	total := 0
+	for _, omission := range omissions {
+		total += int(omission.Count())
+	}
+	if len(omissions) > maximumOmissionRecords || total < 100 {
+		t.Fatalf("%d omission records counting %d", len(omissions), total)
+	}
+	if fields := 2*len(result.assembly.Packet.Sources()) + len(omissions); fields > 128 {
+		t.Fatalf("the packet needs %d scanned source and omission fields", fields)
+	}
 }
 
 func TestIndexContextLeavesOutBadAndDuplicateRanges(t *testing.T) {
@@ -164,32 +186,37 @@ func TestIndexContextLeavesOutBadAndDuplicateRanges(t *testing.T) {
 	checkIndexGolden(t, "rejected", renderIndexContext(t, assembleWithIndex(t, fakeIndexSource{plan: plan}, review.DefaultContextBudget())))
 }
 
-func TestReviewProceedsWithoutAnIndex(t *testing.T) {
-	cases := map[string]struct {
-		source IndexContextSource
-		state  string
-	}{
-		"none":        {nil, review.ContextIndexUnavailable},
-		"failed":      {fakeIndexSource{err: errors.New("damaged")}, review.ContextIndexFailed},
-		"over_budget": {fakeIndexSource{plan: review.UnavailableContextPlan(review.ContextIndexOverBudget)}, review.ContextIndexOverBudget},
-		"unknown":     {fakeIndexSource{plan: review.ContextPlan{State: "partial"}}, review.ContextIndexFailed},
+func TestReviewWithoutAnIndexPlansFromItsSnapshots(t *testing.T) {
+	cases := map[string]IndexContextSource{
+		"none":        nil,
+		"failed":      fakeIndexSource{err: errors.New("damaged")},
+		"over_budget": fakeIndexSource{plan: review.UnavailableContextPlan(review.ContextIndexOverBudget)},
+		"unknown":     fakeIndexSource{plan: review.ContextPlan{State: "partial"}},
 	}
-	for name, c := range cases {
+	for name, source := range cases {
 		t.Run(name, func(t *testing.T) {
-			result := assembleWithIndex(t, c.source, review.DefaultContextBudget())
-			if result.failure != 0 {
-				t.Fatalf("assembly failed: %s", result.failure)
+			result := assembleWithIndex(t, source, review.DefaultContextBudget())
+			got := renderIndexContext(t, result)
+			if name == "none" {
+				checkIndexGolden(t, "snapshot", got)
 			}
 			summary, err := review.ContextManifestOf(result.request.Payload())
-			if err != nil || summary.State != c.state || summary.Complete || len(summary.Included) != 0 || summary.Budget.Basis != review.ContextBudgetDefault {
+			if err != nil || summary.State != review.ContextIndexSnapshot || !summary.ValueUses || summary.Dependents == 0 || len(summary.Included) == 0 || summary.Budget.Basis != review.ContextBudgetDefault {
 				t.Fatalf("manifest = %+v, %v", summary, err)
 			}
-			for _, source := range result.assembly.Packet.Sources() {
-				if indexStage(source.Stage()) {
-					t.Fatalf("index context without an index: %s", source.Stage())
-				}
-			}
 		})
+	}
+}
+
+func TestInvestigationPlanKeepsItsContractStages(t *testing.T) {
+	plan := investigationPlan(indexPlan())
+	for _, item := range plan.Items {
+		if item.Stage == review.ContextStageRelatedTest || item.Stage == review.ContextStageRepositoryMap {
+			t.Fatalf("investigation plan keeps %s", item.Stage)
+		}
+	}
+	if len(plan.Items) != 3 {
+		t.Fatalf("items = %v", plan.Items)
 	}
 }
 
@@ -197,18 +224,17 @@ func TestRouteContextBudget(t *testing.T) {
 	cases := []struct {
 		window, output uint32
 		bytes          uint32
-		sources        uint8
 		basis          string
 	}{
-		{0, 4096, 128 << 10, 32, review.ContextBudgetDefault},
-		{32768, 4096, 14336, 32, review.ContextBudgetRouteWindow},
-		{4096, 8192, 8 << 10, 32, review.ContextBudgetRouteWindow},
-		{400_000, 16_000, 192_000, 64, review.ContextBudgetRouteWindow},
-		{10_000_000, 16_000, 1 << 20, 64, review.ContextBudgetRouteWindow},
+		{0, 4096, 128 << 10, review.ContextBudgetDefault},
+		{32768, 4096, 14336, review.ContextBudgetRouteWindow},
+		{4096, 8192, 8 << 10, review.ContextBudgetRouteWindow},
+		{400_000, 16_000, 192_000, review.ContextBudgetRouteWindow},
+		{10_000_000, 16_000, 1 << 20, review.ContextBudgetRouteWindow},
 	}
 	for _, c := range cases {
 		got := review.RouteContextBudget(c.window, c.output)
-		if got.MaxSourceBytes != c.bytes || got.MaxSources != c.sources || got.Basis != c.basis {
+		if got.MaxSourceBytes != c.bytes || got.Basis != c.basis {
 			t.Errorf("RouteContextBudget(%d, %d) = %+v", c.window, c.output, got)
 		}
 	}

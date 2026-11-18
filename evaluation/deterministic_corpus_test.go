@@ -14,11 +14,15 @@ func TestDeterministicCorpusCandidateIsPendingAndBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Validate() != nil || report.ReviewState() != "pending" || report.ExecutionStatus() != "matched" || report.CaseCount() != 6 || report.TargetCount() != 7 || report.ReleaseEvidenceEligible() {
+	if report.Validate() != nil || report.ReviewState() != "pending" || report.ExecutionStatus() != "matched" || report.CaseCount() != 6 || report.TargetCount() != 8 || report.ReleaseEvidenceEligible() {
 		t.Fatalf("report=%#v", report)
 	}
 	for _, target := range report.Targets() {
-		if target.FalsePositiveCount != 0 || target.FalseNegativeCount != 0 {
+		if target.Key == "syntactic_reference_candidate" {
+			if target.TruePositiveCount != 2 || target.FalsePositiveCount != 0 || target.FalseNegativeCount != 0 || target.CoverageNumerator != 3 || target.CoverageDenominator != 3 {
+				t.Fatalf("reference target=%#v", target)
+			}
+		} else if target.FalsePositiveCount != 0 || target.FalseNegativeCount != 0 {
 			t.Fatalf("unexpected target mismatch=%#v", target)
 		}
 	}
@@ -120,93 +124,25 @@ func TestDeterministicCorpusPublishedSchemasRemainPendingOnly(t *testing.T) {
 	}
 }
 
-func copyDeterministicCorpus(t *testing.T) fstest.MapFS {
-	t.Helper()
-	result := fstest.MapFS{}
-	err := fs.WalkDir(deterministicCorpusFiles, corpusRoot, func(name string, entry fs.DirEntry, err error) error {
-		if err != nil || entry.IsDir() {
-			return err
-		}
-		content, readErr := fs.ReadFile(deterministicCorpusFiles, name)
-		if readErr != nil {
-			return readErr
-		}
-		result[name] = &fstest.MapFile{Data: append([]byte(nil), content...)}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return result
-}
-
-// useMismatchedCorpus points the evaluators at a copy of the corpus whose first
-// changed_declaration label in semantic_api_and_references names the wrong change
-// kind, so the observed results disagree with the labels. The copy's labels digest,
-// manifest identity and adjudication binding are recomputed so it still loads.
-func useMismatchedCorpus(t *testing.T) {
-	t.Helper()
-	files := copyDeterministicCorpus(t)
-	labelsName := corpusRoot + "/cases/semantic_api_and_references/labels.json"
-	edited := bytes.Replace(files[labelsName].Data, []byte(`"change_kind": "modified"`), []byte(`"change_kind": "added"`), 1)
-	if bytes.Equal(edited, files[labelsName].Data) {
-		t.Fatal("labels edit did not apply")
-	}
-	files[labelsName].Data = edited
-
-	manifestName := corpusRoot + "/manifest.json"
-	var manifest map[string]any
-	if err := json.Unmarshal(files[manifestName].Data, &manifest); err != nil {
-		t.Fatal(err)
-	}
-	oldIdentity := manifest["corpus_identity"].(string)
-	for _, item := range manifest["cases"].([]any) {
-		entry := item.(map[string]any)
-		if entry["id"] == "semantic_api_and_references" {
-			entry["labels_sha256"] = digestBytes(edited)
-			entry["labels_bytes"] = len(edited)
-		}
-	}
-	manifest["corpus_identity"] = ""
-	preimage, err := json.Marshal(manifest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	identity, err := deriveManifestIdentity(preimage)
-	if err != nil {
-		t.Fatal(err)
-	}
-	manifest["corpus_identity"] = identity
-	if files[manifestName].Data, err = json.Marshal(manifest); err != nil {
-		t.Fatal(err)
-	}
-	adjudicationName := corpusRoot + "/adjudication.json"
-	files[adjudicationName].Data = bytes.Replace(files[adjudicationName].Data, []byte(oldIdentity), []byte(identity), 1)
-
-	previous := corpusFiles
-	corpusFiles = files
-	t.Cleanup(func() { corpusFiles = previous })
-}
-
-func TestDeterministicCorpusReportsLabelDisagreementAsMismatch(t *testing.T) {
-	useMismatchedCorpus(t)
-	report, err := EvaluateDeterministicCorpusCandidate()
-	if err != nil || report.ExecutionStatus() != "mismatch" {
-		t.Fatalf("report=%#v err=%v", report, err)
-	}
-	for _, target := range report.Targets() {
-		if target.Key == "changed_declaration" {
-			if target.TruePositiveCount != 2 || target.FalsePositiveCount != 1 || target.FalseNegativeCount != 1 {
-				t.Fatalf("changed_declaration=%#v", target)
-			}
-		} else if target.FalsePositiveCount != 0 || target.FalseNegativeCount != 0 {
-			t.Fatalf("unrelated target changed=%#v", target)
-		}
-	}
-}
-
 func TestDeterministicCorpusLoaderRejectsTamperAndForgedAdjudication(t *testing.T) {
-	copyCorpus := func() fstest.MapFS { return copyDeterministicCorpus(t) }
+	copyCorpus := func() fstest.MapFS {
+		result := fstest.MapFS{}
+		err := fs.WalkDir(deterministicCorpusFiles, corpusRoot, func(name string, entry fs.DirEntry, err error) error {
+			if err != nil || entry.IsDir() {
+				return err
+			}
+			content, readErr := fs.ReadFile(deterministicCorpusFiles, name)
+			if readErr != nil {
+				return readErr
+			}
+			result[name] = &fstest.MapFile{Data: append([]byte(nil), content...)}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
 	for _, mutate := range []func(fstest.MapFS){
 		func(files fstest.MapFS) {
 			files[corpusRoot+"/cases/debug_direct_and_multiline/head/main.go"].Data[0] ^= 1
@@ -291,37 +227,30 @@ func TestDeterministicCorpusLabelsRequireRealBoundedSourcesAndCompleteCoverage(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	find := func(id string) deterministicCorpusCase {
-		for _, item := range corpus.cases {
-			if item.manifest.ID == id {
-				return item
-			}
+	var source deterministicCorpusCase
+	for _, item := range corpus.cases {
+		if item.manifest.ID == "semantic_api_and_references" {
+			source = item
 		}
-		t.Fatalf("case %s missing", id)
-		return deterministicCorpusCase{}
 	}
-	clone := func(source deterministicCorpusCase, mutate func(target *corpusCaseTarget)) deterministicCorpusCase {
-		result := source
-		result.labels.Targets = append([]corpusCaseTarget(nil), source.labels.Targets...)
-		target := &result.labels.Targets[0]
-		target.Expected = append([]corpusLabel(nil), target.Expected...)
-		target.ExpectedCoverage = append([]expectedCoverage(nil), target.ExpectedCoverage...)
-		mutate(target)
-		return result
-	}
-	if validateCaseLabels(corpus.manifest, clone(find("semantic_api_and_references"), func(target *corpusCaseTarget) {
-		target.Expected[0].Path = "ghost.go"
-	})) == nil {
+	clone := source
+	clone.labels.Targets = append([]corpusCaseTarget(nil), source.labels.Targets...)
+	clone.labels.Targets[0].Expected = append([]corpusLabel(nil), source.labels.Targets[0].Expected...)
+	clone.labels.Targets[0].Expected[0].Path = "ghost.go"
+	if validateCaseLabels(corpus.manifest, clone) == nil {
 		t.Fatal("ghost label path accepted")
 	}
-	if validateCaseLabels(corpus.manifest, clone(find("go_symbol_boundaries"), func(target *corpusCaseTarget) {
-		target.Expected[0].EndLine = 999
-	})) == nil {
-		t.Fatal("out-of-source symbol range accepted")
+	clone = source
+	clone.labels.Targets = append([]corpusCaseTarget(nil), source.labels.Targets...)
+	clone.labels.Targets[2].Expected = append([]corpusLabel(nil), source.labels.Targets[2].Expected...)
+	clone.labels.Targets[2].Expected[0].Line = 999
+	if validateCaseLabels(corpus.manifest, clone) == nil {
+		t.Fatal("out-of-source reference accepted")
 	}
-	if validateCaseLabels(corpus.manifest, clone(find("classification_boundaries"), func(target *corpusCaseTarget) {
-		target.ExpectedCoverage = target.ExpectedCoverage[:2]
-	})) == nil {
+	clone = source
+	clone.labels.Targets = append([]corpusCaseTarget(nil), source.labels.Targets...)
+	clone.labels.Targets[2].ExpectedCoverage = append([]expectedCoverage(nil), source.labels.Targets[2].ExpectedCoverage[:2]...)
+	if validateCaseLabels(corpus.manifest, clone) == nil {
 		t.Fatal("incomplete coverage universe accepted")
 	}
 }

@@ -1,7 +1,7 @@
 {
   "contract": "open-trestle/deterministic-corpus-manifest",
   "schema_version": 1,
-  "corpus_identity": "91d9904795f694d7f84f101d4bbc010f91d094626ff43ef7f050f9ea4d77a5c4",
+  "corpus_identity": "4babb0e544c70eab43d931709f52651fe27be74efffd7249a0d6025e803e2058",
   "corpus_version": 1,
   "license": "Apache-2.0",
   "review_state": "pending",
@@ -48,6 +48,12 @@
       "version": 1,
       "family": "finding_rule",
       "match_unit": "case_id,path,start_line,end_line"
+    },
+    {
+      "key": "syntactic_reference_candidate",
+      "version": 1,
+      "family": "structural_analyzer",
+      "match_unit": "case_id,declaration_key,path,line,column"
     },
     {
       "key": "vendor_path",
@@ -299,8 +305,8 @@
         }
       ],
       "labels_path": "cases/semantic_api_and_references/labels.json",
-      "labels_sha256": "484211b9ea5c4b0a9d0b6ba55f886289201df4392cd172da0ff509fab636d811",
-      "labels_bytes": 1101
+      "labels_sha256": "48ebfd5714d360fa7732dacef6ae231b4a63437b745d80c37d1cdd3b8f8d880c",
+      "labels_bytes": 1860
     }
   ]
 }

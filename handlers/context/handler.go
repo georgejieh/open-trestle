@@ -253,11 +253,10 @@ func deriveHandlerIdentity(authorizer, sanitizer string, specialist review.Conte
 		RouteTokens    uint32 `json:"route_context_tokens"`
 		OutputTokens   uint32 `json:"output_tokens"`
 		MaxSourceBytes uint32 `json:"max_source_bytes"`
-		MaxSources     uint8  `json:"max_sources"`
 	}
 	var bound *budgetWire
 	if budget != (review.ContextBudget{}) {
-		bound = &budgetWire{budget.Basis, budget.RouteContextTokens, budget.OutputTokens, budget.MaxSourceBytes, budget.MaxSources}
+		bound = &budgetWire{budget.Basis, budget.RouteContextTokens, budget.OutputTokens, budget.MaxSourceBytes}
 	}
 	encoded, _ := json.Marshal(struct {
 		Contract          string      `json:"contract"`
@@ -704,15 +703,22 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 		intent = stated.Fit(int(limits.MaxSourceBytes()) - int(selection.SelectedBytes()))
 	}
 	// Index context fills what is left, in its fixed priority order.
-	plan := review.UnavailableContextPlan(review.ContextIndexUnavailable)
+	// Without a usable repository index, the plan comes from the snapshots
+	// this handler already loaded.
+	plan, planFailure := h.indexContextPlan(ctx, change.Repository(), change.BaseRevision(), change.HeadRevision())
+	if planFailure == 0 && plan.State != review.ContextIndexUsed {
+		plan, planFailure = h.snapshotContextPlan(ctx, request.Plan().Scope(), readAt, base, change, contents, &expires)
+	}
+	if planFailure != 0 {
+		return contextAssembly{}, provider.Request{}, nil, planFailure
+	}
+	if h.pipeline != nil {
+		plan = investigationPlan(plan)
+	}
 	var fit indexContextFit
-	if h.pipeline == nil {
-		var planFailure controlplane.RunFailure
-		if plan, planFailure = h.indexContextPlan(ctx, change.Repository(), change.BaseRevision(), change.HeadRevision()); planFailure != 0 {
-			return contextAssembly{}, provider.Request{}, nil, planFailure
-		}
+	{
 		free := int(limits.MaxSourceBytes()) - int(selection.SelectedBytes()) - intent.TextBytes()
-		fit, planFailure = fitIndexContext(plan, contents, memoryScope, selection.SelectedSources(), free, limits.MaxSources()-selection.SelectedCount(), 128-len(candidates))
+		fit, planFailure = fitIndexContext(plan, contents, memoryScope, selection.SelectedSources(), free, review.MaxSelectedContextSources-selection.SelectedCount(), maximumContextCandidates-len(candidates))
 		if planFailure != 0 {
 			return contextAssembly{}, provider.Request{}, nil, planFailure
 		}
@@ -736,6 +742,9 @@ func (h *Handler) assembleAt(ctx context.Context, request controlplane.TaskExecu
 	snapshot, err := review.NewAcquiredReviewPipelineSnapshot(request.Plan().Scope().ReviewRunID(), manifest, ranges)
 	if err != nil {
 		return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureInvalidInput
+	}
+	if omissions, err = collapseOmissions(omissions); err != nil {
+		return contextAssembly{}, provider.Request{}, nil, controlplane.RunFailureResourceLimit
 	}
 	packet, err := review.NewContextPacketWithAccounting(request.Plan().Scope(), memoryScope, snapshot, review.ContextTaskCandidateGeneration, candidates, retrievals, omissions, limits)
 	if err != nil {

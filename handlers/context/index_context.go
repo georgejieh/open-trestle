@@ -200,3 +200,20 @@ func (h *Handler) indexContextPlan(ctx context.Context, repository evidence.Repo
 	}
 	return review.UnavailableContextPlan(review.ContextIndexFailed), 0
 }
+
+// investigationPlan keeps the stages the investigation contract defines:
+// a related test becomes a use, and the repository map is left out.
+func investigationPlan(plan review.ContextPlan) review.ContextPlan {
+	items := []review.ContextPlanItem{}
+	for _, item := range plan.Items {
+		switch item.Stage {
+		case review.ContextStageRelatedTest:
+			item.Stage = review.ContextStageDirectReference
+		case review.ContextStageRepositoryMap:
+			continue
+		}
+		items = append(items, item)
+	}
+	plan.Items = items
+	return plan
+}

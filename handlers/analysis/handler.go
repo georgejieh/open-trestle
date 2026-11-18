@@ -78,9 +78,10 @@ func (h *Handler) Validate() error {
 	return nil
 }
 
-// deriveHandlerIdentity binds schema version 8, whose semantic-impact
-// profiles record declaration differences of the changed Go files only;
-// version 7 profiles also matched references across every head Go file.
+// deriveHandlerIdentity binds handler version 8 (the schema_version field
+// of the identity, not a result version), whose semantic-impact profiles
+// record declaration differences of the changed Go files only; version 7
+// profiles also matched references across every head Go file.
 func deriveHandlerIdentity(projectDiagnostics bool) string {
 	encoded, _ := json.Marshal(struct {
 		Contract             string `json:"contract"`

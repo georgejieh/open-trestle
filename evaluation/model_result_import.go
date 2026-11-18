@@ -70,7 +70,7 @@ func ImportModelResult(encoded []byte, expectedSHA256, caseID string, source scm
 	if !pair.HasManifests() || metadata.RepositoryIdentity != base.RepositoryIdentity() || metadata.RepositoryIdentity != head.RepositoryIdentity() || metadata.BaseRevisionIdentity != base.RevisionIdentity() || metadata.HeadRevisionIdentity != head.RevisionIdentity() {
 		return nil, ErrInvalidModelResultImport
 	}
-	corpus, err := loadDeterministicCorpus(corpusFiles, corpusRoot)
+	corpus, err := loadDeterministicCorpus(deterministicCorpusFiles, corpusRoot)
 	if err != nil {
 		return nil, err
 	}

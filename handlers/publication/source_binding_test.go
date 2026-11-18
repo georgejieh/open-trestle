@@ -303,12 +303,15 @@ func assertSelectedBindingSources(t *testing.T, f sourceBindingFixture, withInde
 	if err := json.Unmarshal(f.contextArtifact.Payload(), &packet); err != nil {
 		t.Fatal(err)
 	}
-	want := 1
-	if withIndex {
-		want = 2
-	}
+	want := 2
 	if len(packet.Sources) != want || len(f.input.EvidenceItems()) != want || len(f.analysis.Items()) != 1 {
 		t.Fatalf("selected=%d input=%d changed=%d", len(packet.Sources), len(f.input.EvidenceItems()), len(f.analysis.Items()))
+	}
+	// An index source binds the test as a direct reference; without one the
+	// context assembly plans the test itself from the snapshots.
+	indexStage := "related_test"
+	if withIndex {
+		indexStage = "direct_reference"
 	}
 	changed, indexed := false, false
 	for _, source := range packet.Sources {
@@ -316,10 +319,10 @@ func assertSelectedBindingSources(t *testing.T, f sourceBindingFixture, withInde
 		case "a.go":
 			changed = source.Stage == "changed_hunk" && source.SourceID == f.analysis.Items()[0].EvidenceID()
 		case "a_test.go":
-			indexed = source.Stage == "direct_reference" && source.StartLine == 2 && source.EndLine == 2 && source.SourceID != f.analysis.Items()[0].EvidenceID()
+			indexed = source.Stage == indexStage && source.StartLine == 2 && source.EndLine == 2 && source.SourceID != f.analysis.Items()[0].EvidenceID()
 		}
 	}
-	if !changed || indexed != withIndex {
+	if !changed || !indexed {
 		t.Fatal("changed hunk or unchanged index source not selected exactly")
 	}
 }
@@ -378,8 +381,14 @@ func sourceBindingContextVariant(t *testing.T, f sourceBindingFixture, mutation 
 	}
 	sources := make([]review.ContextSource, 0, len(f.input.EvidenceItems()))
 	ranges := make([]evidence.SourceRange, 0, len(f.input.EvidenceItems()))
+	recorded := recordedBindingSources(t, f)
 	for _, original := range f.input.EvidenceItems() {
 		rangeValue := original.SourceRange()
+		// The changed source takes the unchanged source's range in this
+		// mutation, so the unchanged source is left out rather than duplicated.
+		if mutation == "changed_path" && rangeValue.Path() == "a_test.go" {
+			continue
+		}
 		content := bytes.Clone(f.contents[rangeValue.Path()])
 		id := original.ID()
 		stage := review.ContextStageChangedHunk
@@ -397,7 +406,11 @@ func sourceBindingContextVariant(t *testing.T, f sourceBindingFixture, mutation 
 			}
 		}
 		if original.SourceRange().Path() == "a_test.go" {
-			stage = review.ContextStageDirectReference
+			for _, source := range recorded {
+				if source.SourceID == original.ID() {
+					stage = recordedStage(t, source)
+				}
+			}
 			switch mutation {
 			case "stage":
 				stage = review.ContextStageChangedHunk
@@ -417,7 +430,7 @@ func sourceBindingContextVariant(t *testing.T, f sourceBindingFixture, mutation 
 		slice := bytes.Join(lines[rangeValue.StartLine()-1:rangeValue.EndLine()], nil)
 		binding, err := evidence.BindSourceSlice(file, content, rangeValue, slice)
 		check(err)
-		if stage == review.ContextStageDirectReference && mutation == "range" {
+		if original.SourceRange().Path() == "a_test.go" && mutation == "range" {
 			id = binding.Identity()
 		}
 		item, err := evidence.NewEvidenceItem(id, evidence.EvidenceKindSource, binding.SliceDigest(), rangeValue)
